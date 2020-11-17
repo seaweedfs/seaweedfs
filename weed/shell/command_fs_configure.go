@@ -11,6 +11,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -35,6 +36,9 @@ func (c *commandFsConfigure) Help() string {
 	fs.configure -locationPrfix=/my/folder -collection=abc
 	fs.configure -locationPrfix=/my/folder -collection=abc -ttl=7d
 
+	# example: configure adding only 1 physical volume for each bucket collection
+	fs.configure -locationPrfix=/buckets/ -volumeGrowthCount=1
+
 	# apply the changes
 	fs.configure -locationPrfix=/my/folder -collection=abc -apply
 
@@ -52,6 +56,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	replication := fsConfigureCommand.String("replication", "", "assign writes with this replication")
 	ttl := fsConfigureCommand.String("ttl", "", "assign writes with this ttl")
 	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes")
+	volumeGrowthCount := fsConfigureCommand.Int("volumeGrowthCount", 0, "the number of physical volumes to add if no writable volumes")
 	isDelete := fsConfigureCommand.Bool("delete", false, "delete the configuration by locationPrefix")
 	apply := fsConfigureCommand.Bool("apply", false, "update and apply filer configuration")
 	if err = fsConfigureCommand.Parse(args); err != nil {
@@ -83,15 +88,31 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	if *locationPrefix != "" {
 		locConf := &filer_pb.FilerConf_PathConf{
-			LocationPrefix: *locationPrefix,
-			Collection:     *collection,
-			Replication:    *replication,
-			Ttl:            *ttl,
-			Fsync:          *fsync,
+			LocationPrefix:    *locationPrefix,
+			Collection:        *collection,
+			Replication:       *replication,
+			Ttl:               *ttl,
+			Fsync:             *fsync,
+			VolumeGrowthCount: uint32(*volumeGrowthCount),
 		}
+
+		// check collection
 		if *collection != "" && strings.HasPrefix(*locationPrefix, "/buckets/") {
 			return fmt.Errorf("one s3 bucket goes to one collection and not customizable.")
 		}
+
+		// check replication
+		if *replication != "" {
+			rp, err := super_block.NewReplicaPlacementFromString(*replication)
+			if err != nil {
+				return fmt.Errorf("parse replication %s: %v", *replication, err)
+			}
+			if *volumeGrowthCount % rp.GetCopyCount() != 0 {
+				return fmt.Errorf("volumeGrowthCount %d should be devided by replication copy count %d", *volumeGrowthCount, rp.GetCopyCount())
+			}
+		}
+
+		// save it
 		if *isDelete {
 			fc.DeleteLocationConf(*locationPrefix)
 		} else {

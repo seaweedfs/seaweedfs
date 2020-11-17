@@ -122,6 +122,9 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 		a.DiskType = b.DiskType
 	}
 	a.Fsync = b.Fsync || a.Fsync
+	if b.VolumeGrowthCount > 0 {
+		a.VolumeGrowthCount = b.VolumeGrowthCount
+	}
 }
 
 func (fc *FilerConf) ToProto() *filer_pb.FilerConf {

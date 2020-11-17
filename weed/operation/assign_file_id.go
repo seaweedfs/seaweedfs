@@ -104,12 +104,13 @@ func LookupJwt(master string, fileId string) security.EncodedJwt {
 }
 
 type StorageOption struct {
-	Replication string
-	Collection  string
-	DataCenter  string
-	Rack        string
-	TtlSeconds  int32
-	Fsync       bool
+	Replication       string
+	Collection        string
+	DataCenter        string
+	Rack              string
+	TtlSeconds        int32
+	Fsync             bool
+	VolumeGrowthCount uint32
 }
 
 func (so *StorageOption) TtlString() string {
@@ -118,21 +119,23 @@ func (so *StorageOption) TtlString() string {
 
 func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, altRequest *VolumeAssignRequest) {
 	ar = &VolumeAssignRequest{
-		Count:       uint64(count),
-		Replication: so.Replication,
-		Collection:  so.Collection,
-		Ttl:         so.TtlString(),
-		DataCenter:  so.DataCenter,
-		Rack:        so.Rack,
+		Count:               uint64(count),
+		Replication:         so.Replication,
+		Collection:          so.Collection,
+		Ttl:                 so.TtlString(),
+		DataCenter:          so.DataCenter,
+		Rack:                so.Rack,
+		WritableVolumeCount: so.VolumeGrowthCount,
 	}
 	if so.DataCenter != "" || so.Rack != "" {
 		altRequest = &VolumeAssignRequest{
-			Count:       uint64(count),
-			Replication: so.Replication,
-			Collection:  so.Collection,
-			Ttl:         so.TtlString(),
-			DataCenter:  "",
-			Rack:        "",
+			Count:               uint64(count),
+			Replication:         so.Replication,
+			Collection:          so.Collection,
+			Ttl:                 so.TtlString(),
+			DataCenter:          "",
+			Rack:                "",
+			WritableVolumeCount: so.VolumeGrowthCount,
 		}
 	}
 	return

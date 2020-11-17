@@ -364,6 +364,7 @@ message FilerConf {
         }
         DiskType disk_type = 5;
         bool fsync = 6;
+        uint32 volume_growth_count = 7;
     }
     repeated PathConf locations = 2;
 }
