@@ -53,7 +53,7 @@ func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.Assi
 		Count:               1,
 		Collection:          util.Nvl(f.metaLogCollection, rule.Collection),
 		Replication:         util.Nvl(f.metaLogReplication, rule.Replication),
-		WritableVolumeCount: 1,
+		WritableVolumeCount: rule.VolumeGrowthCount,
 	}
 
 	assignResult, err := operation.Assign(f.GetMaster(), f.GrpcDialOption, assignRequest)

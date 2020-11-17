@@ -135,12 +135,13 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	}
 
 	return &operation.StorageOption{
-		Replication: util.Nvl(replication, rule.Replication),
-		Collection:  util.Nvl(collection, rule.Collection),
-		DataCenter:  util.Nvl(dataCenter, fs.option.DataCenter),
-		Rack:        util.Nvl(rack, fs.option.Rack),
-		TtlSeconds:  ttlSeconds,
-		Fsync:       fsync || rule.Fsync,
+		Replication:       util.Nvl(replication, rule.Replication),
+		Collection:        util.Nvl(collection, rule.Collection),
+		DataCenter:        util.Nvl(dataCenter, fs.option.DataCenter),
+		Rack:              util.Nvl(rack, fs.option.Rack),
+		TtlSeconds:        ttlSeconds,
+		Fsync:             fsync || rule.Fsync,
+		VolumeGrowthCount: rule.VolumeGrowthCount,
 	}
 }
 

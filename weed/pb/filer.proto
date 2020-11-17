@@ -358,11 +358,13 @@ message FilerConf {
         string replication = 3;
         string ttl = 4;
         enum DiskType {
-            HDD = 0;
-            SSD = 1;
+            NONE = 0;
+            HDD = 1;
+            SSD = 2;
         }
         DiskType disk_type = 5;
         bool fsync = 6;
+        uint32 volume_growth_count = 7;
     }
     repeated PathConf locations = 2;
 }
