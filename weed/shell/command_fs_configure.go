@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -87,6 +88,9 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			Replication:    *replication,
 			Ttl:            *ttl,
 			Fsync:          *fsync,
+		}
+		if *collection != "" && strings.HasPrefix(*locationPrefix, "/buckets/") {
+			return fmt.Errorf("one s3 bucket goes to one collection and not customizable.")
 		}
 		if *isDelete {
 			fc.DeleteLocationConf(*locationPrefix)
