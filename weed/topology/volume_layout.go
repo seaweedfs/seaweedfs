@@ -132,6 +132,8 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, volumeSi
 }
 
 func (vl *VolumeLayout) String() string {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
 	return fmt.Sprintf("rp:%v, ttl:%v, vid2location:%v, writables:%v, volumeSizeLimit:%v", vl.rp, vl.ttl, vl.vid2location, vl.writables, vl.volumeSizeLimit)
 }
 
