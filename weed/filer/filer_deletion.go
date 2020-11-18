@@ -68,6 +68,50 @@ func (f *Filer) loopProcessingDeletion() {
 	}
 }
 
+func (f *Filer) doDeleteFileIds(fileIds []string) {
+
+	lookupFunc := LookupByMasterClientFn(f.MasterClient)
+	DeletionBatchSize := 100000 // roughly 20 bytes cost per file id.
+
+	for len(fileIds) > 0 {
+		var toDeleteFileIds []string
+		if len(fileIds) > DeletionBatchSize {
+			toDeleteFileIds = fileIds[:DeletionBatchSize]
+			fileIds = fileIds[DeletionBatchSize:]
+		} else {
+			toDeleteFileIds = fileIds
+			fileIds = fileIds[:0]
+		}
+		deletionCount := len(toDeleteFileIds)
+		_, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
+		if err != nil {
+			if !strings.Contains(err.Error(), "already deleted") {
+				glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
+			}
+		}
+	}
+}
+
+func (f *Filer) DirectDeleteChunks(chunks []*filer_pb.FileChunk) {
+	var fildIdsToDelete []string
+	for _, chunk := range chunks {
+		if !chunk.IsChunkManifest {
+			fildIdsToDelete = append(fildIdsToDelete, chunk.GetFileIdString())
+			continue
+		}
+		dataChunks, manifestResolveErr := ResolveOneChunkManifest(f.MasterClient.LookupFileId, chunk)
+		if manifestResolveErr != nil {
+			glog.V(0).Infof("failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
+		}
+		for _, dChunk := range dataChunks {
+			fildIdsToDelete = append(fildIdsToDelete, dChunk.GetFileIdString())
+		}
+		fildIdsToDelete = append(fildIdsToDelete, chunk.GetFileIdString())
+	}
+
+	f.doDeleteFileIds(fildIdsToDelete)
+}
+
 func (f *Filer) DeleteChunks(chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
 		if !chunk.IsChunkManifest {
