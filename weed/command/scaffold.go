@@ -76,10 +76,6 @@ const (
 recursive_delete = false
 # directories under this folder will be automatically creating a separate bucket
 buckets_folder = "/buckets"
-buckets_fsync = [          # a list of buckets with all write requests fsync=true
-	"important_bucket",
-	"should_always_fsync",
-]
 
 ####################################################
 # The following are filer store options

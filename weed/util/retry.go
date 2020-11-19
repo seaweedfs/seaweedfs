@@ -29,3 +29,13 @@ func Retry(name string, job func() error) (err error) {
 	}
 	return err
 }
+
+// return the first non empty string
+func Nvl(values ...string) string {
+	for _, s := range values {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}

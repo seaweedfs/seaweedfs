@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"math"
 	"net/http"
 	"time"
+
+	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -33,9 +35,14 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	identityId := r.Header.Get(xhttp.AmzIdentityId)
+
 	var buckets []*s3.Bucket
 	for _, entry := range entries {
 		if entry.IsDirectory {
+			if !s3a.hasAccess(r, entry) {
+				continue
+			}
 			buckets = append(buckets, &s3.Bucket{
 				Name:         aws.String(entry.Name),
 				CreationDate: aws.Time(time.Unix(entry.Attributes.Crtime, 0).UTC()),
@@ -45,8 +52,8 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 	response = ListAllMyBucketsResult{
 		Owner: &s3.Owner{
-			ID:          aws.String(""),
-			DisplayName: aws.String(""),
+			ID:          aws.String(identityId),
+			DisplayName: aws.String(identityId),
 		},
 		Buckets: buckets,
 	}
@@ -80,13 +87,25 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
+	if exist, err := s3a.exists(s3a.option.BucketsPath, bucket, true); err == nil && exist {
+		errCode = s3err.ErrBucketAlreadyExists
+	}
 	if errCode != s3err.ErrNone {
 		writeErrorResponse(w, errCode, r.URL)
 		return
 	}
 
+	fn := func(entry *filer_pb.Entry) {
+		if identityId := r.Header.Get(xhttp.AmzIdentityId); identityId != "" {
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+			entry.Extended[xhttp.AmzIdentityId] = []byte(identityId)
+		}
+	}
+
 	// create the folder for bucket, but lazily create actual collection
-	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, nil); err != nil {
+	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, fn); err != nil {
 		glog.Errorf("PutBucketHandler mkdir: %v", err)
 		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
@@ -98,6 +117,11 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, _ := getBucketAndObject(r)
+
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		writeErrorResponse(w, err, r.URL)
+		return
+	}
 
 	err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
@@ -128,28 +152,40 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 
 	bucket, _ := getBucketAndObject(r)
 
-	err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-
-		request := &filer_pb.LookupDirectoryEntryRequest{
-			Directory: s3a.option.BucketsPath,
-			Name:      bucket,
-		}
-
-		glog.V(1).Infof("lookup bucket: %v", request)
-		if _, err := filer_pb.LookupEntry(client, request); err != nil {
-			if err == filer_pb.ErrNotFound {
-				return filer_pb.ErrNotFound
-			}
-			return fmt.Errorf("lookup bucket %s/%s: %v", s3a.option.BucketsPath, bucket, err)
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		writeErrorResponse(w, s3err.ErrNoSuchBucket, r.URL)
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		writeErrorResponse(w, err, r.URL)
 		return
 	}
 
 	writeSuccessResponseEmpty(w)
+}
+
+func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorCode {
+	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if entry == nil || err == filer_pb.ErrNotFound {
+		return s3err.ErrNoSuchBucket
+	}
+
+	if !s3a.hasAccess(r, entry) {
+		return s3err.ErrAccessDenied
+	}
+	return s3err.ErrNone
+}
+
+func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
+	isAdmin := r.Header.Get(xhttp.AmzIsAdmin) != ""
+	if isAdmin {
+		return true
+	}
+	if entry.Extended == nil {
+		return true
+	}
+
+	identityId := r.Header.Get(xhttp.AmzIdentityId)
+	if id, ok := entry.Extended[xhttp.AmzIdentityId]; ok {
+		if identityId != string(id) {
+			return false
+		}
+	}
+	return true
 }

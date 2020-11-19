@@ -73,7 +73,7 @@ spec:
               -port={{ .Values.s3.port }} \
               {{- if .Values.s3.metricsPort }}
               -metricsPort {{ .Values.s3.metricsPort }} \
-              {{- end }}}
+              {{- end }}
               {{- if .Values.global.enableSecurity }}
               -cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -key.file=/usr/local/share/ca-certificates/client/tls.key \

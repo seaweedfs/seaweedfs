@@ -1,7 +1,6 @@
 package util
 
 import (
-	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"errors"
@@ -27,22 +26,6 @@ func init() {
 	client = &http.Client{
 		Transport: Transport,
 	}
-}
-
-func PostBytes(url string, body []byte) ([]byte, error) {
-	r, err := client.Post(url, "", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("Post to %s: %v", url, err)
-	}
-	defer r.Body.Close()
-	b, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		return nil, fmt.Errorf("Read response body: %v", err)
-	}
-	if r.StatusCode >= 400 {
-		return nil, fmt.Errorf("%s: %s", url, r.Status)
-	}
-	return b, nil
 }
 
 func Post(url string, values url.Values) ([]byte, error) {
@@ -370,7 +353,6 @@ func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, e
 	if err != nil {
 		return nil, err
 	}
-	defer CloseResponse(r)
 	if r.StatusCode >= 400 {
 		return nil, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}

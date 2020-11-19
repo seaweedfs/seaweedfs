@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -49,14 +50,14 @@ func Assign(server string, grpcDialOption grpc.DialOption, primaryRequest *Volum
 		lastError = WithMasterServerClient(server, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
 			req := &master_pb.AssignRequest{
-				Count:               primaryRequest.Count,
-				Replication:         primaryRequest.Replication,
-				Collection:          primaryRequest.Collection,
-				Ttl:                 primaryRequest.Ttl,
-				DataCenter:          primaryRequest.DataCenter,
-				Rack:                primaryRequest.Rack,
-				DataNode:            primaryRequest.DataNode,
-				WritableVolumeCount: primaryRequest.WritableVolumeCount,
+				Count:               request.Count,
+				Replication:         request.Replication,
+				Collection:          request.Collection,
+				Ttl:                 request.Ttl,
+				DataCenter:          request.DataCenter,
+				Rack:                request.Rack,
+				DataNode:            request.DataNode,
+				WritableVolumeCount: request.WritableVolumeCount,
 			}
 			resp, grpcErr := masterClient.Assign(context.Background(), req)
 			if grpcErr != nil {
@@ -100,4 +101,42 @@ func LookupJwt(master string, fileId string) security.EncodedJwt {
 	}
 
 	return security.EncodedJwt(tokenStr)
+}
+
+type StorageOption struct {
+	Replication       string
+	Collection        string
+	DataCenter        string
+	Rack              string
+	TtlSeconds        int32
+	Fsync             bool
+	VolumeGrowthCount uint32
+}
+
+func (so *StorageOption) TtlString() string {
+	return needle.SecondsToTTL(so.TtlSeconds)
+}
+
+func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, altRequest *VolumeAssignRequest) {
+	ar = &VolumeAssignRequest{
+		Count:               uint64(count),
+		Replication:         so.Replication,
+		Collection:          so.Collection,
+		Ttl:                 so.TtlString(),
+		DataCenter:          so.DataCenter,
+		Rack:                so.Rack,
+		WritableVolumeCount: so.VolumeGrowthCount,
+	}
+	if so.DataCenter != "" || so.Rack != "" {
+		altRequest = &VolumeAssignRequest{
+			Count:               uint64(count),
+			Replication:         so.Replication,
+			Collection:          so.Collection,
+			Ttl:                 so.TtlString(),
+			DataCenter:          "",
+			Rack:                "",
+			WritableVolumeCount: so.VolumeGrowthCount,
+		}
+	}
+	return
 }

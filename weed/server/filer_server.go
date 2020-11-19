@@ -89,7 +89,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.Port, option.Collection, option.DefaultReplication, func() {
+	fs.filer = filer.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.Port, option.Collection, option.DefaultReplication, option.DataCenter, func() {
 		fs.listenersCond.Broadcast()
 	})
 	fs.filer.Cipher = option.Cipher
@@ -114,6 +114,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
 	v.SetDefault("filer.options.buckets_folder", "/buckets")
 	fs.filer.DirBucketsPath = v.GetString("filer.options.buckets_folder")
+	// TODO deprecated, will be be removed after 2020-12-31
+	// replaced by https://github.com/chrislusf/seaweedfs/wiki/Path-Specific-Configuration
 	fs.filer.FsyncBuckets = v.GetStringSlice("filer.options.buckets_fsync")
 	fs.filer.LoadConfiguration(v)
 
@@ -130,6 +132,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.filer.AggregateFromPeers(fmt.Sprintf("%s:%d", option.Host, option.Port), option.Filers)
 
 	fs.filer.LoadBuckets()
+
+	fs.filer.LoadFilerConf()
 
 	grace.OnInterrupt(func() {
 		fs.filer.Shutdown()

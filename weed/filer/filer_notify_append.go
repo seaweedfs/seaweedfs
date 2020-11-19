@@ -13,7 +13,7 @@ import (
 
 func (f *Filer) appendToFile(targetFile string, data []byte) error {
 
-	assignResult, uploadResult, err2 := f.assignAndUpload(data)
+	assignResult, uploadResult, err2 := f.assignAndUpload(targetFile, data)
 	if err2 != nil {
 		return err2
 	}
@@ -46,14 +46,16 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 	return err
 }
 
-func (f *Filer) assignAndUpload(data []byte) (*operation.AssignResult, *operation.UploadResult, error) {
+func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.AssignResult, *operation.UploadResult, error) {
 	// assign a volume location
+	rule := f.FilerConf.MatchStorageRule(targetFile)
 	assignRequest := &operation.VolumeAssignRequest{
 		Count:               1,
-		Collection:          f.metaLogCollection,
-		Replication:         f.metaLogReplication,
-		WritableVolumeCount: 1,
+		Collection:          util.Nvl(f.metaLogCollection, rule.Collection),
+		Replication:         util.Nvl(f.metaLogReplication, rule.Replication),
+		WritableVolumeCount: rule.VolumeGrowthCount,
 	}
+
 	assignResult, err := operation.Assign(f.GetMaster(), f.GrpcDialOption, assignRequest)
 	if err != nil {
 		return nil, nil, fmt.Errorf("AssignVolume: %v", err)

@@ -94,10 +94,15 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 
+	// print out the header from extended properties
+	for k, v := range entry.Extended {
+		w.Header().Set(k, string(v))
+	}
+
 	//set tag count
 	if r.Method == "GET" {
 		tagCount := 0
-		for k, _ := range entry.Extended {
+		for k := range entry.Extended {
 			if strings.HasPrefix(k, xhttp.AmzObjectTagging+"-") {
 				tagCount++
 			}

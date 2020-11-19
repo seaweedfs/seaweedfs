@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go v1.33.5
 	github.com/buraksezer/consistent v0.0.0-20191006190839-693edf70fd72
 	github.com/cespare/xxhash v1.1.0
-	github.com/chrislusf/raft v1.0.2-0.20201002174524-b13c3bfdb011
+	github.com/chrislusf/raft v1.0.3
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/disintegration/imaging v1.6.2
@@ -24,6 +24,7 @@ require (
 	github.com/facebookgo/subset v0.0.0-20200203212716-c811ad88dec4 // indirect
 	github.com/fclairamb/ftpserverlib v0.8.0
 	github.com/frankban/quicktest v1.7.2 // indirect
+	github.com/go-errors/errors v1.1.1 // indirect
 	github.com/go-redis/redis v6.15.7+incompatible
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/gocql/gocql v0.0.0-20190829130954-e163eff7a8c6
@@ -45,6 +46,7 @@ require (
 	github.com/klauspost/reedsolomon v1.9.2
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.2.0
+	github.com/lunixbochs/vtclean v1.0.0 // indirect
 	github.com/magiconair/properties v1.8.1 // indirect
 	github.com/mattn/go-ieproxy v0.0.0-20190805055040-f9202b1cfdeb // indirect
 	github.com/mattn/go-runewidth v0.0.4 // indirect
@@ -67,6 +69,9 @@ require (
 	github.com/tidwall/gjson v1.3.2
 	github.com/tidwall/match v1.0.1
 	github.com/valyala/bytebufferpool v1.0.0
+	github.com/viant/assertly v0.5.4 // indirect
+	github.com/viant/ptrie v0.3.0
+	github.com/viant/toolbox v0.33.2 // indirect
 	github.com/willf/bitset v1.1.10 // indirect
 	github.com/willf/bloom v2.0.3+incompatible
 	github.com/wsxiaoys/terminal v0.0.0-20160513160801-0940f3fc43a0 // indirect

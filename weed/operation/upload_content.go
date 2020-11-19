@@ -81,14 +81,11 @@ func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, 
 	if ok {
 		data = bytesReader.Bytes
 	} else {
-		buf := bytebufferpool.Get()
-		_, err = buf.ReadFrom(reader)
-		defer bytebufferpool.Put(buf)
+		data, err = ioutil.ReadAll(reader)
 		if err != nil {
 			err = fmt.Errorf("read input: %v", err)
 			return
 		}
-		data = buf.Bytes()
 	}
 	uploadResult, uploadErr := retriedUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
 	return uploadResult, uploadErr, data
@@ -172,7 +169,7 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 		uploadResult, err = upload_content(uploadUrl, func(w io.Writer) (err error) {
 			_, err = w.Write(data)
 			return
-		}, filename, contentIsGzipped, 0, mtype, pairMap, jwt)
+		}, filename, contentIsGzipped, len(data), mtype, pairMap, jwt)
 	}
 
 	if uploadResult == nil {
@@ -193,6 +190,7 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	body_writer := multipart.NewWriter(buf)
 	h := make(textproto.MIMEHeader)
 	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, fileNameEscaper.Replace(filename)))
+	h.Set("Idempotency-Key", uploadUrl)
 	if mtype == "" {
 		mtype = mime.TypeByExtension(strings.ToLower(filepath.Ext(filename)))
 	}

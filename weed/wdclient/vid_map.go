@@ -16,20 +16,22 @@ const (
 )
 
 type Location struct {
-	Url       string `json:"url,omitempty"`
-	PublicUrl string `json:"publicUrl,omitempty"`
+	Url        string `json:"url,omitempty"`
+	PublicUrl  string `json:"publicUrl,omitempty"`
+	DataCenter string `json:"dataCenter,omitempty"`
 }
 
 type vidMap struct {
 	sync.RWMutex
 	vid2Locations map[uint32][]Location
-
-	cursor int32
+	DataCenter    string
+	cursor        int32
 }
 
-func newVidMap() vidMap {
+func newVidMap(dataCenter string) vidMap {
 	return vidMap{
 		vid2Locations: make(map[uint32][]Location),
+		DataCenter:    dataCenter,
 		cursor:        -1,
 	}
 }
@@ -56,7 +58,11 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 		return nil, fmt.Errorf("volume %d not found", id)
 	}
 	for _, loc := range locations {
-		serverUrls = append(serverUrls, loc.Url)
+		if vc.DataCenter == "" || loc.DataCenter == "" || vc.DataCenter != loc.DataCenter {
+			serverUrls = append(serverUrls, loc.Url)
+		} else {
+			serverUrls = append([]string{loc.Url}, serverUrls...)
+		}
 	}
 	return
 }

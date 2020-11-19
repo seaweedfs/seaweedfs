@@ -14,10 +14,10 @@ spec:
     protocol: TCP
 {{- if .Values.s3.metricsPort }}
   - name: "swfs-s3-metrics"
-    port: {{ .Values.filer.s3 }}
+    port: {{ .Values.s3.metricsPort }}
     targetPort: {{ .Values.s3.metricsPort }}
     protocol: TCP
-{{- end }}}
+{{- end }}
   selector:
     app: {{ template "seaweedfs.name" . }}
     component: s3

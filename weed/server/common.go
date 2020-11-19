@@ -38,10 +38,12 @@ func init() {
 
 func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) (err error) {
 	var bytes []byte
-	if r.FormValue("pretty") != "" {
-		bytes, err = json.MarshalIndent(obj, "", "  ")
-	} else {
-		bytes, err = json.Marshal(obj)
+	if obj != nil {
+		if r.FormValue("pretty") != "" {
+			bytes, err = json.MarshalIndent(obj, "", "  ")
+		} else {
+			bytes, err = json.Marshal(obj)
+		}
 	}
 	if err != nil {
 		return
@@ -125,6 +127,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 	ar := &operation.VolumeAssignRequest{
 		Count:       count,
 		DataCenter:  r.FormValue("dataCenter"),
+		Rack:        r.FormValue("rack"),
 		Replication: r.FormValue("replication"),
 		Collection:  r.FormValue("collection"),
 		Ttl:         r.FormValue("ttl"),

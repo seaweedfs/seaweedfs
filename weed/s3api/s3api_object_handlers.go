@@ -113,12 +113,6 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 
 	bucket, object := getBucketAndObject(r)
 
-	response, _ := s3a.listFilerEntries(bucket, object, 1, "", "/")
-	if len(response.Contents) != 0 && strings.HasSuffix(object, "/") {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
 	destUrl := fmt.Sprintf("http://%s%s/%s%s?recursive=true",
 		s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
 
@@ -266,17 +260,17 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	resp, postErr := client.Do(proxyReq)
 
-	if resp.ContentLength == -1 && !strings.HasSuffix(destUrl, "/") {
-		writeErrorResponse(w, s3err.ErrNoSuchKey, r.URL)
-		return
-	}
-
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
 		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
 	defer util.CloseResponse(resp)
+
+	if (resp.ContentLength == -1 || resp.StatusCode == 404) && !strings.HasSuffix(destUrl, "/") {
+		writeErrorResponse(w, s3err.ErrNoSuchKey, r.URL)
+		return
+	}
 
 	responseFn(resp, w)
 
@@ -323,7 +317,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {
-		glog.Errorf("upload to filer response read: %v", ra_err)
+		glog.Errorf("upload to filer response read %d: %v", resp.StatusCode, ra_err)
 		return etag, s3err.ErrInternalError
 	}
 	var ret weed_server.FilerPostResult

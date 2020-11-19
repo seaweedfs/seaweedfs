@@ -41,14 +41,16 @@ type Filer struct {
 	metaLogReplication  string
 	MetaAggregator      *MetaAggregator
 	Signature           int32
+	FilerConf           *FilerConf
 }
 
 func NewFiler(masters []string, grpcDialOption grpc.DialOption,
-	filerHost string, filerGrpcPort uint32, collection string, replication string, notifyFn func()) *Filer {
+	filerHost string, filerGrpcPort uint32, collection string, replication string, dataCenter string, notifyFn func()) *Filer {
 	f := &Filer{
-		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", filerHost, filerGrpcPort, masters),
+		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", filerHost, filerGrpcPort, dataCenter, masters),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
+		FilerConf:           NewFilerConf(),
 	}
 	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer(LogFlushInterval, f.logFlushFunc, notifyFn)
 	f.metaLogCollection = collection

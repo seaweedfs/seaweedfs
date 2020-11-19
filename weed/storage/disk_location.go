@@ -17,11 +17,12 @@ import (
 )
 
 type DiskLocation struct {
-	Directory           string
-	MaxVolumeCount      int
-	MinFreeSpacePercent float32
-	volumes             map[needle.VolumeId]*Volume
-	volumesLock         sync.RWMutex
+	Directory              string
+	MaxVolumeCount         int
+	OriginalMaxVolumeCount int
+	MinFreeSpacePercent    float32
+	volumes                map[needle.VolumeId]*Volume
+	volumesLock            sync.RWMutex
 
 	// erasure coding
 	ecVolumes     map[needle.VolumeId]*erasure_coding.EcVolume
@@ -31,7 +32,7 @@ type DiskLocation struct {
 }
 
 func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32) *DiskLocation {
-	location := &DiskLocation{Directory: dir, MaxVolumeCount: maxVolumeCount, MinFreeSpacePercent: minFreeSpacePercent}
+	location := &DiskLocation{Directory: dir, MaxVolumeCount: maxVolumeCount, OriginalMaxVolumeCount: maxVolumeCount, MinFreeSpacePercent: minFreeSpacePercent}
 	location.volumes = make(map[needle.VolumeId]*Volume)
 	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
 	go location.CheckDiskSpace()

@@ -130,6 +130,7 @@ message VolumeLocation {
     repeated uint32 new_vids = 3;
     repeated uint32 deleted_vids = 4;
     string leader = 5; // optional when leader is not itself
+    string data_center = 6; // optional when DataCenter is in use
 }
 
 message LookupVolumeRequest {
@@ -187,11 +188,6 @@ message StatisticsResponse {
 //
 // collection related
 //
-
-message StorageType {
-    string replication = 1;
-    string ttl = 2;
-}
 message Collection {
     string name = 1;
 }

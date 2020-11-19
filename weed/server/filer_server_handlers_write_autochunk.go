@@ -21,10 +21,11 @@ import (
 	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, replication string, collection string, dataCenter string, rack string, ttlSec int32, ttlString string, fsync bool) {
+func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) {
 
 	// autoChunking can be set at the command-line level or as a query param. Query param overrides command-line
 	query := r.URL.Query()
@@ -50,10 +51,10 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 		if r.Header.Get("Content-Type") == "" && strings.HasSuffix(r.URL.Path, "/") {
 			reply, err = fs.mkdir(ctx, w, r)
 		} else {
-			reply, md5bytes, err = fs.doPostAutoChunk(ctx, w, r, chunkSize, replication, collection, dataCenter, rack, ttlSec, ttlString, fsync)
+			reply, md5bytes, err = fs.doPostAutoChunk(ctx, w, r, chunkSize, so)
 		}
 	} else {
-		reply, md5bytes, err = fs.doPutAutoChunk(ctx, w, r, chunkSize, replication, collection, dataCenter, rack, ttlSec, ttlString, fsync)
+		reply, md5bytes, err = fs.doPutAutoChunk(ctx, w, r, chunkSize, so)
 	}
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
@@ -65,7 +66,7 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 	}
 }
 
-func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, chunkSize int32, replication string, collection string, dataCenter string, rack string, ttlSec int32, ttlString string, fsync bool) (filerResult *FilerPostResult, md5bytes []byte, replyerr error) {
+func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, chunkSize int32, so *operation.StorageOption) (filerResult *FilerPostResult, md5bytes []byte, replyerr error) {
 
 	multipartReader, multipartReaderErr := r.MultipartReader()
 	if multipartReaderErr != nil {
@@ -86,46 +87,46 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 		contentType = ""
 	}
 
-	fileChunks, md5Hash, chunkOffset, err := fs.uploadReaderToChunks(w, r, part1, chunkSize, replication, collection, dataCenter, rack, ttlString, fileName, contentType, fsync)
+	fileChunks, md5Hash, chunkOffset, err := fs.uploadReaderToChunks(w, r, part1, chunkSize, fileName, contentType, so)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	fileChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(replication, collection, dataCenter, rack, ttlString, fsync), fileChunks)
+	fileChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(so), fileChunks)
 	if replyerr != nil {
 		glog.V(0).Infof("manifestize %s: %v", r.RequestURI, replyerr)
 		return
 	}
 
 	md5bytes = md5Hash.Sum(nil)
-	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, replication, collection, ttlSec, contentType, md5bytes, fileChunks, chunkOffset)
+	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset)
 
 	return
 }
 
-func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, chunkSize int32, replication string, collection string, dataCenter string, rack string, ttlSec int32, ttlString string, fsync bool) (filerResult *FilerPostResult, md5bytes []byte, replyerr error) {
+func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, chunkSize int32, so *operation.StorageOption) (filerResult *FilerPostResult, md5bytes []byte, replyerr error) {
 
 	fileName := ""
 	contentType := ""
 
-	fileChunks, md5Hash, chunkOffset, err := fs.uploadReaderToChunks(w, r, r.Body, chunkSize, replication, collection, dataCenter, rack, ttlString, fileName, contentType, fsync)
+	fileChunks, md5Hash, chunkOffset, err := fs.uploadReaderToChunks(w, r, r.Body, chunkSize, fileName, contentType, so)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	fileChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(replication, collection, dataCenter, rack, ttlString, fsync), fileChunks)
+	fileChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(so), fileChunks)
 	if replyerr != nil {
 		glog.V(0).Infof("manifestize %s: %v", r.RequestURI, replyerr)
 		return
 	}
 
 	md5bytes = md5Hash.Sum(nil)
-	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, replication, collection, ttlSec, contentType, md5bytes, fileChunks, chunkOffset)
+	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset)
 
 	return
 }
 
-func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileName string, replication string, collection string, ttlSec int32, contentType string, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64) (filerResult *FilerPostResult, replyerr error) {
+func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileName string, contentType string, so *operation.StorageOption, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64) (filerResult *FilerPostResult, replyerr error) {
 
 	// detect file mode
 	modeStr := r.URL.Query().Get("mode")
@@ -162,9 +163,9 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			Mode:        os.FileMode(mode),
 			Uid:         OS_UID,
 			Gid:         OS_GID,
-			Replication: replication,
-			Collection:  collection,
-			TtlSec:      ttlSec,
+			Replication: so.Replication,
+			Collection:  so.Collection,
+			TtlSec:      so.TtlSeconds,
 			Mime:        contentType,
 			Md5:         md5bytes,
 			FileSize:    uint64(chunkOffset),
@@ -177,7 +178,17 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		Size: chunkOffset,
 	}
 
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
+
 	fs.saveAmzMetaData(r, entry)
+
+	for k, v := range r.Header {
+		if len(v) > 0 && strings.HasPrefix(k, needle.PairNamePrefix) {
+			entry.Extended[k] = []byte(v[0])
+		}
+	}
 
 	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil); dbErr != nil {
 		fs.filer.DeleteChunks(entry.Chunks)
@@ -188,7 +199,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	return filerResult, replyerr
 }
 
-func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Request, reader io.Reader, chunkSize int32, replication string, collection string, dataCenter string, rack string, ttlString string, fileName string, contentType string, fsync bool) ([]*filer_pb.FileChunk, hash.Hash, int64, error) {
+func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Request, reader io.Reader, chunkSize int32, fileName, contentType string, so *operation.StorageOption) ([]*filer_pb.FileChunk, hash.Hash, int64, error) {
 	var fileChunks []*filer_pb.FileChunk
 
 	md5Hash := md5.New()
@@ -200,7 +211,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 		limitedReader := io.LimitReader(partReader, int64(chunkSize))
 
 		// assign one file id for one chunk
-		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(replication, collection, dataCenter, rack, ttlString, fsync)
+		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(so)
 		if assignErr != nil {
 			return nil, nil, 0, assignErr
 		}
@@ -244,11 +255,11 @@ func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *ht
 	return uploadResult, err
 }
 
-func (fs *FilerServer) saveAsChunk(replication string, collection string, dataCenter string, rack string, ttlString string, fsync bool) filer.SaveDataAsChunkFunctionType {
+func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAsChunkFunctionType {
 
 	return func(reader io.Reader, name string, offset int64) (*filer_pb.FileChunk, string, string, error) {
 		// assign one file id for one chunk
-		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(replication, collection, dataCenter, rack, ttlString, fsync)
+		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(so)
 		if assignErr != nil {
 			return nil, "", "", assignErr
 		}
@@ -259,7 +270,7 @@ func (fs *FilerServer) saveAsChunk(replication string, collection string, dataCe
 			return nil, "", "", uploadErr
 		}
 
-		return uploadResult.ToPbFileChunk(fileId, offset), collection, replication, nil
+		return uploadResult.ToPbFileChunk(fileId, offset), so.Collection, so.Replication, nil
 	}
 }
 
@@ -313,10 +324,6 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 }
 
 func (fs *FilerServer) saveAmzMetaData(r *http.Request, entry *filer.Entry) {
-
-	if entry.Extended == nil {
-		entry.Extended = make(map[string][]byte)
-	}
 
 	if sc := r.Header.Get(xhttp.AmzStorageClass); sc != "" {
 		entry.Extended[xhttp.AmzStorageClass] = []byte(sc)

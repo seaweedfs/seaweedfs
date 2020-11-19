@@ -4,7 +4,7 @@ global:
   registry: ""
   repository: ""
   imageName: chrislusf/seaweedfs
-  imageTag: "2.08"
+  imageTag: "2.11"
   imagePullPolicy: IfNotPresent
   imagePullSecrets: imagepullsecret
   restartPolicy: Always
@@ -302,10 +302,6 @@ filer:
     WEED_FILER_OPTIONS_RECURSIVE_DELETE: "false"
     # directories under this folder will be automatically creating a separate bucket
     WEED_FILER_BUCKETS_FOLDER: "/buckets"
-    # directories under this folder will be store message queue data
-    WEED_FILER_QUEUES_FOLDER: "/queues"
-    # WEED_FILER_OPTIONS_BUCKETS_FSYNC a list of buckets names with all write requests fsync=true
-    WEED_FILER_OPTIONS_BUCKETS_FSYNC: []
 
 s3:
   enabled: true

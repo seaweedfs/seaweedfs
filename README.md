@@ -58,11 +58,12 @@ Your support will be really appreciated by me and other supporters!
 Table of Contents
 =================
 
+* [Quick Start](#quick-start)
 * [Introduction](#introduction)
 * [Features](#features)
     * [Additional Features](#additional-features)
     * [Filer Features](#filer-features)
-* [Example Usage](#example-usage)
+* [Example: Using Seaweed Object Store](#example-Using-Seaweed-Object-Store)
 * [Architecture](#architecture)
 * [Compared to Other File Systems](#compared-to-other-file-systems)
     * [Compared to HDFS](#compared-to-hdfs)
@@ -74,6 +75,13 @@ Table of Contents
 * [Disk Related Topics](#disk-related-topics)
 * [Benchmark](#Benchmark)
 * [License](#license)
+
+
+## Quick Start ##
+* Download the latest binary from https://github.com/chrislusf/seaweedfs/releases and unzip a single binary file `weed` or `weed.exe`
+* Run `weed server -dir=/some/data/dir -s3` to start one master, one volume server, one filer, and one S3 gateway.
+
+Also, to increase capacity, just add more volume servers by `weed volume -dir="/some/data/dir2" -mserver="<master_host>:9333" -port=8081` locally or a different machine. That is it!
 
 ## Introduction ##
 
@@ -140,10 +148,6 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 [ActiveActiveAsyncReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Active-Active-cross-cluster-continuous-synchronization
 
 [Back to TOC](#table-of-contents)
-
-## Quick Start ##
-* Download the latest binary from https://github.com/chrislusf/seaweedfs/releases and unzip a single binary file `weed` or `weed.exe`
-* Run `weed server -s3` to start one master, one volume server, one filer, and one S3 gateway.
 
 ## Example: Using Seaweed Object Store ##
 

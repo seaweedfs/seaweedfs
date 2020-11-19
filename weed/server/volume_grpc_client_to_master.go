@@ -203,6 +203,7 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDi
 			}
 		case <-volumeTickChan:
 			glog.V(4).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
+			vs.store.MaybeAdjustVolumeMax()
 			if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
 				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
 				return "", err

@@ -36,6 +36,14 @@ public class SeaweedFileSystemStore {
         this.conf = conf;
     }
 
+    public void close() {
+        try {
+            this.filerGrpcClient.shutdown();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
     public static String getParentDirectory(Path path) {
         return path.isRoot() ? "/" : path.getParent().toUri().getPath();
     }
