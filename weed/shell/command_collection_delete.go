@@ -22,7 +22,7 @@ func (c *commandCollectionDelete) Name() string {
 func (c *commandCollectionDelete) Help() string {
 	return `delete specified collection
 
-	collection.delete -collectin <collection_name> -force
+	collection.delete -collection <collection_name> -force
 
 `
 }
