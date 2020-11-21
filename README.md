@@ -121,15 +121,16 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 
 ## Filer Features ##
 * [Filer server][Filer] provides "normal" directories and files via http.
-* [Super Large Files][SuperLargeFiles] stores large or super large files in tens of TB.
+* [File TTL][FilerTTL] automatically expires file metadata and actual file data.
 * [Mount filer][Mount] reads and writes files directly as a local directory via FUSE.
+* [Filer Store Replication][FilerStoreReplication] enables HA for filer meta data stores.
 * [Active-Active Replication][ActiveActiveAsyncReplication] enables asynchronous one-way or two-way cross cluster continuous replication.
 * [Amazon S3 compatible API][AmazonS3API] accesses files with S3 tooling.
 * [Hadoop Compatible File System][Hadoop] accesses files from Hadoop/Spark/Flink/etc or even runs HBase.
 * [Async Replication To Cloud][BackupToCloud] has extremely fast local access and backups to Amazon S3, Google Cloud Storage, Azure, BackBlaze.
 * [WebDAV] accesses as a mapped drive on Mac and Windows, or from mobile devices.
 * [AES256-GCM Encrypted Storage][FilerDataEncryption] safely stores the encrypted data.
-* [File TTL][FilerTTL] automatically purges file metadata and actual file data.
+* [Super Large Files][SuperLargeFiles] stores large or super large files in tens of TB.
 * [Kubernetes CSI Driver][SeaweedFsCsiDriver] A Container Storage Interface (CSI) Driver. [![Docker Pulls](https://img.shields.io/docker/pulls/chrislusf/seaweedfs-csi-driver.svg?maxAge=4800)](https://hub.docker.com/r/chrislusf/seaweedfs-csi-driver/)
 
 [Filer]: https://github.com/chrislusf/seaweedfs/wiki/Directories-and-Files
@@ -146,6 +147,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 [VolumeServerTTL]: https://github.com/chrislusf/seaweedfs/wiki/Store-file-with-a-Time-To-Live
 [SeaweedFsCsiDriver]: https://github.com/seaweedfs/seaweedfs-csi-driver
 [ActiveActiveAsyncReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Active-Active-cross-cluster-continuous-synchronization
+[FilerStoreReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Store-Replication
 
 [Back to TOC](#table-of-contents)
 
