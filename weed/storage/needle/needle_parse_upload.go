@@ -23,7 +23,7 @@ type ParsedUpload struct {
 	MimeType         string
 	PairMap          map[string]string
 	IsGzipped        bool
-	IsZstd           bool
+	// IsZstd           bool
 	OriginalDataSize int
 	ModifiedTime     uint64
 	Ttl              *TTL
@@ -100,7 +100,7 @@ func ParseUpload(r *http.Request, sizeLimit int64) (pu *ParsedUpload, e error) {
 
 func parsePut(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 	pu.IsGzipped = r.Header.Get("Content-Encoding") == "gzip"
-	pu.IsZstd = r.Header.Get("Content-Encoding") == "zstd"
+	// pu.IsZstd = r.Header.Get("Content-Encoding") == "zstd"
 	pu.MimeType = r.Header.Get("Content-Type")
 	pu.FileName = ""
 	pu.Data, e = ioutil.ReadAll(io.LimitReader(r.Body, sizeLimit+1))
@@ -194,7 +194,7 @@ func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error
 		}
 
 		pu.IsGzipped = part.Header.Get("Content-Encoding") == "gzip"
-		pu.IsZstd = part.Header.Get("Content-Encoding") == "zstd"
+		// pu.IsZstd = part.Header.Get("Content-Encoding") == "zstd"
 	}
 
 	return

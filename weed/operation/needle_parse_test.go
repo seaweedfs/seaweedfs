@@ -75,6 +75,7 @@ func TestCreateNeedleFromRequest(t *testing.T) {
 		Upload("http://localhost:8080/389,0f084d17353afda0", "t.txt", false, bytes.NewReader(gzippedData), true, "text/plain", nil, "")
 	}
 
+	/*
 	{
 		mc.needleHandling = func(n *needle.Needle, originalSize int, err error) {
 			assert.Equal(t, nil, err, "upload: %v", err)
@@ -98,6 +99,7 @@ func TestCreateNeedleFromRequest(t *testing.T) {
 		zstdData, _ := util.ZstdData([]byte(textContent))
 		Upload("http://localhost:8080/389,0f084d17353afda0", "t.txt", false, bytes.NewReader(zstdData), false, "application/zstd", nil, "")
 	}
+	*/
 
 }
 
