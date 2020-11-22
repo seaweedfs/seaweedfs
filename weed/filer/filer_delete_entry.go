@@ -47,7 +47,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	}
 
 	if shouldDeleteChunks && !isCollection {
-		go f.DeleteChunks(chunks)
+		f.DirectDeleteChunks(chunks)
 	}
 	// A case not handled:
 	// what if the chunk is in a different collection?
