@@ -141,7 +141,6 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	defer vl.ensureCorrectWritables(v.Id)
 	defer vl.rememberOversizedVolume(v, dn)
 
 	if _, ok := vl.vid2location[v.Id]; !ok {
