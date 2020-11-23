@@ -386,7 +386,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(SeaweedFS_filer_request_total[1m]) * 5",
+              "expr": "rate(SeaweedFS_filer_request_total[1m])",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{type}}",
@@ -761,7 +761,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(SeaweedFS_s3_request_total[1m]) * 5",
+              "expr": "rate(SeaweedFS_s3_request_total[1m])",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{type}}",
