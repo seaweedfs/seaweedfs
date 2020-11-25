@@ -3,15 +3,19 @@ package s3api
 import (
 	"context"
 	"fmt"
-	"strings"
-
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
+	"strings"
+
 	proto "github.com/golang/protobuf/proto"
 	"google.golang.org/grpc"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
+
+const S3ConfName = "s3.conf"
 
 func (s3a *S3ApiServer) mkdir(parentDirectoryPath string, dirName string, fn func(entry *filer_pb.Entry)) error {
 
@@ -84,37 +88,68 @@ func (s3a *S3ApiServer) getEntry(parentDirectoryPath, entryName string) (entry *
 	return filer_pb.GetEntry(s3a, fullPath)
 }
 
+func LoadS3configFromEntryExtended(extended *map[string][]byte, identities *[]*Identity) (err error) {
+	for name, ident := range *extended {
+		t := &Identity{
+			Name:        name,
+			Credentials: nil,
+			Actions:     nil,
+		}
+		identity := &iam_pb.Identity{}
+		if err := proto.Unmarshal(ident, identity); err != nil {
+			return err
+		}
+		for _, action := range identity.Actions {
+			t.Actions = append(t.Actions, Action(action))
+		}
+		for _, cred := range identity.Credentials {
+			t.Credentials = append(t.Credentials, &Credential{
+				AccessKey: cred.AccessKey,
+				SecretKey: cred.SecretKey,
+			})
+		}
+		*identities = append(*identities, t)
+	}
+	return nil
+}
+
+func SaveS3configToEntryExtended(extended *map[string][]byte, identities *[]*Identity) (err error) {
+	for _, identity := range *identities {
+		i := &iam_pb.Identity{
+			Name:        identity.Name,
+			Credentials: []*iam_pb.Credential{},
+			Actions:     []string{},
+		}
+		for _, cred := range identity.Credentials {
+			i.Credentials = append(i.Credentials, &iam_pb.Credential{
+				AccessKey: cred.AccessKey,
+				SecretKey: cred.SecretKey,
+			})
+		}
+		for _, action := range identity.Actions {
+			i.Actions = append(i.Actions, string(action))
+		}
+		ident, err := proto.Marshal(i)
+		if err != nil {
+			return err
+		}
+		(*extended)[identity.Name] = ident
+	}
+	return nil
+}
+
 func loadS3config(iam *IdentityAccessManagement, option *S3ApiServerOption) error {
 	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		resp, err := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: "/.configs",
-			Name:      "s3identities",
+			Directory: filer.DirectoryEtc,
+			Name:      S3ConfName,
 		})
 		if err != nil {
 			return err
 		}
-		for name, ident := range resp.Entry.Extended {
-			t := &Identity{
-				Name:        name,
-				Credentials: nil,
-				Actions:     nil,
-			}
-			identity := &iam_pb.Identity{}
-			if err := proto.Unmarshal(ident, identity); err != nil {
-				return err
-			}
-			for _, action := range identity.Actions {
-				t.Actions = append(t.Actions, Action(action))
-			}
-			for _, cred := range identity.Credentials {
-				t.Credentials = append(t.Credentials, &Credential{
-					AccessKey: cred.AccessKey,
-					SecretKey: cred.SecretKey,
-				})
-				glog.V(0).Infof("AccessKey %s, SecretKey: %s", cred.AccessKey, cred.SecretKey)
-			}
-			iam.identities = append(iam.identities, t)
+		if err = LoadS3configFromEntryExtended(&resp.Entry.Extended, &iam.identities); err != nil {
+			return err
 		}
 		return nil
 	}, option.FilerGrpcAddress, option.GrpcDialOption)
