@@ -3,11 +3,15 @@ package s3api
 import (
 	"bytes"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"google.golang.org/grpc"
 	"io/ioutil"
 	"net/http"
 
 	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	"github.com/chrislusf/seaweedfs/weed/s3iam"
 	"github.com/golang/protobuf/jsonpb"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -48,19 +52,33 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 	iam := &IdentityAccessManagement{
 		domain: option.DomainName,
 	}
-	if err := loadS3config(iam, option); err != nil {
+	if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
 		glog.Warningf("fail to load config %v", err)
 	}
 	if len(iam.identities) == 0 && option.Config != "" {
-		if err := iam.loadS3ApiConfiguration(option.Config); err != nil {
+		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
 			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
 		}
 	}
 	return iam
 }
 
-func (iam *IdentityAccessManagement) loadS3ApiConfiguration(fileName string) error {
+func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) error {
+	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
+	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
+		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+		store := s3iam.NewIAMFilerStore(&client)
+		if err := store.LoadIAMConfig(s3ApiConfiguration); err != nil {
+			return nil
+		}
+		if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
+			return err
+		}
+		return nil
+	}, option.FilerGrpcAddress, option.GrpcDialOption)
+}
 
+func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName string) error {
 	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
 	rawData, readErr := ioutil.ReadFile(fileName)
 	if readErr != nil {
@@ -73,8 +91,14 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(fileName string) err
 		glog.Warningf("unmarshal error: %v", err)
 		return fmt.Errorf("unmarshal %s error: %v", fileName, err)
 	}
+	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
+		return err
+	}
+	return nil
+}
 
-	for _, ident := range s3ApiConfiguration.Identities {
+func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
+	for _, ident := range config.Identities {
 		t := &Identity{
 			Name:        ident.Name,
 			Credentials: nil,
@@ -91,7 +115,6 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(fileName string) err
 		}
 		iam.identities = append(iam.identities, t)
 	}
-
 	return nil
 }
 

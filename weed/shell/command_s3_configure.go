@@ -3,13 +3,13 @@ package shell
 import (
 	"flag"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/s3api"
 	"io"
 	"sort"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
+	"github.com/chrislusf/seaweedfs/weed/s3iam"
 )
 
 func init() {
@@ -44,18 +44,12 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
-	var identities []*s3api.Identity
+	s3cfg := &iam_pb.S3ApiConfiguration{}
+	ifs := &s3iam.IAMFilerStore{}
 	if err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		request := &filer_pb.LookupDirectoryEntryRequest{
-			Directory: filer.DirectoryEtc,
-			Name:      s3api.S3ConfName,
-		}
-		respLookupEntry, err := filer_pb.LookupEntry(client, request)
-		if err != nil {
-			return err
-		}
-		if err = s3api.LoadS3configFromEntryExtended(&respLookupEntry.Entry.Extended, &identities); err != nil {
-			return err
+		ifs = s3iam.NewIAMFilerStore(&client)
+		if err := ifs.LoadIAMConfig(s3cfg); err != nil {
+			return nil
 		}
 		return nil
 	}); err != nil {
@@ -65,7 +59,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	idx := 0
 	changed := false
 	if *user != "" && *buckets != "" {
-		for i, identity := range identities {
+		for i, identity := range s3cfg.Identities {
 			if *user == identity.Name {
 				idx = i
 				changed = true
@@ -73,22 +67,17 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 			}
 		}
 	}
-	cmdActions := []s3api.Action{}
+	var cmdActions []string
 	for _, bucket := range strings.Split(*buckets, ",") {
 		for _, action := range strings.Split(*actions, ",") {
-			cmdActions = append(cmdActions, s3api.Action(fmt.Sprintf("%s:%s", action, bucket)))
+			cmdActions = append(cmdActions, fmt.Sprintf("%s:%s", action, bucket))
 		}
 	}
-	cmdCredential := &s3api.Credential{
-		AccessKey: *accessKey,
-		SecretKey: *secretKey,
-	}
-
 	if changed {
 		if *isDelete {
-			exists := []int{}
+			var exists []int
 			for _, cmdAction := range cmdActions {
-				for i, currentAction := range identities[idx].Actions {
+				for i, currentAction := range s3cfg.Identities[idx].Actions {
 					if cmdAction == currentAction {
 						exists = append(exists, i)
 					}
@@ -96,65 +85,57 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 			}
 			sort.Sort(sort.Reverse(sort.IntSlice(exists)))
 			for _, i := range exists {
-				identities[idx].Actions = append(identities[idx].Actions[:i], identities[idx].Actions[i+1:]...)
+				s3cfg.Identities[idx].Actions = append(
+					s3cfg.Identities[idx].Actions[:i],
+					s3cfg.Identities[idx].Actions[i+1:]...,
+				)
 			}
 			if *accessKey != "" {
 				exists = []int{}
-				for i, credential := range identities[idx].Credentials {
+				for i, credential := range s3cfg.Identities[idx].Credentials {
 					if credential.AccessKey == *accessKey {
 						exists = append(exists, i)
 					}
 				}
 				sort.Sort(sort.Reverse(sort.IntSlice(exists)))
 				for _, i := range exists {
-					identities[idx].Credentials = append(identities[idx].Credentials[:i], identities[idx].Credentials[:i+1]...)
+					s3cfg.Identities[idx].Credentials = append(
+						s3cfg.Identities[idx].Credentials[:i],
+						s3cfg.Identities[idx].Credentials[:i+1]...,
+					)
 				}
 
 			}
 			if *actions == "" && *accessKey == "" {
-				identities = append(identities[:idx], identities[idx+1:]...)
+				s3cfg.Identities = append(s3cfg.Identities[:idx], s3cfg.Identities[idx+1:]...)
 			}
 		} else {
-			identities[idx].Actions = append(identities[idx].Actions, cmdActions...)
-			identities[idx].Credentials = append(identities[idx].Credentials, &s3api.Credential{
+			s3cfg.Identities[idx].Actions = append(s3cfg.Identities[idx].Actions, cmdActions...)
+			s3cfg.Identities[idx].Credentials = append(s3cfg.Identities[idx].Credentials, &iam_pb.Credential{
 				AccessKey: *accessKey,
 				SecretKey: *secretKey,
 			})
 		}
 	} else {
-		identity := s3api.Identity{
+		identity := iam_pb.Identity{
 			Name:    *user,
 			Actions: cmdActions,
 		}
-		identity.Credentials = append(identity.Credentials, &s3api.Credential{
+		identity.Credentials = append(identity.Credentials, &iam_pb.Credential{
 			AccessKey: *accessKey,
 			SecretKey: *secretKey,
 		})
-		identities = append(identities, &identity)
+		s3cfg.Identities = append(s3cfg.Identities, &identity)
 	}
 
-	fmt.Fprintf(writer, fmt.Sprintf("%+v\n", identities))
+	fmt.Fprintf(writer, fmt.Sprintf("%+v\n", s3cfg.Identities))
 	fmt.Fprintln(writer)
 
-	if !*apply {
-		return nil
+	if *apply {
+		if err := ifs.SaveIAMConfig(s3cfg); err != nil {
+			return err
+		}
 	}
 
-	if err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		request := &filer_pb.LookupDirectoryEntryRequest{
-			Directory: filer.DirectoryEtc,
-			Name:      s3api.S3ConfName,
-		}
-		respLookupEntry, err := filer_pb.LookupEntry(client, request)
-		if err != nil {
-			return err
-		}
-		if err = s3api.SaveS3configToEntryExtended(&respLookupEntry.Entry.Extended, &identities); err != nil {
-			return err
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
 	return nil
 }
