@@ -58,7 +58,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	idx := 0
 	changed := false
-	if *user != "" && *buckets != "" {
+	if *user != "" {
 		for i, identity := range s3cfg.Identities {
 			if *user == identity.Name {
 				idx = i
@@ -68,9 +68,13 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		}
 	}
 	var cmdActions []string
-	for _, bucket := range strings.Split(*buckets, ",") {
-		for _, action := range strings.Split(*actions, ",") {
-			cmdActions = append(cmdActions, fmt.Sprintf("%s:%s", action, bucket))
+	for _, action := range strings.Split(*actions, ",") {
+		if *buckets == "" {
+			cmdActions = append(cmdActions, action)
+		} else {
+			for _, bucket := range strings.Split(*buckets, ",") {
+				cmdActions = append(cmdActions, fmt.Sprintf("%s:%s", action, bucket))
+			}
 		}
 	}
 	if changed {
@@ -106,29 +110,58 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 				}
 
 			}
-			if *actions == "" && *accessKey == "" {
+			if *actions == "" && *accessKey == "" && *buckets == "" {
 				s3cfg.Identities = append(s3cfg.Identities[:idx], s3cfg.Identities[idx+1:]...)
 			}
 		} else {
-			s3cfg.Identities[idx].Actions = append(s3cfg.Identities[idx].Actions, cmdActions...)
-			s3cfg.Identities[idx].Credentials = append(s3cfg.Identities[idx].Credentials, &iam_pb.Credential{
-				AccessKey: *accessKey,
-				SecretKey: *secretKey,
-			})
+			if *actions != "" {
+				for _, cmdAction := range cmdActions {
+					found := false
+					for _, action := range s3cfg.Identities[idx].Actions {
+						if cmdAction == action {
+							found = true
+							break
+						}
+					}
+					if !found {
+						s3cfg.Identities[idx].Actions = append(s3cfg.Identities[idx].Actions, cmdAction)
+					}
+				}
+			}
+			if *accessKey != "" && *user != "anonymous" {
+				found := false
+				for _, credential := range s3cfg.Identities[idx].Credentials {
+					if credential.AccessKey == *accessKey {
+						found = true
+						credential.SecretKey = *secretKey
+						break
+					}
+				}
+				if !found {
+					s3cfg.Identities[idx].Credentials = append(s3cfg.Identities[idx].Credentials, &iam_pb.Credential{
+						AccessKey: *accessKey,
+						SecretKey: *secretKey,
+					})
+				}
+			}
 		}
-	} else {
+	} else if *user != "" && *actions != "" {
 		identity := iam_pb.Identity{
-			Name:    *user,
-			Actions: cmdActions,
+			Name:        *user,
+			Actions:     cmdActions,
+			Credentials: []*iam_pb.Credential{},
 		}
-		identity.Credentials = append(identity.Credentials, &iam_pb.Credential{
-			AccessKey: *accessKey,
-			SecretKey: *secretKey,
-		})
+		if *user != "anonymous" {
+			identity.Credentials = append(identity.Credentials,
+				&iam_pb.Credential{AccessKey: *accessKey, SecretKey: *secretKey})
+		}
 		s3cfg.Identities = append(s3cfg.Identities, &identity)
 	}
 
-	fmt.Fprintf(writer, fmt.Sprintf("%+v\n", s3cfg.Identities))
+	for _, identity := range s3cfg.Identities {
+		fmt.Fprintf(writer, fmt.Sprintf("%+v\n", identity))
+	}
+
 	fmt.Fprintln(writer)
 
 	if *apply {
