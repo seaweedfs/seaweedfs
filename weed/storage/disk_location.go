@@ -40,11 +40,11 @@ func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32
 		idxDir = util.ResolvePath(idxDir)
 	}
 	location := &DiskLocation{
-		Directory: dir,
-		IdxDirectory: idxDir,
-		MaxVolumeCount: maxVolumeCount,
+		Directory:              dir,
+		IdxDirectory:           idxDir,
+		MaxVolumeCount:         maxVolumeCount,
 		OriginalMaxVolumeCount: maxVolumeCount,
-		MinFreeSpacePercent: minFreeSpacePercent,
+		MinFreeSpacePercent:    minFreeSpacePercent,
 	}
 	location.volumes = make(map[needle.VolumeId]*Volume)
 	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
@@ -74,53 +74,56 @@ func parseCollectionVolumeId(base string) (collection string, vid needle.VolumeI
 
 func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind NeedleMapType) bool {
 	name := fileInfo.Name()
-	if !fileInfo.IsDir() && strings.HasSuffix(name, ".idx") {
-		name := name[:len(name)-len(".idx")]
-		noteFile := l.Directory + "/" + name + ".note"
-		if util.FileExists(noteFile) {
-			note, _ := ioutil.ReadFile(noteFile)
-			glog.Warningf("volume %s was not completed: %s", name, string(note))
-			removeVolumeFiles(l.Directory + "/" + name)
-			return false
-		}
-		vid, collection, err := l.volumeIdFromPath(fileInfo)
-		if err != nil {
-			glog.Warningf("get volume id failed, %s, err : %s", name, err)
-			return false
-		}
+	if fileInfo.IsDir() {
+		return false
+	}
+	if !strings.HasSuffix(name, ".idx") {
+		return false
+	}
+	name = name[:len(name)-len(".idx")]
+	noteFile := l.Directory + "/" + name + ".note"
+	if util.FileExists(noteFile) {
+		note, _ := ioutil.ReadFile(noteFile)
+		glog.Warningf("volume %s was not completed: %s", name, string(note))
+		removeVolumeFiles(l.Directory + "/" + name)
+		return false
+	}
+	vid, collection, err := l.volumeIdFromPath(fileInfo)
+	if err != nil {
+		glog.Warningf("get volume id failed, %s, err : %s", name, err)
+		return false
+	}
 
-		// void loading one volume more than once
-		l.volumesLock.RLock()
-		_, found := l.volumes[vid]
-		l.volumesLock.RUnlock()
-		if found {
-			glog.V(1).Infof("loaded volume, %v", vid)
-			return true
-		}
-
-		v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil, 0, 0)
-		if e != nil {
-			glog.V(0).Infof("new volume %s error %s", name, e)
-			return false
-		}
-
-		l.SetVolume(vid, v)
-
-		size, _, _ := v.FileStat()
-		glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s",
-			l.Directory+"/"+name+".dat", v.ReplicaPlacement, v.Version(), size, v.Ttl.String())
+	// void loading one volume more than once
+	l.volumesLock.RLock()
+	_, found := l.volumes[vid]
+	l.volumesLock.RUnlock()
+	if found {
+		glog.V(1).Infof("loaded volume, %v", vid)
 		return true
 	}
-	return false
+
+	v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil, 0, 0)
+	if e != nil {
+		glog.V(0).Infof("new volume %s error %s", name, e)
+		return false
+	}
+
+	l.SetVolume(vid, v)
+
+	size, _, _ := v.FileStat()
+	glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s",
+		l.Directory+"/"+name+".dat", v.ReplicaPlacement, v.Version(), size, v.Ttl.String())
+	return true
 }
 
 func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapType, concurrency int) {
 
 	task_queue := make(chan os.FileInfo, 10*concurrency)
 	go func() {
-		if dirs, err := ioutil.ReadDir(l.Directory); err == nil {
-			for _, dir := range dirs {
-				task_queue <- dir
+		if fileInfos, err := ioutil.ReadDir(l.Directory); err == nil {
+			for _, fi := range fileInfos {
+				task_queue <- fi
 			}
 		}
 		close(task_queue)
@@ -131,8 +134,8 @@ func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapType, con
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for dir := range task_queue {
-				_ = l.loadExistingVolume(dir, needleMapKind)
+			for fi := range task_queue {
+				_ = l.loadExistingVolume(fi, needleMapKind)
 			}
 		}()
 	}
