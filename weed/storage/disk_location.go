@@ -52,15 +52,14 @@ func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32
 	return location
 }
 
-func (l *DiskLocation) volumeIdFromPath(dir os.FileInfo) (needle.VolumeId, string, error) {
-	name := dir.Name()
-	if !dir.IsDir() && strings.HasSuffix(name, ".idx") {
-		base := name[:len(name)-len(".idx")]
+func (l *DiskLocation) volumeIdFromFileName(filename string) (needle.VolumeId, string, error) {
+	if strings.HasSuffix(filename, ".idx") {
+		base := filename[:len(filename)-len(".idx")]
 		collection, volumeId, err := parseCollectionVolumeId(base)
 		return volumeId, collection, err
 	}
 
-	return 0, "", fmt.Errorf("Path is not a volume: %s", name)
+	return 0, "", fmt.Errorf("file is not a volume: %s", filename)
 }
 
 func parseCollectionVolumeId(base string) (collection string, vid needle.VolumeId, err error) {
@@ -73,24 +72,25 @@ func parseCollectionVolumeId(base string) (collection string, vid needle.VolumeI
 }
 
 func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind NeedleMapType) bool {
-	name := fileInfo.Name()
+	basename := fileInfo.Name()
 	if fileInfo.IsDir() {
 		return false
 	}
-	if !strings.HasSuffix(name, ".idx") {
+	if !strings.HasSuffix(basename, ".idx") {
 		return false
 	}
-	name = name[:len(name)-len(".idx")]
-	noteFile := l.Directory + "/" + name + ".note"
+	volumeName := basename[:len(basename)-len(".idx")]
+	noteFile := l.Directory + "/" + volumeName + ".note"
 	if util.FileExists(noteFile) {
 		note, _ := ioutil.ReadFile(noteFile)
-		glog.Warningf("volume %s was not completed: %s", name, string(note))
-		removeVolumeFiles(l.Directory + "/" + name)
+		glog.Warningf("volume %s was not completed: %s", volumeName, string(note))
+		removeVolumeFiles(l.Directory + "/" + volumeName)
+		removeVolumeFiles(l.IdxDirectory + "/" + volumeName)
 		return false
 	}
-	vid, collection, err := l.volumeIdFromPath(fileInfo)
+	vid, collection, err := l.volumeIdFromFileName(basename)
 	if err != nil {
-		glog.Warningf("get volume id failed, %s, err : %s", name, err)
+		glog.Warningf("get volume id failed, %s, err : %s", volumeName, err)
 		return false
 	}
 
@@ -105,7 +105,7 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 
 	v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil, 0, 0)
 	if e != nil {
-		glog.V(0).Infof("new volume %s error %s", name, e)
+		glog.V(0).Infof("new volume %s error %s", volumeName, e)
 		return false
 	}
 
@@ -113,7 +113,7 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 
 	size, _, _ := v.FileStat()
 	glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s",
-		l.Directory+"/"+name+".dat", v.ReplicaPlacement, v.Version(), size, v.Ttl.String())
+		l.Directory+"/"+volumeName+".dat", v.ReplicaPlacement, v.Version(), size, v.Ttl.String())
 	return true
 }
 
@@ -301,7 +301,7 @@ func (l *DiskLocation) Close() {
 func (l *DiskLocation) LocateVolume(vid needle.VolumeId) (os.FileInfo, bool) {
 	if fileInfos, err := ioutil.ReadDir(l.Directory); err == nil {
 		for _, fileInfo := range fileInfos {
-			volId, _, err := l.volumeIdFromPath(fileInfo)
+			volId, _, err := l.volumeIdFromFileName(fileInfo.Name())
 			if vid == volId && err == nil {
 				return fileInfo, true
 			}
