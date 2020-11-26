@@ -145,3 +145,11 @@ func (f *Filer) doDeleteCollection(collectionName string) (err error) {
 	})
 
 }
+
+func (f *Filer) maybeDeleteHardLinks(hardLinkIds []HardLinkId) {
+	for _, hardLinkId := range hardLinkIds {
+		if err := f.Store.DeleteHardLink(context.Background(), hardLinkId); err != nil {
+			glog.Errorf("delete hard link id %d : %v", hardLinkId, err)
+		}
+	}
+}
