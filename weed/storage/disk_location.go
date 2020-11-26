@@ -18,6 +18,7 @@ import (
 
 type DiskLocation struct {
 	Directory              string
+	IdxDirectory           string
 	MaxVolumeCount         int
 	OriginalMaxVolumeCount int
 	MinFreeSpacePercent    float32
@@ -31,8 +32,20 @@ type DiskLocation struct {
 	isDiskSpaceLow bool
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32) *DiskLocation {
-	location := &DiskLocation{Directory: dir, MaxVolumeCount: maxVolumeCount, OriginalMaxVolumeCount: maxVolumeCount, MinFreeSpacePercent: minFreeSpacePercent}
+func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32, idxDir string) *DiskLocation {
+	dir = util.ResolvePath(dir)
+	if idxDir == "" {
+		idxDir = dir
+	} else {
+		idxDir = util.ResolvePath(idxDir)
+	}
+	location := &DiskLocation{
+		Directory: dir,
+		IdxDirectory: idxDir,
+		MaxVolumeCount: maxVolumeCount,
+		OriginalMaxVolumeCount: maxVolumeCount,
+		MinFreeSpacePercent: minFreeSpacePercent,
+	}
 	location.volumes = make(map[needle.VolumeId]*Volume)
 	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
 	go location.CheckDiskSpace()
