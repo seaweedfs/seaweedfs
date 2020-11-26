@@ -18,11 +18,11 @@ import (
 )
 
 type ParsedUpload struct {
-	FileName         string
-	Data             []byte
-	MimeType         string
-	PairMap          map[string]string
-	IsGzipped        bool
+	FileName  string
+	Data      []byte
+	MimeType  string
+	PairMap   map[string]string
+	IsGzipped bool
 	// IsZstd           bool
 	OriginalDataSize int
 	ModifiedTime     uint64

@@ -22,7 +22,7 @@ func TestFilerConf(t *testing.T) {
 		},
 		{
 			LocationPrefix: "/buckets/",
-			Replication: "001",
+			Replication:    "001",
 		},
 	}}
 	fc.doLoadConf(conf)

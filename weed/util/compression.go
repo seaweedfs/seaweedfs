@@ -55,15 +55,14 @@ func GzipData(input []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-
 func DecompressData(input []byte) ([]byte, error) {
 	if IsGzippedContent(input) {
 		return ungzipData(input)
 	}
 	/*
-	if IsZstdContent(input) {
-		return unzstdData(input)
-	}
+		if IsZstdContent(input) {
+			return unzstdData(input)
+		}
 	*/
 	return input, UnsupportedCompression
 }

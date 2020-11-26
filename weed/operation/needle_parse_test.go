@@ -76,29 +76,29 @@ func TestCreateNeedleFromRequest(t *testing.T) {
 	}
 
 	/*
-	{
-		mc.needleHandling = func(n *needle.Needle, originalSize int, err error) {
-			assert.Equal(t, nil, err, "upload: %v", err)
-			assert.Equal(t, "text/plain", string(n.Mime), "mime detection failed: %v", string(n.Mime))
-			assert.Equal(t, true, n.IsCompressed(), "this should be compressed")
-			assert.Equal(t, true, util.IsZstdContent(n.Data), "this should be zstd")
-			fmt.Printf("needle: %v, dataSize:%d originalSize:%d\n", n, len(n.Data), originalSize)
+		{
+			mc.needleHandling = func(n *needle.Needle, originalSize int, err error) {
+				assert.Equal(t, nil, err, "upload: %v", err)
+				assert.Equal(t, "text/plain", string(n.Mime), "mime detection failed: %v", string(n.Mime))
+				assert.Equal(t, true, n.IsCompressed(), "this should be compressed")
+				assert.Equal(t, true, util.IsZstdContent(n.Data), "this should be zstd")
+				fmt.Printf("needle: %v, dataSize:%d originalSize:%d\n", n, len(n.Data), originalSize)
+			}
+			zstdData, _ := util.ZstdData([]byte(textContent))
+			Upload("http://localhost:8080/389,0f084d17353afda0", "t.txt", false, bytes.NewReader(zstdData), true, "text/plain", nil, "")
 		}
-		zstdData, _ := util.ZstdData([]byte(textContent))
-		Upload("http://localhost:8080/389,0f084d17353afda0", "t.txt", false, bytes.NewReader(zstdData), true, "text/plain", nil, "")
-	}
 
-	{
-		mc.needleHandling = func(n *needle.Needle, originalSize int, err error) {
-			assert.Equal(t, nil, err, "upload: %v", err)
-			assert.Equal(t, "application/zstd", string(n.Mime), "mime detection failed: %v", string(n.Mime))
-			assert.Equal(t, false, n.IsCompressed(), "this should not be compressed")
-			assert.Equal(t, true, util.IsZstdContent(n.Data), "this should still be zstd")
-			fmt.Printf("needle: %v, dataSize:%d originalSize:%d\n", n, len(n.Data), originalSize)
+		{
+			mc.needleHandling = func(n *needle.Needle, originalSize int, err error) {
+				assert.Equal(t, nil, err, "upload: %v", err)
+				assert.Equal(t, "application/zstd", string(n.Mime), "mime detection failed: %v", string(n.Mime))
+				assert.Equal(t, false, n.IsCompressed(), "this should not be compressed")
+				assert.Equal(t, true, util.IsZstdContent(n.Data), "this should still be zstd")
+				fmt.Printf("needle: %v, dataSize:%d originalSize:%d\n", n, len(n.Data), originalSize)
+			}
+			zstdData, _ := util.ZstdData([]byte(textContent))
+			Upload("http://localhost:8080/389,0f084d17353afda0", "t.txt", false, bytes.NewReader(zstdData), false, "application/zstd", nil, "")
 		}
-		zstdData, _ := util.ZstdData([]byte(textContent))
-		Upload("http://localhost:8080/389,0f084d17353afda0", "t.txt", false, bytes.NewReader(zstdData), false, "application/zstd", nil, "")
-	}
 	*/
 
 }
