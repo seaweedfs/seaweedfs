@@ -61,13 +61,18 @@ func (v *Volume) Destroy() (err error) {
 }
 
 func removeVolumeFiles(filename string) {
+	// basic
 	os.Remove(filename + ".dat")
 	os.Remove(filename + ".idx")
 	os.Remove(filename + ".vif")
+	// sorted index file
 	os.Remove(filename + ".sdx")
+	// compaction
 	os.Remove(filename + ".cpd")
 	os.Remove(filename + ".cpx")
+	// level db indx file
 	os.RemoveAll(filename + ".ldb")
+	// marker for damaged or incomplete volume
 	os.Remove(filename + ".note")
 }
 
