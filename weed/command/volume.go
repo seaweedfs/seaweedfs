@@ -84,7 +84,7 @@ func init() {
 	v.fileSizeLimitMB = cmdVolume.Flag.Int("fileSizeLimitMB", 256, "limit file size to avoid out of memory")
 	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
 	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
-	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
+	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "WIP directory to store .idx files")
 }
 
 var cmdVolume = &Command{
