@@ -68,7 +68,7 @@ func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shard
 	defer l.ecVolumesLock.Unlock()
 	ecVolume, found := l.ecVolumes[vid]
 	if !found {
-		ecVolume, err = erasure_coding.NewEcVolume(l.Directory, collection, vid)
+		ecVolume, err = erasure_coding.NewEcVolume(l.Directory, l.IdxDirectory, collection, vid)
 		if err != nil {
 			return fmt.Errorf("failed to create ec volume %d: %v", vid, err)
 		}
@@ -121,6 +121,13 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 	fileInfos, err := ioutil.ReadDir(l.Directory)
 	if err != nil {
 		return fmt.Errorf("load all ec shards in dir %s: %v", l.Directory, err)
+	}
+	if l.IdxDirectory != l.Directory {
+		indexFileInfos, err := ioutil.ReadDir(l.IdxDirectory)
+		if err != nil {
+			return fmt.Errorf("load all ec shards in dir %s: %v", l.IdxDirectory, err)
+		}
+		fileInfos = append(fileInfos, indexFileInfos...)
 	}
 
 	sort.Slice(fileInfos, func(i, j int) bool {

@@ -56,7 +56,8 @@ func (v *Volume) Destroy() (err error) {
 		}
 	}
 	v.Close()
-	removeVolumeFiles(v.FileName())
+	removeVolumeFiles(v.DataFileName())
+	removeVolumeFiles(v.IndexFileName())
 	return
 }
 

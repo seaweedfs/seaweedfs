@@ -45,14 +45,14 @@ func WriteIdxFileFromEcIndex(baseFileName string) (err error) {
 // FindDatFileSize calculate .dat file size from max offset entry
 // there may be extra deletions after that entry
 // but they are deletions anyway
-func FindDatFileSize(baseFileName string) (datSize int64, err error) {
+func FindDatFileSize(dataBaseFileName, indexBaseFileName string) (datSize int64, err error) {
 
-	version, err := readEcVolumeVersion(baseFileName)
+	version, err := readEcVolumeVersion(dataBaseFileName)
 	if err != nil {
-		return 0, fmt.Errorf("read ec volume %s version: %v", baseFileName, err)
+		return 0, fmt.Errorf("read ec volume %s version: %v", dataBaseFileName, err)
 	}
 
-	err = iterateEcxFile(baseFileName, func(key types.NeedleId, offset types.Offset, size types.Size) error {
+	err = iterateEcxFile(indexBaseFileName, func(key types.NeedleId, offset types.Offset, size types.Size) error {
 
 		if size.IsDeleted() {
 			return nil

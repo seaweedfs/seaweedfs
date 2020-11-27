@@ -16,18 +16,18 @@ type SortedFileNeedleMap struct {
 	dbFileSize   int64
 }
 
-func NewSortedFileNeedleMap(baseFileName string, indexFile *os.File) (m *SortedFileNeedleMap, err error) {
-	m = &SortedFileNeedleMap{baseFileName: baseFileName}
+func NewSortedFileNeedleMap(indexBaseFileName string, indexFile *os.File) (m *SortedFileNeedleMap, err error) {
+	m = &SortedFileNeedleMap{baseFileName: indexBaseFileName}
 	m.indexFile = indexFile
-	fileName := baseFileName + ".sdx"
+	fileName := indexBaseFileName + ".sdx"
 	if !isSortedFileFresh(fileName, indexFile) {
 		glog.V(0).Infof("Start to Generate %s from %s", fileName, indexFile.Name())
-		erasure_coding.WriteSortedFileFromIdx(baseFileName, ".sdx")
+		erasure_coding.WriteSortedFileFromIdx(indexBaseFileName, ".sdx")
 		glog.V(0).Infof("Finished Generating %s from %s", fileName, indexFile.Name())
 	}
 	glog.V(1).Infof("Opening %s...", fileName)
 
-	if m.dbFile, err = os.Open(baseFileName + ".sdx"); err != nil {
+	if m.dbFile, err = os.Open(indexBaseFileName + ".sdx"); err != nil {
 		return
 	}
 	dbStat, _ := m.dbFile.Stat()

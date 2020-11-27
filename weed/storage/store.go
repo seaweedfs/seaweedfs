@@ -121,7 +121,7 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 	if location := s.FindFreeLocation(); location != nil {
 		glog.V(0).Infof("In dir %s adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
 			location.Directory, vid, collection, replicaPlacement, ttl)
-		if volume, err := NewVolume(location.Directory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate, memoryMapMaxSizeMb); err == nil {
+		if volume, err := NewVolume(location.Directory, location.IdxDirectory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate, memoryMapMaxSizeMb); err == nil {
 			location.SetVolume(vid, volume)
 			glog.V(0).Infof("add volume %d", vid)
 			s.NewVolumesChan <- master_pb.VolumeShortInformationMessage{

@@ -49,7 +49,6 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 		v.isCompacting = false
 	}()
 
-	filePath := v.FileName()
 	v.lastCompactIndexOffset = v.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
 	glog.V(3).Infof("creating copies for volume %d ,last offset %d...", v.Id, v.lastCompactIndexOffset)
@@ -59,7 +58,7 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 	if err := v.nm.Sync(); err != nil {
 		glog.V(0).Infof("compact fail to sync volume idx %d", v.Id)
 	}
-	return v.copyDataAndGenerateIndexFile(filePath+".cpd", filePath+".cpx", preallocate, compactionBytePerSecond)
+	return v.copyDataAndGenerateIndexFile(v.FileName(".cpd"), v.FileName(".cpx"), preallocate, compactionBytePerSecond)
 }
 
 // compact a volume based on deletions in .idx files
@@ -75,7 +74,6 @@ func (v *Volume) Compact2(preallocate int64, compactionBytePerSecond int64) erro
 		v.isCompacting = false
 	}()
 
-	filePath := v.FileName()
 	v.lastCompactIndexOffset = v.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
 	glog.V(3).Infof("creating copies for volume %d ...", v.Id)
@@ -85,7 +83,7 @@ func (v *Volume) Compact2(preallocate int64, compactionBytePerSecond int64) erro
 	if err := v.nm.Sync(); err != nil {
 		glog.V(0).Infof("compact2 fail to sync volume idx %d: %v", v.Id, err)
 	}
-	return copyDataBasedOnIndexFile(filePath+".dat", filePath+".idx", filePath+".cpd", filePath+".cpx", v.SuperBlock, v.Version(), preallocate, compactionBytePerSecond)
+	return copyDataBasedOnIndexFile(v.FileName(".dat"), v.FileName(".idx"), v.FileName(".cpd"), v.FileName(".cpx"), v.SuperBlock, v.Version(), preallocate, compactionBytePerSecond)
 }
 
 func (v *Volume) CommitCompact() error {
@@ -113,40 +111,40 @@ func (v *Volume) CommitCompact() error {
 	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Dec()
 
 	var e error
-	if e = v.makeupDiff(v.FileName()+".cpd", v.FileName()+".cpx", v.FileName()+".dat", v.FileName()+".idx"); e != nil {
+	if e = v.makeupDiff(v.FileName(".cpd"), v.FileName(".cpx"), v.FileName(".dat"), v.FileName(".idx")); e != nil {
 		glog.V(0).Infof("makeupDiff in CommitCompact volume %d failed %v", v.Id, e)
-		e = os.Remove(v.FileName() + ".cpd")
+		e = os.Remove(v.FileName(".cpd"))
 		if e != nil {
 			return e
 		}
-		e = os.Remove(v.FileName() + ".cpx")
+		e = os.Remove(v.FileName(".cpx"))
 		if e != nil {
 			return e
 		}
 	} else {
 		if runtime.GOOS == "windows" {
-			e = os.RemoveAll(v.FileName() + ".dat")
+			e = os.RemoveAll(v.FileName(".dat"))
 			if e != nil {
 				return e
 			}
-			e = os.RemoveAll(v.FileName() + ".idx")
+			e = os.RemoveAll(v.FileName(".idx"))
 			if e != nil {
 				return e
 			}
 		}
 		var e error
-		if e = os.Rename(v.FileName()+".cpd", v.FileName()+".dat"); e != nil {
-			return fmt.Errorf("rename %s: %v", v.FileName()+".cpd", e)
+		if e = os.Rename(v.FileName(".cpd"), v.FileName(".dat")); e != nil {
+			return fmt.Errorf("rename %s: %v", v.FileName(".cpd"), e)
 		}
-		if e = os.Rename(v.FileName()+".cpx", v.FileName()+".idx"); e != nil {
-			return fmt.Errorf("rename %s: %v", v.FileName()+".cpx", e)
+		if e = os.Rename(v.FileName(".cpx"), v.FileName(".idx")); e != nil {
+			return fmt.Errorf("rename %s: %v", v.FileName(".cpx"), e)
 		}
 	}
 
 	//glog.V(3).Infof("Pretending to be vacuuming...")
 	//time.Sleep(20 * time.Second)
 
-	os.RemoveAll(v.FileName() + ".ldb")
+	os.RemoveAll(v.FileName(".ldb"))
 
 	glog.V(3).Infof("Loading volume %d commit file...", v.Id)
 	if e = v.load(true, false, v.needleMapKind, 0); e != nil {
@@ -158,8 +156,8 @@ func (v *Volume) CommitCompact() error {
 func (v *Volume) cleanupCompact() error {
 	glog.V(0).Infof("Cleaning up volume %d vacuuming...", v.Id)
 
-	e1 := os.Remove(v.FileName() + ".cpd")
-	e2 := os.Remove(v.FileName() + ".cpx")
+	e1 := os.Remove(v.FileName(".cpd"))
+	e2 := os.Remove(v.FileName(".cpx"))
 	if e1 != nil {
 		return e1
 	}

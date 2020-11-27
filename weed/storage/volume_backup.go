@@ -124,9 +124,9 @@ func (v *Volume) findLastAppendAtNs() (uint64, error) {
 }
 
 func (v *Volume) locateLastAppendEntry() (Offset, error) {
-	indexFile, e := os.OpenFile(v.FileName()+".idx", os.O_RDONLY, 0644)
+	indexFile, e := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
 	if e != nil {
-		return Offset{}, fmt.Errorf("cannot read %s.idx: %v", v.FileName(), e)
+		return Offset{}, fmt.Errorf("cannot read %s: %v", v.FileName(".idx"), e)
 	}
 	defer indexFile.Close()
 
@@ -156,9 +156,9 @@ func (v *Volume) readAppendAtNs(offset Offset) (uint64, error) {
 
 	n, _, bodyLength, err := needle.ReadNeedleHeader(v.DataBackend, v.SuperBlock.Version, offset.ToAcutalOffset())
 	if err != nil {
-		return 0, fmt.Errorf("ReadNeedleHeader: %v", err)
+		return 0, fmt.Errorf("ReadNeedleHeader %s [%d,%d): %v", v.DataBackend.Name(), offset.ToAcutalOffset(), offset.ToAcutalOffset()+NeedleHeaderSize, err)
 	}
-	_, err = n.ReadNeedleBody(v.DataBackend, v.SuperBlock.Version, offset.ToAcutalOffset()+int64(NeedleHeaderSize), bodyLength)
+	_, err = n.ReadNeedleBody(v.DataBackend, v.SuperBlock.Version, offset.ToAcutalOffset()+NeedleHeaderSize, bodyLength)
 	if err != nil {
 		return 0, fmt.Errorf("ReadNeedleBody offset %d, bodyLength %d: %v", offset.ToAcutalOffset(), bodyLength, err)
 	}
@@ -168,9 +168,9 @@ func (v *Volume) readAppendAtNs(offset Offset) (uint64, error) {
 
 // on server side
 func (v *Volume) BinarySearchByAppendAtNs(sinceNs uint64) (offset Offset, isLast bool, err error) {
-	indexFile, openErr := os.OpenFile(v.FileName()+".idx", os.O_RDONLY, 0644)
+	indexFile, openErr := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
 	if openErr != nil {
-		err = fmt.Errorf("cannot read %s.idx: %v", v.FileName(), openErr)
+		err = fmt.Errorf("cannot read %s: %v", v.FileName(".idx"), openErr)
 		return
 	}
 	defer indexFile.Close()

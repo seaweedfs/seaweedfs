@@ -14,7 +14,7 @@ func (v *Volume) GetVolumeInfo() *volume_server_pb.VolumeInfo {
 
 func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 
-	v.volumeInfo, v.hasRemoteFile, _ = pb.MaybeLoadVolumeInfo(v.FileName() + ".vif")
+	v.volumeInfo, v.hasRemoteFile, _ = pb.MaybeLoadVolumeInfo(v.FileName(".vif"))
 
 	if v.hasRemoteFile {
 		glog.V(0).Infof("volume %d is tiered to %s as %s and read only", v.Id,
@@ -43,7 +43,7 @@ func (v *Volume) LoadRemoteFile() error {
 
 func (v *Volume) SaveVolumeInfo() error {
 
-	tierFileName := v.FileName() + ".vif"
+	tierFileName := v.FileName(".vif")
 
 	return pb.SaveVolumeInfo(tierFileName, v.volumeInfo)
 

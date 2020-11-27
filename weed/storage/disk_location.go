@@ -53,8 +53,8 @@ func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32
 }
 
 func volumeIdFromFileName(filename string) (needle.VolumeId, string, error) {
-	if strings.HasSuffix(filename, ".idx") {
-		base := filename[:len(filename)-len(".idx")]
+	if strings.HasSuffix(filename, ".idx") || strings.HasSuffix(filename, ".vif") {
+		base := filename[:len(filename)-4]
 		collection, volumeId, err := parseCollectionVolumeId(base)
 		return volumeId, collection, err
 	}
@@ -76,10 +76,10 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 	if fileInfo.IsDir() {
 		return false
 	}
-	if !strings.HasSuffix(basename, ".idx") {
+	if !strings.HasSuffix(basename, ".idx") && !strings.HasSuffix(basename, ".vif") {
 		return false
 	}
-	volumeName := basename[:len(basename)-len(".idx")]
+	volumeName := basename[:len(basename)-4]
 
 	// check for incomplete volume
 	noteFile := l.Directory + "/" + volumeName + ".note"
@@ -108,7 +108,7 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 	}
 
 	// load the volume
-	v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil, 0, 0)
+	v, e := NewVolume(l.Directory, l.IdxDirectory, collection, vid, needleMapKind, nil, nil, 0, 0)
 	if e != nil {
 		glog.V(0).Infof("new volume %s error %s", volumeName, e)
 		return false
