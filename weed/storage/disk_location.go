@@ -52,7 +52,7 @@ func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32
 	return location
 }
 
-func (l *DiskLocation) volumeIdFromFileName(filename string) (needle.VolumeId, string, error) {
+func volumeIdFromFileName(filename string) (needle.VolumeId, string, error) {
 	if strings.HasSuffix(filename, ".idx") {
 		base := filename[:len(filename)-len(".idx")]
 		collection, volumeId, err := parseCollectionVolumeId(base)
@@ -80,6 +80,8 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 		return false
 	}
 	volumeName := basename[:len(basename)-len(".idx")]
+
+	// check for incomplete volume
 	noteFile := l.Directory + "/" + volumeName + ".note"
 	if util.FileExists(noteFile) {
 		note, _ := ioutil.ReadFile(noteFile)
@@ -88,13 +90,15 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 		removeVolumeFiles(l.IdxDirectory + "/" + volumeName)
 		return false
 	}
-	vid, collection, err := l.volumeIdFromFileName(basename)
+
+	// parse out collection, volume id
+	vid, collection, err := volumeIdFromFileName(basename)
 	if err != nil {
 		glog.Warningf("get volume id failed, %s, err : %s", volumeName, err)
 		return false
 	}
 
-	// void loading one volume more than once
+	// avoid loading one volume more than once
 	l.volumesLock.RLock()
 	_, found := l.volumes[vid]
 	l.volumesLock.RUnlock()
@@ -103,6 +107,7 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 		return true
 	}
 
+	// load the volume
 	v, e := NewVolume(l.Directory, collection, vid, needleMapKind, nil, nil, 0, 0)
 	if e != nil {
 		glog.V(0).Infof("new volume %s error %s", volumeName, e)
@@ -301,7 +306,7 @@ func (l *DiskLocation) Close() {
 func (l *DiskLocation) LocateVolume(vid needle.VolumeId) (os.FileInfo, bool) {
 	if fileInfos, err := ioutil.ReadDir(l.Directory); err == nil {
 		for _, fileInfo := range fileInfos {
-			volId, _, err := l.volumeIdFromFileName(fileInfo.Name())
+			volId, _, err := volumeIdFromFileName(fileInfo.Name())
 			if vid == volId && err == nil {
 				return fileInfo, true
 			}
