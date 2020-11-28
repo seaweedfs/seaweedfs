@@ -168,25 +168,13 @@ func (v *Volume) readAppendAtNs(offset Offset) (uint64, error) {
 
 // on server side
 func (v *Volume) BinarySearchByAppendAtNs(sinceNs uint64) (offset Offset, isLast bool, err error) {
-	indexFile, openErr := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
-	if openErr != nil {
-		err = fmt.Errorf("cannot read %s: %v", v.FileName(".idx"), openErr)
-		return
-	}
-	defer indexFile.Close()
 
-	fi, statErr := indexFile.Stat()
-	if statErr != nil {
-		err = fmt.Errorf("file %s stat error: %v", indexFile.Name(), statErr)
-		return
-	}
-	fileSize := fi.Size()
+	fileSize := int64(v.IndexFileSize())
 	if fileSize%NeedleMapEntrySize != 0 {
-		err = fmt.Errorf("unexpected file %s size: %d", indexFile.Name(), fileSize)
+		err = fmt.Errorf("unexpected file %s.idx size: %d", v.IndexFileName(), fileSize)
 		return
 	}
 
-	bytes := make([]byte, NeedleMapEntrySize)
 	entryCount := fileSize / NeedleMapEntrySize
 	l := int64(0)
 	h := entryCount
@@ -200,7 +188,7 @@ func (v *Volume) BinarySearchByAppendAtNs(sinceNs uint64) (offset Offset, isLast
 		}
 
 		// read the appendAtNs for entry m
-		offset, err = v.readAppendAtNsForIndexEntry(indexFile, bytes, m)
+		offset, err = v.readOffsetFromIndex(m)
 		if err != nil {
 			return
 		}
@@ -224,19 +212,21 @@ func (v *Volume) BinarySearchByAppendAtNs(sinceNs uint64) (offset Offset, isLast
 		return Offset{}, true, nil
 	}
 
-	offset, err = v.readAppendAtNsForIndexEntry(indexFile, bytes, l)
+	offset, err = v.readOffsetFromIndex(l)
 
 	return offset, false, err
 
 }
 
 // bytes is of size NeedleMapEntrySize
-func (v *Volume) readAppendAtNsForIndexEntry(indexFile *os.File, bytes []byte, m int64) (Offset, error) {
-	if _, readErr := indexFile.ReadAt(bytes, m*NeedleMapEntrySize); readErr != nil && readErr != io.EOF {
-		return Offset{}, readErr
+func (v *Volume) readOffsetFromIndex(m int64) (Offset, error) {
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
+	if v.nm == nil {
+		return Offset{}, io.EOF
 	}
-	_, offset, _ := idx.IdxFileEntry(bytes)
-	return offset, nil
+	_, offset, _, err := v.nm.ReadIndexEntry(m)
+	return offset, err
 }
 
 // generate the volume idx
