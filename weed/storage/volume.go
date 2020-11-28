@@ -46,6 +46,8 @@ type Volume struct {
 
 	volumeInfo *volume_server_pb.VolumeInfo
 	location   *DiskLocation
+
+	lastIoError     error
 }
 
 func NewVolume(dirname string, dirIdx string, collection string, id needle.VolumeId, needleMapKind NeedleMapType, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32) (v *Volume, e error) {
@@ -86,10 +88,10 @@ func (v *Volume) IndexFileName() (fileName string) {
 func (v *Volume) FileName(ext string) (fileName string) {
 	switch ext {
 	case ".idx", ".cpx", ".ldb":
-		return VolumeFileName(v.dirIdx, v.Collection, int(v.Id))+ext
+		return VolumeFileName(v.dirIdx, v.Collection, int(v.Id)) + ext
 	}
 	// .dat, .cpd, .vif
-	return VolumeFileName(v.dir, v.Collection, int(v.Id))+ext
+	return VolumeFileName(v.dir, v.Collection, int(v.Id)) + ext
 }
 
 func (v *Volume) Version() needle.Version {

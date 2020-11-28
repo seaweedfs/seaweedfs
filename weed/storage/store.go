@@ -221,7 +221,12 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
 					deleteVids = append(deleteVids, v.Id)
 				} else {
-					glog.V(0).Infoln("volume", v.Id, "is expired.")
+					glog.V(0).Infoln("volume %d is expired", v.Id)
+				}
+				if v.lastIoError != nil {
+					deleteVids = append(deleteVids, v.Id)
+				} else {
+					glog.Warningf("volume %d has IO error", v.Id)
 				}
 			}
 			collectionVolumeSize[v.Collection] += volumeMessage.Size
