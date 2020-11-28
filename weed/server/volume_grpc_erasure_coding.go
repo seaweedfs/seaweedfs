@@ -26,7 +26,7 @@ import (
 Steps to apply erasure coding to .dat .idx files
 0. ensure the volume is readonly
 1. client call VolumeEcShardsGenerate to generate the .ecx and .ec00 ~ .ec13 files
-2. client ask master for possible servers to hold the ec files, at least 4 servers
+2. client ask master for possible servers to hold the ec files
 3. client call VolumeEcShardsCopy on above target servers to copy ec files from the source server
 4. target servers report the new ec files to the master
 5.   master stores vid -> [14]*DataNode
