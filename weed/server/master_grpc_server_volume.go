@@ -177,3 +177,16 @@ func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.Looku
 
 	return resp, nil
 }
+
+func (ms *MasterServer) VacuumVolume(ctx context.Context, req *master_pb.VacuumVolumeRequest) (*master_pb.VacuumVolumeResponse, error) {
+
+	if !ms.Topo.IsLeader() {
+		return nil, raft.NotLeaderError
+	}
+
+	resp := &master_pb.VacuumVolumeResponse{}
+
+	ms.Topo.Vacuum(ms.grpcDialOption, float64(req.GarbageThreshold), ms.preallocateSize)
+
+	return resp, nil
+}

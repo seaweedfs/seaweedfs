@@ -25,6 +25,8 @@ service Seaweed {
     }
     rpc LookupEcVolume (LookupEcVolumeRequest) returns (LookupEcVolumeResponse) {
     }
+    rpc VacuumVolume (VacuumVolumeRequest) returns (VacuumVolumeResponse) {
+    }
     rpc GetMasterConfiguration (GetMasterConfigurationRequest) returns (GetMasterConfigurationResponse) {
     }
     rpc ListMasterClients (ListMasterClientsRequest) returns (ListMasterClientsResponse) {
@@ -262,6 +264,12 @@ message LookupEcVolumeResponse {
         repeated Location locations = 2;
     }
     repeated EcShardIdLocation shard_id_locations = 2;
+}
+
+message VacuumVolumeRequest {
+    float garbage_threshold = 1;
+}
+message VacuumVolumeResponse {
 }
 
 message GetMasterConfigurationRequest {
