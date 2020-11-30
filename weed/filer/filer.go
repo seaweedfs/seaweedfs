@@ -238,6 +238,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 
 func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err error) {
 	if oldEntry != nil {
+		entry.Attr.Crtime = oldEntry.Attr.Crtime
 		if oldEntry.IsDirectory() && !entry.IsDirectory() {
 			glog.Errorf("existing %s is a directory", entry.FullPath)
 			return fmt.Errorf("existing %s is a directory", entry.FullPath)

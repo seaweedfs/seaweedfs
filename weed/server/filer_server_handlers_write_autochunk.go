@@ -147,19 +147,12 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		}
 	}
 
-	// fix the crTime
-	existingEntry, err := fs.filer.FindEntry(ctx, util.FullPath(path))
-	crTime := time.Now()
-	if err == nil && existingEntry != nil {
-		crTime = existingEntry.Crtime
-	}
-
 	glog.V(4).Infoln("saving", path)
 	entry := &filer.Entry{
 		FullPath: util.FullPath(path),
 		Attr: filer.Attr{
 			Mtime:       time.Now(),
-			Crtime:      crTime,
+			Crtime:      time.Now(),
 			Mode:        os.FileMode(mode),
 			Uid:         OS_UID,
 			Gid:         OS_GID,
