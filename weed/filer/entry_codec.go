@@ -18,6 +18,7 @@ func (entry *Entry) EncodeAttributesAndChunks() ([]byte, error) {
 		Extended:        entry.Extended,
 		HardLinkId:      entry.HardLinkId,
 		HardLinkCounter: entry.HardLinkCounter,
+		Content:         entry.Content,
 	}
 	return proto.Marshal(message)
 }
@@ -38,6 +39,7 @@ func (entry *Entry) DecodeAttributesAndChunks(blob []byte) error {
 
 	entry.HardLinkId = message.HardLinkId
 	entry.HardLinkCounter = message.HardLinkCounter
+	entry.Content = message.Content
 
 	return nil
 }
@@ -120,6 +122,9 @@ func EqualEntry(a, b *Entry) bool {
 		return false
 	}
 	if a.HardLinkCounter != b.HardLinkCounter {
+		return false
+	}
+	if !bytes.Equal(a.Content, b.Content) {
 		return false
 	}
 	return true

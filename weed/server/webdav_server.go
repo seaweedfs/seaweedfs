@@ -418,6 +418,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		return 0, fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
 
+	f.entry.Content = nil
 	f.entry.Chunks = append(f.entry.Chunks, uploadResult.ToPbFileChunk(fileId, f.off))
 
 	err = f.fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {

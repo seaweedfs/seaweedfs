@@ -110,6 +110,12 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		return 0, io.EOF
 	}
 
+	if offset+int64(len(buff)) <= int64(len(fh.f.entry.Content)) {
+		totalRead := copy(buff, fh.f.entry.Content[offset:])
+		glog.V(4).Infof("file handle read cached %s [%d,%d] %d", fh.f.fullpath(), offset, offset+int64(totalRead), totalRead)
+		return int64(totalRead), nil
+	}
+
 	var chunkResolveErr error
 	if fh.f.entryViewCache == nil {
 		fh.f.entryViewCache, chunkResolveErr = filer.NonOverlappingVisibleIntervals(filer.LookupFn(fh.f.wfs), fh.f.entry.Chunks)
@@ -149,6 +155,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 		copy(data, req.Data)
 	}
 
+	fh.f.entry.Content = nil
 	fh.f.entry.Attributes.FileSize = uint64(max(req.Offset+int64(len(data)), int64(fh.f.entry.Attributes.FileSize)))
 	glog.V(4).Infof("%v write [%d,%d) %d", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)), len(req.Data))
 
