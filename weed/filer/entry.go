@@ -40,6 +40,7 @@ type Entry struct {
 
 	HardLinkId      HardLinkId
 	HardLinkCounter int32
+	Content         []byte
 }
 
 func (entry *Entry) Size() uint64 {
@@ -66,6 +67,7 @@ func (entry *Entry) ToProtoEntry() *filer_pb.Entry {
 		Extended:        entry.Extended,
 		HardLinkId:      entry.HardLinkId,
 		HardLinkCounter: entry.HardLinkCounter,
+		Content:         entry.Content,
 	}
 }
 
@@ -98,6 +100,7 @@ func FromPbEntry(dir string, entry *filer_pb.Entry) *Entry {
 		Chunks:          entry.Chunks,
 		HardLinkId:      HardLinkId(entry.HardLinkId),
 		HardLinkCounter: entry.HardLinkCounter,
+		Content:         entry.Content,
 	}
 }
 

@@ -107,7 +107,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			if err != nil {
 				return fmt.Errorf("parse replication %s: %v", *replication, err)
 			}
-			if *volumeGrowthCount % rp.GetCopyCount() != 0 {
+			if *volumeGrowthCount%rp.GetCopyCount() != 0 {
 				return fmt.Errorf("volumeGrowthCount %d should be devided by replication copy count %d", *volumeGrowthCount, rp.GetCopyCount())
 			}
 		}

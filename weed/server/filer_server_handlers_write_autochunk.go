@@ -87,7 +87,7 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 		contentType = ""
 	}
 
-	fileChunks, md5Hash, chunkOffset, err := fs.uploadReaderToChunks(w, r, part1, chunkSize, fileName, contentType, so)
+	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadReaderToChunks(w, r, part1, chunkSize, fileName, contentType, so)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -99,7 +99,7 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 	}
 
 	md5bytes = md5Hash.Sum(nil)
-	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset)
+	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
 
 	return
 }
@@ -109,7 +109,7 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 	fileName := ""
 	contentType := ""
 
-	fileChunks, md5Hash, chunkOffset, err := fs.uploadReaderToChunks(w, r, r.Body, chunkSize, fileName, contentType, so)
+	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadReaderToChunks(w, r, r.Body, chunkSize, fileName, contentType, so)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -121,12 +121,12 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 	}
 
 	md5bytes = md5Hash.Sum(nil)
-	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset)
+	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
 
 	return
 }
 
-func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileName string, contentType string, so *operation.StorageOption, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64) (filerResult *FilerPostResult, replyerr error) {
+func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileName string, contentType string, so *operation.StorageOption, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64, content []byte) (filerResult *FilerPostResult, replyerr error) {
 
 	// detect file mode
 	modeStr := r.URL.Query().Get("mode")
@@ -147,19 +147,12 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		}
 	}
 
-	// fix the crTime
-	existingEntry, err := fs.filer.FindEntry(ctx, util.FullPath(path))
-	crTime := time.Now()
-	if err == nil && existingEntry != nil {
-		crTime = existingEntry.Crtime
-	}
-
 	glog.V(4).Infoln("saving", path)
 	entry := &filer.Entry{
 		FullPath: util.FullPath(path),
 		Attr: filer.Attr{
 			Mtime:       time.Now(),
-			Crtime:      crTime,
+			Crtime:      time.Now(),
 			Mode:        os.FileMode(mode),
 			Uid:         OS_UID,
 			Gid:         OS_GID,
@@ -170,7 +163,8 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			Md5:         md5bytes,
 			FileSize:    uint64(chunkOffset),
 		},
-		Chunks: fileChunks,
+		Chunks:  fileChunks,
+		Content: content,
 	}
 
 	filerResult = &FilerPostResult{
@@ -199,13 +193,14 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	return filerResult, replyerr
 }
 
-func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Request, reader io.Reader, chunkSize int32, fileName, contentType string, so *operation.StorageOption) ([]*filer_pb.FileChunk, hash.Hash, int64, error) {
+func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Request, reader io.Reader, chunkSize int32, fileName, contentType string, so *operation.StorageOption) ([]*filer_pb.FileChunk, hash.Hash, int64, error, []byte) {
 	var fileChunks []*filer_pb.FileChunk
 
 	md5Hash := md5.New()
 	var partReader = ioutil.NopCloser(io.TeeReader(reader, md5Hash))
 
 	chunkOffset := int64(0)
+	var smallContent, content []byte
 
 	for {
 		limitedReader := io.LimitReader(partReader, int64(chunkSize))
@@ -213,14 +208,15 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 		// assign one file id for one chunk
 		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(so)
 		if assignErr != nil {
-			return nil, nil, 0, assignErr
+			return nil, nil, 0, assignErr, nil
 		}
 
 		// upload the chunk to the volume server
-		uploadResult, uploadErr := fs.doUpload(urlLocation, w, r, limitedReader, fileName, contentType, nil, auth)
+		uploadResult, uploadErr, data := fs.doUpload(urlLocation, w, r, limitedReader, fileName, contentType, nil, auth)
 		if uploadErr != nil {
-			return nil, nil, 0, uploadErr
+			return nil, nil, 0, uploadErr, nil
 		}
+		content = data
 
 		// if last chunk exhausted the reader exactly at the border
 		if uploadResult.Size == 0 {
@@ -240,10 +236,13 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			break
 		}
 	}
-	return fileChunks, md5Hash, chunkOffset, nil
+	if chunkOffset < 2048 {
+		smallContent = content
+	}
+	return fileChunks, md5Hash, chunkOffset, nil, smallContent
 }
 
-func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *http.Request, limitedReader io.Reader, fileName string, contentType string, pairMap map[string]string, auth security.EncodedJwt) (*operation.UploadResult, error) {
+func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *http.Request, limitedReader io.Reader, fileName string, contentType string, pairMap map[string]string, auth security.EncodedJwt) (*operation.UploadResult, error, []byte) {
 
 	stats.FilerRequestCounter.WithLabelValues("postAutoChunkUpload").Inc()
 	start := time.Now()
@@ -251,8 +250,8 @@ func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *ht
 		stats.FilerRequestHistogram.WithLabelValues("postAutoChunkUpload").Observe(time.Since(start).Seconds())
 	}()
 
-	uploadResult, err, _ := operation.Upload(urlLocation, fileName, fs.option.Cipher, limitedReader, false, contentType, pairMap, auth)
-	return uploadResult, err
+	uploadResult, err, data := operation.Upload(urlLocation, fileName, fs.option.Cipher, limitedReader, false, contentType, pairMap, auth)
+	return uploadResult, err, data
 }
 
 func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAsChunkFunctionType {

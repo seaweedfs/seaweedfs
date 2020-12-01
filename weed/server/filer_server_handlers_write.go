@@ -66,6 +66,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	)
 
 	fs.autoChunk(ctx, w, r, so)
+	util.CloseRequest(r)
 
 }
 

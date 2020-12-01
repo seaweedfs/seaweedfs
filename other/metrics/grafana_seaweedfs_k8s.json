@@ -97,7 +97,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "sum(rate(SeaweedFS_s3_request_total{namespace=\"$namespace\",service=~\"$service-api\",type=~\"$method\"}[1m]) * 5) by (code)",
+          "expr": "sum(rate(SeaweedFS_s3_request_total{namespace=\"$namespace\",service=~\"$service-api\",type=~\"$method\"}[1m])) by (code)",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
@@ -210,7 +210,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "sum(rate(SeaweedFS_s3_request_total{namespace=\"$namespace\",service=~\"$service-api\"}[1m]) * 5) by (type)",
+          "expr": "sum(rate(SeaweedFS_s3_request_total{namespace=\"$namespace\",service=~\"$service-api\"}[1m])) by (type)",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
@@ -1014,7 +1014,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "rate(SeaweedFS_filer_request_total{namespace=\"$namespace\",service=~\"$service-api\"}[1m]) * 5",
+          "expr": "rate(SeaweedFS_filer_request_total{namespace=\"$namespace\",service=~\"$service-api\"}[1m])",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,

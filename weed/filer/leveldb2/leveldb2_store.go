@@ -171,14 +171,14 @@ func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath w
 	return nil
 }
 
-func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, err error) {
-	return nil, filer.ErrUnsupportedListDirectoryPrefixed
-}
-
 func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer.Entry, err error) {
+	return store.ListDirectoryPrefixedEntries(ctx, fullpath, startFileName, inclusive, limit, "")
+}
 
-	directoryPrefix, partitionId := genDirectoryKeyPrefix(fullpath, "", store.dbCount)
+func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, err error) {
+
+	directoryPrefix, partitionId := genDirectoryKeyPrefix(fullpath, prefix, store.dbCount)
 	lastFileStart, _ := genDirectoryKeyPrefix(fullpath, startFileName, store.dbCount)
 
 	iter := store.dbs[partitionId].NewIterator(&leveldb_util.Range{Start: lastFileStart}, nil)

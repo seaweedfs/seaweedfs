@@ -40,7 +40,7 @@ require (
 	github.com/json-iterator/go v1.1.10
 	github.com/karlseguin/ccache v2.0.3+incompatible
 	github.com/karlseguin/expect v1.0.1 // indirect
-	github.com/klauspost/compress v1.10.9
+	github.com/klauspost/compress v1.10.9 // indirect
 	github.com/klauspost/cpuid v1.2.1 // indirect
 	github.com/klauspost/crc32 v1.2.0
 	github.com/klauspost/reedsolomon v1.9.2

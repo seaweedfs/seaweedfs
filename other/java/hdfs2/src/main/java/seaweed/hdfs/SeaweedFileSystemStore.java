@@ -193,6 +193,7 @@ public class SeaweedFileSystemStore {
             if (existingEntry != null) {
                 entry = FilerProto.Entry.newBuilder();
                 entry.mergeFrom(existingEntry);
+                entry.clearContent();
                 entry.getAttributesBuilder().setMtime(now);
                 LOG.debug("createFile merged entry path:{} entry:{} from:{}", path, entry, existingEntry);
                 writePosition = SeaweedRead.fileSize(existingEntry);

@@ -39,6 +39,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 			Extended:        entry.Extended,
 			HardLinkId:      entry.HardLinkId,
 			HardLinkCounter: entry.HardLinkCounter,
+			Content:         entry.Content,
 		},
 	}, nil
 }
@@ -84,6 +85,7 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 					Extended:        entry.Extended,
 					HardLinkId:      entry.HardLinkId,
 					HardLinkCounter: entry.HardLinkCounter,
+					Content:         entry.Content,
 				},
 			}); err != nil {
 				return err

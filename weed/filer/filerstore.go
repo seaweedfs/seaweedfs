@@ -45,6 +45,7 @@ type FilerStore interface {
 type VirtualFilerStore interface {
 	FilerStore
 	DeleteHardLink(ctx context.Context, hardLinkId HardLinkId) error
+	DeleteOneEntry(ctx context.Context, entry *Entry) error
 }
 
 type FilerStoreWrapper struct {
@@ -143,6 +144,23 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 	}
 
 	return fsw.ActualStore.DeleteEntry(ctx, fp)
+}
+
+func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry *Entry) (err error) {
+	stats.FilerStoreCounter.WithLabelValues(fsw.ActualStore.GetName(), "delete").Inc()
+	start := time.Now()
+	defer func() {
+		stats.FilerStoreHistogram.WithLabelValues(fsw.ActualStore.GetName(), "delete").Observe(time.Since(start).Seconds())
+	}()
+
+	if len(existingEntry.HardLinkId) != 0 {
+		// remove hard link
+		if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
+			return err
+		}
+	}
+
+	return fsw.ActualStore.DeleteEntry(ctx, existingEntry.FullPath)
 }
 
 func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {

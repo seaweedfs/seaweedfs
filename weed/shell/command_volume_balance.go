@@ -306,16 +306,16 @@ func isGoodMove(placement *super_block.ReplicaPlacement, existingReplicas []*Vol
 	dcs[targetNode.dc] = true
 	racks[fmt.Sprintf("%s %s", targetNode.dc, targetNode.rack)]++
 
-	if len(dcs) > placement.DiffDataCenterCount+1 {
+	if len(dcs) != placement.DiffDataCenterCount+1 {
 		return false
 	}
 
-	if len(racks) > placement.DiffRackCount+placement.DiffDataCenterCount+1 {
+	if len(racks) != placement.DiffRackCount+placement.DiffDataCenterCount+1 {
 		return false
 	}
 
 	for _, sameRackCount := range racks {
-		if sameRackCount > placement.SameRackCount+1 {
+		if sameRackCount != placement.SameRackCount+1 {
 			return false
 		}
 	}

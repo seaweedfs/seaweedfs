@@ -12,7 +12,7 @@ var _ = filer_pb.FilerClient(&WFS{})
 
 func (wfs *WFS) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	err := util.Retry("filer grpc", func() error {
+	err := util.Retry("filer grpc "+wfs.option.FilerGrpcAddress, func() error {
 		return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 			client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 			return fn(client)

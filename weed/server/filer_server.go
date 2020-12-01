@@ -126,6 +126,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		defaultMux.HandleFunc("/", fs.filerHandler)
 	}
 	if defaultMux != readonlyMux {
+		handleStaticResources(readonlyMux)
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
 

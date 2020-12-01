@@ -100,6 +100,7 @@ message Entry {
     map<string, bytes> extended = 5;
     bytes hard_link_id = 7;
     int32 hard_link_counter = 8; // only exists in hard link meta data
+    bytes content = 9; // if not empty, the file content
 }
 
 message FullEntry {

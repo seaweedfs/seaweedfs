@@ -40,6 +40,10 @@ func (fc *FilerConf) loadFromFiler(filer *Filer) (err error) {
 		return
 	}
 
+	if len(entry.Content) > 0 {
+		return fc.LoadFromBytes(entry.Content)
+	}
+
 	return fc.loadFromChunks(filer, entry.Chunks)
 }
 

@@ -112,6 +112,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 				IsDirectory: entry.IsDirectory,
 				Attributes:  entry.Attributes,
 				Chunks:      replicatedChunks,
+				Content:     entry.Content,
 			},
 			IsFromOtherCluster: true,
 			Signatures:         signatures,

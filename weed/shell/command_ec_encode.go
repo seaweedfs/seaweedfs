@@ -99,13 +99,13 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId) 
 	// fmt.Printf("found ec %d shards on %v\n", vid, locations)
 
 	// mark the volume as readonly
-	err = markVolumeReadonly(commandEnv.option.GrpcDialOption, needle.VolumeId(vid), locations)
+	err = markVolumeReadonly(commandEnv.option.GrpcDialOption, vid, locations)
 	if err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 	}
 
 	// generate ec shards
-	err = generateEcShards(commandEnv.option.GrpcDialOption, needle.VolumeId(vid), collection, locations[0].Url)
+	err = generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, locations[0].Url)
 	if err != nil {
 		return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, locations[0].Url, err)
 	}

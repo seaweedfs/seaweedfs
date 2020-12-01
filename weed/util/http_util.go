@@ -374,3 +374,8 @@ func CloseResponse(resp *http.Response) {
 	io.Copy(ioutil.Discard, resp.Body)
 	resp.Body.Close()
 }
+
+func CloseRequest(req *http.Request) {
+	io.Copy(ioutil.Discard, req.Body)
+	req.Body.Close()
+}

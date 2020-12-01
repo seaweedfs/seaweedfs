@@ -84,7 +84,13 @@ public class SeaweedInputStream extends FSInputStream {
             throw new IllegalArgumentException("requested read length is more than will fit after requested offset in buffer");
         }
 
-        long bytesRead = SeaweedRead.read(this.filerGrpcClient, this.visibleIntervalList, this.position, b, off, len, SeaweedRead.fileSize(entry));
+        long bytesRead = 0;
+        if (position+len < entry.getContent().size()) {
+            entry.getContent().copyTo(b, (int) position, (int) off, len);
+        } else {
+            bytesRead = SeaweedRead.read(this.filerGrpcClient, this.visibleIntervalList, this.position, b, off, len, SeaweedRead.fileSize(entry));
+        }
+
         if (bytesRead > Integer.MAX_VALUE) {
             throw new IOException("Unexpected Content-Length");
         }

@@ -157,12 +157,12 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, volumeId 
 			IgnoreSourceFileNotFound: false,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to start copying volume %d.idx: %v", volumeId, err)
+			return fmt.Errorf("failed to start copying volume %d%s: %v", volumeId, ext, err)
 		}
 
 		err = writeToFile(copyFileClient, getVolumeFileIdFile(tempFolder, volumeId))
 		if err != nil {
-			return fmt.Errorf("failed to copy %d.idx from %s: %v", volumeId, vinfo.server, err)
+			return fmt.Errorf("failed to copy %d%s from %s: %v", volumeId, ext, vinfo.server, err)
 		}
 
 		return nil

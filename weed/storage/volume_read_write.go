@@ -19,6 +19,18 @@ var ErrorNotFound = errors.New("not found")
 var ErrorDeleted = errors.New("already deleted")
 var ErrorSizeMismatch = errors.New("size mismatch")
 
+func (v *Volume) checkReadWriteError(err error) {
+	if err == nil {
+		if v.lastIoError != nil {
+			v.lastIoError = nil
+		}
+		return
+	}
+	if err.Error() == "input/output error" {
+		v.lastIoError = err
+	}
+}
+
 // isFileUnchanged checks whether this needle to write is same as last one.
 // It requires serialized access in the same volume.
 func (v *Volume) isFileUnchanged(n *needle.Needle) bool {
@@ -56,18 +68,24 @@ func (v *Volume) Destroy() (err error) {
 		}
 	}
 	v.Close()
-	removeVolumeFiles(v.FileName())
+	removeVolumeFiles(v.DataFileName())
+	removeVolumeFiles(v.IndexFileName())
 	return
 }
 
 func removeVolumeFiles(filename string) {
+	// basic
 	os.Remove(filename + ".dat")
 	os.Remove(filename + ".idx")
 	os.Remove(filename + ".vif")
+	// sorted index file
 	os.Remove(filename + ".sdx")
+	// compaction
 	os.Remove(filename + ".cpd")
 	os.Remove(filename + ".cpx")
+	// level db indx file
 	os.RemoveAll(filename + ".ldb")
+	// marker for damaged or incomplete volume
 	os.Remove(filename + ".note")
 }
 
@@ -109,7 +127,9 @@ func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size Size, isUnchan
 
 	// append to dat file
 	n.AppendAtNs = uint64(time.Now().UnixNano())
-	if offset, size, _, err = n.Append(v.DataBackend, v.Version()); err != nil {
+	offset, size, _, err = n.Append(v.DataBackend, v.Version())
+	v.checkReadWriteError(err)
+	if err != nil {
 		return
 	}
 
@@ -173,7 +193,9 @@ func (v *Volume) doWriteRequest(n *needle.Needle) (offset uint64, size Size, isU
 
 	// append to dat file
 	n.AppendAtNs = uint64(time.Now().UnixNano())
-	if offset, size, _, err = n.Append(v.DataBackend, v.Version()); err != nil {
+	offset, size, _, err = n.Append(v.DataBackend, v.Version())
+	v.checkReadWriteError(err)
+	if err != nil {
 		return
 	}
 	v.lastAppendAtNs = n.AppendAtNs
@@ -208,6 +230,7 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 		n.Data = nil
 		n.AppendAtNs = uint64(time.Now().UnixNano())
 		offset, _, _, err := n.Append(v.DataBackend, v.Version())
+		v.checkReadWriteError(err)
 		if err != nil {
 			return size, err
 		}
@@ -246,6 +269,7 @@ func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 		n.Data = nil
 		n.AppendAtNs = uint64(time.Now().UnixNano())
 		offset, _, _, err := n.Append(v.DataBackend, v.Version())
+		v.checkReadWriteError(err)
 		if err != nil {
 			return size, err
 		}
@@ -283,6 +307,7 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, erro
 	if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
 		err = n.ReadData(v.DataBackend, nv.Offset.ToAcutalOffset()+int64(MaxPossibleVolumeSize), readSize, v.Version())
 	}
+	v.checkReadWriteError(err)
 	if err != nil {
 		return 0, err
 	}
