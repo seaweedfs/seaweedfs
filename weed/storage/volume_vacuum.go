@@ -181,13 +181,13 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 
 	oldIdxFile, err := os.Open(oldIdxFileName)
 	if err != nil {
-		return err
+		return fmt.Errorf("makeupDiff open %s failed: %v", oldIdxFileName, err)
 	}
 	defer oldIdxFile.Close()
 
 	oldDatFile, err := os.Open(oldDatFileName)
 	if err != nil {
-		return err
+		return fmt.Errorf("makeupDiff open %s failed: %v", oldDatFileName, err)
 	}
 	oldDatBackend := backend.NewDiskFile(oldDatFile)
 	defer oldDatBackend.Close()
