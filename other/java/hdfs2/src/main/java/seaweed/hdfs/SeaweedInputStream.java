@@ -2,6 +2,7 @@ package seaweed.hdfs;
 
 // based on org.apache.hadoop.fs.azurebfs.services.AbfsInputStream
 
+import org.apache.hadoop.fs.ByteBufferReadable;
 import org.apache.hadoop.fs.FSExceptionMessages;
 import org.apache.hadoop.fs.FSInputStream;
 import org.apache.hadoop.fs.FileSystem.Statistics;
@@ -13,9 +14,10 @@ import seaweedfs.client.SeaweedRead;
 
 import java.io.EOFException;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.List;
 
-public class SeaweedInputStream extends FSInputStream {
+public class SeaweedInputStream extends FSInputStream implements ByteBufferReadable {
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedInputStream.class);
 
@@ -85,7 +87,7 @@ public class SeaweedInputStream extends FSInputStream {
         }
 
         long bytesRead = 0;
-        if (position+len < entry.getContent().size()) {
+        if (position+len <= entry.getContent().size()) {
             entry.getContent().copyTo(b, (int) position, (int) off, len);
         } else {
             bytesRead = SeaweedRead.read(this.filerGrpcClient, this.visibleIntervalList, this.position, b, off, len, SeaweedRead.fileSize(entry));
@@ -104,6 +106,12 @@ public class SeaweedInputStream extends FSInputStream {
 
         return (int) bytesRead;
 
+    }
+
+    // implement ByteBufferReadable
+    @Override
+    public synchronized int read(ByteBuffer buf) throws IOException {
+        return read(buf.array(), buf.position(), buf.remaining());
     }
 
     /**
