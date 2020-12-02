@@ -108,7 +108,7 @@ func batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *VolumeLayout, v
 			resp, err := volumeServerClient.VacuumVolumeCommit(context.Background(), &volume_server_pb.VacuumVolumeCommitRequest{
 				VolumeId: uint32(vid),
 			})
-			if resp.IsReadOnly {
+			if resp != nil && resp.IsReadOnly {
 				isReadOnly = true
 			}
 			return err
