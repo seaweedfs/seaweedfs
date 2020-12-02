@@ -450,7 +450,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 			manifestedChunks, manifestErr := filer.MaybeManifestize(f.saveDataAsChunk, f.entry.Chunks)
 			if manifestErr != nil {
 				// not good, but should be ok
-				glog.V(0).Infof("file %s close MaybeManifestize: %v", manifestErr)
+				glog.V(0).Infof("file %s close MaybeManifestize: %v", f.name, manifestErr)
 			} else {
 				f.entry.Chunks = manifestedChunks
 			}
