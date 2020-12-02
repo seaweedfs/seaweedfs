@@ -180,9 +180,15 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 	var indexSize int64
 
 	oldIdxFile, err := os.Open(oldIdxFileName)
+	if err != nil {
+		return err
+	}
 	defer oldIdxFile.Close()
 
 	oldDatFile, err := os.Open(oldDatFileName)
+	if err != nil {
+		return err
+	}
 	oldDatBackend := backend.NewDiskFile(oldDatFile)
 	defer oldDatBackend.Close()
 
