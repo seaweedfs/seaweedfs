@@ -33,7 +33,7 @@ func (ifs *IAMFilerStore) LoadIAMConfig(config *iam_pb.S3ApiConfiguration) error
 	if err != nil {
 		return err
 	}
-	err = ifs.loadIAMConfigFromEntryExtended(&resp.Entry.Extended, config)
+	err = ifs.loadIAMConfigFromEntry(resp.Entry.Content, config)
 	if err != nil {
 		return err
 	}
@@ -51,14 +51,12 @@ func (ifs *IAMFilerStore) SaveIAMConfig(config *iam_pb.S3ApiConfiguration) error
 			Collection:  "",
 			Replication: "",
 		},
-		Extended: make(map[string][]byte),
+		Content: []byte{},
 	}
-
-	err := ifs.saveIAMConfigToEntryExtended(&entry.Extended, config)
+	err := ifs.saveIAMConfigToEntry(entry.Content, config)
 	if err != nil {
 		return err
 	}
-
 	_, err = filer_pb.LookupEntry(*ifs.client, ifs.getIAMConfigRequest())
 	if err == filer_pb.ErrNotFound {
 		err = filer_pb.CreateEntry(*ifs.client, &filer_pb.CreateEntryRequest{
@@ -81,24 +79,17 @@ func (ifs *IAMFilerStore) SaveIAMConfig(config *iam_pb.S3ApiConfiguration) error
 	return nil
 }
 
-func (ifs *IAMFilerStore) loadIAMConfigFromEntryExtended(extended *map[string][]byte, config *iam_pb.S3ApiConfiguration) error {
-	for _, ident := range *extended {
-		identity := &iam_pb.Identity{}
-		if err := proto.Unmarshal(ident, identity); err != nil {
-			return err
-		}
-		config.Identities = append(config.Identities, identity)
+func (ifs *IAMFilerStore) loadIAMConfigFromEntry(content []byte, config *iam_pb.S3ApiConfiguration) error {
+	if err := proto.Unmarshal(content, config); err != nil {
+		return err
 	}
 	return nil
 }
 
-func (ifs *IAMFilerStore) saveIAMConfigToEntryExtended(extended *map[string][]byte, config *iam_pb.S3ApiConfiguration) error {
-	for _, identity := range config.Identities {
-		ident, err := proto.Marshal(identity)
-		if err != nil {
-			return err
-		}
-		(*extended)[identity.Name] = ident
+func (ifs *IAMFilerStore) saveIAMConfigToEntry(content []byte, config *iam_pb.S3ApiConfiguration) error {
+	content, err := proto.Marshal(config)
+	if err != nil {
+		return err
 	}
 	return nil
 }
