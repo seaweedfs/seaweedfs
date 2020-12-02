@@ -3,6 +3,7 @@ package s3iam
 import (
 	"testing"
 
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
 
 	"github.com/stretchr/testify/assert"
@@ -50,10 +51,12 @@ func TestS3Conf(t *testing.T) {
 			},
 		},
 	}
-	content := []byte{}
-	_ = ifs.saveIAMConfigToEntry(content, s3Conf)
+	entry := filer_pb.Entry{}
+	err := ifs.saveIAMConfigToEntry(&entry, s3Conf)
+	assert.Equal(t, err, nil)
 	s3ConfSaved := &iam_pb.S3ApiConfiguration{}
-	_ = ifs.loadIAMConfigFromEntry(content, s3ConfSaved)
+	err = ifs.loadIAMConfigFromEntry(&entry, s3ConfSaved)
+	assert.Equal(t, err, nil)
 
 	assert.Equal(t, "some_name", s3ConfSaved.Identities[0].Name)
 	assert.Equal(t, "some_read_only_user", s3ConfSaved.Identities[1].Name)
