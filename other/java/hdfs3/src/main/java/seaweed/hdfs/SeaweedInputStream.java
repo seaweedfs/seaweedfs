@@ -65,14 +65,8 @@ public class SeaweedInputStream extends FSInputStream implements ByteBufferReada
     }
 
     @Override
-    public synchronized int read(final byte[] b, final int off, final int len) throws IOException {
+    public int read(final byte[] b, final int off, final int len) throws IOException {
 
-        if (position < 0) {
-            throw new IllegalArgumentException("attempting to read from negative offset");
-        }
-        if (position >= contentLength) {
-            return -1;  // Hadoop prefers -1 to EOFException
-        }
         if (b == null) {
             throw new IllegalArgumentException("null byte array passed in to read() method");
         }
