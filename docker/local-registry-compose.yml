@@ -13,10 +13,6 @@ services:
       - 8080:8080
       - 18080:18080
     command: "volume -mserver=master:9333 -port=8080 -ip=volume -max=0 -preStopSeconds=1"
-    volumes:
-      - type: bind
-        source: /Volumes/mobile_disk/data
-        target: /data
     depends_on:
       - master
   filer:
