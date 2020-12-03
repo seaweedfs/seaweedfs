@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.*;
 
 public class SeaweedRead {
@@ -23,10 +24,9 @@ public class SeaweedRead {
 
     // returns bytesRead
     public static long read(FilerGrpcClient filerGrpcClient, List<VisibleInterval> visibleIntervals,
-                            final long position, final byte[] buffer, final int bufferOffset,
-                            final int bufferLength, final long fileSize) throws IOException {
+                            final long position, final ByteBuffer buf, final long fileSize) throws IOException {
 
-        List<ChunkView> chunkViews = viewFromVisibles(visibleIntervals, position, bufferLength);
+        List<ChunkView> chunkViews = viewFromVisibles(visibleIntervals, position, buf.remaining());
 
         Map<String, FilerProto.Locations> knownLocations = new HashMap<>();
 
@@ -59,6 +59,7 @@ public class SeaweedRead {
             if (startOffset < chunkView.logicOffset) {
                 long gap = chunkView.logicOffset - startOffset;
                 LOG.debug("zero [{},{})", startOffset, startOffset + gap);
+                buf.position(buf.position()+ (int)gap);
                 readCount += gap;
                 startOffset += gap;
             }
@@ -70,7 +71,7 @@ public class SeaweedRead {
                 return 0;
             }
 
-            int len = readChunkView(startOffset, buffer, bufferOffset + readCount, chunkView, locations);
+            int len = readChunkView(startOffset, buf, chunkView, locations);
 
             LOG.debug("read [{},{}) {} size {}", startOffset, startOffset + len, chunkView.fileId, chunkView.size);
 
@@ -79,11 +80,12 @@ public class SeaweedRead {
 
         }
 
-        long limit = Math.min(bufferOffset + bufferLength, fileSize);
+        long limit = Math.min(buf.limit(), fileSize);
 
         if (startOffset < limit) {
             long gap = limit - startOffset;
             LOG.debug("zero2 [{},{})", startOffset, startOffset + gap);
+            buf.position(buf.position()+ (int)gap);
             readCount += gap;
             startOffset += gap;
         }
@@ -91,7 +93,7 @@ public class SeaweedRead {
         return readCount;
     }
 
-    private static int readChunkView(long startOffset, byte[] buffer, long bufOffset, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
+    private static int readChunkView(long startOffset, ByteBuffer buf, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
 
         byte[] chunkData = chunkCache.getChunk(chunkView.fileId);
 
@@ -101,9 +103,9 @@ public class SeaweedRead {
         }
 
         int len = (int) chunkView.size;
-        LOG.debug("readChunkView fid:{} chunkData.length:{} chunkView.offset:{} chunkView[{};{}) buf[{},{})/{} startOffset:{}",
-                chunkView.fileId, chunkData.length, chunkView.offset, chunkView.logicOffset, chunkView.logicOffset + chunkView.size, bufOffset, bufOffset + len, buffer.length, startOffset);
-        System.arraycopy(chunkData, (int) (startOffset - chunkView.logicOffset + chunkView.offset), buffer, (int) bufOffset, len);
+        LOG.debug("readChunkView fid:{} chunkData.length:{} chunkView.offset:{} chunkView[{};{}) startOffset:{}",
+                chunkView.fileId, chunkData.length, chunkView.offset, chunkView.logicOffset, chunkView.logicOffset + chunkView.size, startOffset);
+        buf.put(chunkData, (int) (startOffset - chunkView.logicOffset + chunkView.offset), len);
 
         return len;
     }

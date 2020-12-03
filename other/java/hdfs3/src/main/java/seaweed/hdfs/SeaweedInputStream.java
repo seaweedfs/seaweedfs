@@ -86,11 +86,29 @@ public class SeaweedInputStream extends FSInputStream implements ByteBufferReada
             throw new IllegalArgumentException("requested read length is more than will fit after requested offset in buffer");
         }
 
+        ByteBuffer buf = ByteBuffer.wrap(b, off, len);
+        return read(buf);
+
+    }
+
+    // implement ByteBufferReadable
+    @Override
+    public synchronized int read(ByteBuffer buf) throws IOException {
+
+        if (position < 0) {
+            throw new IllegalArgumentException("attempting to read from negative offset");
+        }
+        if (position >= contentLength) {
+            return -1;  // Hadoop prefers -1 to EOFException
+        }
+
         long bytesRead = 0;
-        if (position+len <= entry.getContent().size()) {
-            entry.getContent().copyTo(b, (int) position, (int) off, len);
+        int len = buf.remaining();
+        int start = (int) this.position;
+        if (start+len <= entry.getContent().size()) {
+            entry.getContent().substring(start, start+len).copyTo(buf);
         } else {
-            bytesRead = SeaweedRead.read(this.filerGrpcClient, this.visibleIntervalList, this.position, b, off, len, SeaweedRead.fileSize(entry));
+            bytesRead = SeaweedRead.read(this.filerGrpcClient, this.visibleIntervalList, this.position, buf, SeaweedRead.fileSize(entry));
         }
 
         if (bytesRead > Integer.MAX_VALUE) {
@@ -105,13 +123,6 @@ public class SeaweedInputStream extends FSInputStream implements ByteBufferReada
         }
 
         return (int) bytesRead;
-
-    }
-
-    // implement ByteBufferReadable
-    @Override
-    public synchronized int read(ByteBuffer buf) throws IOException {
-        return read(buf.array(), buf.position(), buf.remaining());
     }
 
     /**
