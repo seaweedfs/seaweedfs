@@ -25,6 +25,20 @@ func loadVolumeWithoutIndex(dirname string, collection string, id needle.VolumeI
 func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind NeedleMapType, preallocate int64) (err error) {
 	alreadyHasSuperBlock := false
 
+	hasLoadedVolume := false
+	defer func() {
+		if !hasLoadedVolume {
+			if v.nm != nil {
+				v.nm.Close()
+				v.nm = nil
+			}
+			if v.DataBackend != nil {
+				v.DataBackend.Close()
+				v.DataBackend = nil
+			}
+		}
+	}()
+
 	hasVolumeInfoFile := v.maybeLoadVolumeInfo() && v.volumeInfo.Version != 0
 
 	if v.HasRemoteFile() {
@@ -150,6 +164,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	}
 
 	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Inc()
+
+	if err == nil {
+		hasLoadedVolume = true
+	}
 
 	return err
 }
