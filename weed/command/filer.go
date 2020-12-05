@@ -42,6 +42,7 @@ type FilerOptions struct {
 	cipher                  *bool
 	peers                   *string
 	metricsHttpPort         *int
+	cacheToFilerLimit       *int
 
 	// default leveldb directory, used in "weed server" mode
 	defaultLevelDbDirectory *string
@@ -65,6 +66,7 @@ func init() {
 	f.cipher = cmdFiler.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
 	f.peers = cmdFiler.Flag.String("peers", "", "all filers sharing the same filer store in comma separated ip:port list")
 	f.metricsHttpPort = cmdFiler.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
+	f.cacheToFilerLimit = cmdFiler.Flag.Int("cacheToFilerLimit", 0, "Small files smaller than this limit can be cached in filer store.")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -149,6 +151,7 @@ func (fo *FilerOptions) startFiler() {
 		Host:               *fo.ip,
 		Port:               uint32(*fo.port),
 		Cipher:             *fo.cipher,
+		CacheToFilerLimit:  int64(*fo.cacheToFilerLimit),
 		Filers:             peers,
 	})
 	if nfs_err != nil {

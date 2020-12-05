@@ -236,7 +236,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			break
 		}
 	}
-	if chunkOffset < 2048 {
+	if chunkOffset < fs.option.CacheToFilerLimit {
 		smallContent = content
 	}
 	return fileChunks, md5Hash, chunkOffset, nil, smallContent

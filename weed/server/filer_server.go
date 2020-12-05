@@ -55,6 +55,7 @@ type FilerOption struct {
 	Port               uint32
 	recursiveDelete    bool
 	Cipher             bool
+	CacheToFilerLimit  int64
 	Filers             []string
 }
 
