@@ -1,9 +1,9 @@
 package s3iam
 
 import (
+	"github.com/golang/protobuf/proto"
 	"testing"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
 
 	"github.com/stretchr/testify/assert"
@@ -51,11 +51,10 @@ func TestS3Conf(t *testing.T) {
 			},
 		},
 	}
-	entry := filer_pb.Entry{}
-	err := ifs.saveIAMConfigToEntry(&entry, s3Conf)
+	content, _ := proto.Marshal(config)
 	assert.Equal(t, err, nil)
 	s3ConfSaved := &iam_pb.S3ApiConfiguration{}
-	err = ifs.loadIAMConfigFromEntry(&entry, s3ConfSaved)
+	err = ifs.loadIAMConfigFromBytes(content, s3ConfSaved)
 	assert.Equal(t, err, nil)
 
 	assert.Equal(t, "some_name", s3ConfSaved.Identities[0].Name)

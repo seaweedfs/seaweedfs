@@ -33,7 +33,7 @@ func (ifs *IAMFilerStore) LoadIAMConfig(config *iam_pb.S3ApiConfiguration) error
 	if err != nil {
 		return err
 	}
-	err = ifs.loadIAMConfigFromEntry(resp.Entry, config)
+	err = ifs.loadIAMConfigFromBytes(resp.Entry.Content, config)
 	if err != nil {
 		return err
 	}
@@ -79,8 +79,8 @@ func (ifs *IAMFilerStore) SaveIAMConfig(config *iam_pb.S3ApiConfiguration) error
 	return nil
 }
 
-func (ifs *IAMFilerStore) loadIAMConfigFromEntry(entry *filer_pb.Entry, config *iam_pb.S3ApiConfiguration) error {
-	if err := proto.Unmarshal(entry.Content, config); err != nil {
+func (ifs *IAMFilerStore) loadIAMConfigFromBytes(content []byte, config *iam_pb.S3ApiConfiguration) error {
+	if err := proto.Unmarshal(content, config); err != nil {
 		return err
 	}
 	return nil
