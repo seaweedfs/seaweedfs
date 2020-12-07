@@ -51,7 +51,7 @@ func TestS3Conf(t *testing.T) {
 			},
 		},
 	}
-	content, _ := proto.Marshal(config)
+	content, err := proto.Marshal(s3Conf)
 	assert.Equal(t, err, nil)
 	s3ConfSaved := &iam_pb.S3ApiConfiguration{}
 	err = ifs.loadIAMConfigFromBytes(content, s3ConfSaved)
