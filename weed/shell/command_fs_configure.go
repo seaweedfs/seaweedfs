@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"strings"
 
@@ -65,18 +64,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	var buf bytes.Buffer
 	if err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-
-		request := &filer_pb.LookupDirectoryEntryRequest{
-			Directory: filer.DirectoryEtc,
-			Name:      filer.FilerConfName,
-		}
-		respLookupEntry, err := filer_pb.LookupEntry(client, request)
-		if err != nil {
-			return err
-		}
-
-		return filer.StreamContent(commandEnv.MasterClient, &buf, respLookupEntry.Entry.Chunks, 0, math.MaxInt64)
-
+		return filer_pb.ReadEntry(commandEnv.MasterClient, client, filer.DirectoryEtc, filer.FilerConfName, &buf)
 	}); err != nil && err != filer_pb.ErrNotFound {
 		return err
 	}

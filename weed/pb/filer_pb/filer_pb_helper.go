@@ -1,9 +1,13 @@
 package filer_pb
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"math"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -120,6 +124,25 @@ func LookupEntry(client SeaweedFilerClient, request *LookupDirectoryEntryRequest
 		return nil, ErrNotFound
 	}
 	return resp, nil
+}
+
+func ReadEntry(masterClient *wdclient.MasterClient, filerClient SeaweedFilerClient, dir, name string, byteBuffer *bytes.Buffer) error {
+
+	request := &LookupDirectoryEntryRequest{
+		Directory: filer.DirectoryEtc,
+		Name:      filer.FilerConfName,
+	}
+	respLookupEntry, err := LookupEntry(filerClient, request)
+	if err != nil {
+		return err
+	}
+	if len(respLookupEntry.Entry.Content) > 0 {
+		_, err = byteBuffer.Write(respLookupEntry.Entry.Content)
+		return err
+	}
+
+	return filer.StreamContent(masterClient, byteBuffer, respLookupEntry.Entry.Chunks, 0, math.MaxInt64)
+
 }
 
 var ErrNotFound = errors.New("filer: no entry is found in filer store")
