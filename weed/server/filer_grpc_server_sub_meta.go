@@ -153,7 +153,14 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 		}
 
 		if !strings.HasPrefix(fullpath, req.PathPrefix) {
-			return nil
+			if eventNotification.NewParentPath != "" {
+				newFullPath := util.Join(eventNotification.NewParentPath, entryName)
+				if !strings.HasPrefix(newFullPath, req.PathPrefix) {
+					return nil
+				}
+			} else {
+				return nil
+			}
 		}
 
 		message := &filer_pb.SubscribeMetadataResponse{
