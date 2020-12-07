@@ -77,13 +77,15 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 		return filer.StreamContent(commandEnv.MasterClient, &buf, respLookupEntry.Entry.Chunks, 0, math.MaxInt64)
 
-	}); err != nil {
+	}); err != nil && err != filer_pb.ErrNotFound {
 		return err
 	}
 
 	fc := filer.NewFilerConf()
-	if err = fc.LoadFromBytes(buf.Bytes()); err != nil {
-		return err
+	if buf.Len() > 0 {
+		if err = fc.LoadFromBytes(buf.Bytes()); err != nil {
+			return err
+		}
 	}
 
 	if *locationPrefix != "" {
