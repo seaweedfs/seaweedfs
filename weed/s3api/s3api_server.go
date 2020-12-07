@@ -3,6 +3,7 @@ package s3api
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
+	. "github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"net/http"
 	"strings"
 	"time"

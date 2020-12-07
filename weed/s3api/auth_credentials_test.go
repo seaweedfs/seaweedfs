@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	. "github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"testing"
 
 	"github.com/golang/protobuf/jsonpb"

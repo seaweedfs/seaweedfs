@@ -2,7 +2,7 @@ package filer
 
 import (
 	"bytes"
-	"github.com/chrislusf/seaweedfs/weed/s3api"
+	. "github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"testing"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
@@ -22,9 +22,9 @@ func TestS3Conf(t *testing.T) {
 					},
 				},
 				Actions: []string{
-					s3api.ACTION_ADMIN,
-					s3api.ACTION_READ,
-					s3api.ACTION_WRITE,
+					ACTION_ADMIN,
+					ACTION_READ,
+					ACTION_WRITE,
 				},
 			},
 			{
@@ -36,9 +36,9 @@ func TestS3Conf(t *testing.T) {
 					},
 				},
 				Actions: []string{
-					s3api.ACTION_READ,
-					s3api.ACTION_TAGGING,
-					s3api.ACTION_LIST,
+					ACTION_READ,
+					ACTION_TAGGING,
+					ACTION_LIST,
 				},
 			},
 		},
