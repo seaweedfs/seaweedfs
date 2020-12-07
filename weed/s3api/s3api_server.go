@@ -2,8 +2,10 @@ package s3api
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc"
@@ -31,6 +33,8 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 	}
 
 	s3ApiServer.registerRouter(router)
+
+	go s3ApiServer.subscribeMetaEvents("s3", filer.IamConfigDirecotry+"/"+filer.IamIdentityFile, time.Now().UnixNano())
 
 	return s3ApiServer, nil
 }

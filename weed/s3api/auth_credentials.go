@@ -1,18 +1,15 @@
 package s3api
 
 import (
-	"bytes"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"io/ioutil"
 	"net/http"
 
-	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
-	"github.com/golang/protobuf/jsonpb"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
+	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 )
 
 type Action string
@@ -50,7 +47,7 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 		domain: option.DomainName,
 	}
 	if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
-		glog.Warningf("fail to load config %v", err)
+		glog.Warningf("fail to load config: %v", err)
 	}
 	if len(iam.identities) == 0 && option.Config != "" {
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
@@ -72,6 +69,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3A
 	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
 		return fmt.Errorf("laod S3 config: %v", err)
 	}
+	glog.V(0).Infof("loaded %d s3 identities", len(iam.identities))
 	return nil
 }
 
@@ -84,7 +82,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 	}
 
 	glog.V(1).Infof("load s3 config: %v", fileName)
-	if err := jsonpb.Unmarshal(bytes.NewReader(rawData), s3ApiConfiguration); err != nil {
+	if err := filer.ParseS3ConfigurationFromBytes(rawData, s3ApiConfiguration); err != nil {
 		glog.Warningf("unmarshal error: %v", err)
 		return fmt.Errorf("unmarshal %s error: %v", fileName, err)
 	}
@@ -95,6 +93,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
+	var identities []*Identity
 	for _, ident := range config.Identities {
 		t := &Identity{
 			Name:        ident.Name,
@@ -110,8 +109,11 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 				SecretKey: cred.SecretKey,
 			})
 		}
-		iam.identities = append(iam.identities, t)
+		identities = append(identities, t)
 	}
+
+	// atomically switch
+	iam.identities = identities
 	return nil
 }
 
