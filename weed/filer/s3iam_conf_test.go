@@ -1,7 +1,8 @@
-package s3iam
+package filer
 
 import (
-	"github.com/golang/protobuf/proto"
+	"bytes"
+	"github.com/chrislusf/seaweedfs/weed/s3api"
 	"testing"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
@@ -9,16 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-const (
-	ACTION_READ    = "Read"
-	ACTION_WRITE   = "Write"
-	ACTION_ADMIN   = "Admin"
-	ACTION_TAGGING = "Tagging"
-	ACTION_LIST    = "List"
-)
-
 func TestS3Conf(t *testing.T) {
-	ifs := &IAMFilerStore{}
 	s3Conf := &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
 			{
@@ -30,9 +22,9 @@ func TestS3Conf(t *testing.T) {
 					},
 				},
 				Actions: []string{
-					ACTION_ADMIN,
-					ACTION_READ,
-					ACTION_WRITE,
+					s3api.ACTION_ADMIN,
+					s3api.ACTION_READ,
+					s3api.ACTION_WRITE,
 				},
 			},
 			{
@@ -44,17 +36,18 @@ func TestS3Conf(t *testing.T) {
 					},
 				},
 				Actions: []string{
-					ACTION_READ,
-					ACTION_TAGGING,
-					ACTION_LIST,
+					s3api.ACTION_READ,
+					s3api.ACTION_TAGGING,
+					s3api.ACTION_LIST,
 				},
 			},
 		},
 	}
-	content, err := proto.Marshal(s3Conf)
+	var buf bytes.Buffer
+	err := S3ConfigurationToText(&buf, s3Conf)
 	assert.Equal(t, err, nil)
 	s3ConfSaved := &iam_pb.S3ApiConfiguration{}
-	err = ifs.loadIAMConfigFromBytes(content, s3ConfSaved)
+	err = ParseS3ConfigurationFromBytes(buf.Bytes(), s3ConfSaved)
 	assert.Equal(t, err, nil)
 
 	assert.Equal(t, "some_name", s3ConfSaved.Identities[0].Name)

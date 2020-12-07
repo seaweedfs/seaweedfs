@@ -15,6 +15,8 @@ import (
 const (
 	DirectoryEtc  = "/etc"
 	FilerConfName = "filer.conf"
+	IamConfigDirecotry = "/etc/iam"
+	IamIdentityFile = "identity.json"
 )
 
 type FilerConf struct {

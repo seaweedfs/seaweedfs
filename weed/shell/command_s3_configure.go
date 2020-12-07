@@ -1,15 +1,16 @@
 package shell
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"io"
 	"sort"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
-	"github.com/chrislusf/seaweedfs/weed/s3iam"
 )
 
 func init() {
@@ -32,6 +33,7 @@ func (c *commandS3Configure) Help() string {
 }
 
 func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
+
 	s3ConfigureCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	actions := s3ConfigureCommand.String("actions", "", "comma separated actions names: Read,Write,List,Tagging,Admin")
 	user := s3ConfigureCommand.String("user", "", "user name")
@@ -45,16 +47,18 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
-	s3cfg := &iam_pb.S3ApiConfiguration{}
-	ifs := &s3iam.IAMFilerStore{}
+	var buf bytes.Buffer
 	if err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		ifs = s3iam.NewIAMFilerStore(&client)
-		if err := ifs.LoadIAMConfig(s3cfg); err != nil {
-			return nil
-		}
-		return nil
-	}); err != nil {
+		return filer.ReadEntry(commandEnv.MasterClient, client, filer.IamConfigDirecotry, filer.IamIdentityFile, &buf)
+	}); err != nil && err != filer_pb.ErrNotFound {
 		return err
+	}
+
+	s3cfg := &iam_pb.S3ApiConfiguration{}
+	if buf.Len() > 0 {
+		if err = filer.ParseS3ConfigurationFromBytes(buf.Bytes(), s3cfg); err != nil {
+			return err
+		}
 	}
 
 	idx := 0
@@ -159,16 +163,19 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		s3cfg.Identities = append(s3cfg.Identities, &identity)
 	}
 
-	for _, identity := range s3cfg.Identities {
-		fmt.Fprintf(writer, fmt.Sprintf("%+v\n", identity))
-	}
+	buf.Reset()
+	filer.S3ConfigurationToText(&buf, s3cfg)
 
+	fmt.Fprintf(writer, string(buf.Bytes()))
 	fmt.Fprintln(writer)
 
+
 	if *apply {
-		if err := ifs.SaveIAMConfig(s3cfg); err != nil {
+
+		if err := filer.SaveAs(commandEnv.option.FilerHost, int(commandEnv.option.FilerPort), filer.IamConfigDirecotry, filer.IamIdentityFile, "text/plain; charset=utf-8", &buf); err != nil {
 			return err
 		}
+
 	}
 
 	return nil

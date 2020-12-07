@@ -3,15 +3,12 @@ package s3api
 import (
 	"bytes"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"google.golang.org/grpc"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"io/ioutil"
 	"net/http"
 
 	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
-	"github.com/chrislusf/seaweedfs/weed/s3iam"
 	"github.com/golang/protobuf/jsonpb"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -65,17 +62,17 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) error {
 	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
-	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		store := s3iam.NewIAMFilerStore(&client)
-		if err := store.LoadIAMConfig(s3ApiConfiguration); err != nil {
-			return nil
-		}
-		if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
-			return err
-		}
-		return nil
-	}, option.FilerGrpcAddress, option.GrpcDialOption)
+	content, err := filer.ReadContent(option.Filer, filer.IamConfigDirecotry, filer.IamIdentityFile)
+	if err != nil {
+		return fmt.Errorf("read S3 config: %v", err)
+	}
+	if err = filer.ParseS3ConfigurationFromBytes(content, s3ApiConfiguration); err != nil {
+		return fmt.Errorf("parse S3 config: %v", err)
+	}
+	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
+		return fmt.Errorf("laod S3 config: %v", err)
+	}
+	return nil
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName string) error {
