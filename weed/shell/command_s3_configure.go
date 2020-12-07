@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/chrislusf/seaweedfs/weed/iamapi"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
-	"github.com/chrislusf/seaweedfs/weed/s3iam"
 )
 
 func init() {
@@ -45,9 +45,9 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	s3cfg := &iam_pb.S3ApiConfiguration{}
-	ifs := &s3iam.IAMFilerStore{}
+	ifs := &iamapi.IAMFilerStore{}
 	if err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		ifs = s3iam.NewIAMFilerStore(&client)
+		ifs = iamapi.NewIAMFilerStore(&client)
 		if err := ifs.LoadIAMConfig(s3cfg); err != nil {
 			return nil
 		}

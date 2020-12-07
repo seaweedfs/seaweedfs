@@ -9,9 +9,9 @@ import (
 	"io/ioutil"
 	"net/http"
 
+	"github.com/chrislusf/seaweedfs/weed/iamapi"
 	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
-	"github.com/chrislusf/seaweedfs/weed/s3iam"
 	"github.com/golang/protobuf/jsonpb"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -67,7 +67,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3A
 	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
 	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		store := s3iam.NewIAMFilerStore(&client)
+		store := iamapi.NewIAMFilerStore(&client)
 		if err := store.LoadIAMConfig(s3ApiConfiguration); err != nil {
 			return nil
 		}

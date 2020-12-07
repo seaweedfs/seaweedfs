@@ -24,6 +24,7 @@ var (
 	masterOptions    MasterOptions
 	filerOptions     FilerOptions
 	s3Options        S3Options
+	iamOptions       IamOptions
 	msgBrokerOptions MessageBrokerOptions
 )
 
@@ -65,6 +66,7 @@ var (
 	isStartingFiler        = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 	isStartingS3           = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
 	isStartingMsgBroker    = cmdServer.Flag.Bool("msgBroker", false, "whether to start message broker")
+	isStartingIam          = cmdServer.Flag.Bool("iam", false, "whether to start IAM gateway")
 
 	serverWhiteList []string
 
@@ -112,6 +114,8 @@ func init() {
 	s3Options.tlsPrivateKey = cmdServer.Flag.String("s3.key.file", "", "path to the TLS private key file")
 	s3Options.tlsCertificate = cmdServer.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
 	s3Options.config = cmdServer.Flag.String("s3.config", "", "path to the config file")
+
+	iamOptions.port = cmdServer.Flag.Int("iam.port", 8111, "iam server http listen port")
 
 	msgBrokerOptions.port = cmdServer.Flag.Int("msgBroker.port", 17777, "broker gRPC listen port")
 
@@ -206,6 +210,13 @@ func runServer(cmd *Command, args []string) bool {
 
 			s3Options.startS3Server()
 
+		}()
+	}
+
+	if *isStartingIam {
+		go func() {
+			time.Sleep(2 * time.Second)
+			iamOptions.startIamServer()
 		}()
 	}
 

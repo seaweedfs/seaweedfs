@@ -1,4 +1,4 @@
-package s3iam
+package iamapi
 
 import (
 	"testing"

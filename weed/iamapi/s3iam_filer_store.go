@@ -1,4 +1,4 @@
-package s3iam
+package iamapi
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
