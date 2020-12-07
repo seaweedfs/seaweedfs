@@ -33,7 +33,7 @@ func (c *commandS3Configure) Help() string {
 
 func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 	s3ConfigureCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	actions := s3ConfigureCommand.String("actions", "", "actions names")
+	actions := s3ConfigureCommand.String("actions", "", "comma separated actions names: Read,Write,List,Tagging,Admin")
 	user := s3ConfigureCommand.String("user", "", "user name")
 	buckets := s3ConfigureCommand.String("buckets", "", "bucket name")
 	accessKey := s3ConfigureCommand.String("access_key", "", "specify the access key")
