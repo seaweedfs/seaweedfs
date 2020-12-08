@@ -22,6 +22,7 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 	viper.SetConfigName(configFileName)     // name of config file (without extension)
 	viper.AddConfigPath(".")                // optionally look for config in the working directory
 	viper.AddConfigPath("$HOME/.seaweedfs") // call multiple times to add many search paths
+	viper.AddConfigPath("/usr/local/etc/seaweedfs/")  // search path for bsd-style config directory in
 	viper.AddConfigPath("/etc/seaweedfs/")  // path to look for the config file in
 
 	glog.V(1).Infof("Reading %s.toml from %s", configFileName, viper.ConfigFileUsed())
