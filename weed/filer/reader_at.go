@@ -23,8 +23,6 @@ type ChunkReadAt struct {
 	fileSize     int64
 
 	fetchGroup      singleflight.Group
-	lastChunkFileId string
-	lastChunkData   []byte
 	chunkCache      chunk_cache.ChunkCache
 }
 
@@ -107,7 +105,6 @@ func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
 
 func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
-	var buffer []byte
 	startOffset, remaining := offset, int64(len(p))
 	var nextChunk *ChunkView
 	for i, chunk := range c.chunkViews {
@@ -134,6 +131,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 			continue
 		}
 		glog.V(4).Infof("read [%d,%d), %d/%d chunk %s [%d,%d)", chunkStart, chunkStop, i, len(c.chunkViews), chunk.FileId, chunk.LogicOffset-chunk.Offset, chunk.LogicOffset-chunk.Offset+int64(chunk.Size))
+		var buffer []byte
 		buffer, err = c.readFromWholeChunkData(chunk, nextChunk)
 		if err != nil {
 			glog.Errorf("fetching chunk %+v: %v\n", chunk, err)
@@ -164,10 +162,6 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 func (c *ChunkReadAt) readFromWholeChunkData(chunkView *ChunkView, nextChunkViews ...*ChunkView) (chunkData []byte, err error) {
 
-	if c.lastChunkFileId == chunkView.FileId {
-		return c.lastChunkData, nil
-	}
-
 	v, doErr := c.readOneWholeChunk(chunkView)
 
 	if doErr != nil {
@@ -175,9 +169,6 @@ func (c *ChunkReadAt) readFromWholeChunkData(chunkView *ChunkView, nextChunkView
 	}
 
 	chunkData = v.([]byte)
-
-	c.lastChunkData = chunkData
-	c.lastChunkFileId = chunkView.FileId
 
 	for _, nextChunkView := range nextChunkViews {
 		if c.chunkCache != nil && nextChunkView != nil {
