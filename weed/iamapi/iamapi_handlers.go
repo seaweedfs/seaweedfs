@@ -75,3 +75,7 @@ func writeResponse(w http.ResponseWriter, statusCode int, response []byte, mType
 		w.(http.Flusher).Flush()
 	}
 }
+
+func writeSuccessResponseXML(w http.ResponseWriter, response []byte) {
+	writeResponse(w, http.StatusOK, response, mimeXML)
+}
