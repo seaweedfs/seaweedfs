@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"io/ioutil"
 	"math"
 	"net/http"
 )
@@ -56,7 +57,16 @@ func SaveAs(host string, port int, dir, name string, contentType string, byteBuf
 	if err != nil {
 		return err
 	}
-	util.CloseResponse(resp)
+	defer util.CloseResponse(resp)
+
+	b, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("%s: %s %v", target, resp.Status, string(b))
+	}
 
 	return nil
 
