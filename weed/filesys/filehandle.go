@@ -202,6 +202,9 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 		}
 
 		fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
+		if closer, ok := fh.f.reader.(io.Closer); ok {
+			closer.Close()
+		}
 	}
 
 	return nil

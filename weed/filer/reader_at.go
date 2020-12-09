@@ -24,9 +24,12 @@ type ChunkReadAt struct {
 
 	fetchGroup      singleflight.Group
 	chunkCache      chunk_cache.ChunkCache
+	lastChunkFileId string
+	lastChunkData   []byte
 }
 
-// var _ = io.ReaderAt(&ChunkReadAt{})
+var _ = io.ReaderAt(&ChunkReadAt{})
+var _ = io.Closer(&ChunkReadAt{})
 
 type LookupFileIdFunctionType func(fileId string) (targetUrls []string, err error)
 
@@ -92,6 +95,12 @@ func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*
 		chunkCache:   chunkCache,
 		fileSize:     fileSize,
 	}
+}
+
+func (c *ChunkReadAt) Close() error {
+	c.lastChunkData = nil
+	c.lastChunkFileId = ""
+	return nil
 }
 
 func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
@@ -162,6 +171,10 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 func (c *ChunkReadAt) readFromWholeChunkData(chunkView *ChunkView, nextChunkViews ...*ChunkView) (chunkData []byte, err error) {
 
+	if c.lastChunkFileId == chunkView.FileId {
+		return c.lastChunkData, nil
+	}
+
 	v, doErr := c.readOneWholeChunk(chunkView)
 
 	if doErr != nil {
@@ -169,6 +182,9 @@ func (c *ChunkReadAt) readFromWholeChunkData(chunkView *ChunkView, nextChunkView
 	}
 
 	chunkData = v.([]byte)
+
+	c.lastChunkData = chunkData
+	c.lastChunkFileId = chunkView.FileId
 
 	for _, nextChunkView := range nextChunkViews {
 		if c.chunkCache != nil && nextChunkView != nil {
