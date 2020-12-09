@@ -23,6 +23,7 @@ var Commands = []*Command{
 	cmdMaster,
 	cmdMount,
 	cmdS3,
+	cmdIam,
 	cmdMsgBroker,
 	cmdScaffold,
 	cmdServer,
