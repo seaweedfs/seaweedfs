@@ -29,3 +29,7 @@ debug_volume:
 debug_webdav:
 	go build -gcflags="all=-N -l"
 	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- -v=4 webdav
+
+debug_s3:
+	go build -gcflags="all=-N -l"
+	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- -v=4 s3
