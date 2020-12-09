@@ -205,6 +205,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 		if closer, ok := fh.f.reader.(io.Closer); ok {
 			closer.Close()
 		}
+		fh.f.reader = nil
 	}
 
 	return nil
