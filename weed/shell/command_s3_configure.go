@@ -169,10 +169,11 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	fmt.Fprintf(writer, string(buf.Bytes()))
 	fmt.Fprintln(writer)
 
-
 	if *apply {
 
-		if err := filer.SaveAs(commandEnv.option.FilerHost, int(commandEnv.option.FilerPort), filer.IamConfigDirecotry, filer.IamIdentityFile, "text/plain; charset=utf-8", &buf); err != nil {
+		if err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+			return filer.SaveInsideFiler(client, filer.IamConfigDirecotry, filer.IamIdentityFile, buf.Bytes())
+		}); err != nil {
 			return err
 		}
 

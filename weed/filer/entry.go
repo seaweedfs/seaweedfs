@@ -44,7 +44,7 @@ type Entry struct {
 }
 
 func (entry *Entry) Size() uint64 {
-	return maxUint64(TotalSize(entry.Chunks), entry.FileSize)
+	return maxUint64(maxUint64(TotalSize(entry.Chunks), entry.FileSize), uint64(len(entry.Content)))
 }
 
 func (entry *Entry) Timestamp() time.Time {

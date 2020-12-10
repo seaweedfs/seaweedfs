@@ -38,51 +38,47 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 	iam := &IdentityAccessManagement{
 		domain: option.DomainName,
 	}
-	if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
-		glog.Warningf("fail to load config: %v", err)
-	}
-	if len(iam.identities) == 0 && option.Config != "" {
+	if option.Config != "" {
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
 			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
+		}
+	} else {
+		if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
+			glog.Warningf("fail to load config: %v", err)
 		}
 	}
 	return iam
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) error {
-	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
 	content, err := filer.ReadContent(option.Filer, filer.IamConfigDirecotry, filer.IamIdentityFile)
 	if err != nil {
 		return fmt.Errorf("read S3 config: %v", err)
 	}
-	if err = filer.ParseS3ConfigurationFromBytes(content, s3ApiConfiguration); err != nil {
-		return fmt.Errorf("parse S3 config: %v", err)
-	}
-	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
-		return fmt.Errorf("laod S3 config: %v", err)
-	}
-	glog.V(0).Infof("loaded %d s3 identities", len(iam.identities))
-	return nil
+	return iam.loadS3ApiConfigurationFromBytes(content)
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName string) error {
-	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
-	rawData, readErr := ioutil.ReadFile(fileName)
+	content, readErr := ioutil.ReadFile(fileName)
 	if readErr != nil {
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)
 	}
+	return iam.loadS3ApiConfigurationFromBytes(content)
+}
 
-	glog.V(1).Infof("load s3 config: %v", fileName)
-	if err := filer.ParseS3ConfigurationFromBytes(rawData, s3ApiConfiguration); err != nil {
+func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromBytes(content []byte) error {
+	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
+	if err := filer.ParseS3ConfigurationFromBytes(content, s3ApiConfiguration); err != nil {
 		glog.Warningf("unmarshal error: %v", err)
-		return fmt.Errorf("unmarshal %s error: %v", fileName, err)
+		return fmt.Errorf("unmarshal error: %v", err)
 	}
 	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
 		return err
 	}
 	return nil
 }
+
 
 func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
 	var identities []*Identity
