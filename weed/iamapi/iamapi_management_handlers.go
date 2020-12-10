@@ -1,10 +1,12 @@
 package iamapi
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
@@ -213,13 +215,15 @@ func GetActions(policy *PolicyDocument) (actions []string) {
 		for _, resource := range statement.Resource {
 			// Parse "arn:aws:s3:::my-bucket/shared/*"
 			res := strings.Split(resource, ":")
-			if len(res) != 6 || res[0] != "arn:" || res[1] != "aws" || res[2] != "s3" {
+			if len(res) != 6 || res[0] != "arn" || res[1] != "aws" || res[2] != "s3" {
+				glog.Infof("not math resource: %s", res)
 				continue
 			}
 			for _, action := range statement.Action {
 				// Parse "s3:Get*"
 				act := strings.Split(action, ":")
 				if len(act) != 2 || act[0] != "s3" {
+					glog.Infof("not match action: %s", act)
 					continue
 				}
 				if res[5] == "*" {
@@ -229,8 +233,11 @@ func GetActions(policy *PolicyDocument) (actions []string) {
 				// Parse my-bucket/shared/*
 				path := strings.Split(res[5], "/")
 				if len(path) != 2 || path[1] != "*" {
-					actions = append(actions, fmt.Sprintf("%s:%s", MapAction(act[1]), path[0]))
+					glog.Infof("not match bucket: %s", path)
+					continue
 				}
+				actions = append(actions, fmt.Sprintf("%s:%s", MapAction(act[1]), path[0]))
+
 			}
 		}
 	}
@@ -312,11 +319,14 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 
 	glog.Info("values ", values)
 	var response interface{}
+	changed := true
 	switch r.Form.Get("Action") {
 	case "ListUsers":
 		response = iama.ListUsers(s3cfg, values)
+		changed = false
 	case "ListAccessKeys":
 		response = iama.ListAccessKeys(s3cfg, values)
+		changed = false
 	case "CreateUser":
 		response = iama.CreateUser(s3cfg, values)
 	case "DeleteUser":
@@ -342,6 +352,25 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeErrorResponse(w, s3err.ErrNotImplemented, r.URL)
 		return
+	}
+	if changed {
+		buf := bytes.Buffer{}
+		if err := filer.S3ConfigurationToText(&buf, s3cfg); err != nil {
+			glog.Error("S3ConfigurationToText: ", err)
+			writeErrorResponse(w, s3err.ErrInternalError, r.URL)
+			return
+		}
+		if err := filer.SaveAs(
+			iama.option.Filer,
+			0,
+			filer.IamConfigDirecotry,
+			filer.IamIdentityFile,
+			"text/plain; charset=utf-8",
+			&buf); err != nil {
+			glog.Error("SaveAs: ", err)
+			writeErrorResponse(w, s3err.ErrInternalError, r.URL)
+			return
+		}
 	}
 	writeSuccessResponseXML(w, encodeResponse(response))
 }
