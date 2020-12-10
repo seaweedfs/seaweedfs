@@ -62,7 +62,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	var buf bytes.Buffer
 	if err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		return filer.ReadEntry(commandEnv.MasterClient, client, filer.DirectoryEtc, filer.FilerConfName, &buf)
+		return filer.ReadEntry(commandEnv.MasterClient, client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, &buf)
 	}); err != nil && err != filer_pb.ErrNotFound {
 		return err
 	}
@@ -116,7 +116,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	if *apply {
 
-		if err := filer.SaveAs(commandEnv.option.FilerHost, int(commandEnv.option.FilerPort), filer.DirectoryEtc, filer.FilerConfName, "text/plain; charset=utf-8", &buf); err != nil {
+		if err := filer.SaveAs(commandEnv.option.FilerHost, int(commandEnv.option.FilerPort), filer.DirectoryEtcSeaweedFS, filer.FilerConfName, "text/plain; charset=utf-8", &buf); err != nil {
 			return err
 		}
 

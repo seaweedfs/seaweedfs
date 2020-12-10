@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	DirectoryEtc  = "/etc"
-	FilerConfName = "filer.conf"
-	IamConfigDirecotry = "/etc/iam"
-	IamIdentityFile = "identity.json"
+	DirectoryEtcRoot      = "/etc"
+	DirectoryEtcSeaweedFS = "/etc/seaweedfs"
+	FilerConfName         = "filer.conf"
+	IamConfigDirecotry    = "/etc/iam"
+	IamIdentityFile       = "identity.json"
 )
 
 type FilerConf struct {
@@ -31,7 +32,7 @@ func NewFilerConf() (fc *FilerConf) {
 }
 
 func (fc *FilerConf) loadFromFiler(filer *Filer) (err error) {
-	filerConfPath := util.NewFullPath(DirectoryEtc, FilerConfName)
+	filerConfPath := util.NewFullPath(DirectoryEtcSeaweedFS, FilerConfName)
 	entry, err := filer.FindEntry(context.Background(), filerConfPath)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {

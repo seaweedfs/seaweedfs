@@ -11,8 +11,8 @@ import (
 
 // onMetadataChangeEvent is triggered after filer processed change events from local or remote filers
 func (f *Filer) onMetadataChangeEvent(event *filer_pb.SubscribeMetadataResponse) {
-	if DirectoryEtc != event.Directory {
-		if DirectoryEtc != event.EventNotification.NewParentPath {
+	if DirectoryEtcSeaweedFS != event.Directory {
+		if DirectoryEtcSeaweedFS != event.EventNotification.NewParentPath {
 			return
 		}
 	}
