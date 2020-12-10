@@ -38,12 +38,13 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 	iam := &IdentityAccessManagement{
 		domain: option.DomainName,
 	}
-	if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
-		glog.Warningf("fail to load config: %v", err)
-	}
-	if len(iam.identities) == 0 && option.Config != "" {
+	if option.Config != "" {
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
 			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
+		}
+	} else {
+		if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
+			glog.Warningf("fail to load config: %v", err)
 		}
 	}
 	return iam
