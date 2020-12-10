@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"time"
 )
 
 func ReadEntry(masterClient *wdclient.MasterClient, filerClient filer_pb.SeaweedFilerClient, dir, name string, byteBuffer *bytes.Buffer) error {
@@ -70,4 +71,42 @@ func SaveAs(host string, port int, dir, name string, contentType string, byteBuf
 
 	return nil
 
+}
+
+func SaveInsideFiler(client filer_pb.SeaweedFilerClient, dir, name string, content []byte) error {
+
+	resp, err := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: dir,
+		Name:      name,
+	})
+
+	if err == filer_pb.ErrNotFound {
+		err = filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
+			Directory:          dir,
+			Entry:              &filer_pb.Entry{
+				Name:        name,
+				IsDirectory: false,
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:       time.Now().Unix(),
+					Crtime:      time.Now().Unix(),
+					FileMode:    uint32(0644),
+					Collection:  "",
+					Replication: "",
+					FileSize: uint64(len(content)),
+				},
+				Content: content,
+			},
+		})
+	} else if err == nil {
+		entry := resp.Entry
+		entry.Content = content
+		entry.Attributes.Mtime = time.Now().Unix()
+		entry.Attributes.FileSize = uint64(len(content))
+		err = filer_pb.UpdateEntry(client, &filer_pb.UpdateEntryRequest{
+			Directory:          dir,
+			Entry:              entry,
+		})
+	}
+
+	return err
 }

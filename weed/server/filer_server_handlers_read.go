@@ -60,7 +60,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	if len(entry.Chunks) == 0 {
+	if len(entry.Chunks) == 0 && len(entry.Content) == 0 {
 		glog.V(1).Infof("no file chunks for %s, attr=%+v", path, entry.Attr)
 		stats.FilerRequestCounter.WithLabelValues("read.nocontent").Inc()
 		w.WriteHeader(http.StatusNoContent)
@@ -123,12 +123,12 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 	filename := entry.Name()
 	adjustHeaderContentDisposition(w, r, filename)
 
+	totalSize := int64(entry.Size())
+
 	if r.Method == "HEAD" {
-		w.Header().Set("Content-Length", strconv.FormatInt(int64(entry.Size()), 10))
+		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return
 	}
-
-	totalSize := int64(entry.Size())
 
 	if rangeReq := r.Header.Get("Range"); rangeReq == "" {
 		ext := filepath.Ext(filename)
@@ -148,7 +148,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 
 	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
 		if offset+size <= int64(len(entry.Content)) {
-			_, err := writer.Write(entry.Content[offset:offset+size])
+			_, err := writer.Write(entry.Content[offset : offset+size])
 			return err
 		}
 		return filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size)
