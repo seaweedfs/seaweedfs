@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"strings"
 	"time"
@@ -61,14 +60,32 @@ type EachEntryFunciton func(entry *Entry, isLast bool) error
 
 func ReadDirAllEntries(filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunciton) (err error) {
 
-	return doList(filerClient, fullDirPath, prefix, fn, "", false, math.MaxUint32)
+	var counter uint32
+	var startFrom string
+	var counterFunc = func(entry *Entry, isLast bool) error {
+		counter++
+		startFrom = entry.Name
+		return fn(entry, isLast)
+	}
 
+	var paginationLimit uint32 = 10000
+
+	if err = doList(filerClient, fullDirPath, prefix, counterFunc, "", false, paginationLimit); err != nil {
+		return err
+	}
+
+	for counter == paginationLimit {
+		counter = 0
+		if err = doList(filerClient, fullDirPath, prefix, counterFunc, startFrom, false, paginationLimit); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func List(filerClient FilerClient, parentDirectoryPath, prefix string, fn EachEntryFunciton, startFrom string, inclusive bool, limit uint32) (err error) {
-
 	return doList(filerClient, util.FullPath(parentDirectoryPath), prefix, fn, startFrom, inclusive, limit)
-
 }
 
 func doList(filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunciton, startFrom string, inclusive bool, limit uint32) (err error) {
