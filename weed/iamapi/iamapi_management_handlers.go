@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
@@ -216,7 +218,7 @@ func GetActions(policy *PolicyDocument) (actions []string) {
 			// Parse "arn:aws:s3:::my-bucket/shared/*"
 			res := strings.Split(resource, ":")
 			if len(res) != 6 || res[0] != "arn" || res[1] != "aws" || res[2] != "s3" {
-				glog.Infof("not math resource: %s", res)
+				glog.Infof("not match resource: %s", res)
 				continue
 			}
 			for _, action := range statement.Action {
@@ -237,7 +239,6 @@ func GetActions(policy *PolicyDocument) (actions []string) {
 					continue
 				}
 				actions = append(actions, fmt.Sprintf("%s:%s", MapAction(act[1]), path[0]))
-
 			}
 		}
 	}
@@ -360,14 +361,17 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 			return
 		}
-		if err := filer.SaveAs(
-			iama.option.Filer,
-			0,
-			filer.IamConfigDirecotry,
-			filer.IamIdentityFile,
-			"text/plain; charset=utf-8",
-			&buf); err != nil {
-			glog.Error("SaveAs: ", err)
+		err := pb.WithGrpcFilerClient(
+			iama.option.FilerGrpcAddress,
+			iama.option.GrpcDialOption,
+			func(client filer_pb.SeaweedFilerClient) error {
+				if err := filer.SaveInsideFiler(client, filer.IamConfigDirecotry, filer.IamIdentityFile, buf.Bytes()); err != nil {
+					return err
+				}
+				return nil
+			},
+		)
+		if err != nil {
 			writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 			return
 		}
