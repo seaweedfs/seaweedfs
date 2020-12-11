@@ -18,6 +18,7 @@ func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx context.Context, entry
 	}
 
 	// check what is existing entry
+	glog.V(4).Infof("handleUpdateToHardLinks FindEntry %s", entry.FullPath)
 	existingEntry, err := fsw.ActualStore.FindEntry(ctx, entry.FullPath)
 	if err != nil && err != filer_pb.ErrNotFound {
 		return fmt.Errorf("update existing entry %s: %v", entry.FullPath, err)
@@ -25,6 +26,7 @@ func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx context.Context, entry
 
 	// remove old hard link
 	if err == nil && len(existingEntry.HardLinkId) != 0 && bytes.Compare(existingEntry.HardLinkId, entry.HardLinkId) != 0 {
+		glog.V(4).Infof("handleUpdateToHardLinks DeleteHardLink %s", entry.FullPath)
 		if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
 			return err
 		}
@@ -52,6 +54,7 @@ func (fsw *FilerStoreWrapper) maybeReadHardLink(ctx context.Context, entry *Entr
 	}
 	key := entry.HardLinkId
 
+	glog.V(4).Infof("maybeReadHardLink KvGet %v", key)
 	value, err := fsw.KvGet(ctx, key)
 	if err != nil {
 		glog.Errorf("read %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
@@ -83,6 +86,7 @@ func (fsw *FilerStoreWrapper) DeleteHardLink(ctx context.Context, hardLinkId Har
 
 	entry.HardLinkCounter--
 	if entry.HardLinkCounter <= 0 {
+		glog.V(4).Infof("DeleteHardLink KvDelete %v", key)
 		return fsw.KvDelete(ctx, key)
 	}
 
@@ -91,6 +95,7 @@ func (fsw *FilerStoreWrapper) DeleteHardLink(ctx context.Context, hardLinkId Har
 		return encodeErr
 	}
 
+	glog.V(4).Infof("DeleteHardLink KvPut %v", key)
 	return fsw.KvPut(ctx, key, newBlob)
 
 }
