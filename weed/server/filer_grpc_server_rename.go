@@ -15,12 +15,17 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 
 	glog.V(1).Infof("AtomicRenameEntry %v", req)
 
+	oldParent := util.FullPath(filepath.ToSlash(req.OldDirectory))
+	newParent := util.FullPath(filepath.ToSlash(req.NewDirectory))
+
+	if err := fs.filer.CanRename(oldParent, newParent); err != nil {
+		return nil, err
+	}
+
 	ctx, err := fs.filer.BeginTransaction(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	oldParent := util.FullPath(filepath.ToSlash(req.OldDirectory))
 
 	oldEntry, err := fs.filer.FindEntry(ctx, oldParent.Child(req.OldName))
 	if err != nil {
@@ -29,7 +34,7 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 	}
 
 	var events MoveEvents
-	moveErr := fs.moveEntry(ctx, oldParent, oldEntry, util.FullPath(filepath.ToSlash(req.NewDirectory)), req.NewName, &events)
+	moveErr := fs.moveEntry(ctx, oldParent, oldEntry, newParent, req.NewName, &events)
 	if moveErr != nil {
 		fs.filer.RollbackTransaction(ctx)
 		return nil, fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, moveErr)

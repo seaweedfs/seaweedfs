@@ -42,7 +42,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 		_, err := client.AtomicRenameEntry(ctx, request)
 		if err != nil {
 			glog.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, err)
-			return fuse.EIO
+			return fuse.EXDEV
 		}
 
 		return nil
