@@ -251,21 +251,23 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 	return f.Store.UpdateEntry(ctx, entry)
 }
 
+var (
+	Root = &Entry{
+		FullPath: "/",
+		Attr: Attr{
+			Mtime:  time.Now(),
+			Crtime: time.Now(),
+			Mode:   os.ModeDir | 0755,
+			Uid:    OS_UID,
+			Gid:    OS_GID,
+		},
+	}
+)
+
 func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, err error) {
 
-	now := time.Now()
-
 	if string(p) == "/" {
-		return &Entry{
-			FullPath: p,
-			Attr: Attr{
-				Mtime:  now,
-				Crtime: now,
-				Mode:   os.ModeDir | 0755,
-				Uid:    OS_UID,
-				Gid:    OS_GID,
-			},
-		}, nil
+		return Root, nil
 	}
 	entry, err = f.Store.FindEntry(ctx, p)
 	if entry != nil && entry.TtlSec > 0 {
