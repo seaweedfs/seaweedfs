@@ -3,8 +3,6 @@ package filer
 import (
 	"context"
 	"fmt"
-	"strings"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -60,11 +58,6 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 		collectionName := entry.Name()
 		f.doDeleteCollection(collectionName)
 		f.deleteBucket(collectionName)
-	} else {
-		parent, _ := p.DirAndName()
-		if err := f.removeEmptyParentFolder(ctx, util.FullPath(parent)); err != nil {
-			glog.Errorf("clean up empty folders for %s : %v", p, err)
-		}
 	}
 
 	return nil
@@ -158,26 +151,4 @@ func (f *Filer) maybeDeleteHardLinks(hardLinkIds []HardLinkId) {
 			glog.Errorf("delete hard link id %d : %v", hardLinkId, err)
 		}
 	}
-}
-
-func (f *Filer) removeEmptyParentFolder(ctx context.Context, dir util.FullPath) error {
-	if !strings.HasPrefix(string(dir), f.DirBucketsPath) {
-		return nil
-	}
-	parent, _ := dir.DirAndName()
-	if parent == f.DirBucketsPath {
-		// should not delete bucket itself
-		return nil
-	}
-	entries, err := f.ListDirectoryEntries(ctx, dir, "", false, 1, "")
-	if err != nil {
-		return err
-	}
-	if len(entries) > 0 {
-		return nil
-	}
-	if err := f.Store.DeleteEntry(ctx, dir); err != nil {
-		return err
-	}
-	return f.removeEmptyParentFolder(ctx, util.FullPath(parent))
 }
