@@ -205,9 +205,9 @@ func (v *Volume) expired(contentSize uint64, volumeSizeLimit uint64) bool {
 	if v.Ttl == nil || v.Ttl.Minutes() == 0 {
 		return false
 	}
-	glog.V(2).Infof("now:%v lastModified:%v", time.Now().Unix(), v.lastModifiedTsSeconds)
+	glog.V(2).Infof("volume %d now:%v lastModified:%v", v.Id, time.Now().Unix(), v.lastModifiedTsSeconds)
 	livedMinutes := (time.Now().Unix() - int64(v.lastModifiedTsSeconds)) / 60
-	glog.V(2).Infof("ttl:%v lived:%v", v.Ttl, livedMinutes)
+	glog.V(2).Infof("volume %d ttl:%v lived:%v", v.Id, v.Ttl, livedMinutes)
 	if int64(v.Ttl.Minutes()) < livedMinutes {
 		return true
 	}

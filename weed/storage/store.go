@@ -225,8 +225,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				}
 				if v.lastIoError != nil {
 					deleteVids = append(deleteVids, v.Id)
-				} else {
-					glog.Warningf("volume %d has IO error", v.Id)
+					glog.Warningf("volume %d has IO error: %v", v.Id, v.lastIoError)
 				}
 			}
 			collectionVolumeSize[v.Collection] += volumeMessage.Size
