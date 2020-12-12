@@ -85,57 +85,63 @@ func ReadDirAllEntries(filerClient FilerClient, fullDirPath util.FullPath, prefi
 }
 
 func List(filerClient FilerClient, parentDirectoryPath, prefix string, fn EachEntryFunciton, startFrom string, inclusive bool, limit uint32) (err error) {
-	return doList(filerClient, util.FullPath(parentDirectoryPath), prefix, fn, startFrom, inclusive, limit)
+	return filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
+		return doSeaweedList(client, util.FullPath(parentDirectoryPath), prefix, fn, startFrom, inclusive, limit)
+	})
 }
 
 func doList(filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunciton, startFrom string, inclusive bool, limit uint32) (err error) {
-
-	err = filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
-
-		request := &ListEntriesRequest{
-			Directory:          string(fullDirPath),
-			Prefix:             prefix,
-			StartFromFileName:  startFrom,
-			Limit:              limit,
-			InclusiveStartFrom: inclusive,
-		}
-
-		glog.V(4).Infof("read directory: %v", request)
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		stream, err := client.ListEntries(ctx, request)
-		if err != nil {
-			return fmt.Errorf("list %s: %v", fullDirPath, err)
-		}
-
-		var prevEntry *Entry
-		for {
-			resp, recvErr := stream.Recv()
-			if recvErr != nil {
-				if recvErr == io.EOF {
-					if prevEntry != nil {
-						if err := fn(prevEntry, true); err != nil {
-							return err
-						}
-					}
-					break
-				} else {
-					return recvErr
-				}
-			}
-			if prevEntry != nil {
-				if err := fn(prevEntry, false); err != nil {
-					return err
-				}
-			}
-			prevEntry = resp.Entry
-		}
-
-		return nil
-
+	return filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
+		return doSeaweedList(client, fullDirPath, prefix, fn, startFrom, inclusive, limit)
 	})
+}
 
-	return
+func SeaweedList(client SeaweedFilerClient, parentDirectoryPath, prefix string, fn EachEntryFunciton, startFrom string, inclusive bool, limit uint32) (err error) {
+	return doSeaweedList(client, util.FullPath(parentDirectoryPath), prefix, fn, startFrom, inclusive, limit)
+}
+
+func doSeaweedList(client SeaweedFilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunciton, startFrom string, inclusive bool, limit uint32) (err error) {
+
+	request := &ListEntriesRequest{
+		Directory:          string(fullDirPath),
+		Prefix:             prefix,
+		StartFromFileName:  startFrom,
+		Limit:              limit,
+		InclusiveStartFrom: inclusive,
+	}
+
+	glog.V(4).Infof("read directory: %v", request)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.ListEntries(ctx, request)
+	if err != nil {
+		return fmt.Errorf("list %s: %v", fullDirPath, err)
+	}
+
+	var prevEntry *Entry
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr != nil {
+			if recvErr == io.EOF {
+				if prevEntry != nil {
+					if err := fn(prevEntry, true); err != nil {
+						return err
+					}
+				}
+				break
+			} else {
+				return recvErr
+			}
+		}
+		if prevEntry != nil {
+			if err := fn(prevEntry, false); err != nil {
+				return err
+			}
+		}
+		prevEntry = resp.Entry
+	}
+
+	return nil
 }
 
 func Exists(filerClient FilerClient, parentDirectoryPath string, entryName string, isDirectory bool) (exists bool, err error) {
