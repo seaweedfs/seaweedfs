@@ -167,7 +167,7 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 		}
 	}
 
-	glog.V(4).Infof("DeleteHaDeleteEntryrdLink %s", existingEntry.FullPath)
+	glog.V(4).Infof("DeleteOneEntry %s", existingEntry.FullPath)
 	return fsw.ActualStore.DeleteEntry(ctx, existingEntry.FullPath)
 }
 
