@@ -263,14 +263,10 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 					}
 				} else {
 					var isEmpty bool
-					if isEmpty, err = s3a.isDirectoryAllEmpty(client, dir+"/"+entry.Name); err != nil {
+					if isEmpty, err = s3a.isDirectoryAllEmpty(client, dir, entry.Name); err != nil {
 						return
 					}
-					if isEmpty {
-						if err = doDeleteEntry(client, dir, entry.Name, true, true); err != nil {
-							return
-						}
-					} else {
+					if !isEmpty {
 						eachEntryFn(dir, entry)
 						counter++
 					}
@@ -311,14 +307,43 @@ func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, 
 	return
 }
 
-func (s3a *S3ApiServer) isDirectoryAllEmpty(filerClient filer_pb.SeaweedFilerClient, dir string) (isEmpty bool, err error) {
-	// println("+ isDirectoryAllEmpty", dir)
-	subCounter, _, _, subErr := s3a.doListFilerEntries(filerClient, dir, "", 32, "", "/", func(dir string, entry *filer_pb.Entry) {
-	})
-	if subErr != nil {
-		err = fmt.Errorf("isDirectoryAllEmpty: %v", subErr)
+func (s3a *S3ApiServer) isDirectoryAllEmpty(filerClient filer_pb.SeaweedFilerClient, parentDir, name string) (isEmpty bool, err error) {
+	// println("+ isDirectoryAllEmpty", dir, name)
+	var fileCounter int
+	var subDirs []string
+	currentDir := parentDir+"/"+name
+	err = filer_pb.SeaweedList(filerClient, currentDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+		if entry.IsDirectory {
+			subDirs = append(subDirs, entry.Name)
+		} else {
+			println("existing file", currentDir, entry.Name)
+			fileCounter++
+		}
+		return nil
+	}, "",false, 32)
+
+	if err != nil {
+		return false, err
 	}
-	isEmpty = subCounter <= 0
-	// println("- isDirectoryAllEmpty", dir, isEmpty)
-	return
+
+	if fileCounter > 0 {
+		return false, nil
+	}
+
+	for _, subDir := range subDirs {
+		isSubEmpty, subErr := s3a.isDirectoryAllEmpty(filerClient, currentDir, subDir)
+		if subErr != nil {
+			return false, subErr
+		}
+		if !isSubEmpty {
+			return false, nil
+		}
+	}
+
+	println("deleting empty", currentDir)
+	if err = doDeleteEntry(filerClient, parentDir, name, true, true); err != nil {
+		return
+	}
+
+	return true, nil
 }
