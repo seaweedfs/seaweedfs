@@ -322,7 +322,7 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, erro
 	if !n.HasLastModifiedDate() {
 		return bytesRead, nil
 	}
-	if uint64(time.Now().Unix()) < n.LastModified+uint64(ttlMinutes*60) {
+	if time.Now().Before(time.Unix(0, int64(n.AppendAtNs)).Add(time.Duration(ttlMinutes) * time.Minute)) {
 		return bytesRead, nil
 	}
 	return -1, ErrorNotFound
