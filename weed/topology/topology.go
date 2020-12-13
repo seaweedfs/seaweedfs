@@ -182,6 +182,9 @@ func (t *Topology) DeleteLayout(collectionName string, rp *super_block.ReplicaPl
 		return
 	}
 	collection.DeleteVolumeLayout(rp, ttl, volumeType)
+	if len(collection.storageType2VolumeLayout.Items()) == 0 {
+		t.DeleteCollection(collectionName)
+	}
 }
 
 func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
