@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"io"
 	"net/http"
 	"net/url"
@@ -311,16 +312,21 @@ func (s3a *S3ApiServer) isDirectoryAllEmpty(filerClient filer_pb.SeaweedFilerCli
 	// println("+ isDirectoryAllEmpty", dir, name)
 	var fileCounter int
 	var subDirs []string
-	currentDir := parentDir+"/"+name
-	err = filer_pb.SeaweedList(filerClient, currentDir, "", func(entry *filer_pb.Entry, isLast bool) error {
-		if entry.IsDirectory {
-			subDirs = append(subDirs, entry.Name)
-		} else {
-			println("existing file", currentDir, entry.Name)
-			fileCounter++
-		}
-		return nil
-	}, "",false, 32)
+	currentDir := parentDir + "/" + name
+	var startFrom string
+	var isExhausted bool
+	for fileCounter == 0 && !isExhausted {
+		err = filer_pb.SeaweedList(filerClient, currentDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+			if entry.IsDirectory {
+				subDirs = append(subDirs, entry.Name)
+			} else {
+				fileCounter++
+			}
+			startFrom = entry.Name
+			isExhausted = isExhausted || isLast
+			return nil
+		}, startFrom, false, 8)
+	}
 
 	if err != nil {
 		return false, err
@@ -340,7 +346,7 @@ func (s3a *S3ApiServer) isDirectoryAllEmpty(filerClient filer_pb.SeaweedFilerCli
 		}
 	}
 
-	println("deleting empty", currentDir)
+	glog.V(1).Infof("deleting empty folder %s", currentDir)
 	if err = doDeleteEntry(filerClient, parentDir, name, true, true); err != nil {
 		return
 	}
