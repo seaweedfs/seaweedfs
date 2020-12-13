@@ -158,7 +158,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 	if err != nil {
 		return nil, err
 	}
-	diskType, err := storage.ToDiskType(r.FormValue("diskType"))
+	diskType, err := storage.ToDiskType(r.FormValue("disk"))
 	if err != nil {
 		return nil, err
 	}
