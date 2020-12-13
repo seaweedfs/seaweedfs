@@ -30,27 +30,27 @@ func (c *Collection) String() string {
 	return fmt.Sprintf("Name:%s, volumeSizeLimit:%d, storageType2VolumeLayout:%v", c.Name, c.volumeSizeLimit, c.storageType2VolumeLayout)
 }
 
-func (c *Collection) GetOrCreateVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, volumeType storage.VolumeType) *VolumeLayout {
+func (c *Collection) GetOrCreateVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType storage.DiskType) *VolumeLayout {
 	keyString := rp.String()
 	if ttl != nil {
 		keyString += ttl.String()
 	}
-	if volumeType != storage.HardDriveType {
-		keyString += string(volumeType)
+	if diskType != storage.HardDriveType {
+		keyString += string(diskType)
 	}
 	vl := c.storageType2VolumeLayout.Get(keyString, func() interface{} {
-		return NewVolumeLayout(rp, ttl, volumeType, c.volumeSizeLimit, c.replicationAsMin)
+		return NewVolumeLayout(rp, ttl, diskType, c.volumeSizeLimit, c.replicationAsMin)
 	})
 	return vl.(*VolumeLayout)
 }
 
-func (c *Collection) DeleteVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, volumeType storage.VolumeType) {
+func (c *Collection) DeleteVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType storage.DiskType) {
 	keyString := rp.String()
 	if ttl != nil {
 		keyString += ttl.String()
 	}
-	if volumeType != storage.HardDriveType {
-		keyString += string(volumeType)
+	if diskType != storage.HardDriveType {
+		keyString += string(diskType)
 	}
 	c.storageType2VolumeLayout.Delete(keyString)
 }

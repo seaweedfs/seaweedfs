@@ -2,22 +2,22 @@ package storage
 
 import "fmt"
 
-type VolumeType string
+type DiskType string
 
 const (
-	HardDriveType VolumeType = ""
+	HardDriveType DiskType = ""
 	SsdType                  = "ssd"
 )
 
-func ToVolumeType(vt string) (volumeType VolumeType, err error) {
-	volumeType = HardDriveType
+func ToDiskType(vt string) (diskType DiskType, err error) {
+	diskType = HardDriveType
 	switch vt {
 	case "", "hdd":
-		volumeType = HardDriveType
+		diskType = HardDriveType
 	case "ssd":
-		volumeType = SsdType
+		diskType = SsdType
 	default:
-		err = fmt.Errorf("parse VolumeType %s: expecting hdd or ssd\n", vt)
+		err = fmt.Errorf("parse DiskType %s: expecting hdd or ssd\n", vt)
 	}
 	return
 }

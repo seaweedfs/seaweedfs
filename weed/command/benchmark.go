@@ -35,7 +35,7 @@ type BenchmarkOptions struct {
 	sequentialRead   *bool
 	collection       *string
 	replication      *string
-	volumeType       *string
+	diskType       *string
 	cpuprofile       *string
 	maxCpu           *int
 	grpcDialOption   grpc.DialOption
@@ -63,7 +63,7 @@ func init() {
 	b.sequentialRead = cmdBenchmark.Flag.Bool("readSequentially", false, "randomly read by ids from \"-list\" specified file")
 	b.collection = cmdBenchmark.Flag.String("collection", "benchmark", "write data to this collection")
 	b.replication = cmdBenchmark.Flag.String("replication", "000", "replication type")
-	b.volumeType = cmdBenchmark.Flag.String("volumeType", "", "[hdd|ssd] choose between hard drive or solid state drive")
+	b.diskType = cmdBenchmark.Flag.String("diskType", "", "[hdd|ssd] choose between hard drive or solid state drive")
 	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
 	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	b.fsync = cmdBenchmark.Flag.Bool("fsync", false, "flush data to disk after write")
@@ -236,7 +236,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			Count:       1,
 			Collection:  *b.collection,
 			Replication: *b.replication,
-			VolumeType: *b.volumeType,
+			DiskType: *b.diskType,
 		}
 		if assignResult, err := operation.Assign(b.masterClient.GetMaster(), b.grpcDialOption, ar); err == nil {
 			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection

@@ -23,7 +23,7 @@ type FilerSink struct {
 	replication    string
 	collection     string
 	ttlSec         int32
-	volumeType     string
+	diskType     string
 	dataCenter     string
 	grpcDialOption grpc.DialOption
 }
@@ -47,7 +47,7 @@ func (fs *FilerSink) Initialize(configuration util.Configuration, prefix string)
 		configuration.GetString(prefix+"replication"),
 		configuration.GetString(prefix+"collection"),
 		configuration.GetInt(prefix+"ttlSec"),
-		configuration.GetString(prefix+"volumeType"),
+		configuration.GetString(prefix+"diskType"),
 		security.LoadClientTLS(util.GetViper(), "grpc.client"))
 }
 
@@ -56,13 +56,13 @@ func (fs *FilerSink) SetSourceFiler(s *source.FilerSource) {
 }
 
 func (fs *FilerSink) DoInitialize(grpcAddress string, dir string,
-	replication string, collection string, ttlSec int, volumeType string, grpcDialOption grpc.DialOption) (err error) {
+	replication string, collection string, ttlSec int, diskType string, grpcDialOption grpc.DialOption) (err error) {
 	fs.grpcAddress = grpcAddress
 	fs.dir = dir
 	fs.replication = replication
 	fs.collection = collection
 	fs.ttlSec = int32(ttlSec)
-	fs.volumeType = volumeType
+	fs.diskType = diskType
 	fs.grpcDialOption = grpcDialOption
 	return nil
 }

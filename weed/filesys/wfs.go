@@ -31,7 +31,7 @@ type Option struct {
 	Collection         string
 	Replication        string
 	TtlSec             int32
-	VolumeType         storage.VolumeType
+	DiskType         storage.DiskType
 	ChunkSizeLimit     int64
 	ConcurrentWriters  int
 	CacheDir           string
@@ -178,7 +178,7 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 				Collection:  wfs.option.Collection,
 				Replication: wfs.option.Replication,
 				Ttl:         fmt.Sprintf("%ds", wfs.option.TtlSec),
-				VolumeType:  string(wfs.option.VolumeType),
+				DiskType:  string(wfs.option.DiskType),
 			}
 
 			glog.V(4).Infof("reading filer stats: %+v", request)

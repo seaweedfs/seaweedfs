@@ -61,7 +61,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	if err != nil {
 		return nil, err
 	}
-	volumeType, err := storage.ToVolumeType(req.VolumeType)
+	diskType, err := storage.ToDiskType(req.DiskType)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +70,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		Collection:         req.Collection,
 		ReplicaPlacement:   replicaPlacement,
 		Ttl:                ttl,
-		VolumeType:         volumeType,
+		DiskType:         diskType,
 		Prealloacte:        ms.preallocateSize,
 		DataCenter:         req.DataCenter,
 		Rack:               req.Rack,
@@ -123,7 +123,7 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 		return nil, err
 	}
 
-	volumeLayout := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, ttl, storage.VolumeType(req.VolumeType))
+	volumeLayout := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, ttl, storage.DiskType(req.DiskType))
 	stats := volumeLayout.Stats()
 
 	totalSize := (ms.Topo.GetMaxVolumeCount() + ms.Topo.GetMaxSsdVolumeCount()) * int64(ms.option.VolumeSizeLimitMB) * 1024 * 1024

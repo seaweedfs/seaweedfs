@@ -305,7 +305,7 @@ type VolumeInformationMessage struct {
 	ModifiedAtSecond  int64  `protobuf:"varint,12,opt,name=modified_at_second,json=modifiedAtSecond,proto3" json:"modified_at_second,omitempty"`
 	RemoteStorageName string `protobuf:"bytes,13,opt,name=remote_storage_name,json=remoteStorageName,proto3" json:"remote_storage_name,omitempty"`
 	RemoteStorageKey  string `protobuf:"bytes,14,opt,name=remote_storage_key,json=remoteStorageKey,proto3" json:"remote_storage_key,omitempty"`
-	VolumeType        string `protobuf:"bytes,15,opt,name=volume_type,json=volumeType,proto3" json:"volume_type,omitempty"`
+	DiskType        string `protobuf:"bytes,15,opt,name=volume_type,json=diskType,proto3" json:"volume_type,omitempty"`
 }
 
 func (x *VolumeInformationMessage) Reset() {
@@ -438,9 +438,9 @@ func (x *VolumeInformationMessage) GetRemoteStorageKey() string {
 	return ""
 }
 
-func (x *VolumeInformationMessage) GetVolumeType() string {
+func (x *VolumeInformationMessage) GetDiskType() string {
 	if x != nil {
-		return x.VolumeType
+		return x.DiskType
 	}
 	return ""
 }
@@ -455,7 +455,7 @@ type VolumeShortInformationMessage struct {
 	ReplicaPlacement uint32 `protobuf:"varint,8,opt,name=replica_placement,json=replicaPlacement,proto3" json:"replica_placement,omitempty"`
 	Version          uint32 `protobuf:"varint,9,opt,name=version,proto3" json:"version,omitempty"`
 	Ttl              uint32 `protobuf:"varint,10,opt,name=ttl,proto3" json:"ttl,omitempty"`
-	VolumeType       string `protobuf:"bytes,15,opt,name=volume_type,json=volumeType,proto3" json:"volume_type,omitempty"`
+	DiskType       string `protobuf:"bytes,15,opt,name=volume_type,json=diskType,proto3" json:"volume_type,omitempty"`
 }
 
 func (x *VolumeShortInformationMessage) Reset() {
@@ -525,9 +525,9 @@ func (x *VolumeShortInformationMessage) GetTtl() uint32 {
 	return 0
 }
 
-func (x *VolumeShortInformationMessage) GetVolumeType() string {
+func (x *VolumeShortInformationMessage) GetDiskType() string {
 	if x != nil {
-		return x.VolumeType
+		return x.DiskType
 	}
 	return ""
 }
@@ -1056,7 +1056,7 @@ type AssignRequest struct {
 	DataNode            string `protobuf:"bytes,7,opt,name=data_node,json=dataNode,proto3" json:"data_node,omitempty"`
 	MemoryMapMaxSizeMb  uint32 `protobuf:"varint,8,opt,name=memory_map_max_size_mb,json=memoryMapMaxSizeMb,proto3" json:"memory_map_max_size_mb,omitempty"`
 	WritableVolumeCount uint32 `protobuf:"varint,9,opt,name=Writable_volume_count,json=WritableVolumeCount,proto3" json:"Writable_volume_count,omitempty"`
-	VolumeType          string `protobuf:"bytes,10,opt,name=volume_type,json=volumeType,proto3" json:"volume_type,omitempty"`
+	DiskType          string `protobuf:"bytes,10,opt,name=volume_type,json=diskType,proto3" json:"volume_type,omitempty"`
 }
 
 func (x *AssignRequest) Reset() {
@@ -1154,9 +1154,9 @@ func (x *AssignRequest) GetWritableVolumeCount() uint32 {
 	return 0
 }
 
-func (x *AssignRequest) GetVolumeType() string {
+func (x *AssignRequest) GetDiskType() string {
 	if x != nil {
-		return x.VolumeType
+		return x.DiskType
 	}
 	return ""
 }
@@ -1256,7 +1256,7 @@ type StatisticsRequest struct {
 	Replication string `protobuf:"bytes,1,opt,name=replication,proto3" json:"replication,omitempty"`
 	Collection  string `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
 	Ttl         string `protobuf:"bytes,3,opt,name=ttl,proto3" json:"ttl,omitempty"`
-	VolumeType  string `protobuf:"bytes,4,opt,name=volume_type,json=volumeType,proto3" json:"volume_type,omitempty"`
+	DiskType  string `protobuf:"bytes,4,opt,name=volume_type,json=diskType,proto3" json:"volume_type,omitempty"`
 }
 
 func (x *StatisticsRequest) Reset() {
@@ -1312,9 +1312,9 @@ func (x *StatisticsRequest) GetTtl() string {
 	return ""
 }
 
-func (x *StatisticsRequest) GetVolumeType() string {
+func (x *StatisticsRequest) GetDiskType() string {
 	if x != nil {
-		return x.VolumeType
+		return x.DiskType
 	}
 	return ""
 }

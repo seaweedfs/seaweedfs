@@ -358,12 +358,7 @@ message FilerConf {
         string collection = 2;
         string replication = 3;
         string ttl = 4;
-        enum DiskType {
-            NONE = 0;
-            HDD = 1;
-            SSD = 2;
-        }
-        DiskType disk_type = 5;
+        string disk_type = 5;
         bool fsync = 6;
         uint32 volume_growth_count = 7;
     }

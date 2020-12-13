@@ -120,7 +120,7 @@ func balanceVolumeServers(commandEnv *CommandEnv, volumeReplicas map[uint32][]*V
 					return false
 				}
 			}
-			return v.VolumeType == string(storage.HardDriveType) && (!v.ReadOnly && v.Size < volumeSizeLimit)
+			return v.DiskType == string(storage.HardDriveType) && (!v.ReadOnly && v.Size < volumeSizeLimit)
 		})
 	}
 	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxVolumeCount, sortWritableVolumes, applyBalancing); err != nil {
@@ -135,7 +135,7 @@ func balanceVolumeServers(commandEnv *CommandEnv, volumeReplicas map[uint32][]*V
 					return false
 				}
 			}
-			return v.VolumeType == string(storage.HardDriveType) && (v.ReadOnly || v.Size >= volumeSizeLimit)
+			return v.DiskType == string(storage.HardDriveType) && (v.ReadOnly || v.Size >= volumeSizeLimit)
 		})
 	}
 	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxVolumeCount, sortReadOnlyVolumes, applyBalancing); err != nil {
@@ -150,7 +150,7 @@ func balanceVolumeServers(commandEnv *CommandEnv, volumeReplicas map[uint32][]*V
 					return false
 				}
 			}
-			return v.VolumeType == string(storage.SsdType) && (!v.ReadOnly && v.Size < volumeSizeLimit)
+			return v.DiskType == string(storage.SsdType) && (!v.ReadOnly && v.Size < volumeSizeLimit)
 		})
 	}
 	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxSsdVolumeCount, sortWritableVolumes, applyBalancing); err != nil {
@@ -165,7 +165,7 @@ func balanceVolumeServers(commandEnv *CommandEnv, volumeReplicas map[uint32][]*V
 					return false
 				}
 			}
-			return v.VolumeType == string(storage.SsdType) && (v.ReadOnly || v.Size >= volumeSizeLimit)
+			return v.DiskType == string(storage.SsdType) && (v.ReadOnly || v.Size >= volumeSizeLimit)
 		})
 	}
 	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxSsdVolumeCount, sortReadOnlyVolumes, applyBalancing); err != nil {

@@ -31,8 +31,8 @@ type SyncOptions struct {
 	bCollection     *string
 	aTtlSec         *int
 	bTtlSec         *int
-	aVolumeType     *string
-	bVolumeType     *string
+	aDiskType     *string
+	bDiskType     *string
 	aDebug          *bool
 	bDebug          *bool
 }
@@ -56,8 +56,8 @@ func init() {
 	syncOptions.bCollection = cmdFilerSynchronize.Flag.String("b.collection", "", "collection on filer B")
 	syncOptions.aTtlSec = cmdFilerSynchronize.Flag.Int("a.ttlSec", 0, "ttl in seconds on filer A")
 	syncOptions.bTtlSec = cmdFilerSynchronize.Flag.Int("b.ttlSec", 0, "ttl in seconds on filer B")
-	syncOptions.aVolumeType = cmdFilerSynchronize.Flag.String("a.volumeType", "", "[hdd|ssd] choose between hard drive or solid state drive on filer A")
-	syncOptions.bVolumeType = cmdFilerSynchronize.Flag.String("b.volumeType", "", "[hdd|ssd] choose between hard drive or solid state drive on filer B")
+	syncOptions.aDiskType = cmdFilerSynchronize.Flag.String("a.diskType", "", "[hdd|ssd] choose between hard drive or solid state drive on filer A")
+	syncOptions.bDiskType = cmdFilerSynchronize.Flag.String("b.diskType", "", "[hdd|ssd] choose between hard drive or solid state drive on filer B")
 	syncOptions.aDebug = cmdFilerSynchronize.Flag.Bool("a.debug", false, "debug mode to print out filer A received files")
 	syncOptions.bDebug = cmdFilerSynchronize.Flag.Bool("b.debug", false, "debug mode to print out filer B received files")
 	syncCpuProfile = cmdFilerSynchronize.Flag.String("cpuprofile", "", "cpu profile output file")
@@ -91,7 +91,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	go func() {
 		for {
 			err := doSubscribeFilerMetaChanges(grpcDialOption, *syncOptions.filerA, *syncOptions.aPath, *syncOptions.filerB,
-				*syncOptions.bPath, *syncOptions.bReplication, *syncOptions.bCollection, *syncOptions.bTtlSec, *syncOptions.bVolumeType, *syncOptions.bDebug)
+				*syncOptions.bPath, *syncOptions.bReplication, *syncOptions.bCollection, *syncOptions.bTtlSec, *syncOptions.bDiskType, *syncOptions.bDebug)
 			if err != nil {
 				glog.Errorf("sync from %s to %s: %v", *syncOptions.filerA, *syncOptions.filerB, err)
 				time.Sleep(1747 * time.Millisecond)
@@ -103,7 +103,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 		go func() {
 			for {
 				err := doSubscribeFilerMetaChanges(grpcDialOption, *syncOptions.filerB, *syncOptions.bPath, *syncOptions.filerA,
-					*syncOptions.aPath, *syncOptions.aReplication, *syncOptions.aCollection, *syncOptions.aTtlSec, *syncOptions.aVolumeType, *syncOptions.aDebug)
+					*syncOptions.aPath, *syncOptions.aReplication, *syncOptions.aCollection, *syncOptions.aTtlSec, *syncOptions.aDiskType, *syncOptions.aDebug)
 				if err != nil {
 					glog.Errorf("sync from %s to %s: %v", *syncOptions.filerB, *syncOptions.filerA, err)
 					time.Sleep(2147 * time.Millisecond)
@@ -118,7 +118,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 }
 
 func doSubscribeFilerMetaChanges(grpcDialOption grpc.DialOption, sourceFiler, sourcePath, targetFiler, targetPath string,
-	replicationStr, collection string, ttlSec int, volumeType string, debug bool) error {
+	replicationStr, collection string, ttlSec int, diskType string, debug bool) error {
 
 	// read source filer signature
 	sourceFilerSignature, sourceErr := replication.ReadFilerSignature(grpcDialOption, sourceFiler)
@@ -144,7 +144,7 @@ func doSubscribeFilerMetaChanges(grpcDialOption grpc.DialOption, sourceFiler, so
 	filerSource := &source.FilerSource{}
 	filerSource.DoInitialize(pb.ServerToGrpcAddress(sourceFiler), sourcePath)
 	filerSink := &filersink.FilerSink{}
-	filerSink.DoInitialize(pb.ServerToGrpcAddress(targetFiler), targetPath, replicationStr, collection, ttlSec, volumeType, grpcDialOption)
+	filerSink.DoInitialize(pb.ServerToGrpcAddress(targetFiler), targetPath, replicationStr, collection, ttlSec, diskType, grpcDialOption)
 	filerSink.SetSourceFiler(filerSource)
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {

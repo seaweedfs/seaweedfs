@@ -18,7 +18,7 @@ type Attr struct {
 	Replication   string      // replication
 	Collection    string      // collection name
 	TtlSec        int32       // ttl in seconds
-	VolumeType    string
+	DiskType    string
 	UserName      string
 	GroupNames    []string
 	SymlinkTarget string

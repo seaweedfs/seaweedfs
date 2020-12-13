@@ -137,7 +137,7 @@ func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *
 }
 
 func (ms *MasterServer) HasWritableVolume(option *topology.VolumeGrowOption) bool {
-	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.VolumeType)
+	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
 	return vl.GetActiveVolumeCount(option) > 0
 }
 
@@ -158,7 +158,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 	if err != nil {
 		return nil, err
 	}
-	volumeType, err := storage.ToVolumeType(r.FormValue("volumeType"))
+	diskType, err := storage.ToDiskType(r.FormValue("diskType"))
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +174,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 		Collection:         r.FormValue("collection"),
 		ReplicaPlacement:   replicaPlacement,
 		Ttl:                ttl,
-		VolumeType:         volumeType,
+		DiskType:         diskType,
 		Prealloacte:        preallocate,
 		DataCenter:         r.FormValue("dataCenter"),
 		Rack:               r.FormValue("rack"),

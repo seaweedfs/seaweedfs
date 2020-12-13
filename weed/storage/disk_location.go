@@ -19,7 +19,7 @@ import (
 type DiskLocation struct {
 	Directory              string
 	IdxDirectory           string
-	VolumeType             VolumeType
+	DiskType             DiskType
 	MaxVolumeCount         int
 	OriginalMaxVolumeCount int
 	MinFreeSpacePercent    float32
@@ -33,7 +33,7 @@ type DiskLocation struct {
 	isDiskSpaceLow bool
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32, idxDir string, volumeType VolumeType) *DiskLocation {
+func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32, idxDir string, diskType DiskType) *DiskLocation {
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
 		idxDir = dir
@@ -43,7 +43,7 @@ func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32
 	location := &DiskLocation{
 		Directory:              dir,
 		IdxDirectory:           idxDir,
-		VolumeType:             volumeType,
+		DiskType:             diskType,
 		MaxVolumeCount:         maxVolumeCount,
 		OriginalMaxVolumeCount: maxVolumeCount,
 		MinFreeSpacePercent:    minFreeSpacePercent,

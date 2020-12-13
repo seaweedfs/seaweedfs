@@ -168,7 +168,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		mountRoot = mountRoot[0 : len(mountRoot)-1]
 	}
 
-	volumeType, err := storage.ToVolumeType(*option.volumeType)
+	diskType, err := storage.ToDiskType(*option.diskType)
 	if err != nil {
 		fmt.Printf("failed to parse volume type: %v\n", err)
 		return false
@@ -181,7 +181,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		Collection:                  *option.collection,
 		Replication:                 *option.replication,
 		TtlSec:                      int32(*option.ttlSec),
-		VolumeType:                  volumeType,
+		DiskType:                  diskType,
 		ChunkSizeLimit:              int64(chunkSizeLimitMB) * 1024 * 1024,
 		ConcurrentWriters:           *option.concurrentWriters,
 		CacheDir:                    *option.cacheDir,

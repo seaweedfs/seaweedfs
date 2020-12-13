@@ -25,7 +25,7 @@ type FilePart struct {
 	Collection  string
 	DataCenter  string
 	Ttl         string
-	VolumeType  string
+	DiskType  string
 	Server      string //this comes from assign result
 	Fid         string //this comes from assign result, but customizable
 	Fsync       bool
@@ -39,7 +39,7 @@ type SubmitResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
-func SubmitFiles(master string, grpcDialOption grpc.DialOption, files []FilePart, replication string, collection string, dataCenter string, ttl string, volumeType string, maxMB int, usePublicUrl bool) ([]SubmitResult, error) {
+func SubmitFiles(master string, grpcDialOption grpc.DialOption, files []FilePart, replication string, collection string, dataCenter string, ttl string, diskType string, maxMB int, usePublicUrl bool) ([]SubmitResult, error) {
 	results := make([]SubmitResult, len(files))
 	for index, file := range files {
 		results[index].FileName = file.FileName
@@ -50,7 +50,7 @@ func SubmitFiles(master string, grpcDialOption grpc.DialOption, files []FilePart
 		Collection:  collection,
 		DataCenter:  dataCenter,
 		Ttl:         ttl,
-		VolumeType:  volumeType,
+		DiskType:  diskType,
 	}
 	ret, err := Assign(master, grpcDialOption, ar)
 	if err != nil {
@@ -72,7 +72,7 @@ func SubmitFiles(master string, grpcDialOption grpc.DialOption, files []FilePart
 		file.Collection = collection
 		file.DataCenter = dataCenter
 		file.Ttl = ttl
-		file.VolumeType = volumeType
+		file.DiskType = diskType
 		results[index].Size, err = file.Upload(maxMB, master, usePublicUrl, ret.Auth, grpcDialOption)
 		if err != nil {
 			results[index].Error = err.Error()
@@ -146,7 +146,7 @@ func (fi FilePart) Upload(maxMB int, master string, usePublicUrl bool, jwt secur
 				Replication: fi.Replication,
 				Collection:  fi.Collection,
 				Ttl:         fi.Ttl,
-				VolumeType:  fi.VolumeType,
+				DiskType:  fi.DiskType,
 			}
 			ret, err = Assign(master, grpcDialOption, ar)
 			if err != nil {
@@ -160,7 +160,7 @@ func (fi FilePart) Upload(maxMB int, master string, usePublicUrl bool, jwt secur
 					Replication: fi.Replication,
 					Collection:  fi.Collection,
 					Ttl:         fi.Ttl,
-					VolumeType:  fi.VolumeType,
+					DiskType:  fi.DiskType,
 				}
 				ret, err = Assign(master, grpcDialOption, ar)
 				if err != nil {

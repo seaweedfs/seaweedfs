@@ -37,7 +37,7 @@ type CopyOptions struct {
 	replication       *string
 	collection        *string
 	ttl               *string
-	volumeType        *string
+	diskType        *string
 	maxMB             *int
 	masterClient      *wdclient.MasterClient
 	concurrenctFiles  *int
@@ -55,7 +55,7 @@ func init() {
 	copy.replication = cmdCopy.Flag.String("replication", "", "replication type")
 	copy.collection = cmdCopy.Flag.String("collection", "", "optional collection name")
 	copy.ttl = cmdCopy.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
-	copy.volumeType = cmdCopy.Flag.String("volumeType", "", "[hdd|ssd] choose between hard drive or solid state drive")
+	copy.diskType = cmdCopy.Flag.String("diskType", "", "[hdd|ssd] choose between hard drive or solid state drive")
 	copy.maxMB = cmdCopy.Flag.Int("maxMB", 32, "split files larger than the limit")
 	copy.concurrenctFiles = cmdCopy.Flag.Int("c", 8, "concurrent file copy goroutines")
 	copy.concurrenctChunks = cmdCopy.Flag.Int("concurrentChunks", 8, "concurrent chunk copy goroutines for each file")
@@ -313,7 +313,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 				Replication: *worker.options.replication,
 				Collection:  *worker.options.collection,
 				TtlSec:      worker.options.ttlSec,
-				VolumeType:  *worker.options.volumeType,
+				DiskType:  *worker.options.diskType,
 				Path:        task.destinationUrlPath,
 			}
 
@@ -408,7 +408,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 					Replication: *worker.options.replication,
 					Collection:  *worker.options.collection,
 					TtlSec:      worker.options.ttlSec,
-					VolumeType:  *worker.options.volumeType,
+					DiskType:  *worker.options.diskType,
 					Path:        task.destinationUrlPath + fileName,
 				}
 

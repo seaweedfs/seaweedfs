@@ -52,11 +52,11 @@ func (s *Store) String() (str string) {
 	return
 }
 
-func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, minFreeSpacePercents []float32, idxFolder string, needleMapKind NeedleMapType, volumeType VolumeType) (s *Store) {
+func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, minFreeSpacePercents []float32, idxFolder string, needleMapKind NeedleMapType, diskType DiskType) (s *Store) {
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, PublicUrl: publicUrl, NeedleMapType: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
-		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i], minFreeSpacePercents[i], idxFolder, volumeType)
+		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i], minFreeSpacePercents[i], idxFolder, diskType)
 		location.loadExistingVolumes(needleMapKind)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
@@ -209,7 +209,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
 	for _, location := range s.Locations {
 		var deleteVids []needle.VolumeId
-		switch location.VolumeType {
+		switch location.DiskType {
 		case SsdType:
 			maxSsdVolumeCount = maxSsdVolumeCount + location.MaxVolumeCount
 		case HardDriveType:

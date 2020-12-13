@@ -262,7 +262,7 @@ func (v *Volume) ToVolumeInformationMessage() (types.NeedleId, *master_pb.Volume
 		Ttl:              v.Ttl.ToUint32(),
 		CompactRevision:  uint32(v.SuperBlock.CompactionRevision),
 		ModifiedAtSecond: modTime.Unix(),
-		VolumeType:       string(v.location.VolumeType),
+		DiskType:       string(v.location.DiskType),
 	}
 
 	volumeInfo.RemoteStorageName, volumeInfo.RemoteStorageKey = v.RemoteStorageNameKey()

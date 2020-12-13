@@ -23,7 +23,7 @@ type UploadOptions struct {
 	collection   *string
 	dataCenter   *string
 	ttl          *string
-	volumeType   *string
+	diskType   *string
 	maxMB        *int
 	usePublicUrl *bool
 }
@@ -37,7 +37,7 @@ func init() {
 	upload.replication = cmdUpload.Flag.String("replication", "", "replication type")
 	upload.collection = cmdUpload.Flag.String("collection", "", "optional collection name")
 	upload.dataCenter = cmdUpload.Flag.String("dataCenter", "", "optional data center name")
-	upload.volumeType = cmdUpload.Flag.String("volumeType", "", "[hdd|ssd] choose between hard drive or solid state drive")
+	upload.diskType = cmdUpload.Flag.String("diskType", "", "[hdd|ssd] choose between hard drive or solid state drive")
 	upload.ttl = cmdUpload.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
 	upload.maxMB = cmdUpload.Flag.Int("maxMB", 32, "split files larger than the limit")
 	upload.usePublicUrl = cmdUpload.Flag.Bool("usePublicUrl", false, "upload to public url from volume server")
@@ -83,7 +83,7 @@ func runUpload(cmd *Command, args []string) bool {
 					if e != nil {
 						return e
 					}
-					results, e := operation.SubmitFiles(*upload.master, grpcDialOption, parts, *upload.replication, *upload.collection, *upload.dataCenter, *upload.ttl, *upload.volumeType, *upload.maxMB, *upload.usePublicUrl)
+					results, e := operation.SubmitFiles(*upload.master, grpcDialOption, parts, *upload.replication, *upload.collection, *upload.dataCenter, *upload.ttl, *upload.diskType, *upload.maxMB, *upload.usePublicUrl)
 					bytes, _ := json.Marshal(results)
 					fmt.Println(string(bytes))
 					if e != nil {
@@ -100,7 +100,7 @@ func runUpload(cmd *Command, args []string) bool {
 		if e != nil {
 			fmt.Println(e.Error())
 		}
-		results, _ := operation.SubmitFiles(*upload.master, grpcDialOption, parts, *upload.replication, *upload.collection, *upload.dataCenter, *upload.ttl, *upload.volumeType, *upload.maxMB, *upload.usePublicUrl)
+		results, _ := operation.SubmitFiles(*upload.master, grpcDialOption, parts, *upload.replication, *upload.collection, *upload.dataCenter, *upload.ttl, *upload.diskType, *upload.maxMB, *upload.usePublicUrl)
 		bytes, _ := json.Marshal(results)
 		fmt.Println(string(bytes))
 	}
