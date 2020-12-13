@@ -47,7 +47,7 @@ func (fs *FilerSink) Initialize(configuration util.Configuration, prefix string)
 		configuration.GetString(prefix+"replication"),
 		configuration.GetString(prefix+"collection"),
 		configuration.GetInt(prefix+"ttlSec"),
-		configuration.GetString(prefix+"diskType"),
+		configuration.GetString(prefix+"disk"),
 		security.LoadClientTLS(util.GetViper(), "grpc.client"))
 }
 

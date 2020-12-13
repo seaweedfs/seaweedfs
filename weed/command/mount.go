@@ -42,7 +42,7 @@ func init() {
 	mountOptions.dirAutoCreate = cmdMount.Flag.Bool("dirAutoCreate", false, "auto create the directory to mount to")
 	mountOptions.collection = cmdMount.Flag.String("collection", "", "collection to create the files")
 	mountOptions.replication = cmdMount.Flag.String("replication", "", "replication(e.g. 000, 001) to create to files. If empty, let filer decide.")
-	mountOptions.diskType = cmdMount.Flag.String("diskType", "", "[hdd|ssd] choose between hard drive or solid state drive")
+	mountOptions.diskType = cmdMount.Flag.String("disk", "", "[hdd|ssd] choose between hard drive or solid state drive")
 	mountOptions.ttlSec = cmdMount.Flag.Int("ttl", 0, "file ttl in seconds")
 	mountOptions.chunkSizeLimitMB = cmdMount.Flag.Int("chunkSizeLimitMB", 2, "local write buffer size, also chunk large files")
 	mountOptions.concurrentWriters = cmdMount.Flag.Int("concurrentWriters", 0, "limit concurrent goroutine writers if not 0")

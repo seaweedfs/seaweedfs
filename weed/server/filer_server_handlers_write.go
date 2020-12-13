@@ -61,7 +61,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		query.Get("collection"),
 		query.Get("replication"),
 		query.Get("ttl"),
-		query.Get("diskType"),
+		query.Get("disk"),
 		query.Get("dataCenter"),
 		query.Get("rack"),
 	)

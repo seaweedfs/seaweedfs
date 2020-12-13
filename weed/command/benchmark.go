@@ -63,7 +63,7 @@ func init() {
 	b.sequentialRead = cmdBenchmark.Flag.Bool("readSequentially", false, "randomly read by ids from \"-list\" specified file")
 	b.collection = cmdBenchmark.Flag.String("collection", "benchmark", "write data to this collection")
 	b.replication = cmdBenchmark.Flag.String("replication", "000", "replication type")
-	b.diskType = cmdBenchmark.Flag.String("diskType", "", "[hdd|ssd] choose between hard drive or solid state drive")
+	b.diskType = cmdBenchmark.Flag.String("disk", "", "[hdd|ssd] choose between hard drive or solid state drive")
 	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
 	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	b.fsync = cmdBenchmark.Flag.Bool("fsync", false, "flush data to disk after write")
