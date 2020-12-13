@@ -176,17 +176,27 @@ func (t *Topology) DeleteCollection(collectionName string) {
 	t.collectionMap.Delete(collectionName)
 }
 
+func (t *Topology) DeleteLayout(collectionName string, rp *super_block.ReplicaPlacement, ttl *needle.TTL, volumeType storage.VolumeType) {
+	collection, found := t.FindCollection(collectionName)
+	if !found {
+		return
+	}
+	collection.DeleteVolumeLayout(rp, ttl, volumeType)
+}
+
 func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
-	vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, v.VolumeType)
+	volumeType, _ := storage.ToVolumeType(v.VolumeType)
+	vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, volumeType)
 	vl.RegisterVolume(&v, dn)
 	vl.EnsureCorrectWritables(&v)
 }
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	glog.Infof("removing volume info: %+v", v)
-	volumeLayout := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, v.VolumeType)
+	volumeType, _ := storage.ToVolumeType(v.VolumeType)
+	volumeLayout := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, volumeType)
 	volumeLayout.UnRegisterVolume(&v, dn)
 	if volumeLayout.isEmpty() {
-		t.DeleteCollection(v.Collection)
+		t.DeleteLayout(v.Collection, v.ReplicaPlacement, v.Ttl, volumeType)
 	}
 }
 
@@ -222,7 +232,8 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		t.UnRegisterVolumeLayout(v, dn)
 	}
 	for _, v := range changedVolumes {
-		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, v.VolumeType)
+		volumeType, _ := storage.ToVolumeType(v.VolumeType)
+		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, volumeType)
 		vl.EnsureCorrectWritables(&v)
 	}
 	return

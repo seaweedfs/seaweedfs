@@ -52,11 +52,11 @@ func (s *Store) String() (str string) {
 	return
 }
 
-func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, minFreeSpacePercents []float32, idxFolder string, needleMapKind NeedleMapType) (s *Store) {
+func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, minFreeSpacePercents []float32, idxFolder string, needleMapKind NeedleMapType, volumeType VolumeType) (s *Store) {
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, PublicUrl: publicUrl, NeedleMapType: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
-		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i], minFreeSpacePercents[i], idxFolder)
+		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i], minFreeSpacePercents[i], idxFolder, volumeType)
 		location.loadExistingVolumes(needleMapKind)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
@@ -203,12 +203,18 @@ func (s *Store) GetRack() string {
 func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var volumeMessages []*master_pb.VolumeInformationMessage
 	maxVolumeCount := 0
+	maxSsdVolumeCount := 0
 	var maxFileKey NeedleId
 	collectionVolumeSize := make(map[string]uint64)
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
 	for _, location := range s.Locations {
 		var deleteVids []needle.VolumeId
-		maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
+		switch location.VolumeType {
+		case SsdType:
+			maxSsdVolumeCount = maxSsdVolumeCount + location.MaxVolumeCount
+		case HardDriveType:
+			maxVolumeCount = maxVolumeCount + location.MaxVolumeCount
+		}
 		location.volumesLock.RLock()
 		for _, v := range location.volumes {
 			curMaxFileKey, volumeMessage := v.ToVolumeInformationMessage()
@@ -280,15 +286,16 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	}
 
 	return &master_pb.Heartbeat{
-		Ip:             s.Ip,
-		Port:           uint32(s.Port),
-		PublicUrl:      s.PublicUrl,
-		MaxVolumeCount: uint32(maxVolumeCount),
-		MaxFileKey:     NeedleIdToUint64(maxFileKey),
-		DataCenter:     s.dataCenter,
-		Rack:           s.rack,
-		Volumes:        volumeMessages,
-		HasNoVolumes:   len(volumeMessages) == 0,
+		Ip:                s.Ip,
+		Port:              uint32(s.Port),
+		PublicUrl:         s.PublicUrl,
+		MaxVolumeCount:    uint32(maxVolumeCount),
+		MaxSsdVolumeCount: uint32(maxSsdVolumeCount),
+		MaxFileKey:        NeedleIdToUint64(maxFileKey),
+		DataCenter:        s.dataCenter,
+		Rack:              s.rack,
+		Volumes:           volumeMessages,
+		HasNoVolumes:      len(volumeMessages) == 0,
 	}
 
 }

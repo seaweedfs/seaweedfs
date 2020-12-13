@@ -49,6 +49,7 @@ type VolumeServerOptions struct {
 	rack                  *string
 	whiteList             []string
 	indexType             *string
+	volumeType            *string
 	fixJpgOrientation     *bool
 	readRedirect          *bool
 	cpuProfile            *string
@@ -76,6 +77,7 @@ func init() {
 	v.dataCenter = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	v.rack = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
 	v.indexType = cmdVolume.Flag.String("index", "memory", "Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.")
+	v.volumeType = cmdVolume.Flag.String("volumeType", "", "[hdd|ssd] choose between hard drive or solid state drive")
 	v.fixJpgOrientation = cmdVolume.Flag.Bool("images.fix.orientation", false, "Adjust jpg orientation when uploading.")
 	v.readRedirect = cmdVolume.Flag.Bool("read.redirect", true, "Redirect moved or non-local volumes.")
 	v.cpuProfile = cmdVolume.Flag.String("cpuprofile", "", "cpu profile output file")
@@ -210,10 +212,15 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	masters := *v.masters
 
+	volumeType, err := storage.ToVolumeType(*v.volumeType)
+	if err != nil {
+		glog.Fatalf("failed to parse volume type: %v", err)
+	}
+
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.publicUrl,
 		v.folders, v.folderMaxLimits, v.minFreeSpacePercents,
-		*v.idxFolder,
+		*v.idxFolder, volumeType,
 		volumeNeedleMapKind,
 		strings.Split(masters, ","), 5, *v.dataCenter, *v.rack,
 		v.whiteList,

@@ -31,6 +31,7 @@ func (dc *DataCenter) ToMap() interface{} {
 	m := make(map[string]interface{})
 	m["Id"] = dc.Id()
 	m["Max"] = dc.GetMaxVolumeCount()
+	m["MaxSsd"] = dc.GetMaxSsdVolumeCount()
 	m["Free"] = dc.FreeSpace()
 	var racks []interface{}
 	for _, c := range dc.Children() {
@@ -46,6 +47,8 @@ func (dc *DataCenter) ToDataCenterInfo() *master_pb.DataCenterInfo {
 		Id:                string(dc.Id()),
 		VolumeCount:       uint64(dc.GetVolumeCount()),
 		MaxVolumeCount:    uint64(dc.GetMaxVolumeCount()),
+		MaxSsdVolumeCount: uint64(dc.GetMaxSsdVolumeCount()),
+		SsdVolumeCount:    uint64(dc.GetSsdVolumeCount()),
 		FreeVolumeCount:   uint64(dc.FreeSpace()),
 		ActiveVolumeCount: uint64(dc.GetActiveVolumeCount()),
 		RemoteVolumeCount: uint64(dc.GetRemoteVolumeCount()),

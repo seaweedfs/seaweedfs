@@ -19,17 +19,21 @@ type Node interface {
 	FreeSpace() int64
 	ReserveOneVolume(r int64) (*DataNode, error)
 	UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int64)
+	UpAdjustMaxSsdVolumeCountDelta(maxSsdVolumeCountDelta int64)
 	UpAdjustVolumeCountDelta(volumeCountDelta int64)
+	UpAdjustSsdVolumeCountDelta(ssdVolumeCountDelta int64)
 	UpAdjustRemoteVolumeCountDelta(remoteVolumeCountDelta int64)
 	UpAdjustEcShardCountDelta(ecShardCountDelta int64)
 	UpAdjustActiveVolumeCountDelta(activeVolumeCountDelta int64)
 	UpAdjustMaxVolumeId(vid needle.VolumeId)
 
 	GetVolumeCount() int64
+	GetSsdVolumeCount() int64
 	GetEcShardCount() int64
 	GetActiveVolumeCount() int64
 	GetRemoteVolumeCount() int64
 	GetMaxVolumeCount() int64
+	GetMaxSsdVolumeCount() int64
 	GetMaxVolumeId() needle.VolumeId
 	SetParent(Node)
 	LinkChildNode(node Node)
@@ -47,9 +51,11 @@ type Node interface {
 type NodeImpl struct {
 	volumeCount       int64
 	remoteVolumeCount int64
+	ssdVolumeCount    int64
 	activeVolumeCount int64
 	ecShardCount      int64
 	maxVolumeCount    int64
+	maxSsdVolumeCount int64
 	id                NodeId
 	parent            Node
 	sync.RWMutex      // lock children
@@ -143,7 +149,7 @@ func (n *NodeImpl) Id() NodeId {
 	return n.id
 }
 func (n *NodeImpl) FreeSpace() int64 {
-	freeVolumeSlotCount := n.maxVolumeCount + n.remoteVolumeCount - n.volumeCount
+	freeVolumeSlotCount := n.maxVolumeCount + n.maxSsdVolumeCount + n.remoteVolumeCount - n.volumeCount - n.ssdVolumeCount
 	if n.ecShardCount > 0 {
 		freeVolumeSlotCount = freeVolumeSlotCount - n.ecShardCount/erasure_coding.DataShardsCount - 1
 	}
@@ -200,6 +206,15 @@ func (n *NodeImpl) UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int64) { //ca
 		n.parent.UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta)
 	}
 }
+func (n *NodeImpl) UpAdjustMaxSsdVolumeCountDelta(maxSsdVolumeCountDelta int64) { //can be negative
+	if maxSsdVolumeCountDelta == 0 {
+		return
+	}
+	atomic.AddInt64(&n.maxSsdVolumeCount, maxSsdVolumeCountDelta)
+	if n.parent != nil {
+		n.parent.UpAdjustMaxSsdVolumeCountDelta(maxSsdVolumeCountDelta)
+	}
+}
 func (n *NodeImpl) UpAdjustVolumeCountDelta(volumeCountDelta int64) { //can be negative
 	if volumeCountDelta == 0 {
 		return
@@ -216,6 +231,15 @@ func (n *NodeImpl) UpAdjustRemoteVolumeCountDelta(remoteVolumeCountDelta int64) 
 	atomic.AddInt64(&n.remoteVolumeCount, remoteVolumeCountDelta)
 	if n.parent != nil {
 		n.parent.UpAdjustRemoteVolumeCountDelta(remoteVolumeCountDelta)
+	}
+}
+func (n *NodeImpl) UpAdjustSsdVolumeCountDelta(ssdVolumeCountDelta int64) { //can be negative
+	if ssdVolumeCountDelta == 0 {
+		return
+	}
+	atomic.AddInt64(&n.ssdVolumeCount, ssdVolumeCountDelta)
+	if n.parent != nil {
+		n.parent.UpAdjustSsdVolumeCountDelta(ssdVolumeCountDelta)
 	}
 }
 func (n *NodeImpl) UpAdjustEcShardCountDelta(ecShardCountDelta int64) { //can be negative
@@ -250,6 +274,9 @@ func (n *NodeImpl) GetMaxVolumeId() needle.VolumeId {
 func (n *NodeImpl) GetVolumeCount() int64 {
 	return n.volumeCount
 }
+func (n *NodeImpl) GetSsdVolumeCount() int64 {
+	return n.ssdVolumeCount
+}
 func (n *NodeImpl) GetEcShardCount() int64 {
 	return n.ecShardCount
 }
@@ -262,6 +289,9 @@ func (n *NodeImpl) GetActiveVolumeCount() int64 {
 func (n *NodeImpl) GetMaxVolumeCount() int64 {
 	return n.maxVolumeCount
 }
+func (n *NodeImpl) GetMaxSsdVolumeCount() int64 {
+	return n.maxSsdVolumeCount
+}
 
 func (n *NodeImpl) LinkChildNode(node Node) {
 	n.Lock()
@@ -269,8 +299,10 @@ func (n *NodeImpl) LinkChildNode(node Node) {
 	if n.children[node.Id()] == nil {
 		n.children[node.Id()] = node
 		n.UpAdjustMaxVolumeCountDelta(node.GetMaxVolumeCount())
+		n.UpAdjustMaxSsdVolumeCountDelta(node.GetMaxSsdVolumeCount())
 		n.UpAdjustMaxVolumeId(node.GetMaxVolumeId())
 		n.UpAdjustVolumeCountDelta(node.GetVolumeCount())
+		n.UpAdjustSsdVolumeCountDelta(node.GetSsdVolumeCount())
 		n.UpAdjustRemoteVolumeCountDelta(node.GetRemoteVolumeCount())
 		n.UpAdjustEcShardCountDelta(node.GetEcShardCount())
 		n.UpAdjustActiveVolumeCountDelta(node.GetActiveVolumeCount())
@@ -287,10 +319,12 @@ func (n *NodeImpl) UnlinkChildNode(nodeId NodeId) {
 		node.SetParent(nil)
 		delete(n.children, node.Id())
 		n.UpAdjustVolumeCountDelta(-node.GetVolumeCount())
+		n.UpAdjustSsdVolumeCountDelta(-node.GetSsdVolumeCount())
 		n.UpAdjustRemoteVolumeCountDelta(-node.GetRemoteVolumeCount())
 		n.UpAdjustEcShardCountDelta(-node.GetEcShardCount())
 		n.UpAdjustActiveVolumeCountDelta(-node.GetActiveVolumeCount())
 		n.UpAdjustMaxVolumeCountDelta(-node.GetMaxVolumeCount())
+		n.UpAdjustMaxSsdVolumeCountDelta(-node.GetMaxSsdVolumeCount())
 		glog.V(0).Infoln(n, "removes", node.Id())
 	}
 }

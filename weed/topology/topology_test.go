@@ -27,7 +27,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 
 	dc := topo.GetOrCreateDataCenter("dc1")
 	rack := dc.GetOrCreateRack("rack1")
-	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, "127.0.0.1", 25)
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, "127.0.0.1", 25, 12)
 
 	{
 		volumeCount := 7
@@ -48,10 +48,28 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 			volumeMessages = append(volumeMessages, volumeMessage)
 		}
 
+		for k := 1; k <= volumeCount; k++ {
+			volumeMessage := &master_pb.VolumeInformationMessage{
+				Id:               uint32(volumeCount + k),
+				Size:             uint64(25432),
+				Collection:       "",
+				FileCount:        uint64(2343),
+				DeleteCount:      uint64(345),
+				DeletedByteCount: 34524,
+				ReadOnly:         false,
+				ReplicaPlacement: uint32(0),
+				Version:          uint32(needle.CurrentVersion),
+				Ttl:              0,
+				VolumeType:       "ssd",
+			}
+			volumeMessages = append(volumeMessages, volumeMessage)
+		}
+
 		topo.SyncDataNodeRegistration(volumeMessages, dn)
 
-		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount)
+		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount*2)
 		assert(t, "volumeCount", int(topo.volumeCount), volumeCount)
+		assert(t, "ssdVolumeCount", int(topo.ssdVolumeCount), volumeCount)
 	}
 
 	{
@@ -115,7 +133,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 			nil,
 			dn)
 
-		for vid, _ := range layout.vid2location {
+		for vid := range layout.vid2location {
 			println("after add volume id", vid)
 		}
 		for _, vid := range layout.writables {
@@ -144,12 +162,13 @@ func TestAddRemoveVolume(t *testing.T) {
 
 	dc := topo.GetOrCreateDataCenter("dc1")
 	rack := dc.GetOrCreateRack("rack1")
-	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, "127.0.0.1", 25)
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, "127.0.0.1", 25, 12)
 
 	v := storage.VolumeInfo{
 		Id:               needle.VolumeId(1),
 		Size:             100,
 		Collection:       "xcollection",
+		VolumeType:       "ssd",
 		FileCount:        123,
 		DeleteCount:      23,
 		DeletedByteCount: 45,

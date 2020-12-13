@@ -37,7 +37,8 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 	}()
 }
 func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
-	vl := t.GetVolumeLayout(volumeInfo.Collection, volumeInfo.ReplicaPlacement, volumeInfo.Ttl, volumeInfo.VolumeType)
+	volumeType, _ := storage.ToVolumeType(volumeInfo.VolumeType)
+	vl := t.GetVolumeLayout(volumeInfo.Collection, volumeInfo.ReplicaPlacement, volumeInfo.Ttl, volumeType)
 	if !vl.SetVolumeCapacityFull(volumeInfo.Id) {
 		return false
 	}
@@ -55,13 +56,16 @@ func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
 func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 	for _, v := range dn.GetVolumes() {
 		glog.V(0).Infoln("Removing Volume", v.Id, "from the dead volume server", dn.Id())
-		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, v.VolumeType)
+		volumeType, _ := storage.ToVolumeType(v.VolumeType)
+		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, volumeType)
 		vl.SetVolumeUnavailable(dn, v.Id)
 	}
 	dn.UpAdjustVolumeCountDelta(-dn.GetVolumeCount())
+	dn.UpAdjustSsdVolumeCountDelta(-dn.GetSsdVolumeCount())
 	dn.UpAdjustRemoteVolumeCountDelta(-dn.GetRemoteVolumeCount())
 	dn.UpAdjustActiveVolumeCountDelta(-dn.GetActiveVolumeCount())
 	dn.UpAdjustMaxVolumeCountDelta(-dn.GetMaxVolumeCount())
+	dn.UpAdjustMaxSsdVolumeCountDelta(-dn.GetMaxSsdVolumeCount())
 	if dn.Parent() != nil {
 		dn.Parent().UnlinkChildNode(dn.Id())
 	}

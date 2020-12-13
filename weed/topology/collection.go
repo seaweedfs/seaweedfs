@@ -44,6 +44,17 @@ func (c *Collection) GetOrCreateVolumeLayout(rp *super_block.ReplicaPlacement, t
 	return vl.(*VolumeLayout)
 }
 
+func (c *Collection) DeleteVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, volumeType storage.VolumeType) {
+	keyString := rp.String()
+	if ttl != nil {
+		keyString += ttl.String()
+	}
+	if volumeType != storage.HardDriveType {
+		keyString += string(volumeType)
+	}
+	c.storageType2VolumeLayout.Delete(keyString)
+}
+
 func (c *Collection) Lookup(vid needle.VolumeId) []*DataNode {
 	for _, vl := range c.storageType2VolumeLayout.Items() {
 		if vl != nil {
