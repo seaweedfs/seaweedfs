@@ -131,6 +131,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterUrl st
 		Replication: r.FormValue("replication"),
 		Collection:  r.FormValue("collection"),
 		Ttl:         r.FormValue("ttl"),
+		VolumeType:  r.FormValue("volumeType"),
 	}
 	assignResult, ae := operation.Assign(masterUrl, grpcDialOption, ar)
 	if ae != nil {

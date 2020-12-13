@@ -14,6 +14,7 @@ type VolumeInfo struct {
 	Size              uint64
 	ReplicaPlacement  *super_block.ReplicaPlacement
 	Ttl               *needle.TTL
+	VolumeType        VolumeType
 	Collection        string
 	Version           needle.Version
 	FileCount         int

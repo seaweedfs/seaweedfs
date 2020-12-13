@@ -2,6 +2,7 @@ package topology
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
@@ -29,13 +30,16 @@ func (c *Collection) String() string {
 	return fmt.Sprintf("Name:%s, volumeSizeLimit:%d, storageType2VolumeLayout:%v", c.Name, c.volumeSizeLimit, c.storageType2VolumeLayout)
 }
 
-func (c *Collection) GetOrCreateVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL) *VolumeLayout {
+func (c *Collection) GetOrCreateVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, volumeType storage.VolumeType) *VolumeLayout {
 	keyString := rp.String()
 	if ttl != nil {
 		keyString += ttl.String()
 	}
+	if volumeType != storage.HardDriveType {
+		keyString += string(volumeType)
+	}
 	vl := c.storageType2VolumeLayout.Get(keyString, func() interface{} {
-		return NewVolumeLayout(rp, ttl, c.volumeSizeLimit, c.replicationAsMin)
+		return NewVolumeLayout(rp, ttl, volumeType, c.volumeSizeLimit, c.replicationAsMin)
 	})
 	return vl.(*VolumeLayout)
 }

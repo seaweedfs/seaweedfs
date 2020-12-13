@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -136,7 +137,7 @@ func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *
 }
 
 func (ms *MasterServer) HasWritableVolume(option *topology.VolumeGrowOption) bool {
-	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl)
+	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.VolumeType)
 	return vl.GetActiveVolumeCount(option) > 0
 }
 
@@ -157,6 +158,10 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 	if err != nil {
 		return nil, err
 	}
+	volumeType, err := storage.ToVolumeType(r.FormValue("volumeType"))
+	if err != nil {
+		return nil, err
+	}
 
 	preallocate := ms.preallocateSize
 	if r.FormValue("preallocate") != "" {
@@ -169,6 +174,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 		Collection:         r.FormValue("collection"),
 		ReplicaPlacement:   replicaPlacement,
 		Ttl:                ttl,
+		VolumeType:         volumeType,
 		Prealloacte:        preallocate,
 		DataCenter:         r.FormValue("dataCenter"),
 		Rack:               r.FormValue("rack"),

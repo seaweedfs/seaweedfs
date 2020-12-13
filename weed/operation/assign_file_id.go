@@ -18,6 +18,7 @@ type VolumeAssignRequest struct {
 	Replication         string
 	Collection          string
 	Ttl                 string
+	VolumeType          string
 	DataCenter          string
 	Rack                string
 	DataNode            string
@@ -54,6 +55,7 @@ func Assign(server string, grpcDialOption grpc.DialOption, primaryRequest *Volum
 				Replication:         request.Replication,
 				Collection:          request.Collection,
 				Ttl:                 request.Ttl,
+				VolumeType:          request.VolumeType,
 				DataCenter:          request.DataCenter,
 				Rack:                request.Rack,
 				DataNode:            request.DataNode,
@@ -105,6 +107,7 @@ func LookupJwt(master string, fileId string) security.EncodedJwt {
 
 type StorageOption struct {
 	Replication       string
+	VolumeType        string
 	Collection        string
 	DataCenter        string
 	Rack              string
@@ -123,6 +126,7 @@ func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, a
 		Replication:         so.Replication,
 		Collection:          so.Collection,
 		Ttl:                 so.TtlString(),
+		VolumeType:          so.VolumeType,
 		DataCenter:          so.DataCenter,
 		Rack:                so.Rack,
 		WritableVolumeCount: so.VolumeGrowthCount,
@@ -133,6 +137,7 @@ func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, a
 			Replication:         so.Replication,
 			Collection:          so.Collection,
 			Ttl:                 so.TtlString(),
+			VolumeType:          so.VolumeType,
 			DataCenter:          "",
 			Rack:                "",
 			WritableVolumeCount: so.VolumeGrowthCount,

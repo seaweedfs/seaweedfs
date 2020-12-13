@@ -26,6 +26,7 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 				Replication: wfs.option.Replication,
 				Collection:  wfs.option.Collection,
 				TtlSec:      wfs.option.TtlSec,
+				VolumeType:  string(wfs.option.VolumeType),
 				DataCenter:  wfs.option.DataCenter,
 				Path:        string(fullPath),
 			}

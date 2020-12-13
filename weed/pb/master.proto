@@ -163,6 +163,7 @@ message AssignRequest {
     string data_node = 7;
     uint32 memory_map_max_size_mb = 8;
     uint32 Writable_volume_count = 9;
+    string volume_type = 10;
 }
 message AssignResponse {
     string fid = 1;
@@ -177,11 +178,9 @@ message StatisticsRequest {
     string replication = 1;
     string collection = 2;
     string ttl = 3;
+    string volume_type = 4;
 }
 message StatisticsResponse {
-    string replication = 1;
-    string collection = 2;
-    string ttl = 3;
     uint64 total_size = 4;
     uint64 used_size = 5;
     uint64 file_count = 6;

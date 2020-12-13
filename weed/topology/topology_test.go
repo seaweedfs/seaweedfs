@@ -96,7 +96,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 			nil,
 			dn)
 		rp, _ := super_block.NewReplicaPlacementFromString("000")
-		layout := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL)
+		layout := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, storage.HardDriveType)
 		assert(t, "writables after repeated add", len(layout.writables), volumeCount)
 
 		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount)

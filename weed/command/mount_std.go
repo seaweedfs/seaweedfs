@@ -5,6 +5,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 	"os"
 	"os/user"
 	"path"
@@ -167,6 +168,12 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		mountRoot = mountRoot[0 : len(mountRoot)-1]
 	}
 
+	volumeType, err := storage.ToVolumeType(*option.volumeType)
+	if err != nil {
+		fmt.Printf("failed to parse volume type: %v\n", err)
+		return false
+	}
+
 	seaweedFileSystem := filesys.NewSeaweedFileSystem(&filesys.Option{
 		FilerGrpcAddress:            filerGrpcAddress,
 		GrpcDialOption:              grpcDialOption,
@@ -174,6 +181,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		Collection:                  *option.collection,
 		Replication:                 *option.replication,
 		TtlSec:                      int32(*option.ttlSec),
+		VolumeType:                  volumeType,
 		ChunkSizeLimit:              int64(chunkSizeLimitMB) * 1024 * 1024,
 		ConcurrentWriters:           *option.concurrentWriters,
 		CacheDir:                    *option.cacheDir,

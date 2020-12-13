@@ -103,6 +103,7 @@ func (v *volumesBinaryState) copyState(list *VolumeLocationList) copyState {
 type VolumeLayout struct {
 	rp               *super_block.ReplicaPlacement
 	ttl              *needle.TTL
+	volumeType       storage.VolumeType
 	vid2location     map[needle.VolumeId]*VolumeLocationList
 	writables        []needle.VolumeId   // transient array of writable volume id
 	readonlyVolumes  *volumesBinaryState // readonly volumes
@@ -118,10 +119,11 @@ type VolumeLayoutStats struct {
 	FileCount uint64
 }
 
-func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, volumeSizeLimit uint64, replicationAsMin bool) *VolumeLayout {
+func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, volumeType storage.VolumeType, volumeSizeLimit uint64, replicationAsMin bool) *VolumeLayout {
 	return &VolumeLayout{
 		rp:               rp,
 		ttl:              ttl,
+		volumeType:       volumeType,
 		vid2location:     make(map[needle.VolumeId]*VolumeLocationList),
 		writables:        *new([]needle.VolumeId),
 		readonlyVolumes:  NewVolumesBinaryState(readOnlyState, rp, ExistCopies()),

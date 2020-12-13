@@ -27,6 +27,7 @@ type VolumeGrowOption struct {
 	Collection         string
 	ReplicaPlacement   *super_block.ReplicaPlacement
 	Ttl                *needle.TTL
+	VolumeType         storage.VolumeType
 	Prealloacte        int64
 	DataCenter         string
 	Rack               string
