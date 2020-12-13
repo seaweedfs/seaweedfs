@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"io"
 	"os"
@@ -111,7 +112,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 
 func balanceVolumeServers(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, volumeSizeLimit uint64, collection string, applyBalancing bool) error {
 
-	// balance writable volumes
+	// balance writable hdd volumes
 	for _, n := range nodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
 			if collection != "ALL_COLLECTIONS" {
@@ -119,14 +120,14 @@ func balanceVolumeServers(commandEnv *CommandEnv, volumeReplicas map[uint32][]*V
 					return false
 				}
 			}
-			return !v.ReadOnly && v.Size < volumeSizeLimit
+			return v.VolumeType == string(storage.HardDriveType) && (!v.ReadOnly && v.Size < volumeSizeLimit)
 		})
 	}
-	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, sortWritableVolumes, applyBalancing); err != nil {
+	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxVolumeCount, sortWritableVolumes, applyBalancing); err != nil {
 		return err
 	}
 
-	// balance readable volumes
+	// balance readable hdd volumes
 	for _, n := range nodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
 			if collection != "ALL_COLLECTIONS" {
@@ -134,10 +135,40 @@ func balanceVolumeServers(commandEnv *CommandEnv, volumeReplicas map[uint32][]*V
 					return false
 				}
 			}
-			return v.ReadOnly || v.Size >= volumeSizeLimit
+			return v.VolumeType == string(storage.HardDriveType) && (v.ReadOnly || v.Size >= volumeSizeLimit)
 		})
 	}
-	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, sortReadOnlyVolumes, applyBalancing); err != nil {
+	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxVolumeCount, sortReadOnlyVolumes, applyBalancing); err != nil {
+		return err
+	}
+
+	// balance writable ssd volumes
+	for _, n := range nodes {
+		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
+			if collection != "ALL_COLLECTIONS" {
+				if v.Collection != collection {
+					return false
+				}
+			}
+			return v.VolumeType == string(storage.SsdType) && (!v.ReadOnly && v.Size < volumeSizeLimit)
+		})
+	}
+	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxSsdVolumeCount, sortWritableVolumes, applyBalancing); err != nil {
+		return err
+	}
+
+	// balance readable ssd volumes
+	for _, n := range nodes {
+		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
+			if collection != "ALL_COLLECTIONS" {
+				if v.Collection != collection {
+					return false
+				}
+			}
+			return v.VolumeType == string(storage.SsdType) && (v.ReadOnly || v.Size >= volumeSizeLimit)
+		})
+	}
+	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxSsdVolumeCount, sortReadOnlyVolumes, applyBalancing); err != nil {
 		return err
 	}
 
@@ -169,12 +200,21 @@ type Node struct {
 	rack            string
 }
 
-func (n *Node) localVolumeRatio() float64 {
-	return divide(len(n.selectedVolumes), int(n.info.MaxVolumeCount))
+type CapacityFunc func(*master_pb.DataNodeInfo) int
+
+func capacityByMaxSsdVolumeCount(info *master_pb.DataNodeInfo) int {
+	return int(info.MaxSsdVolumeCount)
+}
+func capacityByMaxVolumeCount(info *master_pb.DataNodeInfo) int {
+	return int(info.MaxVolumeCount)
 }
 
-func (n *Node) localVolumeNextRatio() float64 {
-	return divide(len(n.selectedVolumes)+1, int(n.info.MaxVolumeCount))
+func (n *Node) localVolumeRatio(capacityFunc CapacityFunc) float64 {
+	return divide(len(n.selectedVolumes), capacityFunc(n.info))
+}
+
+func (n *Node) localVolumeNextRatio(capacityFunc CapacityFunc) float64 {
+	return divide(len(n.selectedVolumes)+1, capacityFunc(n.info))
 }
 
 func (n *Node) selectVolumes(fn func(v *master_pb.VolumeInformationMessage) bool) {
@@ -198,11 +238,11 @@ func sortReadOnlyVolumes(volumes []*master_pb.VolumeInformationMessage) {
 	})
 }
 
-func balanceSelectedVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage), applyBalancing bool) (err error) {
+func balanceSelectedVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, capacityFunc CapacityFunc, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage), applyBalancing bool) (err error) {
 	selectedVolumeCount, volumeMaxCount := 0, 0
 	for _, dn := range nodes {
 		selectedVolumeCount += len(dn.selectedVolumes)
-		volumeMaxCount += int(dn.info.MaxVolumeCount)
+		volumeMaxCount += capacityFunc(dn.info)
 	}
 
 	idealVolumeRatio := divide(selectedVolumeCount, volumeMaxCount)
@@ -212,7 +252,7 @@ func balanceSelectedVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*
 	for hasMoved {
 		hasMoved = false
 		sort.Slice(nodes, func(i, j int) bool {
-			return nodes[i].localVolumeRatio() < nodes[j].localVolumeRatio()
+			return nodes[i].localVolumeRatio(capacityFunc) < nodes[j].localVolumeRatio(capacityFunc)
 		})
 
 		fullNode := nodes[len(nodes)-1]
@@ -224,7 +264,7 @@ func balanceSelectedVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*
 
 		for i := 0; i < len(nodes)-1; i++ {
 			emptyNode := nodes[i]
-			if !(fullNode.localVolumeRatio() > idealVolumeRatio && emptyNode.localVolumeNextRatio() <= idealVolumeRatio) {
+			if !(fullNode.localVolumeRatio(capacityFunc) > idealVolumeRatio && emptyNode.localVolumeNextRatio(capacityFunc) <= idealVolumeRatio) {
 				// no more volume servers with empty slots
 				break
 			}
