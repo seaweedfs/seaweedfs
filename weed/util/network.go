@@ -7,16 +7,26 @@ import (
 )
 
 func DetectedHostAddress() string {
-	addrs, err := net.InterfaceAddrs()
+	netInterfaces, err := net.Interfaces()
 	if err != nil {
-		glog.V(0).Infof("failed to detect ip address: %v", err)
+		glog.V(0).Infof("failed to detect net interfaces: %v", err)
 		return ""
 	}
 
-	for _, a := range addrs {
-		if ipnet, ok := a.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String()
+	for _, netInterface := range netInterfaces {
+		if (netInterface.Flags & net.FlagUp) == 0 {
+			continue
+		}
+		addrs, err := netInterface.Addrs()
+		if err != nil {
+			glog.V(0).Infof("get interface addresses: %v", err)
+		}
+
+		for _, a := range addrs {
+			if ipNet, ok := a.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+				if ipNet.IP.To4() != nil {
+					return ipNet.IP.String()
+				}
 			}
 		}
 	}
