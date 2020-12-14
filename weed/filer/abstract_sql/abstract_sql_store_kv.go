@@ -21,7 +21,8 @@ func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []by
 	}
 
 	if !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
-		return fmt.Errorf("kv insert: %s", err)
+		// return fmt.Errorf("kv insert: %s", err)
+		// skip this since the error can be in a different language
 	}
 
 	// now the insert failed possibly due to duplication constraints
@@ -33,7 +34,7 @@ func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []by
 	}
 
 	_, err = res.RowsAffected()
-	if err != nil {
+	if err != nil  {
 		return fmt.Errorf("kv upsert no rows affected: %s", err)
 	}
 	return nil
