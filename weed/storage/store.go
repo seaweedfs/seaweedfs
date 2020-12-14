@@ -103,6 +103,9 @@ func (s *Store) findVolume(vid needle.VolumeId) *Volume {
 func (s *Store) FindFreeLocation(diskType DiskType) (ret *DiskLocation) {
 	max := 0
 	for _, location := range s.Locations {
+		if diskType != location.DiskType {
+			continue
+		}
 		currentFreeCount := location.MaxVolumeCount - location.VolumesLen()
 		currentFreeCount *= erasure_coding.DataShardsCount
 		currentFreeCount -= location.EcVolumesLen()
