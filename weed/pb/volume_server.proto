@@ -157,6 +157,7 @@ message AllocateVolumeRequest {
     string replication = 4;
     string ttl = 5;
     uint32 memory_map_max_size_mb = 6;
+    string disk_type = 7;
 }
 message AllocateVolumeResponse {
 }
@@ -361,6 +362,7 @@ message ReadVolumeFileStatusResponse {
     uint64 file_count = 6;
     uint32 compaction_revision = 7;
     string collection = 8;
+    string disk_type = 9;
 }
 
 message DiskStatus {

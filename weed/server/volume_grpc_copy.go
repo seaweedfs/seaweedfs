@@ -36,11 +36,6 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 		glog.V(0).Infof("deleted existing volume %d before copying.", req.VolumeId)
 	}
 
-	location := vs.store.FindFreeLocation()
-	if location == nil {
-		return nil, fmt.Errorf("no space left")
-	}
-
 	// the master will not start compaction for read-only volumes, so it is safe to just copy files directly
 	// copy .dat and .idx files
 	//   read .idx .dat file size and timestamp
@@ -57,6 +52,11 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 			})
 		if nil != err {
 			return fmt.Errorf("read volume file status failed, %v", err)
+		}
+
+		location := vs.store.FindFreeLocation(storage.DiskType(volFileInfoResp.DiskType))
+		if location == nil {
+			return fmt.Errorf("no space left")
 		}
 
 		dataBaseFileName = storage.VolumeFileName(location.Directory, volFileInfoResp.Collection, int(req.VolumeId))
@@ -206,6 +206,7 @@ func (vs *VolumeServer) ReadVolumeFileStatus(ctx context.Context, req *volume_se
 	resp.FileCount = v.FileCount()
 	resp.CompactionRevision = uint32(v.CompactionRevision)
 	resp.Collection = v.Collection
+	resp.DiskType = string(v.DiskType())
 	return resp, nil
 }
 
