@@ -219,8 +219,8 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.publicUrl,
-		v.folders, v.folderMaxLimits, v.minFreeSpacePercents,
-		*v.idxFolder, diskType,
+		v.folders, v.folderMaxLimits, v.minFreeSpacePercents, diskType,
+		*v.idxFolder,
 		volumeNeedleMapKind,
 		strings.Split(masters, ","), 5, *v.dataCenter, *v.rack,
 		v.whiteList,
