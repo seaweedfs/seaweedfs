@@ -77,7 +77,8 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Ent
 	}
 
 	if !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
-		return fmt.Errorf("kv insert: %s", err)
+		// return fmt.Errorf("insert: %s", err)
+		// skip this since the error can be in a different language
 	}
 
 	// now the insert failed possibly due to duplication constraints

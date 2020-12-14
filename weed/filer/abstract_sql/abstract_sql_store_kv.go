@@ -5,11 +5,10 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
-	"strings"
-
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"strings"
 )
 
 func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
@@ -17,10 +16,13 @@ func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []by
 	dirStr, dirHash, name := genDirAndName(key)
 
 	res, err := store.getTxOrDB(ctx).ExecContext(ctx, store.SqlInsert, dirHash, name, dirStr, value)
-	if err != nil {
-		if !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
-			return fmt.Errorf("kv insert: %s", err)
-		}
+	if err == nil {
+		return
+	}
+
+	if !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+		// return fmt.Errorf("kv insert: %s", err)
+		// skip this since the error can be in a different language
 	}
 
 	// now the insert failed possibly due to duplication constraints
@@ -32,7 +34,7 @@ func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []by
 	}
 
 	_, err = res.RowsAffected()
-	if err != nil {
+	if err != nil  {
 		return fmt.Errorf("kv upsert no rows affected: %s", err)
 	}
 	return nil
