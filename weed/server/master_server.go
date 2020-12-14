@@ -82,9 +82,6 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 	v.SetDefault("master.replication.treat_replication_as_minimums", false)
 	replicationAsMin := v.GetBool("master.replication.treat_replication_as_minimums")
 
-	v.SetDefault("access.ui", true)
-	enableUiAccess := v.GetBool("access.ui")
-
 	var preallocateSize int64
 	if option.VolumePreallocate {
 		preallocateSize = int64(option.VolumeSizeLimitMB) * (1 << 20)
@@ -111,11 +108,9 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 
 	ms.guard = security.NewGuard(ms.option.WhiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
-	if enableUiAccess {
-		handleStaticResources2(r)
-		r.HandleFunc("/", ms.proxyToLeader(ms.uiStatusHandler))
-		r.HandleFunc("/ui/index.html", ms.uiStatusHandler)
-	}
+	handleStaticResources2(r)
+	r.HandleFunc("/", ms.proxyToLeader(ms.uiStatusHandler))
+	r.HandleFunc("/ui/index.html", ms.uiStatusHandler)
 	if !ms.option.DisableHttp {
 		r.HandleFunc("/dir/assign", ms.proxyToLeader(ms.guard.WhiteList(ms.dirAssignHandler)))
 		r.HandleFunc("/dir/lookup", ms.guard.WhiteList(ms.dirLookupHandler))
