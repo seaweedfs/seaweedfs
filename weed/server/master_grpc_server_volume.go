@@ -79,7 +79,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	}
 
 	if !ms.Topo.HasWritableVolume(option) {
-		if ms.Topo.FreeSpace() <= 0 {
+		if ms.Topo.AvailableSpaceFor(option) <= 0 {
 			return nil, fmt.Errorf("No free volumes left!")
 		}
 		ms.vgLock.Lock()

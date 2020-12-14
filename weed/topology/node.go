@@ -2,6 +2,7 @@ package topology
 
 import (
 	"errors"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 	"math/rand"
 	"strings"
 	"sync"
@@ -147,6 +148,16 @@ func (n *NodeImpl) String() string {
 }
 func (n *NodeImpl) Id() NodeId {
 	return n.id
+}
+func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
+	freeVolumeSlotCount := n.maxVolumeCount + n.remoteVolumeCount - n.volumeCount
+	if option.DiskType == storage.SsdType {
+		freeVolumeSlotCount = n.maxSsdVolumeCount - n.ssdVolumeCount
+	}
+	if n.ecShardCount > 0 {
+		freeVolumeSlotCount = freeVolumeSlotCount - n.ecShardCount/erasure_coding.DataShardsCount - 1
+	}
+	return freeVolumeSlotCount
 }
 func (n *NodeImpl) FreeSpace() int64 {
 	freeVolumeSlotCount := n.maxVolumeCount + n.maxSsdVolumeCount + n.remoteVolumeCount - n.volumeCount - n.ssdVolumeCount
