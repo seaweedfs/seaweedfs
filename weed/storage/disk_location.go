@@ -354,3 +354,10 @@ func (l *DiskLocation) CheckDiskSpace() {
 	}
 
 }
+
+func (l *DiskLocation) GetDiskType() string {
+	if l.DiskType == SsdType {
+		return "SSD"
+	}
+	return "HDD"
+}

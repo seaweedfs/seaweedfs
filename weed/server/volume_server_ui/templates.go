@@ -69,6 +69,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
             <thead>
               <tr>
               <th>Path</th>
+              <th>Type</th>
               <th>Total</th>
               <th>Free</th>
               <th>Usage</th>
@@ -78,6 +79,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
           {{ range .DiskStatuses }}
             <tr>
               <td>{{ .Dir }}</td>
+              <td>{{ .DiskType }}</td>
               <td>{{ bytesToHumanReadable .All }}</td>
               <td>{{ bytesToHumanReadable .Free  }}</td>
               <td>{{ percentFrom .All .Used}}%</td>
