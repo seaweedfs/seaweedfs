@@ -20,7 +20,6 @@ type VolumeServer struct {
 	pulseSeconds    int
 	dataCenter      string
 	rack            string
-	DiskType      storage.DiskType
 	store           *storage.Store
 	guard           *security.Guard
 	grpcDialOption  grpc.DialOption
@@ -38,7 +37,7 @@ type VolumeServer struct {
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	port int, publicUrl string,
-	folders []string, maxCounts []int, minFreeSpacePercents []float32, diskType storage.DiskType,
+	folders []string, maxCounts []int, minFreeSpacePercents []float32, diskTypes []storage.DiskType,
 	idxFolder string,
 	needleMapKind storage.NeedleMapType,
 	masterNodes []string, pulseSeconds int,
@@ -64,7 +63,6 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		pulseSeconds:            pulseSeconds,
 		dataCenter:              dataCenter,
 		rack:                    rack,
-		DiskType:              diskType,
 		needleMapKind:           needleMapKind,
 		FixJpgOrientation:       fixJpgOrientation,
 		ReadRedirect:            readRedirect,
@@ -78,7 +76,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 
 	vs.checkWithMaster()
 
-	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, minFreeSpacePercents, idxFolder, vs.needleMapKind, vs.DiskType)
+	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, minFreeSpacePercents, idxFolder, vs.needleMapKind, diskTypes)
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)

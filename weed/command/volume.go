@@ -169,6 +169,25 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		glog.Fatalf("%d directories by -dir, but only %d minFreeSpacePercent is set by -minFreeSpacePercent", len(v.folders), len(v.minFreeSpacePercents))
 	}
 
+	// set disk types
+	var diskTypes []storage.DiskType
+	diskTypeStrings := strings.Split(*v.diskType, ",")
+	for _, diskTypeString := range diskTypeStrings {
+		if diskType, err := storage.ToDiskType(diskTypeString); err == nil {
+			diskTypes = append(diskTypes, diskType)
+		} else {
+			glog.Fatalf("failed to parse volume type: %v", err)
+		}
+	}
+	if len(diskTypes) == 1 && len(v.folders) > 1 {
+		for i := 0; i < len(v.folders)-1; i++ {
+			diskTypes = append(diskTypes, diskTypes[0])
+		}
+	}
+	if len(v.folders) != len(diskTypes) {
+		glog.Fatalf("%d directories by -dir, but only %d disk types is set by -disk", len(v.folders), len(diskTypes))
+	}
+
 	// security related white list configuration
 	if volumeWhiteListOption != "" {
 		v.whiteList = strings.Split(volumeWhiteListOption, ",")
@@ -212,14 +231,9 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	masters := *v.masters
 
-	diskType, err := storage.ToDiskType(*v.diskType)
-	if err != nil {
-		glog.Fatalf("failed to parse volume type: %v", err)
-	}
-
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.publicUrl,
-		v.folders, v.folderMaxLimits, v.minFreeSpacePercents, diskType,
+		v.folders, v.folderMaxLimits, v.minFreeSpacePercents, diskTypes,
 		*v.idxFolder,
 		volumeNeedleMapKind,
 		strings.Split(masters, ","), 5, *v.dataCenter, *v.rack,
