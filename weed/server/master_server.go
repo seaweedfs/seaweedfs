@@ -108,10 +108,10 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 
 	ms.guard = security.NewGuard(ms.option.WhiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
+	handleStaticResources2(r)
+	r.HandleFunc("/", ms.proxyToLeader(ms.uiStatusHandler))
+	r.HandleFunc("/ui/index.html", ms.uiStatusHandler)
 	if !ms.option.DisableHttp {
-		handleStaticResources2(r)
-		r.HandleFunc("/", ms.proxyToLeader(ms.uiStatusHandler))
-		r.HandleFunc("/ui/index.html", ms.uiStatusHandler)
 		r.HandleFunc("/dir/assign", ms.proxyToLeader(ms.guard.WhiteList(ms.dirAssignHandler)))
 		r.HandleFunc("/dir/lookup", ms.guard.WhiteList(ms.dirLookupHandler))
 		r.HandleFunc("/dir/status", ms.proxyToLeader(ms.guard.WhiteList(ms.dirStatusHandler)))
