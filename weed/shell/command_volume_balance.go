@@ -113,6 +113,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 func balanceVolumeServers(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, volumeSizeLimit uint64, collection string, applyBalancing bool) error {
 
 	// balance writable hdd volumes
+	// fmt.Fprintf(os.Stdout, "\nbalance collection %s writable hdd volumes\n", collection)
 	for _, n := range nodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
 			if collection != "ALL_COLLECTIONS" {
@@ -128,6 +129,7 @@ func balanceVolumeServers(commandEnv *CommandEnv, volumeReplicas map[uint32][]*V
 	}
 
 	// balance readable hdd volumes
+	// fmt.Fprintf(os.Stdout, "\nbalance collection %s readable hdd volumes\n", collection)
 	for _, n := range nodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
 			if collection != "ALL_COLLECTIONS" {
@@ -143,6 +145,7 @@ func balanceVolumeServers(commandEnv *CommandEnv, volumeReplicas map[uint32][]*V
 	}
 
 	// balance writable ssd volumes
+	// fmt.Fprintf(os.Stdout, "\nbalance collection %s writable ssd volumes\n", collection)
 	for _, n := range nodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
 			if collection != "ALL_COLLECTIONS" {
@@ -158,6 +161,7 @@ func balanceVolumeServers(commandEnv *CommandEnv, volumeReplicas map[uint32][]*V
 	}
 
 	// balance readable ssd volumes
+	// fmt.Fprintf(os.Stdout, "\nbalance collection %s readable ssd volumes\n", collection)
 	for _, n := range nodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
 			if collection != "ALL_COLLECTIONS" {
@@ -249,6 +253,8 @@ func balanceSelectedVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*
 
 	hasMoved := true
 
+	// fmt.Fprintf(os.Stdout, " total %d volumes, max %d volumes, idealVolumeRatio %f\n", selectedVolumeCount, volumeMaxCount, idealVolumeRatio)
+
 	for hasMoved {
 		hasMoved = false
 		sort.Slice(nodes, func(i, j int) bool {
@@ -319,7 +325,7 @@ func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, f
 	if v.Collection == "" {
 		collectionPrefix = ""
 	}
-	fmt.Fprintf(os.Stdout, "moving volume %s%d %s => %s\n", collectionPrefix, v.Id, fullNode.info.Id, emptyNode.info.Id)
+	fmt.Fprintf(os.Stdout, "  moving %s volume %s%d %s => %s\n", v.DiskType, collectionPrefix, v.Id, fullNode.info.Id, emptyNode.info.Id)
 	if applyChange {
 		return LiveMoveVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id), fullNode.info.Id, emptyNode.info.Id, 5*time.Second)
 	}
