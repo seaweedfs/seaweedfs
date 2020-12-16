@@ -57,7 +57,11 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 		reply, md5bytes, err = fs.doPutAutoChunk(ctx, w, r, chunkSize, so)
 	}
 	if err != nil {
-		writeJsonError(w, r, http.StatusInternalServerError, err)
+		if strings.HasPrefix(err.Error(), "read input:") {
+			writeJsonError(w, r, 499, err)
+		} else {
+			writeJsonError(w, r, http.StatusInternalServerError, err)
+		}
 	} else if reply != nil {
 		if len(md5bytes) > 0 {
 			w.Header().Set("Content-MD5", util.Base64Encode(md5bytes))
