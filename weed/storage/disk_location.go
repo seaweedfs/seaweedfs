@@ -104,19 +104,19 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 		l.volumesLock.Unlock()
 		glog.V(1).Infof("loaded volume, %v", vid)
 		return true
+	} else {
+		l.volumes[vid] = nil
+		l.volumesLock.Unlock()
 	}
 
 	// load the volume
 	v, e := NewVolume(l.Directory, l.IdxDirectory, collection, vid, needleMapKind, nil, nil, 0, 0)
 	if e != nil {
-		l.volumesLock.Unlock()
 		glog.V(0).Infof("new volume %s error %s", volumeName, e)
 		return false
 	}
-
-	l.volumes[vid] = v
-	v.location = l
-	l.volumesLock.Unlock()
+	
+	l.SetVolume(vid, v)
 
 	size, _, _ := v.FileStat()
 	glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s",
