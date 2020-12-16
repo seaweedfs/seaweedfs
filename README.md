@@ -27,15 +27,16 @@ Your support will be really appreciated by me and other supporters!
     Add your name or icon here
   </a>
 </p>
+-->
 
-<h4 align="center">Gold</h4>
 
 <table>
   <tbody>
     <tr>
       <td align="center" valign="middle">
+        <b>Gold Sponsor:</b>
         <a href="" target="_blank">
-          Add your name or icon here
+          ![曙光](https://raw.githubusercontent.com/chrislusf/seaweedfs/master/note/shuguang.png)
         </a>
       </td>
     </tr>
@@ -43,7 +44,6 @@ Your support will be really appreciated by me and other supporters!
   </tbody>
 </table>
 
--->
 
 ---
 
