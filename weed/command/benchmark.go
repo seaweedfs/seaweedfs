@@ -35,7 +35,7 @@ type BenchmarkOptions struct {
 	sequentialRead   *bool
 	collection       *string
 	replication      *string
-	diskType       *string
+	diskType         *string
 	cpuprofile       *string
 	maxCpu           *int
 	grpcDialOption   grpc.DialOption
@@ -236,7 +236,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			Count:       1,
 			Collection:  *b.collection,
 			Replication: *b.replication,
-			DiskType: *b.diskType,
+			DiskType:    *b.diskType,
 		}
 		if assignResult, err := operation.Assign(b.masterClient.GetMaster(), b.grpcDialOption, ar); err == nil {
 			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection

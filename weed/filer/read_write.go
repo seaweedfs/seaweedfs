@@ -82,8 +82,8 @@ func SaveInsideFiler(client filer_pb.SeaweedFilerClient, dir, name string, conte
 
 	if err == filer_pb.ErrNotFound {
 		err = filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
-			Directory:          dir,
-			Entry:              &filer_pb.Entry{
+			Directory: dir,
+			Entry: &filer_pb.Entry{
 				Name:        name,
 				IsDirectory: false,
 				Attributes: &filer_pb.FuseAttributes{
@@ -92,7 +92,7 @@ func SaveInsideFiler(client filer_pb.SeaweedFilerClient, dir, name string, conte
 					FileMode:    uint32(0644),
 					Collection:  "",
 					Replication: "",
-					FileSize: uint64(len(content)),
+					FileSize:    uint64(len(content)),
 				},
 				Content: content,
 			},
@@ -103,8 +103,8 @@ func SaveInsideFiler(client filer_pb.SeaweedFilerClient, dir, name string, conte
 		entry.Attributes.Mtime = time.Now().Unix()
 		entry.Attributes.FileSize = uint64(len(content))
 		err = filer_pb.UpdateEntry(client, &filer_pb.UpdateEntryRequest{
-			Directory:          dir,
-			Entry:              entry,
+			Directory: dir,
+			Entry:     entry,
 		})
 	}
 

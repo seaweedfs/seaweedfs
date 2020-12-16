@@ -25,7 +25,7 @@ type FilePart struct {
 	Collection  string
 	DataCenter  string
 	Ttl         string
-	DiskType  string
+	DiskType    string
 	Server      string //this comes from assign result
 	Fid         string //this comes from assign result, but customizable
 	Fsync       bool
@@ -50,7 +50,7 @@ func SubmitFiles(master string, grpcDialOption grpc.DialOption, files []FilePart
 		Collection:  collection,
 		DataCenter:  dataCenter,
 		Ttl:         ttl,
-		DiskType:  diskType,
+		DiskType:    diskType,
 	}
 	ret, err := Assign(master, grpcDialOption, ar)
 	if err != nil {
@@ -146,7 +146,7 @@ func (fi FilePart) Upload(maxMB int, master string, usePublicUrl bool, jwt secur
 				Replication: fi.Replication,
 				Collection:  fi.Collection,
 				Ttl:         fi.Ttl,
-				DiskType:  fi.DiskType,
+				DiskType:    fi.DiskType,
 			}
 			ret, err = Assign(master, grpcDialOption, ar)
 			if err != nil {
@@ -160,7 +160,7 @@ func (fi FilePart) Upload(maxMB int, master string, usePublicUrl bool, jwt secur
 					Replication: fi.Replication,
 					Collection:  fi.Collection,
 					Ttl:         fi.Ttl,
-					DiskType:  fi.DiskType,
+					DiskType:    fi.DiskType,
 				}
 				ret, err = Assign(master, grpcDialOption, ar)
 				if err != nil {

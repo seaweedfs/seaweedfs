@@ -19,7 +19,7 @@ import (
 type DiskLocation struct {
 	Directory              string
 	IdxDirectory           string
-	DiskType             DiskType
+	DiskType               DiskType
 	MaxVolumeCount         int
 	OriginalMaxVolumeCount int
 	MinFreeSpacePercent    float32
@@ -43,7 +43,7 @@ func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32
 	location := &DiskLocation{
 		Directory:              dir,
 		IdxDirectory:           idxDir,
-		DiskType:             diskType,
+		DiskType:               diskType,
 		MaxVolumeCount:         maxVolumeCount,
 		OriginalMaxVolumeCount: maxVolumeCount,
 		MinFreeSpacePercent:    minFreeSpacePercent,
@@ -117,7 +117,7 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 		glog.V(0).Infof("new volume %s error %s", volumeName, e)
 		return false
 	}
-	
+
 	l.SetVolume(vid, v)
 
 	size, _, _ := v.FileStat()

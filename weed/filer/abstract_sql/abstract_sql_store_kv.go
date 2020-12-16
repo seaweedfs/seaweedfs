@@ -34,7 +34,7 @@ func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []by
 	}
 
 	_, err = res.RowsAffected()
-	if err != nil  {
+	if err != nil {
 		return fmt.Errorf("kv upsert no rows affected: %s", err)
 	}
 	return nil

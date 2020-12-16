@@ -405,7 +405,7 @@ func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsR
 			Replication: req.Replication,
 			Collection:  req.Collection,
 			Ttl:         req.Ttl,
-			DiskType:  req.DiskType,
+			DiskType:    req.DiskType,
 		})
 		if grpcErr != nil {
 			return grpcErr

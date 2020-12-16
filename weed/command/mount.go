@@ -12,7 +12,7 @@ type MountOptions struct {
 	dirAutoCreate               *bool
 	collection                  *string
 	replication                 *string
-	diskType                  *string
+	diskType                    *string
 	ttlSec                      *int
 	chunkSizeLimitMB            *int
 	concurrentWriters           *int

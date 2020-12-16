@@ -23,7 +23,7 @@ type UploadOptions struct {
 	collection   *string
 	dataCenter   *string
 	ttl          *string
-	diskType   *string
+	diskType     *string
 	maxMB        *int
 	usePublicUrl *bool
 }

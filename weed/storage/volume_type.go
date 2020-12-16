@@ -6,7 +6,7 @@ type DiskType string
 
 const (
 	HardDriveType DiskType = ""
-	SsdType                  = "ssd"
+	SsdType                = "ssd"
 )
 
 func ToDiskType(vt string) (diskType DiskType, err error) {

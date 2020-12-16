@@ -60,7 +60,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 				ReplicaPlacement: uint32(0),
 				Version:          uint32(needle.CurrentVersion),
 				Ttl:              0,
-				DiskType:       "ssd",
+				DiskType:         "ssd",
 			}
 			volumeMessages = append(volumeMessages, volumeMessage)
 		}
@@ -168,7 +168,7 @@ func TestAddRemoveVolume(t *testing.T) {
 		Id:               needle.VolumeId(1),
 		Size:             100,
 		Collection:       "xcollection",
-		DiskType:       "ssd",
+		DiskType:         "ssd",
 		FileCount:        123,
 		DeleteCount:      23,
 		DeletedByteCount: 45,

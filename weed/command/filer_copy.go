@@ -37,7 +37,7 @@ type CopyOptions struct {
 	replication       *string
 	collection        *string
 	ttl               *string
-	diskType        *string
+	diskType          *string
 	maxMB             *int
 	masterClient      *wdclient.MasterClient
 	concurrenctFiles  *int
@@ -313,7 +313,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 				Replication: *worker.options.replication,
 				Collection:  *worker.options.collection,
 				TtlSec:      worker.options.ttlSec,
-				DiskType:  *worker.options.diskType,
+				DiskType:    *worker.options.diskType,
 				Path:        task.destinationUrlPath,
 			}
 
@@ -408,7 +408,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 					Replication: *worker.options.replication,
 					Collection:  *worker.options.collection,
 					TtlSec:      worker.options.ttlSec,
-					DiskType:  *worker.options.diskType,
+					DiskType:    *worker.options.diskType,
 					Path:        task.destinationUrlPath + fileName,
 				}
 

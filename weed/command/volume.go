@@ -49,7 +49,7 @@ type VolumeServerOptions struct {
 	rack                  *string
 	whiteList             []string
 	indexType             *string
-	diskType            *string
+	diskType              *string
 	fixJpgOrientation     *bool
 	readRedirect          *bool
 	cpuProfile            *string

@@ -7,4 +7,3 @@ const (
 	ACTION_TAGGING = "Tagging"
 	ACTION_LIST    = "List"
 )
-

@@ -31,8 +31,8 @@ type SyncOptions struct {
 	bCollection     *string
 	aTtlSec         *int
 	bTtlSec         *int
-	aDiskType     *string
-	bDiskType     *string
+	aDiskType       *string
+	bDiskType       *string
 	aDebug          *bool
 	bDebug          *bool
 }

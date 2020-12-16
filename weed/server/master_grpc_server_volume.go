@@ -70,7 +70,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		Collection:         req.Collection,
 		ReplicaPlacement:   replicaPlacement,
 		Ttl:                ttl,
-		DiskType:         diskType,
+		DiskType:           diskType,
 		Prealloacte:        ms.preallocateSize,
 		DataCenter:         req.DataCenter,
 		Rack:               req.Rack,

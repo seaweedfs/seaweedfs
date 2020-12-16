@@ -56,7 +56,7 @@ func EntryAttributeToPb(entry *Entry) *filer_pb.FuseAttributes {
 		Collection:    entry.Attr.Collection,
 		Replication:   entry.Attr.Replication,
 		TtlSec:        entry.Attr.TtlSec,
-		DiskType:    entry.Attr.DiskType,
+		DiskType:      entry.Attr.DiskType,
 		UserName:      entry.Attr.UserName,
 		GroupName:     entry.Attr.GroupNames,
 		SymlinkTarget: entry.Attr.SymlinkTarget,
