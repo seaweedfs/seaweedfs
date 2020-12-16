@@ -159,7 +159,7 @@ func runCopy(cmd *Command, args []string) bool {
 		defer close(fileCopyTaskChan)
 		for _, fileOrDir := range fileOrDirs {
 			if err := genFileCopyTask(fileOrDir, urlPath, fileCopyTaskChan); err != nil {
-				fmt.Fprintf(os.Stderr, "gen file list error: %v\n", err)
+				fmt.Fprintf(os.Stderr, "genFileCopyTask : %v\n", err)
 				break
 			}
 		}
@@ -202,7 +202,7 @@ func genFileCopyTask(fileOrDir string, destPath string, fileCopyTaskChan chan Fi
 
 	fi, err := os.Stat(fileOrDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to get stat for file %s: %v\n", fileOrDir, err)
+		fmt.Fprintf(os.Stderr, "Error: read file %s: %v\n", fileOrDir, err)
 		return nil
 	}
 
