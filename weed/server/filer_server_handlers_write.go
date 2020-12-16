@@ -135,7 +135,7 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 		DataCenter:        util.Nvl(dataCenter, fs.option.DataCenter),
 		Rack:              util.Nvl(rack, fs.option.Rack),
 		TtlSeconds:        ttlSeconds,
-		DiskType:        diskType,
+		DiskType:          util.Nvl(diskType, rule.DiskType),
 		Fsync:             fsync || rule.Fsync,
 		VolumeGrowthCount: rule.VolumeGrowthCount,
 	}

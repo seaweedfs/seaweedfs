@@ -64,6 +64,7 @@ func NewVolumeInfoFromShort(m *master_pb.VolumeShortInformationMessage) (vi Volu
 	}
 	vi.ReplicaPlacement = rp
 	vi.Ttl = needle.LoadTTLFromUint32(m.Ttl)
+	vi.DiskType = m.DiskType
 	return vi, nil
 }
 
