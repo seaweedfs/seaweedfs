@@ -35,9 +35,7 @@ Your support will be really appreciated by me and other supporters!
     <tr>
       <td align="center" valign="middle">
         <b>Gold Sponsor:</b>
-        <a href="" target="_blank">
-          ![曙光](https://raw.githubusercontent.com/chrislusf/seaweedfs/master/note/shuguang.png)
-        </a>
+          ![shuguang](https://raw.githubusercontent.com/chrislusf/seaweedfs/master/note/shuguang.png)
       </td>
     </tr>
     <tr></tr>
