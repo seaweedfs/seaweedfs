@@ -30,18 +30,8 @@ Your support will be really appreciated by me and other supporters!
 -->
 
 
-<table>
-  <tbody>
-    <tr>
-      <td align="center" valign="middle">
-        <b>Gold Sponsor:</b>
-          ![shuguang](https://raw.githubusercontent.com/chrislusf/seaweedfs/master/note/shuguang.png)
-      </td>
-    </tr>
-    <tr></tr>
-  </tbody>
-</table>
-
+### Gold Sponsors
+![shuguang](https://raw.githubusercontent.com/chrislusf/seaweedfs/master/note/shuguang.png)
 
 ---
 
