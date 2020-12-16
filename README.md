@@ -8,7 +8,7 @@
 
 ![SeaweedFS Logo](https://raw.githubusercontent.com/chrislusf/seaweedfs/master/note/seaweedfs.png)
 
-<h2 align="center">Supporting SeaweedFS</h2>
+<h2 align="center"><a href="https://www.patreon.com/seaweedfs">Sponsor SeaweedFS via Patreon</a></h2>
 
 SeaweedFS is an independent Apache-licensed open source project with its ongoing development made
 possible entirely thanks to the support of these awesome [backers](https://github.com/chrislusf/seaweedfs/blob/master/backers.md).
@@ -16,8 +16,6 @@ If you'd like to grow SeaweedFS even stronger, please consider joining our
 <a href="https://www.patreon.com/seaweedfs">sponsors on Patreon</a>.
 
 Your support will be really appreciated by me and other supporters!
-
-<h3 align="center"><a href="https://www.patreon.com/seaweedfs">Sponsor SeaweedFS via Patreon</a></h3>
 
 <!--
 <h4 align="center">Platinum</h4>
