@@ -190,7 +190,7 @@ func (dn *DataNode) Url() string {
 func (dn *DataNode) ToMap() interface{} {
 	ret := make(map[string]interface{})
 	ret["Url"] = dn.Url()
-	ret["Volumes"] = dn.GetVolumeCount()
+	ret["Volumes"] = dn.GetVolumeCount() + dn.GetSsdVolumeCount()
 	ret["VolumeIds"] = dn.GetVolumeIds()
 	ret["EcShards"] = dn.GetEcShardCount()
 	ret["Max"] = dn.GetMaxVolumeCount()
