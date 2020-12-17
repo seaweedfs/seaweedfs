@@ -77,7 +77,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 
 	if count, err = strconv.Atoi(r.FormValue("count")); err == nil {
 		if ms.Topo.AvailableSpaceFor(option) < int64(count*option.ReplicaPlacement.GetCopyCount()) {
-			err = fmt.Errorf("only %d volumes left, not enough for %d", ms.Topo.FreeSpace(), count*option.ReplicaPlacement.GetCopyCount())
+			err = fmt.Errorf("only %d volumes left, not enough for %d", ms.Topo.AvailableSpaceFor(option), count*option.ReplicaPlacement.GetCopyCount())
 		} else {
 			count, err = ms.vg.GrowByCountAndType(ms.grpcDialOption, count, option, ms.Topo)
 		}

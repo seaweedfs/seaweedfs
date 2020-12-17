@@ -18,7 +18,8 @@ type Node interface {
 	Id() NodeId
 	String() string
 	FreeSpace() int64
-	ReserveOneVolume(r int64) (*DataNode, error)
+	AvailableSpaceFor(option *VolumeGrowOption) int64
+	ReserveOneVolume(r int64, option *VolumeGrowOption) (*DataNode, error)
 	UpAdjustMaxVolumeCountDelta(maxVolumeCountDelta int64)
 	UpAdjustMaxSsdVolumeCountDelta(maxSsdVolumeCountDelta int64)
 	UpAdjustVolumeCountDelta(volumeCountDelta int64)
@@ -69,7 +70,7 @@ type NodeImpl struct {
 }
 
 // the first node must satisfy filterFirstNodeFn(), the rest nodes must have one free slot
-func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, filterFirstNodeFn func(dn Node) error) (firstNode Node, restNodes []Node, err error) {
+func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, option *VolumeGrowOption, filterFirstNodeFn func(dn Node) error) (firstNode Node, restNodes []Node, err error) {
 	var totalWeights int64
 	var errs []string
 	n.RLock()
@@ -77,12 +78,12 @@ func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, filterFirstNodeFn func(d
 	candidatesWeights := make([]int64, 0, len(n.children))
 	//pick nodes which has enough free volumes as candidates, and use free volumes number as node weight.
 	for _, node := range n.children {
-		if node.FreeSpace() <= 0 {
+		if node.AvailableSpaceFor(option) <= 0 {
 			continue
 		}
-		totalWeights += node.FreeSpace()
+		totalWeights += node.AvailableSpaceFor(option)
 		candidates = append(candidates, node)
-		candidatesWeights = append(candidatesWeights, node.FreeSpace())
+		candidatesWeights = append(candidatesWeights, node.AvailableSpaceFor(option))
 	}
 	n.RUnlock()
 	if len(candidates) < numberOfNodes {
@@ -183,11 +184,11 @@ func (n *NodeImpl) Parent() Node {
 func (n *NodeImpl) GetValue() interface{} {
 	return n.value
 }
-func (n *NodeImpl) ReserveOneVolume(r int64) (assignedNode *DataNode, err error) {
+func (n *NodeImpl) ReserveOneVolume(r int64, option *VolumeGrowOption) (assignedNode *DataNode, err error) {
 	n.RLock()
 	defer n.RUnlock()
 	for _, node := range n.children {
-		freeSpace := node.FreeSpace()
+		freeSpace := node.AvailableSpaceFor(option)
 		// fmt.Println("r =", r, ", node =", node, ", freeSpace =", freeSpace)
 		if freeSpace <= 0 {
 			continue
@@ -195,11 +196,11 @@ func (n *NodeImpl) ReserveOneVolume(r int64) (assignedNode *DataNode, err error)
 		if r >= freeSpace {
 			r -= freeSpace
 		} else {
-			if node.IsDataNode() && node.FreeSpace() > 0 {
+			if node.IsDataNode() && node.AvailableSpaceFor(option) > 0 {
 				// fmt.Println("vid =", vid, " assigned to node =", node, ", freeSpace =", node.FreeSpace())
 				return node.(*DataNode), nil
 			}
-			assignedNode, err = node.ReserveOneVolume(r)
+			assignedNode, err = node.ReserveOneVolume(r, option)
 			if err == nil {
 				return
 			}
