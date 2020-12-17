@@ -193,8 +193,7 @@ func (dn *DataNode) ToMap() interface{} {
 	ret["Volumes"] = dn.GetVolumeCount() + dn.GetSsdVolumeCount()
 	ret["VolumeIds"] = dn.GetVolumeIds()
 	ret["EcShards"] = dn.GetEcShardCount()
-	ret["Max"] = dn.GetMaxVolumeCount()
-	ret["MaxSsd"] = dn.GetMaxSsdVolumeCount()
+	ret["Max"] = dn.GetMaxVolumeCount() + dn.GetMaxSsdVolumeCount()
 	ret["Free"] = dn.FreeSpace()
 	ret["PublicUrl"] = dn.PublicUrl
 	return ret
