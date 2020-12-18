@@ -257,12 +257,12 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			location.volumesLock.Lock()
 			for _, vid := range deleteVids {
 				found, err := location.deleteVolumeById(vid)
-				if found {
-					if err == nil {
+				if err == nil {
+					if found {
 						glog.V(0).Infof("volume %d is deleted", vid)
-					} else {
-						glog.V(0).Infof("delete volume %d: %v", vid, err)
 					}
+				} else {
+					glog.V(0).Infof("delete volume %d: %v", vid, err)
 				}
 			}
 			location.volumesLock.Unlock()
