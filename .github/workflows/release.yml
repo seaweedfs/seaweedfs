@@ -23,6 +23,7 @@ jobs:
       with:
         token: ${{ github.token }}
         tag: dev
+        fail-if-no-assets: false 
         assets: | 
           weed-large-disk-*
           weed-*
