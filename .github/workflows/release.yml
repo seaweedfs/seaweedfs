@@ -14,8 +14,20 @@ jobs:
     - name: Check out code into the Go module directory
       uses: actions/checkout@v2
 
+    - name: Delete old release assets
+      uses: mknejp/delete-release-assets@v1
+      with:
+        token: ${{ github.token }}
+        tag: dev
+        assets: | 
+          weed-large-disk-*
+          weed-*
+
+    - name: Set BUILD_TIME env
+      run: echo BUILD_TIME=$(date -u +%Y%m%d) >> ${GITHUB_ENV}
+
     - name: Go Release Binaries
-      uses: wangyoucao577/go-release-action@v1.10
+      uses: wangyoucao577/go-release-action@feature/asset-name
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         goos: linux # default is 
@@ -27,6 +39,8 @@ jobs:
         # Where to run `go build .`
         project_path: weed
         binary_name: weed-large-disk
+        asset_name: "weed-large-disk-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+
     - name: Go Release Binaries
       uses: wangyoucao577/go-release-action@v1.10
       with:
