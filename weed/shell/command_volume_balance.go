@@ -244,9 +244,14 @@ func sortReadOnlyVolumes(volumes []*master_pb.VolumeInformationMessage) {
 
 func balanceSelectedVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, capacityFunc CapacityFunc, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage), applyBalancing bool) (err error) {
 	selectedVolumeCount, volumeMaxCount := 0, 0
+	var nodesWithCapacity []*Node
 	for _, dn := range nodes {
 		selectedVolumeCount += len(dn.selectedVolumes)
-		volumeMaxCount += capacityFunc(dn.info)
+		capacity := capacityFunc(dn.info)
+		if capacity > 0 {
+			nodesWithCapacity = append(nodesWithCapacity, dn)
+		}
+		volumeMaxCount += capacity
 	}
 
 	idealVolumeRatio := divide(selectedVolumeCount, volumeMaxCount)
@@ -257,22 +262,19 @@ func balanceSelectedVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*
 
 	for hasMoved {
 		hasMoved = false
-		sort.Slice(nodes, func(i, j int) bool {
-			return nodes[i].localVolumeRatio(capacityFunc) < nodes[j].localVolumeRatio(capacityFunc)
+		sort.Slice(nodesWithCapacity, func(i, j int) bool {
+			return nodesWithCapacity[i].localVolumeRatio(capacityFunc) < nodesWithCapacity[j].localVolumeRatio(capacityFunc)
 		})
 
-		fullNode := nodes[len(nodes)-1]
+		fullNode := nodesWithCapacity[len(nodesWithCapacity)-1]
 		var candidateVolumes []*master_pb.VolumeInformationMessage
 		for _, v := range fullNode.selectedVolumes {
 			candidateVolumes = append(candidateVolumes, v)
 		}
 		sortCandidatesFn(candidateVolumes)
 
-		for i := 0; i < len(nodes)-1; i++ {
-			emptyNode := nodes[i]
-			if capacityFunc(emptyNode.info) == 0 {
-				continue
-			}
+		for i := 0; i < len(nodesWithCapacity)-1; i++ {
+			emptyNode := nodesWithCapacity[i]
 			if !(fullNode.localVolumeRatio(capacityFunc) > idealVolumeRatio && emptyNode.localVolumeNextRatio(capacityFunc) <= idealVolumeRatio) {
 				// no more volume servers with empty slots
 				break
