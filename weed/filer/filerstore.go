@@ -50,6 +50,7 @@ type VirtualFilerStore interface {
 	FilerStore
 	DeleteHardLink(ctx context.Context, hardLinkId HardLinkId) error
 	DeleteOneEntry(ctx context.Context, entry *Entry) error
+	AddPathSpecificStore(path string, store FilerStore)
 }
 
 type FilerStoreWrapper struct {
@@ -67,7 +68,7 @@ func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
 	}
 }
 
-func (fsw *FilerStoreWrapper) addStore(path string, store FilerStore) {
+func (fsw *FilerStoreWrapper) AddPathSpecificStore(path string, store FilerStore) {
 	fsw.pathToStore.Put([]byte(path), store)
 }
 

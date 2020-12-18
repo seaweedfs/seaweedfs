@@ -27,6 +27,9 @@ func (f *Filer) LoadConfiguration(config *viper.Viper) {
 		}
 	}
 
+	// TODO load path-specific filer store here
+	// f.Store.AddPathSpecificStore(path, store)
+
 	println()
 	println("Supported filer stores are:")
 	for _, store := range Stores {
