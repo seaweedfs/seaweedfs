@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/viant/ptrie"
 	"strings"
 	"time"
 
@@ -52,7 +53,8 @@ type VirtualFilerStore interface {
 }
 
 type FilerStoreWrapper struct {
-	ActualStore FilerStore
+	defaultStore FilerStore
+	pathToStore  ptrie.Trie
 }
 
 func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
@@ -60,12 +62,23 @@ func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
 		return innerStore
 	}
 	return &FilerStoreWrapper{
-		ActualStore: store,
+		defaultStore: store,
+		pathToStore:  ptrie.New(),
 	}
 }
 
-func (fsw *FilerStoreWrapper) getActualStore(path string) FilerStore {
-	return fsw.ActualStore
+func (fsw *FilerStoreWrapper) addStore(path string, store FilerStore) {
+	fsw.pathToStore.Put([]byte(path), store)
+}
+
+func (fsw *FilerStoreWrapper) getActualStore(path util.FullPath) FilerStore {
+	if path == "" {
+		return fsw.defaultStore
+	}
+	if store, found := fsw.pathToStore.Get([]byte(path)); found {
+		return store.(FilerStore)
+	}
+	return fsw.defaultStore
 }
 
 func (fsw *FilerStoreWrapper) GetName() string {
@@ -77,10 +90,11 @@ func (fsw *FilerStoreWrapper) Initialize(configuration util.Configuration, prefi
 }
 
 func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) error {
-	stats.FilerStoreCounter.WithLabelValues(fsw.getActualStore("").GetName(), "insert").Inc()
+	actualStore := fsw.getActualStore("")
+	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "insert").Inc()
 	start := time.Now()
 	defer func() {
-		stats.FilerStoreHistogram.WithLabelValues(fsw.getActualStore("").GetName(), "insert").Observe(time.Since(start).Seconds())
+		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "insert").Observe(time.Since(start).Seconds())
 	}()
 
 	filer_pb.BeforeEntrySerialization(entry.Chunks)
@@ -93,14 +107,15 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 	}
 
 	glog.V(4).Infof("InsertEntry %s", entry.FullPath)
-	return fsw.getActualStore("").InsertEntry(ctx, entry)
+	return actualStore.InsertEntry(ctx, entry)
 }
 
 func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) error {
-	stats.FilerStoreCounter.WithLabelValues(fsw.getActualStore("").GetName(), "update").Inc()
+	actualStore := fsw.getActualStore("")
+	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "update").Inc()
 	start := time.Now()
 	defer func() {
-		stats.FilerStoreHistogram.WithLabelValues(fsw.getActualStore("").GetName(), "update").Observe(time.Since(start).Seconds())
+		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "update").Observe(time.Since(start).Seconds())
 	}()
 
 	filer_pb.BeforeEntrySerialization(entry.Chunks)
@@ -113,18 +128,19 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 	}
 
 	glog.V(4).Infof("UpdateEntry %s", entry.FullPath)
-	return fsw.getActualStore("").UpdateEntry(ctx, entry)
+	return actualStore.UpdateEntry(ctx, entry)
 }
 
 func (fsw *FilerStoreWrapper) FindEntry(ctx context.Context, fp util.FullPath) (entry *Entry, err error) {
-	stats.FilerStoreCounter.WithLabelValues(fsw.getActualStore("").GetName(), "find").Inc()
+	actualStore := fsw.getActualStore("")
+	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "find").Inc()
 	start := time.Now()
 	defer func() {
-		stats.FilerStoreHistogram.WithLabelValues(fsw.getActualStore("").GetName(), "find").Observe(time.Since(start).Seconds())
+		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "find").Observe(time.Since(start).Seconds())
 	}()
 
 	glog.V(4).Infof("FindEntry %s", fp)
-	entry, err = fsw.getActualStore("").FindEntry(ctx, fp)
+	entry, err = actualStore.FindEntry(ctx, fp)
 	if err != nil {
 		return nil, err
 	}
@@ -136,10 +152,11 @@ func (fsw *FilerStoreWrapper) FindEntry(ctx context.Context, fp util.FullPath) (
 }
 
 func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {
-	stats.FilerStoreCounter.WithLabelValues(fsw.getActualStore("").GetName(), "delete").Inc()
+	actualStore := fsw.getActualStore("")
+	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "delete").Inc()
 	start := time.Now()
 	defer func() {
-		stats.FilerStoreHistogram.WithLabelValues(fsw.getActualStore("").GetName(), "delete").Observe(time.Since(start).Seconds())
+		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "delete").Observe(time.Since(start).Seconds())
 	}()
 
 	existingEntry, findErr := fsw.FindEntry(ctx, fp)
@@ -155,14 +172,15 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 	}
 
 	glog.V(4).Infof("DeleteEntry %s", fp)
-	return fsw.getActualStore("").DeleteEntry(ctx, fp)
+	return actualStore.DeleteEntry(ctx, fp)
 }
 
 func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry *Entry) (err error) {
-	stats.FilerStoreCounter.WithLabelValues(fsw.getActualStore("").GetName(), "delete").Inc()
+	actualStore := fsw.getActualStore("")
+	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "delete").Inc()
 	start := time.Now()
 	defer func() {
-		stats.FilerStoreHistogram.WithLabelValues(fsw.getActualStore("").GetName(), "delete").Observe(time.Since(start).Seconds())
+		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "delete").Observe(time.Since(start).Seconds())
 	}()
 
 	if len(existingEntry.HardLinkId) != 0 {
@@ -174,29 +192,31 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 	}
 
 	glog.V(4).Infof("DeleteOneEntry %s", existingEntry.FullPath)
-	return fsw.getActualStore("").DeleteEntry(ctx, existingEntry.FullPath)
+	return actualStore.DeleteEntry(ctx, existingEntry.FullPath)
 }
 
 func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {
-	stats.FilerStoreCounter.WithLabelValues(fsw.getActualStore("").GetName(), "deleteFolderChildren").Inc()
+	actualStore := fsw.getActualStore("")
+	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "deleteFolderChildren").Inc()
 	start := time.Now()
 	defer func() {
-		stats.FilerStoreHistogram.WithLabelValues(fsw.getActualStore("").GetName(), "deleteFolderChildren").Observe(time.Since(start).Seconds())
+		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "deleteFolderChildren").Observe(time.Since(start).Seconds())
 	}()
 
 	glog.V(4).Infof("DeleteFolderChildren %s", fp)
-	return fsw.getActualStore("").DeleteFolderChildren(ctx, fp)
+	return actualStore.DeleteFolderChildren(ctx, fp)
 }
 
 func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, error) {
-	stats.FilerStoreCounter.WithLabelValues(fsw.getActualStore("").GetName(), "list").Inc()
+	actualStore := fsw.getActualStore("")
+	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "list").Inc()
 	start := time.Now()
 	defer func() {
-		stats.FilerStoreHistogram.WithLabelValues(fsw.getActualStore("").GetName(), "list").Observe(time.Since(start).Seconds())
+		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "list").Observe(time.Since(start).Seconds())
 	}()
 
 	glog.V(4).Infof("ListDirectoryEntries %s from %s limit %d", dirPath, startFileName, limit)
-	entries, err := fsw.getActualStore("").ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
+	entries, err := actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -208,13 +228,14 @@ func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath 
 }
 
 func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*Entry, error) {
-	stats.FilerStoreCounter.WithLabelValues(fsw.getActualStore("").GetName(), "prefixList").Inc()
+	actualStore := fsw.getActualStore("")
+	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "prefixList").Inc()
 	start := time.Now()
 	defer func() {
-		stats.FilerStoreHistogram.WithLabelValues(fsw.getActualStore("").GetName(), "prefixList").Observe(time.Since(start).Seconds())
+		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "prefixList").Observe(time.Since(start).Seconds())
 	}()
 	glog.V(4).Infof("ListDirectoryPrefixedEntries %s from %s prefix %s limit %d", dirPath, startFileName, prefix, limit)
-	entries, err := fsw.getActualStore("").ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix)
+	entries, err := actualStore.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix)
 	if err == ErrUnsupportedListDirectoryPrefixed {
 		entries, err = fsw.prefixFilterEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix)
 	}
@@ -229,7 +250,8 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 }
 
 func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*Entry, err error) {
-	entries, err = fsw.getActualStore("").ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
+	actualStore := fsw.getActualStore("")
+	entries, err = actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +276,7 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 			}
 		}
 		if count < limit {
-			notPrefixed, err = fsw.getActualStore("").ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit)
+			notPrefixed, err = actualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit)
 			if err != nil {
 				return
 			}
