@@ -29,7 +29,6 @@ jobs:
         tag: dev
         fail-if-no-assets: false 
         assets: | 
-          weed-large-disk-*
           weed-*
 
     - name: Set BUILD_TIME env
