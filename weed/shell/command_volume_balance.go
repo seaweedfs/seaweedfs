@@ -270,6 +270,9 @@ func balanceSelectedVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*
 
 		for i := 0; i < len(nodes)-1; i++ {
 			emptyNode := nodes[i]
+			if capacityFunc(emptyNode.info) == 0 {
+				continue
+			}
 			if !(fullNode.localVolumeRatio(capacityFunc) > idealVolumeRatio && emptyNode.localVolumeNextRatio(capacityFunc) <= idealVolumeRatio) {
 				// no more volume servers with empty slots
 				break
