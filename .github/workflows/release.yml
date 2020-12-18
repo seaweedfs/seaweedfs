@@ -47,7 +47,7 @@ jobs:
         asset_name: "weed-large-disk-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
 
     - name: Go Release Binaries
-      uses: wangyoucao577/go-release-action@v1.10
+      uses: wangyoucao577/go-release-action@feature/asset-name
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         goos: ${{ matrix.goos }}
