@@ -9,6 +9,10 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, windows, darwin]
+        goarch: ["386", amd64]
     steps:
 
     - name: Check out code into the Go module directory
@@ -24,14 +28,14 @@ jobs:
           weed-*
 
     - name: Set BUILD_TIME env
-      run: echo BUILD_TIME=$(date -u +%Y%m%d) >> ${GITHUB_ENV}
+      run: echo BUILD_TIME=$(date -u +%Y-%m-%d-%H-%M) >> ${GITHUB_ENV}
 
     - name: Go Release Binaries
       uses: wangyoucao577/go-release-action@feature/asset-name
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        goos: linux # default is 
-        goarch: amd64 # default is 
+        goos: ${{ matrix.goos }}
+        goarch: ${{ matrix.goarch }}
         release_tag: dev
         overwrite: true 
         build_flags: -tags 5BytesOffset # optional, default is 
@@ -45,11 +49,13 @@ jobs:
       uses: wangyoucao577/go-release-action@v1.10
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        goos: linux # default is 
-        goarch: amd64 # default is 
+        goos: ${{ matrix.goos }}
+        goarch: ${{ matrix.goarch }}
         release_tag: dev
         overwrite: true 
+        build_flags: -tags 5BytesOffset # optional, default is 
         ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
         # Where to run `go build .`
         project_path: weed
-        binary_name: weed
+        binary_name: weed-
+        asset_name: "weed-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
