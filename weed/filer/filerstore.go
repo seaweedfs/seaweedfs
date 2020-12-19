@@ -50,12 +50,13 @@ type VirtualFilerStore interface {
 	FilerStore
 	DeleteHardLink(ctx context.Context, hardLinkId HardLinkId) error
 	DeleteOneEntry(ctx context.Context, entry *Entry) error
-	AddPathSpecificStore(path string, store FilerStore)
+	AddPathSpecificStore(path string, storeId string, store FilerStore)
 }
 
 type FilerStoreWrapper struct {
-	defaultStore FilerStore
-	pathToStore  ptrie.Trie
+	defaultStore   FilerStore
+	pathToStore    ptrie.Trie
+	storeIdToStore map[string]FilerStore
 }
 
 func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
@@ -63,23 +64,34 @@ func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
 		return innerStore
 	}
 	return &FilerStoreWrapper{
-		defaultStore: store,
-		pathToStore:  ptrie.New(),
+		defaultStore:   store,
+		pathToStore:    ptrie.New(),
+		storeIdToStore: make(map[string]FilerStore),
 	}
 }
 
-func (fsw *FilerStoreWrapper) AddPathSpecificStore(path string, store FilerStore) {
-	fsw.pathToStore.Put([]byte(path), store)
+func (fsw *FilerStoreWrapper) AddPathSpecificStore(path string, storeId string, store FilerStore) {
+	fsw.storeIdToStore[storeId] = store
+	err := fsw.pathToStore.Put([]byte(path), storeId)
+	if err != nil {
+		glog.Fatalf("put path specific store: %v", err)
+	}
 }
 
-func (fsw *FilerStoreWrapper) getActualStore(path util.FullPath) FilerStore {
+func (fsw *FilerStoreWrapper) getActualStore(path util.FullPath) (store FilerStore) {
+	store = fsw.defaultStore
 	if path == "" {
-		return fsw.defaultStore
+		return
 	}
-	if store, found := fsw.pathToStore.Get([]byte(path)); found {
-		return store.(FilerStore)
+	var storeId string
+	fsw.pathToStore.MatchPrefix([]byte(path), func(key []byte, value interface{}) bool {
+		storeId = value.(string)
+		return false
+	})
+	if storeId != "" {
+		store = fsw.storeIdToStore[storeId]
 	}
-	return fsw.defaultStore
+	return
 }
 
 func (fsw *FilerStoreWrapper) GetName() string {
