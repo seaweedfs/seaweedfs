@@ -12,6 +12,9 @@ build:
 dev: build
 	docker-compose -f local-dev-compose.yml -p seaweedfs up
 
+k8s: build
+	docker-compose -f local-k8s-compose.yml -p seaweedfs up
+
 dev_registry: build
 	docker-compose -f local-registry-compose.yml -p seaweedfs up
 

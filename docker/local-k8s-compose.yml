@@ -1,0 +1,65 @@
+version: '2'
+
+services:
+  master:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9333:9333
+      - 19333:19333
+    command: "master -ip=master"
+  volume:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8080:8080
+      - 18080:18080
+    command: "volume -mserver=master:9333 -port=8080 -ip=volume"
+    depends_on:
+      - master
+  mysql:
+    image: percona/percona-server:5.7
+    ports:
+      - 3306:3306
+    volumes:
+      - ./seaweedfs.sql:/docker-entrypoint-initdb.d/seaweedfs.sql
+    environment:
+      - MYSQL_ROOT_PASSWORD=secret
+      - MYSQL_DATABASE=seaweedfs
+      - MYSQL_PASSWORD=secret
+      - MYSQL_USER=seaweedfs
+  filer:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8888:8888
+      - 18888:18888
+    environment:
+      - WEED_MYSQL_HOSTNAME=mysql
+      - WEED_MYSQL_PORT=3306
+      - WEED_MYSQL_DATABASE=seaweedfs
+      - WEED_MYSQL_USERNAME=seaweedfs
+      - WEED_MYSQL_PASSWORD=secret
+      - WEED_MYSQL_ENABLED=true
+      - WEED_LEVELDB2_ENABLED=false
+    command: 'filer -master="master:9333"'
+    depends_on:
+      - master
+      - volume
+      - mysql
+  ingress:
+    image: jwilder/nginx-proxy
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - /tmp/nginx:/etc/nginx/conf.d
+  s3:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8333:8333
+    command: 's3 -filer="filer:8888"'
+    depends_on:
+      - master
+      - volume
+      - filer
+    environment:
+      - VIRTUAL_HOST=s3
+      - VIRTUAL_PORT=8333
