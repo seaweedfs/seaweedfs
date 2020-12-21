@@ -59,7 +59,11 @@ func (f *Filer) LoadConfiguration(config *viper.Viper) {
 		parts := strings.Split(key, ".")
 		storeName, storeId := parts[0], parts[1]
 
-		store := storeNames[storeName]
+		store, found := storeNames[storeName]
+		if !found {
+			glog.Errorf("path-specific filer store %s.%s is not found", storeName, storeId)
+			os.Exit(-1)
+		}
 		store = reflect.New(reflect.ValueOf(store).Elem().Type()).Interface().(FilerStore)
 		if err := store.Initialize(config, key+"."); err != nil {
 			glog.Fatalf("Failed to initialize store for %s: %+v", key, err)
