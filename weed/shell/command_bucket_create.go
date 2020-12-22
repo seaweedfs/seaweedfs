@@ -34,7 +34,7 @@ func (c *commandBucketCreate) Do(args []string, commandEnv *CommandEnv, writer i
 
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	bucketName := bucketCommand.String("name", "", "bucket name")
-	replication := bucketCommand.String("replication", "", "replication setting for the bucket")
+	replication := bucketCommand.String("replication", "", "replication setting for the bucket, if not set it will honor the setting defined by the master")
 	if err = bucketCommand.Parse(args); err != nil {
 		return nil
 	}
