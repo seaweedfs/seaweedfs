@@ -61,8 +61,7 @@ func (f *Filer) LoadConfiguration(config *viper.Viper) {
 
 		store, found := storeNames[storeName]
 		if !found {
-			glog.Errorf("path-specific filer store %s.%s is not found", storeName, storeId)
-			os.Exit(-1)
+			continue
 		}
 		store = reflect.New(reflect.ValueOf(store).Elem().Type()).Interface().(FilerStore)
 		if err := store.Initialize(config, key+"."); err != nil {
