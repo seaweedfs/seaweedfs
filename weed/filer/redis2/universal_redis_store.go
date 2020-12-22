@@ -19,26 +19,19 @@ const (
 
 type UniversalRedis2Store struct {
 	Client redis.UniversalClient
-	superLargeDirectoryHash map[string]string
+	superLargeDirectoryHash map[string]bool
 }
 
-func (store *UniversalRedis2Store) isSuperLargeDirectory(dir string) (dirHash string, isSuperLargeDirectory bool) {
-	dirHash, isSuperLargeDirectory = store.superLargeDirectoryHash[dir]
+func (store *UniversalRedis2Store) isSuperLargeDirectory(dir string) (isSuperLargeDirectory bool) {
+	_, isSuperLargeDirectory = store.superLargeDirectoryHash[dir]
 	return
 }
 
 func (store *UniversalRedis2Store) loadSuperLargeDirectories(superLargeDirectories []string) {
 	// set directory hash
-	store.superLargeDirectoryHash = make(map[string]string)
-	existingHash := make(map[string]string)
+	store.superLargeDirectoryHash = make(map[string]bool)
 	for _, dir := range superLargeDirectories {
-		// adding dir hash to avoid duplicated names
-		dirHash := util.Md5String([]byte(dir))[:4]
-		store.superLargeDirectoryHash[dir] = dirHash
-		if existingDir, found := existingHash[dirHash]; found {
-			glog.Fatalf("directory %s has the same hash as %s", dir, existingDir)
-		}
-		existingHash[dirHash] = dir
+		store.superLargeDirectoryHash[dir] = true
 	}
 }
 
@@ -68,7 +61,7 @@ func (store *UniversalRedis2Store) InsertEntry(ctx context.Context, entry *filer
 	}
 
 	dir, name := entry.FullPath.DirAndName()
-	if _, found := store.isSuperLargeDirectory(dir); found {
+	if store.isSuperLargeDirectory(dir) {
 		return nil
 	}
 
@@ -121,7 +114,7 @@ func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath uti
 	}
 
 	dir, name := fullpath.DirAndName()
-	if _, found := store.isSuperLargeDirectory(dir); found {
+	if store.isSuperLargeDirectory(dir) {
 		return nil
 	}
 	if name != "" {
@@ -136,7 +129,7 @@ func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath uti
 
 func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) (err error) {
 
-	if _, found := store.isSuperLargeDirectory(string(fullpath)); found {
+	if store.isSuperLargeDirectory(string(fullpath)) {
 		return nil
 	}
 
