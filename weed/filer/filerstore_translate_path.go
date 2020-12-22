@@ -30,7 +30,7 @@ func NewFilerStorePathTranlator(storeRoot string, store FilerStore) *FilerStoreP
 	}
 }
 
-func (t *FilerStorePathTranlator) translatePath(fp util.FullPath) (newPath util.FullPath){
+func (t *FilerStorePathTranlator) translatePath(fp util.FullPath) (newPath util.FullPath) {
 	newPath = fp
 	if t.storeRoot == "/" {
 		return
@@ -41,7 +41,7 @@ func (t *FilerStorePathTranlator) translatePath(fp util.FullPath) (newPath util.
 	}
 	return
 }
-func (t *FilerStorePathTranlator) changeEntryPath(entry *Entry) (previousPath util.FullPath){
+func (t *FilerStorePathTranlator) changeEntryPath(entry *Entry) (previousPath util.FullPath) {
 	previousPath = entry.FullPath
 	if t.storeRoot == "/" {
 		return

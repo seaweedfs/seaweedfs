@@ -79,7 +79,6 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromBytes(content []b
 	return nil
 }
 
-
 func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
 	var identities []*Identity
 	for _, ident := range config.Identities {

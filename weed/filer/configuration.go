@@ -68,7 +68,7 @@ func (f *Filer) LoadConfiguration(config *viper.Viper) {
 		if err := store.Initialize(config, key+"."); err != nil {
 			glog.Fatalf("Failed to initialize store for %s: %+v", key, err)
 		}
-		location := config.GetString(key+".location")
+		location := config.GetString(key + ".location")
 		if location == "" {
 			glog.Errorf("path-specific filer store needs %s", key+".location")
 			os.Exit(-1)

@@ -18,7 +18,7 @@ const (
 )
 
 type UniversalRedis2Store struct {
-	Client redis.UniversalClient
+	Client                  redis.UniversalClient
 	superLargeDirectoryHash map[string]bool
 }
 

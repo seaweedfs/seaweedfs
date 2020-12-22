@@ -47,7 +47,7 @@ type Volume struct {
 	volumeInfo *volume_server_pb.VolumeInfo
 	location   *DiskLocation
 
-	lastIoError     error
+	lastIoError error
 }
 
 func NewVolume(dirname string, dirIdx string, collection string, id needle.VolumeId, needleMapKind NeedleMapType, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32) (v *Volume, e error) {

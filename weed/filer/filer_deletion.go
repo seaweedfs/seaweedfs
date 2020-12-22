@@ -151,4 +151,3 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 	}
 	f.DeleteChunks(toDelete)
 }
-

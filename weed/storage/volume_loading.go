@@ -92,7 +92,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	if err == nil && alsoLoadIndex {
 		// adjust for existing volumes with .idx together with .dat files
 		if v.dirIdx != v.dir {
-			if util.FileExists(v.DataFileName()+".idx") {
+			if util.FileExists(v.DataFileName() + ".idx") {
 				v.dirIdx = v.dir
 			}
 		}
@@ -100,12 +100,12 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		if v.noWriteOrDelete {
 			glog.V(0).Infoln("open to read file", v.FileName(".idx"))
 			if indexFile, err = os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644); err != nil {
-				return fmt.Errorf("cannot read Volume Index %s: %v",  v.FileName(".idx"), err)
+				return fmt.Errorf("cannot read Volume Index %s: %v", v.FileName(".idx"), err)
 			}
 		} else {
 			glog.V(1).Infoln("open to write file", v.FileName(".idx"))
 			if indexFile, err = os.OpenFile(v.FileName(".idx"), os.O_RDWR|os.O_CREATE, 0644); err != nil {
-				return fmt.Errorf("cannot write Volume Index %s: %v",  v.FileName(".idx"), err)
+				return fmt.Errorf("cannot write Volume Index %s: %v", v.FileName(".idx"), err)
 			}
 		}
 		if v.lastAppendAtNs, err = CheckAndFixVolumeDataIntegrity(v, indexFile); err != nil {
@@ -115,7 +115,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 
 		if v.noWriteOrDelete || v.noWriteCanDelete {
 			if v.nm, err = NewSortedFileNeedleMap(v.IndexFileName(), indexFile); err != nil {
-				glog.V(0).Infof("loading sorted db %s error: %v",  v.FileName(".sdx"), err)
+				glog.V(0).Infof("loading sorted db %s error: %v", v.FileName(".sdx"), err)
 			}
 		} else {
 			switch needleMapKind {
