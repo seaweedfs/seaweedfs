@@ -30,12 +30,23 @@ func NewFilerStorePathTranlator(storeRoot string, store FilerStore) *FilerStoreP
 	}
 }
 
+func (t *FilerStorePathTranlator) translatePath(fp util.FullPath) (newPath util.FullPath){
+	newPath = fp
+	if t.storeRoot == "/" {
+		return
+	}
+	newPath = fp[len(t.storeRoot)-1:]
+	if newPath == "" {
+		newPath = "/"
+	}
+	return
+}
 func (t *FilerStorePathTranlator) changeEntryPath(entry *Entry) (previousPath util.FullPath){
 	previousPath = entry.FullPath
 	if t.storeRoot == "/" {
 		return
 	}
-	entry.FullPath = previousPath[len(t.storeRoot)-1:]
+	entry.FullPath = t.translatePath(previousPath)
 	return
 }
 func (t *FilerStorePathTranlator) recoverEntryPath(entry *Entry, previousPath util.FullPath) {
@@ -68,7 +79,7 @@ func (t *FilerStorePathTranlator) FindEntry(ctx context.Context, fp util.FullPat
 	if t.storeRoot == "/" {
 		return t.actualStore.FindEntry(ctx, fp)
 	}
-	newFullPath := fp[len(t.storeRoot)-1:]
+	newFullPath := t.translatePath(fp)
 	entry, err = t.actualStore.FindEntry(ctx, newFullPath)
 	if err == nil {
 		entry.FullPath = fp[:len(t.storeRoot)-1] + entry.FullPath
@@ -77,7 +88,7 @@ func (t *FilerStorePathTranlator) FindEntry(ctx context.Context, fp util.FullPat
 }
 
 func (t *FilerStorePathTranlator) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {
-	newFullPath := fp[len(t.storeRoot)-1:]
+	newFullPath := t.translatePath(fp)
 	return t.actualStore.DeleteEntry(ctx, newFullPath)
 }
 
@@ -90,14 +101,14 @@ func (t *FilerStorePathTranlator) DeleteOneEntry(ctx context.Context, existingEn
 }
 
 func (t *FilerStorePathTranlator) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {
-	newFullPath := fp[len(t.storeRoot)-1:]
+	newFullPath := t.translatePath(fp)
 
 	return t.actualStore.DeleteFolderChildren(ctx, newFullPath)
 }
 
 func (t *FilerStorePathTranlator) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, error) {
 
-	newFullPath := dirPath[len(t.storeRoot)-1:]
+	newFullPath := t.translatePath(dirPath)
 
 	entries, err := t.actualStore.ListDirectoryEntries(ctx, newFullPath, startFileName, includeStartFile, limit)
 	if err != nil {
@@ -111,7 +122,7 @@ func (t *FilerStorePathTranlator) ListDirectoryEntries(ctx context.Context, dirP
 
 func (t *FilerStorePathTranlator) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*Entry, error) {
 
-	newFullPath := dirPath[len(t.storeRoot)-1:]
+	newFullPath := t.translatePath(dirPath)
 
 	entries, err := t.actualStore.ListDirectoryPrefixedEntries(ctx, newFullPath, startFileName, includeStartFile, limit, prefix)
 	if err != nil {

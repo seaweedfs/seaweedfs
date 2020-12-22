@@ -237,7 +237,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 }
 
 func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*Entry, err error) {
-	actualStore := fsw.getActualStore(dirPath)
+	actualStore := fsw.getActualStore(dirPath+"/")
 	entries, err = actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
 	if err != nil {
 		return nil, err
