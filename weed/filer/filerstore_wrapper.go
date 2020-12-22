@@ -41,7 +41,7 @@ func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
 }
 
 func (fsw *FilerStoreWrapper) AddPathSpecificStore(path string, storeId string, store FilerStore) {
-	fsw.storeIdToStore[storeId] = store
+	fsw.storeIdToStore[storeId] = NewFilerStorePathTranlator(path, store)
 	err := fsw.pathToStore.Put([]byte(path), storeId)
 	if err != nil {
 		glog.Fatalf("put path specific store: %v", err)
