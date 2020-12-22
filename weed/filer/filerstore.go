@@ -7,10 +7,10 @@ import (
 )
 
 var (
-	ErrUnsupportedListDirectoryPrefixed = errors.New("unsupported directory prefix listing")
-	ErrKvNotImplemented                 = errors.New("kv not implemented yet")
-	ErrKvNotFound                       = errors.New("kv: not found")
-
+	ErrUnsupportedListDirectoryPrefixed      = errors.New("unsupported directory prefix listing")
+	ErrUnsupportedSuperLargeDirectoryListing = errors.New("unsupported super large directory listing")
+	ErrKvNotImplemented                      = errors.New("kv not implemented yet")
+	ErrKvNotFound                            = errors.New("kv: not found")
 )
 
 type FilerStore interface {

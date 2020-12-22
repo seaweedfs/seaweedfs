@@ -28,15 +28,17 @@ func (store *RedisCluster2Store) Initialize(configuration util.Configuration, pr
 		configuration.GetString(prefix+"password"),
 		configuration.GetBool(prefix+"useReadOnly"),
 		configuration.GetBool(prefix+"routeByLatency"),
+		configuration.GetStringSlice(prefix+"superLargeDirectories"),
 	)
 }
 
-func (store *RedisCluster2Store) initialize(addresses []string, password string, readOnly, routeByLatency bool) (err error) {
+func (store *RedisCluster2Store) initialize(addresses []string, password string, readOnly, routeByLatency bool, superLargeDirectories []string) (err error) {
 	store.Client = redis.NewClusterClient(&redis.ClusterOptions{
 		Addrs:          addresses,
 		Password:       password,
 		ReadOnly:       readOnly,
 		RouteByLatency: routeByLatency,
 	})
+	store.loadSuperLargeDirectories(superLargeDirectories)
 	return
 }

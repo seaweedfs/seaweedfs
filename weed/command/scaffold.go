@@ -138,12 +138,16 @@ hosts=[
 ]
 username=""
 password=""
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
 
 [redis2]
 enabled = false
 address  = "localhost:6379"
 password = ""
 database = 0
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
 
 [redis_cluster2]
 enabled = false
@@ -160,6 +164,8 @@ password = ""
 readOnly = true
 # automatically use the closest Redis server for reads
 routeByLatency = true
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
 
 [etcd]
 enabled = false

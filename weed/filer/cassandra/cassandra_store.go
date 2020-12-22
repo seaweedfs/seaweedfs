@@ -16,8 +16,9 @@ func init() {
 }
 
 type CassandraStore struct {
-	cluster *gocql.ClusterConfig
-	session *gocql.Session
+	cluster                 *gocql.ClusterConfig
+	session                 *gocql.Session
+	superLargeDirectoryHash map[string]string
 }
 
 func (store *CassandraStore) GetName() string {
@@ -30,10 +31,16 @@ func (store *CassandraStore) Initialize(configuration util.Configuration, prefix
 		configuration.GetStringSlice(prefix+"hosts"),
 		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
+		configuration.GetStringSlice(prefix+"superLargeDirectories"),
 	)
 }
 
-func (store *CassandraStore) initialize(keyspace string, hosts []string, username string, password string) (err error) {
+func (store *CassandraStore) isSuperLargeDirectory(dir string) (dirHash string, isSuperLargeDirectory bool) {
+	dirHash, isSuperLargeDirectory = store.superLargeDirectoryHash[dir]
+	return
+}
+
+func (store *CassandraStore) initialize(keyspace string, hosts []string, username string, password string, superLargeDirectories []string) (err error) {
 	store.cluster = gocql.NewCluster(hosts...)
 	if username != "" && password != "" {
 		store.cluster.Authenticator = gocql.PasswordAuthenticator{Username: username, Password: password}
@@ -43,6 +50,19 @@ func (store *CassandraStore) initialize(keyspace string, hosts []string, usernam
 	store.session, err = store.cluster.CreateSession()
 	if err != nil {
 		glog.V(0).Infof("Failed to open cassandra store, hosts %v, keyspace %s", hosts, keyspace)
+	}
+
+	// set directory hash
+	store.superLargeDirectoryHash = make(map[string]string)
+	existingHash := make(map[string]string)
+	for _, dir := range superLargeDirectories {
+		// adding dir hash to avoid duplicated names
+		dirHash := util.Md5String([]byte(dir))[:4]
+		store.superLargeDirectoryHash[dir] = dirHash
+		if existingDir, found := existingHash[dirHash]; found {
+			glog.Fatalf("directory %s has the same hash as %s", dir, existingDir)
+		}
+		existingHash[dirHash] = dir
 	}
 	return
 }
@@ -60,6 +80,10 @@ func (store *CassandraStore) RollbackTransaction(ctx context.Context) error {
 func (store *CassandraStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 
 	dir, name := entry.FullPath.DirAndName()
+	if dirHash, ok := store.isSuperLargeDirectory(dir); ok {
+		dir, name = dirHash+name, ""
+	}
+
 	meta, err := entry.EncodeAttributesAndChunks()
 	if err != nil {
 		return fmt.Errorf("encode %s: %s", entry.FullPath, err)
@@ -86,6 +110,10 @@ func (store *CassandraStore) UpdateEntry(ctx context.Context, entry *filer.Entry
 func (store *CassandraStore) FindEntry(ctx context.Context, fullpath util.FullPath) (entry *filer.Entry, err error) {
 
 	dir, name := fullpath.DirAndName()
+	if dirHash, ok := store.isSuperLargeDirectory(dir); ok {
+		dir, name = dirHash+name, ""
+	}
+
 	var data []byte
 	if err := store.session.Query(
 		"SELECT meta FROM filemeta WHERE directory=? AND name=?",
@@ -113,6 +141,9 @@ func (store *CassandraStore) FindEntry(ctx context.Context, fullpath util.FullPa
 func (store *CassandraStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) error {
 
 	dir, name := fullpath.DirAndName()
+	if dirHash, ok := store.isSuperLargeDirectory(dir); ok {
+		dir, name = dirHash+name, ""
+	}
 
 	if err := store.session.Query(
 		"DELETE FROM filemeta WHERE directory=? AND name=?",
@@ -124,6 +155,9 @@ func (store *CassandraStore) DeleteEntry(ctx context.Context, fullpath util.Full
 }
 
 func (store *CassandraStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) error {
+	if _, ok := store.isSuperLargeDirectory(string(fullpath)); ok {
+		return nil // filer.ErrUnsupportedSuperLargeDirectoryListing
+	}
 
 	if err := store.session.Query(
 		"DELETE FROM filemeta WHERE directory=?",
@@ -140,6 +174,10 @@ func (store *CassandraStore) ListDirectoryPrefixedEntries(ctx context.Context, f
 
 func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool,
 	limit int) (entries []*filer.Entry, err error) {
+
+	if _, ok := store.isSuperLargeDirectory(string(fullpath)); ok {
+		return // nil, filer.ErrUnsupportedSuperLargeDirectoryListing
+	}
 
 	cqlStr := "SELECT NAME, meta FROM filemeta WHERE directory=? AND name>? ORDER BY NAME ASC LIMIT ?"
 	if inclusive {
