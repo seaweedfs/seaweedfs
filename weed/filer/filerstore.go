@@ -80,7 +80,7 @@ func (fsw *FilerStoreWrapper) AddPathSpecificStore(path string, storeId string, 
 
 func (fsw *FilerStoreWrapper) getActualStore(path util.FullPath) (store FilerStore) {
 	store = fsw.defaultStore
-	if path == "" {
+	if path == "/" {
 		return
 	}
 	var storeId string
@@ -95,11 +95,11 @@ func (fsw *FilerStoreWrapper) getActualStore(path util.FullPath) (store FilerSto
 }
 
 func (fsw *FilerStoreWrapper) GetName() string {
-	return fsw.getActualStore("").GetName()
+	return fsw.getActualStore("/").GetName()
 }
 
 func (fsw *FilerStoreWrapper) Initialize(configuration util.Configuration, prefix string) error {
-	return fsw.getActualStore("").Initialize(configuration, prefix)
+	return fsw.getActualStore("/").Initialize(configuration, prefix)
 }
 
 func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) error {
@@ -299,27 +299,27 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 }
 
 func (fsw *FilerStoreWrapper) BeginTransaction(ctx context.Context) (context.Context, error) {
-	return fsw.getActualStore("").BeginTransaction(ctx)
+	return fsw.getActualStore("/").BeginTransaction(ctx)
 }
 
 func (fsw *FilerStoreWrapper) CommitTransaction(ctx context.Context) error {
-	return fsw.getActualStore("").CommitTransaction(ctx)
+	return fsw.getActualStore("/").CommitTransaction(ctx)
 }
 
 func (fsw *FilerStoreWrapper) RollbackTransaction(ctx context.Context) error {
-	return fsw.getActualStore("").RollbackTransaction(ctx)
+	return fsw.getActualStore("/").RollbackTransaction(ctx)
 }
 
 func (fsw *FilerStoreWrapper) Shutdown() {
-	fsw.getActualStore("").Shutdown()
+	fsw.getActualStore("/").Shutdown()
 }
 
 func (fsw *FilerStoreWrapper) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
-	return fsw.getActualStore("").KvPut(ctx, key, value)
+	return fsw.getActualStore("/").KvPut(ctx, key, value)
 }
 func (fsw *FilerStoreWrapper) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
-	return fsw.getActualStore("").KvGet(ctx, key)
+	return fsw.getActualStore("/").KvGet(ctx, key)
 }
 func (fsw *FilerStoreWrapper) KvDelete(ctx context.Context, key []byte) (err error) {
-	return fsw.getActualStore("").KvDelete(ctx, key)
+	return fsw.getActualStore("/").KvDelete(ctx, key)
 }
