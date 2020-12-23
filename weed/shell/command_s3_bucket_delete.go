@@ -9,24 +9,24 @@ import (
 )
 
 func init() {
-	Commands = append(Commands, &commandBucketDelete{})
+	Commands = append(Commands, &commandS3BucketDelete{})
 }
 
-type commandBucketDelete struct {
+type commandS3BucketDelete struct {
 }
 
-func (c *commandBucketDelete) Name() string {
-	return "bucket.delete"
+func (c *commandS3BucketDelete) Name() string {
+	return "s3.bucket.delete"
 }
 
-func (c *commandBucketDelete) Help() string {
+func (c *commandS3BucketDelete) Help() string {
 	return `delete a bucket by a given name
 
-	bucket.delete -name <bucket_name>
+	s3.bucket.delete -name <bucket_name>
 `
 }
 
-func (c *commandBucketDelete) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
+func (c *commandS3BucketDelete) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	bucketName := bucketCommand.String("name", "", "bucket name")
