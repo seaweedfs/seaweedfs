@@ -86,7 +86,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 		// check collection
 		if *collection != "" && strings.HasPrefix(*locationPrefix, "/buckets/") {
-			return fmt.Errorf("one s3 bucket goes to one collection and not customizable.")
+			return fmt.Errorf("one s3 bucket goes to one collection and not customizable")
 		}
 
 		// check replication
