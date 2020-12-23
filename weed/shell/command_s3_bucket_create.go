@@ -34,7 +34,9 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	bucketName := bucketCommand.String("name", "", "bucket name")
-	replication := bucketCommand.String("replication", "", "replication setting for the bucket, if not set it will honor the setting defined by the filer or master")
+	replication := bucketCommand.String("replication", "", "replication setting for the bucket, if not set "+
+		"it will honor the value defined by the filer if it exists, "+
+		"else it will honor the value defined on the master")
 	if err = bucketCommand.Parse(args); err != nil {
 		return nil
 	}
