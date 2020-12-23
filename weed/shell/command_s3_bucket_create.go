@@ -12,29 +12,29 @@ import (
 )
 
 func init() {
-	Commands = append(Commands, &commandBucketCreate{})
+	Commands = append(Commands, &commandS3BucketCreate{})
 }
 
-type commandBucketCreate struct {
+type commandS3BucketCreate struct {
 }
 
-func (c *commandBucketCreate) Name() string {
-	return "bucket.create"
+func (c *commandS3BucketCreate) Name() string {
+	return "s3.bucket.create"
 }
 
-func (c *commandBucketCreate) Help() string {
+func (c *commandS3BucketCreate) Help() string {
 	return `create a bucket with a given name
 
 	Example:
-		bucket.create -name <bucket_name> -replication 001
+		s3.bucket.create -name <bucket_name> -replication 001
 `
 }
 
-func (c *commandBucketCreate) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
+func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	bucketName := bucketCommand.String("name", "", "bucket name")
-	replication := bucketCommand.String("replication", "", "replication setting for the bucket")
+	replication := bucketCommand.String("replication", "", "replication setting for the bucket, if not set it will honor the setting defined by the filer or master")
 	if err = bucketCommand.Parse(args); err != nil {
 		return nil
 	}

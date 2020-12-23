@@ -109,6 +109,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 			os.MkdirAll(option.DefaultLevelDbDir, 0755)
 		}
 		glog.V(0).Infof("default to create filer store dir in %s", option.DefaultLevelDbDir)
+	} else {
+		glog.Warningf("skipping default store dir in %s", option.DefaultLevelDbDir)
 	}
 	util.LoadConfiguration("notification", false)
 

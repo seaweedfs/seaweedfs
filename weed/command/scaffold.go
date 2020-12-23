@@ -138,12 +138,16 @@ hosts=[
 ]
 username=""
 password=""
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
 
 [redis2]
 enabled = false
 address  = "localhost:6379"
 password = ""
 database = 0
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
 
 [redis_cluster2]
 enabled = false
@@ -160,6 +164,8 @@ password = ""
 readOnly = true
 # automatically use the closest Redis server for reads
 routeByLatency = true
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
 
 [etcd]
 enabled = false
@@ -185,6 +191,28 @@ sniff_enabled = false
 healthcheck_enabled = false
 # increase the value is recommend, be sure the value in Elastic is greater or equal here
 index.max_result_window = 10000
+
+
+
+##########################
+##########################
+# To add path-specific filer store:
+#
+# 1. Add a name following the store type separated by a dot ".". E.g., cassandra.tmp
+# 2. Add a location configuraiton. E.g., location = "/tmp/"
+# 3. Copy and customize all other configurations. 
+#     Make sure they are not the same if using the same store type!
+# 4. Set enabled to true
+#
+# The following is just using cassandra as an example
+##########################
+[redis2.tmp]
+enabled = false
+location = "/tmp/"
+address  = "localhost:6379"
+password = ""
+database = 1
+
 `
 
 	NOTIFICATION_TOML_EXAMPLE = `

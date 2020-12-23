@@ -23,14 +23,16 @@ func (store *Redis2Store) Initialize(configuration util.Configuration, prefix st
 		configuration.GetString(prefix+"address"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetInt(prefix+"database"),
+		configuration.GetStringSlice(prefix+"superLargeDirectories"),
 	)
 }
 
-func (store *Redis2Store) initialize(hostPort string, password string, database int) (err error) {
+func (store *Redis2Store) initialize(hostPort string, password string, database int, superLargeDirectories []string) (err error) {
 	store.Client = redis.NewClient(&redis.Options{
 		Addr:     hostPort,
 		Password: password,
 		DB:       database,
 	})
+	store.loadSuperLargeDirectories(superLargeDirectories)
 	return
 }

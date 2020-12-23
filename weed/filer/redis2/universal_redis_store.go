@@ -18,7 +18,21 @@ const (
 )
 
 type UniversalRedis2Store struct {
-	Client redis.UniversalClient
+	Client                  redis.UniversalClient
+	superLargeDirectoryHash map[string]bool
+}
+
+func (store *UniversalRedis2Store) isSuperLargeDirectory(dir string) (isSuperLargeDirectory bool) {
+	_, isSuperLargeDirectory = store.superLargeDirectoryHash[dir]
+	return
+}
+
+func (store *UniversalRedis2Store) loadSuperLargeDirectories(superLargeDirectories []string) {
+	// set directory hash
+	store.superLargeDirectoryHash = make(map[string]bool)
+	for _, dir := range superLargeDirectories {
+		store.superLargeDirectoryHash[dir] = true
+	}
 }
 
 func (store *UniversalRedis2Store) BeginTransaction(ctx context.Context) (context.Context, error) {
@@ -47,6 +61,10 @@ func (store *UniversalRedis2Store) InsertEntry(ctx context.Context, entry *filer
 	}
 
 	dir, name := entry.FullPath.DirAndName()
+	if store.isSuperLargeDirectory(dir) {
+		return nil
+	}
+
 	if name != "" {
 		if err = store.Client.ZAddNX(genDirectoryListKey(dir), redis.Z{Score: 0, Member: name}).Err(); err != nil {
 			return fmt.Errorf("persisting %s in parent dir: %v", entry.FullPath, err)
@@ -96,6 +114,9 @@ func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath uti
 	}
 
 	dir, name := fullpath.DirAndName()
+	if store.isSuperLargeDirectory(dir) {
+		return nil
+	}
 	if name != "" {
 		_, err = store.Client.ZRem(genDirectoryListKey(dir), name).Result()
 		if err != nil {
@@ -107,6 +128,10 @@ func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath uti
 }
 
 func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) (err error) {
+
+	if store.isSuperLargeDirectory(string(fullpath)) {
+		return nil
+	}
 
 	members, err := store.Client.ZRange(genDirectoryListKey(string(fullpath)), 0, -1).Result()
 	if err != nil {

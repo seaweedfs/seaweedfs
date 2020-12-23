@@ -1,10 +1,11 @@
 package filer
 
 import (
-	"os"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/spf13/viper"
+	"os"
+	"reflect"
+	"strings"
 )
 
 var (
@@ -15,25 +16,67 @@ func (f *Filer) LoadConfiguration(config *viper.Viper) {
 
 	validateOneEnabledStore(config)
 
+	// load configuration for default filer store
+	hasDefaultStoreConfigured := false
 	for _, store := range Stores {
 		if config.GetBool(store.GetName() + ".enabled") {
+			store = reflect.New(reflect.ValueOf(store).Elem().Type()).Interface().(FilerStore)
 			if err := store.Initialize(config, store.GetName()+"."); err != nil {
-				glog.Fatalf("Failed to initialize store for %s: %+v",
-					store.GetName(), err)
+				glog.Fatalf("failed to initialize store for %s: %+v", store.GetName(), err)
 			}
 			f.SetStore(store)
-			glog.V(0).Infof("Configure filer for %s", store.GetName())
-			return
+			glog.V(0).Infof("configured filer store to %s", store.GetName())
+			hasDefaultStoreConfigured = true
+			break
 		}
 	}
 
-	println()
-	println("Supported filer stores are:")
-	for _, store := range Stores {
-		println("    " + store.GetName())
+	if !hasDefaultStoreConfigured {
+		println()
+		println("Supported filer stores are:")
+		for _, store := range Stores {
+			println("    " + store.GetName())
+		}
+		os.Exit(-1)
 	}
 
-	os.Exit(-1)
+	// load path-specific filer store here
+	// f.Store.AddPathSpecificStore(path, store)
+	storeNames := make(map[string]FilerStore)
+	for _, store := range Stores {
+		storeNames[store.GetName()] = store
+	}
+	allKeys := config.AllKeys()
+	for _, key := range allKeys {
+		if !strings.HasSuffix(key, ".enabled") {
+			continue
+		}
+		key = key[:len(key)-len(".enabled")]
+		if !strings.Contains(key, ".") {
+			continue
+		}
+
+		parts := strings.Split(key, ".")
+		storeName, storeId := parts[0], parts[1]
+
+		store, found := storeNames[storeName]
+		if !found {
+			continue
+		}
+		store = reflect.New(reflect.ValueOf(store).Elem().Type()).Interface().(FilerStore)
+		if err := store.Initialize(config, key+"."); err != nil {
+			glog.Fatalf("Failed to initialize store for %s: %+v", key, err)
+		}
+		location := config.GetString(key + ".location")
+		if location == "" {
+			glog.Errorf("path-specific filer store needs %s", key+".location")
+			os.Exit(-1)
+		}
+		f.Store.AddPathSpecificStore(location, storeId, store)
+
+		glog.V(0).Infof("configure filer %s for %s", store.GetName(), location)
+	}
+
 }
 
 func validateOneEnabledStore(config *viper.Viper) {

@@ -12,8 +12,13 @@ jobs:
     strategy:
       matrix:
         goos: [linux, windows, darwin, freebsd, netbsd, openbsd ]
-        goarch: ["386", amd64]
-        # goarch: ["386", amd64, arm]
+        goarch: ["386", amd64, arm]
+        exclude:  
+          - goarch: arm
+            goos: darwin
+          - goarch: 386
+            goos: freebsd
+
     steps:
 
     - name: Check out code into the Go module directory
@@ -26,7 +31,6 @@ jobs:
         tag: dev
         fail-if-no-assets: false 
         assets: | 
-          weed-large-disk-*
           weed-*
 
     - name: Set BUILD_TIME env

@@ -11,23 +11,23 @@ import (
 )
 
 func init() {
-	Commands = append(Commands, &commandBucketList{})
+	Commands = append(Commands, &commandS3BucketList{})
 }
 
-type commandBucketList struct {
+type commandS3BucketList struct {
 }
 
-func (c *commandBucketList) Name() string {
-	return "bucket.list"
+func (c *commandS3BucketList) Name() string {
+	return "s3.bucket.list"
 }
 
-func (c *commandBucketList) Help() string {
+func (c *commandS3BucketList) Help() string {
 	return `list all buckets
 
 `
 }
 
-func (c *commandBucketList) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
+func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	if err = bucketCommand.Parse(args); err != nil {
