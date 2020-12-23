@@ -25,7 +25,7 @@ func (f *Filer) LoadConfiguration(config *viper.Viper) {
 				glog.Fatalf("failed to initialize store for %s: %+v", store.GetName(), err)
 			}
 			f.SetStore(store)
-			glog.V(0).Infof("configured filer for %s", store.GetName())
+			glog.V(0).Infof("configured filer store to %s", store.GetName())
 			hasDefaultStoreConfigured = true
 			break
 		}
