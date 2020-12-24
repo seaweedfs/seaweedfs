@@ -1,0 +1,67 @@
+package hbase
+
+import (
+	"context"
+	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/tsuna/gohbase/hrpc"
+)
+
+const(
+	COLUMN_NAME = "a"
+)
+func (store *HbaseStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
+	return store.doPut(ctx, store.cfKv, key, value)
+}
+
+func (store *HbaseStore) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
+	return store.doGet(ctx, store.cfKv, key)
+}
+
+func (store *HbaseStore) KvDelete(ctx context.Context, key []byte) (err error) {
+	return store.doDelete(ctx, store.cfKv, key)
+}
+
+func (store *HbaseStore) doPut(ctx context.Context, cf string, key, value []byte) (err error) {
+	values := map[string]map[string][]byte{store.cfKv: map[string][]byte{}}
+	values[cf][COLUMN_NAME] = value
+	putRequest, err := hrpc.NewPut(ctx, store.table, key, values)
+	if err != nil {
+		return err
+	}
+	_, err = store.Client.Put(putRequest)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (store *HbaseStore) doGet(ctx context.Context, cf string, key []byte) (value []byte, err error) {
+	family := map[string][]string{cf: {COLUMN_NAME}}
+	getRequest, err := hrpc.NewGet(context.Background(), store.table, key, hrpc.Families(family))
+	if err != nil {
+		return nil, err
+	}
+	getResp, err := store.Client.Get(getRequest)
+	if err != nil {
+		return nil, err
+	}
+	if len(getResp.Cells) == 0 {
+		return nil, filer.ErrKvNotFound
+	}
+
+	return getResp.Cells[0].Value, nil
+}
+
+func (store *HbaseStore) doDelete(ctx context.Context, cf string, key []byte) (err error) {
+	values := map[string]map[string][]byte{store.cfKv: map[string][]byte{}}
+	values[cf][COLUMN_NAME] = nil
+	deleteRequest, err := hrpc.NewDel(ctx, store.table, key, values)
+	if err != nil {
+		return err
+	}
+	_, err = store.Client.Delete(deleteRequest)
+	if err != nil {
+		return err
+	}
+	return nil
+}
