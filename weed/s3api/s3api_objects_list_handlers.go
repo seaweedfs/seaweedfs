@@ -310,6 +310,7 @@ func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, 
 
 func (s3a *S3ApiServer) isDirectoryAllEmpty(filerClient filer_pb.SeaweedFilerClient, parentDir, name string) (isEmpty bool, err error) {
 	// println("+ isDirectoryAllEmpty", dir, name)
+	glog.V(8).Infof("isDirectoryAllEmpty() start parentDir: %s", parentDir)
 	var fileCounter int
 	var subDirs []string
 	currentDir := parentDir + "/" + name
@@ -324,6 +325,7 @@ func (s3a *S3ApiServer) isDirectoryAllEmpty(filerClient filer_pb.SeaweedFilerCli
 			}
 			startFrom = entry.Name
 			isExhausted = isExhausted || isLast
+			glog.V(8).Infof("filer_pb.SeaweedList() startFrom: %s isExhausted: %t", startFrom, isExhausted)
 			return nil
 		}, startFrom, false, 8)
 	}
@@ -338,6 +340,8 @@ func (s3a *S3ApiServer) isDirectoryAllEmpty(filerClient filer_pb.SeaweedFilerCli
 
 	for _, subDir := range subDirs {
 		isSubEmpty, subErr := s3a.isDirectoryAllEmpty(filerClient, currentDir, subDir)
+		glog.V(8).Infof("s3a.isDirectoryAllEmpty() subDir: %s, isSubEmpty: %t", subDir, isSubEmpty)
+
 		if subErr != nil {
 			return false, subErr
 		}
