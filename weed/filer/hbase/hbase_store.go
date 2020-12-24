@@ -112,7 +112,7 @@ func (store *HbaseStore) DeleteEntry(ctx context.Context, path util.FullPath) (e
 func (store *HbaseStore) DeleteFolderChildren(ctx context.Context, path util.FullPath) (err error) {
 
 	family := map[string][]string{store.cfMetaDir: {COLUMN_NAME}}
-	expectedPrefix := []byte(path+"/")
+	expectedPrefix := []byte(path + "/")
 	scan, err := hrpc.NewScanRange(ctx, store.table, expectedPrefix, nil, hrpc.Families(family))
 	if err != nil {
 		return err
@@ -133,6 +133,11 @@ func (store *HbaseStore) DeleteFolderChildren(ctx context.Context, path util.Ful
 		if !bytes.HasPrefix(cell.Row, expectedPrefix) {
 			break
 		}
+		fullpath := util.FullPath(cell.Row)
+		dir, _ := fullpath.DirAndName()
+		if dir != string(dirPath) {
+			continue
+		}
 
 		err = store.doDelete(ctx, store.cfMetaDir, cell.Row)
 		if err != nil {
@@ -149,7 +154,7 @@ func (store *HbaseStore) ListDirectoryEntries(ctx context.Context, dirPath util.
 
 func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*filer.Entry, error) {
 	family := map[string][]string{store.cfMetaDir: {COLUMN_NAME}}
-	expectedPrefix := []byte(dirPath.Child(prefix))
+	expectedPrefix := []byte(string(dirPath) + "/" + prefix)
 	scan, err := hrpc.NewScanRange(ctx, store.table, expectedPrefix, nil, hrpc.Families(family))
 	if err != nil {
 		return nil, err
@@ -176,11 +181,12 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 		}
 
 		fullpath := util.FullPath(cell.Row)
-
+		dir, fileName := fullpath.DirAndName()
+		if dir != string(dirPath) {
+			continue
+		}
 
 		value := cell.Value
-
-		_, fileName := fullpath.DirAndName()
 
 		if fileName == startFileName && !includeStartFile {
 			continue
