@@ -79,7 +79,7 @@ func (store *HbaseStore) InsertEntry(ctx context.Context, entry *filer.Entry) er
 		value = util.MaybeGzipData(value)
 	}
 
-	return store.doPut(ctx, store.cfMetaDir, []byte(entry.FullPath), value)
+	return store.doPut(ctx, store.cfMetaDir, []byte(entry.FullPath), value, entry.TtlSec)
 }
 
 func (store *HbaseStore) UpdateEntry(ctx context.Context, entry *filer.Entry) (err error) {
