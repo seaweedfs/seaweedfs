@@ -114,7 +114,7 @@ func (store *HbaseStore) DeleteEntry(ctx context.Context, path util.FullPath) (e
 func (store *HbaseStore) DeleteFolderChildren(ctx context.Context, path util.FullPath) (err error) {
 
 	family := map[string][]string{store.cfMetaDir: {COLUMN_NAME}}
-	expectedPrefix := []byte(dirPath+"/")
+	expectedPrefix := []byte(path+"/")
 	scan, err := hrpc.NewScanRange(ctx, store.table, expectedPrefix, nil, hrpc.Families(family))
 	if err != nil {
 		return err
