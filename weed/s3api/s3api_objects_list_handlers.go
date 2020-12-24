@@ -317,8 +317,10 @@ func (s3a *S3ApiServer) isDirectoryAllEmpty(filerClient filer_pb.SeaweedFilerCli
 	currentDir := parentDir + "/" + name
 	var startFrom string
 	var isExhausted bool
+	var foundEntry bool
 	for fileCounter == 0 && !isExhausted && err == nil {
 		err = filer_pb.SeaweedList(filerClient, currentDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+			foundEntry = true
 			if entry.IsDirectory {
 				subDirs = append(subDirs, entry.Name)
 			} else {
@@ -329,6 +331,9 @@ func (s3a *S3ApiServer) isDirectoryAllEmpty(filerClient filer_pb.SeaweedFilerCli
 			glog.V(4).Infof("    * %s/%s isLast: %t", currentDir, startFrom, isLast)
 			return nil
 		}, startFrom, false, 8)
+		if !foundEntry {
+			break
+		}
 	}
 
 	if err != nil {
