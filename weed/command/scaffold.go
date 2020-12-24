@@ -142,6 +142,7 @@ password=""
 superLargeDirectories = []
 
 [hbase]
+enabled = false
 zkquorum = ""
 table = "seaweedfs"
 
