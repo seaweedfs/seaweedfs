@@ -135,7 +135,7 @@ func (store *HbaseStore) DeleteFolderChildren(ctx context.Context, path util.Ful
 		}
 		fullpath := util.FullPath(cell.Row)
 		dir, _ := fullpath.DirAndName()
-		if dir != string(dirPath) {
+		if dir != string(dir) {
 			continue
 		}
 
