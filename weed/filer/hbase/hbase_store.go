@@ -22,7 +22,6 @@ type HbaseStore struct {
 	table     []byte
 	cfKv      string
 	cfMetaDir string
-	cfFlatDir string
 	column    string
 }
 
@@ -42,7 +41,6 @@ func (store *HbaseStore) initialize(zkquorum, table string) (err error) {
 	store.table = []byte(table)
 	store.cfKv = "kv"
 	store.cfMetaDir = "meta"
-	store.cfFlatDir = "flat"
 	store.column = "a"
 
 	// check table exists
@@ -59,7 +57,7 @@ func (store *HbaseStore) initialize(zkquorum, table string) (err error) {
 
 	// create table
 	adminClient := gohbase.NewAdminClient(zkquorum)
-	cFamilies := []string{store.cfKv, store.cfMetaDir, store.cfFlatDir}
+	cFamilies := []string{store.cfKv, store.cfMetaDir}
 	cf := make(map[string]map[string]string, len(cFamilies))
 	for _, f := range cFamilies {
 		cf[f] = nil

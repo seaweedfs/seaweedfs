@@ -22,7 +22,7 @@ func (store *HbaseStore) KvDelete(ctx context.Context, key []byte) (err error) {
 }
 
 func (store *HbaseStore) doPut(ctx context.Context, cf string, key, value []byte) (err error) {
-	values := map[string]map[string][]byte{store.cfKv: map[string][]byte{}}
+	values := map[string]map[string][]byte{cf: map[string][]byte{}}
 	values[cf][COLUMN_NAME] = value
 	putRequest, err := hrpc.NewPut(ctx, store.table, key, values)
 	if err != nil {
@@ -53,7 +53,7 @@ func (store *HbaseStore) doGet(ctx context.Context, cf string, key []byte) (valu
 }
 
 func (store *HbaseStore) doDelete(ctx context.Context, cf string, key []byte) (err error) {
-	values := map[string]map[string][]byte{store.cfKv: map[string][]byte{}}
+	values := map[string]map[string][]byte{cf: map[string][]byte{}}
 	values[cf][COLUMN_NAME] = nil
 	deleteRequest, err := hrpc.NewDel(ctx, store.table, key, values)
 	if err != nil {
