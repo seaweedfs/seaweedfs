@@ -141,6 +141,10 @@ password=""
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
 
+[hbase]
+zkquorum = ""
+table = "seaweedfs"
+
 [redis2]
 enabled = false
 address  = "localhost:6379"
