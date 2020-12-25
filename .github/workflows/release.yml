@@ -11,13 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [linux, windows, darwin, freebsd, netbsd, openbsd ]
-        goarch: ["386", amd64, arm]
+        goos: [linux, windows, darwin ]
+        goarch: [amd64, arm]
         exclude:  
           - goarch: arm
             goos: darwin
-          - goarch: 386
-            goos: freebsd
+          - goarch: arm
+            goos: windows
 
     steps:
 
