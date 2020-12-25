@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"math"
 	"net/http"
 	"time"
@@ -26,6 +27,16 @@ type ListAllMyBucketsResult struct {
 
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
 
+	var identity *Identity
+	var s3Err s3err.ErrorCode
+	if s3a.iam.isEnabled() {
+		identity, s3Err = s3a.iam.authUser(r)
+		if s3Err != s3err.ErrNone {
+			writeErrorResponse(w, s3Err, r.URL)
+			return
+		}
+	}
+
 	var response ListAllMyBucketsResult
 
 	entries, _, err := s3a.list(s3a.option.BucketsPath, "", "", false, math.MaxInt32)
@@ -40,7 +51,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	var buckets []*s3.Bucket
 	for _, entry := range entries {
 		if entry.IsDirectory {
-			if !s3a.hasAccess(r, entry) {
+			if identity!=nil && !identity.canDo(s3_constants.ACTION_ADMIN, entry.Name) {
 				continue
 			}
 			buckets = append(buckets, &s3.Bucket{

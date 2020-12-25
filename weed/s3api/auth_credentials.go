@@ -3,6 +3,7 @@ package s3api
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"io/ioutil"
 	"net/http"
 
@@ -155,6 +156,24 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 
 // check whether the request has valid access keys
 func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action) (*Identity, s3err.ErrorCode) {
+	identity, s3Err := iam.authUser(r)
+	if s3Err != s3err.ErrNone {
+		return identity, s3Err
+	}
+
+	glog.V(3).Infof("user name: %v actions: %v", identity.Name, identity.Actions)
+
+	bucket, _ := getBucketAndObject(r)
+
+	if !identity.canDo(action, bucket) {
+		return identity, s3err.ErrAccessDenied
+	}
+
+	return identity, s3err.ErrNone
+
+}
+
+func (iam *IdentityAccessManagement) authUser(r *http.Request) (*Identity, s3err.ErrorCode) {
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	var found bool
@@ -189,17 +208,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	if s3Err != s3err.ErrNone {
 		return identity, s3Err
 	}
-
-	glog.V(3).Infof("user name: %v actions: %v", identity.Name, identity.Actions)
-
-	bucket, _ := getBucketAndObject(r)
-
-	if !identity.canDo(action, bucket) {
-		return identity, s3err.ErrAccessDenied
-	}
-
 	return identity, s3err.ErrNone
-
 }
 
 func (identity *Identity) canDo(action Action, bucket string) bool {
@@ -215,8 +224,12 @@ func (identity *Identity) canDo(action Action, bucket string) bool {
 		return false
 	}
 	limitedByBucket := string(action) + ":" + bucket
+	adminLimitedByBucket := s3_constants.ACTION_ADMIN + ":" + bucket
 	for _, a := range identity.Actions {
 		if string(a) == limitedByBucket {
+			return true
+		}
+		if string(a) == adminLimitedByBucket {
 			return true
 		}
 	}
