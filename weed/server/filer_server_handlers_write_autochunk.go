@@ -209,17 +209,36 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 	for {
 		limitedReader := io.LimitReader(partReader, int64(chunkSize))
 
-		// assign one file id for one chunk
-		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(so)
-		if assignErr != nil {
-			return nil, nil, 0, assignErr, nil
+		data, err := ioutil.ReadAll(limitedReader)
+		if err != nil {
+			return nil, nil, 0, err, nil
 		}
+		dataReader := util.NewBytesReader(data)
 
-		// upload the chunk to the volume server
-		uploadResult, uploadErr, data := fs.doUpload(urlLocation, w, r, limitedReader, fileName, contentType, nil, auth)
+		// retry to assign a different file id
+		var fileId, urlLocation string
+		var auth security.EncodedJwt
+		var assignErr, uploadErr error
+		var uploadResult *operation.UploadResult
+		for i := 0; i < 3; i++ {
+			// assign one file id for one chunk
+			fileId, urlLocation, auth, assignErr = fs.assignNewFileInfo(so)
+			if assignErr != nil {
+				return nil, nil, 0, assignErr, nil
+			}
+
+			// upload the chunk to the volume server
+			uploadResult, uploadErr, _ = fs.doUpload(urlLocation, w, r, dataReader, fileName, contentType, nil, auth)
+			if uploadErr != nil {
+				time.Sleep(251 * time.Millisecond)
+				continue
+			}
+			break
+		}
 		if uploadErr != nil {
 			return nil, nil, 0, uploadErr, nil
 		}
+
 		content = data
 
 		// if last chunk exhausted the reader exactly at the border
