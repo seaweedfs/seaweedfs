@@ -7,19 +7,16 @@ import (
 	"strings"
 )
 
-func splitPattern(pattern string) (prefix string, restPattern string, hasUpper bool) {
-	for i := 0; i < len(pattern); i++ {
-		hasUpper = hasUpper || ('A' <= pattern[i] && pattern[i] <= 'Z')
-	}
+func splitPattern(pattern string) (prefix string, restPattern string) {
 	position := strings.Index(pattern, "*")
 	if position >= 0 {
-		return pattern[:position], pattern[position:], hasUpper
+		return pattern[:position], pattern[position:]
 	}
 	position = strings.Index(pattern, "?")
 	if position >= 0 {
-		return pattern[:position], pattern[position:], hasUpper
+		return pattern[:position], pattern[position:]
 	}
-	return "", restPattern, hasUpper
+	return "", restPattern
 }
 
 func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int, namePattern string) (entries []*Entry, err error) {
@@ -27,15 +24,15 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, start
 		p = p[0 : len(p)-1]
 	}
 
-	prefix, restNamePattern, hasUpper := splitPattern(namePattern)
+	prefix, restNamePattern := splitPattern(namePattern)
 	var missedCount int
 	var lastFileName string
 
-	entries, missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, startFileName, inclusive, limit, prefix, restNamePattern, hasUpper)
+	entries, missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, startFileName, inclusive, limit, prefix, restNamePattern)
 
 	for missedCount > 0 && err == nil {
 		var makeupEntries []*Entry
-		makeupEntries, missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, lastFileName, false, missedCount, prefix, restNamePattern, hasUpper)
+		makeupEntries, missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, lastFileName, false, missedCount, prefix, restNamePattern)
 		for _, entry := range makeupEntries {
 			entries = append(entries, entry)
 		}
@@ -44,7 +41,7 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, start
 	return entries, err
 }
 
-func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int, prefix, restNamePattern string, hasUpper bool) (matchedEntries []*Entry, missedCount int, lastFileName string, err error) {
+func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int, prefix, restNamePattern string) (matchedEntries []*Entry, missedCount int, lastFileName string, err error) {
 	var foundEntries []*Entry
 
 	foundEntries, lastFileName, err = f.doListValidEntries(ctx, p, startFileName, inclusive, limit, prefix)
