@@ -23,13 +23,14 @@ var (
 )
 
 type S3Options struct {
-	filer           *string
-	port            *int
-	config          *string
-	domainName      *string
-	tlsPrivateKey   *string
-	tlsCertificate  *string
-	metricsHttpPort *int
+	filer            *string
+	port             *int
+	config           *string
+	domainName       *string
+	tlsPrivateKey    *string
+	tlsCertificate   *string
+	metricsHttpPort  *int
+	allowEmptyFolder *bool
 }
 
 func init() {
@@ -41,6 +42,7 @@ func init() {
 	s3StandaloneOptions.tlsPrivateKey = cmdS3.Flag.String("key.file", "", "path to the TLS private key file")
 	s3StandaloneOptions.tlsCertificate = cmdS3.Flag.String("cert.file", "", "path to the TLS certificate file")
 	s3StandaloneOptions.metricsHttpPort = cmdS3.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
+	s3StandaloneOptions.allowEmptyFolder = cmdS3.Flag.Bool("allowEmptyFolder", false, "allow empty folders")
 }
 
 var cmdS3 = &Command{
@@ -181,6 +183,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		DomainName:       *s3opt.domainName,
 		BucketsPath:      filerBucketsPath,
 		GrpcDialOption:   grpcDialOption,
+		AllowEmptyFolder: *s3opt.allowEmptyFolder,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)

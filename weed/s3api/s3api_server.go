@@ -20,6 +20,7 @@ type S3ApiServerOption struct {
 	DomainName       string
 	BucketsPath      string
 	GrpcDialOption   grpc.DialOption
+	AllowEmptyFolder bool
 }
 
 type S3ApiServer struct {
