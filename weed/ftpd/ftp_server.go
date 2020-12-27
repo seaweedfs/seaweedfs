@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/spf13/afero"
 	"net"
 
 	ftpserver "github.com/fclairamb/ftpserverlib"
@@ -25,16 +26,18 @@ type FtpServerOption struct {
 type SftpServer struct {
 	option      *FtpServerOption
 	ftpListener net.Listener
+	fs          *FtpFileSystem
 }
 
 var _ = ftpserver.MainDriver(&SftpServer{})
 
 // NewServer returns a new FTP server driver
 func NewFtpServer(ftpListener net.Listener, option *FtpServerOption) (*SftpServer, error) {
-	var err error
+	fs, err := NewFtpFileSystem(option)
 	server := &SftpServer{
 		option:      option,
 		ftpListener: ftpListener,
+		fs:          fs,
 	}
 	return server, err
 }
@@ -71,11 +74,17 @@ func (s *SftpServer) ClientDisconnected(cc ftpserver.ClientContext) {
 
 // AuthUser authenticates the user and selects an handling driver
 func (s *SftpServer) AuthUser(cc ftpserver.ClientContext, username, password string) (ftpserver.ClientDriver, error) {
-	return nil, nil
+	return &ClientDriver{
+		Fs: s.fs,
+	}, nil
 }
 
 // GetTLSConfig returns a TLS Certificate to use
 // The certificate could frequently change if we use something like "let's encrypt"
 func (s *SftpServer) GetTLSConfig() (*tls.Config, error) {
 	return nil, errors.New("no TLS certificate configured")
+}
+
+type ClientDriver struct {
+	afero.Fs
 }
