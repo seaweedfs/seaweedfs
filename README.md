@@ -86,6 +86,8 @@ SeaweedFS started by implementing [Facebook's Haystack design paper](http://www.
 
 On top of the object store, optional [Filer] can support directories and POSIX attributes. Filer is a separate linearly-scalable stateless server with customizable metadata stores, e.g., MySql, Postgres, Redis, Cassandra, HBase, Mongodb, Elastic Search, LevelDB, MemSql, TiDB, Etcd, CockroachDB, etc.
 
+For any distributed key value stores, the large values can be offloaded to SeaweedFS. With the fast access speed and linearly scalable capacity, SeaweedFS can work as a distributed [Key-Large-Value store][KeyLargeValueStore].
+
 [Back to TOC](#table-of-contents)
 
 ## Additional Features ##
@@ -137,7 +139,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 [SeaweedFsCsiDriver]: https://github.com/seaweedfs/seaweedfs-csi-driver
 [ActiveActiveAsyncReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Active-Active-cross-cluster-continuous-synchronization
 [FilerStoreReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Store-Replication
-
+[KeyLargeValueStore]: https://github.com/chrislusf/seaweedfs/wiki/Filer-as-a-Key-Large-Value-Store
 
 [Back to TOC](#table-of-contents)
 
