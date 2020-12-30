@@ -335,7 +335,7 @@ Usually hot data are fresh and warm data are old. SeaweedFS puts the newly creat
 
 With the O(1) access time, the network latency cost is kept at minimum. 
 
-If the hot~warm data is split as 20~80, with 20 servers, you can achieve storage capacity of 100 servers. That's a cost saving of 80%! Or you can repurpose the 80 servers to store new data also, and get 5X storage throughput.
+If the hot/warm data is split as 20/80, with 20 servers, you can achieve storage capacity of 100 servers. That's a cost saving of 80%! Or you can repurpose the 80 servers to store new data also, and get 5X storage throughput.
 
 [Back to TOC](#table-of-contents)
 
