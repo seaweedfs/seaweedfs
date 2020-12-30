@@ -69,6 +69,7 @@ func SubmitFiles(master string, grpcDialOption grpc.DialOption, files []FilePart
 		file.Replication = replication
 		file.Collection = collection
 		file.DataCenter = dataCenter
+		file.Ttl = ttl
 		results[index].Size, err = file.Upload(maxMB, master, usePublicUrl, ret.Auth, grpcDialOption)
 		if err != nil {
 			results[index].Error = err.Error()
