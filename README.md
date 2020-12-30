@@ -117,7 +117,10 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * [WebDAV] accesses as a mapped drive on Mac and Windows, or from mobile devices.
 * [AES256-GCM Encrypted Storage][FilerDataEncryption] safely stores the encrypted data.
 * [Super Large Files][SuperLargeFiles] stores large or super large files in tens of TB.
+
+## Kubernetes ##
 * [Kubernetes CSI Driver][SeaweedFsCsiDriver] A Container Storage Interface (CSI) Driver. [![Docker Pulls](https://img.shields.io/docker/pulls/chrislusf/seaweedfs-csi-driver.svg?maxAge=4800)](https://hub.docker.com/r/chrislusf/seaweedfs-csi-driver/)
+* [SeaweedFS Operator](https://github.com/seaweedfs/seaweedfs-operator)
 
 [Filer]: https://github.com/chrislusf/seaweedfs/wiki/Directories-and-Files
 [SuperLargeFiles]: https://github.com/chrislusf/seaweedfs/wiki/Data-Structure-for-Large-Files
@@ -134,6 +137,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 [SeaweedFsCsiDriver]: https://github.com/seaweedfs/seaweedfs-csi-driver
 [ActiveActiveAsyncReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Active-Active-cross-cluster-continuous-synchronization
 [FilerStoreReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Store-Replication
+
 
 [Back to TOC](#table-of-contents)
 
@@ -436,9 +440,7 @@ MinIO has specific requirements on storage layout. It is not flexible to adjust 
 
 ## Dev Plan ##
 
-* More tools and documentation, on how to manage and scale the system. For example, how to move volumes, automatically balancing data, how to grow volumes, how to check system status, etc.
-* Integrate with Kubernetes. build [SeaweedFS Operator](https://github.com/seaweedfs/seaweedfs-operator).
-* Add ftp server.
+* More tools and documentation, on how to manage and scale the system.
 * Read and write stream data.
 * Support structured data.
 
