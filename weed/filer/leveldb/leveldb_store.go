@@ -175,7 +175,7 @@ func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, ful
 	for iter.Next() {
 		key := iter.Key()
 		if !bytes.HasPrefix(key, directoryPrefix) {
-			break
+			continue
 		}
 		fileName := getNameFromKey(key)
 		if fileName == "" {
