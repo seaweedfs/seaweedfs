@@ -38,7 +38,8 @@ services:
     privileged: true
     cap_add:
       - SYS_ADMIN
-    command: 'mount -filer="filer:8888" -dirAutoCreate -dir=/mnt/seaweedfs'
+    mem_limit: 4096m
+    command: '-v=4 mount -filer="filer:8888" -dirAutoCreate -dir=/mnt/seaweedfs -cacheCapacityMB=0 '
     depends_on:
       - master
       - volume
