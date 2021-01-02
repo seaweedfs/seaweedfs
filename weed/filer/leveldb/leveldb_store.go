@@ -170,8 +170,12 @@ func (store *LevelDBStore) ListDirectoryEntries(ctx context.Context, fullpath we
 func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, err error) {
 
 	directoryPrefix := genDirectoryKeyPrefix(fullpath, prefix)
+	lastFileStart := directoryPrefix
+	if startFileName != "" {
+		lastFileStart = genDirectoryKeyPrefix(fullpath, startFileName)
+	}
 
-	iter := store.db.NewIterator(&leveldb_util.Range{Start: genDirectoryKeyPrefix(fullpath, startFileName)}, nil)
+	iter := store.db.NewIterator(&leveldb_util.Range{Start: lastFileStart}, nil)
 	for iter.Next() {
 		key := iter.Key()
 		if !bytes.HasPrefix(key, directoryPrefix) {
