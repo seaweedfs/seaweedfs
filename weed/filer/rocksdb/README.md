@@ -16,7 +16,6 @@ brew install snappy
 
 # install rocksdb:
 ```
-
  export ROCKSDB_HOME=/Users/chris/dev/rocksdb
 
  git clone https://github.com/facebook/rocksdb.git $ROCKSDB_HOME
@@ -24,7 +23,6 @@ brew install snappy
  make clean
  make install-static
  popd
-
 ```
 
 # install gorocksdb
@@ -34,5 +32,10 @@ export CGO_CFLAGS="-I$ROCKSDB_HOME/include"
 export CGO_LDFLAGS="-L$ROCKSDB_HOME -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd"
 
 go get github.com/tecbot/gorocksdb
+```
+# compile with rocksdb
 
+```
+cd ~/go/src/github.com/chrislusf/seaweedfs/weed
+go install -tags rocksdb
 ```
