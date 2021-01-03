@@ -32,7 +32,7 @@ type FilePart struct {
 
 type SubmitResult struct {
 	FileName string `json:"fileName,omitempty"`
-	FileUrl  string `json:"fileUrl,omitempty"`
+	FileUrl  string `json:"url,omitempty"`
 	Fid      string `json:"fid,omitempty"`
 	Size     uint32 `json:"size,omitempty"`
 	Error    string `json:"error,omitempty"`
