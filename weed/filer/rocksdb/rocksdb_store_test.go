@@ -1,4 +1,6 @@
-package leveldb
+// +build rocksdb
+
+package rocksdb
 
 import (
 	"context"
@@ -16,7 +18,7 @@ func TestCreateAndFind(t *testing.T) {
 	testFiler := filer.NewFiler(nil, nil, "", 0, "", "", "", nil)
 	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test")
 	defer os.RemoveAll(dir)
-	store := &LevelDBStore{}
+	store := &RocksDBStore{}
 	store.initialize(dir)
 	testFiler.SetStore(store)
 
@@ -70,7 +72,7 @@ func TestEmptyRoot(t *testing.T) {
 	testFiler := filer.NewFiler(nil, nil, "", 0, "", "", "", nil)
 	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test2")
 	defer os.RemoveAll(dir)
-	store := &LevelDBStore{}
+	store := &RocksDBStore{}
 	store.initialize(dir)
 	testFiler.SetStore(store)
 
@@ -93,7 +95,7 @@ func BenchmarkInsertEntry(b *testing.B) {
 	testFiler := filer.NewFiler(nil, nil, "", 0, "", "", "", nil)
 	dir, _ := ioutil.TempDir("", "seaweedfs_filer_bench")
 	defer os.RemoveAll(dir)
-	store := &LevelDBStore{}
+	store := &RocksDBStore{}
 	store.initialize(dir)
 	testFiler.SetStore(store)
 
