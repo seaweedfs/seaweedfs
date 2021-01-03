@@ -66,6 +66,7 @@ require (
 	github.com/spf13/viper v1.4.0
 	github.com/stretchr/testify v1.6.1
 	github.com/syndtr/goleveldb v1.0.0
+	github.com/tecbot/gorocksdb v0.0.0-20191217155057-f0fad39f321c
 	github.com/tidwall/gjson v1.3.2
 	github.com/tidwall/match v1.0.1
 	github.com/tsuna/gohbase v0.0.0-20201125011725-348991136365

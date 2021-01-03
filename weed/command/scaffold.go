@@ -87,7 +87,13 @@ buckets_folder = "/buckets"
 # local on disk, mostly for simple single-machine setup, fairly scalable
 # faster than previous leveldb, recommended.
 enabled = true
-dir = "."					# directory to store level db files
+dir = "./filerldb2"					# directory to store level db files
+
+[rocksdb]
+# local on disk, similar to leveldb
+# since it is using a C wrapper, you need to install rocksdb and build it by yourself
+enabled = false
+dir = "./filerrdb"					# directory to store rocksdb files
 
 [mysql]  # or tidb
 # CREATE TABLE IF NOT EXISTS filemeta (
