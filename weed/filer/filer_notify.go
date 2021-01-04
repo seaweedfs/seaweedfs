@@ -113,13 +113,13 @@ func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, eachLogEntryFn func(
 	sizeBuf := make([]byte, 4)
 	startTsNs := startTime.UnixNano()
 
-	dayEntries, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, 366, "")
+	dayEntries, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, 366, "", "")
 	if listDayErr != nil {
 		return lastTsNs, fmt.Errorf("fail to list log by day: %v", listDayErr)
 	}
 	for _, dayEntry := range dayEntries {
 		// println("checking day", dayEntry.FullPath)
-		hourMinuteEntries, listHourMinuteErr := f.ListDirectoryEntries(context.Background(), util.NewFullPath(SystemLogDir, dayEntry.Name()), "", false, 24*60, "")
+		hourMinuteEntries, listHourMinuteErr := f.ListDirectoryEntries(context.Background(), util.NewFullPath(SystemLogDir, dayEntry.Name()), "", false, 24*60, "", "")
 		if listHourMinuteErr != nil {
 			return lastTsNs, fmt.Errorf("fail to list log %s by day: %v", dayEntry.Name(), listHourMinuteErr)
 		}

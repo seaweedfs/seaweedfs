@@ -1,0 +1,22 @@
+name: Cleanup
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: Delete old release assets
+      uses: mknejp/delete-release-assets@v1
+      with:
+        token: ${{ github.token }}
+        tag: dev
+        fail-if-no-assets: false 
+        assets: | 
+          weed-*

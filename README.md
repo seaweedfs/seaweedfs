@@ -86,6 +86,8 @@ SeaweedFS started by implementing [Facebook's Haystack design paper](http://www.
 
 On top of the object store, optional [Filer] can support directories and POSIX attributes. Filer is a separate linearly-scalable stateless server with customizable metadata stores, e.g., MySql, Postgres, Redis, Cassandra, HBase, Mongodb, Elastic Search, LevelDB, MemSql, TiDB, Etcd, CockroachDB, etc.
 
+For any distributed key value stores, the large values can be offloaded to SeaweedFS. With the fast access speed and linearly scalable capacity, SeaweedFS can work as a distributed [Key-Large-Value store][KeyLargeValueStore].
+
 [Back to TOC](#table-of-contents)
 
 ## Additional Features ##
@@ -117,7 +119,10 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 * [WebDAV] accesses as a mapped drive on Mac and Windows, or from mobile devices.
 * [AES256-GCM Encrypted Storage][FilerDataEncryption] safely stores the encrypted data.
 * [Super Large Files][SuperLargeFiles] stores large or super large files in tens of TB.
+
+## Kubernetes ##
 * [Kubernetes CSI Driver][SeaweedFsCsiDriver] A Container Storage Interface (CSI) Driver. [![Docker Pulls](https://img.shields.io/docker/pulls/chrislusf/seaweedfs-csi-driver.svg?maxAge=4800)](https://hub.docker.com/r/chrislusf/seaweedfs-csi-driver/)
+* [SeaweedFS Operator](https://github.com/seaweedfs/seaweedfs-operator)
 
 [Filer]: https://github.com/chrislusf/seaweedfs/wiki/Directories-and-Files
 [SuperLargeFiles]: https://github.com/chrislusf/seaweedfs/wiki/Data-Structure-for-Large-Files
@@ -134,6 +139,7 @@ On top of the object store, optional [Filer] can support directories and POSIX a
 [SeaweedFsCsiDriver]: https://github.com/seaweedfs/seaweedfs-csi-driver
 [ActiveActiveAsyncReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Active-Active-cross-cluster-continuous-synchronization
 [FilerStoreReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Store-Replication
+[KeyLargeValueStore]: https://github.com/chrislusf/seaweedfs/wiki/Filer-as-a-Key-Large-Value-Store
 
 [Back to TOC](#table-of-contents)
 
@@ -335,7 +341,7 @@ Usually hot data are fresh and warm data are old. SeaweedFS puts the newly creat
 
 With the O(1) access time, the network latency cost is kept at minimum. 
 
-If the hot~warm data is split as 20~80, with 20 servers, you can achieve storage capacity of 100 servers. That's a cost saving of 80%! Or you can repurpose the 80 servers to store new data also, and get 5X storage throughput.
+If the hot/warm data is split as 20/80, with 20 servers, you can achieve storage capacity of 100 servers. That's a cost saving of 80%! Or you can repurpose the 80 servers to store new data also, and get 5X storage throughput.
 
 [Back to TOC](#table-of-contents)
 
@@ -403,7 +409,7 @@ SeaweedFS has a centralized master group to look up free volumes, while Ceph use
 
 Same as SeaweedFS, Ceph is also based on the object store RADOS. Ceph is rather complicated with mixed reviews.
 
-Ceph uses CRUSH hashing to automatically manage the data placement. SeaweedFS places data by assigned volumes.
+Ceph uses CRUSH hashing to automatically manage the data placement, which is efficient to locate the data. But the data has to be placed according to the CRUSH algorithm. Any wrong configuration would cause data loss. SeaweedFS places data by assigning them to any writable volumes. If writes to one volume failed, just pick another volume to write. Adding more volumes are also as simple as it can be.
 
 SeaweedFS is optimized for small files. Small files are stored as one continuous block of content, with at most 8 unused bytes between files. Small file access is O(1) disk read.
 
@@ -436,9 +442,7 @@ MinIO has specific requirements on storage layout. It is not flexible to adjust 
 
 ## Dev Plan ##
 
-* More tools and documentation, on how to manage and scale the system. For example, how to move volumes, automatically balancing data, how to grow volumes, how to check system status, etc.
-* Integrate with Kubernetes. build [SeaweedFS Operator](https://github.com/seaweedfs/seaweedfs-operator).
-* Add ftp server.
+* More tools and documentation, on how to manage and scale the system.
 * Read and write stream data.
 * Support structured data.
 

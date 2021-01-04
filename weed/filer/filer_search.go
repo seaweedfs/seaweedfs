@@ -19,12 +19,16 @@ func splitPattern(pattern string) (prefix string, restPattern string) {
 	return "", restPattern
 }
 
-func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int, namePattern string) (entries []*Entry, err error) {
+// For now, prefix and namePattern are mutually exclusive
+func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int, prefix string, namePattern string) (entries []*Entry, err error) {
 	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
 		p = p[0 : len(p)-1]
 	}
 
-	prefix, restNamePattern := splitPattern(namePattern)
+	prefixInNamePattern, restNamePattern := splitPattern(namePattern)
+	if prefixInNamePattern != "" {
+		prefix = prefixInNamePattern
+	}
 	var missedCount int
 	var lastFileName string
 

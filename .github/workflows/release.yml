@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [linux, windows, darwin ]
+        goos: [linux, windows, darwin, freebsd ]
         goarch: [amd64, arm]
         exclude:  
           - goarch: arm
@@ -24,14 +24,10 @@ jobs:
     - name: Check out code into the Go module directory
       uses: actions/checkout@v2
 
-    - name: Delete old release assets
-      uses: mknejp/delete-release-assets@v1
+    - name: Wait for the deletion
+      uses: jakejarvis/wait-action@master
       with:
-        token: ${{ github.token }}
-        tag: dev
-        fail-if-no-assets: false 
-        assets: | 
-          weed-*
+        time: '30s'
 
     - name: Set BUILD_TIME env
       run: echo BUILD_TIME=$(date -u +%Y-%m-%d-%H-%M) >> ${GITHUB_ENV}

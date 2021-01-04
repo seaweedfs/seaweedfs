@@ -61,7 +61,7 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 	lastFileName := req.StartFromFileName
 	includeLastFile := req.InclusiveStartFrom
 	for limit > 0 {
-		entries, err := fs.filer.ListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, paginationLimit, req.Prefix)
+		entries, err := fs.filer.ListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, paginationLimit, req.Prefix, "")
 
 		if err != nil {
 			return err
@@ -326,7 +326,7 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures)
 	resp = &filer_pb.DeleteEntryResponse{}
-	if err != nil {
+	if err != nil && err != filer_pb.ErrNotFound {
 		resp.Error = err.Error()
 	}
 	return resp, nil

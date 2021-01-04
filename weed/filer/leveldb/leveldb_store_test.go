@@ -2,9 +2,11 @@ package leveldb
 
 import (
 	"context"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -49,14 +51,14 @@ func TestCreateAndFind(t *testing.T) {
 	}
 
 	// checking one upper directory
-	entries, _ := testFiler.ListDirectoryEntries(ctx, util.FullPath("/home/chris/this/is/one"), "", false, 100, "")
+	entries, _ := testFiler.ListDirectoryEntries(ctx, util.FullPath("/home/chris/this/is/one"), "", false, 100, "", "")
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
 	}
 
 	// checking one upper directory
-	entries, _ = testFiler.ListDirectoryEntries(ctx, util.FullPath("/"), "", false, 100, "")
+	entries, _ = testFiler.ListDirectoryEntries(ctx, util.FullPath("/"), "", false, 100, "", "")
 	if len(entries) != 1 {
 		t.Errorf("list entries count: %v", len(entries))
 		return
@@ -75,7 +77,7 @@ func TestEmptyRoot(t *testing.T) {
 	ctx := context.Background()
 
 	// checking one upper directory
-	entries, err := testFiler.ListDirectoryEntries(ctx, util.FullPath("/"), "", false, 100, "")
+	entries, err := testFiler.ListDirectoryEntries(ctx, util.FullPath("/"), "", false, 100, "", "")
 	if err != nil {
 		t.Errorf("list entries: %v", err)
 		return
@@ -85,4 +87,29 @@ func TestEmptyRoot(t *testing.T) {
 		return
 	}
 
+}
+
+func BenchmarkInsertEntry(b *testing.B) {
+	testFiler := filer.NewFiler(nil, nil, "", 0, "", "", "", nil)
+	dir, _ := ioutil.TempDir("", "seaweedfs_filer_bench")
+	defer os.RemoveAll(dir)
+	store := &LevelDBStore{}
+	store.initialize(dir)
+	testFiler.SetStore(store)
+
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		entry := &filer.Entry{
+			FullPath: util.FullPath(fmt.Sprintf("/file%d.txt", i)),
+			Attr: filer.Attr{
+				Crtime: time.Now(),
+				Mtime:  time.Now(),
+				Mode:   os.FileMode(0644),
+			},
+		}
+		store.InsertEntry(ctx, entry)
+	}
 }

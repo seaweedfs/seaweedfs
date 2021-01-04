@@ -1,10 +1,14 @@
-package leveldb
+// +build rocksdb
+
+package rocksdb
 
 import (
 	"context"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -14,8 +18,8 @@ func TestCreateAndFind(t *testing.T) {
 	testFiler := filer.NewFiler(nil, nil, "", 0, "", "", "", nil)
 	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test")
 	defer os.RemoveAll(dir)
-	store := &LevelDB2Store{}
-	store.initialize(dir, 2)
+	store := &RocksDBStore{}
+	store.initialize(dir)
 	testFiler.SetStore(store)
 
 	fullpath := util.FullPath("/home/chris/this/is/one/file1.jpg")
@@ -68,8 +72,8 @@ func TestEmptyRoot(t *testing.T) {
 	testFiler := filer.NewFiler(nil, nil, "", 0, "", "", "", nil)
 	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test2")
 	defer os.RemoveAll(dir)
-	store := &LevelDB2Store{}
-	store.initialize(dir, 2)
+	store := &RocksDBStore{}
+	store.initialize(dir)
 	testFiler.SetStore(store)
 
 	ctx := context.Background()
@@ -85,4 +89,29 @@ func TestEmptyRoot(t *testing.T) {
 		return
 	}
 
+}
+
+func BenchmarkInsertEntry(b *testing.B) {
+	testFiler := filer.NewFiler(nil, nil, "", 0, "", "", "", nil)
+	dir, _ := ioutil.TempDir("", "seaweedfs_filer_bench")
+	defer os.RemoveAll(dir)
+	store := &RocksDBStore{}
+	store.initialize(dir)
+	testFiler.SetStore(store)
+
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		entry := &filer.Entry{
+			FullPath: util.FullPath(fmt.Sprintf("/file%d.txt", i)),
+			Attr: filer.Attr{
+				Crtime: time.Now(),
+				Mtime:  time.Now(),
+				Mode:   os.FileMode(0644),
+			},
+		}
+		store.InsertEntry(ctx, entry)
+	}
 }

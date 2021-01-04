@@ -58,6 +58,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		return true
 	}
 
+	util.LoadConfiguration("security", false)
 	// try to connect to filer, filerBucketsPath may be useful later
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	var cipher bool
@@ -77,8 +78,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	filerMountRootPath := *option.filerMountRootPath
 	dir := util.ResolvePath(*option.dir)
 	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
-
-	util.LoadConfiguration("security", false)
 
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.Version(), runtime.GOOS, runtime.GOARCH)
 	if dir == "" {

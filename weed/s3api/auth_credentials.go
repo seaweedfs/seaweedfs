@@ -156,7 +156,36 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 
 // check whether the request has valid access keys
 func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action) (*Identity, s3err.ErrorCode) {
-	identity, s3Err := iam.authUser(r)
+	var identity *Identity
+	var s3Err s3err.ErrorCode
+	var found bool
+	switch getRequestAuthType(r) {
+	case authTypeStreamingSigned:
+		return identity, s3err.ErrNone
+	case authTypeUnknown:
+		glog.V(3).Infof("unknown auth type")
+		return identity, s3err.ErrAccessDenied
+	case authTypePresignedV2, authTypeSignedV2:
+		glog.V(3).Infof("v2 auth type")
+		identity, s3Err = iam.isReqAuthenticatedV2(r)
+	case authTypeSigned, authTypePresigned:
+		glog.V(3).Infof("v4 auth type")
+		identity, s3Err = iam.reqSignatureV4Verify(r)
+	case authTypePostPolicy:
+		glog.V(3).Infof("post policy auth type")
+		return identity, s3err.ErrNone
+	case authTypeJWT:
+		glog.V(3).Infof("jwt auth type")
+		return identity, s3err.ErrNotImplemented
+	case authTypeAnonymous:
+		identity, found = iam.lookupAnonymous()
+		if !found {
+			return identity, s3err.ErrAccessDenied
+		}
+	default:
+		return identity, s3err.ErrNotImplemented
+	}
+
 	if s3Err != s3err.ErrNone {
 		return identity, s3Err
 	}

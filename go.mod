@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go v1.33.5
 	github.com/buraksezer/consistent v0.0.0-20191006190839-693edf70fd72
 	github.com/cespare/xxhash v1.1.0
-	github.com/chrislusf/raft v1.0.3
+	github.com/chrislusf/raft v1.0.4
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/disintegration/imaging v1.6.2
@@ -66,6 +66,7 @@ require (
 	github.com/spf13/viper v1.4.0
 	github.com/stretchr/testify v1.6.1
 	github.com/syndtr/goleveldb v1.0.0
+	github.com/tecbot/gorocksdb v0.0.0-20191217155057-f0fad39f321c
 	github.com/tidwall/gjson v1.3.2
 	github.com/tidwall/match v1.0.1
 	github.com/tsuna/gohbase v0.0.0-20201125011725-348991136365
