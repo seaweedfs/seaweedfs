@@ -29,7 +29,7 @@ func (t *TTLFilter) Filter(level int, key, val []byte) (remove bool, newVal []by
 	entry := filer.Entry{}
 	if err := entry.DecodeAttributesAndChunks(val); err == nil {
 		if entry.TtlSec == 0 ||
-			entry.Crtime.Add(time.Duration(entry.TtlSec)*time.Second).Before(time.Now()) {
+			entry.Crtime.Add(time.Duration(entry.TtlSec)*time.Second).After(time.Now()) {
 			return false, val
 		}
 	}
