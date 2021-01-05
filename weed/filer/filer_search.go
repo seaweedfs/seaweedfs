@@ -42,17 +42,7 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, start
 		}
 	}
 
-	//Distinguish between folders and common files, folders are listed first
-	var folderEntries, commonEntries []*Entry
-	for i, _ := range entries {
-		if entries[i].IsDirectory() {
-			folderEntries = append(folderEntries, entries[i])
-		} else {
-			commonEntries = append(commonEntries, entries[i])
-		}
-	}
-	folderEntries = append(folderEntries, commonEntries...)
-	return folderEntries, err
+	return entries, err
 }
 
 func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int, prefix, restNamePattern string) (matchedEntries []*Entry, missedCount int, lastFileName string, err error) {
