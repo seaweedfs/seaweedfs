@@ -102,9 +102,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 
 	//Add some custom headers that need to be exposed
 	seaweedHeaders := []string{}
-	for i, _ := range w.Header() {
-		if strings.Contains(i, "Seaweed") {
-			seaweedHeaders = append(seaweedHeaders, i)
+	for header, _ := range w.Header() {
+		if strings.HasPrefix(header, "Seaweed-") {
+			seaweedHeaders = append(seaweedHeaders, header)
 		}
 	}
 	seaweedHeaders = append(seaweedHeaders, "Content-Disposition")
