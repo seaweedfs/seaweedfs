@@ -83,3 +83,21 @@ other/java/hdfs/dependency-reduced-pom.xml
 
 # binary file
 weed/weed
+
+
+
+weed-ui/node_modules/
+weed-ui/dist/
+weed-ui/npm-debug.log*
+weed-ui/yarn-debug.log*
+weed-ui/yarn-error.log*
+weed-ui//test/e2e/reports/
+weed-ui/selenium-debug.log
+
+# Editor directories and files
+
+weed-ui/.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
