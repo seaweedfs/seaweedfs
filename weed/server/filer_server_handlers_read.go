@@ -100,7 +100,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		w.Header().Set(k, string(v))
 	}
 
-	//Add some custom headers that need to be exposed
+	//Seaweed custom header are not visible to Vue or javascript
 	seaweedHeaders := []string{}
 	for header, _ := range w.Header() {
 		if strings.HasPrefix(header, "Seaweed-") {
