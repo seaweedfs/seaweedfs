@@ -100,6 +100,16 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		w.Header().Set(k, string(v))
 	}
 
+	//Seaweed custom header are not visible to Vue or javascript
+	seaweedHeaders := []string{}
+	for header, _ := range w.Header() {
+		if strings.HasPrefix(header, "Seaweed-") {
+			seaweedHeaders = append(seaweedHeaders, header)
+		}
+	}
+	seaweedHeaders = append(seaweedHeaders, "Content-Disposition")
+	w.Header().Set("Access-Control-Expose-Headers", strings.Join(seaweedHeaders, ","))
+
 	//set tag count
 	if r.Method == "GET" {
 		tagCount := 0
