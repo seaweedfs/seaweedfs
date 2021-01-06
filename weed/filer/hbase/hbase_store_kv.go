@@ -7,9 +7,10 @@ import (
 	"time"
 )
 
-const(
+const (
 	COLUMN_NAME = "a"
 )
+
 func (store *HbaseStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
 	return store.doPut(ctx, store.cfKv, key, value, 0)
 }

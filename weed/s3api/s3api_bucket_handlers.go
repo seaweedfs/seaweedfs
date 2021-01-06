@@ -51,7 +51,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	var buckets []*s3.Bucket
 	for _, entry := range entries {
 		if entry.IsDirectory {
-			if identity!=nil && !identity.canDo(s3_constants.ACTION_ADMIN, entry.Name) {
+			if identity != nil && !identity.canDo(s3_constants.ACTION_ADMIN, entry.Name) {
 				continue
 			}
 			buckets = append(buckets, &s3.Bucket{
