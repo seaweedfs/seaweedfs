@@ -15,6 +15,7 @@ var Commands = []*Command{
 	cmdDownload,
 	cmdExport,
 	cmdFiler,
+	cmdFilerCat,
 	cmdFilerReplicate,
 	cmdFilerSynchronize,
 	cmdFix,

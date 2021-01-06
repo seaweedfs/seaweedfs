@@ -3,6 +3,7 @@ package filersink
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
 
 	"google.golang.org/grpc"
 
@@ -206,7 +207,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	})
 
 }
-func compareChunks(lookupFileIdFn filer.LookupFileIdFunctionType, oldEntry, newEntry *filer_pb.Entry) (deletedChunks, newChunks []*filer_pb.FileChunk, err error) {
+func compareChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, oldEntry, newEntry *filer_pb.Entry) (deletedChunks, newChunks []*filer_pb.FileChunk, err error) {
 	aData, aMeta, aErr := filer.ResolveChunkManifest(lookupFileIdFn, oldEntry.Chunks)
 	if aErr != nil {
 		return nil, nil, aErr
