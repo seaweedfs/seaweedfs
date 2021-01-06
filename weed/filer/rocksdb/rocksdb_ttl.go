@@ -23,17 +23,16 @@ func NewTTLFilter() gorocksdb.CompactionFilter {
 func (t *TTLFilter) Filter(level int, key, val []byte) (remove bool, newVal []byte) {
 	// decode could be slow, causing write stall
 	// level >0 sst can run compaction in parallel
-	if t.skipLevel0 && level == 0 {
-		return false, val
-	}
-	entry := filer.Entry{}
-	if err := entry.DecodeAttributesAndChunks(val); err == nil {
-		if entry.TtlSec == 0 ||
-			entry.Crtime.Add(time.Duration(entry.TtlSec)*time.Second).After(time.Now()) {
-			return false, val
+	if !t.skipLevel0 || level > 0 {
+		entry := filer.Entry{}
+		if err := entry.DecodeAttributesAndChunks(val); err == nil {
+			if entry.TtlSec > 0 &&
+				entry.Crtime.Add(time.Duration(entry.TtlSec)*time.Second).Before(time.Now()) {
+				return true, nil
+			}
 		}
 	}
-	return true, nil
+	return false, val
 }
 
 func (t *TTLFilter) Name() string {
