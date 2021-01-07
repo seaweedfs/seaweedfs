@@ -182,17 +182,9 @@ func enumerate(iter *gorocksdb.Iterator, prefix, lastKey []byte, includeLastKey 
 	} else {
 		iter.Seek(lastKey)
 
-		if !includeLastKey {
-			key := iter.Key().Data()
-
-			if !bytes.HasPrefix(key, prefix) {
-				return nil
-			}
-
-			if bytes.Equal(key, lastKey) {
-				iter.Next()
-			}
-
+		if iter.Valid() && !includeLastKey &&
+			bytes.Equal(iter.Key().Data(), lastKey) {
+			iter.Next()
 		}
 	}
 
@@ -249,10 +241,6 @@ func (store *RocksDBStore) ListDirectoryPrefixedEntries(ctx context.Context, ful
 		fileName := getNameFromKey(key)
 		if fileName == "" {
 			return true
-		}
-		limit--
-		if limit < 0 {
-			return false
 		}
 		entry := &filer.Entry{
 			FullPath: weed_util.NewFullPath(string(fullpath), fileName),
