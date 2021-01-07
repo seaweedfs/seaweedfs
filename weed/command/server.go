@@ -61,6 +61,7 @@ var (
 	serverMetricsHttpPort     = cmdServer.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 
 	// pulseSeconds              = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	isStartingMasterServer = cmdServer.Flag.Bool("master", true, "whether to start master server")
 	isStartingVolumeServer = cmdServer.Flag.Bool("volume", true, "whether to start volume server")
 	isStartingFiler        = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 	isStartingS3           = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -224,7 +225,11 @@ func runServer(cmd *Command, args []string) bool {
 
 	}
 
-	startMaster(masterOptions, serverWhiteList)
+	if *isStartingMasterServer {
+		go startMaster(masterOptions, serverWhiteList)
+	}
+
+	select {}
 
 	return true
 }
