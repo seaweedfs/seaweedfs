@@ -181,10 +181,12 @@ func enumerate(iter *gorocksdb.Iterator, prefix, lastKey []byte, includeLastKey 
 		iter.Seek(prefix)
 	} else {
 		iter.Seek(lastKey)
-
-		if iter.Valid() && !includeLastKey &&
-			bytes.Equal(iter.Key().Data(), lastKey) {
-			iter.Next()
+		if !includeLastKey {
+			if iter.Valid() {
+				if bytes.Equal(iter.Key().Data(), lastKey) {
+					iter.Next()
+				}
+			}
 		}
 	}
 
