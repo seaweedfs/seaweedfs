@@ -25,7 +25,7 @@ require (
 	github.com/fclairamb/ftpserverlib v0.8.0
 	github.com/frankban/quicktest v1.7.2 // indirect
 	github.com/go-errors/errors v1.1.1 // indirect
-	github.com/go-redis/redis v6.15.7+incompatible
+	github.com/go-redis/redis/v8 v8.4.4
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/gocql/gocql v0.0.0-20190829130954-e163eff7a8c6
 	github.com/gogo/protobuf v1.2.2-0.20190730201129-28a6bbf47e48 // indirect
@@ -51,8 +51,6 @@ require (
 	github.com/mattn/go-ieproxy v0.0.0-20190805055040-f9202b1cfdeb // indirect
 	github.com/mattn/go-runewidth v0.0.4 // indirect
 	github.com/olivere/elastic/v7 v7.0.19
-	github.com/onsi/ginkgo v1.10.1 // indirect
-	github.com/onsi/gomega v1.7.0 // indirect
 	github.com/peterh/liner v1.1.0
 	github.com/pierrec/lz4 v2.2.7+incompatible // indirect
 	github.com/prometheus/client_golang v1.3.0
@@ -83,7 +81,7 @@ require (
 	gocloud.dev/pubsub/natspubsub v0.16.0
 	gocloud.dev/pubsub/rabbitpubsub v0.16.0
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1 // indirect
-	golang.org/x/net v0.0.0-20200202094626-16171245cfb2
+	golang.org/x/net v0.0.0-20201202161906-c7110b5ffcbb
 	golang.org/x/sync v0.0.0-20200930132711-30421366ff76 // indirect
 	golang.org/x/sys v0.0.0-20201022201747-fb209a7c41cd
 	golang.org/x/tools v0.0.0-20200103221440-774c71fcf114

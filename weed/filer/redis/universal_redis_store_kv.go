@@ -5,12 +5,12 @@ import (
 	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v8"
 )
 
 func (store *UniversalRedisStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
 
-	_, err = store.Client.Set(string(key), value, 0).Result()
+	_, err = store.Client.Set(ctx, string(key), value, 0).Result()
 
 	if err != nil {
 		return fmt.Errorf("kv put: %v", err)
@@ -21,7 +21,7 @@ func (store *UniversalRedisStore) KvPut(ctx context.Context, key []byte, value [
 
 func (store *UniversalRedisStore) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
 
-	data, err := store.Client.Get(string(key)).Result()
+	data, err := store.Client.Get(ctx, string(key)).Result()
 
 	if err == redis.Nil {
 		return nil, filer.ErrKvNotFound
@@ -32,7 +32,7 @@ func (store *UniversalRedisStore) KvGet(ctx context.Context, key []byte) (value 
 
 func (store *UniversalRedisStore) KvDelete(ctx context.Context, key []byte) (err error) {
 
-	_, err = store.Client.Del(string(key)).Result()
+	_, err = store.Client.Del(ctx, string(key)).Result()
 
 	if err != nil {
 		return fmt.Errorf("kv delete: %v", err)
