@@ -42,7 +42,7 @@ type FilerOptions struct {
 	cipher                  *bool
 	peers                   *string
 	metricsHttpPort         *int
-	cacheToFilerLimit       *int
+	saveToFilerLimit        *int
 	defaultLevelDbDirectory *string
 }
 
@@ -64,7 +64,7 @@ func init() {
 	f.cipher = cmdFiler.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
 	f.peers = cmdFiler.Flag.String("peers", "", "all filers sharing the same filer store in comma separated ip:port list")
 	f.metricsHttpPort = cmdFiler.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
-	f.cacheToFilerLimit = cmdFiler.Flag.Int("cacheToFilerLimit", 0, "Small files smaller than this limit can be cached in filer store.")
+	f.saveToFilerLimit = cmdFiler.Flag.Int("saveToFilerLimit", 0, "files smaller than this limit will be saved in filer store")
 	f.defaultLevelDbDirectory = cmdFiler.Flag.String("defaultStoreDir", ".", "if filer.toml is empty, use an embedded filer store in the directory")
 
 	// start s3 on filer
@@ -139,18 +139,18 @@ func (fo *FilerOptions) startFiler() {
 		Masters:            strings.Split(*fo.masters, ","),
 		Collection:         *fo.collection,
 		DefaultReplication: *fo.defaultReplicaPlacement,
-		DisableDirListing:  *fo.disableDirListing,
-		MaxMB:              *fo.maxMB,
-		DirListingLimit:    *fo.dirListingLimit,
-		DataCenter:         *fo.dataCenter,
-		Rack:               *fo.rack,
-		DefaultLevelDbDir:  defaultLevelDbDirectory,
-		DisableHttp:        *fo.disableHttp,
-		Host:               *fo.ip,
-		Port:               uint32(*fo.port),
-		Cipher:             *fo.cipher,
-		CacheToFilerLimit:  int64(*fo.cacheToFilerLimit),
-		Filers:             peers,
+		DisableDirListing: *fo.disableDirListing,
+		MaxMB:             *fo.maxMB,
+		DirListingLimit:   *fo.dirListingLimit,
+		DataCenter:        *fo.dataCenter,
+		Rack:              *fo.rack,
+		DefaultLevelDbDir: defaultLevelDbDirectory,
+		DisableHttp:       *fo.disableHttp,
+		Host:              *fo.ip,
+		Port:              uint32(*fo.port),
+		Cipher:            *fo.cipher,
+		SaveToFilerLimit:  *fo.saveToFilerLimit,
+		Filers:            peers,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

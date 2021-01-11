@@ -207,7 +207,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 	var partReader = ioutil.NopCloser(io.TeeReader(reader, md5Hash))
 
 	chunkOffset := int64(0)
-	var smallContent, content []byte
+	var smallContent []byte
 
 	for {
 		limitedReader := io.LimitReader(partReader, int64(chunkSize))
@@ -215,6 +215,13 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 		data, err := ioutil.ReadAll(limitedReader)
 		if err != nil {
 			return nil, nil, 0, err, nil
+		}
+		if chunkOffset == 0 {
+			if len(data) < fs.option.SaveToFilerLimit || strings.HasPrefix(r.URL.Path, filer.DirectoryEtcRoot) && len(data) < 4*1024 {
+				smallContent = data
+				chunkOffset += int64(len(data))
+				break
+			}
 		}
 		dataReader := util.NewBytesReader(data)
 
@@ -242,8 +249,6 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			return nil, nil, 0, uploadErr, nil
 		}
 
-		content = data
-
 		// if last chunk exhausted the reader exactly at the border
 		if uploadResult.Size == 0 {
 			break
@@ -263,9 +268,6 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	if chunkOffset < fs.option.CacheToFilerLimit || strings.HasPrefix(r.URL.Path, filer.DirectoryEtcRoot) && chunkOffset < 4*1024 {
-		smallContent = content
-	}
 	return fileChunks, md5Hash, chunkOffset, nil, smallContent
 }
 
