@@ -174,9 +174,9 @@ addresses = [
 ]
 password = ""
 # allows reads from slave servers or the master, but all writes still go to the master
-readOnly = true
+readOnly = false
 # automatically use the closest Redis server for reads
-routeByLatency = true
+routeByLatency = false
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
 
