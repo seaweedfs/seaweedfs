@@ -73,7 +73,7 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 				}
 
 				if err := processEventFn(resp); err != nil {
-					glog.Fatalf("process %v: %v", resp, err)
+					return err
 				}
 				lastTsNs = resp.TsNs
 			}
