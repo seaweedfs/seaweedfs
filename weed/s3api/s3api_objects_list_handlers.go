@@ -71,7 +71,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		ContinuationToken:     continuationToken,
 		Delimiter:             response.Delimiter,
 		IsTruncated:           response.IsTruncated,
-		KeyCount:              len(response.Contents),
+		KeyCount:              len(response.Contents) + len(response.CommonPrefixes),
 		MaxKeys:               response.MaxKeys,
 		NextContinuationToken: response.NextMarker,
 		Prefix:                response.Prefix,
