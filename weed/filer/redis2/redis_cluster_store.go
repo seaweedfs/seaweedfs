@@ -3,7 +3,7 @@ package redis2
 import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v8"
 )
 
 func init() {
