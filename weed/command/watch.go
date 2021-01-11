@@ -76,8 +76,9 @@ func runWatch(cmd *Command, args []string) bool {
 		return false
 	}
 
-	eachEntryFunc := func(resp *filer_pb.SubscribeMetadataResponse) {
+	eachEntryFunc := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		fmt.Printf("dir:%s %+v\n", resp.Directory, resp.EventNotification)
+		return nil
 	}
 
 	watchErr := pb.WithFilerClient(*watchFiler, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -105,7 +106,9 @@ func runWatch(cmd *Command, args []string) bool {
 			if !shouldPrint(resp) {
 				continue
 			}
-			eachEntryFunc(resp)
+			if err = eachEntryFunc(resp); err != nil {
+				return err
+			}
 		}
 
 	})
