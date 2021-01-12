@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	ResumeError = fmt.Errorf("resume")
+	ResumeError         = fmt.Errorf("resume")
 	ResumeFromDiskError = fmt.Errorf("resumeFromDisk")
 )
 

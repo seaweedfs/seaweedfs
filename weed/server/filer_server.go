@@ -47,18 +47,18 @@ type FilerOption struct {
 	Collection         string
 	DefaultReplication string
 	DisableDirListing  bool
-	MaxMB             int
-	DirListingLimit   int
-	DataCenter        string
-	Rack              string
-	DefaultLevelDbDir string
-	DisableHttp       bool
-	Host              string
-	Port              uint32
-	recursiveDelete   bool
-	Cipher            bool
-	SaveToFilerLimit  int
-	Filers            []string
+	MaxMB              int
+	DirListingLimit    int
+	DataCenter         string
+	Rack               string
+	DefaultLevelDbDir  string
+	DisableHttp        bool
+	Host               string
+	Port               uint32
+	recursiveDelete    bool
+	Cipher             bool
+	SaveToFilerLimit   int
+	Filers             []string
 }
 
 type FilerServer struct {
