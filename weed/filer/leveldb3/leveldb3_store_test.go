@@ -15,7 +15,7 @@ func TestCreateAndFind(t *testing.T) {
 	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test")
 	defer os.RemoveAll(dir)
 	store := &LevelDB3Store{}
-	store.initialize(dir, 2)
+	store.initialize(dir)
 	testFiler.SetStore(store)
 
 	fullpath := util.FullPath("/home/chris/this/is/one/file1.jpg")
@@ -69,7 +69,7 @@ func TestEmptyRoot(t *testing.T) {
 	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test2")
 	defer os.RemoveAll(dir)
 	store := &LevelDB3Store{}
-	store.initialize(dir, 2)
+	store.initialize(dir)
 	testFiler.SetStore(store)
 
 	ctx := context.Background()
