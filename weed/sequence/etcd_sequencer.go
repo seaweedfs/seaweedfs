@@ -47,7 +47,6 @@ func NewEtcdSequencer(etcdUrls string, metaFolder string) (*EtcdSequencer, error
 	if nil != err {
 		return nil, fmt.Errorf("open sequence file fialed, %v", err)
 	}
-	defer file.Close()
 
 	cli, err := client.New(client.Config{
 		Endpoints: strings.Split(etcdUrls, ","),
