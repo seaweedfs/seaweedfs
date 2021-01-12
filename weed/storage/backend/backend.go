@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
 	"os"
 	"strings"
@@ -9,7 +10,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/spf13/viper"
 )
 
 type BackendStorageFile interface {
@@ -45,7 +45,7 @@ var (
 )
 
 // used by master to load remote storage configurations
-func LoadConfiguration(config *viper.Viper) {
+func LoadConfiguration(config *util.ViperProxy) {
 
 	StorageBackendPrefix := "storage.backend"
 

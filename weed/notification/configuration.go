@@ -4,7 +4,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
-	"github.com/spf13/viper"
 )
 
 type MessageQueue interface {
@@ -21,7 +20,7 @@ var (
 	Queue MessageQueue
 )
 
-func LoadConfiguration(config *viper.Viper, prefix string) {
+func LoadConfiguration(config *util.ViperProxy, prefix string) {
 
 	if config == nil {
 		return
@@ -43,7 +42,7 @@ func LoadConfiguration(config *viper.Viper, prefix string) {
 
 }
 
-func validateOneEnabledQueue(config *viper.Viper) {
+func validateOneEnabledQueue(config *util.ViperProxy) {
 	enabledQueue := ""
 	for _, queue := range MessageQueues {
 		if config.GetBool(queue.GetName() + ".enabled") {
