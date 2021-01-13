@@ -101,20 +101,21 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 		return nil
 	}
 
-	if err = broker.readPersistedLogBuffer(&tp, lastReadTime, eachLogEntryFn); err != nil {
-		if err != io.EOF {
-			// println("stopping from persisted logs", err.Error())
-			return err
-		}
-	}
-
-	if processedTsNs != 0 {
-		lastReadTime = time.Unix(0, processedTsNs)
-	}
-
 	// fmt.Printf("subscriber %s read %d on disk log %v\n", subscriberId, messageCount, lastReadTime)
 
 	for {
+
+		if err = broker.readPersistedLogBuffer(&tp, lastReadTime, eachLogEntryFn); err != nil {
+			if err != io.EOF {
+				// println("stopping from persisted logs", err.Error())
+				return err
+			}
+		}
+
+		if processedTsNs != 0 {
+			lastReadTime = time.Unix(0, processedTsNs)
+		}
+
 		lastReadTime, err = lock.logBuffer.LoopProcessLogData(lastReadTime, func() bool {
 			lock.Mutex.Lock()
 			lock.cond.Wait()
@@ -122,6 +123,9 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 			return isConnected
 		}, eachLogEntryFn)
 		if err != nil {
+			if err == log_buffer.ResumeFromDiskError {
+				continue
+			}
 			glog.Errorf("processed to %v: %v", lastReadTime, err)
 			time.Sleep(3127 * time.Millisecond)
 			if err != log_buffer.ResumeError {

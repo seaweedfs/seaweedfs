@@ -89,6 +89,12 @@ buckets_folder = "/buckets"
 enabled = true
 dir = "./filerldb2"					# directory to store level db files
 
+[leveldb3]
+# similar to leveldb2.
+# each bucket has its own meta store.
+enabled = false
+dir = "./filerldb3"					# directory to store level db files
+
 [rocksdb]
 # local on disk, similar to leveldb
 # since it is using a C wrapper, you need to install rocksdb and build it by yourself
@@ -174,9 +180,9 @@ addresses = [
 ]
 password = ""
 # allows reads from slave servers or the master, but all writes still go to the master
-readOnly = true
+readOnly = false
 # automatically use the closest Redis server for reads
-routeByLatency = true
+routeByLatency = false
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
 

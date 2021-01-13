@@ -2,6 +2,7 @@ package util
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/spf13/viper"
 
@@ -46,9 +47,20 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 	return true
 }
 
-func GetViper() *viper.Viper {
-	v := &viper.Viper{}
-	*v = *viper.GetViper()
+type ViperProxy struct {
+	*viper.Viper
+	sync.Mutex
+}
+
+func (vp *ViperProxy) SetDefault(key string, value interface{}) {
+	vp.Lock()
+	defer vp.Unlock()
+	vp.Viper.SetDefault(key, value)
+}
+
+func GetViper() *ViperProxy {
+	v := &ViperProxy{}
+	v.Viper = viper.GetViper()
 	v.AutomaticEnv()
 	v.SetEnvPrefix("weed")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))

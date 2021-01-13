@@ -14,7 +14,6 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/s3sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/sub"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/spf13/viper"
 )
 
 func init() {
@@ -123,7 +122,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 
 }
 
-func validateOneEnabledInput(config *viper.Viper) {
+func validateOneEnabledInput(config *util.ViperProxy) {
 	enabledInput := ""
 	for _, input := range sub.NotificationInputs {
 		if config.GetBool("notification." + input.GetName() + ".enabled") {

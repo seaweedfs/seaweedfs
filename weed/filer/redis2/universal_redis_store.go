@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v8"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -56,7 +56,7 @@ func (store *UniversalRedis2Store) InsertEntry(ctx context.Context, entry *filer
 		value = util.MaybeGzipData(value)
 	}
 
-	if err = store.Client.Set(string(entry.FullPath), value, time.Duration(entry.TtlSec)*time.Second).Err(); err != nil {
+	if err = store.Client.Set(ctx, string(entry.FullPath), value, time.Duration(entry.TtlSec)*time.Second).Err(); err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
 	}
 
@@ -66,7 +66,7 @@ func (store *UniversalRedis2Store) InsertEntry(ctx context.Context, entry *filer
 	}
 
 	if name != "" {
-		if err = store.Client.ZAddNX(genDirectoryListKey(dir), redis.Z{Score: 0, Member: name}).Err(); err != nil {
+		if err = store.Client.ZAddNX(ctx, genDirectoryListKey(dir), &redis.Z{Score: 0, Member: name}).Err(); err != nil {
 			return fmt.Errorf("persisting %s in parent dir: %v", entry.FullPath, err)
 		}
 	}
@@ -81,7 +81,7 @@ func (store *UniversalRedis2Store) UpdateEntry(ctx context.Context, entry *filer
 
 func (store *UniversalRedis2Store) FindEntry(ctx context.Context, fullpath util.FullPath) (entry *filer.Entry, err error) {
 
-	data, err := store.Client.Get(string(fullpath)).Result()
+	data, err := store.Client.Get(ctx, string(fullpath)).Result()
 	if err == redis.Nil {
 		return nil, filer_pb.ErrNotFound
 	}
@@ -103,12 +103,12 @@ func (store *UniversalRedis2Store) FindEntry(ctx context.Context, fullpath util.
 
 func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath util.FullPath) (err error) {
 
-	_, err = store.Client.Del(genDirectoryListKey(string(fullpath))).Result()
+	_, err = store.Client.Del(ctx, genDirectoryListKey(string(fullpath))).Result()
 	if err != nil {
 		return fmt.Errorf("delete dir list %s : %v", fullpath, err)
 	}
 
-	_, err = store.Client.Del(string(fullpath)).Result()
+	_, err = store.Client.Del(ctx, string(fullpath)).Result()
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
@@ -118,7 +118,7 @@ func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath uti
 		return nil
 	}
 	if name != "" {
-		_, err = store.Client.ZRem(genDirectoryListKey(dir), name).Result()
+		_, err = store.Client.ZRem(ctx, genDirectoryListKey(dir), name).Result()
 		if err != nil {
 			return fmt.Errorf("DeleteEntry %s in parent dir: %v", fullpath, err)
 		}
@@ -133,14 +133,14 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 		return nil
 	}
 
-	members, err := store.Client.ZRange(genDirectoryListKey(string(fullpath)), 0, -1).Result()
+	members, err := store.Client.ZRange(ctx, genDirectoryListKey(string(fullpath)), 0, -1).Result()
 	if err != nil {
 		return fmt.Errorf("DeleteFolderChildren %s : %v", fullpath, err)
 	}
 
 	for _, fileName := range members {
 		path := util.NewFullPath(string(fullpath), fileName)
-		_, err = store.Client.Del(string(path)).Result()
+		_, err = store.Client.Del(ctx, string(path)).Result()
 		if err != nil {
 			return fmt.Errorf("DeleteFolderChildren %s in parent dir: %v", fullpath, err)
 		}
@@ -159,12 +159,12 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, ful
 	dirListKey := genDirectoryListKey(string(fullpath))
 	start := int64(0)
 	if startFileName != "" {
-		start, _ = store.Client.ZRank(dirListKey, startFileName).Result()
+		start, _ = store.Client.ZRank(ctx, dirListKey, startFileName).Result()
 		if !inclusive {
 			start++
 		}
 	}
-	members, err := store.Client.ZRange(dirListKey, start, start+int64(limit)-1).Result()
+	members, err := store.Client.ZRange(ctx, dirListKey, start, start+int64(limit)-1).Result()
 	if err != nil {
 		return nil, fmt.Errorf("list %s : %v", fullpath, err)
 	}
@@ -178,8 +178,8 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, ful
 		} else {
 			if entry.TtlSec > 0 {
 				if entry.Attr.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
-					store.Client.Del(string(path)).Result()
-					store.Client.ZRem(dirListKey, fileName).Result()
+					store.Client.Del(ctx, string(path)).Result()
+					store.Client.ZRem(ctx, dirListKey, fileName).Result()
 					continue
 				}
 			}

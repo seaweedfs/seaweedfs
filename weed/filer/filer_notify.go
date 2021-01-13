@@ -170,7 +170,7 @@ func ReadEachLogEntry(r io.Reader, sizeBuf []byte, ns int64, eachLogEntryFn func
 			return lastTsNs, err
 		}
 		if logEntry.TsNs <= ns {
-			return lastTsNs, nil
+			continue
 		}
 		// println("each log: ", logEntry.TsNs)
 		if err := eachLogEntryFn(logEntry); err != nil {

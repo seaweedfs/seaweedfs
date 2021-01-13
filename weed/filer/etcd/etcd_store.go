@@ -101,7 +101,7 @@ func (store *EtcdStore) FindEntry(ctx context.Context, fullpath weed_util.FullPa
 
 	resp, err := store.client.Get(ctx, string(key))
 	if err != nil {
-		return nil, fmt.Errorf("get %s : %v", entry.FullPath, err)
+		return nil, fmt.Errorf("get %s : %v", fullpath, err)
 	}
 
 	if len(resp.Kvs) == 0 {

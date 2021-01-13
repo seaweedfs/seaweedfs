@@ -61,6 +61,7 @@ var (
 	serverMetricsHttpPort     = cmdServer.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 
 	// pulseSeconds              = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	isStartingMasterServer = cmdServer.Flag.Bool("master", true, "whether to start master server")
 	isStartingVolumeServer = cmdServer.Flag.Bool("volume", true, "whether to start volume server")
 	isStartingFiler        = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 	isStartingS3           = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -94,7 +95,7 @@ func init() {
 	filerOptions.dirListingLimit = cmdServer.Flag.Int("filer.dirListLimit", 1000, "limit sub dir listing size")
 	filerOptions.cipher = cmdServer.Flag.Bool("filer.encryptVolumeData", false, "encrypt data on volume servers")
 	filerOptions.peers = cmdServer.Flag.String("filer.peers", "", "all filers sharing the same filer store in comma separated ip:port list")
-	filerOptions.cacheToFilerLimit = cmdServer.Flag.Int("filer.cacheToFilerLimit", 0, "Small files smaller than this limit can be cached in filer store.")
+	filerOptions.saveToFilerLimit = cmdServer.Flag.Int("filer.saveToFilerLimit", 0, "Small files smaller than this limit can be cached in filer store.")
 
 	serverOptions.v.port = cmdServer.Flag.Int("volume.port", 8080, "volume server http listen port")
 	serverOptions.v.publicPort = cmdServer.Flag.Int("volume.port.public", 0, "volume server public port")
@@ -224,7 +225,11 @@ func runServer(cmd *Command, args []string) bool {
 
 	}
 
-	startMaster(masterOptions, serverWhiteList)
+	if *isStartingMasterServer {
+		go startMaster(masterOptions, serverWhiteList)
+	}
+
+	select {}
 
 	return true
 }

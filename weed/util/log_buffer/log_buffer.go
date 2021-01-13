@@ -28,6 +28,7 @@ type LogBuffer struct {
 	pos           int
 	startTime     time.Time
 	stopTime      time.Time
+	lastFlushTime time.Time
 	sizeBuf       []byte
 	flushInterval time.Duration
 	flushFn       func(startTime, stopTime time.Time, buf []byte)
@@ -129,6 +130,7 @@ func (m *LogBuffer) loopFlush() {
 			// fmt.Printf("flush [%v, %v] size %d\n", d.startTime, d.stopTime, len(d.data.Bytes()))
 			m.flushFn(d.startTime, d.stopTime, d.data.Bytes())
 			d.releaseMemory()
+			m.lastFlushTime = d.stopTime
 		}
 	}
 }
@@ -174,9 +176,13 @@ func (d *dataToFlush) releaseMemory() {
 	bufferPool.Put(d.data)
 }
 
-func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Buffer) {
+func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Buffer, err error) {
 	m.RLock()
 	defer m.RUnlock()
+
+	if !m.lastFlushTime.IsZero() && m.lastFlushTime.After(lastReadTime) {
+		return nil, ResumeFromDiskError
+	}
 
 	/*
 		fmt.Printf("read buffer %p: %v last stop time: [%v,%v], pos %d, entries:%d, prevBufs:%d\n", m, lastReadTime, m.startTime, m.stopTime, m.pos, len(m.idx), len(m.prevBuffers.buffers))
@@ -186,11 +192,11 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 	*/
 
 	if lastReadTime.Equal(m.stopTime) {
-		return nil
+		return nil, nil
 	}
 	if lastReadTime.After(m.stopTime) {
 		// glog.Fatalf("unexpected last read time %v, older than latest %v", lastReadTime, m.stopTime)
-		return nil
+		return nil, nil
 	}
 	if lastReadTime.Before(m.startTime) {
 		// println("checking ", lastReadTime.UnixNano())
@@ -198,19 +204,19 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 			if buf.startTime.After(lastReadTime) {
 				if i == 0 {
 					// println("return the earliest in memory", buf.startTime.UnixNano())
-					return copiedBytes(buf.buf[:buf.size])
+					return copiedBytes(buf.buf[:buf.size]), nil
 				}
 				// println("return the", i, "th in memory", buf.startTime.UnixNano())
-				return copiedBytes(buf.buf[:buf.size])
+				return copiedBytes(buf.buf[:buf.size]), nil
 			}
 			if !buf.startTime.After(lastReadTime) && buf.stopTime.After(lastReadTime) {
 				pos := buf.locateByTs(lastReadTime)
 				// fmt.Printf("locate buffer[%d] pos %d\n", i, pos)
-				return copiedBytes(buf.buf[pos:buf.size])
+				return copiedBytes(buf.buf[pos:buf.size]), nil
 			}
 		}
 		// println("return the current buf", lastReadTime.UnixNano())
-		return copiedBytes(m.buf[:m.pos])
+		return copiedBytes(m.buf[:m.pos]), nil
 	}
 
 	lastTs := lastReadTime.UnixNano()
@@ -243,7 +249,7 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 			}
 			if prevT <= lastTs {
 				// fmt.Printf("found l=%d, m-1=%d(ts=%d), m=%d(ts=%d), h=%d [%d, %d) \n", l, mid-1, prevT, mid, t, h, pos, m.pos)
-				return copiedBytes(m.buf[pos:m.pos])
+				return copiedBytes(m.buf[pos:m.pos]), nil
 			}
 			h = mid
 		}
@@ -251,7 +257,7 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 	}
 
 	// FIXME: this could be that the buffer has been flushed already
-	return nil
+	return nil, nil
 
 }
 func (m *LogBuffer) ReleaseMemory(b *bytes.Buffer) {

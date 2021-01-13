@@ -26,6 +26,7 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer/hbase"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/leveldb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/leveldb2"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/leveldb3"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/mongodb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/mysql"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/postgres"
@@ -56,7 +57,7 @@ type FilerOption struct {
 	Port               uint32
 	recursiveDelete    bool
 	Cipher             bool
-	CacheToFilerLimit  int64
+	SaveToFilerLimit   int
 	Filers             []string
 }
 

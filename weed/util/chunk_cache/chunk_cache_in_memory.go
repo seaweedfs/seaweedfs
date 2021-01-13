@@ -3,7 +3,7 @@ package chunk_cache
 import (
 	"time"
 
-	"github.com/karlseguin/ccache"
+	"github.com/karlseguin/ccache/v2"
 )
 
 // a global cache for recently accessed file chunks

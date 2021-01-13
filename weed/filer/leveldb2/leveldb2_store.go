@@ -115,7 +115,7 @@ func (store *LevelDB2Store) FindEntry(ctx context.Context, fullpath weed_util.Fu
 		return nil, filer_pb.ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get %s : %v", entry.FullPath, err)
+		return nil, fmt.Errorf("get %s : %v", fullpath, err)
 	}
 
 	entry = &filer.Entry{

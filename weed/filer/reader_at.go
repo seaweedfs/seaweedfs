@@ -18,7 +18,7 @@ import (
 type ChunkReadAt struct {
 	masterClient *wdclient.MasterClient
 	chunkViews   []*ChunkView
-	lookupFileId LookupFileIdFunctionType
+	lookupFileId wdclient.LookupFileIdFunctionType
 	readerLock   sync.Mutex
 	fileSize     int64
 
@@ -31,9 +31,7 @@ type ChunkReadAt struct {
 var _ = io.ReaderAt(&ChunkReadAt{})
 var _ = io.Closer(&ChunkReadAt{})
 
-type LookupFileIdFunctionType func(fileId string) (targetUrls []string, err error)
-
-func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
+func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionType {
 
 	vidCache := make(map[string]*filer_pb.Locations)
 	var vicCacheLock sync.RWMutex

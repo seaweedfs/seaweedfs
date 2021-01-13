@@ -8,7 +8,7 @@ require (
 	github.com/Azure/azure-storage-blob-go v0.8.0
 	github.com/OneOfOne/xxhash v1.2.2
 	github.com/Shopify/sarama v1.23.1
-	github.com/aws/aws-sdk-go v1.33.5
+	github.com/aws/aws-sdk-go v1.34.30
 	github.com/buraksezer/consistent v0.0.0-20191006190839-693edf70fd72
 	github.com/cespare/xxhash v1.1.0
 	github.com/chrislusf/raft v1.0.4
@@ -25,7 +25,7 @@ require (
 	github.com/fclairamb/ftpserverlib v0.8.0
 	github.com/frankban/quicktest v1.7.2 // indirect
 	github.com/go-errors/errors v1.1.1 // indirect
-	github.com/go-redis/redis v6.15.7+incompatible
+	github.com/go-redis/redis/v8 v8.4.4
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/gocql/gocql v0.0.0-20190829130954-e163eff7a8c6
 	github.com/gogo/protobuf v1.2.2-0.20190730201129-28a6bbf47e48 // indirect
@@ -39,7 +39,7 @@ require (
 	github.com/jcmturner/gofork v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.10
 	github.com/karlseguin/ccache v2.0.3+incompatible
-	github.com/karlseguin/expect v1.0.1 // indirect
+	github.com/karlseguin/ccache/v2 v2.0.7
 	github.com/klauspost/compress v1.10.9 // indirect
 	github.com/klauspost/cpuid v1.2.1 // indirect
 	github.com/klauspost/crc32 v1.2.0
@@ -51,8 +51,6 @@ require (
 	github.com/mattn/go-ieproxy v0.0.0-20190805055040-f9202b1cfdeb // indirect
 	github.com/mattn/go-runewidth v0.0.4 // indirect
 	github.com/olivere/elastic/v7 v7.0.19
-	github.com/onsi/ginkgo v1.10.1 // indirect
-	github.com/onsi/gomega v1.7.0 // indirect
 	github.com/peterh/liner v1.1.0
 	github.com/pierrec/lz4 v2.2.7+incompatible // indirect
 	github.com/prometheus/client_golang v1.3.0
@@ -83,7 +81,7 @@ require (
 	gocloud.dev/pubsub/natspubsub v0.16.0
 	gocloud.dev/pubsub/rabbitpubsub v0.16.0
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1 // indirect
-	golang.org/x/net v0.0.0-20200202094626-16171245cfb2
+	golang.org/x/net v0.0.0-20201202161906-c7110b5ffcbb
 	golang.org/x/sync v0.0.0-20200930132711-30421366ff76 // indirect
 	golang.org/x/sys v0.0.0-20201022201747-fb209a7c41cd
 	golang.org/x/tools v0.0.0-20200103221440-774c71fcf114

@@ -7,21 +7,42 @@ import (
 	"context"
 	"crypto/md5"
 	"fmt"
+	"io"
+
+	"github.com/tecbot/gorocksdb"
+
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	weed_util "github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/tecbot/gorocksdb"
-	"io"
 )
 
 func init() {
 	filer.Stores = append(filer.Stores, &RocksDBStore{})
 }
 
+type options struct {
+	opt *gorocksdb.Options
+	ro  *gorocksdb.ReadOptions
+	wo  *gorocksdb.WriteOptions
+}
+
+func (opt *options) init() {
+	opt.opt = gorocksdb.NewDefaultOptions()
+	opt.ro = gorocksdb.NewDefaultReadOptions()
+	opt.wo = gorocksdb.NewDefaultWriteOptions()
+}
+
+func (opt *options) close() {
+	opt.opt.Destroy()
+	opt.ro.Destroy()
+	opt.wo.Destroy()
+}
+
 type RocksDBStore struct {
 	path string
 	db   *gorocksdb.DB
+	options
 }
 
 func (store *RocksDBStore) GetName() string {
@@ -38,10 +59,15 @@ func (store *RocksDBStore) initialize(dir string) (err error) {
 	if err := weed_util.TestFolderWritable(dir); err != nil {
 		return fmt.Errorf("Check Level Folder %s Writable: %s", dir, err)
 	}
+	store.options.init()
+	store.opt.SetCreateIfMissing(true)
+	// reduce write amplification
+	// also avoid expired data stored in highest level never get compacted
+	store.opt.SetLevelCompactionDynamicLevelBytes(true)
+	store.opt.SetCompactionFilter(NewTTLFilter())
+	// store.opt.SetMaxBackgroundCompactions(2)
 
-	options := gorocksdb.NewDefaultOptions()
-	options.SetCreateIfMissing(true)
-	store.db, err = gorocksdb.OpenDb(options, dir)
+	store.db, err = gorocksdb.OpenDb(store.opt, dir)
 
 	return
 }
@@ -65,8 +91,7 @@ func (store *RocksDBStore) InsertEntry(ctx context.Context, entry *filer.Entry) 
 		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
 	}
 
-	wo := gorocksdb.NewDefaultWriteOptions()
-	err = store.db.Put(wo, key, value)
+	err = store.db.Put(store.wo, key, value)
 
 	if err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
@@ -85,21 +110,21 @@ func (store *RocksDBStore) UpdateEntry(ctx context.Context, entry *filer.Entry) 
 func (store *RocksDBStore) FindEntry(ctx context.Context, fullpath weed_util.FullPath) (entry *filer.Entry, err error) {
 	dir, name := fullpath.DirAndName()
 	key := genKey(dir, name)
-
-	ro := gorocksdb.NewDefaultReadOptions()
-	data, err := store.db.GetBytes(ro, key)
+	data, err := store.db.Get(store.ro, key)
 
 	if data == nil {
 		return nil, filer_pb.ErrNotFound
 	}
+	defer data.Free()
+
 	if err != nil {
-		return nil, fmt.Errorf("get %s : %v", entry.FullPath, err)
+		return nil, fmt.Errorf("get %s : %v", fullpath, err)
 	}
 
 	entry = &filer.Entry{
 		FullPath: fullpath,
 	}
-	err = entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(data))
+	err = entry.DecodeAttributesAndChunks(data.Data())
 	if err != nil {
 		return entry, fmt.Errorf("decode %s : %v", entry.FullPath, err)
 	}
@@ -113,8 +138,7 @@ func (store *RocksDBStore) DeleteEntry(ctx context.Context, fullpath weed_util.F
 	dir, name := fullpath.DirAndName()
 	key := genKey(dir, name)
 
-	wo := gorocksdb.NewDefaultWriteOptions()
-	err = store.db.Delete(wo, key)
+	err = store.db.Delete(store.wo, key)
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
@@ -125,10 +149,13 @@ func (store *RocksDBStore) DeleteEntry(ctx context.Context, fullpath weed_util.F
 func (store *RocksDBStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
 
-	batch := new(gorocksdb.WriteBatch)
+	batch := gorocksdb.NewWriteBatch()
+	defer batch.Destroy()
 
 	ro := gorocksdb.NewDefaultReadOptions()
+	defer ro.Destroy()
 	ro.SetFillCache(false)
+
 	iter := store.db.NewIterator(ro)
 	defer iter.Close()
 	err = enumerate(iter, directoryPrefix, nil, false, -1, func(key, value []byte) bool {
@@ -139,8 +166,7 @@ func (store *RocksDBStore) DeleteFolderChildren(ctx context.Context, fullpath we
 		return fmt.Errorf("delete list %s : %v", fullpath, err)
 	}
 
-	wo := gorocksdb.NewDefaultWriteOptions()
-	err = store.db.Write(wo, batch)
+	err = store.db.Write(store.wo, batch)
 
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
@@ -155,22 +181,12 @@ func enumerate(iter *gorocksdb.Iterator, prefix, lastKey []byte, includeLastKey 
 		iter.Seek(prefix)
 	} else {
 		iter.Seek(lastKey)
-
 		if !includeLastKey {
-			k := iter.Key()
-			v := iter.Value()
-			key := k.Data()
-			defer k.Free()
-			defer v.Free()
-
-			if !bytes.HasPrefix(key, prefix) {
-				return nil
+			if iter.Valid() {
+				if bytes.Equal(iter.Key().Data(), lastKey) {
+					iter.Next()
+				}
 			}
-
-			if bytes.Equal(key, lastKey) {
-				iter.Next()
-			}
-
 		}
 	}
 
@@ -184,21 +200,13 @@ func enumerate(iter *gorocksdb.Iterator, prefix, lastKey []byte, includeLastKey 
 			}
 		}
 
-		k := iter.Key()
-		v := iter.Value()
-		key := k.Data()
-		value := v.Data()
+		key := iter.Key().Data()
 
 		if !bytes.HasPrefix(key, prefix) {
-			k.Free()
-			v.Free()
 			break
 		}
 
-		ret := fn(key, value)
-
-		k.Free()
-		v.Free()
+		ret := fn(key, iter.Value().Data())
 
 		if !ret {
 			break
@@ -226,7 +234,9 @@ func (store *RocksDBStore) ListDirectoryPrefixedEntries(ctx context.Context, ful
 	}
 
 	ro := gorocksdb.NewDefaultReadOptions()
+	defer ro.Destroy()
 	ro.SetFillCache(false)
+
 	iter := store.db.NewIterator(ro)
 	defer iter.Close()
 	err = enumerate(iter, directoryPrefix, lastFileStart, inclusive, limit, func(key, value []byte) bool {
@@ -234,16 +244,12 @@ func (store *RocksDBStore) ListDirectoryPrefixedEntries(ctx context.Context, ful
 		if fileName == "" {
 			return true
 		}
-		limit--
-		if limit < 0 {
-			return false
-		}
 		entry := &filer.Entry{
 			FullPath: weed_util.NewFullPath(string(fullpath), fileName),
 		}
 
 		// println("list", entry.FullPath, "chunks", len(entry.Chunks))
-		if decodeErr := entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(value)); decodeErr != nil {
+		if decodeErr := entry.DecodeAttributesAndChunks(value); decodeErr != nil {
 			err = decodeErr
 			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
 			return false
@@ -290,4 +296,5 @@ func hashToBytes(dir string) []byte {
 
 func (store *RocksDBStore) Shutdown() {
 	store.db.Close()
+	store.options.close()
 }
