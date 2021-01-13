@@ -6,6 +6,7 @@ metadata:
   name: {{ include "seaweedfs.fullname" . }}-cronjob
 spec:
   schedule: "{{ .Values.cronjob.schedule }}"
+  startingDeadlineSeconds: 200
   concurrencyPolicy: Forbid
   failedJobsHistoryLimit: 2
   successfulJobsHistoryLimit: 2
