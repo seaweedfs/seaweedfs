@@ -158,7 +158,7 @@ spec:
             periodSeconds: 90
             successThreshold: 1
             failureThreshold: 100
-            timeoutSeconds: 5
+            timeoutSeconds: 30
           livenessProbe:
             httpGet:
               path: /status
@@ -168,7 +168,7 @@ spec:
             periodSeconds: 90
             successThreshold: 1
             failureThreshold: 4
-            timeoutSeconds: 5
+            timeoutSeconds: 30
           {{- if .Values.volume.resources }}
           resources:
             {{ tpl .Values.volume.resources . | nindent 12 | trim }}

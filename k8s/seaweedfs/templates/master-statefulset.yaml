@@ -163,7 +163,7 @@ spec:
             periodSeconds: 45
             successThreshold: 2
             failureThreshold: 100
-            timeoutSeconds: 5
+            timeoutSeconds: 10
           livenessProbe:
             httpGet:
               path: /cluster/status
@@ -173,7 +173,7 @@ spec:
             periodSeconds: 30
             successThreshold: 1
             failureThreshold: 4
-            timeoutSeconds: 5
+            timeoutSeconds: 10
           {{- if .Values.master.resources }}
           resources:
             {{ tpl .Values.master.resources . | nindent 12 | trim }}

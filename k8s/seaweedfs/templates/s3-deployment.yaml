@@ -116,7 +116,6 @@ spec:
               mountPath: /usr/local/share/ca-certificates/client/
             {{- end }}
             {{ tpl .Values.s3.extraVolumeMounts . | nindent 12 | trim }}
-          {{- end }}
           ports:
             - containerPort: {{ .Values.s3.port }}
               name: swfs-s3
@@ -129,7 +128,7 @@ spec:
             periodSeconds: 15
             successThreshold: 1
             failureThreshold: 100
-            timeoutSeconds: 3
+            timeoutSeconds: 10
           livenessProbe:
             httpGet:
               path: /
@@ -139,7 +138,7 @@ spec:
             periodSeconds: 60
             successThreshold: 1
             failureThreshold: 20
-            timeoutSeconds: 3
+            timeoutSeconds: 10
           {{- if .Values.s3.resources }}
           resources:
             {{ tpl .Values.s3.resources . | nindent 12 | trim }}
