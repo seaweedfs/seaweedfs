@@ -15,11 +15,11 @@ import (
 )
 
 func init() {
-	cmdWatch.Run = runWatch // break init cycle
+	cmdFilerMetaTail.Run = runFilerMetaTail // break init cycle
 }
 
-var cmdWatch = &Command{
-	UsageLine: "watch [-filer=localhost:8888] [-target=/]",
+var cmdFilerMetaTail = &Command{
+	UsageLine: "filer.meta.tail [-filer=localhost:8888] [-target=/]",
 	Short:     "see recent changes on a filer",
 	Long: `See recent changes on a filer.
 
@@ -27,13 +27,13 @@ var cmdWatch = &Command{
 }
 
 var (
-	watchFiler   = cmdWatch.Flag.String("filer", "localhost:8888", "filer hostname:port")
-	watchTarget  = cmdWatch.Flag.String("pathPrefix", "/", "path to a folder or file, or common prefix for the folders or files on filer")
-	watchStart   = cmdWatch.Flag.Duration("timeAgo", 0, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
-	watchPattern = cmdWatch.Flag.String("pattern", "", "full path or just filename pattern, ex: \"/home/?opher\", \"*.pdf\", see https://golang.org/pkg/path/filepath/#Match ")
+	watchFiler   = cmdFilerMetaTail.Flag.String("filer", "localhost:8888", "filer hostname:port")
+	watchTarget  = cmdFilerMetaTail.Flag.String("pathPrefix", "/", "path to a folder or file, or common prefix for the folders or files on filer")
+	watchStart   = cmdFilerMetaTail.Flag.Duration("timeAgo", 0, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
+	watchPattern = cmdFilerMetaTail.Flag.String("pattern", "", "full path or just filename pattern, ex: \"/home/?opher\", \"*.pdf\", see https://golang.org/pkg/path/filepath/#Match ")
 )
 
-func runWatch(cmd *Command, args []string) bool {
+func runFilerMetaTail(cmd *Command, args []string) bool {
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
