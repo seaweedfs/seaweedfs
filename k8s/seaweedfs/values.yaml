@@ -21,6 +21,10 @@ global:
   # Y number of replica in other racks in the same data center
   # Z number of replica in other servers in the same rack
   replicationPlacment: "001"
+  extraEnvironmentVars:
+    WEED_CLUSTER_DEFAULT: "sw"
+    WEED_CLUSTER_SW_MASTER: "seaweedfs-master:9333"
+    WEED_CLUSTER_SW_FILER: "seaweedfs-filer-client:8888"
 
 image:
   registry: ""
