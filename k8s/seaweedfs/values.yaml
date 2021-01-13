@@ -144,6 +144,8 @@ volume:
 
   # Directories to store data files. dir[,dir]... (default "/tmp")
   dir: "/data"
+  # Directories to store index files. dir[,dir]... (default "/tmp")
+  dir_idx: null
 
   # Maximum numbers of volumes, count[,count]...
   # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
