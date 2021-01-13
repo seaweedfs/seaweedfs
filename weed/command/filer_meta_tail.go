@@ -27,10 +27,10 @@ var cmdFilerMetaTail = &Command{
 }
 
 var (
-	watchFiler   = cmdFilerMetaTail.Flag.String("filer", "localhost:8888", "filer hostname:port")
-	watchTarget  = cmdFilerMetaTail.Flag.String("pathPrefix", "/", "path to a folder or file, or common prefix for the folders or files on filer")
-	watchStart   = cmdFilerMetaTail.Flag.Duration("timeAgo", 0, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
-	watchPattern = cmdFilerMetaTail.Flag.String("pattern", "", "full path or just filename pattern, ex: \"/home/?opher\", \"*.pdf\", see https://golang.org/pkg/path/filepath/#Match ")
+	tailFiler   = cmdFilerMetaTail.Flag.String("filer", "localhost:8888", "filer hostname:port")
+	tailTarget  = cmdFilerMetaTail.Flag.String("pathPrefix", "/", "path to a folder or file, or common prefix for the folders or files on filer")
+	tailStart   = cmdFilerMetaTail.Flag.Duration("timeAgo", 0, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
+	tailPattern = cmdFilerMetaTail.Flag.String("pattern", "", "full path or just filename pattern, ex: \"/home/?opher\", \"*.pdf\", see https://golang.org/pkg/path/filepath/#Match ")
 )
 
 func runFilerMetaTail(cmd *Command, args []string) bool {
@@ -38,20 +38,20 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	var filterFunc func(dir, fname string) bool
-	if *watchPattern != "" {
-		if strings.Contains(*watchPattern, "/") {
-			println("watch path pattern", *watchPattern)
+	if *tailPattern != "" {
+		if strings.Contains(*tailPattern, "/") {
+			println("watch path pattern", *tailPattern)
 			filterFunc = func(dir, fname string) bool {
-				matched, err := filepath.Match(*watchPattern, dir+"/"+fname)
+				matched, err := filepath.Match(*tailPattern, dir+"/"+fname)
 				if err != nil {
 					fmt.Printf("error: %v", err)
 				}
 				return matched
 			}
 		} else {
-			println("watch file pattern", *watchPattern)
+			println("watch file pattern", *tailPattern)
 			filterFunc = func(dir, fname string) bool {
-				matched, err := filepath.Match(*watchPattern, fname)
+				matched, err := filepath.Match(*tailPattern, fname)
 				if err != nil {
 					fmt.Printf("error: %v", err)
 				}
@@ -81,15 +81,15 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 		return nil
 	}
 
-	watchErr := pb.WithFilerClient(*watchFiler, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	tailErr := pb.WithFilerClient(*tailFiler, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
-			ClientName: "watch",
-			PathPrefix: *watchTarget,
-			SinceNs:    time.Now().Add(-*watchStart).UnixNano(),
+			ClientName: "tail",
+			PathPrefix: *tailTarget,
+			SinceNs:    time.Now().Add(-*tailStart).UnixNano(),
 		})
 		if err != nil {
 			return fmt.Errorf("listen: %v", err)
@@ -112,8 +112,8 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 		}
 
 	})
-	if watchErr != nil {
-		fmt.Printf("watch %s: %v\n", *watchFiler, watchErr)
+	if tailErr != nil {
+		fmt.Printf("tail %s: %v\n", *tailFiler, tailErr)
 	}
 
 	return true
