@@ -58,6 +58,30 @@ func (vp *ViperProxy) SetDefault(key string, value interface{}) {
 	vp.Viper.SetDefault(key, value)
 }
 
+func (vp *ViperProxy) GetString(key string) string {
+	vp.Lock()
+	defer vp.Unlock()
+	return vp.Viper.GetString(key)
+}
+
+func (vp *ViperProxy) GetBool(key string) bool {
+	vp.Lock()
+	defer vp.Unlock()
+	return vp.Viper.GetBool(key)
+}
+
+func (vp *ViperProxy) GetInt(key string) int {
+	vp.Lock()
+	defer vp.Unlock()
+	return vp.Viper.GetInt(key)
+}
+
+func (vp *ViperProxy) GetStringSlice(key string) []string {
+	vp.Lock()
+	defer vp.Unlock()
+	return vp.Viper.GetStringSlice(key)
+}
+
 func GetViper() *ViperProxy {
 	v := &ViperProxy{}
 	v.Viper = viper.GetViper()
