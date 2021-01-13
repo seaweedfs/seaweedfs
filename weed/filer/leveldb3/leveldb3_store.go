@@ -112,8 +112,6 @@ func (store *LevelDB3Store) findDB(fullpath weed_util.FullPath, isForChildren bo
 		shortPath = weed_util.FullPath(bucketAndObjectKey[t:])
 	}
 
-	println("bucket:", bucket, "shortPath", shortPath)
-
 	if db, found := store.dbs[bucket]; found {
 		store.dbsLock.RUnlock()
 		return db, bucket, shortPath, nil
