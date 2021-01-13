@@ -137,6 +137,18 @@ func (store *LevelDB3Store) findDB(fullpath weed_util.FullPath, isForChildren bo
 	return db, bucket, shortPath, nil
 }
 
+func (store *LevelDB3Store) closeDB(bucket string) {
+
+	store.dbsLock.Lock()
+	defer store.dbsLock.Unlock()
+
+	if db, found := store.dbs[bucket]; found {
+		db.Close()
+		delete(store.dbs, bucket)
+	}
+
+}
+
 func (store *LevelDB3Store) BeginTransaction(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }
@@ -240,7 +252,7 @@ func (store *LevelDB3Store) DeleteFolderChildren(ctx context.Context, fullpath w
 	}
 
 	if bucket != DEFAULT && shortPath == "/" {
-		db.Close()
+		store.closeDB(bucket)
 		if bucket != "" { // just to make sure
 			os.RemoveAll(store.dir + "/" + bucket)
 		}
