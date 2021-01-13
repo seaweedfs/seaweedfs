@@ -69,7 +69,7 @@ spec:
             - "/bin/sh"
             - "-ec"
             - | 
-              exec /usr/bin/weed \
+              exec /usr/bin/weed -logdir=/logs \
               {{- if .Values.s3.loggingOverrideLevel }}
               -v={{ .Values.s3.loggingOverrideLevel }} \
               {{- else }}
@@ -92,6 +92,8 @@ spec:
               {{- end }}
               -filer={{ template "seaweedfs.name" . }}-filer-client:{{ .Values.filer.port }}
           volumeMounts:
+            - name: logs
+              mountPath: "/logs/"
             {{- if .Values.global.enableSecurity }}
             - name: security-config
               readOnly: true
@@ -143,6 +145,12 @@ spec:
             {{ tpl .Values.s3.resources . | nindent 12 | trim }}
           {{- end }}
       volumes:
+        {{- if eq .Values.s3.logs.type "hostPath" }}
+        - name: logs
+          hostPath:
+            path: /storage/logs/seaweedfs/s3
+            type: DirectoryOrCreate
+        {{- end }}
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:

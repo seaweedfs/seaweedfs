@@ -351,6 +351,11 @@ s3:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+  logs:
+    type: "hostPath"
+    size: ""
+    storageClass: ""
+
 cronjob:
   enabled: false
   schedule: "*/7 * * * *"
