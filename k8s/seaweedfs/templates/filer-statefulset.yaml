@@ -134,7 +134,7 @@ spec:
               {{- end }}
               -ip=${POD_IP} \
               {{- if gt (.Values.filer.replicas | int) 1 }}
-              -peers={{ range $index := until (.Values.filer.replicas | int) }}${SEAWEEDFS_FULLNAME}-filer-{{ $index }}.${SEAWEEDFS_FULLNAME}-filer:{{ $.Values.filer.port }}{{ if lt $index (sub ($.Values.filer.replicas | int) 1) }},{{ end }}{{ end }}
+              -peers=$(echo -n "{{ range $index := until (.Values.filer.replicas | int) }}${SEAWEEDFS_FULLNAME}-filer-{{ $index }}.${SEAWEEDFS_FULLNAME}-filer:{{ $.Values.filer.port }}{{ if lt $index (sub ($.Values.filer.replicas | int) 1) }},{{ end }}{{ end }}" | sed "s/$HOSTNAME.${SEAWEEDFS_FULLNAME}-filer:{{ $.Values.filer.port }}//" | sed 's/,$//; 's/^,//'; s/,,/,/;' )  \
               {{- end }}
               -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
           {{- if or (.Values.global.enableSecurity) (.Values.filer.extraVolumeMounts) }}    
