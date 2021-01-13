@@ -87,8 +87,10 @@ spec:
               {{- if .Values.s3.domainName }}
               -domainName={{ .Values.s3.domainName }} \
               {{- end }}
-              -filer={{ template "seaweedfs.name" . }}-filer:{{ .Values.filer.port }}
-          {{- if or (.Values.global.enableSecurity) (.Values.s3.extraVolumeMounts) }}
+              {{- if .Values.s3.allowEmptyFolder }}
+              -allowEmptyFolder={{ .Values.s3.allowEmptyFolder }} \
+              {{- end }}
+              -filer={{ template "seaweedfs.name" . }}-filer-client:{{ .Values.filer.port }}
           volumeMounts:
             {{- if .Values.global.enableSecurity }}
             - name: security-config

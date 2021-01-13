@@ -319,6 +319,8 @@ s3:
   port: 8333
   metricsPort: 9327
   loggingOverrideLevel: null
+  #allow empty folders
+  allowEmptyFolder: true
 
   # Suffix of the host name, {bucket}.{domainName}
   domainName: ""
