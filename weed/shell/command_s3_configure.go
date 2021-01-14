@@ -25,7 +25,7 @@ func (c *commandS3Configure) Name() string {
 }
 
 func (c *commandS3Configure) Help() string {
-	return `<WIP> configure and apply s3 options for each bucket
+	return `configure and apply s3 options for each bucket
 
 	# see the current configuration file content
 	s3.configure
