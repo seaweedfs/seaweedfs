@@ -3,6 +3,7 @@ package mysql
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
@@ -66,7 +67,7 @@ func (store *MysqlStore) initialize(user, password, hostname string, port int, d
 
 	store.DB.SetMaxIdleConns(maxIdle)
 	store.DB.SetMaxOpenConns(maxOpen)
-	store.DB.SetConnMaxLifetime(maxLifetimeSeconds*time.Second)
+	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds)*time.Second)
 
 	if err = store.DB.Ping(); err != nil {
 		return fmt.Errorf("connect to %s error:%v", sqlUrl, err)
