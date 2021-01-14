@@ -118,6 +118,7 @@ password = ""
 database = ""              # create or use an existing database
 connection_max_idle = 2
 connection_max_open = 100
+connection_max_lifetime_seconds = 0
 interpolateParams = false
 
 [postgres] # or cockroachdb

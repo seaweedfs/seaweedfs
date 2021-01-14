@@ -298,8 +298,10 @@ filer:
     WEED_MYSQL_HOSTNAME: "mysql-db-host"
     WEED_MYSQL_PORT: "3306"
     WEED_MYSQL_DATABASE: "sw_database"
-    WEED_MYSQL_CONNECTION_MAX_IDLE: "10"
-    WEED_MYSQL_CONNECTION_MAX_OPEN: "150"
+    WEED_MYSQL_CONNECTION_MAX_IDLE: "5"
+    WEED_MYSQL_CONNECTION_MAX_OPEN: "75"
+    # "refresh" connection every 10 minutes, eliminating mysql closing "old" connections
+    WEED_MYSQL_CONNECTION_MAX_LIFETIME_SECONDS: "600"
     # enable usage of memsql as filer backend
     WEED_MYSQL_INTERPOLATEPARAMS: "true"
     WEED_LEVELDB2_ENABLED: "false"
