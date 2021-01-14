@@ -233,12 +233,12 @@ func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, file
 	}
 }
 
-func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, writeFn func(writer io.Writer, offset int64, size int64) error) {
+func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, writeFn func(writer io.Writer, offset int64, size int64, httpStatusCode int) error) {
 	rangeReq := r.Header.Get("Range")
 
 	if rangeReq == "" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
-		if err := writeFn(w, 0, totalSize); err != nil {
+		if err := writeFn(w, 0, totalSize, 0); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -277,9 +277,8 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		ra := ranges[0]
 		w.Header().Set("Content-Length", strconv.FormatInt(ra.length, 10))
 		w.Header().Set("Content-Range", ra.contentRange(totalSize))
-		w.WriteHeader(http.StatusPartialContent)
 
-		err = writeFn(w, ra.start, ra.length)
+		err = writeFn(w, ra.start, ra.length, http.StatusPartialContent)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -307,7 +306,7 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 				pw.CloseWithError(e)
 				return
 			}
-			if e = writeFn(part, ra.start, ra.length); e != nil {
+			if e = writeFn(part, ra.start, ra.length, 0); e != nil {
 				pw.CloseWithError(e)
 				return
 			}

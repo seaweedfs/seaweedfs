@@ -158,8 +158,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 
-	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
+	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64, httpStatusCode int) error {
 		if offset+size <= int64(len(entry.Content)) {
+			if httpStatusCode != 0 {
+				w.WriteHeader(httpStatusCode)
+			}
 			_, err := writer.Write(entry.Content[offset : offset+size])
 			return err
 		}
