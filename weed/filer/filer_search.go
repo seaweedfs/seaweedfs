@@ -53,7 +53,7 @@ func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath
 		return
 	}
 	if len(restNamePattern) == 0 {
-		return foundEntries, false,0, lastFileName, nil
+		return foundEntries, false, 0, lastFileName, nil
 	}
 	for _, entry := range foundEntries {
 		nameToTest := strings.ToLower(entry.Name())

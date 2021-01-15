@@ -203,7 +203,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 		entries = append(entries, entry)
 	}
 
-	hasMore = int64(len(entries)) == limit + 1
+	hasMore = int64(len(entries)) == limit+1
 	if hasMore {
 		entries = entries[:limit]
 	}

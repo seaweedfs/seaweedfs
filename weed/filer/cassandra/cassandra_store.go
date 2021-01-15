@@ -201,7 +201,7 @@ func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, dirPath u
 		glog.V(0).Infof("list iterator close: %v", err)
 	}
 
-	hasMore = int64(len(entries)) == limit + 1
+	hasMore = int64(len(entries)) == limit+1
 	if hasMore {
 		entries = entries[:limit]
 	}

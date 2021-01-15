@@ -42,7 +42,7 @@ func (store *MysqlStore) Initialize(configuration util.Configuration, prefix str
 }
 
 func (store *MysqlStore) initialize(user, password, hostname string, port int, database string, maxIdle, maxOpen,
-    maxLifetimeSeconds int,	interpolateParams bool) (err error) {
+	maxLifetimeSeconds int, interpolateParams bool) (err error) {
 	//
 	store.SqlInsert = "INSERT INTO filemeta (dirhash,name,directory,meta) VALUES(?,?,?,?)"
 	store.SqlUpdate = "UPDATE filemeta SET meta=? WHERE dirhash=? AND name=? AND directory=?"
@@ -67,7 +67,7 @@ func (store *MysqlStore) initialize(user, password, hostname string, port int, d
 
 	store.DB.SetMaxIdleConns(maxIdle)
 	store.DB.SetMaxOpenConns(maxOpen)
-	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds)*time.Second)
+	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
 
 	if err = store.DB.Ping(); err != nil {
 		return fmt.Errorf("connect to %s error:%v", sqlUrl, err)

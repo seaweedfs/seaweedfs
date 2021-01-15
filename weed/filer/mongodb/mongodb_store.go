@@ -190,7 +190,7 @@ func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, dirPath uti
 			"$gte": startFileName,
 		}
 	}
-	optLimit := int64(limit+1)
+	optLimit := int64(limit + 1)
 	opts := &options.FindOptions{Limit: &optLimit, Sort: bson.M{"name": 1}}
 	cur, err := store.connect.Database(store.database).Collection(store.collectionName).Find(ctx, where, opts)
 	for cur.Next(ctx) {
@@ -212,7 +212,7 @@ func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, dirPath uti
 		entries = append(entries, entry)
 	}
 
-	hasMore = int64(len(entries)) == limit + 1
+	hasMore = int64(len(entries)) == limit+1
 	if hasMore {
 		entries = entries[:limit]
 	}
