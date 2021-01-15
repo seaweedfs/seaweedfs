@@ -125,17 +125,16 @@ func (store *UniversalRedisStore) DeleteFolderChildren(ctx context.Context, full
 	return nil
 }
 
-func (store *UniversalRedisStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, err error) {
-	return nil, filer.ErrUnsupportedListDirectoryPrefixed
+func (store *UniversalRedisStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
+	return nil, false, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
-func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool,
-	limit int) (entries []*filer.Entry, err error) {
+func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, includeStartFile bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
 
 	dirListKey := genDirectoryListKey(string(fullpath))
 	members, err := store.Client.SMembers(ctx, dirListKey).Result()
 	if err != nil {
-		return nil, fmt.Errorf("list %s : %v", fullpath, err)
+		return nil, false, fmt.Errorf("list %s : %v", fullpath, err)
 	}
 
 	// skip
@@ -144,7 +143,7 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, full
 		for _, m := range members {
 			if strings.Compare(m, startFileName) >= 0 {
 				if m == startFileName {
-					if inclusive {
+					if includeStartFile {
 						t = append(t, m)
 					}
 				} else {
@@ -163,6 +162,7 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, full
 	// limit
 	if limit < len(members) {
 		members = members[:limit]
+		hasMore = true
 	}
 
 	// fetch entry meta
@@ -186,7 +186,7 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, full
 		}
 	}
 
-	return entries, err
+	return entries, hasMore, err
 }
 
 func genDirectoryListKey(dir string) (dirList string) {
