@@ -171,6 +171,9 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, full
 		entry, err := store.FindEntry(ctx, path)
 		if err != nil {
 			glog.V(0).Infof("list %s : %v", path, err)
+			if err == filer_pb.ErrNotFound {
+				continue
+			}
 		} else {
 			if entry.TtlSec > 0 {
 				if entry.Attr.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
