@@ -24,8 +24,8 @@ type FilerStore interface {
 	FindEntry(context.Context, util.FullPath) (entry *Entry, err error)
 	DeleteEntry(context.Context, util.FullPath) (err error)
 	DeleteFolderChildren(context.Context, util.FullPath) (err error)
-	ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, error)
-	ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*Entry, error)
+	ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, bool, error)
+	ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*Entry, bool, error)
 
 	BeginTransaction(ctx context.Context) (context.Context, error)
 	CommitTransaction(ctx context.Context) error
