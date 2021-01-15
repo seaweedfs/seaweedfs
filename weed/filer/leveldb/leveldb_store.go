@@ -162,12 +162,11 @@ func (store *LevelDBStore) DeleteFolderChildren(ctx context.Context, fullpath we
 	return nil
 }
 
-func (store *LevelDBStore) ListDirectoryEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool,
-	limit int) (entries []*filer.Entry, err error) {
-	return store.ListDirectoryPrefixedEntries(ctx, fullpath, startFileName, inclusive, limit, "")
+func (store *LevelDBStore) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
+	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "")
 }
 
-func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, err error) {
+func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
 
 	directoryPrefix := genDirectoryKeyPrefix(fullpath, prefix)
 	lastFileStart := directoryPrefix
@@ -190,6 +189,7 @@ func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, ful
 		}
 		limit--
 		if limit < 0 {
+			hasMore = true
 			break
 		}
 		entry := &filer.Entry{
@@ -204,7 +204,7 @@ func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, ful
 	}
 	iter.Release()
 
-	return entries, err
+	return entries, hasMore, err
 }
 
 func genKey(dirPath, fileName string) (key []byte) {

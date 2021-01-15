@@ -286,16 +286,15 @@ func (store *LevelDB3Store) DeleteFolderChildren(ctx context.Context, fullpath w
 	return nil
 }
 
-func (store *LevelDB3Store) ListDirectoryEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool,
-	limit int) (entries []*filer.Entry, err error) {
-	return store.ListDirectoryPrefixedEntries(ctx, fullpath, startFileName, inclusive, limit, "")
+func (store *LevelDB3Store) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
+	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "")
 }
 
-func (store *LevelDB3Store) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, err error) {
+func (store *LevelDB3Store) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
 
-	db, _, shortPath, err := store.findDB(fullpath, true)
+	db, _, shortPath, err := store.findDB(dirPath, true)
 	if err != nil {
-		return nil, fmt.Errorf("findDB %s : %v", fullpath, err)
+		return nil, false, fmt.Errorf("findDB %s : %v", dirPath, err)
 	}
 
 	directoryPrefix := genDirectoryKeyPrefix(shortPath, prefix)
@@ -314,15 +313,16 @@ func (store *LevelDB3Store) ListDirectoryPrefixedEntries(ctx context.Context, fu
 		if fileName == "" {
 			continue
 		}
-		if fileName == startFileName && !inclusive {
+		if fileName == startFileName && !includeStartFile {
 			continue
 		}
 		limit--
 		if limit < 0 {
+			hasMore = true
 			break
 		}
 		entry := &filer.Entry{
-			FullPath: weed_util.NewFullPath(string(fullpath), fileName),
+			FullPath: weed_util.NewFullPath(string(dirPath), fileName),
 		}
 
 		// println("list", entry.FullPath, "chunks", len(entry.Chunks))
@@ -335,7 +335,7 @@ func (store *LevelDB3Store) ListDirectoryPrefixedEntries(ctx context.Context, fu
 	}
 	iter.Release()
 
-	return entries, err
+	return entries, hasMore, err
 }
 
 func genKey(dirPath, fileName string) (key []byte) {
