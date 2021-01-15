@@ -149,11 +149,11 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 	return nil
 }
 
-func (store *UniversalRedis2Store) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *UniversalRedis2Store) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
 	return nil, false, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
-func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64) (entries []*filer.Entry, hasMore bool, err error) {
 
 	dirListKey := genDirectoryListKey(string(dirPath))
 	start := int64(0)
@@ -168,7 +168,7 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 		return nil, false, fmt.Errorf("list %s : %v", dirPath, err)
 	}
 
-	hasMore = len(members) == limit+1
+	hasMore = int64(len(entries)) == limit+1
 	if hasMore {
 		members = members[:len(members)-1]
 	}

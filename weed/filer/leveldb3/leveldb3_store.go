@@ -286,11 +286,11 @@ func (store *LevelDB3Store) DeleteFolderChildren(ctx context.Context, fullpath w
 	return nil
 }
 
-func (store *LevelDB3Store) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *LevelDB3Store) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64) (entries []*filer.Entry, hasMore bool, err error) {
 	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "")
 }
 
-func (store *LevelDB3Store) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *LevelDB3Store) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
 
 	db, _, shortPath, err := store.findDB(dirPath, true)
 	if err != nil {

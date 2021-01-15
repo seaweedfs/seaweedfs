@@ -194,7 +194,7 @@ func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.
 	return actualStore.DeleteFolderChildren(ctx, fp)
 }
 
-func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, bool, error) {
+func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64) ([]*Entry, bool, error) {
 	actualStore := fsw.getActualStore(dirPath + "/")
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "list").Inc()
 	start := time.Now()
@@ -214,7 +214,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath 
 	return entries, hasMore, err
 }
 
-func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*Entry, bool, error) {
+func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) ([]*Entry, bool, error) {
 	actualStore := fsw.getActualStore(dirPath + "/")
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "prefixList").Inc()
 	start := time.Now()
@@ -236,7 +236,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 	return entries, hasMore, nil
 }
 
-func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*Entry, hasMore bool, err error) {
+func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) (entries []*Entry, hasMore bool, err error) {
 	actualStore := fsw.getActualStore(dirPath + "/")
 	entries, hasMore, err = actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
 	if err != nil {
@@ -247,7 +247,7 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 		return
 	}
 
-	count := 0
+	count := int64(0)
 	var lastFileName string
 	notPrefixed := entries
 	entries = nil

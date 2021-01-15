@@ -171,16 +171,16 @@ func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath w
 	return nil
 }
 
-func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64) (entries []*filer.Entry, hasMore bool, err error) {
 	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "")
 }
 
-func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
 
-	directoryPrefix, partitionId := genDirectoryKeyPrefix(fullpath, prefix, store.dbCount)
+	directoryPrefix, partitionId := genDirectoryKeyPrefix(dirPath, prefix, store.dbCount)
 	lastFileStart := directoryPrefix
 	if startFileName != "" {
-		lastFileStart, _ = genDirectoryKeyPrefix(fullpath, startFileName, store.dbCount)
+		lastFileStart, _ = genDirectoryKeyPrefix(dirPath, startFileName, store.dbCount)
 	}
 
 	iter := store.dbs[partitionId].NewIterator(&leveldb_util.Range{Start: lastFileStart}, nil)
@@ -193,7 +193,7 @@ func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, fu
 		if fileName == "" {
 			continue
 		}
-		if fileName == startFileName && !inclusive {
+		if fileName == startFileName && !includeStartFile {
 			continue
 		}
 		limit--
@@ -202,7 +202,7 @@ func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, fu
 			break
 		}
 		entry := &filer.Entry{
-			FullPath: weed_util.NewFullPath(string(fullpath), fileName),
+			FullPath: weed_util.NewFullPath(string(dirPath), fileName),
 		}
 
 		// println("list", entry.FullPath, "chunks", len(entry.Chunks))

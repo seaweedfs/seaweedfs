@@ -172,7 +172,7 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 	return nil
 }
 
-func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
 	sqlText := store.SqlListExclusive
 	if includeStartFile {
 		sqlText = store.SqlListInclusive
@@ -203,7 +203,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 		entries = append(entries, entry)
 	}
 
-	hasMore = len(entries) == limit + 1
+	hasMore = int64(len(entries)) == limit + 1
 	if hasMore {
 		entries = entries[:limit]
 	}
@@ -211,7 +211,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 	return entries, hasMore, nil
 }
 
-func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64) (entries []*filer.Entry, hasMore bool, err error) {
 	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "")
 }
 

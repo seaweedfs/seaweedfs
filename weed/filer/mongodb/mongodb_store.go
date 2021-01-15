@@ -178,11 +178,11 @@ func (store *MongodbStore) DeleteFolderChildren(ctx context.Context, fullpath ut
 	return nil
 }
 
-func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
 	return nil, false, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
-func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64) (entries []*filer.Entry, hasMore bool, err error) {
 
 	var where = bson.M{"directory": string(dirPath), "name": bson.M{"$gt": startFileName}}
 	if includeStartFile {
@@ -212,7 +212,7 @@ func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, dirPath uti
 		entries = append(entries, entry)
 	}
 
-	hasMore = len(entries) == limit + 1
+	hasMore = int64(len(entries)) == limit + 1
 	if hasMore {
 		entries = entries[:limit]
 	}

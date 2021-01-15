@@ -117,7 +117,7 @@ func (mc *MetaCache) DeleteEntry(ctx context.Context, fp util.FullPath) (err err
 	return mc.localStore.DeleteEntry(ctx, fp)
 }
 
-func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*filer.Entry, error) {
+func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64) ([]*filer.Entry, error) {
 	mc.RLock()
 	defer mc.RUnlock()
 

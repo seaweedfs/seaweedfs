@@ -106,7 +106,7 @@ func (t *FilerStorePathTranlator) DeleteFolderChildren(ctx context.Context, fp u
 	return t.actualStore.DeleteFolderChildren(ctx, newFullPath)
 }
 
-func (t *FilerStorePathTranlator) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, bool, error) {
+func (t *FilerStorePathTranlator) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64) ([]*Entry, bool, error) {
 
 	newFullPath := t.translatePath(dirPath)
 
@@ -120,7 +120,7 @@ func (t *FilerStorePathTranlator) ListDirectoryEntries(ctx context.Context, dirP
 	return entries, hasMore, err
 }
 
-func (t *FilerStorePathTranlator) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*Entry, bool, error) {
+func (t *FilerStorePathTranlator) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) ([]*Entry, bool, error) {
 
 	newFullPath := t.translatePath(dirPath)
 

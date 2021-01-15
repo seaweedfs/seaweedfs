@@ -168,11 +168,11 @@ func (store *CassandraStore) DeleteFolderChildren(ctx context.Context, fullpath 
 	return nil
 }
 
-func (store *CassandraStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *CassandraStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
 	return nil, false, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
-func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64) (entries []*filer.Entry, hasMore bool, err error) {
 
 	if _, ok := store.isSuperLargeDirectory(string(dirPath)); ok {
 		return // nil, filer.ErrUnsupportedSuperLargeDirectoryListing
@@ -201,7 +201,7 @@ func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, dirPath u
 		glog.V(0).Infof("list iterator close: %v", err)
 	}
 
-	hasMore = len(entries) == limit + 1
+	hasMore = int64(len(entries)) == limit + 1
 	if hasMore {
 		entries = entries[:limit]
 	}

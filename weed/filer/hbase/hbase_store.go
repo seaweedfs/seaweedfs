@@ -148,11 +148,11 @@ func (store *HbaseStore) DeleteFolderChildren(ctx context.Context, path util.Ful
 	return
 }
 
-func (store *HbaseStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*filer.Entry, bool, error) {
+func (store *HbaseStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64) ([]*filer.Entry, bool, error) {
 	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "")
 }
 
-func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*filer.Entry, bool, error) {
+func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) ([]*filer.Entry, bool, error) {
 	family := map[string][]string{store.cfMetaDir: {COLUMN_NAME}}
 	expectedPrefix := []byte(dirPath.Child(prefix))
 	scan, err := hrpc.NewScanRange(ctx, store.table, expectedPrefix, nil, hrpc.Families(family))

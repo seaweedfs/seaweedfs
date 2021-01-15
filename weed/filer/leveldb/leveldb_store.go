@@ -162,16 +162,16 @@ func (store *LevelDBStore) DeleteFolderChildren(ctx context.Context, fullpath we
 	return nil
 }
 
-func (store *LevelDBStore) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *LevelDBStore) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64) (entries []*filer.Entry, hasMore bool, err error) {
 	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "")
 }
 
-func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
 
-	directoryPrefix := genDirectoryKeyPrefix(fullpath, prefix)
+	directoryPrefix := genDirectoryKeyPrefix(dirPath, prefix)
 	lastFileStart := directoryPrefix
 	if startFileName != "" {
-		lastFileStart = genDirectoryKeyPrefix(fullpath, startFileName)
+		lastFileStart = genDirectoryKeyPrefix(dirPath, startFileName)
 	}
 
 	iter := store.db.NewIterator(&leveldb_util.Range{Start: lastFileStart}, nil)
@@ -184,7 +184,7 @@ func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, ful
 		if fileName == "" {
 			continue
 		}
-		if fileName == startFileName && !inclusive {
+		if fileName == startFileName && !includeStartFile {
 			continue
 		}
 		limit--
@@ -193,7 +193,7 @@ func (store *LevelDBStore) ListDirectoryPrefixedEntries(ctx context.Context, ful
 			break
 		}
 		entry := &filer.Entry{
-			FullPath: weed_util.NewFullPath(string(fullpath), fileName),
+			FullPath: weed_util.NewFullPath(string(dirPath), fileName),
 		}
 		if decodeErr := entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(iter.Value())); decodeErr != nil {
 			err = decodeErr

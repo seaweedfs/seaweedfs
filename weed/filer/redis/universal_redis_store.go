@@ -125,16 +125,16 @@ func (store *UniversalRedisStore) DeleteFolderChildren(ctx context.Context, full
 	return nil
 }
 
-func (store *UniversalRedisStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *UniversalRedisStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
 	return nil, false, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
-func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, includeStartFile bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64) (entries []*filer.Entry, hasMore bool, err error) {
 
-	dirListKey := genDirectoryListKey(string(fullpath))
+	dirListKey := genDirectoryListKey(string(dirPath))
 	members, err := store.Client.SMembers(ctx, dirListKey).Result()
 	if err != nil {
-		return nil, false, fmt.Errorf("list %s : %v", fullpath, err)
+		return nil, false, fmt.Errorf("list %s : %v", dirPath, err)
 	}
 
 	// skip
@@ -160,14 +160,14 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, full
 	})
 
 	// limit
-	if limit < len(members) {
+	if limit < int64(len(entries)) {
 		members = members[:limit]
 		hasMore = true
 	}
 
 	// fetch entry meta
 	for _, fileName := range members {
-		path := util.NewFullPath(string(fullpath), fileName)
+		path := util.NewFullPath(string(dirPath), fileName)
 		entry, err := store.FindEntry(ctx, path)
 		if err != nil {
 			glog.V(0).Infof("list %s : %v", path, err)

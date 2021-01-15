@@ -96,7 +96,7 @@ func (store *ElasticStore) RollbackTransaction(ctx context.Context) error {
 	return nil
 }
 
-func (store *ElasticStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *ElasticStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
 	return nil, false, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
@@ -195,14 +195,14 @@ func (store *ElasticStore) DeleteFolderChildren(ctx context.Context, fullpath we
 	return nil
 }
 
-func (store *ElasticStore) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *ElasticStore) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64) (entries []*filer.Entry, hasMore bool, err error) {
 	if string(dirPath) == "/" {
 		return store.listRootDirectoryEntries(ctx, startFileName, includeStartFile, limit)
 	}
 	return store.listDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
 }
 
-func (store *ElasticStore) listRootDirectoryEntries(ctx context.Context, startFileName string, inclusive bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *ElasticStore) listRootDirectoryEntries(ctx context.Context, startFileName string, inclusive bool, limit int64) (entries []*filer.Entry, hasMore bool, err error) {
 	indexResult, err := store.client.CatIndices().Do(ctx)
 	if err != nil {
 		glog.Errorf("list indices %v.", err)
@@ -232,7 +232,7 @@ func (store *ElasticStore) listRootDirectoryEntries(ctx context.Context, startFi
 }
 
 func (store *ElasticStore) listDirectoryEntries(
-	ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int,
+	ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int64,
 ) (entries []*filer.Entry, hasMore bool, err error) {
 	first := true
 	index := getIndex(fullpath)

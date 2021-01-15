@@ -319,7 +319,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 		glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 		return nil, fuse.EIO
 	}
-	listedEntries, listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), util.FullPath(dir.FullPath()), "", false, int(math.MaxInt32))
+	listedEntries, listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), util.FullPath(dir.FullPath()), "", false, int64(math.MaxInt32))
 	if listErr != nil {
 		glog.Errorf("list meta cache: %v", listErr)
 		return nil, fuse.EIO
