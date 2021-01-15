@@ -148,18 +148,19 @@ func (store *HbaseStore) DeleteFolderChildren(ctx context.Context, path util.Ful
 	return
 }
 
-func (store *HbaseStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*filer.Entry, error) {
+func (store *HbaseStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*filer.Entry, bool, error) {
 	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "")
 }
 
-func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*filer.Entry, error) {
+func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*filer.Entry, bool, error) {
 	family := map[string][]string{store.cfMetaDir: {COLUMN_NAME}}
 	expectedPrefix := []byte(dirPath.Child(prefix))
 	scan, err := hrpc.NewScanRange(ctx, store.table, expectedPrefix, nil, hrpc.Families(family))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
+	var hasMore bool
 	var entries []*filer.Entry
 	scanner := store.Client.Scan(scan)
 	defer scanner.Close()
@@ -169,7 +170,7 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 			break
 		}
 		if err != nil {
-			return entries, err
+			return entries, hasMore, err
 		}
 		if len(res.Cells) == 0 {
 			continue
@@ -194,6 +195,7 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 
 		limit--
 		if limit < 0 {
+			hasMore = true
 			break
 		}
 		entry := &filer.Entry{
@@ -207,7 +209,7 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 		entries = append(entries, entry)
 	}
 
-	return entries, nil
+	return entries, hasMore, nil
 }
 
 func (store *HbaseStore) BeginTransaction(ctx context.Context) (context.Context, error) {
