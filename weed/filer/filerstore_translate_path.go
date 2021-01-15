@@ -106,32 +106,32 @@ func (t *FilerStorePathTranlator) DeleteFolderChildren(ctx context.Context, fp u
 	return t.actualStore.DeleteFolderChildren(ctx, newFullPath)
 }
 
-func (t *FilerStorePathTranlator) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, error) {
+func (t *FilerStorePathTranlator) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, bool, error) {
 
 	newFullPath := t.translatePath(dirPath)
 
-	entries, err := t.actualStore.ListDirectoryEntries(ctx, newFullPath, startFileName, includeStartFile, limit)
+	entries, hasMore, err := t.actualStore.ListDirectoryEntries(ctx, newFullPath, startFileName, includeStartFile, limit)
 	if err != nil {
-		return nil, err
+		return nil, hasMore, err
 	}
 	for _, entry := range entries {
 		entry.FullPath = dirPath[:len(t.storeRoot)-1] + entry.FullPath
 	}
-	return entries, err
+	return entries, hasMore, err
 }
 
-func (t *FilerStorePathTranlator) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*Entry, error) {
+func (t *FilerStorePathTranlator) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*Entry, bool, error) {
 
 	newFullPath := t.translatePath(dirPath)
 
-	entries, err := t.actualStore.ListDirectoryPrefixedEntries(ctx, newFullPath, startFileName, includeStartFile, limit, prefix)
+	entries, hasMore, err := t.actualStore.ListDirectoryPrefixedEntries(ctx, newFullPath, startFileName, includeStartFile, limit, prefix)
 	if err != nil {
-		return nil, err
+		return nil, hasMore, err
 	}
 	for _, entry := range entries {
 		entry.FullPath = dirPath[:len(t.storeRoot)-1] + entry.FullPath
 	}
-	return entries, nil
+	return entries, hasMore, nil
 }
 
 func (t *FilerStorePathTranlator) BeginTransaction(ctx context.Context) (context.Context, error) {
