@@ -172,15 +172,15 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 	return nil
 }
 
-func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, err error) {
+func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
 	sqlText := store.SqlListExclusive
-	if inclusive {
+	if includeStartFile {
 		sqlText = store.SqlListInclusive
 	}
 
-	rows, err := store.getTxOrDB(ctx).QueryContext(ctx, sqlText, util.HashStringToLong(string(fullpath)), startFileName, string(fullpath), prefix+"%", limit)
+	rows, err := store.getTxOrDB(ctx).QueryContext(ctx, sqlText, util.HashStringToLong(string(dirPath)), startFileName, string(dirPath), prefix+"%", limit+1)
 	if err != nil {
-		return nil, fmt.Errorf("list %s : %v", fullpath, err)
+		return nil, false, fmt.Errorf("list %s : %v", dirPath, err)
 	}
 	defer rows.Close()
 
@@ -188,26 +188,31 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 		var name string
 		var data []byte
 		if err = rows.Scan(&name, &data); err != nil {
-			glog.V(0).Infof("scan %s : %v", fullpath, err)
-			return nil, fmt.Errorf("scan %s: %v", fullpath, err)
+			glog.V(0).Infof("scan %s : %v", dirPath, err)
+			return nil, false, fmt.Errorf("scan %s: %v", dirPath, err)
 		}
 
 		entry := &filer.Entry{
-			FullPath: util.NewFullPath(string(fullpath), name),
+			FullPath: util.NewFullPath(string(dirPath), name),
 		}
 		if err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
 			glog.V(0).Infof("scan decode %s : %v", entry.FullPath, err)
-			return nil, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
+			return nil, false, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
 		}
 
 		entries = append(entries, entry)
 	}
 
-	return entries, nil
+	hasMore = len(entries) == limit + 1
+	if hasMore {
+		entries = entries[:limit]
+	}
+
+	return entries, hasMore, nil
 }
 
-func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer.Entry, err error) {
-	return store.ListDirectoryPrefixedEntries(ctx, fullpath, startFileName, inclusive, limit, "")
+func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
+	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "")
 }
 
 func (store *AbstractSqlStore) Shutdown() {
