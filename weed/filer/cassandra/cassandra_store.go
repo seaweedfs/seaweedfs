@@ -168,28 +168,27 @@ func (store *CassandraStore) DeleteFolderChildren(ctx context.Context, fullpath 
 	return nil
 }
 
-func (store *CassandraStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, err error) {
-	return nil, filer.ErrUnsupportedListDirectoryPrefixed
+func (store *CassandraStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
+	return nil, false, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
-func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool,
-	limit int) (entries []*filer.Entry, err error) {
+func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
 
-	if _, ok := store.isSuperLargeDirectory(string(fullpath)); ok {
+	if _, ok := store.isSuperLargeDirectory(string(dirPath)); ok {
 		return // nil, filer.ErrUnsupportedSuperLargeDirectoryListing
 	}
 
 	cqlStr := "SELECT NAME, meta FROM filemeta WHERE directory=? AND name>? ORDER BY NAME ASC LIMIT ?"
-	if inclusive {
+	if includeStartFile {
 		cqlStr = "SELECT NAME, meta FROM filemeta WHERE directory=? AND name>=? ORDER BY NAME ASC LIMIT ?"
 	}
 
 	var data []byte
 	var name string
-	iter := store.session.Query(cqlStr, string(fullpath), startFileName, limit).Iter()
+	iter := store.session.Query(cqlStr, string(dirPath), startFileName, limit+1).Iter()
 	for iter.Scan(&name, &data) {
 		entry := &filer.Entry{
-			FullPath: util.NewFullPath(string(fullpath), name),
+			FullPath: util.NewFullPath(string(dirPath), name),
 		}
 		if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); decodeErr != nil {
 			err = decodeErr
@@ -202,7 +201,12 @@ func (store *CassandraStore) ListDirectoryEntries(ctx context.Context, fullpath 
 		glog.V(0).Infof("list iterator close: %v", err)
 	}
 
-	return entries, err
+	hasMore = len(entries) == limit + 1
+	if hasMore {
+		entries = entries[:limit]
+	}
+
+	return entries, hasMore, err
 }
 
 func (store *CassandraStore) Shutdown() {
