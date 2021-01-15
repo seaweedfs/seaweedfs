@@ -178,30 +178,30 @@ func (store *MongodbStore) DeleteFolderChildren(ctx context.Context, fullpath ut
 	return nil
 }
 
-func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, err error) {
-	return nil, filer.ErrUnsupportedListDirectoryPrefixed
+func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
+	return nil, false, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
-func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer.Entry, err error) {
+func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) (entries []*filer.Entry, hasMore bool, err error) {
 
-	var where = bson.M{"directory": string(fullpath), "name": bson.M{"$gt": startFileName}}
-	if inclusive {
+	var where = bson.M{"directory": string(dirPath), "name": bson.M{"$gt": startFileName}}
+	if includeStartFile {
 		where["name"] = bson.M{
 			"$gte": startFileName,
 		}
 	}
-	optLimit := int64(limit)
+	optLimit := int64(limit+1)
 	opts := &options.FindOptions{Limit: &optLimit, Sort: bson.M{"name": 1}}
 	cur, err := store.connect.Database(store.database).Collection(store.collectionName).Find(ctx, where, opts)
 	for cur.Next(ctx) {
 		var data Model
 		err := cur.Decode(&data)
 		if err != nil && err != mongo.ErrNoDocuments {
-			return nil, err
+			return nil, false, err
 		}
 
 		entry := &filer.Entry{
-			FullPath: util.NewFullPath(string(fullpath), data.Name),
+			FullPath: util.NewFullPath(string(dirPath), data.Name),
 		}
 		if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data.Meta)); decodeErr != nil {
 			err = decodeErr
@@ -212,11 +212,16 @@ func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, fullpath ut
 		entries = append(entries, entry)
 	}
 
+	hasMore = len(entries) == limit + 1
+	if hasMore {
+		entries = entries[:limit]
+	}
+
 	if err := cur.Close(ctx); err != nil {
 		glog.V(0).Infof("list iterator close: %v", err)
 	}
 
-	return entries, err
+	return entries, hasMore, err
 }
 
 func (store *MongodbStore) Shutdown() {
