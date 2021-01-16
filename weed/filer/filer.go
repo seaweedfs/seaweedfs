@@ -281,22 +281,19 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 
 }
 
-func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string) (entries []*Entry, hasMore bool, expiredCount int64, lastFileName string, err error) {
-	listedEntries, listHasMore, listErr := f.Store.ListDirectoryPrefixedEntries(ctx, p, startFileName, inclusive, limit, prefix)
-	hasMore = listHasMore
-	if listErr != nil {
-		return listedEntries, hasMore, expiredCount, "", listErr
-	}
-	for _, entry := range listedEntries {
-		lastFileName = entry.Name()
+func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (expiredCount int64, lastFileName string, err error) {
+	lastFileName, err = f.Store.ListDirectoryPrefixedEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) bool {
 		if entry.TtlSec > 0 {
 			if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
 				f.Store.DeleteOneEntry(ctx, entry)
 				expiredCount++
-				continue
+				return true
 			}
 		}
-		entries = append(entries, entry)
+		return eachEntryFunc(entry)
+	})
+	if err != nil {
+		return expiredCount, lastFileName, err
 	}
 	return
 }

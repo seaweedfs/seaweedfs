@@ -139,17 +139,17 @@ func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath weed_
 	return nil
 }
 
-func (store *EtcdStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
-	return nil, false, filer.ErrUnsupportedListDirectoryPrefixed
+func (store *EtcdStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return lastFileName, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
-func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	directoryPrefix := genDirectoryKeyPrefix(dirPath, "")
 
 	resp, err := store.client.Get(ctx, string(directoryPrefix),
 		clientv3.WithPrefix(), clientv3.WithSort(clientv3.SortByKey, clientv3.SortDescend))
 	if err != nil {
-		return nil, false, fmt.Errorf("list %s : %v", dirPath, err)
+		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
 	}
 
 	for _, kv := range resp.Kvs {
@@ -160,9 +160,9 @@ func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, dirPath weed_u
 		if fileName == startFileName && !includeStartFile {
 			continue
 		}
+		lastFileName = fileName
 		limit--
 		if limit < 0 {
-			hasMore = true
 			break
 		}
 		entry := &filer.Entry{
@@ -173,10 +173,12 @@ func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, dirPath weed_u
 			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
 			break
 		}
-		entries = append(entries, entry)
+		if !eachEntryFunc(entry) {
+			break
+		}
 	}
 
-	return entries, hasMore, err
+	return lastFileName, err
 }
 
 func genKey(dirPath, fileName string) (key []byte) {

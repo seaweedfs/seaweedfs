@@ -158,7 +158,7 @@ func (store *RocksDBStore) DeleteFolderChildren(ctx context.Context, fullpath we
 
 	iter := store.db.NewIterator(ro)
 	defer iter.Close()
-	_, err = enumerate(iter, directoryPrefix, nil, false, -1, func(key, value []byte) bool {
+	err = enumerate(iter, directoryPrefix, nil, false, -1, func(key, value []byte) bool {
 		batch.Delete(key)
 		return true
 	})
@@ -175,7 +175,7 @@ func (store *RocksDBStore) DeleteFolderChildren(ctx context.Context, fullpath we
 	return nil
 }
 
-func enumerate(iter *gorocksdb.Iterator, prefix, lastKey []byte, includeLastKey bool, limit int64, fn func(key, value []byte) bool) (hasMore bool, err error) {
+func enumerate(iter *gorocksdb.Iterator, prefix, lastKey []byte, includeLastKey bool, limit int64, fn func(key, value []byte) bool) (err error) {
 
 	if len(lastKey) == 0 {
 		iter.Seek(prefix)
@@ -196,7 +196,6 @@ func enumerate(iter *gorocksdb.Iterator, prefix, lastKey []byte, includeLastKey 
 		if limit > 0 {
 			i++
 			if i > limit {
-				hasMore = true
 				break
 			}
 		}
@@ -216,16 +215,16 @@ func enumerate(iter *gorocksdb.Iterator, prefix, lastKey []byte, includeLastKey 
 	}
 
 	if err := iter.Err(); err != nil {
-		return hasMore, fmt.Errorf("prefix scan iterator: %v", err)
+		return fmt.Errorf("prefix scan iterator: %v", err)
 	}
-	return hasMore, nil
+	return nil
 }
 
-func (store *RocksDBStore) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64) (entries []*filer.Entry, hasMore bool, err error) {
-	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "")
+func (store *RocksDBStore) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "", eachEntryFunc)
 }
 
-func (store *RocksDBStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *RocksDBStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
 	directoryPrefix := genDirectoryKeyPrefix(dirPath, prefix)
 	lastFileStart := directoryPrefix
@@ -239,7 +238,7 @@ func (store *RocksDBStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 
 	iter := store.db.NewIterator(ro)
 	defer iter.Close()
-	hasMore, err = enumerate(iter, directoryPrefix, lastFileStart, includeStartFile, limit, func(key, value []byte) bool {
+	err = enumerate(iter, directoryPrefix, lastFileStart, includeStartFile, limit, func(key, value []byte) bool {
 		fileName := getNameFromKey(key)
 		if fileName == "" {
 			return true
@@ -247,6 +246,7 @@ func (store *RocksDBStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 		entry := &filer.Entry{
 			FullPath: weed_util.NewFullPath(string(dirPath), fileName),
 		}
+		lastFileName = fileName
 
 		// println("list", entry.FullPath, "chunks", len(entry.Chunks))
 		if decodeErr := entry.DecodeAttributesAndChunks(value); decodeErr != nil {
@@ -254,14 +254,16 @@ func (store *RocksDBStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
 			return false
 		}
-		entries = append(entries, entry)
+		if !eachEntryFunc(entry) {
+			return false
+		}
 		return true
 	})
 	if err != nil {
-		return entries, false, fmt.Errorf("prefix list %s : %v", dirPath, err)
+		return lastFileName, fmt.Errorf("prefix list %s : %v", dirPath, err)
 	}
 
-	return entries, false, err
+	return lastFileName, err
 }
 
 func genKey(dirPath, fileName string) (key []byte) {

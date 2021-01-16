@@ -172,7 +172,7 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 	return nil
 }
 
-func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	sqlText := store.SqlListExclusive
 	if includeStartFile {
 		sqlText = store.SqlListInclusive
@@ -180,7 +180,7 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 
 	rows, err := store.getTxOrDB(ctx).QueryContext(ctx, sqlText, util.HashStringToLong(string(dirPath)), startFileName, string(dirPath), prefix+"%", limit+1)
 	if err != nil {
-		return nil, false, fmt.Errorf("list %s : %v", dirPath, err)
+		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
 	}
 	defer rows.Close()
 
@@ -189,30 +189,29 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 		var data []byte
 		if err = rows.Scan(&name, &data); err != nil {
 			glog.V(0).Infof("scan %s : %v", dirPath, err)
-			return nil, false, fmt.Errorf("scan %s: %v", dirPath, err)
+			return lastFileName, fmt.Errorf("scan %s: %v", dirPath, err)
 		}
+		lastFileName = name
 
 		entry := &filer.Entry{
 			FullPath: util.NewFullPath(string(dirPath), name),
 		}
 		if err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
 			glog.V(0).Infof("scan decode %s : %v", entry.FullPath, err)
-			return nil, false, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
+			return lastFileName, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
 		}
 
-		entries = append(entries, entry)
+		if !eachEntryFunc(entry) {
+			break
+		}
+
 	}
 
-	hasMore = int64(len(entries)) == limit+1
-	if hasMore {
-		entries = entries[:limit]
-	}
-
-	return entries, hasMore, nil
+	return lastFileName, nil
 }
 
-func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64) (entries []*filer.Entry, hasMore bool, err error) {
-	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "")
+func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "", nil)
 }
 
 func (store *AbstractSqlStore) Shutdown() {

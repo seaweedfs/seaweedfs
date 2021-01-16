@@ -32,49 +32,76 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, start
 	var missedCount int64
 	var lastFileName string
 
-	entries, hasMore, missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, startFileName, inclusive, limit, prefix, restNamePattern)
+	missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, startFileName, inclusive, limit+1, prefix, restNamePattern, func(entry *Entry) bool {
+		entries = append(entries, entry)
+		return true
+	})
 
 	for missedCount > 0 && err == nil {
-		var makeupEntries []*Entry
-		makeupEntries, hasMore, missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, lastFileName, false, missedCount, prefix, restNamePattern)
-		for _, entry := range makeupEntries {
+		missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, lastFileName, false, missedCount+1, prefix, restNamePattern, func(entry *Entry) bool {
 			entries = append(entries, entry)
-		}
+			return true
+		})
+	}
+
+	hasMore = int64(len(entries)) >= limit+1
+	if hasMore {
+		entries = entries[:limit]
 	}
 
 	return entries, hasMore, err
 }
 
-func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix, restNamePattern string) (matchedEntries []*Entry, hasMore bool, missedCount int64, lastFileName string, err error) {
-	var foundEntries []*Entry
+// For now, prefix and namePattern are mutually exclusive
+func (f *Filer) StreamListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, namePattern string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {
+	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
+		p = p[0 : len(p)-1]
+	}
 
-	foundEntries, hasMore, lastFileName, err = f.doListValidEntries(ctx, p, startFileName, inclusive, limit, prefix)
-	if err != nil {
-		return
+	prefixInNamePattern, restNamePattern := splitPattern(namePattern)
+	if prefixInNamePattern != "" {
+		prefix = prefixInNamePattern
 	}
+	var missedCount int64
+
+	missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, startFileName, inclusive, limit, prefix, restNamePattern, eachEntryFunc)
+
+	for missedCount > 0 && err == nil {
+		missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, lastFileName, false, missedCount, prefix, restNamePattern, eachEntryFunc)
+	}
+
+	return
+}
+
+func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix, restNamePattern string, eachEntryFunc ListEachEntryFunc) (missedCount int64, lastFileName string, err error) {
+
 	if len(restNamePattern) == 0 {
-		return foundEntries, false, 0, lastFileName, nil
+		lastFileName, err = f.doListValidEntries(ctx, p, startFileName, inclusive, limit, prefix, eachEntryFunc)
+		return 0, lastFileName, err
 	}
-	for _, entry := range foundEntries {
+
+	lastFileName, err = f.doListValidEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) bool {
 		nameToTest := strings.ToLower(entry.Name())
 		if matched, matchErr := filepath.Match(restNamePattern, nameToTest[len(prefix):]); matchErr == nil && matched {
-			matchedEntries = append(matchedEntries, entry)
+			if !eachEntryFunc(entry) {
+				return false
+			}
 		} else {
 			missedCount++
 		}
+		return true
+	})
+	if err != nil {
+		return
 	}
 	return
 }
 
-func (f *Filer) doListValidEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string) (entries []*Entry, hasMore bool, lastFileName string, err error) {
-	var makeupEntries []*Entry
+func (f *Filer) doListValidEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {
 	var expiredCount int64
-	entries, hasMore, expiredCount, lastFileName, err = f.doListDirectoryEntries(ctx, p, startFileName, inclusive, limit, prefix)
+	expiredCount, lastFileName, err = f.doListDirectoryEntries(ctx, p, startFileName, inclusive, limit, prefix, eachEntryFunc)
 	for expiredCount > 0 && err == nil {
-		makeupEntries, hasMore, expiredCount, lastFileName, err = f.doListDirectoryEntries(ctx, p, lastFileName, false, expiredCount, prefix)
-		if err == nil {
-			entries = append(entries, makeupEntries...)
-		}
+		expiredCount, lastFileName, err = f.doListDirectoryEntries(ctx, p, lastFileName, false, expiredCount, prefix, eachEntryFunc)
 	}
 	return
 }

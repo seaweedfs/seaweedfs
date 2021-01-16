@@ -148,20 +148,18 @@ func (store *HbaseStore) DeleteFolderChildren(ctx context.Context, path util.Ful
 	return
 }
 
-func (store *HbaseStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64) ([]*filer.Entry, bool, error) {
-	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "")
+func (store *HbaseStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (string, error) {
+	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "", eachEntryFunc)
 }
 
-func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) ([]*filer.Entry, bool, error) {
+func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	family := map[string][]string{store.cfMetaDir: {COLUMN_NAME}}
 	expectedPrefix := []byte(dirPath.Child(prefix))
 	scan, err := hrpc.NewScanRange(ctx, store.table, expectedPrefix, nil, hrpc.Families(family))
 	if err != nil {
-		return nil, false, err
+		return lastFileName, err
 	}
 
-	var hasMore bool
-	var entries []*filer.Entry
 	scanner := store.Client.Scan(scan)
 	defer scanner.Close()
 	for {
@@ -170,7 +168,7 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 			break
 		}
 		if err != nil {
-			return entries, hasMore, err
+			return lastFileName, err
 		}
 		if len(res.Cells) == 0 {
 			continue
@@ -187,6 +185,8 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 			continue
 		}
 
+		lastFileName = fileName
+
 		value := cell.Value
 
 		if fileName == startFileName && !includeStartFile {
@@ -195,7 +195,6 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 
 		limit--
 		if limit < 0 {
-			hasMore = true
 			break
 		}
 		entry := &filer.Entry{
@@ -206,10 +205,12 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
 			break
 		}
-		entries = append(entries, entry)
+		if !eachEntryFunc(entry) {
+			break
+		}
 	}
 
-	return entries, hasMore, nil
+	return lastFileName, nil
 }
 
 func (store *HbaseStore) BeginTransaction(ctx context.Context) (context.Context, error) {

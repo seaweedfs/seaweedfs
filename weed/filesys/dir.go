@@ -319,13 +319,13 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 		glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 		return nil, fuse.EIO
 	}
-	listedEntries, listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), util.FullPath(dir.FullPath()), "", false, int64(math.MaxInt32))
+	listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), util.FullPath(dir.FullPath()), "", false, int64(math.MaxInt32), func(entry *filer.Entry) bool {
+		processEachEntryFn(entry.ToProtoEntry(), false)
+		return true
+	})
 	if listErr != nil {
 		glog.Errorf("list meta cache: %v", listErr)
 		return nil, fuse.EIO
-	}
-	for _, cachedEntry := range listedEntries {
-		processEachEntryFn(cachedEntry.ToProtoEntry(), false)
 	}
 	return
 }

@@ -149,11 +149,11 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 	return nil
 }
 
-func (store *UniversalRedis2Store) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
-	return nil, false, filer.ErrUnsupportedListDirectoryPrefixed
+func (store *UniversalRedis2Store) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return lastFileName, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
-func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
 	dirListKey := genDirectoryListKey(string(dirPath))
 	start := int64(0)
@@ -163,20 +163,16 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 			start++
 		}
 	}
-	members, err := store.Client.ZRange(ctx, dirListKey, start, start+int64(limit)-1+1).Result()
+	members, err := store.Client.ZRange(ctx, dirListKey, start, start+int64(limit)-1).Result()
 	if err != nil {
-		return nil, false, fmt.Errorf("list %s : %v", dirPath, err)
-	}
-
-	hasMore = int64(len(entries)) == limit+1
-	if hasMore {
-		members = members[:len(members)-1]
+		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
 	}
 
 	// fetch entry meta
 	for _, fileName := range members {
 		path := util.NewFullPath(string(dirPath), fileName)
 		entry, err := store.FindEntry(ctx, path)
+		lastFileName = fileName
 		if err != nil {
 			glog.V(0).Infof("list %s : %v", path, err)
 			if err == filer_pb.ErrNotFound {
@@ -190,11 +186,13 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 					continue
 				}
 			}
-			entries = append(entries, entry)
+			if !eachEntryFunc(entry) {
+				break
+			}
 		}
 	}
 
-	return entries, hasMore, err
+	return lastFileName, err
 }
 
 func genDirectoryListKey(dir string) (dirList string) {

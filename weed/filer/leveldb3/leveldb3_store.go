@@ -286,15 +286,15 @@ func (store *LevelDB3Store) DeleteFolderChildren(ctx context.Context, fullpath w
 	return nil
 }
 
-func (store *LevelDB3Store) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64) (entries []*filer.Entry, hasMore bool, err error) {
-	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "")
+func (store *LevelDB3Store) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "", eachEntryFunc)
 }
 
-func (store *LevelDB3Store) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string) (entries []*filer.Entry, hasMore bool, err error) {
+func (store *LevelDB3Store) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
 	db, _, shortPath, err := store.findDB(dirPath, true)
 	if err != nil {
-		return nil, false, fmt.Errorf("findDB %s : %v", dirPath, err)
+		return lastFileName, fmt.Errorf("findDB %s : %v", dirPath, err)
 	}
 
 	directoryPrefix := genDirectoryKeyPrefix(shortPath, prefix)
@@ -316,9 +316,9 @@ func (store *LevelDB3Store) ListDirectoryPrefixedEntries(ctx context.Context, di
 		if fileName == startFileName && !includeStartFile {
 			continue
 		}
+		lastFileName = fileName
 		limit--
 		if limit < 0 {
-			hasMore = true
 			break
 		}
 		entry := &filer.Entry{
@@ -331,11 +331,13 @@ func (store *LevelDB3Store) ListDirectoryPrefixedEntries(ctx context.Context, di
 			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
 			break
 		}
-		entries = append(entries, entry)
+		if !eachEntryFunc(entry) {
+			break
+		}
 	}
 	iter.Release()
 
-	return entries, hasMore, err
+	return lastFileName, err
 }
 
 func genKey(dirPath, fileName string) (key []byte) {
