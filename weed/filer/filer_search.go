@@ -21,28 +21,11 @@ func splitPattern(pattern string) (prefix string, restPattern string) {
 
 // For now, prefix and namePattern are mutually exclusive
 func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, namePattern string) (entries []*Entry, hasMore bool, err error) {
-	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
-		p = p[0 : len(p)-1]
-	}
 
-	prefixInNamePattern, restNamePattern := splitPattern(namePattern)
-	if prefixInNamePattern != "" {
-		prefix = prefixInNamePattern
-	}
-	var missedCount int64
-	var lastFileName string
-
-	missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, startFileName, inclusive, limit+1, prefix, restNamePattern, func(entry *Entry) bool {
+	_, err = f.StreamListDirectoryEntries(ctx, p, startFileName, inclusive, limit+1, prefix, namePattern, func(entry *Entry) bool {
 		entries = append(entries, entry)
 		return true
 	})
-
-	for missedCount > 0 && err == nil {
-		missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, lastFileName, false, missedCount+1, prefix, restNamePattern, func(entry *Entry) bool {
-			entries = append(entries, entry)
-			return true
-		})
-	}
 
 	hasMore = int64(len(entries)) >= limit+1
 	if hasMore {
