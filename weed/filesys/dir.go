@@ -178,7 +178,7 @@ func (dir *Dir) doCreateEntry(name string, mode os.FileMode, uid, gid uint32, ex
 		OExcl: exlusive,
 		Signatures: []int32{dir.wfs.signature},
 	}
-	glog.V(1).Infof("create %s/%s: %v", dir.FullPath(), name)
+	glog.V(1).Infof("create %s/%s", dir.FullPath(), name)
 
 	err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
