@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/seaweedfs/fuse"
@@ -308,7 +309,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 			dirent := fuse.Dirent{Inode: inode, Name: entry.Name, Type: fuse.DT_Dir}
 			ret = append(ret, dirent)
 		} else {
-			dirent := fuse.Dirent{Inode: inode, Name: entry.Name, Type: fuse.DT_File}
+			dirent := fuse.Dirent{Inode: inode, Name: entry.Name, Type: findFileType(uint16(entry.Attributes.FileMode))}
 			ret = append(ret, dirent)
 		}
 		return nil
@@ -328,6 +329,26 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 		return nil, fuse.EIO
 	}
 	return
+}
+
+func findFileType(mode uint16) fuse.DirentType {
+	switch mode & (syscall.S_IFMT & 0xffff) {
+	case syscall.S_IFSOCK:
+		return fuse.DT_Socket
+	case syscall.S_IFLNK:
+		return fuse.DT_Link
+	case syscall.S_IFREG:
+		return fuse.DT_File
+	case syscall.S_IFBLK:
+		return fuse.DT_Block
+	case syscall.S_IFDIR:
+		return fuse.DT_Dir
+	case syscall.S_IFCHR:
+		return fuse.DT_Char
+	case syscall.S_IFIFO:
+		return fuse.DT_FIFO
+	}
+	return fuse.DT_File
 }
 
 func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
