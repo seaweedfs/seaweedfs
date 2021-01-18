@@ -72,7 +72,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	}
 
 	totalRead, err := fh.readFromChunks(buff, req.Offset)
-	if err == nil {
+	if err == nil || err == io.EOF {
 		maxStop := fh.readFromDirtyPages(buff, req.Offset)
 		totalRead = max(maxStop-req.Offset, totalRead)
 	}
