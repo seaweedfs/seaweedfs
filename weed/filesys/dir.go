@@ -128,44 +128,9 @@ func (dir *Dir) newDirectory(fullpath util.FullPath, entry *filer_pb.Entry) fs.N
 func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
 
-	request := &filer_pb.CreateEntryRequest{
-		Directory: dir.FullPath(),
-		Entry: &filer_pb.Entry{
-			Name:        req.Name,
-			IsDirectory: req.Mode&os.ModeDir > 0,
-			Attributes: &filer_pb.FuseAttributes{
-				Mtime:       time.Now().Unix(),
-				Crtime:      time.Now().Unix(),
-				FileMode:    uint32(req.Mode &^ dir.wfs.option.Umask),
-				Uid:         req.Uid,
-				Gid:         req.Gid,
-				Collection:  dir.wfs.option.Collection,
-				Replication: dir.wfs.option.Replication,
-				TtlSec:      dir.wfs.option.TtlSec,
-			},
-		},
-		OExcl:      req.Flags&fuse.OpenExclusive != 0,
-		Signatures: []int32{dir.wfs.signature},
-	}
-	glog.V(1).Infof("create %s/%s: %v", dir.FullPath(), req.Name, req.Flags)
+	request, err := dir.doCreateEntry(req.Name, req.Mode, req.Uid, req.Gid, req.Flags&fuse.OpenExclusive != 0)
 
-	if err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-
-		dir.wfs.mapPbIdFromLocalToFiler(request.Entry)
-		defer dir.wfs.mapPbIdFromFilerToLocal(request.Entry)
-
-		if err := filer_pb.CreateEntry(client, request); err != nil {
-			if strings.Contains(err.Error(), "EEXIST") {
-				return fuse.EEXIST
-			}
-			glog.V(0).Infof("create %s/%s: %v", dir.FullPath(), req.Name, err)
-			return fuse.EIO
-		}
-
-		dir.wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
-
-		return nil
-	}); err != nil {
+	if err != nil {
 		return nil, nil, err
 	}
 	var node fs.Node
@@ -182,17 +147,57 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 }
 
 func (dir *Dir) Mknod(ctx context.Context, req *fuse.MknodRequest) (fs.Node, error) {
-	if req.Mode&os.ModeNamedPipe != 0 {
-		glog.V(1).Infof("mknod named pipe %s", req.String())
-		return nil, fuse.ENOSYS
+
+	request, err := dir.doCreateEntry(req.Name, req.Mode, req.Uid, req.Gid, false)
+
+	if err != nil {
+		return nil, err
 	}
-	if req.Mode&req.Mode&os.ModeSocket != 0 {
-		glog.V(1).Infof("mknod socket %s", req.String())
-		return nil, fuse.ENOSYS
+	var node fs.Node
+	node = dir.newFile(req.Name, request.Entry)
+	return node, nil
+}
+
+func (dir *Dir) doCreateEntry(name string, mode os.FileMode, uid, gid uint32, exlusive bool) (*filer_pb.CreateEntryRequest, error) {
+	request := &filer_pb.CreateEntryRequest{
+		Directory: dir.FullPath(),
+		Entry: &filer_pb.Entry{
+			Name:        name,
+			IsDirectory: mode&os.ModeDir > 0,
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime:       time.Now().Unix(),
+				Crtime:      time.Now().Unix(),
+				FileMode:    uint32(mode &^ dir.wfs.option.Umask),
+				Uid:         uid,
+				Gid:         gid,
+				Collection:  dir.wfs.option.Collection,
+				Replication: dir.wfs.option.Replication,
+				TtlSec:      dir.wfs.option.TtlSec,
+			},
+		},
+		OExcl: exlusive,
+		Signatures: []int32{dir.wfs.signature},
 	}
-	// not going to support mknod for normal files either
-	glog.V(1).Infof("mknod %s", req.String())
-	return nil, fuse.ENOSYS
+	glog.V(1).Infof("create %s/%s: %v", dir.FullPath(), name)
+
+	err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		dir.wfs.mapPbIdFromLocalToFiler(request.Entry)
+		defer dir.wfs.mapPbIdFromFilerToLocal(request.Entry)
+
+		if err := filer_pb.CreateEntry(client, request); err != nil {
+			if strings.Contains(err.Error(), "EEXIST") {
+				return fuse.EEXIST
+			}
+			glog.V(0).Infof("create %s/%s: %v", dir.FullPath(), name, err)
+			return fuse.EIO
+		}
+
+		dir.wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
+
+		return nil
+	})
+	return request, err
 }
 
 func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
