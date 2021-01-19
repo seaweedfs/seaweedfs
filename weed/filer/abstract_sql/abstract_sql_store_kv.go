@@ -20,7 +20,7 @@ func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []by
 
 	dirStr, dirHash, name := genDirAndName(key)
 
-	res, err := db.ExecContext(ctx, store.SqlInsert, dirHash, name, dirStr, value)
+	res, err := db.ExecContext(ctx, store.GetSqlInsert(DEFAULT_TABLE), dirHash, name, dirStr, value)
 	if err == nil {
 		return
 	}
@@ -33,7 +33,7 @@ func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []by
 	// now the insert failed possibly due to duplication constraints
 	glog.V(1).Infof("kv insert falls back to update: %s", err)
 
-	res, err = db.ExecContext(ctx, store.SqlUpdate, value, dirHash, name, dirStr)
+	res, err = db.ExecContext(ctx, store.GetSqlUpdate(DEFAULT_TABLE), value, dirHash, name, dirStr)
 	if err != nil {
 		return fmt.Errorf("kv upsert: %s", err)
 	}
@@ -54,7 +54,7 @@ func (store *AbstractSqlStore) KvGet(ctx context.Context, key []byte) (value []b
 	}
 
 	dirStr, dirHash, name := genDirAndName(key)
-	row := db.QueryRowContext(ctx, store.SqlFind, dirHash, name, dirStr)
+	row := db.QueryRowContext(ctx, store.GetSqlFind(DEFAULT_TABLE), dirHash, name, dirStr)
 
 	err = row.Scan(&value)
 
@@ -78,7 +78,7 @@ func (store *AbstractSqlStore) KvDelete(ctx context.Context, key []byte) (err er
 
 	dirStr, dirHash, name := genDirAndName(key)
 
-	res, err := db.ExecContext(ctx, store.SqlDelete, dirHash, name, dirStr)
+	res, err := db.ExecContext(ctx, store.GetSqlDelete(DEFAULT_TABLE), dirHash, name, dirStr)
 	if err != nil {
 		return fmt.Errorf("kv delete: %s", err)
 	}

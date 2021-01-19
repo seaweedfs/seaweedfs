@@ -15,6 +15,41 @@ const (
 	CONNECTION_URL_PATTERN = "%s:%s@tcp(%s:%d)/%s?charset=utf8"
 )
 
+type SqlGenMysql struct {
+}
+
+var (
+	_ = abstract_sql.SqlGenerator(&SqlGenMysql{})
+)
+
+func (gen *SqlGenMysql) GetSqlInsert(bucket string) string {
+	return "INSERT INTO filemeta (dirhash,name,directory,meta) VALUES(?,?,?,?)"
+}
+
+func (gen *SqlGenMysql) GetSqlUpdate(bucket string) string {
+	return "UPDATE filemeta SET meta=? WHERE dirhash=? AND name=? AND directory=?"
+}
+
+func (gen *SqlGenMysql) GetSqlFind(bucket string) string {
+	return "SELECT meta FROM filemeta WHERE dirhash=? AND name=? AND directory=?"
+}
+
+func (gen *SqlGenMysql) GetSqlDelete(bucket string) string {
+	return "DELETE FROM filemeta WHERE dirhash=? AND name=? AND directory=?"
+}
+
+func (gen *SqlGenMysql) GetSqlDeleteFolderChildren(bucket string) string {
+	return "DELETE FROM filemeta WHERE dirhash=? AND directory=?"
+}
+
+func (gen *SqlGenMysql) GetSqlListExclusive(bucket string) string {
+	return "SELECT NAME, meta FROM filemeta WHERE dirhash=? AND name>? AND directory=? AND name like ? ORDER BY NAME ASC LIMIT ?"
+}
+
+func (gen *SqlGenMysql) GetSqlListInclusive(bucket string) string {
+	return "SELECT NAME, meta FROM filemeta WHERE dirhash=? AND name>=? AND directory=? AND name like ? ORDER BY NAME ASC LIMIT ?"
+}
+
 func init() {
 	filer.Stores = append(filer.Stores, &MysqlStore{})
 }
@@ -43,14 +78,8 @@ func (store *MysqlStore) Initialize(configuration util.Configuration, prefix str
 
 func (store *MysqlStore) initialize(user, password, hostname string, port int, database string, maxIdle, maxOpen,
 	maxLifetimeSeconds int, interpolateParams bool) (err error) {
-	//
-	store.SqlInsert = "INSERT INTO filemeta (dirhash,name,directory,meta) VALUES(?,?,?,?)"
-	store.SqlUpdate = "UPDATE filemeta SET meta=? WHERE dirhash=? AND name=? AND directory=?"
-	store.SqlFind = "SELECT meta FROM filemeta WHERE dirhash=? AND name=? AND directory=?"
-	store.SqlDelete = "DELETE FROM filemeta WHERE dirhash=? AND name=? AND directory=?"
-	store.SqlDeleteFolderChildren = "DELETE FROM filemeta WHERE dirhash=? AND directory=?"
-	store.SqlListExclusive = "SELECT NAME, meta FROM filemeta WHERE dirhash=? AND name>? AND directory=? AND name like ? ORDER BY NAME ASC LIMIT ?"
-	store.SqlListInclusive = "SELECT NAME, meta FROM filemeta WHERE dirhash=? AND name>=? AND directory=? AND name like ? ORDER BY NAME ASC LIMIT ?"
+
+	store.SqlGenerator = &SqlGenMysql{}
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, password, hostname, port, database)
 	if interpolateParams {
