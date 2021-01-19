@@ -74,7 +74,7 @@ func (store *AbstractSqlStore) getTxOrDB(ctx context.Context, fullpath util.Full
 		txOrDB = store.DB
 	}
 
-	if strings.HasPrefix(string(fullpath), "/buckets/") {
+	if !strings.HasPrefix(string(fullpath), "/buckets/") {
 		return
 	}
 
