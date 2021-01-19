@@ -22,6 +22,10 @@ type AbstractSqlStore struct {
 	SqlListInclusive        string
 }
 
+const (
+	DEFAULT = "_main"
+)
+
 type TxOrDB interface {
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
@@ -52,16 +56,22 @@ func (store *AbstractSqlStore) RollbackTransaction(ctx context.Context) error {
 	return nil
 }
 
-func (store *AbstractSqlStore) getTxOrDB(ctx context.Context, fullpath util.FullPath, isForChildren bool) TxOrDB {
+func (store *AbstractSqlStore) getTxOrDB(ctx context.Context, fullpath util.FullPath, isForChildren bool) (txOrDB TxOrDB, bucket string, shortPath util.FullPath, err error) {
+	shortPath = fullpath
 	if tx, ok := ctx.Value("tx").(*sql.Tx); ok {
-		return tx
+		return tx, bucket, shortPath, err
 	}
-	return store.DB
+	return store.DB, bucket, shortPath, err
 }
 
 func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 
-	dir, name := entry.FullPath.DirAndName()
+	db, _, shortPath, err := store.getTxOrDB(ctx, entry.FullPath, false)
+	if err != nil {
+		return fmt.Errorf("findDB %s : %v", entry.FullPath, err)
+	}
+
+	dir, name := shortPath.DirAndName()
 	meta, err := entry.EncodeAttributesAndChunks()
 	if err != nil {
 		return fmt.Errorf("encode %s: %s", entry.FullPath, err)
@@ -71,7 +81,7 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Ent
 		meta = util.MaybeGzipData(meta)
 	}
 
-	res, err := store.getTxOrDB(ctx, entry.FullPath, false).ExecContext(ctx, store.SqlInsert, util.HashStringToLong(dir), name, dir, meta)
+	res, err := db.ExecContext(ctx, store.SqlInsert, util.HashStringToLong(dir), name, dir, meta)
 	if err == nil {
 		return
 	}
@@ -84,7 +94,7 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Ent
 	// now the insert failed possibly due to duplication constraints
 	glog.V(1).Infof("insert %s falls back to update: %v", entry.FullPath, err)
 
-	res, err = store.getTxOrDB(ctx, entry.FullPath, false).ExecContext(ctx, store.SqlUpdate, meta, util.HashStringToLong(dir), name, dir)
+	res, err = db.ExecContext(ctx, store.SqlUpdate, meta, util.HashStringToLong(dir), name, dir)
 	if err != nil {
 		return fmt.Errorf("upsert %s: %s", entry.FullPath, err)
 	}
@@ -99,13 +109,18 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Ent
 
 func (store *AbstractSqlStore) UpdateEntry(ctx context.Context, entry *filer.Entry) (err error) {
 
-	dir, name := entry.FullPath.DirAndName()
+	db, _, shortPath, err := store.getTxOrDB(ctx, entry.FullPath, false)
+	if err != nil {
+		return fmt.Errorf("findDB %s : %v", entry.FullPath, err)
+	}
+
+	dir, name := shortPath.DirAndName()
 	meta, err := entry.EncodeAttributesAndChunks()
 	if err != nil {
 		return fmt.Errorf("encode %s: %s", entry.FullPath, err)
 	}
 
-	res, err := store.getTxOrDB(ctx, entry.FullPath, false).ExecContext(ctx, store.SqlUpdate, meta, util.HashStringToLong(dir), name, dir)
+	res, err := db.ExecContext(ctx, store.SqlUpdate, meta, util.HashStringToLong(dir), name, dir)
 	if err != nil {
 		return fmt.Errorf("update %s: %s", entry.FullPath, err)
 	}
@@ -119,8 +134,13 @@ func (store *AbstractSqlStore) UpdateEntry(ctx context.Context, entry *filer.Ent
 
 func (store *AbstractSqlStore) FindEntry(ctx context.Context, fullpath util.FullPath) (*filer.Entry, error) {
 
-	dir, name := fullpath.DirAndName()
-	row := store.getTxOrDB(ctx, fullpath, false).QueryRowContext(ctx, store.SqlFind, util.HashStringToLong(dir), name, dir)
+	db, _, shortPath, err := store.getTxOrDB(ctx, fullpath, false)
+	if err != nil {
+		return nil, fmt.Errorf("findDB %s : %v", fullpath, err)
+	}
+
+	dir, name := shortPath.DirAndName()
+	row := db.QueryRowContext(ctx, store.SqlFind, util.HashStringToLong(dir), name, dir)
 
 	var data []byte
 	if err := row.Scan(&data); err != nil {
@@ -142,9 +162,14 @@ func (store *AbstractSqlStore) FindEntry(ctx context.Context, fullpath util.Full
 
 func (store *AbstractSqlStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) error {
 
-	dir, name := fullpath.DirAndName()
+	db, _, shortPath, err := store.getTxOrDB(ctx, fullpath, false)
+	if err != nil {
+		return fmt.Errorf("findDB %s : %v", fullpath, err)
+	}
 
-	res, err := store.getTxOrDB(ctx, fullpath, false).ExecContext(ctx, store.SqlDelete, util.HashStringToLong(dir), name, dir)
+	dir, name := shortPath.DirAndName()
+
+	res, err := db.ExecContext(ctx, store.SqlDelete, util.HashStringToLong(dir), name, dir)
 	if err != nil {
 		return fmt.Errorf("delete %s: %s", fullpath, err)
 	}
@@ -159,7 +184,17 @@ func (store *AbstractSqlStore) DeleteEntry(ctx context.Context, fullpath util.Fu
 
 func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) error {
 
-	res, err := store.getTxOrDB(ctx, fullpath, true).ExecContext(ctx, store.SqlDeleteFolderChildren, util.HashStringToLong(string(fullpath)), fullpath)
+	db, bucket, shortPath, err := store.getTxOrDB(ctx, fullpath, true)
+	if err != nil {
+		return fmt.Errorf("findDB %s : %v", fullpath, err)
+	}
+
+	if bucket != DEFAULT && shortPath == "/" {
+		store.deleteTable(bucket)
+		return nil
+	}
+
+	res, err := db.ExecContext(ctx, store.SqlDeleteFolderChildren, util.HashStringToLong(string(shortPath)), fullpath)
 	if err != nil {
 		return fmt.Errorf("deleteFolderChildren %s: %s", fullpath, err)
 	}
@@ -173,12 +208,18 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 }
 
 func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+
+	db, _, shortPath, err := store.getTxOrDB(ctx, dirPath, true)
+	if err != nil {
+		return lastFileName, fmt.Errorf("findDB %s : %v", dirPath, err)
+	}
+
 	sqlText := store.SqlListExclusive
 	if includeStartFile {
 		sqlText = store.SqlListInclusive
 	}
 
-	rows, err := store.getTxOrDB(ctx, dirPath, true).QueryContext(ctx, sqlText, util.HashStringToLong(string(dirPath)), startFileName, string(dirPath), prefix+"%", limit+1)
+	rows, err := db.QueryContext(ctx, sqlText, util.HashStringToLong(string(shortPath)), startFileName, string(shortPath), prefix+"%", limit+1)
 	if err != nil {
 		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
 	}
@@ -216,4 +257,7 @@ func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, dirPath
 
 func (store *AbstractSqlStore) Shutdown() {
 	store.DB.Close()
+}
+
+func (store *AbstractSqlStore) deleteTable(bucket string) {
 }
