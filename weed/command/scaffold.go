@@ -101,7 +101,7 @@ dir = "./filerldb3"					# directory to store level db files
 enabled = false
 dir = "./filerrdb"					# directory to store rocksdb files
 
-[mysql]  # or tidb
+[mysql]  # or memsql, tidb
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT         COMMENT 'first 64 bits of MD5 hash value of directory field',
 #   name        VARCHAR(1000)  COMMENT 'directory or file name',
