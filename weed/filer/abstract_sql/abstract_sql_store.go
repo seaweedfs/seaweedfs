@@ -20,13 +20,16 @@ type SqlGenerator interface {
 	GetSqlDeleteFolderChildren(bucket string) string
 	GetSqlListExclusive(bucket string) string
 	GetSqlListInclusive(bucket string) string
+	GetSqlCreateTable(bucket string) string
+	GetSqlDropTable(bucket string) string
 }
 
 type AbstractSqlStore struct {
-	DB *sql.DB
 	SqlGenerator
-	dbs     map[string]bool
-	dbsLock sync.Mutex
+	DB                 *sql.DB
+	SupportBucketTable bool
+	dbs                map[string]bool
+	dbsLock            sync.Mutex
 }
 
 const (
@@ -74,6 +77,10 @@ func (store *AbstractSqlStore) getTxOrDB(ctx context.Context, fullpath util.Full
 		txOrDB = store.DB
 	}
 
+	if !store.SupportBucketTable {
+		return
+	}
+
 	if !strings.HasPrefix(string(fullpath), "/buckets/") {
 		return
 	}
@@ -98,7 +105,7 @@ func (store *AbstractSqlStore) getTxOrDB(ctx context.Context, fullpath util.Full
 		}
 
 		if _, found := store.dbs[bucket]; !found {
-			if err = store.createTable(bucket); err != nil {
+			if err = store.createTable(ctx, bucket); err != nil {
 				store.dbs[bucket] = true
 			}
 		}
@@ -234,7 +241,7 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 	}
 
 	if isValidBucket(bucket) && shortPath == "/" {
-		if store.deleteTable(bucket) {
+		if err = store.deleteTable(ctx, bucket); err != nil {
 			store.dbsLock.Lock()
 			delete(store.dbs, bucket)
 			store.dbsLock.Unlock()
@@ -311,10 +318,18 @@ func isValidBucket(bucket string) bool {
 	return bucket != DEFAULT_TABLE && bucket != ""
 }
 
-func (store *AbstractSqlStore) createTable(bucket string) error {
-	return nil
+func (store *AbstractSqlStore) createTable(ctx context.Context, bucket string) error {
+	if !store.SupportBucketTable {
+		return nil
+	}
+	_, err := store.DB.ExecContext(ctx, store.SqlGenerator.GetSqlCreateTable(bucket))
+	return err
 }
 
-func (store *AbstractSqlStore) deleteTable(bucket string) bool {
-	return false
+func (store *AbstractSqlStore) deleteTable(ctx context.Context, bucket string) error {
+	if !store.SupportBucketTable {
+		return nil
+	}
+	_, err := store.DB.ExecContext(ctx, store.SqlGenerator.GetSqlDropTable(bucket))
+	return err
 }

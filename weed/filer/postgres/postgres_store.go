@@ -15,6 +15,8 @@ const (
 )
 
 type SqlGenPostgres struct {
+	createTableSqlTemplate string
+	dropTableSqlTemplate string
 }
 
 var (
@@ -49,6 +51,14 @@ func (gen *SqlGenPostgres) GetSqlListInclusive(bucket string) string {
 	return "SELECT NAME, meta FROM filemeta WHERE dirhash=$1 AND name>=$2 AND directory=$3 AND name like $4 ORDER BY NAME ASC LIMIT $5"
 }
 
+func (gen *SqlGenPostgres) GetSqlCreateTable(bucket string) string {
+	return fmt.Sprintf(gen.createTableSqlTemplate, bucket)
+}
+
+func (gen *SqlGenPostgres) GetSqlDropTable(bucket string) string {
+	return fmt.Sprintf(gen.dropTableSqlTemplate, bucket)
+}
+
 func init() {
 	filer.Stores = append(filer.Stores, &PostgresStore{})
 }
@@ -76,7 +86,11 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 
 func (store *PostgresStore) initialize(user, password, hostname string, port int, database, sslmode string, maxIdle, maxOpen int) (err error) {
 
-	store.SqlGenerator = &SqlGenPostgres{}
+	store.SupportBucketTable = false
+	store.SqlGenerator = &SqlGenPostgres{
+		createTableSqlTemplate: "",
+		dropTableSqlTemplate: "drop table %s",
+	}
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, hostname, port, sslmode)
 	if user != "" {

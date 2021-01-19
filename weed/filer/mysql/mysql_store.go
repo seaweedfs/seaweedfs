@@ -16,6 +16,8 @@ const (
 )
 
 type SqlGenMysql struct {
+	createTableSqlTemplate string
+	dropTableSqlTemplate string
 }
 
 var (
@@ -50,6 +52,14 @@ func (gen *SqlGenMysql) GetSqlListInclusive(bucket string) string {
 	return "SELECT NAME, meta FROM filemeta WHERE dirhash=? AND name>=? AND directory=? AND name like ? ORDER BY NAME ASC LIMIT ?"
 }
 
+func (gen *SqlGenMysql) GetSqlCreateTable(bucket string) string {
+	return fmt.Sprintf(gen.createTableSqlTemplate, bucket)
+}
+
+func (gen *SqlGenMysql) GetSqlDropTable(bucket string) string {
+	return fmt.Sprintf(gen.dropTableSqlTemplate, bucket)
+}
+
 func init() {
 	filer.Stores = append(filer.Stores, &MysqlStore{})
 }
@@ -79,7 +89,11 @@ func (store *MysqlStore) Initialize(configuration util.Configuration, prefix str
 func (store *MysqlStore) initialize(user, password, hostname string, port int, database string, maxIdle, maxOpen,
 	maxLifetimeSeconds int, interpolateParams bool) (err error) {
 
-	store.SqlGenerator = &SqlGenMysql{}
+	store.SupportBucketTable = false
+	store.SqlGenerator = &SqlGenMysql{
+		createTableSqlTemplate: "",
+		dropTableSqlTemplate: "drop table %s",
+	}
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, password, hostname, port, database)
 	if interpolateParams {
