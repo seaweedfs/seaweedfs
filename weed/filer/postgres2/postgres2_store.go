@@ -1,11 +1,13 @@
-package postgres
+package postgres2
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
+	"github.com/chrislusf/seaweedfs/weed/filer/postgres"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	_ "github.com/lib/pq"
 )
@@ -15,19 +17,20 @@ const (
 )
 
 func init() {
-	filer.Stores = append(filer.Stores, &PostgresStore{})
+	filer.Stores = append(filer.Stores, &PostgresStore2{})
 }
 
-type PostgresStore struct {
+type PostgresStore2 struct {
 	abstract_sql.AbstractSqlStore
 }
 
-func (store *PostgresStore) GetName() string {
-	return "postgres"
+func (store *PostgresStore2) GetName() string {
+	return "postgres2"
 }
 
-func (store *PostgresStore) Initialize(configuration util.Configuration, prefix string) (err error) {
+func (store *PostgresStore2) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return store.initialize(
+		configuration.GetString(prefix+"createTable"),
 		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetString(prefix+"hostname"),
@@ -40,11 +43,11 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 	)
 }
 
-func (store *PostgresStore) initialize(user, password, hostname string, port int, database, schema, sslmode string, maxIdle, maxOpen int) (err error) {
+func (store *PostgresStore2) initialize(createTable, user, password, hostname string, port int, database, schema, sslmode string, maxIdle, maxOpen int) (err error) {
 
-	store.SupportBucketTable = false
-	store.SqlGenerator = &SqlGenPostgres{
-		CreateTableSqlTemplate: "",
+	store.SupportBucketTable = true
+	store.SqlGenerator = &postgres.SqlGenPostgres{
+		CreateTableSqlTemplate: createTable,
 		DropTableSqlTemplate:   "drop table %s",
 	}
 
@@ -74,6 +77,10 @@ func (store *PostgresStore) initialize(user, password, hostname string, port int
 
 	if err = store.DB.Ping(); err != nil {
 		return fmt.Errorf("connect to %s error:%v", sqlUrl, err)
+	}
+
+	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil {
+		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
 	}
 
 	return nil

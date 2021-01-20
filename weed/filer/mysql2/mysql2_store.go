@@ -1,6 +1,7 @@
 package mysql2
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -71,6 +72,10 @@ func (store *MysqlStore2) initialize(createTable, user, password, hostname strin
 
 	if err = store.DB.Ping(); err != nil {
 		return fmt.Errorf("connect to %s error:%v", sqlUrl, err)
+	}
+
+	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil {
+		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
 	}
 
 	return nil

@@ -160,6 +160,26 @@ sslmode = "disable"
 connection_max_idle = 100
 connection_max_open = 100
 
+[postgres2]
+enabled = false
+createTable = """
+  CREATE TABLE IF NOT EXISTS %s (
+    dirhash   BIGINT, 
+    name      VARCHAR(65535), 
+    directory VARCHAR(65535), 
+    meta      bytea, 
+    PRIMARY KEY (dirhash, name)
+  );
+"""
+hostname = "localhost"
+port = 5432
+username = "postgres"
+password = ""
+database = ""              # create or use an existing database
+sslmode = "disable"
+connection_max_idle = 100
+connection_max_open = 100
+
 [cassandra]
 # CREATE TABLE filemeta (
 #    directory varchar,

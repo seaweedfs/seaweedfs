@@ -107,7 +107,7 @@ func (store *AbstractSqlStore) getTxOrDB(ctx context.Context, fullpath util.Full
 		}
 
 		if _, found := store.dbs[bucket]; !found {
-			if err = store.createTable(ctx, bucket); err != nil {
+			if err = store.CreateTable(ctx, bucket); err != nil {
 				store.dbs[bucket] = true
 			}
 		}
@@ -322,7 +322,7 @@ func isValidBucket(bucket string) bool {
 	return bucket != DEFAULT_TABLE && bucket != ""
 }
 
-func (store *AbstractSqlStore) createTable(ctx context.Context, bucket string) error {
+func (store *AbstractSqlStore) CreateTable(ctx context.Context, bucket string) error {
 	if !store.SupportBucketTable {
 		return nil
 	}
