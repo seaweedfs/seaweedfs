@@ -96,12 +96,6 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 		return nil, nil, err
 	}
 
-	fileChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(so), fileChunks)
-	if replyerr != nil {
-		glog.V(0).Infof("manifestize %s: %v", r.RequestURI, replyerr)
-		return
-	}
-
 	md5bytes = md5Hash.Sum(nil)
 	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
 
@@ -121,12 +115,6 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 		return nil, nil, err
 	}
 
-	fileChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(so), fileChunks)
-	if replyerr != nil {
-		glog.V(0).Infof("manifestize %s: %v", r.RequestURI, replyerr)
-		return
-	}
-
 	md5bytes = md5Hash.Sum(nil)
 	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
 
@@ -134,6 +122,13 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 }
 
 func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileName string, contentType string, so *operation.StorageOption, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64, content []byte) (filerResult *FilerPostResult, replyerr error) {
+
+	// maybe compact chunks
+	fileChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(so), fileChunks)
+	if replyerr != nil {
+		glog.V(0).Infof("manifestize %s: %v", r.RequestURI, replyerr)
+		return
+	}
 
 	// detect file mode
 	modeStr := r.URL.Query().Get("mode")
