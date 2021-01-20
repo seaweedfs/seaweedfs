@@ -29,6 +29,7 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer/leveldb3"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/mongodb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/mysql"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/mysql2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/postgres"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis2"

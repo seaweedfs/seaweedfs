@@ -1,12 +1,13 @@
-package mysql
+package mysql2
 
 import (
 	"database/sql"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
+	"github.com/chrislusf/seaweedfs/weed/filer/mysql"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -16,19 +17,20 @@ const (
 )
 
 func init() {
-	filer.Stores = append(filer.Stores, &MysqlStore{})
+	filer.Stores = append(filer.Stores, &MysqlStore2{})
 }
 
-type MysqlStore struct {
+type MysqlStore2 struct {
 	abstract_sql.AbstractSqlStore
 }
 
-func (store *MysqlStore) GetName() string {
-	return "mysql"
+func (store *MysqlStore2) GetName() string {
+	return "mysql2"
 }
 
-func (store *MysqlStore) Initialize(configuration util.Configuration, prefix string) (err error) {
+func (store *MysqlStore2) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return store.initialize(
+		configuration.GetString(prefix+"createTable"),
 		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetString(prefix+"hostname"),
@@ -41,12 +43,12 @@ func (store *MysqlStore) Initialize(configuration util.Configuration, prefix str
 	)
 }
 
-func (store *MysqlStore) initialize(user, password, hostname string, port int, database string, maxIdle, maxOpen,
+func (store *MysqlStore2) initialize(createTable, user, password, hostname string, port int, database string, maxIdle, maxOpen,
 	maxLifetimeSeconds int, interpolateParams bool) (err error) {
 
-	store.SupportBucketTable = false
-	store.SqlGenerator = &SqlGenMysql{
-		CreateTableSqlTemplate: "",
+	store.SupportBucketTable = true
+	store.SqlGenerator = &mysql.SqlGenMysql{
+		CreateTableSqlTemplate: createTable,
 		DropTableSqlTemplate:   "drop table %s",
 	}
 

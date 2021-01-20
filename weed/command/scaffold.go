@@ -121,6 +121,27 @@ connection_max_open = 100
 connection_max_lifetime_seconds = 0
 interpolateParams = false
 
+[mysql2]  # or memsql, tidb
+enabled = false
+createTable = """
+  CREATE TABLE IF NOT EXISTS %s (
+    dirhash BIGINT, 
+    name VARCHAR(1000), 
+    directory TEXT, 
+    meta LONGBLOB, 
+    PRIMARY KEY (dirhash, name)
+  ) DEFAULT CHARSET=utf8;
+"""
+hostname = "localhost"
+port = 3306
+username = "root"
+password = ""
+database = ""              # create or use an existing database
+connection_max_idle = 2
+connection_max_open = 100
+connection_max_lifetime_seconds = 0
+interpolateParams = false
+
 [postgres] # or cockroachdb, YugabyteDB
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT,

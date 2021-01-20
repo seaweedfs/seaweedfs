@@ -91,6 +91,8 @@ func (store *AbstractSqlStore) getTxOrDB(ctx context.Context, fullpath util.Full
 	if t < 0 && !isForChildren {
 		return
 	}
+	bucket = bucketAndObjectKey
+	shortPath = "/"
 	if t > 0 {
 		bucket = bucketAndObjectKey[:t]
 		shortPath = util.FullPath(bucketAndObjectKey[t:])
@@ -241,11 +243,13 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 	}
 
 	if isValidBucket(bucket) && shortPath == "/" {
-		if err = store.deleteTable(ctx, bucket); err != nil {
+		if err = store.deleteTable(ctx, bucket); err == nil {
 			store.dbsLock.Lock()
 			delete(store.dbs, bucket)
 			store.dbsLock.Unlock()
 			return nil
+		} else {
+			return err
 		}
 	}
 
