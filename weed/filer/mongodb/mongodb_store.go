@@ -178,14 +178,14 @@ func (store *MongodbStore) DeleteFolderChildren(ctx context.Context, fullpath ut
 	return nil
 }
 
-func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, err error) {
-	return nil, filer.ErrUnsupportedListDirectoryPrefixed
+func (store *MongodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return lastFileName, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
-func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, fullpath util.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer.Entry, err error) {
+func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
-	var where = bson.M{"directory": string(fullpath), "name": bson.M{"$gt": startFileName}}
-	if inclusive {
+	var where = bson.M{"directory": string(dirPath), "name": bson.M{"$gt": startFileName}}
+	if includeStartFile {
 		where["name"] = bson.M{
 			"$gte": startFileName,
 		}
@@ -197,26 +197,30 @@ func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, fullpath ut
 		var data Model
 		err := cur.Decode(&data)
 		if err != nil && err != mongo.ErrNoDocuments {
-			return nil, err
+			return lastFileName, err
 		}
 
 		entry := &filer.Entry{
-			FullPath: util.NewFullPath(string(fullpath), data.Name),
+			FullPath: util.NewFullPath(string(dirPath), data.Name),
 		}
+		lastFileName = data.Name
 		if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data.Meta)); decodeErr != nil {
 			err = decodeErr
 			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
 			break
 		}
 
-		entries = append(entries, entry)
+		if !eachEntryFunc(entry) {
+			break
+		}
+
 	}
 
 	if err := cur.Close(ctx); err != nil {
 		glog.V(0).Infof("list iterator close: %v", err)
 	}
 
-	return entries, err
+	return lastFileName, err
 }
 
 func (store *MongodbStore) Shutdown() {

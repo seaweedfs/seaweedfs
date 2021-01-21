@@ -117,22 +117,22 @@ func (mc *MetaCache) DeleteEntry(ctx context.Context, fp util.FullPath) (err err
 	return mc.localStore.DeleteEntry(ctx, fp)
 }
 
-func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*filer.Entry, error) {
+func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) error {
 	mc.RLock()
 	defer mc.RUnlock()
 
 	if !mc.visitedBoundary.HasVisited(dirPath) {
-		return nil, fmt.Errorf("unsynchronized dir: %v", dirPath)
+		return fmt.Errorf("unsynchronized dir: %v", dirPath)
 	}
 
-	entries, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
-	if err != nil {
-		return nil, err
-	}
-	for _, entry := range entries {
+	_, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *filer.Entry) bool {
 		mc.mapIdFromFilerToLocal(entry)
+		return eachEntryFunc(entry)
+	})
+	if err != nil {
+		return err
 	}
-	return entries, err
+	return err
 }
 
 func (mc *MetaCache) Shutdown() {

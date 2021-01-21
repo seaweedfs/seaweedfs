@@ -1,8 +1,12 @@
 package command
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"google.golang.org/grpc"
 	"os"
 	"path/filepath"
 
@@ -65,6 +69,15 @@ func runUpload(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
+	defaultCollection, err := readMasterConfiguration(grpcDialOption, *upload.master)
+	if err != nil {
+		fmt.Printf("upload: %v", err)
+		return false
+	}
+	if *upload.replication == "" {
+		*upload.replication = defaultCollection
+	}
+
 	if len(args) == 0 {
 		if *upload.dir == "" {
 			return false
@@ -103,4 +116,16 @@ func runUpload(cmd *Command, args []string) bool {
 		fmt.Println(string(bytes))
 	}
 	return true
+}
+
+func readMasterConfiguration(grpcDialOption grpc.DialOption, masterAddress string) (replication string, err error) {
+	err = pb.WithMasterClient(masterAddress, grpcDialOption, func(client master_pb.SeaweedClient) error {
+		resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+		if err != nil {
+			return fmt.Errorf("get master %s configuration: %v", masterAddress, err)
+		}
+		replication = resp.DefaultReplication
+		return nil
+	})
+	return
 }

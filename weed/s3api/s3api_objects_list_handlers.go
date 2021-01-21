@@ -71,7 +71,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		ContinuationToken:     continuationToken,
 		Delimiter:             response.Delimiter,
 		IsTruncated:           response.IsTruncated,
-		KeyCount:              len(response.Contents),
+		KeyCount:              len(response.Contents) + len(response.CommonPrefixes),
 		MaxKeys:               response.MaxKeys,
 		NextContinuationToken: response.NextMarker,
 		Prefix:                response.Prefix,
@@ -238,7 +238,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				return
 			}
 		}
-		if counter >= maxKeys {
+		if counter >= maxKeys + 1 {
 			isTruncated = true
 			return
 		}
@@ -264,8 +264,10 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 					}
 				} else {
 					var isEmpty bool
-					if isEmpty, err = s3a.isDirectoryAllEmpty(client, dir, entry.Name); err != nil {
-						glog.Errorf("check empty folder %s: %v", dir, err)
+					if !s3a.option.AllowEmptyFolder {
+						if isEmpty, err = s3a.isDirectoryAllEmpty(client, dir, entry.Name); err != nil {
+							glog.Errorf("check empty folder %s: %v", dir, err)
+						}
 					}
 					if !isEmpty {
 						eachEntryFn(dir, entry)

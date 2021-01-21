@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "seaweedfs.name" . }}-filer-client
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "seaweedfs.name" . }}
+    component: filer
+{{- if .Values.filer.metricsPort }}
+    monitoring: "true"
+{{- end }}
+spec:
+  clusterIP: None
+  ports:
+  - name: "swfs-filer"
+    port: {{ .Values.filer.port }}
+    targetPort: {{ .Values.filer.port }}
+    protocol: TCP
+  - name: "swfs-filer-grpc"
+    port: {{ .Values.filer.grpcPort }}
+    targetPort: {{ .Values.filer.grpcPort }}
+    protocol: TCP
+{{- if .Values.filer.metricsPort }}
+  - name: "metrics"
+    port: {{ .Values.filer.metricsPort }}
+    targetPort: {{ .Values.filer.metricsPort }}
+    protocol: TCP
+{{- end }}
+  selector:
+    app: {{ template "seaweedfs.name" . }}
+    component: filer

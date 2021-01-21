@@ -4,7 +4,7 @@ global:
   registry: ""
   repository: ""
   imageName: chrislusf/seaweedfs
-  imageTag: "2.17"
+  # imageTag: "2.21" - started using {.Chart.appVersion}
   imagePullPolicy: IfNotPresent
   imagePullSecrets: imagepullsecret
   restartPolicy: Always
@@ -21,6 +21,10 @@ global:
   # Y number of replica in other racks in the same data center
   # Z number of replica in other servers in the same rack
   replicationPlacment: "001"
+  extraEnvironmentVars:
+    WEED_CLUSTER_DEFAULT: "sw"
+    WEED_CLUSTER_SW_MASTER: "seaweedfs-master:9333"
+    WEED_CLUSTER_SW_FILER: "seaweedfs-filer-client:8888"
 
 image:
   registry: ""
@@ -140,6 +144,8 @@ volume:
 
   # Directories to store data files. dir[,dir]... (default "/tmp")
   dir: "/data"
+  # Directories to store index files. dir[,dir]... (default "/tmp")
+  dir_idx: null
 
   # Maximum numbers of volumes, count[,count]...
   # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
@@ -292,8 +298,10 @@ filer:
     WEED_MYSQL_HOSTNAME: "mysql-db-host"
     WEED_MYSQL_PORT: "3306"
     WEED_MYSQL_DATABASE: "sw_database"
-    WEED_MYSQL_CONNECTION_MAX_IDLE: "10"
-    WEED_MYSQL_CONNECTION_MAX_OPEN: "150"
+    WEED_MYSQL_CONNECTION_MAX_IDLE: "5"
+    WEED_MYSQL_CONNECTION_MAX_OPEN: "75"
+    # "refresh" connection every 10 minutes, eliminating mysql closing "old" connections
+    WEED_MYSQL_CONNECTION_MAX_LIFETIME_SECONDS: "600"
     # enable usage of memsql as filer backend
     WEED_MYSQL_INTERPOLATEPARAMS: "true"
     WEED_LEVELDB2_ENABLED: "false"
@@ -313,6 +321,8 @@ s3:
   port: 8333
   metricsPort: 9327
   loggingOverrideLevel: null
+  #allow empty folders
+  allowEmptyFolder: true
 
   # Suffix of the host name, {bucket}.{domainName}
   domainName: ""
@@ -342,6 +352,11 @@ s3:
   # used to assign priority to server pods
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
+
+  logs:
+    type: "hostPath"
+    size: ""
+    storageClass: ""
 
 cronjob:
   enabled: false

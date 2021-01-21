@@ -44,6 +44,8 @@ func runScaffold(cmd *Command, args []string) bool {
 		content = SECURITY_TOML_EXAMPLE
 	case "master":
 		content = MASTER_TOML_EXAMPLE
+	case "shell":
+		content = SHELL_TOML_EXAMPLE
 	}
 	if content == "" {
 		println("need a valid -config option")
@@ -85,9 +87,21 @@ buckets_folder = "/buckets"
 # local on disk, mostly for simple single-machine setup, fairly scalable
 # faster than previous leveldb, recommended.
 enabled = true
-dir = "."					# directory to store level db files
+dir = "./filerldb2"					# directory to store level db files
 
-[mysql]  # or tidb
+[leveldb3]
+# similar to leveldb2.
+# each bucket has its own meta store.
+enabled = false
+dir = "./filerldb3"					# directory to store level db files
+
+[rocksdb]
+# local on disk, similar to leveldb
+# since it is using a C wrapper, you need to install rocksdb and build it by yourself
+enabled = false
+dir = "./filerrdb"					# directory to store rocksdb files
+
+[mysql]  # or memsql, tidb
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT         COMMENT 'first 64 bits of MD5 hash value of directory field',
 #   name        VARCHAR(1000)  COMMENT 'directory or file name',
@@ -104,9 +118,31 @@ password = ""
 database = ""              # create or use an existing database
 connection_max_idle = 2
 connection_max_open = 100
+connection_max_lifetime_seconds = 0
 interpolateParams = false
 
-[postgres] # or cockroachdb
+[mysql2]  # or memsql, tidb
+enabled = false
+createTable = """
+  CREATE TABLE IF NOT EXISTS %s (
+    dirhash BIGINT, 
+    name VARCHAR(1000), 
+    directory TEXT, 
+    meta LONGBLOB, 
+    PRIMARY KEY (dirhash, name)
+  ) DEFAULT CHARSET=utf8;
+"""
+hostname = "localhost"
+port = 3306
+username = "root"
+password = ""
+database = ""              # create or use an existing database
+connection_max_idle = 2
+connection_max_open = 100
+connection_max_lifetime_seconds = 0
+interpolateParams = false
+
+[postgres] # or cockroachdb, YugabyteDB
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT,
 #   name        VARCHAR(65535),
@@ -119,7 +155,29 @@ hostname = "localhost"
 port = 5432
 username = "postgres"
 password = ""
-database = ""              # create or use an existing database
+database = "postgres"          # create or use an existing database
+schema = ""
+sslmode = "disable"
+connection_max_idle = 100
+connection_max_open = 100
+
+[postgres2]
+enabled = false
+createTable = """
+  CREATE TABLE IF NOT EXISTS %s (
+    dirhash   BIGINT, 
+    name      VARCHAR(65535), 
+    directory VARCHAR(65535), 
+    meta      bytea, 
+    PRIMARY KEY (dirhash, name)
+  );
+"""
+hostname = "localhost"
+port = 5432
+username = "postgres"
+password = ""
+database = "postgres"          # create or use an existing database
+schema = ""
 sslmode = "disable"
 connection_max_idle = 100
 connection_max_open = 100
@@ -166,9 +224,9 @@ addresses = [
 ]
 password = ""
 # allows reads from slave servers or the master, but all writes still go to the master
-readOnly = true
+readOnly = false
 # automatically use the closest Redis server for reads
-routeByLatency = true
+routeByLatency = false
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
 
@@ -458,6 +516,20 @@ copy_other = 1            # create n x 1 = n actual volumes
 # try to replicate to all available volumes. You should only use this option
 # if you are doing your own replication or periodic sync of volumes.
 treat_replication_as_minimums = false
+
+`
+	SHELL_TOML_EXAMPLE = `
+
+[cluster]
+default = "c1"
+
+[cluster.c1]
+master = "localhost:9333"    # comma-separated master servers
+filer = "localhost:8888"     # filer host and port
+
+[cluster.c2]
+master = ""
+filer = ""
 
 `
 )

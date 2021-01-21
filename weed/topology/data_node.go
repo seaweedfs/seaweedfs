@@ -151,7 +151,10 @@ func (dn *DataNode) GetVolumesById(id needle.VolumeId) (storage.VolumeInfo, erro
 }
 
 func (dn *DataNode) GetDataCenter() *DataCenter {
-	return dn.Parent().Parent().(*NodeImpl).value.(*DataCenter)
+	rack := dn.Parent()
+	dcNode := rack.Parent()
+	dcValue := dcNode.GetValue()
+	return dcValue.(*DataCenter)
 }
 
 func (dn *DataNode) GetRack() *Rack {

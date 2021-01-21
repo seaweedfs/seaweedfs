@@ -15,6 +15,12 @@ const (
 	maxCursorIndex = 4096
 )
 
+type HasLookupFileIdFunction interface {
+	GetLookupFileIdFunction() LookupFileIdFunctionType
+}
+
+type LookupFileIdFunctionType func(fileId string) (targetUrls []string, err error)
+
 type Location struct {
 	Url        string `json:"url,omitempty"`
 	PublicUrl  string `json:"publicUrl,omitempty"`
@@ -65,6 +71,10 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 		}
 	}
 	return
+}
+
+func (vc *vidMap) GetLookupFileIdFunction() LookupFileIdFunctionType {
+	return vc.LookupFileId
 }
 
 func (vc *vidMap) LookupFileId(fileId string) (fullUrls []string, err error) {

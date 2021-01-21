@@ -44,7 +44,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 	}, nil
 }
 
-func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
+func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) (err error) {
 
 	glog.V(4).Infof("ListEntries %v", req)
 
@@ -60,23 +60,12 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 
 	lastFileName := req.StartFromFileName
 	includeLastFile := req.InclusiveStartFrom
+	var listErr error
 	for limit > 0 {
-		entries, err := fs.filer.ListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, paginationLimit, req.Prefix)
-
-		if err != nil {
-			return err
-		}
-		if len(entries) == 0 {
-			return nil
-		}
-
-		includeLastFile = false
-
-		for _, entry := range entries {
-
-			lastFileName = entry.Name()
-
-			if err := stream.Send(&filer_pb.ListEntriesResponse{
+		var hasEntries bool
+		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, int64(paginationLimit), req.Prefix, "", func(entry *filer.Entry) bool {
+			hasEntries = true
+			if err = stream.Send(&filer_pb.ListEntriesResponse{
 				Entry: &filer_pb.Entry{
 					Name:            entry.Name(),
 					IsDirectory:     entry.IsDirectory(),
@@ -88,18 +77,27 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 					Content:         entry.Content,
 				},
 			}); err != nil {
-				return err
+				return false
 			}
 
 			limit--
 			if limit == 0 {
-				return nil
+				return false
 			}
+			return true
+		})
+
+		if listErr != nil {
+			return listErr
+		}
+		if err != nil {
+			return err
+		}
+		if !hasEntries {
+			return nil
 		}
 
-		if len(entries) < paginationLimit {
-			break
-		}
+		includeLastFile = false
 
 	}
 
@@ -326,7 +324,7 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures)
 	resp = &filer_pb.DeleteEntryResponse{}
-	if err != nil {
+	if err != nil && err != filer_pb.ErrNotFound {
 		resp.Error = err.Error()
 	}
 	return resp, nil

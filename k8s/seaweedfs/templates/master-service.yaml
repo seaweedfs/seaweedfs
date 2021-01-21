@@ -10,6 +10,7 @@ metadata:
     service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"    
 spec:
   clusterIP: None
+  publishNotReadyAddresses: true
   ports:
   - name: "swfs-master"
     port: {{ .Values.master.port }}

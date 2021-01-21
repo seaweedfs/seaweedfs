@@ -106,32 +106,24 @@ func (t *FilerStorePathTranlator) DeleteFolderChildren(ctx context.Context, fp u
 	return t.actualStore.DeleteFolderChildren(ctx, newFullPath)
 }
 
-func (t *FilerStorePathTranlator) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, error) {
+func (t *FilerStorePathTranlator) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (string, error) {
 
 	newFullPath := t.translatePath(dirPath)
 
-	entries, err := t.actualStore.ListDirectoryEntries(ctx, newFullPath, startFileName, includeStartFile, limit)
-	if err != nil {
-		return nil, err
-	}
-	for _, entry := range entries {
+	return t.actualStore.ListDirectoryEntries(ctx, newFullPath, startFileName, includeStartFile, limit, func(entry *Entry) bool {
 		entry.FullPath = dirPath[:len(t.storeRoot)-1] + entry.FullPath
-	}
-	return entries, err
+		return eachEntryFunc(entry)
+	})
 }
 
-func (t *FilerStorePathTranlator) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*Entry, error) {
+func (t *FilerStorePathTranlator) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (string, error) {
 
 	newFullPath := t.translatePath(dirPath)
 
-	entries, err := t.actualStore.ListDirectoryPrefixedEntries(ctx, newFullPath, startFileName, includeStartFile, limit, prefix)
-	if err != nil {
-		return nil, err
-	}
-	for _, entry := range entries {
+	return t.actualStore.ListDirectoryPrefixedEntries(ctx, newFullPath, startFileName, includeStartFile, limit, prefix, func(entry *Entry) bool {
 		entry.FullPath = dirPath[:len(t.storeRoot)-1] + entry.FullPath
-	}
-	return entries, nil
+		return eachEntryFunc(entry)
+	})
 }
 
 func (t *FilerStorePathTranlator) BeginTransaction(ctx context.Context) (context.Context, error) {
