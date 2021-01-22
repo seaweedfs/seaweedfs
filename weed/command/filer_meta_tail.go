@@ -3,9 +3,11 @@ package command
 import (
 	"context"
 	"fmt"
+	"github.com/golang/protobuf/jsonpb"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/olivere/elastic/v7"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -24,6 +26,10 @@ var cmdFilerMetaTail = &Command{
 	UsageLine: "filer.meta.tail [-filer=localhost:8888] [-target=/]",
 	Short:     "see recent changes on a filer",
 	Long: `See recent changes on a filer.
+
+	weed filer.meta.tail -timeAgo=30h | grep truncate
+	weed filer.meta.tail -timeAgo=30h | jq .
+	weed filer.meta.tail -timeAgo=30h | jq .eventNotification.newEntry.name
 
   `,
 }
@@ -80,8 +86,12 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 		return false
 	}
 
+	jsonpbMarshaler := jsonpb.Marshaler{
+		EmitDefaults: false,
+	}
 	eachEntryFunc := func(resp *filer_pb.SubscribeMetadataResponse) error {
-		fmt.Printf("dir:%s %+v\n", resp.Directory, resp.EventNotification)
+		jsonpbMarshaler.Marshal(os.Stdout, resp)
+		fmt.Fprintln(os.Stdout)
 		return nil
 	}
 	if *esServers != "" {
