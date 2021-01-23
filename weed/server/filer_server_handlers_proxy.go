@@ -32,7 +32,7 @@ func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	proxyReq, err := http.NewRequest("GET", urlStrings[rand.Intn(len(urlStrings))], r.Body)
+	proxyReq, err := http.NewRequest(r.Method, urlStrings[rand.Intn(len(urlStrings))], r.Body)
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", urlStrings[0], err)
 		w.WriteHeader(http.StatusInternalServerError)
