@@ -204,7 +204,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 	filerResult = &FilerPostResult{
 		Name: fileName,
-		Size: chunkOffset,
+		Size: int64(entry.FileSize),
 	}
 
 	if entry.Extended == nil {
