@@ -91,6 +91,9 @@ func (file *File) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp 
 func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 
 	glog.V(4).Infof("file %v open %+v", file.fullpath(), req)
+	if USE_DIRECT_IO {
+		resp.Flags |= fuse.OpenDirectIO
+	}
 
 	handle := file.wfs.AcquireHandle(file, req.Uid, req.Gid)
 

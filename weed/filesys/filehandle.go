@@ -90,8 +90,9 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 		glog.Warningf("%s FileHandle Read %d: [%d,%d) size %d totalRead %d", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size), req.Size, totalRead)
 		totalRead = min(int64(len(buff)), totalRead)
 	}
-	// resp.Data = buff[:totalRead]
-	resp.Data = buff
+	if err == nil {
+		resp.Data = buff[:totalRead]
+	}
 
 	return err
 }
