@@ -17,9 +17,16 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	switch r.Method {
 	case "GET":
-		stats.FilerRequestCounter.WithLabelValues("get").Inc()
-		fs.GetOrHeadHandler(w, r, true)
-		stats.FilerRequestHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds())
+		fileId := r.FormValue("proxyToFileId")
+		if fileId != "" {
+			stats.FilerRequestCounter.WithLabelValues("proxy").Inc()
+			fs.proxyToVolumeServer(w,r,fileId)
+			stats.FilerRequestHistogram.WithLabelValues("proxy").Observe(time.Since(start).Seconds())
+		} else {
+			stats.FilerRequestCounter.WithLabelValues("get").Inc()
+			fs.GetOrHeadHandler(w, r, true)
+			stats.FilerRequestHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds())
+		}
 	case "HEAD":
 		stats.FilerRequestCounter.WithLabelValues("head").Inc()
 		fs.GetOrHeadHandler(w, r, false)
