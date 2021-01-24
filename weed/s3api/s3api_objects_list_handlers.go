@@ -238,7 +238,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				return
 			}
 		}
-		if counter >= maxKeys + 1 {
+		if counter >= maxKeys {
 			isTruncated = true
 			return
 		}
