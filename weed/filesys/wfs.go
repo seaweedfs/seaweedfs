@@ -3,6 +3,8 @@ package filesys
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"math"
 	"os"
 	"path"
@@ -24,6 +26,7 @@ import (
 )
 
 type Option struct {
+	FilerAddress       string
 	FilerGrpcAddress   string
 	GrpcDialOption     grpc.DialOption
 	FilerMountRootPath string
@@ -236,4 +239,14 @@ func (wfs *WFS) mapPbIdFromLocalToFiler(entry *filer_pb.Entry) {
 		return
 	}
 	entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.LocalToFiler(entry.Attributes.Uid, entry.Attributes.Gid)
+}
+
+func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
+	if wfs.option.OutsideContainerClusterMode {
+		return func(fileId string) (targetUrls []string, err error) {
+			return []string{"http://" + wfs.option.FilerAddress + "/?proxyChunkId=" + fileId}, nil
+		}
+	}
+	return filer.LookupFn(wfs)
+
 }

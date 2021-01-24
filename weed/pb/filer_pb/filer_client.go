@@ -20,7 +20,6 @@ var (
 
 type FilerClient interface {
 	WithFilerClient(fn func(SeaweedFilerClient) error) error
-	AdjustedUrl(location *Location) string
 }
 
 func GetEntry(filerClient FilerClient, fullFilePath util.FullPath) (entry *Entry, err error) {

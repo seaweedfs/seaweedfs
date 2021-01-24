@@ -22,7 +22,7 @@ func (wfs *WFS) deleteFileChunks(chunks []*filer_pb.FileChunk) {
 			fileIds = append(fileIds, chunk.GetFileIdString())
 			continue
 		}
-		dataChunks, manifestResolveErr := filer.ResolveOneChunkManifest(filer.LookupFn(wfs), chunk)
+		dataChunks, manifestResolveErr := filer.ResolveOneChunkManifest(wfs.LookupFn(), chunk)
 		if manifestResolveErr != nil {
 			glog.V(0).Infof("failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
 		}
@@ -68,7 +68,7 @@ func (wfs *WFS) deleteFileIds(grpcDialOption grpc.DialOption, client filer_pb.Se
 			}
 			for _, loc := range locations.Locations {
 				lr.Locations = append(lr.Locations, operation.Location{
-					Url:       wfs.AdjustedUrl(loc),
+					Url:       loc.Url,
 					PublicUrl: loc.PublicUrl,
 				})
 			}

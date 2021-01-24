@@ -147,7 +147,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 				}
 			}
 			file.entry.Chunks = chunks
-			file.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(filer.LookupFn(file.wfs), chunks)
+			file.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(file.wfs.LookupFn(), chunks)
 			file.reader = nil
 			file.wfs.deleteFileChunks(truncatedChunks)
 		}
@@ -329,7 +329,7 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 
 func (file *File) setEntry(entry *filer_pb.Entry) {
 	file.entry = entry
-	file.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(filer.LookupFn(file.wfs), entry.Chunks)
+	file.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(file.wfs.LookupFn(), entry.Chunks)
 	file.reader = nil
 }
 
