@@ -123,6 +123,9 @@ func (fs *WebDavFileSystem) WithFilerClient(fn func(filer_pb.SeaweedFilerClient)
 	}, fs.option.FilerGrpcAddress, fs.option.GrpcDialOption)
 
 }
+func (fs *WebDavFileSystem) AdjustedUrl(location *filer_pb.Location) string {
+	return location.Url
+}
 
 func clearName(name string) (string, error) {
 	slashed := strings.HasSuffix(name, "/")
@@ -520,7 +523,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	}
 	if f.reader == nil {
 		chunkViews := filer.ViewFromVisibleIntervals(f.entryViewCache, 0, math.MaxInt64)
-		f.reader = filer.NewChunkReaderAtFromClient(filer.LookupFn(f.fs), chunkViews, f.fs.chunkCache, fileSize)
+		f.reader = filer.NewChunkReaderAtFromClient(f.fs, chunkViews, f.fs.chunkCache, fileSize)
 	}
 
 	readSize, err = f.reader.ReadAt(p, f.off)

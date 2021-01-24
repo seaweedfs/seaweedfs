@@ -124,6 +124,10 @@ func (fs *FilerSource) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) erro
 
 }
 
+func (fs *FilerSource) AdjustedUrl(location *filer_pb.Location) string {
+	return location.Url
+}
+
 func volumeId(fileId string) string {
 	lastCommaIndex := strings.LastIndex(fileId, ",")
 	if lastCommaIndex > 0 {

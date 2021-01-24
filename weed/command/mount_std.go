@@ -169,7 +169,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	seaweedFileSystem := filesys.NewSeaweedFileSystem(&filesys.Option{
-		FilerAddress:                filer,
 		FilerGrpcAddress:            filerGrpcAddress,
 		GrpcDialOption:              grpcDialOption,
 		FilerMountRootPath:          mountRoot,
