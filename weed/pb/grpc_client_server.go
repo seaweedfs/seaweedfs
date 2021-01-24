@@ -138,6 +138,22 @@ func ServerToGrpcAddress(server string) (serverGrpcAddress string) {
 	return fmt.Sprintf("%s:%d", hostnameAndPort[0], grpcPort)
 }
 
+func GrpcAddressToServerAddress(grpcAddress string) (serverAddress string) {
+	hostnameAndPort := strings.Split(grpcAddress, ":")
+	if len(hostnameAndPort) != 2 {
+		return fmt.Sprintf("unexpected grpcAddress: %s", grpcAddress)
+	}
+
+	grpcPort, parseErr := strconv.ParseUint(hostnameAndPort[1], 10, 64)
+	if parseErr != nil {
+		return fmt.Sprintf("failed to parse port for %s:%s", hostnameAndPort[0], hostnameAndPort[1])
+	}
+
+	port := int(grpcPort) - 10000
+
+	return fmt.Sprintf("%s:%d", hostnameAndPort[0], port)
+}
+
 func WithMasterClient(master string, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) error {
 
 	masterGrpcAddress, parseErr := ParseServerToGrpcAddress(master)

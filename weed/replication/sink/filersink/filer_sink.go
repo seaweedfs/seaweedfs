@@ -3,6 +3,7 @@ package filersink
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 
 	"google.golang.org/grpc"
@@ -18,14 +19,16 @@ import (
 )
 
 type FilerSink struct {
-	filerSource    *source.FilerSource
-	grpcAddress    string
-	dir            string
-	replication    string
-	collection     string
-	ttlSec         int32
-	dataCenter     string
-	grpcDialOption grpc.DialOption
+	filerSource       *source.FilerSource
+	grpcAddress       string
+	dir               string
+	replication       string
+	collection        string
+	ttlSec            int32
+	dataCenter        string
+	grpcDialOption    grpc.DialOption
+	address           string
+	writeChunkByFiler bool
 }
 
 func init() {
@@ -42,26 +45,33 @@ func (fs *FilerSink) GetSinkToDirectory() string {
 
 func (fs *FilerSink) Initialize(configuration util.Configuration, prefix string) error {
 	return fs.DoInitialize(
+		"",
 		configuration.GetString(prefix+"grpcAddress"),
 		configuration.GetString(prefix+"directory"),
 		configuration.GetString(prefix+"replication"),
 		configuration.GetString(prefix+"collection"),
 		configuration.GetInt(prefix+"ttlSec"),
-		security.LoadClientTLS(util.GetViper(), "grpc.client"))
+		security.LoadClientTLS(util.GetViper(), "grpc.client"),
+		false)
 }
 
 func (fs *FilerSink) SetSourceFiler(s *source.FilerSource) {
 	fs.filerSource = s
 }
 
-func (fs *FilerSink) DoInitialize(grpcAddress string, dir string,
-	replication string, collection string, ttlSec int, grpcDialOption grpc.DialOption) (err error) {
+func (fs *FilerSink) DoInitialize(address, grpcAddress string, dir string,
+	replication string, collection string, ttlSec int, grpcDialOption grpc.DialOption, writeChunkByFiler bool) (err error) {
+	fs.address = address
+	if fs.address == "" {
+		fs.address = pb.GrpcAddressToServerAddress(grpcAddress)
+	}
 	fs.grpcAddress = grpcAddress
 	fs.dir = dir
 	fs.replication = replication
 	fs.collection = collection
 	fs.ttlSec = int32(ttlSec)
 	fs.grpcDialOption = grpcDialOption
+	fs.writeChunkByFiler = writeChunkByFiler
 	return nil
 }
 
