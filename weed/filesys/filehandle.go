@@ -126,12 +126,14 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		fh.f.reader = nil
 	}
 
-	if fh.f.reader == nil {
+	reader := fh.f.reader
+	if reader == nil {
 		chunkViews := filer.ViewFromVisibleIntervals(fh.f.entryViewCache, 0, math.MaxInt64)
-		fh.f.reader = filer.NewChunkReaderAtFromClient(fh.f.wfs, chunkViews, fh.f.wfs.chunkCache, fileSize)
+		reader = filer.NewChunkReaderAtFromClient(fh.f.wfs, chunkViews, fh.f.wfs.chunkCache, fileSize)
 	}
+	fh.f.reader = reader
 
-	totalRead, err := fh.f.reader.ReadAt(buff, offset)
+	totalRead, err := reader.ReadAt(buff, offset)
 
 	if err != nil && err != io.EOF {
 		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
