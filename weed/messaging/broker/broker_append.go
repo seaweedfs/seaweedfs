@@ -107,7 +107,3 @@ func (broker *MessageBroker) WithFilerClient(fn func(filer_pb.SeaweedFilerClient
 	return
 
 }
-
-func (broker *MessageBroker) AdjustedUrl(location *filer_pb.Location) string {
-	return location.Url
-}

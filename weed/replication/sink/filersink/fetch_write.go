@@ -128,6 +128,3 @@ func (fs *FilerSink) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error)
 	}, fs.grpcAddress, fs.grpcDialOption)
 
 }
-func (fs *FilerSink) AdjustedUrl(location *filer_pb.Location) string {
-	return location.Url
-}
