@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc"
 	"net/http"
 	"strings"
 	"sync"
-
-	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 )

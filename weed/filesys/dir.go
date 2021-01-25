@@ -404,11 +404,6 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 	inodeId := util.NewFullPath(dir.FullPath(), req.Name).AsInode()
 	delete(dir.wfs.handles, inodeId)
 
-	// delete the chunks last
-	if isDeleteData {
-		dir.wfs.deleteFileChunks(entry.Chunks)
-	}
-
 	return nil
 
 }
