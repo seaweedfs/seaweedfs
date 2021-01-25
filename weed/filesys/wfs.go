@@ -26,6 +26,7 @@ import (
 )
 
 type Option struct {
+	MountDirectory     string
 	FilerAddress       string
 	FilerGrpcAddress   string
 	GrpcDialOption     grpc.DialOption
@@ -92,7 +93,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		},
 		signature: util.RandomInt32(),
 	}
-	cacheUniqueId := util.Md5String([]byte(option.FilerGrpcAddress + option.FilerMountRootPath + util.Version()))[0:4]
+	cacheUniqueId := util.Md5String([]byte(option.MountDirectory + option.FilerGrpcAddress + option.FilerMountRootPath + util.Version()))[0:8]
 	cacheDir := path.Join(option.CacheDir, cacheUniqueId)
 	if option.CacheSizeMB > 0 {
 		os.MkdirAll(cacheDir, os.FileMode(0777)&^option.Umask)
