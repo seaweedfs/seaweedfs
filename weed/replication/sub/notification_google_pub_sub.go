@@ -85,15 +85,21 @@ func (k *GooglePubSubInput) initialize(google_application_credentials, projectId
 
 	go k.sub.Receive(ctx, func(ctx context.Context, m *pubsub.Message) {
 		k.messageChan <- m
-		m.Ack()
 	})
 
 	return err
 }
 
-func (k *GooglePubSubInput) ReceiveMessage() (key string, message *filer_pb.EventNotification, err error) {
+func (k *GooglePubSubInput) ReceiveMessage() (key string, message *filer_pb.EventNotification, onSuccessFn func(), onFailureFn func(), err error) {
 
 	m := <-k.messageChan
+
+	onSuccessFn = func() {
+		m.Ack()
+	}
+	onFailureFn = func() {
+		m.Nack()
+	}
 
 	// process the message
 	key = m.Attributes["key"]

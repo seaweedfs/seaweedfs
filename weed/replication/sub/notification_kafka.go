@@ -97,7 +97,7 @@ func (k *KafkaInput) initialize(hosts []string, topic string, offsetFile string,
 	return nil
 }
 
-func (k *KafkaInput) ReceiveMessage() (key string, message *filer_pb.EventNotification, err error) {
+func (k *KafkaInput) ReceiveMessage() (key string, message *filer_pb.EventNotification, onSuccessFn func(), onFailureFn func(), err error) {
 
 	msg := <-k.messageChan
 

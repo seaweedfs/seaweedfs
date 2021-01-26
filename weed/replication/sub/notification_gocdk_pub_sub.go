@@ -38,13 +38,24 @@ func (k *GoCDKPubSubInput) Initialize(configuration util.Configuration, prefix s
 	return nil
 }
 
-func (k *GoCDKPubSubInput) ReceiveMessage() (key string, message *filer_pb.EventNotification, err error) {
+func (k *GoCDKPubSubInput) ReceiveMessage() (key string, message *filer_pb.EventNotification, onSuccessFn func(), onFailureFn func(), err error) {
 	msg, err := k.sub.Receive(context.Background())
+	if err != nil {
+		return
+	}
+	onSuccessFn = func() {
+		msg.Ack()
+	}
+	onFailureFn = func() {
+		if msg.Nackable() {
+			msg.Nack()
+		}
+	}
 	key = msg.Metadata["key"]
 	message = &filer_pb.EventNotification{}
 	err = proto.Unmarshal(msg.Body, message)
 	if err != nil {
-		return "", nil, err
+		return "", nil, onSuccessFn, onFailureFn, err
 	}
-	return key, message, nil
+	return key, message, onSuccessFn, onFailureFn, nil
 }
