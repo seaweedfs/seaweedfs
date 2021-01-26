@@ -58,7 +58,7 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 		return err
 	}
 
-	attr.Inode = util.FullPath(dir.FullPath()).AsInode()
+	// attr.Inode = util.FullPath(dir.FullPath()).AsInode()
 	attr.Mode = os.FileMode(dir.entry.Attributes.FileMode) | os.ModeDir
 	attr.Mtime = time.Unix(dir.entry.Attributes.Mtime, 0)
 	attr.Crtime = time.Unix(dir.entry.Attributes.Crtime, 0)
@@ -82,8 +82,8 @@ func (dir *Dir) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *f
 }
 
 func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
-	attr.Inode = 1 // filer2.FullPath(dir.Path).AsInode()
-	attr.Valid = time.Hour
+	// attr.Inode = 1 // filer2.FullPath(dir.Path).AsInode()
+	attr.Valid = time.Second
 	attr.Uid = dir.wfs.option.MountUid
 	attr.Gid = dir.wfs.option.MountGid
 	attr.Mode = dir.wfs.option.MountMode
@@ -91,7 +91,7 @@ func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
 	attr.Ctime = dir.wfs.option.MountCtime
 	attr.Mtime = dir.wfs.option.MountMtime
 	attr.Atime = dir.wfs.option.MountMtime
-	attr.BlockSize = 1024 * 1024
+	attr.BlockSize = blockSize
 }
 
 func (dir *Dir) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
@@ -285,7 +285,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		}
 
 		// resp.EntryValid = time.Second
-		resp.Attr.Inode = fullFilePath.AsInode()
+		// resp.Attr.Inode = fullFilePath.AsInode()
 		resp.Attr.Valid = time.Second
 		resp.Attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
 		resp.Attr.Crtime = time.Unix(entry.Attributes.Crtime, 0)
@@ -308,13 +308,11 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 	glog.V(4).Infof("dir ReadDirAll %s", dir.FullPath())
 
 	processEachEntryFn := func(entry *filer_pb.Entry, isLast bool) error {
-		fullpath := util.NewFullPath(dir.FullPath(), entry.Name)
-		inode := fullpath.AsInode()
 		if entry.IsDirectory {
-			dirent := fuse.Dirent{Inode: inode, Name: entry.Name, Type: fuse.DT_Dir}
+			dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_Dir}
 			ret = append(ret, dirent)
 		} else {
-			dirent := fuse.Dirent{Inode: inode, Name: entry.Name, Type: findFileType(uint16(entry.Attributes.FileMode))}
+			dirent := fuse.Dirent{Name: entry.Name, Type: findFileType(uint16(entry.Attributes.FileMode))}
 			ret = append(ret, dirent)
 		}
 		return nil

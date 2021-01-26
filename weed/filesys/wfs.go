@@ -76,6 +76,7 @@ type WFS struct {
 
 	// throttle writers
 	concurrentWriters *util.LimitedConcurrentExecutor
+	Server            *fs.Server
 }
 type statsCache struct {
 	filer_pb.StatisticsResponse
@@ -104,7 +105,20 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		fsNode := wfs.fsNodeCache.GetFsNode(filePath)
 		if fsNode != nil {
 			if file, ok := fsNode.(*File); ok {
+				if err := wfs.Server.InvalidateNodeData(file); err != nil {
+					glog.V(4).Infof("InvalidateNodeData %s : %v", filePath, err)
+				}
 				file.clearEntry()
+			}
+		}
+		dir, name := filePath.DirAndName()
+		parent := wfs.root
+		if dir != "/" {
+			parent = wfs.fsNodeCache.GetFsNode(util.FullPath(dir))
+		}
+		if parent != nil {
+			if err := wfs.Server.InvalidateEntry(parent, name); err != nil {
+				glog.V(4).Infof("InvalidateEntry %s : %v", filePath, err)
 			}
 		}
 	})

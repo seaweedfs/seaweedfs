@@ -45,7 +45,7 @@ func (file *File) fullpath() util.FullPath {
 
 func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 
-	glog.V(4).Infof("file Attr %s, open:%v, existing attr: %+v", file.fullpath(), file.isOpen, attr)
+	glog.V(4).Infof("file Attr %s, open:%v existing:%v", file.fullpath(), file.isOpen, attr)
 
 	entry := file.entry
 	if file.isOpen <= 0 || entry == nil {
@@ -54,7 +54,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 		}
 	}
 
-	attr.Inode = file.fullpath().AsInode()
+	// attr.Inode = file.fullpath().AsInode()
 	attr.Valid = time.Second
 	attr.Mode = os.FileMode(entry.Attributes.FileMode)
 	attr.Size = filer.FileSize(entry)
@@ -91,9 +91,6 @@ func (file *File) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp 
 func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 
 	glog.V(4).Infof("file %v open %+v", file.fullpath(), req)
-	if USE_DIRECT_IO {
-		resp.Flags |= fuse.OpenDirectIO
-	}
 
 	handle := file.wfs.AcquireHandle(file, req.Uid, req.Gid)
 
