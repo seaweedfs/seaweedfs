@@ -329,7 +329,8 @@ enabled = false
 # This URL will Dial the RabbitMQ server at the URL in the environment
 # variable RABBIT_SERVER_URL and open the exchange "myexchange".
 # The exchange must have already been created by some other means, like
-# the RabbitMQ management plugin.
+# the RabbitMQ management plugin. Сreate myexchange of type fanout and myqueue then
+# create binding myexchange => myqueue
 topic_url = "rabbit://myexchange"
 sub_url = "rabbit://myqueue"
 `
@@ -353,6 +354,8 @@ directory = "/buckets"
 [sink.local]
 enabled = false
 directory = "/backup"
+# all replicated files are under todays date directory tree
+todays_date_format = ""
 
 [sink.filer]
 enabled = false
