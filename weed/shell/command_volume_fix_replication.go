@@ -162,6 +162,7 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 		replica := pickOneReplicaToCopyFrom(replicas)
 		replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
 		foundNewLocation := false
+		hasSkippedCollection := false
 		for _, dst := range allLocations {
 			// check whether data nodes satisfy the constraints
 			if dst.dataNode.FreeVolumeCount > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
@@ -172,6 +173,7 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 						return fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
 					}
 					if !matched {
+						hasSkippedCollection = true
 						break
 					}
 				}
@@ -205,7 +207,7 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 				break
 			}
 		}
-		if !foundNewLocation {
+		if !foundNewLocation && !hasSkippedCollection {
 			fmt.Fprintf(writer, "failed to place volume %d replica as %s, existing:%+v\n", replica.info.Id, replicaPlacement, len(replicas))
 		}
 
