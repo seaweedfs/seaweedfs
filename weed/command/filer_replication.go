@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/azuresink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/b2sink"
+	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/backupsink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/filersink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/gcssink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/localsink"

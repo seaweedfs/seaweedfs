@@ -6,7 +6,6 @@ grpcAddress = "filer:18888"
 # i.e., all files with this "prefix" are sent to notification message queue.
 directory = "/buckets"
 
-[sink.local]
+[sink.backup]
 enabled = true
 directory = "/data"
-todays_date_format = "2006-02-01"
