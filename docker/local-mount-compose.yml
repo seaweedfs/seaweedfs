@@ -31,7 +31,7 @@ services:
   mount_1:
     image: chrislusf/seaweedfs:local
     privileged: true
-    entrypoint: '/bin/sh -c "mkdir -p t1 && mkdir -p cache/t1 && weed -v=4 mount -filer=filer:8888 -cacheDir=./cache/t1 -dir=./t1 -filer.path=/"'
+    entrypoint: '/bin/sh -c "mkdir -p t1 && mkdir -p cache/t1 && weed -v=4 mount -filer=filer:8888 -cacheDir=./cache/t1 -dir=./t1 -filer.path=/c1"'
     depends_on:
       - master
       - volume
@@ -39,7 +39,7 @@ services:
   mount_2:
     image: chrislusf/seaweedfs:local
     privileged: true
-    entrypoint: '/bin/sh -c "mkdir -p t2 && mkdir -p cache/t2 && weed -v=4  mount -filer=filer:8888 -cacheDir=./cache/t2 -dir=./t2 -filer.path=/"'
+    entrypoint: '/bin/sh -c "mkdir -p t2 && mkdir -p cache/t2 && weed -v=4  mount -filer=filer:8888 -cacheDir=./cache/t2 -dir=./t2 -filer.path=/c1"'
     depends_on:
       - master
       - volume
