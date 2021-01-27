@@ -12,11 +12,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type LocalSink struct {
-	dir         string
-	filerSource *source.FilerSource
+	dir              string
+	todaysDateFormat string
+	filerSource      *source.FilerSource
 }
 
 func init() {
@@ -35,18 +37,23 @@ func (localsink *LocalSink) isMultiPartEntry(key string) bool {
 	return strings.HasSuffix(key, ".part") && strings.Contains(key, "/.uploads/")
 }
 
-func (localsink *LocalSink) initialize(dir string) error {
+func (localsink *LocalSink) initialize(dir string, todaysDateFormat string) error {
 	localsink.dir = dir
+	localsink.todaysDateFormat = todaysDateFormat
 	return nil
 }
 
 func (localsink *LocalSink) Initialize(configuration util.Configuration, prefix string) error {
 	dir := configuration.GetString(prefix + "directory")
+	todaysDateFormat := configuration.GetString(prefix + "todays_date_format")
 	glog.V(4).Infof("sink.local.directory: %v", dir)
-	return localsink.initialize(dir)
+	return localsink.initialize(dir, todaysDateFormat)
 }
 
 func (localsink *LocalSink) GetSinkToDirectory() string {
+	if localsink.todaysDateFormat != "" {
+		return filepath.Join(localsink.dir, time.Now().Format(localsink.todaysDateFormat))
+	}
 	return localsink.dir
 }
 
@@ -56,7 +63,7 @@ func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeCh
 	}
 	glog.V(4).Infof("Delete Entry key: %s", key)
 	if err := os.Remove(key); err != nil {
-		return err
+		glog.V(0).Infof("remove entry key %s: %s", key, err)
 	}
 	return nil
 }

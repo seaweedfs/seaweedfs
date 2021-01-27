@@ -9,3 +9,4 @@ directory = "/buckets"
 [sink.local]
 enabled = true
 directory = "/data"
+todays_date_format = "2006-02-01"
