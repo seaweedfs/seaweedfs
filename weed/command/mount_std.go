@@ -102,7 +102,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	if err == nil {
 		mountMode = os.ModeDir | os.FileMode(0777)&^umask
 		uid, gid = util.GetFileUidGid(fileInfo)
-		fmt.Printf("mount point owner uid=%d gid=%d mode=%s\n", uid, gid, fileInfo.Mode())
+		fmt.Printf("mount point owner uid=%d gid=%d mode=%s\n", uid, gid, mountMode)
 	} else {
 		fmt.Printf("can not stat %s\n", dir)
 		return false
