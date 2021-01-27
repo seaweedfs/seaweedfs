@@ -40,8 +40,8 @@ func (c *commandVolumeFixReplication) Help() string {
 	volume.fix.replication -collectionPattern=important*  # fix any collections with prefix "important"
 
 	Note:
-		* each time this will only add back one replica for one volume id. If there are multiple replicas
-		  are missing, e.g. multiple volume servers are new, you may need to run this multiple times.
+		* each time this will only add back one replica for each volume id that is under replicated.
+		  If there are multiple replicas are missing, e.g. replica count is > 2, you may need to run this multiple times.
 		* do not run this too quickly within seconds, since the new volume replica may take a few seconds 
 		  to register itself to the master.
 
