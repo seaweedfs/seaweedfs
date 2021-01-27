@@ -350,6 +350,10 @@ grpcAddress = "localhost:18888"
 # i.e., all files with this "prefix" are sent to notification message queue.
 directory = "/buckets"
 
+[sink.local]
+enabled = false
+directory = "/backup"
+
 [sink.filer]
 enabled = false
 grpcAddress = "localhost:18888"
