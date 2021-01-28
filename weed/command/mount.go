@@ -11,19 +11,19 @@ type MountOptions struct {
 	dir                         *string
 	dirAutoCreate               *bool
 	collection                  *string
-	replication                 *string
-	ttlSec                      *int
-	chunkSizeLimitMB            *int
-	concurrentWriters           *int
-	cacheDir                    *string
-	cacheSizeMB                 *int64
-	dataCenter                  *string
-	allowOthers                 *bool
-	umaskString                 *string
-	nonempty                    *bool
-	outsideContainerClusterMode *bool
-	uidMap                      *string
-	gidMap                      *string
+	replication        *string
+	ttlSec             *int
+	chunkSizeLimitMB   *int
+	concurrentWriters  *int
+	cacheDir           *string
+	cacheSizeMB        *int64
+	dataCenter         *string
+	allowOthers        *bool
+	umaskString        *string
+	nonempty           *bool
+	volumeServerAccess *string
+	uidMap             *string
+	gidMap             *string
 }
 
 var (
@@ -50,7 +50,7 @@ func init() {
 	mountOptions.allowOthers = cmdMount.Flag.Bool("allowOthers", true, "allows other users to access the file system")
 	mountOptions.umaskString = cmdMount.Flag.String("umask", "022", "octal umask, e.g., 022, 0111")
 	mountOptions.nonempty = cmdMount.Flag.Bool("nonempty", false, "allows the mounting over a non-empty directory")
-	mountOptions.outsideContainerClusterMode = cmdMount.Flag.Bool("outsideContainerClusterMode", false, "allows other users to access volume servers with publicUrl")
+	mountOptions.volumeServerAccess = cmdMount.Flag.String("volumeServerAccess", "direct", "access volume servers by [direct|publicUrl|filerProxy]")
 	mountOptions.uidMap = cmdMount.Flag.String("map.uid", "", "map local uid to uid on filer, comma-separated <local_uid>:<filer_uid>")
 	mountOptions.gidMap = cmdMount.Flag.String("map.gid", "", "map local gid to gid on filer, comma-separated <local_gid>:<filer_gid>")
 

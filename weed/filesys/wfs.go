@@ -48,9 +48,9 @@ type Option struct {
 	MountCtime time.Time
 	MountMtime time.Time
 
-	OutsideContainerClusterMode bool // whether the mount runs outside SeaweedFS containers
-	Cipher                      bool // whether encrypt data on volume server
-	UidGidMapper                *meta_cache.UidGidMapper
+	VolumeServerAccess string // how to access volume servers
+	Cipher             bool   // whether encrypt data on volume server
+	UidGidMapper       *meta_cache.UidGidMapper
 }
 
 var _ = fs.FS(&WFS{})
@@ -257,7 +257,7 @@ func (wfs *WFS) mapPbIdFromLocalToFiler(entry *filer_pb.Entry) {
 }
 
 func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
-	if wfs.option.OutsideContainerClusterMode {
+	if wfs.option.VolumeServerAccess == "filerProxy" {
 		return func(fileId string) (targetUrls []string, err error) {
 			return []string{"http://" + wfs.option.FilerAddress + "/?proxyChunkId=" + fileId}, nil
 		}
