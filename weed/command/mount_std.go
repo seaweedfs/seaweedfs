@@ -208,7 +208,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	})
 
 	glog.V(0).Infof("mounted %s%s to %s", filer, mountRoot, dir)
-	err = fs.Serve(c, seaweedFileSystem)
+	server := fs.New(c, nil)
+	seaweedFileSystem.Server = server
+	err = server.Serve(seaweedFileSystem)
 
 	// check if the mount process has an error to report
 	<-c.Ready
