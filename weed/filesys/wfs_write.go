@@ -44,7 +44,7 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 				Url:       resp.Url,
 				PublicUrl: resp.PublicUrl,
 			}
-			host = loc.Url
+			host = wfs.AdjustedUrl(loc)
 			collection, replication = resp.Collection, resp.Replication
 
 			return nil
