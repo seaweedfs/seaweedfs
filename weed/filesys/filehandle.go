@@ -184,25 +184,20 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	fh.Lock()
 	defer fh.Unlock()
 
-	fh.f.isOpen--
-
-	if fh.f.isOpen < 0 {
+	if fh.f.isOpen <= 0 {
 		glog.V(0).Infof("Release reset %s open count %d => %d", fh.f.Name, fh.f.isOpen, 0)
 		fh.f.isOpen = 0
 		return nil
 	}
 
-	if fh.f.isOpen == 0 {
+	if fh.f.isOpen == 1 {
 
 		if err := fh.doFlush(ctx, req.Header); err != nil {
 			glog.Errorf("Release doFlush %s: %v", fh.f.Name, err)
+			return err
 		}
 
-		// stop the goroutine
-		if !fh.dirtyPages.chunkSaveErrChanClosed {
-			fh.dirtyPages.chunkSaveErrChanClosed = true
-			close(fh.dirtyPages.chunkSaveErrChan)
-		}
+		fh.f.isOpen--
 
 		fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
 		if closer, ok := fh.f.reader.(io.Closer); ok {
@@ -216,10 +211,18 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 
 func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
+	glog.V(4).Infof("Flush %v fh %d", fh.f.fullpath(), fh.handle)
+
 	fh.Lock()
 	defer fh.Unlock()
 
-	return fh.doFlush(ctx, req.Header)
+	if err := fh.doFlush(ctx, req.Header); err != nil {
+		glog.Errorf("Flush doFlush %s: %v", fh.f.Name, err)
+		return err
+	}
+
+	glog.V(4).Infof("Flush %v fh %d success", fh.f.fullpath(), fh.handle)
+	return nil
 }
 
 func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
@@ -232,7 +235,8 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 	fh.dirtyPages.writeWaitGroup.Wait()
 
 	if fh.dirtyPages.lastErr != nil {
-		return fh.dirtyPages.lastErr
+		glog.Errorf("%v doFlush last err: %v", fh.f.fullpath(), fh.dirtyPages.lastErr)
+		return fuse.EIO
 	}
 
 	if !fh.f.dirtyMetadata {
