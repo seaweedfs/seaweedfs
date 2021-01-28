@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"google.golang.org/grpc"
 	"strings"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -40,7 +41,17 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		glog.V(4).Infof("skipping %v outside of %v", key, r.source.Dir)
 		return nil
 	}
-	newKey := util.Join(r.sink.GetSinkToDirectory(), key[len(r.source.Dir):])
+	var dateKey string
+	if r.sink.GetName() == "local_incremental" {
+		var mTime int64
+		if message.NewEntry != nil {
+			mTime = message.NewEntry.Attributes.Mtime
+		} else if message.OldEntry != nil {
+			mTime = message.OldEntry.Attributes.Mtime
+		}
+		dateKey = time.Unix(mTime, 0).Format("2006-01-02")
+	}
+	newKey := util.Join(r.sink.GetSinkToDirectory(), dateKey, key[len(r.source.Dir):])
 	glog.V(3).Infof("replicate %s => %s", key, newKey)
 	key = newKey
 	if message.OldEntry != nil && message.NewEntry == nil {

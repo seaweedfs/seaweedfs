@@ -12,13 +12,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 type LocalSink struct {
-	dir              string
-	todaysDateFormat string
-	filerSource      *source.FilerSource
+	Dir         string
+	filerSource *source.FilerSource
 }
 
 func init() {
@@ -37,24 +35,19 @@ func (localsink *LocalSink) isMultiPartEntry(key string) bool {
 	return strings.HasSuffix(key, ".part") && strings.Contains(key, "/.uploads/")
 }
 
-func (localsink *LocalSink) initialize(dir string, todaysDateFormat string) error {
-	localsink.dir = dir
-	localsink.todaysDateFormat = todaysDateFormat
+func (localsink *LocalSink) initialize(dir string) error {
+	localsink.Dir = dir
 	return nil
 }
 
 func (localsink *LocalSink) Initialize(configuration util.Configuration, prefix string) error {
 	dir := configuration.GetString(prefix + "directory")
-	todaysDateFormat := configuration.GetString(prefix + "todays_date_format")
 	glog.V(4).Infof("sink.local.directory: %v", dir)
-	return localsink.initialize(dir, todaysDateFormat)
+	return localsink.initialize(dir)
 }
 
 func (localsink *LocalSink) GetSinkToDirectory() string {
-	if localsink.todaysDateFormat != "" {
-		return filepath.Join(localsink.dir, time.Now().Format(localsink.todaysDateFormat))
-	}
-	return localsink.dir
+	return localsink.Dir
 }
 
 func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {

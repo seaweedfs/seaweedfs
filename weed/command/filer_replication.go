@@ -11,6 +11,7 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/b2sink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/filersink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/gcssink"
+	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/localincrementalsink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/localsink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/s3sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/sub"
