@@ -175,7 +175,7 @@ func (dir *Dir) doCreateEntry(name string, mode os.FileMode, uid, gid uint32, ex
 				TtlSec:      dir.wfs.option.TtlSec,
 			},
 		},
-		OExcl: exlusive,
+		OExcl:      exlusive,
 		Signatures: []int32{dir.wfs.signature},
 	}
 	glog.V(1).Infof("create %s/%s", dir.FullPath(), name)

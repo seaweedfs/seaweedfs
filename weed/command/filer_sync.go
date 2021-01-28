@@ -20,21 +20,21 @@ import (
 )
 
 type SyncOptions struct {
-	isActivePassive     *bool
-	filerA              *string
-	filerB              *string
-	aPath               *string
-	bPath         *string
-	aReplication  *string
-	bReplication  *string
-	aCollection   *string
-	bCollection   *string
-	aTtlSec       *int
-	bTtlSec       *int
-	aDebug        *bool
-	bDebug        *bool
-	aProxyByFiler *bool
-	bProxyByFiler *bool
+	isActivePassive *bool
+	filerA          *string
+	filerB          *string
+	aPath           *string
+	bPath           *string
+	aReplication    *string
+	bReplication    *string
+	aCollection     *string
+	bCollection     *string
+	aTtlSec         *int
+	bTtlSec         *int
+	aDebug          *bool
+	bDebug          *bool
+	aProxyByFiler   *bool
+	bProxyByFiler   *bool
 }
 
 var (

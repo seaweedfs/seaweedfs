@@ -11,19 +11,19 @@ import (
 )
 
 type ContinuousDirtyPages struct {
-	intervals              *ContinuousIntervals
-	f                      *File
-	writeWaitGroup         sync.WaitGroup
-	chunkAddLock           sync.Mutex
-	lastErr                error
-	collection             string
-	replication            string
+	intervals      *ContinuousIntervals
+	f              *File
+	writeWaitGroup sync.WaitGroup
+	chunkAddLock   sync.Mutex
+	lastErr        error
+	collection     string
+	replication    string
 }
 
 func newDirtyPages(file *File) *ContinuousDirtyPages {
 	dirtyPages := &ContinuousDirtyPages{
-		intervals:        &ContinuousIntervals{},
-		f:                file,
+		intervals: &ContinuousIntervals{},
+		f:         file,
 	}
 	return dirtyPages
 }

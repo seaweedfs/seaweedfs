@@ -20,7 +20,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if fileId != "" {
 		stats.FilerRequestCounter.WithLabelValues("proxy").Inc()
-		fs.proxyToVolumeServer(w,r,fileId)
+		fs.proxyToVolumeServer(w, r, fileId)
 		stats.FilerRequestHistogram.WithLabelValues("proxy").Observe(time.Since(start).Seconds())
 		return
 	}

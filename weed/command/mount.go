@@ -6,11 +6,11 @@ import (
 )
 
 type MountOptions struct {
-	filer                       *string
-	filerMountRootPath          *string
-	dir                         *string
-	dirAutoCreate               *bool
-	collection                  *string
+	filer              *string
+	filerMountRootPath *string
+	dir                *string
+	dirAutoCreate      *bool
+	collection         *string
 	replication        *string
 	ttlSec             *int
 	chunkSizeLimitMB   *int
