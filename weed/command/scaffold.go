@@ -356,7 +356,8 @@ enabled = false
 directory = "/data"
 
 [sink.local_incremental]
-# all replicated files are under creation time as yyyy-mm-dd directories
+# all replicated files are under modified time as yyyy-mm-dd directories
+# so each date directory contains all new and updated files.
 enabled = false
 directory = "/backup"
 
