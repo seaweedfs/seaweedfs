@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
@@ -204,11 +205,20 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			}
 		}
 
+
+
 		// purge empty folders, only checking folders with deletions
-		for dir, deletionCount := range directoriesWithDeletion {
+		var allDirs []string
+		for dir, _ := range directoriesWithDeletion {
+			allDirs = append(allDirs, dir)
+		}
+		sort.Slice(allDirs, func(i, j int) bool {
+			return len(allDirs[i]) > len(allDirs[j])
+		})
+		for _, dir := range allDirs {
 			parentDir, dirName := util.FullPath(dir).DirAndName()
 			if err := doDeleteEntry(client, parentDir, dirName, false, false); err != nil {
-				glog.V(4).Infof("directory %s has %d deletion but still not empty: %v", dir, deletionCount, err)
+				glog.V(4).Infof("directory %s has %d deletion but still not empty: %v", dir, directoriesWithDeletion[dir], err)
 			}
 		}
 
