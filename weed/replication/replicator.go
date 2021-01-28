@@ -42,14 +42,14 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		return nil
 	}
 	var dateKey string
-	if r.sink.GetName() == "backup" {
-		var crTime int64
+	if r.sink.GetName() == "local_incremental" {
+		var mTime int64
 		if message.NewEntry != nil {
-			crTime = message.NewEntry.Attributes.Crtime
+			mTime = message.NewEntry.Attributes.Mtime
 		} else if message.OldEntry != nil {
-			crTime = message.OldEntry.Attributes.Crtime
+			mTime = message.OldEntry.Attributes.Mtime
 		}
-		dateKey = time.Unix(crTime, 0).Format("2006-01-02")
+		dateKey = time.Unix(mTime, 0).Format("2006-01-02")
 	}
 	newKey := util.Join(r.sink.GetSinkToDirectory(), dateKey, key[len(r.source.Dir):])
 	glog.V(3).Infof("replicate %s => %s", key, newKey)
