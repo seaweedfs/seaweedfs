@@ -205,8 +205,6 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			}
 		}
 
-
-
 		// purge empty folders, only checking folders with deletions
 		var allDirs []string
 		for dir, _ := range directoriesWithDeletion {
