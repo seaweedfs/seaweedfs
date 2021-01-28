@@ -43,13 +43,13 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 	}
 	var dateKey string
 	if r.sink.GetName() == "local_incremental" {
-		var mTime int64
+		var cTime int64
 		if message.NewEntry != nil {
-			mTime = message.NewEntry.Attributes.Mtime
+			cTime = message.NewEntry.Attributes.Crtime
 		} else if message.OldEntry != nil {
-			mTime = message.OldEntry.Attributes.Mtime
+			cTime = message.OldEntry.Attributes.Crtime
 		}
-		dateKey = time.Unix(mTime, 0).Format("2006-01-02")
+		dateKey = time.Unix(cTime, 0).Format("2006-01-02")
 	}
 	newKey := util.Join(r.sink.GetSinkToDirectory(), dateKey, key[len(r.source.Dir):])
 	glog.V(3).Infof("replicate %s => %s", key, newKey)

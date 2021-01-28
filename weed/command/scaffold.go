@@ -354,11 +354,10 @@ directory = "/buckets"
 [sink.local]
 enabled = false
 directory = "/data"
-todays_date_format = ""  # set this to 2006-02-01 for incremental backup
 
 [sink.local_incremental]
+# all replicated files are under creation time as yyyy-mm-dd directories
 enabled = false
-# all replicated files are under modification time date directory tree
 directory = "/backup"
 
 [sink.filer]

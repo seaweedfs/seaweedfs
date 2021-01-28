@@ -1,12 +1,11 @@
-package localincrementalsink
+package localsink
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
-	"github.com/chrislusf/seaweedfs/weed/replication/sink/localsink"
 )
 
 type LocalIncSink struct {
-	localsink.LocalSink
+	LocalSink
 }
 
 func (localincsink *LocalIncSink) GetName() string {
