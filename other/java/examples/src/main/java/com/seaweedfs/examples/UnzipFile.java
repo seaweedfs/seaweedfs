@@ -1,6 +1,6 @@
 package com.seaweedfs.examples;
 
-import seaweed.hdfs.SeaweedInputStream;
+import seaweed.hdfs.SeaweedHadoopInputStream;
 import seaweedfs.client.FilerClient;
 import seaweedfs.client.FilerGrpcClient;
 
@@ -24,7 +24,7 @@ public class UnzipFile {
 
         long localProcessTime = startTime2 - startTime;
 
-        SeaweedInputStream seaweedInputStream = new SeaweedInputStream(
+        SeaweedHadoopInputStream seaweedInputStream = new SeaweedHadoopInputStream(
                 filerGrpcClient,
                 new org.apache.hadoop.fs.FileSystem.Statistics(""),
                 "/",

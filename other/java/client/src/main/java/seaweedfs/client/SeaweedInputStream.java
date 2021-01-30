@@ -1,28 +1,22 @@
-package seaweed.hdfs;
+package seaweedfs.client;
 
 // based on org.apache.hadoop.fs.azurebfs.services.AbfsInputStream
 
-import org.apache.hadoop.fs.ByteBufferReadable;
-import org.apache.hadoop.fs.FSExceptionMessages;
-import org.apache.hadoop.fs.FSInputStream;
-import org.apache.hadoop.fs.FileSystem.Statistics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import seaweedfs.client.FilerGrpcClient;
-import seaweedfs.client.FilerProto;
-import seaweedfs.client.SeaweedRead;
 
 import java.io.EOFException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.util.List;
 
-public class SeaweedInputStream extends FSInputStream implements ByteBufferReadable {
+public class SeaweedInputStream extends InputStream {
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedInputStream.class);
+    private static final IOException EXCEPTION_STREAM_IS_CLOSED = new IOException("Stream is closed!");
 
     private final FilerGrpcClient filerGrpcClient;
-    private final Statistics statistics;
     private final String path;
     private final FilerProto.Entry entry;
     private final List<SeaweedRead.VisibleInterval> visibleIntervalList;
@@ -34,11 +28,9 @@ public class SeaweedInputStream extends FSInputStream implements ByteBufferReada
 
     public SeaweedInputStream(
             final FilerGrpcClient filerGrpcClient,
-            final Statistics statistics,
             final String path,
             final FilerProto.Entry entry) throws IOException {
         this.filerGrpcClient = filerGrpcClient;
-        this.statistics = statistics;
         this.path = path;
         this.entry = entry;
         this.contentLength = SeaweedRead.fileSize(entry);
@@ -86,7 +78,6 @@ public class SeaweedInputStream extends FSInputStream implements ByteBufferReada
     }
 
     // implement ByteBufferReadable
-    @Override
     public synchronized int read(ByteBuffer buf) throws IOException {
 
         if (position < 0) {
@@ -111,45 +102,32 @@ public class SeaweedInputStream extends FSInputStream implements ByteBufferReada
 
         if (bytesRead > 0) {
             this.position += bytesRead;
-            if (statistics != null) {
-                statistics.incrementBytesRead(bytesRead);
-            }
         }
 
         return (int) bytesRead;
     }
 
-    /**
-     * Seek to given position in stream.
-     *
-     * @param n position to seek to
-     * @throws IOException  if there is an error
-     * @throws EOFException if attempting to seek past end of file
-     */
-    @Override
     public synchronized void seek(long n) throws IOException {
         if (closed) {
-            throw new IOException(FSExceptionMessages.STREAM_IS_CLOSED);
+            throw EXCEPTION_STREAM_IS_CLOSED;
         }
         if (n < 0) {
-            throw new EOFException(FSExceptionMessages.NEGATIVE_SEEK);
+            throw new EOFException("Cannot seek to a negative offset");
         }
         if (n > contentLength) {
-            throw new EOFException(FSExceptionMessages.CANNOT_SEEK_PAST_EOF);
+            throw new EOFException("Attempted to seek or read past the end of the file");
         }
-
         this.position = n;
-
     }
 
     @Override
     public synchronized long skip(long n) throws IOException {
         if (closed) {
-            throw new IOException(FSExceptionMessages.STREAM_IS_CLOSED);
+            throw EXCEPTION_STREAM_IS_CLOSED;
         }
         if (this.position == contentLength) {
             if (n > 0) {
-                throw new EOFException(FSExceptionMessages.CANNOT_SEEK_PAST_EOF);
+                throw new EOFException("Attempted to seek or read past the end of the file");
             }
         }
         long newPos = this.position + n;
@@ -177,10 +155,9 @@ public class SeaweedInputStream extends FSInputStream implements ByteBufferReada
     @Override
     public synchronized int available() throws IOException {
         if (closed) {
-            throw new IOException(
-                    FSExceptionMessages.STREAM_IS_CLOSED);
+            throw EXCEPTION_STREAM_IS_CLOSED;
         }
-        final long remaining = this.contentLength - this.getPos();
+        final long remaining = this.contentLength - this.position;
         return remaining <= Integer.MAX_VALUE
                 ? (int) remaining : Integer.MAX_VALUE;
     }
@@ -195,33 +172,16 @@ public class SeaweedInputStream extends FSInputStream implements ByteBufferReada
      */
     public long length() throws IOException {
         if (closed) {
-            throw new IOException(FSExceptionMessages.STREAM_IS_CLOSED);
+            throw EXCEPTION_STREAM_IS_CLOSED;
         }
         return contentLength;
     }
 
-    /**
-     * Return the current offset from the start of the file
-     *
-     * @throws IOException throws {@link IOException} if there is an error
-     */
-    @Override
     public synchronized long getPos() throws IOException {
         if (closed) {
-            throw new IOException(FSExceptionMessages.STREAM_IS_CLOSED);
+            throw EXCEPTION_STREAM_IS_CLOSED;
         }
         return position;
-    }
-
-    /**
-     * Seeks a different copy of the data.  Returns true if
-     * found a new source, false otherwise.
-     *
-     * @throws IOException throws {@link IOException} if there is an error
-     */
-    @Override
-    public boolean seekToNewSource(long l) throws IOException {
-        return false;
     }
 
     @Override
@@ -229,31 +189,4 @@ public class SeaweedInputStream extends FSInputStream implements ByteBufferReada
         closed = true;
     }
 
-    /**
-     * Not supported by this stream. Throws {@link UnsupportedOperationException}
-     *
-     * @param readlimit ignored
-     */
-    @Override
-    public synchronized void mark(int readlimit) {
-        throw new UnsupportedOperationException("mark()/reset() not supported on this stream");
-    }
-
-    /**
-     * Not supported by this stream. Throws {@link UnsupportedOperationException}
-     */
-    @Override
-    public synchronized void reset() throws IOException {
-        throw new UnsupportedOperationException("mark()/reset() not supported on this stream");
-    }
-
-    /**
-     * gets whether mark and reset are supported by {@code ADLFileInputStream}. Always returns false.
-     *
-     * @return always {@code false}
-     */
-    @Override
-    public boolean markSupported() {
-        return false;
-    }
 }

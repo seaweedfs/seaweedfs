@@ -230,7 +230,7 @@ public class SeaweedFileSystemStore {
             throw new FileNotFoundException("read non-exist file " + path);
         }
 
-        return new SeaweedInputStream(filerGrpcClient,
+        return new SeaweedHadoopInputStream(filerGrpcClient,
             statistics,
             path.toUri().getPath(),
             entry);
