@@ -1,6 +1,7 @@
 package etcd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -145,14 +146,21 @@ func (store *EtcdStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 
 func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	directoryPrefix := genDirectoryKeyPrefix(dirPath, "")
+	lastFileStart := directoryPrefix
+	if startFileName != "" {
+		lastFileStart = genDirectoryKeyPrefix(dirPath, startFileName)
+	}
 
-	resp, err := store.client.Get(ctx, string(directoryPrefix),
+	resp, err := store.client.Get(ctx, string(lastFileStart),
 		clientv3.WithPrefix(), clientv3.WithSort(clientv3.SortByKey, clientv3.SortDescend))
 	if err != nil {
 		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
 	}
 
 	for _, kv := range resp.Kvs {
+		if !bytes.HasPrefix(kv.Key, directoryPrefix) {
+			break
+		}
 		fileName := getNameFromKey(kv.Key)
 		if fileName == "" {
 			continue
@@ -160,7 +168,6 @@ func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, dirPath weed_u
 		if fileName == startFileName && !includeStartFile {
 			continue
 		}
-		lastFileName = fileName
 		limit--
 		if limit < 0 {
 			break
@@ -176,6 +183,7 @@ func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, dirPath weed_u
 		if !eachEntryFunc(entry) {
 			break
 		}
+		lastFileName = fileName
 	}
 
 	return lastFileName, err

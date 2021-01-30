@@ -1,0 +1,84 @@
+# 2021-01-30 16:25:30
+version: '3.8'
+
+services:
+
+  etcd:
+    image: gasparekatapy/etcd
+    networks:
+      - net
+    deploy:
+      mode: replicated
+      replicas: 3
+
+  master:
+    image: chrislusf/seaweedfs:local
+    environment:
+      WEED_MASTER_FILER_DEFAULT: "filer:8888"
+      WEED_MASTER_SEQUENCER_TYPE: "raft"
+    ports:
+      - "9333:9333"
+      - "19333:19333"
+    networks:
+      - net
+    command:
+      - 'master'
+      - '-resumeState=true'
+      - '-ip=master'
+      - '-port=9333'
+    deploy:
+      mode: replicated
+      replicas: 1
+
+  filer:
+    image: chrislusf/seaweedfs:local
+    environment:
+      WEED_LEVELDB2_ENABLED: "false"
+      WEED_ETCD_ENABLED: "true"
+      WEED_ETCD_SERVERS: "etcd:2379"
+    ports:
+      - target: 8888
+        published: 8888
+        protocol: tcp
+        mode: host
+      - target: 18888
+        published: 18888
+        protocol: tcp
+        mode: host
+    networks:
+      - net
+    command:
+      - 'filer'
+      - '-ip=filer'
+      - '-port=8888'
+      - '-port.readonly=28888'
+      - '-master=master:9333'
+      - '-disableDirListing=true'
+    deploy:
+      mode: replicated
+      replicas: 1
+
+  volume:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - target: 8080
+        published: 8080
+        protocol: tcp
+        mode: host
+      - target: 18080
+        published: 18080
+        protocol: tcp
+        mode: host
+    networks:
+      - net
+    command:
+      - 'volume'
+      - '-mserver=master:9333'
+      - '-port=8080'
+    deploy:
+      mode: global
+
+  ###########################################################################
+
+networks:
+  net:

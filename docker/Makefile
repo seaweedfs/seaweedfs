@@ -30,5 +30,8 @@ cluster: build
 2clusters: build
 	docker-compose -f local-clusters-compose.yml -p seaweedfs up
 
+filer_etcd: build
+	docker stack deploy -c swarm-etcd.yml fs
+
 clean:
 	rm ./weed
