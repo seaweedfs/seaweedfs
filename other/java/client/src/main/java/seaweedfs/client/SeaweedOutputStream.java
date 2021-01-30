@@ -1,16 +1,9 @@
-package seaweed.hdfs;
+package seaweedfs.client;
 
 // adapted from org.apache.hadoop.fs.azurebfs.services.AbfsOutputStream
 
-import com.google.common.base.Preconditions;
-import org.apache.hadoop.fs.FSExceptionMessages;
-import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import seaweedfs.client.ByteBufferPool;
-import seaweedfs.client.FilerGrpcClient;
-import seaweedfs.client.FilerProto;
-import seaweedfs.client.SeaweedWrite;
 
 import java.io.IOException;
 import java.io.InterruptedIOException;
@@ -18,20 +11,18 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.concurrent.*;
 
-import static seaweed.hdfs.SeaweedFileSystemStore.getParentDirectory;
-
 public class SeaweedOutputStream extends OutputStream {
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedOutputStream.class);
 
     private final FilerGrpcClient filerGrpcClient;
-    private final Path path;
+    private final String path;
     private final int bufferSize;
     private final int maxConcurrentRequestCount;
     private final ThreadPoolExecutor threadExecutor;
     private final ExecutorCompletionService<Void> completionService;
     private final FilerProto.Entry.Builder entry;
-    private final boolean supportFlush = false; // true;
+    protected final boolean supportFlush = false; // true;
     private final ConcurrentLinkedDeque<WriteOperation> writeOperations;
     private long position;
     private boolean closed;
@@ -42,7 +33,7 @@ public class SeaweedOutputStream extends OutputStream {
     private long outputIndex;
     private String replication = "000";
 
-    public SeaweedOutputStream(FilerGrpcClient filerGrpcClient, final Path path, FilerProto.Entry.Builder entry,
+    public SeaweedOutputStream(FilerGrpcClient filerGrpcClient, final String path, FilerProto.Entry.Builder entry,
                                final long position, final int bufferSize, final String replication) {
         this.filerGrpcClient = filerGrpcClient;
         this.replication = replication;
@@ -70,6 +61,14 @@ public class SeaweedOutputStream extends OutputStream {
 
     }
 
+    public static String getParentDirectory(String path) {
+        if (path.equals("/")) {
+            return path;
+        }
+        int lastSlashIndex = path.lastIndexOf("/");
+        return path.substring(0, lastSlashIndex);
+    }
+
     private synchronized void flushWrittenBytesToServiceInternal(final long offset) throws IOException {
         try {
             SeaweedWrite.writeMeta(filerGrpcClient, getParentDirectory(path), entry);
@@ -89,7 +88,9 @@ public class SeaweedOutputStream extends OutputStream {
             throws IOException {
         maybeThrowLastError();
 
-        Preconditions.checkArgument(data != null, "null data");
+        if (data == null) {
+            return;
+        }
 
         if (off < 0 || length < 0 || length > data.length - off) {
             throw new IndexOutOfBoundsException();
@@ -152,7 +153,7 @@ public class SeaweedOutputStream extends OutputStream {
             flushInternal();
             threadExecutor.shutdown();
         } finally {
-            lastError = new IOException(FSExceptionMessages.STREAM_IS_CLOSED);
+            lastError = new IOException("Stream is closed!");
             ByteBufferPool.release(buffer);
             buffer = null;
             outputIndex = 0;
@@ -185,7 +186,7 @@ public class SeaweedOutputStream extends OutputStream {
         }
         final Future<Void> job = completionService.submit(() -> {
             // System.out.println(path + " is going to save [" + (writePosition) + "," + ((writePosition) + bytesLength) + ")");
-            SeaweedWrite.writeData(entry, replication, filerGrpcClient, writePosition, bufferToWrite.array(), bufferToWrite.position(), bufferToWrite.limit(), path.toUri().getPath());
+            SeaweedWrite.writeData(entry, replication, filerGrpcClient, writePosition, bufferToWrite.array(), bufferToWrite.position(), bufferToWrite.limit(), path);
             // System.out.println(path + " saved [" + (writePosition) + "," + ((writePosition) + bytesLength) + ")");
             ByteBufferPool.release(bufferToWrite);
             return null;
@@ -239,13 +240,13 @@ public class SeaweedOutputStream extends OutputStream {
         }
     }
 
-    private synchronized void flushInternal() throws IOException {
+    protected synchronized void flushInternal() throws IOException {
         maybeThrowLastError();
         writeCurrentBufferToService();
         flushWrittenBytesToService();
     }
 
-    private synchronized void flushInternalAsync() throws IOException {
+    protected synchronized void flushInternalAsync() throws IOException {
         maybeThrowLastError();
         writeCurrentBufferToService();
         flushWrittenBytesToServiceAsync();
@@ -278,10 +279,6 @@ public class SeaweedOutputStream extends OutputStream {
         private final long length;
 
         WriteOperation(final Future<Void> task, final long startOffset, final long length) {
-            Preconditions.checkNotNull(task, "task");
-            Preconditions.checkArgument(startOffset >= 0, "startOffset");
-            Preconditions.checkArgument(length >= 0, "length");
-
             this.task = task;
             this.startOffset = startOffset;
             this.length = length;
