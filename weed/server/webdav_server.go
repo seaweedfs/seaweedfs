@@ -105,7 +105,10 @@ type WebDavFile struct {
 
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 
-	chunkCache := chunk_cache.NewTieredChunkCache(256, option.CacheDir, option.CacheSizeMB, 1024*1024)
+	cacheUniqueId := util.Md5String([]byte("webdav" + option.FilerGrpcAddress + util.Version()))[0:8]
+	cacheDir := path.Join(option.CacheDir, cacheUniqueId)
+
+	chunkCache := chunk_cache.NewTieredChunkCache(256, cacheDir, option.CacheSizeMB, 1024*1024)
 	return &WebDavFileSystem{
 		option:     option,
 		chunkCache: chunkCache,
