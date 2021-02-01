@@ -185,8 +185,6 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 			continue
 		}
 
-		lastFileName = fileName
-
 		value := cell.Value
 
 		if fileName == startFileName && !includeStartFile {
@@ -197,6 +195,9 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 		if limit < 0 {
 			break
 		}
+
+		lastFileName = fileName
+
 		entry := &filer.Entry{
 			FullPath: fullpath,
 		}

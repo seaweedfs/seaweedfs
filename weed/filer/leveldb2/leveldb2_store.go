@@ -196,11 +196,11 @@ func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, di
 		if fileName == startFileName && !includeStartFile {
 			continue
 		}
-		lastFileName = fileName
 		limit--
 		if limit < 0 {
 			break
 		}
+		lastFileName = fileName
 		entry := &filer.Entry{
 			FullPath: weed_util.NewFullPath(string(dirPath), fileName),
 		}
