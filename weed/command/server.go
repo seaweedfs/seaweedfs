@@ -24,6 +24,7 @@ var (
 	masterOptions    MasterOptions
 	filerOptions     FilerOptions
 	s3Options        S3Options
+	webdavOptions    WebDavOption
 	msgBrokerOptions MessageBrokerOptions
 )
 
@@ -65,6 +66,7 @@ var (
 	isStartingVolumeServer = cmdServer.Flag.Bool("volume", true, "whether to start volume server")
 	isStartingFiler        = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 	isStartingS3           = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
+	isStartingWebDav       = cmdServer.Flag.Bool("webdav", false, "whether to start WebDAV gateway")
 	isStartingMsgBroker    = cmdServer.Flag.Bool("msgBroker", false, "whether to start message broker")
 
 	serverWhiteList []string
@@ -116,6 +118,13 @@ func init() {
 	s3Options.config = cmdServer.Flag.String("s3.config", "", "path to the config file")
 	s3Options.allowEmptyFolder = cmdServer.Flag.Bool("s3.allowEmptyFolder", false, "allow empty folders")
 
+	webdavOptions.port = cmdServer.Flag.Int("webdav.port", 7333, "webdav server http listen port")
+	webdavOptions.collection = cmdServer.Flag.String("webdav.collection", "", "collection to create the files")
+	webdavOptions.tlsPrivateKey = cmdServer.Flag.String("webdav.key.file", "", "path to the TLS private key file")
+	webdavOptions.tlsCertificate = cmdServer.Flag.String("webdav.cert.file", "", "path to the TLS certificate file")
+	webdavOptions.cacheDir = cmdServer.Flag.String("webdav.cacheDir", os.TempDir(), "local cache directory for file chunks")
+	webdavOptions.cacheSizeMB = cmdServer.Flag.Int64("webdav.cacheCapacityMB", 1000, "local cache capacity in MB")
+
 	msgBrokerOptions.port = cmdServer.Flag.Int("msgBroker.port", 17777, "broker gRPC listen port")
 
 }
@@ -135,6 +144,9 @@ func runServer(cmd *Command, args []string) bool {
 	}
 
 	if *isStartingS3 {
+		*isStartingFiler = true
+	}
+	if *isStartingWebDav {
 		*isStartingFiler = true
 	}
 	if *isStartingMsgBroker {
@@ -171,6 +183,7 @@ func runServer(cmd *Command, args []string) bool {
 
 	filerAddress := fmt.Sprintf("%s:%d", *serverIp, *filerOptions.port)
 	s3Options.filer = &filerAddress
+	webdavOptions.filer = &filerAddress
 	msgBrokerOptions.filer = &filerAddress
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
@@ -208,6 +221,15 @@ func runServer(cmd *Command, args []string) bool {
 			time.Sleep(2 * time.Second)
 
 			s3Options.startS3Server()
+
+		}()
+	}
+
+	if *isStartingWebDav {
+		go func() {
+			time.Sleep(2 * time.Second)
+
+			webdavOptions.startWebDav()
 
 		}()
 	}

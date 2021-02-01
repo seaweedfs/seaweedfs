@@ -108,6 +108,7 @@ func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 	cacheUniqueId := util.Md5String([]byte("webdav" + option.FilerGrpcAddress + util.Version()))[0:8]
 	cacheDir := path.Join(option.CacheDir, cacheUniqueId)
 
+	os.MkdirAll(cacheDir, os.FileMode(0755))
 	chunkCache := chunk_cache.NewTieredChunkCache(256, cacheDir, option.CacheSizeMB, 1024*1024)
 	return &WebDavFileSystem{
 		option:     option,

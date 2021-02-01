@@ -3,6 +3,7 @@ package command
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -19,9 +20,11 @@ import (
 )
 
 var (
-	f              FilerOptions
-	filerStartS3   *bool
-	filerS3Options S3Options
+	f                  FilerOptions
+	filerStartS3       *bool
+	filerS3Options     S3Options
+	filerStartWebDav   *bool
+	filerWebDavOptions WebDavOption
 )
 
 type FilerOptions struct {
@@ -75,6 +78,15 @@ func init() {
 	filerS3Options.tlsCertificate = cmdFiler.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
 	filerS3Options.config = cmdFiler.Flag.String("s3.config", "", "path to the config file")
 	filerS3Options.allowEmptyFolder = cmdFiler.Flag.Bool("s3.allowEmptyFolder", false, "allow empty folders")
+
+	// start webdav on filer
+	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
+	filerWebDavOptions.port = cmdFiler.Flag.Int("webdav.port", 7333, "webdav server http listen port")
+	filerWebDavOptions.collection = cmdFiler.Flag.String("webdav.collection", "", "collection to create the files")
+	filerWebDavOptions.tlsPrivateKey = cmdFiler.Flag.String("webdav.key.file", "", "path to the TLS private key file")
+	filerWebDavOptions.tlsCertificate = cmdFiler.Flag.String("webdav.cert.file", "", "path to the TLS certificate file")
+	filerWebDavOptions.cacheDir = cmdFiler.Flag.String("webdav.cacheDir", os.TempDir(), "local cache directory for file chunks")
+	filerWebDavOptions.cacheSizeMB = cmdFiler.Flag.Int64("webdav.cacheCapacityMB", 1000, "local cache capacity in MB")
 }
 
 var cmdFiler = &Command{
@@ -111,6 +123,15 @@ func runFiler(cmd *Command, args []string) bool {
 		go func() {
 			time.Sleep(2 * time.Second)
 			filerS3Options.startS3Server()
+		}()
+	}
+
+	if *filerStartWebDav {
+		filerAddress := fmt.Sprintf("%s:%d", *f.ip, *f.port)
+		filerWebDavOptions.filer = &filerAddress
+		go func() {
+			time.Sleep(2 * time.Second)
+			filerWebDavOptions.startWebDav()
 		}()
 	}
 
