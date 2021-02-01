@@ -33,3 +33,12 @@ services:
       - master
       - volume
       - filer
+  webdav:
+    image: chrislusf/seaweedfs:dev # use a remote dev image
+    ports:
+      - 7333:7333
+    command: 'webdav -filer="filer:8888"'
+    depends_on:
+      - master
+      - volume
+      - filer
