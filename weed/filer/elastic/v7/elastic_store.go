@@ -218,7 +218,6 @@ func (store *ElasticStore) listRootDirectoryEntries(ctx context.Context, startFi
 			if entry, err := store.FindEntry(ctx,
 				weed_util.FullPath("/"+strings.Replace(index.Index, indexPrefix, "", 1))); err == nil {
 				fileName := getFileName(entry.FullPath)
-				lastFileName = fileName
 				if fileName == startFileName && !inclusive {
 					continue
 				}
@@ -229,6 +228,7 @@ func (store *ElasticStore) listRootDirectoryEntries(ctx context.Context, startFi
 				if !eachEntryFunc(entry) {
 					break
 				}
+				lastFileName = fileName
 			}
 		}
 	}
@@ -278,13 +278,13 @@ func (store *ElasticStore) listDirectoryEntries(
 				}
 				nextStart = string(esEntry.Entry.FullPath)
 				fileName := getFileName(esEntry.Entry.FullPath)
-				lastFileName = fileName
 				if fileName == startFileName && !inclusive {
 					continue
 				}
 				if !eachEntryFunc(esEntry.Entry) {
 					break
 				}
+				lastFileName = fileName
 			}
 		}
 	}
