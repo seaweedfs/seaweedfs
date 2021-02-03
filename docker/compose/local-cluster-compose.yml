@@ -19,12 +19,32 @@ services:
       - 9335:9335
       - 19335:19335
     command: "master -ip=master2 -port=9335 -peers=master0:9333,master1:9334,master2:9335 -mdir=/data/m3"
-  volume:
+  volume1:
     image: chrislusf/seaweedfs:local
     ports:
       - 8080:8080
       - 18080:18080
-    command: 'volume -mserver="master0:9333,master1:9334,master2:9335" -port=8080 -ip=volume -publicUrl=localhost:8080'
+    command: 'volume -mserver="master0:9333,master1:9334,master2:9335" -port=8080 -ip=volume1 -publicUrl=localhost:8080'
+    depends_on:
+      - master0
+      - master1
+      - master2
+  volume2:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8082:8082
+      - 18082:18082
+    command: 'volume -mserver="master0:9333,master1:9334,master2:9335" -port=8082 -ip=volume2 -publicUrl=localhost:8082'
+    depends_on:
+      - master0
+      - master1
+      - master2
+  volume3:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8083:8083
+      - 18083:18083
+    command: 'volume -mserver="master0:9333,master1:9334,master2:9335" -port=8083 -ip=volume3 -publicUrl=localhost:8083'
     depends_on:
       - master0
       - master1
@@ -39,7 +59,8 @@ services:
       - master0
       - master1
       - master2
-      - volume
+      - volume1
+      - volume2
   s3:
     image: chrislusf/seaweedfs:local
     ports:
@@ -49,5 +70,6 @@ services:
       - master0
       - master1
       - master2
-      - volume
+      - volume1
+      - volume2
       - filer
