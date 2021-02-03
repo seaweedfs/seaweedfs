@@ -121,7 +121,7 @@ func (k *GoCDKPubSubInput) ReceiveMessage() (key string, message *filer_pb.Event
 			var delivery amqp.Delivery
 			if msg.As(&delivery) {
 				isRedelivered = delivery.Redelivered
-				glog.Warning("onFailureFn() metadata: %+v, redelivered: %v", msg.Metadata, delivery.Redelivered)
+				glog.Warningf("onFailureFn() metadata: %+v, redelivered: %v", msg.Metadata, delivery.Redelivered)
 			}
 			if isRedelivered {
 				if err := delivery.Nack(false, false); err != nil {
