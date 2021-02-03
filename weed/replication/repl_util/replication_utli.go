@@ -17,9 +17,10 @@ func CopyFromChunkViews(chunkViews []*filer.ChunkView, filerSource *source.Filer
 		}
 
 		var writeErr error
+		var shouldRetry bool
 
 		for _, fileUrl := range fileUrls {
-			_, err = util.ReadUrlAsStream(fileUrl+"?readDeleted=true", nil, false, chunk.IsFullChunk(), chunk.Offset, int(chunk.Size), func(data []byte) {
+			shouldRetry, err = util.ReadUrlAsStream(fileUrl+"?readDeleted=true", nil, false, chunk.IsFullChunk(), chunk.Offset, int(chunk.Size), func(data []byte) {
 				writeErr = writeFunc(data)
 			})
 			if err != nil {
@@ -30,11 +31,12 @@ func CopyFromChunkViews(chunkViews []*filer.ChunkView, filerSource *source.Filer
 				break
 			}
 		}
-
-		if err != nil {
+		if shouldRetry && err != nil {
 			return err
 		}
-
+		if writeErr != nil {
+			return writeErr
+		}
 	}
 	return nil
 }

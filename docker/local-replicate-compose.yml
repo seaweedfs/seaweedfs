@@ -57,3 +57,5 @@ services:
       - 5672:5672
       - 15671:15671
       - 15672:15672
+    environment:
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit log_levels [{connection,error},{queue,debug}]"
