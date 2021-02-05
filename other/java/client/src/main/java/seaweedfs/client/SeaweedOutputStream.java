@@ -84,6 +84,11 @@ public class SeaweedOutputStream extends OutputStream {
     }
 
     public static String getParentDirectory(String path) {
+        int protoIndex = path.indexOf("://");
+        if (protoIndex >= 0) {
+            int pathStart = path.indexOf("/", protoIndex+3);
+            path = path.substring(pathStart);
+        }
         if (path.equals("/")) {
             return path;
         }
