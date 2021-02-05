@@ -23,7 +23,7 @@ public class UnzipFile {
         long localProcessTime = startTime2 - startTime;
 
         SeaweedInputStream seaweedInputStream = new SeaweedInputStream(
-                filerGrpcClient, "/", "test.zip");
+                filerGrpcClient, "/test.zip");
         parseZip(seaweedInputStream);
 
         long swProcessTime = System.currentTimeMillis() - startTime2;

@@ -28,11 +28,13 @@ public class SeaweedInputStream extends InputStream {
 
     public SeaweedInputStream(
             final FilerGrpcClient filerGrpcClient,
-            final String dir, final String name) throws IOException {
+            final String fullpath) throws IOException {
         this.filerGrpcClient = filerGrpcClient;
-        this.path = dir;
+        this.path = fullpath;
         FilerClient filerClient = new FilerClient(filerGrpcClient);
-        this.entry = filerClient.lookupEntry(dir, name);
+        this.entry = filerClient.lookupEntry(
+                SeaweedOutputStream.getParentDirectory(fullpath),
+                SeaweedOutputStream.getFileName(fullpath));
         this.contentLength = SeaweedRead.fileSize(entry);
 
         this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerGrpcClient, entry.getChunksList());
