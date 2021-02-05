@@ -28,6 +28,21 @@ public class SeaweedInputStream extends InputStream {
 
     public SeaweedInputStream(
             final FilerGrpcClient filerGrpcClient,
+            final String dir, final String name) throws IOException {
+        this.filerGrpcClient = filerGrpcClient;
+        this.path = dir;
+        FilerClient filerClient = new FilerClient(filerGrpcClient);
+        this.entry = filerClient.lookupEntry(dir, name);
+        this.contentLength = SeaweedRead.fileSize(entry);
+
+        this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerGrpcClient, entry.getChunksList());
+
+        LOG.debug("new path:{} entry:{} visibleIntervalList:{}", path, entry, visibleIntervalList);
+
+    }
+
+    public SeaweedInputStream(
+            final FilerGrpcClient filerGrpcClient,
             final String path,
             final FilerProto.Entry entry) throws IOException {
         this.filerGrpcClient = filerGrpcClient;
