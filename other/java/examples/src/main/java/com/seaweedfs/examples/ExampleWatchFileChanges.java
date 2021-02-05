@@ -7,7 +7,7 @@ import java.io.IOException;
 import java.util.Date;
 import java.util.Iterator;
 
-public class WatchFiles {
+public class ExampleWatchFileChanges {
 
     public static void main(String[] args) throws IOException {
 

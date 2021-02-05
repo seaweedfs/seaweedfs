@@ -9,7 +9,7 @@ import java.io.InputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-public class WriteFile {
+public class ExampleWriteFile {
 
     public static void main(String[] args) throws IOException {
 
