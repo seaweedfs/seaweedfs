@@ -21,8 +21,9 @@ public class SeaweedOutputStream extends OutputStream {
     private final int maxConcurrentRequestCount;
     private final ThreadPoolExecutor threadExecutor;
     private final ExecutorCompletionService<Void> completionService;
-    private final FilerProto.Entry.Builder entry;
     private final ConcurrentLinkedDeque<WriteOperation> writeOperations;
+    private final boolean shouldSaveMetadata = false;
+    private FilerProto.Entry.Builder entry;
     private long position;
     private boolean closed;
     private volatile IOException lastError;
@@ -31,49 +32,13 @@ public class SeaweedOutputStream extends OutputStream {
     private ByteBuffer buffer;
     private long outputIndex;
     private String replication = "000";
-    private boolean shouldSaveMetadata = false;
 
     public SeaweedOutputStream(FilerGrpcClient filerGrpcClient, final String fullpath) {
         this(filerGrpcClient, fullpath, "000");
     }
 
     public SeaweedOutputStream(FilerGrpcClient filerGrpcClient, final String fullpath, final String replication) {
-        this.replication = replication;
-        this.filerGrpcClient = filerGrpcClient;
-        this.path = fullpath;
-        this.position = 0;
-        this.closed = false;
-        this.lastError = null;
-        this.lastFlushOffset = 0;
-        this.bufferSize = 8 * 1024 * 1024;
-        this.buffer = ByteBufferPool.request(bufferSize);
-        this.outputIndex = 0;
-        this.writeOperations = new ConcurrentLinkedDeque<>();
-
-        this.maxConcurrentRequestCount = Runtime.getRuntime().availableProcessors();
-
-        this.threadExecutor
-                = new ThreadPoolExecutor(maxConcurrentRequestCount,
-                maxConcurrentRequestCount,
-                120L,
-                TimeUnit.SECONDS,
-                new LinkedBlockingQueue<Runnable>());
-        this.completionService = new ExecutorCompletionService<>(this.threadExecutor);
-
-        long now = System.currentTimeMillis() / 1000L;
-
-        this.entry = FilerProto.Entry.newBuilder()
-                .setName(getFileName(path))
-                .setIsDirectory(false)
-                .setAttributes(FilerProto.FuseAttributes.newBuilder()
-                        .setFileMode(0755)
-                        .setReplication(replication)
-                        .setCrtime(now)
-                        .setMtime(now)
-                        .clearGroupName()
-                );
-        this.shouldSaveMetadata = true;
-
+        this(filerGrpcClient, fullpath, null, 0, 8 * 1024 * 1024, "000");
     }
 
     public SeaweedOutputStream(FilerGrpcClient filerGrpcClient, final String path, FilerProto.Entry.Builder entry,
@@ -101,6 +66,20 @@ public class SeaweedOutputStream extends OutputStream {
         this.completionService = new ExecutorCompletionService<>(this.threadExecutor);
 
         this.entry = entry;
+        if (this.entry == null) {
+            long now = System.currentTimeMillis() / 1000L;
+
+            this.entry = FilerProto.Entry.newBuilder()
+                    .setName(getFileName(path))
+                    .setIsDirectory(false)
+                    .setAttributes(FilerProto.FuseAttributes.newBuilder()
+                            .setFileMode(0755)
+                            .setReplication(replication)
+                            .setCrtime(now)
+                            .setMtime(now)
+                            .clearGroupName()
+                    );
+        }
 
     }
 
@@ -120,7 +99,7 @@ public class SeaweedOutputStream extends OutputStream {
             return path;
         }
         int lastSlashIndex = path.lastIndexOf("/");
-        return path.substring(lastSlashIndex+1);
+        return path.substring(lastSlashIndex + 1);
     }
 
     private synchronized void flushWrittenBytesToServiceInternal(final long offset) throws IOException {
@@ -216,10 +195,6 @@ public class SeaweedOutputStream extends OutputStream {
             if (!threadExecutor.isShutdown()) {
                 threadExecutor.shutdownNow();
             }
-        }
-
-        if (shouldSaveMetadata) {
-            SeaweedWrite.writeMeta(filerGrpcClient, getParentDirectory(path), entry);
         }
 
     }
