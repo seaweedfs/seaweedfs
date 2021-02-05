@@ -122,7 +122,7 @@ public class SeaweedRead {
                 } else if (filerGrpcClient.isAccessVolumeServerByFilerProxy()) {
                     host = filerGrpcClient.getFilerAddress();
                 }
-                String url = String.format("http://%s/%s", location.getUrl(), chunkView.fileId);
+                String url = String.format("http://%s/%s", host, chunkView.fileId);
                 try {
                     data = doFetchOneFullChunkData(chunkView, url);
                     lastException = null;
