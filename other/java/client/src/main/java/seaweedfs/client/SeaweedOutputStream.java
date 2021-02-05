@@ -14,7 +14,7 @@ import java.util.concurrent.*;
 public class SeaweedOutputStream extends OutputStream {
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedOutputStream.class);
-    protected final boolean supportFlush = false; // true;
+    protected final boolean supportFlush = true;
     private final FilerGrpcClient filerGrpcClient;
     private final String path;
     private final int bufferSize;
