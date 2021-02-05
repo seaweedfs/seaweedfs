@@ -71,7 +71,7 @@ public class SeaweedRead {
                 return 0;
             }
 
-            int len = readChunkView(startOffset, buf, chunkView, locations);
+            int len = readChunkView(filerGrpcClient, startOffset, buf, chunkView, locations);
 
             LOG.debug("read [{},{}) {} size {}", startOffset, startOffset + len, chunkView.fileId, chunkView.size);
 
@@ -93,12 +93,12 @@ public class SeaweedRead {
         return readCount;
     }
 
-    private static int readChunkView(long startOffset, ByteBuffer buf, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
+    private static int readChunkView(FilerGrpcClient filerGrpcClient, long startOffset, ByteBuffer buf, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
 
         byte[] chunkData = chunkCache.getChunk(chunkView.fileId);
 
         if (chunkData == null) {
-            chunkData = doFetchFullChunkData(chunkView, locations);
+            chunkData = doFetchFullChunkData(filerGrpcClient, chunkView, locations);
             chunkCache.setChunk(chunkView.fileId, chunkData);
         }
 
@@ -110,12 +110,18 @@ public class SeaweedRead {
         return len;
     }
 
-    public static byte[] doFetchFullChunkData(ChunkView chunkView, FilerProto.Locations locations) throws IOException {
+    public static byte[] doFetchFullChunkData(FilerGrpcClient filerGrpcClient, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
 
         byte[] data = null;
         IOException lastException = null;
         for (long waitTime = 1000L; waitTime < 10 * 1000; waitTime += waitTime / 2) {
             for (FilerProto.Location location : locations.getLocationsList()) {
+                String host = location.getUrl();
+                if (filerGrpcClient.isAccessVolumeServerByPublicUrl()) {
+                    host = location.getPublicUrl();
+                } else if (filerGrpcClient.isAccessVolumeServerByFilerProxy()) {
+                    host = filerGrpcClient.getFilerAddress();
+                }
                 String url = String.format("http://%s/%s", location.getUrl(), chunkView.fileId);
                 try {
                     data = doFetchOneFullChunkData(chunkView, url);
@@ -145,7 +151,7 @@ public class SeaweedRead {
 
     }
 
-    public static byte[] doFetchOneFullChunkData(ChunkView chunkView, String url) throws IOException {
+    private static byte[] doFetchOneFullChunkData(ChunkView chunkView, String url) throws IOException {
 
         HttpGet request = new HttpGet(url);
 

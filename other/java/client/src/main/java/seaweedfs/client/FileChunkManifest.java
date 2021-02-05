@@ -74,7 +74,7 @@ public class FileChunkManifest {
         byte[] chunkData = SeaweedRead.chunkCache.getChunk(chunkView.fileId);
         if (chunkData == null) {
             LOG.debug("doFetchFullChunkData:{}", chunkView);
-            chunkData = SeaweedRead.doFetchFullChunkData(chunkView, locations);
+            chunkData = SeaweedRead.doFetchFullChunkData(filerGrpcClient, chunkView, locations);
         }
         if (chunk.getIsChunkManifest()){
             LOG.debug("chunk {} size {}", chunkView.fileId, chunkData.length);
