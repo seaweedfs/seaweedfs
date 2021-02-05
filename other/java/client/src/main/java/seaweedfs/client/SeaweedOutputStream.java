@@ -34,6 +34,11 @@ public class SeaweedOutputStream extends OutputStream {
     private boolean shouldSaveMetadata = false;
 
     public SeaweedOutputStream(FilerGrpcClient filerGrpcClient, final String fullpath) {
+        this(filerGrpcClient, fullpath, "000");
+    }
+
+    public SeaweedOutputStream(FilerGrpcClient filerGrpcClient, final String fullpath, final String replication) {
+        this.replication = replication;
         this.filerGrpcClient = filerGrpcClient;
         this.path = fullpath;
         this.position = 0;
