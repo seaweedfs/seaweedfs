@@ -26,6 +26,7 @@ public class SeaweedFileSystem extends FileSystem {
     public static final int FS_SEAWEED_DEFAULT_PORT = 8888;
     public static final String FS_SEAWEED_BUFFER_SIZE = "fs.seaweed.buffer.size";
     public static final String FS_SEAWEED_REPLICATION = "fs.seaweed.replication";
+    public static final String FS_SEAWEED_VOLUME_SERVER_ACCESS = "fs.seaweed.volume.server.access";
     public static final int FS_SEAWEED_DEFAULT_BUFFER_SIZE = 4 * 1024 * 1024;
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedFileSystem.class);

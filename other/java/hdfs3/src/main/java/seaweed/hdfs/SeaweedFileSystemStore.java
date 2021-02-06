@@ -18,8 +18,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import static seaweed.hdfs.SeaweedFileSystem.FS_SEAWEED_BUFFER_SIZE;
-import static seaweed.hdfs.SeaweedFileSystem.FS_SEAWEED_DEFAULT_BUFFER_SIZE;
+import static seaweed.hdfs.SeaweedFileSystem.*;
 
 public class SeaweedFileSystemStore {
 
@@ -34,6 +33,13 @@ public class SeaweedFileSystemStore {
         filerGrpcClient = new FilerGrpcClient(host, grpcPort);
         filerClient = new FilerClient(filerGrpcClient);
         this.conf = conf;
+        String volumeServerAccessMode = this.conf.get(FS_SEAWEED_VOLUME_SERVER_ACCESS, "direct");
+        if (volumeServerAccessMode.equals("publicUrl")) {
+            filerGrpcClient.setAccessVolumeServerByPublicUrl();
+        } else if (volumeServerAccessMode.equals("filerProxy")) {
+            filerGrpcClient.setAccessVolumeServerByFilerProxy();
+        }
+
     }
 
     public void close() {
