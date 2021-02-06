@@ -116,13 +116,7 @@ public class SeaweedRead {
         IOException lastException = null;
         for (long waitTime = 1000L; waitTime < 10 * 1000; waitTime += waitTime / 2) {
             for (FilerProto.Location location : locations.getLocationsList()) {
-                String host = location.getUrl();
-                if (filerGrpcClient.isAccessVolumeServerByPublicUrl()) {
-                    host = location.getPublicUrl();
-                } else if (filerGrpcClient.isAccessVolumeServerByFilerProxy()) {
-                    host = filerGrpcClient.getFilerAddress();
-                }
-                String url = String.format("http://%s/%s", host, chunkView.fileId);
+                String url = filerGrpcClient.getChunkUrl(chunkView.fileId, location.getUrl(), location.getPublicUrl());
                 try {
                     data = doFetchOneFullChunkData(chunkView, url);
                     lastException = null;

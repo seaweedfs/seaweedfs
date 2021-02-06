@@ -53,13 +53,7 @@ public class SeaweedWrite {
         String fileId = response.getFileId();
         String auth = response.getAuth();
 
-        String host = response.getUrl();
-        if (filerGrpcClient.isAccessVolumeServerByPublicUrl()) {
-            host = response.getPublicUrl();
-        } else if (filerGrpcClient.isAccessVolumeServerByFilerProxy()) {
-            host = filerGrpcClient.getFilerAddress();
-        }
-        String targetUrl = String.format("http://%s/%s", host, fileId);
+        String targetUrl = filerGrpcClient.getChunkUrl(fileId, response.getUrl(), response.getPublicUrl());
 
         ByteString cipherKeyString = com.google.protobuf.ByteString.EMPTY;
         byte[] cipherKey = null;
