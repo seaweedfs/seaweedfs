@@ -27,7 +27,7 @@ func (vs *VolumeServer) VolumeIncrementalCopy(req *volume_server_pb.VolumeIncrem
 		return nil
 	}
 
-	startOffset := foundOffset.ToAcutalOffset()
+	startOffset := foundOffset.ToActualOffset()
 
 	buf := make([]byte, 1024*1024*2)
 	return sendFileContent(v.DataBackend, buf, startOffset, int64(stopOffset), stream)

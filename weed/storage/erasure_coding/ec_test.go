@@ -93,7 +93,7 @@ func assertSame(datFile *os.File, datSize int64, ecFiles []*os.File, offset type
 func readDatFile(datFile *os.File, offset types.Offset, size types.Size) ([]byte, error) {
 
 	data := make([]byte, size)
-	n, err := datFile.ReadAt(data, offset.ToAcutalOffset())
+	n, err := datFile.ReadAt(data, offset.ToActualOffset())
 	if err != nil {
 		return nil, fmt.Errorf("failed to ReadAt dat file: %v", err)
 	}
@@ -105,7 +105,7 @@ func readDatFile(datFile *os.File, offset types.Offset, size types.Size) ([]byte
 
 func readEcFile(datSize int64, ecFiles []*os.File, offset types.Offset, size types.Size) (data []byte, err error) {
 
-	intervals := LocateData(largeBlockSize, smallBlockSize, datSize, offset.ToAcutalOffset(), size)
+	intervals := LocateData(largeBlockSize, smallBlockSize, datSize, offset.ToActualOffset(), size)
 
 	for i, interval := range intervals {
 		if d, e := readOneInterval(interval, ecFiles); e != nil {
