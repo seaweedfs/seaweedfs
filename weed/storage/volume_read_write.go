@@ -410,7 +410,7 @@ type VolumeFileScanner interface {
 }
 
 func ScanVolumeFile(dirname string, collection string, id needle.VolumeId,
-	needleMapKind NeedleMapType,
+	needleMapKind NeedleMapKind,
 	volumeFileScanner VolumeFileScanner) (err error) {
 	var v *Volume
 	if v, err = loadVolumeWithoutIndex(dirname, collection, id, needleMapKind); err != nil {
