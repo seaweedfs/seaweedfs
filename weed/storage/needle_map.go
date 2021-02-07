@@ -11,10 +11,10 @@ import (
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
-type NeedleMapType int
+type NeedleMapKind int
 
 const (
-	NeedleMapInMemory      NeedleMapType = iota
+	NeedleMapInMemory      NeedleMapKind = iota
 	NeedleMapLevelDb                     // small memory footprint, 4MB total, 1 write buffer, 3 block buffer
 	NeedleMapLevelDbMedium               // medium memory footprint, 8MB total, 3 write buffer, 5 block buffer
 	NeedleMapLevelDbLarge                // large memory footprint, 12MB total, 4write buffer, 8 block buffer
