@@ -115,7 +115,7 @@ func (store *LevelDB2Store) FindEntry(ctx context.Context, fullpath weed_util.Fu
 		return nil, filer_pb.ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get %s : %v", entry.FullPath, err)
+		return nil, fmt.Errorf("get %s : %v", fullpath, err)
 	}
 
 	entry = &filer.Entry{
@@ -171,15 +171,17 @@ func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath w
 	return nil
 }
 
-func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool,
-	limit int) (entries []*filer.Entry, err error) {
-	return store.ListDirectoryPrefixedEntries(ctx, fullpath, startFileName, inclusive, limit, "")
+func (store *LevelDB2Store) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "", eachEntryFunc)
 }
 
-func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, err error) {
+func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
-	directoryPrefix, partitionId := genDirectoryKeyPrefix(fullpath, prefix, store.dbCount)
-	lastFileStart, _ := genDirectoryKeyPrefix(fullpath, startFileName, store.dbCount)
+	directoryPrefix, partitionId := genDirectoryKeyPrefix(dirPath, prefix, store.dbCount)
+	lastFileStart := directoryPrefix
+	if startFileName != "" {
+		lastFileStart, _ = genDirectoryKeyPrefix(dirPath, startFileName, store.dbCount)
+	}
 
 	iter := store.dbs[partitionId].NewIterator(&leveldb_util.Range{Start: lastFileStart}, nil)
 	for iter.Next() {
@@ -191,15 +193,16 @@ func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, fu
 		if fileName == "" {
 			continue
 		}
-		if fileName == startFileName && !inclusive {
+		if fileName == startFileName && !includeStartFile {
 			continue
 		}
 		limit--
 		if limit < 0 {
 			break
 		}
+		lastFileName = fileName
 		entry := &filer.Entry{
-			FullPath: weed_util.NewFullPath(string(fullpath), fileName),
+			FullPath: weed_util.NewFullPath(string(dirPath), fileName),
 		}
 
 		// println("list", entry.FullPath, "chunks", len(entry.Chunks))
@@ -208,11 +211,13 @@ func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, fu
 			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
 			break
 		}
-		entries = append(entries, entry)
+		if !eachEntryFunc(entry) {
+			break
+		}
 	}
 	iter.Release()
 
-	return entries, err
+	return lastFileName, err
 }
 
 func genKey(dirPath, fileName string, dbCount int) (key []byte, partitionId int) {

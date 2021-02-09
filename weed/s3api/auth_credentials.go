@@ -3,6 +3,7 @@ package s3api
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"io/ioutil"
 	"net/http"
 
@@ -185,7 +186,6 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		return identity, s3err.ErrNotImplemented
 	}
 
-	glog.V(3).Infof("auth error: %v", s3Err)
 	if s3Err != s3err.ErrNone {
 		return identity, s3Err
 	}
@@ -202,6 +202,44 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 
 }
 
+func (iam *IdentityAccessManagement) authUser(r *http.Request) (*Identity, s3err.ErrorCode) {
+	var identity *Identity
+	var s3Err s3err.ErrorCode
+	var found bool
+	switch getRequestAuthType(r) {
+	case authTypeStreamingSigned:
+		return identity, s3err.ErrNone
+	case authTypeUnknown:
+		glog.V(3).Infof("unknown auth type")
+		return identity, s3err.ErrAccessDenied
+	case authTypePresignedV2, authTypeSignedV2:
+		glog.V(3).Infof("v2 auth type")
+		identity, s3Err = iam.isReqAuthenticatedV2(r)
+	case authTypeSigned, authTypePresigned:
+		glog.V(3).Infof("v4 auth type")
+		identity, s3Err = iam.reqSignatureV4Verify(r)
+	case authTypePostPolicy:
+		glog.V(3).Infof("post policy auth type")
+		return identity, s3err.ErrNone
+	case authTypeJWT:
+		glog.V(3).Infof("jwt auth type")
+		return identity, s3err.ErrNotImplemented
+	case authTypeAnonymous:
+		identity, found = iam.lookupAnonymous()
+		if !found {
+			return identity, s3err.ErrAccessDenied
+		}
+	default:
+		return identity, s3err.ErrNotImplemented
+	}
+
+	glog.V(3).Infof("auth error: %v", s3Err)
+	if s3Err != s3err.ErrNone {
+		return identity, s3Err
+	}
+	return identity, s3err.ErrNone
+}
+
 func (identity *Identity) canDo(action Action, bucket string) bool {
 	if identity.isAdmin() {
 		return true
@@ -215,8 +253,12 @@ func (identity *Identity) canDo(action Action, bucket string) bool {
 		return false
 	}
 	limitedByBucket := string(action) + ":" + bucket
+	adminLimitedByBucket := s3_constants.ACTION_ADMIN + ":" + bucket
 	for _, a := range identity.Actions {
 		if string(a) == limitedByBucket {
+			return true
+		}
+		if string(a) == adminLimitedByBucket {
 			return true
 		}
 	}

@@ -18,27 +18,31 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import static seaweed.hdfs.SeaweedFileSystem.FS_SEAWEED_BUFFER_SIZE;
-import static seaweed.hdfs.SeaweedFileSystem.FS_SEAWEED_DEFAULT_BUFFER_SIZE;
+import static seaweed.hdfs.SeaweedFileSystem.*;
 
 public class SeaweedFileSystemStore {
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedFileSystemStore.class);
 
-    private FilerGrpcClient filerGrpcClient;
     private FilerClient filerClient;
     private Configuration conf;
 
     public SeaweedFileSystemStore(String host, int port, Configuration conf) {
         int grpcPort = 10000 + port;
-        filerGrpcClient = new FilerGrpcClient(host, grpcPort);
-        filerClient = new FilerClient(filerGrpcClient);
+        filerClient = new FilerClient(host, grpcPort);
         this.conf = conf;
+        String volumeServerAccessMode = this.conf.get(FS_SEAWEED_VOLUME_SERVER_ACCESS, "direct");
+        if (volumeServerAccessMode.equals("publicUrl")) {
+            filerClient.setAccessVolumeServerByPublicUrl();
+        } else if (volumeServerAccessMode.equals("filerProxy")) {
+            filerClient.setAccessVolumeServerByFilerProxy();
+        }
+
     }
 
     public void close() {
         try {
-            this.filerGrpcClient.shutdown();
+            this.filerClient.shutdown();
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
@@ -213,10 +217,10 @@ public class SeaweedFileSystemStore {
                     .clearGroupName()
                     .addAllGroupName(Arrays.asList(userGroupInformation.getGroupNames()))
                 );
-            SeaweedWrite.writeMeta(filerGrpcClient, getParentDirectory(path), entry);
+            SeaweedWrite.writeMeta(filerClient, getParentDirectory(path), entry);
         }
 
-        return new SeaweedOutputStream(filerGrpcClient, path, entry, writePosition, bufferSize, replication);
+        return new SeaweedHadoopOutputStream(filerClient, path.toString(), entry, writePosition, bufferSize, replication);
 
     }
 
@@ -230,7 +234,7 @@ public class SeaweedFileSystemStore {
             throw new FileNotFoundException("read non-exist file " + path);
         }
 
-        return new SeaweedInputStream(filerGrpcClient,
+        return new SeaweedHadoopInputStream(filerClient,
             statistics,
             path.toUri().getPath(),
             entry);

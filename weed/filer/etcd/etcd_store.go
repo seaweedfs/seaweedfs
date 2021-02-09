@@ -1,6 +1,7 @@
 package etcd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -101,7 +102,7 @@ func (store *EtcdStore) FindEntry(ctx context.Context, fullpath weed_util.FullPa
 
 	resp, err := store.client.Get(ctx, string(key))
 	if err != nil {
-		return nil, fmt.Errorf("get %s : %v", entry.FullPath, err)
+		return nil, fmt.Errorf("get %s : %v", fullpath, err)
 	}
 
 	if len(resp.Kvs) == 0 {
@@ -139,25 +140,32 @@ func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath weed_
 	return nil
 }
 
-func (store *EtcdStore) ListDirectoryPrefixedEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int, prefix string) (entries []*filer.Entry, err error) {
-	return nil, filer.ErrUnsupportedListDirectoryPrefixed
+func (store *EtcdStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return lastFileName, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
-func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, fullpath weed_util.FullPath, startFileName string, inclusive bool, limit int) (entries []*filer.Entry, err error) {
-	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
+func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	directoryPrefix := genDirectoryKeyPrefix(dirPath, "")
+	lastFileStart := directoryPrefix
+	if startFileName != "" {
+		lastFileStart = genDirectoryKeyPrefix(dirPath, startFileName)
+	}
 
-	resp, err := store.client.Get(ctx, string(directoryPrefix),
+	resp, err := store.client.Get(ctx, string(lastFileStart),
 		clientv3.WithPrefix(), clientv3.WithSort(clientv3.SortByKey, clientv3.SortDescend))
 	if err != nil {
-		return nil, fmt.Errorf("list %s : %v", fullpath, err)
+		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
 	}
 
 	for _, kv := range resp.Kvs {
+		if !bytes.HasPrefix(kv.Key, directoryPrefix) {
+			break
+		}
 		fileName := getNameFromKey(kv.Key)
 		if fileName == "" {
 			continue
 		}
-		if fileName == startFileName && !inclusive {
+		if fileName == startFileName && !includeStartFile {
 			continue
 		}
 		limit--
@@ -165,17 +173,20 @@ func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, fullpath weed_
 			break
 		}
 		entry := &filer.Entry{
-			FullPath: weed_util.NewFullPath(string(fullpath), fileName),
+			FullPath: weed_util.NewFullPath(string(dirPath), fileName),
 		}
 		if decodeErr := entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(kv.Value)); decodeErr != nil {
 			err = decodeErr
 			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
 			break
 		}
-		entries = append(entries, entry)
+		if !eachEntryFunc(entry) {
+			break
+		}
+		lastFileName = fileName
 	}
 
-	return entries, err
+	return lastFileName, err
 }
 
 func genKey(dirPath, fileName string) (key []byte) {

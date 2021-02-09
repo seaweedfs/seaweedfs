@@ -3,7 +3,6 @@ package filesys
 import (
 	"bytes"
 	"io"
-	"runtime"
 	"sync"
 	"time"
 
@@ -12,30 +11,20 @@ import (
 )
 
 type ContinuousDirtyPages struct {
-	intervals              *ContinuousIntervals
-	f                      *File
-	writeWaitGroup         sync.WaitGroup
-	chunkAddLock           sync.Mutex
-	chunkSaveErrChan       chan error
-	chunkSaveErrChanClosed bool
-	lastErr                error
-	collection             string
-	replication            string
+	intervals      *ContinuousIntervals
+	f              *File
+	writeWaitGroup sync.WaitGroup
+	chunkAddLock   sync.Mutex
+	lastErr        error
+	collection     string
+	replication    string
 }
 
 func newDirtyPages(file *File) *ContinuousDirtyPages {
 	dirtyPages := &ContinuousDirtyPages{
-		intervals:        &ContinuousIntervals{},
-		f:                file,
-		chunkSaveErrChan: make(chan error, runtime.NumCPU()),
+		intervals: &ContinuousIntervals{},
+		f:         file,
 	}
-	go func() {
-		for t := range dirtyPages.chunkSaveErrChan {
-			if t != nil {
-				dirtyPages.lastErr = t
-			}
-		}
-	}()
 	return dirtyPages
 }
 
@@ -94,15 +83,6 @@ func (pages *ContinuousDirtyPages) saveExistingLargestPageToStorage() (hasSavedD
 
 func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64, size int64) {
 
-	errChanSize := pages.f.wfs.option.ConcurrentWriters
-	if errChanSize == 0 {
-		errChanSize = runtime.NumCPU()
-	}
-	if pages.chunkSaveErrChanClosed {
-		pages.chunkSaveErrChan = make(chan error, errChanSize)
-		pages.chunkSaveErrChanClosed = false
-	}
-
 	mtime := time.Now().UnixNano()
 	pages.writeWaitGroup.Add(1)
 	writer := func() {
@@ -112,7 +92,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 		chunk, collection, replication, err := pages.f.wfs.saveDataAsChunk(pages.f.fullpath())(reader, pages.f.Name, offset)
 		if err != nil {
 			glog.V(0).Infof("%s saveToStorage [%d,%d): %v", pages.f.fullpath(), offset, offset+size, err)
-			pages.chunkSaveErrChan <- err
+			pages.lastErr = err
 			return
 		}
 		chunk.Mtime = mtime

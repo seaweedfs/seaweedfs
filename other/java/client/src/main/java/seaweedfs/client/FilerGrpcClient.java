@@ -9,8 +9,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLException;
-import java.util.Map;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 public class FilerGrpcClient {
@@ -26,6 +26,9 @@ public class FilerGrpcClient {
         }
     }
 
+    public final int VOLUME_SERVER_ACCESS_DIRECT = 0;
+    public final int VOLUME_SERVER_ACCESS_PUBLIC_URL = 1;
+    public final int VOLUME_SERVER_ACCESS_FILER_PROXY = 2;
     public final Map<String, FilerProto.Locations> vidLocations = new HashMap<>();
     private final ManagedChannel channel;
     private final SeaweedFilerGrpc.SeaweedFilerBlockingStub blockingStub;
@@ -34,6 +37,8 @@ public class FilerGrpcClient {
     private boolean cipher = false;
     private String collection = "";
     private String replication = "";
+    private int volumeServerAccess = VOLUME_SERVER_ACCESS_DIRECT;
+    private String filerAddress;
 
     public FilerGrpcClient(String host, int grpcPort) {
         this(host, grpcPort, sslContext);
@@ -49,6 +54,8 @@ public class FilerGrpcClient {
                         .negotiationType(NegotiationType.TLS)
                         .sslContext(sslContext));
 
+        filerAddress = String.format("%s:%d", host, grpcPort - 10000);
+
         FilerProto.GetFilerConfigurationResponse filerConfigurationResponse =
                 this.getBlockingStub().getFilerConfiguration(
                         FilerProto.GetFilerConfigurationRequest.newBuilder().build());
@@ -58,7 +65,7 @@ public class FilerGrpcClient {
 
     }
 
-    public FilerGrpcClient(ManagedChannelBuilder<?> channelBuilder) {
+    private FilerGrpcClient(ManagedChannelBuilder<?> channelBuilder) {
         channel = channelBuilder.build();
         blockingStub = SeaweedFilerGrpc.newBlockingStub(channel);
         asyncStub = SeaweedFilerGrpc.newStub(channel);
@@ -91,6 +98,41 @@ public class FilerGrpcClient {
 
     public SeaweedFilerGrpc.SeaweedFilerFutureStub getFutureStub() {
         return futureStub;
+    }
+
+    public void setAccessVolumeServerDirectly() {
+        this.volumeServerAccess = VOLUME_SERVER_ACCESS_DIRECT;
+    }
+
+    public boolean isAccessVolumeServerDirectly() {
+        return this.volumeServerAccess == VOLUME_SERVER_ACCESS_DIRECT;
+    }
+
+    public void setAccessVolumeServerByPublicUrl() {
+        this.volumeServerAccess = VOLUME_SERVER_ACCESS_PUBLIC_URL;
+    }
+
+    public boolean isAccessVolumeServerByPublicUrl() {
+        return this.volumeServerAccess == VOLUME_SERVER_ACCESS_PUBLIC_URL;
+    }
+
+    public void setAccessVolumeServerByFilerProxy() {
+        this.volumeServerAccess = VOLUME_SERVER_ACCESS_FILER_PROXY;
+    }
+
+    public boolean isAccessVolumeServerByFilerProxy() {
+        return this.volumeServerAccess == VOLUME_SERVER_ACCESS_FILER_PROXY;
+    }
+
+    public String getChunkUrl(String chunkId, String url, String publicUrl) {
+        switch (this.volumeServerAccess) {
+            case VOLUME_SERVER_ACCESS_PUBLIC_URL:
+                return String.format("http://%s/%s", publicUrl, chunkId);
+            case VOLUME_SERVER_ACCESS_FILER_PROXY:
+                return String.format("http://%s/?proxyChunkId=%s", this.filerAddress, chunkId);
+            default:
+                return String.format("http://%s/%s", url, chunkId);
+        }
     }
 
 }

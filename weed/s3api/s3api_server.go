@@ -20,6 +20,7 @@ type S3ApiServerOption struct {
 	DomainName       string
 	BucketsPath      string
 	GrpcDialOption   grpc.DialOption
+	AllowEmptyFolder bool
 }
 
 type S3ApiServer struct {
@@ -128,7 +129,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	}
 
 	// ListBuckets
-	apiRouter.Methods("GET").Path("/").HandlerFunc(track(s3a.iam.Auth(s3a.ListBucketsHandler, ACTION_ADMIN), "LIST"))
+	apiRouter.Methods("GET").Path("/").HandlerFunc(track(s3a.ListBucketsHandler, "LIST"))
 
 	// NotFound
 	apiRouter.NotFoundHandler = http.HandlerFunc(notFoundHandler)

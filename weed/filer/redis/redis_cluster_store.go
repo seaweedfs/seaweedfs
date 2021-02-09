@@ -3,7 +3,7 @@ package redis
 import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v8"
 )
 
 func init() {
@@ -20,8 +20,8 @@ func (store *RedisClusterStore) GetName() string {
 
 func (store *RedisClusterStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 
-	configuration.SetDefault(prefix+"useReadOnly", true)
-	configuration.SetDefault(prefix+"routeByLatency", true)
+	configuration.SetDefault(prefix+"useReadOnly", false)
+	configuration.SetDefault(prefix+"routeByLatency", false)
 
 	return store.initialize(
 		configuration.GetStringSlice(prefix+"addresses"),

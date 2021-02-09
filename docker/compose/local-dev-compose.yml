@@ -12,7 +12,7 @@ services:
     ports:
       - 8080:8080
       - 18080:18080
-    command: "volume -mserver=master:9333 -port=8080 -ip=volume"
+    command: "volume -mserver=master:9333 -port=8080 -ip=volume -preStopSeconds=1"
     depends_on:
       - master
   filer:
@@ -29,6 +29,17 @@ services:
     ports:
       - 8333:8333
     command: 's3 -filer="filer:8888"'
+    depends_on:
+      - master
+      - volume
+      - filer
+  mount:
+    image: chrislusf/seaweedfs:local
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+    mem_limit: 4096m
+    command: '-v=4 mount -filer="filer:8888" -dirAutoCreate -dir=/mnt/seaweedfs -cacheCapacityMB=100 -concurrentWriters=128'
     depends_on:
       - master
       - volume

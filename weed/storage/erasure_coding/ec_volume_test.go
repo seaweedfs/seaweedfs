@@ -35,16 +35,16 @@ func TestPositioning(t *testing.T) {
 		needleId, _ := types.ParseNeedleId(test.needleId)
 		offset, size, err := SearchNeedleFromSortedIndex(ecxFile, fileSize, needleId, nil)
 		assert.Equal(t, nil, err, "SearchNeedleFromSortedIndex")
-		fmt.Printf("offset: %d size: %d\n", offset.ToAcutalOffset(), size)
+		fmt.Printf("offset: %d size: %d\n", offset.ToActualOffset(), size)
 	}
 
 	needleId, _ := types.ParseNeedleId("0f087622")
 	offset, size, err := SearchNeedleFromSortedIndex(ecxFile, fileSize, needleId, nil)
 	assert.Equal(t, nil, err, "SearchNeedleFromSortedIndex")
-	fmt.Printf("offset: %d size: %d\n", offset.ToAcutalOffset(), size)
+	fmt.Printf("offset: %d size: %d\n", offset.ToActualOffset(), size)
 
 	var shardEcdFileSize int64 = 1118830592 // 1024*1024*1024*3
-	intervals := LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, DataShardsCount*shardEcdFileSize, offset.ToAcutalOffset(), types.Size(needle.GetActualSize(size, needle.CurrentVersion)))
+	intervals := LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, DataShardsCount*shardEcdFileSize, offset.ToActualOffset(), types.Size(needle.GetActualSize(size, needle.CurrentVersion)))
 
 	for _, interval := range intervals {
 		shardId, shardOffset := interval.ToShardIdAndOffset(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize)

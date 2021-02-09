@@ -71,7 +71,7 @@ func ToOffset(offset int64) Offset {
 	}
 }
 
-func (offset Offset) ToAcutalOffset() (actualOffset int64) {
+func (offset Offset) ToActualOffset() (actualOffset int64) {
 	return (int64(offset.b0) + int64(offset.b1)<<8 + int64(offset.b2)<<16 + int64(offset.b3)<<24 + int64(offset.b4)<<32) * int64(NeedlePaddingSize)
 }
 

@@ -18,7 +18,7 @@ import (
 type ChunkReadAt struct {
 	masterClient *wdclient.MasterClient
 	chunkViews   []*ChunkView
-	lookupFileId LookupFileIdFunctionType
+	lookupFileId wdclient.LookupFileIdFunctionType
 	readerLock   sync.Mutex
 	fileSize     int64
 
@@ -31,9 +31,7 @@ type ChunkReadAt struct {
 var _ = io.ReaderAt(&ChunkReadAt{})
 var _ = io.Closer(&ChunkReadAt{})
 
-type LookupFileIdFunctionType func(fileId string) (targetUrls []string, err error)
-
-func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
+func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionType {
 
 	vidCache := make(map[string]*filer_pb.Locations)
 	var vicCacheLock sync.RWMutex
@@ -87,11 +85,11 @@ func LookupFn(filerClient filer_pb.FilerClient) LookupFileIdFunctionType {
 	}
 }
 
-func NewChunkReaderAtFromClient(filerClient filer_pb.FilerClient, chunkViews []*ChunkView, chunkCache chunk_cache.ChunkCache, fileSize int64) *ChunkReadAt {
+func NewChunkReaderAtFromClient(lookupFn wdclient.LookupFileIdFunctionType, chunkViews []*ChunkView, chunkCache chunk_cache.ChunkCache, fileSize int64) *ChunkReadAt {
 
 	return &ChunkReadAt{
 		chunkViews:   chunkViews,
-		lookupFileId: LookupFn(filerClient),
+		lookupFileId: lookupFn,
 		chunkCache:   chunkCache,
 		fileSize:     fileSize,
 	}
@@ -109,7 +107,7 @@ func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
 	defer c.readerLock.Unlock()
 
 	glog.V(4).Infof("ReadAt [%d,%d) of total file size %d bytes %d chunk views", offset, offset+int64(len(p)), c.fileSize, len(c.chunkViews))
-	return c.doReadAt(p[n:], offset+int64(n))
+	return c.doReadAt(p, offset)
 }
 
 func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {

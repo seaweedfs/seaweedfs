@@ -12,7 +12,8 @@ services:
     ports:
       - 8080:8080
       - 18080:18080
-    command: 'volume -mserver="master:9333" -port=8080'
+      - 9325:9325
+    command: 'volume -mserver="master:9333" -port=8080  -metricsPort=9325'
     depends_on:
       - master
   filer:
@@ -20,7 +21,8 @@ services:
     ports:
       - 8888:8888
       - 18888:18888
-    command: 'filer -master="master:9333"'
+      - 9326:9326
+    command: 'filer -master="master:9333"  -metricsPort=9326'
     tty: true
     stdin_open: true
     depends_on:
@@ -40,8 +42,27 @@ services:
     image: chrislusf/seaweedfs # use a remote image
     ports:
       - 8333:8333
-    command: 's3 -filer="filer:8888"'
+      - 9327:9327
+    command: 's3 -filer="filer:8888" -metricsPort=9327'
     depends_on:
       - master
       - volume
       - filer
+  webdav:
+    image: chrislusf/seaweedfs # use a remote image
+    ports:
+      - 7333:7333
+    command: 'webdav -filer="filer:8888"'
+    depends_on:
+      - master
+      - volume
+      - filer
+  prometheus:
+    image: prom/prometheus:v2.21.0
+    ports:
+      - 9000:9090
+    volumes:
+      - ./prometheus:/etc/prometheus
+    command: --web.enable-lifecycle  --config.file=/etc/prometheus/prometheus.yml
+    depends_on:
+      - s3

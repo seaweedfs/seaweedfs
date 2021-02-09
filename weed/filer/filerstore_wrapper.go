@@ -194,7 +194,7 @@ func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.
 	return actualStore.DeleteFolderChildren(ctx, fp)
 }
 
-func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, error) {
+func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (string, error) {
 	actualStore := fsw.getActualStore(dirPath + "/")
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "list").Inc()
 	start := time.Now()
@@ -203,18 +203,14 @@ func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath 
 	}()
 
 	glog.V(4).Infof("ListDirectoryEntries %s from %s limit %d", dirPath, startFileName, limit)
-	entries, err := actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
-	if err != nil {
-		return nil, err
-	}
-	for _, entry := range entries {
+	return actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *Entry) bool {
 		fsw.maybeReadHardLink(ctx, entry)
 		filer_pb.AfterEntryDeserialization(entry.Chunks)
-	}
-	return entries, err
+		return eachEntryFunc(entry)
+	})
 }
 
-func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*Entry, error) {
+func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {
 	actualStore := fsw.getActualStore(dirPath + "/")
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "prefixList").Inc()
 	start := time.Now()
@@ -222,48 +218,52 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "prefixList").Observe(time.Since(start).Seconds())
 	}()
 	glog.V(4).Infof("ListDirectoryPrefixedEntries %s from %s prefix %s limit %d", dirPath, startFileName, prefix, limit)
-	entries, err := actualStore.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix)
+	lastFileName, err = actualStore.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix, eachEntryFunc)
 	if err == ErrUnsupportedListDirectoryPrefixed {
-		entries, err = fsw.prefixFilterEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix)
+		lastFileName, err = fsw.prefixFilterEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix, func(entry *Entry) bool {
+			fsw.maybeReadHardLink(ctx, entry)
+			filer_pb.AfterEntryDeserialization(entry.Chunks)
+			return eachEntryFunc(entry)
+		})
 	}
-	if err != nil {
-		return nil, err
-	}
-	for _, entry := range entries {
-		fsw.maybeReadHardLink(ctx, entry)
-		filer_pb.AfterEntryDeserialization(entry.Chunks)
-	}
-	return entries, nil
+	return lastFileName, err
 }
 
-func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) (entries []*Entry, err error) {
+func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {
 	actualStore := fsw.getActualStore(dirPath + "/")
-	entries, err = actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit)
-	if err != nil {
-		return nil, err
-	}
 
 	if prefix == "" {
+		return actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, eachEntryFunc)
+	}
+
+	var notPrefixed []*Entry
+	lastFileName, err = actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *Entry) bool {
+		notPrefixed = append(notPrefixed, entry)
+		return true
+	})
+	if err != nil {
 		return
 	}
 
-	count := 0
-	var lastFileName string
-	notPrefixed := entries
-	entries = nil
+	count := int64(0)
 	for count < limit && len(notPrefixed) > 0 {
 		for _, entry := range notPrefixed {
-			lastFileName = entry.Name()
 			if strings.HasPrefix(entry.Name(), prefix) {
 				count++
-				entries = append(entries, entry)
+				if !eachEntryFunc(entry) {
+					return
+				}
 				if count >= limit {
 					break
 				}
 			}
 		}
 		if count < limit {
-			notPrefixed, err = actualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit)
+			notPrefixed = notPrefixed[:0]
+			_, err = actualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit, func(entry *Entry) bool {
+				notPrefixed = append(notPrefixed, entry)
+				return true
+			})
 			if err != nil {
 				return
 			}

@@ -52,12 +52,12 @@ Inject extra environment vars in the format key:value, if populated
 {{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
 {{- $repositoryName := .Values.image.repository | toString -}}
 {{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Values.global.imageTag | toString -}}
+{{- $tag := .Chart.AppVersion | toString -}}
 {{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
 {{- end -}}
 {{- end -}}
 
-{{/* Return the proper postgresqlSchema image */}}
+{{/* Return the proper dbSchema image */}}
 {{- define "filer.dbSchema.image" -}}
 {{- if .Values.filer.dbSchema.imageOverride -}}
 {{- $imageOverride := .Values.filer.dbSchema.imageOverride -}}
@@ -80,7 +80,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
 {{- $repositoryName := .Values.image.repository | toString -}}
 {{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Values.global.imageTag | toString -}}
+{{- $tag := .Chart.AppVersion | toString -}}
 {{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
 {{- end -}}
 {{- end -}}
@@ -94,7 +94,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
 {{- $repositoryName := .Values.image.repository | toString -}}
 {{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Values.global.imageTag | toString -}}
+{{- $tag := .Chart.AppVersion | toString -}}
 {{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
 {{- end -}}
 {{- end -}}
@@ -108,7 +108,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
 {{- $repositoryName := .Values.image.repository | toString -}}
 {{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Values.global.imageTag | toString -}}
+{{- $tag := .Chart.AppVersion | toString -}}
 {{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
 {{- end -}}
 {{- end -}}
@@ -122,7 +122,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
 {{- $repositoryName := .Values.image.repository | toString -}}
 {{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Values.global.imageTag | toString -}}
+{{- $tag := .Chart.AppVersion | toString -}}
 {{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
 {{- end -}}
 {{- end -}}

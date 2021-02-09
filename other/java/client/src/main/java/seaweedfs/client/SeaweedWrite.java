@@ -23,41 +23,41 @@ public class SeaweedWrite {
 
     public static void writeData(FilerProto.Entry.Builder entry,
                                  final String replication,
-                                 final FilerGrpcClient filerGrpcClient,
+                                 final FilerClient filerClient,
                                  final long offset,
                                  final byte[] bytes,
                                  final long bytesOffset, final long bytesLength,
                                  final String path) throws IOException {
         FilerProto.FileChunk.Builder chunkBuilder = writeChunk(
-                replication, filerGrpcClient, offset, bytes, bytesOffset, bytesLength, path);
+                replication, filerClient, offset, bytes, bytesOffset, bytesLength, path);
         synchronized (entry) {
             entry.addChunks(chunkBuilder);
         }
     }
 
     public static FilerProto.FileChunk.Builder writeChunk(final String replication,
-                                                          final FilerGrpcClient filerGrpcClient,
+                                                          final FilerClient filerClient,
                                                           final long offset,
                                                           final byte[] bytes,
                                                           final long bytesOffset,
                                                           final long bytesLength,
                                                           final String path) throws IOException {
-        FilerProto.AssignVolumeResponse response = filerGrpcClient.getBlockingStub().assignVolume(
+        FilerProto.AssignVolumeResponse response = filerClient.getBlockingStub().assignVolume(
                 FilerProto.AssignVolumeRequest.newBuilder()
-                        .setCollection(filerGrpcClient.getCollection())
-                        .setReplication(replication == null ? filerGrpcClient.getReplication() : replication)
+                        .setCollection(filerClient.getCollection())
+                        .setReplication(replication == null ? filerClient.getReplication() : replication)
                         .setDataCenter("")
                         .setTtlSec(0)
                         .setPath(path)
                         .build());
         String fileId = response.getFileId();
-        String url = response.getUrl();
         String auth = response.getAuth();
-        String targetUrl = String.format("http://%s/%s", url, fileId);
+
+        String targetUrl = filerClient.getChunkUrl(fileId, response.getUrl(), response.getPublicUrl());
 
         ByteString cipherKeyString = com.google.protobuf.ByteString.EMPTY;
         byte[] cipherKey = null;
-        if (filerGrpcClient.isCipher()) {
+        if (filerClient.isCipher()) {
             cipherKey = genCipherKey();
             cipherKeyString = ByteString.copyFrom(cipherKey);
         }
@@ -75,15 +75,15 @@ public class SeaweedWrite {
                 .setCipherKey(cipherKeyString);
     }
 
-    public static void writeMeta(final FilerGrpcClient filerGrpcClient,
+    public static void writeMeta(final FilerClient filerClient,
                                  final String parentDirectory,
                                  final FilerProto.Entry.Builder entry) throws IOException {
 
         synchronized (entry) {
-            List<FilerProto.FileChunk> chunks = FileChunkManifest.maybeManifestize(filerGrpcClient, entry.getChunksList(), parentDirectory);
+            List<FilerProto.FileChunk> chunks = FileChunkManifest.maybeManifestize(filerClient, entry.getChunksList(), parentDirectory);
             entry.clearChunks();
             entry.addAllChunks(chunks);
-            filerGrpcClient.getBlockingStub().createEntry(
+            filerClient.getBlockingStub().createEntry(
                     FilerProto.CreateEntryRequest.newBuilder()
                             .setDirectory(parentDirectory)
                             .setEntry(entry)

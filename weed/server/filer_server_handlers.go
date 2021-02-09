@@ -3,18 +3,33 @@ package weed_server
 import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/stats"
 )
 
 func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
+
+	start := time.Now()
+
+	// proxy to volume servers
+	var fileId string
+	if strings.HasPrefix(r.RequestURI, "/?proxyChunkId=") {
+		fileId = r.RequestURI[len("/?proxyChunkId="):]
+	}
+	if fileId != "" {
+		stats.FilerRequestCounter.WithLabelValues("proxy").Inc()
+		fs.proxyToVolumeServer(w, r, fileId)
+		stats.FilerRequestHistogram.WithLabelValues("proxy").Observe(time.Since(start).Seconds())
+		return
+	}
+
 	w.Header().Set("Server", "SeaweedFS Filer "+util.VERSION)
 	if r.Header.Get("Origin") != "" {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
-	start := time.Now()
 	switch r.Method {
 	case "GET":
 		stats.FilerRequestCounter.WithLabelValues("get").Inc()

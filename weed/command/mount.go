@@ -6,25 +6,25 @@ import (
 )
 
 type MountOptions struct {
-	filer                       *string
-	filerMountRootPath          *string
-	dir                         *string
-	dirAutoCreate               *bool
-	collection                  *string
-	replication                 *string
-	diskType                    *string
-	ttlSec                      *int
-	chunkSizeLimitMB            *int
-	concurrentWriters           *int
-	cacheDir                    *string
-	cacheSizeMB                 *int64
-	dataCenter                  *string
-	allowOthers                 *bool
-	umaskString                 *string
-	nonempty                    *bool
-	outsideContainerClusterMode *bool
-	uidMap                      *string
-	gidMap                      *string
+	filer              *string
+	filerMountRootPath *string
+	dir                *string
+	dirAutoCreate      *bool
+	collection         *string
+	replication        *string
+	diskType           *string
+	ttlSec             *int
+	chunkSizeLimitMB   *int
+	concurrentWriters  *int
+	cacheDir           *string
+	cacheSizeMB        *int64
+	dataCenter         *string
+	allowOthers        *bool
+	umaskString        *string
+	nonempty           *bool
+	volumeServerAccess *string
+	uidMap             *string
+	gidMap             *string
 }
 
 var (
@@ -45,14 +45,14 @@ func init() {
 	mountOptions.diskType = cmdMount.Flag.String("disk", "", "[hdd|ssd] choose between hard drive or solid state drive")
 	mountOptions.ttlSec = cmdMount.Flag.Int("ttl", 0, "file ttl in seconds")
 	mountOptions.chunkSizeLimitMB = cmdMount.Flag.Int("chunkSizeLimitMB", 2, "local write buffer size, also chunk large files")
-	mountOptions.concurrentWriters = cmdMount.Flag.Int("concurrentWriters", 0, "limit concurrent goroutine writers if not 0")
+	mountOptions.concurrentWriters = cmdMount.Flag.Int("concurrentWriters", 128, "limit concurrent goroutine writers if not 0")
 	mountOptions.cacheDir = cmdMount.Flag.String("cacheDir", os.TempDir(), "local cache directory for file chunks and meta data")
 	mountOptions.cacheSizeMB = cmdMount.Flag.Int64("cacheCapacityMB", 1000, "local file chunk cache capacity in MB (0 will disable cache)")
 	mountOptions.dataCenter = cmdMount.Flag.String("dataCenter", "", "prefer to write to the data center")
 	mountOptions.allowOthers = cmdMount.Flag.Bool("allowOthers", true, "allows other users to access the file system")
 	mountOptions.umaskString = cmdMount.Flag.String("umask", "022", "octal umask, e.g., 022, 0111")
 	mountOptions.nonempty = cmdMount.Flag.Bool("nonempty", false, "allows the mounting over a non-empty directory")
-	mountOptions.outsideContainerClusterMode = cmdMount.Flag.Bool("outsideContainerClusterMode", false, "allows other users to access volume servers with publicUrl")
+	mountOptions.volumeServerAccess = cmdMount.Flag.String("volumeServerAccess", "direct", "access volume servers by [direct|publicUrl|filerProxy]")
 	mountOptions.uidMap = cmdMount.Flag.String("map.uid", "", "map local uid to uid on filer, comma-separated <local_uid>:<filer_uid>")
 	mountOptions.gidMap = cmdMount.Flag.String("map.gid", "", "map local gid to gid on filer, comma-separated <local_gid>:<filer_gid>")
 

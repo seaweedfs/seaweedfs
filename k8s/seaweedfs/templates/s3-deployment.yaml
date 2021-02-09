@@ -59,11 +59,17 @@ spec:
                   fieldPath: metadata.namespace
             - name: SEAWEEDFS_FULLNAME
               value: "{{ template "seaweedfs.name" . }}"
+            {{- if .Values.global.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
           command:
             - "/bin/sh"
             - "-ec"
             - | 
-              exec /usr/bin/weed \
+              exec /usr/bin/weed -logdir=/logs \
               {{- if .Values.s3.loggingOverrideLevel }}
               -v={{ .Values.s3.loggingOverrideLevel }} \
               {{- else }}
@@ -81,9 +87,19 @@ spec:
               {{- if .Values.s3.domainName }}
               -domainName={{ .Values.s3.domainName }} \
               {{- end }}
-              -filer={{ template "seaweedfs.name" . }}-filer:{{ .Values.filer.port }}
-          {{- if or (.Values.global.enableSecurity) (.Values.s3.extraVolumeMounts) }}
+              {{- if .Values.s3.allowEmptyFolder }}
+              -allowEmptyFolder={{ .Values.s3.allowEmptyFolder }} \
+              {{- end }}
+              {{- if .Values.s3.enableAuth }}
+              -config=/etc/sw/seaweedfs_s3_config \
+              {{- end }}
+              -filer={{ template "seaweedfs.name" . }}-filer-client:{{ .Values.filer.port }}
           volumeMounts:
+            - name: logs
+              mountPath: "/logs/"
+            - mountPath: /etc/sw
+              name: config-users
+              readOnly: true
             {{- if .Values.global.enableSecurity }}
             - name: security-config
               readOnly: true
@@ -106,7 +122,6 @@ spec:
               mountPath: /usr/local/share/ca-certificates/client/
             {{- end }}
             {{ tpl .Values.s3.extraVolumeMounts . | nindent 12 | trim }}
-          {{- end }}
           ports:
             - containerPort: {{ .Values.s3.port }}
               name: swfs-s3
@@ -119,7 +134,7 @@ spec:
             periodSeconds: 15
             successThreshold: 1
             failureThreshold: 100
-            timeoutSeconds: 3
+            timeoutSeconds: 10
           livenessProbe:
             httpGet:
               path: /
@@ -129,12 +144,22 @@ spec:
             periodSeconds: 60
             successThreshold: 1
             failureThreshold: 20
-            timeoutSeconds: 3
+            timeoutSeconds: 10
           {{- if .Values.s3.resources }}
           resources:
             {{ tpl .Values.s3.resources . | nindent 12 | trim }}
           {{- end }}
       volumes:
+        - name: config-users
+          secret:
+            defaultMode: 420
+            secretName: seaweedfs-s3-secret
+        {{- if eq .Values.s3.logs.type "hostPath" }}
+        - name: logs
+          hostPath:
+            path: /storage/logs/seaweedfs/s3
+            type: DirectoryOrCreate
+        {{- end }}
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:

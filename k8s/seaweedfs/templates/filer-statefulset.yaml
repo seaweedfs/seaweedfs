@@ -87,6 +87,12 @@ spec:
               value: {{ $value | quote }}
             {{- end }}
             {{- end }}
+            {{- if .Values.global.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
           command:
             - "/bin/sh"
             - "-ec"
@@ -127,14 +133,36 @@ spec:
               -encryptVolumeData \
               {{- end }}
               -ip=${POD_IP} \
+              {{- if .Values.filer.enable_peers }}
               {{- if gt (.Values.filer.replicas | int) 1 }}
-              -peers={{ range $index := until (.Values.filer.replicas | int) }}${SEAWEEDFS_FULLNAME}-filer-{{ $index }}.${SEAWEEDFS_FULLNAME}-filer:{{ $.Values.filer.port }}{{ if lt $index (sub ($.Values.filer.replicas | int) 1) }},{{ end }}{{ end }}
+              -peers=$(echo -n "{{ range $index := until (.Values.filer.replicas | int) }}${SEAWEEDFS_FULLNAME}-filer-{{ $index }}.${SEAWEEDFS_FULLNAME}-filer:{{ $.Values.filer.port }}{{ if lt $index (sub ($.Values.filer.replicas | int) 1) }},{{ end }}{{ end }}" | sed "s/$HOSTNAME.${SEAWEEDFS_FULLNAME}-filer:{{ $.Values.filer.port }}//" | sed 's/,$//; 's/^,//'; s/,,/,/;' )  \
+              {{- end }}
+              {{- end }}
+              {{- if .Values.filer.s3.enabled }}
+              -s3 \
+              -s3.port={{ .Values.filer.s3.port }} \
+              {{- if .Values.filer.s3.domainName }}
+              -s3.domainName={{ .Values.filer.s3.domainName }} \
+              {{- end }}
+              {{- if .Values.global.enableSecurity }}
+              -s3.cert.file=/usr/local/share/ca-certificates/client/tls.crt \
+              -s3.key.file=/usr/local/share/ca-certificates/client/tls.key \
+              {{- end }}
+              {{- if .Values.filer.s3.allowEmptyFolder }}
+              -s3.allowEmptyFolder={{ .Values.filer.s3.allowEmptyFolder }} \
+              {{- end }}
+              {{- if .Values.filer.s3.enableAuth }}
+              -s3.config=/etc/sw/seaweedfs_s3_config \
+              {{- end }}
               {{- end }}
               -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
           {{- if or (.Values.global.enableSecurity) (.Values.filer.extraVolumeMounts) }}    
           volumeMounts:
             - name: seaweedfs-filer-log-volume
               mountPath: "/logs/"
+            - mountPath: /etc/sw
+              name: config-users
+              readOnly: true
             {{- if .Values.global.enableSecurity }}
             - name: security-config
               readOnly: true
@@ -172,7 +200,7 @@ spec:
             periodSeconds: 15
             successThreshold: 1
             failureThreshold: 100
-            timeoutSeconds: 3
+            timeoutSeconds: 10
           livenessProbe:
             httpGet:
               path: /
@@ -182,7 +210,7 @@ spec:
             periodSeconds: 30
             successThreshold: 1
             failureThreshold: 5
-            timeoutSeconds: 3
+            timeoutSeconds: 10
           {{- if .Values.filer.resources }}
           resources:
             {{ tpl .Values.filer.resources . | nindent 12 | trim }}
@@ -192,6 +220,13 @@ spec:
           hostPath:
             path: /storage/logs/seaweedfs/filer
             type: DirectoryOrCreate
+        - name: db-schema-config-volume
+          configMap:
+            name: seaweedfs-db-init-config
+        - name: config-users
+          secret:
+            defaultMode: 420
+            secretName: seaweedfs-s3-secret
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:

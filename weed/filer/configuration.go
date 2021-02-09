@@ -2,7 +2,7 @@ package filer
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/spf13/viper"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"os"
 	"reflect"
 	"strings"
@@ -12,7 +12,7 @@ var (
 	Stores []FilerStore
 )
 
-func (f *Filer) LoadConfiguration(config *viper.Viper) {
+func (f *Filer) LoadConfiguration(config *util.ViperProxy) {
 
 	validateOneEnabledStore(config)
 
@@ -79,7 +79,7 @@ func (f *Filer) LoadConfiguration(config *viper.Viper) {
 
 }
 
-func validateOneEnabledStore(config *viper.Viper) {
+func validateOneEnabledStore(config *util.ViperProxy) {
 	enabledStore := ""
 	for _, store := range Stores {
 		if config.GetBool(store.GetName() + ".enabled") {

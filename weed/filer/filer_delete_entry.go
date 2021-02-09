@@ -30,7 +30,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 		// delete the folder children, not including the folder itself
 		var dirChunks []*filer_pb.FileChunk
 		var dirHardLinkIds []HardLinkId
-		dirChunks, dirHardLinkIds, err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !isDeleteCollection, isFromOtherCluster, signatures)
+		dirChunks, dirHardLinkIds, err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !isDeleteCollection, isDeleteCollection, isFromOtherCluster, signatures)
 		if err != nil {
 			glog.V(0).Infof("delete directory %s: %v", p, err)
 			return fmt.Errorf("delete directory %s: %v", p, err)
@@ -63,46 +63,49 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	return nil
 }
 
-func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32) (chunks []*filer_pb.FileChunk, hardlinkIds []HardLinkId, err error) {
+func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isDeletingBucket, isFromOtherCluster bool, signatures []int32) (chunks []*filer_pb.FileChunk, hardlinkIds []HardLinkId, err error) {
 
 	lastFileName := ""
 	includeLastFile := false
-	for {
-		entries, err := f.ListDirectoryEntries(ctx, entry.FullPath, lastFileName, includeLastFile, PaginationSize, "")
-		if err != nil {
-			glog.Errorf("list folder %s: %v", entry.FullPath, err)
-			return nil, nil, fmt.Errorf("list folder %s: %v", entry.FullPath, err)
-		}
-		if lastFileName == "" && !isRecursive && len(entries) > 0 {
-			// only for first iteration in the loop
-			glog.Errorf("deleting a folder %s has children: %+v ...", entry.FullPath, entries[0].Name())
-			return nil, nil, fmt.Errorf("fail to delete non-empty folder: %s", entry.FullPath)
-		}
+	if !isDeletingBucket {
+		for {
+			entries, _, err := f.ListDirectoryEntries(ctx, entry.FullPath, lastFileName, includeLastFile, PaginationSize, "", "")
+			if err != nil {
+				glog.Errorf("list folder %s: %v", entry.FullPath, err)
+				return nil, nil, fmt.Errorf("list folder %s: %v", entry.FullPath, err)
+			}
+			if lastFileName == "" && !isRecursive && len(entries) > 0 {
+				// only for first iteration in the loop
+				glog.Errorf("deleting a folder %s has children: %+v ...", entry.FullPath, entries[0].Name())
+				return nil, nil, fmt.Errorf("fail to delete non-empty folder: %s", entry.FullPath)
+			}
 
-		for _, sub := range entries {
-			lastFileName = sub.Name()
-			var dirChunks []*filer_pb.FileChunk
-			var dirHardLinkIds []HardLinkId
-			if sub.IsDirectory() {
-				dirChunks, dirHardLinkIds, err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, false, nil)
-				chunks = append(chunks, dirChunks...)
-				hardlinkIds = append(hardlinkIds, dirHardLinkIds...)
-			} else {
-				f.NotifyUpdateEvent(ctx, sub, nil, shouldDeleteChunks, isFromOtherCluster, nil)
-				if len(sub.HardLinkId) != 0 {
-					// hard link chunk data are deleted separately
-					hardlinkIds = append(hardlinkIds, sub.HardLinkId)
+			for _, sub := range entries {
+				lastFileName = sub.Name()
+				var dirChunks []*filer_pb.FileChunk
+				var dirHardLinkIds []HardLinkId
+				if sub.IsDirectory() {
+					subIsDeletingBucket := f.isBucket(sub)
+					dirChunks, dirHardLinkIds, err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, subIsDeletingBucket, false, nil)
+					chunks = append(chunks, dirChunks...)
+					hardlinkIds = append(hardlinkIds, dirHardLinkIds...)
 				} else {
-					chunks = append(chunks, sub.Chunks...)
+					f.NotifyUpdateEvent(ctx, sub, nil, shouldDeleteChunks, isFromOtherCluster, nil)
+					if len(sub.HardLinkId) != 0 {
+						// hard link chunk data are deleted separately
+						hardlinkIds = append(hardlinkIds, sub.HardLinkId)
+					} else {
+						chunks = append(chunks, sub.Chunks...)
+					}
+				}
+				if err != nil && !ignoreRecursiveError {
+					return nil, nil, err
 				}
 			}
-			if err != nil && !ignoreRecursiveError {
-				return nil, nil, err
-			}
-		}
 
-		if len(entries) < PaginationSize {
-			break
+			if len(entries) < PaginationSize {
+				break
+			}
 		}
 	}
 

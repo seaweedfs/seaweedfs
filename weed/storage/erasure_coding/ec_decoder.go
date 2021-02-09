@@ -58,7 +58,7 @@ func FindDatFileSize(dataBaseFileName, indexBaseFileName string) (datSize int64,
 			return nil
 		}
 
-		entryStopOffset := offset.ToAcutalOffset() + needle.GetActualSize(size, version)
+		entryStopOffset := offset.ToActualOffset() + needle.GetActualSize(size, version)
 		if datSize < entryStopOffset {
 			datSize = entryStopOffset
 		}

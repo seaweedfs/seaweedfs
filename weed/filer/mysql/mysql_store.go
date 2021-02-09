@@ -3,8 +3,9 @@ package mysql
 import (
 	"database/sql"
 	"fmt"
-
 	"github.com/chrislusf/seaweedfs/weed/filer"
+	"time"
+
 	"github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	_ "github.com/go-sql-driver/mysql"
@@ -35,20 +36,19 @@ func (store *MysqlStore) Initialize(configuration util.Configuration, prefix str
 		configuration.GetString(prefix+"database"),
 		configuration.GetInt(prefix+"connection_max_idle"),
 		configuration.GetInt(prefix+"connection_max_open"),
+		configuration.GetInt(prefix+"connection_max_lifetime_seconds"),
 		configuration.GetBool(prefix+"interpolateParams"),
 	)
 }
 
-func (store *MysqlStore) initialize(user, password, hostname string, port int, database string, maxIdle, maxOpen int,
-	interpolateParams bool) (err error) {
-	//
-	store.SqlInsert = "INSERT INTO filemeta (dirhash,name,directory,meta) VALUES(?,?,?,?)"
-	store.SqlUpdate = "UPDATE filemeta SET meta=? WHERE dirhash=? AND name=? AND directory=?"
-	store.SqlFind = "SELECT meta FROM filemeta WHERE dirhash=? AND name=? AND directory=?"
-	store.SqlDelete = "DELETE FROM filemeta WHERE dirhash=? AND name=? AND directory=?"
-	store.SqlDeleteFolderChildren = "DELETE FROM filemeta WHERE dirhash=? AND directory=?"
-	store.SqlListExclusive = "SELECT NAME, meta FROM filemeta WHERE dirhash=? AND name>? AND directory=? AND name like ? ORDER BY NAME ASC LIMIT ?"
-	store.SqlListInclusive = "SELECT NAME, meta FROM filemeta WHERE dirhash=? AND name>=? AND directory=? AND name like ? ORDER BY NAME ASC LIMIT ?"
+func (store *MysqlStore) initialize(user, password, hostname string, port int, database string, maxIdle, maxOpen,
+	maxLifetimeSeconds int, interpolateParams bool) (err error) {
+
+	store.SupportBucketTable = false
+	store.SqlGenerator = &SqlGenMysql{
+		CreateTableSqlTemplate: "",
+		DropTableSqlTemplate:   "drop table %s",
+	}
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, password, hostname, port, database)
 	if interpolateParams {
@@ -65,6 +65,7 @@ func (store *MysqlStore) initialize(user, password, hostname string, port int, d
 
 	store.DB.SetMaxIdleConns(maxIdle)
 	store.DB.SetMaxOpenConns(maxOpen)
+	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
 
 	if err = store.DB.Ping(); err != nil {
 		return fmt.Errorf("connect to %s error:%v", sqlUrl, err)

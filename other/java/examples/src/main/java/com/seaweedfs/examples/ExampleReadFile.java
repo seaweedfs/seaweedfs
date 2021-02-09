@@ -1,8 +1,7 @@
 package com.seaweedfs.examples;
 
-import seaweed.hdfs.SeaweedInputStream;
 import seaweedfs.client.FilerClient;
-import seaweedfs.client.FilerGrpcClient;
+import seaweedfs.client.SeaweedInputStream;
 
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -10,12 +9,11 @@ import java.io.InputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-public class UnzipFile {
+public class ExampleReadFile {
 
     public static void main(String[] args) throws IOException {
 
-        FilerGrpcClient filerGrpcClient = new FilerGrpcClient("localhost", 18888);
-        FilerClient filerClient = new FilerClient(filerGrpcClient);
+        FilerClient filerClient = new FilerClient("localhost", 18888);
 
         long startTime = System.currentTimeMillis();
         parseZip("/Users/chris/tmp/test.zip");
@@ -25,11 +23,7 @@ public class UnzipFile {
         long localProcessTime = startTime2 - startTime;
 
         SeaweedInputStream seaweedInputStream = new SeaweedInputStream(
-                filerGrpcClient,
-                new org.apache.hadoop.fs.FileSystem.Statistics(""),
-                "/",
-                filerClient.lookupEntry("/", "test.zip")
-        );
+                filerClient, "/test.zip");
         parseZip(seaweedInputStream);
 
         long swProcessTime = System.currentTimeMillis() - startTime2;

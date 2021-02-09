@@ -19,6 +19,9 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 		util.Retry("ReadDirAllEntries", func() error {
 			err = filer_pb.ReadDirAllEntries(client, dirPath, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
 				entry := filer.FromPbEntry(string(dirPath), pbEntry)
+				if IsHiddenSystemEntry(string(dirPath), entry.Name()) {
+					return nil
+				}
 				if err := mc.doInsertEntry(context.Background(), entry); err != nil {
 					glog.V(0).Infof("read %s: %v", entry.FullPath, err)
 					return err
@@ -37,4 +40,8 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 
 		return
 	})
+}
+
+func IsHiddenSystemEntry(dir, name string) bool {
+	return dir == "/" && name == "topics"
 }

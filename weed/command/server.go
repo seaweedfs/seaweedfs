@@ -24,6 +24,7 @@ var (
 	masterOptions    MasterOptions
 	filerOptions     FilerOptions
 	s3Options        S3Options
+	webdavOptions    WebDavOption
 	msgBrokerOptions MessageBrokerOptions
 )
 
@@ -61,9 +62,11 @@ var (
 	serverMetricsHttpPort     = cmdServer.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 
 	// pulseSeconds              = cmdServer.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
+	isStartingMasterServer = cmdServer.Flag.Bool("master", true, "whether to start master server")
 	isStartingVolumeServer = cmdServer.Flag.Bool("volume", true, "whether to start volume server")
 	isStartingFiler        = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 	isStartingS3           = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
+	isStartingWebDav       = cmdServer.Flag.Bool("webdav", false, "whether to start WebDAV gateway")
 	isStartingMsgBroker    = cmdServer.Flag.Bool("msgBroker", false, "whether to start message broker")
 
 	serverWhiteList []string
@@ -94,7 +97,7 @@ func init() {
 	filerOptions.dirListingLimit = cmdServer.Flag.Int("filer.dirListLimit", 1000, "limit sub dir listing size")
 	filerOptions.cipher = cmdServer.Flag.Bool("filer.encryptVolumeData", false, "encrypt data on volume servers")
 	filerOptions.peers = cmdServer.Flag.String("filer.peers", "", "all filers sharing the same filer store in comma separated ip:port list")
-	filerOptions.cacheToFilerLimit = cmdServer.Flag.Int("filer.cacheToFilerLimit", 0, "Small files smaller than this limit can be cached in filer store.")
+	filerOptions.saveToFilerLimit = cmdServer.Flag.Int("filer.saveToFilerLimit", 0, "Small files smaller than this limit can be cached in filer store.")
 
 	serverOptions.v.port = cmdServer.Flag.Int("volume.port", 8080, "volume server http listen port")
 	serverOptions.v.publicPort = cmdServer.Flag.Int("volume.port.public", 0, "volume server public port")
@@ -114,6 +117,14 @@ func init() {
 	s3Options.tlsPrivateKey = cmdServer.Flag.String("s3.key.file", "", "path to the TLS private key file")
 	s3Options.tlsCertificate = cmdServer.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
 	s3Options.config = cmdServer.Flag.String("s3.config", "", "path to the config file")
+	s3Options.allowEmptyFolder = cmdServer.Flag.Bool("s3.allowEmptyFolder", false, "allow empty folders")
+
+	webdavOptions.port = cmdServer.Flag.Int("webdav.port", 7333, "webdav server http listen port")
+	webdavOptions.collection = cmdServer.Flag.String("webdav.collection", "", "collection to create the files")
+	webdavOptions.tlsPrivateKey = cmdServer.Flag.String("webdav.key.file", "", "path to the TLS private key file")
+	webdavOptions.tlsCertificate = cmdServer.Flag.String("webdav.cert.file", "", "path to the TLS certificate file")
+	webdavOptions.cacheDir = cmdServer.Flag.String("webdav.cacheDir", os.TempDir(), "local cache directory for file chunks")
+	webdavOptions.cacheSizeMB = cmdServer.Flag.Int64("webdav.cacheCapacityMB", 1000, "local cache capacity in MB")
 
 	msgBrokerOptions.port = cmdServer.Flag.Int("msgBroker.port", 17777, "broker gRPC listen port")
 
@@ -134,6 +145,9 @@ func runServer(cmd *Command, args []string) bool {
 	}
 
 	if *isStartingS3 {
+		*isStartingFiler = true
+	}
+	if *isStartingWebDav {
 		*isStartingFiler = true
 	}
 	if *isStartingMsgBroker {
@@ -170,6 +184,7 @@ func runServer(cmd *Command, args []string) bool {
 
 	filerAddress := fmt.Sprintf("%s:%d", *serverIp, *filerOptions.port)
 	s3Options.filer = &filerAddress
+	webdavOptions.filer = &filerAddress
 	msgBrokerOptions.filer = &filerAddress
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
@@ -211,6 +226,15 @@ func runServer(cmd *Command, args []string) bool {
 		}()
 	}
 
+	if *isStartingWebDav {
+		go func() {
+			time.Sleep(2 * time.Second)
+
+			webdavOptions.startWebDav()
+
+		}()
+	}
+
 	if *isStartingMsgBroker {
 		go func() {
 			time.Sleep(2 * time.Second)
@@ -224,7 +248,11 @@ func runServer(cmd *Command, args []string) bool {
 
 	}
 
-	startMaster(masterOptions, serverWhiteList)
+	if *isStartingMasterServer {
+		go startMaster(masterOptions, serverWhiteList)
+	}
+
+	select {}
 
 	return true
 }

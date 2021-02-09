@@ -96,7 +96,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
 		httpStatus := http.StatusInternalServerError
 		if err == filer_pb.ErrNotFound {
-			httpStatus = http.StatusNotFound
+			httpStatus = http.StatusNoContent
 		}
 		writeJsonError(w, r, httpStatus, err)
 		return

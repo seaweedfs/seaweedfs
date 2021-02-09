@@ -24,7 +24,7 @@ type VolumeServer struct {
 	guard           *security.Guard
 	grpcDialOption  grpc.DialOption
 
-	needleMapKind           storage.NeedleMapType
+	needleMapKind           storage.NeedleMapKind
 	FixJpgOrientation       bool
 	ReadRedirect            bool
 	compactionBytePerSecond int64
@@ -39,7 +39,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	port int, publicUrl string,
 	folders []string, maxCounts []int, minFreeSpacePercents []float32, diskTypes []storage.DiskType,
 	idxFolder string,
-	needleMapKind storage.NeedleMapType,
+	needleMapKind storage.NeedleMapKind,
 	masterNodes []string, pulseSeconds int,
 	dataCenter string, rack string,
 	whiteList []string,

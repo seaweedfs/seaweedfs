@@ -13,6 +13,8 @@ var (
 	ErrKvNotFound                            = errors.New("kv: not found")
 )
 
+type ListEachEntryFunc func(entry *Entry) bool
+
 type FilerStore interface {
 	// GetName gets the name to locate the configuration in filer.toml file
 	GetName() string
@@ -24,8 +26,8 @@ type FilerStore interface {
 	FindEntry(context.Context, util.FullPath) (entry *Entry, err error)
 	DeleteEntry(context.Context, util.FullPath) (err error)
 	DeleteFolderChildren(context.Context, util.FullPath) (err error)
-	ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int) ([]*Entry, error)
-	ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int, prefix string) ([]*Entry, error)
+	ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error)
+	ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error)
 
 	BeginTransaction(ctx context.Context) (context.Context, error)
 	CommitTransaction(ctx context.Context) error

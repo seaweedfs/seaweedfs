@@ -1,0 +1,11 @@
+[source.filer]
+enabled = true
+grpcAddress = "filer:18888"
+# all files under this directory tree are replicated.
+# this is not a directory on your hard drive, but on your filer.
+# i.e., all files with this "prefix" are sent to notification message queue.
+directory = "/buckets"
+
+[sink.local_incremental]
+enabled = true
+directory = "/data"

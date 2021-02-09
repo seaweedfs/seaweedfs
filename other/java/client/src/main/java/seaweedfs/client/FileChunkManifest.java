@@ -23,7 +23,7 @@ public class FileChunkManifest {
     }
 
     public static List<FilerProto.FileChunk> resolveChunkManifest(
-            final FilerGrpcClient filerGrpcClient, List<FilerProto.FileChunk> chunks) throws IOException {
+            final FilerClient filerClient, List<FilerProto.FileChunk> chunks) throws IOException {
 
         List<FilerProto.FileChunk> dataChunks = new ArrayList<>();
 
@@ -35,30 +35,30 @@ public class FileChunkManifest {
 
             // IsChunkManifest
             LOG.debug("fetching chunk manifest:{}", chunk);
-            byte[] data = fetchChunk(filerGrpcClient, chunk);
+            byte[] data = fetchChunk(filerClient, chunk);
             FilerProto.FileChunkManifest m = FilerProto.FileChunkManifest.newBuilder().mergeFrom(data).build();
             List<FilerProto.FileChunk> resolvedChunks = new ArrayList<>();
             for (FilerProto.FileChunk t : m.getChunksList()) {
                 // avoid deprecated chunk.getFileId()
                 resolvedChunks.add(t.toBuilder().setFileId(FilerClient.toFileId(t.getFid())).build());
             }
-            dataChunks.addAll(resolveChunkManifest(filerGrpcClient, resolvedChunks));
+            dataChunks.addAll(resolveChunkManifest(filerClient, resolvedChunks));
         }
 
         return dataChunks;
     }
 
-    private static byte[] fetchChunk(final FilerGrpcClient filerGrpcClient, FilerProto.FileChunk chunk) throws IOException {
+    private static byte[] fetchChunk(final FilerClient filerClient, FilerProto.FileChunk chunk) throws IOException {
 
         String vid = "" + chunk.getFid().getVolumeId();
-        FilerProto.Locations locations = filerGrpcClient.vidLocations.get(vid);
+        FilerProto.Locations locations = filerClient.vidLocations.get(vid);
         if (locations == null) {
             FilerProto.LookupVolumeRequest.Builder lookupRequest = FilerProto.LookupVolumeRequest.newBuilder();
             lookupRequest.addVolumeIds(vid);
-            FilerProto.LookupVolumeResponse lookupResponse = filerGrpcClient
+            FilerProto.LookupVolumeResponse lookupResponse = filerClient
                     .getBlockingStub().lookupVolume(lookupRequest.build());
             locations = lookupResponse.getLocationsMapMap().get(vid);
-            filerGrpcClient.vidLocations.put(vid, locations);
+            filerClient.vidLocations.put(vid, locations);
             LOG.debug("fetchChunk vid:{} locations:{}", vid, locations);
         }
 
@@ -74,7 +74,7 @@ public class FileChunkManifest {
         byte[] chunkData = SeaweedRead.chunkCache.getChunk(chunkView.fileId);
         if (chunkData == null) {
             LOG.debug("doFetchFullChunkData:{}", chunkView);
-            chunkData = SeaweedRead.doFetchFullChunkData(chunkView, locations);
+            chunkData = SeaweedRead.doFetchFullChunkData(filerClient, chunkView, locations);
         }
         if (chunk.getIsChunkManifest()){
             LOG.debug("chunk {} size {}", chunkView.fileId, chunkData.length);
@@ -86,7 +86,7 @@ public class FileChunkManifest {
     }
 
     public static List<FilerProto.FileChunk> maybeManifestize(
-            final FilerGrpcClient filerGrpcClient, List<FilerProto.FileChunk> inputChunks, String parentDirectory) throws IOException {
+            final FilerClient filerClient, List<FilerProto.FileChunk> inputChunks, String parentDirectory) throws IOException {
         // the return variable
         List<FilerProto.FileChunk> chunks = new ArrayList<>();
 
@@ -101,7 +101,7 @@ public class FileChunkManifest {
 
         int remaining = dataChunks.size();
         for (int i = 0; i + mergeFactor < dataChunks.size(); i += mergeFactor) {
-            FilerProto.FileChunk chunk = mergeIntoManifest(filerGrpcClient, dataChunks.subList(i, i + mergeFactor), parentDirectory);
+            FilerProto.FileChunk chunk = mergeIntoManifest(filerClient, dataChunks.subList(i, i + mergeFactor), parentDirectory);
             chunks.add(chunk);
             remaining -= mergeFactor;
         }
@@ -113,7 +113,7 @@ public class FileChunkManifest {
         return chunks;
     }
 
-    private static FilerProto.FileChunk mergeIntoManifest(final FilerGrpcClient filerGrpcClient, List<FilerProto.FileChunk> dataChunks, String parentDirectory) throws IOException {
+    private static FilerProto.FileChunk mergeIntoManifest(final FilerClient filerClient, List<FilerProto.FileChunk> dataChunks, String parentDirectory) throws IOException {
         // create and serialize the manifest
         dataChunks = FilerClient.beforeEntrySerialization(dataChunks);
         FilerProto.FileChunkManifest.Builder m = FilerProto.FileChunkManifest.newBuilder().addAllChunks(dataChunks);
@@ -127,8 +127,8 @@ public class FileChunkManifest {
         }
 
         FilerProto.FileChunk.Builder manifestChunk = SeaweedWrite.writeChunk(
-                filerGrpcClient.getReplication(),
-                filerGrpcClient,
+                filerClient.getReplication(),
+                filerClient,
                 minOffset,
                 data, 0, data.length, parentDirectory);
         manifestChunk.setIsChunkManifest(true);

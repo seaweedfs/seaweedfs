@@ -13,7 +13,8 @@ import (
 )
 
 var (
-	ResumeError = fmt.Errorf("resume")
+	ResumeError         = fmt.Errorf("resume")
+	ResumeFromDiskError = fmt.Errorf("resumeFromDisk")
 )
 
 func (logBuffer *LogBuffer) LoopProcessLogData(
@@ -34,7 +35,10 @@ func (logBuffer *LogBuffer) LoopProcessLogData(
 		if bytesBuf != nil {
 			logBuffer.ReleaseMemory(bytesBuf)
 		}
-		bytesBuf = logBuffer.ReadFromBuffer(lastReadTime)
+		bytesBuf, err = logBuffer.ReadFromBuffer(lastReadTime)
+		if err == ResumeFromDiskError {
+			return lastReadTime, ResumeFromDiskError
+		}
 		// fmt.Printf("ReadFromBuffer by %v\n", lastReadTime)
 		if bytesBuf == nil {
 			if waitForDataFn() {

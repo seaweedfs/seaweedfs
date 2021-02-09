@@ -59,6 +59,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		return true
 	}
 
+	util.LoadConfiguration("security", false)
 	// try to connect to filer, filerBucketsPath may be useful later
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	var cipher bool
@@ -78,8 +79,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	filerMountRootPath := *option.filerMountRootPath
 	dir := util.ResolvePath(*option.dir)
 	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
-
-	util.LoadConfiguration("security", false)
 
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.Version(), runtime.GOOS, runtime.GOARCH)
 	if dir == "" {
@@ -102,9 +101,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	uid, gid := uint32(0), uint32(0)
 	mountMode := os.ModeDir | 0777
 	if err == nil {
-		mountMode = os.ModeDir | fileInfo.Mode()
+		mountMode = os.ModeDir | os.FileMode(0777)&^umask
 		uid, gid = util.GetFileUidGid(fileInfo)
-		fmt.Printf("mount point owner uid=%d gid=%d mode=%s\n", uid, gid, fileInfo.Mode())
+		fmt.Printf("mount point owner uid=%d gid=%d mode=%s\n", uid, gid, mountMode)
 	} else {
 		fmt.Printf("can not stat %s\n", dir)
 		return false
@@ -152,6 +151,8 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fuse.MaxReadahead(1024 * 128),
 		fuse.AsyncRead(),
 		fuse.WritebackCache(),
+		fuse.MaxBackground(128),
+		fuse.CongestionThreshold(128),
 	}
 
 	options = append(options, osSpecificMountOptions()...)
@@ -175,28 +176,30 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	seaweedFileSystem := filesys.NewSeaweedFileSystem(&filesys.Option{
-		FilerGrpcAddress:            filerGrpcAddress,
-		GrpcDialOption:              grpcDialOption,
-		FilerMountRootPath:          mountRoot,
-		Collection:                  *option.collection,
-		Replication:                 *option.replication,
-		TtlSec:                      int32(*option.ttlSec),
-		DiskType:                    diskType,
-		ChunkSizeLimit:              int64(chunkSizeLimitMB) * 1024 * 1024,
-		ConcurrentWriters:           *option.concurrentWriters,
-		CacheDir:                    *option.cacheDir,
-		CacheSizeMB:                 *option.cacheSizeMB,
-		DataCenter:                  *option.dataCenter,
-		EntryCacheTtl:               3 * time.Second,
-		MountUid:                    uid,
-		MountGid:                    gid,
-		MountMode:                   mountMode,
-		MountCtime:                  fileInfo.ModTime(),
-		MountMtime:                  time.Now(),
-		Umask:                       umask,
-		OutsideContainerClusterMode: *mountOptions.outsideContainerClusterMode,
-		Cipher:                      cipher,
-		UidGidMapper:                uidGidMapper,
+		MountDirectory:     dir,
+		FilerAddress:       filer,
+		FilerGrpcAddress:   filerGrpcAddress,
+		GrpcDialOption:     grpcDialOption,
+		FilerMountRootPath: mountRoot,
+		Collection:         *option.collection,
+		Replication:        *option.replication,
+		TtlSec:             int32(*option.ttlSec),
+		DiskType:           diskType,
+		ChunkSizeLimit:     int64(chunkSizeLimitMB) * 1024 * 1024,
+		ConcurrentWriters:  *option.concurrentWriters,
+		CacheDir:           *option.cacheDir,
+		CacheSizeMB:        *option.cacheSizeMB,
+		DataCenter:         *option.dataCenter,
+		EntryCacheTtl:      3 * time.Second,
+		MountUid:           uid,
+		MountGid:           gid,
+		MountMode:          mountMode,
+		MountCtime:         fileInfo.ModTime(),
+		MountMtime:         time.Now(),
+		Umask:              umask,
+		VolumeServerAccess: *mountOptions.volumeServerAccess,
+		Cipher:             cipher,
+		UidGidMapper:       uidGidMapper,
 	})
 
 	// mount
@@ -213,7 +216,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	})
 
 	glog.V(0).Infof("mounted %s%s to %s", filer, mountRoot, dir)
-	err = fs.Serve(c, seaweedFileSystem)
+	server := fs.New(c, nil)
+	seaweedFileSystem.Server = server
+	err = server.Serve(seaweedFileSystem)
 
 	// check if the mount process has an error to report
 	<-c.Ready

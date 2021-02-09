@@ -35,8 +35,9 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 	var options []grpc.ServerOption
 	options = append(options,
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    10 * time.Second, // wait time before ping if no activity
-			Timeout: 20 * time.Second, // ping timeout
+			Time:             10 * time.Second, // wait time before ping if no activity
+			Timeout:          20 * time.Second, // ping timeout
+			MaxConnectionAge: 10 * time.Hour,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             60 * time.Second, // min time a client should wait before sending a ping
@@ -136,6 +137,22 @@ func ServerToGrpcAddress(server string) (serverGrpcAddress string) {
 	grpcPort := int(port) + 10000
 
 	return fmt.Sprintf("%s:%d", hostnameAndPort[0], grpcPort)
+}
+
+func GrpcAddressToServerAddress(grpcAddress string) (serverAddress string) {
+	hostnameAndPort := strings.Split(grpcAddress, ":")
+	if len(hostnameAndPort) != 2 {
+		return fmt.Sprintf("unexpected grpcAddress: %s", grpcAddress)
+	}
+
+	grpcPort, parseErr := strconv.ParseUint(hostnameAndPort[1], 10, 64)
+	if parseErr != nil {
+		return fmt.Sprintf("failed to parse port for %s:%s", hostnameAndPort[0], hostnameAndPort[1])
+	}
+
+	port := int(grpcPort) - 10000
+
+	return fmt.Sprintf("%s:%d", hostnameAndPort[0], port)
 }
 
 func WithMasterClient(master string, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) error {
