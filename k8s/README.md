@@ -12,9 +12,12 @@ with ENV.
 ### current instances config (AIO):
 1 instance for each type (master/filer/volume/s3)
 
-instances need node labels:
+To avoid multiple volume servers on the same node, apply these node labels:
 * sw-volume: true  (for volume instance, specific tag)
 * sw-backend: true (for all others, as they less resource demanding)
+```
+kubectl label node YOUR_NODE_NAME sw-volume=true,sw-backend=true
+```
 
 you can update the replicas count for each node type in values.yaml,
 need to add more nodes with the corresponding label.
