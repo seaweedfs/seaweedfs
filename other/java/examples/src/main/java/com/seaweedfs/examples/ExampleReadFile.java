@@ -1,6 +1,6 @@
 package com.seaweedfs.examples;
 
-import seaweedfs.client.FilerGrpcClient;
+import seaweedfs.client.FilerClient;
 import seaweedfs.client.SeaweedInputStream;
 
 import java.io.FileInputStream;
@@ -13,7 +13,7 @@ public class ExampleReadFile {
 
     public static void main(String[] args) throws IOException {
 
-        FilerGrpcClient filerGrpcClient = new FilerGrpcClient("localhost", 18888);
+        FilerClient filerClient = new FilerClient("localhost", 18888);
 
         long startTime = System.currentTimeMillis();
         parseZip("/Users/chris/tmp/test.zip");
@@ -23,7 +23,7 @@ public class ExampleReadFile {
         long localProcessTime = startTime2 - startTime;
 
         SeaweedInputStream seaweedInputStream = new SeaweedInputStream(
-                filerGrpcClient, "/test.zip");
+                filerClient, "/test.zip");
         parseZip(seaweedInputStream);
 
         long swProcessTime = System.currentTimeMillis() - startTime2;

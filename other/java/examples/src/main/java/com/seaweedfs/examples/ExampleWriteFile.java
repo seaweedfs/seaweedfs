@@ -1,6 +1,6 @@
 package com.seaweedfs.examples;
 
-import seaweedfs.client.FilerGrpcClient;
+import seaweedfs.client.FilerClient;
 import seaweedfs.client.SeaweedInputStream;
 import seaweedfs.client.SeaweedOutputStream;
 
@@ -13,15 +13,14 @@ public class ExampleWriteFile {
 
     public static void main(String[] args) throws IOException {
 
-        FilerGrpcClient filerGrpcClient = new FilerGrpcClient("localhost", 18888);
+        FilerClient filerClient = new FilerClient("localhost", 18888);
 
-        SeaweedInputStream seaweedInputStream = new SeaweedInputStream(
-                filerGrpcClient, "/test.zip");
-        unZipFiles(filerGrpcClient, seaweedInputStream);
+        SeaweedInputStream seaweedInputStream = new SeaweedInputStream(filerClient, "/test.zip");
+        unZipFiles(filerClient, seaweedInputStream);
 
     }
 
-    public static void unZipFiles(FilerGrpcClient filerGrpcClient, InputStream is) throws IOException {
+    public static void unZipFiles(FilerClient filerClient, InputStream is) throws IOException {
         ZipInputStream zin = new ZipInputStream(is);
         ZipEntry ze;
         while ((ze = zin.getNextEntry()) != null) {
@@ -34,7 +33,7 @@ public class ExampleWriteFile {
                 continue;
             }
 
-            SeaweedOutputStream seaweedOutputStream = new SeaweedOutputStream(filerGrpcClient, "/test/"+filename);
+            SeaweedOutputStream seaweedOutputStream = new SeaweedOutputStream(filerClient, "/test/"+filename);
             byte[] bytesIn = new byte[16 * 1024];
             int read = 0;
             while ((read = zin.read(bytesIn))!=-1) {

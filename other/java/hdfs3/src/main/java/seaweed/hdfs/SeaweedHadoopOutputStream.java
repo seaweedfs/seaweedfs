@@ -4,7 +4,7 @@ package seaweed.hdfs;
 
 import org.apache.hadoop.fs.StreamCapabilities;
 import org.apache.hadoop.fs.Syncable;
-import seaweedfs.client.FilerGrpcClient;
+import seaweedfs.client.FilerClient;
 import seaweedfs.client.FilerProto;
 import seaweedfs.client.SeaweedOutputStream;
 
@@ -13,9 +13,9 @@ import java.util.Locale;
 
 public class SeaweedHadoopOutputStream extends SeaweedOutputStream implements Syncable, StreamCapabilities {
 
-    public SeaweedHadoopOutputStream(FilerGrpcClient filerGrpcClient, final String path, FilerProto.Entry.Builder entry,
+    public SeaweedHadoopOutputStream(FilerClient filerClient, final String path, FilerProto.Entry.Builder entry,
                                      final long position, final int bufferSize, final String replication) {
-        super(filerGrpcClient, path, entry, position, bufferSize, replication);
+        super(filerClient, path, entry, position, bufferSize, replication);
     }
 
     /**

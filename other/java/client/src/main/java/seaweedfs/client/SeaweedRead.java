@@ -23,7 +23,7 @@ public class SeaweedRead {
     static VolumeIdCache volumeIdCache = new VolumeIdCache(4 * 1024);
 
     // returns bytesRead
-    public static long read(FilerGrpcClient filerGrpcClient, List<VisibleInterval> visibleIntervals,
+    public static long read(FilerClient filerClient, List<VisibleInterval> visibleIntervals,
                             final long position, final ByteBuffer buf, final long fileSize) throws IOException {
 
         List<ChunkView> chunkViews = viewFromVisibles(visibleIntervals, position, buf.remaining());
@@ -42,7 +42,7 @@ public class SeaweedRead {
         }
 
         if (lookupRequest.getVolumeIdsCount() > 0) {
-            FilerProto.LookupVolumeResponse lookupResponse = filerGrpcClient
+            FilerProto.LookupVolumeResponse lookupResponse = filerClient
                     .getBlockingStub().lookupVolume(lookupRequest.build());
             Map<String, FilerProto.Locations> vid2Locations = lookupResponse.getLocationsMapMap();
             for (Map.Entry<String, FilerProto.Locations> entry : vid2Locations.entrySet()) {
@@ -71,7 +71,7 @@ public class SeaweedRead {
                 return 0;
             }
 
-            int len = readChunkView(filerGrpcClient, startOffset, buf, chunkView, locations);
+            int len = readChunkView(filerClient, startOffset, buf, chunkView, locations);
 
             LOG.debug("read [{},{}) {} size {}", startOffset, startOffset + len, chunkView.fileId, chunkView.size);
 
@@ -93,12 +93,12 @@ public class SeaweedRead {
         return readCount;
     }
 
-    private static int readChunkView(FilerGrpcClient filerGrpcClient, long startOffset, ByteBuffer buf, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
+    private static int readChunkView(FilerClient filerClient, long startOffset, ByteBuffer buf, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
 
         byte[] chunkData = chunkCache.getChunk(chunkView.fileId);
 
         if (chunkData == null) {
-            chunkData = doFetchFullChunkData(filerGrpcClient, chunkView, locations);
+            chunkData = doFetchFullChunkData(filerClient, chunkView, locations);
             chunkCache.setChunk(chunkView.fileId, chunkData);
         }
 
@@ -110,13 +110,13 @@ public class SeaweedRead {
         return len;
     }
 
-    public static byte[] doFetchFullChunkData(FilerGrpcClient filerGrpcClient, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
+    public static byte[] doFetchFullChunkData(FilerClient filerClient, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
 
         byte[] data = null;
         IOException lastException = null;
         for (long waitTime = 1000L; waitTime < 10 * 1000; waitTime += waitTime / 2) {
             for (FilerProto.Location location : locations.getLocationsList()) {
-                String url = filerGrpcClient.getChunkUrl(chunkView.fileId, location.getUrl(), location.getPublicUrl());
+                String url = filerClient.getChunkUrl(chunkView.fileId, location.getUrl(), location.getPublicUrl());
                 try {
                     data = doFetchOneFullChunkData(chunkView, url);
                     lastException = null;
@@ -221,9 +221,9 @@ public class SeaweedRead {
     }
 
     public static List<VisibleInterval> nonOverlappingVisibleIntervals(
-            final FilerGrpcClient filerGrpcClient, List<FilerProto.FileChunk> chunkList) throws IOException {
+            final FilerClient filerClient, List<FilerProto.FileChunk> chunkList) throws IOException {
 
-        chunkList = FileChunkManifest.resolveChunkManifest(filerGrpcClient, chunkList);
+        chunkList = FileChunkManifest.resolveChunkManifest(filerClient, chunkList);
 
         FilerProto.FileChunk[] chunks = chunkList.toArray(new FilerProto.FileChunk[0]);
         Arrays.sort(chunks, new Comparator<FilerProto.FileChunk>() {
