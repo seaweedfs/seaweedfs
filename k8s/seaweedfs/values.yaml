@@ -136,7 +136,7 @@ volume:
   # limit file size to avoid out of memory, default 256mb
   fileSizeLimitMB: null
   # minimum free disk space(in percents). If free disk space lower this value - all volumes marks as ReadOnly
-  minFreeSpacePercent: 1
+  minFreeSpacePercent: 7
 
 
   # limit background compaction or copying speed in mega bytes per second
