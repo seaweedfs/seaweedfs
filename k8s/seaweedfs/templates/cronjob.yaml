@@ -40,7 +40,7 @@ spec:
                   {{ if .Values.volume.dataCenter }} -dataCenter {{ .Values.volume.dataCenter }}{{ end }}\
                   {{ if .Values.cronjob.collection }} -collection {{ .Values.cronjob.collection }}{{ end }}\n\
                   {{- if .Values.cronjob.enableFixReplication }}
-                  volume.fix.replication -collectionPattern={{ .Values.cronjob.collectionPattern }} \n\
+                  volume.fix.replication {{ if .Values.cronjob.collectionPattern }} -collectionPattern={{ .Values.cronjob.collectionPattern }} {{ end }} \n\
                   {{- end }}
                   unlock\n" | \
                   /usr/bin/weed shell \
