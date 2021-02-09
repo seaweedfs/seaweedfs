@@ -15,13 +15,13 @@ spec:
       backoffLimit: 2
       template:
         spec:
-          {{- with .Values.cronjob.nodeSelector }}
+          {{- if .Values.cronjob.nodeSelector }}
           nodeSelector:
-          {{- toYaml . | nindent 12 }}
+            {{ tpl .Values.cronjob.nodeSelector . | indent 12 | trim }}
           {{- end }}
-          {{- with .Values.cronjob.tolerations }}
+          {{- if .Values.cronjob.tolerations }}
           tolerations:
-          {{- toYaml . | nindent 12 }}
+            {{ tpl .Values.cronjob.tolerations . | nindent 12 | trim }}
           {{- end }}
           restartPolicy: OnFailure
           containers:
@@ -36,10 +36,13 @@ spec:
                 - |
                   set -ex
                   echo -e "lock\n\
-                  volume.balance -force\
+                  volume.balance -force \
                   {{ if .Values.volume.dataCenter }} -dataCenter {{ .Values.volume.dataCenter }}{{ end }}\
                   {{ if .Values.cronjob.collection }} -collection {{ .Values.cronjob.collection }}{{ end }}\n\
-                  volume.fix.replication\nunlock\n" | \
+                  {{- if .Values.cronjob.enableFixReplication }}
+                  volume.fix.replication {{ if .Values.cronjob.collectionPattern }} -collectionPattern={{ .Values.cronjob.collectionPattern }} {{ end }} \n\
+                  {{- end }}
+                  unlock\n" | \
                   /usr/bin/weed shell \
                   {{- if .Values.cronjob.master }}
                   -master {{ .Values.cronjob.master }} \

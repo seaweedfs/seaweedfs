@@ -90,10 +90,16 @@ spec:
               {{- if .Values.s3.allowEmptyFolder }}
               -allowEmptyFolder={{ .Values.s3.allowEmptyFolder }} \
               {{- end }}
+              {{- if .Values.s3.enableAuth }}
+              -config=/etc/sw/seaweedfs_s3_config \
+              {{- end }}
               -filer={{ template "seaweedfs.name" . }}-filer-client:{{ .Values.filer.port }}
           volumeMounts:
             - name: logs
               mountPath: "/logs/"
+            - mountPath: /etc/sw
+              name: config-users
+              readOnly: true
             {{- if .Values.global.enableSecurity }}
             - name: security-config
               readOnly: true
@@ -144,6 +150,10 @@ spec:
             {{ tpl .Values.s3.resources . | nindent 12 | trim }}
           {{- end }}
       volumes:
+        - name: config-users
+          secret:
+            defaultMode: 420
+            secretName: seaweedfs-s3-secret
         {{- if eq .Values.s3.logs.type "hostPath" }}
         - name: logs
           hostPath:
