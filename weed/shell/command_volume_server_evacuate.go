@@ -175,7 +175,7 @@ func moveAwayOneEcVolume(commandEnv *CommandEnv, ecShardInfo *master_pb.VolumeEc
 
 func moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, vol *master_pb.VolumeInformationMessage, thisNode *Node, otherNodes []*Node, applyChange bool) (hasMoved bool, err error) {
 	sort.Slice(otherNodes, func(i, j int) bool {
-		return otherNodes[i].localVolumeRatio() < otherNodes[j].localVolumeRatio()
+		return otherNodes[i].localVolumeRatio(capacityByMaxVolumeCount)+otherNodes[i].localVolumeRatio(capacityByMaxSsdVolumeCount) < otherNodes[j].localVolumeRatio(capacityByMaxVolumeCount)+otherNodes[j].localVolumeRatio(capacityByMaxSsdVolumeCount)
 	})
 
 	for i := 0; i < len(otherNodes); i++ {

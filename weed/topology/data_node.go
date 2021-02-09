@@ -50,7 +50,11 @@ func (dn *DataNode) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO 
 func (dn *DataNode) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO bool) {
 	if oldV, ok := dn.volumes[v.Id]; !ok {
 		dn.volumes[v.Id] = v
-		dn.UpAdjustVolumeCountDelta(1)
+		if v.DiskType == storage.SsdType {
+			dn.UpAdjustSsdVolumeCountDelta(1)
+		} else {
+			dn.UpAdjustVolumeCountDelta(1)
+		}
 		if v.IsRemote() {
 			dn.UpAdjustRemoteVolumeCountDelta(1)
 		}
@@ -89,7 +93,11 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 			glog.V(0).Infoln("Deleting volume id:", vid)
 			delete(dn.volumes, vid)
 			deletedVolumes = append(deletedVolumes, v)
-			dn.UpAdjustVolumeCountDelta(-1)
+			if v.DiskType == storage.SsdType {
+				dn.UpAdjustSsdVolumeCountDelta(-1)
+			} else {
+				dn.UpAdjustVolumeCountDelta(-1)
+			}
 			if v.IsRemote() {
 				dn.UpAdjustRemoteVolumeCountDelta(-1)
 			}
@@ -116,7 +124,11 @@ func (dn *DataNode) DeltaUpdateVolumes(newVolumes, deletedVolumes []storage.Volu
 
 	for _, v := range deletedVolumes {
 		delete(dn.volumes, v.Id)
-		dn.UpAdjustVolumeCountDelta(-1)
+		if v.DiskType == storage.SsdType {
+			dn.UpAdjustSsdVolumeCountDelta(-1)
+		} else {
+			dn.UpAdjustVolumeCountDelta(-1)
+		}
 		if v.IsRemote() {
 			dn.UpAdjustRemoteVolumeCountDelta(-1)
 		}
@@ -181,10 +193,10 @@ func (dn *DataNode) Url() string {
 func (dn *DataNode) ToMap() interface{} {
 	ret := make(map[string]interface{})
 	ret["Url"] = dn.Url()
-	ret["Volumes"] = dn.GetVolumeCount()
+	ret["Volumes"] = dn.GetVolumeCount() + dn.GetSsdVolumeCount()
 	ret["VolumeIds"] = dn.GetVolumeIds()
 	ret["EcShards"] = dn.GetEcShardCount()
-	ret["Max"] = dn.GetMaxVolumeCount()
+	ret["Max"] = dn.GetMaxVolumeCount() + dn.GetMaxSsdVolumeCount()
 	ret["Free"] = dn.FreeSpace()
 	ret["PublicUrl"] = dn.PublicUrl
 	return ret
@@ -195,6 +207,8 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 		Id:                string(dn.Id()),
 		VolumeCount:       uint64(dn.GetVolumeCount()),
 		MaxVolumeCount:    uint64(dn.GetMaxVolumeCount()),
+		MaxSsdVolumeCount: uint64(dn.GetMaxSsdVolumeCount()),
+		SsdVolumeCount:    uint64(dn.GetSsdVolumeCount()),
 		FreeVolumeCount:   uint64(dn.FreeSpace()),
 		ActiveVolumeCount: uint64(dn.GetActiveVolumeCount()),
 		RemoteVolumeCount: uint64(dn.GetRemoteVolumeCount()),

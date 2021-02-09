@@ -156,6 +156,7 @@ message FuseAttributes {
     repeated string group_name = 12; // for hdfs
     string symlink_target = 13;
     bytes md5 = 14;
+    string disk_type = 15;
 }
 
 message CreateEntryRequest {
@@ -220,6 +221,7 @@ message AssignVolumeRequest {
     string data_center = 5;
     string path = 6;
     string rack = 7;
+    string disk_type = 8;
 }
 
 message AssignVolumeResponse {
@@ -270,11 +272,9 @@ message StatisticsRequest {
     string replication = 1;
     string collection = 2;
     string ttl = 3;
+    string disk_type = 4;
 }
 message StatisticsResponse {
-    string replication = 1;
-    string collection = 2;
-    string ttl = 3;
     uint64 total_size = 4;
     uint64 used_size = 5;
     uint64 file_count = 6;
@@ -358,12 +358,7 @@ message FilerConf {
         string collection = 2;
         string replication = 3;
         string ttl = 4;
-        enum DiskType {
-            NONE = 0;
-            HDD = 1;
-            SSD = 2;
-        }
-        DiskType disk_type = 5;
+        string disk_type = 5;
         bool fsync = 6;
         uint32 volume_growth_count = 7;
     }

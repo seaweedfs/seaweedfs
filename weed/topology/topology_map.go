@@ -4,7 +4,7 @@ import "github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 
 func (t *Topology) ToMap() interface{} {
 	m := make(map[string]interface{})
-	m["Max"] = t.GetMaxVolumeCount()
+	m["Max"] = t.GetMaxVolumeCount() + t.GetMaxSsdVolumeCount()
 	m["Free"] = t.FreeSpace()
 	var dcs []interface{}
 	for _, c := range t.Children() {
@@ -29,7 +29,7 @@ func (t *Topology) ToMap() interface{} {
 
 func (t *Topology) ToVolumeMap() interface{} {
 	m := make(map[string]interface{})
-	m["Max"] = t.GetMaxVolumeCount()
+	m["Max"] = t.GetMaxVolumeCount() + t.GetMaxSsdVolumeCount()
 	m["Free"] = t.FreeSpace()
 	dcs := make(map[NodeId]interface{})
 	for _, c := range t.Children() {
@@ -83,9 +83,11 @@ func (t *Topology) ToTopologyInfo() *master_pb.TopologyInfo {
 		Id:                string(t.Id()),
 		VolumeCount:       uint64(t.GetVolumeCount()),
 		MaxVolumeCount:    uint64(t.GetMaxVolumeCount()),
+		MaxSsdVolumeCount: uint64(t.GetMaxSsdVolumeCount()),
 		FreeVolumeCount:   uint64(t.FreeSpace()),
 		ActiveVolumeCount: uint64(t.GetActiveVolumeCount()),
 		RemoteVolumeCount: uint64(t.GetRemoteVolumeCount()),
+		SsdVolumeCount:    uint64(t.GetSsdVolumeCount()),
 	}
 	for _, c := range t.Children() {
 		dc := c.(*DataCenter)
