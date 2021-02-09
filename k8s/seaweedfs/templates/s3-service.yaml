@@ -9,15 +9,15 @@ metadata:
 spec:
   ports:
   - name: "swfs-s3"
-    port: {{ .Values.s3.port }}
-    targetPort: {{ .Values.s3.port }}
+    port: {{ if .Values.s3.enabled }}{{ .Values.s3.port }}{{ else }}{{ .Values.filer.s3.port }}{{ end }}
+    targetPort: {{ if .Values.s3.enabled }}{{ .Values.s3.port }}{{ else }}{{ .Values.filer.s3.port }}{{ end }}
     protocol: TCP
-{{- if .Values.s3.metricsPort }}
-  - name: "swfs-s3-metrics"
+{{- if and .Values.s3.enabled .Values.s3.metricsPort }}
+  - name: "metrics"
     port: {{ .Values.s3.metricsPort }}
     targetPort: {{ .Values.s3.metricsPort }}
     protocol: TCP
 {{- end }}
   selector:
     app: {{ template "seaweedfs.name" . }}
-    component: s3
+    component: {{ if .Values.s3.enabled }}s3{{ else }}filer{{ end }}

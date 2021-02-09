@@ -229,6 +229,8 @@ filer:
   maxMB: null
   # encrypt data on volume servers
   encryptVolumeData: false
+  # enable peers sync metadata, for leveldb (localdb for filer but with sync across)
+  enable_peers: false
 
   # Whether proxy or redirect to volume server during file GET request
   redirectOnRead: false
@@ -311,8 +313,19 @@ filer:
     # directories under this folder will be automatically creating a separate bucket
     WEED_FILER_BUCKETS_FOLDER: "/buckets"
 
+  s3:
+    enabled: true
+    port: 8333
+    #allow empty folders
+    allowEmptyFolder: false
+    # Suffix of the host name, {bucket}.{domainName}
+    domainName: ""
+    # enable user & permission to s3 (need to inject to all services)
+    enableAuth: false
+    skipAuthSecretCreation: false
+
 s3:
-  enabled: true
+  enabled: false
   repository: null
   imageName: null
   imageTag: null
@@ -323,6 +336,9 @@ s3:
   loggingOverrideLevel: null
   #allow empty folders
   allowEmptyFolder: true
+  # enable user & permission to s3 (need to inject to all services)
+  enableAuth: false
+  skipAuthSecretCreation: false
 
   # Suffix of the host name, {bucket}.{domainName}
   domainName: ""
