@@ -113,6 +113,10 @@ func (k *GoCDKPubSubInput) Initialize(configuration util.Configuration, prefix s
 func (k *GoCDKPubSubInput) ReceiveMessage() (key string, message *filer_pb.EventNotification, onSuccessFn func(), onFailureFn func(), err error) {
 	msg, err := k.sub.Receive(context.Background())
 	if err != nil {
+		var conn *amqp.Connection
+		if k.sub.As(&conn) && conn.IsClosed() {
+			glog.Fatalln(err)
+		}
 		return
 	}
 	onFailureFn = func() {
