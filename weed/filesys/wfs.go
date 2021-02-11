@@ -3,8 +3,8 @@ package filesys
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"math"
 	"os"

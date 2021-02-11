@@ -25,7 +25,7 @@ type FilerSink struct {
 	replication       string
 	collection        string
 	ttlSec            int32
-	diskType       string
+	diskType          string
 	dataCenter        string
 	grpcDialOption    grpc.DialOption
 	address           string

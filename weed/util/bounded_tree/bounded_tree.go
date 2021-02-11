@@ -70,7 +70,6 @@ func (t *BoundedTree) ensureVisited(n *Node, currentPath util.FullPath, componen
 	} else {
 		// fmt.Printf("ensure %v\n", currentPath)
 
-
 		children, err := visitFn(currentPath)
 		if err != nil {
 			glog.V(0).Infof("failed to visit %s: %v", currentPath, err)
