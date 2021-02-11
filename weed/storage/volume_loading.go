@@ -96,6 +96,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				v.dirIdx = v.dir
 			}
 		}
+		// check volume idx files
+		if err := v.checkIdxFile(); err != nil {
+			glog.Fatalf("check volume idx file %s: %v", v.FileName(".idx"), err)
+		}
 		var indexFile *os.File
 		if v.noWriteOrDelete {
 			glog.V(0).Infoln("open to read file", v.FileName(".idx"))
