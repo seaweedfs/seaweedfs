@@ -35,7 +35,7 @@ func ReadContent(filerAddress string, dir, name string) ([]byte, error) {
 
 	target := fmt.Sprintf("http://%s%s/%s", filerAddress, dir, name)
 
-	data, _, err := util.Get(target)
+	data, _, err := util.FastGet(target)
 
 	return data, err
 }
