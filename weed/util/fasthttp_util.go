@@ -63,7 +63,7 @@ func FastGet(url string) ([]byte, bool, error) {
 
 	if res.StatusCode() >= 400 {
 		retryable := res.StatusCode() >= 500
-		return nil, retryable, fmt.Errorf("%s: %s", url, res.StatusCode())
+		return nil, retryable, fmt.Errorf("%s: %d", url, res.StatusCode())
 	}
 	if err != nil {
 		return nil, false, err
@@ -96,7 +96,7 @@ func FastReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool
 
 	if res.StatusCode() >= 400 {
 		retryable = res.StatusCode() >= 500
-		return retryable, fmt.Errorf("%s: %s", fileUrl, res.StatusCode())
+		return retryable, fmt.Errorf("%s: %d", fileUrl, res.StatusCode())
 	}
 
 	contentEncoding := res.Header.Peek("Content-Encoding")
