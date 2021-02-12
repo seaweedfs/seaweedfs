@@ -29,6 +29,7 @@ var (
 
 func init() {
 	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 1024
+	http.DefaultTransport.(*http.Transport).MaxIdleConns = 1024
 }
 
 func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {

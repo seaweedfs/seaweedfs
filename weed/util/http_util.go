@@ -21,6 +21,7 @@ var (
 
 func init() {
 	Transport = &http.Transport{
+		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
 	}
 	client = &http.Client{
