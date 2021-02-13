@@ -173,6 +173,7 @@ func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
 		ReadOnly:         v.IsReadOnly(),
 		Ttl:              v.Ttl,
 		CompactRevision:  uint32(v.CompactionRevision),
+		DiskType:         v.DiskType().String(),
 	}
 	s.RemoteStorageName, s.RemoteStorageKey = v.RemoteStorageNameKey()
 

@@ -17,7 +17,7 @@ func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 	for _, loc := range vs.store.Locations {
 		if dir, e := filepath.Abs(loc.Directory); e == nil {
 			newDiskStatus := stats.NewDiskStatus(dir)
-			newDiskStatus.DiskType = loc.GetDiskType()
+			newDiskStatus.DiskType = loc.DiskType.String()
 			ds = append(ds, newDiskStatus)
 		}
 	}
@@ -34,7 +34,7 @@ func (vs *VolumeServer) statsDiskHandler(w http.ResponseWriter, r *http.Request)
 	for _, loc := range vs.store.Locations {
 		if dir, e := filepath.Abs(loc.Directory); e == nil {
 			newDiskStatus := stats.NewDiskStatus(dir)
-			newDiskStatus.DiskType = loc.GetDiskType()
+			newDiskStatus.DiskType = loc.DiskType.String()
 			ds = append(ds, newDiskStatus)
 		}
 	}
