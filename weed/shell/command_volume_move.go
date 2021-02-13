@@ -56,7 +56,7 @@ func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.
 	volumeIdInt := volMoveCommand.Int("volumeId", 0, "the volume id")
 	sourceNodeStr := volMoveCommand.String("source", "", "the source volume server <host>:<port>")
 	targetNodeStr := volMoveCommand.String("target", "", "the target volume server <host>:<port>")
-	diskTypeStr := volMoveCommand.String("disk", "", "[ssd|hdd] overwrite the original disk type")
+	diskTypeStr := volMoveCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	if err = volMoveCommand.Parse(args); err != nil {
 		return nil
 	}
