@@ -37,7 +37,7 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 	}()
 }
 func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
-	diskType, _ := storage.ToDiskType(volumeInfo.DiskType)
+	diskType := storage.ToDiskType(volumeInfo.DiskType)
 	vl := t.GetVolumeLayout(volumeInfo.Collection, volumeInfo.ReplicaPlacement, volumeInfo.Ttl, diskType)
 	if !vl.SetVolumeCapacityFull(volumeInfo.Id) {
 		return false
@@ -56,7 +56,7 @@ func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
 func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 	for _, v := range dn.GetVolumes() {
 		glog.V(0).Infoln("Removing Volume", v.Id, "from the dead volume server", dn.Id())
-		diskType, _ := storage.ToDiskType(v.DiskType)
+		diskType := storage.ToDiskType(v.DiskType)
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 		vl.SetVolumeUnavailable(dn, v.Id)
 	}

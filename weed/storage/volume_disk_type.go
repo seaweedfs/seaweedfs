@@ -1,6 +1,8 @@
 package storage
 
-import "fmt"
+import (
+	"strings"
+)
 
 type DiskType string
 
@@ -9,7 +11,8 @@ const (
 	SsdType                = "ssd"
 )
 
-func ToDiskType(vt string) (diskType DiskType, err error) {
+func ToDiskType(vt string) (diskType DiskType) {
+	vt = strings.ToLower(vt)
 	diskType = HardDriveType
 	switch vt {
 	case "", "hdd":
@@ -17,7 +20,7 @@ func ToDiskType(vt string) (diskType DiskType, err error) {
 	case "ssd":
 		diskType = SsdType
 	default:
-		err = fmt.Errorf("parse DiskType %s: expecting hdd or ssd\n", vt)
+		diskType = DiskType(vt)
 	}
 	return
 }

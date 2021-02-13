@@ -188,14 +188,14 @@ func (t *Topology) DeleteLayout(collectionName string, rp *super_block.ReplicaPl
 }
 
 func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
-	diskType, _ := storage.ToDiskType(v.DiskType)
+	diskType := storage.ToDiskType(v.DiskType)
 	vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 	vl.RegisterVolume(&v, dn)
 	vl.EnsureCorrectWritables(&v)
 }
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	glog.Infof("removing volume info: %+v", v)
-	diskType, _ := storage.ToDiskType(v.DiskType)
+	diskType := storage.ToDiskType(v.DiskType)
 	volumeLayout := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 	volumeLayout.UnRegisterVolume(&v, dn)
 	if volumeLayout.isEmpty() {
@@ -235,7 +235,7 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		t.UnRegisterVolumeLayout(v, dn)
 	}
 	for _, v := range changedVolumes {
-		diskType, _ := storage.ToDiskType(v.DiskType)
+		diskType := storage.ToDiskType(v.DiskType)
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 		vl.EnsureCorrectWritables(&v)
 	}

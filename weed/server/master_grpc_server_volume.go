@@ -61,10 +61,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	if err != nil {
 		return nil, err
 	}
-	diskType, err := storage.ToDiskType(req.DiskType)
-	if err != nil {
-		return nil, err
-	}
+	diskType := storage.ToDiskType(req.DiskType)
 
 	option := &topology.VolumeGrowOption{
 		Collection:         req.Collection,

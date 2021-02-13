@@ -173,11 +173,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	var diskTypes []storage.DiskType
 	diskTypeStrings := strings.Split(*v.diskType, ",")
 	for _, diskTypeString := range diskTypeStrings {
-		if diskType, err := storage.ToDiskType(diskTypeString); err == nil {
-			diskTypes = append(diskTypes, diskType)
-		} else {
-			glog.Fatalf("failed to parse volume type: %v", err)
-		}
+		diskTypes = append(diskTypes, storage.ToDiskType(diskTypeString))
 	}
 	if len(diskTypes) == 1 && len(v.folders) > 1 {
 		for i := 0; i < len(v.folders)-1; i++ {
