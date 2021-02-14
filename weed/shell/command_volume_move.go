@@ -29,7 +29,7 @@ func (c *commandVolumeMove) Help() string {
 	return `move a live volume from one volume server to another volume server
 
 	volume.move -source <source volume server host:port> -target <target volume server host:port> -volumeId <volume id>
-	volume.move -source <source volume server host:port> -target <target volume server host:port> -volumeId <volume id> -disk [ssd|hdd]
+	volume.move -source <source volume server host:port> -target <target volume server host:port> -volumeId <volume id> -disk [hdd|ssd|<tag>]
 
 	This command move a live volume from one volume server to another volume server. Here are the steps:
 
@@ -41,7 +41,7 @@ func (c *commandVolumeMove) Help() string {
 		Now the master will mark this volume id as writable.
 	5. This command asks the source volume server to delete the source volume
 
-	The option "-disk [ssd|hdd]" can be used to change the volume disk type.
+	The option "-disk [hdd|ssd|<tag>]" can be used to change the volume disk type.
 
 `
 }
