@@ -29,7 +29,7 @@ func (c *commandVolumeMove) Help() string {
 	return `move a live volume from one volume server to another volume server
 
 	volume.move -source <source volume server host:port> -target <target volume server host:port> -volumeId <volume id>
-	volume.move -source <source volume server host:port> -target <target volume server host:port> -volumeId <volume id> -disk [hdd|ssd|<tag>]
+	volume.move -source <source volume server host:port> -target <target volume server host:port> -volumeId <volume id> -disk [hdd|ssd]
 
 	This command move a live volume from one volume server to another volume server. Here are the steps:
 
@@ -41,7 +41,7 @@ func (c *commandVolumeMove) Help() string {
 		Now the master will mark this volume id as writable.
 	5. This command asks the source volume server to delete the source volume
 
-	The option "-disk [hdd|ssd|<tag>]" can be used to change the volume disk type.
+	The option "-disk [hdd|ssd]" can be used to change the volume disk type.
 
 `
 }
@@ -56,7 +56,7 @@ func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.
 	volumeIdInt := volMoveCommand.Int("volumeId", 0, "the volume id")
 	sourceNodeStr := volMoveCommand.String("source", "", "the source volume server <host>:<port>")
 	targetNodeStr := volMoveCommand.String("target", "", "the target volume server <host>:<port>")
-	diskTypeStr := volMoveCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
+	diskTypeStr := volMoveCommand.String("disk", "", "[hdd|ssd] hard drive or solid state drive")
 	if err = volMoveCommand.Parse(args); err != nil {
 		return nil
 	}
