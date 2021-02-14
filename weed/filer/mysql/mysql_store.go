@@ -47,7 +47,7 @@ func (store *MysqlStore) initialize(user, password, hostname string, port int, d
 	store.SupportBucketTable = false
 	store.SqlGenerator = &SqlGenMysql{
 		CreateTableSqlTemplate: "",
-		DropTableSqlTemplate:   "drop table %s",
+		DropTableSqlTemplate: "drop table `%s`",
 	}
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, password, hostname, port, database)

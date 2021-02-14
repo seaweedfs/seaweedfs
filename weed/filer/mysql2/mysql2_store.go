@@ -50,7 +50,7 @@ func (store *MysqlStore2) initialize(createTable, user, password, hostname strin
 	store.SupportBucketTable = true
 	store.SqlGenerator = &mysql.SqlGenMysql{
 		CreateTableSqlTemplate: createTable,
-		DropTableSqlTemplate:   "drop table %s",
+		DropTableSqlTemplate:   "drop table `%s`",
 	}
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, password, hostname, port, database)
