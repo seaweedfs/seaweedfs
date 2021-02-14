@@ -112,6 +112,17 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 
 func balanceVolumeServers(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, volumeSizeLimit uint64, collection string, applyBalancing bool) error {
 
+	for _, diskType := range []storage.DiskType{storage.HardDriveType, storage.SsdType} {
+		if err := balanceVolumeServersByDiskType(commandEnv, diskType, volumeReplicas, nodes, volumeSizeLimit, collection, applyBalancing); err != nil {
+			return err
+		}
+	}
+	return nil
+
+}
+
+func balanceVolumeServersByDiskType(commandEnv *CommandEnv, diskType storage.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, volumeSizeLimit uint64, collection string, applyBalancing bool) error {
+
 	// balance writable hdd volumes
 	// fmt.Fprintf(os.Stdout, "\nbalance collection %s writable hdd volumes\n", collection)
 	for _, n := range nodes {
@@ -121,7 +132,7 @@ func balanceVolumeServers(commandEnv *CommandEnv, volumeReplicas map[uint32][]*V
 					return false
 				}
 			}
-			return v.DiskType == string(storage.HardDriveType) && (!v.ReadOnly && v.Size < volumeSizeLimit)
+			return v.DiskType == string(diskType) && (!v.ReadOnly && v.Size < volumeSizeLimit)
 		})
 	}
 	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxVolumeCount, sortWritableVolumes, applyBalancing); err != nil {
@@ -137,42 +148,10 @@ func balanceVolumeServers(commandEnv *CommandEnv, volumeReplicas map[uint32][]*V
 					return false
 				}
 			}
-			return v.DiskType == string(storage.HardDriveType) && (v.ReadOnly || v.Size >= volumeSizeLimit)
+			return v.DiskType == string(diskType) && (v.ReadOnly || v.Size >= volumeSizeLimit)
 		})
 	}
 	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxVolumeCount, sortReadOnlyVolumes, applyBalancing); err != nil {
-		return err
-	}
-
-	// balance writable ssd volumes
-	// fmt.Fprintf(os.Stdout, "\nbalance collection %s writable ssd volumes\n", collection)
-	for _, n := range nodes {
-		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
-			if collection != "ALL_COLLECTIONS" {
-				if v.Collection != collection {
-					return false
-				}
-			}
-			return v.DiskType == string(storage.SsdType) && (!v.ReadOnly && v.Size < volumeSizeLimit)
-		})
-	}
-	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxSsdVolumeCount, sortWritableVolumes, applyBalancing); err != nil {
-		return err
-	}
-
-	// balance readable ssd volumes
-	// fmt.Fprintf(os.Stdout, "\nbalance collection %s readable ssd volumes\n", collection)
-	for _, n := range nodes {
-		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
-			if collection != "ALL_COLLECTIONS" {
-				if v.Collection != collection {
-					return false
-				}
-			}
-			return v.DiskType == string(storage.SsdType) && (v.ReadOnly || v.Size >= volumeSizeLimit)
-		})
-	}
-	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxSsdVolumeCount, sortReadOnlyVolumes, applyBalancing); err != nil {
 		return err
 	}
 
