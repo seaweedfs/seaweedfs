@@ -124,11 +124,11 @@ interpolateParams = false
 [mysql2]  # or memsql, tidb
 enabled = false
 createTable = """
-  CREATE TABLE IF NOT EXISTS %s (
-    dirhash BIGINT, 
-    name VARCHAR(1000), 
-    directory TEXT, 
-    meta LONGBLOB, 
+  CREATE TABLE IF NOT EXISTS ` + "`%s`" + ` (
+    dirhash BIGINT,
+    name VARCHAR(1000),
+    directory TEXT,
+    meta LONGBLOB,
     PRIMARY KEY (dirhash, name)
   ) DEFAULT CHARSET=utf8;
 """
@@ -164,7 +164,7 @@ connection_max_open = 100
 [postgres2]
 enabled = false
 createTable = """
-  CREATE TABLE IF NOT EXISTS %s (
+  CREATE TABLE IF NOT EXISTS "%s" (
     dirhash   BIGINT, 
     name      VARCHAR(65535), 
     directory VARCHAR(65535), 
