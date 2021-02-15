@@ -185,7 +185,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 		for _, object := range deleteObjects.Objects {
 
 			lastSeparator := strings.LastIndex(object.ObjectName, "/")
-			parentDirectoryPath, entryName, isDeleteData, isRecursive := "/", object.ObjectName, true, false
+			parentDirectoryPath, entryName, isDeleteData, isRecursive := "", object.ObjectName, true, false
 			if lastSeparator > 0 && lastSeparator+1 < len(object.ObjectName) {
 				entryName = object.ObjectName[lastSeparator+1:]
 				parentDirectoryPath = "/" + object.ObjectName[:lastSeparator]
@@ -208,7 +208,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 		// purge empty folders, only checking folders with deletions
 		for len(directoriesWithDeletion) > 0 {
-			directoriesWithDeletion = doDeleteEmptyDirectories(client, directoriesWithDeletion)
+			directoriesWithDeletion = s3a.doDeleteEmptyDirectories(client, directoriesWithDeletion)
 		}
 
 		return nil
@@ -224,7 +224,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 }
 
-func doDeleteEmptyDirectories(client filer_pb.SeaweedFilerClient, directoriesWithDeletion map[string]int) (newDirectoriesWithDeletion map[string]int) {
+func (s3a *S3ApiServer) doDeleteEmptyDirectories(client filer_pb.SeaweedFilerClient, directoriesWithDeletion map[string]int) (newDirectoriesWithDeletion map[string]int) {
 	var allDirs []string
 	for dir, _ := range directoriesWithDeletion {
 		allDirs = append(allDirs, dir)
@@ -235,6 +235,9 @@ func doDeleteEmptyDirectories(client filer_pb.SeaweedFilerClient, directoriesWit
 	newDirectoriesWithDeletion = make(map[string]int)
 	for _, dir := range allDirs {
 		parentDir, dirName := util.FullPath(dir).DirAndName()
+		if parentDir == s3a.option.BucketsPath {
+			continue
+		}
 		if err := doDeleteEntry(client, parentDir, dirName, false, false); err != nil {
 			glog.V(4).Infof("directory %s has %d deletion but still not empty: %v", dir, directoriesWithDeletion[dir], err)
 		} else {
