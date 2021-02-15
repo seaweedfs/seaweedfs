@@ -3,6 +3,7 @@ package postgres
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
@@ -37,10 +38,11 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 		configuration.GetString(prefix+"sslmode"),
 		configuration.GetInt(prefix+"connection_max_idle"),
 		configuration.GetInt(prefix+"connection_max_open"),
+		configuration.GetInt(prefix+"connection_max_lifetime_seconds"),
 	)
 }
 
-func (store *PostgresStore) initialize(user, password, hostname string, port int, database, schema, sslmode string, maxIdle, maxOpen int) (err error) {
+func (store *PostgresStore) initialize(user, password, hostname string, port int, database, schema, sslmode string, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
 
 	store.SupportBucketTable = false
 	store.SqlGenerator = &SqlGenPostgres{
@@ -71,6 +73,7 @@ func (store *PostgresStore) initialize(user, password, hostname string, port int
 
 	store.DB.SetMaxIdleConns(maxIdle)
 	store.DB.SetMaxOpenConns(maxOpen)
+	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
 
 	if err = store.DB.Ping(); err != nil {
 		return fmt.Errorf("connect to %s error:%v", sqlUrl, err)
