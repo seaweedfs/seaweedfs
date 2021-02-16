@@ -159,7 +159,7 @@ func (du *DiskUsages) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts 
 func (d *Disk) String() string {
 	d.RLock()
 	defer d.RUnlock()
-	return fmt.Sprintf("Disk:%s, volumes:%v, ecShards:%v, Port:%d, PublicUrl:%s", d.NodeImpl.String(), d.volumes, d.ecShards)
+	return fmt.Sprintf("Disk:%s, volumes:%v, ecShards:%v", d.NodeImpl.String(), d.volumes, d.ecShards)
 }
 
 func (d *Disk) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO bool) {
