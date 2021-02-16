@@ -46,7 +46,7 @@ func (dn *DataNode) getOrCreateDisk(diskType string) *Disk {
 	c, found := dn.children[NodeId(diskType)]
 	if !found {
 		c = NewDisk(diskType)
-		dn.LinkChildNode(c)
+		dn.doLinkChildNode(c)
 	}
 	disk := c.(*Disk)
 	return disk

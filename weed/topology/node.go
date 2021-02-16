@@ -210,6 +210,10 @@ func (n *NodeImpl) GetMaxVolumeId() needle.VolumeId {
 func (n *NodeImpl) LinkChildNode(node Node) {
 	n.Lock()
 	defer n.Unlock()
+	n.doLinkChildNode(node)
+}
+
+func (n *NodeImpl) doLinkChildNode(node Node) {
 	if n.children[node.Id()] == nil {
 		n.children[node.Id()] = node
 		n.UpAdjustDiskUsageDelta(node.GetDiskUsages())
