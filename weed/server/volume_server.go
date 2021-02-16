@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"net/http"
 
 	"google.golang.org/grpc"
@@ -37,7 +38,7 @@ type VolumeServer struct {
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	port int, publicUrl string,
-	folders []string, maxCounts []int, minFreeSpacePercents []float32, diskTypes []storage.DiskType,
+	folders []string, maxCounts []int, minFreeSpacePercents []float32, diskTypes []types.DiskType,
 	idxFolder string,
 	needleMapKind storage.NeedleMapKind,
 	masterNodes []string, pulseSeconds int,

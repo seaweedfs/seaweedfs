@@ -2,6 +2,7 @@ package topology
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"math/rand"
 	"sync"
 
@@ -27,7 +28,7 @@ type VolumeGrowOption struct {
 	Collection         string
 	ReplicaPlacement   *super_block.ReplicaPlacement
 	Ttl                *needle.TTL
-	DiskType           storage.DiskType
+	DiskType           types.DiskType
 	Prealloacte        int64
 	DataCenter         string
 	Rack               string
@@ -219,6 +220,7 @@ func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid
 				ReplicaPlacement: option.ReplicaPlacement,
 				Ttl:              option.Ttl,
 				Version:          needle.CurrentVersion,
+				DiskType:         string(option.DiskType),
 			}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(vi, server)

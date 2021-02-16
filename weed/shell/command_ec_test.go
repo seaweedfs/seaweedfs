@@ -127,6 +127,7 @@ func newEcNode(dc string, rack string, dataNodeId string, freeEcSlot int) *EcNod
 	return &EcNode{
 		info: &master_pb.DataNodeInfo{
 			Id: dataNodeId,
+			DiskInfos: make(map[string]*master_pb.DiskInfo),
 		},
 		dc:         dc,
 		rack:       RackId(rack),

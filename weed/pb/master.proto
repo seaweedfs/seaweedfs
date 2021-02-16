@@ -61,8 +61,7 @@ message Heartbeat {
     repeated VolumeEcShardInformationMessage deleted_ec_shards = 18;
     bool has_no_ec_shards = 19;
 
-    uint32 max_volume_count = 4;
-    uint32 max_ssd_volume_count = 20;
+    map<string, uint32> max_volume_counts = 4;
 
 }
 
@@ -105,6 +104,7 @@ message VolumeEcShardInformationMessage {
     uint32 id = 1;
     string collection = 2;
     uint32 ec_index_bits = 3;
+    string disk_type = 4;
 }
 
 message StorageBackend {
@@ -213,8 +213,8 @@ message CollectionDeleteResponse {
 //
 // volume related
 //
-message DataNodeInfo {
-    string id = 1;
+message DiskInfo {
+    string type = 1;
     uint64 volume_count = 2;
     uint64 max_volume_count = 3;
     uint64 free_volume_count = 4;
@@ -222,41 +222,25 @@ message DataNodeInfo {
     repeated VolumeInformationMessage volume_infos = 6;
     repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
     uint64 remote_volume_count = 8;
-    uint64 max_ssd_volume_count = 9;
-    uint64 ssd_volume_count = 10;
+}
+message DataNodeInfo {
+    string id = 1;
+    map<string, DiskInfo> diskInfos = 2;
 }
 message RackInfo {
     string id = 1;
-    uint64 volume_count = 2;
-    uint64 max_volume_count = 3;
-    uint64 free_volume_count = 4;
-    uint64 active_volume_count = 5;
-    repeated DataNodeInfo data_node_infos = 6;
-    uint64 remote_volume_count = 7;
-    uint64 max_ssd_volume_count = 8;
-    uint64 ssd_volume_count = 9;
+    repeated DataNodeInfo data_node_infos = 2;
+    map<string, DiskInfo> diskInfos = 3;
 }
 message DataCenterInfo {
     string id = 1;
-    uint64 volume_count = 2;
-    uint64 max_volume_count = 3;
-    uint64 free_volume_count = 4;
-    uint64 active_volume_count = 5;
-    repeated RackInfo rack_infos = 6;
-    uint64 remote_volume_count = 7;
-    uint64 max_ssd_volume_count = 8;
-    uint64 ssd_volume_count = 9;
+    repeated RackInfo rack_infos = 2;
+    map<string, DiskInfo> diskInfos = 3;
 }
 message TopologyInfo {
     string id = 1;
-    uint64 volume_count = 2;
-    uint64 max_volume_count = 3;
-    uint64 free_volume_count = 4;
-    uint64 active_volume_count = 5;
-    repeated DataCenterInfo data_center_infos = 6;
-    uint64 remote_volume_count = 7;
-    uint64 max_ssd_volume_count = 8;
-    uint64 ssd_volume_count = 9;
+    repeated DataCenterInfo data_center_infos = 2;
+    map<string, DiskInfo> diskInfos = 3;
 }
 message VolumeListRequest {
 }

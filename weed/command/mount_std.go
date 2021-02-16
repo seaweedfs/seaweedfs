@@ -5,7 +5,7 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"os"
 	"os/user"
 	"path"
@@ -169,7 +169,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		mountRoot = mountRoot[0 : len(mountRoot)-1]
 	}
 
-	diskType := storage.ToDiskType(*option.diskType)
+	diskType := types.ToDiskType(*option.diskType)
 
 	seaweedFileSystem := filesys.NewSeaweedFileSystem(&filesys.Option{
 		MountDirectory:     dir,

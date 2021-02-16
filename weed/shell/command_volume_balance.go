@@ -4,8 +4,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io"
 	"os"
 	"sort"
@@ -111,7 +111,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	return nil
 }
 
-func balanceVolumeServers(commandEnv *CommandEnv, diskTypes []storage.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, volumeSizeLimit uint64, collection string, applyBalancing bool) error {
+func balanceVolumeServers(commandEnv *CommandEnv, diskTypes []types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, volumeSizeLimit uint64, collection string, applyBalancing bool) error {
 
 	for _, diskType := range diskTypes {
 		if err := balanceVolumeServersByDiskType(commandEnv, diskType, volumeReplicas, nodes, volumeSizeLimit, collection, applyBalancing); err != nil {
@@ -122,7 +122,7 @@ func balanceVolumeServers(commandEnv *CommandEnv, diskTypes []storage.DiskType, 
 
 }
 
-func balanceVolumeServersByDiskType(commandEnv *CommandEnv, diskType storage.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, volumeSizeLimit uint64, collection string, applyBalancing bool) error {
+func balanceVolumeServersByDiskType(commandEnv *CommandEnv, diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, volumeSizeLimit uint64, collection string, applyBalancing bool) error {
 
 	// balance writable volumes
 	for _, n := range nodes {
@@ -135,7 +135,7 @@ func balanceVolumeServersByDiskType(commandEnv *CommandEnv, diskType storage.Dis
 			return v.DiskType == string(diskType) && (!v.ReadOnly && v.Size < volumeSizeLimit)
 		})
 	}
-	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxVolumeCount, sortWritableVolumes, applyBalancing); err != nil {
+	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxVolumeCount(diskType), sortWritableVolumes, applyBalancing); err != nil {
 		return err
 	}
 
@@ -150,7 +150,7 @@ func balanceVolumeServersByDiskType(commandEnv *CommandEnv, diskType storage.Dis
 			return v.DiskType == string(diskType) && (v.ReadOnly || v.Size >= volumeSizeLimit)
 		})
 	}
-	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxVolumeCount, sortReadOnlyVolumes, applyBalancing); err != nil {
+	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxVolumeCount(diskType), sortReadOnlyVolumes, applyBalancing); err != nil {
 		return err
 	}
 
@@ -175,21 +175,21 @@ func collectVolumeServersByDc(t *master_pb.TopologyInfo, selectedDataCenter stri
 	return
 }
 
-func collectVolumeDiskTypes(t *master_pb.TopologyInfo) (diskTypes []storage.DiskType) {
+func collectVolumeDiskTypes(t *master_pb.TopologyInfo) (diskTypes []types.DiskType) {
 	knownTypes := make(map[string]bool)
 	for _, dc := range t.DataCenterInfos {
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {
-				for _, vi := range dn.VolumeInfos {
-					if _, found := knownTypes[vi.DiskType]; !found {
-						knownTypes[vi.DiskType] = true
+				for diskType, _ := range dn.DiskInfos {
+					if _, found := knownTypes[diskType]; !found {
+						knownTypes[diskType] = true
 					}
 				}
 			}
 		}
 	}
 	for diskType, _ := range knownTypes {
-		diskTypes = append(diskTypes, storage.ToDiskType(diskType))
+		diskTypes = append(diskTypes, types.ToDiskType(diskType))
 	}
 	return
 }
@@ -203,11 +203,24 @@ type Node struct {
 
 type CapacityFunc func(*master_pb.DataNodeInfo) int
 
-func capacityByMaxSsdVolumeCount(info *master_pb.DataNodeInfo) int {
-	return int(info.MaxSsdVolumeCount)
+func capacityByMaxVolumeCount(diskType types.DiskType) CapacityFunc {
+	return func(info *master_pb.DataNodeInfo) int {
+		diskInfo, found := info.DiskInfos[string(diskType)]
+		if !found {
+			return 0
+		}
+		return int(diskInfo.MaxVolumeCount)
+	}
 }
-func capacityByMaxVolumeCount(info *master_pb.DataNodeInfo) int {
-	return int(info.MaxVolumeCount)
+
+func capacityByFreeVolumeCount(diskType types.DiskType) CapacityFunc {
+	return func(info *master_pb.DataNodeInfo) int {
+		diskInfo, found := info.DiskInfos[string(diskType)]
+		if !found {
+			return 0
+		}
+		return int(diskInfo.MaxVolumeCount - diskInfo.VolumeCount)
+	}
 }
 
 func (n *Node) localVolumeRatio(capacityFunc CapacityFunc) float64 {
@@ -220,9 +233,11 @@ func (n *Node) localVolumeNextRatio(capacityFunc CapacityFunc) float64 {
 
 func (n *Node) selectVolumes(fn func(v *master_pb.VolumeInformationMessage) bool) {
 	n.selectedVolumes = make(map[uint32]*master_pb.VolumeInformationMessage)
-	for _, v := range n.info.VolumeInfos {
-		if fn(v) {
-			n.selectedVolumes[v.Id] = v
+	for _, diskInfo := range n.info.DiskInfos {
+		for _, v := range diskInfo.VolumeInfos {
+			if fn(v) {
+				n.selectedVolumes[v.Id] = v
+			}
 		}
 	}
 }
@@ -329,7 +344,7 @@ func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, f
 	}
 	fmt.Fprintf(os.Stdout, "  moving %s volume %s%d %s => %s\n", v.DiskType, collectionPrefix, v.Id, fullNode.info.Id, emptyNode.info.Id)
 	if applyChange {
-		return LiveMoveVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id), fullNode.info.Id, emptyNode.info.Id, 5*time.Second, "")
+		return LiveMoveVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id), fullNode.info.Id, emptyNode.info.Id, 5*time.Second, v.DiskType)
 	}
 	return nil
 }

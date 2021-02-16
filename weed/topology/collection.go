@@ -2,7 +2,7 @@ package topology
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
@@ -30,12 +30,12 @@ func (c *Collection) String() string {
 	return fmt.Sprintf("Name:%s, volumeSizeLimit:%d, storageType2VolumeLayout:%v", c.Name, c.volumeSizeLimit, c.storageType2VolumeLayout)
 }
 
-func (c *Collection) GetOrCreateVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType storage.DiskType) *VolumeLayout {
+func (c *Collection) GetOrCreateVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType types.DiskType) *VolumeLayout {
 	keyString := rp.String()
 	if ttl != nil {
 		keyString += ttl.String()
 	}
-	if diskType != storage.HardDriveType {
+	if diskType != types.HardDriveType {
 		keyString += string(diskType)
 	}
 	vl := c.storageType2VolumeLayout.Get(keyString, func() interface{} {
@@ -44,12 +44,12 @@ func (c *Collection) GetOrCreateVolumeLayout(rp *super_block.ReplicaPlacement, t
 	return vl.(*VolumeLayout)
 }
 
-func (c *Collection) DeleteVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType storage.DiskType) {
+func (c *Collection) DeleteVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType types.DiskType) {
 	keyString := rp.String()
 	if ttl != nil {
 		keyString += ttl.String()
 	}
-	if diskType != storage.HardDriveType {
+	if diskType != types.HardDriveType {
 		keyString += string(diskType)
 	}
 	c.storageType2VolumeLayout.Delete(keyString)

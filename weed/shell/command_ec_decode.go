@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io"
 
 	"google.golang.org/grpc"
@@ -225,9 +226,11 @@ func collectTopologyInfo(commandEnv *CommandEnv) (topoInfo *master_pb.TopologyIn
 func collectEcShardInfos(topoInfo *master_pb.TopologyInfo, selectedCollection string, vid needle.VolumeId) (ecShardInfos []*master_pb.VolumeEcShardInformationMessage) {
 
 	eachDataNode(topoInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		for _, v := range dn.EcShardInfos {
-			if v.Collection == selectedCollection && v.Id == uint32(vid) {
-				ecShardInfos = append(ecShardInfos, v)
+		if diskInfo, found := dn.DiskInfos[string(types.HardDriveType)]; found {
+			for _, v := range diskInfo.EcShardInfos {
+				if v.Collection == selectedCollection && v.Id == uint32(vid) {
+					ecShardInfos = append(ecShardInfos, v)
+				}
 			}
 		}
 	})
@@ -239,9 +242,11 @@ func collectEcShardIds(topoInfo *master_pb.TopologyInfo, selectedCollection stri
 
 	vidMap := make(map[uint32]bool)
 	eachDataNode(topoInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		for _, v := range dn.EcShardInfos {
-			if v.Collection == selectedCollection {
-				vidMap[v.Id] = true
+		if diskInfo, found := dn.DiskInfos[string(types.HardDriveType)]; found {
+			for _, v := range diskInfo.EcShardInfos {
+				if v.Collection == selectedCollection {
+					vidMap[v.Id] = true
+				}
 			}
 		}
 	})
@@ -257,9 +262,11 @@ func collectEcNodeShardBits(topoInfo *master_pb.TopologyInfo, vid needle.VolumeI
 
 	nodeToEcIndexBits := make(map[string]erasure_coding.ShardBits)
 	eachDataNode(topoInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		for _, v := range dn.EcShardInfos {
-			if v.Id == uint32(vid) {
-				nodeToEcIndexBits[dn.Id] = erasure_coding.ShardBits(v.EcIndexBits)
+		if diskInfo, found := dn.DiskInfos[string(types.HardDriveType)]; found {
+			for _, v := range diskInfo.EcShardInfos {
+				if v.Id == uint32(vid) {
+					nodeToEcIndexBits[dn.Id] = erasure_coding.ShardBits(v.EcIndexBits)
+				}
 			}
 		}
 	})

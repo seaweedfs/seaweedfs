@@ -285,18 +285,20 @@ func (c *commandVolumeFsck) collectVolumeIds(verbose bool, writer io.Writer) (vo
 	}
 
 	eachDataNode(resp.TopologyInfo, func(dc string, rack RackId, t *master_pb.DataNodeInfo) {
-		for _, vi := range t.VolumeInfos {
-			volumeIdToServer[vi.Id] = VInfo{
-				server:     t.Id,
-				collection: vi.Collection,
-				isEcVolume: false,
+		for _, diskInfo := range t.DiskInfos{
+			for _, vi := range diskInfo.VolumeInfos {
+				volumeIdToServer[vi.Id] = VInfo{
+					server:     t.Id,
+					collection: vi.Collection,
+					isEcVolume: false,
+				}
 			}
-		}
-		for _, ecShardInfo := range t.EcShardInfos {
-			volumeIdToServer[ecShardInfo.Id] = VInfo{
-				server:     t.Id,
-				collection: ecShardInfo.Collection,
-				isEcVolume: true,
+			for _, ecShardInfo := range diskInfo.EcShardInfos {
+				volumeIdToServer[ecShardInfo.Id] = VInfo{
+					server:     t.Id,
+					collection: ecShardInfo.Collection,
+					isEcVolume: true,
+				}
 			}
 		}
 	})

@@ -1,4 +1,4 @@
-package storage
+package types
 
 import (
 	"strings"
@@ -27,7 +27,7 @@ func ToDiskType(vt string) (diskType DiskType) {
 
 func (diskType DiskType) String() string{
 	if diskType == "" {
-		return "hdd"
+		return ""
 	}
 	return string(diskType)
 }
