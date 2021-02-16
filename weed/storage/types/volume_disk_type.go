@@ -7,7 +7,7 @@ import (
 type DiskType string
 
 const (
-	HardDriveType DiskType = "hdd"
+	HardDriveType DiskType = ""
 	SsdType                = "ssd"
 )
 
@@ -27,7 +27,7 @@ func ToDiskType(vt string) (diskType DiskType) {
 
 func (diskType DiskType) String() string{
 	if diskType == "" {
-		return "hdd"
+		return ""
 	}
 	return string(diskType)
 }
