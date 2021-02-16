@@ -62,7 +62,7 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 		deltaDiskUsages := newDiskUsages()
 		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(ecShards.DiskType))
 
-		if dn.hasEcShards(ecShards.VolumeId) {
+		if !dn.hasEcShards(ecShards.VolumeId) {
 			newShards = append(newShards, ecShards)
 			newShardCount += ecShards.ShardIdCount()
 		}
