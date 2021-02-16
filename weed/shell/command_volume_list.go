@@ -48,6 +48,9 @@ func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.
 func diskInfosToString(diskInfos map[string]*master_pb.DiskInfo) string {
 	var buf bytes.Buffer
 	for diskType, diskInfo := range diskInfos {
+		if diskType == "" {
+			diskType = "hdd"
+		}
 		fmt.Fprintf(&buf, " %s(volume:%d/%d active:%d free:%d remote:%d)", diskType, diskInfo.VolumeCount, diskInfo.MaxVolumeCount, diskInfo.ActiveVolumeCount, diskInfo.FreeVolumeCount, diskInfo.RemoteVolumeCount)
 	}
 	return buf.String()
@@ -107,7 +110,11 @@ func writeDataNodeInfo(writer io.Writer, t *master_pb.DataNodeInfo) statistics {
 
 func writeDiskInfo(writer io.Writer, t *master_pb.DiskInfo) statistics {
 	var s statistics
-	fmt.Fprintf(writer, "        Disk %s(%s)\n", t.Type, diskInfoToString(t))
+	diskType := t.Type
+	if diskType == "" {
+		diskType = "hdd"
+	}
+	fmt.Fprintf(writer, "        Disk %s(%s)\n", diskType, diskInfoToString(t))
 	sort.Slice(t.VolumeInfos, func(i, j int) bool {
 		return t.VolumeInfos[i].Id < t.VolumeInfos[j].Id
 	})
@@ -117,7 +124,7 @@ func writeDiskInfo(writer io.Writer, t *master_pb.DiskInfo) statistics {
 	for _, ecShardInfo := range t.EcShardInfos {
 		fmt.Fprintf(writer, "          ec volume id:%v collection:%v shards:%v\n", ecShardInfo.Id, ecShardInfo.Collection, erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds())
 	}
-	fmt.Fprintf(writer, "        Disk %s %+v \n", t.Type, s)
+	fmt.Fprintf(writer, "        Disk %s %+v \n", diskType, s)
 	return s
 }
 
