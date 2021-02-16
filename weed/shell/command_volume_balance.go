@@ -213,6 +213,16 @@ func capacityByMaxVolumeCount(diskType types.DiskType) CapacityFunc {
 	}
 }
 
+func capacityByFreeVolumeCount(diskType types.DiskType) CapacityFunc {
+	return func(info *master_pb.DataNodeInfo) int {
+		diskInfo, found := info.DiskInfos[string(diskType)]
+		if !found {
+			return 0
+		}
+		return int(diskInfo.MaxVolumeCount - diskInfo.VolumeCount)
+	}
+}
+
 func (n *Node) localVolumeRatio(capacityFunc CapacityFunc) float64 {
 	return divide(len(n.selectedVolumes), capacityFunc(n.info))
 }
