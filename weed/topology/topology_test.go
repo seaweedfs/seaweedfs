@@ -14,11 +14,11 @@ import (
 func TestRemoveDataCenter(t *testing.T) {
 	topo := setup(topologyLayout)
 	topo.UnlinkChildNode(NodeId("dc2"))
-	if topo.GetActiveVolumeCount() != 15 {
+	if topo.diskUsages.usages[types.HardDriveType].activeVolumeCount != 15 {
 		t.Fail()
 	}
 	topo.UnlinkChildNode(NodeId("dc3"))
-	if topo.GetActiveVolumeCount() != 12 {
+	if topo.diskUsages.usages[types.HardDriveType].activeVolumeCount != 12 {
 		t.Fail()
 	}
 }
@@ -28,7 +28,10 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 
 	dc := topo.GetOrCreateDataCenter("dc1")
 	rack := dc.GetOrCreateRack("rack1")
-	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, "127.0.0.1", 25, 12)
+	maxVolumeCounts := make(map[string]uint32)
+	maxVolumeCounts[""] = 25
+	maxVolumeCounts["ssd"] = 12
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, "127.0.0.1", maxVolumeCounts)
 
 	{
 		volumeCount := 7
@@ -68,9 +71,11 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 
 		topo.SyncDataNodeRegistration(volumeMessages, dn)
 
-		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount*2)
-		assert(t, "volumeCount", int(topo.volumeCount), volumeCount)
-		assert(t, "ssdVolumeCount", int(topo.ssdVolumeCount), volumeCount)
+		usageCounts := topo.diskUsages.usages[types.HardDriveType]
+
+		assert(t, "activeVolumeCount1", int(usageCounts.activeVolumeCount), volumeCount)
+		assert(t, "volumeCount", int(usageCounts.volumeCount), volumeCount)
+		assert(t, "ssdVolumeCount", int(topo.diskUsages.usages[types.SsdType].volumeCount), volumeCount)
 	}
 
 	{
@@ -97,8 +102,10 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 		//layout := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL)
 		//assert(t, "writables", len(layout.writables), volumeCount)
 
-		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount)
-		assert(t, "volumeCount", int(topo.volumeCount), volumeCount)
+		usageCounts := topo.diskUsages.usages[types.HardDriveType]
+
+		assert(t, "activeVolumeCount1", int(usageCounts.activeVolumeCount), volumeCount)
+		assert(t, "volumeCount", int(usageCounts.volumeCount), volumeCount)
 	}
 
 	{
@@ -118,16 +125,18 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 		layout := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.HardDriveType)
 		assert(t, "writables after repeated add", len(layout.writables), volumeCount)
 
-		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount)
-		assert(t, "volumeCount", int(topo.volumeCount), volumeCount)
+		usageCounts := topo.diskUsages.usages[types.HardDriveType]
+
+		assert(t, "activeVolumeCount1", int(usageCounts.activeVolumeCount), volumeCount)
+		assert(t, "volumeCount", int(usageCounts.volumeCount), volumeCount)
 
 		topo.IncrementalSyncDataNodeRegistration(
 			nil,
 			[]*master_pb.VolumeShortInformationMessage{newVolumeShortMessage},
 			dn)
 		assert(t, "writables after deletion", len(layout.writables), volumeCount-1)
-		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount-1)
-		assert(t, "volumeCount", int(topo.volumeCount), volumeCount-1)
+		assert(t, "activeVolumeCount1", int(usageCounts.activeVolumeCount), volumeCount-1)
+		assert(t, "volumeCount", int(usageCounts.volumeCount), volumeCount-1)
 
 		topo.IncrementalSyncDataNodeRegistration(
 			[]*master_pb.VolumeShortInformationMessage{newVolumeShortMessage},
@@ -147,7 +156,9 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 
 	topo.UnRegisterDataNode(dn)
 
-	assert(t, "activeVolumeCount2", int(topo.activeVolumeCount), 0)
+	usageCounts := topo.diskUsages.usages[types.HardDriveType]
+
+	assert(t, "activeVolumeCount2", int(usageCounts.activeVolumeCount), 0)
 
 }
 
@@ -163,7 +174,10 @@ func TestAddRemoveVolume(t *testing.T) {
 
 	dc := topo.GetOrCreateDataCenter("dc1")
 	rack := dc.GetOrCreateRack("rack1")
-	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, "127.0.0.1", 25, 12)
+	maxVolumeCounts := make(map[string]uint32)
+	maxVolumeCounts[""] = 25
+	maxVolumeCounts["ssd"] = 12
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, "127.0.0.1", maxVolumeCounts)
 
 	v := storage.VolumeInfo{
 		Id:               needle.VolumeId(1),
