@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io"
 	"path/filepath"
 	"sort"
@@ -167,7 +168,8 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 		keepDataNodesSorted(allLocations, replica.info.DiskType)
 		for _, dst := range allLocations {
 			// check whether data nodes satisfy the constraints
-			if dst.dataNode.DiskInfos[replica.info.DiskType].FreeVolumeCount > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
+			fn := capacityByFreeVolumeCount(types.ToDiskType(replica.info.DiskType))
+			if fn(dst.dataNode) > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
 				// check collection name pattern
 				if *c.collectionPattern != "" {
 					matched, err := filepath.Match(*c.collectionPattern, replica.info.Collection)
@@ -218,8 +220,9 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 }
 
 func keepDataNodesSorted(dataNodes []location, diskType string) {
+	fn := capacityByFreeVolumeCount(types.ToDiskType(diskType))
 	sort.Slice(dataNodes, func(i, j int) bool {
-		return dataNodes[i].dataNode.DiskInfos[diskType].FreeVolumeCount > dataNodes[j].dataNode.DiskInfos[diskType].FreeVolumeCount
+		return fn(dataNodes[i].dataNode) > fn(dataNodes[j].dataNode)
 	})
 }
 

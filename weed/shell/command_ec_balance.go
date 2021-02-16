@@ -388,7 +388,10 @@ func doBalanceEcRack(commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool
 	}
 
 	ecNodeIdToShardCount := groupByCount(rackEcNodes, func(ecNode *EcNode) (id string, count int) {
-		diskInfo := ecNode.info.DiskInfos[string(types.HardDriveType)]
+		diskInfo, found := ecNode.info.DiskInfos[string(types.HardDriveType)]
+		if !found {
+			return
+		}
 		for _, ecShardInfo := range diskInfo.EcShardInfos {
 			count += erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIdCount()
 		}
@@ -413,28 +416,30 @@ func doBalanceEcRack(commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool
 		if fullNodeShardCount > averageShardCount && emptyNodeShardCount+1 <= averageShardCount {
 
 			emptyNodeIds := make(map[uint32]bool)
-			emptyDiskInfo := emptyNode.info.DiskInfos[string(types.HardDriveType)]
-			for _, shards := range emptyDiskInfo.EcShardInfos {
-				emptyNodeIds[shards.Id] = true
+			if emptyDiskInfo, found := emptyNode.info.DiskInfos[string(types.HardDriveType)]; found {
+				for _, shards := range emptyDiskInfo.EcShardInfos {
+					emptyNodeIds[shards.Id] = true
+				}
 			}
-			fullDiskInfo := fullNode.info.DiskInfos[string(types.HardDriveType)]
-			for _, shards := range fullDiskInfo.EcShardInfos {
-				if _, found := emptyNodeIds[shards.Id]; !found {
-					for _, shardId := range erasure_coding.ShardBits(shards.EcIndexBits).ShardIds() {
+			if fullDiskInfo, found := fullNode.info.DiskInfos[string(types.HardDriveType)]; found {
+				for _, shards := range fullDiskInfo.EcShardInfos {
+					if _, found := emptyNodeIds[shards.Id]; !found {
+						for _, shardId := range erasure_coding.ShardBits(shards.EcIndexBits).ShardIds() {
 
-						fmt.Printf("%s moves ec shards %d.%d to %s\n", fullNode.info.Id, shards.Id, shardId, emptyNode.info.Id)
+							fmt.Printf("%s moves ec shards %d.%d to %s\n", fullNode.info.Id, shards.Id, shardId, emptyNode.info.Id)
 
-						err := moveMountedShardToEcNode(commandEnv, fullNode, shards.Collection, needle.VolumeId(shards.Id), shardId, emptyNode, applyBalancing)
-						if err != nil {
-							return err
+							err := moveMountedShardToEcNode(commandEnv, fullNode, shards.Collection, needle.VolumeId(shards.Id), shardId, emptyNode, applyBalancing)
+							if err != nil {
+								return err
+							}
+
+							ecNodeIdToShardCount[emptyNode.info.Id]++
+							ecNodeIdToShardCount[fullNode.info.Id]--
+							hasMove = true
+							break
 						}
-
-						ecNodeIdToShardCount[emptyNode.info.Id]++
-						ecNodeIdToShardCount[fullNode.info.Id]--
-						hasMove = true
 						break
 					}
-					break
 				}
 			}
 		}
@@ -515,7 +520,10 @@ func pickNEcShardsToMoveFrom(ecNodes []*EcNode, vid needle.VolumeId, n int) map[
 func collectVolumeIdToEcNodes(allEcNodes []*EcNode) map[needle.VolumeId][]*EcNode {
 	vidLocations := make(map[needle.VolumeId][]*EcNode)
 	for _, ecNode := range allEcNodes {
-		diskInfo := ecNode.info.DiskInfos[string(types.HardDriveType)]
+		diskInfo, found := ecNode.info.DiskInfos[string(types.HardDriveType)]
+		if !found {
+			continue
+		}
 		for _, shardInfo := range diskInfo.EcShardInfos {
 			vidLocations[needle.VolumeId(shardInfo.Id)] = append(vidLocations[needle.VolumeId(shardInfo.Id)], ecNode)
 		}
