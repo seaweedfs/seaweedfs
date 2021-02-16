@@ -18,6 +18,7 @@ func (t *Topology) SyncDataNodeEcShards(shardInfos []*master_pb.VolumeEcShardInf
 	for _, shardInfo := range shardInfos {
 		shards = append(shards,
 			erasure_coding.NewEcVolumeInfo(
+				shardInfo.DiskType,
 				shardInfo.Collection,
 				needle.VolumeId(shardInfo.Id),
 				erasure_coding.ShardBits(shardInfo.EcIndexBits)))
@@ -39,6 +40,7 @@ func (t *Topology) IncrementalSyncDataNodeEcShards(newEcShards, deletedEcShards 
 	for _, shardInfo := range newEcShards {
 		newShards = append(newShards,
 			erasure_coding.NewEcVolumeInfo(
+				shardInfo.DiskType,
 				shardInfo.Collection,
 				needle.VolumeId(shardInfo.Id),
 				erasure_coding.ShardBits(shardInfo.EcIndexBits)))
@@ -46,6 +48,7 @@ func (t *Topology) IncrementalSyncDataNodeEcShards(newEcShards, deletedEcShards 
 	for _, shardInfo := range deletedEcShards {
 		deletedShards = append(deletedShards,
 			erasure_coding.NewEcVolumeInfo(
+				shardInfo.DiskType,
 				shardInfo.Collection,
 				needle.VolumeId(shardInfo.Id),
 				erasure_coding.ShardBits(shardInfo.EcIndexBits)))

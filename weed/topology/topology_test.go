@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 
 	"testing"
 )
@@ -114,7 +115,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 			nil,
 			dn)
 		rp, _ := super_block.NewReplicaPlacementFromString("000")
-		layout := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, storage.HardDriveType)
+		layout := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.HardDriveType)
 		assert(t, "writables after repeated add", len(layout.writables), volumeCount)
 
 		assert(t, "activeVolumeCount1", int(topo.activeVolumeCount), volumeCount)

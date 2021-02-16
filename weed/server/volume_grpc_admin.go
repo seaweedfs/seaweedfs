@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 	"path/filepath"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -42,7 +41,7 @@ func (vs *VolumeServer) AllocateVolume(ctx context.Context, req *volume_server_p
 		req.Ttl,
 		req.Preallocate,
 		req.MemoryMapMaxSizeMb,
-		storage.DiskType(req.DiskType),
+		types.DiskType(req.DiskType),
 	)
 
 	if err != nil {

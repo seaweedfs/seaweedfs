@@ -3,6 +3,7 @@ package shell
 import (
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io"
 	"sort"
 
@@ -386,11 +387,12 @@ func doBalanceEcRack(commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool
 		rackEcNodes = append(rackEcNodes, node)
 	}
 
-	ecNodeIdToShardCount := groupByCount(rackEcNodes, func(node *EcNode) (id string, count int) {
-		for _, ecShardInfo := range node.info.EcShardInfos {
+	ecNodeIdToShardCount := groupByCount(rackEcNodes, func(ecNode *EcNode) (id string, count int) {
+		diskInfo := ecNode.info.DiskInfos[string(types.HardDriveType)]
+		for _, ecShardInfo := range diskInfo.EcShardInfos {
 			count += erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIdCount()
 		}
-		return node.info.Id, count
+		return ecNode.info.Id, count
 	})
 
 	var totalShardCount int
@@ -411,10 +413,12 @@ func doBalanceEcRack(commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool
 		if fullNodeShardCount > averageShardCount && emptyNodeShardCount+1 <= averageShardCount {
 
 			emptyNodeIds := make(map[uint32]bool)
-			for _, shards := range emptyNode.info.EcShardInfos {
+			emptyDiskInfo := emptyNode.info.DiskInfos[string(types.HardDriveType)]
+			for _, shards := range emptyDiskInfo.EcShardInfos {
 				emptyNodeIds[shards.Id] = true
 			}
-			for _, shards := range fullNode.info.EcShardInfos {
+			fullDiskInfo := fullNode.info.DiskInfos[string(types.HardDriveType)]
+			for _, shards := range fullDiskInfo.EcShardInfos {
 				if _, found := emptyNodeIds[shards.Id]; !found {
 					for _, shardId := range erasure_coding.ShardBits(shards.EcIndexBits).ShardIds() {
 
@@ -511,7 +515,8 @@ func pickNEcShardsToMoveFrom(ecNodes []*EcNode, vid needle.VolumeId, n int) map[
 func collectVolumeIdToEcNodes(allEcNodes []*EcNode) map[needle.VolumeId][]*EcNode {
 	vidLocations := make(map[needle.VolumeId][]*EcNode)
 	for _, ecNode := range allEcNodes {
-		for _, shardInfo := range ecNode.info.EcShardInfos {
+		diskInfo := ecNode.info.DiskInfos[string(types.HardDriveType)]
+		for _, shardInfo := range diskInfo.EcShardInfos {
 			vidLocations[needle.VolumeId(shardInfo.Id)] = append(vidLocations[needle.VolumeId(shardInfo.Id)], ecNode)
 		}
 	}

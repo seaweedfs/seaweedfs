@@ -1,4 +1,4 @@
-package storage
+package types
 
 import (
 	"strings"

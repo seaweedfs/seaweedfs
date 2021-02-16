@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/chrislusf/raft"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -61,7 +61,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	if err != nil {
 		return nil, err
 	}
-	diskType := storage.ToDiskType(req.DiskType)
+	diskType := types.ToDiskType(req.DiskType)
 
 	option := &topology.VolumeGrowOption{
 		Collection:         req.Collection,
@@ -120,10 +120,10 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 		return nil, err
 	}
 
-	volumeLayout := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, ttl, storage.DiskType(req.DiskType))
+	volumeLayout := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, ttl, types.DiskType(req.DiskType))
 	stats := volumeLayout.Stats()
 
-	totalSize := (ms.Topo.GetMaxVolumeCount() + ms.Topo.GetMaxSsdVolumeCount()) * int64(ms.option.VolumeSizeLimitMB) * 1024 * 1024
+	totalSize := ms.Topo.GetDiskUsages().GetMaxVolumeCount() * int64(ms.option.VolumeSizeLimitMB) * 1024 * 1024
 
 	resp := &master_pb.StatisticsResponse{
 		TotalSize: uint64(totalSize),

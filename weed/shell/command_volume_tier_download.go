@@ -86,9 +86,11 @@ func collectRemoteVolumes(topoInfo *master_pb.TopologyInfo, selectedCollection s
 
 	vidMap := make(map[uint32]bool)
 	eachDataNode(topoInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		for _, v := range dn.VolumeInfos {
-			if v.Collection == selectedCollection && v.RemoteStorageKey != "" && v.RemoteStorageName != "" {
-				vidMap[v.Id] = true
+		for _, diskInfo := range dn.DiskInfos {
+			for _, v := range diskInfo.VolumeInfos {
+				if v.Collection == selectedCollection && v.RemoteStorageKey != "" && v.RemoteStorageName != "" {
+					vidMap[v.Id] = true
+				}
 			}
 		}
 	})

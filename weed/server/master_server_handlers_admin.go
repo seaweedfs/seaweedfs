@@ -3,7 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -158,7 +158,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 	if err != nil {
 		return nil, err
 	}
-	diskType := storage.ToDiskType(r.FormValue("disk"))
+	diskType := types.ToDiskType(r.FormValue("disk"))
 
 	preallocate := ms.preallocateSize
 	if r.FormValue("preallocate") != "" {

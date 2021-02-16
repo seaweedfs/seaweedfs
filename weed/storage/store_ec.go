@@ -58,6 +58,7 @@ func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId er
 				Id:          uint32(vid),
 				Collection:  collection,
 				EcIndexBits: uint32(shardBits.AddShardId(shardId)),
+				DiskType:    string(location.DiskType),
 			}
 			return nil
 		} else if err == os.ErrNotExist {
@@ -82,6 +83,7 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 		Id:          uint32(vid),
 		Collection:  ecShard.Collection,
 		EcIndexBits: uint32(shardBits.AddShardId(shardId)),
+		DiskType:    string(ecShard.DiskType),
 	}
 
 	for _, location := range s.Locations {

@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io"
 	"io/ioutil"
 	"math"
@@ -58,7 +59,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 		if req.DiskType != "" {
 			diskType = req.DiskType
 		}
-		location := vs.store.FindFreeLocation(storage.DiskType(diskType))
+		location := vs.store.FindFreeLocation(types.DiskType(diskType))
 		if location == nil {
 			return fmt.Errorf("no space left")
 		}

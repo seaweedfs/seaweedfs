@@ -171,7 +171,7 @@ func (v *Volume) IndexFileSize() uint64 {
 	return v.nm.IndexFileSize()
 }
 
-func (v *Volume) DiskType() DiskType {
+func (v *Volume) DiskType() types.DiskType {
 	return v.location.DiskType
 }
 

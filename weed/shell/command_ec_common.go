@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"math"
 	"sort"
 
@@ -159,8 +160,15 @@ func countShards(ecShardInfos []*master_pb.VolumeEcShardInformationMessage) (cou
 	return
 }
 
-func countFreeShardSlots(dn *master_pb.DataNodeInfo) (count int) {
-	return int(dn.MaxVolumeCount-dn.ActiveVolumeCount)*erasure_coding.DataShardsCount - countShards(dn.EcShardInfos)
+func countFreeShardSlots(dn *master_pb.DataNodeInfo, diskType types.DiskType) (count int) {
+	if dn.DiskInfos == nil {
+		return 0
+	}
+	diskInfo := dn.DiskInfos[string(diskType)]
+	if diskInfo == nil {
+		return 0
+	}
+	return int(diskInfo.MaxVolumeCount-diskInfo.ActiveVolumeCount)*erasure_coding.DataShardsCount - countShards(diskInfo.EcShardInfos)
 }
 
 type RackId string
@@ -174,10 +182,12 @@ type EcNode struct {
 }
 
 func (ecNode *EcNode) localShardIdCount(vid uint32) int {
-	for _, ecShardInfo := range ecNode.info.EcShardInfos {
-		if vid == ecShardInfo.Id {
-			shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
-			return shardBits.ShardIdCount()
+	for _, diskInfo := range ecNode.info.DiskInfos {
+		for _, ecShardInfo := range diskInfo.EcShardInfos {
+			if vid == ecShardInfo.Id {
+				shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+				return shardBits.ShardIdCount()
+			}
 		}
 	}
 	return 0
@@ -214,7 +224,7 @@ func collectEcVolumeServersByDc(topo *master_pb.TopologyInfo, selectedDataCenter
 			return
 		}
 
-		freeEcSlots := countFreeShardSlots(dn)
+		freeEcSlots := countFreeShardSlots(dn, types.HardDriveType)
 		ecNodes = append(ecNodes, &EcNode{
 			info:       dn,
 			dc:         dc,
@@ -278,7 +288,8 @@ func ceilDivide(total, n int) int {
 
 func findEcVolumeShards(ecNode *EcNode, vid needle.VolumeId) erasure_coding.ShardBits {
 
-	for _, shardInfo := range ecNode.info.EcShardInfos {
+	diskInfo := ecNode.info.DiskInfos[string(types.HardDriveType)]
+	for _, shardInfo := range diskInfo.EcShardInfos {
 		if needle.VolumeId(shardInfo.Id) == vid {
 			return erasure_coding.ShardBits(shardInfo.EcIndexBits)
 		}
@@ -290,7 +301,8 @@ func findEcVolumeShards(ecNode *EcNode, vid needle.VolumeId) erasure_coding.Shar
 func (ecNode *EcNode) addEcVolumeShards(vid needle.VolumeId, collection string, shardIds []uint32) *EcNode {
 
 	foundVolume := false
-	for _, shardInfo := range ecNode.info.EcShardInfos {
+	diskInfo := ecNode.info.DiskInfos[string(types.HardDriveType)]
+	for _, shardInfo := range diskInfo.EcShardInfos {
 		if needle.VolumeId(shardInfo.Id) == vid {
 			oldShardBits := erasure_coding.ShardBits(shardInfo.EcIndexBits)
 			newShardBits := oldShardBits
@@ -309,10 +321,11 @@ func (ecNode *EcNode) addEcVolumeShards(vid needle.VolumeId, collection string, 
 		for _, shardId := range shardIds {
 			newShardBits = newShardBits.AddShardId(erasure_coding.ShardId(shardId))
 		}
-		ecNode.info.EcShardInfos = append(ecNode.info.EcShardInfos, &master_pb.VolumeEcShardInformationMessage{
+		diskInfo.EcShardInfos = append(diskInfo.EcShardInfos, &master_pb.VolumeEcShardInformationMessage{
 			Id:          uint32(vid),
 			Collection:  collection,
 			EcIndexBits: uint32(newShardBits),
+			DiskType:    string(types.HardDriveType),
 		})
 		ecNode.freeEcSlot -= len(shardIds)
 	}
@@ -322,7 +335,8 @@ func (ecNode *EcNode) addEcVolumeShards(vid needle.VolumeId, collection string, 
 
 func (ecNode *EcNode) deleteEcVolumeShards(vid needle.VolumeId, shardIds []uint32) *EcNode {
 
-	for _, shardInfo := range ecNode.info.EcShardInfos {
+	diskInfo := ecNode.info.DiskInfos[string(types.HardDriveType)]
+	for _, shardInfo := range diskInfo.EcShardInfos {
 		if needle.VolumeId(shardInfo.Id) == vid {
 			oldShardBits := erasure_coding.ShardBits(shardInfo.EcIndexBits)
 			newShardBits := oldShardBits

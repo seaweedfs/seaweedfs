@@ -3,6 +3,7 @@ package topology
 import (
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"math/rand"
 	"sync"
 	"time"
@@ -45,6 +46,7 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 	t.id = NodeId(id)
 	t.nodeType = "Topology"
 	t.NodeImpl.value = t
+	t.diskUsages = newDiskUsages()
 	t.children = make(map[NodeId]Node)
 	t.collectionMap = util.NewConcurrentReadMap()
 	t.ecShardMap = make(map[needle.VolumeId]*EcShardLocations)
@@ -137,7 +139,7 @@ func (t *Topology) PickForWrite(count uint64, option *VolumeGrowOption) (string,
 	return needle.NewFileId(*vid, fileId, rand.Uint32()).String(), count, datanodes.Head(), nil
 }
 
-func (t *Topology) GetVolumeLayout(collectionName string, rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType storage.DiskType) *VolumeLayout {
+func (t *Topology) GetVolumeLayout(collectionName string, rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType types.DiskType) *VolumeLayout {
 	return t.collectionMap.Get(collectionName, func() interface{} {
 		return NewCollection(collectionName, t.volumeSizeLimit, t.replicationAsMin)
 	}).(*Collection).GetOrCreateVolumeLayout(rp, ttl, diskType)
@@ -176,7 +178,7 @@ func (t *Topology) DeleteCollection(collectionName string) {
 	t.collectionMap.Delete(collectionName)
 }
 
-func (t *Topology) DeleteLayout(collectionName string, rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType storage.DiskType) {
+func (t *Topology) DeleteLayout(collectionName string, rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType types.DiskType) {
 	collection, found := t.FindCollection(collectionName)
 	if !found {
 		return
@@ -188,14 +190,14 @@ func (t *Topology) DeleteLayout(collectionName string, rp *super_block.ReplicaPl
 }
 
 func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
-	diskType := storage.ToDiskType(v.DiskType)
+	diskType := types.ToDiskType(v.DiskType)
 	vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 	vl.RegisterVolume(&v, dn)
 	vl.EnsureCorrectWritables(&v)
 }
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	glog.Infof("removing volume info: %+v", v)
-	diskType := storage.ToDiskType(v.DiskType)
+	diskType := types.ToDiskType(v.DiskType)
 	volumeLayout := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 	volumeLayout.UnRegisterVolume(&v, dn)
 	if volumeLayout.isEmpty() {
@@ -235,7 +237,7 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		t.UnRegisterVolumeLayout(v, dn)
 	}
 	for _, v := range changedVolumes {
-		diskType := storage.ToDiskType(v.DiskType)
+		diskType := types.ToDiskType(v.DiskType)
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 		vl.EnsureCorrectWritables(&v)
 	}

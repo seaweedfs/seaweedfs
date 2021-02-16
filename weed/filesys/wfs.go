@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"math"
 	"os"
@@ -35,7 +35,7 @@ type Option struct {
 	Collection         string
 	Replication        string
 	TtlSec             int32
-	DiskType           storage.DiskType
+	DiskType           types.DiskType
 	ChunkSizeLimit     int64
 	ConcurrentWriters  int
 	CacheDir           string

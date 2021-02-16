@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"net/http"
 	httppprof "net/http/pprof"
 	"os"
@@ -170,10 +171,10 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	}
 
 	// set disk types
-	var diskTypes []storage.DiskType
+	var diskTypes []types.DiskType
 	diskTypeStrings := strings.Split(*v.diskType, ",")
 	for _, diskTypeString := range diskTypeStrings {
-		diskTypes = append(diskTypes, storage.ToDiskType(diskTypeString))
+		diskTypes = append(diskTypes, types.ToDiskType(diskTypeString))
 	}
 	if len(diskTypes) == 1 && len(v.folders) > 1 {
 		for i := 0; i < len(v.folders)-1; i++ {

@@ -222,7 +222,6 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDi
 				Ip:             vs.store.Ip,
 				Port:           uint32(vs.store.Port),
 				PublicUrl:      vs.store.PublicUrl,
-				MaxVolumeCount: uint32(0),
 				MaxFileKey:     uint64(0),
 				DataCenter:     vs.store.GetDataCenter(),
 				Rack:           vs.store.GetRack(),
