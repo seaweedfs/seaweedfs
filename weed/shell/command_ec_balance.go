@@ -326,7 +326,9 @@ func balanceEcShardsWithinRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, ra
 
 			var possibleDestinationEcNodes []*EcNode
 			for _, n := range racks[RackId(rackId)].ecNodes {
-				possibleDestinationEcNodes = append(possibleDestinationEcNodes, n)
+				if _, found := n.info.DiskInfos[string(types.HardDriveType)]; found {
+					possibleDestinationEcNodes = append(possibleDestinationEcNodes, n)
+				}
 			}
 			sourceEcNodes := rackEcNodesWithVid[rackId]
 			averageShardsPerEcNode := ceilDivide(rackToShardCount[rackId], len(possibleDestinationEcNodes))
