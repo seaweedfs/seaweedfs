@@ -471,6 +471,9 @@ func (s *Store) GetVolumeSizeLimit() uint64 {
 
 func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 	volumeSizeLimit := s.GetVolumeSizeLimit()
+	if volumeSizeLimit == 0 {
+		return
+	}
 	for _, diskLocation := range s.Locations {
 		if diskLocation.OriginalMaxVolumeCount == 0 {
 			currentMaxVolumeCount := diskLocation.MaxVolumeCount
