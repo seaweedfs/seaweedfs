@@ -59,7 +59,7 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 		if req.DiskType != "" {
 			diskType = req.DiskType
 		}
-		location := vs.store.FindFreeLocation(types.DiskType(diskType))
+		location := vs.store.FindFreeLocation(types.ToDiskType(diskType))
 		if location == nil {
 			return fmt.Errorf("no space left")
 		}

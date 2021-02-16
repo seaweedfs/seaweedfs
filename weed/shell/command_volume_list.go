@@ -115,14 +115,14 @@ func writeDiskInfo(writer io.Writer, t *master_pb.DiskInfo) statistics {
 		s = s.plus(writeVolumeInformationMessage(writer, vi))
 	}
 	for _, ecShardInfo := range t.EcShardInfos {
-		fmt.Fprintf(writer, "        ec volume id:%v collection:%v shards:%v\n", ecShardInfo.Id, ecShardInfo.Collection, erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds())
+		fmt.Fprintf(writer, "          ec volume id:%v collection:%v shards:%v\n", ecShardInfo.Id, ecShardInfo.Collection, erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds())
 	}
 	fmt.Fprintf(writer, "        Disk %s %+v \n", t.Type, s)
 	return s
 }
 
 func writeVolumeInformationMessage(writer io.Writer, t *master_pb.VolumeInformationMessage) statistics {
-	fmt.Fprintf(writer, "        volume %+v \n", t)
+	fmt.Fprintf(writer, "          volume %+v \n", t)
 	return newStatistics(t)
 }
 

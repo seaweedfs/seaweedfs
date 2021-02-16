@@ -41,7 +41,7 @@ func (vs *VolumeServer) AllocateVolume(ctx context.Context, req *volume_server_p
 		req.Ttl,
 		req.Preallocate,
 		req.MemoryMapMaxSizeMb,
-		types.DiskType(req.DiskType),
+		types.ToDiskType(req.DiskType),
 	)
 
 	if err != nil {

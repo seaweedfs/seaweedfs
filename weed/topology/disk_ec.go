@@ -30,7 +30,7 @@ func (d *Disk) AddOrUpdateEcShard(s *erasure_coding.EcVolumeInfo) {
 	}
 
 	deltaDiskUsages := newDiskUsages()
-	deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.DiskType(d.Id()))
+	deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(string(d.Id())))
 	deltaDiskUsage.ecShardCount = int64(delta)
 	d.UpAdjustDiskUsageDelta(deltaDiskUsages)
 
@@ -46,7 +46,7 @@ func (d *Disk) DeleteEcShard(s *erasure_coding.EcVolumeInfo) {
 		delta := existing.ShardBits.ShardIdCount() - oldCount
 
 		deltaDiskUsages := newDiskUsages()
-		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.DiskType(d.Id()))
+		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(string(d.Id())))
 		deltaDiskUsage.ecShardCount = int64(delta)
 		d.UpAdjustDiskUsageDelta(deltaDiskUsages)
 

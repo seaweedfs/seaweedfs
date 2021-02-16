@@ -31,7 +31,7 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 
 		disk := dn.getOrCreateDisk(ecShards.DiskType)
 		deltaDiskUsages := newDiskUsages()
-		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.DiskType(ecShards.DiskType))
+		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(ecShards.DiskType))
 
 		vid := ecShards.VolumeId
 		if actualEcShards, ok := actualEcShardMap[vid]; !ok {
@@ -60,7 +60,7 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 
 		disk := dn.getOrCreateDisk(ecShards.DiskType)
 		deltaDiskUsages := newDiskUsages()
-		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.DiskType(ecShards.DiskType))
+		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(ecShards.DiskType))
 
 		if dn.hasEcShards(ecShards.VolumeId) {
 			newShards = append(newShards, ecShards)

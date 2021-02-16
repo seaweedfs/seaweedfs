@@ -7,7 +7,7 @@ import (
 type DiskType string
 
 const (
-	HardDriveType DiskType = ""
+	HardDriveType DiskType = "hdd"
 	SsdType                = "ssd"
 )
 

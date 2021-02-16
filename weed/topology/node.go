@@ -193,7 +193,7 @@ func (n *NodeImpl) AdjustMaxVolumeCounts(maxVolumeCounts map[string]uint32) {
 			// the volume server may have set the max to zero
 			continue
 		}
-		dt := types.DiskType(diskType)
+		dt := types.ToDiskType(diskType)
 		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(dt)
 		currentDiskUsage := n.diskUsages.getOrCreateDisk(dt)
 		deltaDiskUsage.maxVolumeCount = int64(maxVolumeCount) - currentDiskUsage.maxVolumeCount

@@ -46,7 +46,7 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 	r.LinkChildNode(dn)
 	for diskType, maxVolumeCount := range maxVolumeCounts {
 		disk := NewDisk(diskType)
-		disk.diskUsages.getOrCreateDisk(types.DiskType(diskType)).maxVolumeCount = int64(maxVolumeCount)
+		disk.diskUsages.getOrCreateDisk(types.ToDiskType(diskType)).maxVolumeCount = int64(maxVolumeCount)
 		dn.LinkChildNode(disk)
 	}
 	return dn

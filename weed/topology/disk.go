@@ -63,7 +63,7 @@ func (d *DiskUsages) ToMap() interface{} {
 	defer d.RUnlock()
 	ret := make(map[string]interface{})
 	for diskType, diskUsage := range d.usages {
-		ret[types.DiskType(diskType).String()] = diskUsage.ToMap()
+		ret[diskType.String()] = diskUsage.ToMap()
 	}
 	return ret
 }
@@ -156,7 +156,7 @@ func (d *Disk) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO bool)
 
 func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO bool) {
 	deltaDiskUsages := newDiskUsages()
-	deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.DiskType(v.DiskType))
+	deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(v.DiskType))
 	if oldV, ok := d.volumes[v.Id]; !ok {
 		d.volumes[v.Id] = v
 		deltaDiskUsage.volumeCount = 1
@@ -228,7 +228,7 @@ func (d *Disk) GetTopology() *Topology {
 
 func (d *Disk) ToMap() interface{} {
 	ret := make(map[string]interface{})
-	diskUsage := d.diskUsages.getOrCreateDisk(types.DiskType(d.Id()))
+	diskUsage := d.diskUsages.getOrCreateDisk(types.ToDiskType(string(d.Id())))
 	ret["Volumes"] = diskUsage.volumeCount
 	ret["VolumeIds"] = d.GetVolumeIds()
 	ret["EcShards"] = diskUsage.ecShardCount
@@ -238,12 +238,12 @@ func (d *Disk) ToMap() interface{} {
 }
 
 func (d *Disk) FreeSpace() int64 {
-	t := d.diskUsages.getOrCreateDisk(types.DiskType(d.Id()))
+	t := d.diskUsages.getOrCreateDisk(types.ToDiskType(string(d.Id())))
 	return t.FreeSpace()
 }
 
 func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
-	diskUsage := d.diskUsages.getOrCreateDisk(types.DiskType(d.Id()))
+	diskUsage := d.diskUsages.getOrCreateDisk(types.ToDiskType(string(d.Id())))
 	m := &master_pb.DiskInfo{
 		Type:              string(d.Id()),
 		VolumeCount:       uint64(diskUsage.volumeCount),

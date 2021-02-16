@@ -52,7 +52,7 @@ func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
 
 			disk := dn.getOrCreateDisk(volumeInfo.DiskType)
 			deltaDiskUsages := newDiskUsages()
-			deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.DiskType(volumeInfo.DiskType))
+			deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(volumeInfo.DiskType))
 			deltaDiskUsage.activeVolumeCount = -1
 			disk.UpAdjustDiskUsageDelta(deltaDiskUsages)
 

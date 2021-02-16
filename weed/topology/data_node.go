@@ -14,10 +14,10 @@ import (
 
 type DataNode struct {
 	NodeImpl
-	Ip           string
-	Port         int
-	PublicUrl    string
-	LastSeen     int64 // unix time in seconds
+	Ip        string
+	Port      int
+	PublicUrl string
+	LastSeen  int64 // unix time in seconds
 }
 
 func NewDataNode(id string) *DataNode {
@@ -80,7 +80,7 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 			deletedVolumes = append(deletedVolumes, v)
 
 			deltaDiskUsages := newDiskUsages()
-			deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.DiskType(v.DiskType))
+			deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(v.DiskType))
 			deltaDiskUsage.volumeCount = -1
 			if v.IsRemote() {
 				deltaDiskUsage.remoteVolumeCount = -1
@@ -112,7 +112,7 @@ func (dn *DataNode) DeltaUpdateVolumes(newVolumes, deletedVolumes []storage.Volu
 		delete(disk.volumes, v.Id)
 
 		deltaDiskUsages := newDiskUsages()
-		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.DiskType(v.DiskType))
+		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(v.DiskType))
 		deltaDiskUsage.volumeCount = -1
 		if v.IsRemote() {
 			deltaDiskUsage.remoteVolumeCount = -1
@@ -194,7 +194,8 @@ func (dn *DataNode) ToMap() interface{} {
 
 func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 	m := &master_pb.DataNodeInfo{
-		Id:                string(dn.Id()),
+		Id:        string(dn.Id()),
+		DiskInfos: make(map[string]*master_pb.DiskInfo),
 	}
 	for _, c := range dn.Children() {
 		disk := c.(*Disk)
