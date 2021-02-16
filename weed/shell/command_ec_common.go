@@ -302,7 +302,8 @@ func findEcVolumeShards(ecNode *EcNode, vid needle.VolumeId) erasure_coding.Shar
 func (ecNode *EcNode) addEcVolumeShards(vid needle.VolumeId, collection string, shardIds []uint32) *EcNode {
 
 	foundVolume := false
-	if diskInfo, found := ecNode.info.DiskInfos[string(types.HardDriveType)]; found {
+	diskInfo, found := ecNode.info.DiskInfos[string(types.HardDriveType)]
+	if found {
 		for _, shardInfo := range diskInfo.EcShardInfos {
 			if needle.VolumeId(shardInfo.Id) == vid {
 				oldShardBits := erasure_coding.ShardBits(shardInfo.EcIndexBits)
@@ -316,6 +317,11 @@ func (ecNode *EcNode) addEcVolumeShards(vid needle.VolumeId, collection string, 
 				break
 			}
 		}
+	} else {
+		diskInfo = &master_pb.DiskInfo{
+			Type: string(types.HardDriveType),
+		}
+		ecNode.info.DiskInfos[string(types.HardDriveType)] = diskInfo
 	}
 
 	if !foundVolume {
