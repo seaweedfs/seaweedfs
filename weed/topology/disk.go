@@ -42,7 +42,7 @@ func newDiskUsages() *DiskUsages {
 	}
 }
 
-func (d *DiskUsages) negative() (*DiskUsages) {
+func (d *DiskUsages) negative() *DiskUsages {
 	d.RLock()
 	defer d.RUnlock()
 	t := newDiskUsages()
@@ -68,6 +68,21 @@ func (d *DiskUsages) ToMap() interface{} {
 	return ret
 }
 
+func (d *DiskUsages) ToDiskInfo() (map[string]*master_pb.DiskInfo) {
+	ret := make(map[string]*master_pb.DiskInfo)
+	for diskType, diskUsageCounts := range d.usages {
+		m := &master_pb.DiskInfo{
+			VolumeCount:       uint64(diskUsageCounts.volumeCount),
+			MaxVolumeCount:    uint64(diskUsageCounts.maxVolumeCount),
+			FreeVolumeCount:   uint64(diskUsageCounts.maxVolumeCount - diskUsageCounts.volumeCount),
+			ActiveVolumeCount: uint64(diskUsageCounts.activeVolumeCount),
+			RemoteVolumeCount: uint64(diskUsageCounts.remoteVolumeCount),
+		}
+		ret[string(diskType)] = m
+	}
+	return ret
+}
+
 func (d *DiskUsages) FreeSpace() (freeSpace int64) {
 	d.RLock()
 	defer d.RUnlock()
@@ -76,7 +91,6 @@ func (d *DiskUsages) FreeSpace() (freeSpace int64) {
 	}
 	return
 }
-
 
 func (d *DiskUsages) GetMaxVolumeCount() (maxVolumeCount int64) {
 	d.RLock()
@@ -111,13 +125,13 @@ func (a *DiskUsageCounts) FreeSpace() int64 {
 	return freeVolumeSlotCount
 }
 
-func (a *DiskUsageCounts) minus(b *DiskUsageCounts) (*DiskUsageCounts) {
+func (a *DiskUsageCounts) minus(b *DiskUsageCounts) *DiskUsageCounts {
 	return &DiskUsageCounts{
-		volumeCount: a.volumeCount - b.volumeCount,
+		volumeCount:       a.volumeCount - b.volumeCount,
 		remoteVolumeCount: a.remoteVolumeCount - b.remoteVolumeCount,
 		activeVolumeCount: a.activeVolumeCount - b.activeVolumeCount,
-		ecShardCount: a.ecShardCount - b.ecShardCount,
-		maxVolumeCount: a.maxVolumeCount - b.maxVolumeCount,
+		ecShardCount:      a.ecShardCount - b.ecShardCount,
+		maxVolumeCount:    a.maxVolumeCount - b.maxVolumeCount,
 	}
 }
 
@@ -248,7 +262,7 @@ func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 		Type:              string(d.Id()),
 		VolumeCount:       uint64(diskUsage.volumeCount),
 		MaxVolumeCount:    uint64(diskUsage.maxVolumeCount),
-		FreeVolumeCount:   uint64(d.FreeSpace()),
+		FreeVolumeCount:   uint64(diskUsage.maxVolumeCount - diskUsage.volumeCount),
 		ActiveVolumeCount: uint64(diskUsage.activeVolumeCount),
 		RemoteVolumeCount: uint64(diskUsage.remoteVolumeCount),
 	}

@@ -128,6 +128,25 @@ func (dn *DataNode) DeltaUpdateVolumes(newVolumes, deletedVolumes []storage.Volu
 	return
 }
 
+func (dn *DataNode) AdjustMaxVolumeCounts(maxVolumeCounts map[string]uint32) {
+	deltaDiskUsages := newDiskUsages()
+	for diskType, maxVolumeCount := range maxVolumeCounts {
+		if maxVolumeCount == 0 {
+			// the volume server may have set the max to zero
+			continue
+		}
+		dt := types.ToDiskType(diskType)
+		currentDiskUsage := dn.diskUsages.getOrCreateDisk(dt)
+		if currentDiskUsage.maxVolumeCount == int64(maxVolumeCount) {
+			continue
+		}
+		disk := dn.getOrCreateDisk(dt.String())
+		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(dt)
+		deltaDiskUsage.maxVolumeCount = int64(maxVolumeCount) - currentDiskUsage.maxVolumeCount
+		disk.UpAdjustDiskUsageDelta(deltaDiskUsages)
+	}
+}
+
 func (dn *DataNode) GetVolumes() (ret []storage.VolumeInfo) {
 	dn.RLock()
 	for _, c := range dn.children {

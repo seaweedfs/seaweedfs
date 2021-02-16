@@ -66,7 +66,8 @@ func (r *Rack) ToMap() interface{} {
 
 func (r *Rack) ToRackInfo() *master_pb.RackInfo {
 	m := &master_pb.RackInfo{
-		Id:                string(r.Id()),
+		Id:        string(r.Id()),
+		DiskInfos: r.diskUsages.ToDiskInfo(),
 	}
 	for _, c := range r.Children() {
 		dn := c.(*DataNode)

@@ -186,22 +186,6 @@ func (n *NodeImpl) ReserveOneVolume(r int64, option *VolumeGrowOption) (assigned
 	return nil, errors.New("No free volume slot found!")
 }
 
-func (n *NodeImpl) AdjustMaxVolumeCounts(maxVolumeCounts map[string]uint32) {
-	deltaDiskUsages := newDiskUsages()
-	for diskType, maxVolumeCount := range maxVolumeCounts {
-		if maxVolumeCount == 0 {
-			// the volume server may have set the max to zero
-			continue
-		}
-		dt := types.ToDiskType(diskType)
-		deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(dt)
-		currentDiskUsage := n.diskUsages.getOrCreateDisk(dt)
-		deltaDiskUsage.maxVolumeCount = int64(maxVolumeCount) - currentDiskUsage.maxVolumeCount
-		deltaDiskUsages.getOrCreateDisk(dt).maxVolumeCount = int64(maxVolumeCount)
-	}
-	n.UpAdjustDiskUsageDelta(deltaDiskUsages)
-}
-
 func (n *NodeImpl) UpAdjustDiskUsageDelta(deltaDiskUsages *DiskUsages) { //can be negative
 	for diskType, diskUsage := range deltaDiskUsages.usages {
 		existingDisk := n.getOrCreateDisk(diskType)
