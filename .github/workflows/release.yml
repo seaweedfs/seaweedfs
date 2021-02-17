@@ -24,10 +24,20 @@ jobs:
     - name: Check out code into the Go module directory
       uses: actions/checkout@v2
 
-    - name: Wait for the deletion
-      uses: jakejarvis/wait-action@master
+    - name: Delete old release assets
+      uses: mknejp/delete-release-assets@v1
       with:
-        time: '30s'
+        token: ${{ github.token }}
+        tag: dev
+        fail-if-no-assets: false 
+        assets: | 
+          weed-*
+
+    - name: Latest tag
+      uses: EndBug/latest-tag@v1.4.0
+      with:
+        description: latest master branch builds
+        tag-name: dev
 
     - name: Set BUILD_TIME env
       run: echo BUILD_TIME=$(date -u +%Y-%m-%d-%H-%M) >> ${GITHUB_ENV}
