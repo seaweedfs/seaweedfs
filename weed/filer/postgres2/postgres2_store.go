@@ -57,21 +57,25 @@ func (store *PostgresStore2) initialize(createTable, user, password, hostname st
 	if user != "" {
 		sqlUrl += " user=" + user
 	}
+	adaptedSqlUrl := sqlUrl
 	if password != "" {
 		sqlUrl += " password=" + password
+		adaptedSqlUrl += " password=ADAPTED"
 	}
 	if database != "" {
 		sqlUrl += " dbname=" + database
+		adaptedSqlUrl += " dbname=" + database
 	}
 	if schema != "" {
 		sqlUrl += " search_path=" + schema
+		adaptedSqlUrl += " search_path=" + schema
 	}
 	var dbErr error
 	store.DB, dbErr = sql.Open("postgres", sqlUrl)
 	if dbErr != nil {
 		store.DB.Close()
 		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", sqlUrl, err)
+		return fmt.Errorf("can not connect to %s error:%v", adaptedSqlUrl, err)
 	}
 
 	store.DB.SetMaxIdleConns(maxIdle)

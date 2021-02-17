@@ -47,28 +47,32 @@ func (store *PostgresStore) initialize(user, password, hostname string, port int
 	store.SupportBucketTable = false
 	store.SqlGenerator = &SqlGenPostgres{
 		CreateTableSqlTemplate: "",
-		DropTableSqlTemplate: `drop table "%s"`,
+		DropTableSqlTemplate:   `drop table "%s"`,
 	}
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, hostname, port, sslmode)
 	if user != "" {
 		sqlUrl += " user=" + user
 	}
+	adaptedSqlUrl := sqlUrl
 	if password != "" {
 		sqlUrl += " password=" + password
+		adaptedSqlUrl += " password=ADAPTED"
 	}
 	if database != "" {
 		sqlUrl += " dbname=" + database
+		adaptedSqlUrl += " dbname=" + database
 	}
 	if schema != "" {
 		sqlUrl += " search_path=" + schema
+		adaptedSqlUrl += " search_path=" + schema
 	}
 	var dbErr error
 	store.DB, dbErr = sql.Open("postgres", sqlUrl)
 	if dbErr != nil {
 		store.DB.Close()
 		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", sqlUrl, err)
+		return fmt.Errorf("can not connect to %s error:%v", adaptedSqlUrl, err)
 	}
 
 	store.DB.SetMaxIdleConns(maxIdle)
