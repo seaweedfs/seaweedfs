@@ -33,12 +33,6 @@ jobs:
         assets: | 
           weed-*
 
-    - name: Latest tag
-      uses: EndBug/latest-tag@v1.4.0
-      with:
-        description: latest master branch builds
-        tag-name: dev
-
     - name: Set BUILD_TIME env
       run: echo BUILD_TIME=$(date -u +%Y-%m-%d-%H-%M) >> ${GITHUB_ENV}
 
