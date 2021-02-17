@@ -16,4 +16,4 @@ jobs:
       uses: EndBug/latest-tag@v1.4.0
       with:
         description: latest master branch builds
-        tag-name: latest
+        tag-name: tip
