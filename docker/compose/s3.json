@@ -1,0 +1,105 @@
+{
+  "identities": [
+    {
+      "name": "anonymous",
+      "actions": [
+        "Read"
+      ]
+    },
+    {
+      "name": "some_admin_user",
+      "credentials": [
+        {
+          "accessKey": "some_access_key1",
+          "secretKey": "some_secret_key1"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
+    },
+    {
+      "name": "s3_tests",
+      "credentials": [
+        {
+          "accessKey": "ABCDEFGHIJKLMNOPQRST",
+          "secretKey": "abcdefghijklmnopqrstuvwxyzabcdefghijklmn"
+        },
+        {
+          "accessKey": "0555b35654ad1656d804",
+          "secretKey": "h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q=="
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
+    },
+    {
+      "name": "s3_tests_alt",
+      "credentials": [
+        {
+          "accessKey": "NOPQRSTUVWXYZABCDEFG",
+          "secretKey": "nopqrstuvwxyzabcdefghijklmnabcdefghijklm"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
+    },
+    {
+      "name": "s3_tests_tenant",
+      "credentials": [
+        {
+          "accessKey": "HIJKLMNOPQRSTUVWXYZA",
+          "secretKey": "opqrstuvwxyzabcdefghijklmnopqrstuvwxyzab"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
+    },
+    {
+      "name": "some_read_only_user",
+      "credentials": [
+        {
+          "accessKey": "some_access_key2",
+          "secretKey": "some_secret_key2"
+        }
+      ],
+      "actions": [
+        "Read"
+      ]
+    },
+    {
+      "name": "some_normal_user",
+      "credentials": [
+        {
+          "accessKey": "some_access_key3",
+          "secretKey": "some_secret_key3"
+        }
+      ],
+      "actions": [
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
+    }
+  ]
+}
