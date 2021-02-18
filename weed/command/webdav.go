@@ -26,6 +26,7 @@ type WebDavOption struct {
 	port           *int
 	collection     *string
 	replication    *string
+	disk           *string
 	tlsPrivateKey  *string
 	tlsCertificate *string
 	cacheDir       *string
@@ -38,6 +39,7 @@ func init() {
 	webDavStandaloneOptions.port = cmdWebDav.Flag.Int("port", 7333, "webdav server http listen port")
 	webDavStandaloneOptions.collection = cmdWebDav.Flag.String("collection", "", "collection to create the files")
 	webDavStandaloneOptions.replication = cmdWebDav.Flag.String("replication", "", "replication to create the files")
+	webDavStandaloneOptions.disk = cmdWebDav.Flag.String("disk", "", "[hdd|ssd] hard drive or solid state drive")
 	webDavStandaloneOptions.tlsPrivateKey = cmdWebDav.Flag.String("key.file", "", "path to the TLS private key file")
 	webDavStandaloneOptions.tlsCertificate = cmdWebDav.Flag.String("cert.file", "", "path to the TLS certificate file")
 	webDavStandaloneOptions.cacheDir = cmdWebDav.Flag.String("cacheDir", os.TempDir(), "local cache directory for file chunks")
@@ -110,6 +112,7 @@ func (wo *WebDavOption) startWebDav() bool {
 		GrpcDialOption:   grpcDialOption,
 		Collection:       *wo.collection,
 		Replication:      *wo.replication,
+		DiskType:         *wo.disk,
 		Uid:              uid,
 		Gid:              gid,
 		Cipher:           cipher,
