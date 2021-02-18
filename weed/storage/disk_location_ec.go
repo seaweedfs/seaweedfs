@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	re = regexp.MustCompile("\\.ec[0-9][0-9]")
+	re = regexp.MustCompile(`\.ec[0-9][0-9]`)
 )
 
 func (l *DiskLocation) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, bool) {

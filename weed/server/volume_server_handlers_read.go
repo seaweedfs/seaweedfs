@@ -23,7 +23,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-var fileNameEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
+var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
 
