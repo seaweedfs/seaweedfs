@@ -104,7 +104,7 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 
 func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, chunkSize int32, so *operation.StorageOption) (filerResult *FilerPostResult, md5bytes []byte, replyerr error) {
 
-	fileName := ""
+	fileName := path.Base(r.URL.Path)
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "application/octet-stream" {
 		contentType = ""
