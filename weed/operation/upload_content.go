@@ -58,6 +58,7 @@ var (
 
 func init() {
 	HttpClient = &http.Client{Transport: &http.Transport{
+		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
 	}}
 }
@@ -99,6 +100,7 @@ func retriedUploadData(uploadUrl string, filename string, cipher bool, data []by
 		} else {
 			glog.Warningf("uploading to %s: %v", uploadUrl, err)
 		}
+		time.Sleep(time.Millisecond * time.Duration(237*(i+1)))
 	}
 	return
 }

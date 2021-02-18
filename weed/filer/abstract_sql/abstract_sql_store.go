@@ -107,7 +107,7 @@ func (store *AbstractSqlStore) getTxOrDB(ctx context.Context, fullpath util.Full
 		}
 
 		if _, found := store.dbs[bucket]; !found {
-			if err = store.CreateTable(ctx, bucket); err != nil {
+			if err = store.CreateTable(ctx, bucket); err == nil {
 				store.dbs[bucket] = true
 			}
 		}

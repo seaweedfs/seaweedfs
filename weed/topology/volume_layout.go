@@ -3,6 +3,7 @@ package topology
 import (
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"math/rand"
 	"sync"
 	"time"
@@ -103,6 +104,7 @@ func (v *volumesBinaryState) copyState(list *VolumeLocationList) copyState {
 type VolumeLayout struct {
 	rp               *super_block.ReplicaPlacement
 	ttl              *needle.TTL
+	diskType         types.DiskType
 	vid2location     map[needle.VolumeId]*VolumeLocationList
 	writables        []needle.VolumeId   // transient array of writable volume id
 	readonlyVolumes  *volumesBinaryState // readonly volumes
@@ -118,10 +120,11 @@ type VolumeLayoutStats struct {
 	FileCount uint64
 }
 
-func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, volumeSizeLimit uint64, replicationAsMin bool) *VolumeLayout {
+func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType types.DiskType, volumeSizeLimit uint64, replicationAsMin bool) *VolumeLayout {
 	return &VolumeLayout{
 		rp:               rp,
 		ttl:              ttl,
+		diskType:         diskType,
 		vid2location:     make(map[needle.VolumeId]*VolumeLocationList),
 		writables:        *new([]needle.VolumeId),
 		readonlyVolumes:  NewVolumesBinaryState(readOnlyState, rp, ExistCopies()),

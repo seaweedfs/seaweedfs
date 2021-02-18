@@ -116,7 +116,7 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 	a.Collection = util.Nvl(b.Collection, a.Collection)
 	a.Replication = util.Nvl(b.Replication, a.Replication)
 	a.Ttl = util.Nvl(b.Ttl, a.Ttl)
-	if b.DiskType != filer_pb.FilerConf_PathConf_NONE {
+	if b.DiskType != "" {
 		a.DiskType = b.DiskType
 	}
 	a.Fsync = b.Fsync || a.Fsync

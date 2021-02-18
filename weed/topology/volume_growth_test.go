@@ -103,7 +103,13 @@ func setup(topologyLayout string) *Topology {
 						Version: needle.CurrentVersion}
 					server.AddOrUpdateVolume(vi)
 				}
-				server.UpAdjustMaxVolumeCountDelta(int64(serverMap["limit"].(float64)))
+
+				disk := server.getOrCreateDisk("")
+				deltaDiskUsages := newDiskUsages()
+				deltaDiskUsage := deltaDiskUsages.getOrCreateDisk("")
+				deltaDiskUsage.maxVolumeCount = int64(serverMap["limit"].(float64))
+				disk.UpAdjustDiskUsageDelta(deltaDiskUsages)
+
 			}
 		}
 	}

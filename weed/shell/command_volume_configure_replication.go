@@ -71,10 +71,12 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	var allLocations []location
 	eachDataNode(resp.TopologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
 		loc := newLocation(dc, string(rack), dn)
-		for _, v := range dn.VolumeInfos {
-			if v.Id == uint32(vid) && v.ReplicaPlacement != replicaPlacementInt32 {
-				allLocations = append(allLocations, loc)
-				continue
+		for _, diskInfo := range dn.DiskInfos {
+			for _, v := range diskInfo.VolumeInfos {
+				if v.Id == uint32(vid) && v.ReplicaPlacement != replicaPlacementInt32 {
+					allLocations = append(allLocations, loc)
+					continue
+				}
 			}
 		}
 	})

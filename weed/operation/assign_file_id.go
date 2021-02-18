@@ -18,6 +18,7 @@ type VolumeAssignRequest struct {
 	Replication         string
 	Collection          string
 	Ttl                 string
+	DiskType            string
 	DataCenter          string
 	Rack                string
 	DataNode            string
@@ -33,7 +34,7 @@ type AssignResult struct {
 	Auth      security.EncodedJwt `json:"auth,omitempty"`
 }
 
-func Assign(server string, grpcDialOption grpc.DialOption, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
+func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
 
 	var requests []*VolumeAssignRequest
 	requests = append(requests, primaryRequest)
@@ -47,13 +48,14 @@ func Assign(server string, grpcDialOption grpc.DialOption, primaryRequest *Volum
 			continue
 		}
 
-		lastError = WithMasterServerClient(server, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+		lastError = WithMasterServerClient(masterFn(), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
 			req := &master_pb.AssignRequest{
 				Count:               request.Count,
 				Replication:         request.Replication,
 				Collection:          request.Collection,
 				Ttl:                 request.Ttl,
+				DiskType:            request.DiskType,
 				DataCenter:          request.DataCenter,
 				Rack:                request.Rack,
 				DataNode:            request.DataNode,
@@ -105,6 +107,7 @@ func LookupJwt(master string, fileId string) security.EncodedJwt {
 
 type StorageOption struct {
 	Replication       string
+	DiskType          string
 	Collection        string
 	DataCenter        string
 	Rack              string
@@ -123,6 +126,7 @@ func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, a
 		Replication:         so.Replication,
 		Collection:          so.Collection,
 		Ttl:                 so.TtlString(),
+		DiskType:            so.DiskType,
 		DataCenter:          so.DataCenter,
 		Rack:                so.Rack,
 		WritableVolumeCount: so.VolumeGrowthCount,
@@ -133,6 +137,7 @@ func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, a
 			Replication:         so.Replication,
 			Collection:          so.Collection,
 			Ttl:                 so.TtlString(),
+			DiskType:            so.DiskType,
 			DataCenter:          "",
 			Rack:                "",
 			WritableVolumeCount: so.VolumeGrowthCount,

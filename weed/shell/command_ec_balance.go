@@ -3,6 +3,7 @@ package shell
 import (
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io"
 	"sort"
 
@@ -325,7 +326,9 @@ func balanceEcShardsWithinRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, ra
 
 			var possibleDestinationEcNodes []*EcNode
 			for _, n := range racks[RackId(rackId)].ecNodes {
-				possibleDestinationEcNodes = append(possibleDestinationEcNodes, n)
+				if _, found := n.info.DiskInfos[string(types.HardDriveType)]; found {
+					possibleDestinationEcNodes = append(possibleDestinationEcNodes, n)
+				}
 			}
 			sourceEcNodes := rackEcNodesWithVid[rackId]
 			averageShardsPerEcNode := ceilDivide(rackToShardCount[rackId], len(possibleDestinationEcNodes))
@@ -386,11 +389,15 @@ func doBalanceEcRack(commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool
 		rackEcNodes = append(rackEcNodes, node)
 	}
 
-	ecNodeIdToShardCount := groupByCount(rackEcNodes, func(node *EcNode) (id string, count int) {
-		for _, ecShardInfo := range node.info.EcShardInfos {
+	ecNodeIdToShardCount := groupByCount(rackEcNodes, func(ecNode *EcNode) (id string, count int) {
+		diskInfo, found := ecNode.info.DiskInfos[string(types.HardDriveType)]
+		if !found {
+			return
+		}
+		for _, ecShardInfo := range diskInfo.EcShardInfos {
 			count += erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIdCount()
 		}
-		return node.info.Id, count
+		return ecNode.info.Id, count
 	})
 
 	var totalShardCount int
@@ -411,26 +418,30 @@ func doBalanceEcRack(commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool
 		if fullNodeShardCount > averageShardCount && emptyNodeShardCount+1 <= averageShardCount {
 
 			emptyNodeIds := make(map[uint32]bool)
-			for _, shards := range emptyNode.info.EcShardInfos {
-				emptyNodeIds[shards.Id] = true
+			if emptyDiskInfo, found := emptyNode.info.DiskInfos[string(types.HardDriveType)]; found {
+				for _, shards := range emptyDiskInfo.EcShardInfos {
+					emptyNodeIds[shards.Id] = true
+				}
 			}
-			for _, shards := range fullNode.info.EcShardInfos {
-				if _, found := emptyNodeIds[shards.Id]; !found {
-					for _, shardId := range erasure_coding.ShardBits(shards.EcIndexBits).ShardIds() {
+			if fullDiskInfo, found := fullNode.info.DiskInfos[string(types.HardDriveType)]; found {
+				for _, shards := range fullDiskInfo.EcShardInfos {
+					if _, found := emptyNodeIds[shards.Id]; !found {
+						for _, shardId := range erasure_coding.ShardBits(shards.EcIndexBits).ShardIds() {
 
-						fmt.Printf("%s moves ec shards %d.%d to %s\n", fullNode.info.Id, shards.Id, shardId, emptyNode.info.Id)
+							fmt.Printf("%s moves ec shards %d.%d to %s\n", fullNode.info.Id, shards.Id, shardId, emptyNode.info.Id)
 
-						err := moveMountedShardToEcNode(commandEnv, fullNode, shards.Collection, needle.VolumeId(shards.Id), shardId, emptyNode, applyBalancing)
-						if err != nil {
-							return err
+							err := moveMountedShardToEcNode(commandEnv, fullNode, shards.Collection, needle.VolumeId(shards.Id), shardId, emptyNode, applyBalancing)
+							if err != nil {
+								return err
+							}
+
+							ecNodeIdToShardCount[emptyNode.info.Id]++
+							ecNodeIdToShardCount[fullNode.info.Id]--
+							hasMove = true
+							break
 						}
-
-						ecNodeIdToShardCount[emptyNode.info.Id]++
-						ecNodeIdToShardCount[fullNode.info.Id]--
-						hasMove = true
 						break
 					}
-					break
 				}
 			}
 		}
@@ -511,7 +522,11 @@ func pickNEcShardsToMoveFrom(ecNodes []*EcNode, vid needle.VolumeId, n int) map[
 func collectVolumeIdToEcNodes(allEcNodes []*EcNode) map[needle.VolumeId][]*EcNode {
 	vidLocations := make(map[needle.VolumeId][]*EcNode)
 	for _, ecNode := range allEcNodes {
-		for _, shardInfo := range ecNode.info.EcShardInfos {
+		diskInfo, found := ecNode.info.DiskInfos[string(types.HardDriveType)]
+		if !found {
+			continue
+		}
+		for _, shardInfo := range diskInfo.EcShardInfos {
 			vidLocations[needle.VolumeId(shardInfo.Id)] = append(vidLocations[needle.VolumeId(shardInfo.Id)], ecNode)
 		}
 	}

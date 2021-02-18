@@ -14,6 +14,7 @@ type VolumeInfo struct {
 	Size              uint64
 	ReplicaPlacement  *super_block.ReplicaPlacement
 	Ttl               *needle.TTL
+	DiskType          string
 	Collection        string
 	Version           needle.Version
 	FileCount         int
@@ -40,6 +41,7 @@ func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err er
 		ModifiedAtSecond:  m.ModifiedAtSecond,
 		RemoteStorageName: m.RemoteStorageName,
 		RemoteStorageKey:  m.RemoteStorageKey,
+		DiskType:          m.DiskType,
 	}
 	rp, e := super_block.NewReplicaPlacementFromByte(byte(m.ReplicaPlacement))
 	if e != nil {
@@ -62,6 +64,7 @@ func NewVolumeInfoFromShort(m *master_pb.VolumeShortInformationMessage) (vi Volu
 	}
 	vi.ReplicaPlacement = rp
 	vi.Ttl = needle.LoadTTLFromUint32(m.Ttl)
+	vi.DiskType = m.DiskType
 	return vi, nil
 }
 
@@ -90,6 +93,7 @@ func (vi VolumeInfo) ToVolumeInformationMessage() *master_pb.VolumeInformationMe
 		ModifiedAtSecond:  vi.ModifiedAtSecond,
 		RemoteStorageName: vi.RemoteStorageName,
 		RemoteStorageKey:  vi.RemoteStorageKey,
+		DiskType:          vi.DiskType,
 	}
 }
 

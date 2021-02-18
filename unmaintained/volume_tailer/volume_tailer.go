@@ -37,7 +37,7 @@ func main() {
 		sinceTimeNs = time.Now().Add(-*rewindDuration).UnixNano()
 	}
 
-	err := operation.TailVolume(*master, grpcDialOption, vid, uint64(sinceTimeNs), *timeoutSeconds, func(n *needle.Needle) (err error) {
+	err := operation.TailVolume(func()string{return *master}, grpcDialOption, vid, uint64(sinceTimeNs), *timeoutSeconds, func(n *needle.Needle) (err error) {
 		if n.Size == 0 {
 			println("-", n.String())
 			return nil
