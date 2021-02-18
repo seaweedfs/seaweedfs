@@ -10,13 +10,15 @@ type EcVolumeInfo struct {
 	VolumeId   needle.VolumeId
 	Collection string
 	ShardBits  ShardBits
+	DiskType   string
 }
 
-func NewEcVolumeInfo(collection string, vid needle.VolumeId, shardBits ShardBits) *EcVolumeInfo {
+func NewEcVolumeInfo(diskType string, collection string, vid needle.VolumeId, shardBits ShardBits) *EcVolumeInfo {
 	return &EcVolumeInfo{
 		Collection: collection,
 		VolumeId:   vid,
 		ShardBits:  shardBits,
+		DiskType:   diskType,
 	}
 }
 
@@ -45,6 +47,7 @@ func (ecInfo *EcVolumeInfo) Minus(other *EcVolumeInfo) *EcVolumeInfo {
 		VolumeId:   ecInfo.VolumeId,
 		Collection: ecInfo.Collection,
 		ShardBits:  ecInfo.ShardBits.Minus(other.ShardBits),
+		DiskType:   ecInfo.DiskType,
 	}
 
 	return ret
@@ -55,6 +58,7 @@ func (ecInfo *EcVolumeInfo) ToVolumeEcShardInformationMessage() (ret *master_pb.
 		Id:          uint32(ecInfo.VolumeId),
 		EcIndexBits: uint32(ecInfo.ShardBits),
 		Collection:  ecInfo.Collection,
+		DiskType:    ecInfo.DiskType,
 	}
 }
 

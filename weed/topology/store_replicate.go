@@ -18,7 +18,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func ReplicatedWrite(masterNode string, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (isUnchanged bool, err error) {
+func ReplicatedWrite(masterFn operation.GetMasterFn, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (isUnchanged bool, err error) {
 
 	//check JWT
 	jwt := security.GetJwt(r)
@@ -27,7 +27,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId needle.Volume
 	var remoteLocations []operation.Location
 	if r.FormValue("type") != "replicate" {
 		// this is the initial request
-		remoteLocations, err = getWritableRemoteReplications(s, volumeId, masterNode)
+		remoteLocations, err = getWritableRemoteReplications(s, volumeId, masterFn)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return
@@ -92,7 +92,7 @@ func ReplicatedWrite(masterNode string, s *storage.Store, volumeId needle.Volume
 	return
 }
 
-func ReplicatedDelete(masterNode string, store *storage.Store,
+func ReplicatedDelete(masterFn operation.GetMasterFn, store *storage.Store,
 	volumeId needle.VolumeId, n *needle.Needle,
 	r *http.Request) (size types.Size, err error) {
 
@@ -101,7 +101,7 @@ func ReplicatedDelete(masterNode string, store *storage.Store,
 
 	var remoteLocations []operation.Location
 	if r.FormValue("type") != "replicate" {
-		remoteLocations, err = getWritableRemoteReplications(store, volumeId, masterNode)
+		remoteLocations, err = getWritableRemoteReplications(store, volumeId, masterFn)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return
@@ -161,7 +161,7 @@ func distributedOperation(locations []operation.Location, store *storage.Store, 
 	return ret.Error()
 }
 
-func getWritableRemoteReplications(s *storage.Store, volumeId needle.VolumeId, masterNode string) (
+func getWritableRemoteReplications(s *storage.Store, volumeId needle.VolumeId, masterFn operation.GetMasterFn) (
 	remoteLocations []operation.Location, err error) {
 
 	v := s.GetVolume(volumeId)
@@ -170,7 +170,7 @@ func getWritableRemoteReplications(s *storage.Store, volumeId needle.VolumeId, m
 	}
 
 	// not on local store, or has replications
-	lookupResult, lookupErr := operation.Lookup(masterNode, volumeId.String())
+	lookupResult, lookupErr := operation.Lookup(masterFn, volumeId.String())
 	if lookupErr == nil {
 		selfUrl := s.Ip + ":" + strconv.Itoa(s.Port)
 		for _, location := range lookupResult.Locations {

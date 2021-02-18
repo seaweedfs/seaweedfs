@@ -5,6 +5,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"os"
 	"os/user"
 	"path"
@@ -168,6 +169,8 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		mountRoot = mountRoot[0 : len(mountRoot)-1]
 	}
 
+	diskType := types.ToDiskType(*option.diskType)
+
 	seaweedFileSystem := filesys.NewSeaweedFileSystem(&filesys.Option{
 		MountDirectory:     dir,
 		FilerAddress:       filer,
@@ -177,6 +180,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		Collection:         *option.collection,
 		Replication:        *option.replication,
 		TtlSec:             int32(*option.ttlSec),
+		DiskType:           diskType,
 		ChunkSizeLimit:     int64(chunkSizeLimitMB) * 1024 * 1024,
 		ConcurrentWriters:  *option.concurrentWriters,
 		CacheDir:           *option.cacheDir,

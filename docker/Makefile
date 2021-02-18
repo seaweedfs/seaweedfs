@@ -9,6 +9,9 @@ build:
 	docker build --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.local .
 	rm ./weed
 
+s3tests_build:
+	docker build --no-cache -t chrislusf/ceph-s3-tests:local -f Dockerfile.s3tests .
+
 dev: build
 	docker-compose -f compose/local-dev-compose.yml -p seaweedfs up
 
@@ -29,6 +32,9 @@ cluster: build
 
 2clusters: build
 	docker-compose -f compose/local-clusters-compose.yml -p seaweedfs up
+
+s3tests: build s3tests_build
+	docker-compose -f compose/local-s3tests-compose.yml -p seaweedfs up
 
 filer_etcd: build
 	docker stack deploy -c compose/swarm-etcd.yml fs

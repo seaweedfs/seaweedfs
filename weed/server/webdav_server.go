@@ -33,6 +33,7 @@ type WebDavOption struct {
 	BucketsPath      string
 	GrpcDialOption   grpc.DialOption
 	Collection       string
+	DiskType         string
 	Uid              uint32
 	Gid              uint32
 	Cipher           bool
@@ -382,6 +383,7 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 			Count:       1,
 			Replication: "",
 			Collection:  f.fs.option.Collection,
+			DiskType:    f.fs.option.DiskType,
 			Path:        name,
 		}
 

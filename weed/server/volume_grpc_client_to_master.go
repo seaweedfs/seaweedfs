@@ -219,15 +219,14 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDi
 		case <-vs.stopChan:
 			var volumeMessages []*master_pb.VolumeInformationMessage
 			emptyBeat := &master_pb.Heartbeat{
-				Ip:             vs.store.Ip,
-				Port:           uint32(vs.store.Port),
-				PublicUrl:      vs.store.PublicUrl,
-				MaxVolumeCount: uint32(0),
-				MaxFileKey:     uint64(0),
-				DataCenter:     vs.store.GetDataCenter(),
-				Rack:           vs.store.GetRack(),
-				Volumes:        volumeMessages,
-				HasNoVolumes:   len(volumeMessages) == 0,
+				Ip:           vs.store.Ip,
+				Port:         uint32(vs.store.Port),
+				PublicUrl:    vs.store.PublicUrl,
+				MaxFileKey:   uint64(0),
+				DataCenter:   vs.store.GetDataCenter(),
+				Rack:         vs.store.GetRack(),
+				Volumes:      volumeMessages,
+				HasNoVolumes: len(volumeMessages) == 0,
 			}
 			glog.V(1).Infof("volume server %s:%d stops and deletes all volumes", vs.store.Ip, vs.store.Port)
 			if err = stream.Send(emptyBeat); err != nil {

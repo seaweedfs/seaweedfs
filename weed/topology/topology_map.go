@@ -4,8 +4,8 @@ import "github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 
 func (t *Topology) ToMap() interface{} {
 	m := make(map[string]interface{})
-	m["Max"] = t.GetMaxVolumeCount()
-	m["Free"] = t.FreeSpace()
+	m["Max"] = t.diskUsages.GetMaxVolumeCount()
+	m["Free"] = t.diskUsages.FreeSpace()
 	var dcs []interface{}
 	for _, c := range t.Children() {
 		dc := c.(*DataCenter)
@@ -29,8 +29,8 @@ func (t *Topology) ToMap() interface{} {
 
 func (t *Topology) ToVolumeMap() interface{} {
 	m := make(map[string]interface{})
-	m["Max"] = t.GetMaxVolumeCount()
-	m["Free"] = t.FreeSpace()
+	m["Max"] = t.diskUsages.GetMaxVolumeCount()
+	m["Free"] = t.diskUsages.FreeSpace()
 	dcs := make(map[NodeId]interface{})
 	for _, c := range t.Children() {
 		dc := c.(*DataCenter)
@@ -80,12 +80,8 @@ func (t *Topology) ToVolumeLocations() (volumeLocations []*master_pb.VolumeLocat
 
 func (t *Topology) ToTopologyInfo() *master_pb.TopologyInfo {
 	m := &master_pb.TopologyInfo{
-		Id:                string(t.Id()),
-		VolumeCount:       uint64(t.GetVolumeCount()),
-		MaxVolumeCount:    uint64(t.GetMaxVolumeCount()),
-		FreeVolumeCount:   uint64(t.FreeSpace()),
-		ActiveVolumeCount: uint64(t.GetActiveVolumeCount()),
-		RemoteVolumeCount: uint64(t.GetRemoteVolumeCount()),
+		Id:        string(t.Id()),
+		DiskInfos: t.diskUsages.ToDiskInfo(),
 	}
 	for _, c := range t.Children() {
 		dc := c.(*DataCenter)

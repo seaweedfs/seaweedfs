@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 type DiskLocation struct {
 	Directory              string
 	IdxDirectory           string
+	DiskType               types.DiskType
 	MaxVolumeCount         int
 	OriginalMaxVolumeCount int
 	MinFreeSpacePercent    float32
@@ -32,7 +34,7 @@ type DiskLocation struct {
 	isDiskSpaceLow bool
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32, idxDir string) *DiskLocation {
+func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32, idxDir string, diskType types.DiskType) *DiskLocation {
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
 		idxDir = dir
@@ -42,6 +44,7 @@ func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32
 	location := &DiskLocation{
 		Directory:              dir,
 		IdxDirectory:           idxDir,
+		DiskType:               diskType,
 		MaxVolumeCount:         maxVolumeCount,
 		OriginalMaxVolumeCount: maxVolumeCount,
 		MinFreeSpacePercent:    minFreeSpacePercent,

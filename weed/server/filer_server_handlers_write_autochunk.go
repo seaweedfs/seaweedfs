@@ -104,7 +104,7 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 
 func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, chunkSize int32, so *operation.StorageOption) (filerResult *FilerPostResult, md5bytes []byte, replyerr error) {
 
-	fileName := ""
+	fileName := path.Base(r.URL.Path)
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "application/octet-stream" {
 		contentType = ""
@@ -186,6 +186,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 				Replication: so.Replication,
 				Collection:  so.Collection,
 				TtlSec:      so.TtlSeconds,
+				DiskType:    so.DiskType,
 				Mime:        contentType,
 				Md5:         md5bytes,
 				FileSize:    uint64(chunkOffset),

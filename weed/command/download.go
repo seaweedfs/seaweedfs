@@ -44,15 +44,15 @@ var cmdDownload = &Command{
 
 func runDownload(cmd *Command, args []string) bool {
 	for _, fid := range args {
-		if e := downloadToFile(*d.server, fid, util.ResolvePath(*d.dir)); e != nil {
+		if e := downloadToFile(func() string { return *d.server }, fid, util.ResolvePath(*d.dir)); e != nil {
 			fmt.Println("Download Error: ", fid, e)
 		}
 	}
 	return true
 }
 
-func downloadToFile(server, fileId, saveDir string) error {
-	fileUrl, lookupError := operation.LookupFileId(server, fileId)
+func downloadToFile(masterFn operation.GetMasterFn, fileId, saveDir string) error {
+	fileUrl, lookupError := operation.LookupFileId(masterFn, fileId)
 	if lookupError != nil {
 		return lookupError
 	}
@@ -83,7 +83,7 @@ func downloadToFile(server, fileId, saveDir string) error {
 		fids := strings.Split(string(content), "\n")
 		for _, partId := range fids {
 			var n int
-			_, part, err := fetchContent(*d.server, partId)
+			_, part, err := fetchContent(masterFn, partId)
 			if err == nil {
 				n, err = f.Write(part)
 			}
@@ -103,8 +103,8 @@ func downloadToFile(server, fileId, saveDir string) error {
 	return nil
 }
 
-func fetchContent(server string, fileId string) (filename string, content []byte, e error) {
-	fileUrl, lookupError := operation.LookupFileId(server, fileId)
+func fetchContent(masterFn operation.GetMasterFn, fileId string) (filename string, content []byte, e error) {
+	fileUrl, lookupError := operation.LookupFileId(masterFn, fileId)
 	if lookupError != nil {
 		return "", nil, lookupError
 	}

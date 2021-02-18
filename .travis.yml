@@ -1,8 +1,8 @@
 sudo: false
 language: go
 go:
-  - 1.14.x
   - 1.15.x
+  - 1.16.x
 
 before_install:
   - export PATH=/home/travis/gopath/bin:$PATH
@@ -44,4 +44,4 @@ deploy:
   on:
     tags: true
     repo: chrislusf/seaweedfs
-    go: 1.15.x
+    go: 1.16.x

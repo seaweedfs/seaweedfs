@@ -157,6 +157,7 @@ message AllocateVolumeRequest {
     string replication = 4;
     string ttl = 5;
     uint32 memory_map_max_size_mb = 6;
+    string disk_type = 7;
 }
 message AllocateVolumeResponse {
 }
@@ -233,6 +234,7 @@ message VolumeCopyRequest {
     string replication = 3;
     string ttl = 4;
     string source_data_node = 5;
+    string disk_type = 6;
 }
 message VolumeCopyResponse {
     uint64 last_append_at_ns = 1;
@@ -361,6 +363,7 @@ message ReadVolumeFileStatusResponse {
     uint64 file_count = 6;
     uint32 compaction_revision = 7;
     string collection = 8;
+    string disk_type = 9;
 }
 
 message DiskStatus {
@@ -370,6 +373,7 @@ message DiskStatus {
     uint64 free = 4;
     float percent_free = 5;
     float percent_used = 6;
+    string disk_type = 7;
 }
 
 message MemStatus {

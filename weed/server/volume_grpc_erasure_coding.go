@@ -105,7 +105,7 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 
 	glog.V(0).Infof("VolumeEcShardsCopy: %v", req)
 
-	location := vs.store.FindFreeLocation()
+	location := vs.store.FindFreeLocation(types.HardDriveType)
 	if location == nil {
 		return nil, fmt.Errorf("no space left")
 	}

@@ -68,6 +68,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 			Replication: so.Replication,
 			Collection:  so.Collection,
 			TtlSec:      so.TtlSeconds,
+			DiskType:    so.DiskType,
 			Mime:        pu.MimeType,
 			Md5:         util.Base64Md5ToBytes(pu.ContentMd5),
 		},

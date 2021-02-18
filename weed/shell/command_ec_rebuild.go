@@ -188,10 +188,12 @@ func prepareDataToRecover(commandEnv *CommandEnv, rebuilder *EcNode, collection 
 
 	needEcxFile := true
 	var localShardBits erasure_coding.ShardBits
-	for _, ecShardInfo := range rebuilder.info.EcShardInfos {
-		if ecShardInfo.Collection == collection && needle.VolumeId(ecShardInfo.Id) == volumeId {
-			needEcxFile = false
-			localShardBits = erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+	for _, diskInfo := range rebuilder.info.DiskInfos {
+		for _, ecShardInfo := range diskInfo.EcShardInfos {
+			if ecShardInfo.Collection == collection && needle.VolumeId(ecShardInfo.Id) == volumeId {
+				needEcxFile = false
+				localShardBits = erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+			}
 		}
 	}
 
@@ -247,15 +249,17 @@ type EcShardMap map[needle.VolumeId]EcShardLocations
 type EcShardLocations [][]*EcNode
 
 func (ecShardMap EcShardMap) registerEcNode(ecNode *EcNode, collection string) {
-	for _, shardInfo := range ecNode.info.EcShardInfos {
-		if shardInfo.Collection == collection {
-			existing, found := ecShardMap[needle.VolumeId(shardInfo.Id)]
-			if !found {
-				existing = make([][]*EcNode, erasure_coding.TotalShardsCount)
-				ecShardMap[needle.VolumeId(shardInfo.Id)] = existing
-			}
-			for _, shardId := range erasure_coding.ShardBits(shardInfo.EcIndexBits).ShardIds() {
-				existing[shardId] = append(existing[shardId], ecNode)
+	for _, diskInfo := range ecNode.info.DiskInfos {
+		for _, shardInfo := range diskInfo.EcShardInfos {
+			if shardInfo.Collection == collection {
+				existing, found := ecShardMap[needle.VolumeId(shardInfo.Id)]
+				if !found {
+					existing = make([][]*EcNode, erasure_coding.TotalShardsCount)
+					ecShardMap[needle.VolumeId(shardInfo.Id)] = existing
+				}
+				for _, shardId := range erasure_coding.ShardBits(shardInfo.EcIndexBits).ShardIds() {
+					existing[shardId] = append(existing[shardId], ecNode)
+				}
 			}
 		}
 	}
