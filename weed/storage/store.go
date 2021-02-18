@@ -285,15 +285,15 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	}
 
 	return &master_pb.Heartbeat{
-		Ip:                s.Ip,
-		Port:              uint32(s.Port),
-		PublicUrl:         s.PublicUrl,
-		MaxVolumeCounts:   maxVolumeCounts,
-		MaxFileKey:        NeedleIdToUint64(maxFileKey),
-		DataCenter:        s.dataCenter,
-		Rack:              s.rack,
-		Volumes:           volumeMessages,
-		HasNoVolumes:      len(volumeMessages) == 0,
+		Ip:              s.Ip,
+		Port:            uint32(s.Port),
+		PublicUrl:       s.PublicUrl,
+		MaxVolumeCounts: maxVolumeCounts,
+		MaxFileKey:      NeedleIdToUint64(maxFileKey),
+		DataCenter:      s.dataCenter,
+		Rack:            s.rack,
+		Volumes:         volumeMessages,
+		HasNoVolumes:    len(volumeMessages) == 0,
 	}
 
 }

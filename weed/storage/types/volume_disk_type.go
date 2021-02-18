@@ -25,7 +25,7 @@ func ToDiskType(vt string) (diskType DiskType) {
 	return
 }
 
-func (diskType DiskType) String() string{
+func (diskType DiskType) String() string {
 	if diskType == "" {
 		return ""
 	}

@@ -285,7 +285,7 @@ func (c *commandVolumeFsck) collectVolumeIds(verbose bool, writer io.Writer) (vo
 	}
 
 	eachDataNode(resp.TopologyInfo, func(dc string, rack RackId, t *master_pb.DataNodeInfo) {
-		for _, diskInfo := range t.DiskInfos{
+		for _, diskInfo := range t.DiskInfos {
 			for _, vi := range diskInfo.VolumeInfos {
 				volumeIdToServer[vi.Id] = VInfo{
 					server:     t.Id,

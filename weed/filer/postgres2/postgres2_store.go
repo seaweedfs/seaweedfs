@@ -50,7 +50,7 @@ func (store *PostgresStore2) initialize(createTable, user, password, hostname st
 	store.SupportBucketTable = true
 	store.SqlGenerator = &postgres.SqlGenPostgres{
 		CreateTableSqlTemplate: createTable,
-		DropTableSqlTemplate: `drop table "%s"`,
+		DropTableSqlTemplate:   `drop table "%s"`,
 	}
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, hostname, port, sslmode)

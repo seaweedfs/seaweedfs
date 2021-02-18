@@ -48,11 +48,11 @@ func (d *DiskUsages) negative() *DiskUsages {
 	t := newDiskUsages()
 	for diskType, b := range d.usages {
 		a := t.getOrCreateDisk(diskType)
-		a.volumeCount = - b.volumeCount
-		a.remoteVolumeCount = - b.remoteVolumeCount
-		a.activeVolumeCount = - b.activeVolumeCount
-		a.ecShardCount = - b.ecShardCount
-		a.maxVolumeCount = - b.maxVolumeCount
+		a.volumeCount = -b.volumeCount
+		a.remoteVolumeCount = -b.remoteVolumeCount
+		a.activeVolumeCount = -b.activeVolumeCount
+		a.ecShardCount = -b.ecShardCount
+		a.maxVolumeCount = -b.maxVolumeCount
 
 	}
 	return t
@@ -68,7 +68,7 @@ func (d *DiskUsages) ToMap() interface{} {
 	return ret
 }
 
-func (d *DiskUsages) ToDiskInfo() (map[string]*master_pb.DiskInfo) {
+func (d *DiskUsages) ToDiskInfo() map[string]*master_pb.DiskInfo {
 	ret := make(map[string]*master_pb.DiskInfo)
 	for diskType, diskUsageCounts := range d.usages {
 		m := &master_pb.DiskInfo{

@@ -1,10 +1,10 @@
 package postgres
 
 import (
-	`fmt`
+	"fmt"
 
-	`github.com/chrislusf/seaweedfs/weed/filer/abstract_sql`
-	_ `github.com/lib/pq`
+	"github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
+	_ "github.com/lib/pq"
 )
 
 type SqlGenPostgres struct {

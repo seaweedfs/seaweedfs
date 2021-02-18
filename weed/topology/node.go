@@ -39,7 +39,7 @@ type NodeImpl struct {
 	diskUsages   *DiskUsages
 	id           NodeId
 	parent       Node
-	sync.RWMutex     // lock children
+	sync.RWMutex // lock children
 	children     map[NodeId]Node
 	maxVolumeId  needle.VolumeId
 
