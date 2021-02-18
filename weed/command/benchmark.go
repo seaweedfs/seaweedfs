@@ -238,12 +238,12 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			Replication: *b.replication,
 			DiskType:    *b.diskType,
 		}
-		if assignResult, err := operation.Assign(b.masterClient.GetMaster(), b.grpcDialOption, ar); err == nil {
+		if assignResult, err := operation.Assign(b.masterClient.GetMaster, b.grpcDialOption, ar); err == nil {
 			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection
 			if !isSecure && assignResult.Auth != "" {
 				isSecure = true
 			}
-			if _, err := fp.Upload(0, b.masterClient.GetMaster(), false, assignResult.Auth, b.grpcDialOption); err == nil {
+			if _, err := fp.Upload(0, b.masterClient.GetMaster, false, assignResult.Auth, b.grpcDialOption); err == nil {
 				if random.Intn(100) < *b.deletePercentage {
 					s.total++
 					delayedDeleteChan <- &delayedFile{time.Now().Add(time.Second), fp}

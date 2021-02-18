@@ -34,7 +34,7 @@ type AssignResult struct {
 	Auth      security.EncodedJwt `json:"auth,omitempty"`
 }
 
-func Assign(server string, grpcDialOption grpc.DialOption, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
+func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
 
 	var requests []*VolumeAssignRequest
 	requests = append(requests, primaryRequest)
@@ -48,7 +48,7 @@ func Assign(server string, grpcDialOption grpc.DialOption, primaryRequest *Volum
 			continue
 		}
 
-		lastError = WithMasterServerClient(server, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+		lastError = WithMasterServerClient(masterFn(), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
 			req := &master_pb.AssignRequest{
 				Count:               request.Count,

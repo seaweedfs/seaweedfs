@@ -96,7 +96,7 @@ func runUpload(cmd *Command, args []string) bool {
 					if e != nil {
 						return e
 					}
-					results, e := operation.SubmitFiles(*upload.master, grpcDialOption, parts, *upload.replication, *upload.collection, *upload.dataCenter, *upload.ttl, *upload.diskType, *upload.maxMB, *upload.usePublicUrl)
+					results, e := operation.SubmitFiles(func()string {return *upload.master}, grpcDialOption, parts, *upload.replication, *upload.collection, *upload.dataCenter, *upload.ttl, *upload.diskType, *upload.maxMB, *upload.usePublicUrl)
 					bytes, _ := json.Marshal(results)
 					fmt.Println(string(bytes))
 					if e != nil {
@@ -113,7 +113,7 @@ func runUpload(cmd *Command, args []string) bool {
 		if e != nil {
 			fmt.Println(e.Error())
 		}
-		results, _ := operation.SubmitFiles(*upload.master, grpcDialOption, parts, *upload.replication, *upload.collection, *upload.dataCenter, *upload.ttl, *upload.diskType, *upload.maxMB, *upload.usePublicUrl)
+		results, _ := operation.SubmitFiles(func()string {return *upload.master}, grpcDialOption, parts, *upload.replication, *upload.collection, *upload.dataCenter, *upload.ttl, *upload.diskType, *upload.maxMB, *upload.usePublicUrl)
 		bytes, _ := json.Marshal(results)
 		fmt.Println(string(bytes))
 	}

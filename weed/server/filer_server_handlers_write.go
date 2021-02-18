@@ -37,7 +37,7 @@ func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, u
 
 	ar, altRequest := so.ToAssignRequests(1)
 
-	assignResult, ae := operation.Assign(fs.filer.GetMaster(), fs.grpcDialOption, ar, altRequest)
+	assignResult, ae := operation.Assign(fs.filer.GetMaster, fs.grpcDialOption, ar, altRequest)
 	if ae != nil {
 		glog.Errorf("failing to assign a file id: %v", ae)
 		err = ae
