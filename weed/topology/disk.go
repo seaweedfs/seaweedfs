@@ -58,16 +58,6 @@ func (d *DiskUsages) negative() *DiskUsages {
 	return t
 }
 
-func (d *DiskUsages) ToMap() interface{} {
-	d.RLock()
-	defer d.RUnlock()
-	ret := make(map[string]interface{})
-	for diskType, diskUsage := range d.usages {
-		ret[diskType.String()] = diskUsage.ToMap()
-	}
-	return ret
-}
-
 func (d *DiskUsages) ToDiskInfo() map[string]*master_pb.DiskInfo {
 	ret := make(map[string]*master_pb.DiskInfo)
 	for diskType, diskUsageCounts := range d.usages {
@@ -133,15 +123,6 @@ func (a *DiskUsageCounts) minus(b *DiskUsageCounts) *DiskUsageCounts {
 		ecShardCount:      a.ecShardCount - b.ecShardCount,
 		maxVolumeCount:    a.maxVolumeCount - b.maxVolumeCount,
 	}
-}
-
-func (diskUsage *DiskUsageCounts) ToMap() interface{} {
-	ret := make(map[string]interface{})
-	ret["Volumes"] = diskUsage.volumeCount
-	ret["EcShards"] = diskUsage.ecShardCount
-	ret["Max"] = diskUsage.maxVolumeCount
-	ret["Free"] = diskUsage.FreeSpace()
-	return ret
 }
 
 func (du *DiskUsages) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts {
