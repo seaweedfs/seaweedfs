@@ -30,7 +30,7 @@ func CheckAndFixVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAt
 			healthyIndexSize = indexSize - int64(i)*NeedleMapEntrySize
 			continue
 		}
-		if err != ErrorSizeMismatch {
+		if err != ErrSizeMismatch {
 			break
 		}
 	}
@@ -94,7 +94,7 @@ func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version,
 		return 0, fmt.Errorf("read %s at %d", datFile.Name(), offset)
 	}
 	if n.Size != size {
-		return 0, ErrorSizeMismatch
+		return 0, ErrSizeMismatch
 	}
 	if v == needle.Version3 {
 		bytes := make([]byte, TimestampSize)

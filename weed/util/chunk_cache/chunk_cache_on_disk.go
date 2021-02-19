@@ -104,7 +104,7 @@ func (v *ChunkCacheVolume) GetNeedle(key types.NeedleId) ([]byte, error) {
 
 	nv, ok := v.nm.Get(key)
 	if !ok {
-		return nil, storage.ErrorNotFound
+		return nil, storage.ErrNotFound
 	}
 	data := make([]byte, nv.Size)
 	if readSize, readErr := v.DataBackend.ReadAt(data, nv.Offset.ToActualOffset()); readErr != nil {

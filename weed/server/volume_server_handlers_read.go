@@ -93,7 +93,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	} else if hasEcVolume {
 		count, err = vs.store.ReadEcShardNeedle(volumeId, n)
 	}
-	if err != nil && err != storage.ErrorDeleted && r.FormValue("type") != "replicate" && hasVolume {
+	if err != nil && err != storage.ErrDeleted && r.FormValue("type") != "replicate" && hasVolume {
 		glog.V(4).Infof("read needle: %v", err)
 		// start to fix it from other replicas, if not deleted and hasVolume and is not a replicated request
 	}

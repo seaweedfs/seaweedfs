@@ -130,7 +130,7 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle) (int, e
 				return 0, fmt.Errorf("locate in local ec volume: %v", err)
 			}
 			if size.IsDeleted() {
-				return 0, ErrorDeleted
+				return 0, ErrDeleted
 			}
 
 			glog.V(3).Infof("read ec volume %d offset %d size %d intervals:%+v", vid, offset.ToActualOffset(), size, intervals)
@@ -143,7 +143,7 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle) (int, e
 				return 0, fmt.Errorf("ReadEcShardIntervals: %v", err)
 			}
 			if isDeleted {
-				return 0, ErrorDeleted
+				return 0, ErrDeleted
 			}
 
 			err = n.ReadBytes(bytes, offset.ToActualOffset(), size, localEcVolume.Version)
