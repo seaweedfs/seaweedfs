@@ -219,7 +219,7 @@ func (dn *DataNode) ToMap() interface{} {
 
 	for _, disk := range dn.Children() {
 		d := disk.(*Disk)
-		volumeIds += d.GetVolumeIds()
+		volumeIds += " " + d.GetVolumeIds()
 	}
 
 	ret["Volumes"] = volumeCount
