@@ -40,7 +40,7 @@ func (f *Filer) readEntry(chunks []*filer_pb.FileChunk) ([]byte, error) {
 
 func (f *Filer) reloadFilerConfiguration(entry *filer_pb.Entry) {
 	fc := NewFilerConf()
-	err := fc.loadFromChunks(f, entry.Chunks)
+	err := fc.loadFromChunks(f, entry.Content, entry.Chunks)
 	if err != nil {
 		glog.Errorf("read filer conf chunks: %v", err)
 		return
