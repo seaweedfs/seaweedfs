@@ -225,7 +225,7 @@ func (dn *DataNode) ToMap() interface{} {
 	ret["Volumes"] = volumeCount
 	ret["EcShards"] = ecShardCount
 	ret["Max"] = maxVolumeCount
-	ret["volumeIds"] = volumeIds
+	ret["VolumeIds"] = volumeIds
 
 	return ret
 }
