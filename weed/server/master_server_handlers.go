@@ -113,7 +113,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 
 	if !ms.Topo.HasWritableVolume(option) {
 		if ms.Topo.AvailableSpaceFor(option) <= 0 {
-			writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left!"})
+			writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left for " + option.String()})
 			return
 		}
 		ms.vgLock.Lock()
