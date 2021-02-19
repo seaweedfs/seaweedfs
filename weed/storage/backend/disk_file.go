@@ -12,8 +12,6 @@ var (
 type DiskFile struct {
 	File         *os.File
 	fullFilePath string
-	fileSize     int64
-	modTime      time.Time
 }
 
 func NewDiskFile(f *os.File) *DiskFile {
@@ -28,24 +26,11 @@ func (df *DiskFile) ReadAt(p []byte, off int64) (n int, err error) {
 }
 
 func (df *DiskFile) WriteAt(p []byte, off int64) (n int, err error) {
-	n, err = df.File.WriteAt(p, off)
-	if err == nil {
-		waterMark := off + int64(n)
-		if waterMark > df.fileSize {
-			df.fileSize = waterMark
-			df.modTime = time.Now()
-		}
-	}
-	return
+	return df.File.WriteAt(p, off)
 }
 
 func (df *DiskFile) Truncate(off int64) error {
-	err := df.File.Truncate(off)
-	if err == nil {
-		df.fileSize = off
-		df.modTime = time.Now()
-	}
-	return err
+	return df.File.Truncate(off)
 }
 
 func (df *DiskFile) Close() error {
@@ -53,9 +38,6 @@ func (df *DiskFile) Close() error {
 }
 
 func (df *DiskFile) GetStat() (datSize int64, modTime time.Time, err error) {
-	if df.fileSize != 0 {
-		return df.fileSize, df.modTime, nil
-	}
 	stat, e := df.File.Stat()
 	if e == nil {
 		return stat.Size(), stat.ModTime(), nil
@@ -68,6 +50,5 @@ func (df *DiskFile) Name() string {
 }
 
 func (df *DiskFile) Sync() error {
-	df.fileSize = 0
 	return df.File.Sync()
 }
