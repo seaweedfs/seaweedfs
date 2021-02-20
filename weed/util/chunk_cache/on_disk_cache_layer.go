@@ -66,7 +66,7 @@ func (c *OnDiskCacheLayer) getChunk(needleId types.NeedleId) (data []byte) {
 
 	for _, diskCache := range c.diskCaches {
 		data, err = diskCache.GetNeedle(needleId)
-		if err == storage.ErrNotFound {
+		if err == storage.ErrorNotFound {
 			continue
 		}
 		if err != nil {
