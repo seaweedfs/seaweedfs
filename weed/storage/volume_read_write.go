@@ -305,8 +305,6 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, erro
 	}
 	err := n.ReadData(v.DataBackend, nv.Offset.ToActualOffset(), readSize, v.Version())
 	if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
-		// add special handling for .dat larger than 32GB, from git commit comment of
-		// 06c15ab3 Chris Lu <chris.lu@gmail.com> on 2020/10/28 at 4:11 上
 		err = n.ReadData(v.DataBackend, nv.Offset.ToActualOffset()+int64(MaxPossibleVolumeSize), readSize, v.Version())
 	}
 	v.checkReadWriteError(err)
