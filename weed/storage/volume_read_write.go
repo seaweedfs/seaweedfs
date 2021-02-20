@@ -15,9 +15,9 @@ import (
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
-var ErrNotFound = errors.New("not found")
-var ErrDeleted = errors.New("already deleted")
-var ErrSizeMismatch = errors.New("size mismatch")
+var ErrorNotFound = errors.New("not found")
+var ErrorDeleted = errors.New("already deleted")
+var ErrorSizeMismatch = errors.New("size mismatch")
 
 func (v *Volume) checkReadWriteError(err error) {
 	if err == nil {
@@ -289,7 +289,7 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, erro
 
 	nv, ok := v.nm.Get(n.Id)
 	if !ok || nv.Offset.IsZero() {
-		return -1, ErrNotFound
+		return -1, ErrorNotFound
 	}
 	readSize := nv.Size
 	if readSize.IsDeleted() {
@@ -297,14 +297,14 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, erro
 			glog.V(3).Infof("reading deleted %s", n.String())
 			readSize = -readSize
 		} else {
-			return -1, ErrDeleted
+			return -1, ErrorDeleted
 		}
 	}
 	if readSize == 0 {
 		return 0, nil
 	}
 	err := n.ReadData(v.DataBackend, nv.Offset.ToActualOffset(), readSize, v.Version())
-	if err == needle.ErrSizeMismatch && OffsetSize == 4 {
+	if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
 		// add special handling for .dat larger than 32GB, from git commit comment of
 		// 06c15ab3 Chris Lu <chris.lu@gmail.com> on 2020/10/28 at 4:11 上
 		err = n.ReadData(v.DataBackend, nv.Offset.ToActualOffset()+int64(MaxPossibleVolumeSize), readSize, v.Version())
@@ -327,7 +327,7 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, erro
 	if time.Now().Before(time.Unix(0, int64(n.AppendAtNs)).Add(time.Duration(ttlMinutes) * time.Minute)) {
 		return bytesRead, nil
 	}
-	return -1, ErrNotFound
+	return -1, ErrorNotFound
 }
 
 func (v *Volume) startWorker() {
