@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -41,6 +40,7 @@ type baseNeedleMapper struct {
 
 	indexFile           *os.File
 	indexFileAccessLock sync.Mutex
+	indexFileOffset     int64
 }
 
 func (nm *baseNeedleMapper) IndexFileSize() uint64 {
@@ -56,11 +56,10 @@ func (nm *baseNeedleMapper) appendToIndexFile(key NeedleId, offset Offset, size 
 
 	nm.indexFileAccessLock.Lock()
 	defer nm.indexFileAccessLock.Unlock()
-	if _, err := nm.indexFile.Seek(0, 2); err != nil {
-		return fmt.Errorf("cannot seek end of indexfile %s: %v",
-			nm.indexFile.Name(), err)
+	written, err := nm.indexFile.WriteAt(bytes, nm.indexFileOffset)
+	if err == nil {
+		nm.indexFileOffset += int64(written)
 	}
-	_, err := nm.indexFile.Write(bytes)
 	return err
 }
 
