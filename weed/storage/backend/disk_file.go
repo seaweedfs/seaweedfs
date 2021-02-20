@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"os"
 	"time"
 )
@@ -12,12 +13,21 @@ var (
 type DiskFile struct {
 	File         *os.File
 	fullFilePath string
+	fileSize     int64
+	modTime      time.Time
 }
 
 func NewDiskFile(f *os.File) *DiskFile {
+	stat, err := f.Stat()
+	if err != nil {
+		glog.Fatalf("stat file %s: %v", f.Name(), err)
+	}
+
 	return &DiskFile{
 		fullFilePath: f.Name(),
 		File:         f,
+		fileSize:     stat.Size(),
+		modTime:      stat.ModTime(),
 	}
 }
 
@@ -26,11 +36,24 @@ func (df *DiskFile) ReadAt(p []byte, off int64) (n int, err error) {
 }
 
 func (df *DiskFile) WriteAt(p []byte, off int64) (n int, err error) {
-	return df.File.WriteAt(p, off)
+	n, err = df.File.WriteAt(p, off)
+	if err == nil {
+		waterMark := off + int64(n)
+		if waterMark > df.fileSize {
+			df.fileSize = waterMark
+			df.modTime = time.Now()
+		}
+	}
+	return
 }
 
 func (df *DiskFile) Truncate(off int64) error {
-	return df.File.Truncate(off)
+	err := df.File.Truncate(off)
+	if err == nil {
+		df.fileSize = off
+		df.modTime = time.Now()
+	}
+	return err
 }
 
 func (df *DiskFile) Close() error {
@@ -38,11 +61,7 @@ func (df *DiskFile) Close() error {
 }
 
 func (df *DiskFile) GetStat() (datSize int64, modTime time.Time, err error) {
-	stat, e := df.File.Stat()
-	if e == nil {
-		return stat.Size(), stat.ModTime(), nil
-	}
-	return 0, time.Time{}, err
+	return df.fileSize, df.modTime, nil
 }
 
 func (df *DiskFile) Name() string {
