@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"math/rand"
@@ -25,15 +26,15 @@ This package is created to resolve these replica placement issues:
 */
 
 type VolumeGrowOption struct {
-	Collection         string
-	ReplicaPlacement   *super_block.ReplicaPlacement
-	Ttl                *needle.TTL
-	DiskType           types.DiskType
-	Prealloacte        int64
-	DataCenter         string
-	Rack               string
-	DataNode           string
-	MemoryMapMaxSizeMb uint32
+	Collection         string                        `json:"collection,omitempty"`
+	ReplicaPlacement   *super_block.ReplicaPlacement `json:"replication,omitempty"`
+	Ttl                *needle.TTL                   `json:"ttl,omitempty"`
+	DiskType           types.DiskType                `json:"disk,omitempty"`
+	Prealloacte        int64                         `json:"prealloacte,omitempty"`
+	DataCenter         string                        `json:"dataCenter,omitempty"`
+	Rack               string                        `json:"rack,omitempty"`
+	DataNode           string                        `json:"dataNode,omitempty"`
+	MemoryMapMaxSizeMb uint32                        `json:"memoryMapMaxSizeMb,omitempty"`
 }
 
 type VolumeGrowth struct {
@@ -41,7 +42,8 @@ type VolumeGrowth struct {
 }
 
 func (o *VolumeGrowOption) String() string {
-	return fmt.Sprintf("Collection:%s, ReplicaPlacement:%v, Ttl:%v, DataCenter:%s, Rack:%s, DataNode:%s", o.Collection, o.ReplicaPlacement, o.Ttl, o.DataCenter, o.Rack, o.DataNode)
+	blob, _ := json.Marshal(o)
+	return string(blob)
 }
 
 func NewDefaultVolumeGrowth() *VolumeGrowth {

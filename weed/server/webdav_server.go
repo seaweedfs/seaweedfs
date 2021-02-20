@@ -33,6 +33,7 @@ type WebDavOption struct {
 	BucketsPath      string
 	GrpcDialOption   grpc.DialOption
 	Collection       string
+	Replication      string
 	DiskType         string
 	Uid              uint32
 	Gid              uint32
@@ -225,7 +226,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 						Uid:         fs.option.Uid,
 						Gid:         fs.option.Gid,
 						Collection:  fs.option.Collection,
-						Replication: "000",
+						Replication: fs.option.Replication,
 						TtlSec:      0,
 					},
 				},
@@ -381,7 +382,7 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 
 		request := &filer_pb.AssignVolumeRequest{
 			Count:       1,
-			Replication: "",
+			Replication: f.fs.option.Replication,
 			Collection:  f.fs.option.Collection,
 			DiskType:    f.fs.option.DiskType,
 			Path:        name,

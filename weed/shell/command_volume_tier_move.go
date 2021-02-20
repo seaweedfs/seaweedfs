@@ -20,11 +20,11 @@ type commandVolumeTierMove struct {
 }
 
 func (c *commandVolumeTierMove) Name() string {
-	return "volume.tier.upload"
+	return "volume.tier.move"
 }
 
 func (c *commandVolumeTierMove) Help() string {
-	return `change a volume from one disk type to another
+	return `<WIP> change a volume from one disk type to another
 
 	volume.tier.move -source=hdd -target=ssd [-collection=""] [-fullPercent=95] [-quietFor=1h]
 	volume.tier.move -target=hdd [-collection=""] -volumeId=<volume_id>

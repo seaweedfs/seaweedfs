@@ -207,7 +207,26 @@ func (dn *DataNode) ToMap() interface{} {
 	ret := make(map[string]interface{})
 	ret["Url"] = dn.Url()
 	ret["PublicUrl"] = dn.PublicUrl
-	ret["Disks"] = dn.diskUsages.ToMap()
+
+	// aggregated volume info
+	var volumeCount, ecShardCount, maxVolumeCount int64
+	var volumeIds string
+	for _, diskUsage := range dn.diskUsages.usages {
+		volumeCount += diskUsage.volumeCount
+		ecShardCount += diskUsage.ecShardCount
+		maxVolumeCount += diskUsage.maxVolumeCount
+	}
+
+	for _, disk := range dn.Children() {
+		d := disk.(*Disk)
+		volumeIds += " " + d.GetVolumeIds()
+	}
+
+	ret["Volumes"] = volumeCount
+	ret["EcShards"] = ecShardCount
+	ret["Max"] = maxVolumeCount
+	ret["VolumeIds"] = volumeIds
+
 	return ret
 }
 
