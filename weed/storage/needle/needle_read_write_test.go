@@ -48,7 +48,7 @@ func TestAppend(t *testing.T) {
 		int64  : -9223372036854775808 to 9223372036854775807
 	*/
 
-	fileSize := int64(4294967295) + 10000
+	fileSize := int64(4294967296) + 10000
 	tempFile.Truncate(fileSize)
 	defer func() {
 		tempFile.Close()
