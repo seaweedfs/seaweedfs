@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -26,8 +25,10 @@ func (c *commandVolumeTierMove) Name() string {
 func (c *commandVolumeTierMove) Help() string {
 	return `<WIP> change a volume from one disk type to another
 
-	volume.tier.move -source=hdd -target=ssd [-collection=""] [-fullPercent=95] [-quietFor=1h]
-	volume.tier.move -target=hdd [-collection=""] -volumeId=<volume_id>
+	volume.tier.move -fromDiskType=hdd -toDiskType=ssd [-collection=""] [-fullPercent=95] [-quietFor=1h]
+
+	Even if the volume is replicated, only one replica will be changed and the rest replicas will be dropped.
+	So "volume.fix.replication" and "volume.balance" should be followed.
 
 `
 }
@@ -39,7 +40,6 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	tierCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	volumeId := tierCommand.Int("volumeId", 0, "the volume id")
 	collection := tierCommand.String("collection", "", "the collection name")
 	fullPercentage := tierCommand.Float64("fullPercent", 95, "the volume reaches the percentage of max volume size")
 	quietPeriod := tierCommand.Duration("quietFor", 24*time.Hour, "select volumes without no writes for this period")
@@ -49,20 +49,21 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 		return nil
 	}
 
-	if *source == *target {
-		return fmt.Errorf("source tier %s is the same as target tier %s", *source, *target)
+	fromDiskType := types.ToDiskType(*source)
+	toDiskType := types.ToDiskType(*target)
+
+	if fromDiskType == toDiskType {
+		return fmt.Errorf("source tier %s is the same as target tier %s", fromDiskType, toDiskType)
 	}
 
-	vid := needle.VolumeId(*volumeId)
-
-	// volumeId is provided
-	if vid != 0 {
-		// return doVolumeTierMove(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile)
+	// collect topology information
+	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv)
+	if err != nil {
+		return err
 	}
 
 	// apply to all volumes in the collection
-	// reusing collectVolumeIdsForEcEncode for now
-	volumeIds, err := collectVolumeIdsForTierChange(commandEnv, *source, *collection, *fullPercentage, *quietPeriod)
+	volumeIds, err := collectVolumeIdsForTierChange(commandEnv, topologyInfo, volumeSizeLimitMb, fromDiskType, *collection, *fullPercentage, *quietPeriod)
 	if err != nil {
 		return err
 	}
@@ -71,16 +72,7 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	return nil
 }
 
-func collectVolumeIdsForTierChange(commandEnv *CommandEnv, sourceTier string, selectedCollection string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
-
-	var resp *master_pb.VolumeListResponse
-	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-		return err
-	})
-	if err != nil {
-		return
-	}
+func collectVolumeIdsForTierChange(commandEnv *CommandEnv, topologyInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, sourceTier types.DiskType, selectedCollection string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
 
 	quietSeconds := int64(quietPeriod / time.Second)
 	nowUnixSeconds := time.Now().Unix()
@@ -88,11 +80,11 @@ func collectVolumeIdsForTierChange(commandEnv *CommandEnv, sourceTier string, se
 	fmt.Printf("collect %s volumes quiet for: %d seconds\n", sourceTier, quietSeconds)
 
 	vidMap := make(map[uint32]bool)
-	eachDataNode(resp.TopologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
+	eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
-				if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds && types.ToDiskType(v.DiskType) == types.ToDiskType(sourceTier) {
-					if float64(v.Size) > fullPercentage/100*float64(resp.VolumeSizeLimitMb)*1024*1024 {
+				if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds && types.ToDiskType(v.DiskType) == sourceTier {
+					if float64(v.Size) > fullPercentage/100*float64(volumeSizeLimitMb)*1024*1024 {
 						vidMap[v.Id] = true
 					}
 				}

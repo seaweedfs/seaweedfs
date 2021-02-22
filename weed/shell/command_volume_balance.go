@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
@@ -75,18 +74,15 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 		return nil
 	}
 
-	var resp *master_pb.VolumeListResponse
-	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-		return err
-	})
+	// collect topology information
+	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv)
 	if err != nil {
 		return err
 	}
 
-	volumeServers := collectVolumeServersByDc(resp.TopologyInfo, *dc)
-	volumeReplicas, _ := collectVolumeReplicaLocations(resp)
-	diskTypes := collectVolumeDiskTypes(resp.TopologyInfo)
+	volumeServers := collectVolumeServersByDc(topologyInfo, *dc)
+	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
+	diskTypes := collectVolumeDiskTypes(topologyInfo)
 
 	if *collection == "EACH_COLLECTION" {
 		collections, err := ListCollectionNames(commandEnv, true, false)
@@ -94,16 +90,16 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 			return err
 		}
 		for _, c := range collections {
-			if err = balanceVolumeServers(commandEnv, diskTypes, volumeReplicas, volumeServers, resp.VolumeSizeLimitMb*1024*1024, c, *applyBalancing); err != nil {
+			if err = balanceVolumeServers(commandEnv, diskTypes, volumeReplicas, volumeServers, volumeSizeLimitMb*1024*1024, c, *applyBalancing); err != nil {
 				return err
 			}
 		}
 	} else if *collection == "ALL_COLLECTIONS" {
-		if err = balanceVolumeServers(commandEnv, diskTypes, volumeReplicas, volumeServers, resp.VolumeSizeLimitMb*1024*1024, "ALL_COLLECTIONS", *applyBalancing); err != nil {
+		if err = balanceVolumeServers(commandEnv, diskTypes, volumeReplicas, volumeServers, volumeSizeLimitMb*1024*1024, "ALL_COLLECTIONS", *applyBalancing); err != nil {
 			return err
 		}
 	} else {
-		if err = balanceVolumeServers(commandEnv, diskTypes, volumeReplicas, volumeServers, resp.VolumeSizeLimitMb*1024*1024, *collection, *applyBalancing); err != nil {
+		if err = balanceVolumeServers(commandEnv, diskTypes, volumeReplicas, volumeServers, volumeSizeLimitMb*1024*1024, *collection, *applyBalancing); err != nil {
 			return err
 		}
 	}

@@ -73,7 +73,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	defer os.RemoveAll(tempFolder)
 
 	// collect all volume id locations
-	volumeIdToVInfo, err := c.collectVolumeIds(*verbose, writer)
+	volumeIdToVInfo, err := c.collectVolumeIds(commandEnv, *verbose, writer)
 	if err != nil {
 		return fmt.Errorf("failed to collect all volume locations: %v", err)
 	}
@@ -268,23 +268,20 @@ type VInfo struct {
 	isEcVolume bool
 }
 
-func (c *commandVolumeFsck) collectVolumeIds(verbose bool, writer io.Writer) (volumeIdToServer map[uint32]VInfo, err error) {
+func (c *commandVolumeFsck) collectVolumeIds(commandEnv *CommandEnv, verbose bool, writer io.Writer) (volumeIdToServer map[uint32]VInfo, err error) {
 
 	if verbose {
 		fmt.Fprintf(writer, "collecting volume id and locations from master ...\n")
 	}
 
 	volumeIdToServer = make(map[uint32]VInfo)
-	var resp *master_pb.VolumeListResponse
-	err = c.env.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-		return err
-	})
+	// collect topology information
+	topologyInfo, _, err := collectTopologyInfo(commandEnv)
 	if err != nil {
 		return
 	}
 
-	eachDataNode(resp.TopologyInfo, func(dc string, rack RackId, t *master_pb.DataNodeInfo) {
+	eachDataNode(topologyInfo, func(dc string, rack RackId, t *master_pb.DataNodeInfo) {
 		for _, diskInfo := range t.DiskInfos {
 			for _, vi := range diskInfo.VolumeInfos {
 				volumeIdToServer[vi.Id] = VInfo{

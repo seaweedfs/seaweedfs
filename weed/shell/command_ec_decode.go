@@ -51,7 +51,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	vid := needle.VolumeId(*volumeId)
 
 	// collect topology information
-	topologyInfo, err := collectTopologyInfo(commandEnv)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv)
 	if err != nil {
 		return err
 	}
@@ -208,7 +208,7 @@ func collectEcShards(commandEnv *CommandEnv, nodeToEcIndexBits map[string]erasur
 
 }
 
-func collectTopologyInfo(commandEnv *CommandEnv) (topoInfo *master_pb.TopologyInfo, err error) {
+func collectTopologyInfo(commandEnv *CommandEnv) (topoInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, err error) {
 
 	var resp *master_pb.VolumeListResponse
 	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
@@ -219,7 +219,7 @@ func collectTopologyInfo(commandEnv *CommandEnv) (topoInfo *master_pb.TopologyIn
 		return
 	}
 
-	return resp.TopologyInfo, nil
+	return resp.TopologyInfo, resp.VolumeSizeLimitMb, nil
 
 }
 
