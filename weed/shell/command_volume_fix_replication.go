@@ -162,10 +162,10 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 		replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
 		foundNewLocation := false
 		hasSkippedCollection := false
-		keepDataNodesSorted(allLocations, replica.info.DiskType)
+		keepDataNodesSorted(allLocations, types.ToDiskType(replica.info.DiskType))
+		fn := capacityByFreeVolumeCount(types.ToDiskType(replica.info.DiskType))
 		for _, dst := range allLocations {
 			// check whether data nodes satisfy the constraints
-			fn := capacityByFreeVolumeCount(types.ToDiskType(replica.info.DiskType))
 			if fn(dst.dataNode) > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
 				// check collection name pattern
 				if *c.collectionPattern != "" {
@@ -216,8 +216,8 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 	return nil
 }
 
-func keepDataNodesSorted(dataNodes []location, diskType string) {
-	fn := capacityByFreeVolumeCount(types.ToDiskType(diskType))
+func keepDataNodesSorted(dataNodes []location, diskType types.DiskType) {
+	fn := capacityByFreeVolumeCount(diskType)
 	sort.Slice(dataNodes, func(i, j int) bool {
 		return fn(dataNodes[i].dataNode) > fn(dataNodes[j].dataNode)
 	})
