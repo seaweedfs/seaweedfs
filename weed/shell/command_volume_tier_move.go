@@ -116,7 +116,7 @@ func doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, collection strin
 			if sourceVolumeServer == "" {
 				continue
 			}
-			fmt.Fprintf(writer, "moving volume %d %s from %s to dataNode %s with disk type ...\n", vid, sourceVolumeServer, dst.dataNode.Id, toDiskType.String())
+			fmt.Fprintf(writer, "moving volume %d from %s to %s with disk type %s ...\n", vid, sourceVolumeServer, dst.dataNode.Id, toDiskType.ReadableString())
 			hasFoundTarget = true
 
 			if !applyChanges {
@@ -127,7 +127,7 @@ func doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, collection strin
 			if err = markVolumeReadonly(commandEnv.option.GrpcDialOption, vid, locations); err != nil {
 				return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 			}
-			if err = LiveMoveVolume(commandEnv.option.GrpcDialOption, vid, sourceVolumeServer, dst.dataNode.Id, 5*time.Second, toDiskType.String()); err != nil {
+			if err = LiveMoveVolume(commandEnv.option.GrpcDialOption, vid, sourceVolumeServer, dst.dataNode.Id, 5*time.Second, toDiskType.ReadableString()); err != nil {
 				return fmt.Errorf("move volume %d %s => %s : %v", vid, locations[0].Url, dst.dataNode.Id, err)
 			}
 
@@ -143,7 +143,7 @@ func doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, collection strin
 	}
 
 	if !hasFoundTarget {
-		fmt.Fprintf(writer, "can not find disk type %s for volume %d\n", toDiskType.String(), vid)
+		fmt.Fprintf(writer, "can not find disk type %s for volume %d\n", toDiskType.ReadableString(), vid)
 	}
 
 	return nil

@@ -31,3 +31,10 @@ func (diskType DiskType) String() string {
 	}
 	return string(diskType)
 }
+
+func (diskType DiskType) ReadableString() string {
+	if diskType == "" {
+		return "hdd"
+	}
+	return string(diskType)
+}
