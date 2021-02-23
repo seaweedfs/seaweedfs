@@ -1078,7 +1078,7 @@ func NewFlagSetWithEnvPrefix(name string, prefix string, errorHandling ErrorHand
 // DefaultConfigFlagName defines the flag name of the optional config file
 // path. Used to lookup and parse the config file when a default is set and
 // available on disk.
-var DefaultConfigFlagName = "config"
+var DefaultConfigFlagName = "conf"
 
 // ParseFile parses flags from the file in path.
 // Same format as commandline arguments, newlines and lines beginning with a
