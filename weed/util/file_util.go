@@ -69,6 +69,10 @@ func CheckFile(filename string) (exists, canRead, canWrite bool, modTime time.Ti
 
 func ResolvePath(path string) string {
 
+	if !strings.Contains(path, "~") {
+		return path
+	}
+
 	usr, _ := user.Current()
 	dir := usr.HomeDir
 
