@@ -61,15 +61,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	if len(entry.Chunks) == 0 && len(entry.Content) == 0 {
-		glog.V(1).Infof("no file chunks for %s, attr=%+v", path, entry.Attr)
-		stats.FilerRequestCounter.WithLabelValues("read.nocontent").Inc()
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
 	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Last-Modified", entry.Attr.Mtime.Format(http.TimeFormat))
 
 	// mime type
 	mimeType := entry.Attr.Mime
