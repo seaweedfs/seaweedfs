@@ -2,6 +2,7 @@ package erasure_coding
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"os"
 	"path"
 	"strconv"
@@ -20,11 +21,12 @@ type EcVolumeShard struct {
 	dir         string
 	ecdFile     *os.File
 	ecdFileSize int64
+	DiskType    types.DiskType
 }
 
-func NewEcVolumeShard(dirname string, collection string, id needle.VolumeId, shardId ShardId) (v *EcVolumeShard, e error) {
+func NewEcVolumeShard(diskType types.DiskType, dirname string, collection string, id needle.VolumeId, shardId ShardId) (v *EcVolumeShard, e error) {
 
-	v = &EcVolumeShard{dir: dirname, Collection: collection, VolumeId: id, ShardId: shardId}
+	v = &EcVolumeShard{dir: dirname, Collection: collection, VolumeId: id, ShardId: shardId, DiskType: diskType}
 
 	baseFileName := v.FileName()
 

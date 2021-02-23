@@ -1,7 +1,9 @@
 package topology
 
 import (
+	"encoding/json"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"math/rand"
 	"sync"
 
@@ -24,14 +26,15 @@ This package is created to resolve these replica placement issues:
 */
 
 type VolumeGrowOption struct {
-	Collection         string
-	ReplicaPlacement   *super_block.ReplicaPlacement
-	Ttl                *needle.TTL
-	Prealloacte        int64
-	DataCenter         string
-	Rack               string
-	DataNode           string
-	MemoryMapMaxSizeMb uint32
+	Collection         string                        `json:"collection,omitempty"`
+	ReplicaPlacement   *super_block.ReplicaPlacement `json:"replication,omitempty"`
+	Ttl                *needle.TTL                   `json:"ttl,omitempty"`
+	DiskType           types.DiskType                `json:"disk,omitempty"`
+	Prealloacte        int64                         `json:"prealloacte,omitempty"`
+	DataCenter         string                        `json:"dataCenter,omitempty"`
+	Rack               string                        `json:"rack,omitempty"`
+	DataNode           string                        `json:"dataNode,omitempty"`
+	MemoryMapMaxSizeMb uint32                        `json:"memoryMapMaxSizeMb,omitempty"`
 }
 
 type VolumeGrowth struct {
@@ -39,7 +42,8 @@ type VolumeGrowth struct {
 }
 
 func (o *VolumeGrowOption) String() string {
-	return fmt.Sprintf("Collection:%s, ReplicaPlacement:%v, Ttl:%v, DataCenter:%s, Rack:%s, DataNode:%s", o.Collection, o.ReplicaPlacement, o.Ttl, o.DataCenter, o.Rack, o.DataNode)
+	blob, _ := json.Marshal(o)
+	return string(blob)
 }
 
 func NewDefaultVolumeGrowth() *VolumeGrowth {
@@ -113,21 +117,21 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption) (servers []*DataNode, err error) {
 	//find main datacenter and other data centers
 	rp := option.ReplicaPlacement
-	mainDataCenter, otherDataCenters, dc_err := topo.PickNodesByWeight(rp.DiffDataCenterCount+1, func(node Node) error {
+	mainDataCenter, otherDataCenters, dc_err := topo.PickNodesByWeight(rp.DiffDataCenterCount+1, option, func(node Node) error {
 		if option.DataCenter != "" && node.IsDataCenter() && node.Id() != NodeId(option.DataCenter) {
 			return fmt.Errorf("Not matching preferred data center:%s", option.DataCenter)
 		}
 		if len(node.Children()) < rp.DiffRackCount+1 {
 			return fmt.Errorf("Only has %d racks, not enough for %d.", len(node.Children()), rp.DiffRackCount+1)
 		}
-		if node.FreeSpace() < int64(rp.DiffRackCount+rp.SameRackCount+1) {
-			return fmt.Errorf("Free:%d < Expected:%d", node.FreeSpace(), rp.DiffRackCount+rp.SameRackCount+1)
+		if node.AvailableSpaceFor(option) < int64(rp.DiffRackCount+rp.SameRackCount+1) {
+			return fmt.Errorf("Free:%d < Expected:%d", node.AvailableSpaceFor(option), rp.DiffRackCount+rp.SameRackCount+1)
 		}
 		possibleRacksCount := 0
 		for _, rack := range node.Children() {
 			possibleDataNodesCount := 0
 			for _, n := range rack.Children() {
-				if n.FreeSpace() >= 1 {
+				if n.AvailableSpaceFor(option) >= 1 {
 					possibleDataNodesCount++
 				}
 			}
@@ -145,12 +149,12 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	}
 
 	//find main rack and other racks
-	mainRack, otherRacks, rackErr := mainDataCenter.(*DataCenter).PickNodesByWeight(rp.DiffRackCount+1, func(node Node) error {
+	mainRack, otherRacks, rackErr := mainDataCenter.(*DataCenter).PickNodesByWeight(rp.DiffRackCount+1, option, func(node Node) error {
 		if option.Rack != "" && node.IsRack() && node.Id() != NodeId(option.Rack) {
 			return fmt.Errorf("Not matching preferred rack:%s", option.Rack)
 		}
-		if node.FreeSpace() < int64(rp.SameRackCount+1) {
-			return fmt.Errorf("Free:%d < Expected:%d", node.FreeSpace(), rp.SameRackCount+1)
+		if node.AvailableSpaceFor(option) < int64(rp.SameRackCount+1) {
+			return fmt.Errorf("Free:%d < Expected:%d", node.AvailableSpaceFor(option), rp.SameRackCount+1)
 		}
 		if len(node.Children()) < rp.SameRackCount+1 {
 			// a bit faster way to test free racks
@@ -158,7 +162,7 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		}
 		possibleDataNodesCount := 0
 		for _, n := range node.Children() {
-			if n.FreeSpace() >= 1 {
+			if n.AvailableSpaceFor(option) >= 1 {
 				possibleDataNodesCount++
 			}
 		}
@@ -172,12 +176,12 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	}
 
 	//find main rack and other racks
-	mainServer, otherServers, serverErr := mainRack.(*Rack).PickNodesByWeight(rp.SameRackCount+1, func(node Node) error {
+	mainServer, otherServers, serverErr := mainRack.(*Rack).PickNodesByWeight(rp.SameRackCount+1, option, func(node Node) error {
 		if option.DataNode != "" && node.IsDataNode() && node.Id() != NodeId(option.DataNode) {
 			return fmt.Errorf("Not matching preferred data node:%s", option.DataNode)
 		}
-		if node.FreeSpace() < 1 {
-			return fmt.Errorf("Free:%d < Expected:%d", node.FreeSpace(), 1)
+		if node.AvailableSpaceFor(option) < 1 {
+			return fmt.Errorf("Free:%d < Expected:%d", node.AvailableSpaceFor(option), 1)
 		}
 		return nil
 	})
@@ -190,16 +194,16 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		servers = append(servers, server.(*DataNode))
 	}
 	for _, rack := range otherRacks {
-		r := rand.Int63n(rack.FreeSpace())
-		if server, e := rack.ReserveOneVolume(r); e == nil {
+		r := rand.Int63n(rack.AvailableSpaceFor(option))
+		if server, e := rack.ReserveOneVolume(r, option); e == nil {
 			servers = append(servers, server)
 		} else {
 			return servers, e
 		}
 	}
 	for _, datacenter := range otherDataCenters {
-		r := rand.Int63n(datacenter.FreeSpace())
-		if server, e := datacenter.ReserveOneVolume(r); e == nil {
+		r := rand.Int63n(datacenter.AvailableSpaceFor(option))
+		if server, e := datacenter.ReserveOneVolume(r, option); e == nil {
 			servers = append(servers, server)
 		} else {
 			return servers, e
@@ -218,6 +222,7 @@ func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid
 				ReplicaPlacement: option.ReplicaPlacement,
 				Ttl:              option.Ttl,
 				Version:          needle.CurrentVersion,
+				DiskType:         string(option.DiskType),
 			}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(vi, server)

@@ -1,13 +1,13 @@
 package shell
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io"
 	"os"
 	"sort"
@@ -70,72 +70,73 @@ func volumeServerEvacuate(commandEnv *CommandEnv, volumeServer string, skipNonMo
 	// 3. move to any other volume server as long as it satisfy the replication requirements
 
 	// list all the volumes
-	var resp *master_pb.VolumeListResponse
-	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-		return err
-	})
+	// collect topology information
+	topologyInfo, _, err := collectTopologyInfo(commandEnv)
 	if err != nil {
 		return err
 	}
 
-	if err := evacuateNormalVolumes(commandEnv, resp, volumeServer, skipNonMoveable, applyChange, writer); err != nil {
+	if err := evacuateNormalVolumes(commandEnv, topologyInfo, volumeServer, skipNonMoveable, applyChange, writer); err != nil {
 		return err
 	}
 
-	if err := evacuateEcVolumes(commandEnv, resp, volumeServer, skipNonMoveable, applyChange, writer); err != nil {
+	if err := evacuateEcVolumes(commandEnv, topologyInfo, volumeServer, skipNonMoveable, applyChange, writer); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func evacuateNormalVolumes(commandEnv *CommandEnv, resp *master_pb.VolumeListResponse, volumeServer string, skipNonMoveable, applyChange bool, writer io.Writer) error {
+func evacuateNormalVolumes(commandEnv *CommandEnv, topologyInfo *master_pb.TopologyInfo, volumeServer string, skipNonMoveable, applyChange bool, writer io.Writer) error {
 	// find this volume server
-	volumeServers := collectVolumeServersByDc(resp.TopologyInfo, "")
+	volumeServers := collectVolumeServersByDc(topologyInfo, "")
 	thisNode, otherNodes := nodesOtherThan(volumeServers, volumeServer)
 	if thisNode == nil {
 		return fmt.Errorf("%s is not found in this cluster", volumeServer)
 	}
 
 	// move away normal volumes
-	volumeReplicas, _ := collectVolumeReplicaLocations(resp)
-	for _, vol := range thisNode.info.VolumeInfos {
-		hasMoved, err := moveAwayOneNormalVolume(commandEnv, volumeReplicas, vol, thisNode, otherNodes, applyChange)
-		if err != nil {
-			return fmt.Errorf("move away volume %d from %s: %v", vol.Id, volumeServer, err)
-		}
-		if !hasMoved {
-			if skipNonMoveable {
-				replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(vol.ReplicaPlacement))
-				fmt.Fprintf(writer, "skipping non moveable volume %d replication:%s\n", vol.Id, replicaPlacement.String())
-			} else {
-				return fmt.Errorf("failed to move volume %d from %s", vol.Id, volumeServer)
+	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
+	for _, diskInfo := range thisNode.info.DiskInfos {
+		for _, vol := range diskInfo.VolumeInfos {
+			hasMoved, err := moveAwayOneNormalVolume(commandEnv, volumeReplicas, vol, thisNode, otherNodes, applyChange)
+			if err != nil {
+				return fmt.Errorf("move away volume %d from %s: %v", vol.Id, volumeServer, err)
+			}
+			if !hasMoved {
+				if skipNonMoveable {
+					replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(vol.ReplicaPlacement))
+					fmt.Fprintf(writer, "skipping non moveable volume %d replication:%s\n", vol.Id, replicaPlacement.String())
+				} else {
+					return fmt.Errorf("failed to move volume %d from %s", vol.Id, volumeServer)
+				}
 			}
 		}
 	}
 	return nil
 }
 
-func evacuateEcVolumes(commandEnv *CommandEnv, resp *master_pb.VolumeListResponse, volumeServer string, skipNonMoveable, applyChange bool, writer io.Writer) error {
+func evacuateEcVolumes(commandEnv *CommandEnv, topologyInfo *master_pb.TopologyInfo, volumeServer string, skipNonMoveable, applyChange bool, writer io.Writer) error {
 	// find this ec volume server
-	ecNodes, _ := collectEcVolumeServersByDc(resp.TopologyInfo, "")
+	ecNodes, _ := collectEcVolumeServersByDc(topologyInfo, "")
 	thisNode, otherNodes := ecNodesOtherThan(ecNodes, volumeServer)
 	if thisNode == nil {
 		return fmt.Errorf("%s is not found in this cluster\n", volumeServer)
 	}
 
 	// move away ec volumes
-	for _, ecShardInfo := range thisNode.info.EcShardInfos {
-		hasMoved, err := moveAwayOneEcVolume(commandEnv, ecShardInfo, thisNode, otherNodes, applyChange)
-		if err != nil {
-			return fmt.Errorf("move away volume %d from %s: %v", ecShardInfo.Id, volumeServer, err)
-		}
-		if !hasMoved {
-			if skipNonMoveable {
-				fmt.Fprintf(writer, "failed to move away ec volume %d from %s\n", ecShardInfo.Id, volumeServer)
-			} else {
-				return fmt.Errorf("failed to move away ec volume %d from %s", ecShardInfo.Id, volumeServer)
+	for _, diskInfo := range thisNode.info.DiskInfos {
+		for _, ecShardInfo := range diskInfo.EcShardInfos {
+			hasMoved, err := moveAwayOneEcVolume(commandEnv, ecShardInfo, thisNode, otherNodes, applyChange)
+			if err != nil {
+				return fmt.Errorf("move away volume %d from %s: %v", ecShardInfo.Id, volumeServer, err)
+			}
+			if !hasMoved {
+				if skipNonMoveable {
+					fmt.Fprintf(writer, "failed to move away ec volume %d from %s\n", ecShardInfo.Id, volumeServer)
+				} else {
+					return fmt.Errorf("failed to move away ec volume %d from %s", ecShardInfo.Id, volumeServer)
+				}
 			}
 		}
 	}
@@ -174,8 +175,9 @@ func moveAwayOneEcVolume(commandEnv *CommandEnv, ecShardInfo *master_pb.VolumeEc
 }
 
 func moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, vol *master_pb.VolumeInformationMessage, thisNode *Node, otherNodes []*Node, applyChange bool) (hasMoved bool, err error) {
+	fn := capacityByFreeVolumeCount(types.ToDiskType(vol.DiskType))
 	sort.Slice(otherNodes, func(i, j int) bool {
-		return otherNodes[i].localVolumeRatio() < otherNodes[j].localVolumeRatio()
+		return otherNodes[i].localVolumeRatio(fn) > otherNodes[j].localVolumeRatio(fn)
 	})
 
 	for i := 0; i < len(otherNodes); i++ {

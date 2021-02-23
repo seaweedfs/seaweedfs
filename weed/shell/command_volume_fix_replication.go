@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io"
 	"path/filepath"
 	"sort"
@@ -63,18 +64,15 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 
 	takeAction := !*skipChange
 
-	var resp *master_pb.VolumeListResponse
-	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-		return err
-	})
+	// collect topology information
+	topologyInfo, _, err := collectTopologyInfo(commandEnv)
 	if err != nil {
 		return err
 	}
 
 	// find all volumes that needs replication
 	// collect all data nodes
-	volumeReplicas, allLocations := collectVolumeReplicaLocations(resp)
+	volumeReplicas, allLocations := collectVolumeReplicaLocations(topologyInfo)
 
 	if len(allLocations) == 0 {
 		return fmt.Errorf("no data nodes at all")
@@ -102,22 +100,22 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	}
 
 	// find the most under populated data nodes
-	keepDataNodesSorted(allLocations)
-
 	return c.fixUnderReplicatedVolumes(commandEnv, writer, takeAction, underReplicatedVolumeIds, volumeReplicas, allLocations)
 
 }
 
-func collectVolumeReplicaLocations(resp *master_pb.VolumeListResponse) (map[uint32][]*VolumeReplica, []location) {
+func collectVolumeReplicaLocations(topologyInfo *master_pb.TopologyInfo) (map[uint32][]*VolumeReplica, []location) {
 	volumeReplicas := make(map[uint32][]*VolumeReplica)
 	var allLocations []location
-	eachDataNode(resp.TopologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
+	eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
 		loc := newLocation(dc, string(rack), dn)
-		for _, v := range dn.VolumeInfos {
-			volumeReplicas[v.Id] = append(volumeReplicas[v.Id], &VolumeReplica{
-				location: &loc,
-				info:     v,
-			})
+		for _, diskInfo := range dn.DiskInfos {
+			for _, v := range diskInfo.VolumeInfos {
+				volumeReplicas[v.Id] = append(volumeReplicas[v.Id], &VolumeReplica{
+					location: &loc,
+					info:     v,
+				})
+			}
 		}
 		allLocations = append(allLocations, loc)
 	})
@@ -157,15 +155,18 @@ func (c *commandVolumeFixReplication) fixOverReplicatedVolumes(commandEnv *Comma
 }
 
 func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *CommandEnv, writer io.Writer, takeAction bool, underReplicatedVolumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, allLocations []location) error {
+
 	for _, vid := range underReplicatedVolumeIds {
 		replicas := volumeReplicas[vid]
 		replica := pickOneReplicaToCopyFrom(replicas)
 		replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
 		foundNewLocation := false
 		hasSkippedCollection := false
+		keepDataNodesSorted(allLocations, types.ToDiskType(replica.info.DiskType))
+		fn := capacityByFreeVolumeCount(types.ToDiskType(replica.info.DiskType))
 		for _, dst := range allLocations {
 			// check whether data nodes satisfy the constraints
-			if dst.dataNode.FreeVolumeCount > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
+			if fn(dst.dataNode) > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
 				// check collection name pattern
 				if *c.collectionPattern != "" {
 					matched, err := filepath.Match(*c.collectionPattern, replica.info.Collection)
@@ -202,11 +203,11 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 				}
 
 				// adjust free volume count
-				dst.dataNode.FreeVolumeCount--
-				keepDataNodesSorted(allLocations)
+				dst.dataNode.DiskInfos[replica.info.DiskType].FreeVolumeCount--
 				break
 			}
 		}
+
 		if !foundNewLocation && !hasSkippedCollection {
 			fmt.Fprintf(writer, "failed to place volume %d replica as %s, existing:%+v\n", replica.info.Id, replicaPlacement, len(replicas))
 		}
@@ -215,9 +216,10 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 	return nil
 }
 
-func keepDataNodesSorted(dataNodes []location) {
+func keepDataNodesSorted(dataNodes []location, diskType types.DiskType) {
+	fn := capacityByFreeVolumeCount(diskType)
 	sort.Slice(dataNodes, func(i, j int) bool {
-		return dataNodes[i].dataNode.FreeVolumeCount > dataNodes[j].dataNode.FreeVolumeCount
+		return fn(dataNodes[i].dataNode) > fn(dataNodes[j].dataNode)
 	})
 }
 

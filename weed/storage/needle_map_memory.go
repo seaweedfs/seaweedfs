@@ -19,6 +19,11 @@ func NewCompactNeedleMap(file *os.File) *NeedleMap {
 		m: needle_map.NewCompactMap(),
 	}
 	nm.indexFile = file
+	stat, err := file.Stat()
+	if err != nil {
+		glog.Fatalf("stat file %s: %v", file.Name(), err)
+	}
+	nm.indexFileOffset = stat.Size()
 	return nm
 }
 

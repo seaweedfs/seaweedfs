@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io"
 
 	"google.golang.org/grpc"
@@ -50,7 +51,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	vid := needle.VolumeId(*volumeId)
 
 	// collect topology information
-	topologyInfo, err := collectTopologyInfo(commandEnv)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv)
 	if err != nil {
 		return err
 	}
@@ -207,7 +208,7 @@ func collectEcShards(commandEnv *CommandEnv, nodeToEcIndexBits map[string]erasur
 
 }
 
-func collectTopologyInfo(commandEnv *CommandEnv) (topoInfo *master_pb.TopologyInfo, err error) {
+func collectTopologyInfo(commandEnv *CommandEnv) (topoInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, err error) {
 
 	var resp *master_pb.VolumeListResponse
 	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
@@ -218,16 +219,18 @@ func collectTopologyInfo(commandEnv *CommandEnv) (topoInfo *master_pb.TopologyIn
 		return
 	}
 
-	return resp.TopologyInfo, nil
+	return resp.TopologyInfo, resp.VolumeSizeLimitMb, nil
 
 }
 
 func collectEcShardInfos(topoInfo *master_pb.TopologyInfo, selectedCollection string, vid needle.VolumeId) (ecShardInfos []*master_pb.VolumeEcShardInformationMessage) {
 
 	eachDataNode(topoInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		for _, v := range dn.EcShardInfos {
-			if v.Collection == selectedCollection && v.Id == uint32(vid) {
-				ecShardInfos = append(ecShardInfos, v)
+		if diskInfo, found := dn.DiskInfos[string(types.HardDriveType)]; found {
+			for _, v := range diskInfo.EcShardInfos {
+				if v.Collection == selectedCollection && v.Id == uint32(vid) {
+					ecShardInfos = append(ecShardInfos, v)
+				}
 			}
 		}
 	})
@@ -239,9 +242,11 @@ func collectEcShardIds(topoInfo *master_pb.TopologyInfo, selectedCollection stri
 
 	vidMap := make(map[uint32]bool)
 	eachDataNode(topoInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		for _, v := range dn.EcShardInfos {
-			if v.Collection == selectedCollection {
-				vidMap[v.Id] = true
+		if diskInfo, found := dn.DiskInfos[string(types.HardDriveType)]; found {
+			for _, v := range diskInfo.EcShardInfos {
+				if v.Collection == selectedCollection {
+					vidMap[v.Id] = true
+				}
 			}
 		}
 	})
@@ -257,9 +262,11 @@ func collectEcNodeShardBits(topoInfo *master_pb.TopologyInfo, vid needle.VolumeI
 
 	nodeToEcIndexBits := make(map[string]erasure_coding.ShardBits)
 	eachDataNode(topoInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		for _, v := range dn.EcShardInfos {
-			if v.Id == uint32(vid) {
-				nodeToEcIndexBits[dn.Id] = erasure_coding.ShardBits(v.EcIndexBits)
+		if diskInfo, found := dn.DiskInfos[string(types.HardDriveType)]; found {
+			for _, v := range diskInfo.EcShardInfos {
+				if v.Id == uint32(vid) {
+					nodeToEcIndexBits[dn.Id] = erasure_coding.ShardBits(v.EcIndexBits)
+				}
 			}
 		}
 	})

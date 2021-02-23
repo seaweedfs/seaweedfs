@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"io"
 	"os"
 
@@ -58,7 +59,7 @@ func doCheckAndFixVolumeData(v *Volume, indexFile *os.File, indexOffset int64) (
 			return lastAppendAtNs, fmt.Errorf("verifyNeedleIntegrity %s failed: %v", indexFile.Name(), err)
 		}
 	} else {
-		if lastAppendAtNs, err = verifyNeedleIntegrity(v.DataBackend, v.Version(), offset.ToAcutalOffset(), key, size); err != nil {
+		if lastAppendAtNs, err = verifyNeedleIntegrity(v.DataBackend, v.Version(), offset.ToActualOffset(), key, size); err != nil {
 			return lastAppendAtNs, err
 		}
 	}
@@ -147,4 +148,19 @@ func verifyDeletedNeedleIntegrity(datFile backend.BackendStorageFile, v needle.V
 		return n.AppendAtNs, fmt.Errorf("index key %#x does not match needle's Id %#x", key, n.Id)
 	}
 	return n.AppendAtNs, err
+}
+
+func (v *Volume) checkIdxFile() error {
+	datFileSize, _, err := v.DataBackend.GetStat()
+	if err != nil {
+		return fmt.Errorf("get stat %s: %v", v.FileName(".dat"), err)
+	}
+	if datFileSize <= super_block.SuperBlockSize {
+		return nil
+	}
+	indexFileName := v.FileName(".idx")
+	if util.FileExists(indexFileName) {
+		return nil
+	}
+	return fmt.Errorf("idx file %s does not exists", indexFileName)
 }

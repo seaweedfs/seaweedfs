@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/chrislusf/raft"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -60,11 +61,13 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	if err != nil {
 		return nil, err
 	}
+	diskType := types.ToDiskType(req.DiskType)
 
 	option := &topology.VolumeGrowOption{
 		Collection:         req.Collection,
 		ReplicaPlacement:   replicaPlacement,
 		Ttl:                ttl,
+		DiskType:           diskType,
 		Prealloacte:        ms.preallocateSize,
 		DataCenter:         req.DataCenter,
 		Rack:               req.Rack,
@@ -73,8 +76,8 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	}
 
 	if !ms.Topo.HasWritableVolume(option) {
-		if ms.Topo.FreeSpace() <= 0 {
-			return nil, fmt.Errorf("No free volumes left!")
+		if ms.Topo.AvailableSpaceFor(option) <= 0 {
+			return nil, fmt.Errorf("no free volumes left for "+option.String())
 		}
 		ms.vgLock.Lock()
 		if !ms.Topo.HasWritableVolume(option) {
@@ -117,10 +120,10 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 		return nil, err
 	}
 
-	volumeLayout := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, ttl)
+	volumeLayout := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, ttl, types.ToDiskType(req.DiskType))
 	stats := volumeLayout.Stats()
 
-	totalSize := ms.Topo.GetMaxVolumeCount() * int64(ms.option.VolumeSizeLimitMB) * 1024 * 1024
+	totalSize := ms.Topo.GetDiskUsages().GetMaxVolumeCount() * int64(ms.option.VolumeSizeLimitMB) * 1024 * 1024
 
 	resp := &master_pb.StatisticsResponse{
 		TotalSize: uint64(totalSize),

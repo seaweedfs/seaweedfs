@@ -6,9 +6,9 @@ import (
 )
 
 type ReplicaPlacement struct {
-	SameRackCount       int
-	DiffRackCount       int
-	DiffDataCenterCount int
+	SameRackCount       int `json:"node,omitempty"`
+	DiffRackCount       int `json:"rack,omitempty"`
+	DiffDataCenterCount int `json:"dc,omitempty"`
 }
 
 func NewReplicaPlacementFromString(t string) (*ReplicaPlacement, error) {

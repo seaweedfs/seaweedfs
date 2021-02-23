@@ -5,7 +5,7 @@ package seaweed.hdfs;
 import org.apache.hadoop.fs.ByteBufferReadable;
 import org.apache.hadoop.fs.FSInputStream;
 import org.apache.hadoop.fs.FileSystem.Statistics;
-import seaweedfs.client.FilerGrpcClient;
+import seaweedfs.client.FilerClient;
 import seaweedfs.client.FilerProto;
 import seaweedfs.client.SeaweedInputStream;
 
@@ -19,11 +19,11 @@ public class SeaweedHadoopInputStream extends FSInputStream implements ByteBuffe
     private final Statistics statistics;
 
     public SeaweedHadoopInputStream(
-            final FilerGrpcClient filerGrpcClient,
+            final FilerClient filerClient,
             final Statistics statistics,
             final String path,
             final FilerProto.Entry entry) throws IOException {
-        this.seaweedInputStream = new SeaweedInputStream(filerGrpcClient, path, entry);
+        this.seaweedInputStream = new SeaweedInputStream(filerClient, path, entry);
         this.statistics = statistics;
     }
 

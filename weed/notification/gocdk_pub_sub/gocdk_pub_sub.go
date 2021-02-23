@@ -17,10 +17,14 @@ package gocdk_pub_sub
 import (
 	"context"
 	"fmt"
-
 	"github.com/golang/protobuf/proto"
+	"github.com/streadway/amqp"
 	"gocloud.dev/pubsub"
 	_ "gocloud.dev/pubsub/awssnssqs"
+	"gocloud.dev/pubsub/rabbitpubsub"
+	"net/url"
+	"path"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/notification"
@@ -29,10 +33,16 @@ import (
 	_ "gocloud.dev/pubsub/gcppubsub"
 	_ "gocloud.dev/pubsub/natspubsub"
 	_ "gocloud.dev/pubsub/rabbitpubsub"
+	"os"
 )
 
 func init() {
 	notification.MessageQueues = append(notification.MessageQueues, &GoCDKPubSub{})
+}
+
+func getPath(rawUrl string) string {
+	parsedUrl, _ := url.Parse(rawUrl)
+	return path.Join(parsedUrl.Host, parsedUrl.Path)
 }
 
 type GoCDKPubSub struct {
@@ -44,6 +54,28 @@ func (k *GoCDKPubSub) GetName() string {
 	return "gocdk_pub_sub"
 }
 
+func (k *GoCDKPubSub) doReconnect() {
+	var conn *amqp.Connection
+	if k.topic.As(&conn) {
+		go func() {
+			<-conn.NotifyClose(make(chan *amqp.Error))
+			conn.Close()
+			k.topic.Shutdown(context.Background())
+			for {
+				glog.Info("Try reconnect")
+				conn, err := amqp.Dial(os.Getenv("RABBIT_SERVER_URL"))
+				if err == nil {
+					k.topic = rabbitpubsub.OpenTopic(conn, getPath(k.topicURL), nil)
+					k.doReconnect()
+					break
+				}
+				glog.Error(err)
+				time.Sleep(time.Second)
+			}
+		}()
+	}
+}
+
 func (k *GoCDKPubSub) Initialize(configuration util.Configuration, prefix string) error {
 	k.topicURL = configuration.GetString(prefix + "topic_url")
 	glog.V(0).Infof("notification.gocdk_pub_sub.topic_url: %v", k.topicURL)
@@ -52,6 +84,7 @@ func (k *GoCDKPubSub) Initialize(configuration util.Configuration, prefix string
 		glog.Fatalf("Failed to open topic: %v", err)
 	}
 	k.topic = topic
+	k.doReconnect()
 	return nil
 }
 

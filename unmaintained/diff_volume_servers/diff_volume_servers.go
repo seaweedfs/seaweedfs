@@ -168,7 +168,7 @@ func getVolumeFiles(v uint32, addr string) (map[types.NeedleId]needleState, int6
 				size:  size,
 			}
 		}
-		if actual := offset.ToAcutalOffset(); actual > maxOffset {
+		if actual := offset.ToActualOffset(); actual > maxOffset {
 			maxOffset = actual
 		}
 		return nil

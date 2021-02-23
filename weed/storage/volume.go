@@ -25,7 +25,7 @@ type Volume struct {
 	Collection         string
 	DataBackend        backend.BackendStorageFile
 	nm                 NeedleMapper
-	needleMapKind      NeedleMapType
+	needleMapKind      NeedleMapKind
 	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	noWriteLock        sync.RWMutex
@@ -50,7 +50,7 @@ type Volume struct {
 	lastIoError error
 }
 
-func NewVolume(dirname string, dirIdx string, collection string, id needle.VolumeId, needleMapKind NeedleMapType, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32) (v *Volume, e error) {
+func NewVolume(dirname string, dirIdx string, collection string, id needle.VolumeId, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32) (v *Volume, e error) {
 	// if replicaPlacement is nil, the superblock will be loaded from disk
 	v = &Volume{dir: dirname, dirIdx: dirIdx, Collection: collection, Id: id, MemoryMapMaxSizeMb: memoryMapMaxSizeMb,
 		asyncRequestsChan: make(chan *needle.AsyncRequest, 128)}
@@ -171,6 +171,10 @@ func (v *Volume) IndexFileSize() uint64 {
 	return v.nm.IndexFileSize()
 }
 
+func (v *Volume) DiskType() types.DiskType {
+	return v.location.DiskType
+}
+
 // Close cleanly shuts down this volume
 func (v *Volume) Close() {
 	v.dataFileAccessLock.Lock()
@@ -262,6 +266,7 @@ func (v *Volume) ToVolumeInformationMessage() (types.NeedleId, *master_pb.Volume
 		Ttl:              v.Ttl.ToUint32(),
 		CompactRevision:  uint32(v.SuperBlock.CompactionRevision),
 		ModifiedAtSecond: modTime.Unix(),
+		DiskType:         string(v.location.DiskType),
 	}
 
 	volumeInfo.RemoteStorageName, volumeInfo.RemoteStorageKey = v.RemoteStorageNameKey()

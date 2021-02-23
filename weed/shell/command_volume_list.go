@@ -1,7 +1,7 @@
 package shell
 
 import (
-	"context"
+	"bytes"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
@@ -31,21 +31,35 @@ func (c *commandVolumeList) Help() string {
 
 func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	var resp *master_pb.VolumeListResponse
-	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-		return err
-	})
+	// collect topology information
+	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv)
 	if err != nil {
 		return err
 	}
 
-	writeTopologyInfo(writer, resp.TopologyInfo, resp.VolumeSizeLimitMb)
+	writeTopologyInfo(writer, topologyInfo, volumeSizeLimitMb)
 	return nil
 }
 
+func diskInfosToString(diskInfos map[string]*master_pb.DiskInfo) string {
+	var buf bytes.Buffer
+	for diskType, diskInfo := range diskInfos {
+		if diskType == "" {
+			diskType = "hdd"
+		}
+		fmt.Fprintf(&buf, " %s(volume:%d/%d active:%d free:%d remote:%d)", diskType, diskInfo.VolumeCount, diskInfo.MaxVolumeCount, diskInfo.ActiveVolumeCount, diskInfo.FreeVolumeCount, diskInfo.RemoteVolumeCount)
+	}
+	return buf.String()
+}
+
+func diskInfoToString(diskInfo *master_pb.DiskInfo) string {
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "volume:%d/%d active:%d free:%d remote:%d", diskInfo.VolumeCount, diskInfo.MaxVolumeCount, diskInfo.ActiveVolumeCount, diskInfo.FreeVolumeCount, diskInfo.RemoteVolumeCount)
+	return buf.String()
+}
+
 func writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo, volumeSizeLimitMb uint64) statistics {
-	fmt.Fprintf(writer, "Topology volume:%d/%d active:%d free:%d remote:%d volumeSizeLimit:%d MB\n", t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount, t.RemoteVolumeCount, volumeSizeLimitMb)
+	fmt.Fprintf(writer, "Topology volumeSizeLimit:%d MB%s\n", volumeSizeLimitMb, diskInfosToString(t.DiskInfos))
 	sort.Slice(t.DataCenterInfos, func(i, j int) bool {
 		return t.DataCenterInfos[i].Id < t.DataCenterInfos[j].Id
 	})
@@ -57,7 +71,7 @@ func writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo, volumeSizeLi
 	return s
 }
 func writeDataCenterInfo(writer io.Writer, t *master_pb.DataCenterInfo) statistics {
-	fmt.Fprintf(writer, "  DataCenter %s volume:%d/%d active:%d free:%d remote:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount, t.RemoteVolumeCount)
+	fmt.Fprintf(writer, "  DataCenter %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
 	var s statistics
 	sort.Slice(t.RackInfos, func(i, j int) bool {
 		return t.RackInfos[i].Id < t.RackInfos[j].Id
@@ -69,7 +83,7 @@ func writeDataCenterInfo(writer io.Writer, t *master_pb.DataCenterInfo) statisti
 	return s
 }
 func writeRackInfo(writer io.Writer, t *master_pb.RackInfo) statistics {
-	fmt.Fprintf(writer, "    Rack %s volume:%d/%d active:%d free:%d remote:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount, t.RemoteVolumeCount)
+	fmt.Fprintf(writer, "    Rack %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
 	var s statistics
 	sort.Slice(t.DataNodeInfos, func(i, j int) bool {
 		return t.DataNodeInfos[i].Id < t.DataNodeInfos[j].Id
@@ -81,8 +95,22 @@ func writeRackInfo(writer io.Writer, t *master_pb.RackInfo) statistics {
 	return s
 }
 func writeDataNodeInfo(writer io.Writer, t *master_pb.DataNodeInfo) statistics {
-	fmt.Fprintf(writer, "      DataNode %s volume:%d/%d active:%d free:%d remote:%d\n", t.Id, t.VolumeCount, t.MaxVolumeCount, t.ActiveVolumeCount, t.FreeVolumeCount, t.RemoteVolumeCount)
+	fmt.Fprintf(writer, "      DataNode %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
 	var s statistics
+	for _, diskInfo := range t.DiskInfos {
+		s = s.plus(writeDiskInfo(writer, diskInfo))
+	}
+	fmt.Fprintf(writer, "      DataNode %s %+v \n", t.Id, s)
+	return s
+}
+
+func writeDiskInfo(writer io.Writer, t *master_pb.DiskInfo) statistics {
+	var s statistics
+	diskType := t.Type
+	if diskType == "" {
+		diskType = "hdd"
+	}
+	fmt.Fprintf(writer, "        Disk %s(%s)\n", diskType, diskInfoToString(t))
 	sort.Slice(t.VolumeInfos, func(i, j int) bool {
 		return t.VolumeInfos[i].Id < t.VolumeInfos[j].Id
 	})
@@ -90,13 +118,14 @@ func writeDataNodeInfo(writer io.Writer, t *master_pb.DataNodeInfo) statistics {
 		s = s.plus(writeVolumeInformationMessage(writer, vi))
 	}
 	for _, ecShardInfo := range t.EcShardInfos {
-		fmt.Fprintf(writer, "        ec volume id:%v collection:%v shards:%v\n", ecShardInfo.Id, ecShardInfo.Collection, erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds())
+		fmt.Fprintf(writer, "          ec volume id:%v collection:%v shards:%v\n", ecShardInfo.Id, ecShardInfo.Collection, erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds())
 	}
-	fmt.Fprintf(writer, "      DataNode %s %+v \n", t.Id, s)
+	fmt.Fprintf(writer, "        Disk %s %+v \n", diskType, s)
 	return s
 }
+
 func writeVolumeInformationMessage(writer io.Writer, t *master_pb.VolumeInformationMessage) statistics {
-	fmt.Fprintf(writer, "        volume %+v \n", t)
+	fmt.Fprintf(writer, "          volume %+v \n", t)
 	return newStatistics(t)
 }
 

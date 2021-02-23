@@ -46,17 +46,19 @@ func (fc *FilerConf) loadFromFiler(filer *Filer) (err error) {
 		return fc.LoadFromBytes(entry.Content)
 	}
 
-	return fc.loadFromChunks(filer, entry.Chunks)
+	return fc.loadFromChunks(filer, entry.Content, entry.Chunks)
 }
 
-func (fc *FilerConf) loadFromChunks(filer *Filer, chunks []*filer_pb.FileChunk) (err error) {
-	data, err := filer.readEntry(chunks)
-	if err != nil {
-		glog.Errorf("read filer conf content: %v", err)
-		return
+func (fc *FilerConf) loadFromChunks(filer *Filer, content []byte, chunks []*filer_pb.FileChunk) (err error) {
+	if len(content) == 0 {
+		content, err = filer.readEntry(chunks)
+		if err != nil {
+			glog.Errorf("read filer conf content: %v", err)
+			return
+		}
 	}
 
-	return fc.LoadFromBytes(data)
+	return fc.LoadFromBytes(content)
 }
 
 func (fc *FilerConf) LoadFromBytes(data []byte) (err error) {
@@ -116,7 +118,7 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 	a.Collection = util.Nvl(b.Collection, a.Collection)
 	a.Replication = util.Nvl(b.Replication, a.Replication)
 	a.Ttl = util.Nvl(b.Ttl, a.Ttl)
-	if b.DiskType != filer_pb.FilerConf_PathConf_NONE {
+	if b.DiskType != "" {
 		a.DiskType = b.DiskType
 	}
 	a.Fsync = b.Fsync || a.Fsync

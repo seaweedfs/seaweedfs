@@ -29,6 +29,7 @@ func (c *commandVolumeMove) Help() string {
 	return `move a live volume from one volume server to another volume server
 
 	volume.move -source <source volume server host:port> -target <target volume server host:port> -volumeId <volume id>
+	volume.move -source <source volume server host:port> -target <target volume server host:port> -volumeId <volume id> -disk [hdd|ssd|<tag>]
 
 	This command move a live volume from one volume server to another volume server. Here are the steps:
 
@@ -39,6 +40,8 @@ func (c *commandVolumeMove) Help() string {
 	4. This command asks the source volume server to unmount the source volume
 		Now the master will mark this volume id as writable.
 	5. This command asks the source volume server to delete the source volume
+
+	The option "-disk [hdd|ssd|<tag>]" can be used to change the volume disk type.
 
 `
 }
@@ -53,6 +56,7 @@ func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.
 	volumeIdInt := volMoveCommand.Int("volumeId", 0, "the volume id")
 	sourceNodeStr := volMoveCommand.String("source", "", "the source volume server <host>:<port>")
 	targetNodeStr := volMoveCommand.String("target", "", "the target volume server <host>:<port>")
+	diskTypeStr := volMoveCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	if err = volMoveCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -65,14 +69,14 @@ func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.
 		return fmt.Errorf("source and target volume servers are the same!")
 	}
 
-	return LiveMoveVolume(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, targetVolumeServer, 5*time.Second)
+	return LiveMoveVolume(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, targetVolumeServer, 5*time.Second, *diskTypeStr)
 }
 
 // LiveMoveVolume moves one volume from one source volume server to one target volume server, with idleTimeout to drain the incoming requests.
-func LiveMoveVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer, targetVolumeServer string, idleTimeout time.Duration) (err error) {
+func LiveMoveVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer, targetVolumeServer string, idleTimeout time.Duration, diskType string) (err error) {
 
 	log.Printf("copying volume %d from %s to %s", volumeId, sourceVolumeServer, targetVolumeServer)
-	lastAppendAtNs, err := copyVolume(grpcDialOption, volumeId, sourceVolumeServer, targetVolumeServer)
+	lastAppendAtNs, err := copyVolume(grpcDialOption, volumeId, sourceVolumeServer, targetVolumeServer, diskType)
 	if err != nil {
 		return fmt.Errorf("copy volume %d from %s to %s: %v", volumeId, sourceVolumeServer, targetVolumeServer, err)
 	}
@@ -91,7 +95,7 @@ func LiveMoveVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, so
 	return nil
 }
 
-func copyVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer, targetVolumeServer string) (lastAppendAtNs uint64, err error) {
+func copyVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer, targetVolumeServer string, diskType string) (lastAppendAtNs uint64, err error) {
 
 	// check to see if the volume is already read-only and if its not then we need
 	// to mark it as read-only and then before we return we need to undo what we
@@ -134,6 +138,7 @@ func copyVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, source
 		resp, replicateErr := volumeServerClient.VolumeCopy(context.Background(), &volume_server_pb.VolumeCopyRequest{
 			VolumeId:       uint32(volumeId),
 			SourceDataNode: sourceVolumeServer,
+			DiskType:       diskType,
 		})
 		if replicateErr == nil {
 			lastAppendAtNs = resp.LastAppendAtNs

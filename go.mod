@@ -3,7 +3,7 @@ module github.com/chrislusf/seaweedfs
 go 1.12
 
 require (
-	cloud.google.com/go v0.58.0
+	cloud.google.com/go v0.58.0 // indirect
 	cloud.google.com/go/pubsub v1.3.1
 	cloud.google.com/go/storage v1.9.0
 	github.com/Azure/azure-amqp-common-go/v2 v2.1.0 // indirect
@@ -41,7 +41,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway v1.11.0 // indirect
 	github.com/jcmturner/gofork v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.10
-	github.com/karlseguin/ccache v2.0.3+incompatible
+	github.com/karlseguin/ccache v2.0.3+incompatible // indirect
 	github.com/karlseguin/ccache/v2 v2.0.7
 	github.com/klauspost/compress v1.10.9 // indirect
 	github.com/klauspost/cpuid v1.2.1 // indirect
@@ -73,6 +73,7 @@ require (
 	github.com/tidwall/match v1.0.1
 	github.com/tsuna/gohbase v0.0.0-20201125011725-348991136365
 	github.com/valyala/bytebufferpool v1.0.0
+	github.com/valyala/fasthttp v1.20.0
 	github.com/viant/assertly v0.5.4 // indirect
 	github.com/viant/ptrie v0.3.0
 	github.com/viant/toolbox v0.33.2 // indirect

@@ -36,10 +36,11 @@ type EcVolume struct {
 	Version                   needle.Version
 	ecjFile                   *os.File
 	ecjFileAccessLock         sync.Mutex
+	diskType                  types.DiskType
 }
 
-func NewEcVolume(dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
-	ev = &EcVolume{dir: dir, dirIdx: dirIdx, Collection: collection, VolumeId: vid}
+func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
+	ev = &EcVolume{dir: dir, dirIdx: dirIdx, Collection: collection, VolumeId: vid, diskType: diskType}
 
 	dataBaseFileName := EcShardFileName(collection, dir, int(vid))
 	indexBaseFileName := EcShardFileName(collection, dirIdx, int(vid))
@@ -191,6 +192,7 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage() (messages []*master_pb.V
 			m = &master_pb.VolumeEcShardInformationMessage{
 				Id:         uint32(s.VolumeId),
 				Collection: s.Collection,
+				DiskType:   string(ev.diskType),
 			}
 			messages = append(messages, m)
 		}
@@ -211,7 +213,7 @@ func (ev *EcVolume) LocateEcShardNeedle(needleId types.NeedleId, version needle.
 	shard := ev.Shards[0]
 
 	// calculate the locations in the ec shards
-	intervals = LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, DataShardsCount*shard.ecdFileSize, offset.ToAcutalOffset(), types.Size(needle.GetActualSize(size, version)))
+	intervals = LocateData(ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, DataShardsCount*shard.ecdFileSize, offset.ToActualOffset(), types.Size(needle.GetActualSize(size, version)))
 
 	return
 }

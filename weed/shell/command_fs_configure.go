@@ -52,6 +52,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	collection := fsConfigureCommand.String("collection", "", "assign writes to this collection")
 	replication := fsConfigureCommand.String("replication", "", "assign writes with this replication")
 	ttl := fsConfigureCommand.String("ttl", "", "assign writes with this ttl")
+	diskType := fsConfigureCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes")
 	volumeGrowthCount := fsConfigureCommand.Int("volumeGrowthCount", 0, "the number of physical volumes to add if no writable volumes")
 	isDelete := fsConfigureCommand.Bool("delete", false, "delete the configuration by locationPrefix")
@@ -81,6 +82,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			Replication:       *replication,
 			Ttl:               *ttl,
 			Fsync:             *fsync,
+			DiskType:          *diskType,
 			VolumeGrowthCount: uint32(*volumeGrowthCount),
 		}
 

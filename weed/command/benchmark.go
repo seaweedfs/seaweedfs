@@ -35,6 +35,7 @@ type BenchmarkOptions struct {
 	sequentialRead   *bool
 	collection       *string
 	replication      *string
+	diskType         *string
 	cpuprofile       *string
 	maxCpu           *int
 	grpcDialOption   grpc.DialOption
@@ -62,6 +63,7 @@ func init() {
 	b.sequentialRead = cmdBenchmark.Flag.Bool("readSequentially", false, "randomly read by ids from \"-list\" specified file")
 	b.collection = cmdBenchmark.Flag.String("collection", "benchmark", "write data to this collection")
 	b.replication = cmdBenchmark.Flag.String("replication", "000", "replication type")
+	b.diskType = cmdBenchmark.Flag.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
 	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	b.fsync = cmdBenchmark.Flag.Bool("fsync", false, "flush data to disk after write")
@@ -234,13 +236,14 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			Count:       1,
 			Collection:  *b.collection,
 			Replication: *b.replication,
+			DiskType:    *b.diskType,
 		}
-		if assignResult, err := operation.Assign(b.masterClient.GetMaster(), b.grpcDialOption, ar); err == nil {
+		if assignResult, err := operation.Assign(b.masterClient.GetMaster, b.grpcDialOption, ar); err == nil {
 			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection
 			if !isSecure && assignResult.Auth != "" {
 				isSecure = true
 			}
-			if _, err := fp.Upload(0, b.masterClient.GetMaster(), false, assignResult.Auth, b.grpcDialOption); err == nil {
+			if _, err := fp.Upload(0, b.masterClient.GetMaster, false, assignResult.Auth, b.grpcDialOption); err == nil {
 				if random.Intn(100) < *b.deletePercentage {
 					s.total++
 					delayedDeleteChan <- &delayedFile{time.Now().Add(time.Second), fp}
@@ -290,7 +293,7 @@ func readFiles(fileIdLineChan chan string, s *stat) {
 		}
 		var bytes []byte
 		for _, url := range urls {
-			bytes, _, err = util.Get(url)
+			bytes, _, err = util.FastGet(url)
 			if err == nil {
 				break
 			}

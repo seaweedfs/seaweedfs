@@ -16,7 +16,7 @@ public class SeaweedInputStream extends InputStream {
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedInputStream.class);
     private static final IOException EXCEPTION_STREAM_IS_CLOSED = new IOException("Stream is closed!");
 
-    private final FilerGrpcClient filerGrpcClient;
+    private final FilerClient filerClient;
     private final String path;
     private final FilerProto.Entry entry;
     private final List<SeaweedRead.VisibleInterval> visibleIntervalList;
@@ -27,32 +27,31 @@ public class SeaweedInputStream extends InputStream {
     private boolean closed = false;
 
     public SeaweedInputStream(
-            final FilerGrpcClient filerGrpcClient,
+            final FilerClient filerClient,
             final String fullpath) throws IOException {
-        this.filerGrpcClient = filerGrpcClient;
         this.path = fullpath;
-        FilerClient filerClient = new FilerClient(filerGrpcClient);
+        this.filerClient = filerClient;
         this.entry = filerClient.lookupEntry(
                 SeaweedOutputStream.getParentDirectory(fullpath),
                 SeaweedOutputStream.getFileName(fullpath));
         this.contentLength = SeaweedRead.fileSize(entry);
 
-        this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerGrpcClient, entry.getChunksList());
+        this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerClient, entry.getChunksList());
 
         LOG.debug("new path:{} entry:{} visibleIntervalList:{}", path, entry, visibleIntervalList);
 
     }
 
     public SeaweedInputStream(
-            final FilerGrpcClient filerGrpcClient,
+            final FilerClient filerClient,
             final String path,
             final FilerProto.Entry entry) throws IOException {
-        this.filerGrpcClient = filerGrpcClient;
+        this.filerClient = filerClient;
         this.path = path;
         this.entry = entry;
         this.contentLength = SeaweedRead.fileSize(entry);
 
-        this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerGrpcClient, entry.getChunksList());
+        this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerClient, entry.getChunksList());
 
         LOG.debug("new path:{} entry:{} visibleIntervalList:{}", path, entry, visibleIntervalList);
 
@@ -110,7 +109,7 @@ public class SeaweedInputStream extends InputStream {
         if (start+len <= entry.getContent().size()) {
             entry.getContent().substring(start, start+len).copyTo(buf);
         } else {
-            bytesRead = SeaweedRead.read(this.filerGrpcClient, this.visibleIntervalList, this.position, buf, SeaweedRead.fileSize(entry));
+            bytesRead = SeaweedRead.read(this.filerClient, this.visibleIntervalList, this.position, buf, SeaweedRead.fileSize(entry));
         }
 
         if (bytesRead > Integer.MAX_VALUE) {

@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"net/http"
 
 	"google.golang.org/grpc"
@@ -24,7 +25,7 @@ type VolumeServer struct {
 	guard           *security.Guard
 	grpcDialOption  grpc.DialOption
 
-	needleMapKind           storage.NeedleMapType
+	needleMapKind           storage.NeedleMapKind
 	FixJpgOrientation       bool
 	ReadRedirect            bool
 	compactionBytePerSecond int64
@@ -37,9 +38,9 @@ type VolumeServer struct {
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	port int, publicUrl string,
-	folders []string, maxCounts []int, minFreeSpacePercents []float32,
+	folders []string, maxCounts []int, minFreeSpacePercents []float32, diskTypes []types.DiskType,
 	idxFolder string,
-	needleMapKind storage.NeedleMapType,
+	needleMapKind storage.NeedleMapKind,
 	masterNodes []string, pulseSeconds int,
 	dataCenter string, rack string,
 	whiteList []string,
@@ -76,7 +77,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 
 	vs.checkWithMaster()
 
-	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, minFreeSpacePercents, idxFolder, vs.needleMapKind)
+	vs.store = storage.NewStore(vs.grpcDialOption, port, ip, publicUrl, folders, maxCounts, minFreeSpacePercents, idxFolder, vs.needleMapKind, diskTypes)
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)

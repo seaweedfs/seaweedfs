@@ -69,6 +69,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
             <thead>
               <tr>
               <th>Path</th>
+              <th>Disk</th>
               <th>Total</th>
               <th>Free</th>
               <th>Usage</th>
@@ -78,6 +79,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
           {{ range .DiskStatuses }}
             <tr>
               <td>{{ .Dir }}</td>
+              <td>{{ .DiskType }}</td>
               <td>{{ bytesToHumanReadable .All }}</td>
               <td>{{ bytesToHumanReadable .Free  }}</td>
               <td>{{ percentFrom .All .Used}}%</td>
@@ -127,6 +129,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
             <tr>
               <th>Id</th>
               <th>Collection</th>
+              <th>Disk</th>
               <th>Data Size</th>
               <th>Files</th>
               <th>Trash</th>
@@ -139,6 +142,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
             <tr>
               <td><code>{{ .Id }}</code></td>
               <td>{{ .Collection }}</td>
+              <td>{{ .DiskType }}</td>
               <td>{{ bytesToHumanReadable .Size }}</td>
               <td>{{ .FileCount }}</td>
               <td>{{ .DeleteCount }} / {{bytesToHumanReadable .DeletedByteCount}}</td>

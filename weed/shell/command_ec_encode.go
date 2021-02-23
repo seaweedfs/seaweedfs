@@ -265,11 +265,8 @@ func balancedEcDistribution(servers []*EcNode) (allocated [][]uint32) {
 
 func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
 
-	var resp *master_pb.VolumeListResponse
-	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-		return err
-	})
+	// collect topology information
+	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv)
 	if err != nil {
 		return
 	}
@@ -280,11 +277,13 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 	fmt.Printf("ec encode volumes quiet for: %d seconds\n", quietSeconds)
 
 	vidMap := make(map[uint32]bool)
-	eachDataNode(resp.TopologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		for _, v := range dn.VolumeInfos {
-			if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds {
-				if float64(v.Size) > fullPercentage/100*float64(resp.VolumeSizeLimitMb)*1024*1024 {
-					vidMap[v.Id] = true
+	eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
+		for _, diskInfo := range dn.DiskInfos {
+			for _, v := range diskInfo.VolumeInfos {
+				if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds {
+					if float64(v.Size) > fullPercentage/100*float64(volumeSizeLimitMb)*1024*1024 {
+						vidMap[v.Id] = true
+					}
 				}
 			}
 		}

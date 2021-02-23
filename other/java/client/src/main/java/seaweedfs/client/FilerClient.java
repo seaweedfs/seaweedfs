@@ -4,25 +4,18 @@ import com.google.common.base.Strings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 
-public class FilerClient {
+public class FilerClient extends FilerGrpcClient {
 
     private static final Logger LOG = LoggerFactory.getLogger(FilerClient.class);
 
-    private final FilerGrpcClient filerGrpcClient;
-
     public FilerClient(String host, int grpcPort) {
-        filerGrpcClient = new FilerGrpcClient(host, grpcPort);
-    }
-
-    public FilerClient(FilerGrpcClient filerGrpcClient) {
-        this.filerGrpcClient = filerGrpcClient;
+        super(host, grpcPort);
     }
 
     public static String toFileId(FilerProto.FileId fid) {
@@ -100,9 +93,9 @@ public class FilerClient {
         if ("/".equals(path)) {
             return true;
         }
-        Path pathObject = Paths.get(path);
-        String parent = pathObject.getParent().toString();
-        String name = pathObject.getFileName().toString();
+        File pathFile = new File(path);
+        String parent = pathFile.getParent();
+        String name = pathFile.getName();
 
         mkdirs(parent, mode, uid, gid, userName, groupNames);
 
@@ -121,13 +114,13 @@ public class FilerClient {
 
     public boolean mv(String oldPath, String newPath) {
 
-        Path oldPathObject = Paths.get(oldPath);
-        String oldParent = oldPathObject.getParent().toString();
-        String oldName = oldPathObject.getFileName().toString();
+        File oldPathFile = new File(oldPath);
+        String oldParent = oldPathFile.getParent();
+        String oldName = oldPathFile.getName();
 
-        Path newPathObject = Paths.get(newPath);
-        String newParent = newPathObject.getParent().toString();
-        String newName = newPathObject.getFileName().toString();
+        File newPathFile = new File(newPath);
+        String newParent = newPathFile.getParent();
+        String newName = newPathFile.getName();
 
         return atomicRenameEntry(oldParent, oldName, newParent, newName);
 
@@ -135,9 +128,9 @@ public class FilerClient {
 
     public boolean rm(String path, boolean isRecursive, boolean ignoreRecusiveError) {
 
-        Path pathObject = Paths.get(path);
-        String parent = pathObject.getParent().toString();
-        String name = pathObject.getFileName().toString();
+        File pathFile = new File(path);
+        String parent = pathFile.getParent();
+        String name = pathFile.getName();
 
         return deleteEntry(
                 parent,
@@ -154,9 +147,9 @@ public class FilerClient {
 
     public boolean touch(String path, int mode, int uid, int gid, String userName, String[] groupNames) {
 
-        Path pathObject = Paths.get(path);
-        String parent = pathObject.getParent().toString();
-        String name = pathObject.getFileName().toString();
+        File pathFile = new File(path);
+        String parent = pathFile.getParent();
+        String name = pathFile.getName();
 
         FilerProto.Entry entry = lookupEntry(parent, name);
         if (entry == null) {
@@ -236,7 +229,7 @@ public class FilerClient {
     }
 
     public List<FilerProto.Entry> listEntries(String path, String entryPrefix, String lastEntryName, int limit, boolean includeLastEntry) {
-        Iterator<FilerProto.ListEntriesResponse> iter = filerGrpcClient.getBlockingStub().listEntries(FilerProto.ListEntriesRequest.newBuilder()
+        Iterator<FilerProto.ListEntriesResponse> iter = this.getBlockingStub().listEntries(FilerProto.ListEntriesRequest.newBuilder()
                 .setDirectory(path)
                 .setPrefix(entryPrefix)
                 .setStartFromFileName(lastEntryName)
@@ -253,7 +246,7 @@ public class FilerClient {
 
     public FilerProto.Entry lookupEntry(String directory, String entryName) {
         try {
-            FilerProto.Entry entry = filerGrpcClient.getBlockingStub().lookupDirectoryEntry(
+            FilerProto.Entry entry = this.getBlockingStub().lookupDirectoryEntry(
                     FilerProto.LookupDirectoryEntryRequest.newBuilder()
                             .setDirectory(directory)
                             .setName(entryName)
@@ -274,7 +267,7 @@ public class FilerClient {
     public boolean createEntry(String parent, FilerProto.Entry entry) {
         try {
             FilerProto.CreateEntryResponse createEntryResponse =
-                    filerGrpcClient.getBlockingStub().createEntry(FilerProto.CreateEntryRequest.newBuilder()
+                    this.getBlockingStub().createEntry(FilerProto.CreateEntryRequest.newBuilder()
                             .setDirectory(parent)
                             .setEntry(entry)
                             .build());
@@ -291,7 +284,7 @@ public class FilerClient {
 
     public boolean updateEntry(String parent, FilerProto.Entry entry) {
         try {
-            filerGrpcClient.getBlockingStub().updateEntry(FilerProto.UpdateEntryRequest.newBuilder()
+            this.getBlockingStub().updateEntry(FilerProto.UpdateEntryRequest.newBuilder()
                     .setDirectory(parent)
                     .setEntry(entry)
                     .build());
@@ -304,7 +297,7 @@ public class FilerClient {
 
     public boolean deleteEntry(String parent, String entryName, boolean isDeleteFileChunk, boolean isRecursive, boolean ignoreRecusiveError) {
         try {
-            filerGrpcClient.getBlockingStub().deleteEntry(FilerProto.DeleteEntryRequest.newBuilder()
+            this.getBlockingStub().deleteEntry(FilerProto.DeleteEntryRequest.newBuilder()
                     .setDirectory(parent)
                     .setName(entryName)
                     .setIsDeleteData(isDeleteFileChunk)
@@ -320,7 +313,7 @@ public class FilerClient {
 
     public boolean atomicRenameEntry(String oldParent, String oldName, String newParent, String newName) {
         try {
-            filerGrpcClient.getBlockingStub().atomicRenameEntry(FilerProto.AtomicRenameEntryRequest.newBuilder()
+            this.getBlockingStub().atomicRenameEntry(FilerProto.AtomicRenameEntryRequest.newBuilder()
                     .setOldDirectory(oldParent)
                     .setOldName(oldName)
                     .setNewDirectory(newParent)
@@ -334,7 +327,7 @@ public class FilerClient {
     }
 
     public Iterator<FilerProto.SubscribeMetadataResponse> watch(String prefix, String clientName, long sinceNs) {
-        return filerGrpcClient.getBlockingStub().subscribeMetadata(FilerProto.SubscribeMetadataRequest.newBuilder()
+        return this.getBlockingStub().subscribeMetadata(FilerProto.SubscribeMetadataRequest.newBuilder()
                 .setPathPrefix(prefix)
                 .setClientName(clientName)
                 .setSinceNs(sinceNs)

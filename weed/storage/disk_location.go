@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 type DiskLocation struct {
 	Directory              string
 	IdxDirectory           string
+	DiskType               types.DiskType
 	MaxVolumeCount         int
 	OriginalMaxVolumeCount int
 	MinFreeSpacePercent    float32
@@ -32,7 +34,7 @@ type DiskLocation struct {
 	isDiskSpaceLow bool
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32, idxDir string) *DiskLocation {
+func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32, idxDir string, diskType types.DiskType) *DiskLocation {
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
 		idxDir = dir
@@ -42,6 +44,7 @@ func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32
 	location := &DiskLocation{
 		Directory:              dir,
 		IdxDirectory:           idxDir,
+		DiskType:               diskType,
 		MaxVolumeCount:         maxVolumeCount,
 		OriginalMaxVolumeCount: maxVolumeCount,
 		MinFreeSpacePercent:    minFreeSpacePercent,
@@ -82,7 +85,7 @@ func getValidVolumeName(basename string) string {
 	return ""
 }
 
-func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind NeedleMapType) bool {
+func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind NeedleMapKind) bool {
 	basename := fileInfo.Name()
 	if fileInfo.IsDir() {
 		return false
@@ -133,7 +136,7 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 	return true
 }
 
-func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapType, concurrency int) {
+func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, concurrency int) {
 
 	task_queue := make(chan os.FileInfo, 10*concurrency)
 	go func() {
@@ -167,7 +170,7 @@ func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapType, con
 
 }
 
-func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapType) {
+func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapKind) {
 
 	l.concurrentLoadingVolumes(needleMapKind, 10)
 	glog.V(0).Infof("Store started on dir: %s with %d volumes max %d", l.Directory, len(l.volumes), l.MaxVolumeCount)
@@ -237,7 +240,7 @@ func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId) (found bool, e erro
 	return
 }
 
-func (l *DiskLocation) LoadVolume(vid needle.VolumeId, needleMapKind NeedleMapType) bool {
+func (l *DiskLocation) LoadVolume(vid needle.VolumeId, needleMapKind NeedleMapKind) bool {
 	if fileInfo, found := l.LocateVolume(vid); found {
 		return l.loadExistingVolume(fileInfo, needleMapKind)
 	}

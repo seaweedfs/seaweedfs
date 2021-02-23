@@ -92,7 +92,7 @@ func processEachCmd(reg *regexp.Regexp, cmd string, commandEnv *CommandEnv) bool
 
 func printGenericHelp() {
 	msg :=
-		`Type:	"help <command>" for help on <command>
+		`Type:	"help <command>" for help on <command>. Most commands support "<command> -h" also for options. 
 `
 	fmt.Print(msg)
 

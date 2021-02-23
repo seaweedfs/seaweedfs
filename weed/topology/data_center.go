@@ -1,6 +1,8 @@
 package topology
 
-import "github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+import (
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+)
 
 type DataCenter struct {
 	NodeImpl
@@ -10,6 +12,7 @@ func NewDataCenter(id string) *DataCenter {
 	dc := &DataCenter{}
 	dc.id = NodeId(id)
 	dc.nodeType = "DataCenter"
+	dc.diskUsages = newDiskUsages()
 	dc.children = make(map[NodeId]Node)
 	dc.NodeImpl.value = dc
 	return dc
@@ -30,8 +33,6 @@ func (dc *DataCenter) GetOrCreateRack(rackName string) *Rack {
 func (dc *DataCenter) ToMap() interface{} {
 	m := make(map[string]interface{})
 	m["Id"] = dc.Id()
-	m["Max"] = dc.GetMaxVolumeCount()
-	m["Free"] = dc.FreeSpace()
 	var racks []interface{}
 	for _, c := range dc.Children() {
 		rack := c.(*Rack)
@@ -43,12 +44,8 @@ func (dc *DataCenter) ToMap() interface{} {
 
 func (dc *DataCenter) ToDataCenterInfo() *master_pb.DataCenterInfo {
 	m := &master_pb.DataCenterInfo{
-		Id:                string(dc.Id()),
-		VolumeCount:       uint64(dc.GetVolumeCount()),
-		MaxVolumeCount:    uint64(dc.GetMaxVolumeCount()),
-		FreeVolumeCount:   uint64(dc.FreeSpace()),
-		ActiveVolumeCount: uint64(dc.GetActiveVolumeCount()),
-		RemoteVolumeCount: uint64(dc.GetRemoteVolumeCount()),
+		Id:        string(dc.Id()),
+		DiskInfos: dc.diskUsages.ToDiskInfo(),
 	}
 	for _, c := range dc.Children() {
 		rack := c.(*Rack)

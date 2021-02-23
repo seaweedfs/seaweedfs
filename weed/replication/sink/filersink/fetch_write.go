@@ -78,6 +78,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 			Collection:  fs.collection,
 			TtlSec:      fs.ttlSec,
 			DataCenter:  fs.dataCenter,
+			DiskType:    fs.diskType,
 			Path:        path,
 		}
 

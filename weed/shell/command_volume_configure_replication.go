@@ -56,11 +56,8 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	}
 	replicaPlacementInt32 := uint32(replicaPlacement.Byte())
 
-	var resp *master_pb.VolumeListResponse
-	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-		return err
-	})
+	// collect topology information
+	topologyInfo, _, err := collectTopologyInfo(commandEnv)
 	if err != nil {
 		return err
 	}
@@ -69,12 +66,14 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 
 	// find all data nodes with volumes that needs replication change
 	var allLocations []location
-	eachDataNode(resp.TopologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
+	eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
 		loc := newLocation(dc, string(rack), dn)
-		for _, v := range dn.VolumeInfos {
-			if v.Id == uint32(vid) && v.ReplicaPlacement != replicaPlacementInt32 {
-				allLocations = append(allLocations, loc)
-				continue
+		for _, diskInfo := range dn.DiskInfos {
+			for _, v := range diskInfo.VolumeInfos {
+				if v.Id == uint32(vid) && v.ReplicaPlacement != replicaPlacementInt32 {
+					allLocations = append(allLocations, loc)
+					continue
+				}
 			}
 		}
 	})

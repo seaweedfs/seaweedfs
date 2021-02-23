@@ -9,9 +9,12 @@ import (
 	"github.com/streadway/amqp"
 	"gocloud.dev/pubsub"
 	_ "gocloud.dev/pubsub/awssnssqs"
+	"gocloud.dev/pubsub/rabbitpubsub"
 	"net/url"
+	"os"
 	"path"
 	"strings"
+	"time"
 
 	// _ "gocloud.dev/pubsub/azuresb"
 	_ "gocloud.dev/pubsub/gcppubsub"
@@ -73,7 +76,8 @@ func QueueDeclareAndBind(conn *amqp.Connection, exchangeUrl string, queueUrl str
 }
 
 type GoCDKPubSubInput struct {
-	sub *pubsub.Subscription
+	sub    *pubsub.Subscription
+	subURL string
 }
 
 func (k *GoCDKPubSubInput) GetName() string {
@@ -82,9 +86,9 @@ func (k *GoCDKPubSubInput) GetName() string {
 
 func (k *GoCDKPubSubInput) Initialize(configuration util.Configuration, prefix string) error {
 	topicUrl := configuration.GetString(prefix + "topic_url")
-	subURL := configuration.GetString(prefix + "sub_url")
-	glog.V(0).Infof("notification.gocdk_pub_sub.sub_url: %v", subURL)
-	sub, err := pubsub.OpenSubscription(context.Background(), subURL)
+	k.subURL = configuration.GetString(prefix + "sub_url")
+	glog.V(0).Infof("notification.gocdk_pub_sub.sub_url: %v", k.subURL)
+	sub, err := pubsub.OpenSubscription(context.Background(), k.subURL)
 	if err != nil {
 		return err
 	}
@@ -95,10 +99,10 @@ func (k *GoCDKPubSubInput) Initialize(configuration util.Configuration, prefix s
 			return err
 		}
 		defer ch.Close()
-		_, err = ch.QueueInspect(getPath(subURL))
+		_, err = ch.QueueInspect(getPath(k.subURL))
 		if err != nil {
 			if strings.HasPrefix(err.Error(), "Exception (404) Reason") {
-				if err := QueueDeclareAndBind(conn, topicUrl, subURL); err != nil {
+				if err := QueueDeclareAndBind(conn, topicUrl, k.subURL); err != nil {
 					return err
 				}
 			} else {
@@ -111,9 +115,24 @@ func (k *GoCDKPubSubInput) Initialize(configuration util.Configuration, prefix s
 }
 
 func (k *GoCDKPubSubInput) ReceiveMessage() (key string, message *filer_pb.EventNotification, onSuccessFn func(), onFailureFn func(), err error) {
-	msg, err := k.sub.Receive(context.Background())
+	ctx := context.Background()
+	msg, err := k.sub.Receive(ctx)
 	if err != nil {
-		return
+		var conn *amqp.Connection
+		if k.sub.As(&conn) && conn.IsClosed() {
+			conn.Close()
+			k.sub.Shutdown(ctx)
+			conn, err = amqp.Dial(os.Getenv("RABBIT_SERVER_URL"))
+			if err != nil {
+				glog.Error(err)
+				time.Sleep(time.Second)
+				return
+			}
+			k.sub = rabbitpubsub.OpenSubscription(conn, getPath(k.subURL), nil)
+			return
+		}
+		// This is permanent cached sub err
+		glog.Fatal(err)
 	}
 	onFailureFn = func() {
 		if msg.Nackable() {

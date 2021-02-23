@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	re = regexp.MustCompile("\\.ec[0-9][0-9]")
+	re = regexp.MustCompile(`\.ec[0-9][0-9]`)
 )
 
 func (l *DiskLocation) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, bool) {
@@ -57,7 +57,7 @@ func (l *DiskLocation) FindEcShard(vid needle.VolumeId, shardId erasure_coding.S
 
 func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId) (err error) {
 
-	ecVolumeShard, err := erasure_coding.NewEcVolumeShard(l.Directory, collection, vid, shardId)
+	ecVolumeShard, err := erasure_coding.NewEcVolumeShard(l.DiskType, l.Directory, collection, vid, shardId)
 	if err != nil {
 		if err == os.ErrNotExist {
 			return os.ErrNotExist
@@ -68,7 +68,7 @@ func (l *DiskLocation) LoadEcShard(collection string, vid needle.VolumeId, shard
 	defer l.ecVolumesLock.Unlock()
 	ecVolume, found := l.ecVolumes[vid]
 	if !found {
-		ecVolume, err = erasure_coding.NewEcVolume(l.Directory, l.IdxDirectory, collection, vid)
+		ecVolume, err = erasure_coding.NewEcVolume(l.DiskType, l.Directory, l.IdxDirectory, collection, vid)
 		if err != nil {
 			return fmt.Errorf("failed to create ec volume %d: %v", vid, err)
 		}

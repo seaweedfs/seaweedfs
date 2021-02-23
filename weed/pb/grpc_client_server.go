@@ -29,14 +29,16 @@ var (
 
 func init() {
 	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 1024
+	http.DefaultTransport.(*http.Transport).MaxIdleConns = 1024
 }
 
 func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 	var options []grpc.ServerOption
 	options = append(options,
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    10 * time.Second, // wait time before ping if no activity
-			Timeout: 20 * time.Second, // ping timeout
+			Time:             10 * time.Second, // wait time before ping if no activity
+			Timeout:          20 * time.Second, // ping timeout
+			MaxConnectionAge: 10 * time.Hour,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             60 * time.Second, // min time a client should wait before sending a ping
@@ -62,7 +64,6 @@ func GrpcDial(ctx context.Context, address string, opts ...grpc.DialOption) (*gr
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallSendMsgSize(Max_Message_Size),
 			grpc.MaxCallRecvMsgSize(Max_Message_Size),
-			grpc.WaitForReady(true),
 		),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                30 * time.Second, // client ping server if no activity for this long

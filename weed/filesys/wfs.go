@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"math"
 	"os"
@@ -34,6 +35,7 @@ type Option struct {
 	Collection         string
 	Replication        string
 	TtlSec             int32
+	DiskType           types.DiskType
 	ChunkSizeLimit     int64
 	ConcurrentWriters  int
 	CacheDir           string
@@ -194,6 +196,7 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 				Collection:  wfs.option.Collection,
 				Replication: wfs.option.Replication,
 				Ttl:         fmt.Sprintf("%ds", wfs.option.TtlSec),
+				DiskType:    string(wfs.option.DiskType),
 			}
 
 			glog.V(4).Infof("reading filer stats: %+v", request)

@@ -44,7 +44,6 @@ message Heartbeat {
     string ip = 1;
     uint32 port = 2;
     string public_url = 3;
-    uint32 max_volume_count = 4;
     uint64 max_file_key = 5;
     string data_center = 6;
     string rack = 7;
@@ -61,6 +60,8 @@ message Heartbeat {
     repeated VolumeEcShardInformationMessage new_ec_shards = 17;
     repeated VolumeEcShardInformationMessage deleted_ec_shards = 18;
     bool has_no_ec_shards = 19;
+
+    map<string, uint32> max_volume_counts = 4;
 
 }
 
@@ -87,6 +88,7 @@ message VolumeInformationMessage {
     int64 modified_at_second = 12;
     string remote_storage_name = 13;
     string remote_storage_key = 14;
+    string disk_type = 15;
 }
 
 message VolumeShortInformationMessage {
@@ -95,12 +97,14 @@ message VolumeShortInformationMessage {
     uint32 replica_placement = 8;
     uint32 version = 9;
     uint32 ttl = 10;
+    string disk_type = 15;
 }
 
 message VolumeEcShardInformationMessage {
     uint32 id = 1;
     string collection = 2;
     uint32 ec_index_bits = 3;
+    string disk_type = 4;
 }
 
 message StorageBackend {
@@ -163,6 +167,7 @@ message AssignRequest {
     string data_node = 7;
     uint32 memory_map_max_size_mb = 8;
     uint32 Writable_volume_count = 9;
+    string disk_type = 10;
 }
 message AssignResponse {
     string fid = 1;
@@ -177,11 +182,9 @@ message StatisticsRequest {
     string replication = 1;
     string collection = 2;
     string ttl = 3;
+    string disk_type = 4;
 }
 message StatisticsResponse {
-    string replication = 1;
-    string collection = 2;
-    string ttl = 3;
     uint64 total_size = 4;
     uint64 used_size = 5;
     uint64 file_count = 6;
@@ -210,8 +213,8 @@ message CollectionDeleteResponse {
 //
 // volume related
 //
-message DataNodeInfo {
-    string id = 1;
+message DiskInfo {
+    string type = 1;
     uint64 volume_count = 2;
     uint64 max_volume_count = 3;
     uint64 free_volume_count = 4;
@@ -220,32 +223,24 @@ message DataNodeInfo {
     repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
     uint64 remote_volume_count = 8;
 }
+message DataNodeInfo {
+    string id = 1;
+    map<string, DiskInfo> diskInfos = 2;
+}
 message RackInfo {
     string id = 1;
-    uint64 volume_count = 2;
-    uint64 max_volume_count = 3;
-    uint64 free_volume_count = 4;
-    uint64 active_volume_count = 5;
-    repeated DataNodeInfo data_node_infos = 6;
-    uint64 remote_volume_count = 7;
+    repeated DataNodeInfo data_node_infos = 2;
+    map<string, DiskInfo> diskInfos = 3;
 }
 message DataCenterInfo {
     string id = 1;
-    uint64 volume_count = 2;
-    uint64 max_volume_count = 3;
-    uint64 free_volume_count = 4;
-    uint64 active_volume_count = 5;
-    repeated RackInfo rack_infos = 6;
-    uint64 remote_volume_count = 7;
+    repeated RackInfo rack_infos = 2;
+    map<string, DiskInfo> diskInfos = 3;
 }
 message TopologyInfo {
     string id = 1;
-    uint64 volume_count = 2;
-    uint64 max_volume_count = 3;
-    uint64 free_volume_count = 4;
-    uint64 active_volume_count = 5;
-    repeated DataCenterInfo data_center_infos = 6;
-    uint64 remote_volume_count = 7;
+    repeated DataCenterInfo data_center_infos = 2;
+    map<string, DiskInfo> diskInfos = 3;
 }
 message VolumeListRequest {
 }

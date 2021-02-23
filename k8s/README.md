@@ -9,15 +9,32 @@ and backup/HA memsql can provide.
 with ENV.
 * cert config exists and can be enabled, but not been tested.
 
-### current instances config (AIO):
-1 instance for each type (master/filer/volume/s3)
+### prerequisites
+kubernetes node have labels which help to define which node(Host) will run which pod.
 
-instances need node labels:
-* sw-volume: true  (for volume instance, specific tag)
-* sw-backend: true (for all others, as they less resource demanding)
+s3/filer/master needs the label **sw-backend=true**
+
+volume need the label **sw-volume=true**
+
+to label a node to be able to run all pod types in k8s:
+```
+kubectl label node YOUR_NODE_NAME sw-volume=true,sw-backend=true
+```
+
+on production k8s deployment you will want each pod to have a different host,
+especially the volume server & the masters, currently all pods (master/volume/filer)
+have anti-affinity rule to disallow running multiple pod type on the same host.
+if you still want to run multiple pods of the same type (master/volume/filer) on the same host
+please set/update the corresponding affinity rule in values.yaml to an empty one:
+
+```affinity: ""```
+
+
+### current instances config (AIO):
+1 instance for each type (master/filer+s3/volume)
 
 you can update the replicas count for each node type in values.yaml,
-need to add more nodes with the corresponding label.
+need to add more nodes with the corresponding labels.
 
 most of the configuration are available through values.yaml
 

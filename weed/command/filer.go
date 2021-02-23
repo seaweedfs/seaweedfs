@@ -52,7 +52,7 @@ type FilerOptions struct {
 func init() {
 	cmdFiler.Run = runFiler // break init cycle
 	f.masters = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
-	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this collection")
+	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this default collection")
 	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
 	f.bindIp = cmdFiler.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
@@ -83,6 +83,8 @@ func init() {
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
 	filerWebDavOptions.port = cmdFiler.Flag.Int("webdav.port", 7333, "webdav server http listen port")
 	filerWebDavOptions.collection = cmdFiler.Flag.String("webdav.collection", "", "collection to create the files")
+	filerWebDavOptions.replication = cmdFiler.Flag.String("webdav.replication", "", "replication to create the files")
+	filerWebDavOptions.disk = cmdFiler.Flag.String("webdav.disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	filerWebDavOptions.tlsPrivateKey = cmdFiler.Flag.String("webdav.key.file", "", "path to the TLS private key file")
 	filerWebDavOptions.tlsCertificate = cmdFiler.Flag.String("webdav.cert.file", "", "path to the TLS certificate file")
 	filerWebDavOptions.cacheDir = cmdFiler.Flag.String("webdav.cacheDir", os.TempDir(), "local cache directory for file chunks")

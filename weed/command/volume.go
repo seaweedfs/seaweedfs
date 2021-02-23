@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"net/http"
 	httppprof "net/http/pprof"
 	"os"
@@ -49,6 +50,7 @@ type VolumeServerOptions struct {
 	rack                  *string
 	whiteList             []string
 	indexType             *string
+	diskType              *string
 	fixJpgOrientation     *bool
 	readRedirect          *bool
 	cpuProfile            *string
@@ -76,6 +78,7 @@ func init() {
 	v.dataCenter = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	v.rack = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
 	v.indexType = cmdVolume.Flag.String("index", "memory", "Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.")
+	v.diskType = cmdVolume.Flag.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	v.fixJpgOrientation = cmdVolume.Flag.Bool("images.fix.orientation", false, "Adjust jpg orientation when uploading.")
 	v.readRedirect = cmdVolume.Flag.Bool("read.redirect", true, "Redirect moved or non-local volumes.")
 	v.cpuProfile = cmdVolume.Flag.String("cpuprofile", "", "cpu profile output file")
@@ -167,6 +170,21 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		glog.Fatalf("%d directories by -dir, but only %d minFreeSpacePercent is set by -minFreeSpacePercent", len(v.folders), len(v.minFreeSpacePercents))
 	}
 
+	// set disk types
+	var diskTypes []types.DiskType
+	diskTypeStrings := strings.Split(*v.diskType, ",")
+	for _, diskTypeString := range diskTypeStrings {
+		diskTypes = append(diskTypes, types.ToDiskType(diskTypeString))
+	}
+	if len(diskTypes) == 1 && len(v.folders) > 1 {
+		for i := 0; i < len(v.folders)-1; i++ {
+			diskTypes = append(diskTypes, diskTypes[0])
+		}
+	}
+	if len(v.folders) != len(diskTypes) {
+		glog.Fatalf("%d directories by -dir, but only %d disk types is set by -disk", len(v.folders), len(diskTypes))
+	}
+
 	// security related white list configuration
 	if volumeWhiteListOption != "" {
 		v.whiteList = strings.Split(volumeWhiteListOption, ",")
@@ -212,7 +230,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.publicUrl,
-		v.folders, v.folderMaxLimits, v.minFreeSpacePercents,
+		v.folders, v.folderMaxLimits, v.minFreeSpacePercents, diskTypes,
 		*v.idxFolder,
 		volumeNeedleMapKind,
 		strings.Split(masters, ","), 5, *v.dataCenter, *v.rack,

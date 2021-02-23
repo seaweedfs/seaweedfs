@@ -55,7 +55,10 @@ func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 
 	if notification.Queue != nil {
 		glog.V(3).Infof("notifying entry update %v", fullpath)
-		notification.Queue.SendMessage(fullpath, eventNotification)
+		if err := notification.Queue.SendMessage(fullpath, eventNotification); err != nil {
+			// throw message
+			glog.Error(err)
+		}
 	}
 
 	f.logMetaEvent(ctx, fullpath, eventNotification)

@@ -47,12 +47,14 @@ func (store *MysqlStore) initialize(user, password, hostname string, port int, d
 	store.SupportBucketTable = false
 	store.SqlGenerator = &SqlGenMysql{
 		CreateTableSqlTemplate: "",
-		DropTableSqlTemplate:   "drop table %s",
+		DropTableSqlTemplate:   "drop table `%s`",
 	}
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, password, hostname, port, database)
+	adaptedSqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, "<ADAPTED>", hostname, port, database)
 	if interpolateParams {
 		sqlUrl += "&interpolateParams=true"
+		adaptedSqlUrl += "&interpolateParams=true"
 	}
 
 	var dbErr error
@@ -60,7 +62,7 @@ func (store *MysqlStore) initialize(user, password, hostname string, port int, d
 	if dbErr != nil {
 		store.DB.Close()
 		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", sqlUrl, err)
+		return fmt.Errorf("can not connect to %s error:%v", adaptedSqlUrl, err)
 	}
 
 	store.DB.SetMaxIdleConns(maxIdle)
