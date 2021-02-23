@@ -102,7 +102,7 @@ func doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, collection strin
 	keepDataNodesSorted(allLocations, toDiskType)
 	fn := capacityByFreeVolumeCount(toDiskType)
 	for _, dst := range allLocations {
-		if fn(dst.dataNode) > 0 {
+		if fn(dst.dataNode) > 0 && !hasFoundTarget {
 			// ask the volume server to replicate the volume
 			if isOneOf(dst.dataNode.Id, locations) {
 				continue
