@@ -29,6 +29,14 @@ please set/update the corresponding affinity rule in values.yaml to an empty one
 
 ```affinity: ""```
 
+### PVC - storage class ###
+
+on the volume stateful set added support for K8S PVC, currently example
+with the simple local-path-provisioner from Rancher (comes included with k3d / k3s)
+https://github.com/rancher/local-path-provisioner
+
+you can use ANY storage class you like, just update the correct storage-class
+for your deployment.
 
 ### current instances config (AIO):
 1 instance for each type (master/filer+s3/volume)
