@@ -138,6 +138,24 @@ volume:
   # minimum free disk space(in percents). If free disk space lower this value - all volumes marks as ReadOnly
   minFreeSpacePercent: 7
 
+# can use ANY storage-class , example with local-path-provisner
+#  data:
+#    type: "persistentVolumeClaim"
+#    size: "24Ti"
+#    storageClass: "local-path-provisioner"
+  data:
+    type: "hostPath"
+    size: ""
+    storageClass: ""
+  idx:
+    type: "hostPath"
+    size: ""
+    storageClass: ""
+
+  logs:
+    type: "hostPath"
+    size: ""
+    storageClass: ""
 
   # limit background compaction or copying speed in mega bytes per second
   compactionMBps: "50"
