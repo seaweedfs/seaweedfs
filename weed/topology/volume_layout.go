@@ -432,7 +432,7 @@ func (vl *VolumeLayout) Stats() *VolumeLayoutStats {
 		if vl.readonlyVolumes.IsTrue(vid) {
 			ret.TotalSize += size
 		} else {
-			ret.TotalSize += vl.volumeSizeLimit
+			ret.TotalSize += vl.volumeSizeLimit * uint64(vll.Length())
 		}
 	}
 
