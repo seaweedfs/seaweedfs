@@ -886,7 +886,7 @@ func (f *FlagSet) parseOne() (bool, error) {
 // The return value will be ErrHelp if -help or -h were set but not defined.
 func (f *FlagSet) Parse(arguments []string) error {
 	if _, ok := f.formal[DefaultConfigFlagName]; !ok {
-		f.String(DefaultConfigFlagName, "", "config file")
+		f.String(DefaultConfigFlagName, "", "file with command line options with each line in optionName=optionValue format")
 	}
 
 	f.parsed = true
