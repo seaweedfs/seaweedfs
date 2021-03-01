@@ -995,6 +995,7 @@ func NewFlagSet(name string, errorHandling ErrorHandling) *FlagSet {
 	f := &FlagSet{
 		name:          name,
 		errorHandling: errorHandling,
+		envPrefix:     EnvPrefix,
 	}
 	return f
 }
