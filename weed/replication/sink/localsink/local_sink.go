@@ -50,6 +50,10 @@ func (localsink *LocalSink) GetSinkToDirectory() string {
 	return localsink.Dir
 }
 
+func (localsink *LocalSink) IsIncremental() bool {
+	return true
+}
+
 func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 	if localsink.isMultiPartEntry(key) {
 		return nil
@@ -74,13 +78,13 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		glog.V(4).Infof("Create Direcotry key: %s", dir)
-		if err = os.MkdirAll(dir, 0); err != nil {
+		if err = os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}
 	}
 
 	writeFunc := func(data []byte) error {
-		writeErr := ioutil.WriteFile(key, data, 0)
+		writeErr := ioutil.WriteFile(key, data, 0755)
 		return writeErr
 	}
 

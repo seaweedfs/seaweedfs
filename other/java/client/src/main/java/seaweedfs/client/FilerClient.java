@@ -4,8 +4,7 @@ import com.google.common.base.Strings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
@@ -94,9 +93,9 @@ public class FilerClient extends FilerGrpcClient {
         if ("/".equals(path)) {
             return true;
         }
-        Path pathObject = Paths.get(path);
-        String parent = pathObject.getParent().toString();
-        String name = pathObject.getFileName().toString();
+        File pathFile = new File(path);
+        String parent = pathFile.getParent();
+        String name = pathFile.getName();
 
         mkdirs(parent, mode, uid, gid, userName, groupNames);
 
@@ -115,13 +114,13 @@ public class FilerClient extends FilerGrpcClient {
 
     public boolean mv(String oldPath, String newPath) {
 
-        Path oldPathObject = Paths.get(oldPath);
-        String oldParent = oldPathObject.getParent().toString();
-        String oldName = oldPathObject.getFileName().toString();
+        File oldPathFile = new File(oldPath);
+        String oldParent = oldPathFile.getParent();
+        String oldName = oldPathFile.getName();
 
-        Path newPathObject = Paths.get(newPath);
-        String newParent = newPathObject.getParent().toString();
-        String newName = newPathObject.getFileName().toString();
+        File newPathFile = new File(newPath);
+        String newParent = newPathFile.getParent();
+        String newName = newPathFile.getName();
 
         return atomicRenameEntry(oldParent, oldName, newParent, newName);
 
@@ -129,9 +128,9 @@ public class FilerClient extends FilerGrpcClient {
 
     public boolean rm(String path, boolean isRecursive, boolean ignoreRecusiveError) {
 
-        Path pathObject = Paths.get(path);
-        String parent = pathObject.getParent().toString();
-        String name = pathObject.getFileName().toString();
+        File pathFile = new File(path);
+        String parent = pathFile.getParent();
+        String name = pathFile.getName();
 
         return deleteEntry(
                 parent,
@@ -148,9 +147,9 @@ public class FilerClient extends FilerGrpcClient {
 
     public boolean touch(String path, int mode, int uid, int gid, String userName, String[] groupNames) {
 
-        Path pathObject = Paths.get(path);
-        String parent = pathObject.getParent().toString();
-        String name = pathObject.getFileName().toString();
+        File pathFile = new File(path);
+        String parent = pathFile.getParent();
+        String name = pathFile.getName();
 
         FilerProto.Entry entry = lookupEntry(parent, name);
         if (entry == null) {

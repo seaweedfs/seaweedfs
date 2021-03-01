@@ -21,12 +21,13 @@ import (
 )
 
 type S3Sink struct {
-	conn        s3iface.S3API
-	region      string
-	bucket      string
-	dir         string
-	endpoint    string
-	filerSource *source.FilerSource
+	conn          s3iface.S3API
+	region        string
+	bucket        string
+	dir           string
+	endpoint      string
+	filerSource   *source.FilerSource
+	isIncremental bool
 }
 
 func init() {
@@ -41,11 +42,17 @@ func (s3sink *S3Sink) GetSinkToDirectory() string {
 	return s3sink.dir
 }
 
+func (s3sink *S3Sink) IsIncremental() bool {
+	return s3sink.isIncremental
+}
+
 func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string) error {
 	glog.V(0).Infof("sink.s3.region: %v", configuration.GetString(prefix+"region"))
 	glog.V(0).Infof("sink.s3.bucket: %v", configuration.GetString(prefix+"bucket"))
 	glog.V(0).Infof("sink.s3.directory: %v", configuration.GetString(prefix+"directory"))
 	glog.V(0).Infof("sink.s3.endpoint: %v", configuration.GetString(prefix+"endpoint"))
+	glog.V(0).Infof("sink.s3.is_incremental: %v", configuration.GetString(prefix+"is_incremental"))
+	s3sink.isIncremental = configuration.GetBool(prefix + "is_incremental")
 	return s3sink.initialize(
 		configuration.GetString(prefix+"aws_access_key_id"),
 		configuration.GetString(prefix+"aws_secret_access_key"),
@@ -67,8 +74,9 @@ func (s3sink *S3Sink) initialize(awsAccessKeyId, awsSecretAccessKey, region, buc
 	s3sink.endpoint = endpoint
 
 	config := &aws.Config{
-		Region:   aws.String(s3sink.region),
-		Endpoint: aws.String(s3sink.endpoint),
+		Region:           aws.String(s3sink.region),
+		Endpoint:         aws.String(s3sink.endpoint),
+		S3ForcePathStyle: aws.Bool(true),
 	}
 	if awsAccessKeyId != "" && awsSecretAccessKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, awsSecretAccessKey, "")
@@ -104,7 +112,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 
 	uploadId, err := s3sink.createMultipartUpload(key, entry)
 	if err != nil {
-		return err
+		return fmt.Errorf("createMultipartUpload: %v", err)
 	}
 
 	totalSize := filer.FileSize(entry)
@@ -120,6 +128,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 			defer wg.Done()
 			if part, uploadErr := s3sink.uploadPart(key, uploadId, partId, chunk); uploadErr != nil {
 				err = uploadErr
+				glog.Errorf("uploadPart: %v", uploadErr)
 			} else {
 				parts[index] = part
 			}
@@ -129,7 +138,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 
 	if err != nil {
 		s3sink.abortMultipartUpload(key, uploadId)
-		return err
+		return fmt.Errorf("uploadPart: %v", err)
 	}
 
 	return s3sink.completeMultipartUpload(context.Background(), key, uploadId, parts)

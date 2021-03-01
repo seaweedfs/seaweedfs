@@ -2,7 +2,6 @@ package shell
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
@@ -32,16 +31,13 @@ func (c *commandVolumeList) Help() string {
 
 func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	var resp *master_pb.VolumeListResponse
-	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
-		resp, err = client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-		return err
-	})
+	// collect topology information
+	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv)
 	if err != nil {
 		return err
 	}
 
-	writeTopologyInfo(writer, resp.TopologyInfo, resp.VolumeSizeLimitMb)
+	writeTopologyInfo(writer, topologyInfo, volumeSizeLimitMb)
 	return nil
 }
 

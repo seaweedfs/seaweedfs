@@ -45,6 +45,19 @@ spec:
       priorityClassName: {{ .Values.volume.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
+      {{- if .Values.volume.dir_idx }}
+      initContainers:
+        - name: seaweedfs-vol-move-idx
+          image: {{ template "volume.image" . }}
+          imagePullPolicy: {{ .Values.global.pullPolicy | default "IfNotPresent" }}
+          command: [ '/bin/sh', '-c' ]
+          args: ['if ls {{ .Values.volume.dir }}/*.idx >/dev/null 2>&1; then mv {{ .Values.volume.dir }}/*.idx {{ .Values.volume.dir_idx }}/; fi;']
+          volumeMounts:
+          - name: idx
+            mountPath: {{ .Values.volume.dir_idx }}
+          - name: data
+            mountPath: {{ .Values.volume.dir }}
+      {{- end }}
       containers:
         - name: seaweedfs
           image: {{ template "volume.image" . }}
@@ -118,9 +131,13 @@ spec:
                 -compactionMBps={{ .Values.volume.compactionMBps }} \
                 -mserver={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
           volumeMounts:
-            - name: seaweedfs-volume-storage
-              mountPath: "/data/"
-            - name: seaweedfs-volume-log-volume
+            - name: data
+              mountPath: "{{ .Values.volume.dir }}/"
+            {{- if .Values.volume.dir_idx }}
+            - name: idx
+              mountPath: "{{ .Values.volume.dir_idx }}/"
+            {{- end }}
+            - name: logs
               mountPath: "/logs/"
             {{- if .Values.global.enableSecurity }}
             - name: security-config
@@ -173,15 +190,27 @@ spec:
           resources:
             {{ tpl .Values.volume.resources . | nindent 12 | trim }}
           {{- end }}
+      {{- $hostpath_exists := include "volume.hostpath_exists" . -}}
+      {{- if $hostpath_exists }}
       volumes:
-        - name: seaweedfs-volume-log-volume
-          hostPath:
-            path: /storage/logs/seaweedfs/volume
-            type: DirectoryOrCreate
-        - name: seaweedfs-volume-storage
+        {{- if eq .Values.volume.data.type "hostPath" }}
+        - name: data
           hostPath:
             path: /storage/object_store/
             type: DirectoryOrCreate
+        {{- end }}
+        {{- if and (eq .Values.volume.idx.type "hostPath") .Values.volume.dir_idx }}
+        - name: idx
+          hostPath:
+            path: /ssd/seaweedfs-volume-idx/
+            type: DirectoryOrCreate
+        {{- end }}
+        {{- if eq .Values.volume.logs.type "hostPath" }}
+        - name: logs
+          hostPath:
+            path: /storage/logs/seaweedfs/volume
+            type: DirectoryOrCreate
+        {{- end }}
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:
@@ -205,8 +234,43 @@ spec:
       {{- if .Values.volume.extraVolumes }}
         {{ tpl .Values.volume.extraVolumes . | indent 8 | trim }}
       {{- end }}
+      {{- end }}
       {{- if .Values.volume.nodeSelector }}
       nodeSelector:
         {{ tpl .Values.volume.nodeSelector . | indent 8 | trim }}
+      {{- end }}
+  {{- $pvc_exists := include "volume.pvc_exists" . -}}
+  {{- if $pvc_exists }}
+  volumeClaimTemplates:
+    {{- if eq .Values.volume.data.type "persistentVolumeClaim"}}
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: {{ .Values.volume.data.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.volume.data.size }}
+    {{- end }}
+    {{- if and (eq .Values.volume.idx.type "persistentVolumeClaim") .Values.volume.dir_idx }}
+    - metadata:
+        name: idx
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: {{ .Values.volume.idx.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.volume.idx.size }}
+    {{- end }}
+    {{- if eq .Values.volume.logs.type "persistentVolumeClaim" }}
+    - metadata:
+        name: logs
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: {{ .Values.volume.logs.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.volume.logs.size }}
+    {{- end }}
       {{- end }}
 {{- end }}

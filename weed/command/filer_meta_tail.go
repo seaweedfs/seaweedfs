@@ -24,8 +24,8 @@ func init() {
 
 var cmdFilerMetaTail = &Command{
 	UsageLine: "filer.meta.tail [-filer=localhost:8888] [-target=/]",
-	Short:     "see recent changes on a filer",
-	Long: `See recent changes on a filer.
+	Short:     "see continuous changes on a filer",
+	Long: `See continuous changes on a filer.
 
 	weed filer.meta.tail -timeAgo=30h | grep truncate
 	weed filer.meta.tail -timeAgo=30h | jq .

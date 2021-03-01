@@ -78,7 +78,7 @@ func init() {
 	v.dataCenter = cmdVolume.Flag.String("dataCenter", "", "current volume server's data center name")
 	v.rack = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
 	v.indexType = cmdVolume.Flag.String("index", "memory", "Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.")
-	v.diskType = cmdVolume.Flag.String("disk", "", "[hdd|ssd] hard drive or solid state drive")
+	v.diskType = cmdVolume.Flag.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	v.fixJpgOrientation = cmdVolume.Flag.Bool("images.fix.orientation", false, "Adjust jpg orientation when uploading.")
 	v.readRedirect = cmdVolume.Flag.Bool("read.redirect", true, "Redirect moved or non-local volumes.")
 	v.cpuProfile = cmdVolume.Flag.String("cpuprofile", "", "cpu profile output file")

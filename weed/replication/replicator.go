@@ -42,7 +42,7 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		return nil
 	}
 	var dateKey string
-	if r.sink.GetName() == "local_incremental" {
+	if r.sink.IsIncremental() {
 		var mTime int64
 		if message.NewEntry != nil {
 			mTime = message.NewEntry.Attributes.Mtime

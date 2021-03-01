@@ -126,3 +126,26 @@ Inject extra environment vars in the format key:value, if populated
 {{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
 {{- end -}}
 {{- end -}}
+
+
+{{/* check if any PVC exists */}}
+{{- define "volume.pvc_exists" -}}
+{{- if or (or (eq .Values.volume.data.type "persistentVolumeClaim") (and (eq .Values.volume.idx.type "persistentVolumeClaim") .Values.volume.dir_idx )) (eq .Values.volume.logs.type "persistentVolumeClaim") -}}
+{{- printf "true" -}}
+{{- else -}}
+{{- printf "false" -}}
+{{- end -}}
+{{- end -}}
+
+{{/* check if any HostPath exists */}}
+{{- define "volume.hostpath_exists" -}}
+{{- if or (or (eq .Values.volume.data.type "hostPath") (and (eq .Values.volume.idx.type "hostPath") .Values.volume.dir_idx )) (eq .Values.volume.logs.type "hostPath") -}}
+{{- printf "true" -}}
+{{- else -}}
+{{- if or .Values.global.enableSecurity .Values.volume.extraVolumes -}}
+{{- printf "true" -}}
+{{- else -}}
+{{- printf "false" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
