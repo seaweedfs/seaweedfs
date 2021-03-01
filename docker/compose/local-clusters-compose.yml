@@ -11,6 +11,8 @@ services:
       - 8888:8888
       - 18888:18888
     command: "server -ip=server1 -filer -volume.max=0 -master.volumeSizeLimitMB=1024 -volume.preStopSeconds=1"
+    volumes:
+      - ./master-cloud.toml:/etc/seaweedfs/master.toml
   server2:
     image: chrislusf/seaweedfs:local
     ports:
