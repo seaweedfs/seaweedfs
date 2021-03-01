@@ -50,6 +50,10 @@ func (localsink *LocalSink) GetSinkToDirectory() string {
 	return localsink.Dir
 }
 
+func (localsink *LocalSink) IsIncremental() bool {
+	return true
+}
+
 func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 	if localsink.isMultiPartEntry(key) {
 		return nil

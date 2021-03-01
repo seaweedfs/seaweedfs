@@ -14,6 +14,7 @@ type ReplicationSink interface {
 	UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error)
 	GetSinkToDirectory() string
 	SetSourceFiler(s *source.FilerSource)
+	IsIncremental() bool
 }
 
 var (
