@@ -36,6 +36,9 @@ func NewReplicaPlacementFromByte(b byte) (*ReplicaPlacement, error) {
 }
 
 func (rp *ReplicaPlacement) Byte() byte {
+	if rp == nil {
+		return 0
+	}
 	ret := rp.DiffDataCenterCount*100 + rp.DiffRackCount*10 + rp.SameRackCount
 	return byte(ret)
 }

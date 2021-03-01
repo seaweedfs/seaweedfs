@@ -84,6 +84,11 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	if alreadyHasSuperBlock {
 		err = v.readSuperBlock()
 		glog.V(0).Infof("readSuperBlock volume %d version %v", v.Id, v.SuperBlock.Version)
+		if v.HasRemoteFile() {
+			// maybe temporary network problem
+			glog.Errorf("readSuperBlock remote volume %d: %v", v.Id, err)
+			err = nil
+		}
 	} else {
 		if !v.SuperBlock.Initialized() {
 			return fmt.Errorf("volume %s not initialized", v.FileName(".dat"))
