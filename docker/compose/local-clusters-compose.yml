@@ -13,6 +13,8 @@ services:
     command: "server -ip=server1 -filer -volume.max=0 -master.volumeSizeLimitMB=1024 -volume.preStopSeconds=1"
     volumes:
       - ./master-cloud.toml:/etc/seaweedfs/master.toml
+    depends_on:
+      - server2
   server2:
     image: chrislusf/seaweedfs:local
     ports:
