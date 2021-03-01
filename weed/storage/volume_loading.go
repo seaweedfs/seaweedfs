@@ -39,12 +39,12 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 	}()
 
-	hasVolumeInfoFile := v.maybeLoadVolumeInfo() && v.volumeInfo.Version != 0
+	hasVolumeInfoFile := v.maybeLoadVolumeInfo()
 
 	if v.HasRemoteFile() {
 		v.noWriteCanDelete = true
 		v.noWriteOrDelete = false
-		glog.V(0).Infof("loading volume %d from remote %v", v.Id, v.volumeInfo.Files)
+		glog.V(0).Infof("loading volume %d from remote %v", v.Id, v.volumeInfo)
 		v.LoadRemoteFile()
 		alreadyHasSuperBlock = true
 	} else if exists, canRead, canWrite, modifiedTime, fileSize := util.CheckFile(v.FileName(".dat")); exists {
