@@ -74,18 +74,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		}
 	}
 
-	var dataSink sink.ReplicationSink
-	for _, sk := range sink.Sinks {
-		if config.GetBool("sink." + sk.GetName() + ".enabled") {
-			if err := sk.Initialize(config, "sink."+sk.GetName()+"."); err != nil {
-				glog.Fatalf("Failed to initialize sink for %s: %+v",
-					sk.GetName(), err)
-			}
-			glog.V(0).Infof("Configure sink to %s", sk.GetName())
-			dataSink = sk
-			break
-		}
-	}
+	dataSink := findSink(config)
 
 	if dataSink == nil {
 		println("no data sink configured in replication.toml:")
@@ -133,6 +122,22 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		}
 	}
 
+}
+
+func findSink(config *util.ViperProxy) sink.ReplicationSink {
+	var dataSink sink.ReplicationSink
+	for _, sk := range sink.Sinks {
+		if config.GetBool("sink." + sk.GetName() + ".enabled") {
+			if err := sk.Initialize(config, "sink."+sk.GetName()+"."); err != nil {
+				glog.Fatalf("Failed to initialize sink for %s: %+v",
+					sk.GetName(), err)
+			}
+			glog.V(0).Infof("Configure sink to %s", sk.GetName())
+			dataSink = sk
+			break
+		}
+	}
+	return dataSink
 }
 
 func validateOneEnabledInput(config *util.ViperProxy) {
