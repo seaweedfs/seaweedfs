@@ -83,6 +83,10 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 		return nil
 	})
 
+	if err != nil {
+		return nil, fuse.EIO
+	}
+
 	// create new file node
 	newNode := dir.newFile(req.NewName, request.Entry)
 	newFile := newNode.(*File)
