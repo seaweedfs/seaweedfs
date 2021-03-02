@@ -389,12 +389,12 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 
 	// clear entry inside the file
 	fsNode := dir.wfs.fsNodeCache.GetFsNode(filePath)
+	dir.wfs.fsNodeCache.DeleteFsNode(filePath)
 	if fsNode != nil {
 		if file, ok := fsNode.(*File); ok {
 			file.clearEntry()
 		}
 	}
-	dir.wfs.fsNodeCache.DeleteFsNode(filePath)
 
 	// remove current file handle if any
 	dir.wfs.handlesLock.Lock()
