@@ -35,7 +35,7 @@ func init() {
 	cmdFilerMetaBackup.Run = runFilerMetaBackup // break init cycle
 	metaBackup.filerAddress = cmdFilerMetaBackup.Flag.String("filer", "localhost:8888", "filer hostname:port")
 	metaBackup.filerDirectory = cmdFilerMetaBackup.Flag.String("filerDir", "/", "a folder on the filer")
-	metaBackup.restart = cmdFilerMetaBackup.Flag.Bool("restart", false, "copy the full metadata snapshot before async continuous backup")
+	metaBackup.restart = cmdFilerMetaBackup.Flag.Bool("restart", false, "copy the full metadata before async incremental backup")
 	metaBackup.backupFilerConfig = cmdFilerMetaBackup.Flag.String("config", "", "path to filer.toml specifying backup filer store")
 }
 
