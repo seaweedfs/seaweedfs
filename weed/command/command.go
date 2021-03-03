@@ -17,6 +17,7 @@ var Commands = []*Command{
 	cmdFiler,
 	cmdFilerBackup,
 	cmdFilerCat,
+	cmdFilerMetaBackup,
 	cmdFilerMetaTail,
 	cmdFilerReplicate,
 	cmdFilerSynchronize,
