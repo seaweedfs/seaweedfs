@@ -53,7 +53,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	filer := *option.filer
 	// parse filer grpc address
-	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(filer)
+	filerGrpcAddress, err := pb.ParseServerToGrpcAddress(filer)
 	if err != nil {
 		glog.V(0).Infof("ParseFilerGrpcAddress: %v", err)
 		return true

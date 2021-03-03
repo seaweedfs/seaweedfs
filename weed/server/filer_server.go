@@ -153,7 +153,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 func (fs *FilerServer) checkWithMaster() {
 
 	for _, master := range fs.option.Masters {
-		_, err := pb.ParseFilerGrpcAddress(master)
+		_, err := pb.ParseServerToGrpcAddress(master)
 		if err != nil {
 			glog.Fatalf("invalid master address %s: %v", master, err)
 		}

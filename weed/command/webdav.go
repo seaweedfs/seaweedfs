@@ -78,7 +78,7 @@ func (wo *WebDavOption) startWebDav() bool {
 	}
 
 	// parse filer grpc address
-	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(*wo.filer)
+	filerGrpcAddress, err := pb.ParseServerToGrpcAddress(*wo.filer)
 	if err != nil {
 		glog.Fatal(err)
 		return false
