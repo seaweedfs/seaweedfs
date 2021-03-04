@@ -156,9 +156,11 @@ func runServer(cmd *Command, args []string) bool {
 		*isStartingFiler = true
 	}
 
-	_, peerList := checkPeers(*serverIp, *masterOptions.port, *masterOptions.peers)
-	peers := strings.Join(peerList, ",")
-	masterOptions.peers = &peers
+	if *isStartingMasterServer {
+		_, peerList := checkPeers(*serverIp, *masterOptions.port, *masterOptions.peers)
+		peers := strings.Join(peerList, ",")
+		masterOptions.peers = &peers
+	}
 
 	// ip address
 	masterOptions.ip = serverIp
