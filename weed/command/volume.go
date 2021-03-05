@@ -251,6 +251,9 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		}
 	}
 
+	// starting tcp server
+	go v.startTcpService(volumeServer)
+
 	// starting the cluster http server
 	clusterHttpServer := v.startClusterHttpService(volumeMux)
 
@@ -367,4 +370,23 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 		}
 	}()
 	return clusterHttpServer
+}
+
+func (v VolumeServerOptions) startTcpService(volumeServer *weed_server.VolumeServer) {
+	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port+20000)
+	glog.V(0).Infoln("Start Seaweed volume server", util.Version(), "tcp at", listeningAddress)
+	listener, e := util.NewListener(listeningAddress, 0)
+	if e != nil {
+		glog.Fatalf("Volume server listener error on %s:%v", listeningAddress, e)
+	}
+	defer listener.Close()
+
+	for {
+		c, err := listener.Accept()
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		go volumeServer.HandleTcpConnection(c)
+	}
 }

@@ -2,6 +2,8 @@ package needle
 
 import (
 	"fmt"
+	"hash"
+	"io"
 
 	"github.com/klauspost/crc32"
 
@@ -29,3 +31,25 @@ func (n *Needle) Etag() string {
 	util.Uint32toBytes(bits, uint32(n.Checksum))
 	return fmt.Sprintf("%x", bits)
 }
+
+func NewCRCwriter(w io.Writer) *CRCwriter {
+
+	return &CRCwriter{
+		h: crc32.New(table),
+		w: w,
+	}
+
+}
+
+type CRCwriter struct {
+	h hash.Hash32
+	w io.Writer
+}
+
+func (c *CRCwriter) Write(p []byte) (n int, err error) {
+	n, err = c.w.Write(p) // with each write ...
+	c.h.Write(p)          // ... update the hash
+	return
+}
+
+func (c *CRCwriter) Sum() uint32 { return c.h.Sum32() } // final hash
