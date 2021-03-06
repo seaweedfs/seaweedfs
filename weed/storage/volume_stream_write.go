@@ -48,8 +48,6 @@ func (v *Volume) StreamWrite(n *needle.Needle, data io.Reader, dataSize uint32) 
 
 	// data checksum
 	util.Uint32toBytes(header[0:needle.NeedleChecksumSize], crcWriter.Sum())
-	df.Write(header[0:needle.NeedleChecksumSize])
-
 	// write timestamp, padding
 	n.AppendAtNs = uint64(time.Now().UnixNano())
 	util.Uint64toBytes(header[needle.NeedleChecksumSize:needle.NeedleChecksumSize+TimestampSize], n.AppendAtNs)
