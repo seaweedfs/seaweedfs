@@ -122,6 +122,7 @@ SeaweedFS can work as a distributed [Key-Large-Value store][KeyLargeValueStore].
 * Support ETag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/readonly mode tuning for memory/performance balance.
 * Support rebalancing the writable and readonly volumes.
+* [Customizable Multiple Storage Tiers][TieredStorage]: Customizable storage disk types to balance performance and cost.
 * [Transparent cloud integration][CloudTier]: unlimited capacity via tiered cloud storage for warm data.
 * [Erasure Coding for warm storage][ErasureCoding]  Rack-Aware 10.4 erasure coding reduces storage cost and increases availability.
 
@@ -152,6 +153,7 @@ SeaweedFS can work as a distributed [Key-Large-Value store][KeyLargeValueStore].
 [Hadoop]: https://github.com/chrislusf/seaweedfs/wiki/Hadoop-Compatible-File-System
 [WebDAV]: https://github.com/chrislusf/seaweedfs/wiki/WebDAV
 [ErasureCoding]: https://github.com/chrislusf/seaweedfs/wiki/Erasure-coding-for-warm-storage
+[TieredStorage]: https://github.com/chrislusf/seaweedfs/wiki/Tiered-Storage
 [CloudTier]: https://github.com/chrislusf/seaweedfs/wiki/Cloud-Tier
 [FilerDataEncryption]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Data-Encryption
 [FilerTTL]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Stores
