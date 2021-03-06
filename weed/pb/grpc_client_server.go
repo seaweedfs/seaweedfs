@@ -109,15 +109,19 @@ func WithCachedGrpcClient(fn func(*grpc.ClientConn) error, address string, opts 
 }
 
 func ParseServerToGrpcAddress(server string) (serverGrpcAddress string, err error) {
+	return ParseServerAddress(server, 10000)
+}
+
+func ParseServerAddress(server string, deltaPort int) (newServerAddress string, err error) {
 
 	host, port, parseErr := hostAndPort(server)
 	if parseErr != nil {
 		return "", fmt.Errorf("server port parse error: %v", parseErr)
 	}
 
-	grpcPort := int(port) + 10000
+	newPort := int(port) + deltaPort
 
-	return fmt.Sprintf("%s:%d", host, grpcPort), nil
+	return fmt.Sprintf("%s:%d", host, newPort), nil
 }
 
 func hostAndPort(address string) (host string, port uint64, err error) {
