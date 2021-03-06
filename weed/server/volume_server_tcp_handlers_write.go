@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"io"
 	"net"
 	"strings"
 )
@@ -21,9 +22,12 @@ func (vs *VolumeServer) HandleTcpConnection(c net.Conn) {
 	for {
 		cmd, err := bufReader.ReadString('\n')
 		if err != nil {
-			glog.Errorf("read command from %s: %v", c.RemoteAddr().String(), err)
+			if err != io.EOF {
+				glog.Errorf("read command from %s: %v", c.RemoteAddr().String(), err)
+			}
 			return
 		}
+		cmd = cmd[:len(cmd)-1]
 		switch cmd[0] {
 		case '+':
 			fileId := cmd[1:]
