@@ -62,6 +62,7 @@ type VolumeServerOptions struct {
 	preStopSeconds        *int
 	metricsHttpPort       *int
 	// pulseSeconds          *int
+	enableTcp *bool
 }
 
 func init() {
@@ -88,6 +89,7 @@ func init() {
 	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
 	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
+	v.enableTcp = cmdVolume.Flag.Bool("tcp", false, "<exprimental> enable tcp port")
 }
 
 var cmdVolume = &Command{
@@ -252,7 +254,9 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	}
 
 	// starting tcp server
-	go v.startTcpService(volumeServer)
+	if *v.enableTcp {
+		go v.startTcpService(volumeServer)
+	}
 
 	// starting the cluster http server
 	clusterHttpServer := v.startClusterHttpService(volumeMux)
