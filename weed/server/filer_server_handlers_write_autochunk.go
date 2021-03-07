@@ -38,10 +38,10 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 
 	chunkSize := 1024 * 1024 * maxMB
 
-	stats.FilerRequestCounter.WithLabelValues("postAutoChunk").Inc()
+	stats.FilerRequestCounter.WithLabelValues("chunk").Inc()
 	start := time.Now()
 	defer func() {
-		stats.FilerRequestHistogram.WithLabelValues("postAutoChunk").Observe(time.Since(start).Seconds())
+		stats.FilerRequestHistogram.WithLabelValues("chunk").Observe(time.Since(start).Seconds())
 	}()
 
 	var reply *FilerPostResult
@@ -302,13 +302,16 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 
 func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *http.Request, limitedReader io.Reader, fileName string, contentType string, pairMap map[string]string, auth security.EncodedJwt) (*operation.UploadResult, error, []byte) {
 
-	stats.FilerRequestCounter.WithLabelValues("postAutoChunkUpload").Inc()
+	stats.FilerRequestCounter.WithLabelValues("chunkUpload").Inc()
 	start := time.Now()
 	defer func() {
-		stats.FilerRequestHistogram.WithLabelValues("postAutoChunkUpload").Observe(time.Since(start).Seconds())
+		stats.FilerRequestHistogram.WithLabelValues("chunkUpload").Observe(time.Since(start).Seconds())
 	}()
 
 	uploadResult, err, data := operation.Upload(urlLocation, fileName, fs.option.Cipher, limitedReader, false, contentType, pairMap, auth)
+	if uploadResult != nil && uploadResult.RetryCount > 0 {
+		stats.FilerRequestCounter.WithLabelValues("chunkUploadRetry").Add(float64(uploadResult.RetryCount))
+	}
 	return uploadResult, err, data
 }
 
