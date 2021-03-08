@@ -29,12 +29,15 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	// load cert/key, ca cert
 	cert, err := tls.LoadX509KeyPair(config.GetString(component+".cert"), config.GetString(component+".key"))
 	if err != nil {
-		glog.V(1).Infof("load cert/key error: %v", err)
+		glog.V(1).Infof("load cert: %s / key: %s error: %v",
+			config.GetString(component+".cert"),
+			config.GetString(component+".key"),
+			err)
 		return nil, nil
 	}
 	caCert, err := ioutil.ReadFile(config.GetString("grpc.ca"))
 	if err != nil {
-		glog.V(1).Infof("read ca cert file error: %v", err)
+		glog.V(1).Infof("read ca cert file %s error: %v", config.GetString("grpc.ca"), err)
 		return nil, nil
 	}
 	caCertPool := x509.NewCertPool()
@@ -44,11 +47,11 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		ClientCAs:    caCertPool,
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 	})
-	permitCommonNames := config.GetStringSlice(component + "permitCommonNames")
 
+	permitCommonNames := config.GetStringSlice(component + ".allowed_commonNames")
 	if len(permitCommonNames) > 0 {
 		permitCommonNamesMap := make(map[string]bool)
-		for _, s := range util.GetViper().GetStringSlice(component + "permitCommonNames") {
+		for _, s := range permitCommonNames {
 			permitCommonNamesMap[s] = true
 		}
 		auther := Authenticator{

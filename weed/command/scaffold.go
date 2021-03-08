@@ -444,25 +444,28 @@ ca = ""
 [grpc.volume]
 cert = ""
 key  = ""
+allowed_commonNames = ""
 
 [grpc.master]
 cert = ""
 key  = ""
+allowed_commonNames = ""
 
 [grpc.filer]
 cert = ""
 key  = ""
+allowed_commonNames = ""
 
 [grpc.msg_broker]
 cert = ""
 key  = ""
+allowed_commonNames = ""
 
 # use this for any place needs a grpc client
 # i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
 [grpc.client]
 cert = ""
 key  = ""
-
 
 # volume server https options
 # Note: work in progress!
