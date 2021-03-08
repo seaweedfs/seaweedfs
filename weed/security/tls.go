@@ -1,9 +1,14 @@
 package security
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	grpc_auth "github.com/grpc-ecosystem/go-grpc-middleware/auth"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 	"io/ioutil"
 
 	"google.golang.org/grpc"
@@ -12,21 +17,25 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
-func LoadServerTLS(config *util.ViperProxy, component string) grpc.ServerOption {
+type Authenticator struct {
+	PermitCommonNames map[string]bool
+}
+
+func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption, grpc.ServerOption) {
 	if config == nil {
-		return nil
+		return nil, nil
 	}
 
 	// load cert/key, ca cert
 	cert, err := tls.LoadX509KeyPair(config.GetString(component+".cert"), config.GetString(component+".key"))
 	if err != nil {
 		glog.V(1).Infof("load cert/key error: %v", err)
-		return nil
+		return nil, nil
 	}
 	caCert, err := ioutil.ReadFile(config.GetString("grpc.ca"))
 	if err != nil {
 		glog.V(1).Infof("read ca cert file error: %v", err)
-		return nil
+		return nil, nil
 	}
 	caCertPool := x509.NewCertPool()
 	caCertPool.AppendCertsFromPEM(caCert)
@@ -35,8 +44,19 @@ func LoadServerTLS(config *util.ViperProxy, component string) grpc.ServerOption 
 		ClientCAs:    caCertPool,
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 	})
+	permitCommonNames := config.GetStringSlice(component + "permitCommonNames")
 
-	return grpc.Creds(ta)
+	if len(permitCommonNames) > 0 {
+		permitCommonNamesMap := make(map[string]bool)
+		for _, s := range util.GetViper().GetStringSlice(component + "permitCommonNames") {
+			permitCommonNamesMap[s] = true
+		}
+		auther := Authenticator{
+			PermitCommonNames: permitCommonNamesMap,
+		}
+		return grpc.Creds(ta), grpc.UnaryInterceptor(grpc_auth.UnaryServerInterceptor(auther.Authenticate))
+	}
+	return grpc.Creds(ta), nil
 }
 
 func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
@@ -69,4 +89,25 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 		InsecureSkipVerify: true,
 	})
 	return grpc.WithTransportCredentials(ta)
+}
+
+func (a Authenticator) Authenticate(ctx context.Context) (newCtx context.Context, err error) {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return ctx, status.Error(codes.Unauthenticated, "no peer found")
+	}
+
+	tlsAuth, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok {
+		return ctx, status.Error(codes.Unauthenticated, "unexpected peer transport credentials")
+	}
+
+	if len(tlsAuth.State.VerifiedChains) == 0 || len(tlsAuth.State.VerifiedChains[0]) == 0 {
+		return ctx, status.Error(codes.Unauthenticated, "could not verify peer certificate")
+	}
+
+	if _, ok := a.PermitCommonNames[tlsAuth.State.VerifiedChains[0][0].Subject.CommonName]; !ok {
+		return ctx, status.Error(codes.Unauthenticated, "invalid subject common name")
+	}
+	return ctx, nil
 }
