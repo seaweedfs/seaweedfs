@@ -48,7 +48,7 @@ require (
 	github.com/klauspost/crc32 v1.2.0
 	github.com/klauspost/reedsolomon v1.9.2
 	github.com/kurin/blazer v0.5.3
-	github.com/lib/pq v1.2.0
+	github.com/lib/pq v1.10.0
 	github.com/lunixbochs/vtclean v1.0.0 // indirect
 	github.com/magiconair/properties v1.8.1 // indirect
 	github.com/mattn/go-colorable v0.1.2 // indirect
