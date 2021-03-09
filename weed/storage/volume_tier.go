@@ -16,7 +16,7 @@ func (v *Volume) GetVolumeInfo() *volume_server_pb.VolumeInfo {
 func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 
 	var err error
-	v.volumeInfo, v.hasRemoteFile, err = pb.MaybeLoadVolumeInfo(v.FileName(".vif"))
+	v.volumeInfo, v.hasRemoteFile, found, err = pb.MaybeLoadVolumeInfo(v.FileName(".vif"))
 
 	if v.volumeInfo.Version == 0 {
 		v.volumeInfo.Version = uint32(needle.CurrentVersion)
@@ -29,10 +29,10 @@ func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 
 	if err != nil {
 		glog.Warningf("load volume %d.vif file: %v", v.Id, err)
-		return false
+		return
 	}
 
-	return true
+	return
 
 }
 
