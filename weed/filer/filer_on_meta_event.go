@@ -11,6 +11,10 @@ import (
 
 // onMetadataChangeEvent is triggered after filer processed change events from local or remote filers
 func (f *Filer) onMetadataChangeEvent(event *filer_pb.SubscribeMetadataResponse) {
+	f.maybeReloadFilerConfiguration(event)
+}
+
+func (f *Filer) maybeReloadFilerConfiguration(event *filer_pb.SubscribeMetadataResponse) {
 	if DirectoryEtcSeaweedFS != event.Directory {
 		if DirectoryEtcSeaweedFS != event.EventNotification.NewParentPath {
 			return
@@ -26,7 +30,6 @@ func (f *Filer) onMetadataChangeEvent(event *filer_pb.SubscribeMetadataResponse)
 	if entry.Name == FilerConfName {
 		f.reloadFilerConfiguration(entry)
 	}
-
 }
 
 func (f *Filer) readEntry(chunks []*filer_pb.FileChunk) ([]byte, error) {
