@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"io/ioutil"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -48,7 +49,7 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 	})
 
-	permitCommonNames := config.GetStringSlice(component + ".allowed_commonNames")
+	permitCommonNames := strings.Split(config.GetString(component+".allowed_commonNames"), ",")
 	if len(permitCommonNames) > 0 {
 		permitCommonNamesMap := make(map[string]bool)
 		for _, s := range permitCommonNames {
