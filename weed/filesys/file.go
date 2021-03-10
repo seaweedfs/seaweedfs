@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/fuse"
@@ -33,6 +34,7 @@ type File struct {
 	dir            *Dir
 	wfs            *WFS
 	entry          *filer_pb.Entry
+	entryLock      sync.RWMutex
 	entryViewCache []filer.VisibleInterval
 	isOpen         int
 	reader         io.ReaderAt
@@ -47,7 +49,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 
 	glog.V(4).Infof("file Attr %s, open:%v existing:%v", file.fullpath(), file.isOpen, attr)
 
-	entry := file.entry
+	entry := file.getEntry()
 	if file.isOpen <= 0 || entry == nil {
 		if entry, err = file.maybeLoadEntry(ctx); err != nil {
 			return err
@@ -258,7 +260,7 @@ func (file *File) Forget() {
 }
 
 func (file *File) maybeLoadEntry(ctx context.Context) (entry *filer_pb.Entry, err error) {
-	entry = file.entry
+	entry = file.getEntry()
 	if file.isOpen > 0 {
 		return entry, nil
 	}
@@ -299,8 +301,13 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 		}
 	}
 
+	entry := file.getEntry()
+	if entry == nil {
+		return
+	}
+
 	// pick out-of-order chunks from existing chunks
-	for _, chunk := range file.entry.Chunks {
+	for _, chunk := range entry.Chunks {
 		if lessThan(earliestChunk, chunk) {
 			chunks = append(chunks, chunk)
 		}
@@ -318,18 +325,22 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 
 	file.reader = nil
 
-	glog.V(4).Infof("%s existing %d chunks adds %d more", file.fullpath(), len(file.entry.Chunks), len(chunks))
+	glog.V(4).Infof("%s existing %d chunks adds %d more", file.fullpath(), len(entry.Chunks), len(chunks))
 
-	file.entry.Chunks = append(file.entry.Chunks, newChunks...)
+	entry.Chunks = append(entry.Chunks, newChunks...)
 }
 
 func (file *File) setEntry(entry *filer_pb.Entry) {
+	file.entryLock.Lock()
+	defer file.entryLock.Unlock()
 	file.entry = entry
 	file.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(file.wfs.LookupFn(), entry.Chunks)
 	file.reader = nil
 }
 
 func (file *File) clearEntry() {
+	file.entryLock.Lock()
+	defer file.entryLock.Unlock()
 	file.entry = nil
 	file.entryViewCache = nil
 	file.reader = nil
@@ -358,4 +369,10 @@ func (file *File) saveEntry(entry *filer_pb.Entry) error {
 
 		return nil
 	})
+}
+
+func (file *File) getEntry() *filer_pb.Entry {
+	file.entryLock.RLock()
+	defer file.entryLock.RUnlock()
+	return file.entry
 }
