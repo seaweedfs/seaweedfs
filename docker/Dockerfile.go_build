@@ -6,7 +6,7 @@ ARG BRANCH=${BRANCH:-master}
 RUN cd /go/src/github.com/chrislusf/seaweedfs && git checkout $BRANCH
 RUN cd /go/src/github.com/chrislusf/seaweedfs/weed \
   && export LDFLAGS="-X github.com/chrislusf/seaweedfs/weed/util.COMMIT=$(git rev-parse --short HEAD)" \
-  && go install -ldflags "${LDFLAGS}"
+  && CGO_ENABLED=0 go install -ldflags "-extldflags -static ${LDFLAGS}"
 
 FROM alpine AS final
 LABEL author="Chris Lu"
