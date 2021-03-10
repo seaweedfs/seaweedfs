@@ -50,11 +50,11 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 	})
 
-	allowedCommonNames := strings.Split(config.GetString(component+".allowed_commonNames"), ",")
+	allowedCommonNames := config.GetString(component + ".allowed_commonNames")
 	allowedWildcardDomain := config.GetString("grpc.allowed_wildcard_domain")
-	if len(allowedCommonNames) > 0 || allowedWildcardDomain != "" {
+	if allowedCommonNames != "" || allowedWildcardDomain != "" {
 		allowedCommonNamesMap := make(map[string]bool)
-		for _, s := range allowedCommonNames {
+		for _, s := range strings.Split(allowedCommonNames, ",") {
 			allowedCommonNamesMap[s] = true
 		}
 		auther := Authenticator{
@@ -108,10 +108,10 @@ func (a Authenticator) Authenticate(ctx context.Context) (newCtx context.Context
 	if !ok {
 		return ctx, status.Error(codes.Unauthenticated, "unexpected peer transport credentials")
 	}
-
 	if len(tlsAuth.State.VerifiedChains) == 0 || len(tlsAuth.State.VerifiedChains[0]) == 0 {
 		return ctx, status.Error(codes.Unauthenticated, "could not verify peer certificate")
 	}
+
 	commonName := tlsAuth.State.VerifiedChains[0][0].Subject.CommonName
 	if a.AllowedWildcardDomain != "" && strings.HasSuffix(commonName, a.AllowedWildcardDomain) {
 		return ctx, nil
@@ -119,5 +119,6 @@ func (a Authenticator) Authenticate(ctx context.Context) (newCtx context.Context
 	if _, ok := a.AllowedCommonNames[commonName]; ok {
 		return ctx, nil
 	}
-	return ctx, status.Error(codes.Unauthenticated, "invalid subject common name")
+
+	return ctx, status.Errorf(codes.Unauthenticated, "invalid subject common name: %s", commonName)
 }
