@@ -444,22 +444,22 @@ ca = ""
 [grpc.volume]
 cert = ""
 key  = ""
-allowed_commonNames = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
 
 [grpc.master]
 cert = ""
 key  = ""
-allowed_commonNames = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
 
 [grpc.filer]
 cert = ""
 key  = ""
-allowed_commonNames = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
 
 [grpc.msg_broker]
 cert = ""
 key  = ""
-allowed_commonNames = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
 
 # use this for any place needs a grpc client
 # i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
