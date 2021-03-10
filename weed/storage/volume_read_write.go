@@ -104,47 +104,8 @@ func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size Size, isUnchan
 		err = fmt.Errorf("volume size limit %d exceeded! current size is %d", MaxPossibleVolumeSize, v.nm.ContentSize())
 		return
 	}
-	if v.isFileUnchanged(n) {
-		size = Size(n.DataSize)
-		isUnchanged = true
-		return
-	}
 
-	// check whether existing needle cookie matches
-	nv, ok := v.nm.Get(n.Id)
-	if ok {
-		existingNeedle, _, _, existingNeedleReadErr := needle.ReadNeedleHeader(v.DataBackend, v.Version(), nv.Offset.ToActualOffset())
-		if existingNeedleReadErr != nil {
-			err = fmt.Errorf("reading existing needle: %v", existingNeedleReadErr)
-			return
-		}
-		if existingNeedle.Cookie != n.Cookie {
-			glog.V(0).Infof("write cookie mismatch: existing %x, new %x", existingNeedle.Cookie, n.Cookie)
-			err = fmt.Errorf("mismatching cookie %x", n.Cookie)
-			return
-		}
-	}
-
-	// append to dat file
-	n.AppendAtNs = uint64(time.Now().UnixNano())
-	offset, size, _, err = n.Append(v.DataBackend, v.Version())
-	v.checkReadWriteError(err)
-	if err != nil {
-		return
-	}
-
-	v.lastAppendAtNs = n.AppendAtNs
-
-	// add to needle map
-	if !ok || uint64(nv.Offset.ToActualOffset()) < offset {
-		if err = v.nm.Put(n.Id, ToOffset(int64(offset)), n.Size); err != nil {
-			glog.V(4).Infof("failed to save in needle map %d: %v", n.Id, err)
-		}
-	}
-	if v.lastModifiedTsSeconds < n.LastModified {
-		v.lastModifiedTsSeconds = n.LastModified
-	}
-	return
+	return v.doWriteRequest(n)
 }
 
 func (v *Volume) writeNeedle2(n *needle.Needle, fsync bool) (offset uint64, size Size, isUnchanged bool, err error) {
@@ -223,24 +184,7 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 		return 0, err
 	}
 
-	nv, ok := v.nm.Get(n.Id)
-	// fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
-	if ok && nv.Size.IsValid() {
-		size := nv.Size
-		n.Data = nil
-		n.AppendAtNs = uint64(time.Now().UnixNano())
-		offset, _, _, err := n.Append(v.DataBackend, v.Version())
-		v.checkReadWriteError(err)
-		if err != nil {
-			return size, err
-		}
-		v.lastAppendAtNs = n.AppendAtNs
-		if err = v.nm.Delete(n.Id, ToOffset(int64(offset))); err != nil {
-			return size, err
-		}
-		return size, err
-	}
-	return 0, nil
+	return v.doDeleteRequest(n)
 }
 
 func (v *Volume) deleteNeedle2(n *needle.Needle) (Size, error) {
