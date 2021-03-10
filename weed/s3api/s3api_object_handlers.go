@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -69,7 +70,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	} else {
-		uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
+		uploadUrl := s3a.buildUploadUrl(bucket, object)
 
 		etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
 
@@ -82,6 +83,15 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeSuccessResponseEmpty(w)
+}
+
+func (s3a *S3ApiServer) buildUploadUrl(bucket string, object string) string {
+	var escapedParts []string
+	for _, part := range strings.Split(object, "/") {
+		escapedParts = append(escapedParts, url.PathEscape(part))
+	}
+	object = strings.Join(escapedParts, "/")
+	return fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
 }
 
 func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {

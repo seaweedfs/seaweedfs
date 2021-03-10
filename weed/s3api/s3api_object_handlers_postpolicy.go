@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/s3api/policy"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"github.com/dustin/go-humanize"
@@ -110,7 +109,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	uploadUrl := fmt.Sprintf("http://%s%s/%s/%s", s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
+	uploadUrl := s3a.buildUploadUrl(bucket, object)
 
 	etag, errCode := s3a.putToFiler(r, uploadUrl, fileBody)
 
