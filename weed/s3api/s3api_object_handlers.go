@@ -15,6 +15,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	weed_server "github.com/chrislusf/seaweedfs/weed/server"
@@ -193,7 +194,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			parentDirectoryPath = fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, parentDirectoryPath)
 
 			err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
-			if err == nil {
+			if err == nil || strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
 				directoriesWithDeletion[parentDirectoryPath]++
 				deletedObjects = append(deletedObjects, object)
 			} else {
