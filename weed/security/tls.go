@@ -19,7 +19,8 @@ import (
 )
 
 type Authenticator struct {
-	PermitCommonNames map[string]bool
+	AllowedWildcardDomain string
+	AllowedCommonNames    map[string]bool
 }
 
 func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption, grpc.ServerOption) {
@@ -49,14 +50,16 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 	})
 
-	permitCommonNames := strings.Split(config.GetString(component+".allowed_commonNames"), ",")
-	if len(permitCommonNames) > 0 {
-		permitCommonNamesMap := make(map[string]bool)
-		for _, s := range permitCommonNames {
-			permitCommonNamesMap[s] = true
+	allowedCommonNames := strings.Split(config.GetString(component+".allowed_commonNames"), ",")
+	allowedWildcardDomain := config.GetString("grpc.allowed_wildcard_domain")
+	if len(allowedCommonNames) > 0 || allowedWildcardDomain != "" {
+		allowedCommonNamesMap := make(map[string]bool)
+		for _, s := range allowedCommonNames {
+			allowedCommonNamesMap[s] = true
 		}
 		auther := Authenticator{
-			PermitCommonNames: permitCommonNamesMap,
+			AllowedCommonNames:    allowedCommonNamesMap,
+			AllowedWildcardDomain: allowedWildcardDomain,
 		}
 		return grpc.Creds(ta), grpc.UnaryInterceptor(grpc_auth.UnaryServerInterceptor(auther.Authenticate))
 	}
@@ -109,9 +112,12 @@ func (a Authenticator) Authenticate(ctx context.Context) (newCtx context.Context
 	if len(tlsAuth.State.VerifiedChains) == 0 || len(tlsAuth.State.VerifiedChains[0]) == 0 {
 		return ctx, status.Error(codes.Unauthenticated, "could not verify peer certificate")
 	}
-
-	if _, ok := a.PermitCommonNames[tlsAuth.State.VerifiedChains[0][0].Subject.CommonName]; !ok {
-		return ctx, status.Error(codes.Unauthenticated, "invalid subject common name")
+	commonName := tlsAuth.State.VerifiedChains[0][0].Subject.CommonName
+	if a.AllowedWildcardDomain != "" && strings.HasSuffix(commonName, a.AllowedWildcardDomain) {
+		return ctx, nil
 	}
-	return ctx, nil
+	if _, ok := a.AllowedCommonNames[commonName]; ok {
+		return ctx, nil
+	}
+	return ctx, status.Error(codes.Unauthenticated, "invalid subject common name")
 }

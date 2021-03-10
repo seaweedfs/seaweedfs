@@ -48,11 +48,11 @@ clean:
 certstrap:
 	go get github.com/square/certstrap
 	certstrap --depot-path compose/tls init --passphrase "" --common-name "SeaweedFS CA" || true
-	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name volume01 || true
-	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name master01 || true
-	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name filer01 || true
-	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name client01 || true
-	certstrap --depot-path compose/tls sign --CA "SeaweedFS CA" volume01 || true
-	certstrap --depot-path compose/tls sign --CA "SeaweedFS CA" master01 || true
-	certstrap --depot-path compose/tls sign --CA "SeaweedFS CA" filer01 || true
-	certstrap --depot-path compose/tls sign --CA "SeaweedFS CA" client01 || true
+	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name volume01.dev || true
+	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name master01.dev || true
+	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name filer01.dev || true
+	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name client01.dev || true
+	certstrap --depot-path compose/tls sign --CA "SeaweedFS CA" volume01.dev || true
+	certstrap --depot-path compose/tls sign --CA "SeaweedFS CA" master01.dev || true
+	certstrap --depot-path compose/tls sign --CA "SeaweedFS CA" filer01.dev || true
+	certstrap --depot-path compose/tls sign --CA "SeaweedFS CA" client01.dev || true

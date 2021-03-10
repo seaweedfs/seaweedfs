@@ -440,6 +440,7 @@ expires_after_seconds = 10           # seconds
 # the host name is not checked, so the PERM files can be shared.
 [grpc]
 ca = ""
+allowed_wildcard_domain = "" # .mycompany.com
 
 [grpc.volume]
 cert = ""
