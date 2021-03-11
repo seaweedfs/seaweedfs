@@ -31,6 +31,10 @@ func (s3a *S3ApiServer) list(parentDirectoryPath, prefix, startFrom string, incl
 		return nil
 	}, startFrom, inclusive, limit)
 
+	if len(entries) == 0 {
+		isLast = true
+	}
+
 	return
 
 }
