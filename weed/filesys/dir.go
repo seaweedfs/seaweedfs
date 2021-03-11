@@ -251,10 +251,10 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (node fs.Node, err error) {
 
-	glog.V(4).Infof("dir Lookup %s: %s by %s", dir.FullPath(), req.Name, req.Header.String())
-
-	fullFilePath := util.NewFullPath(dir.FullPath(), req.Name)
 	dirPath := util.FullPath(dir.FullPath())
+	glog.V(4).Infof("dir Lookup %s: %s by %s", dirPath, req.Name, req.Header.String())
+
+	fullFilePath := dirPath.Child(req.Name)
 	visitErr := meta_cache.EnsureVisited(dir.wfs.metaCache, dir.wfs, dirPath)
 	if visitErr != nil {
 		glog.Errorf("dir Lookup %s: %v", dirPath, visitErr)
@@ -305,7 +305,8 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
-	glog.V(4).Infof("dir ReadDirAll %s", dir.FullPath())
+	dirPath := util.FullPath(dir.FullPath())
+	glog.V(4).Infof("dir ReadDirAll %s", dirPath)
 
 	processEachEntryFn := func(entry *filer_pb.Entry, isLast bool) error {
 		if entry.IsDirectory {
@@ -318,12 +319,11 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 		return nil
 	}
 
-	dirPath := util.FullPath(dir.FullPath())
 	if err = meta_cache.EnsureVisited(dir.wfs.metaCache, dir.wfs, dirPath); err != nil {
 		glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 		return nil, fuse.EIO
 	}
-	listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), util.FullPath(dir.FullPath()), "", false, int64(math.MaxInt32), func(entry *filer.Entry) bool {
+	listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, "", false, int64(math.MaxInt32), func(entry *filer.Entry) bool {
 		processEachEntryFn(entry.ToProtoEntry(), false)
 		return true
 	})

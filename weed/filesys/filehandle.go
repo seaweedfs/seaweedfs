@@ -111,15 +111,16 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 	}
 
 	fileSize := int64(filer.FileSize(entry))
+	fileFullPath := fh.f.fullpath()
 
 	if fileSize == 0 {
-		glog.V(1).Infof("empty fh %v", fh.f.fullpath())
+		glog.V(1).Infof("empty fh %v", fileFullPath)
 		return 0, io.EOF
 	}
 
 	if offset+int64(len(buff)) <= int64(len(entry.Content)) {
 		totalRead := copy(buff, entry.Content[offset:])
-		glog.V(4).Infof("file handle read cached %s [%d,%d] %d", fh.f.fullpath(), offset, offset+int64(totalRead), totalRead)
+		glog.V(4).Infof("file handle read cached %s [%d,%d] %d", fileFullPath, offset, offset+int64(totalRead), totalRead)
 		return int64(totalRead), nil
 	}
 
@@ -142,10 +143,10 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 	totalRead, err := reader.ReadAt(buff, offset)
 
 	if err != nil && err != io.EOF {
-		glog.Errorf("file handle read %s: %v", fh.f.fullpath(), err)
+		glog.Errorf("file handle read %s: %v", fileFullPath, err)
 	}
 
-	glog.V(4).Infof("file handle read %s [%d,%d] %d : %v", fh.f.fullpath(), offset, offset+int64(totalRead), totalRead, err)
+	glog.V(4).Infof("file handle read %s [%d,%d] %d : %v", fileFullPath, offset, offset+int64(totalRead), totalRead, err)
 
 	return int64(totalRead), err
 }
