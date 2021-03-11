@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -204,6 +205,8 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
 			if err == nil {
 				directoriesWithDeletion[parentDirectoryPath]++
+				deletedObjects = append(deletedObjects, object)
+			} else if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
 				deletedObjects = append(deletedObjects, object)
 			} else {
 				delete(directoriesWithDeletion, parentDirectoryPath)
