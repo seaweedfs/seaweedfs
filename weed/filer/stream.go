@@ -15,7 +15,7 @@ import (
 
 func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
 
-	// fmt.Printf("start to stream content for chunks: %+v\n", chunks)
+	glog.V(9).Infof("start to stream content for chunks: %+v\n", chunks)
 	chunkViews := ViewFromChunks(masterClient.GetLookupFileIdFunction(), chunks, offset, size)
 
 	fileId2Url := make(map[string][]string)
@@ -38,7 +38,14 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 		if err != nil {
 			glog.Errorf("read chunk: %v", err)
 			return fmt.Errorf("read chunk: %v", err)
+		} else if len(data) == 0 {
+			glog.Errorf("data size zero read chunk: %s", urlStrings)
+			return fmt.Errorf("data size zero read chunk: %s", urlStrings)
+		} else if len(chunkViews) == 1 && int64(len(data)) != size {
+			glog.Errorf("data size not eq %i read chunk: %s", size, urlStrings)
+			return fmt.Errorf("data size not eq %i read chunk: %s", size, urlStrings)
 		}
+
 		_, err = w.Write(data)
 		if err != nil {
 			glog.Errorf("write chunk: %v", err)
