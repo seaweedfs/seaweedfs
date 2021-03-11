@@ -156,7 +156,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		}
 		if offset+size <= int64(len(entry.Content)) {
 			_, err := writer.Write(entry.Content[offset : offset+size])
-			glog.Errorf("failed to write entry content: %v", err)
+			if err != nil {
+				glog.Errorf("failed to write entry content: %v", err)
+			}
 			return err
 		}
 		return filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size)
