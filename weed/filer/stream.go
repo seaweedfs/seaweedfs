@@ -15,7 +15,7 @@ import (
 
 func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
 
-	// fmt.Printf("start to stream content for chunks: %+v\n", chunks)
+	glog.V(9).Infof("start to stream content for chunks: %+v\n", chunks)
 	chunkViews := ViewFromChunks(masterClient.GetLookupFileIdFunction(), chunks, offset, size)
 
 	fileId2Url := make(map[string][]string)
@@ -26,6 +26,9 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 		if err != nil {
 			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 			return err
+		} else if len(urlStrings) == 0 {
+			glog.Errorf("operation LookupFileId %s failed, err: urls not found", chunkView.FileId)
+			return fmt.Errorf("operation LookupFileId %s failed, err: urls not found", chunkView.FileId)
 		}
 		fileId2Url[chunkView.FileId] = urlStrings
 	}
@@ -39,6 +42,7 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 			glog.Errorf("read chunk: %v", err)
 			return fmt.Errorf("read chunk: %v", err)
 		}
+
 		_, err = w.Write(data)
 		if err != nil {
 			glog.Errorf("write chunk: %v", err)
