@@ -54,7 +54,7 @@ func init() {
 	f.masters = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this default collection")
 	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
-	f.bindIp = cmdFiler.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
+	f.bindIp = cmdFiler.Flag.String("ip.bind", "", "ip address to bind to")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "", "default replication type. If not specified, use master setting.")

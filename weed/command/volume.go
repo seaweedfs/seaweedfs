@@ -71,7 +71,7 @@ func init() {
 	v.publicPort = cmdVolume.Flag.Int("port.public", 0, "port opened to public")
 	v.ip = cmdVolume.Flag.String("ip", util.DetectedHostAddress(), "ip or server name")
 	v.publicUrl = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible address")
-	v.bindIp = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
+	v.bindIp = cmdVolume.Flag.String("ip.bind", "", "ip address to bind to")
 	v.masters = cmdVolume.Flag.String("mserver", "localhost:9333", "comma-separated master servers")
 	v.preStopSeconds = cmdVolume.Flag.Int("preStopSeconds", 10, "number of seconds between stop send heartbeats and stop volume server")
 	// v.pulseSeconds = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
