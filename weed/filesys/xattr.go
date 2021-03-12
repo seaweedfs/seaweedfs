@@ -2,6 +2,7 @@ package filesys
 
 import (
 	"context"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 
 	"github.com/seaweedfs/fuse"
 
@@ -10,7 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func getxattr(entry *filer_pb.Entry, req *fuse.GetxattrRequest, resp *fuse.GetxattrResponse) error {
+func getxattr(entry *filer.Entry, req *fuse.GetxattrRequest, resp *fuse.GetxattrResponse) error {
 
 	if entry == nil {
 		return fuse.ErrNoXattr
@@ -38,7 +39,7 @@ func getxattr(entry *filer_pb.Entry, req *fuse.GetxattrRequest, resp *fuse.Getxa
 
 }
 
-func setxattr(entry *filer_pb.Entry, req *fuse.SetxattrRequest) error {
+func setxattr(entry *filer.Entry, req *fuse.SetxattrRequest) error {
 
 	if entry == nil {
 		return fuse.EIO
@@ -61,7 +62,7 @@ func setxattr(entry *filer_pb.Entry, req *fuse.SetxattrRequest) error {
 
 }
 
-func removexattr(entry *filer_pb.Entry, req *fuse.RemovexattrRequest) error {
+func removexattr(entry *filer.Entry, req *fuse.RemovexattrRequest) error {
 
 	if entry == nil {
 		return fuse.ErrNoXattr
@@ -83,7 +84,7 @@ func removexattr(entry *filer_pb.Entry, req *fuse.RemovexattrRequest) error {
 
 }
 
-func listxattr(entry *filer_pb.Entry, req *fuse.ListxattrRequest, resp *fuse.ListxattrResponse) error {
+func listxattr(entry *filer.Entry, req *fuse.ListxattrRequest, resp *fuse.ListxattrResponse) error {
 
 	if entry == nil {
 		return fuse.EIO
@@ -108,7 +109,7 @@ func listxattr(entry *filer_pb.Entry, req *fuse.ListxattrRequest, resp *fuse.Lis
 
 }
 
-func (wfs *WFS) maybeLoadEntry(dir, name string) (entry *filer_pb.Entry, err error) {
+func (wfs *WFS) maybeLoadEntry(dir, name string) (entry *filer.Entry, err error) {
 
 	fullpath := util.NewFullPath(dir, name)
 	// glog.V(3).Infof("read entry cache miss %s", fullpath)
@@ -119,5 +120,5 @@ func (wfs *WFS) maybeLoadEntry(dir, name string) (entry *filer_pb.Entry, err err
 	if cacheErr == filer_pb.ErrNotFound {
 		return nil, fuse.ENOENT
 	}
-	return cachedEntry.ToProtoEntry(), cacheErr
+	return cachedEntry, cacheErr
 }

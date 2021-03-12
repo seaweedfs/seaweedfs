@@ -23,6 +23,10 @@ func TotalSize(chunks []*filer_pb.FileChunk) (size uint64) {
 	return
 }
 
+func FileSize2(entry *Entry) (size uint64) {
+	return maxUint64(TotalSize(entry.Chunks), entry.Attr.FileSize)
+}
+
 func FileSize(entry *filer_pb.Entry) (size uint64) {
 	return maxUint64(TotalSize(entry.Chunks), entry.Attributes.FileSize)
 }

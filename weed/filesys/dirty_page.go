@@ -74,7 +74,7 @@ func (pages *ContinuousDirtyPages) saveExistingLargestPageToStorage() (hasSavedD
 		return false
 	}
 
-	fileSize := int64(entry.Attributes.FileSize)
+	fileSize := int64(entry.Attr.FileSize)
 
 	chunkSize := min(maxList.Size(), fileSize-maxList.Offset())
 	if chunkSize == 0 {

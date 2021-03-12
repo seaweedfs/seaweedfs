@@ -131,7 +131,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	})
 
 	entry, _ := filer_pb.GetEntry(wfs, util.FullPath(wfs.option.FilerMountRootPath))
-	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs, entry: entry}
+	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs, entry: filer.FromPbEntry(wfs.option.FilerMountRootPath,entry)}
 	wfs.fsNodeCache = newFsCache(wfs.root)
 
 	if wfs.option.ConcurrentWriters > 0 {

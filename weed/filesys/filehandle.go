@@ -6,7 +6,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -42,7 +41,7 @@ func newFileHandle(file *File, uid, gid uint32) *FileHandle {
 	}
 	entry := fh.f.getEntry()
 	if entry != nil {
-		entry.Attributes.FileSize = filer.FileSize(entry)
+		entry.Attr.FileSize = filer.FileSize2(entry)
 	}
 
 	return fh
@@ -110,7 +109,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		return 0, io.EOF
 	}
 
-	fileSize := int64(filer.FileSize(entry))
+	fileSize := int64(filer.FileSize2(entry))
 	fileFullPath := fh.f.fullpath()
 
 	if fileSize == 0 {
@@ -171,7 +170,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 	}
 
 	entry.Content = nil
-	entry.Attributes.FileSize = uint64(max(req.Offset+int64(len(data)), int64(entry.Attributes.FileSize)))
+	entry.Attr.FileSize = uint64(max(req.Offset+int64(len(data)), int64(entry.Attr.FileSize)))
 	glog.V(4).Infof("%v write [%d,%d) %d", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)), len(req.Data))
 
 	fh.dirtyPages.AddPage(req.Offset, data)
@@ -259,26 +258,24 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 			return nil
 		}
 
-		if entry.Attributes != nil {
-			entry.Attributes.Mime = fh.contentType
-			if entry.Attributes.Uid == 0 {
-				entry.Attributes.Uid = header.Uid
-			}
-			if entry.Attributes.Gid == 0 {
-				entry.Attributes.Gid = header.Gid
-			}
-			if entry.Attributes.Crtime == 0 {
-				entry.Attributes.Crtime = time.Now().Unix()
-			}
-			entry.Attributes.Mtime = time.Now().Unix()
-			entry.Attributes.FileMode = uint32(os.FileMode(entry.Attributes.FileMode) &^ fh.f.wfs.option.Umask)
-			entry.Attributes.Collection = fh.dirtyPages.collection
-			entry.Attributes.Replication = fh.dirtyPages.replication
+		entry.Attr.Mime = fh.contentType
+		if entry.Attr.Uid == 0 {
+			entry.Attr.Uid = header.Uid
 		}
+		if entry.Attr.Gid == 0 {
+			entry.Attr.Gid = header.Gid
+		}
+		if entry.Attr.Crtime.IsZero() {
+			entry.Attr.Crtime = time.Now()
+		}
+		entry.Attr.Mtime = time.Now()
+		entry.Attr.Mode = entry.Attr.Mode &^ fh.f.wfs.option.Umask
+		entry.Attr.Collection = fh.dirtyPages.collection
+		entry.Attr.Replication = fh.dirtyPages.replication
 
 		request := &filer_pb.CreateEntryRequest{
 			Directory:  fh.f.dir.FullPath(),
-			Entry:      entry,
+			Entry:      entry.ToProtoEntry(),
 			Signatures: []int32{fh.f.wfs.signature},
 		}
 
