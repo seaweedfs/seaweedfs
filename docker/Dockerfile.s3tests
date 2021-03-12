@@ -28,4 +28,4 @@ ENV \
     S3TEST_CONF="/s3test.conf"
 
 ENTRYPOINT ["/bin/bash", "-c"]
-CMD ["exec ./virtualenv/bin/nosetests ${NOSETESTS_OPTIONS-} ${NOSETESTS_ATTR:+-a $NOSETESTS_ATTR} ${NOSETESTS_EXCLUDE:+-e $NOSETESTS_EXCLUDE}"]
+CMD ["sleep 10 && exec ./virtualenv/bin/nosetests ${NOSETESTS_OPTIONS-} ${NOSETESTS_ATTR:+-a $NOSETESTS_ATTR} ${NOSETESTS_EXCLUDE:+-e $NOSETESTS_EXCLUDE}"]
