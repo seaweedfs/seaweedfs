@@ -63,7 +63,7 @@ func (msgBrokerOpt *MessageBrokerOptions) startQueueServer() bool {
 
 	grace.SetupProfiling(*messageBrokerStandaloneOptions.cpuprofile, *messageBrokerStandaloneOptions.memprofile)
 
-	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(*msgBrokerOpt.filer)
+	filerGrpcAddress, err := pb.ParseServerToGrpcAddress(*msgBrokerOpt.filer)
 	if err != nil {
 		glog.Fatal(err)
 		return false

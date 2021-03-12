@@ -41,6 +41,7 @@ type BenchmarkOptions struct {
 	grpcDialOption   grpc.DialOption
 	masterClient     *wdclient.MasterClient
 	fsync            *bool
+	useTcp           *bool
 }
 
 var (
@@ -67,6 +68,7 @@ func init() {
 	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
 	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	b.fsync = cmdBenchmark.Flag.Bool("fsync", false, "flush data to disk after write")
+	b.useTcp = cmdBenchmark.Flag.Bool("useTcp", false, "send data via tcp")
 	sharedBytes = make([]byte, 1024)
 }
 
@@ -223,6 +225,8 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 
+	volumeTcpClient := wdclient.NewVolumeTcpClient()
+
 	for id := range idChan {
 		start := time.Now()
 		fileSize := int64(*b.fileSize + random.Intn(64))
@@ -243,7 +247,15 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			if !isSecure && assignResult.Auth != "" {
 				isSecure = true
 			}
-			if _, err := fp.Upload(0, b.masterClient.GetMaster, false, assignResult.Auth, b.grpcDialOption); err == nil {
+			if *b.useTcp {
+				if uploadByTcp(volumeTcpClient, fp) {
+					fileIdLineChan <- fp.Fid
+					s.completed++
+					s.transferred += fileSize
+				} else {
+					s.failed++
+				}
+			} else if _, err := fp.Upload(0, b.masterClient.GetMaster, false, assignResult.Auth, b.grpcDialOption); err == nil {
 				if random.Intn(100) < *b.deletePercentage {
 					s.total++
 					delayedDeleteChan <- &delayedFile{time.Now().Add(time.Second), fp}
@@ -327,6 +339,17 @@ func writeFileIds(fileName string, fileIdLineChan chan string, finishChan chan b
 			file.Write([]byte("\n"))
 		}
 	}
+}
+
+func uploadByTcp(volumeTcpClient *wdclient.VolumeTcpClient, fp *operation.FilePart) bool {
+
+	err := volumeTcpClient.PutFileChunk(fp.Server, fp.Fid, uint32(fp.FileSize), fp.Reader)
+	if err != nil {
+		glog.Errorf("upload chunk err: %v", err)
+		return false
+	}
+
+	return true
 }
 
 func readFileIds(fileName string, fileIdLineChan chan string) {

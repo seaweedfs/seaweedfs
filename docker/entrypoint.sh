@@ -60,9 +60,9 @@ case "$1" in
   'cronjob')
 	MASTER=${WEED_MASTER-localhost:9333}
 	FIX_REPLICATION_CRON_SCHEDULE=${CRON_SCHEDULE-*/7 * * * * *}
-	echo "$FIX_REPLICATION_CRON_SCHEDULE" 'echo "volume.fix.replication" | weed shell -master='$MASTER > /crontab
+	echo "$FIX_REPLICATION_CRON_SCHEDULE" 'echo "lock; volume.fix.replication; unlock" | weed shell -master='$MASTER > /crontab
 	BALANCING_CRON_SCHEDULE=${CRON_SCHEDULE-25 * * * * *}
-	echo "$BALANCING_CRON_SCHEDULE" 'echo "volume.balance -c ALL -force" | weed shell -master='$MASTER >> /crontab
+	echo "$BALANCING_CRON_SCHEDULE" 'echo "lock; volume.balance -collection ALL_COLLECTIONS -force; unlock" | weed shell -master='$MASTER >> /crontab
 	echo "Running Crontab:"
 	cat /crontab
 	exec supercronic /crontab

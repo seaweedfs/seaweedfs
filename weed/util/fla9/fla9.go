@@ -886,7 +886,7 @@ func (f *FlagSet) parseOne() (bool, error) {
 // The return value will be ErrHelp if -help or -h were set but not defined.
 func (f *FlagSet) Parse(arguments []string) error {
 	if _, ok := f.formal[DefaultConfigFlagName]; !ok {
-		f.String(DefaultConfigFlagName, "", "config file")
+		f.String(DefaultConfigFlagName, "", "a file of command line options, each line in optionName=optionValue format")
 	}
 
 	f.parsed = true
@@ -995,6 +995,7 @@ func NewFlagSet(name string, errorHandling ErrorHandling) *FlagSet {
 	f := &FlagSet{
 		name:          name,
 		errorHandling: errorHandling,
+		envPrefix:     EnvPrefix,
 	}
 	return f
 }
@@ -1078,7 +1079,7 @@ func NewFlagSetWithEnvPrefix(name string, prefix string, errorHandling ErrorHand
 // DefaultConfigFlagName defines the flag name of the optional config file
 // path. Used to lookup and parse the config file when a default is set and
 // available on disk.
-var DefaultConfigFlagName = "conf"
+var DefaultConfigFlagName = "options"
 
 // ParseFile parses flags from the file in path.
 // Same format as commandline arguments, newlines and lines beginning with a

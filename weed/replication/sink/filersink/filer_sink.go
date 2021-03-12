@@ -30,6 +30,7 @@ type FilerSink struct {
 	grpcDialOption    grpc.DialOption
 	address           string
 	writeChunkByFiler bool
+	isIncremental     bool
 }
 
 func init() {
@@ -44,7 +45,12 @@ func (fs *FilerSink) GetSinkToDirectory() string {
 	return fs.dir
 }
 
+func (fs *FilerSink) IsIncremental() bool {
+	return fs.isIncremental
+}
+
 func (fs *FilerSink) Initialize(configuration util.Configuration, prefix string) error {
+	fs.isIncremental = configuration.GetBool(prefix + "is_incremental")
 	return fs.DoInitialize(
 		"",
 		configuration.GetString(prefix+"grpcAddress"),

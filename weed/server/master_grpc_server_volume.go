@@ -77,7 +77,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 
 	if !ms.Topo.HasWritableVolume(option) {
 		if ms.Topo.AvailableSpaceFor(option) <= 0 {
-			return nil, fmt.Errorf("no free volumes left for "+option.String())
+			return nil, fmt.Errorf("no free volumes left for " + option.String())
 		}
 		ms.vgLock.Lock()
 		if !ms.Topo.HasWritableVolume(option) {
@@ -122,11 +122,8 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 
 	volumeLayout := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, ttl, types.ToDiskType(req.DiskType))
 	stats := volumeLayout.Stats()
-
-	totalSize := ms.Topo.GetDiskUsages().GetMaxVolumeCount() * int64(ms.option.VolumeSizeLimitMB) * 1024 * 1024
-
 	resp := &master_pb.StatisticsResponse{
-		TotalSize: uint64(totalSize),
+		TotalSize: stats.TotalSize,
 		UsedSize:  stats.UsedSize,
 		FileCount: stats.FileCount,
 	}

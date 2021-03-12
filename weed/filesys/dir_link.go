@@ -35,15 +35,20 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 		return nil, err
 	}
 
-	// update old file to hardlink mode
-	if len(oldFile.entry.HardLinkId) == 0 {
-		oldFile.entry.HardLinkId = append(util.RandomBytes(16), HARD_LINK_MARKER)
-		oldFile.entry.HardLinkCounter = 1
+	oldEntry := oldFile.getEntry()
+	if oldEntry == nil {
+		return nil, fuse.EIO
 	}
-	oldFile.entry.HardLinkCounter++
+
+	// update old file to hardlink mode
+	if len(oldEntry.HardLinkId) == 0 {
+		oldEntry.HardLinkId = append(util.RandomBytes(16), HARD_LINK_MARKER)
+		oldEntry.HardLinkCounter = 1
+	}
+	oldEntry.HardLinkCounter++
 	updateOldEntryRequest := &filer_pb.UpdateEntryRequest{
 		Directory:  oldFile.dir.FullPath(),
-		Entry:      oldFile.entry,
+		Entry:      oldEntry,
 		Signatures: []int32{dir.wfs.signature},
 	}
 
@@ -53,11 +58,11 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 		Entry: &filer_pb.Entry{
 			Name:            req.NewName,
 			IsDirectory:     false,
-			Attributes:      oldFile.entry.Attributes,
-			Chunks:          oldFile.entry.Chunks,
-			Extended:        oldFile.entry.Extended,
-			HardLinkId:      oldFile.entry.HardLinkId,
-			HardLinkCounter: oldFile.entry.HardLinkCounter,
+			Attributes:      oldEntry.Attributes,
+			Chunks:          oldEntry.Chunks,
+			Extended:        oldEntry.Extended,
+			HardLinkId:      oldEntry.HardLinkId,
+			HardLinkCounter: oldEntry.HardLinkCounter,
 		},
 		Signatures: []int32{dir.wfs.signature},
 	}
@@ -82,6 +87,10 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 
 		return nil
 	})
+
+	if err != nil {
+		return nil, fuse.EIO
+	}
 
 	// create new file node
 	newNode := dir.newFile(req.NewName, request.Entry)

@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
+import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.util.concurrent.*;
 
@@ -217,7 +218,7 @@ public class SeaweedOutputStream extends OutputStream {
 
     private synchronized int submitWriteBufferToService(final ByteBuffer bufferToWrite, final long writePosition) throws IOException {
 
-        bufferToWrite.flip();
+        ((Buffer)bufferToWrite).flip();
         int bytesLength = bufferToWrite.limit() - bufferToWrite.position();
 
         if (threadExecutor.getQueue().size() >= maxConcurrentRequestCount) {

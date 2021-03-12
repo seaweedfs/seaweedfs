@@ -31,6 +31,7 @@ type UploadResult struct {
 	Mime       string `json:"mime,omitempty"`
 	Gzip       uint32 `json:"gzip,omitempty"`
 	ContentMd5 string `json:"contentMd5,omitempty"`
+	RetryCount int    `json:"-"`
 }
 
 func (uploadResult *UploadResult) ToPbFileChunk(fileId string, offset int64) *filer_pb.FileChunk {
@@ -96,6 +97,7 @@ func retriedUploadData(uploadUrl string, filename string, cipher bool, data []by
 	for i := 0; i < 3; i++ {
 		uploadResult, err = doUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
 		if err == nil {
+			uploadResult.RetryCount = i
 			return
 		} else {
 			glog.Warningf("uploading to %s: %v", uploadUrl, err)

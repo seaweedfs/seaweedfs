@@ -152,8 +152,10 @@ func (m *LevelDbNeedleMap) Close() {
 		glog.Warningf("close index file %s failed: %v", indexFileName, err)
 	}
 
-	if err := m.db.Close(); err != nil {
-		glog.Warningf("close levelDB failed: %v", err)
+	if m.db != nil {
+		if err := m.db.Close(); err != nil {
+			glog.Warningf("close levelDB failed: %v", err)
+		}
 	}
 }
 

@@ -18,6 +18,7 @@ var (
 		WriteTimeout:                  time.Second,
 		MaxIdleConnDuration:           time.Minute,
 		DisableHeaderNamesNormalizing: true, // If you set the case on your headers correctly you can enable this.
+		DialDualStack:                 true,
 	}
 
 	// Put everything in pools to prevent garbage.

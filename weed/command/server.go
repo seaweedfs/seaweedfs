@@ -111,6 +111,7 @@ func init() {
 	serverOptions.v.preStopSeconds = cmdServer.Flag.Int("volume.preStopSeconds", 10, "number of seconds between stop send heartbeats and stop volume server")
 	serverOptions.v.pprof = cmdServer.Flag.Bool("volume.pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
 	serverOptions.v.idxFolder = cmdServer.Flag.String("volume.dir.idx", "", "directory to store .idx files")
+	serverOptions.v.enableTcp = cmdServer.Flag.Bool("volume.tcp", false, "<exprimental> enable tcp port")
 
 	s3Options.port = cmdServer.Flag.Int("s3.port", 8333, "s3 server http listen port")
 	s3Options.domainName = cmdServer.Flag.String("s3.domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
@@ -156,19 +157,21 @@ func runServer(cmd *Command, args []string) bool {
 		*isStartingFiler = true
 	}
 
-	_, peerList := checkPeers(*serverIp, *masterOptions.port, *masterOptions.peers)
-	peers := strings.Join(peerList, ",")
-	masterOptions.peers = &peers
+	if *isStartingMasterServer {
+		_, peerList := checkPeers(*serverIp, *masterOptions.port, *masterOptions.peers)
+		peers := strings.Join(peerList, ",")
+		masterOptions.peers = &peers
+	}
 
 	// ip address
 	masterOptions.ip = serverIp
 	masterOptions.ipBind = serverBindIp
-	filerOptions.masters = &peers
+	filerOptions.masters = masterOptions.peers
 	filerOptions.ip = serverIp
 	filerOptions.bindIp = serverBindIp
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp
-	serverOptions.v.masters = &peers
+	serverOptions.v.masters = masterOptions.peers
 	serverOptions.v.idleConnectionTimeout = serverTimeout
 	serverOptions.v.dataCenter = serverDataCenter
 	serverOptions.v.rack = serverRack

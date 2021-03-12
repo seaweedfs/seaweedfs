@@ -138,7 +138,6 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}
-	// Create your protocol servers.
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.master"))
 	master_pb.RegisterSeaweedServer(grpcS, ms)
 	protobuf.RegisterRaftServer(grpcS, raftServer)

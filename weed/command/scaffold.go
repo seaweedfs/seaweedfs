@@ -356,6 +356,9 @@ directory = "/buckets"
 [sink.local]
 enabled = false
 directory = "/data"
+# all replicated files are under modified time as yyyy-mm-dd directories
+# so each date directory contains all new and updated files.
+is_incremental = false
 
 [sink.local_incremental]
 # all replicated files are under modified time as yyyy-mm-dd directories
@@ -373,6 +376,7 @@ directory = "/backup"
 replication = ""
 collection = ""
 ttlSec = 0
+is_incremental = false
 
 [sink.s3]
 # read credentials doc at https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/sessions.html
@@ -384,6 +388,7 @@ region = "us-east-2"
 bucket = "your_bucket_name"    # an existing bucket
 directory = "/"                # destination directory
 endpoint = ""
+is_incremental = false
 
 [sink.google_cloud_storage]
 # read credentials doc at https://cloud.google.com/docs/authentication/getting-started
@@ -391,6 +396,7 @@ enabled = false
 google_application_credentials = "/path/to/x.json" # path to json credential file
 bucket = "your_bucket_seaweedfs"    # an existing bucket
 directory = "/"                     # destination directory
+is_incremental = false
 
 [sink.azure]
 # experimental, let me know if it works
@@ -399,6 +405,7 @@ account_name = ""
 account_key  = ""
 container = "mycontainer"      # an existing container
 directory = "/"                # destination directory
+is_incremental = false
 
 [sink.backblaze]
 enabled = false
@@ -406,6 +413,7 @@ b2_account_id = ""
 b2_master_application_key  = ""
 bucket = "mybucket"            # an existing bucket
 directory = "/"                # destination directory
+is_incremental = false
 
 `
 
@@ -432,29 +440,34 @@ expires_after_seconds = 10           # seconds
 # the host name is not checked, so the PERM files can be shared.
 [grpc]
 ca = ""
+# Set wildcard domain for enable TLS authentication by common names
+allowed_wildcard_domain = "" # .mycompany.com
 
 [grpc.volume]
 cert = ""
 key  = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
 
 [grpc.master]
 cert = ""
 key  = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
 
 [grpc.filer]
 cert = ""
 key  = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
 
 [grpc.msg_broker]
 cert = ""
 key  = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
 
 # use this for any place needs a grpc client
 # i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
 [grpc.client]
 cert = ""
 key  = ""
-
 
 # volume server https options
 # Note: work in progress!
