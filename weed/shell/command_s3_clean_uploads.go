@@ -78,9 +78,10 @@ func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io
 	}
 
 	for _, staleUpload:= range staleUploads {
-		fmt.Fprintf(writer, "purge %s/%s\n", uploadsDir, staleUpload)
+		deleteUrl := fmt.Sprintf("http://%s:%d%s/%s?recursive=true&ignoreRecursiveError=true",commandEnv.option.FilerHost, commandEnv.option.FilerPort,uploadsDir, staleUpload)
+		fmt.Fprintf(writer, "purge %s\n", deleteUrl)
 
-		err = util.Delete(fmt.Sprintf("http://%s:%d%s/%s?recursive=true&ignoreRecursiveError=true",commandEnv.option.FilerHost, commandEnv.option.FilerPort,uploadsDir, staleUpload), "")
+		err = util.Delete(deleteUrl, "")
 		if err != nil {
 			return fmt.Errorf("purge %s/%s: %v", uploadsDir, staleUpload, err)
 		}
