@@ -40,7 +40,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	bucket, object := getBucketAndObject(r)
 
-	_, err := validateContentMd5(r.Header)
+	contentMd5, err := validateContentMd5(r.Header)
 	if err != nil {
 		writeErrorResponse(w, s3err.ErrInvalidDigest, r.URL)
 		return
@@ -81,6 +81,11 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		}
 
 		setEtag(w, etag)
+
+		if len(contentMd5) != 0 && fmt.Sprintf("%x", contentMd5) != etag {
+			writeErrorResponse(w, s3err.ErrBadDigest, r.URL)
+			return
+		}
 	}
 
 	writeSuccessResponseEmpty(w)

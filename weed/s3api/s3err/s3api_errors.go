@@ -45,6 +45,7 @@ const (
 	ErrNone ErrorCode = iota
 	ErrAccessDenied
 	ErrMethodNotAllowed
+	ErrBadDigest
 	ErrBucketNotEmpty
 	ErrBucketAlreadyExists
 	ErrBucketAlreadyOwnedByYou
@@ -108,6 +109,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "MethodNotAllowed",
 		Description:    "The specified method is not allowed against this resource.",
 		HTTPStatusCode: http.StatusMethodNotAllowed,
+	},
+	ErrBadDigest: {
+		Code:           "BadDigest",
+		Description:    "The Content-Md5 you specified did not match what we received.",
+		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrBucketNotEmpty: {
 		Code:           "BucketNotEmpty",

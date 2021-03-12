@@ -182,6 +182,13 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// get Content-Md5 sent by client and verify if valid
+	contentMd5, err := validateContentMd5(r.Header)
+	if err != nil {
+		writeErrorResponse(w, s3err.ErrInvalidDigest, r.URL)
+		return
+	}
+
 	dataReader := r.Body
 	if s3a.iam.isEnabled() {
 		rAuthType := getRequestAuthType(r)
@@ -212,6 +219,11 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	setEtag(w, etag)
+
+	if len(contentMd5) != 0 && fmt.Sprintf("%x", contentMd5) != etag {
+		writeErrorResponse(w, s3err.ErrBadDigest, r.URL)
+		return
+	}
 
 	writeSuccessResponseEmpty(w)
 
