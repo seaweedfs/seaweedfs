@@ -63,16 +63,23 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	// try to connect to filer, filerBucketsPath may be useful later
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	var cipher bool
-	err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+	for i := 0; i < 10; i++ {
+		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+			if err != nil {
+				return fmt.Errorf("get filer grpc address %s configuration: %v", filerGrpcAddress, err)
+			}
+			cipher = resp.Cipher
+			return nil
+		})
 		if err != nil {
-			return fmt.Errorf("get filer grpc address %s configuration: %v", filerGrpcAddress, err)
+			glog.V(0).Infof("failed to talk to filer %s: %v", filerGrpcAddress, err)
+			glog.V(0).Infof("wait for %d seconds ...", i+1)
+			time.Sleep(time.Duration(i+1)*time.Second)
 		}
-		cipher = resp.Cipher
-		return nil
-	})
+	}
 	if err != nil {
-		glog.Infof("failed to talk to filer %s: %v", filerGrpcAddress, err)
+		glog.Errorf("failed to talk to filer %s: %v", filerGrpcAddress, err)
 		return true
 	}
 
