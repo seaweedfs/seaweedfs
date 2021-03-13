@@ -1,16 +1,18 @@
 package weed_server
 
 import (
-	"bytes"
-	"fmt"
-	"io"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"pack.ag/tftp"
 )
 
-func (vs *VolumeServer) UdpReadHandler(filename string, rf io.ReaderFrom) error {
+func (vs *VolumeServer) ServeTFTP(r tftp.ReadRequest) {
+
+	filename := r.Name()
 
 	volumeId, n, err := vs.parseFileId(filename)
 	if err != nil {
-		return err
+		glog.Errorf("parse file id %s: %v", filename, err)
+		return
 	}
 
 	hasVolume := vs.store.HasVolume(volumeId)
@@ -18,48 +20,59 @@ func (vs *VolumeServer) UdpReadHandler(filename string, rf io.ReaderFrom) error 
 
 	if hasVolume {
 		if _, err = vs.store.ReadVolumeNeedle(volumeId, n, nil); err != nil {
-			return err
+			glog.Errorf("ReadVolumeNeedle %s: %v", filename, err)
+			return
 		}
 	}
 	if hasEcVolume {
 		if _, err = vs.store.ReadEcShardNeedle(volumeId, n); err != nil {
-			return err
+			glog.Errorf("ReadEcShardNeedle %s: %v", filename, err)
+			return
 		}
 	}
 
-	if _, err = rf.ReadFrom(bytes.NewBuffer(n.Data)); err != nil {
-		return err
+	if _, err = r.Write(n.Data); err != nil {
+		glog.Errorf("UDP Write data %s: %v", filename, err)
+		return
 	}
 
-	return nil
 }
 
-func (vs *VolumeServer) UdpWriteHandler(filename string, wt io.WriterTo) error {
+func (vs *VolumeServer) ReceiveTFTP(w tftp.WriteRequest) {
+
+	filename := w.Name()
+
+	// Get the file size
+	size, err := w.Size()
+
+	// Note: The size value is sent by the client, the client could send more data than
+	// it indicated in the size option. To be safe we'd want to allocate a buffer
+	// with the size we're expecting and use w.Read(buf) rather than ioutil.ReadAll.
 
 	if filename[0] == '-' {
-		return vs.handleTcpDelete(filename[1:])
+		err = vs.handleTcpDelete(filename[1:])
+		if err != nil {
+			glog.Errorf("handleTcpDelete %s: %v", filename, err)
+			return
+		}
 	}
 
 	volumeId, n, err := vs.parseFileId(filename)
 	if err != nil {
-		return err
+		glog.Errorf("parse file id %s: %v", filename, err)
+		return
 	}
 
 	volume := vs.store.GetVolume(volumeId)
 	if volume == nil {
-		return fmt.Errorf("volume %d not found", volumeId)
+		glog.Errorf("volume %d not found", volumeId)
+		return
 	}
 
-	var buf bytes.Buffer
-	written, err := wt.WriteTo(&buf)
+	err = volume.StreamWrite(n, w, uint32(size))
 	if err != nil {
-		return err
+		glog.Errorf("StreamWrite %s: %v", filename, err)
+		return
 	}
 
-	err = volume.StreamWrite(n, &buf, uint32(written))
-	if err != nil {
-		return err
-	}
-
-	return nil
 }

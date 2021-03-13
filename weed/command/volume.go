@@ -29,7 +29,7 @@ import (
 	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/pin/tftp"
+	"pack.ag/tftp"
 )
 
 var (
@@ -398,11 +398,16 @@ func (v VolumeServerOptions) startTcpService(volumeServer *weed_server.VolumeSer
 }
 
 func (v VolumeServerOptions) startUdpService(volumeServer *weed_server.VolumeServer) {
-	tftpServer := tftp.NewServer(volumeServer.UdpReadHandler, volumeServer.UdpWriteHandler)
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port+20001)
+	tftpServer, err := tftp.NewServer(listeningAddress)
+	if err != nil {
+		glog.Fatalf("Volume server listen on %s:%v", listeningAddress, err)
+	}
+	tftpServer.WriteHandler(volumeServer)
+	tftpServer.ReadHandler(volumeServer)
 
 	glog.V(0).Infoln("Start Seaweed volume server", util.Version(), "UDP at", listeningAddress)
-	if e:= tftpServer.ListenAndServe(listeningAddress); e != nil {
+	if e:= tftpServer.ListenAndServe(); e != nil {
 		glog.Fatalf("Volume server UDP on %s:%v", listeningAddress, e)
 	}
 }

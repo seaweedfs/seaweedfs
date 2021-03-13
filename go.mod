@@ -99,6 +99,7 @@ require (
 	gopkg.in/jcmturner/goidentity.v3 v3.0.0 // indirect
 	gopkg.in/jcmturner/gokrb5.v7 v7.3.0 // indirect
 	gopkg.in/karlseguin/expect.v1 v1.0.1 // indirect
+	pack.ag/tftp v1.0.0 // indirect
 )
 
 // replace github.com/seaweedfs/fuse => /Users/chris/go/src/github.com/seaweedfs/fuse
