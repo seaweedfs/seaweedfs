@@ -41,6 +41,7 @@ func (vs *VolumeServer) ServeTFTP(r tftp.ReadRequest) {
 func (vs *VolumeServer) ReceiveTFTP(w tftp.WriteRequest) {
 
 	filename := w.Name()
+	println("+ ", filename)
 
 	// Get the file size
 	size, err := w.Size()
@@ -74,5 +75,7 @@ func (vs *VolumeServer) ReceiveTFTP(w tftp.WriteRequest) {
 		glog.Errorf("StreamWrite %s: %v", filename, err)
 		return
 	}
+
+	println("- ", filename)
 
 }
