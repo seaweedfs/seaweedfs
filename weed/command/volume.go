@@ -3,6 +3,8 @@ package command
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/udptransfer"
+	"net"
 	"net/http"
 	httppprof "net/http/pprof"
 	"os"
@@ -29,7 +31,6 @@ import (
 	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"pack.ag/tftp"
 )
 
 var (
@@ -399,15 +400,37 @@ func (v VolumeServerOptions) startTcpService(volumeServer *weed_server.VolumeSer
 
 func (v VolumeServerOptions) startUdpService(volumeServer *weed_server.VolumeServer) {
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port+20001)
-	tftpServer, err := tftp.NewServer(listeningAddress)
+
+	listener, err := udptransfer.NewEndpoint(&udptransfer.Params{
+		LocalAddr:      listeningAddress,
+		Bandwidth:      100,
+		FastRetransmit: true,
+		FlatTraffic:    true,
+		IsServ:         true,
+	})
 	if err != nil {
 		glog.Fatalf("Volume server listen on %s:%v", listeningAddress, err)
 	}
-	tftpServer.WriteHandler(volumeServer)
-	tftpServer.ReadHandler(volumeServer)
+	defer listener.Close()
 
-	glog.V(0).Infoln("Start Seaweed volume server", util.Version(), "UDP at", listeningAddress)
-	if e:= tftpServer.ListenAndServe(); e != nil {
-		glog.Fatalf("Volume server UDP on %s:%v", listeningAddress, e)
+	for {
+		conn, err := listener.Accept()
+		if err == nil {
+			glog.V(0).Infof("Client from %s", conn.RemoteAddr())
+			go volumeServer.HandleTcpConnection(conn)
+		} else if isTemporaryError(err) {
+			continue
+		} else {
+			break
+		}
 	}
+}
+
+func isTemporaryError(err error) bool {
+	if err != nil {
+		if ne, y := err.(net.Error); y {
+			return ne.Temporary()
+		}
+	}
+	return false
 }

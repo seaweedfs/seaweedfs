@@ -15,6 +15,7 @@ require (
 	github.com/buraksezer/consistent v0.0.0-20191006190839-693edf70fd72
 	github.com/cespare/xxhash v1.1.0
 	github.com/chrislusf/raft v1.0.4
+	github.com/cloudflare/golibs v0.0.0-20201113145655-eb7a42c5e0be // indirect
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/disintegration/imaging v1.6.2
@@ -64,6 +65,7 @@ require (
 	github.com/seaweedfs/fuse v1.1.3
 	github.com/seaweedfs/goexif v1.0.2
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
+	github.com/spance/suft v0.0.0-20161129124228-358fdb24d82d // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/viper v1.4.0
