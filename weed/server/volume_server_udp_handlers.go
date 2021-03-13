@@ -1,81 +1,48 @@
 package weed_server
 
 import (
+	"bufio"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"pack.ag/tftp"
+	"io"
+	"net"
 )
 
-func (vs *VolumeServer) ServeTFTP(r tftp.ReadRequest) {
+func (vs *VolumeServer) HandleUdpConnection(c net.Conn) {
+	defer c.Close()
 
-	filename := r.Name()
+	glog.V(0).Infof("Serving writes from %s", c.RemoteAddr().String())
 
-	volumeId, n, err := vs.parseFileId(filename)
-	if err != nil {
-		glog.Errorf("parse file id %s: %v", filename, err)
-		return
-	}
+	bufReader := bufio.NewReaderSize(c, 1024*1024)
+	bufWriter := bufio.NewWriterSize(c, 1024*1024)
 
-	hasVolume := vs.store.HasVolume(volumeId)
-	_, hasEcVolume := vs.store.FindEcVolume(volumeId)
-
-	if hasVolume {
-		if _, err = vs.store.ReadVolumeNeedle(volumeId, n, nil); err != nil {
-			glog.Errorf("ReadVolumeNeedle %s: %v", filename, err)
-			return
-		}
-	}
-	if hasEcVolume {
-		if _, err = vs.store.ReadEcShardNeedle(volumeId, n); err != nil {
-			glog.Errorf("ReadEcShardNeedle %s: %v", filename, err)
-			return
-		}
-	}
-
-	if _, err = r.Write(n.Data); err != nil {
-		glog.Errorf("UDP Write data %s: %v", filename, err)
-		return
-	}
-
-}
-
-func (vs *VolumeServer) ReceiveTFTP(w tftp.WriteRequest) {
-
-	filename := w.Name()
-	println("+ ", filename)
-
-	// Get the file size
-	size, err := w.Size()
-
-	// Note: The size value is sent by the client, the client could send more data than
-	// it indicated in the size option. To be safe we'd want to allocate a buffer
-	// with the size we're expecting and use w.Read(buf) rather than ioutil.ReadAll.
-
-	if filename[0] == '-' {
-		err = vs.handleTcpDelete(filename[1:])
+	for {
+		cmd, err := bufReader.ReadString('\n')
 		if err != nil {
-			glog.Errorf("handleTcpDelete %s: %v", filename, err)
+			if err != io.EOF {
+				glog.Errorf("read command from %s: %v", c.RemoteAddr().String(), err)
+			}
 			return
 		}
-	}
+		cmd = cmd[:len(cmd)-1]
+		switch cmd[0] {
+		case '+':
+			fileId := cmd[1:]
+			err = vs.handleTcpPut(fileId, bufReader)
+			if err != nil {
+				glog.Errorf("put %s: %v", fileId, err)
+			}
+		case '-':
+			fileId := cmd[1:]
+			err = vs.handleTcpDelete(fileId)
+			if err != nil {
+				glog.Errorf("del %s: %v", fileId, err)
+			}
+		case '?':
+			fileId := cmd[1:]
+			err = vs.handleTcpGet(fileId, bufWriter)
+		case '!':
+		}
 
-	volumeId, n, err := vs.parseFileId(filename)
-	if err != nil {
-		glog.Errorf("parse file id %s: %v", filename, err)
-		return
 	}
-
-	volume := vs.store.GetVolume(volumeId)
-	if volume == nil {
-		glog.Errorf("volume %d not found", volumeId)
-		return
-	}
-
-	err = volume.StreamWrite(n, w, uint32(size))
-	if err != nil {
-		glog.Errorf("StreamWrite %s: %v", filename, err)
-		return
-	}
-
-	println("- ", filename)
 
 }

@@ -417,7 +417,7 @@ func (v VolumeServerOptions) startUdpService(volumeServer *weed_server.VolumeSer
 		conn, err := listener.Accept()
 		if err == nil {
 			glog.V(0).Infof("Client from %s", conn.RemoteAddr())
-			go volumeServer.HandleTcpConnection(conn)
+			go volumeServer.HandleUdpConnection(conn)
 		} else if isTemporaryError(err) {
 			continue
 		} else {

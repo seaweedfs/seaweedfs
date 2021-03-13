@@ -2,9 +2,6 @@ package wdclient
 
 import (
 	"bufio"
-	"bytes"
-	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/udptransfer"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -70,45 +67,41 @@ func (c *VolumeUdpClient) PutFileChunk(volumeServerAddress string, fileId string
 		return parseErr
 	}
 
-	c.cp.Register("udp", udpAddress)
-	udpConn, getErr := c.cp.Get("udp", udpAddress)
-	if getErr != nil {
-		return fmt.Errorf("get connection to %s: %v", udpAddress, getErr)
+	listener, err := udptransfer.NewEndpoint(&udptransfer.Params{
+		LocalAddr:      "",
+		Bandwidth:      100,
+		FastRetransmit: true,
+		FlatTraffic:    true,
+		IsServ:         false,
+	})
+	if err != nil {
+		return err
 	}
-	conn := udpConn.RawConn().(*VolumeUdpConn)
-	defer func() {
-		if err != nil {
-			udpConn.DiscardConnection()
-		} else {
-			udpConn.ReleaseConnection()
-		}
-	}()
+
+	conn, err := listener.Dial(udpAddress)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	bufWriter := bufio.NewWriter(conn)
 
 	buf := []byte("+" + fileId + "\n")
-	_, err = conn.bufWriter.Write([]byte(buf))
+	_, err = bufWriter.Write([]byte(buf))
 	if err != nil {
 		return
 	}
 	util.Uint32toBytes(buf[0:4], fileSize)
-	_, err = conn.bufWriter.Write(buf[0:4])
+	_, err = bufWriter.Write(buf[0:4])
 	if err != nil {
 		return
 	}
-	_, err = io.Copy(conn.bufWriter, fileReader)
+	_, err = io.Copy(bufWriter, fileReader)
 	if err != nil {
 		return
 	}
-	conn.bufWriter.Write([]byte("!\n"))
-	conn.bufWriter.Flush()
-
-	ret, _, err := conn.bufReader.ReadLine()
-	if err != nil {
-		glog.V(0).Infof("upload by udp: %v", err)
-		return
-	}
-	if !bytes.HasPrefix(ret, []byte("+OK")) {
-		glog.V(0).Infof("upload by udp: %v", string(ret))
-	}
+	bufWriter.Write([]byte("!\n"))
+	bufWriter.Flush()
 
 	return nil
 }
