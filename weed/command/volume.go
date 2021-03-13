@@ -29,6 +29,7 @@ import (
 	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/pin/tftp"
 )
 
 var (
@@ -256,6 +257,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	// starting tcp server
 	if *v.enableTcp {
 		go v.startTcpService(volumeServer)
+		go v.startUdpService(volumeServer)
 	}
 
 	// starting the cluster http server
@@ -378,10 +380,10 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 
 func (v VolumeServerOptions) startTcpService(volumeServer *weed_server.VolumeServer) {
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port+20000)
-	glog.V(0).Infoln("Start Seaweed volume server", util.Version(), "tcp at", listeningAddress)
+	glog.V(0).Infoln("Start Seaweed volume server", util.Version(), "TCP at", listeningAddress)
 	listener, e := util.NewListener(listeningAddress, 0)
 	if e != nil {
-		glog.Fatalf("Volume server listener error on %s:%v", listeningAddress, e)
+		glog.Fatalf("Volume server TCP on %s:%v", listeningAddress, e)
 	}
 	defer listener.Close()
 
@@ -392,5 +394,15 @@ func (v VolumeServerOptions) startTcpService(volumeServer *weed_server.VolumeSer
 			return
 		}
 		go volumeServer.HandleTcpConnection(c)
+	}
+}
+
+func (v VolumeServerOptions) startUdpService(volumeServer *weed_server.VolumeServer) {
+	tftpServer := tftp.NewServer(volumeServer.UdpReadHandler, volumeServer.UdpWriteHandler)
+	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port+20001)
+
+	glog.V(0).Infoln("Start Seaweed volume server", util.Version(), "UDP at", listeningAddress)
+	if e:= tftpServer.ListenAndServe(listeningAddress); e != nil {
+		glog.Fatalf("Volume server UDP on %s:%v", listeningAddress, e)
 	}
 }

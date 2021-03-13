@@ -57,6 +57,7 @@ require (
 	github.com/olivere/elastic/v7 v7.0.19
 	github.com/peterh/liner v1.1.0
 	github.com/pierrec/lz4 v2.2.7+incompatible // indirect
+	github.com/pin/tftp v2.1.0+incompatible // indirect
 	github.com/prometheus/client_golang v1.3.0
 	github.com/rakyll/statik v0.1.7
 	github.com/rcrowley/go-metrics v0.0.0-20190826022208-cac0b30c2563 // indirect

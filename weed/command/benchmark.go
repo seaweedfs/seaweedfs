@@ -42,6 +42,7 @@ type BenchmarkOptions struct {
 	masterClient     *wdclient.MasterClient
 	fsync            *bool
 	useTcp           *bool
+	useUdp           *bool
 }
 
 var (
@@ -68,7 +69,8 @@ func init() {
 	b.cpuprofile = cmdBenchmark.Flag.String("cpuprofile", "", "cpu profile output file")
 	b.maxCpu = cmdBenchmark.Flag.Int("maxCpu", 0, "maximum number of CPUs. 0 means all available CPUs")
 	b.fsync = cmdBenchmark.Flag.Bool("fsync", false, "flush data to disk after write")
-	b.useTcp = cmdBenchmark.Flag.Bool("useTcp", false, "send data via tcp")
+	b.useTcp = cmdBenchmark.Flag.Bool("useTcp", false, "write data via tcp")
+	b.useUdp = cmdBenchmark.Flag.Bool("useUdp", false, "write data via udp")
 	sharedBytes = make([]byte, 1024)
 }
 
@@ -226,6 +228,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	volumeTcpClient := wdclient.NewVolumeTcpClient()
+	volumeUdpClient := wdclient.NewVolumeUdpClient()
 
 	for id := range idChan {
 		start := time.Now()
@@ -249,6 +252,14 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			}
 			if *b.useTcp {
 				if uploadByTcp(volumeTcpClient, fp) {
+					fileIdLineChan <- fp.Fid
+					s.completed++
+					s.transferred += fileSize
+				} else {
+					s.failed++
+				}
+			} else if *b.useUdp {
+				if uploadByUdp(volumeUdpClient, fp) {
 					fileIdLineChan <- fp.Fid
 					s.completed++
 					s.transferred += fileSize
@@ -344,6 +355,17 @@ func writeFileIds(fileName string, fileIdLineChan chan string, finishChan chan b
 func uploadByTcp(volumeTcpClient *wdclient.VolumeTcpClient, fp *operation.FilePart) bool {
 
 	err := volumeTcpClient.PutFileChunk(fp.Server, fp.Fid, uint32(fp.FileSize), fp.Reader)
+	if err != nil {
+		glog.Errorf("upload chunk err: %v", err)
+		return false
+	}
+
+	return true
+}
+
+func uploadByUdp(volumeUdpClient *wdclient.VolumeUdpClient, fp *operation.FilePart) bool {
+
+	err := volumeUdpClient.PutFileChunk(fp.Server, fp.Fid, uint32(fp.FileSize), fp.Reader)
 	if err != nil {
 		glog.Errorf("upload chunk err: %v", err)
 		return false
