@@ -23,6 +23,7 @@ func (vs *VolumeServer) HandleUdpConnection(c net.Conn) {
 			}
 			return
 		}
+		println("received", cmd)
 		cmd = cmd[:len(cmd)-1]
 		switch cmd[0] {
 		case '+':
