@@ -32,6 +32,25 @@ type AbstractSqlStore struct {
 	dbsLock            sync.Mutex
 }
 
+func (store *AbstractSqlStore) OnBucketCreation(bucket string) {
+	store.dbsLock.Lock()
+	defer store.dbsLock.Unlock()
+
+	if store.dbs == nil {
+		return
+	}
+	store.dbs[bucket] = true
+}
+func (store *AbstractSqlStore) OnBucketDeletion(bucket string) {
+	store.dbsLock.Lock()
+	defer store.dbsLock.Unlock()
+
+	if store.dbs == nil {
+		return
+	}
+	delete(store.dbs, bucket)
+}
+
 const (
 	DEFAULT_TABLE = "filemeta"
 )
