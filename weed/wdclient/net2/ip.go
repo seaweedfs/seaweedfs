@@ -80,7 +80,7 @@ func GetLocalIPs() ([]*net.IP, error) {
 	// TODO(zviad): Is rest of the code really necessary?
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		return nil, fmt.Errorf( "Failed to get interface addresses: %v", err)
+		return nil, fmt.Errorf("Failed to get interface addresses: %v", err)
 	}
 	for _, addr := range addrs {
 		ipnet, ok := addr.(*net.IPNet)

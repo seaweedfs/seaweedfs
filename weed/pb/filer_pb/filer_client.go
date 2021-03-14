@@ -104,7 +104,7 @@ func SeaweedList(client SeaweedFilerClient, parentDirectoryPath, prefix string, 
 func doSeaweedList(client SeaweedFilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunciton, startFrom string, inclusive bool, limit uint32) (err error) {
 	// Redundancy limit to make it correctly judge whether it is the last file.
 	redLimit := limit
-	if limit != math.MaxInt32 && limit != 0{
+	if limit != math.MaxInt32 && limit != 0 {
 		redLimit = limit + 1
 	}
 	request := &ListEntriesRequest{

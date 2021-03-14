@@ -44,4 +44,3 @@ type BucketAware interface {
 	OnBucketCreation(bucket string)
 	OnBucketDeletion(bucket string)
 }
-
