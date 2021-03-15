@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/golang/protobuf/proto"
 	"github.com/stretchr/testify/assert"
 	"strconv"
@@ -69,7 +70,7 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 					Type: diskType,
 					MaxVolumeCount: uint64(maxVolumeCount),
 				}
-				dn.DiskInfos[diskType] = disk
+				dn.DiskInfos[types.ToDiskType(diskType).String()] = disk
 			} else {
 				disk = nil
 			}
