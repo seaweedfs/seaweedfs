@@ -72,12 +72,11 @@ func FastGet(url string) ([]byte, bool, error) {
 	return out, false, nil
 }
 
-func FastReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
+func FastReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, isCheck bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
 
 	if cipherKey != nil {
 		return readEncryptedUrl(fileUrl, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 	}
-
 	req := fasthttp.AcquireRequest()
 	res := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseRequest(req)
@@ -85,7 +84,9 @@ func FastReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool
 
 	req.SetRequestURIBytes([]byte(fileUrl))
 
-	if isFullChunk {
+	if isCheck {
+		req.Header.Add("Range", "bytes=0-1")
+	} else if isFullChunk {
 		req.Header.Add("Accept-Encoding", "gzip")
 	} else {
 		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)-1))
