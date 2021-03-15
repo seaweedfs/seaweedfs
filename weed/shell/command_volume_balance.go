@@ -201,7 +201,7 @@ type CapacityFunc func(*master_pb.DataNodeInfo) int
 
 func capacityByMaxVolumeCount(diskType types.DiskType) CapacityFunc {
 	return func(info *master_pb.DataNodeInfo) int {
-		diskInfo, found := info.DiskInfos[diskType.ReadableString()]
+		diskInfo, found := info.DiskInfos[string(diskType)]
 		if !found {
 			return 0
 		}
