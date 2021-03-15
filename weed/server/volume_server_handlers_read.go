@@ -27,7 +27,7 @@ var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
 
-	// println(r.Method + " " + r.URL.Path)
+	glog.V(9).Info(r.Method + " " + r.URL.Path + " " + r.Header.Get("Range"))
 
 	stats.VolumeServerRequestCounter.WithLabelValues("get").Inc()
 	start := time.Now()

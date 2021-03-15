@@ -73,9 +73,11 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 
 func CheckAllChunkViews(chunkViews []*ChunkView, fileId2Url *map[string][]string, gErr *errgroup.Group) {
 	for _, chunkView := range chunkViews {
+		urlStrings := (*fileId2Url)[chunkView.FileId]
+		glog.V(9).Infof("Check chunk: %+v\n url: %v", chunkView, urlStrings)
 		gErr.Go(func() error {
 			_, err := retriedFetchChunkData(
-				(*fileId2Url)[chunkView.FileId],
+				urlStrings,
 				chunkView.CipherKey,
 				chunkView.IsGzipped,
 				chunkView.IsFullChunk(),
