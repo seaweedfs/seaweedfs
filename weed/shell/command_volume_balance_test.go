@@ -169,3 +169,15 @@ func TestIsGoodMove(t *testing.T) {
 	}
 
 }
+
+func TestBalance(t *testing.T) {
+	topologyInfo := parseOutput(topoData)
+	volumeServers := collectVolumeServersByDc(topologyInfo, "")
+	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
+	diskTypes := collectVolumeDiskTypes(topologyInfo)
+
+	if err := balanceVolumeServers(nil, diskTypes, volumeReplicas, volumeServers, 30*1024*1024*1024, "ALL_COLLECTIONS", false); err != nil {
+		t.Errorf("balance: %v", err)
+	}
+
+}
