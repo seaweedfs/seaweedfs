@@ -56,6 +56,10 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 		}
 	}
 
+	if entry == nil {
+		return fuse.ENOENT
+	}
+
 	// attr.Inode = file.fullpath().AsInode()
 	attr.Valid = time.Second
 	attr.Mode = os.FileMode(entry.Attr.Mode)
