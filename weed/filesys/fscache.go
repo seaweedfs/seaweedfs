@@ -126,7 +126,7 @@ func (c *FsCache) Move(oldPath util.FullPath, newPath util.FullPath) *FsNode {
 		f.Name = target.name
 		entry := f.getEntry()
 		if entry != nil {
-			entry.FullPath = newPath
+			entry.Name = f.Name
 		}
 	}
 	parent.disconnectChild(target)

@@ -33,7 +33,7 @@ type File struct {
 	Name           string
 	dir            *Dir
 	wfs            *WFS
-	entry          *filer.Entry
+	entry          *filer_pb.Entry
 	entryLock      sync.RWMutex
 	entryViewCache []filer.VisibleInterval
 	isOpen         int
@@ -62,16 +62,16 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 
 	// attr.Inode = file.fullpath().AsInode()
 	attr.Valid = time.Second
-	attr.Mode = os.FileMode(entry.Attr.Mode)
-	attr.Size = filer.FileSize2(entry)
+	attr.Mode = os.FileMode(entry.Attributes.FileMode)
+	attr.Size = filer.FileSize(entry)
 	if file.isOpen > 0 {
-		attr.Size = entry.Attr.FileSize
+		attr.Size = entry.Attributes.FileSize
 		glog.V(4).Infof("file Attr %s, open:%v, size: %d", file.fullpath(), file.isOpen, attr.Size)
 	}
-	attr.Crtime = entry.Attr.Crtime
-	attr.Mtime = entry.Attr.Mtime
-	attr.Gid = entry.Attr.Gid
-	attr.Uid = entry.Attr.Uid
+	attr.Crtime = time.Unix(entry.Attributes.Crtime, 0)
+	attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
+	attr.Gid = entry.Attributes.Gid
+	attr.Uid = entry.Attributes.Uid
 	attr.Blocks = attr.Size/blockSize + 1
 	attr.BlockSize = uint32(file.wfs.option.ChunkSizeLimit)
 	if entry.HardLinkCounter > 0 {
@@ -130,7 +130,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 	if req.Valid.Size() {
 
 		glog.V(4).Infof("%v file setattr set size=%v chunks=%d", file.fullpath(), req.Size, len(entry.Chunks))
-		if req.Size < filer.FileSize2(entry) {
+		if req.Size < filer.FileSize(entry) {
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk
 			var truncatedChunks []*filer_pb.FileChunk
@@ -153,32 +153,32 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 			file.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(file.wfs.LookupFn(), chunks)
 			file.reader = nil
 		}
-		entry.Attr.FileSize = req.Size
+		entry.Attributes.FileSize = req.Size
 		file.dirtyMetadata = true
 	}
 
 	if req.Valid.Mode() {
-		entry.Attr.Mode = req.Mode
+		entry.Attributes.FileMode = uint32(req.Mode)
 		file.dirtyMetadata = true
 	}
 
 	if req.Valid.Uid() {
-		entry.Attr.Uid = req.Uid
+		entry.Attributes.Uid = req.Uid
 		file.dirtyMetadata = true
 	}
 
 	if req.Valid.Gid() {
-		entry.Attr.Gid = req.Gid
+		entry.Attributes.Gid = req.Gid
 		file.dirtyMetadata = true
 	}
 
 	if req.Valid.Crtime() {
-		entry.Attr.Crtime = req.Crtime
+		entry.Attributes.Crtime = req.Crtime.Unix()
 		file.dirtyMetadata = true
 	}
 
 	if req.Valid.Mtime() {
-		entry.Attr.Mtime = req.Mtime
+		entry.Attributes.Mtime = req.Mtime.Unix()
 		file.dirtyMetadata = true
 	}
 
@@ -263,7 +263,7 @@ func (file *File) Forget() {
 	file.wfs.fsNodeCache.DeleteFsNode(t)
 }
 
-func (file *File) maybeLoadEntry(ctx context.Context) (entry *filer.Entry, err error) {
+func (file *File) maybeLoadEntry(ctx context.Context) (entry *filer_pb.Entry, err error) {
 	entry = file.getEntry()
 	if file.isOpen > 0 {
 		return entry, nil
@@ -334,7 +334,7 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 	entry.Chunks = append(entry.Chunks, newChunks...)
 }
 
-func (file *File) setEntry(entry *filer.Entry) {
+func (file *File) setEntry(entry *filer_pb.Entry) {
 	file.entryLock.Lock()
 	defer file.entryLock.Unlock()
 	file.entry = entry
@@ -350,17 +350,15 @@ func (file *File) clearEntry() {
 	file.reader = nil
 }
 
-func (file *File) saveEntry(entry *filer.Entry) error {
+func (file *File) saveEntry(entry *filer_pb.Entry) error {
 	return file.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		pbEntry := entry.ToProtoEntry()
-
-		file.wfs.mapPbIdFromLocalToFiler(pbEntry)
-		defer file.wfs.mapPbIdFromFilerToLocal(pbEntry)
+		file.wfs.mapPbIdFromLocalToFiler(entry)
+		defer file.wfs.mapPbIdFromFilerToLocal(entry)
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory:  file.dir.FullPath(),
-			Entry:      pbEntry,
+			Entry:      entry,
 			Signatures: []int32{file.wfs.signature},
 		}
 
@@ -377,7 +375,7 @@ func (file *File) saveEntry(entry *filer.Entry) error {
 	})
 }
 
-func (file *File) getEntry() *filer.Entry {
+func (file *File) getEntry() *filer_pb.Entry {
 	file.entryLock.RLock()
 	defer file.entryLock.RUnlock()
 	return file.entry
