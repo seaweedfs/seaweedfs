@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -201,8 +202,9 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	}
 	defer dataReader.Close()
 
-	uploadUrl := fmt.Sprintf("http://%s%s/%s/%04d.part?collection=%s",
-		s3a.option.Filer, s3a.genUploadsFolder(bucket), uploadID, partID, bucket)
+	maxMB := int(math.Ceil(float64(r.ContentLength) / 1024 / 1024))
+	uploadUrl := fmt.Sprintf("http://%s%s/%s/%04d.part?collection=%s&maxMB=%d",
+		s3a.option.Filer, s3a.genUploadsFolder(bucket), uploadID, partID, bucket, maxMB)
 
 	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
 
