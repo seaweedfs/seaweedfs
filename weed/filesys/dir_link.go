@@ -48,7 +48,7 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 	oldEntry.HardLinkCounter++
 	updateOldEntryRequest := &filer_pb.UpdateEntryRequest{
 		Directory:  oldFile.dir.FullPath(),
-		Entry:      oldEntry.ToProtoEntry(),
+		Entry:      oldEntry,
 		Signatures: []int32{dir.wfs.signature},
 	}
 
@@ -58,7 +58,7 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 		Entry: &filer_pb.Entry{
 			Name:            req.NewName,
 			IsDirectory:     false,
-			Attributes:      filer.EntryAttributeToPb(oldEntry),
+			Attributes:      oldEntry.Attributes,
 			Chunks:          oldEntry.Chunks,
 			Extended:        oldEntry.Extended,
 			HardLinkId:      oldEntry.HardLinkId,
@@ -152,12 +152,12 @@ func (file *File) Readlink(ctx context.Context, req *fuse.ReadlinkRequest) (stri
 		return "", err
 	}
 
-	if entry.Attr.Mode&os.ModeSymlink == 0 {
+	if os.FileMode(entry.Attributes.FileMode)&os.ModeSymlink == 0 {
 		return "", fuse.Errno(syscall.EINVAL)
 	}
 
-	glog.V(4).Infof("Readlink: %v/%v => %v", file.dir.FullPath(), file.Name, entry.Attr.SymlinkTarget)
+	glog.V(4).Infof("Readlink: %v/%v => %v", file.dir.FullPath(), file.Name, entry.Attributes.SymlinkTarget)
 
-	return entry.Attr.SymlinkTarget, nil
+	return entry.Attributes.SymlinkTarget, nil
 
 }

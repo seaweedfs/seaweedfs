@@ -1,6 +1,7 @@
 package filesys
 
 import (
+	"bytes"
 	"context"
 	"math"
 	"os"
@@ -21,7 +22,7 @@ import (
 type Dir struct {
 	name   string
 	wfs    *WFS
-	entry  *filer.Entry
+	entry  *filer_pb.Entry
 	parent *Dir
 }
 
@@ -58,11 +59,11 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 	}
 
 	// attr.Inode = util.FullPath(dir.FullPath()).AsInode()
-	attr.Mode = dir.entry.Attr.Mode | os.ModeDir
-	attr.Mtime = dir.entry.Attr.Mtime
-	attr.Crtime = dir.entry.Attr.Crtime
-	attr.Gid = dir.entry.Attr.Gid
-	attr.Uid = dir.entry.Attr.Uid
+	attr.Mode = os.FileMode(dir.entry.Attributes.FileMode) | os.ModeDir
+	attr.Mtime = time.Unix(dir.entry.Attributes.Mtime, 0)
+	attr.Crtime = time.Unix(dir.entry.Attributes.Crtime, 0)
+	attr.Gid = dir.entry.Attributes.Gid
+	attr.Uid = dir.entry.Attributes.Uid
 
 	glog.V(4).Infof("dir Attr %s, attr: %+v", dir.FullPath(), attr)
 
@@ -102,13 +103,12 @@ func (dir *Dir) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 }
 
 func (dir *Dir) newFile(name string, entry *filer_pb.Entry) fs.Node {
-	dirPath := dir.FullPath()
-	f := dir.wfs.fsNodeCache.EnsureFsNode(util.NewFullPath(dirPath, name), func() fs.Node {
+	f := dir.wfs.fsNodeCache.EnsureFsNode(util.NewFullPath(dir.FullPath(), name), func() fs.Node {
 		return &File{
 			Name:           name,
 			dir:            dir,
 			wfs:            dir.wfs,
-			entry:          filer.FromPbEntry(dirPath, entry),
+			entry:          entry,
 			entryViewCache: nil,
 		}
 	})
@@ -119,7 +119,7 @@ func (dir *Dir) newFile(name string, entry *filer_pb.Entry) fs.Node {
 func (dir *Dir) newDirectory(fullpath util.FullPath, entry *filer_pb.Entry) fs.Node {
 
 	d := dir.wfs.fsNodeCache.EnsureFsNode(fullpath, func() fs.Node {
-		return &Dir{name: entry.Name, wfs: dir.wfs, entry: filer.FromPbEntry(dir.FullPath(), entry), parent: dir}
+		return &Dir{name: entry.Name, wfs: dir.wfs, entry: entry, parent: dir}
 	})
 	d.(*Dir).parent = dir // in case dir node was created later
 	return d
@@ -436,19 +436,19 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	}
 
 	if req.Valid.Mode() {
-		dir.entry.Attr.Mode = req.Mode
+		dir.entry.Attributes.FileMode = uint32(req.Mode)
 	}
 
 	if req.Valid.Uid() {
-		dir.entry.Attr.Uid = req.Uid
+		dir.entry.Attributes.Uid = req.Uid
 	}
 
 	if req.Valid.Gid() {
-		dir.entry.Attr.Gid = req.Gid
+		dir.entry.Attributes.Gid = req.Gid
 	}
 
 	if req.Valid.Mtime() {
-		dir.entry.Attr.Mtime = req.Mtime
+		dir.entry.Attributes.Mtime = req.Mtime.Unix()
 	}
 
 	return dir.saveEntry()
@@ -527,14 +527,12 @@ func (dir *Dir) saveEntry() error {
 
 	return dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		pbEntry := dir.entry.ToProtoEntry()
-
-		dir.wfs.mapPbIdFromLocalToFiler(pbEntry)
-		defer dir.wfs.mapPbIdFromFilerToLocal(pbEntry)
+		dir.wfs.mapPbIdFromLocalToFiler(dir.entry)
+		defer dir.wfs.mapPbIdFromFilerToLocal(dir.entry)
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory:  parentDir,
-			Entry:      pbEntry,
+			Entry:      dir.entry,
 			Signatures: []int32{dir.wfs.signature},
 		}
 
@@ -552,5 +550,25 @@ func (dir *Dir) saveEntry() error {
 }
 
 func (dir *Dir) FullPath() string {
-	return string(dir.entry.FullPath)
+	var parts []string
+	for p := dir; p != nil; p = p.parent {
+		if strings.HasPrefix(p.name, "/") {
+			if len(p.name) > 1 {
+				parts = append(parts, p.name[1:])
+			}
+		} else {
+			parts = append(parts, p.name)
+		}
+	}
+
+	if len(parts) == 0 {
+		return "/"
+	}
+
+	var buf bytes.Buffer
+	for i := len(parts) - 1; i >= 0; i-- {
+		buf.WriteString("/")
+		buf.WriteString(parts[i])
+	}
+	return buf.String()
 }

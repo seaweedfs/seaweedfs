@@ -61,6 +61,7 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 			glog.Errorf("read chunk: %v", err)
 			return fmt.Errorf("read chunk: %v", err)
 		}
+
 		_, err = w.Write(data)
 		if err != nil {
 			glog.Errorf("write chunk: %v", err)
@@ -221,7 +222,7 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 	var buffer bytes.Buffer
 	var shouldRetry bool
 	for _, urlString := range urlStrings {
-		shouldRetry, err = util.FastReadUrlAsStream(urlString, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), false, chunkView.Offset, int(chunkView.Size), func(data []byte) {
+		shouldRetry, err = util.ReadUrlAsStream(urlString, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size), func(data []byte) {
 			buffer.Write(data)
 		})
 		if !shouldRetry {
