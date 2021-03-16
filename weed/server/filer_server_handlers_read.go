@@ -131,6 +131,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
+		processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
+			return filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size, true)
+		})
 		return
 	}
 
@@ -158,7 +161,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 			}
 			return err
 		}
-		return filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size)
+		return filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size, false)
 	})
 
 }

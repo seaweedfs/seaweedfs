@@ -14,7 +14,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
-func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
+func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64, isCheck bool) error {
 
 	glog.V(9).Infof("start to stream content for chunks: %+v\n", chunks)
 	chunkViews := ViewFromChunks(masterClient.GetLookupFileIdFunction(), chunks, offset, size)
@@ -34,15 +34,20 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 		fileId2Url[chunkView.FileId] = urlStrings
 	}
 
-	for idx, chunkView := range chunkViews {
-
-		urlStrings := fileId2Url[chunkView.FileId]
-
+	if isCheck {
 		// Pre-check all chunkViews urls
 		gErr := new(errgroup.Group)
-		if len(chunkViews) > 1 && idx == 0 {
-			CheckAllChunkViews(chunkViews[1:], &fileId2Url, gErr)
+		CheckAllChunkViews(chunkViews, &fileId2Url, gErr)
+		if err := gErr.Wait(); err != nil {
+			glog.Errorf("check all chunks: %v", err)
+			return fmt.Errorf("check all chunks: %v", err)
 		}
+		return nil
+	}
+
+	for _, chunkView := range chunkViews {
+
+		urlStrings := fileId2Url[chunkView.FileId]
 		data, err := retriedFetchChunkData(
 			urlStrings,
 			chunkView.CipherKey,
@@ -55,10 +60,6 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 		if err != nil {
 			glog.Errorf("read chunk: %v", err)
 			return fmt.Errorf("read chunk: %v", err)
-		}
-		if err := gErr.Wait(); err != nil {
-			glog.Errorf("check all chunks: %v", err)
-			return fmt.Errorf("check all chunks: %v", err)
 		}
 		_, err = w.Write(data)
 		if err != nil {
