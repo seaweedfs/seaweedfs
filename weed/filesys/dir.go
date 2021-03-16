@@ -552,5 +552,8 @@ func (dir *Dir) saveEntry() error {
 }
 
 func (dir *Dir) FullPath() string {
-	return string(dir.entry.FullPath)
+	if dir.wfs.option.FilerMountRootPath == "/" {
+		return string(dir.entry.FullPath)
+	}
+	return string(dir.entry.FullPath)[len(dir.wfs.option.FilerMountRootPath):]
 }
