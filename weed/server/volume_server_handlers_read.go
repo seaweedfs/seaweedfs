@@ -27,7 +27,7 @@ var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
 
-	// println(r.Method + " " + r.URL.Path)
+	glog.V(9).Info(r.Method + " " + r.URL.Path + " " + r.Header.Get("Range"))
 
 	stats.VolumeServerRequestCounter.WithLabelValues("get").Inc()
 	start := time.Now()
@@ -261,12 +261,9 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 		return nil
 	}
 
-	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64, httpStatusCode int) error {
+	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
 		if _, e = rs.Seek(offset, 0); e != nil {
 			return e
-		}
-		if httpStatusCode != 0 {
-			w.WriteHeader(httpStatusCode)
 		}
 		_, e = io.CopyN(writer, rs, size)
 		return e

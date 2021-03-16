@@ -38,7 +38,7 @@ require (
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.4
 	github.com/gorilla/websocket v1.4.1 // indirect
-	github.com/grpc-ecosystem/go-grpc-middleware v1.0.1-0.20190118093823-f849b5445de4 // indirect
+	github.com/grpc-ecosystem/go-grpc-middleware v1.0.1-0.20190118093823-f849b5445de4
 	github.com/grpc-ecosystem/grpc-gateway v1.11.0 // indirect
 	github.com/jcmturner/gofork v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.10
@@ -88,7 +88,7 @@ require (
 	gocloud.dev/pubsub/rabbitpubsub v0.20.0
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1 // indirect
 	golang.org/x/net v0.0.0-20201202161906-c7110b5ffcbb
-	golang.org/x/sync v0.0.0-20200930132711-30421366ff76 // indirect
+	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
 	golang.org/x/sys v0.0.0-20201022201747-fb209a7c41cd
 	golang.org/x/tools v0.0.0-20200608174601-1b747fd94509
 	google.golang.org/api v0.26.0
