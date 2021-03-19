@@ -182,6 +182,26 @@ func Exists(filerClient FilerClient, parentDirectoryPath string, entryName strin
 	return
 }
 
+func Touch(filerClient FilerClient, parentDirectoryPath string, entryName string, entry *Entry) (err error) {
+
+	return filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
+
+		request := &UpdateEntryRequest{
+			Directory: parentDirectoryPath,
+			Entry:     entry,
+		}
+
+		glog.V(4).Infof("touch entry %v/%v: %v", parentDirectoryPath, entryName, request)
+		if err := UpdateEntry(client, request); err != nil {
+			glog.V(0).Infof("touch exists entry %v: %v", request, err)
+			return fmt.Errorf("touch exists entry %s/%s: %v", parentDirectoryPath, entryName, err)
+		}
+
+		return nil
+	})
+
+}
+
 func Mkdir(filerClient FilerClient, parentDirectoryPath string, dirName string, fn func(entry *Entry)) error {
 	return filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
 
