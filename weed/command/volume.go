@@ -3,7 +3,7 @@ package command
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/udptransfer"
+	"github.com/chrislusf/seaweedfs/weed/wdclient/penet"
 	"net"
 	"net/http"
 	httppprof "net/http/pprof"
@@ -401,13 +401,7 @@ func (v VolumeServerOptions) startTcpService(volumeServer *weed_server.VolumeSer
 func (v VolumeServerOptions) startUdpService(volumeServer *weed_server.VolumeServer) {
 	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port+20001)
 
-	listener, err := udptransfer.NewEndpoint(&udptransfer.Params{
-		LocalAddr:      listeningAddress,
-		Bandwidth:      100,
-		FastRetransmit: true,
-		FlatTraffic:    true,
-		IsServ:         true,
-	})
+	listener, err := penet.Listen("", listeningAddress)
 	if err != nil {
 		glog.Fatalf("Volume server listen on %s:%v", listeningAddress, err)
 	}
@@ -416,7 +410,6 @@ func (v VolumeServerOptions) startUdpService(volumeServer *weed_server.VolumeSer
 	for {
 		conn, err := listener.Accept()
 		if err == nil {
-			glog.V(0).Infof("Client from %s", conn.RemoteAddr())
 			go volumeServer.HandleUdpConnection(conn)
 		} else if isTemporaryError(err) {
 			continue

@@ -10,8 +10,6 @@ import (
 func (vs *VolumeServer) HandleUdpConnection(c net.Conn) {
 	defer c.Close()
 
-	glog.V(0).Infof("Serving writes from %s", c.RemoteAddr().String())
-
 	bufReader := bufio.NewReaderSize(c, 1024*1024)
 	bufWriter := bufio.NewWriterSize(c, 1024*1024)
 
@@ -19,7 +17,7 @@ func (vs *VolumeServer) HandleUdpConnection(c net.Conn) {
 		cmd, err := bufReader.ReadString('\n')
 		if err != nil {
 			if err != io.EOF {
-				glog.Errorf("read command from %s: %v", c.RemoteAddr().String(), err)
+				// glog.Errorf("read command from: %v", err)
 			}
 			return
 		}
