@@ -42,6 +42,7 @@ Your support will be really appreciated by me and other supporters!
 - [SeaweedFS on Twitter](https://twitter.com/SeaweedFS)
 - [SeaweedFS Mailing List](https://groups.google.com/d/forum/seaweedfs)
 - [Wiki Documentation](https://github.com/chrislusf/seaweedfs/wiki)
+- [SeaweedFS White Paper](https://github.com/chrislusf/seaweedfs/wiki/SeaweedFS_Architecture.pdf)
 - [SeaweedFS Introduction Slides](https://www.slideshare.net/chrislusf/seaweedfs-introduction)
 
 Table of Contents
