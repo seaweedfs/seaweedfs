@@ -67,7 +67,7 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 				maxVolumeCountStr := parts[1][strings.Index(parts[1], "/")+1:]
 				maxVolumeCount, _ := strconv.Atoi(maxVolumeCountStr)
 				disk = &master_pb.DiskInfo{
-					Type: diskType,
+					Type:           diskType,
 					MaxVolumeCount: uint64(maxVolumeCount),
 				}
 				dn.DiskInfos[types.ToDiskType(diskType).String()] = disk
