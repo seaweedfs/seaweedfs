@@ -37,7 +37,7 @@ func (c *commandFsMv) Help() string {
 func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	if len(args) != 2 {
-		return fmt.Errorf("need to have 2 arguments.")
+		return fmt.Errorf("need to have 2 arguments")
 	}
 
 	sourcePath, err := commandEnv.parseUrl(args[0])
