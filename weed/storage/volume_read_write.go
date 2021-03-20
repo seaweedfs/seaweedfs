@@ -146,7 +146,8 @@ func (v *Volume) doWriteRequest(n *needle.Needle) (offset uint64, size Size, isU
 			return
 		}
 		if existingNeedle.Cookie != n.Cookie {
-			glog.V(0).Infof("write cookie mismatch: existing %x, new %x", existingNeedle.Cookie, n.Cookie)
+			glog.V(0).Infof("write cookie mismatch: existing %s, new %s",
+				needle.NewFileIdFromNeedle(v.Id, existingNeedle), needle.NewFileIdFromNeedle(v.Id, n))
 			err = fmt.Errorf("mismatching cookie %x", n.Cookie)
 			return
 		}
