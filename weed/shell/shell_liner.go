@@ -19,6 +19,10 @@ var (
 
 func RunShell(options ShellOptions) {
 
+	sort.Slice(Commands, func(i, j int) bool {
+		return strings.Compare(Commands[i].Name(), Commands[j].Name()) < 0
+	})
+
 	line = liner.NewLiner()
 	defer line.Close()
 
@@ -96,9 +100,6 @@ func printGenericHelp() {
 `
 	fmt.Print(msg)
 
-	sort.Slice(Commands, func(i, j int) bool {
-		return strings.Compare(Commands[i].Name(), Commands[j].Name()) < 0
-	})
 	for _, c := range Commands {
 		helpTexts := strings.SplitN(c.Help(), "\n", 2)
 		fmt.Printf("  %-30s\t# %s \n", c.Name(), helpTexts[0])
@@ -113,10 +114,6 @@ func printHelp(cmds []string) {
 		fmt.Println()
 	} else {
 		cmd := strings.ToLower(args[0])
-
-		sort.Slice(Commands, func(i, j int) bool {
-			return strings.Compare(Commands[i].Name(), Commands[j].Name()) < 0
-		})
 
 		for _, c := range Commands {
 			if c.Name() == cmd {
