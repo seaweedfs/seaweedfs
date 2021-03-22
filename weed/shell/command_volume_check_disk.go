@@ -139,7 +139,7 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(subtrahend, minuend *needle_m
 		}
 
 		if verbose {
-			fmt.Fprintf(writer, "%s read %s \n", source.location.dataNode.Id, counter, target.location.dataNode.Id, len(missingNeedles))
+			fmt.Fprintf(writer, "read %d,%x %s => %s \n", source.info.Id, needleValue.Key, source.location.dataNode.Id, target.location.dataNode.Id)
 		}
 
 		if err := c.writeNeedleBlobToTarget(target.location.dataNode.Id, source.info.Id, needleValue, needleBlob); err != nil {

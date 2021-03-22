@@ -31,7 +31,7 @@ func (vs *VolumeServer) WriteNeedleBlob(ctx context.Context, req *volume_server_
 	}
 
 	if err = v.WriteNeedleBlob(types.NeedleId(req.NeedleId), req.NeedleBlob, types.Size(req.Size)); err != nil {
-		return nil, fmt.Errorf("write blob needle %d: %v", req.NeedleId, req.Size, err)
+		return nil, fmt.Errorf("write blob needle %d size %d: %v", req.NeedleId, req.Size, err)
 	}
 
 	return resp, nil
