@@ -299,3 +299,29 @@ func (v *Volume) startWorker() {
 		}
 	}()
 }
+
+func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size) error {
+
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+
+	if MaxPossibleVolumeSize < v.nm.ContentSize()+uint64(len(needleBlob)) {
+		return fmt.Errorf("volume size limit %d exceeded! current size is %d", MaxPossibleVolumeSize, v.nm.ContentSize())
+	}
+
+	appendAtNs := uint64(time.Now().UnixNano())
+	offset, err := needle.WriteNeedleBlob(v.DataBackend, needleBlob, size, appendAtNs, v.Version())
+
+	v.checkReadWriteError(err)
+	if err != nil {
+		return err
+	}
+	v.lastAppendAtNs = appendAtNs
+
+	// add to needle map
+	if err = v.nm.Put(needleId, ToOffset(int64(offset)), size); err != nil {
+		glog.V(4).Infof("failed to put in needle map %d: %v", needleId, err)
+	}
+
+	return err
+}

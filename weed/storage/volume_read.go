@@ -58,6 +58,14 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, erro
 	return -1, ErrorNotFound
 }
 
+// read fills in Needle content by looking up n.Id from NeedleMapper
+func (v *Volume) ReadNeedleBlob(offset int64, size Size) ([]byte, error) {
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
+
+	return needle.ReadNeedleBlob(v.DataBackend, offset, size, v.Version())
+}
+
 type VolumeFileScanner interface {
 	VisitSuperBlock(super_block.SuperBlock) error
 	ReadNeedleBody() bool
