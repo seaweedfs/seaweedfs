@@ -130,7 +130,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		if chunkResolveErr != nil {
 			return 0, fmt.Errorf("fail to resolve chunk manifest: %v", chunkResolveErr)
 		}
-		fh.f.reader = nil
+		fh.f.setReader(nil)
 	}
 
 	reader := fh.f.reader
@@ -138,7 +138,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		chunkViews := filer.ViewFromVisibleIntervals(fh.f.entryViewCache, 0, math.MaxInt64)
 		reader = filer.NewChunkReaderAtFromClient(fh.f.wfs.LookupFn(), chunkViews, fh.f.wfs.chunkCache, fileSize)
 	}
-	fh.f.reader = reader
+	fh.f.setReader(reader)
 
 	totalRead, err := reader.ReadAt(buff, offset)
 
@@ -207,12 +207,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 		fh.f.isOpen--
 
 		fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
-		if closer, ok := fh.f.reader.(io.Closer); ok {
-			if closer != nil {
-				closer.Close()
-			}
-		}
-		fh.f.reader = nil
+		fh.f.setReader(nil)
 	}
 
 	return nil
