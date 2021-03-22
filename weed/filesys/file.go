@@ -280,6 +280,9 @@ func (file *File) maybeLoadEntry(ctx context.Context) (entry *filer_pb.Entry, er
 		return entry, err
 	}
 	if entry != nil {
+		if entry.Attributes == nil {
+			entry.Attributes = &filer_pb.FuseAttributes{}
+		}
 		file.setEntry(entry)
 	} else {
 		glog.Warningf("maybeLoadEntry not found entry %s/%s: %v", file.dir.FullPath(), file.Name, err)
