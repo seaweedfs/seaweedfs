@@ -46,6 +46,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	}
 
 	fsckCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	slowMode := fsckCommand.Bool("slow", false, "slow mode checks all replicas even file counts are the same")
 	verbose := fsckCommand.Bool("v", false, "verbose mode")
 	applyChanges := fsckCommand.Bool("force", false, "apply the fix")
 	if err = fsckCommand.Parse(args); err != nil {
@@ -75,9 +76,11 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 		})
 		for len(replicas) >= 2 {
 			a, b := replicas[0], replicas[1]
-			if fileCount(a) == fileCount(b) {
-				replicas = replicas[1:]
-				continue
+			if !*slowMode {
+				if fileCount(a) == fileCount(b) {
+					replicas = replicas[1:]
+					continue
+				}
 			}
 			if a.info.ReadOnly || b.info.ReadOnly {
 				fmt.Fprintf(writer, "skipping readonly volume %d on %s and %s\n", a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id)
@@ -125,7 +128,7 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(subtrahend, minuend *needle_m
 		return nil
 	})
 
-	fmt.Fprintf(writer, "%s has %d entries, %s missed %d entries\n", source.location.dataNode.Id, counter, target.location.dataNode.Id, len(missingNeedles))
+	fmt.Fprintf(writer, "volume %d %s has %d entries, %s missed %d entries\n", source.info.Id, source.location.dataNode.Id, counter, target.location.dataNode.Id, len(missingNeedles))
 
 	for _, needleValue := range missingNeedles {
 
