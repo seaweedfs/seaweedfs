@@ -23,7 +23,7 @@ type FileHandle struct {
 	dirtyPages  *ContinuousDirtyPages
 	contentType string
 	handle      uint64
-	sync.RWMutex
+	sync.Mutex
 
 	f         *File
 	RequestId fuse.RequestID // unique ID for request
@@ -59,8 +59,8 @@ var _ = fs.HandleReleaser(&FileHandle{})
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 
 	glog.V(4).Infof("%s read fh %d: [%d,%d) size %d resp.Data cap=%d", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size), req.Size, cap(resp.Data))
-	fh.RLock()
-	defer fh.RUnlock()
+	fh.Lock()
+	defer fh.Unlock()
 
 	if req.Size <= 0 {
 		return nil
