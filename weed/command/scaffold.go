@@ -103,9 +103,9 @@ dir = "./filerrdb"					# directory to store rocksdb files
 
 [mysql]  # or memsql, tidb
 # CREATE TABLE IF NOT EXISTS filemeta (
-#   dirhash     BIGINT         COMMENT 'first 64 bits of MD5 hash value of directory field',
-#   name        VARCHAR(1000)  COMMENT 'directory or file name',
-#   directory   TEXT           COMMENT 'full path to parent directory',
+#   dirhash     BIGINT               COMMENT 'first 64 bits of MD5 hash value of directory field',
+#   name        VARCHAR(1000) BINARY COMMENT 'directory or file name',
+#   directory   TEXT                 COMMENT 'full path to parent directory',
 #   meta        LONGBLOB,
 #   PRIMARY KEY (dirhash, name)
 # ) DEFAULT CHARSET=utf8;
@@ -126,7 +126,7 @@ enabled = false
 createTable = """
   CREATE TABLE IF NOT EXISTS ` + "`%s`" + ` (
     dirhash BIGINT,
-    name VARCHAR(1000),
+    name VARCHAR(1000) BINARY,
     directory TEXT,
     meta LONGBLOB,
     PRIMARY KEY (dirhash, name)
