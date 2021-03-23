@@ -48,15 +48,7 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 	for _, chunkView := range chunkViews {
 
 		urlStrings := fileId2Url[chunkView.FileId]
-		data, err := retriedFetchChunkData(
-			urlStrings,
-			chunkView.CipherKey,
-			chunkView.IsGzipped,
-			chunkView.IsFullChunk(),
-			false,
-			chunkView.Offset,
-			int(chunkView.Size),
-		)
+		data, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
 		if err != nil {
 			glog.Errorf("read chunk: %v", err)
 			return fmt.Errorf("read chunk: %v", err)
@@ -78,14 +70,7 @@ func CheckAllChunkViews(chunkViews []*ChunkView, fileId2Url *map[string][]string
 		urlStrings := (*fileId2Url)[chunkView.FileId]
 		glog.V(9).Infof("Check chunk: %+v\n url: %v", chunkView, urlStrings)
 		gErr.Go(func() error {
-			_, err := retriedFetchChunkData(
-				urlStrings,
-				chunkView.CipherKey,
-				chunkView.IsGzipped,
-				chunkView.IsFullChunk(),
-				true,
-				chunkView.Offset,
-				int(chunkView.Size))
+			_, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
 			return err
 		})
 	}
@@ -110,7 +95,7 @@ func ReadAll(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) 
 			return nil, err
 		}
 
-		data, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), false, chunkView.Offset, int(chunkView.Size))
+		data, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
 		if err != nil {
 			return nil, err
 		}
