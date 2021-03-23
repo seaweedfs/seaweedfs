@@ -131,11 +131,11 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(subtrahend, minuend *needle_m
 	})
 
 	fmt.Fprintf(writer, "volume %d %s has %d entries, %s missed %d entries\n", source.info.Id, source.location.dataNode.Id, counter, target.location.dataNode.Id, len(missingNeedles))
-	missingNeedlesPercent := float64(len(missingNeedles)) / float64(counter)
-	if missingNeedlesPercent > missingKeysThreshold {
+	missingNeedlesFraction := float64(len(missingNeedles)) / float64(counter)
+	if missingNeedlesFraction > missingKeysThreshold {
 		return fmt.Errorf(
 			"failed to start repair volume %d, percentage of missing keys is greater than the threshold: %.2f > %.2f",
-			source.info.Id, missingNeedlesPercent, missingKeysThreshold)
+			source.info.Id, missingNeedlesFraction, missingKeysThreshold)
 	}
 
 	for _, needleValue := range missingNeedles {
