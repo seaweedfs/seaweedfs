@@ -3,7 +3,6 @@ package command
 import (
 	"fmt"
 	"os"
-	"runtime"
 	"runtime/pprof"
 	"strings"
 	"time"
@@ -192,7 +191,6 @@ func runServer(cmd *Command, args []string) bool {
 	webdavOptions.filer = &filerAddress
 	msgBrokerOptions.filer = &filerAddress
 
-	runtime.GOMAXPROCS(runtime.NumCPU())
 	go stats_collect.StartMetricsServer(*serverMetricsHttpPort)
 
 	folders := strings.Split(*volumeDataFolders, ",")
