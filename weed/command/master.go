@@ -6,7 +6,6 @@ import (
 	"google.golang.org/grpc/reflection"
 	"net/http"
 	"os"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -86,7 +85,6 @@ func runMaster(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("master", false)
 
-	runtime.GOMAXPROCS(runtime.NumCPU())
 	grace.SetupProfiling(*masterCpuProfile, *masterMemProfile)
 
 	parent, _ := util.FullPath(*m.metaFolder).DirAndName()

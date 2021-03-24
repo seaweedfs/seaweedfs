@@ -6,7 +6,6 @@ import (
 	"net/http"
 	httppprof "net/http/pprof"
 	"os"
-	"runtime"
 	"runtime/pprof"
 	"strconv"
 	"strings"
@@ -110,8 +109,6 @@ var (
 func runVolume(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
-
-	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	// If --pprof is set we assume the caller wants to be able to collect
 	// cpu and memory profiles via go tool pprof
