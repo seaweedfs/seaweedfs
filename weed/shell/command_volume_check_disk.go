@@ -130,6 +130,11 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(subtrahend, minuend *needle_m
 	})
 
 	fmt.Fprintf(writer, "volume %d %s has %d entries, %s missed %d entries\n", source.info.Id, source.location.dataNode.Id, counter, target.location.dataNode.Id, len(missingNeedles))
+
+	if counter == 0 || len(missingNeedles) == 0 {
+		return nil
+	}
+
 	missingNeedlesFraction := float64(len(missingNeedles)) / float64(counter)
 	if missingNeedlesFraction > nonRepairThreshold {
 		return fmt.Errorf(
