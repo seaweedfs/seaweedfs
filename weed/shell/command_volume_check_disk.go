@@ -49,8 +49,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	slowMode := fsckCommand.Bool("slow", false, "slow mode checks all replicas even file counts are the same")
 	verbose := fsckCommand.Bool("v", false, "verbose mode")
 	applyChanges := fsckCommand.Bool("force", false, "apply the fix")
-	missingKeysThreshold := fsckCommand.Float64("missingKeysThreshold", 0.3, "repair when missing keys is not more than this limit")
-
+	repairThreshold := fsckCommand.Float64("repairThreshold", 0.3, "repair when missing keys is not more than this limit")
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -103,10 +102,10 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 			}
 
 			// find and make up the differnces
-			if err := c.doVolumeCheckDisk(aDB, bDB, a, b, *verbose, writer, *applyChanges, *missingKeysThreshold); err != nil {
+			if err := c.doVolumeCheckDisk(aDB, bDB, a, b, *verbose, writer, *applyChanges, *repairThreshold); err != nil {
 				return err
 			}
-			if err := c.doVolumeCheckDisk(bDB, aDB, b, a, *verbose, writer, *applyChanges, *missingKeysThreshold); err != nil {
+			if err := c.doVolumeCheckDisk(bDB, aDB, b, a, *verbose, writer, *applyChanges, *repairThreshold); err != nil {
 				return err
 			}
 			replicas = replicas[1:]
@@ -116,7 +115,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	return nil
 }
 
-func (c *commandVolumeCheckDisk) doVolumeCheckDisk(subtrahend, minuend *needle_map.MemDb, source, target *VolumeReplica, verbose bool, writer io.Writer, applyChanges bool, missingKeysThreshold float64) error {
+func (c *commandVolumeCheckDisk) doVolumeCheckDisk(subtrahend, minuend *needle_map.MemDb, source, target *VolumeReplica, verbose bool, writer io.Writer, applyChanges bool, repairThreshold float64) error {
 
 	// find missing keys
 	// hash join, can be more efficient
@@ -132,10 +131,10 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(subtrahend, minuend *needle_m
 
 	fmt.Fprintf(writer, "volume %d %s has %d entries, %s missed %d entries\n", source.info.Id, source.location.dataNode.Id, counter, target.location.dataNode.Id, len(missingNeedles))
 	missingNeedlesFraction := float64(len(missingNeedles)) / float64(counter)
-	if missingNeedlesFraction > missingKeysThreshold {
+	if missingNeedlesFraction > repairThreshold {
 		return fmt.Errorf(
 			"failed to start repair volume %d, percentage of missing keys is greater than the threshold: %.2f > %.2f",
-			source.info.Id, missingNeedlesFraction, missingKeysThreshold)
+			source.info.Id, missingNeedlesFraction, repairThreshold)
 	}
 
 	for _, needleValue := range missingNeedles {
