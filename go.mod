@@ -13,6 +13,7 @@ require (
 	github.com/Shopify/sarama v1.23.1
 	github.com/aws/aws-sdk-go v1.34.30
 	github.com/buraksezer/consistent v0.0.0-20191006190839-693edf70fd72
+	github.com/bwmarrin/snowflake v0.3.0
 	github.com/cespare/xxhash v1.1.0
 	github.com/chrislusf/raft v1.0.4
 	github.com/coreos/go-semver v0.3.0 // indirect
