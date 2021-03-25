@@ -279,7 +279,6 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 		}
 	case "snowflake":
 		var err error
-		glog.V(0).Infof("use a snowfalke seq id, nodeid %s:%d", option.Host, option.Port)
 		seq, err = sequence.NewSnowflakeSequencer(fmt.Sprintf("%s:%d", option.Host, option.Port))
 		if err != nil {
 			glog.Error(err)

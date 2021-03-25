@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 
 	"github.com/bwmarrin/snowflake"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 // a simple snowflake Sequencer
@@ -13,7 +14,9 @@ type SnowflakeSequencer struct {
 }
 
 func NewSnowflakeSequencer(nodeid string) (*SnowflakeSequencer, error) {
-	node, err := snowflake.NewNode(int64(hash(nodeid) & 0x3ff))
+	nodeid_hash := hash(nodeid) & 0x3ff
+	glog.V(0).Infof("use snowfalke seq id generator, nodeid:%s hex_of_nodeid: %x", nodeid, nodeid_hash)
+	node, err := snowflake.NewNode(int64(nodeid_hash))
 	if err != nil {
 		fmt.Println(err)
 		return nil, err
