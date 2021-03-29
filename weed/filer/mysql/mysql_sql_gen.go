@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"fmt"
+
 	"github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -9,6 +10,7 @@ import (
 type SqlGenMysql struct {
 	CreateTableSqlTemplate string
 	DropTableSqlTemplate   string
+	InsertQueryTemplate    string
 }
 
 var (
@@ -16,7 +18,11 @@ var (
 )
 
 func (gen *SqlGenMysql) GetSqlInsert(tableName string) string {
-	return fmt.Sprintf("INSERT INTO `%s` (dirhash,name,directory,meta) VALUES(?,?,?,?)", tableName)
+	if gen.InsertQueryTemplate != "" {
+		return fmt.Sprintf(gen.InsertQueryTemplate, tableName)
+	} else {
+		return fmt.Sprintf("INSERT INTO `%s` (dirhash,name,directory,meta) VALUES(?,?,?,?)", tableName)
+	}
 }
 
 func (gen *SqlGenMysql) GetSqlUpdate(tableName string) string {

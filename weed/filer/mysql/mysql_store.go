@@ -3,8 +3,9 @@ package mysql
 import (
 	"database/sql"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/filer"
 
 	"github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -29,6 +30,7 @@ func (store *MysqlStore) GetName() string {
 
 func (store *MysqlStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return store.initialize(
+		configuration.GetString(prefix+"insertQuery"),
 		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetString(prefix+"hostname"),
@@ -41,13 +43,14 @@ func (store *MysqlStore) Initialize(configuration util.Configuration, prefix str
 	)
 }
 
-func (store *MysqlStore) initialize(user, password, hostname string, port int, database string, maxIdle, maxOpen,
+func (store *MysqlStore) initialize(insertQuery, user, password, hostname string, port int, database string, maxIdle, maxOpen,
 	maxLifetimeSeconds int, interpolateParams bool) (err error) {
 
 	store.SupportBucketTable = false
 	store.SqlGenerator = &SqlGenMysql{
 		CreateTableSqlTemplate: "",
 		DropTableSqlTemplate:   "drop table `%s`",
+		InsertQueryTemplate:    insertQuery,
 	}
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, password, hostname, port, database)

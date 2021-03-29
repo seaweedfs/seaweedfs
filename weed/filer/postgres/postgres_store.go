@@ -29,6 +29,7 @@ func (store *PostgresStore) GetName() string {
 
 func (store *PostgresStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return store.initialize(
+		configuration.GetString(prefix+"insertQuery"),
 		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetString(prefix+"hostname"),
@@ -42,12 +43,13 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 	)
 }
 
-func (store *PostgresStore) initialize(user, password, hostname string, port int, database, schema, sslmode string, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
+func (store *PostgresStore) initialize(insertQuery, user, password, hostname string, port int, database, schema, sslmode string, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
 
 	store.SupportBucketTable = false
 	store.SqlGenerator = &SqlGenPostgres{
 		CreateTableSqlTemplate: "",
 		DropTableSqlTemplate:   `drop table "%s"`,
+		InsertQueryTemplate:    insertQuery,
 	}
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, hostname, port, sslmode)
