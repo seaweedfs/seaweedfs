@@ -33,7 +33,7 @@ func (store *PostgresStore2) Initialize(configuration util.Configuration, prefix
 	return store.initialize(
 		configuration.GetString(prefix+"createTable"),
 		configuration.GetString(prefix+"upsertQuery"),
-		configuration.GetString(prefix+"enableUpsert"),
+		configuration.GetBool(prefix+"enableUpsert"),
 		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetString(prefix+"hostname"),
@@ -47,7 +47,7 @@ func (store *PostgresStore2) Initialize(configuration util.Configuration, prefix
 	)
 }
 
-func (store *PostgresStore2) initialize(createTable, upsertQuery, enableUpsert, user, password, hostname string, port int, database, schema, sslmode string, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
+func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database, schema, sslmode string, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
 
 	store.SupportBucketTable = true
 	if !enableUpsert {

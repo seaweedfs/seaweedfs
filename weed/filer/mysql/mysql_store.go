@@ -31,7 +31,7 @@ func (store *MysqlStore) GetName() string {
 func (store *MysqlStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return store.initialize(
 		configuration.GetString(prefix+"upsertQuery"),
-		configuration.GetString(prefix+"enableUpsert"),
+		configuration.GetBool(prefix+"enableUpsert"),
 		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetString(prefix+"hostname"),
@@ -44,7 +44,7 @@ func (store *MysqlStore) Initialize(configuration util.Configuration, prefix str
 	)
 }
 
-func (store *MysqlStore) initialize(upsertQuery, enableUpsert, user, password, hostname string, port int, database string, maxIdle, maxOpen,
+func (store *MysqlStore) initialize(upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database string, maxIdle, maxOpen,
 	maxLifetimeSeconds int, interpolateParams bool) (err error) {
 
 	store.SupportBucketTable = false
