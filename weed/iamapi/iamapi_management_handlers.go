@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -19,12 +18,10 @@ import (
 	"strings"
 	"time"
 
-	//	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/iam"
 )
 
 const (
-	version      = "2010-05-08"
 	charsetUpper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	charset      = charsetUpper + "abcdefghijklmnopqrstuvwxyz/"
 )
@@ -42,73 +39,6 @@ type PolicyDocument struct {
 		Action   []string `json:"Action"`
 		Resource []string `json:"Resource"`
 	} `json:"Statement"`
-}
-
-type CommonResponse struct {
-	ResponseMetadata struct {
-		RequestId string `xml:"RequestId"`
-	} `xml:"ResponseMetadata"`
-}
-
-type ListUsersResponse struct {
-	CommonResponse
-	XMLName         xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListUsersResponse"`
-	ListUsersResult struct {
-		Users       []*iam.User `xml:"Users>member"`
-		IsTruncated bool        `xml:"IsTruncated"`
-	} `xml:"ListUsersResult"`
-}
-
-type ListAccessKeysResponse struct {
-	CommonResponse
-	XMLName              xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListAccessKeysResponse"`
-	ListAccessKeysResult struct {
-		AccessKeyMetadata []*iam.AccessKeyMetadata `xml:"AccessKeyMetadata>member"`
-		IsTruncated       bool                     `xml:"IsTruncated"`
-	} `xml:"ListAccessKeysResult"`
-}
-
-type DeleteUserResponse struct {
-	CommonResponse
-	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DeleteUserResponse"`
-}
-
-type DeleteAccessKeyResponse struct {
-	CommonResponse
-	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DeleteAccessKeyResponse"`
-}
-
-type CreatePolicyResponse struct {
-	CommonResponse
-	XMLName            xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ CreatePolicyResponse"`
-	CreatePolicyResult struct {
-		Policy iam.Policy `xml:"Policy"`
-	} `xml:"CreatePolicyResult"`
-}
-
-type CreateUserResponse struct {
-	CommonResponse
-	XMLName          xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ CreateUserResponse"`
-	CreateUserResult struct {
-		User iam.User `xml:"User"`
-	} `xml:"CreateUserResult"`
-}
-
-type CreateAccessKeyResponse struct {
-	CommonResponse
-	XMLName               xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ CreateAccessKeyResponse"`
-	CreateAccessKeyResult struct {
-		AccessKey iam.AccessKey `xml:"AccessKey"`
-	} `xml:"CreateAccessKeyResult"`
-}
-
-type PutUserPolicyResponse struct {
-	CommonResponse
-	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ PutUserPolicyResponse"`
-}
-
-func (r *CommonResponse) SetRequestId() {
-	r.ResponseMetadata.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
 }
 
 func Hash(s *string) string {
@@ -150,6 +80,27 @@ func (iama *IamApiServer) CreateUser(s3cfg *iam_pb.S3ApiConfiguration, values ur
 	s3cfg.Identities = append(s3cfg.Identities, &iam_pb.Identity{Name: userName})
 	return resp
 }
+
+func (iama *IamApiServer) DeleteUser(s3cfg *iam_pb.S3ApiConfiguration, userName string) (resp DeleteUserResponse, err error) {
+	for i, ident := range s3cfg.Identities {
+		if userName == ident.Name {
+			ident.Credentials = append(ident.Credentials[:i], ident.Credentials[i+1:]...)
+			return resp, nil
+		}
+	}
+	return resp, fmt.Errorf(iam.ErrCodeNoSuchEntityException)
+}
+
+func (iama *IamApiServer) GetUser(s3cfg *iam_pb.S3ApiConfiguration, userName string) (resp GetUserResponse, err error) {
+	for _, ident := range s3cfg.Identities {
+		if userName == ident.Name {
+			resp.GetUserResult.User = iam.User{UserName: &ident.Name}
+			return resp, nil
+		}
+	}
+	return resp, fmt.Errorf(iam.ErrCodeNoSuchEntityException)
+}
+
 func GetPolicyDocument(policy *string) (policyDocument PolicyDocument, err error) {
 	if err = json.Unmarshal([]byte(*policy), &policyDocument); err != nil {
 		return PolicyDocument{}, err
@@ -245,17 +196,6 @@ func GetActions(policy *PolicyDocument) (actions []string) {
 	return actions
 }
 
-func (iama *IamApiServer) DeleteUser(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp DeleteUserResponse) {
-	userName := values.Get("UserName")
-	for i, ident := range s3cfg.Identities {
-		if userName == ident.Name {
-			ident.Credentials = append(ident.Credentials[:i], ident.Credentials[i+1:]...)
-			break
-		}
-	}
-	return resp
-}
-
 func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp CreateAccessKeyResponse) {
 	userName := values.Get("UserName")
 	status := iam.StatusTypeActive
@@ -320,6 +260,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 
 	glog.Info("values ", values)
 	var response interface{}
+	var err error
 	changed := true
 	switch r.Form.Get("Action") {
 	case "ListUsers":
@@ -330,21 +271,31 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		changed = false
 	case "CreateUser":
 		response = iama.CreateUser(s3cfg, values)
+	case "GetUser":
+		userName := values.Get("UserName")
+		response, err = iama.GetUser(s3cfg, userName)
+		if err != nil {
+			writeIamErrorResponse(w, err, "user", userName)
+			return
+		}
 	case "DeleteUser":
-		response = iama.DeleteUser(s3cfg, values)
+		userName := values.Get("UserName")
+		response, err = iama.DeleteUser(s3cfg, userName)
+		if err != nil {
+			writeIamErrorResponse(w, err, "user", userName)
+			return
+		}
 	case "CreateAccessKey":
 		response = iama.CreateAccessKey(s3cfg, values)
 	case "DeleteAccessKey":
 		response = iama.DeleteAccessKey(s3cfg, values)
 	case "CreatePolicy":
-		var err error
 		response, err = iama.CreatePolicy(s3cfg, values)
 		if err != nil {
 			writeErrorResponse(w, s3err.ErrInvalidRequest, r.URL)
 			return
 		}
 	case "PutUserPolicy":
-		var err error
 		response, err = iama.PutUserPolicy(s3cfg, values)
 		if err != nil {
 			writeErrorResponse(w, s3err.ErrInvalidRequest, r.URL)

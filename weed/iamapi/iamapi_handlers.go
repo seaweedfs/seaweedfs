@@ -12,6 +12,8 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+
+	"github.com/aws/aws-sdk-go/service/iam"
 )
 
 type mimeType string
@@ -46,6 +48,22 @@ func writeErrorResponse(w http.ResponseWriter, errorCode s3err.ErrorCode, reqURL
 	errorResponse := getRESTErrorResponse(apiError, reqURL.Path)
 	encodedErrorResponse := encodeResponse(errorResponse)
 	writeResponse(w, apiError.HTTPStatusCode, encodedErrorResponse, mimeXML)
+}
+
+func writeIamErrorResponse(w http.ResponseWriter, err error, object string, value string) {
+	errCode := err.Error()
+	errorResp := ErrorResponse{}
+	errorResp.Error.Type = "Sender"
+	errorResp.Error.Code = &errCode
+	switch errCode {
+	case iam.ErrCodeNoSuchEntityException:
+		msg := fmt.Sprintf("The %s with name %s cannot be found.", object, value)
+		errorResp.Error.Message = &msg
+		writeResponse(w, http.StatusNotFound, encodeResponse(errorResp), mimeXML)
+	default:
+		writeResponse(w, http.StatusInternalServerError, encodeResponse(errorResp), mimeXML)
+
+	}
 }
 
 func getRESTErrorResponse(err s3err.APIError, resource string) s3err.RESTErrorResponse {

@@ -25,6 +25,8 @@ var (
 	filerS3Options     S3Options
 	filerStartWebDav   *bool
 	filerWebDavOptions WebDavOption
+	filerStartIam      *bool
+	filerIamOptions    IamOptions
 )
 
 type FilerOptions struct {
@@ -89,6 +91,10 @@ func init() {
 	filerWebDavOptions.tlsCertificate = cmdFiler.Flag.String("webdav.cert.file", "", "path to the TLS certificate file")
 	filerWebDavOptions.cacheDir = cmdFiler.Flag.String("webdav.cacheDir", os.TempDir(), "local cache directory for file chunks")
 	filerWebDavOptions.cacheSizeMB = cmdFiler.Flag.Int64("webdav.cacheCapacityMB", 1000, "local cache capacity in MB")
+
+	// start iam on filer
+	filerStartIam = cmdFiler.Flag.Bool("iam", false, "whether to start IAM service")
+	filerIamOptions.port = cmdFiler.Flag.Int("iam.port", 8111, "iam server http listen port")
 }
 
 var cmdFiler = &Command{
@@ -119,21 +125,32 @@ func runFiler(cmd *Command, args []string) bool {
 
 	go stats_collect.StartMetricsServer(*f.metricsHttpPort)
 
+	filerAddress := fmt.Sprintf("%s:%d", *f.ip, *f.port)
+	startDelay := time.Duration(2)
 	if *filerStartS3 {
-		filerAddress := fmt.Sprintf("%s:%d", *f.ip, *f.port)
 		filerS3Options.filer = &filerAddress
 		go func() {
-			time.Sleep(2 * time.Second)
+			time.Sleep(startDelay * time.Second)
 			filerS3Options.startS3Server()
 		}()
+		startDelay++
 	}
 
 	if *filerStartWebDav {
-		filerAddress := fmt.Sprintf("%s:%d", *f.ip, *f.port)
 		filerWebDavOptions.filer = &filerAddress
 		go func() {
-			time.Sleep(2 * time.Second)
+			time.Sleep(startDelay * time.Second)
 			filerWebDavOptions.startWebDav()
+		}()
+		startDelay++
+	}
+
+	if *filerStartIam {
+		filerIamOptions.filer = &filerAddress
+		filerIamOptions.masters = f.masters
+		go func() {
+			time.Sleep(startDelay * time.Second)
+			filerIamOptions.startIamServer()
 		}()
 	}
 
