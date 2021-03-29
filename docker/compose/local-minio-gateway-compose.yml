@@ -1,0 +1,50 @@
+version: '2'
+
+services:
+  master:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9333:9333
+      - 19333:19333
+    command: "master -ip=master -volumeSizeLimitMB=1024"
+  volume:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8080:8080
+      - 18080:18080
+    command: "volume -mserver=master:9333 -port=8080 -ip=volume -max=0 -preStopSeconds=1"
+    depends_on:
+      - master
+  s3:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8888:8888
+      - 18888:18888
+      - 8333:8333
+    command: '-v 1 filer -master="master:9333" -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333'
+    volumes:
+      - ./s3.json:/etc/seaweedfs/s3.json
+    depends_on:
+      - master
+      - volume
+  minio-gateway-s3:
+    image: minio/minio
+    ports:
+      - 9000:9000
+    command: 'minio gateway s3 http://s3:8333'
+    restart: on-failure
+    environment:
+      MINIO_ACCESS_KEY: "some_access_key1"
+      MINIO_SECRET_KEY: "some_secret_key1"
+    depends_on:
+      - s3
+  minio-warp:
+    image: minio/warp
+    command: 'mixed --duration=5m --obj.size=3mb --autoterm'
+    restart: on-failure
+    environment:
+      WARP_HOST: "minio-gateway-s3:9000"
+      WARP_ACCESS_KEY: "some_access_key1"
+      WARP_SECRET_KEY: "some_secret_key1"
+    depends_on:
+      - minio-gateway-s3
