@@ -10,7 +10,7 @@ import (
 type SqlGenPostgres struct {
 	CreateTableSqlTemplate string
 	DropTableSqlTemplate   string
-	InsertQueryTemplate    string
+	UpsertQueryTemplate    string
 }
 
 var (
@@ -18,8 +18,8 @@ var (
 )
 
 func (gen *SqlGenPostgres) GetSqlInsert(tableName string) string {
-	if gen.InsertQueryTemplate != "" {
-		return fmt.Sprintf(gen.InsertQueryTemplate, tableName)
+	if gen.UpsertQueryTemplate != "" {
+		return fmt.Sprintf(gen.UpsertQueryTemplate, tableName)
 	} else {
 		return fmt.Sprintf(`INSERT INTO "%s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4)`, tableName)
 	}

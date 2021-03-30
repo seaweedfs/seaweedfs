@@ -120,10 +120,9 @@ connection_max_idle = 2
 connection_max_open = 100
 connection_max_lifetime_seconds = 0
 interpolateParams = false
-# Empty insertQuery will use the default insert query
-# example insertQuery can be for UPSERT syntax:
-# insertQuery = """INSERT INTO ` + "`%s`" + ` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
-insertQuery = ""
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+upsertQuery = """INSERT INTO ` + "`%s`" + ` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
+enableUpsert = true
 
 [mysql2]  # or memsql, tidb
 enabled = false
@@ -145,10 +144,9 @@ connection_max_idle = 2
 connection_max_open = 100
 connection_max_lifetime_seconds = 0
 interpolateParams = false
-# Empty insertQuery will use the default insert query
-# example insertQuery can be for UPSERT syntax:
-# insertQuery = """INSERT INTO ` + "`%s`" + ` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
-insertQuery = ""
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+upsertQuery = """INSERT INTO ` + "`%s`" + ` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
+enableUpsert = true
 
 [postgres] # or cockroachdb, YugabyteDB
 # CREATE TABLE IF NOT EXISTS filemeta (
@@ -169,10 +167,9 @@ sslmode = "disable"
 connection_max_idle = 100
 connection_max_open = 100
 connection_max_lifetime_seconds = 0
-# Empty insertQuery will use the default insert query
-# example insertQuery can be for UPSERT syntax:
-# insertQuery = """INSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT ON CONSTRAINT "%[1]s_pkey" DO UPDATE SET meta = EXCLUDED.meta WHERE "%[1]s".meta != EXCLUDED.meta"""
-insertQuery = ""
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+upsertQuery = """INSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT (dirhash,name) DO UPDATE SET meta = EXCLUDED.meta WHERE "%[1]s".meta != EXCLUDED.meta"""
+enableUpsert = true
 
 [postgres2]
 enabled = false
@@ -195,10 +192,9 @@ sslmode = "disable"
 connection_max_idle = 100
 connection_max_open = 100
 connection_max_lifetime_seconds = 0
-# Empty insertQuery will use the default insert query
-# example insertQuery can be for UPSERT syntax:
-# insertQuery = """INSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT ON CONSTRAINT "%[1]s_pkey" DO UPDATE SET meta = EXCLUDED.meta WHERE "%[1]s".meta != EXCLUDED.meta"""
-insertQuery = ""
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+upsertQuery = """INSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT ON CONSTRAINT "%[1]s_pkey" DO UPDATE SET meta = EXCLUDED.meta WHERE "%[1]s".meta != EXCLUDED.meta"""
+enableUpsert = true
 
 [cassandra]
 # CREATE TABLE filemeta (
