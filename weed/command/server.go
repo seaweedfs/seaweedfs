@@ -2,8 +2,8 @@ package command
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"os"
-	"runtime/pprof"
 	"strings"
 	"time"
 
@@ -15,6 +15,7 @@ import (
 
 type ServerOptions struct {
 	cpuprofile *string
+	memprofile *string
 	v          VolumeServerOptions
 }
 
@@ -75,6 +76,7 @@ var (
 
 func init() {
 	serverOptions.cpuprofile = cmdServer.Flag.String("cpuprofile", "", "cpu profile output file")
+	serverOptions.memprofile = cmdServer.Flag.String("memprofile", "", "memory profile output file")
 
 	masterOptions.port = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
 	masterOptions.metaFolder = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
@@ -137,14 +139,7 @@ func runServer(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("master", false)
 
-	if *serverOptions.cpuprofile != "" {
-		f, err := os.Create(*serverOptions.cpuprofile)
-		if err != nil {
-			glog.Fatal(err)
-		}
-		pprof.StartCPUProfile(f)
-		defer pprof.StopCPUProfile()
-	}
+	grace.SetupProfiling(*serverOptions.cpuprofile, *serverOptions.memprofile)
 
 	if *isStartingS3 {
 		*isStartingFiler = true
