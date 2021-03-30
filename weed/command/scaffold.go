@@ -194,7 +194,7 @@ connection_max_open = 100
 connection_max_lifetime_seconds = 0
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
 enableUpsert = true
-upsertQuery = """INSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT ON CONSTRAINT "%[1]s_pkey" DO UPDATE SET meta = EXCLUDED.meta WHERE "%[1]s".meta != EXCLUDED.meta"""
+upsertQuery = """INSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT (dirhash,name) DO UPDATE SET meta = EXCLUDED.meta WHERE "%[1]s".meta != EXCLUDED.meta"""
 
 [cassandra]
 # CREATE TABLE filemeta (
