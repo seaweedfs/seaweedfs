@@ -47,6 +47,7 @@ type FilerOptions struct {
 	metricsHttpPort         *int
 	saveToFilerLimit        *int
 	defaultLevelDbDirectory *string
+	concurrentUploadLimitMB *int
 }
 
 func init() {
@@ -69,6 +70,7 @@ func init() {
 	f.metricsHttpPort = cmdFiler.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	f.saveToFilerLimit = cmdFiler.Flag.Int("saveToFilerLimit", 0, "files smaller than this limit will be saved in filer store")
 	f.defaultLevelDbDirectory = cmdFiler.Flag.String("defaultStoreDir", ".", "if filer.toml is empty, use an embedded filer store in the directory")
+	f.concurrentUploadLimitMB = cmdFiler.Flag.Int("concurrentUploadLimitMB", 128, "limit total concurrent upload size")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -159,21 +161,22 @@ func (fo *FilerOptions) startFiler() {
 	}
 
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
-		Masters:            strings.Split(*fo.masters, ","),
-		Collection:         *fo.collection,
-		DefaultReplication: *fo.defaultReplicaPlacement,
-		DisableDirListing:  *fo.disableDirListing,
-		MaxMB:              *fo.maxMB,
-		DirListingLimit:    *fo.dirListingLimit,
-		DataCenter:         *fo.dataCenter,
-		Rack:               *fo.rack,
-		DefaultLevelDbDir:  defaultLevelDbDirectory,
-		DisableHttp:        *fo.disableHttp,
-		Host:               *fo.ip,
-		Port:               uint32(*fo.port),
-		Cipher:             *fo.cipher,
-		SaveToFilerLimit:   *fo.saveToFilerLimit,
-		Filers:             peers,
+		Masters:               strings.Split(*fo.masters, ","),
+		Collection:            *fo.collection,
+		DefaultReplication:    *fo.defaultReplicaPlacement,
+		DisableDirListing:     *fo.disableDirListing,
+		MaxMB:                 *fo.maxMB,
+		DirListingLimit:       *fo.dirListingLimit,
+		DataCenter:            *fo.dataCenter,
+		Rack:                  *fo.rack,
+		DefaultLevelDbDir:     defaultLevelDbDirectory,
+		DisableHttp:           *fo.disableHttp,
+		Host:                  *fo.ip,
+		Port:                  uint32(*fo.port),
+		Cipher:                *fo.cipher,
+		SaveToFilerLimit:      *fo.saveToFilerLimit,
+		Filers:                peers,
+		ConcurrentUploadLimit: int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

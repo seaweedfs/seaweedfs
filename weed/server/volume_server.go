@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"net/http"
+	"sync"
 
 	"google.golang.org/grpc"
 
@@ -34,6 +35,10 @@ type VolumeServer struct {
 	fileSizeLimitBytes      int64
 	isHeartbeating          bool
 	stopChan                chan bool
+
+	inFlightDataSize      int64
+	inFlightDataLimitCond *sync.Cond
+	concurrentUploadLimit int64
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
@@ -48,6 +53,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	readRedirect bool,
 	compactionMBPerSecond int,
 	fileSizeLimitMB int,
+	concurrentUploadLimit int64,
 ) *VolumeServer {
 
 	v := util.GetViper()
@@ -72,6 +78,8 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		fileSizeLimitBytes:      int64(fileSizeLimitMB) * 1024 * 1024,
 		isHeartbeating:          true,
 		stopChan:                make(chan bool),
+		inFlightDataLimitCond:   sync.NewCond(new(sync.Mutex)),
+		concurrentUploadLimit:   concurrentUploadLimit,
 	}
 	vs.SeedMasterNodes = masterNodes
 

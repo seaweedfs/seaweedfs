@@ -35,31 +35,32 @@ var (
 )
 
 type VolumeServerOptions struct {
-	port                  *int
-	publicPort            *int
-	folders               []string
-	folderMaxLimits       []int
-	idxFolder             *string
-	ip                    *string
-	publicUrl             *string
-	bindIp                *string
-	masters               *string
-	idleConnectionTimeout *int
-	dataCenter            *string
-	rack                  *string
-	whiteList             []string
-	indexType             *string
-	diskType              *string
-	fixJpgOrientation     *bool
-	readRedirect          *bool
-	cpuProfile            *string
-	memProfile            *string
-	compactionMBPerSecond *int
-	fileSizeLimitMB       *int
-	minFreeSpacePercents  []float32
-	pprof                 *bool
-	preStopSeconds        *int
-	metricsHttpPort       *int
+	port                    *int
+	publicPort              *int
+	folders                 []string
+	folderMaxLimits         []int
+	idxFolder               *string
+	ip                      *string
+	publicUrl               *string
+	bindIp                  *string
+	masters                 *string
+	idleConnectionTimeout   *int
+	dataCenter              *string
+	rack                    *string
+	whiteList               []string
+	indexType               *string
+	diskType                *string
+	fixJpgOrientation       *bool
+	readRedirect            *bool
+	cpuProfile              *string
+	memProfile              *string
+	compactionMBPerSecond   *int
+	fileSizeLimitMB         *int
+	concurrentUploadLimitMB *int
+	minFreeSpacePercents    []float32
+	pprof                   *bool
+	preStopSeconds          *int
+	metricsHttpPort         *int
 	// pulseSeconds          *int
 	enableTcp *bool
 }
@@ -85,6 +86,7 @@ func init() {
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
 	v.fileSizeLimitMB = cmdVolume.Flag.Int("fileSizeLimitMB", 256, "limit file size to avoid out of memory")
+	v.concurrentUploadLimitMB = cmdVolume.Flag.Int("concurrentUploadLimitMB", 128, "limit total concurrent upload size")
 	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
 	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
@@ -237,6 +239,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.fixJpgOrientation, *v.readRedirect,
 		*v.compactionMBPerSecond,
 		*v.fileSizeLimitMB,
+		int64(*v.concurrentUploadLimitMB) * 1024 * 1024,
 	)
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)
