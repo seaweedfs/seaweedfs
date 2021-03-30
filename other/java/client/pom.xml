@@ -17,7 +17,7 @@
         <protobuf.version>3.9.1</protobuf.version>
         <!-- follow https://github.com/grpc/grpc-java -->
         <grpc.version>1.23.0</grpc.version>
-        <guava.version>28.0-jre</guava.version>
+        <guava.version>29.0-jre</guava.version>
     </properties>
 
     <dependencies>
