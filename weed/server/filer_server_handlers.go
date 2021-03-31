@@ -68,12 +68,12 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 			if _, ok := r.URL.Query()["tagging"]; ok {
 				fs.PutTaggingHandler(w, r)
 			} else {
-				fs.PostHandler(w, r)
+				fs.PostHandler(w, r, contentLength)
 			}
 			stats.FilerRequestHistogram.WithLabelValues("put").Observe(time.Since(start).Seconds())
 		} else { // method == "POST"
 			stats.FilerRequestCounter.WithLabelValues("post").Inc()
-			fs.PostHandler(w, r)
+			fs.PostHandler(w, r, contentLength)
 			stats.FilerRequestHistogram.WithLabelValues("post").Observe(time.Since(start).Seconds())
 		}
 	case "OPTIONS":
