@@ -60,7 +60,7 @@ func init() {
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "", "default replication type. If not specified, use master setting.")
 	f.disableDirListing = cmdFiler.Flag.Bool("disableDirListing", false, "turn off directory listing")
-	f.maxMB = cmdFiler.Flag.Int("maxMB", 32, "split files larger than the limit")
+	f.maxMB = cmdFiler.Flag.Int("maxMB", 4, "split files larger than the limit")
 	f.dirListingLimit = cmdFiler.Flag.Int("dirListLimit", 100000, "limit sub dir listing size")
 	f.dataCenter = cmdFiler.Flag.String("dataCenter", "", "prefer to read and write to volumes in this data center")
 	f.rack = cmdFiler.Flag.String("rack", "", "prefer to write to volumes in this rack")
