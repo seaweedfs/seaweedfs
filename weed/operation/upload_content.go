@@ -19,7 +19,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/valyala/bytebufferpool"
 )
 
 type UploadResult struct {
@@ -190,8 +189,8 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 }
 
 func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, originalDataSize int, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
-	buf := bytebufferpool.Get()
-	defer bytebufferpool.Put(buf)
+	buf := GetBuffer()
+	defer PutBuffer(buf)
 	body_writer := multipart.NewWriter(buf)
 	h := make(textproto.MIMEHeader)
 	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, fileNameEscaper.Replace(filename)))

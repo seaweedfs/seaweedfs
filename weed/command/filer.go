@@ -174,7 +174,7 @@ func (fo *FilerOptions) startFiler() {
 		Host:                  *fo.ip,
 		Port:                  uint32(*fo.port),
 		Cipher:                *fo.cipher,
-		SaveToFilerLimit:      *fo.saveToFilerLimit,
+		SaveToFilerLimit:      int64(*fo.saveToFilerLimit),
 		Filers:                peers,
 		ConcurrentUploadLimit: int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
 	})
