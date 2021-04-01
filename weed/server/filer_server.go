@@ -59,7 +59,7 @@ type FilerOption struct {
 	Port                  uint32
 	recursiveDelete       bool
 	Cipher                bool
-	SaveToFilerLimit      int
+	SaveToFilerLimit      int64
 	Filers                []string
 	ConcurrentUploadLimit int64
 }
