@@ -36,6 +36,8 @@ func (store *AbstractSqlStore) OnBucketCreation(bucket string) {
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
 
+	store.CreateTable(context.Background(), bucket)
+
 	if store.dbs == nil {
 		return
 	}
@@ -44,6 +46,8 @@ func (store *AbstractSqlStore) OnBucketCreation(bucket string) {
 func (store *AbstractSqlStore) OnBucketDeletion(bucket string) {
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
+
+	store.deleteTable(context.Background(), bucket)
 
 	if store.dbs == nil {
 		return
