@@ -77,7 +77,7 @@ type WFS struct {
 	signature  int32
 
 	// throttle writers
-	concurrentWriters *util.LimitedOutOfOrderProcessor
+	concurrentWriters *util.LimitedConcurrentExecutor
 	Server            *fs.Server
 }
 type statsCache struct {
@@ -135,7 +135,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs.fsNodeCache = newFsCache(wfs.root)
 
 	if wfs.option.ConcurrentWriters > 0 {
-		wfs.concurrentWriters = util.NewLimitedOutOfOrderProcessor(int32(wfs.option.ConcurrentWriters))
+		wfs.concurrentWriters = util.NewLimitedConcurrentExecutor(wfs.option.ConcurrentWriters)
 	}
 
 	return wfs
