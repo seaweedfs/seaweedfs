@@ -36,7 +36,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	resultsChan := make(chan *ChunkCreationResult, operation.ConcurrentUploadLimit)
+	resultsChan := make(chan *ChunkCreationResult, 2)
 
 	var waitForAllData sync.WaitGroup
 	waitForAllData.Add(1)
