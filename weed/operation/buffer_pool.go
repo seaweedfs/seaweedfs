@@ -6,6 +6,7 @@ import (
 )
 
 var bufferCounter int64
+
 func GetBuffer() *bytebufferpool.ByteBuffer {
 	defer func() {
 		atomic.AddInt64(&bufferCounter, 1)
