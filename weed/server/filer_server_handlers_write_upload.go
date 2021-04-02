@@ -5,8 +5,8 @@ import (
 	"hash"
 	"io"
 	"io/ioutil"
-	"math/rand"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +18,10 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
+)
+
+var (
+	limitedUploadProcessor = util.NewLimitedOutOfOrderProcessor(int32(runtime.NumCPU()))
 )
 
 func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Request, reader io.Reader, chunkSize int32, fileName, contentType string, contentLength int64, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, dataSize int64, err error, smallContent []byte) {
@@ -58,7 +62,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 	for readErr == nil {
 
 		wg.Add(1)
-		operation.AsyncOutOfOrderProcess(rand.Uint32(), func() {
+		limitedUploadProcessor.Execute(func() {
 			defer wg.Done()
 
 			var localOffset int64
