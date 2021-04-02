@@ -173,7 +173,7 @@ func WriteNeedleBlob(w backend.BackendStorageFile, dataSlice []byte, size Size, 
 
 	if version == Version3 {
 		tsOffset := NeedleHeaderSize + size + NeedleChecksumSize
-		util.Uint64toBytes(dataSlice[tsOffset : tsOffset+TimestampSize], appendAtNs)
+		util.Uint64toBytes(dataSlice[tsOffset:tsOffset+TimestampSize], appendAtNs)
 	}
 
 	if err == nil {

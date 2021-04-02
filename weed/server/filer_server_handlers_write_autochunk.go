@@ -55,7 +55,7 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 	if err != nil {
 		if strings.HasPrefix(err.Error(), "read input:") {
 			writeJsonError(w, r, 499, err)
-		}else if strings.HasSuffix(err.Error(), "is a file") {
+		} else if strings.HasSuffix(err.Error(), "is a file") {
 			writeJsonError(w, r, http.StatusConflict, err)
 		} else {
 			writeJsonError(w, r, http.StatusInternalServerError, err)

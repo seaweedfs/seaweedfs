@@ -49,7 +49,7 @@ func (store *MysqlStore) initialize(upsertQuery string, enableUpsert bool, user,
 
 	store.SupportBucketTable = false
 	if !enableUpsert {
-	    upsertQuery = ""
+		upsertQuery = ""
 	}
 	store.SqlGenerator = &SqlGenMysql{
 		CreateTableSqlTemplate: "",

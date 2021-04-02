@@ -48,7 +48,7 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 
 	store.SupportBucketTable = false
 	if !enableUpsert {
-	    upsertQuery = ""
+		upsertQuery = ""
 	}
 	store.SqlGenerator = &SqlGenPostgres{
 		CreateTableSqlTemplate: "",

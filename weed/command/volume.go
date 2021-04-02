@@ -239,7 +239,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.fixJpgOrientation, *v.readRedirect,
 		*v.compactionMBPerSecond,
 		*v.fileSizeLimitMB,
-		int64(*v.concurrentUploadLimitMB) * 1024 * 1024,
+		int64(*v.concurrentUploadLimitMB)*1024*1024,
 	)
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)
