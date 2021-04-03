@@ -15,7 +15,7 @@ type SnowflakeSequencer struct {
 
 func NewSnowflakeSequencer(nodeid string) (*SnowflakeSequencer, error) {
 	nodeid_hash := hash(nodeid) & 0x3ff
-	glog.V(0).Infof("use snowfalke seq id generator, nodeid:%s hex_of_nodeid: %x", nodeid, nodeid_hash)
+	glog.V(0).Infof("use snowflake seq id generator, nodeid:%s hex_of_nodeid: %x", nodeid, nodeid_hash)
 	node, err := snowflake.NewNode(int64(nodeid_hash))
 	if err != nil {
 		fmt.Println(err)
