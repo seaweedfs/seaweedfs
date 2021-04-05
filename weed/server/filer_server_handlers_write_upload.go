@@ -62,7 +62,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 	for readErr == nil {
 
 		wg.Add(1)
-		limitedUploadProcessor.Execute(func() {
+		request := func() {
 			defer wg.Done()
 
 			var localOffset int64
@@ -105,7 +105,8 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 				chunk: uploadResult.ToPbFileChunk(fileId, localOffset),
 			}
 
-		})
+		}
+		limitedUploadProcessor.Execute(request)
 	}
 
 	go func() {
