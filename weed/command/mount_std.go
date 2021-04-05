@@ -203,6 +203,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		VolumeServerAccess: *mountOptions.volumeServerAccess,
 		Cipher:             cipher,
 		UidGidMapper:       uidGidMapper,
+		ReadOnly:           *option.readOnly,
 	})
 
 	// mount

@@ -25,6 +25,7 @@ type MountOptions struct {
 	volumeServerAccess *string
 	uidMap             *string
 	gidMap             *string
+	readOnly           *bool
 }
 
 var (
@@ -55,6 +56,7 @@ func init() {
 	mountOptions.volumeServerAccess = cmdMount.Flag.String("volumeServerAccess", "direct", "access volume servers by [direct|publicUrl|filerProxy]")
 	mountOptions.uidMap = cmdMount.Flag.String("map.uid", "", "map local uid to uid on filer, comma-separated <local_uid>:<filer_uid>")
 	mountOptions.gidMap = cmdMount.Flag.String("map.gid", "", "map local gid to gid on filer, comma-separated <local_gid>:<filer_gid>")
+	mountOptions.readOnly = cmdMount.Flag.Bool("readOnly", false, "read only")
 
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
 	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")

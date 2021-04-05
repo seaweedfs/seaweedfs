@@ -43,6 +43,7 @@ type Option struct {
 	DataCenter         string
 	EntryCacheTtl      time.Duration
 	Umask              os.FileMode
+	ReadOnly           bool
 
 	MountUid   uint32
 	MountGid   uint32
