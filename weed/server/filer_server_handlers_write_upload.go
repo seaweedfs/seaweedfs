@@ -74,10 +74,10 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			lock.Unlock()
 			// handle read errors
 			if readErr != nil {
+				if err == nil {
+					err = readErr
+				}
 				if readErr != io.EOF {
-					if err == nil {
-						err = readErr
-					}
 					resultsChan <- &ChunkCreationResult{
 						err: readErr,
 					}
@@ -86,6 +86,9 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			}
 			if len(data) == 0 {
 				readErr = io.EOF
+				if err == nil {
+					err = readErr
+				}
 				return
 			}
 
@@ -119,6 +122,10 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 	}()
 
 	waitForAllData.Wait()
+
+	if err == io.EOF {
+		err = nil
+	}
 
 	return fileChunks, md5Hash, readOffset, err, nil
 }
