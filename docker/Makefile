@@ -4,8 +4,10 @@ all: gen
 
 gen: dev
 
-build:
+binary:
 	cd ../weed; CGO_ENABLED=0 GOOS=linux go build -ldflags "-extldflags -static"; mv weed ../docker/
+
+build: binary
 	docker build --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.local .
 	rm ./weed
 
@@ -20,6 +22,9 @@ dev_tls: build certstrap
 
 dev_mount: build
 	docker-compose -f compose/local-mount-compose.yml -p seaweedfs up
+
+profile_mount: build
+	docker-compose -f compose/local-mount-profile-compose.yml -p seaweedfs up
 
 k8s: build
 	docker-compose -f compose/local-k8s-compose.yml -p seaweedfs up

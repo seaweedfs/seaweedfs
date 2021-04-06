@@ -217,6 +217,9 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		location.volumesLock.RLock()
 		for _, v := range location.volumes {
 			curMaxFileKey, volumeMessage := v.ToVolumeInformationMessage()
+			if volumeMessage == nil {
+				continue
+			}
 			if maxFileKey < curMaxFileKey {
 				maxFileKey = curMaxFileKey
 			}

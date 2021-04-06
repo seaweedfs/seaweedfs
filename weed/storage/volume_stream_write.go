@@ -73,7 +73,7 @@ func (v *Volume) StreamRead(n *needle.Needle, writer io.Writer) (err error) {
 
 	sr := &StreamReader{
 		readerAt: v.DataBackend,
-		offset: nv.Offset.ToActualOffset(),
+		offset:   nv.Offset.ToActualOffset(),
 	}
 	bufReader := bufio.NewReader(sr)
 	bufReader.Discard(NeedleHeaderSize)

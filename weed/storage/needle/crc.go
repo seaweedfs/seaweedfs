@@ -35,7 +35,7 @@ func NewCRCwriter(w io.Writer) *CRCwriter {
 
 	return &CRCwriter{
 		crc: CRC(0),
-		w: w,
+		w:   w,
 	}
 
 }

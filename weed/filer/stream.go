@@ -3,6 +3,7 @@ package filer
 import (
 	"bytes"
 	"fmt"
+	"golang.org/x/sync/errgroup"
 	"io"
 	"math"
 	"strings"
@@ -13,7 +14,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
-func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
+func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64, isCheck bool) error {
 
 	glog.V(9).Infof("start to stream content for chunks: %+v\n", chunks)
 	chunkViews := ViewFromChunks(masterClient.GetLookupFileIdFunction(), chunks, offset, size)
@@ -33,10 +34,20 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 		fileId2Url[chunkView.FileId] = urlStrings
 	}
 
+	if isCheck {
+		// Pre-check all chunkViews urls
+		gErr := new(errgroup.Group)
+		CheckAllChunkViews(chunkViews, &fileId2Url, gErr)
+		if err := gErr.Wait(); err != nil {
+			glog.Errorf("check all chunks: %v", err)
+			return fmt.Errorf("check all chunks: %v", err)
+		}
+		return nil
+	}
+
 	for _, chunkView := range chunkViews {
 
 		urlStrings := fileId2Url[chunkView.FileId]
-
 		data, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
 		if err != nil {
 			glog.Errorf("read chunk: %v", err)
@@ -52,6 +63,17 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 
 	return nil
 
+}
+
+func CheckAllChunkViews(chunkViews []*ChunkView, fileId2Url *map[string][]string, gErr *errgroup.Group) {
+	for _, chunkView := range chunkViews {
+		urlStrings := (*fileId2Url)[chunkView.FileId]
+		glog.V(9).Infof("Check chunk: %+v\n url: %v", chunkView, urlStrings)
+		gErr.Go(func() error {
+			_, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
+			return err
+		})
+	}
 }
 
 // ----------------  ReadAllReader ----------------------------------
@@ -185,7 +207,7 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 	var buffer bytes.Buffer
 	var shouldRetry bool
 	for _, urlString := range urlStrings {
-		shouldRetry, err = util.FastReadUrlAsStream(urlString, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size), func(data []byte) {
+		shouldRetry, err = util.ReadUrlAsStream(urlString, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size), func(data []byte) {
 			buffer.Write(data)
 		})
 		if !shouldRetry {

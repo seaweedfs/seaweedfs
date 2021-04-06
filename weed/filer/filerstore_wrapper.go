@@ -21,6 +21,8 @@ type VirtualFilerStore interface {
 	DeleteHardLink(ctx context.Context, hardLinkId HardLinkId) error
 	DeleteOneEntry(ctx context.Context, entry *Entry) error
 	AddPathSpecificStore(path string, storeId string, store FilerStore)
+	OnBucketCreation(bucket string)
+	OnBucketDeletion(bucket string)
 }
 
 type FilerStoreWrapper struct {
@@ -37,6 +39,27 @@ func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
 		defaultStore:   store,
 		pathToStore:    ptrie.New(),
 		storeIdToStore: make(map[string]FilerStore),
+	}
+}
+
+func (fsw *FilerStoreWrapper) OnBucketCreation(bucket string) {
+	for _, store := range fsw.storeIdToStore {
+		if ba, ok := store.(BucketAware); ok {
+			ba.OnBucketCreation(bucket)
+		}
+	}
+	if ba, ok := fsw.defaultStore.(BucketAware); ok {
+		ba.OnBucketCreation(bucket)
+	}
+}
+func (fsw *FilerStoreWrapper) OnBucketDeletion(bucket string) {
+	for _, store := range fsw.storeIdToStore {
+		if ba, ok := store.(BucketAware); ok {
+			ba.OnBucketDeletion(bucket)
+		}
+	}
+	if ba, ok := fsw.defaultStore.(BucketAware); ok {
+		ba.OnBucketDeletion(bucket)
 	}
 }
 

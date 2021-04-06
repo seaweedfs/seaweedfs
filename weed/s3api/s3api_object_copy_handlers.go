@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,6 +26,26 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	srcBucket, srcObject := pathToBucketAndObject(cpSrcPath)
+
+	if (srcBucket == dstBucket && srcObject == dstObject || cpSrcPath == "") && isReplace(r) {
+		fullPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
+		dir, name := fullPath.DirAndName()
+		entry, err := s3a.getEntry(dir, name)
+		if err != nil {
+			writeErrorResponse(w, s3err.ErrInvalidCopySource, r.URL)
+		}
+		entry.Extended = weed_server.SaveAmzMetaData(r, entry.Extended, isReplace(r))
+		err = s3a.touch(dir, name, entry)
+		if err != nil {
+			writeErrorResponse(w, s3err.ErrInvalidCopySource, r.URL)
+		}
+		writeSuccessResponseXML(w, encodeResponse(CopyObjectResult{
+			ETag:         fmt.Sprintf("%x", entry.Attributes.Md5),
+			LastModified: time.Now().UTC(),
+		}))
+		return
+	}
+
 	// If source object is empty or bucket is empty, reply back invalid copy source.
 	if srcObject == "" || srcBucket == "" {
 		writeErrorResponse(w, s3err.ErrInvalidCopySource, r.URL)
@@ -32,7 +53,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	if srcBucket == dstBucket && srcObject == dstObject {
-		writeErrorResponse(w, s3err.ErrInvalidCopySource, r.URL)
+		writeErrorResponse(w, s3err.ErrInvalidCopyDest, r.URL)
 		return
 	}
 
@@ -146,4 +167,8 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	writeSuccessResponseXML(w, encodeResponse(response))
 
+}
+
+func isReplace(r *http.Request) bool {
+	return r.Header.Get("X-Amz-Metadata-Directive") == "REPLACE"
 }

@@ -75,7 +75,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		if err != nil {
 			glog.V(0).Infof("failed to talk to filer %s: %v", filerGrpcAddress, err)
 			glog.V(0).Infof("wait for %d seconds ...", i+1)
-			time.Sleep(time.Duration(i+1)*time.Second)
+			time.Sleep(time.Duration(i+1) * time.Second)
 		}
 	}
 	if err != nil {
@@ -203,6 +203,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		VolumeServerAccess: *mountOptions.volumeServerAccess,
 		Cipher:             cipher,
 		UidGidMapper:       uidGidMapper,
+		ReadOnly:           *option.readOnly,
 	})
 
 	// mount

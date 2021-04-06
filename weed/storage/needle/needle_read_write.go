@@ -3,13 +3,12 @@ package needle
 import (
 	"errors"
 	"fmt"
-	"io"
-	"math"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"io"
+	"math"
 )
 
 const (
@@ -154,6 +153,35 @@ func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset u
 	}
 
 	return offset, size, actualSize, err
+}
+
+func WriteNeedleBlob(w backend.BackendStorageFile, dataSlice []byte, size Size, appendAtNs uint64, version Version) (offset uint64, err error) {
+
+	if end, _, e := w.GetStat(); e == nil {
+		defer func(w backend.BackendStorageFile, off int64) {
+			if err != nil {
+				if te := w.Truncate(end); te != nil {
+					glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", w.Name(), end, te)
+				}
+			}
+		}(w, end)
+		offset = uint64(end)
+	} else {
+		err = fmt.Errorf("Cannot Read Current Volume Position: %v", e)
+		return
+	}
+
+	if version == Version3 {
+		tsOffset := NeedleHeaderSize + size + NeedleChecksumSize
+		util.Uint64toBytes(dataSlice[tsOffset:tsOffset+TimestampSize], appendAtNs)
+	}
+
+	if err == nil {
+		_, err = w.WriteAt(dataSlice, int64(offset))
+	}
+
+	return
+
 }
 
 func ReadNeedleBlob(r backend.BackendStorageFile, offset int64, size Size, version Version) (dataSlice []byte, err error) {

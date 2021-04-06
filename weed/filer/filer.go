@@ -241,12 +241,12 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 	if oldEntry != nil {
 		entry.Attr.Crtime = oldEntry.Attr.Crtime
 		if oldEntry.IsDirectory() && !entry.IsDirectory() {
-			glog.Errorf("existing %s is a directory", entry.FullPath)
-			return fmt.Errorf("existing %s is a directory", entry.FullPath)
+			glog.Errorf("existing %s is a directory", oldEntry.FullPath)
+			return fmt.Errorf("existing %s is a directory", oldEntry.FullPath)
 		}
 		if !oldEntry.IsDirectory() && entry.IsDirectory() {
-			glog.Errorf("existing %s is a file", entry.FullPath)
-			return fmt.Errorf("existing %s is a file", entry.FullPath)
+			glog.Errorf("existing %s is a file", oldEntry.FullPath)
+			return fmt.Errorf("existing %s is a file", oldEntry.FullPath)
 		}
 	}
 	return f.Store.UpdateEntry(ctx, entry)

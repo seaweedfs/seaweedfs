@@ -311,7 +311,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	}
 	defer util.CloseResponse(resp)
 
-	if (resp.ContentLength == -1 || resp.StatusCode == 404) && !strings.HasSuffix(destUrl, "/") {
+	if resp.ContentLength == -1 || resp.StatusCode == 404 {
 		if r.Method != "DELETE" {
 			writeErrorResponse(w, s3err.ErrNoSuchKey, r.URL)
 			return
@@ -326,7 +326,11 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) {
 	for k, v := range proxyResponse.Header {
 		w.Header()[k] = v
 	}
-	w.WriteHeader(proxyResponse.StatusCode)
+	if proxyResponse.Header.Get("Content-Range") != "" && proxyResponse.StatusCode == 200 {
+		w.WriteHeader(http.StatusPartialContent)
+	} else {
+		w.WriteHeader(proxyResponse.StatusCode)
+	}
 	io.Copy(w, proxyResponse.Body)
 }
 

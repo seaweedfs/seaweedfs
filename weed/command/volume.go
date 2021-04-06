@@ -6,7 +6,6 @@ import (
 	"net/http"
 	httppprof "net/http/pprof"
 	"os"
-	"runtime"
 	"runtime/pprof"
 	"strconv"
 	"strings"
@@ -36,31 +35,32 @@ var (
 )
 
 type VolumeServerOptions struct {
-	port                  *int
-	publicPort            *int
-	folders               []string
-	folderMaxLimits       []int
-	idxFolder             *string
-	ip                    *string
-	publicUrl             *string
-	bindIp                *string
-	masters               *string
-	idleConnectionTimeout *int
-	dataCenter            *string
-	rack                  *string
-	whiteList             []string
-	indexType             *string
-	diskType              *string
-	fixJpgOrientation     *bool
-	readRedirect          *bool
-	cpuProfile            *string
-	memProfile            *string
-	compactionMBPerSecond *int
-	fileSizeLimitMB       *int
-	minFreeSpacePercents  []float32
-	pprof                 *bool
-	preStopSeconds        *int
-	metricsHttpPort       *int
+	port                    *int
+	publicPort              *int
+	folders                 []string
+	folderMaxLimits         []int
+	idxFolder               *string
+	ip                      *string
+	publicUrl               *string
+	bindIp                  *string
+	masters                 *string
+	idleConnectionTimeout   *int
+	dataCenter              *string
+	rack                    *string
+	whiteList               []string
+	indexType               *string
+	diskType                *string
+	fixJpgOrientation       *bool
+	readRedirect            *bool
+	cpuProfile              *string
+	memProfile              *string
+	compactionMBPerSecond   *int
+	fileSizeLimitMB         *int
+	concurrentUploadLimitMB *int
+	minFreeSpacePercents    []float32
+	pprof                   *bool
+	preStopSeconds          *int
+	metricsHttpPort         *int
 	// pulseSeconds          *int
 	enableTcp *bool
 }
@@ -69,9 +69,9 @@ func init() {
 	cmdVolume.Run = runVolume // break init cycle
 	v.port = cmdVolume.Flag.Int("port", 8080, "http listen port")
 	v.publicPort = cmdVolume.Flag.Int("port.public", 0, "port opened to public")
-	v.ip = cmdVolume.Flag.String("ip", util.DetectedHostAddress(), "ip or server name")
+	v.ip = cmdVolume.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
 	v.publicUrl = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible address")
-	v.bindIp = cmdVolume.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
+	v.bindIp = cmdVolume.Flag.String("ip.bind", "", "ip address to bind to")
 	v.masters = cmdVolume.Flag.String("mserver", "localhost:9333", "comma-separated master servers")
 	v.preStopSeconds = cmdVolume.Flag.Int("preStopSeconds", 10, "number of seconds between stop send heartbeats and stop volume server")
 	// v.pulseSeconds = cmdVolume.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats, must be smaller than or equal to the master's setting")
@@ -86,6 +86,7 @@ func init() {
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
 	v.fileSizeLimitMB = cmdVolume.Flag.Int("fileSizeLimitMB", 256, "limit file size to avoid out of memory")
+	v.concurrentUploadLimitMB = cmdVolume.Flag.Int("concurrentUploadLimitMB", 128, "limit total concurrent upload size")
 	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
 	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
@@ -110,8 +111,6 @@ var (
 func runVolume(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
-
-	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	// If --pprof is set we assume the caller wants to be able to collect
 	// cpu and memory profiles via go tool pprof
@@ -240,6 +239,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.fixJpgOrientation, *v.readRedirect,
 		*v.compactionMBPerSecond,
 		*v.fileSizeLimitMB,
+		int64(*v.concurrentUploadLimitMB)*1024*1024,
 	)
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)

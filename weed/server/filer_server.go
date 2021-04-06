@@ -45,22 +45,23 @@ import (
 )
 
 type FilerOption struct {
-	Masters            []string
-	Collection         string
-	DefaultReplication string
-	DisableDirListing  bool
-	MaxMB              int
-	DirListingLimit    int
-	DataCenter         string
-	Rack               string
-	DefaultLevelDbDir  string
-	DisableHttp        bool
-	Host               string
-	Port               uint32
-	recursiveDelete    bool
-	Cipher             bool
-	SaveToFilerLimit   int
-	Filers             []string
+	Masters               []string
+	Collection            string
+	DefaultReplication    string
+	DisableDirListing     bool
+	MaxMB                 int
+	DirListingLimit       int
+	DataCenter            string
+	Rack                  string
+	DefaultLevelDbDir     string
+	DisableHttp           bool
+	Host                  string
+	Port                  uint32
+	recursiveDelete       bool
+	Cipher                bool
+	SaveToFilerLimit      int64
+	Filers                []string
+	ConcurrentUploadLimit int64
 }
 
 type FilerServer struct {
@@ -79,14 +80,18 @@ type FilerServer struct {
 
 	brokers     map[string]map[string]bool
 	brokersLock sync.Mutex
+
+	inFlightDataSize      int64
+	inFlightDataLimitCond *sync.Cond
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
 
 	fs = &FilerServer{
-		option:         option,
-		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.filer"),
-		brokers:        make(map[string]map[string]bool),
+		option:                option,
+		grpcDialOption:        security.LoadClientTLS(util.GetViper(), "grpc.filer"),
+		brokers:               make(map[string]map[string]bool),
+		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
 	}
 	fs.listenersCond = sync.NewCond(&fs.listenersLock)
 

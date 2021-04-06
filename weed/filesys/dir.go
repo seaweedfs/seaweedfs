@@ -128,6 +128,10 @@ func (dir *Dir) newDirectory(fullpath util.FullPath, entry *filer_pb.Entry) fs.N
 func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
 
+	if dir.wfs.option.ReadOnly {
+		return nil, nil, fuse.EPERM
+	}
+
 	request, err := dir.doCreateEntry(req.Name, req.Mode, req.Uid, req.Gid, req.Flags&fuse.OpenExclusive != 0)
 
 	if err != nil {
@@ -147,6 +151,10 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 }
 
 func (dir *Dir) Mknod(ctx context.Context, req *fuse.MknodRequest) (fs.Node, error) {
+
+	if dir.wfs.option.ReadOnly {
+		return nil, fuse.EPERM
+	}
 
 	request, err := dir.doCreateEntry(req.Name, req.Mode, req.Uid, req.Gid, false)
 
@@ -201,6 +209,10 @@ func (dir *Dir) doCreateEntry(name string, mode os.FileMode, uid, gid uint32, ex
 }
 
 func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
+
+	if dir.wfs.option.ReadOnly {
+		return nil, fuse.EPERM
+	}
 
 	glog.V(4).Infof("mkdir %s: %s", dir.FullPath(), req.Name)
 
@@ -356,6 +368,11 @@ func findFileType(mode uint16) fuse.DirentType {
 
 func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 
+	if dir.wfs.option.ReadOnly {
+		return fuse.EPERM
+	}
+
+
 	if !req.Dir {
 		return dir.removeOneFile(req)
 	}
@@ -429,6 +446,10 @@ func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 
 func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
+	if dir.wfs.option.ReadOnly {
+		return fuse.EPERM
+	}
+
 	glog.V(4).Infof("%v dir setattr %+v", dir.FullPath(), req)
 
 	if err := dir.maybeLoadEntry(); err != nil {
@@ -457,6 +478,10 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 
 func (dir *Dir) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
 
+	if dir.wfs.option.ReadOnly {
+		return fuse.EPERM
+	}
+
 	glog.V(4).Infof("dir Setxattr %s: %s", dir.FullPath(), req.Name)
 
 	if err := dir.maybeLoadEntry(); err != nil {
@@ -472,6 +497,10 @@ func (dir *Dir) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
 }
 
 func (dir *Dir) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) error {
+
+	if dir.wfs.option.ReadOnly {
+		return fuse.EPERM
+	}
 
 	glog.V(4).Infof("dir Removexattr %s: %s", dir.FullPath(), req.Name)
 

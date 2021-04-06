@@ -23,7 +23,7 @@ type FileHandle struct {
 	dirtyPages  *ContinuousDirtyPages
 	contentType string
 	handle      uint64
-	sync.RWMutex
+	sync.Mutex
 
 	f         *File
 	RequestId fuse.RequestID // unique ID for request
@@ -59,8 +59,8 @@ var _ = fs.HandleReleaser(&FileHandle{})
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 
 	glog.V(4).Infof("%s read fh %d: [%d,%d) size %d resp.Data cap=%d", fh.f.fullpath(), fh.handle, req.Offset, req.Offset+int64(req.Size), req.Size, cap(resp.Data))
-	fh.RLock()
-	defer fh.RUnlock()
+	fh.Lock()
+	defer fh.Unlock()
 
 	if req.Size <= 0 {
 		return nil
@@ -130,7 +130,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		if chunkResolveErr != nil {
 			return 0, fmt.Errorf("fail to resolve chunk manifest: %v", chunkResolveErr)
 		}
-		fh.f.reader = nil
+		fh.f.setReader(nil)
 	}
 
 	reader := fh.f.reader
@@ -138,7 +138,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		chunkViews := filer.ViewFromVisibleIntervals(fh.f.entryViewCache, 0, math.MaxInt64)
 		reader = filer.NewChunkReaderAtFromClient(fh.f.wfs.LookupFn(), chunkViews, fh.f.wfs.chunkCache, fileSize)
 	}
-	fh.f.reader = reader
+	fh.f.setReader(reader)
 
 	totalRead, err := reader.ReadAt(buff, offset)
 
@@ -153,6 +153,10 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 // Write to the file handle
 func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
+
+	if fh.f.wfs.option.ReadOnly {
+		return fuse.EPERM
+	}
 
 	fh.Lock()
 	defer fh.Unlock()
@@ -207,12 +211,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 		fh.f.isOpen--
 
 		fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
-		if closer, ok := fh.f.reader.(io.Closer); ok {
-			if closer != nil {
-				closer.Close()
-			}
-		}
-		fh.f.reader = nil
+		fh.f.setReader(nil)
 	}
 
 	return nil

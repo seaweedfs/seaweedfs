@@ -54,7 +54,7 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 		return fmt.Errorf("list buckets under %v: %v", filerBucketsPath, err)
 	}
 
-	for _, bucket:= range buckets {
+	for _, bucket := range buckets {
 		c.cleanupUploads(commandEnv, writer, filerBucketsPath, bucket, *uploadedTimeAgo)
 	}
 
@@ -63,7 +63,7 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 }
 
 func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io.Writer, filerBucketsPath string, bucket string, timeAgo time.Duration) error {
-	uploadsDir := filerBucketsPath+"/"+bucket+"/.uploads"
+	uploadsDir := filerBucketsPath + "/" + bucket + "/.uploads"
 	var staleUploads []string
 	now := time.Now()
 	err := filer_pb.List(commandEnv, uploadsDir, "", func(entry *filer_pb.Entry, isLast bool) error {
@@ -77,8 +77,8 @@ func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io
 		return fmt.Errorf("list uploads under %v: %v", uploadsDir, err)
 	}
 
-	for _, staleUpload:= range staleUploads {
-		deleteUrl := fmt.Sprintf("http://%s:%d%s/%s?recursive=true&ignoreRecursiveError=true",commandEnv.option.FilerHost, commandEnv.option.FilerPort,uploadsDir, staleUpload)
+	for _, staleUpload := range staleUploads {
+		deleteUrl := fmt.Sprintf("http://%s:%d%s/%s?recursive=true&ignoreRecursiveError=true", commandEnv.option.FilerHost, commandEnv.option.FilerPort, uploadsDir, staleUpload)
 		fmt.Fprintf(writer, "purge %s\n", deleteUrl)
 
 		err = util.Delete(deleteUrl, "")

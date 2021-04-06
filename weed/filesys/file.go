@@ -56,6 +56,10 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 		}
 	}
 
+	if entry == nil {
+		return fuse.ENOENT
+	}
+
 	// attr.Inode = file.fullpath().AsInode()
 	attr.Valid = time.Second
 	attr.Mode = os.FileMode(entry.Attributes.FileMode)
@@ -106,6 +110,10 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
+	if file.wfs.option.ReadOnly {
+		return fuse.EPERM
+	}
+
 	glog.V(4).Infof("%v file setattr %+v", file.fullpath(), req)
 
 	entry, err := file.maybeLoadEntry(ctx)
@@ -147,7 +155,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 			}
 			entry.Chunks = chunks
 			file.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(file.wfs.LookupFn(), chunks)
-			file.reader = nil
+			file.setReader(nil)
 		}
 		entry.Attributes.FileSize = req.Size
 		file.dirtyMetadata = true
@@ -196,6 +204,10 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 
 func (file *File) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
 
+	if file.wfs.option.ReadOnly {
+		return fuse.EPERM
+	}
+
 	glog.V(4).Infof("file Setxattr %s: %s", file.fullpath(), req.Name)
 
 	entry, err := file.maybeLoadEntry(ctx)
@@ -212,6 +224,10 @@ func (file *File) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error
 }
 
 func (file *File) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) error {
+
+	if file.wfs.option.ReadOnly {
+		return fuse.EPERM
+	}
 
 	glog.V(4).Infof("file Removexattr %s: %s", file.fullpath(), req.Name)
 
@@ -257,6 +273,8 @@ func (file *File) Forget() {
 	t := util.NewFullPath(file.dir.FullPath(), file.Name)
 	glog.V(4).Infof("Forget file %s", t)
 	file.wfs.fsNodeCache.DeleteFsNode(t)
+	file.wfs.ReleaseHandle(t, 0)
+	file.setReader(nil)
 }
 
 func (file *File) maybeLoadEntry(ctx context.Context) (entry *filer_pb.Entry, err error) {
@@ -323,11 +341,21 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 		file.entryViewCache = filer.MergeIntoVisibles(file.entryViewCache, chunk)
 	}
 
-	file.reader = nil
+	file.setReader(nil)
 
 	glog.V(4).Infof("%s existing %d chunks adds %d more", file.fullpath(), len(entry.Chunks), len(chunks))
 
 	entry.Chunks = append(entry.Chunks, newChunks...)
+}
+
+func (file *File) setReader(reader io.ReaderAt) {
+	r := file.reader
+	if r != nil {
+		if closer, ok := r.(io.Closer); ok {
+			closer.Close()
+		}
+	}
+	file.reader = reader
 }
 
 func (file *File) setEntry(entry *filer_pb.Entry) {
@@ -335,7 +363,7 @@ func (file *File) setEntry(entry *filer_pb.Entry) {
 	defer file.entryLock.Unlock()
 	file.entry = entry
 	file.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(file.wfs.LookupFn(), entry.Chunks)
-	file.reader = nil
+	file.setReader(nil)
 }
 
 func (file *File) clearEntry() {
@@ -343,7 +371,7 @@ func (file *File) clearEntry() {
 	defer file.entryLock.Unlock()
 	file.entry = nil
 	file.entryViewCache = nil
-	file.reader = nil
+	file.setReader(nil)
 }
 
 func (file *File) saveEntry(entry *filer_pb.Entry) error {
