@@ -82,7 +82,7 @@ func (dnll *VolumeLocationList) Stats(vid needle.VolumeId, freshThreshHold int64
 		if dnl.LastSeen < freshThreshHold {
 			vinfo, err := dnl.GetVolumesById(vid)
 			if err == nil {
-				return vinfo.Size - vinfo.DeletedByteCount, vinfo.FileCount - vinfo.DeleteCount
+				return (vinfo.Size - vinfo.DeletedByteCount) * uint64(len(dnll.list)), vinfo.FileCount - vinfo.DeleteCount
 			}
 		}
 	}

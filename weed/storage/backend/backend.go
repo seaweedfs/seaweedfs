@@ -58,6 +58,9 @@ func LoadConfiguration(config *util.ViperProxy) {
 			if !config.GetBool(StorageBackendPrefix + "." + backendTypeName + "." + backendStorageId + ".enabled") {
 				continue
 			}
+			if _, found := BackendStorages[backendTypeName+"."+backendStorageId]; found {
+				continue
+			}
 			backendStorage, buildErr := backendStorageFactory.BuildStorage(config,
 				StorageBackendPrefix+"."+backendTypeName+"."+backendStorageId+".", backendStorageId)
 			if buildErr != nil {
@@ -79,6 +82,9 @@ func LoadFromPbStorageBackends(storageBackends []*master_pb.StorageBackend) {
 		backendStorageFactory, found := BackendStorageFactories[StorageType(storageBackend.Type)]
 		if !found {
 			glog.Warningf("storage type %s not found", storageBackend.Type)
+			continue
+		}
+		if _, found := BackendStorages[storageBackend.Type+"."+storageBackend.Id]; found {
 			continue
 		}
 		backendStorage, buildErr := backendStorageFactory.BuildStorage(newProperties(storageBackend.Properties), "", storageBackend.Id)

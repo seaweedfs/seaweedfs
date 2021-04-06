@@ -32,5 +32,7 @@ func (c *ChunkCacheInMemory) GetChunk(fileId string) []byte {
 }
 
 func (c *ChunkCacheInMemory) SetChunk(fileId string, data []byte) {
-	c.cache.Set(fileId, data, time.Hour)
+	localCopy := make([]byte, len(data))
+	copy(localCopy, data)
+	c.cache.Set(fileId, localCopy, time.Hour)
 }

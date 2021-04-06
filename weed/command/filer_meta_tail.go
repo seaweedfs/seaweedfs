@@ -23,9 +23,9 @@ func init() {
 }
 
 var cmdFilerMetaTail = &Command{
-	UsageLine: "filer.meta.tail [-filer=localhost:8888] [-target=/]",
-	Short:     "see recent changes on a filer",
-	Long: `See recent changes on a filer.
+	UsageLine: "filer.meta.tail [-filer=localhost:8888] [-pathPrefix=/]",
+	Short:     "see continuous changes on a filer",
+	Long: `See continuous changes on a filer.
 
 	weed filer.meta.tail -timeAgo=30h | grep truncate
 	weed filer.meta.tail -timeAgo=30h | jq .
@@ -36,7 +36,7 @@ var cmdFilerMetaTail = &Command{
 
 var (
 	tailFiler   = cmdFilerMetaTail.Flag.String("filer", "localhost:8888", "filer hostname:port")
-	tailTarget  = cmdFilerMetaTail.Flag.String("pathPrefix", "/", "path to a folder or file, or common prefix for the folders or files on filer")
+	tailTarget  = cmdFilerMetaTail.Flag.String("pathPrefix", "/", "path to a folder or common prefix for the folders or files on filer")
 	tailStart   = cmdFilerMetaTail.Flag.Duration("timeAgo", 0, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
 	tailPattern = cmdFilerMetaTail.Flag.String("pattern", "", "full path or just filename pattern, ex: \"/home/?opher\", \"*.pdf\", see https://golang.org/pkg/path/filepath/#Match ")
 	esServers   = cmdFilerMetaTail.Flag.String("es", "", "comma-separated elastic servers http://<host:port>")

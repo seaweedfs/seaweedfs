@@ -39,3 +39,8 @@ type FilerStore interface {
 
 	Shutdown()
 }
+
+type BucketAware interface {
+	OnBucketCreation(bucket string)
+	OnBucketDeletion(bucket string)
+}

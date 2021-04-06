@@ -83,8 +83,12 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrls []string, err error) 
 		return nil, fmt.Errorf("LookupFileId locate volume id %s: %v", vid, err)
 	}
 
-	for _, loc := range locations.Locations {
-		fileUrls = append(fileUrls, fmt.Sprintf("http://%s/%s", loc.Url, part))
+	if !fs.proxyByFiler {
+		for _, loc := range locations.Locations {
+			fileUrls = append(fileUrls, fmt.Sprintf("http://%s/%s?readDeleted=true", loc.Url, part))
+		}
+	} else {
+		fileUrls = append(fileUrls, fmt.Sprintf("http://%s/?proxyChunkId=%s", fs.address, part))
 	}
 
 	return

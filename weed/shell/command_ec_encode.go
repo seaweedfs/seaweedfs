@@ -274,7 +274,7 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 	quietSeconds := int64(quietPeriod / time.Second)
 	nowUnixSeconds := time.Now().Unix()
 
-	fmt.Printf("ec encode volumes quiet for: %d seconds\n", quietSeconds)
+	fmt.Printf("collect volumes quiet for: %d seconds\n", quietSeconds)
 
 	vidMap := make(map[uint32]bool)
 	eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {

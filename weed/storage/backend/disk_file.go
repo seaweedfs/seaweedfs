@@ -52,7 +52,7 @@ func (df *DiskFile) WriteAt(p []byte, off int64) (n int, err error) {
 	return
 }
 
-func (df *DiskFile) Append(p []byte) (n int, err error) {
+func (df *DiskFile) Write(p []byte) (n int, err error) {
 	return df.WriteAt(p, df.fileSize)
 }
 

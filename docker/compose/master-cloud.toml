@@ -1,0 +1,30 @@
+
+# Put this file to one of the location, with descending priority
+#    ./master.toml
+#    $HOME/.seaweedfs/master.toml
+#    /etc/seaweedfs/master.toml
+# this file is read by master
+
+[master.maintenance]
+# periodically run these scripts are the same as running them from 'weed shell'
+scripts = """
+  lock
+  ec.encode -fullPercent=95 -quietFor=1h
+  ec.rebuild -force
+  ec.balance -force
+  volume.balance -force
+  volume.fix.replication
+  unlock
+"""
+sleep_minutes = 17          # sleep minutes between each script execution
+
+# configurations for tiered cloud storage
+# old volumes are transparently moved to cloud for cost efficiency
+[storage.backend]
+	[storage.backend.s3.default]
+	enabled = true
+	aws_access_key_id     = "any"     # if empty, loads from the shared credentials file (~/.aws/credentials).
+	aws_secret_access_key = "any"     # if empty, loads from the shared credentials file (~/.aws/credentials).
+	region = "us-east-2"
+	bucket = "volume_bucket"    # an existing bucket
+	endpoint = "http://server2:8333"

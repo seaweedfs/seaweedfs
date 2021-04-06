@@ -15,24 +15,18 @@ services:
     command: "volume -mserver=master:9333 -port=8080 -ip=volume -max=0 -preStopSeconds=1"
     depends_on:
       - master
-  filer:
+  s3:
     image: chrislusf/seaweedfs:local
     ports:
       - 8888:8888
       - 18888:18888
-    command: 'filer -master="master:9333"'
-    depends_on:
-      - master
-      - volume
-  s3:
-    image: chrislusf/seaweedfs:local
-    ports:
       - 8333:8333
-    command: '-v 9 s3 -filer="filer:8888"'
+    command: '-v 9 filer -master="master:9333" -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333'
+    volumes:
+      - ./s3.json:/etc/seaweedfs/s3.json
     depends_on:
       - master
       - volume
-      - filer
   minio:
     image: minio/minio
     ports:

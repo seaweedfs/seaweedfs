@@ -393,9 +393,8 @@ func adjustAfterMove(v *master_pb.VolumeInformationMessage, volumeReplicas map[u
 		if replica.location.dataNode.Id == fullNode.info.Id &&
 			replica.location.rack == fullNode.rack &&
 			replica.location.dc == fullNode.dc {
-			replica.location.dc = emptyNode.dc
-			replica.location.rack = emptyNode.rack
-			replica.location.dataNode = emptyNode.info
+			loc := newLocation(emptyNode.dc, emptyNode.rack, emptyNode.info)
+			replica.location = &loc
 			return
 		}
 	}

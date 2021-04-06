@@ -97,20 +97,20 @@ func fetchChunk(lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string,
 func retriedFetchChunkData(urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int) ([]byte, error) {
 
 	var err error
-	var buffer bytes.Buffer
 	var shouldRetry bool
+	receivedData := make([]byte, 0, size)
 
 	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
 		for _, urlString := range urlStrings {
-			shouldRetry, err = util.FastReadUrlAsStream(urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
-				buffer.Write(data)
+			receivedData = receivedData[:0]
+			shouldRetry, err = util.ReadUrlAsStream(urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
+				receivedData = append(receivedData, data...)
 			})
 			if !shouldRetry {
 				break
 			}
 			if err != nil {
 				glog.V(0).Infof("read %s failed, err: %v", urlString, err)
-				buffer.Reset()
 			} else {
 				break
 			}
@@ -123,7 +123,8 @@ func retriedFetchChunkData(urlStrings []string, cipherKey []byte, isGzipped bool
 		}
 	}
 
-	return buffer.Bytes(), err
+	return receivedData, err
+
 }
 
 func MaybeManifestize(saveFunc SaveDataAsChunkFunctionType, inputChunks []*filer_pb.FileChunk) (chunks []*filer_pb.FileChunk, err error) {

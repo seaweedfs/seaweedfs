@@ -128,6 +128,10 @@ func (dir *Dir) newDirectory(fullpath util.FullPath, entry *filer_pb.Entry) fs.N
 func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
 
+	if dir.wfs.option.ReadOnly {
+		return nil, nil, fuse.EPERM
+	}
+
 	request, err := dir.doCreateEntry(req.Name, req.Mode, req.Uid, req.Gid, req.Flags&fuse.OpenExclusive != 0)
 
 	if err != nil {
@@ -147,6 +151,10 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 }
 
 func (dir *Dir) Mknod(ctx context.Context, req *fuse.MknodRequest) (fs.Node, error) {
+
+	if dir.wfs.option.ReadOnly {
+		return nil, fuse.EPERM
+	}
 
 	request, err := dir.doCreateEntry(req.Name, req.Mode, req.Uid, req.Gid, false)
 
@@ -202,6 +210,10 @@ func (dir *Dir) doCreateEntry(name string, mode os.FileMode, uid, gid uint32, ex
 
 func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
 
+	if dir.wfs.option.ReadOnly {
+		return nil, fuse.EPERM
+	}
+
 	glog.V(4).Infof("mkdir %s: %s", dir.FullPath(), req.Name)
 
 	newEntry := &filer_pb.Entry{
@@ -251,10 +263,10 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (node fs.Node, err error) {
 
-	glog.V(4).Infof("dir Lookup %s: %s by %s", dir.FullPath(), req.Name, req.Header.String())
-
-	fullFilePath := util.NewFullPath(dir.FullPath(), req.Name)
 	dirPath := util.FullPath(dir.FullPath())
+	glog.V(4).Infof("dir Lookup %s: %s by %s", dirPath, req.Name, req.Header.String())
+
+	fullFilePath := dirPath.Child(req.Name)
 	visitErr := meta_cache.EnsureVisited(dir.wfs.metaCache, dir.wfs, dirPath)
 	if visitErr != nil {
 		glog.Errorf("dir Lookup %s: %v", dirPath, visitErr)
@@ -305,7 +317,8 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
-	glog.V(4).Infof("dir ReadDirAll %s", dir.FullPath())
+	dirPath := util.FullPath(dir.FullPath())
+	glog.V(4).Infof("dir ReadDirAll %s", dirPath)
 
 	processEachEntryFn := func(entry *filer_pb.Entry, isLast bool) error {
 		if entry.IsDirectory {
@@ -318,12 +331,11 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 		return nil
 	}
 
-	dirPath := util.FullPath(dir.FullPath())
 	if err = meta_cache.EnsureVisited(dir.wfs.metaCache, dir.wfs, dirPath); err != nil {
 		glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 		return nil, fuse.EIO
 	}
-	listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), util.FullPath(dir.FullPath()), "", false, int64(math.MaxInt32), func(entry *filer.Entry) bool {
+	listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, "", false, int64(math.MaxInt32), func(entry *filer.Entry) bool {
 		processEachEntryFn(entry.ToProtoEntry(), false)
 		return true
 	})
@@ -355,6 +367,11 @@ func findFileType(mode uint16) fuse.DirentType {
 }
 
 func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
+
+	if dir.wfs.option.ReadOnly {
+		return fuse.EPERM
+	}
+
 
 	if !req.Dir {
 		return dir.removeOneFile(req)
@@ -389,12 +406,12 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 
 	// clear entry inside the file
 	fsNode := dir.wfs.fsNodeCache.GetFsNode(filePath)
+	dir.wfs.fsNodeCache.DeleteFsNode(filePath)
 	if fsNode != nil {
 		if file, ok := fsNode.(*File); ok {
 			file.clearEntry()
 		}
 	}
-	dir.wfs.fsNodeCache.DeleteFsNode(filePath)
 
 	// remove current file handle if any
 	dir.wfs.handlesLock.Lock()
@@ -429,6 +446,10 @@ func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 
 func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
+	if dir.wfs.option.ReadOnly {
+		return fuse.EPERM
+	}
+
 	glog.V(4).Infof("%v dir setattr %+v", dir.FullPath(), req)
 
 	if err := dir.maybeLoadEntry(); err != nil {
@@ -457,6 +478,10 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 
 func (dir *Dir) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
 
+	if dir.wfs.option.ReadOnly {
+		return fuse.EPERM
+	}
+
 	glog.V(4).Infof("dir Setxattr %s: %s", dir.FullPath(), req.Name)
 
 	if err := dir.maybeLoadEntry(); err != nil {
@@ -472,6 +497,10 @@ func (dir *Dir) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
 }
 
 func (dir *Dir) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) error {
+
+	if dir.wfs.option.ReadOnly {
+		return fuse.EPERM
+	}
 
 	glog.V(4).Infof("dir Removexattr %s: %s", dir.FullPath(), req.Name)
 

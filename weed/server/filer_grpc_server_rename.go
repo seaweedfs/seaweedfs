@@ -33,8 +33,7 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 		return nil, fmt.Errorf("%s/%s not found: %v", req.OldDirectory, req.OldName, err)
 	}
 
-	var events MoveEvents
-	moveErr := fs.moveEntry(ctx, oldParent, oldEntry, newParent, req.NewName, &events)
+	moveErr := fs.moveEntry(ctx, oldParent, oldEntry, newParent, req.NewName)
 	if moveErr != nil {
 		fs.filer.RollbackTransaction(ctx)
 		return nil, fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, moveErr)
@@ -48,11 +47,11 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 	return &filer_pb.AtomicRenameEntryResponse{}, nil
 }
 
-func (fs *FilerServer) moveEntry(ctx context.Context, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, events *MoveEvents) error {
+func (fs *FilerServer) moveEntry(ctx context.Context, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string) error {
 
-	if err := fs.moveSelfEntry(ctx, oldParent, entry, newParent, newName, events, func() error {
+	if err := fs.moveSelfEntry(ctx, oldParent, entry, newParent, newName, func() error {
 		if entry.IsDirectory() {
-			if err := fs.moveFolderSubEntries(ctx, oldParent, entry, newParent, newName, events); err != nil {
+			if err := fs.moveFolderSubEntries(ctx, oldParent, entry, newParent, newName); err != nil {
 				return err
 			}
 		}
@@ -64,7 +63,7 @@ func (fs *FilerServer) moveEntry(ctx context.Context, oldParent util.FullPath, e
 	return nil
 }
 
-func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, events *MoveEvents) error {
+func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string) error {
 
 	currentDirPath := oldParent.Child(entry.Name())
 	newDirPath := newParent.Child(newName)
@@ -85,7 +84,7 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, oldParent util.
 		for _, item := range entries {
 			lastFileName = item.Name()
 			// println("processing", lastFileName)
-			err := fs.moveEntry(ctx, currentDirPath, item, newDirPath, item.Name(), events)
+			err := fs.moveEntry(ctx, currentDirPath, item, newDirPath, item.Name())
 			if err != nil {
 				return err
 			}
@@ -97,8 +96,7 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, oldParent util.
 	return nil
 }
 
-func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, events *MoveEvents,
-	moveFolderSubEntries func() error) error {
+func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, moveFolderSubEntries func() error) error {
 
 	oldPath, newPath := oldParent.Child(entry.Name()), newParent.Child(newName)
 
@@ -122,8 +120,6 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPat
 		return createErr
 	}
 
-	events.newEntries = append(events.newEntries, newEntry)
-
 	if moveFolderSubEntries != nil {
 		if moveChildrenErr := moveFolderSubEntries(); moveChildrenErr != nil {
 			return moveChildrenErr
@@ -136,13 +132,6 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPat
 		return deleteErr
 	}
 
-	events.oldEntries = append(events.oldEntries, entry)
-
 	return nil
 
-}
-
-type MoveEvents struct {
-	oldEntries []*filer.Entry
-	newEntries []*filer.Entry
 }

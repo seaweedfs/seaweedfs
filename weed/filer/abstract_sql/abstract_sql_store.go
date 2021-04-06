@@ -13,15 +13,15 @@ import (
 )
 
 type SqlGenerator interface {
-	GetSqlInsert(bucket string) string
-	GetSqlUpdate(bucket string) string
-	GetSqlFind(bucket string) string
-	GetSqlDelete(bucket string) string
-	GetSqlDeleteFolderChildren(bucket string) string
-	GetSqlListExclusive(bucket string) string
-	GetSqlListInclusive(bucket string) string
-	GetSqlCreateTable(bucket string) string
-	GetSqlDropTable(bucket string) string
+	GetSqlInsert(tableName string) string
+	GetSqlUpdate(tableName string) string
+	GetSqlFind(tableName string) string
+	GetSqlDelete(tableName string) string
+	GetSqlDeleteFolderChildren(tableName string) string
+	GetSqlListExclusive(tableName string) string
+	GetSqlListInclusive(tableName string) string
+	GetSqlCreateTable(tableName string) string
+	GetSqlDropTable(tableName string) string
 }
 
 type AbstractSqlStore struct {
@@ -30,6 +30,29 @@ type AbstractSqlStore struct {
 	SupportBucketTable bool
 	dbs                map[string]bool
 	dbsLock            sync.Mutex
+}
+
+func (store *AbstractSqlStore) OnBucketCreation(bucket string) {
+	store.dbsLock.Lock()
+	defer store.dbsLock.Unlock()
+
+	store.CreateTable(context.Background(), bucket)
+
+	if store.dbs == nil {
+		return
+	}
+	store.dbs[bucket] = true
+}
+func (store *AbstractSqlStore) OnBucketDeletion(bucket string) {
+	store.dbsLock.Lock()
+	defer store.dbsLock.Unlock()
+
+	store.deleteTable(context.Background(), bucket)
+
+	if store.dbs == nil {
+		return
+	}
+	delete(store.dbs, bucket)
 }
 
 const (

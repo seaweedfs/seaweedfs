@@ -49,6 +49,7 @@ type FilerOptions struct {
 	metricsHttpPort         *int
 	saveToFilerLimit        *int
 	defaultLevelDbDirectory *string
+	concurrentUploadLimitMB *int
 }
 
 func init() {
@@ -56,12 +57,12 @@ func init() {
 	f.masters = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this default collection")
 	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
-	f.bindIp = cmdFiler.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to")
+	f.bindIp = cmdFiler.Flag.String("ip.bind", "", "ip address to bind to")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "", "default replication type. If not specified, use master setting.")
 	f.disableDirListing = cmdFiler.Flag.Bool("disableDirListing", false, "turn off directory listing")
-	f.maxMB = cmdFiler.Flag.Int("maxMB", 32, "split files larger than the limit")
+	f.maxMB = cmdFiler.Flag.Int("maxMB", 4, "split files larger than the limit")
 	f.dirListingLimit = cmdFiler.Flag.Int("dirListLimit", 100000, "limit sub dir listing size")
 	f.dataCenter = cmdFiler.Flag.String("dataCenter", "", "prefer to read and write to volumes in this data center")
 	f.rack = cmdFiler.Flag.String("rack", "", "prefer to write to volumes in this rack")
@@ -71,6 +72,7 @@ func init() {
 	f.metricsHttpPort = cmdFiler.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	f.saveToFilerLimit = cmdFiler.Flag.Int("saveToFilerLimit", 0, "files smaller than this limit will be saved in filer store")
 	f.defaultLevelDbDirectory = cmdFiler.Flag.String("defaultStoreDir", ".", "if filer.toml is empty, use an embedded filer store in the directory")
+	f.concurrentUploadLimitMB = cmdFiler.Flag.Int("concurrentUploadLimitMB", 128, "limit total concurrent upload size")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -176,21 +178,22 @@ func (fo *FilerOptions) startFiler() {
 	}
 
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
-		Masters:            strings.Split(*fo.masters, ","),
-		Collection:         *fo.collection,
-		DefaultReplication: *fo.defaultReplicaPlacement,
-		DisableDirListing:  *fo.disableDirListing,
-		MaxMB:              *fo.maxMB,
-		DirListingLimit:    *fo.dirListingLimit,
-		DataCenter:         *fo.dataCenter,
-		Rack:               *fo.rack,
-		DefaultLevelDbDir:  defaultLevelDbDirectory,
-		DisableHttp:        *fo.disableHttp,
-		Host:               *fo.ip,
-		Port:               uint32(*fo.port),
-		Cipher:             *fo.cipher,
-		SaveToFilerLimit:   *fo.saveToFilerLimit,
-		Filers:             peers,
+		Masters:               strings.Split(*fo.masters, ","),
+		Collection:            *fo.collection,
+		DefaultReplication:    *fo.defaultReplicaPlacement,
+		DisableDirListing:     *fo.disableDirListing,
+		MaxMB:                 *fo.maxMB,
+		DirListingLimit:       *fo.dirListingLimit,
+		DataCenter:            *fo.dataCenter,
+		Rack:                  *fo.rack,
+		DefaultLevelDbDir:     defaultLevelDbDirectory,
+		DisableHttp:           *fo.disableHttp,
+		Host:                  *fo.ip,
+		Port:                  uint32(*fo.port),
+		Cipher:                *fo.cipher,
+		SaveToFilerLimit:      int64(*fo.saveToFilerLimit),
+		Filers:                peers,
+		ConcurrentUploadLimit: int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

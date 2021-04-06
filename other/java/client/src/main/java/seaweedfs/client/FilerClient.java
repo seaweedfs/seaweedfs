@@ -94,7 +94,7 @@ public class FilerClient extends FilerGrpcClient {
             return true;
         }
         File pathFile = new File(path);
-        String parent = pathFile.getParent();
+        String parent = pathFile.getParent().replace('\\','/');
         String name = pathFile.getName();
 
         mkdirs(parent, mode, uid, gid, userName, groupNames);
@@ -115,11 +115,11 @@ public class FilerClient extends FilerGrpcClient {
     public boolean mv(String oldPath, String newPath) {
 
         File oldPathFile = new File(oldPath);
-        String oldParent = oldPathFile.getParent();
+        String oldParent = oldPathFile.getParent().replace('\\','/');
         String oldName = oldPathFile.getName();
 
         File newPathFile = new File(newPath);
-        String newParent = newPathFile.getParent();
+        String newParent = newPathFile.getParent().replace('\\','/');
         String newName = newPathFile.getName();
 
         return atomicRenameEntry(oldParent, oldName, newParent, newName);
@@ -129,7 +129,7 @@ public class FilerClient extends FilerGrpcClient {
     public boolean rm(String path, boolean isRecursive, boolean ignoreRecusiveError) {
 
         File pathFile = new File(path);
-        String parent = pathFile.getParent();
+        String parent = pathFile.getParent().replace('\\','/');
         String name = pathFile.getName();
 
         return deleteEntry(
@@ -148,7 +148,7 @@ public class FilerClient extends FilerGrpcClient {
     public boolean touch(String path, int mode, int uid, int gid, String userName, String[] groupNames) {
 
         File pathFile = new File(path);
-        String parent = pathFile.getParent();
+        String parent = pathFile.getParent().replace('\\','/');
         String name = pathFile.getName();
 
         FilerProto.Entry entry = lookupEntry(parent, name);
