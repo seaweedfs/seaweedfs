@@ -57,26 +57,27 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 	var lock sync.Mutex
 	readOffset := int64(0)
 	var wg sync.WaitGroup
-	var readErr error
 
-	for readErr == nil {
+	for err == nil {
 
 		wg.Add(1)
 		request := func() {
 			defer wg.Done()
 
 			var localOffset int64
-			var data []byte
 			// read from the input
 			lock.Lock()
 			localOffset = readOffset
 			limitedReader := io.LimitReader(partReader, int64(chunkSize))
-			data, readErr = ioutil.ReadAll(limitedReader)
+			data, readErr := ioutil.ReadAll(limitedReader)
 			readOffset += int64(len(data))
 			lock.Unlock()
 			// handle read errors
 			if readErr != nil {
 				if readErr != io.EOF {
+					if err == nil {
+						err = readErr
+					}
 					resultsChan <- &ChunkCreationResult{
 						err: readErr,
 					}
@@ -92,6 +93,9 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			dataReader := util.NewBytesReader(data)
 			fileId, uploadResult, uploadErr := fs.doCreateChunk(w, r, so, dataReader, fileName, contentType)
 			if uploadErr != nil {
+				if err == nil {
+					err = uploadErr
+				}
 				resultsChan <- &ChunkCreationResult{
 					err: uploadErr,
 				}
