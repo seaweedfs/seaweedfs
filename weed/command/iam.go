@@ -43,7 +43,7 @@ func runIam(cmd *Command, args []string) bool {
 }
 
 func (iamopt *IamOptions) startIamServer() bool {
-	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(*iamopt.filer)
+	filerGrpcAddress, err := pb.ParseServerToGrpcAddress(*iamopt.filer)
 	if err != nil {
 		glog.Fatal(err)
 		return false
