@@ -149,8 +149,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fuse.Subtype("seaweedfs"),
 		// fuse.NoAppleDouble(), // include .DS_Store, otherwise can not delete non-empty folders
 		fuse.NoAppleXattr(),
-		fuse.NoBrowse(),
-		fuse.AutoXattr(),
 		fuse.ExclCreate(),
 		fuse.DaemonTimeout("3600"),
 		fuse.AllowSUID(),
