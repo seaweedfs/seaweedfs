@@ -1,0 +1,15 @@
+server:
+  port: 8080
+
+ftp:
+  port: 2222
+  passive-address: localhost
+  passive-ports: 30000-30999
+
+hdfs:
+  uri: seaweedfs://localhost:8888
+
+seaweedFs:
+  enable: true
+  access: direct # direct/filerProxy/publicUrl
+  replication: "000"
