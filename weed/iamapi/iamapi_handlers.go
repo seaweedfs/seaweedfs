@@ -55,6 +55,7 @@ func writeIamErrorResponse(w http.ResponseWriter, err error, object string, valu
 	errorResp := ErrorResponse{}
 	errorResp.Error.Type = "Sender"
 	errorResp.Error.Code = &errCode
+	glog.Errorf("Response %+v", err)
 	switch errCode {
 	case iam.ErrCodeNoSuchEntityException:
 		msg := fmt.Sprintf("The %s with name %s cannot be found.", object, value)

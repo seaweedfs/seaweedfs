@@ -1,14 +1,10 @@
 package iamapi
 
 import (
-	"bytes"
 	"crypto/sha1"
 	"encoding/json"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
@@ -16,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/iam"
@@ -32,13 +29,15 @@ var (
 	policyDocuments = map[string]*PolicyDocument{}
 )
 
+type Statement struct {
+	Effect   string   `json:"Effect"`
+	Action   []string `json:"Action"`
+	Resource []string `json:"Resource"`
+}
+
 type PolicyDocument struct {
-	Version   string `json:"Version"`
-	Statement []struct {
-		Effect   string   `json:"Effect"`
-		Action   []string `json:"Action"`
-		Resource []string `json:"Resource"`
-	} `json:"Statement"`
+	Version   string       `json:"Version"`
+	Statement []*Statement `json:"Statement"`
 }
 
 func Hash(s *string) string {
@@ -252,13 +251,16 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	values := r.PostForm
+	var s3cfgLock sync.RWMutex
+	s3cfgLock.RLock()
 	s3cfg := &iam_pb.S3ApiConfiguration{}
-	if err := iama.GetS3ApiConfiguration(s3cfg); err != nil {
+	if err := iama.s3ApiConfig.GetS3ApiConfiguration(s3cfg); err != nil {
 		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
+	s3cfgLock.RUnlock()
 
-	glog.Info("values ", values)
+	glog.V(4).Infof("DoActions: %+v", values)
 	var response interface{}
 	var err error
 	changed := true
@@ -292,12 +294,14 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	case "CreatePolicy":
 		response, err = iama.CreatePolicy(s3cfg, values)
 		if err != nil {
+			glog.Errorf("CreatePolicy:  %+v", err)
 			writeErrorResponse(w, s3err.ErrInvalidRequest, r.URL)
 			return
 		}
 	case "PutUserPolicy":
 		response, err = iama.PutUserPolicy(s3cfg, values)
 		if err != nil {
+			glog.Errorf("PutUserPolicy:  %+v", err)
 			writeErrorResponse(w, s3err.ErrInvalidRequest, r.URL)
 			return
 		}
@@ -306,22 +310,9 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if changed {
-		buf := bytes.Buffer{}
-		if err := filer.S3ConfigurationToText(&buf, s3cfg); err != nil {
-			glog.Error("S3ConfigurationToText: ", err)
-			writeErrorResponse(w, s3err.ErrInternalError, r.URL)
-			return
-		}
-		err := pb.WithGrpcFilerClient(
-			iama.option.FilerGrpcAddress,
-			iama.option.GrpcDialOption,
-			func(client filer_pb.SeaweedFilerClient) error {
-				if err := filer.SaveInsideFiler(client, filer.IamConfigDirecotry, filer.IamIdentityFile, buf.Bytes()); err != nil {
-					return err
-				}
-				return nil
-			},
-		)
+		s3cfgLock.Lock()
+		err := iama.s3ApiConfig.PutS3ApiConfiguration(s3cfg)
+		s3cfgLock.Unlock()
 		if err != nil {
 			writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 			return

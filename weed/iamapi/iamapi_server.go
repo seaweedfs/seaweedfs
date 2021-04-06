@@ -1,10 +1,10 @@
 package iamapi
 
 // https://docs.aws.amazon.com/cli/latest/reference/iam/list-roles.html
-// https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateRole.html
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -16,6 +16,16 @@ import (
 	"strings"
 )
 
+type IamS3ApiConfig interface {
+	GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error)
+	PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error)
+}
+
+type IamS3ApiConfigure struct {
+	option       *IamServerOption
+	masterClient *wdclient.MasterClient
+}
+
 type IamServerOption struct {
 	Masters          string
 	Filer            string
@@ -25,15 +35,20 @@ type IamServerOption struct {
 }
 
 type IamApiServer struct {
-	option       *IamServerOption
-	masterClient *wdclient.MasterClient
-	filerclient  *filer_pb.SeaweedFilerClient
+	s3ApiConfig IamS3ApiConfig
+	filerclient *filer_pb.SeaweedFilerClient
 }
 
+var s3ApiConfigure IamS3ApiConfig
+
 func NewIamApiServer(router *mux.Router, option *IamServerOption) (iamApiServer *IamApiServer, err error) {
-	iamApiServer = &IamApiServer{
+	s3ApiConfigure = IamS3ApiConfigure{
 		option:       option,
 		masterClient: wdclient.NewMasterClient(option.GrpcDialOption, pb.AdminShellClient, "", 0, "", strings.Split(option.Masters, ",")),
+	}
+
+	iamApiServer = &IamApiServer{
+		s3ApiConfig: s3ApiConfigure,
 	}
 
 	iamApiServer.registerRouter(router)
@@ -52,10 +67,10 @@ func (iama *IamApiServer) registerRouter(router *mux.Router) {
 	apiRouter.NotFoundHandler = http.HandlerFunc(notFoundHandler)
 }
 
-func (iama *IamApiServer) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
+func (iam IamS3ApiConfigure) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
 	var buf bytes.Buffer
-	err = pb.WithGrpcFilerClient(iama.option.FilerGrpcAddress, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		if err = filer.ReadEntry(iama.masterClient, client, filer.IamConfigDirecotry, filer.IamIdentityFile, &buf); err != nil {
+	err = pb.WithGrpcFilerClient(iam.option.FilerGrpcAddress, iam.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		if err = filer.ReadEntry(iam.masterClient, client, filer.IamConfigDirecotry, filer.IamIdentityFile, &buf); err != nil {
 			return err
 		}
 		return nil
@@ -69,4 +84,21 @@ func (iama *IamApiServer) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration
 		}
 	}
 	return nil
+}
+
+func (iam IamS3ApiConfigure) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
+	buf := bytes.Buffer{}
+	if err := filer.S3ConfigurationToText(&buf, s3cfg); err != nil {
+		return fmt.Errorf("S3ConfigurationToText: %s", err)
+	}
+	return pb.WithGrpcFilerClient(
+		iam.option.FilerGrpcAddress,
+		iam.option.GrpcDialOption,
+		func(client filer_pb.SeaweedFilerClient) error {
+			if err := filer.SaveInsideFiler(client, filer.IamConfigDirecotry, filer.IamIdentityFile, buf.Bytes()); err != nil {
+				return err
+			}
+			return nil
+		},
+	)
 }
