@@ -235,8 +235,10 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	// print("+")
 	resp, post_err := HttpClient.Do(req)
 	if post_err != nil {
-		glog.Errorf("upload %s %d bytes to %v: %v", filename, originalDataSize, uploadUrl, post_err)
-		debug.PrintStack()
+		if !strings.Contains(post_err.Error(), "connection reset by peer"){
+			glog.Errorf("upload %s %d bytes to %v: %v", filename, originalDataSize, uploadUrl, post_err)
+			debug.PrintStack()
+		}
 		return nil, fmt.Errorf("upload %s %d bytes to %v: %v", filename, originalDataSize, uploadUrl, post_err)
 	}
 	// print("-")
