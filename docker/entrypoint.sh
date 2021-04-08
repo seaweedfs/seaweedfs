@@ -1,73 +1,51 @@
 #!/bin/sh
 
-isArgPassed() {
-  arg="$1"
-  argWithEqualSign="$1="
-  shift
-  while [ $# -gt 0 ]; do
-    passedArg="$1"
-    shift
-    case $passedArg in
-    $arg)
-      return 0
-      ;;
-    $argWithEqualSign*)
-      return 0
-      ;;
-    esac
-  done
-  return 1
-}
+WEED=${WEED-"/usr/bin/weed"}
+WEED_DIR=${WEED_DIR-"/data"}
+WEED_VOLUME_PREALLOCATE=${WEED_VOLUME_PREALLOCATE-"-volumePreallocate"}
+WEED_MASTER_VOLUME_PREALLOCATE=${WEED_MASTER_VOLUME_PREALLOCATE-"-master.volumePreallocate"}
+WEED_VOLUME_SIZE_LIMIT_MB=${WEED_VOLUME_SIZE_LIMIT_MB-1024}
+WEED_MAX=${WEED_MAX-0}
+WEED_S3_DOMAIN_NAME=${WEED_S3_DOMAIN_NAME-""}
+WEED_S3_KEY_FILE=${WEED_S3_KEY_FILE-""}
+WEED_S3_CERT_FILE=${WEED_S3_CERT_FILE-""}
+
+WEED_MASTER=${WEED_MASTER-"localhost:9333"}
+WEED_FILER=${WEED_FILER-"localhost:8888"}
+FIX_REPLICATION_CRON_SCHEDULE=${FIX_REPLICATION_CRON_SCHEDULE-"*/7 * * * * *"}
+BALANCING_CRON_SCHEDULE=${BALANCING_CRON_SCHEDULE-"25 * * * * *"}
 
 case "$1" in
-
   'master')
-  	ARGS="-mdir=/data -volumePreallocate -volumeSizeLimitMB=1024"
-  	shift
-  	exec /usr/bin/weed master $ARGS $@
-	;;
-
+    ARGS="-mdir=$WEED_DIR $WEED_VOLUME_PREALLOCATE -volumeSizeLimitMB=$WEED_VOLUME_SIZE_LIMIT_MB"
+    shift
+    exec $WEED master $ARGS $@
+    ;;
   'volume')
-  	ARGS="-dir=/data -max=0"
-  	if isArgPassed "-max" "$@"; then
-  	  ARGS="-dir=/data"
-  	fi
-  	shift
-  	exec /usr/bin/weed volume $ARGS $@
-	;;
-
+    ARGS="-dir=$WEED_DIR -max=$WEED_MAX"
+    shift
+    exec $WEED volume $ARGS $@
+    ;;
   'server')
-  	ARGS="-dir=/data -volume.max=0 -master.volumePreallocate -master.volumeSizeLimitMB=1024"
-  	if isArgPassed "-volume.max" "$@"; then
-  	  ARGS="-dir=/data -master.volumePreallocate -master.volumeSizeLimitMB=1024"
-  	fi
- 	shift
-  	exec /usr/bin/weed server $ARGS $@
-  	;;
-
-  'filer')
-  	ARGS=""
-  	shift
-  	exec /usr/bin/weed filer $ARGS $@
-	;;
-
+    ARGS="-dir=$WEED_DIR -volume.max=$WEED_MAX $WEED_MASTER_VOLUME_PREALLOCATE -master.volumeSizeLimitMB=$WEED_VOLUME_SIZE_LIMIT_MB"
+    shift
+    exec $WEED server $ARGS $@
+    ;;
   's3')
-  	ARGS="-domainName=$S3_DOMAIN_NAME -key.file=$S3_KEY_FILE -cert.file=$S3_CERT_FILE"
-  	shift
-  	exec /usr/bin/weed s3 $ARGS $@
-	;;
-
+    ARGS="-domainName=$WEED_S3_DOMAIN_NAME -key.file=$WEED_S3_KEY_FILE -cert.file=$WEED_S3_CERT_FILE"
+    shift
+    exec $WEED s3 $ARGS $@
+    ;;
   'cronjob')
-	MASTER=${WEED_MASTER-localhost:9333}
-	FIX_REPLICATION_CRON_SCHEDULE=${CRON_SCHEDULE-*/7 * * * * *}
-	echo "$FIX_REPLICATION_CRON_SCHEDULE" 'echo "lock; volume.fix.replication; unlock" | weed shell -master='$MASTER > /crontab
-	BALANCING_CRON_SCHEDULE=${CRON_SCHEDULE-25 * * * * *}
-	echo "$BALANCING_CRON_SCHEDULE" 'echo "lock; volume.balance -collection ALL_COLLECTIONS -force; unlock" | weed shell -master='$MASTER >> /crontab
-	echo "Running Crontab:"
-	cat /crontab
-	exec supercronic /crontab
-	;;
+    cat <<-EOF >crontab
+    $FIX_REPLICATION_CRON_SCHEDULE echo "lock; volume.fix.replication; unlock" | $WEED shell -master=$WEED_MASTER -filer=$WEED_FILER
+    $BALANCING_CRON_SCHEDULE echo "lock; volume.balance -collection ALL_COLLECTIONS -force; unlock" | $WEED shell -master=$WEED_MASTER -filer=$WEED_FILER
+    EOF
+    echo "Running Crontab:"
+    cat /crontab
+    exec supercronic /crontab
+    ;;
   *)
-  	exec /usr/bin/weed $@
-	;;
+    exec $WEED $@
+    ;;
 esac

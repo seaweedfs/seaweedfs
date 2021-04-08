@@ -7,13 +7,20 @@ services:
       - 9333:9333
       - 19333:19333
     command: "master -ip=master"
+    environment:
+      WEED_DIR: "/data"
+      WEED_VOLUME_PREALLOCATE: "-volumePreallocate"
+      WEED_VOLUME_SIZE_LIMIT_MB: 1024
   volume:
     image: chrislusf/seaweedfs # use a remote image
     ports:
       - 8080:8080
       - 18080:18080
       - 9325:9325
-    command: 'volume -mserver="master:9333" -port=8080  -metricsPort=9325'
+    command: 'volume -mserver="master:9333" -port=8080 -metricsPort=9325'
+    environment:
+      WEED_DIR: "/data"
+      WEED_MAX: 0
     depends_on:
       - master
   filer:
@@ -32,9 +39,10 @@ services:
     image: chrislusf/seaweedfs # use a remote image
     command: 'cronjob'
     environment:
-      # Run re-replication every 2 minutes
-      CRON_SCHEDULE: '*/2 * * * * *' # Default: '*/5 * * * * *'
-      WEED_MASTER: master:9333 # Default: localhost:9333
+      FIX_REPLICATION_CRON_SCHEDULE: "*/7 * * * * *"
+      BALANCING_CRON_SCHEDULE: "25 * * * * *"
+      WEED_MASTER: "master:9333" # Default: localhost:9333
+      WEED_FILER: "filer:8888" # Default: localhost:8888
     depends_on:
       - master
       - volume
@@ -44,6 +52,10 @@ services:
       - 8333:8333
       - 9327:9327
     command: 's3 -filer="filer:8888" -metricsPort=9327'
+    environment:
+      WEED_S3_DOMAIN_NAME: ""
+      WEED_S3_KEY_FILE: ""
+      WEED_S3_CERT_FILE: ""
     depends_on:
       - master
       - volume
