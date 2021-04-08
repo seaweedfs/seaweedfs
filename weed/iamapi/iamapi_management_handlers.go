@@ -144,6 +144,17 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 	return resp, nil
 }
 
+func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp PutUserPolicyResponse, err error) {
+	userName := values.Get("UserName")
+	for i, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			s3cfg.Identities = append(s3cfg.Identities[:i], s3cfg.Identities[i+1:]...)
+			return resp, nil
+		}
+	}
+	return resp, fmt.Errorf(iam.ErrCodeNoSuchEntityException)
+}
+
 func MapAction(action string) string {
 	switch action {
 	case "*":
@@ -277,14 +288,14 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		userName := values.Get("UserName")
 		response, err = iama.GetUser(s3cfg, userName)
 		if err != nil {
-			writeIamErrorResponse(w, err, "user", userName)
+			writeIamErrorResponse(w, err, "user", userName, nil)
 			return
 		}
 	case "DeleteUser":
 		userName := values.Get("UserName")
 		response, err = iama.DeleteUser(s3cfg, userName)
 		if err != nil {
-			writeIamErrorResponse(w, err, "user", userName)
+			writeIamErrorResponse(w, err, "user", userName, nil)
 			return
 		}
 	case "CreateAccessKey":
@@ -305,8 +316,16 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			writeErrorResponse(w, s3err.ErrInvalidRequest, r.URL)
 			return
 		}
+	case "DeleteUserPolicy":
+		if response, err = iama.DeleteUserPolicy(s3cfg, values); err != nil {
+			writeIamErrorResponse(w, err, "user", values.Get("UserName"), nil)
+		}
 	default:
-		writeErrorResponse(w, s3err.ErrNotImplemented, r.URL)
+		errNotImplemented := s3err.GetAPIError(s3err.ErrNotImplemented)
+		errorResponse := ErrorResponse{}
+		errorResponse.Error.Code = &errNotImplemented.Code
+		errorResponse.Error.Message = &errNotImplemented.Description
+		writeResponse(w, errNotImplemented.HTTPStatusCode, encodeResponse(errorResponse), mimeXML)
 		return
 	}
 	if changed {
@@ -314,7 +333,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		err := iama.s3ApiConfig.PutS3ApiConfiguration(s3cfg)
 		s3cfgLock.Unlock()
 		if err != nil {
-			writeErrorResponse(w, s3err.ErrInternalError, r.URL)
+			writeIamErrorResponse(w, fmt.Errorf(iam.ErrCodeServiceFailureException), "", "", err)
 			return
 		}
 	}
