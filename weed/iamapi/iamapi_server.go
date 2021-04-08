@@ -9,6 +9,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
+	"github.com/chrislusf/seaweedfs/weed/s3api"
+	. "github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc"
@@ -36,7 +38,7 @@ type IamServerOption struct {
 
 type IamApiServer struct {
 	s3ApiConfig IamS3ApiConfig
-	filerclient *filer_pb.SeaweedFilerClient
+	iam         *s3api.IdentityAccessManagement
 }
 
 var s3ApiConfigure IamS3ApiConfig
@@ -46,9 +48,10 @@ func NewIamApiServer(router *mux.Router, option *IamServerOption) (iamApiServer 
 		option:       option,
 		masterClient: wdclient.NewMasterClient(option.GrpcDialOption, pb.AdminShellClient, "", 0, "", strings.Split(option.Masters, ",")),
 	}
-
+	s3Option := s3api.S3ApiServerOption{Filer: option.Filer}
 	iamApiServer = &IamApiServer{
 		s3ApiConfig: s3ApiConfigure,
+		iam:         s3api.NewIdentityAccessManagement(&s3Option),
 	}
 
 	iamApiServer.registerRouter(router)
@@ -62,7 +65,8 @@ func (iama *IamApiServer) registerRouter(router *mux.Router) {
 	// ListBuckets
 
 	// apiRouter.Methods("GET").Path("/").HandlerFunc(track(s3a.iam.Auth(s3a.ListBucketsHandler, ACTION_ADMIN), "LIST"))
-	apiRouter.Path("/").Methods("POST").HandlerFunc(iama.DoActions)
+	apiRouter.Methods("POST").Path("/").HandlerFunc(iama.iam.Auth(iama.DoActions, ACTION_ADMIN))
+	//
 	// NotFound
 	apiRouter.NotFoundHandler = http.HandlerFunc(notFoundHandler)
 }

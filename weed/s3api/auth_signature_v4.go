@@ -24,6 +24,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -132,6 +133,17 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 	// Query string.
 	queryStr := req.URL.Query().Encode()
 
+	// Get hashed Payload
+	if signV4Values.Credential.scope.service != "s3" && hashedPayload == emptySHA256 && r.Body != nil {
+		buf, _ := ioutil.ReadAll(r.Body)
+		r.Body = ioutil.NopCloser(bytes.NewBuffer(buf))
+		b, _ := ioutil.ReadAll(bytes.NewBuffer(buf))
+		if len(b) != 0 {
+			bodyHash := sha256.Sum256(b)
+			hashedPayload = hex.EncodeToString(bodyHash[:])
+		}
+	}
+
 	// Get canonical request.
 	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, queryStr, req.URL.Path, req.Method)
 
@@ -139,7 +151,10 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 	stringToSign := getStringToSign(canonicalRequest, t, signV4Values.Credential.getScope())
 
 	// Get hmac signing key.
-	signingKey := getSigningKey(cred.SecretKey, signV4Values.Credential.scope.date, signV4Values.Credential.scope.region)
+	signingKey := getSigningKey(cred.SecretKey,
+		signV4Values.Credential.scope.date,
+		signV4Values.Credential.scope.region,
+		signV4Values.Credential.scope.service)
 
 	// Calculate signature.
 	newSignature := getSignature(signingKey, stringToSign)
@@ -310,7 +325,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 	}
 
 	// Get signing key.
-	signingKey := getSigningKey(cred.SecretKey, credHeader.scope.date, credHeader.scope.region)
+	signingKey := getSigningKey(cred.SecretKey, credHeader.scope.date, credHeader.scope.region, credHeader.scope.service)
 
 	// Get signature.
 	newSignature := getSignature(signingKey, formValues.Get("Policy"))
@@ -427,7 +442,10 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	presignedStringToSign := getStringToSign(presignedCanonicalReq, t, pSignValues.Credential.getScope())
 
 	// Get hmac presigned signing key.
-	presignedSigningKey := getSigningKey(cred.SecretKey, pSignValues.Credential.scope.date, pSignValues.Credential.scope.region)
+	presignedSigningKey := getSigningKey(cred.SecretKey,
+		pSignValues.Credential.scope.date,
+		pSignValues.Credential.scope.region,
+		pSignValues.Credential.scope.service)
 
 	// Get new signature.
 	newSignature := getSignature(presignedSigningKey, presignedStringToSign)
@@ -655,11 +673,11 @@ func sumHMAC(key []byte, data []byte) []byte {
 }
 
 // getSigningKey hmac seed to calculate final signature.
-func getSigningKey(secretKey string, t time.Time, region string) []byte {
+func getSigningKey(secretKey string, t time.Time, region string, service string) []byte {
 	date := sumHMAC([]byte("AWS4"+secretKey), []byte(t.Format(yyyymmdd)))
 	regionBytes := sumHMAC(date, []byte(region))
-	service := sumHMAC(regionBytes, []byte("s3"))
-	signingKey := sumHMAC(service, []byte("aws4_request"))
+	serviceBytes := sumHMAC(regionBytes, []byte(service))
+	signingKey := sumHMAC(serviceBytes, []byte("aws4_request"))
 	return signingKey
 }
 
