@@ -200,7 +200,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	fh.Lock()
 	defer fh.Unlock()
 
-	fh.f.clearEntry()
+	fh.f.entryViewCache = nil
 
 	if fh.f.isOpen <= 0 {
 		glog.V(0).Infof("Release reset %s open count %d => %d", fh.f.Name, fh.f.isOpen, 0)
@@ -213,6 +213,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 		fh.f.isOpen--
 
 		fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
+		fh.f.setReader(nil)
 	}
 
 	return nil
