@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -19,15 +20,56 @@ import (
 )
 
 const (
-	charsetUpper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	charset      = charsetUpper + "abcdefghijklmnopqrstuvwxyz/"
+	charsetUpper           = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	charset                = charsetUpper + "abcdefghijklmnopqrstuvwxyz/"
+	policyDocumentVersion  = "2012-10-17"
+	StatementActionAdmin   = "*"
+	StatementActionWrite   = "Put*"
+	StatementActionRead    = "Get*"
+	StatementActionList    = "List*"
+	StatementActionTagging = "Tagging*"
 )
 
 var (
 	seededRand *rand.Rand = rand.New(
 		rand.NewSource(time.Now().UnixNano()))
 	policyDocuments = map[string]*PolicyDocument{}
+	policyLock      = sync.RWMutex{}
 )
+
+func MapToStatementAction(action string) string {
+	switch action {
+	case StatementActionAdmin:
+		return s3_constants.ACTION_ADMIN
+	case StatementActionWrite:
+		return s3_constants.ACTION_WRITE
+	case StatementActionRead:
+		return s3_constants.ACTION_READ
+	case StatementActionList:
+		return s3_constants.ACTION_LIST
+	case StatementActionTagging:
+		return s3_constants.ACTION_TAGGING
+	default:
+		return ""
+	}
+}
+
+func MapToIdentitiesAction(action string) string {
+	switch action {
+	case s3_constants.ACTION_ADMIN:
+		return StatementActionAdmin
+	case s3_constants.ACTION_WRITE:
+		return StatementActionWrite
+	case s3_constants.ACTION_READ:
+		return StatementActionRead
+	case s3_constants.ACTION_LIST:
+		return StatementActionList
+	case s3_constants.ACTION_TAGGING:
+		return StatementActionTagging
+	default:
+		return ""
+	}
+}
 
 type Statement struct {
 	Effect   string   `json:"Effect"`
@@ -35,9 +77,18 @@ type Statement struct {
 	Resource []string `json:"Resource"`
 }
 
+type Policies struct {
+	Policies map[string]PolicyDocument `json:"policies"`
+}
+
 type PolicyDocument struct {
 	Version   string       `json:"Version"`
 	Statement []*Statement `json:"Statement"`
+}
+
+func (p PolicyDocument) String() string {
+	b, _ := json.Marshal(p)
+	return string(b)
 }
 
 func Hash(s *string) string {
@@ -83,7 +134,7 @@ func (iama *IamApiServer) CreateUser(s3cfg *iam_pb.S3ApiConfiguration, values ur
 func (iama *IamApiServer) DeleteUser(s3cfg *iam_pb.S3ApiConfiguration, userName string) (resp DeleteUserResponse, err error) {
 	for i, ident := range s3cfg.Identities {
 		if userName == ident.Name {
-			ident.Credentials = append(ident.Credentials[:i], ident.Credentials[i+1:]...)
+			s3cfg.Identities = append(s3cfg.Identities[:i], s3cfg.Identities[i+1:]...)
 			return resp, nil
 		}
 	}
@@ -119,7 +170,16 @@ func (iama *IamApiServer) CreatePolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 	resp.CreatePolicyResult.Policy.PolicyName = &policyName
 	resp.CreatePolicyResult.Policy.Arn = &arn
 	resp.CreatePolicyResult.Policy.PolicyId = &policyId
-	policyDocuments[policyName] = &policyDocument
+	policies := Policies{}
+	policyLock.Lock()
+	defer policyLock.Unlock()
+	if err = iama.s3ApiConfig.GetPolicies(&policies); err != nil {
+		return resp, err
+	}
+	policies.Policies[policyName] = policyDocument
+	if err = iama.s3ApiConfig.PutPolicies(&policies); err != nil {
+		return resp, err
+	}
 	return resp, nil
 }
 
@@ -144,6 +204,60 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 	return resp, nil
 }
 
+func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp GetUserPolicyResponse, err error) {
+	userName := values.Get("UserName")
+	policyName := values.Get("PolicyName")
+	for _, ident := range s3cfg.Identities {
+		if userName != ident.Name {
+			continue
+		}
+
+		resp.GetUserPolicyResult.UserName = userName
+		resp.GetUserPolicyResult.PolicyName = policyName
+		if len(ident.Actions) == 0 {
+			return resp, fmt.Errorf(iam.ErrCodeNoSuchEntityException)
+		}
+
+		policyDocument := PolicyDocument{Version: policyDocumentVersion}
+		statements := make(map[string][]string)
+		for _, action := range ident.Actions {
+			// parse "Read:EXAMPLE-BUCKET"
+			act := strings.Split(action, ":")
+
+			resource := "*"
+			if len(act) == 2 {
+				resource = fmt.Sprintf("arn:aws:s3:::%s/*", act[1])
+			}
+			statements[resource] = append(statements[resource],
+				fmt.Sprintf("s3:%s", MapToIdentitiesAction(act[0])),
+			)
+		}
+		for resource, actions := range statements {
+			isEqAction := false
+			for i, statement := range policyDocument.Statement {
+				if reflect.DeepEqual(statement.Action, actions) {
+					policyDocument.Statement[i].Resource = append(
+						policyDocument.Statement[i].Resource, resource)
+					isEqAction = true
+					break
+				}
+			}
+			if isEqAction {
+				continue
+			}
+			policyDocumentStatement := Statement{
+				Effect: "Allow",
+				Action: actions,
+			}
+			policyDocumentStatement.Resource = append(policyDocumentStatement.Resource, resource)
+			policyDocument.Statement = append(policyDocument.Statement, &policyDocumentStatement)
+		}
+		resp.GetUserPolicyResult.PolicyDocument = policyDocument.String()
+		return resp, nil
+	}
+	return resp, fmt.Errorf(iam.ErrCodeNoSuchEntityException)
+}
+
 func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp PutUserPolicyResponse, err error) {
 	userName := values.Get("UserName")
 	for i, ident := range s3cfg.Identities {
@@ -153,21 +267,6 @@ func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 		}
 	}
 	return resp, fmt.Errorf(iam.ErrCodeNoSuchEntityException)
-}
-
-func MapAction(action string) string {
-	switch action {
-	case "*":
-		return s3_constants.ACTION_ADMIN
-	case "Put*":
-		return s3_constants.ACTION_WRITE
-	case "Get*":
-		return s3_constants.ACTION_READ
-	case "List*":
-		return s3_constants.ACTION_LIST
-	default:
-		return s3_constants.ACTION_TAGGING
-	}
 }
 
 func GetActions(policy *PolicyDocument) (actions []string) {
@@ -189,8 +288,9 @@ func GetActions(policy *PolicyDocument) (actions []string) {
 					glog.Infof("not match action: %s", act)
 					continue
 				}
+				statementAction := MapToStatementAction(act[1])
 				if res[5] == "*" {
-					actions = append(actions, MapAction(act[1]))
+					actions = append(actions, statementAction)
 					continue
 				}
 				// Parse my-bucket/shared/*
@@ -199,7 +299,7 @@ func GetActions(policy *PolicyDocument) (actions []string) {
 					glog.Infof("not match bucket: %s", path)
 					continue
 				}
-				actions = append(actions, fmt.Sprintf("%s:%s", MapAction(act[1]), path[0]))
+				actions = append(actions, fmt.Sprintf("%s:%s", statementAction, path[0]))
 			}
 		}
 	}
@@ -291,6 +391,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			writeIamErrorResponse(w, err, "user", userName, nil)
 			return
 		}
+		changed = false
 	case "DeleteUser":
 		userName := values.Get("UserName")
 		response, err = iama.DeleteUser(s3cfg, userName)
@@ -316,6 +417,13 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			writeErrorResponse(w, s3err.ErrInvalidRequest, r.URL)
 			return
 		}
+	case "GetUserPolicy":
+		response, err = iama.GetUserPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, err, "user", values.Get("UserName"), nil)
+			return
+		}
+		changed = false
 	case "DeleteUserPolicy":
 		if response, err = iama.DeleteUserPolicy(s3cfg, values); err != nil {
 			writeIamErrorResponse(w, err, "user", values.Get("UserName"), nil)

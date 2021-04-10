@@ -4,6 +4,7 @@ package iamapi
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -21,6 +22,8 @@ import (
 type IamS3ApiConfig interface {
 	GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error)
 	PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error)
+	GetPolicies(policies *Policies) (err error)
+	PutPolicies(policies *Policies) (err error)
 }
 
 type IamS3ApiConfigure struct {
@@ -100,6 +103,44 @@ func (iam IamS3ApiConfigure) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfigurat
 		iam.option.GrpcDialOption,
 		func(client filer_pb.SeaweedFilerClient) error {
 			if err := filer.SaveInsideFiler(client, filer.IamConfigDirecotry, filer.IamIdentityFile, buf.Bytes()); err != nil {
+				return err
+			}
+			return nil
+		},
+	)
+}
+
+func (iam IamS3ApiConfigure) GetPolicies(policies *Policies) (err error) {
+	var buf bytes.Buffer
+	err = pb.WithGrpcFilerClient(iam.option.FilerGrpcAddress, iam.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		if err = filer.ReadEntry(iam.masterClient, client, filer.IamConfigDirecotry, filer.IamPoliciesFile, &buf); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if buf.Len() == 0 {
+		policies.Policies = make(map[string]PolicyDocument)
+		return nil
+	}
+	if err := json.Unmarshal(buf.Bytes(), policies); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (iam IamS3ApiConfigure) PutPolicies(policies *Policies) (err error) {
+	var b []byte
+	if b, err = json.Marshal(policies); err != nil {
+		return err
+	}
+	return pb.WithGrpcFilerClient(
+		iam.option.FilerGrpcAddress,
+		iam.option.GrpcDialOption,
+		func(client filer_pb.SeaweedFilerClient) error {
+			if err := filer.SaveInsideFiler(client, filer.IamConfigDirecotry, filer.IamPoliciesFile, b); err != nil {
 				return err
 			}
 			return nil

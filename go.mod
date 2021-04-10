@@ -42,6 +42,7 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.1-0.20190118093823-f849b5445de4
 	github.com/grpc-ecosystem/grpc-gateway v1.11.0 // indirect
 	github.com/jcmturner/gofork v1.0.0 // indirect
+	github.com/jinzhu/copier v0.2.8
 	github.com/json-iterator/go v1.1.10
 	github.com/karlseguin/ccache v2.0.3+incompatible // indirect
 	github.com/karlseguin/ccache/v2 v2.0.7
