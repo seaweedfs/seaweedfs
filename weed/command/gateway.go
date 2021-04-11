@@ -68,9 +68,9 @@ func (gw *GatewayOptions) startGateway() {
 	defaultMux := http.NewServeMux()
 
 	_, gws_err := weed_server.NewGatewayServer(defaultMux, &weed_server.GatewayOption{
-		Masters:               strings.Split(*gw.masters, ","),
-		Filers:                strings.Split(*gw.filers, ","),
-		MaxMB:                 *gw.maxMB,
+		Masters: strings.Split(*gw.masters, ","),
+		Filers:  strings.Split(*gw.filers, ","),
+		MaxMB:   *gw.maxMB,
 	})
 	if gws_err != nil {
 		glog.Fatalf("Gateway startup error: %v", gws_err)

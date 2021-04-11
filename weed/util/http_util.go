@@ -145,7 +145,6 @@ func DeleteProxied(url string, jwt string) (body []byte, httpStatus int, err err
 	return
 }
 
-
 func GetBufferStream(url string, values url.Values, allocatedBytes []byte, eachBuffer func([]byte)) error {
 	r, err := client.PostForm(url, values)
 	if err != nil {
