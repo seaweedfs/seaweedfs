@@ -38,7 +38,7 @@ var cmdGateway = &Command{
 	Long: `start a gateway server which accepts REST operation to write any blobs, files, or topic messages.
 
 	POST /blobs/
-		return a chunk id
+		upload the blob and return a chunk id
 	DELETE /blobs/<chunk_id>
 		delete a chunk id
 
