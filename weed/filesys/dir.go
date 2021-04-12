@@ -372,7 +372,6 @@ func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 		return fuse.EPERM
 	}
 
-
 	if !req.Dir {
 		return dir.removeOneFile(req)
 	}
