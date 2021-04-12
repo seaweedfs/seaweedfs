@@ -311,7 +311,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	}
 	defer util.CloseResponse(resp)
 
-	if resp.ContentLength == -1 || resp.StatusCode == 404 {
+	if (resp.ContentLength == -1 || resp.StatusCode == 404) && resp.StatusCode != 304 {
 		if r.Method != "DELETE" {
 			writeErrorResponse(w, s3err.ErrNoSuchKey, r.URL)
 			return

@@ -79,7 +79,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		w.Header().Set("Last-Modified", entry.Attr.Mtime.UTC().Format(http.TimeFormat))
 		if r.Header.Get("If-Modified-Since") != "" {
 			if t, parseError := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since")); parseError == nil {
-				if t.After(entry.Attr.Mtime) {
+				if t.After(entry.Attr.Mtime) || t.Equal(entry.Attr.Mtime) {
 					w.WriteHeader(http.StatusNotModified)
 					return
 				}
