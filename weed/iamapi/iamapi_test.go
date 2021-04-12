@@ -7,29 +7,43 @@ import (
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
 	"github.com/gorilla/mux"
+	"github.com/jinzhu/copier"
 	"github.com/stretchr/testify/assert"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
-var S3config iam_pb.S3ApiConfiguration
 var GetS3ApiConfiguration func(s3cfg *iam_pb.S3ApiConfiguration) (err error)
 var PutS3ApiConfiguration func(s3cfg *iam_pb.S3ApiConfiguration) (err error)
+var GetPolicies func(policies *Policies) (err error)
+var PutPolicies func(policies *Policies) (err error)
+
+var s3config = iam_pb.S3ApiConfiguration{}
+var policiesFile = Policies{Policies: make(map[string]PolicyDocument)}
+var ias = IamApiServer{s3ApiConfig: iamS3ApiConfigureMock{}}
 
 type iamS3ApiConfigureMock struct{}
 
 func (iam iamS3ApiConfigureMock) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
-	s3cfg = &S3config
+	_ = copier.Copy(&s3cfg.Identities, &s3config.Identities)
 	return nil
 }
 
 func (iam iamS3ApiConfigureMock) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
-	S3config = *s3cfg
+	_ = copier.Copy(&s3config.Identities, &s3cfg.Identities)
 	return nil
 }
 
-var a = IamApiServer{}
+func (iam iamS3ApiConfigureMock) GetPolicies(policies *Policies) (err error) {
+	_ = copier.Copy(&policies, &policiesFile)
+	return nil
+}
+
+func (iam iamS3ApiConfigureMock) PutPolicies(policies *Policies) (err error) {
+	_ = copier.Copy(&policiesFile, &policies)
+	return nil
+}
 
 func TestCreateUser(t *testing.T) {
 	userName := aws.String("Test")
@@ -64,17 +78,6 @@ func TestListAccessKeys(t *testing.T) {
 	assert.Equal(t, http.StatusOK, response.Code)
 }
 
-func TestDeleteUser(t *testing.T) {
-	userName := aws.String("Test")
-	params := &iam.DeleteUserInput{UserName: userName}
-	req, _ := iam.New(session.New()).DeleteUserRequest(params)
-	_ = req.Build()
-	out := DeleteUserResponse{}
-	response, err := executeRequest(req.HTTPRequest, out)
-	assert.Equal(t, nil, err)
-	assert.Equal(t, http.StatusNotFound, response.Code)
-}
-
 func TestGetUser(t *testing.T) {
 	userName := aws.String("Test")
 	params := &iam.GetUserInput{UserName: userName}
@@ -83,7 +86,7 @@ func TestGetUser(t *testing.T) {
 	out := GetUserResponse{}
 	response, err := executeRequest(req.HTTPRequest, out)
 	assert.Equal(t, nil, err)
-	assert.Equal(t, http.StatusNotFound, response.Code)
+	assert.Equal(t, http.StatusOK, response.Code)
 }
 
 // Todo flat statement
@@ -147,11 +150,32 @@ func TestPutUserPolicy(t *testing.T) {
 	assert.Equal(t, http.StatusOK, response.Code)
 }
 
+func TestGetUserPolicy(t *testing.T) {
+	userName := aws.String("Test")
+	params := &iam.GetUserPolicyInput{UserName: userName, PolicyName: aws.String("S3-read-only-example-bucket")}
+	req, _ := iam.New(session.New()).GetUserPolicyRequest(params)
+	_ = req.Build()
+	out := GetUserPolicyResponse{}
+	response, err := executeRequest(req.HTTPRequest, out)
+	assert.Equal(t, nil, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+}
+
+func TestDeleteUser(t *testing.T) {
+	userName := aws.String("Test")
+	params := &iam.DeleteUserInput{UserName: userName}
+	req, _ := iam.New(session.New()).DeleteUserRequest(params)
+	_ = req.Build()
+	out := DeleteUserResponse{}
+	response, err := executeRequest(req.HTTPRequest, out)
+	assert.Equal(t, nil, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+}
+
 func executeRequest(req *http.Request, v interface{}) (*httptest.ResponseRecorder, error) {
 	rr := httptest.NewRecorder()
 	apiRouter := mux.NewRouter().SkipClean(true)
-	a.s3ApiConfig = iamS3ApiConfigureMock{}
-	apiRouter.Path("/").Methods("POST").HandlerFunc(a.DoActions)
+	apiRouter.Path("/").Methods("POST").HandlerFunc(ias.DoActions)
 	apiRouter.ServeHTTP(rr, req)
 	return rr, xml.Unmarshal(rr.Body.Bytes(), &v)
 }

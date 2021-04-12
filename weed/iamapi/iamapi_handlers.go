@@ -50,20 +50,25 @@ func writeErrorResponse(w http.ResponseWriter, errorCode s3err.ErrorCode, reqURL
 	writeResponse(w, apiError.HTTPStatusCode, encodedErrorResponse, mimeXML)
 }
 
-func writeIamErrorResponse(w http.ResponseWriter, err error, object string, value string) {
+func writeIamErrorResponse(w http.ResponseWriter, err error, object string, value string, msg error) {
 	errCode := err.Error()
 	errorResp := ErrorResponse{}
 	errorResp.Error.Type = "Sender"
 	errorResp.Error.Code = &errCode
+	if msg != nil {
+		errMsg := msg.Error()
+		errorResp.Error.Message = &errMsg
+	}
 	glog.Errorf("Response %+v", err)
 	switch errCode {
 	case iam.ErrCodeNoSuchEntityException:
 		msg := fmt.Sprintf("The %s with name %s cannot be found.", object, value)
 		errorResp.Error.Message = &msg
 		writeResponse(w, http.StatusNotFound, encodeResponse(errorResp), mimeXML)
+	case iam.ErrCodeServiceFailureException:
+		writeResponse(w, http.StatusInternalServerError, encodeResponse(errorResp), mimeXML)
 	default:
 		writeResponse(w, http.StatusInternalServerError, encodeResponse(errorResp), mimeXML)
-
 	}
 }
 

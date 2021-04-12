@@ -18,6 +18,7 @@ const (
 	FilerConfName         = "filer.conf"
 	IamConfigDirecotry    = "/etc/iam"
 	IamIdentityFile       = "identity.json"
+	IamPoliciesFile       = "policies.json"
 )
 
 type FilerConf struct {

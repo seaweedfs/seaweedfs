@@ -79,6 +79,16 @@ type PutUserPolicyResponse struct {
 	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ PutUserPolicyResponse"`
 }
 
+type GetUserPolicyResponse struct {
+	CommonResponse
+	XMLName             xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetUserPolicyResponse"`
+	GetUserPolicyResult struct {
+		UserName       string `xml:"UserName"`
+		PolicyName     string `xml:"PolicyName"`
+		PolicyDocument string `xml:"PolicyDocument"`
+	} `xml:"GetUserPolicyResult"`
+}
+
 type ErrorResponse struct {
 	CommonResponse
 	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ErrorResponse"`
