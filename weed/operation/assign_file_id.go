@@ -86,6 +86,7 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 			continue
 		}
 
+		break
 	}
 
 	return ret, lastError
