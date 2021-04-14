@@ -28,12 +28,12 @@ var _ = fs.NodeListxattrer(&File{})
 var _ = fs.NodeForgetter(&File{})
 
 type File struct {
-	Name           string
-	dir            *Dir
-	wfs            *WFS
-	entry          *filer_pb.Entry
-	isOpen         int
-	dirtyMetadata  bool
+	Name          string
+	dir           *Dir
+	wfs           *WFS
+	entry         *filer_pb.Entry
+	isOpen        int
+	dirtyMetadata bool
 }
 
 func (file *File) fullpath() util.FullPath {
