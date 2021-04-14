@@ -133,7 +133,7 @@ func doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, collection strin
 
 			// remove the remaining replicas
 			for _, loc := range locations {
-				if loc.Url != sourceVolumeServer {
+				if loc.Url != dst.dataNode.Id {
 					if err = deleteVolume(commandEnv.option.GrpcDialOption, vid, loc.Url); err != nil {
 						fmt.Fprintf(writer, "failed to delete volume %d on %s\n", vid, loc.Url)
 					}
