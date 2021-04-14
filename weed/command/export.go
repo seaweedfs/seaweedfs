@@ -215,7 +215,7 @@ func runExport(cmd *Command, args []string) bool {
 
 	err = storage.ScanVolumeFile(util.ResolvePath(*export.dir), *export.collection, vid, storage.NeedleMapInMemory, volumeFileScanner)
 	if err != nil && err != io.EOF {
-		glog.Fatalf("Export Volume File [ERROR] %s\n", err)
+		glog.Errorf("Export Volume File [ERROR] %s\n", err)
 	}
 	return true
 }
