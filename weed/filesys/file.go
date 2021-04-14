@@ -2,10 +2,8 @@ package filesys
 
 import (
 	"context"
-	"io"
 	"os"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/seaweedfs/fuse"
@@ -34,10 +32,7 @@ type File struct {
 	dir            *Dir
 	wfs            *WFS
 	entry          *filer_pb.Entry
-	entryLock      sync.RWMutex
-	entryViewCache []filer.VisibleInterval
 	isOpen         int
-	reader         io.ReaderAt
 	dirtyMetadata  bool
 }
 
@@ -154,8 +149,6 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 				}
 			}
 			entry.Chunks = chunks
-			file.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(file.wfs.LookupFn(), chunks)
-			file.setReader(nil)
 		}
 		entry.Attributes.FileSize = req.Size
 		file.dirtyMetadata = true
@@ -274,7 +267,6 @@ func (file *File) Forget() {
 	glog.V(4).Infof("Forget file %s", t)
 	file.wfs.fsNodeCache.DeleteFsNode(t)
 	file.wfs.ReleaseHandle(t, 0)
-	file.setReader(nil)
 }
 
 func (file *File) maybeLoadEntry(ctx context.Context) (entry *filer_pb.Entry, err error) {
@@ -294,7 +286,7 @@ func (file *File) maybeLoadEntry(ctx context.Context) (entry *filer_pb.Entry, er
 		return entry, err
 	}
 	if entry != nil {
-		file.setEntry(entry)
+		file.entry = entry
 	} else {
 		glog.Warningf("maybeLoadEntry not found entry %s/%s: %v", file.dir.FullPath(), file.Name, err)
 	}
@@ -336,42 +328,9 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 		return lessThan(chunks[i], chunks[j])
 	})
 
-	// add to entry view cache
-	for _, chunk := range chunks {
-		file.entryViewCache = filer.MergeIntoVisibles(file.entryViewCache, chunk)
-	}
-
-	file.setReader(nil)
-
 	glog.V(4).Infof("%s existing %d chunks adds %d more", file.fullpath(), len(entry.Chunks), len(chunks))
 
 	entry.Chunks = append(entry.Chunks, newChunks...)
-}
-
-func (file *File) setReader(reader io.ReaderAt) {
-	r := file.reader
-	if r != nil {
-		if closer, ok := r.(io.Closer); ok {
-			closer.Close()
-		}
-	}
-	file.reader = reader
-}
-
-func (file *File) setEntry(entry *filer_pb.Entry) {
-	file.entryLock.Lock()
-	defer file.entryLock.Unlock()
-	file.entry = entry
-	file.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(file.wfs.LookupFn(), entry.Chunks)
-	file.setReader(nil)
-}
-
-func (file *File) clearEntry() {
-	file.entryLock.Lock()
-	defer file.entryLock.Unlock()
-	file.entry = nil
-	file.entryViewCache = nil
-	file.setReader(nil)
 }
 
 func (file *File) saveEntry(entry *filer_pb.Entry) error {
@@ -400,7 +359,5 @@ func (file *File) saveEntry(entry *filer_pb.Entry) error {
 }
 
 func (file *File) getEntry() *filer_pb.Entry {
-	file.entryLock.RLock()
-	defer file.entryLock.RUnlock()
 	return file.entry
 }

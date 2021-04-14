@@ -109,7 +109,6 @@ func (dir *Dir) newFile(name string, entry *filer_pb.Entry) fs.Node {
 			dir:            dir,
 			wfs:            dir.wfs,
 			entry:          entry,
-			entryViewCache: nil,
 		}
 	})
 	f.(*File).dir = dir // in case dir node was created later
@@ -408,7 +407,7 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 	dir.wfs.fsNodeCache.DeleteFsNode(filePath)
 	if fsNode != nil {
 		if file, ok := fsNode.(*File); ok {
-			file.clearEntry()
+			file.entry = nil
 		}
 	}
 

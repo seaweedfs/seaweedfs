@@ -111,7 +111,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				if err := wfs.Server.InvalidateNodeData(file); err != nil {
 					glog.V(4).Infof("InvalidateNodeData %s : %v", filePath, err)
 				}
-				file.clearEntry()
+				file.entry = nil
 			}
 		}
 		dir, name := filePath.DirAndName()
