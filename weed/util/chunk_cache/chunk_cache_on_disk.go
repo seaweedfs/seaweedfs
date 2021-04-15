@@ -88,15 +88,17 @@ func (v *ChunkCacheVolume) Shutdown() {
 	}
 }
 
-func (v *ChunkCacheVolume) destroy() {
+func (v *ChunkCacheVolume) doReset() {
 	v.Shutdown()
-	os.Remove(v.fileName + ".dat")
-	os.Remove(v.fileName + ".idx")
+	os.Truncate(v.fileName + ".dat", 0)
+	os.Truncate(v.fileName + ".idx", 0)
+	glog.V(4).Infof("cache removeAll %s ...", v.fileName + ".ldb")
 	os.RemoveAll(v.fileName + ".ldb")
+	glog.V(4).Infof("cache removed %s", v.fileName + ".ldb")
 }
 
 func (v *ChunkCacheVolume) Reset() (*ChunkCacheVolume, error) {
-	v.destroy()
+	v.doReset()
 	return LoadOrCreateChunkCacheVolume(v.fileName, v.sizeLimit)
 }
 
