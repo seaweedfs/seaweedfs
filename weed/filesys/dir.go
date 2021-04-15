@@ -104,13 +104,12 @@ func (dir *Dir) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 	return nil
 }
 
-func (dir *Dir) newFile(name string, entry *filer_pb.Entry) fs.Node {
+func (dir *Dir) newFile(name string) fs.Node {
 	f := dir.wfs.fsNodeCache.EnsureFsNode(util.NewFullPath(dir.FullPath(), name), func() fs.Node {
 		return &File{
 			Name:  name,
 			dir:   dir,
 			wfs:   dir.wfs,
-			entry: entry,
 		}
 	})
 	f.(*File).dir = dir // in case dir node was created later
@@ -144,7 +143,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 		return node, nil, nil
 	}
 
-	node = dir.newFile(req.Name, request.Entry)
+	node = dir.newFile(req.Name)
 	file := node.(*File)
 	fh := dir.wfs.AcquireHandle(file, req.Uid, req.Gid)
 	return file, fh, nil
@@ -157,13 +156,13 @@ func (dir *Dir) Mknod(ctx context.Context, req *fuse.MknodRequest) (fs.Node, err
 		return nil, fuse.EPERM
 	}
 
-	request, err := dir.doCreateEntry(req.Name, req.Mode, req.Uid, req.Gid, false)
+	_, err := dir.doCreateEntry(req.Name, req.Mode, req.Uid, req.Gid, false)
 
 	if err != nil {
 		return nil, err
 	}
 	var node fs.Node
-	node = dir.newFile(req.Name, request.Entry)
+	node = dir.newFile(req.Name)
 	return node, nil
 }
 
@@ -294,7 +293,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		if entry.IsDirectory {
 			node = dir.newDirectory(fullFilePath)
 		} else {
-			node = dir.newFile(req.Name, entry)
+			node = dir.newFile(req.Name)
 		}
 
 		// resp.EntryValid = time.Second

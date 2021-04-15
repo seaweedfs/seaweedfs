@@ -162,8 +162,9 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 		}
 	}
 
+	entry, _ := file.maybeLoadEntry(context.Background())
+	file.entry = entry
 	fileHandle = newFileHandle(file, uid, gid)
-	file.maybeLoadEntry(context.Background())
 	file.isOpen++
 
 	wfs.handles[inodeId] = fileHandle

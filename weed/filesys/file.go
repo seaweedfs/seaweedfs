@@ -286,7 +286,7 @@ func (file *File) maybeLoadEntry(ctx context.Context) (entry *filer_pb.Entry, er
 		return entry, err
 	}
 	if entry != nil {
-		file.entry = entry
+		// file.entry = entry
 	} else {
 		glog.Warningf("maybeLoadEntry not found entry %s/%s: %v", file.dir.FullPath(), file.Name, err)
 	}

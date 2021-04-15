@@ -211,6 +211,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	if fh.f.isOpen == 1 {
 
 		fh.f.isOpen--
+		fh.f.entry = nil
 		fh.entryViewCache = nil
 		fh.reader = nil
 
