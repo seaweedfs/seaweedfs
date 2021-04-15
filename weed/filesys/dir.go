@@ -53,17 +53,18 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 		return nil
 	}
 
-	if err := dir.maybeLoadEntry(); err != nil {
+	entry, err := dir.maybeLoadEntry()
+	if err != nil {
 		glog.V(3).Infof("dir Attr %s,err: %+v", dir.FullPath(), err)
 		return err
 	}
 
 	// attr.Inode = util.FullPath(dir.FullPath()).AsInode()
-	attr.Mode = os.FileMode(dir.entry.Attributes.FileMode) | os.ModeDir
-	attr.Mtime = time.Unix(dir.entry.Attributes.Mtime, 0)
-	attr.Crtime = time.Unix(dir.entry.Attributes.Crtime, 0)
-	attr.Gid = dir.entry.Attributes.Gid
-	attr.Uid = dir.entry.Attributes.Uid
+	attr.Mode = os.FileMode(entry.Attributes.FileMode) | os.ModeDir
+	attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
+	attr.Crtime = time.Unix(entry.Attributes.Crtime, 0)
+	attr.Gid = entry.Attributes.Gid
+	attr.Uid = entry.Attributes.Uid
 
 	glog.V(4).Infof("dir Attr %s, attr: %+v", dir.FullPath(), attr)
 
@@ -74,11 +75,12 @@ func (dir *Dir) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *f
 
 	glog.V(4).Infof("dir Getxattr %s", dir.FullPath())
 
-	if err := dir.maybeLoadEntry(); err != nil {
+	entry, err := dir.maybeLoadEntry()
+	if err != nil {
 		return err
 	}
 
-	return getxattr(dir.entry, req, resp)
+	return getxattr(entry, req, resp)
 }
 
 func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
@@ -115,10 +117,10 @@ func (dir *Dir) newFile(name string, entry *filer_pb.Entry) fs.Node {
 	return f
 }
 
-func (dir *Dir) newDirectory(fullpath util.FullPath, entry *filer_pb.Entry) fs.Node {
+func (dir *Dir) newDirectory(fullpath util.FullPath) fs.Node {
 
 	d := dir.wfs.fsNodeCache.EnsureFsNode(fullpath, func() fs.Node {
-		return &Dir{name: entry.Name, wfs: dir.wfs, entry: entry, parent: dir}
+		return &Dir{name: fullpath.Name(), wfs: dir.wfs, parent: dir}
 	})
 	d.(*Dir).parent = dir // in case dir node was created later
 	return d
@@ -138,7 +140,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	}
 	var node fs.Node
 	if request.Entry.IsDirectory {
-		node = dir.newDirectory(util.NewFullPath(dir.FullPath(), req.Name), request.Entry)
+		node = dir.newDirectory(util.NewFullPath(dir.FullPath(), req.Name))
 		return node, nil, nil
 	}
 
@@ -250,7 +252,7 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 	})
 
 	if err == nil {
-		node := dir.newDirectory(util.NewFullPath(dir.FullPath(), req.Name), newEntry)
+		node := dir.newDirectory(util.NewFullPath(dir.FullPath(), req.Name))
 
 		return node, nil
 	}
@@ -290,7 +292,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 	if entry != nil {
 		if entry.IsDirectory {
-			node = dir.newDirectory(fullFilePath, entry)
+			node = dir.newDirectory(fullFilePath)
 		} else {
 			node = dir.newFile(req.Name, entry)
 		}
@@ -450,27 +452,28 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 
 	glog.V(4).Infof("%v dir setattr %+v", dir.FullPath(), req)
 
-	if err := dir.maybeLoadEntry(); err != nil {
+	entry, err := dir.maybeLoadEntry()
+	if err != nil {
 		return err
 	}
 
 	if req.Valid.Mode() {
-		dir.entry.Attributes.FileMode = uint32(req.Mode)
+		entry.Attributes.FileMode = uint32(req.Mode)
 	}
 
 	if req.Valid.Uid() {
-		dir.entry.Attributes.Uid = req.Uid
+		entry.Attributes.Uid = req.Uid
 	}
 
 	if req.Valid.Gid() {
-		dir.entry.Attributes.Gid = req.Gid
+		entry.Attributes.Gid = req.Gid
 	}
 
 	if req.Valid.Mtime() {
-		dir.entry.Attributes.Mtime = req.Mtime.Unix()
+		entry.Attributes.Mtime = req.Mtime.Unix()
 	}
 
-	return dir.saveEntry()
+	return dir.saveEntry(entry)
 
 }
 
@@ -482,15 +485,16 @@ func (dir *Dir) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
 
 	glog.V(4).Infof("dir Setxattr %s: %s", dir.FullPath(), req.Name)
 
-	if err := dir.maybeLoadEntry(); err != nil {
+	entry, err := dir.maybeLoadEntry()
+	if err != nil {
 		return err
 	}
 
-	if err := setxattr(dir.entry, req); err != nil {
+	if err := setxattr(entry, req); err != nil {
 		return err
 	}
 
-	return dir.saveEntry()
+	return dir.saveEntry(entry)
 
 }
 
@@ -502,15 +506,16 @@ func (dir *Dir) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) e
 
 	glog.V(4).Infof("dir Removexattr %s: %s", dir.FullPath(), req.Name)
 
-	if err := dir.maybeLoadEntry(); err != nil {
+	entry, err := dir.maybeLoadEntry()
+	if err != nil {
 		return err
 	}
 
-	if err := removexattr(dir.entry, req); err != nil {
+	if err := removexattr(entry, req); err != nil {
 		return err
 	}
 
-	return dir.saveEntry()
+	return dir.saveEntry(entry)
 
 }
 
@@ -518,11 +523,12 @@ func (dir *Dir) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, resp 
 
 	glog.V(4).Infof("dir Listxattr %s", dir.FullPath())
 
-	if err := dir.maybeLoadEntry(); err != nil {
+	entry, err := dir.maybeLoadEntry()
+	if err != nil {
 		return err
 	}
 
-	if err := listxattr(dir.entry, req, resp); err != nil {
+	if err := listxattr(entry, req, resp); err != nil {
 		return err
 	}
 
@@ -536,30 +542,23 @@ func (dir *Dir) Forget() {
 	dir.wfs.fsNodeCache.DeleteFsNode(util.FullPath(dir.FullPath()))
 }
 
-func (dir *Dir) maybeLoadEntry() error {
-	if dir.entry == nil {
-		parentDirPath, name := util.FullPath(dir.FullPath()).DirAndName()
-		entry, err := dir.wfs.maybeLoadEntry(parentDirPath, name)
-		if err != nil {
-			return err
-		}
-		dir.entry = entry
-	}
-	return nil
+func (dir *Dir) maybeLoadEntry() (*filer_pb.Entry, error) {
+	parentDirPath, name := util.FullPath(dir.FullPath()).DirAndName()
+	return dir.wfs.maybeLoadEntry(parentDirPath, name)
 }
 
-func (dir *Dir) saveEntry() error {
+func (dir *Dir) saveEntry(entry *filer_pb.Entry) error {
 
 	parentDir, name := util.FullPath(dir.FullPath()).DirAndName()
 
 	return dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		dir.wfs.mapPbIdFromLocalToFiler(dir.entry)
-		defer dir.wfs.mapPbIdFromFilerToLocal(dir.entry)
+		dir.wfs.mapPbIdFromLocalToFiler(entry)
+		defer dir.wfs.mapPbIdFromFilerToLocal(entry)
 
 		request := &filer_pb.UpdateEntryRequest{
 			Directory:  parentDir,
-			Entry:      dir.entry,
+			Entry:      entry,
 			Signatures: []int32{dir.wfs.signature},
 		}
 
