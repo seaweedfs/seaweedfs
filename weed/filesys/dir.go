@@ -396,13 +396,10 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 	if err != nil {
 		return err
 	}
-	if entry == nil {
-		return nil
-	}
 
 	// first, ensure the filer store can correctly delete
 	glog.V(3).Infof("remove file: %v", req)
-	isDeleteData := entry.HardLinkCounter <= 1
+	isDeleteData := entry != nil && entry.HardLinkCounter <= 1
 	err = filer_pb.Remove(dir.wfs, dirFullPath, req.Name, isDeleteData, false, false, false, []int32{dir.wfs.signature})
 	if err != nil {
 		glog.V(3).Infof("not found remove file %s: %v", filePath, err)
