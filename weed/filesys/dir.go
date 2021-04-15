@@ -272,25 +272,25 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		glog.Errorf("dir Lookup %s: %v", dirPath, visitErr)
 		return nil, fuse.EIO
 	}
-	cachedEntry, cacheErr := dir.wfs.metaCache.FindEntry(context.Background(), fullFilePath)
+	localEntry, cacheErr := dir.wfs.metaCache.FindEntry(context.Background(), fullFilePath)
 	if cacheErr == filer_pb.ErrNotFound {
 		return nil, fuse.ENOENT
 	}
-	entry := cachedEntry.ToProtoEntry()
 
-	if entry == nil {
+	if localEntry == nil {
 		// glog.V(3).Infof("dir Lookup cache miss %s", fullFilePath)
-		entry, err = filer_pb.GetEntry(dir.wfs, fullFilePath)
+		entry, err := filer_pb.GetEntry(dir.wfs, fullFilePath)
 		if err != nil {
 			glog.V(1).Infof("dir GetEntry %s: %v", fullFilePath, err)
 			return nil, fuse.ENOENT
 		}
+		localEntry = filer.FromPbEntry(string(dirPath), entry)
 	} else {
 		glog.V(4).Infof("dir Lookup cache hit %s", fullFilePath)
 	}
 
-	if entry != nil {
-		if entry.IsDirectory {
+	if localEntry != nil {
+		if localEntry.IsDirectory() {
 			node = dir.newDirectory(fullFilePath)
 		} else {
 			node = dir.newFile(req.Name)
@@ -299,13 +299,13 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		// resp.EntryValid = time.Second
 		// resp.Attr.Inode = fullFilePath.AsInode()
 		resp.Attr.Valid = time.Second
-		resp.Attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
-		resp.Attr.Crtime = time.Unix(entry.Attributes.Crtime, 0)
-		resp.Attr.Mode = os.FileMode(entry.Attributes.FileMode)
-		resp.Attr.Gid = entry.Attributes.Gid
-		resp.Attr.Uid = entry.Attributes.Uid
-		if entry.HardLinkCounter > 0 {
-			resp.Attr.Nlink = uint32(entry.HardLinkCounter)
+		resp.Attr.Mtime = localEntry.Attr.Mtime
+		resp.Attr.Crtime = localEntry.Attr.Crtime
+		resp.Attr.Mode = localEntry.Attr.Mode
+		resp.Attr.Gid = localEntry.Attr.Gid
+		resp.Attr.Uid = localEntry.Attr.Uid
+		if localEntry.HardLinkCounter > 0 {
+			resp.Attr.Nlink = uint32(localEntry.HardLinkCounter)
 		}
 
 		return node, nil
