@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -89,6 +90,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 			ext := filepath.Ext(entry.Entry.Name)
 			if encrypted, encErr := util.Encrypt([]byte(entry.Entry.Name), cipherKey); encErr == nil {
 				entry.Entry.Name = util.Base64Encode(encrypted)[:len(entry.Entry.Name)] + ext
+				entry.Entry.Name = strings.ReplaceAll(entry.Entry.Name, "/", "x")
 			}
 		}
 		bytes, err := proto.Marshal(entry)
