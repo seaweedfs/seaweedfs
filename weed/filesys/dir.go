@@ -320,12 +320,12 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 	dirPath := util.FullPath(dir.FullPath())
 	glog.V(4).Infof("dir ReadDirAll %s", dirPath)
 
-	processEachEntryFn := func(entry *filer_pb.Entry, isLast bool) error {
-		if entry.IsDirectory {
-			dirent := fuse.Dirent{Name: entry.Name, Type: fuse.DT_Dir}
+	processEachEntryFn := func(entry *filer.Entry, isLast bool) error {
+		if entry.IsDirectory() {
+			dirent := fuse.Dirent{Name: entry.Name(), Type: fuse.DT_Dir}
 			ret = append(ret, dirent)
 		} else {
-			dirent := fuse.Dirent{Name: entry.Name, Type: findFileType(uint16(entry.Attributes.FileMode))}
+			dirent := fuse.Dirent{Name: entry.Name(), Type: findFileType(uint16(entry.Attr.Mode))}
 			ret = append(ret, dirent)
 		}
 		return nil
@@ -336,7 +336,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 		return nil, fuse.EIO
 	}
 	listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, "", false, int64(math.MaxInt32), func(entry *filer.Entry) bool {
-		processEachEntryFn(entry.ToProtoEntry(), false)
+		processEachEntryFn(entry, false)
 		return true
 	})
 	if listErr != nil {
