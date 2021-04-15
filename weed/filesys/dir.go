@@ -166,7 +166,7 @@ func (dir *Dir) Mknod(ctx context.Context, req *fuse.MknodRequest) (fs.Node, err
 	return node, nil
 }
 
-func (dir *Dir) doCreateEntry(name string, mode os.FileMode, uid, gid uint32, exlusive bool) (*filer_pb.CreateEntryRequest, error) {
+func (dir *Dir) doCreateEntry(name string, mode os.FileMode, uid, gid uint32, exclusive bool) (*filer_pb.CreateEntryRequest, error) {
 	request := &filer_pb.CreateEntryRequest{
 		Directory: dir.FullPath(),
 		Entry: &filer_pb.Entry{
@@ -183,7 +183,7 @@ func (dir *Dir) doCreateEntry(name string, mode os.FileMode, uid, gid uint32, ex
 				TtlSec:      dir.wfs.option.TtlSec,
 			},
 		},
-		OExcl:      exlusive,
+		OExcl:      exclusive,
 		Signatures: []int32{dir.wfs.signature},
 	}
 	glog.V(1).Infof("create %s/%s", dir.FullPath(), name)
