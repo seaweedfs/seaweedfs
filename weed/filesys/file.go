@@ -55,7 +55,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 		return fuse.ENOENT
 	}
 
-	// attr.Inode = file.fullpath().AsInode()
+	attr.Inode = file.fullpath().AsInode()
 	attr.Valid = time.Second
 	attr.Mode = os.FileMode(entry.Attributes.FileMode)
 	attr.Size = filer.FileSize(entry)

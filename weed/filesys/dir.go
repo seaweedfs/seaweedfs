@@ -59,7 +59,7 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 		return err
 	}
 
-	// attr.Inode = util.FullPath(dir.FullPath()).AsInode()
+	attr.Inode = util.FullPath(dir.FullPath()).AsInode()
 	attr.Mode = os.FileMode(entry.Attributes.FileMode) | os.ModeDir
 	attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
 	attr.Crtime = time.Unix(entry.Attributes.Crtime, 0)
@@ -331,10 +331,10 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 	processEachEntryFn := func(entry *filer.Entry, isLast bool) {
 		if entry.IsDirectory() {
-			dirent := fuse.Dirent{Name: entry.Name(), Type: fuse.DT_Dir}
+			dirent := fuse.Dirent{Name: entry.Name(), Type: fuse.DT_Dir, Inode: dirPath.Child(entry.Name()).AsInode()}
 			ret = append(ret, dirent)
 		} else {
-			dirent := fuse.Dirent{Name: entry.Name(), Type: findFileType(uint16(entry.Attr.Mode))}
+			dirent := fuse.Dirent{Name: entry.Name(), Type: findFileType(uint16(entry.Attr.Mode)), Inode: dirPath.Child(entry.Name()).AsInode()}
 			ret = append(ret, dirent)
 		}
 	}
