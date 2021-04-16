@@ -18,6 +18,7 @@ import (
 const blockSize = 512
 
 var _ = fs.Node(&File{})
+var _ = fs.NodeIdentifier(&File{})
 var _ = fs.NodeOpener(&File{})
 var _ = fs.NodeFsyncer(&File{})
 var _ = fs.NodeSetattrer(&File{})
@@ -38,6 +39,10 @@ type File struct {
 
 func (file *File) fullpath() util.FullPath {
 	return util.NewFullPath(file.dir.FullPath(), file.Name)
+}
+
+func (file *File) Id() uint64 {
+	return file.fullpath().AsInode()
 }
 
 func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
@@ -253,7 +258,6 @@ func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 func (file *File) Forget() {
 	t := util.NewFullPath(file.dir.FullPath(), file.Name)
 	glog.V(4).Infof("Forget file %s", t)
-	file.wfs.fsNodeCache.DeleteFsNode(t)
 	file.wfs.ReleaseHandle(t, 0)
 }
 

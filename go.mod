@@ -102,7 +102,7 @@ require (
 	gopkg.in/karlseguin/expect.v1 v1.0.1 // indirect
 )
 
-// replace github.com/seaweedfs/fuse => /Users/chris/go/src/github.com/seaweedfs/fuse
+replace github.com/seaweedfs/fuse => /Users/chris/go/src/github.com/seaweedfs/fuse
 // replace github.com/chrislusf/raft => /Users/chris/go/src/github.com/chrislusf/raft
 
 replace go.etcd.io/etcd => go.etcd.io/etcd v0.5.0-alpha.5.0.20200425165423-262c93980547

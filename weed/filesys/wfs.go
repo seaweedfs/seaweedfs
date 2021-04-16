@@ -103,24 +103,15 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 
 	wfs.metaCache = meta_cache.NewMetaCache(path.Join(cacheDir, "meta"), util.FullPath(option.FilerMountRootPath), option.UidGidMapper, func(filePath util.FullPath) {
-		fsNode := wfs.fsNodeCache.GetFsNode(filePath)
-		if fsNode != nil {
-			if file, ok := fsNode.(*File); ok {
-				if err := wfs.Server.InvalidateNodeData(file); err != nil {
-					glog.V(4).Infof("InvalidateNodeData %s : %v", filePath, err)
-				}
-				file.entry = nil
-			}
+		fsNode := NodeWithId(filePath.AsInode())
+		if err := wfs.Server.InvalidateNodeData(fsNode); err != nil {
+			glog.V(4).Infof("InvalidateNodeData %s : %v", filePath, err)
 		}
+
 		dir, name := filePath.DirAndName()
-		parent := wfs.root
-		if dir != "/" {
-			parent = wfs.fsNodeCache.GetFsNode(util.FullPath(dir))
-		}
-		if parent != nil {
-			if err := wfs.Server.InvalidateEntry(parent, name); err != nil {
-				glog.V(4).Infof("InvalidateEntry %s : %v", filePath, err)
-			}
+		parent := NodeWithId(util.FullPath(dir).AsInode())
+		if err := wfs.Server.InvalidateEntry(parent, name); err != nil {
+			glog.V(4).Infof("InvalidateEntry %s : %v", filePath, err)
 		}
 	})
 	startTime := time.Now()
@@ -266,4 +257,12 @@ func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
 	}
 	return filer.LookupFn(wfs)
 
+}
+
+type NodeWithId uint64
+func (n NodeWithId) Id() uint64 {
+	return uint64(n)
+}
+func (n NodeWithId) Attr(ctx context.Context, attr *fuse.Attr) error {
+	return nil
 }
