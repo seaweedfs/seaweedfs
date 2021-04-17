@@ -35,6 +35,7 @@ type File struct {
 	entry         *filer_pb.Entry
 	isOpen        int
 	dirtyMetadata bool
+	id            uint64
 }
 
 func (file *File) fullpath() util.FullPath {
@@ -42,25 +43,23 @@ func (file *File) fullpath() util.FullPath {
 }
 
 func (file *File) Id() uint64 {
-	return file.fullpath().AsInode()
+	return file.id
 }
 
 func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 
 	glog.V(4).Infof("file Attr %s, open:%v existing:%v", file.fullpath(), file.isOpen, attr)
 
-	entry := file.getEntry()
-	if file.isOpen <= 0 || entry == nil {
-		if entry, err = file.maybeLoadEntry(ctx); err != nil {
-			return err
-		}
+	entry, err := file.maybeLoadEntry(ctx)
+	if err != nil {
+		return err
 	}
 
 	if entry == nil {
 		return fuse.ENOENT
 	}
 
-	attr.Inode = file.fullpath().AsInode()
+	attr.Inode = file.Id()
 	attr.Valid = time.Second
 	attr.Mode = os.FileMode(entry.Attributes.FileMode)
 	attr.Size = filer.FileSize(entry)
@@ -118,7 +117,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 	}
 	if file.isOpen > 0 {
 		file.wfs.handlesLock.Lock()
-		fileHandle := file.wfs.handles[file.fullpath().AsInode()]
+		fileHandle := file.wfs.handles[file.Id()]
 		file.wfs.handlesLock.Unlock()
 
 		if fileHandle != nil {
@@ -262,10 +261,15 @@ func (file *File) Forget() {
 }
 
 func (file *File) maybeLoadEntry(ctx context.Context) (entry *filer_pb.Entry, err error) {
-	entry = file.getEntry()
-	if file.isOpen > 0 {
-		return entry, nil
+
+	file.wfs.handlesLock.Lock()
+	handle, found := file.wfs.handles[file.Id()]
+	file.wfs.handlesLock.Unlock()
+	if found {
+		glog.V(4).Infof("maybeLoadEntry found opened file %s/%s: %v %v", file.dir.FullPath(), file.Name, handle.f.entry, entry)
+		entry = handle.f.entry
 	}
+
 	if entry != nil {
 		if len(entry.HardLinkId) == 0 {
 			// only always reload hard link

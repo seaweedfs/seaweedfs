@@ -193,20 +193,20 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 
-	glog.V(4).Infof("Release %v fh %d", fh.f.fullpath(), fh.handle)
+	glog.V(4).Infof("Release %v fh %d open=%d", fh.f.fullpath(), fh.handle, fh.f.isOpen)
 
 	fh.Lock()
 	defer fh.Unlock()
 
-	if fh.f.isOpen <= 0 {
+	fh.f.isOpen--
+
+	if fh.f.isOpen < 0 {
 		glog.V(0).Infof("Release reset %s open count %d => %d", fh.f.Name, fh.f.isOpen, 0)
 		fh.f.isOpen = 0
 		return nil
 	}
 
-	if fh.f.isOpen == 1 {
-
-		fh.f.isOpen--
+	if fh.f.isOpen == 0 {
 		fh.f.entry = nil
 		fh.entryViewCache = nil
 		fh.reader = nil

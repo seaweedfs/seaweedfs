@@ -103,6 +103,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 
 	wfs.metaCache = meta_cache.NewMetaCache(path.Join(cacheDir, "meta"), util.FullPath(option.FilerMountRootPath), option.UidGidMapper, func(filePath util.FullPath) {
+
 		fsNode := NodeWithId(filePath.AsInode())
 		if err := wfs.Server.InvalidateNodeData(fsNode); err != nil {
 			glog.V(4).Infof("InvalidateNodeData %s : %v", filePath, err)
@@ -139,16 +140,15 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 	fullpath := file.fullpath()
 	glog.V(4).Infof("AcquireHandle %s uid=%d gid=%d", fullpath, uid, gid)
 
-	wfs.handlesLock.Lock()
-	defer wfs.handlesLock.Unlock()
+	inodeId := file.Id()
 
-	inodeId := file.fullpath().AsInode()
-	if file.isOpen > 0 {
-		existingHandle, found := wfs.handles[inodeId]
-		if found && existingHandle != nil {
-			file.isOpen++
-			return existingHandle
-		}
+	wfs.handlesLock.Lock()
+	existingHandle, found := wfs.handles[inodeId]
+	wfs.handlesLock.Unlock()
+	if found && existingHandle != nil {
+		existingHandle.f.isOpen++
+		glog.V(4).Infof("Acquired Handle %s open %d", fullpath, existingHandle.f.isOpen)
+		return existingHandle
 	}
 
 	entry, _ := file.maybeLoadEntry(context.Background())
@@ -156,9 +156,12 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 	fileHandle = newFileHandle(file, uid, gid)
 	file.isOpen++
 
+	wfs.handlesLock.Lock()
 	wfs.handles[inodeId] = fileHandle
+	wfs.handlesLock.Unlock()
 	fileHandle.handle = inodeId
 
+	glog.V(4).Infof("Acquired new Handle %s open %d", fullpath, file.isOpen)
 	return
 }
 
@@ -166,9 +169,9 @@ func (wfs *WFS) ReleaseHandle(fullpath util.FullPath, handleId fuse.HandleID) {
 	wfs.handlesLock.Lock()
 	defer wfs.handlesLock.Unlock()
 
-	glog.V(4).Infof("%s ReleaseHandle id %d current handles length %d", fullpath, handleId, len(wfs.handles))
+	glog.V(4).Infof("ReleaseHandle %s id %d current handles length %d", fullpath, handleId, len(wfs.handles))
 
-	delete(wfs.handles, fullpath.AsInode())
+	delete(wfs.handles, uint64(handleId))
 
 	return
 }

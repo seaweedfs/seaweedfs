@@ -24,6 +24,7 @@ type Dir struct {
 	wfs    *WFS
 	entry  *filer_pb.Entry
 	parent *Dir
+	id     uint64
 }
 
 var _ = fs.Node(&Dir{})
@@ -44,7 +45,7 @@ var _ = fs.NodeListxattrer(&Dir{})
 var _ = fs.NodeForgetter(&Dir{})
 
 func (dir *Dir) Id() uint64 {
-	return util.FullPath(dir.FullPath()).AsInode()
+	return dir.id
 }
 
 func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
@@ -64,7 +65,7 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 		return err
 	}
 
-	attr.Inode = util.FullPath(dir.FullPath()).AsInode()
+	attr.Inode = dir.Id()
 	attr.Mode = os.FileMode(entry.Attributes.FileMode) | os.ModeDir
 	attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
 	attr.Crtime = time.Unix(entry.Attributes.Crtime, 0)
@@ -110,16 +111,28 @@ func (dir *Dir) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 }
 
 func (dir *Dir) newFile(name string) fs.Node {
+
+	fileFullPath := util.NewFullPath(dir.FullPath(), name)
+	fileId := fileFullPath.AsInode()
+	dir.wfs.handlesLock.Lock()
+	existingHandle, found := dir.wfs.handles[fileId]
+	dir.wfs.handlesLock.Unlock()
+
+	if found {
+		glog.V(4).Infof("newFile found opened file handle: %+v", fileFullPath)
+		return existingHandle.f
+	}
 	return &File{
-		Name:  name,
-		dir:   dir,
-		wfs:   dir.wfs,
+		Name: name,
+		dir:  dir,
+		wfs:  dir.wfs,
+		id:   fileId,
 	}
 }
 
 func (dir *Dir) newDirectory(fullpath util.FullPath) fs.Node {
 
-	return &Dir{name: fullpath.Name(), wfs: dir.wfs, parent: dir}
+	return &Dir{name: fullpath.Name(), wfs: dir.wfs, parent: dir, id: fullpath.AsInode()}
 
 }
 
