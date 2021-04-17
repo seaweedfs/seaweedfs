@@ -305,7 +305,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		}
 
 		// resp.EntryValid = time.Second
-		// resp.Attr.Inode = fullFilePath.AsInode()
+		resp.Attr.Inode = fullFilePath.AsInode()
 		resp.Attr.Valid = time.Second
 		resp.Attr.Mtime = localEntry.Attr.Mtime
 		resp.Attr.Crtime = localEntry.Attr.Crtime
