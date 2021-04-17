@@ -149,8 +149,8 @@ func (fsw *FilerStoreWrapper) FindEntry(ctx context.Context, fp util.FullPath) (
 		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "find").Observe(time.Since(start).Seconds())
 	}()
 
-	glog.V(4).Infof("FindEntry %s", fp)
 	entry, err = actualStore.FindEntry(ctx, fp)
+	glog.V(4).Infof("FindEntry %s: %v", fp, err)
 	if err != nil {
 		return nil, err
 	}
