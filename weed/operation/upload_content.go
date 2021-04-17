@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/textproto"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 	"time"
 
@@ -235,10 +234,12 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 	// print("+")
 	resp, post_err := HttpClient.Do(req)
 	if post_err != nil {
-		if !strings.Contains(post_err.Error(), "connection reset by peer") {
-			glog.Errorf("upload %s %d bytes to %v: %v", filename, originalDataSize, uploadUrl, post_err)
-			debug.PrintStack()
+		if strings.Contains(post_err.Error(), "connection reset by peer") ||
+			strings.Contains(post_err.Error(), "use of closed network connection") {
+			resp, post_err = HttpClient.Do(req)
 		}
+	}
+	if post_err != nil {
 		return nil, fmt.Errorf("upload %s %d bytes to %v: %v", filename, originalDataSize, uploadUrl, post_err)
 	}
 	// print("-")
