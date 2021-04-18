@@ -42,7 +42,6 @@ type Option struct {
 	CacheSizeMB        int64
 	DataCenter         string
 	Umask              os.FileMode
-	ReadOnly           bool
 
 	MountUid   uint32
 	MountGid   uint32

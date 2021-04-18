@@ -167,6 +167,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	if *option.nonempty {
 		options = append(options, fuse.AllowNonEmptyMount())
 	}
+	if *option.readOnly {
+		options = append(options, fuse.ReadOnly())
+	}
 
 	// find mount point
 	mountRoot := filerMountRootPath
@@ -200,7 +203,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		VolumeServerAccess: *mountOptions.volumeServerAccess,
 		Cipher:             cipher,
 		UidGidMapper:       uidGidMapper,
-		ReadOnly:           *option.readOnly,
 	})
 
 	// mount

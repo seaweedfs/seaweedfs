@@ -105,10 +105,6 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
-	if file.wfs.option.ReadOnly {
-		return fuse.EPERM
-	}
-
 	glog.V(4).Infof("%v file setattr %+v", file.fullpath(), req)
 
 	entry, err := file.maybeLoadEntry(ctx)
@@ -197,10 +193,6 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 
 func (file *File) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
 
-	if file.wfs.option.ReadOnly {
-		return fuse.EPERM
-	}
-
 	glog.V(4).Infof("file Setxattr %s: %s", file.fullpath(), req.Name)
 
 	entry, err := file.maybeLoadEntry(ctx)
@@ -217,10 +209,6 @@ func (file *File) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error
 }
 
 func (file *File) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest) error {
-
-	if file.wfs.option.ReadOnly {
-		return fuse.EPERM
-	}
 
 	glog.V(4).Infof("file Removexattr %s: %s", file.fullpath(), req.Name)
 

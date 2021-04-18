@@ -13,10 +13,6 @@ import (
 
 func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirectory fs.Node) error {
 
-	if dir.wfs.option.ReadOnly {
-		return fuse.EPERM
-	}
-
 	newDir := newDirectory.(*Dir)
 
 	newPath := util.NewFullPath(newDir.FullPath(), req.NewName)

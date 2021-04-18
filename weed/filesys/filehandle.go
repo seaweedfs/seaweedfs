@@ -156,10 +156,6 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 // Write to the file handle
 func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
 
-	if fh.f.wfs.option.ReadOnly {
-		return fuse.EPERM
-	}
-
 	fh.Lock()
 	defer fh.Unlock()
 
