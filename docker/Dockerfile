@@ -1,6 +1,7 @@
 FROM alpine
 
-ARG RELEASE=latest # 'latest' or 'dev'
+# 'latest' or 'dev'
+ARG RELEASE=latest
 
 RUN \
     ARCH=$(if [ $(uname -m) == "x86_64" ] && [ $(getconf LONG_BIT) == "64" ]; then echo "amd64"; \
