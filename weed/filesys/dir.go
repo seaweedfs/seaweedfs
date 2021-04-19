@@ -28,6 +28,7 @@ type Dir struct {
 }
 
 var _ = fs.Node(&Dir{})
+
 //var _ = fs.NodeIdentifier(&Dir{})
 var _ = fs.NodeCreater(&Dir{})
 var _ = fs.NodeMknoder(&Dir{})
@@ -140,19 +141,38 @@ func (dir *Dir) newDirectory(fullpath util.FullPath) fs.Node {
 func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
 
-	request, err := dir.doCreateEntry(req.Name, req.Mode, req.Uid, req.Gid, req.Flags&fuse.OpenExclusive != 0)
+	exclusive := req.Flags&fuse.OpenExclusive != 0
+	isDirectory := req.Mode&os.ModeDir > 0
 
-	if err != nil {
-		return nil, nil, err
+	if exclusive || isDirectory {
+		_, err := dir.doCreateEntry(req.Name, req.Mode, req.Uid, req.Gid, exclusive)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	var node fs.Node
-	if request.Entry.IsDirectory {
+	if isDirectory {
 		node = dir.newDirectory(util.NewFullPath(dir.FullPath(), req.Name))
 		return node, nil, nil
 	}
 
 	node = dir.newFile(req.Name)
 	file := node.(*File)
+	file.entry = &filer_pb.Entry{
+		Name:        req.Name,
+		IsDirectory: req.Mode&os.ModeDir > 0,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:       time.Now().Unix(),
+			Crtime:      time.Now().Unix(),
+			FileMode:    uint32(req.Mode &^ dir.wfs.option.Umask),
+			Uid:         req.Uid,
+			Gid:         req.Gid,
+			Collection:  dir.wfs.option.Collection,
+			Replication: dir.wfs.option.Replication,
+			TtlSec:      dir.wfs.option.TtlSec,
+		},
+	}
+	file.dirtyMetadata = true
 	fh := dir.wfs.AcquireHandle(file, req.Uid, req.Gid)
 	return file, fh, nil
 

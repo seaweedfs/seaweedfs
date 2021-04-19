@@ -265,6 +265,7 @@ func (file *File) maybeLoadEntry(ctx context.Context) (entry *filer_pb.Entry, er
 	file.wfs.handlesLock.Lock()
 	handle, found := file.wfs.handles[file.Id()]
 	file.wfs.handlesLock.Unlock()
+	entry = file.entry
 	if found {
 		glog.V(4).Infof("maybeLoadEntry found opened file %s/%s: %v %v", file.dir.FullPath(), file.Name, handle.f.entry, entry)
 		entry = handle.f.entry
