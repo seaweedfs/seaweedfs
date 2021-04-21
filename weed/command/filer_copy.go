@@ -207,16 +207,6 @@ func genFileCopyTask(fileOrDir string, destPath string, fileCopyTaskChan chan Fi
 	}
 
 	mode := fi.Mode()
-	if mode.IsDir() {
-		files, _ := ioutil.ReadDir(fileOrDir)
-		for _, subFileOrDir := range files {
-			if err = genFileCopyTask(fileOrDir+"/"+subFileOrDir.Name(), destPath+fi.Name()+"/", fileCopyTaskChan); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
 	uid, gid := util.GetFileUidGid(fi)
 
 	fileCopyTaskChan <- FileCopyTask{
@@ -226,6 +216,16 @@ func genFileCopyTask(fileOrDir string, destPath string, fileCopyTaskChan chan Fi
 		fileMode:           fi.Mode(),
 		uid:                uid,
 		gid:                gid,
+	}
+
+	if mode.IsDir() {
+		files, _ := ioutil.ReadDir(fileOrDir)
+		println("checking directory", fileOrDir)
+		for _, subFileOrDir := range files {
+			if err = genFileCopyTask(fileOrDir+"/"+subFileOrDir.Name(), destPath+fi.Name()+"/", fileCopyTaskChan); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
@@ -293,20 +293,22 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 
 	// upload the file content
 	fileName := filepath.Base(f.Name())
-	mimeType := detectMimeType(f)
-	data, err := ioutil.ReadAll(f)
-	if err != nil {
-		return err
-	}
+	var mimeType string
 
 	var chunks []*filer_pb.FileChunk
 	var assignResult *filer_pb.AssignVolumeResponse
 	var assignError error
 
-	if task.fileSize > 0 {
+	if task.fileMode & os.ModeDir == 0 && task.fileSize > 0 {
+
+		mimeType = detectMimeType(f)
+		data, err := ioutil.ReadAll(f)
+		if err != nil {
+			return err
+		}
 
 		// assign a volume
-		err := pb.WithGrpcFilerClient(worker.filerGrpcAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err = pb.WithGrpcFilerClient(worker.filerGrpcAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 
 			request := &filer_pb.AssignVolumeRequest{
 				Count:       1,
