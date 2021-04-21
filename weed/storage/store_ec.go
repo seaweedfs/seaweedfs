@@ -303,7 +303,7 @@ func (s *Store) doReadRemoteEcShardInterval(sourceDataNode string, needleId type
 				break
 			}
 			if receiveErr != nil {
-				return fmt.Errorf("receiving ec shard %d.%d from %s: %v", vid, shardId, sourceDataNode, err)
+				return fmt.Errorf("receiving ec shard %d.%d from %s: %v", vid, shardId, sourceDataNode, receiveErr)
 			}
 			if resp.IsDeleted {
 				is_deleted = true
