@@ -257,7 +257,7 @@ func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 func (file *File) Forget() {
 	t := util.NewFullPath(file.dir.FullPath(), file.Name)
 	glog.V(4).Infof("Forget file %s", t)
-	file.wfs.ReleaseHandle(t, 0)
+	file.wfs.ReleaseHandle(t, fuse.HandleID(t.AsInode()))
 }
 
 func (file *File) maybeLoadEntry(ctx context.Context) (entry *filer_pb.Entry, err error) {

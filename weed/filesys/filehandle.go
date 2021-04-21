@@ -200,18 +200,18 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 
 	fh.f.isOpen--
 
-	if fh.f.isOpen < 0 {
-		glog.V(0).Infof("Release reset %s open count %d => %d", fh.f.Name, fh.f.isOpen, 0)
-		fh.f.isOpen = 0
-		return nil
-	}
-
-	if fh.f.isOpen == 0 {
+	if fh.f.isOpen <= 0 {
 		fh.f.entry = nil
 		fh.entryViewCache = nil
 		fh.reader = nil
 
 		fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
+	}
+
+	if fh.f.isOpen < 0 {
+		glog.V(0).Infof("Release reset %s open count %d => %d", fh.f.Name, fh.f.isOpen, 0)
+		fh.f.isOpen = 0
+		return nil
 	}
 
 	return nil
