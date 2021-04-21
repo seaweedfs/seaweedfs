@@ -16,6 +16,7 @@ jobs:
         uses: mknejp/delete-release-assets@v1
         with:
           token: ${{ github.token }}
+          tag: dev
           fail-if-no-assets: false
           assets: |
             weed-*
