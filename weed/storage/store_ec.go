@@ -200,7 +200,6 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 				return
 			}
 			glog.V(0).Infof("clearing ec shard %d.%d locations: %v", ecVolume.VolumeId, shardId, err)
-			forgetShardId(ecVolume, shardId)
 		}
 
 		// try reading by recovering from other shards
