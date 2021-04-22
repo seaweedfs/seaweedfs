@@ -1,4 +1,4 @@
-package master_ui
+package filer_ui
 
 import (
 	"github.com/dustin/go-humanize"
