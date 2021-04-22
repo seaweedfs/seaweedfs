@@ -106,6 +106,9 @@ func (s *Store) FindFreeLocation(diskType DiskType) (ret *DiskLocation) {
 		if diskType != location.DiskType {
 			continue
 		}
+		if location.isDiskSpaceLow {
+			continue
+		}
 		currentFreeCount := location.MaxVolumeCount - location.VolumesLen()
 		currentFreeCount *= erasure_coding.DataShardsCount
 		currentFreeCount -= location.EcVolumesLen()
