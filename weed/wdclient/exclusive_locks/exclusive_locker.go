@@ -41,7 +41,7 @@ func (l *ExclusiveLocker) GetToken() (token int64, lockTsNs int64) {
 	return atomic.LoadInt64(&l.token), atomic.LoadInt64(&l.lockTsNs)
 }
 
-func (l *ExclusiveLocker) RequestLock() {
+func (l *ExclusiveLocker) RequestLock(clientName string) {
 	if l.isLocking {
 		return
 	}
@@ -56,6 +56,7 @@ func (l *ExclusiveLocker) RequestLock() {
 				PreviousToken:    atomic.LoadInt64(&l.token),
 				PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
 				LockName:         AdminLockName,
+				ClientName:       clientName,
 			})
 			if err == nil {
 				atomic.StoreInt64(&l.token, resp.Token)
@@ -63,7 +64,7 @@ func (l *ExclusiveLocker) RequestLock() {
 			}
 			return err
 		}); err != nil {
-			// println("leasing problem", err.Error())
+			println("lock:", err.Error())
 			time.Sleep(InitLockInteval)
 		} else {
 			break
@@ -83,6 +84,7 @@ func (l *ExclusiveLocker) RequestLock() {
 					PreviousToken:    atomic.LoadInt64(&l.token),
 					PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
 					LockName:         AdminLockName,
+					ClientName:       clientName,
 				})
 				if err == nil {
 					atomic.StoreInt64(&l.token, resp.Token)
