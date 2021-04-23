@@ -26,7 +26,7 @@ func (c *commandS3CleanUploads) Help() string {
 	return `clean up stale multipart uploads
 
 	Example:
-		s3.clean.uploads -replication 001
+		s3.clean.uploads -timeAgo 1.5h
 
 `
 }
