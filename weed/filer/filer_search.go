@@ -64,7 +64,7 @@ func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath
 	}
 
 	lastFileName, err = f.doListValidEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) bool {
-		nameToTest := strings.ToLower(entry.Name())
+		nameToTest := entry.Name()
 		if len(namePatternExclude) > 0 {
 			if matched, matchErr := filepath.Match(namePatternExclude, nameToTest); matchErr == nil && matched {
 				missedCount++
