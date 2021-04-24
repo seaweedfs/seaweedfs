@@ -4,7 +4,7 @@ global:
   registry: ""
   repository: ""
   imageName: chrislusf/seaweedfs
-  # imageTag: "2.40" - started using {.Chart.appVersion}
+  # imageTag: "2.41" - started using {.Chart.appVersion}
   imagePullPolicy: IfNotPresent
   imagePullSecrets: imagepullsecret
   restartPolicy: Always
