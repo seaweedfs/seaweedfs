@@ -35,8 +35,9 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 
 	lastFileName := r.FormValue("lastFileName")
 	namePattern := r.FormValue("namePattern")
+	namePatternExclude := r.FormValue("namePatternExclude")
 
-	entries, shouldDisplayLoadMore, err := fs.filer.ListDirectoryEntries(context.Background(), util.FullPath(path), lastFileName, false, int64(limit), "", namePattern)
+	entries, shouldDisplayLoadMore, err := fs.filer.ListDirectoryEntries(context.Background(), util.FullPath(path), lastFileName, false, int64(limit), "", namePattern, namePatternExclude)
 
 	if err != nil {
 		glog.V(0).Infof("listDirectory %s %s %d: %s", path, lastFileName, limit, err)
