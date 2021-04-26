@@ -69,7 +69,7 @@ func TestCompaction(t *testing.T) {
 	}
 	defer os.RemoveAll(dir) // clean up
 
-	v, err := NewVolume(dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0)
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestCompaction(t *testing.T) {
 	}
 
 	startTime := time.Now()
-	v.Compact2(0)
+	v.Compact2(0, 0)
 	speed := float64(v.ContentSize()) / time.Now().Sub(startTime).Seconds()
 	t.Logf("compaction speed: %.2f bytes/s", speed)
 
@@ -96,7 +96,7 @@ func TestCompaction(t *testing.T) {
 
 	v.Close()
 
-	v, err = NewVolume(dir, "", 1, NeedleMapInMemory, nil, nil, 0, 0)
+	v, err = NewVolume(dir, dir, "", 1, NeedleMapInMemory, nil, nil, 0, 0)
 	if err != nil {
 		t.Fatalf("volume reloading: %v", err)
 	}
@@ -113,11 +113,11 @@ func TestCompaction(t *testing.T) {
 		}
 
 		n := newEmptyNeedle(uint64(i))
-		size, err := v.readNeedle(n)
+		size, err := v.readNeedle(n, nil)
 		if err != nil {
 			t.Fatalf("read file %d: %v", i, err)
 		}
-		if infos[i-1].size != uint32(size) {
+		if infos[i-1].size != types.Size(size) {
 			t.Fatalf("read file %d size mismatch expected %d found %d", i, infos[i-1].size, size)
 		}
 		if infos[i-1].crc != n.Checksum {
@@ -129,7 +129,7 @@ func TestCompaction(t *testing.T) {
 }
 func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	n := newRandomNeedle(uint64(i))
-	_, size, _, err := v.writeNeedle(n)
+	_, size, _, err := v.writeNeedle2(n, false)
 	if err != nil {
 		t.Fatalf("write file %d: %v", i, err)
 	}
@@ -141,7 +141,7 @@ func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	if rand.Float64() < 0.03 {
 		toBeDeleted := rand.Intn(i) + 1
 		oldNeedle := newEmptyNeedle(uint64(toBeDeleted))
-		v.deleteNeedle(oldNeedle)
+		v.deleteNeedle2(oldNeedle)
 		// println("deleted file", toBeDeleted)
 		infos[toBeDeleted-1] = &needleInfo{
 			size: 0,
@@ -151,7 +151,7 @@ func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 }
 
 type needleInfo struct {
-	size uint32
+	size types.Size
 	crc  needle.CRC
 }
 

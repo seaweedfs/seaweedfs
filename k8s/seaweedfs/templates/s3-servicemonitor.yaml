@@ -1,0 +1,18 @@
+{{- if .Values.s3.metricsPort }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ template "seaweedfs.name" . }}-s3
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "seaweedfs.name" . }}
+    component: s3
+spec:
+  endpoints:
+    - interval: 30s
+      port: swfs-s3-metrics
+      scrapeTimeout: 5s
+  selector:
+    app: {{ template "seaweedfs.name" . }}
+    component: s3
+{{- end }}

@@ -1,0 +1,59 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+ name: ingress-{{ template "seaweedfs.name" . }}-filer
+ annotations:
+   kubernetes.io/ingress.class: "nginx"
+   nginx.ingress.kubernetes.io/auth-type: "basic"
+   nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
+   nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Filer'
+   nginx.ingress.kubernetes.io/service-upstream: "true"
+   nginx.ingress.kubernetes.io/rewrite-target: /$1
+   nginx.ingress.kubernetes.io/use-regex: "true"
+   nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
+   nginx.ingress.kubernetes.io/ssl-redirect: "false"
+   nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+   nginx.ingress.kubernetes.io/configuration-snippet: |
+     sub_filter '<head>' '<head> <base href="/sw-filer/">'; #add base url
+     sub_filter '="/' '="./';                               #make absolute paths to relative
+     sub_filter '=/' '=./';
+     sub_filter '/seaweedfsstatic' './seaweedfsstatic';
+     sub_filter_once off;
+spec:
+ rules:
+ - http:
+     paths:
+     - path: /sw-filer/?(.*)
+       backend:
+         serviceName: {{ template "seaweedfs.name" . }}-filer
+         servicePort: {{ .Values.filer.port }}
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: ingress-{{ template "seaweedfs.name" . }}-master
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/auth-type: "basic"
+    nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
+    nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Master'
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      sub_filter '<head>' '<head> <base href="/sw-master/">'; #add base url
+      sub_filter '="/' '="./';                                #make absolute paths to relative
+      sub_filter '=/' '=./';
+      sub_filter '/seaweedfsstatic' './seaweedfsstatic';
+      sub_filter_once off;
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /sw-master/?(.*)
+        backend:
+          serviceName: {{ template "seaweedfs.name" . }}-master
+          servicePort: {{ .Values.master.port }}

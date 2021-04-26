@@ -6,9 +6,9 @@ import (
 )
 
 type ReplicaPlacement struct {
-	SameRackCount       int
-	DiffRackCount       int
-	DiffDataCenterCount int
+	SameRackCount       int `json:"node,omitempty"`
+	DiffRackCount       int `json:"rack,omitempty"`
+	DiffDataCenterCount int `json:"dc,omitempty"`
 }
 
 func NewReplicaPlacementFromString(t string) (*ReplicaPlacement, error) {
@@ -36,6 +36,9 @@ func NewReplicaPlacementFromByte(b byte) (*ReplicaPlacement, error) {
 }
 
 func (rp *ReplicaPlacement) Byte() byte {
+	if rp == nil {
+		return 0
+	}
 	ret := rp.DiffDataCenterCount*100 + rp.DiffRackCount*10 + rp.SameRackCount
 	return byte(ret)
 }

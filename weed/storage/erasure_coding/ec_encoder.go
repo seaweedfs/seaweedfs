@@ -5,12 +5,13 @@ import (
 	"io"
 	"os"
 
+	"github.com/klauspost/reedsolomon"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/klauspost/reedsolomon"
 )
 
 const (
@@ -25,9 +26,12 @@ const (
 // all keys are sorted in ascending order
 func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 
-	cm, err := readCompactMap(baseFileName)
+	nm, err := readNeedleMap(baseFileName)
+	if nm != nil {
+		defer nm.Close()
+	}
 	if err != nil {
-		return fmt.Errorf("readCompactMap: %v", err)
+		return fmt.Errorf("readNeedleMap: %v", err)
 	}
 
 	ecxFile, err := os.OpenFile(baseFileName+ext, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
@@ -36,7 +40,7 @@ func WriteSortedFileFromIdx(baseFileName string, ext string) (e error) {
 	}
 	defer ecxFile.Close()
 
-	err = cm.AscendingVisit(func(value needle_map.NeedleValue) error {
+	err = nm.AscendingVisit(func(value needle_map.NeedleValue) error {
 		bytes := value.ToBytes()
 		_, writeErr := ecxFile.Write(bytes)
 		return writeErr
@@ -73,6 +77,8 @@ func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, 
 	if err != nil {
 		return fmt.Errorf("failed to stat dat file: %v", err)
 	}
+
+	glog.V(0).Infof("encodeDatFile %s.dat size:%d", baseFileName, fi.Size())
 	err = encodeDatFile(fi.Size(), err, baseFileName, bufferSize, largeBlockSize, file, smallBlockSize)
 	if err != nil {
 		return fmt.Errorf("encodeDatFile: %v", err)
@@ -195,7 +201,7 @@ func encodeDatFile(remainingSize int64, err error, baseFileName string, bufferSi
 	}
 
 	buffers := make([][]byte, TotalShardsCount)
-	for i, _ := range buffers {
+	for i := range buffers {
 		buffers[i] = make([]byte, bufferSize)
 	}
 
@@ -232,7 +238,7 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 	}
 
 	buffers := make([][]byte, TotalShardsCount)
-	for i, _ := range buffers {
+	for i := range buffers {
 		if shardHasData[i] {
 			buffers[i] = make([]byte, ErasureCodingSmallBlockSize)
 		}
@@ -280,15 +286,15 @@ func rebuildEcFiles(shardHasData []bool, inputFiles []*os.File, outputFiles []*o
 
 }
 
-func readCompactMap(baseFileName string) (*needle_map.CompactMap, error) {
+func readNeedleMap(baseFileName string) (*needle_map.MemDb, error) {
 	indexFile, err := os.OpenFile(baseFileName+".idx", os.O_RDONLY, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read Volume Index %s.idx: %v", baseFileName, err)
 	}
 	defer indexFile.Close()
 
-	cm := needle_map.NewCompactMap()
-	err = idx.WalkIndexFile(indexFile, func(key types.NeedleId, offset types.Offset, size uint32) error {
+	cm := needle_map.NewMemDb()
+	err = idx.WalkIndexFile(indexFile, func(key types.NeedleId, offset types.Offset, size types.Size) error {
 		if !offset.IsZero() && size != types.TombstoneFileSize {
 			cm.Set(key, offset, size)
 		} else {

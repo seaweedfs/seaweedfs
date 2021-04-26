@@ -11,10 +11,10 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/b2sink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/filersink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/gcssink"
+	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/localsink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/s3sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/sub"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/spf13/viper"
 )
 
 func init() {
@@ -39,7 +39,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("replication", true)
 	util.LoadConfiguration("notification", true)
-	config := viper.GetViper()
+	config := util.GetViper()
 
 	var notificationInput sub.NotificationInput
 
@@ -47,8 +47,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 
 	for _, input := range sub.NotificationInputs {
 		if config.GetBool("notification." + input.GetName() + ".enabled") {
-			viperSub := config.Sub("notification." + input.GetName())
-			if err := input.Initialize(viperSub); err != nil {
+			if err := input.Initialize(config, "notification."+input.GetName()+"."); err != nil {
 				glog.Fatalf("Failed to initialize notification input for %s: %+v",
 					input.GetName(), err)
 			}
@@ -66,29 +65,16 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 
 	// avoid recursive replication
 	if config.GetBool("notification.source.filer.enabled") && config.GetBool("notification.sink.filer.enabled") {
-		sourceConfig, sinkConfig := config.Sub("source.filer"), config.Sub("sink.filer")
-		if sourceConfig.GetString("grpcAddress") == sinkConfig.GetString("grpcAddress") {
-			fromDir := sourceConfig.GetString("directory")
-			toDir := sinkConfig.GetString("directory")
+		if config.GetString("source.filer.grpcAddress") == config.GetString("sink.filer.grpcAddress") {
+			fromDir := config.GetString("source.filer.directory")
+			toDir := config.GetString("sink.filer.directory")
 			if strings.HasPrefix(toDir, fromDir) {
 				glog.Fatalf("recursive replication! source directory %s includes the sink directory %s", fromDir, toDir)
 			}
 		}
 	}
 
-	var dataSink sink.ReplicationSink
-	for _, sk := range sink.Sinks {
-		if config.GetBool("sink." + sk.GetName() + ".enabled") {
-			viperSub := config.Sub("sink." + sk.GetName())
-			if err := sk.Initialize(viperSub); err != nil {
-				glog.Fatalf("Failed to initialize sink for %s: %+v",
-					sk.GetName(), err)
-			}
-			glog.V(0).Infof("Configure sink to %s", sk.GetName())
-			dataSink = sk
-			break
-		}
-	}
+	dataSink := findSink(config)
 
 	if dataSink == nil {
 		println("no data sink configured in replication.toml:")
@@ -98,16 +84,22 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		return true
 	}
 
-	replicator := replication.NewReplicator(config.Sub("source.filer"), dataSink)
+	replicator := replication.NewReplicator(config, "source.filer.", dataSink)
 
 	for {
-		key, m, err := notificationInput.ReceiveMessage()
+		key, m, onSuccessFn, onFailureFn, err := notificationInput.ReceiveMessage()
 		if err != nil {
 			glog.Errorf("receive %s: %+v", key, err)
+			if onFailureFn != nil {
+				onFailureFn()
+			}
 			continue
 		}
 		if key == "" {
 			// long poll received no messages
+			if onSuccessFn != nil {
+				onSuccessFn()
+			}
 			continue
 		}
 		if m.OldEntry != nil && m.NewEntry == nil {
@@ -119,15 +111,36 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 		}
 		if err = replicator.Replicate(context.Background(), key, m); err != nil {
 			glog.Errorf("replicate %s: %+v", key, err)
+			if onFailureFn != nil {
+				onFailureFn()
+			}
 		} else {
 			glog.V(1).Infof("replicated %s", key)
+			if onSuccessFn != nil {
+				onSuccessFn()
+			}
 		}
 	}
 
-	return true
 }
 
-func validateOneEnabledInput(config *viper.Viper) {
+func findSink(config *util.ViperProxy) sink.ReplicationSink {
+	var dataSink sink.ReplicationSink
+	for _, sk := range sink.Sinks {
+		if config.GetBool("sink." + sk.GetName() + ".enabled") {
+			if err := sk.Initialize(config, "sink."+sk.GetName()+"."); err != nil {
+				glog.Fatalf("Failed to initialize sink for %s: %+v",
+					sk.GetName(), err)
+			}
+			glog.V(0).Infof("Configure sink to %s", sk.GetName())
+			dataSink = sk
+			break
+		}
+	}
+	return dataSink
+}
+
+func validateOneEnabledInput(config *util.ViperProxy) {
 	enabledInput := ""
 	for _, input := range sub.NotificationInputs {
 		if config.GetBool("notification." + input.GetName() + ".enabled") {

@@ -49,7 +49,7 @@ func TestIssue52(t *testing.T) {
 func TestCompactMap(t *testing.T) {
 	m := NewCompactMap()
 	for i := uint32(0); i < 100*batch; i += 2 {
-		m.Set(NeedleId(i), ToOffset(int64(i)), i)
+		m.Set(NeedleId(i), ToOffset(int64(i)), Size(i))
 	}
 
 	for i := uint32(0); i < 100*batch; i += 37 {
@@ -57,7 +57,7 @@ func TestCompactMap(t *testing.T) {
 	}
 
 	for i := uint32(0); i < 10*batch; i += 3 {
-		m.Set(NeedleId(i), ToOffset(int64(i+11)), i+5)
+		m.Set(NeedleId(i), ToOffset(int64(i+11)), Size(i+5))
 	}
 
 	//	for i := uint32(0); i < 100; i++ {
@@ -72,15 +72,15 @@ func TestCompactMap(t *testing.T) {
 			if !ok {
 				t.Fatal("key", i, "missing!")
 			}
-			if v.Size != i+5 {
+			if v.Size != Size(i+5) {
 				t.Fatal("key", i, "size", v.Size)
 			}
 		} else if i%37 == 0 {
-			if ok && v.Size != TombstoneFileSize {
+			if ok && v.Size.IsValid() {
 				t.Fatal("key", i, "should have been deleted needle value", v)
 			}
 		} else if i%2 == 0 {
-			if v.Size != i {
+			if v.Size != Size(i) {
 				t.Fatal("key", i, "size", v.Size)
 			}
 		}
@@ -89,14 +89,14 @@ func TestCompactMap(t *testing.T) {
 	for i := uint32(10 * batch); i < 100*batch; i++ {
 		v, ok := m.Get(NeedleId(i))
 		if i%37 == 0 {
-			if ok && v.Size != TombstoneFileSize {
+			if ok && v.Size.IsValid() {
 				t.Fatal("key", i, "should have been deleted needle value", v)
 			}
 		} else if i%2 == 0 {
 			if v == nil {
 				t.Fatal("key", i, "missing")
 			}
-			if v.Size != i {
+			if v.Size != Size(i) {
 				t.Fatal("key", i, "size", v.Size)
 			}
 		}
@@ -129,8 +129,8 @@ func TestOverflow(t *testing.T) {
 
 	cs.deleteOverflowEntry(4)
 
-	if len(cs.overflow) != 4 {
-		t.Fatalf("expecting 4 entries now: %+v", cs.overflow)
+	if len(cs.overflow) != 5 {
+		t.Fatalf("expecting 5 entries now: %+v", cs.overflow)
 	}
 
 	_, x, _ := cs.findOverflowEntry(5)
@@ -146,7 +146,7 @@ func TestOverflow(t *testing.T) {
 	cs.deleteOverflowEntry(1)
 
 	for i, x := range cs.overflow {
-		println("overflow[", i, "]:", x.Key)
+		println("overflow[", i, "]:", x.Key, "size", x.Size)
 	}
 	println()
 

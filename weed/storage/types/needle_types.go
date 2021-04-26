@@ -2,14 +2,23 @@ package types
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"math"
 	"strconv"
+
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type Offset struct {
 	OffsetHigher
 	OffsetLower
+}
+
+type Size int32
+
+func (s Size) IsDeleted() bool {
+	return s < 0 || s == TombstoneFileSize
+}
+func (s Size) IsValid() bool {
+	return s > 0 && s != TombstoneFileSize
 }
 
 type OffsetLower struct {
@@ -27,7 +36,7 @@ const (
 	NeedleMapEntrySize = NeedleIdSize + OffsetSize + SizeSize
 	TimestampSize      = 8 // int64 size
 	NeedlePaddingSize  = 8
-	TombstoneFileSize  = math.MaxUint32
+	TombstoneFileSize  = Size(-1)
 	CookieSize         = 4
 )
 
@@ -48,4 +57,12 @@ func ParseCookie(cookieString string) (Cookie, error) {
 		return 0, fmt.Errorf("needle cookie %s format error: %v", cookieString, err)
 	}
 	return Cookie(cookie), nil
+}
+
+func BytesToSize(bytes []byte) Size {
+	return Size(util.BytesToUint32(bytes))
+}
+
+func SizeToBytes(bytes []byte, size Size) {
+	util.Uint32toBytes(bytes, uint32(size))
 }

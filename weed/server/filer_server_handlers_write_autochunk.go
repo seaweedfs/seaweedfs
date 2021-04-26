@@ -1,31 +1,27 @@
 package weed_server
 
 import (
-	"bytes"
 	"context"
+	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
+	"os"
 	"path"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
+	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request,
-	replication string, collection string, dataCenter string) bool {
-	if r.Method != "POST" {
-		glog.V(4).Infoln("AutoChunking not supported for method", r.Method)
-		return false
-	}
+func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, contentLength int64, so *operation.StorageOption) {
 
 	// autoChunking can be set at the command-line level or as a query param. Query param overrides command-line
 	query := r.URL.Query()
@@ -35,174 +31,308 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 	if maxMB <= 0 && fs.option.MaxMB > 0 {
 		maxMB = int32(fs.option.MaxMB)
 	}
-	if maxMB <= 0 {
-		glog.V(4).Infoln("AutoChunking not enabled")
-		return false
-	}
-	glog.V(4).Infoln("AutoChunking level set to", maxMB, "(MB)")
 
 	chunkSize := 1024 * 1024 * maxMB
 
-	contentLength := int64(0)
-	if contentLengthHeader := r.Header["Content-Length"]; len(contentLengthHeader) == 1 {
-		contentLength, _ = strconv.ParseInt(contentLengthHeader[0], 10, 64)
-		if contentLength <= int64(chunkSize) {
-			glog.V(4).Infoln("Content-Length of", contentLength, "is less than the chunk size of", chunkSize, "so autoChunking will be skipped.")
-			return false
-		}
-	}
-
-	if contentLength <= 0 {
-		glog.V(4).Infoln("Content-Length value is missing or unexpected so autoChunking will be skipped.")
-		return false
-	}
-
-	reply, err := fs.doAutoChunk(ctx, w, r, contentLength, chunkSize, replication, collection, dataCenter)
-	if err != nil {
-		writeJsonError(w, r, http.StatusInternalServerError, err)
-	} else if reply != nil {
-		writeJsonQuiet(w, r, http.StatusCreated, reply)
-	}
-	return true
-}
-
-func (fs *FilerServer) doAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request,
-	contentLength int64, chunkSize int32, replication string, collection string, dataCenter string) (filerResult *FilerPostResult, replyerr error) {
-
-	stats.FilerRequestCounter.WithLabelValues("postAutoChunk").Inc()
+	stats.FilerRequestCounter.WithLabelValues("chunk").Inc()
 	start := time.Now()
 	defer func() {
-		stats.FilerRequestHistogram.WithLabelValues("postAutoChunk").Observe(time.Since(start).Seconds())
+		stats.FilerRequestHistogram.WithLabelValues("chunk").Observe(time.Since(start).Seconds())
 	}()
+
+	var reply *FilerPostResult
+	var err error
+	var md5bytes []byte
+	if r.Method == "POST" {
+		if r.Header.Get("Content-Type") == "" && strings.HasSuffix(r.URL.Path, "/") {
+			reply, err = fs.mkdir(ctx, w, r)
+		} else {
+			reply, md5bytes, err = fs.doPostAutoChunk(ctx, w, r, chunkSize, contentLength, so)
+		}
+	} else {
+		reply, md5bytes, err = fs.doPutAutoChunk(ctx, w, r, chunkSize, contentLength, so)
+	}
+	if err != nil {
+		if strings.HasPrefix(err.Error(), "read input:") {
+			writeJsonError(w, r, 499, err)
+		} else if strings.HasSuffix(err.Error(), "is a file") {
+			writeJsonError(w, r, http.StatusConflict, err)
+		} else {
+			writeJsonError(w, r, http.StatusInternalServerError, err)
+		}
+	} else if reply != nil {
+		if len(md5bytes) > 0 {
+			w.Header().Set("Content-MD5", util.Base64Encode(md5bytes))
+		}
+		writeJsonQuiet(w, r, http.StatusCreated, reply)
+	}
+}
+
+func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, chunkSize int32, contentLength int64, so *operation.StorageOption) (filerResult *FilerPostResult, md5bytes []byte, replyerr error) {
 
 	multipartReader, multipartReaderErr := r.MultipartReader()
 	if multipartReaderErr != nil {
-		return nil, multipartReaderErr
+		return nil, nil, multipartReaderErr
 	}
 
 	part1, part1Err := multipartReader.NextPart()
 	if part1Err != nil {
-		return nil, part1Err
+		return nil, nil, part1Err
 	}
 
 	fileName := part1.FileName()
 	if fileName != "" {
 		fileName = path.Base(fileName)
 	}
-
-	var fileChunks []*filer_pb.FileChunk
-
-	totalBytesRead := int64(0)
-	tmpBufferSize := int32(1024 * 1024)
-	tmpBuffer := bytes.NewBuffer(make([]byte, 0, tmpBufferSize))
-	chunkBuf := make([]byte, chunkSize+tmpBufferSize, chunkSize+tmpBufferSize) // chunk size plus a little overflow
-	chunkBufOffset := int32(0)
-	chunkOffset := int64(0)
-	writtenChunks := 0
-
-	filerResult = &FilerPostResult{
-		Name: fileName,
+	contentType := part1.Header.Get("Content-Type")
+	if contentType == "application/octet-stream" {
+		contentType = ""
 	}
 
-	for totalBytesRead < contentLength {
-		tmpBuffer.Reset()
-		bytesRead, readErr := io.CopyN(tmpBuffer, part1, int64(tmpBufferSize))
-		readFully := readErr != nil && readErr == io.EOF
-		tmpBuf := tmpBuffer.Bytes()
-		bytesToCopy := tmpBuf[0:int(bytesRead)]
-
-		copy(chunkBuf[chunkBufOffset:chunkBufOffset+int32(bytesRead)], bytesToCopy)
-		chunkBufOffset = chunkBufOffset + int32(bytesRead)
-
-		if chunkBufOffset >= chunkSize || readFully || (chunkBufOffset > 0 && bytesRead == 0) {
-			writtenChunks = writtenChunks + 1
-			fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(w, r, replication, collection, dataCenter)
-			if assignErr != nil {
-				return nil, assignErr
-			}
-
-			// upload the chunk to the volume server
-			chunkName := fileName + "_chunk_" + strconv.FormatInt(int64(len(fileChunks)+1), 10)
-			uploadErr := fs.doUpload(urlLocation, w, r, chunkBuf[0:chunkBufOffset], chunkName, "", fileId, auth)
-			if uploadErr != nil {
-				return nil, uploadErr
-			}
-
-			// Save to chunk manifest structure
-			fileChunks = append(fileChunks,
-				&filer_pb.FileChunk{
-					FileId: fileId,
-					Offset: chunkOffset,
-					Size:   uint64(chunkBufOffset),
-					Mtime:  time.Now().UnixNano(),
-				},
-			)
-
-			// reset variables for the next chunk
-			chunkBufOffset = 0
-			chunkOffset = totalBytesRead + int64(bytesRead)
-		}
-
-		totalBytesRead = totalBytesRead + int64(bytesRead)
-
-		if bytesRead == 0 || readFully {
-			break
-		}
-
-		if readErr != nil {
-			return nil, readErr
-		}
+	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadReaderToChunks(w, r, part1, chunkSize, fileName, contentType, contentLength, so)
+	if err != nil {
+		return nil, nil, err
 	}
 
+	md5bytes = md5Hash.Sum(nil)
+	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
+
+	return
+}
+
+func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, chunkSize int32, contentLength int64, so *operation.StorageOption) (filerResult *FilerPostResult, md5bytes []byte, replyerr error) {
+
+	fileName := path.Base(r.URL.Path)
+	contentType := r.Header.Get("Content-Type")
+	if contentType == "application/octet-stream" {
+		contentType = ""
+	}
+
+	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadReaderToChunks(w, r, r.Body, chunkSize, fileName, contentType, contentLength, so)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	md5bytes = md5Hash.Sum(nil)
+	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
+
+	return
+}
+
+func isAppend(r *http.Request) bool {
+	return r.URL.Query().Get("op") == "append"
+}
+
+func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileName string, contentType string, so *operation.StorageOption, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64, content []byte) (filerResult *FilerPostResult, replyerr error) {
+
+	// detect file mode
+	modeStr := r.URL.Query().Get("mode")
+	if modeStr == "" {
+		modeStr = "0660"
+	}
+	mode, err := strconv.ParseUint(modeStr, 8, 32)
+	if err != nil {
+		glog.Errorf("Invalid mode format: %s, use 0660 by default", modeStr)
+		mode = 0660
+	}
+
+	// fix the path
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") {
 		if fileName != "" {
 			path += fileName
 		}
+	} else {
+		if fileName != "" {
+			if possibleDirEntry, findDirErr := fs.filer.FindEntry(ctx, util.FullPath(path)); findDirErr == nil {
+				if possibleDirEntry.IsDirectory() {
+					path += "/" + fileName
+				}
+			}
+		}
 	}
 
-	glog.V(4).Infoln("saving", path)
-	entry := &filer2.Entry{
-		FullPath: filer2.FullPath(path),
-		Attr: filer2.Attr{
-			Mtime:       time.Now(),
-			Crtime:      time.Now(),
-			Mode:        0660,
-			Uid:         OS_UID,
-			Gid:         OS_GID,
-			Replication: replication,
-			Collection:  collection,
-			TtlSec:      int32(util.ParseInt(r.URL.Query().Get("ttl"), 0)),
-		},
-		Chunks: fileChunks,
+	var entry *filer.Entry
+	var mergedChunks []*filer_pb.FileChunk
+	// when it is an append
+	if isAppend(r) {
+		existingEntry, findErr := fs.filer.FindEntry(ctx, util.FullPath(path))
+		if findErr != nil && findErr != filer_pb.ErrNotFound {
+			glog.V(0).Infof("failing to find %s: %v", path, findErr)
+		}
+		entry = existingEntry
 	}
-	if dbErr := fs.filer.CreateEntry(ctx, entry); dbErr != nil {
-		fs.filer.DeleteChunks(entry.Chunks)
+	if entry != nil {
+		entry.Mtime = time.Now()
+		entry.Md5 = nil
+		// adjust chunk offsets
+		for _, chunk := range fileChunks {
+			chunk.Offset += int64(entry.FileSize)
+		}
+		mergedChunks = append(entry.Chunks, fileChunks...)
+		entry.FileSize += uint64(chunkOffset)
+
+		// TODO
+		if len(entry.Content) > 0 {
+			replyerr = fmt.Errorf("append to small file is not supported yet")
+			return
+		}
+
+	} else {
+		glog.V(4).Infoln("saving", path)
+		mergedChunks = fileChunks
+		entry = &filer.Entry{
+			FullPath: util.FullPath(path),
+			Attr: filer.Attr{
+				Mtime:       time.Now(),
+				Crtime:      time.Now(),
+				Mode:        os.FileMode(mode),
+				Uid:         OS_UID,
+				Gid:         OS_GID,
+				Replication: so.Replication,
+				Collection:  so.Collection,
+				TtlSec:      so.TtlSeconds,
+				DiskType:    so.DiskType,
+				Mime:        contentType,
+				Md5:         md5bytes,
+				FileSize:    uint64(chunkOffset),
+			},
+			Content: content,
+		}
+	}
+
+	// maybe compact entry chunks
+	mergedChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(so), mergedChunks)
+	if replyerr != nil {
+		glog.V(0).Infof("manifestize %s: %v", r.RequestURI, replyerr)
+		return
+	}
+	entry.Chunks = mergedChunks
+
+	filerResult = &FilerPostResult{
+		Name: fileName,
+		Size: int64(entry.FileSize),
+	}
+
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
+
+	SaveAmzMetaData(r, entry.Extended, false)
+
+	for k, v := range r.Header {
+		if len(v) > 0 && strings.HasPrefix(k, needle.PairNamePrefix) {
+			entry.Extended[k] = []byte(v[0])
+		}
+	}
+
+	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil); dbErr != nil {
+		fs.filer.DeleteChunks(fileChunks)
 		replyerr = dbErr
 		filerResult.Error = dbErr.Error()
 		glog.V(0).Infof("failing to write %s to filer server : %v", path, dbErr)
+	}
+	return filerResult, replyerr
+}
+
+func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAsChunkFunctionType {
+
+	return func(reader io.Reader, name string, offset int64) (*filer_pb.FileChunk, string, string, error) {
+		// assign one file id for one chunk
+		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(so)
+		if assignErr != nil {
+			return nil, "", "", assignErr
+		}
+
+		// upload the chunk to the volume server
+		uploadResult, uploadErr, _ := operation.Upload(urlLocation, name, fs.option.Cipher, reader, false, "", nil, auth)
+		if uploadErr != nil {
+			return nil, "", "", uploadErr
+		}
+
+		return uploadResult.ToPbFileChunk(fileId, offset), so.Collection, so.Replication, nil
+	}
+}
+
+func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http.Request) (filerResult *FilerPostResult, replyerr error) {
+
+	// detect file mode
+	modeStr := r.URL.Query().Get("mode")
+	if modeStr == "" {
+		modeStr = "0660"
+	}
+	mode, err := strconv.ParseUint(modeStr, 8, 32)
+	if err != nil {
+		glog.Errorf("Invalid mode format: %s, use 0660 by default", modeStr)
+		mode = 0660
+	}
+
+	// fix the path
+	path := r.URL.Path
+	if strings.HasSuffix(path, "/") {
+		path = path[:len(path)-1]
+	}
+
+	existingEntry, err := fs.filer.FindEntry(ctx, util.FullPath(path))
+	if err == nil && existingEntry != nil {
+		replyerr = fmt.Errorf("dir %s already exists", path)
 		return
 	}
 
-	return
+	glog.V(4).Infoln("mkdir", path)
+	entry := &filer.Entry{
+		FullPath: util.FullPath(path),
+		Attr: filer.Attr{
+			Mtime:  time.Now(),
+			Crtime: time.Now(),
+			Mode:   os.FileMode(mode) | os.ModeDir,
+			Uid:    OS_UID,
+			Gid:    OS_GID,
+		},
+	}
+
+	filerResult = &FilerPostResult{
+		Name: util.FullPath(path).Name(),
+	}
+
+	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil); dbErr != nil {
+		replyerr = dbErr
+		filerResult.Error = dbErr.Error()
+		glog.V(0).Infof("failing to create dir %s on filer server : %v", path, dbErr)
+	}
+	return filerResult, replyerr
 }
 
-func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *http.Request,
-	chunkBuf []byte, fileName string, contentType string, fileId string, auth security.EncodedJwt) (err error) {
+func SaveAmzMetaData(r *http.Request, existing map[string][]byte, isReplace bool) (metadata map[string][]byte) {
 
-	stats.FilerRequestCounter.WithLabelValues("postAutoChunkUpload").Inc()
-	start := time.Now()
-	defer func() {
-		stats.FilerRequestHistogram.WithLabelValues("postAutoChunkUpload").Observe(time.Since(start).Seconds())
-	}()
+	metadata = make(map[string][]byte)
+	if !isReplace {
+		for k, v := range existing {
+			metadata[k] = v
+		}
+	}
 
-	ioReader := ioutil.NopCloser(bytes.NewBuffer(chunkBuf))
-	uploadResult, uploadError := operation.Upload(urlLocation, fileName, ioReader, false, contentType, nil, auth)
-	if uploadResult != nil {
-		glog.V(0).Infoln("Chunk upload result. Name:", uploadResult.Name, "Fid:", fileId, "Size:", uploadResult.Size)
+	if sc := r.Header.Get(xhttp.AmzStorageClass); sc != "" {
+		metadata[xhttp.AmzStorageClass] = []byte(sc)
 	}
-	if uploadError != nil {
-		err = uploadError
+
+	if tags := r.Header.Get(xhttp.AmzObjectTagging); tags != "" {
+		for _, v := range strings.Split(tags, "&") {
+			tag := strings.Split(v, "=")
+			if len(tag) == 2 {
+				metadata[xhttp.AmzObjectTagging+"-"+tag[0]] = []byte(tag[1])
+			}
+		}
 	}
+
+	for header, values := range r.Header {
+		if strings.HasPrefix(header, xhttp.AmzUserMetaPrefix) {
+			for _, value := range values {
+				metadata[header] = []byte(value)
+			}
+		}
+	}
+
 	return
+
 }

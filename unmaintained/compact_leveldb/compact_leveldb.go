@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
 )
@@ -25,6 +26,9 @@ func main() {
 	}
 
 	db, err := leveldb.OpenFile(*dir, opts)
+	if errors.IsCorrupted(err) {
+		db, err = leveldb.RecoverFile(*dir, opts)
+	}
 	if err != nil {
 		log.Fatal(err)
 	}

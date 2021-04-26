@@ -1,11 +1,12 @@
 package needle
 
 import (
-	"crypto/md5"
 	"fmt"
+	"io"
+
+	"github.com/klauspost/crc32"
 
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/klauspost/crc32"
 )
 
 var table = crc32.MakeTable(crc32.Castagnoli)
@@ -30,12 +31,24 @@ func (n *Needle) Etag() string {
 	return fmt.Sprintf("%x", bits)
 }
 
-func (n *Needle) MD5() string {
+func NewCRCwriter(w io.Writer) *CRCwriter {
 
-	hash := md5.New()
-
-	hash.Write(n.Data)
-
-	return fmt.Sprintf("%x", hash.Sum(nil))
+	return &CRCwriter{
+		crc: CRC(0),
+		w:   w,
+	}
 
 }
+
+type CRCwriter struct {
+	crc CRC
+	w   io.Writer
+}
+
+func (c *CRCwriter) Write(p []byte) (n int, err error) {
+	n, err = c.w.Write(p) // with each write ...
+	c.crc = c.crc.Update(p)
+	return
+}
+
+func (c *CRCwriter) Sum() uint32 { return c.crc.Value() } // final hash

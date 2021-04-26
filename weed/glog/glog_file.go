@@ -20,8 +20,8 @@ package glog
 
 import (
 	"errors"
-	"flag"
 	"fmt"
+	flag "github.com/chrislusf/seaweedfs/weed/util/fla9"
 	"os"
 	"os/user"
 	"path/filepath"

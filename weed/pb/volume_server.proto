@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 package volume_server_pb;
+option go_package = "github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb";
 
 //////////////////////////////////////////////////
 
@@ -8,6 +9,7 @@ service VolumeServer {
     //Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
     rpc BatchDelete (BatchDeleteRequest) returns (BatchDeleteResponse) {
     }
+
     rpc VacuumVolumeCheck (VacuumVolumeCheckRequest) returns (VacuumVolumeCheckResponse) {
     }
     rpc VacuumVolumeCompact (VacuumVolumeCompactRequest) returns (VacuumVolumeCompactResponse) {
@@ -35,6 +37,12 @@ service VolumeServer {
     }
     rpc VolumeMarkReadonly (VolumeMarkReadonlyRequest) returns (VolumeMarkReadonlyResponse) {
     }
+    rpc VolumeMarkWritable (VolumeMarkWritableRequest) returns (VolumeMarkWritableResponse) {
+    }
+    rpc VolumeConfigure (VolumeConfigureRequest) returns (VolumeConfigureResponse) {
+    }
+    rpc VolumeStatus (VolumeStatusRequest) returns (VolumeStatusResponse) {
+    }
 
     // copy the .idx .dat files, and mount this volume
     rpc VolumeCopy (VolumeCopyRequest) returns (VolumeCopyResponse) {
@@ -42,6 +50,11 @@ service VolumeServer {
     rpc ReadVolumeFileStatus (ReadVolumeFileStatusRequest) returns (ReadVolumeFileStatusResponse) {
     }
     rpc CopyFile (CopyFileRequest) returns (stream CopyFileResponse) {
+    }
+
+    rpc ReadNeedleBlob (ReadNeedleBlobRequest) returns (ReadNeedleBlobResponse) {
+    }
+    rpc WriteNeedleBlob (WriteNeedleBlobRequest) returns (WriteNeedleBlobResponse) {
     }
 
     rpc VolumeTailSender (VolumeTailSenderRequest) returns (stream VolumeTailSenderResponse) {
@@ -75,16 +88,24 @@ service VolumeServer {
     rpc VolumeTierMoveDatFromRemote (VolumeTierMoveDatFromRemoteRequest) returns (stream VolumeTierMoveDatFromRemoteResponse) {
     }
 
-    // query
+    rpc VolumeServerStatus (VolumeServerStatusRequest) returns (VolumeServerStatusResponse) {
+    }
+    rpc VolumeServerLeave (VolumeServerLeaveRequest) returns (VolumeServerLeaveResponse) {
+    }
+
+    // <experimental> query
     rpc Query (QueryRequest) returns (stream QueriedStripe) {
     }
 
+    rpc VolumeNeedleStatus (VolumeNeedleStatusRequest) returns (VolumeNeedleStatusResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
 
 message BatchDeleteRequest {
     repeated string file_ids = 1;
+    bool skip_cookie_check = 2;
 }
 
 message BatchDeleteResponse {
@@ -119,6 +140,7 @@ message VacuumVolumeCommitRequest {
     uint32 volume_id = 1;
 }
 message VacuumVolumeCommitResponse {
+    bool is_read_only = 1;
 }
 
 message VacuumVolumeCleanupRequest {
@@ -140,6 +162,7 @@ message AllocateVolumeRequest {
     string replication = 4;
     string ttl = 5;
     uint32 memory_map_max_size_mb = 6;
+    string disk_type = 7;
 }
 message AllocateVolumeResponse {
 }
@@ -189,12 +212,34 @@ message VolumeMarkReadonlyRequest {
 message VolumeMarkReadonlyResponse {
 }
 
+message VolumeMarkWritableRequest {
+    uint32 volume_id = 1;
+}
+message VolumeMarkWritableResponse {
+}
+
+message VolumeConfigureRequest {
+    uint32 volume_id = 1;
+    string replication = 2;
+}
+message VolumeConfigureResponse {
+    string error = 1;
+}
+
+message VolumeStatusRequest {
+    uint32 volume_id = 1;
+}
+message VolumeStatusResponse {
+    bool is_read_only = 1;
+}
+
 message VolumeCopyRequest {
     uint32 volume_id = 1;
     string collection = 2;
     string replication = 3;
     string ttl = 4;
     string source_data_node = 5;
+    string disk_type = 6;
 }
 message VolumeCopyResponse {
     uint64 last_append_at_ns = 1;
@@ -211,6 +256,25 @@ message CopyFileRequest {
 }
 message CopyFileResponse {
     bytes file_content = 1;
+}
+
+message ReadNeedleBlobRequest {
+    uint32 volume_id = 1;
+    uint64 needle_id = 2;
+    int64 offset = 3; // actual offset
+    int32 size = 4;
+}
+message ReadNeedleBlobResponse {
+    bytes needle_blob = 1;
+}
+
+message WriteNeedleBlobRequest {
+    uint32 volume_id = 1;
+    uint64 needle_id = 2;
+    int32 size = 3;
+    bytes needle_blob = 4;
+}
+message WriteNeedleBlobResponse {
 }
 
 message VolumeTailSenderRequest {
@@ -323,6 +387,7 @@ message ReadVolumeFileStatusResponse {
     uint64 file_count = 6;
     uint32 compaction_revision = 7;
     string collection = 8;
+    string disk_type = 9;
 }
 
 message DiskStatus {
@@ -330,6 +395,9 @@ message DiskStatus {
     uint64 all = 2;
     uint64 used = 3;
     uint64 free = 4;
+    float percent_free = 5;
+    float percent_used = 6;
+    string disk_type = 7;
 }
 
 message MemStatus {
@@ -355,6 +423,7 @@ message RemoteFile {
 message VolumeInfo {
     repeated RemoteFile files = 1;
     uint32 version = 2;
+    string replication = 3;
 }
 
 message VolumeTierMoveDatToRemoteRequest {
@@ -376,6 +445,19 @@ message VolumeTierMoveDatFromRemoteRequest {
 message VolumeTierMoveDatFromRemoteResponse {
     int64 processed = 1;
     float processedPercentage = 2;
+}
+
+message VolumeServerStatusRequest {
+
+}
+message VolumeServerStatusResponse {
+    repeated DiskStatus disk_statuses = 1;
+    MemStatus memory_status = 2;
+}
+
+message VolumeServerLeaveRequest {
+}
+message VolumeServerLeaveResponse {
 }
 
 // select on volume servers
@@ -434,4 +516,17 @@ message QueryRequest {
 }
 message QueriedStripe {
     bytes records = 1;
+}
+
+message VolumeNeedleStatusRequest {
+    uint32 volume_id = 1;
+    uint64 needle_id = 2;
+}
+message VolumeNeedleStatusResponse {
+    uint64 needle_id = 1;
+    uint32 cookie = 2;
+    uint32 size = 3;
+    uint64 last_modified = 4;
+    uint32 crc = 5;
+    string ttl = 6;
 }

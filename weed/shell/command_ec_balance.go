@@ -1,9 +1,9 @@
 package shell
 
 import (
-	"context"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io"
 	"sort"
 
@@ -29,7 +29,7 @@ func (c *commandEcBalance) Help() string {
 
 	Algorithm:
 
-	For each type of volume server (different max volume count limit){
+	func EcBalance() {
 		for each collection:
 			balanceEcVolumes(collectionName)
 		for each rack:
@@ -99,6 +99,10 @@ func (c *commandEcBalance) Help() string {
 
 func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
+	}
+
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collection := balanceCommand.String("collection", "EACH_COLLECTION", "collection name, or \"EACH_COLLECTION\" for each collection")
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
@@ -107,10 +111,8 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return nil
 	}
 
-	ctx := context.Background()
-
 	// collect all ec nodes
-	allEcNodes, totalFreeEcSlots, err := collectEcNodes(ctx, commandEnv, *dc)
+	allEcNodes, totalFreeEcSlots, err := collectEcNodes(commandEnv, *dc)
 	if err != nil {
 		return err
 	}
@@ -138,7 +140,7 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 		}
 	}
 
-	if err := balanceEcRacks(ctx, commandEnv, racks, *applyBalancing); err != nil {
+	if err := balanceEcRacks(commandEnv, racks, *applyBalancing); err != nil {
 		return fmt.Errorf("balance ec racks: %v", err)
 	}
 
@@ -162,38 +164,36 @@ func collectRacks(allEcNodes []*EcNode) map[RackId]*EcRack {
 
 func balanceEcVolumes(commandEnv *CommandEnv, collection string, allEcNodes []*EcNode, racks map[RackId]*EcRack, applyBalancing bool) error {
 
-	ctx := context.Background()
-
 	fmt.Printf("balanceEcVolumes %s\n", collection)
 
-	if err := deleteDuplicatedEcShards(ctx, commandEnv, allEcNodes, collection, applyBalancing); err != nil {
+	if err := deleteDuplicatedEcShards(commandEnv, allEcNodes, collection, applyBalancing); err != nil {
 		return fmt.Errorf("delete duplicated collection %s ec shards: %v", collection, err)
 	}
 
-	if err := balanceEcShardsAcrossRacks(ctx, commandEnv, allEcNodes, racks, collection, applyBalancing); err != nil {
+	if err := balanceEcShardsAcrossRacks(commandEnv, allEcNodes, racks, collection, applyBalancing); err != nil {
 		return fmt.Errorf("balance across racks collection %s ec shards: %v", collection, err)
 	}
 
-	if err := balanceEcShardsWithinRacks(ctx, commandEnv, allEcNodes, racks, collection, applyBalancing); err != nil {
-		return fmt.Errorf("balance across racks collection %s ec shards: %v", collection, err)
+	if err := balanceEcShardsWithinRacks(commandEnv, allEcNodes, racks, collection, applyBalancing); err != nil {
+		return fmt.Errorf("balance within racks collection %s ec shards: %v", collection, err)
 	}
 
 	return nil
 }
 
-func deleteDuplicatedEcShards(ctx context.Context, commandEnv *CommandEnv, allEcNodes []*EcNode, collection string, applyBalancing bool) error {
+func deleteDuplicatedEcShards(commandEnv *CommandEnv, allEcNodes []*EcNode, collection string, applyBalancing bool) error {
 	// vid => []ecNode
 	vidLocations := collectVolumeIdToEcNodes(allEcNodes)
 	// deduplicate ec shards
 	for vid, locations := range vidLocations {
-		if err := doDeduplicateEcShards(ctx, commandEnv, collection, vid, locations, applyBalancing); err != nil {
+		if err := doDeduplicateEcShards(commandEnv, collection, vid, locations, applyBalancing); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func doDeduplicateEcShards(ctx context.Context, commandEnv *CommandEnv, collection string, vid needle.VolumeId, locations []*EcNode, applyBalancing bool) error {
+func doDeduplicateEcShards(commandEnv *CommandEnv, collection string, vid needle.VolumeId, locations []*EcNode, applyBalancing bool) error {
 
 	// check whether this volume has ecNodes that are over average
 	shardToLocations := make([][]*EcNode, erasure_coding.TotalShardsCount)
@@ -215,10 +215,10 @@ func doDeduplicateEcShards(ctx context.Context, commandEnv *CommandEnv, collecti
 
 		duplicatedShardIds := []uint32{uint32(shardId)}
 		for _, ecNode := range ecNodes[1:] {
-			if err := unmountEcShards(ctx, commandEnv.option.GrpcDialOption, vid, ecNode.info.Id, duplicatedShardIds); err != nil {
+			if err := unmountEcShards(commandEnv.option.GrpcDialOption, vid, ecNode.info.Id, duplicatedShardIds); err != nil {
 				return err
 			}
-			if err := sourceServerDeleteEcShards(ctx, commandEnv.option.GrpcDialOption, collection, vid, ecNode.info.Id, duplicatedShardIds); err != nil {
+			if err := sourceServerDeleteEcShards(commandEnv.option.GrpcDialOption, collection, vid, ecNode.info.Id, duplicatedShardIds); err != nil {
 				return err
 			}
 			ecNode.deleteEcVolumeShards(vid, duplicatedShardIds)
@@ -227,19 +227,19 @@ func doDeduplicateEcShards(ctx context.Context, commandEnv *CommandEnv, collecti
 	return nil
 }
 
-func balanceEcShardsAcrossRacks(ctx context.Context, commandEnv *CommandEnv, allEcNodes []*EcNode, racks map[RackId]*EcRack, collection string, applyBalancing bool) error {
+func balanceEcShardsAcrossRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, racks map[RackId]*EcRack, collection string, applyBalancing bool) error {
 	// collect vid => []ecNode, since previous steps can change the locations
 	vidLocations := collectVolumeIdToEcNodes(allEcNodes)
 	// spread the ec shards evenly
 	for vid, locations := range vidLocations {
-		if err := doBalanceEcShardsAcrossRacks(ctx, commandEnv, collection, vid, locations, racks, applyBalancing); err != nil {
+		if err := doBalanceEcShardsAcrossRacks(commandEnv, collection, vid, locations, racks, applyBalancing); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func doBalanceEcShardsAcrossRacks(ctx context.Context, commandEnv *CommandEnv, collection string, vid needle.VolumeId, locations []*EcNode, racks map[RackId]*EcRack, applyBalancing bool) error {
+func doBalanceEcShardsAcrossRacks(commandEnv *CommandEnv, collection string, vid needle.VolumeId, locations []*EcNode, racks map[RackId]*EcRack, applyBalancing bool) error {
 
 	// calculate average number of shards an ec rack should have for one volume
 	averageShardsPerEcRack := ceilDivide(erasure_coding.TotalShardsCount, len(racks))
@@ -274,7 +274,7 @@ func doBalanceEcShardsAcrossRacks(ctx context.Context, commandEnv *CommandEnv, c
 		for _, n := range racks[rackId].ecNodes {
 			possibleDestinationEcNodes = append(possibleDestinationEcNodes, n)
 		}
-		err := pickOneEcNodeAndMoveOneShard(ctx, commandEnv, averageShardsPerEcRack, ecNode, collection, vid, shardId, possibleDestinationEcNodes, applyBalancing)
+		err := pickOneEcNodeAndMoveOneShard(commandEnv, averageShardsPerEcRack, ecNode, collection, vid, shardId, possibleDestinationEcNodes, applyBalancing)
 		if err != nil {
 			return err
 		}
@@ -306,7 +306,7 @@ func pickOneRack(rackToEcNodes map[RackId]*EcRack, rackToShardCount map[string]i
 	return ""
 }
 
-func balanceEcShardsWithinRacks(ctx context.Context, commandEnv *CommandEnv, allEcNodes []*EcNode, racks map[RackId]*EcRack, collection string, applyBalancing bool) error {
+func balanceEcShardsWithinRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, racks map[RackId]*EcRack, collection string, applyBalancing bool) error {
 	// collect vid => []ecNode, since previous steps can change the locations
 	vidLocations := collectVolumeIdToEcNodes(allEcNodes)
 
@@ -326,11 +326,13 @@ func balanceEcShardsWithinRacks(ctx context.Context, commandEnv *CommandEnv, all
 
 			var possibleDestinationEcNodes []*EcNode
 			for _, n := range racks[RackId(rackId)].ecNodes {
-				possibleDestinationEcNodes = append(possibleDestinationEcNodes, n)
+				if _, found := n.info.DiskInfos[string(types.HardDriveType)]; found {
+					possibleDestinationEcNodes = append(possibleDestinationEcNodes, n)
+				}
 			}
 			sourceEcNodes := rackEcNodesWithVid[rackId]
 			averageShardsPerEcNode := ceilDivide(rackToShardCount[rackId], len(possibleDestinationEcNodes))
-			if err := doBalanceEcShardsWithinOneRack(ctx, commandEnv, averageShardsPerEcNode, collection, vid, sourceEcNodes, possibleDestinationEcNodes, applyBalancing); err != nil {
+			if err := doBalanceEcShardsWithinOneRack(commandEnv, averageShardsPerEcNode, collection, vid, sourceEcNodes, possibleDestinationEcNodes, applyBalancing); err != nil {
 				return err
 			}
 		}
@@ -338,7 +340,7 @@ func balanceEcShardsWithinRacks(ctx context.Context, commandEnv *CommandEnv, all
 	return nil
 }
 
-func doBalanceEcShardsWithinOneRack(ctx context.Context, commandEnv *CommandEnv, averageShardsPerEcNode int, collection string, vid needle.VolumeId, existingLocations, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
+func doBalanceEcShardsWithinOneRack(commandEnv *CommandEnv, averageShardsPerEcNode int, collection string, vid needle.VolumeId, existingLocations, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
 
 	for _, ecNode := range existingLocations {
 
@@ -353,7 +355,7 @@ func doBalanceEcShardsWithinOneRack(ctx context.Context, commandEnv *CommandEnv,
 
 			fmt.Printf("%s has %d overlimit, moving ec shard %d.%d\n", ecNode.info.Id, overLimitCount, vid, shardId)
 
-			err := pickOneEcNodeAndMoveOneShard(ctx, commandEnv, averageShardsPerEcNode, ecNode, collection, vid, shardId, possibleDestinationEcNodes, applyBalancing)
+			err := pickOneEcNodeAndMoveOneShard(commandEnv, averageShardsPerEcNode, ecNode, collection, vid, shardId, possibleDestinationEcNodes, applyBalancing)
 			if err != nil {
 				return err
 			}
@@ -365,18 +367,18 @@ func doBalanceEcShardsWithinOneRack(ctx context.Context, commandEnv *CommandEnv,
 	return nil
 }
 
-func balanceEcRacks(ctx context.Context, commandEnv *CommandEnv, racks map[RackId]*EcRack, applyBalancing bool) error {
+func balanceEcRacks(commandEnv *CommandEnv, racks map[RackId]*EcRack, applyBalancing bool) error {
 
 	// balance one rack for all ec shards
 	for _, ecRack := range racks {
-		if err := doBalanceEcRack(ctx, commandEnv, ecRack, applyBalancing); err != nil {
+		if err := doBalanceEcRack(commandEnv, ecRack, applyBalancing); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func doBalanceEcRack(ctx context.Context, commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool) error {
+func doBalanceEcRack(commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool) error {
 
 	if len(ecRack.ecNodes) <= 1 {
 		return nil
@@ -387,11 +389,15 @@ func doBalanceEcRack(ctx context.Context, commandEnv *CommandEnv, ecRack *EcRack
 		rackEcNodes = append(rackEcNodes, node)
 	}
 
-	ecNodeIdToShardCount := groupByCount(rackEcNodes, func(node *EcNode) (id string, count int) {
-		for _, ecShardInfo := range node.info.EcShardInfos {
+	ecNodeIdToShardCount := groupByCount(rackEcNodes, func(ecNode *EcNode) (id string, count int) {
+		diskInfo, found := ecNode.info.DiskInfos[string(types.HardDriveType)]
+		if !found {
+			return
+		}
+		for _, ecShardInfo := range diskInfo.EcShardInfos {
 			count += erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIdCount()
 		}
-		return node.info.Id, count
+		return ecNode.info.Id, count
 	})
 
 	var totalShardCount int
@@ -412,26 +418,30 @@ func doBalanceEcRack(ctx context.Context, commandEnv *CommandEnv, ecRack *EcRack
 		if fullNodeShardCount > averageShardCount && emptyNodeShardCount+1 <= averageShardCount {
 
 			emptyNodeIds := make(map[uint32]bool)
-			for _, shards := range emptyNode.info.EcShardInfos {
-				emptyNodeIds[shards.Id] = true
+			if emptyDiskInfo, found := emptyNode.info.DiskInfos[string(types.HardDriveType)]; found {
+				for _, shards := range emptyDiskInfo.EcShardInfos {
+					emptyNodeIds[shards.Id] = true
+				}
 			}
-			for _, shards := range fullNode.info.EcShardInfos {
-				if _, found := emptyNodeIds[shards.Id]; !found {
-					for _, shardId := range erasure_coding.ShardBits(shards.EcIndexBits).ShardIds() {
+			if fullDiskInfo, found := fullNode.info.DiskInfos[string(types.HardDriveType)]; found {
+				for _, shards := range fullDiskInfo.EcShardInfos {
+					if _, found := emptyNodeIds[shards.Id]; !found {
+						for _, shardId := range erasure_coding.ShardBits(shards.EcIndexBits).ShardIds() {
 
-						fmt.Printf("%s moves ec shards %d.%d to %s\n", fullNode.info.Id, shards.Id, shardId, emptyNode.info.Id)
+							fmt.Printf("%s moves ec shards %d.%d to %s\n", fullNode.info.Id, shards.Id, shardId, emptyNode.info.Id)
 
-						err := moveMountedShardToEcNode(ctx, commandEnv, fullNode, shards.Collection, needle.VolumeId(shards.Id), shardId, emptyNode, applyBalancing)
-						if err != nil {
-							return err
+							err := moveMountedShardToEcNode(commandEnv, fullNode, shards.Collection, needle.VolumeId(shards.Id), shardId, emptyNode, applyBalancing)
+							if err != nil {
+								return err
+							}
+
+							ecNodeIdToShardCount[emptyNode.info.Id]++
+							ecNodeIdToShardCount[fullNode.info.Id]--
+							hasMove = true
+							break
 						}
-
-						ecNodeIdToShardCount[emptyNode.info.Id]++
-						ecNodeIdToShardCount[fullNode.info.Id]--
-						hasMove = true
 						break
 					}
-					break
 				}
 			}
 		}
@@ -440,7 +450,7 @@ func doBalanceEcRack(ctx context.Context, commandEnv *CommandEnv, ecRack *EcRack
 	return nil
 }
 
-func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *CommandEnv, averageShardsPerEcNode int, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
+func pickOneEcNodeAndMoveOneShard(commandEnv *CommandEnv, averageShardsPerEcNode int, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
 
 	sortEcNodesByFreeslotsDecending(possibleDestinationEcNodes)
 
@@ -458,7 +468,7 @@ func pickOneEcNodeAndMoveOneShard(ctx context.Context, commandEnv *CommandEnv, a
 
 		fmt.Printf("%s moves ec shard %d.%d to %s\n", existingLocation.info.Id, vid, shardId, destEcNode.info.Id)
 
-		err := moveMountedShardToEcNode(ctx, commandEnv, existingLocation, collection, vid, shardId, destEcNode, applyBalancing)
+		err := moveMountedShardToEcNode(commandEnv, existingLocation, collection, vid, shardId, destEcNode, applyBalancing)
 		if err != nil {
 			return err
 		}
@@ -512,7 +522,11 @@ func pickNEcShardsToMoveFrom(ecNodes []*EcNode, vid needle.VolumeId, n int) map[
 func collectVolumeIdToEcNodes(allEcNodes []*EcNode) map[needle.VolumeId][]*EcNode {
 	vidLocations := make(map[needle.VolumeId][]*EcNode)
 	for _, ecNode := range allEcNodes {
-		for _, shardInfo := range ecNode.info.EcShardInfos {
+		diskInfo, found := ecNode.info.DiskInfos[string(types.HardDriveType)]
+		if !found {
+			continue
+		}
+		for _, shardInfo := range diskInfo.EcShardInfos {
 			vidLocations[needle.VolumeId(shardInfo.Id)] = append(vidLocations[needle.VolumeId(shardInfo.Id)], ecNode)
 		}
 	}

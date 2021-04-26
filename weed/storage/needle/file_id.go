@@ -66,7 +66,7 @@ func formatNeedleIdCookie(key NeedleId, cookie Cookie) string {
 	NeedleIdToBytes(bytes[0:NeedleIdSize], key)
 	CookieToBytes(bytes[NeedleIdSize:NeedleIdSize+CookieSize], cookie)
 	nonzero_index := 0
-	for ; bytes[nonzero_index] == 0; nonzero_index++ {
+	for ; bytes[nonzero_index] == 0 && nonzero_index < NeedleIdSize; nonzero_index++ {
 	}
 	return hex.EncodeToString(bytes[nonzero_index:])
 }

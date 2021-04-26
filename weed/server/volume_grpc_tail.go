@@ -72,7 +72,7 @@ func sendNeedlesSince(stream volume_server_pb.VolumeServer_VolumeTailSenderServe
 		stream: stream,
 	}
 
-	err = storage.ScanVolumeFileFrom(v.Version(), v.DataBackend, foundOffset.ToAcutalOffset(), scanner)
+	err = storage.ScanVolumeFileFrom(v.Version(), v.DataBackend, foundOffset.ToActualOffset(), scanner)
 
 	return scanner.lastProcessedTimestampNs, err
 
@@ -90,7 +90,7 @@ func (vs *VolumeServer) VolumeTailReceiver(ctx context.Context, req *volume_serv
 	defer glog.V(1).Infof("receive tailing volume %d finished", v.Id)
 
 	return resp, operation.TailVolumeFromSource(req.SourceVolumeServer, vs.grpcDialOption, v.Id, req.SinceNs, int(req.IdleTimeoutSeconds), func(n *needle.Needle) error {
-		_, _, err := vs.store.WriteVolumeNeedle(v.Id, n)
+		_, err := vs.store.WriteVolumeNeedle(v.Id, n, false)
 		return err
 	})
 

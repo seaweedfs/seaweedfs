@@ -4,8 +4,8 @@
 package main
 
 import (
-	"flag"
 	"fmt"
+	flag "github.com/chrislusf/seaweedfs/weed/util/fla9"
 	"io"
 	"math/rand"
 	"os"

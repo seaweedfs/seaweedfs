@@ -27,14 +27,14 @@ func (k *AwsSqsPub) GetName() string {
 	return "aws_sqs"
 }
 
-func (k *AwsSqsPub) Initialize(configuration util.Configuration) (err error) {
-	glog.V(0).Infof("filer.notification.aws_sqs.region: %v", configuration.GetString("region"))
-	glog.V(0).Infof("filer.notification.aws_sqs.sqs_queue_name: %v", configuration.GetString("sqs_queue_name"))
+func (k *AwsSqsPub) Initialize(configuration util.Configuration, prefix string) (err error) {
+	glog.V(0).Infof("filer.notification.aws_sqs.region: %v", configuration.GetString(prefix+"region"))
+	glog.V(0).Infof("filer.notification.aws_sqs.sqs_queue_name: %v", configuration.GetString(prefix+"sqs_queue_name"))
 	return k.initialize(
-		configuration.GetString("aws_access_key_id"),
-		configuration.GetString("aws_secret_access_key"),
-		configuration.GetString("region"),
-		configuration.GetString("sqs_queue_name"),
+		configuration.GetString(prefix+"aws_access_key_id"),
+		configuration.GetString(prefix+"aws_secret_access_key"),
+		configuration.GetString(prefix+"region"),
+		configuration.GetString(prefix+"sqs_queue_name"),
 	)
 }
 

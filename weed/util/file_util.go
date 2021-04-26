@@ -3,6 +3,9 @@ package util
 import (
 	"errors"
 	"os"
+	"os/user"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -49,6 +52,10 @@ func CheckFile(filename string) (exists, canRead, canWrite bool, modTime time.Ti
 		exists = false
 		return
 	}
+	if err != nil {
+		glog.Errorf("check %s: %v", filename, err)
+		return
+	}
 	if fi.Mode()&0400 != 0 {
 		canRead = true
 	}
@@ -58,4 +65,25 @@ func CheckFile(filename string) (exists, canRead, canWrite bool, modTime time.Ti
 	modTime = fi.ModTime()
 	fileSize = fi.Size()
 	return
+}
+
+func ResolvePath(path string) string {
+
+	if !strings.Contains(path, "~") {
+		return path
+	}
+
+	usr, _ := user.Current()
+	dir := usr.HomeDir
+
+	if path == "~" {
+		// In case of "~", which won't be caught by the "else if"
+		path = dir
+	} else if strings.HasPrefix(path, "~/") {
+		// Use strings.HasPrefix so we don't match paths like
+		// "/something/~/something/"
+		path = filepath.Join(dir, path[2:])
+	}
+
+	return path
 }

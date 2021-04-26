@@ -1,14 +1,18 @@
 package erasure_coding
 
+import (
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
+)
+
 type Interval struct {
 	BlockIndex          int
 	InnerBlockOffset    int64
-	Size                uint32
+	Size                types.Size
 	IsLargeBlock        bool
 	LargeBlockRowsCount int
 }
 
-func LocateData(largeBlockLength, smallBlockLength int64, datSize int64, offset int64, size uint32) (intervals []Interval) {
+func LocateData(largeBlockLength, smallBlockLength int64, datSize int64, offset int64, size types.Size) (intervals []Interval) {
 	blockIndex, isLargeBlock, innerBlockOffset := locateOffset(largeBlockLength, smallBlockLength, datSize, offset)
 
 	// adding DataShardsCount*smallBlockLength to ensure we can derive the number of large block size from a shard size
@@ -32,7 +36,7 @@ func LocateData(largeBlockLength, smallBlockLength int64, datSize int64, offset 
 			intervals = append(intervals, interval)
 			return
 		}
-		interval.Size = uint32(blockRemaining)
+		interval.Size = types.Size(blockRemaining)
 		intervals = append(intervals, interval)
 
 		size -= interval.Size

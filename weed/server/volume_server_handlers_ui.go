@@ -13,12 +13,15 @@ import (
 )
 
 func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
 	infos := make(map[string]interface{})
 	infos["Up Time"] = time.Now().Sub(startTime).String()
 	var ds []*volume_server_pb.DiskStatus
 	for _, loc := range vs.store.Locations {
 		if dir, e := filepath.Abs(loc.Directory); e == nil {
-			ds = append(ds, stats.NewDiskStatus(dir))
+			newDiskStatus := stats.NewDiskStatus(dir)
+			newDiskStatus.DiskType = loc.DiskType.String()
+			ds = append(ds, newDiskStatus)
 		}
 	}
 	volumeInfos := vs.store.VolumeInfos()
@@ -40,7 +43,7 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		Stats         interface{}
 		Counters      *stats.ServerStats
 	}{
-		util.VERSION,
+		util.Version(),
 		vs.SeedMasterNodes,
 		normalVolumeInfos,
 		vs.store.EcVolumes(),

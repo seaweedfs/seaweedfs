@@ -25,13 +25,13 @@ func (k *GooglePubSub) GetName() string {
 	return "google_pub_sub"
 }
 
-func (k *GooglePubSub) Initialize(configuration util.Configuration) (err error) {
-	glog.V(0).Infof("notification.google_pub_sub.project_id: %v", configuration.GetString("project_id"))
-	glog.V(0).Infof("notification.google_pub_sub.topic: %v", configuration.GetString("topic"))
+func (k *GooglePubSub) Initialize(configuration util.Configuration, prefix string) (err error) {
+	glog.V(0).Infof("notification.google_pub_sub.project_id: %v", configuration.GetString(prefix+"project_id"))
+	glog.V(0).Infof("notification.google_pub_sub.topic: %v", configuration.GetString(prefix+"topic"))
 	return k.initialize(
-		configuration.GetString("google_application_credentials"),
-		configuration.GetString("project_id"),
-		configuration.GetString("topic"),
+		configuration.GetString(prefix+"google_application_credentials"),
+		configuration.GetString(prefix+"project_id"),
+		configuration.GetString(prefix+"topic"),
 	)
 }
 

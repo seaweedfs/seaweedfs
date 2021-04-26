@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/replication/repl_util"
 	"net/url"
 	"strings"
 
 	"github.com/Azure/azure-storage-blob-go/azblob"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
@@ -17,10 +18,11 @@ import (
 )
 
 type AzureSink struct {
-	containerURL azblob.ContainerURL
-	container    string
-	dir          string
-	filerSource  *source.FilerSource
+	containerURL  azblob.ContainerURL
+	container     string
+	dir           string
+	filerSource   *source.FilerSource
+	isIncremental bool
 }
 
 func init() {
@@ -35,12 +37,17 @@ func (g *AzureSink) GetSinkToDirectory() string {
 	return g.dir
 }
 
-func (g *AzureSink) Initialize(configuration util.Configuration) error {
+func (g *AzureSink) IsIncremental() bool {
+	return g.isIncremental
+}
+
+func (g *AzureSink) Initialize(configuration util.Configuration, prefix string) error {
+	g.isIncremental = configuration.GetBool(prefix + "is_incremental")
 	return g.initialize(
-		configuration.GetString("account_name"),
-		configuration.GetString("account_key"),
-		configuration.GetString("container"),
-		configuration.GetString("directory"),
+		configuration.GetString(prefix+"account_name"),
+		configuration.GetString(prefix+"account_key"),
+		configuration.GetString(prefix+"container"),
+		configuration.GetString(prefix+"directory"),
 	)
 }
 
@@ -70,7 +77,7 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 	return nil
 }
 
-func (g *AzureSink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool) error {
+func (g *AzureSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -78,7 +85,7 @@ func (g *AzureSink) DeleteEntry(ctx context.Context, key string, isDirectory, de
 		key = key + "/"
 	}
 
-	if _, err := g.containerURL.NewBlobURL(key).Delete(ctx,
+	if _, err := g.containerURL.NewBlobURL(key).Delete(context.Background(),
 		azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{}); err != nil {
 		return fmt.Errorf("azure delete %s/%s: %v", g.container, key, err)
 	}
@@ -87,7 +94,7 @@ func (g *AzureSink) DeleteEntry(ctx context.Context, key string, isDirectory, de
 
 }
 
-func (g *AzureSink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry) error {
+func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -95,44 +102,32 @@ func (g *AzureSink) CreateEntry(ctx context.Context, key string, entry *filer_pb
 		return nil
 	}
 
-	totalSize := filer2.TotalSize(entry.Chunks)
-	chunkViews := filer2.ViewFromChunks(entry.Chunks, 0, int(totalSize))
+	totalSize := filer.FileSize(entry)
+	chunkViews := filer.ViewFromChunks(g.filerSource.LookupFileId, entry.Chunks, 0, int64(totalSize))
 
 	// Create a URL that references a to-be-created blob in your
 	// Azure Storage account's container.
 	appendBlobURL := g.containerURL.NewAppendBlobURL(key)
 
-	_, err := appendBlobURL.Create(ctx, azblob.BlobHTTPHeaders{}, azblob.Metadata{}, azblob.BlobAccessConditions{})
+	_, err := appendBlobURL.Create(context.Background(), azblob.BlobHTTPHeaders{}, azblob.Metadata{}, azblob.BlobAccessConditions{})
 	if err != nil {
 		return err
 	}
 
-	for _, chunk := range chunkViews {
+	writeFunc := func(data []byte) error {
+		_, writeErr := appendBlobURL.AppendBlock(context.Background(), bytes.NewReader(data), azblob.AppendBlobAccessConditions{}, nil)
+		return writeErr
+	}
 
-		fileUrl, err := g.filerSource.LookupFileId(ctx, chunk.FileId)
-		if err != nil {
-			return err
-		}
-
-		var writeErr error
-		_, readErr := util.ReadUrlAsStream(fileUrl, chunk.Offset, int(chunk.Size), func(data []byte) {
-			_, writeErr = appendBlobURL.AppendBlock(ctx, bytes.NewReader(data), azblob.AppendBlobAccessConditions{}, nil)
-		})
-
-		if readErr != nil {
-			return readErr
-		}
-		if writeErr != nil {
-			return writeErr
-		}
-
+	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc); err != nil {
+		return err
 	}
 
 	return nil
 
 }
 
-func (g *AzureSink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (g *AzureSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 	key = cleanKey(key)
 	// TODO improve efficiency
 	return false, nil

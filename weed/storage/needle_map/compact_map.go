@@ -18,7 +18,7 @@ const SectionalNeedleIdLimit = 1<<32 - 1
 type SectionalNeedleValue struct {
 	Key         SectionalNeedleId
 	OffsetLower OffsetLower `comment:"Volume offset"` //since aligned to 8 bytes, range is 4G*8=32G
-	Size        uint32      `comment:"Size of the data portion"`
+	Size        Size        `comment:"Size of the data portion"`
 }
 
 type SectionalNeedleValueExtra struct {
@@ -50,7 +50,7 @@ func NewCompactSection(start NeedleId) *CompactSection {
 }
 
 //return old entry size
-func (cs *CompactSection) Set(key NeedleId, offset Offset, size uint32) (oldOffset Offset, oldSize uint32) {
+func (cs *CompactSection) Set(key NeedleId, offset Offset, size Size) (oldOffset Offset, oldSize Size) {
 	cs.Lock()
 	if key > cs.end {
 		cs.end = key
@@ -80,7 +80,7 @@ func (cs *CompactSection) Set(key NeedleId, offset Offset, size uint32) (oldOffs
 	return
 }
 
-func (cs *CompactSection) setOverflowEntry(skey SectionalNeedleId, offset Offset, size uint32) {
+func (cs *CompactSection) setOverflowEntry(skey SectionalNeedleId, offset Offset, size Size) {
 	needleValue := SectionalNeedleValue{Key: skey, OffsetLower: offset.OffsetLower, Size: size}
 	needleValueExtra := SectionalNeedleValueExtra{OffsetHigher: offset.OffsetHigher}
 	insertCandidate := sort.Search(len(cs.overflow), func(i int) bool {
@@ -115,24 +115,21 @@ func (cs *CompactSection) deleteOverflowEntry(key SectionalNeedleId) {
 		return cs.overflow[i].Key >= key
 	})
 	if deleteCandidate != length && cs.overflow[deleteCandidate].Key == key {
-		for i := deleteCandidate; i < length-1; i++ {
-			cs.overflow[i] = cs.overflow[i+1]
-			cs.overflowExtra[i] = cs.overflowExtra[i+1]
+		if cs.overflow[deleteCandidate].Size.IsValid() {
+			cs.overflow[deleteCandidate].Size = -cs.overflow[deleteCandidate].Size
 		}
-		cs.overflow = cs.overflow[0 : length-1]
-		cs.overflowExtra = cs.overflowExtra[0 : length-1]
 	}
 }
 
 //return old entry size
-func (cs *CompactSection) Delete(key NeedleId) uint32 {
+func (cs *CompactSection) Delete(key NeedleId) Size {
 	skey := SectionalNeedleId(key - cs.start)
 	cs.Lock()
-	ret := uint32(0)
+	ret := Size(0)
 	if i := cs.binarySearchValues(skey); i >= 0 {
-		if cs.values[i].Size > 0 && cs.values[i].Size != TombstoneFileSize {
+		if cs.values[i].Size > 0 && cs.values[i].Size.IsValid() {
 			ret = cs.values[i].Size
-			cs.values[i].Size = TombstoneFileSize
+			cs.values[i].Size = -cs.values[i].Size
 		}
 	}
 	if _, v, found := cs.findOverflowEntry(skey); found {
@@ -181,7 +178,7 @@ func NewCompactMap() *CompactMap {
 	return &CompactMap{}
 }
 
-func (cm *CompactMap) Set(key NeedleId, offset Offset, size uint32) (oldOffset Offset, oldSize uint32) {
+func (cm *CompactMap) Set(key NeedleId, offset Offset, size Size) (oldOffset Offset, oldSize Size) {
 	x := cm.binarySearchCompactSection(key)
 	if x < 0 || (key-cm.list[x].start) > SectionalNeedleIdLimit {
 		// println(x, "adding to existing", len(cm.list), "sections, starting", key)
@@ -204,10 +201,10 @@ func (cm *CompactMap) Set(key NeedleId, offset Offset, size uint32) (oldOffset O
 	// println(key, "set to section[", x, "].start", cm.list[x].start)
 	return cm.list[x].Set(key, offset, size)
 }
-func (cm *CompactMap) Delete(key NeedleId) uint32 {
+func (cm *CompactMap) Delete(key NeedleId) Size {
 	x := cm.binarySearchCompactSection(key)
 	if x < 0 {
-		return uint32(0)
+		return Size(0)
 	}
 	return cm.list[x].Delete(key)
 }

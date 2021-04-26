@@ -2,19 +2,21 @@ package wdclient
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 )
 
 type MasterClient struct {
-	ctx            context.Context
-	name           string
+	clientType     string
+	clientHost     string
+	grpcPort       uint32
 	currentMaster  string
 	masters        []string
 	grpcDialOption grpc.DialOption
@@ -22,13 +24,14 @@ type MasterClient struct {
 	vidMap
 }
 
-func NewMasterClient(ctx context.Context, grpcDialOption grpc.DialOption, clientName string, masters []string) *MasterClient {
+func NewMasterClient(grpcDialOption grpc.DialOption, clientType string, clientHost string, clientGrpcPort uint32, clientDataCenter string, masters []string) *MasterClient {
 	return &MasterClient{
-		ctx:            ctx,
-		name:           clientName,
+		clientType:     clientType,
+		clientHost:     clientHost,
+		grpcPort:       clientGrpcPort,
 		masters:        masters,
 		grpcDialOption: grpcDialOption,
-		vidMap:         newVidMap(),
+		vidMap:         newVidMap(clientDataCenter),
 	}
 }
 
@@ -43,11 +46,37 @@ func (mc *MasterClient) WaitUntilConnected() {
 }
 
 func (mc *MasterClient) KeepConnectedToMaster() {
-	glog.V(1).Infof("%s bootstraps with masters %v", mc.name, mc.masters)
+	glog.V(1).Infof("%s masterClient bootstraps with masters %v", mc.clientType, mc.masters)
 	for {
 		mc.tryAllMasters()
 		time.Sleep(time.Second)
 	}
+}
+
+func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress string) (leader string) {
+	for _, master := range mc.masters {
+		if master == myMasterAddress {
+			continue
+		}
+		if grpcErr := pb.WithMasterClient(master, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
+			defer cancel()
+			resp, err := client.GetMasterConfiguration(ctx, &master_pb.GetMasterConfigurationRequest{})
+			if err != nil {
+				return err
+			}
+			leader = resp.Leader
+			return nil
+		}); grpcErr != nil {
+			glog.V(0).Infof("connect to %s: %v", master, grpcErr)
+		}
+		if leader != "" {
+			glog.V(0).Infof("existing leader is %s", leader)
+			return
+		}
+	}
+	glog.V(0).Infof("No existing leader found!")
+	return
 }
 
 func (mc *MasterClient) tryAllMasters() {
@@ -60,32 +89,35 @@ func (mc *MasterClient) tryAllMasters() {
 		}
 
 		mc.currentMaster = ""
-		mc.vidMap = newVidMap()
+		mc.vidMap = newVidMap("")
 	}
 }
 
 func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader string) {
-	glog.V(1).Infof("%s Connecting to master %v", mc.name, master)
-	gprcErr := withMasterClient(context.Background(), master, mc.grpcDialOption, func(ctx context.Context, client master_pb.SeaweedClient) error {
+	glog.V(1).Infof("%s masterClient Connecting to master %v", mc.clientType, master)
+	gprcErr := pb.WithMasterClient(master, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
 		stream, err := client.KeepConnected(ctx)
 		if err != nil {
-			glog.V(0).Infof("%s failed to keep connected to %s: %v", mc.name, master, err)
+			glog.V(1).Infof("%s masterClient failed to keep connected to %s: %v", mc.clientType, master, err)
 			return err
 		}
 
-		if err = stream.Send(&master_pb.KeepConnectedRequest{Name: mc.name}); err != nil {
-			glog.V(0).Infof("%s failed to send to %s: %v", mc.name, master, err)
+		if err = stream.Send(&master_pb.KeepConnectedRequest{Name: mc.clientType, GrpcPort: mc.grpcPort}); err != nil {
+			glog.V(0).Infof("%s masterClient failed to send to %s: %v", mc.clientType, master, err)
 			return err
 		}
 
-		glog.V(1).Infof("%s Connected to %v", mc.name, master)
+		glog.V(1).Infof("%s masterClient Connected to %v", mc.clientType, master)
 		mc.currentMaster = master
 
 		for {
 			volumeLocation, err := stream.Recv()
 			if err != nil {
-				glog.V(0).Infof("%s failed to receive from %s: %v", mc.name, master, err)
+				glog.V(0).Infof("%s masterClient failed to receive from %s: %v", mc.clientType, master, err)
 				return err
 			}
 
@@ -98,42 +130,34 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 
 			// process new volume location
 			loc := Location{
-				Url:       volumeLocation.Url,
-				PublicUrl: volumeLocation.PublicUrl,
+				Url:        volumeLocation.Url,
+				PublicUrl:  volumeLocation.PublicUrl,
+				DataCenter: volumeLocation.DataCenter,
 			}
 			for _, newVid := range volumeLocation.NewVids {
-				glog.V(1).Infof("%s: %s adds volume %d", mc.name, loc.Url, newVid)
+				glog.V(1).Infof("%s: %s masterClient adds volume %d", mc.clientType, loc.Url, newVid)
 				mc.addLocation(newVid, loc)
 			}
 			for _, deletedVid := range volumeLocation.DeletedVids {
-				glog.V(1).Infof("%s: %s removes volume %d", mc.name, loc.Url, deletedVid)
+				glog.V(1).Infof("%s: %s masterClient removes volume %d", mc.clientType, loc.Url, deletedVid)
 				mc.deleteLocation(deletedVid, loc)
 			}
 		}
 
 	})
 	if gprcErr != nil {
-		glog.V(0).Infof("%s failed to connect with master %v: %v", mc.name, master, gprcErr)
+		glog.V(1).Infof("%s masterClient failed to connect with master %v: %v", mc.clientType, master, gprcErr)
 	}
 	return
 }
 
-func withMasterClient(ctx context.Context, master string, grpcDialOption grpc.DialOption, fn func(ctx context.Context, client master_pb.SeaweedClient) error) error {
-
-	masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(master)
-	if parseErr != nil {
-		return fmt.Errorf("failed to parse master grpc %v: %v", master, parseErr)
-	}
-
-	return util.WithCachedGrpcClient(ctx, func(grpcConnection *grpc.ClientConn) error {
-		client := master_pb.NewSeaweedClient(grpcConnection)
-		return fn(ctx, client)
-	}, masterGrpcAddress, grpcDialOption)
-
-}
-
-func (mc *MasterClient) WithClient(ctx context.Context, fn func(client master_pb.SeaweedClient) error) error {
-	return withMasterClient(ctx, mc.currentMaster, mc.grpcDialOption, func(ctx context.Context, client master_pb.SeaweedClient) error {
-		return fn(client)
+func (mc *MasterClient) WithClient(fn func(client master_pb.SeaweedClient) error) error {
+	return util.Retry("master grpc", func() error {
+		for mc.currentMaster == "" {
+			time.Sleep(3 * time.Second)
+		}
+		return pb.WithMasterClient(mc.currentMaster, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
+			return fn(client)
+		})
 	})
 }

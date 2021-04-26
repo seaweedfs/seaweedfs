@@ -45,7 +45,7 @@ func main() {
 			defer wg.Done()
 
 			client := &http.Client{Transport: &http.Transport{
-				MaxConnsPerHost:     1024,
+				MaxIdleConns:     1024,
 				MaxIdleConnsPerHost: 1024,
 			}}
 			r := rand.New(rand.NewSource(time.Now().UnixNano() + int64(x)))

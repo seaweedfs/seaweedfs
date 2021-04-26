@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package filer_pb;
 
+option go_package = "github.com/chrislusf/seaweedfs/weed/pb/filer_pb";
 option java_package = "seaweedfs.client";
 option java_outer_classname = "FilerProto";
 
@@ -21,6 +22,9 @@ service SeaweedFiler {
     rpc UpdateEntry (UpdateEntryRequest) returns (UpdateEntryResponse) {
     }
 
+    rpc AppendToEntry (AppendToEntryRequest) returns (AppendToEntryResponse) {
+    }
+
     rpc DeleteEntry (DeleteEntryRequest) returns (DeleteEntryResponse) {
     }
 
@@ -33,6 +37,9 @@ service SeaweedFiler {
     rpc LookupVolume (LookupVolumeRequest) returns (LookupVolumeResponse) {
     }
 
+    rpc CollectionList (CollectionListRequest) returns (CollectionListResponse) {
+    }
+
     rpc DeleteCollection (DeleteCollectionRequest) returns (DeleteCollectionResponse) {
     }
 
@@ -40,6 +47,24 @@ service SeaweedFiler {
     }
 
     rpc GetFilerConfiguration (GetFilerConfigurationRequest) returns (GetFilerConfigurationResponse) {
+    }
+
+    rpc SubscribeMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
+    }
+
+    rpc SubscribeLocalMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
+    }
+
+    rpc KeepConnected (stream KeepConnectedRequest) returns (stream KeepConnectedResponse) {
+    }
+
+    rpc LocateBroker (LocateBrokerRequest) returns (LocateBrokerResponse) {
+    }
+
+    rpc KvGet (KvGetRequest) returns (KvGetResponse) {
+    }
+
+    rpc KvPut (KvPutRequest) returns (KvPutResponse) {
     }
 
 }
@@ -73,6 +98,9 @@ message Entry {
     repeated FileChunk chunks = 3;
     FuseAttributes attributes = 4;
     map<string, bytes> extended = 5;
+    bytes hard_link_id = 7;
+    int32 hard_link_counter = 8; // only exists in hard link meta data
+    bytes content = 9; // if not empty, the file content
 }
 
 message FullEntry {
@@ -85,6 +113,8 @@ message EventNotification {
     Entry new_entry = 2;
     bool delete_chunks = 3;
     string new_parent_path = 4;
+    bool is_from_other_cluster = 5;
+    repeated int32 signatures = 6;
 }
 
 message FileChunk {
@@ -96,6 +126,13 @@ message FileChunk {
     string source_file_id = 6; // to be deprecated
     FileId fid = 7;
     FileId source_fid = 8;
+    bytes cipher_key = 9;
+    bool is_compressed = 10;
+    bool is_chunk_manifest = 11; // content is a list of FileChunks
+}
+
+message FileChunkManifest {
+    repeated FileChunk chunks = 1;
 }
 
 message FileId {
@@ -118,21 +155,37 @@ message FuseAttributes {
     string user_name = 11; // for hdfs
     repeated string group_name = 12; // for hdfs
     string symlink_target = 13;
+    bytes md5 = 14;
+    string disk_type = 15;
 }
 
 message CreateEntryRequest {
     string directory = 1;
     Entry entry = 2;
+    bool o_excl = 3;
+    bool is_from_other_cluster = 4;
+    repeated int32 signatures = 5;
 }
 
 message CreateEntryResponse {
+    string error = 1;
 }
 
 message UpdateEntryRequest {
     string directory = 1;
     Entry entry = 2;
+    bool is_from_other_cluster = 3;
+    repeated int32 signatures = 4;
 }
 message UpdateEntryResponse {
+}
+
+message AppendToEntryRequest {
+    string directory = 1;
+    string entry_name = 2;
+    repeated FileChunk chunks = 3;
+}
+message AppendToEntryResponse {
 }
 
 message DeleteEntryRequest {
@@ -142,9 +195,12 @@ message DeleteEntryRequest {
     bool is_delete_data = 4;
     bool is_recursive = 5;
     bool ignore_recursive_error = 6;
+    bool is_from_other_cluster = 7;
+    repeated int32 signatures = 8;
 }
 
 message DeleteEntryResponse {
+    string error = 1;
 }
 
 message AtomicRenameEntryRequest {
@@ -163,6 +219,9 @@ message AssignVolumeRequest {
     string replication = 3;
     int32 ttl_sec = 4;
     string data_center = 5;
+    string path = 6;
+    string rack = 7;
+    string disk_type = 8;
 }
 
 message AssignVolumeResponse {
@@ -171,6 +230,9 @@ message AssignVolumeResponse {
     string public_url = 3;
     int32 count = 4;
     string auth = 5;
+    string collection = 6;
+    string replication = 7;
+    string error = 8;
 }
 
 message LookupVolumeRequest {
@@ -189,6 +251,16 @@ message LookupVolumeResponse {
     map<string, Locations> locations_map = 1;
 }
 
+message Collection {
+    string name = 1;
+}
+message CollectionListRequest {
+    bool include_normal_volumes = 1;
+    bool include_ec_volumes = 2;
+}
+message CollectionListResponse {
+    repeated Collection collections = 1;
+}
 message DeleteCollectionRequest {
     string collection = 1;
 }
@@ -200,11 +272,9 @@ message StatisticsRequest {
     string replication = 1;
     string collection = 2;
     string ttl = 3;
+    string disk_type = 4;
 }
 message StatisticsResponse {
-    string replication = 1;
-    string collection = 2;
-    string ttl = 3;
     uint64 total_size = 4;
     uint64 used_size = 5;
     uint64 file_count = 6;
@@ -217,4 +287,80 @@ message GetFilerConfigurationResponse {
     string replication = 2;
     string collection = 3;
     uint32 max_mb = 4;
+    string dir_buckets = 5;
+    bool cipher = 7;
+    int32 signature = 8;
+    string metrics_address = 9;
+    int32 metrics_interval_sec = 10;
+}
+
+message SubscribeMetadataRequest {
+    string client_name = 1;
+    string path_prefix = 2;
+    int64 since_ns = 3;
+    int32 signature = 4;
+}
+message SubscribeMetadataResponse {
+    string directory = 1;
+    EventNotification event_notification = 2;
+    int64 ts_ns = 3;
+}
+
+message LogEntry {
+    int64 ts_ns = 1;
+    int32 partition_key_hash = 2;
+    bytes data = 3;
+}
+
+message KeepConnectedRequest {
+    string name = 1;
+    uint32 grpc_port = 2;
+    repeated string resources = 3;
+}
+message KeepConnectedResponse {
+}
+
+message LocateBrokerRequest {
+    string resource = 1;
+}
+message LocateBrokerResponse {
+    bool found = 1;
+    // if found, send the exact address
+    // if not found, send the full list of existing brokers
+    message Resource {
+        string grpc_addresses = 1;
+        int32 resource_count = 2;
+    }
+    repeated Resource resources = 2;
+}
+
+// Key-Value operations
+message KvGetRequest {
+    bytes key = 1;
+}
+message KvGetResponse {
+    bytes value = 1;
+    string error = 2;
+}
+message KvPutRequest {
+    bytes key = 1;
+    bytes value = 2;
+}
+message KvPutResponse {
+    string error = 1;
+}
+
+// path-based configurations
+message FilerConf {
+    int32 version = 1;
+    message PathConf {
+        string location_prefix = 1;
+        string collection = 2;
+        string replication = 3;
+        string ttl = 4;
+        string disk_type = 5;
+        bool fsync = 6;
+        uint32 volume_growth_count = 7;
+    }
+    repeated PathConf locations = 2;
 }

@@ -1,0 +1,18 @@
+{{- if .Values.volume.metricsPort }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ template "seaweedfs.name" . }}-volume
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "seaweedfs.name" . }}
+    component: volume
+spec:
+  endpoints:
+    - interval: 30s
+      port: swfs-volume-metrics
+      scrapeTimeout: 5s
+  selector:
+    app: {{ template "seaweedfs.name" . }}
+    component: volume
+{{- end }}

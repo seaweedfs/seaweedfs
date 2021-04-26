@@ -6,10 +6,11 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"io"
+
+	"github.com/disintegration/imaging"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/disintegration/imaging"
-	"io"
 )
 
 func Resized(ext string, read io.ReadSeeker, width, height int, mode string) (resized io.ReadSeeker, w int, h int) {
@@ -35,6 +36,7 @@ func Resized(ext string, read io.ReadSeeker, width, height int, mode string) (re
 				}
 			}
 		} else {
+			read.Seek(0, 0)
 			return read, bounds.Dx(), bounds.Dy()
 		}
 		var buf bytes.Buffer

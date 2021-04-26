@@ -1,0 +1,46 @@
+version: '2'
+
+services:
+  master:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9333:9333
+      - 19333:19333
+    command: "master -ip=master"
+  volume:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 7455:8080
+      - 9325:9325
+    command: 'volume -mserver="master:9333" -port=8080 -metricsPort=9325 -preStopSeconds=1 -publicUrl=localhost:7455'
+    depends_on:
+      - master
+  filer:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8888:8888
+      - 18888:18888
+      - 9326:9326
+    command: 'filer -master="master:9333"  -metricsPort=9326'
+    tty: true
+    stdin_open: true
+    depends_on:
+      - master
+      - volume
+  mount_1:
+    image: chrislusf/seaweedfs:local
+    privileged: true
+    entrypoint: '/bin/sh -c "mkdir -p t1 && mkdir -p cache/t1 && weed -v=4 mount -filer=filer:8888 -cacheDir=./cache/t1 -dir=./t1 -filer.path=/c1 -volumeServerAccess=filerProxy"'
+    depends_on:
+      - master
+      - volume
+      - filer
+  mount_2:
+    image: chrislusf/seaweedfs:local
+    privileged: true
+    entrypoint: '/bin/sh -c "mkdir -p t2 && mkdir -p cache/t2 && weed -v=4  mount -filer=filer:8888 -cacheDir=./cache/t2 -dir=./t2 -filer.path=/c1 -volumeServerAcess=publicUrl"'
+    depends_on:
+      - master
+      - volume
+      - filer
+      - mount_1

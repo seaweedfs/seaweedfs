@@ -1,0 +1,28 @@
+version: '2'
+
+services:
+  server1:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9333:9333
+      - 19333:19333
+      - 8084:8080
+      - 18084:18080
+      - 8888:8888
+      - 18888:18888
+    command: "server -ip=server1 -filer -volume.max=0 -master.volumeSizeLimitMB=1024 -volume.preStopSeconds=1"
+    volumes:
+      - ./master-cloud.toml:/etc/seaweedfs/master.toml
+    depends_on:
+      - server2
+  server2:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9334:9333
+      - 19334:19333
+      - 8085:8080
+      - 18085:18080
+      - 8889:8888
+      - 18889:18888
+      - 8334:8333
+    command: "server -ip=server2 -filer -s3 -volume.max=0 -master.volumeSizeLimitMB=1024 -volume.preStopSeconds=1"

@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	_ "github.com/chrislusf/seaweedfs/weed/storage/backend/s3_backend"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 func (v *Volume) GetVolumeInfo() *volume_server_pb.VolumeInfo {
@@ -14,12 +15,21 @@ func (v *Volume) GetVolumeInfo() *volume_server_pb.VolumeInfo {
 
 func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 
-	v.volumeInfo, found = pb.MaybeLoadVolumeInfo(v.FileName() + ".vif")
+	var err error
+	v.volumeInfo, v.hasRemoteFile, found, err = pb.MaybeLoadVolumeInfo(v.FileName(".vif"))
 
-	if found {
+	if v.volumeInfo.Version == 0 {
+		v.volumeInfo.Version = uint32(needle.CurrentVersion)
+	}
+
+	if v.hasRemoteFile {
 		glog.V(0).Infof("volume %d is tiered to %s as %s and read only", v.Id,
 			v.volumeInfo.Files[0].BackendName(), v.volumeInfo.Files[0].Key)
-		v.hasRemoteFile = true
+	}
+
+	if err != nil {
+		glog.Warningf("load volume %d.vif file: %v", v.Id, err)
+		return
 	}
 
 	return
@@ -44,7 +54,7 @@ func (v *Volume) LoadRemoteFile() error {
 
 func (v *Volume) SaveVolumeInfo() error {
 
-	tierFileName := v.FileName() + ".vif"
+	tierFileName := v.FileName(".vif")
 
 	return pb.SaveVolumeInfo(tierFileName, v.volumeInfo)
 

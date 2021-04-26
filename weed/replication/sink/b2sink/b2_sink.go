@@ -2,9 +2,10 @@ package B2Sink
 
 import (
 	"context"
+	"github.com/chrislusf/seaweedfs/weed/replication/repl_util"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
@@ -13,10 +14,11 @@ import (
 )
 
 type B2Sink struct {
-	client      *b2.Client
-	bucket      string
-	dir         string
-	filerSource *source.FilerSource
+	client        *b2.Client
+	bucket        string
+	dir           string
+	filerSource   *source.FilerSource
+	isIncremental bool
 }
 
 func init() {
@@ -31,12 +33,17 @@ func (g *B2Sink) GetSinkToDirectory() string {
 	return g.dir
 }
 
-func (g *B2Sink) Initialize(configuration util.Configuration) error {
+func (g *B2Sink) IsIncremental() bool {
+	return g.isIncremental
+}
+
+func (g *B2Sink) Initialize(configuration util.Configuration, prefix string) error {
+	g.isIncremental = configuration.GetBool(prefix + "is_incremental")
 	return g.initialize(
-		configuration.GetString("b2_account_id"),
-		configuration.GetString("b2_master_application_key"),
-		configuration.GetString("bucket"),
-		configuration.GetString("directory"),
+		configuration.GetString(prefix+"b2_account_id"),
+		configuration.GetString(prefix+"b2_master_application_key"),
+		configuration.GetString(prefix+"bucket"),
+		configuration.GetString(prefix+"directory"),
 	)
 }
 
@@ -45,8 +52,7 @@ func (g *B2Sink) SetSourceFiler(s *source.FilerSource) {
 }
 
 func (g *B2Sink) initialize(accountId, accountKey, bucket, dir string) error {
-	ctx := context.Background()
-	client, err := b2.NewClient(ctx, accountId, accountKey)
+	client, err := b2.NewClient(context.Background(), accountId, accountKey)
 	if err != nil {
 		return err
 	}
@@ -58,7 +64,7 @@ func (g *B2Sink) initialize(accountId, accountKey, bucket, dir string) error {
 	return nil
 }
 
-func (g *B2Sink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool) error {
+func (g *B2Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -66,18 +72,18 @@ func (g *B2Sink) DeleteEntry(ctx context.Context, key string, isDirectory, delet
 		key = key + "/"
 	}
 
-	bucket, err := g.client.Bucket(ctx, g.bucket)
+	bucket, err := g.client.Bucket(context.Background(), g.bucket)
 	if err != nil {
 		return err
 	}
 
 	targetObject := bucket.Object(key)
 
-	return targetObject.Delete(ctx)
+	return targetObject.Delete(context.Background())
 
 }
 
-func (g *B2Sink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry) error {
+func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -85,46 +91,33 @@ func (g *B2Sink) CreateEntry(ctx context.Context, key string, entry *filer_pb.En
 		return nil
 	}
 
-	totalSize := filer2.TotalSize(entry.Chunks)
-	chunkViews := filer2.ViewFromChunks(entry.Chunks, 0, int(totalSize))
+	totalSize := filer.FileSize(entry)
+	chunkViews := filer.ViewFromChunks(g.filerSource.LookupFileId, entry.Chunks, 0, int64(totalSize))
 
-	bucket, err := g.client.Bucket(ctx, g.bucket)
+	bucket, err := g.client.Bucket(context.Background(), g.bucket)
 	if err != nil {
 		return err
 	}
 
 	targetObject := bucket.Object(key)
-	writer := targetObject.NewWriter(ctx)
+	writer := targetObject.NewWriter(context.Background())
 
-	for _, chunk := range chunkViews {
-
-		fileUrl, err := g.filerSource.LookupFileId(ctx, chunk.FileId)
-		if err != nil {
-			return err
-		}
-
-		var writeErr error
-		_, readErr := util.ReadUrlAsStream(fileUrl, chunk.Offset, int(chunk.Size), func(data []byte) {
-			_, err := writer.Write(data)
-			if err != nil {
-				writeErr = err
-			}
-		})
-
-		if readErr != nil {
-			return readErr
-		}
-		if writeErr != nil {
-			return writeErr
-		}
-
+	writeFunc := func(data []byte) error {
+		_, writeErr := writer.Write(data)
+		return writeErr
 	}
 
-	return writer.Close()
+	defer writer.Close()
+
+	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc); err != nil {
+		return err
+	}
+
+	return nil
 
 }
 
-func (g *B2Sink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (g *B2Sink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 
 	key = cleanKey(key)
 

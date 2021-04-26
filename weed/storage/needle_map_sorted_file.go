@@ -16,18 +16,18 @@ type SortedFileNeedleMap struct {
 	dbFileSize   int64
 }
 
-func NewSortedFileNeedleMap(baseFileName string, indexFile *os.File) (m *SortedFileNeedleMap, err error) {
-	m = &SortedFileNeedleMap{baseFileName: baseFileName}
+func NewSortedFileNeedleMap(indexBaseFileName string, indexFile *os.File) (m *SortedFileNeedleMap, err error) {
+	m = &SortedFileNeedleMap{baseFileName: indexBaseFileName}
 	m.indexFile = indexFile
-	fileName := baseFileName + ".sdx"
+	fileName := indexBaseFileName + ".sdx"
 	if !isSortedFileFresh(fileName, indexFile) {
 		glog.V(0).Infof("Start to Generate %s from %s", fileName, indexFile.Name())
-		erasure_coding.WriteSortedFileFromIdx(baseFileName, ".sdx")
+		erasure_coding.WriteSortedFileFromIdx(indexBaseFileName, ".sdx")
 		glog.V(0).Infof("Finished Generating %s from %s", fileName, indexFile.Name())
 	}
 	glog.V(1).Infof("Opening %s...", fileName)
 
-	if m.dbFile, err = os.Open(baseFileName + ".sdx"); err != nil {
+	if m.dbFile, err = os.Open(indexBaseFileName + ".sdx"); err != nil {
 		return
 	}
 	dbStat, _ := m.dbFile.Stat()
@@ -65,7 +65,7 @@ func (m *SortedFileNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue
 
 }
 
-func (m *SortedFileNeedleMap) Put(key NeedleId, offset Offset, size uint32) error {
+func (m *SortedFileNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 	return os.ErrInvalid
 }
 
@@ -80,7 +80,7 @@ func (m *SortedFileNeedleMap) Delete(key NeedleId, offset Offset) error {
 		return err
 	}
 
-	if size == TombstoneFileSize {
+	if size.IsDeleted() {
 		return nil
 	}
 
@@ -94,8 +94,12 @@ func (m *SortedFileNeedleMap) Delete(key NeedleId, offset Offset) error {
 }
 
 func (m *SortedFileNeedleMap) Close() {
-	m.indexFile.Close()
-	m.dbFile.Close()
+	if m.indexFile != nil {
+		m.indexFile.Close()
+	}
+	if m.dbFile != nil {
+		m.dbFile.Close()
+	}
 }
 
 func (m *SortedFileNeedleMap) Destroy() error {

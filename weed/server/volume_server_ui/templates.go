@@ -1,10 +1,16 @@
-package master_ui
+package volume_server_ui
 
 import (
+	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"html/template"
 	"strconv"
 	"strings"
 )
+
+func percentFrom(total uint64, part_of uint64) string {
+	return fmt.Sprintf("%.2f", (float64(part_of)/float64(total))*100)
+}
 
 func join(data []int64) string {
 	var ret []string
@@ -15,7 +21,9 @@ func join(data []int64) string {
 }
 
 var funcMap = template.FuncMap{
-	"join": join,
+	"join":                 join,
+	"bytesToHumanReadable": util.BytesToHumanReadable,
+	"percentFrom":          percentFrom,
 }
 
 var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOCTYPE html>
@@ -57,13 +65,27 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
       <div class="row">
         <div class="col-sm-6">          
     	  <h2>Disk Stats</h2>
-          <table class="table table-condensed table-striped">
+          <table class="table table-striped">
+            <thead>
+              <tr>
+              <th>Path</th>
+              <th>Disk</th>
+              <th>Total</th>
+              <th>Free</th>
+              <th>Usage</th>
+              </tr>
+            </thead>
+          <tbody>          
           {{ range .DiskStatuses }}
             <tr>
-              <th>{{ .Dir }}</th>
-              <td>{{ .Free }} Bytes Free</td>
+              <td>{{ .Dir }}</td>
+              <td>{{ .DiskType }}</td>
+              <td>{{ bytesToHumanReadable .All }}</td>
+              <td>{{ bytesToHumanReadable .Free  }}</td>
+              <td>{{ percentFrom .All .Used}}%</td>
             </tr>
           {{ end }}
+          </tbody>
           </table>
         </div>
 
@@ -107,6 +129,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
             <tr>
               <th>Id</th>
               <th>Collection</th>
+              <th>Disk</th>
               <th>Data Size</th>
               <th>Files</th>
               <th>Trash</th>
@@ -119,9 +142,10 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
             <tr>
               <td><code>{{ .Id }}</code></td>
               <td>{{ .Collection }}</td>
-              <td>{{ .Size }} Bytes</td>
+              <td>{{ .DiskType }}</td>
+              <td>{{ bytesToHumanReadable .Size }}</td>
               <td>{{ .FileCount }}</td>
-              <td>{{ .DeleteCount }} / {{.DeletedByteCount}} Bytes</td>
+              <td>{{ .DeleteCount }} / {{bytesToHumanReadable .DeletedByteCount}}</td>
               <td>{{ .Ttl }}</td>
               <td>{{ .ReadOnly }}</td>
             </tr>
@@ -149,9 +173,9 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
             <tr>
               <td><code>{{ .Id }}</code></td>
               <td>{{ .Collection }}</td>
-              <td>{{ .Size }} Bytes</td>
+              <td>{{ bytesToHumanReadable .Size }}</td>
               <td>{{ .FileCount }}</td>
-              <td>{{ .DeleteCount }} / {{.DeletedByteCount}} Bytes</td>
+              <td>{{ .DeleteCount }} / {{bytesToHumanReadable .DeletedByteCount}}</td>
               <td>{{ .RemoteStorageName }}</td>
               <td>{{ .RemoteStorageKey }}</td>
             </tr>
@@ -177,7 +201,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
             <tr>
               <td><code>{{ .VolumeId }}</code></td>
               <td>{{ .Collection }}</td>
-              <td>{{ .ShardSize }} Bytes</td>
+              <td>{{ bytesToHumanReadable .ShardSize }}</td>
               <td>{{ .ShardIdList }}</td>
               <td>{{ .CreatedAt.Format "02 Jan 06 15:04 -0700" }}</td>
             </tr>

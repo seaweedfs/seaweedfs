@@ -33,10 +33,10 @@ var (
 	vc VidCache // caching of volume locations, re-check if after 10 minutes
 )
 
-func Lookup(server string, vid string) (ret *LookupResult, err error) {
+func Lookup(masterFn GetMasterFn, vid string) (ret *LookupResult, err error) {
 	locations, cache_err := vc.Get(vid)
 	if cache_err != nil {
-		if ret, err = do_lookup(server, vid); err == nil {
+		if ret, err = do_lookup(masterFn, vid); err == nil {
 			vc.Set(vid, ret.Locations, 10*time.Minute)
 		}
 	} else {
@@ -45,9 +45,10 @@ func Lookup(server string, vid string) (ret *LookupResult, err error) {
 	return
 }
 
-func do_lookup(server string, vid string) (*LookupResult, error) {
+func do_lookup(masterFn GetMasterFn, vid string) (*LookupResult, error) {
 	values := make(url.Values)
 	values.Add("volumeId", vid)
+	server := masterFn()
 	jsonBlob, err := util.Post("http://"+server+"/dir/lookup", values)
 	if err != nil {
 		return nil, err
@@ -63,12 +64,12 @@ func do_lookup(server string, vid string) (*LookupResult, error) {
 	return &ret, nil
 }
 
-func LookupFileId(server string, fileId string) (fullUrl string, err error) {
+func LookupFileId(masterFn GetMasterFn, fileId string) (fullUrl string, err error) {
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
 		return "", errors.New("Invalid fileId " + fileId)
 	}
-	lookup, lookupError := Lookup(server, parts[0])
+	lookup, lookupError := Lookup(masterFn, parts[0])
 	if lookupError != nil {
 		return "", lookupError
 	}
@@ -79,7 +80,7 @@ func LookupFileId(server string, fileId string) (fullUrl string, err error) {
 }
 
 // LookupVolumeIds find volume locations by cache and actual lookup
-func LookupVolumeIds(server string, grpcDialOption grpc.DialOption, vids []string) (map[string]LookupResult, error) {
+func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids []string) (map[string]LookupResult, error) {
 	ret := make(map[string]LookupResult)
 	var unknown_vids []string
 
@@ -99,7 +100,7 @@ func LookupVolumeIds(server string, grpcDialOption grpc.DialOption, vids []strin
 
 	//only query unknown_vids
 
-	err := WithMasterServerClient(server, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+	err := WithMasterServerClient(masterFn(), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
 		req := &master_pb.LookupVolumeRequest{
 			VolumeIds: unknown_vids,

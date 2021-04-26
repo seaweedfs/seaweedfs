@@ -1,13 +1,9 @@
 package shell
 
 import (
-	"context"
 	"fmt"
 	"io"
 
-	"github.com/spf13/viper"
-
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -36,20 +32,18 @@ func (c *commandFsMetaNotify) Help() string {
 
 func (c *commandFsMetaNotify) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	filerServer, filerPort, path, err := commandEnv.parseUrl(findInputDirectory(args))
+	path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {
 		return err
 	}
 
 	util.LoadConfiguration("notification", true)
-	v := viper.GetViper()
-	notification.LoadConfiguration(v.Sub("notification"))
-
-	ctx := context.Background()
+	v := util.GetViper()
+	notification.LoadConfiguration(v, "notification.")
 
 	var dirCount, fileCount uint64
 
-	err = doTraverseBFS(ctx, writer, commandEnv.getFilerClient(filerServer, filerPort), filer2.FullPath(path), func(parentPath filer2.FullPath, entry *filer_pb.Entry) {
+	err = filer_pb.TraverseBfs(commandEnv, util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) {
 
 		if entry.IsDirectory {
 			dirCount++

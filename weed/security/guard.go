@@ -62,7 +62,7 @@ func NewGuard(whiteList []string, signingKey string, expiresAfterSec int, readSi
 	return g
 }
 
-func (g *Guard) WhiteList(f func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
+func (g *Guard) WhiteList(f http.HandlerFunc) http.HandlerFunc {
 	if !g.isWriteActive {
 		//if no security needed, just skip all checking
 		return f

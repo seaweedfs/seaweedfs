@@ -1,0 +1,33 @@
+{{- if .Values.global.enableSecurity }}
+apiVersion: certmanager.k8s.io/v1alpha1
+kind: Certificate
+metadata:
+  name: {{ template "seaweedfs.name" . }}-client-cert
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: {{ template "seaweedfs.name" . }}-client-cert
+  issuerRef:
+    name: {{ template "seaweedfs.name" . }}-clusterissuer
+    kind: ClusterIssuer
+  commonName: {{ .Values.certificates.commonName }}
+  organization:
+    - "SeaweedFS CA"
+  dnsNames:
+    - '*.{{ .Release.Namespace }}'
+    - '*.{{ .Release.Namespace }}.svc'
+    - '*.{{ .Release.Namespace }}.svc.cluster.local'
+    - '*.{{ template "seaweedfs.name" . }}-master'
+    - '*.{{ template "seaweedfs.name" . }}-master.{{ .Release.Namespace }}'
+    - '*.{{ template "seaweedfs.name" . }}-master.{{ .Release.Namespace }}.svc'
+    - '*.{{ template "seaweedfs.name" . }}-master.{{ .Release.Namespace }}.svc.cluster.local'
+{{- if .Values.certificates.ipAddresses }}
+  ipAddresses:
+    {{- range .Values.certificates.ipAddresses }}
+    - {{ . }}
+    {{- end }}
+{{- end }}
+  keyAlgorithm: {{ .Values.certificates.keyAlgorithm }}
+  keySize: {{ .Values.certificates.keySize }}
+  duration: {{ .Values.certificates.duration }}
+  renewBefore: {{ .Values.certificates.renewBefore }}
+{{- end }}

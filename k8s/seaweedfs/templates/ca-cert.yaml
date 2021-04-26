@@ -1,0 +1,14 @@
+{{- if .Values.global.enableSecurity }}
+apiVersion: certmanager.k8s.io/v1alpha1
+kind: Certificate
+metadata:
+  name: {{ template "seaweedfs.name" . }}-ca-cert
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: {{ template "seaweedfs.name" . }}-ca-cert
+  commonName: "{{ template "seaweedfs.name" . }}-root-ca"
+  isCA: true
+  issuerRef:
+    name: {{ template "seaweedfs.name" . }}-clusterissuer
+    kind: ClusterIssuer
+{{- end }}

@@ -9,6 +9,8 @@ import (
 const (
 	signV4Algorithm = "AWS4-HMAC-SHA256"
 	signV2Algorithm = "AWS"
+	iso8601Format   = "20060102T150405Z"
+	yyyymmdd        = "20060102"
 )
 
 // Verify if request has JWT.
@@ -23,8 +25,8 @@ func isRequestSignatureV4(r *http.Request) bool {
 
 // Verify if request has AWS Signature Version '2'.
 func isRequestSignatureV2(r *http.Request) bool {
-	return (!strings.HasPrefix(r.Header.Get("Authorization"), signV4Algorithm) &&
-		strings.HasPrefix(r.Header.Get("Authorization"), signV2Algorithm))
+	return !strings.HasPrefix(r.Header.Get("Authorization"), signV4Algorithm) &&
+		strings.HasPrefix(r.Header.Get("Authorization"), signV2Algorithm)
 }
 
 // Verify if request has AWS PreSign Version '4'.

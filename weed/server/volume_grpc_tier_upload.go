@@ -93,7 +93,7 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 	}
 
 	if !req.KeepLocalDatFile {
-		os.Remove(v.FileName() + ".dat")
+		os.Remove(v.FileName(".dat"))
 	}
 
 	return nil

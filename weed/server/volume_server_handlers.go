@@ -2,7 +2,11 @@ package weed_server
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
+	"sync/atomic"
+
+	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -25,6 +29,11 @@ security settings:
 */
 
 func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
+	if r.Header.Get("Origin") != "" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+	}
 	switch r.Method {
 	case "GET", "HEAD":
 		stats.ReadRequest()
@@ -33,12 +42,49 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		stats.DeleteRequest()
 		vs.guard.WhiteList(vs.DeleteHandler)(w, r)
 	case "PUT", "POST":
+
+		// wait until in flight data is less than the limit
+		contentLength := getContentLength(r)
+		vs.inFlightDataLimitCond.L.Lock()
+		for atomic.LoadInt64(&vs.inFlightDataSize) > vs.concurrentUploadLimit {
+			vs.inFlightDataLimitCond.Wait()
+		}
+		atomic.AddInt64(&vs.inFlightDataSize, contentLength)
+		vs.inFlightDataLimitCond.L.Unlock()
+		defer func() {
+			atomic.AddInt64(&vs.inFlightDataSize, -contentLength)
+			vs.inFlightDataLimitCond.Signal()
+		}()
+
+		// processs uploads
 		stats.WriteRequest()
 		vs.guard.WhiteList(vs.PostHandler)(w, r)
+
+	case "OPTIONS":
+		stats.ReadRequest()
+		w.Header().Add("Access-Control-Allow-Methods", "PUT, POST, GET, DELETE, OPTIONS")
+		w.Header().Add("Access-Control-Allow-Headers", "*")
 	}
 }
 
+func getContentLength(r *http.Request) int64 {
+	contentLength := r.Header.Get("Content-Length")
+	if contentLength != "" {
+		length, err := strconv.ParseInt(contentLength, 10, 64)
+		if err != nil {
+			return 0
+		}
+		return length
+	}
+	return 0
+}
+
 func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
+	if r.Header.Get("Origin") != "" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+	}
 	switch r.Method {
 	case "GET":
 		stats.ReadRequest()
@@ -46,6 +92,10 @@ func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Req
 	case "HEAD":
 		stats.ReadRequest()
 		vs.GetOrHeadHandler(w, r)
+	case "OPTIONS":
+		stats.ReadRequest()
+		w.Header().Add("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Add("Access-Control-Allow-Headers", "*")
 	}
 }
 

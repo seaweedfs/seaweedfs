@@ -2,14 +2,17 @@ package weed_server
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
+	"github.com/skip2/go-qrcode"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	ui "github.com/chrislusf/seaweedfs/weed/server/filer_ui"
 	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 // listDirectoryHandler lists directories and folers under a directory
@@ -31,8 +34,10 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	lastFileName := r.FormValue("lastFileName")
+	namePattern := r.FormValue("namePattern")
+	namePatternExclude := r.FormValue("namePatternExclude")
 
-	entries, err := fs.filer.ListDirectoryEntries(context.Background(), filer2.FullPath(path), lastFileName, false, limit)
+	entries, shouldDisplayLoadMore, err := fs.filer.ListDirectoryEntries(context.Background(), util.FullPath(path), lastFileName, false, int64(limit), "", namePattern, namePatternExclude)
 
 	if err != nil {
 		glog.V(0).Infof("listDirectory %s %s %d: %s", path, lastFileName, limit, err)
@@ -40,7 +45,6 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	shouldDisplayLoadMore := len(entries) == limit
 	if path == "/" {
 		path = ""
 	}
@@ -65,21 +69,30 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 			lastFileName,
 			shouldDisplayLoadMore,
 		})
-	} else {
-		ui.StatusTpl.Execute(w, struct {
-			Path                  string
-			Breadcrumbs           []ui.Breadcrumb
-			Entries               interface{}
-			Limit                 int
-			LastFileName          string
-			ShouldDisplayLoadMore bool
-		}{
-			path,
-			ui.ToBreadcrumb(path),
-			entries,
-			limit,
-			lastFileName,
-			shouldDisplayLoadMore,
-		})
+		return
 	}
+
+	var qrImageString string
+	img, err := qrcode.Encode(fmt.Sprintf("http://%s:%d%s", fs.option.Host, fs.option.Port, r.URL.Path), qrcode.Medium, 128)
+	if err == nil {
+		qrImageString = base64.StdEncoding.EncodeToString(img)
+	}
+
+	ui.StatusTpl.Execute(w, struct {
+		Path                  string
+		Breadcrumbs           []ui.Breadcrumb
+		Entries               interface{}
+		Limit                 int
+		LastFileName          string
+		ShouldDisplayLoadMore bool
+		QrImage               string
+	}{
+		path,
+		ui.ToBreadcrumb(path),
+		entries,
+		limit,
+		lastFileName,
+		shouldDisplayLoadMore,
+		qrImageString,
+	})
 }

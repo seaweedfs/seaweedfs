@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -43,15 +44,15 @@ var cmdDownload = &Command{
 
 func runDownload(cmd *Command, args []string) bool {
 	for _, fid := range args {
-		if e := downloadToFile(*d.server, fid, *d.dir); e != nil {
+		if e := downloadToFile(func() string { return *d.server }, fid, util.ResolvePath(*d.dir)); e != nil {
 			fmt.Println("Download Error: ", fid, e)
 		}
 	}
 	return true
 }
 
-func downloadToFile(server, fileId, saveDir string) error {
-	fileUrl, lookupError := operation.LookupFileId(server, fileId)
+func downloadToFile(masterFn operation.GetMasterFn, fileId, saveDir string) error {
+	fileUrl, lookupError := operation.LookupFileId(masterFn, fileId)
 	if lookupError != nil {
 		return lookupError
 	}
@@ -59,7 +60,7 @@ func downloadToFile(server, fileId, saveDir string) error {
 	if err != nil {
 		return err
 	}
-	defer rc.Close()
+	defer util.CloseResponse(rc)
 	if filename == "" {
 		filename = fileId
 	}
@@ -75,14 +76,14 @@ func downloadToFile(server, fileId, saveDir string) error {
 	}
 	defer f.Close()
 	if isFileList {
-		content, err := ioutil.ReadAll(rc)
+		content, err := ioutil.ReadAll(rc.Body)
 		if err != nil {
 			return err
 		}
 		fids := strings.Split(string(content), "\n")
 		for _, partId := range fids {
 			var n int
-			_, part, err := fetchContent(*d.server, partId)
+			_, part, err := fetchContent(masterFn, partId)
 			if err == nil {
 				n, err = f.Write(part)
 			}
@@ -94,7 +95,7 @@ func downloadToFile(server, fileId, saveDir string) error {
 			}
 		}
 	} else {
-		if _, err = io.Copy(f, rc); err != nil {
+		if _, err = io.Copy(f, rc.Body); err != nil {
 			return err
 		}
 
@@ -102,17 +103,17 @@ func downloadToFile(server, fileId, saveDir string) error {
 	return nil
 }
 
-func fetchContent(server string, fileId string) (filename string, content []byte, e error) {
-	fileUrl, lookupError := operation.LookupFileId(server, fileId)
+func fetchContent(masterFn operation.GetMasterFn, fileId string) (filename string, content []byte, e error) {
+	fileUrl, lookupError := operation.LookupFileId(masterFn, fileId)
 	if lookupError != nil {
 		return "", nil, lookupError
 	}
-	var rc io.ReadCloser
+	var rc *http.Response
 	if filename, _, rc, e = util.DownloadFile(fileUrl); e != nil {
 		return "", nil, e
 	}
-	content, e = ioutil.ReadAll(rc)
-	rc.Close()
+	defer util.CloseResponse(rc)
+	content, e = ioutil.ReadAll(rc.Body)
 	return
 }
 

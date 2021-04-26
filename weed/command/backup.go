@@ -3,8 +3,6 @@ package command
 import (
 	"fmt"
 
-	"github.com/spf13/viper"
-
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
@@ -66,7 +64,7 @@ var cmdBackup = &Command{
 func runBackup(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
-	grpcDialOption := security.LoadClientTLS(viper.Sub("grpc"), "client")
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	if *s.volumeId == -1 {
 		return false
@@ -74,7 +72,7 @@ func runBackup(cmd *Command, args []string) bool {
 	vid := needle.VolumeId(*s.volumeId)
 
 	// find volume location, replication, ttl info
-	lookup, err := operation.Lookup(*s.master, vid.String())
+	lookup, err := operation.Lookup(func() string { return *s.master }, vid.String())
 	if err != nil {
 		fmt.Printf("Error looking up volume %d: %v\n", vid, err)
 		return true
@@ -114,14 +112,14 @@ func runBackup(cmd *Command, args []string) bool {
 			return true
 		}
 	}
-	v, err := storage.NewVolume(*s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, 0)
+	v, err := storage.NewVolume(util.ResolvePath(*s.dir), util.ResolvePath(*s.dir), *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, 0)
 	if err != nil {
 		fmt.Printf("Error creating or reading from volume %d: %v\n", vid, err)
 		return true
 	}
 
 	if v.SuperBlock.CompactionRevision < uint16(stats.CompactRevision) {
-		if err = v.Compact2(30 * 1024 * 1024 * 1024); err != nil {
+		if err = v.Compact2(30*1024*1024*1024, 0); err != nil {
 			fmt.Printf("Compact Volume before synchronizing %v\n", err)
 			return true
 		}
@@ -139,7 +137,7 @@ func runBackup(cmd *Command, args []string) bool {
 		// remove the old data
 		v.Destroy()
 		// recreate an empty volume
-		v, err = storage.NewVolume(*s.dir, *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, 0)
+		v, err = storage.NewVolume(util.ResolvePath(*s.dir), util.ResolvePath(*s.dir), *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, 0)
 		if err != nil {
 			fmt.Printf("Error creating or reading from volume %d: %v\n", vid, err)
 			return true

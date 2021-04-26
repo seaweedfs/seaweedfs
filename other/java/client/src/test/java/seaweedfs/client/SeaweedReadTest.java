@@ -3,13 +3,14 @@ package seaweedfs.client;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
 public class SeaweedReadTest {
 
     @Test
-    public void testNonOverlappingVisibleIntervals() {
+    public void testNonOverlappingVisibleIntervals() throws IOException {
         List<FilerProto.FileChunk> chunks = new ArrayList<>();
         chunks.add(FilerProto.FileChunk.newBuilder()
             .setFileId("aaa")
@@ -24,7 +25,7 @@ public class SeaweedReadTest {
             .setMtime(2000)
             .build());
 
-        List<SeaweedRead.VisibleInterval> visibleIntervals = SeaweedRead.nonOverlappingVisibleIntervals(chunks);
+        List<SeaweedRead.VisibleInterval> visibleIntervals = SeaweedRead.nonOverlappingVisibleIntervals(null, chunks);
         for (SeaweedRead.VisibleInterval visibleInterval : visibleIntervals) {
             System.out.println("visible:" + visibleInterval);
         }

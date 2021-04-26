@@ -18,7 +18,7 @@ func (k *LogQueue) GetName() string {
 	return "log"
 }
 
-func (k *LogQueue) Initialize(configuration util.Configuration) (err error) {
+func (k *LogQueue) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return nil
 }
 

@@ -35,6 +35,7 @@ type Conn struct {
 	net.Conn
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
+	isClosed     bool
 }
 
 func (c *Conn) Read(b []byte) (count int, e error) {
@@ -53,7 +54,8 @@ func (c *Conn) Read(b []byte) (count int, e error) {
 
 func (c *Conn) Write(b []byte) (count int, e error) {
 	if c.WriteTimeout != 0 {
-		err := c.Conn.SetWriteDeadline(time.Now().Add(c.WriteTimeout))
+		// minimum 4KB/s
+		err := c.Conn.SetWriteDeadline(time.Now().Add(c.WriteTimeout * time.Duration(len(b)/40000+1)))
 		if err != nil {
 			return 0, err
 		}
@@ -68,7 +70,10 @@ func (c *Conn) Write(b []byte) (count int, e error) {
 func (c *Conn) Close() error {
 	err := c.Conn.Close()
 	if err == nil {
-		stats.ConnectionClose()
+		if !c.isClosed {
+			stats.ConnectionClose()
+			c.isClosed = true
+		}
 	}
 	return err
 }

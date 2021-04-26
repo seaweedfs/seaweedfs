@@ -2,59 +2,104 @@ package weed_server
 
 import (
 	"fmt"
-	"net"
+	"github.com/chrislusf/seaweedfs/weed/operation"
 	"time"
 
+	"google.golang.org/grpc"
+
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
-	"github.com/spf13/viper"
-	"google.golang.org/grpc"
+
+	"golang.org/x/net/context"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"golang.org/x/net/context"
 )
 
 func (vs *VolumeServer) GetMaster() string {
 	return vs.currentMaster
 }
+
+func (vs *VolumeServer) checkWithMaster() (err error) {
+	isConnected := false
+	for !isConnected {
+		for _, master := range vs.SeedMasterNodes {
+			err = operation.WithMasterServerClient(master, vs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+				if err != nil {
+					return fmt.Errorf("get master %s configuration: %v", master, err)
+				}
+				vs.metricsAddress, vs.metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSeconds)
+				backend.LoadFromPbStorageBackends(resp.StorageBackends)
+				return nil
+			})
+			if err == nil {
+				return
+			} else {
+				glog.V(0).Infof("checkWithMaster %s: %v", master, err)
+			}
+		}
+		time.Sleep(1790 * time.Millisecond)
+	}
+	return
+}
+
 func (vs *VolumeServer) heartbeat() {
 
 	glog.V(0).Infof("Volume server start with seed master nodes: %v", vs.SeedMasterNodes)
 	vs.store.SetDataCenter(vs.dataCenter)
 	vs.store.SetRack(vs.rack)
 
-	grpcDialOption := security.LoadClientTLS(viper.Sub("grpc"), "volume")
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.volume")
 
 	var err error
 	var newLeader string
-	for {
+	for vs.isHeartbeating {
 		for _, master := range vs.SeedMasterNodes {
 			if newLeader != "" {
+				// the new leader may actually is the same master
+				// need to wait a bit before adding itself
+				time.Sleep(3 * time.Second)
 				master = newLeader
 			}
-			masterGrpcAddress, parseErr := util.ParseServerToGrpcAddress(master)
+			masterGrpcAddress, parseErr := pb.ParseServerToGrpcAddress(master)
 			if parseErr != nil {
 				glog.V(0).Infof("failed to parse master grpc %v: %v", masterGrpcAddress, parseErr)
 				continue
 			}
 			vs.store.MasterAddress = master
-			newLeader, err = vs.doHeartbeat(context.Background(), master, masterGrpcAddress, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)
+			newLeader, err = vs.doHeartbeat(master, masterGrpcAddress, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)
 			if err != nil {
 				glog.V(0).Infof("heartbeat error: %v", err)
 				time.Sleep(time.Duration(vs.pulseSeconds) * time.Second)
 				newLeader = ""
 				vs.store.MasterAddress = ""
 			}
+			if !vs.isHeartbeating {
+				break
+			}
 		}
 	}
 }
 
-func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcAddress string, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader string, err error) {
+func (vs *VolumeServer) StopHeartbeat() (isAlreadyStopping bool) {
+	if !vs.isHeartbeating {
+		return true
+	}
+	vs.isHeartbeating = false
+	close(vs.stopChan)
+	return false
+}
 
-	grpcConection, err := util.GrpcDial(ctx, masterGrpcAddress, grpcDialOption)
+func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader string, err error) {
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	grpcConection, err := pb.GrpcDial(ctx, masterGrpcAddress, grpcDialOption)
 	if err != nil {
 		return "", fmt.Errorf("fail to dial %s : %v", masterNode, err)
 	}
@@ -78,21 +123,19 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 				doneChan <- err
 				return
 			}
-			if in.GetVolumeSizeLimit() != 0 {
+			if in.GetVolumeSizeLimit() != 0 && vs.store.GetVolumeSizeLimit() != in.GetVolumeSizeLimit() {
 				vs.store.SetVolumeSizeLimit(in.GetVolumeSizeLimit())
+				if vs.store.MaybeAdjustVolumeMax() {
+					if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
+						glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", vs.currentMaster, err)
+					}
+				}
 			}
-			if in.GetLeader() != "" && masterNode != in.GetLeader() && !isSameIP(in.GetLeader(), masterNode) {
-				glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), masterNode)
+			if in.GetLeader() != "" && vs.currentMaster != in.GetLeader() {
+				glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), vs.currentMaster)
 				newLeader = in.GetLeader()
 				doneChan <- nil
 				return
-			}
-			if in.GetMetricsAddress() != "" && vs.MetricsAddress != in.GetMetricsAddress() {
-				vs.MetricsAddress = in.GetMetricsAddress()
-				vs.MetricsIntervalSec = int(in.GetMetricsIntervalSeconds())
-			}
-			if len(in.StorageBackends) > 0 {
-				backend.LoadFromPbStorageBackends(in.StorageBackends)
 			}
 		}
 	}()
@@ -160,6 +203,7 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 			}
 		case <-volumeTickChan:
 			glog.V(4).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
+			vs.store.MaybeAdjustVolumeMax()
 			if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
 				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterNode, err)
 				return "", err
@@ -172,19 +216,24 @@ func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterNode, masterGrpcA
 			}
 		case err = <-doneChan:
 			return
+		case <-vs.stopChan:
+			var volumeMessages []*master_pb.VolumeInformationMessage
+			emptyBeat := &master_pb.Heartbeat{
+				Ip:           vs.store.Ip,
+				Port:         uint32(vs.store.Port),
+				PublicUrl:    vs.store.PublicUrl,
+				MaxFileKey:   uint64(0),
+				DataCenter:   vs.store.GetDataCenter(),
+				Rack:         vs.store.GetRack(),
+				Volumes:      volumeMessages,
+				HasNoVolumes: len(volumeMessages) == 0,
+			}
+			glog.V(1).Infof("volume server %s:%d stops and deletes all volumes", vs.store.Ip, vs.store.Port)
+			if err = stream.Send(emptyBeat); err != nil {
+				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterNode, err)
+				return "", err
+			}
+			return
 		}
 	}
-}
-
-func isSameIP(ip string, host string) bool {
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return false
-	}
-	for _, t := range ips {
-		if ip == t.String() {
-			return true
-		}
-	}
-	return false
 }

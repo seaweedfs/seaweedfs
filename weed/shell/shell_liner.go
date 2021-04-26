@@ -2,13 +2,13 @@ package shell
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"io"
 	"os"
 	"path"
 	"regexp"
-	"strings"
-
 	"sort"
+	"strings"
 
 	"github.com/peterh/liner"
 )
@@ -20,8 +20,15 @@ var (
 
 func RunShell(options ShellOptions) {
 
+	sort.Slice(Commands, func(i, j int) bool {
+		return strings.Compare(Commands[i].Name(), Commands[j].Name()) < 0
+	})
+
 	line = liner.NewLiner()
 	defer line.Close()
+	grace.OnInterrupt(func() {
+		line.Close()
+	})
 
 	line.SetCtrlCAborts(true)
 
@@ -46,51 +53,57 @@ func RunShell(options ShellOptions) {
 			return
 		}
 
-		cmds := reg.FindAllString(cmd, -1)
-		if len(cmds) == 0 {
-			continue
-		} else {
-			line.AppendHistory(cmd)
-
-			args := make([]string, len(cmds[1:]))
-
-			for i := range args {
-				args[i] = strings.Trim(string(cmds[1+i]), "\"'")
-			}
-
-			cmd := strings.ToLower(cmds[0])
-			if cmd == "help" || cmd == "?" {
-				printHelp(cmds)
-			} else if cmd == "exit" || cmd == "quit" {
+		for _, c := range strings.Split(cmd, ";") {
+			if processEachCmd(reg, c, commandEnv) {
 				return
-			} else {
-				foundCommand := false
-				for _, c := range Commands {
-					if c.Name() == cmd {
-						if err := c.Do(args, commandEnv, os.Stdout); err != nil {
-							fmt.Fprintf(os.Stderr, "error: %v\n", err)
-						}
-						foundCommand = true
-					}
-				}
-				if !foundCommand {
-					fmt.Fprintf(os.Stderr, "unknown command: %v\n", cmd)
-				}
 			}
-
 		}
 	}
 }
 
+func processEachCmd(reg *regexp.Regexp, cmd string, commandEnv *CommandEnv) bool {
+	cmds := reg.FindAllString(cmd, -1)
+	if len(cmds) == 0 {
+		return false
+	} else {
+		line.AppendHistory(cmd)
+
+		args := make([]string, len(cmds[1:]))
+
+		for i := range args {
+			args[i] = strings.Trim(string(cmds[1+i]), "\"'")
+		}
+
+		cmd := cmds[0]
+		if cmd == "help" || cmd == "?" {
+			printHelp(cmds)
+		} else if cmd == "exit" || cmd == "quit" {
+			return true
+		} else {
+			foundCommand := false
+			for _, c := range Commands {
+				if c.Name() == cmd || c.Name() == "fs."+cmd {
+					if err := c.Do(args, commandEnv, os.Stdout); err != nil {
+						fmt.Fprintf(os.Stderr, "error: %v\n", err)
+					}
+					foundCommand = true
+				}
+			}
+			if !foundCommand {
+				fmt.Fprintf(os.Stderr, "unknown command: %v\n", cmd)
+			}
+		}
+
+	}
+	return false
+}
+
 func printGenericHelp() {
 	msg :=
-		`Type:	"help <command>" for help on <command>
+		`Type:	"help <command>" for help on <command>. Most commands support "<command> -h" also for options. 
 `
 	fmt.Print(msg)
 
-	sort.Slice(Commands, func(i, j int) bool {
-		return strings.Compare(Commands[i].Name(), Commands[j].Name()) < 0
-	})
 	for _, c := range Commands {
 		helpTexts := strings.SplitN(c.Help(), "\n", 2)
 		fmt.Printf("  %-30s\t# %s \n", c.Name(), helpTexts[0])
@@ -105,10 +118,6 @@ func printHelp(cmds []string) {
 		fmt.Println()
 	} else {
 		cmd := strings.ToLower(args[0])
-
-		sort.Slice(Commands, func(i, j int) bool {
-			return strings.Compare(Commands[i].Name(), Commands[j].Name()) < 0
-		})
 
 		for _, c := range Commands {
 			if c.Name() == cmd {

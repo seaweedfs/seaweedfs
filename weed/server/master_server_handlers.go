@@ -45,7 +45,7 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 			vid = fileId[0:commaSep]
 		}
 	}
-	collection := r.FormValue("collection") //optional, but can be faster if too many collections
+	collection := r.FormValue("collection") // optional, but can be faster if too many collections
 	location := ms.findVolumeLocation(collection, vid)
 	httpStatus := http.StatusOK
 	if location.Error != "" || location.Locations == nil {
@@ -72,9 +72,6 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 			for _, loc := range machines {
 				locations = append(locations, operation.Location{Url: loc.Url(), PublicUrl: loc.PublicUrl})
 			}
-			if locations == nil {
-				err = fmt.Errorf("volume id %s not found", vid)
-			}
 		}
 	} else {
 		machines, getVidLocationsErr := ms.MasterClient.GetVidLocations(vid)
@@ -82,6 +79,9 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 			locations = append(locations, operation.Location{Url: loc.Url, PublicUrl: loc.PublicUrl})
 		}
 		err = getVidLocationsErr
+	}
+	if len(locations) == 0 && err == nil {
+		err = fmt.Errorf("volume id %s not found", vid)
 	}
 	ret := operation.LookupResult{
 		VolumeId:  vid,
@@ -112,8 +112,8 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	if !ms.Topo.HasWritableVolume(option) {
-		if ms.Topo.FreeSpace() <= 0 {
-			writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left!"})
+		if ms.Topo.AvailableSpaceFor(option) <= 0 {
+			writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left for " + option.String()})
 			return
 		}
 		ms.vgLock.Lock()
@@ -136,6 +136,9 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (ms *MasterServer) maybeAddJwtAuthorization(w http.ResponseWriter, fileId string, isWrite bool) {
+	if fileId == "" {
+		return
+	}
 	var encodedJwt security.EncodedJwt
 	if isWrite {
 		encodedJwt = security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fileId)

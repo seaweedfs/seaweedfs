@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -44,7 +45,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 
 func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = util.VERSION
+	m["Version"] = util.Version()
 	m["Topology"] = ms.Topo.ToMap()
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
@@ -61,7 +62,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	glog.Infoln("garbageThreshold =", gcThreshold)
+	// glog.Infoln("garbageThreshold =", gcThreshold)
 	ms.Topo.Vacuum(ms.grpcDialOption, gcThreshold, ms.preallocateSize)
 	ms.dirStatusHandler(w, r)
 }
@@ -75,8 +76,8 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	if count, err = strconv.Atoi(r.FormValue("count")); err == nil {
-		if ms.Topo.FreeSpace() < int64(count*option.ReplicaPlacement.GetCopyCount()) {
-			err = fmt.Errorf("only %d volumes left, not enough for %d", ms.Topo.FreeSpace(), count*option.ReplicaPlacement.GetCopyCount())
+		if ms.Topo.AvailableSpaceFor(option) < int64(count*option.ReplicaPlacement.GetCopyCount()) {
+			err = fmt.Errorf("only %d volumes left, not enough for %d", ms.Topo.AvailableSpaceFor(option), count*option.ReplicaPlacement.GetCopyCount())
 		} else {
 			count, err = ms.vg.GrowByCountAndType(ms.grpcDialOption, count, option, ms.Topo)
 		}
@@ -93,7 +94,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 
 func (ms *MasterServer) volumeStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
-	m["Version"] = util.VERSION
+	m["Version"] = util.Version()
 	m["Volumes"] = ms.Topo.ToVolumeMap()
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
@@ -110,7 +111,7 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 		} else {
 			url = util.NormalizeUrl(loc.PublicUrl) + r.URL.Path
 		}
-		http.Redirect(w, r, url, http.StatusMovedPermanently)
+		http.Redirect(w, r, url, http.StatusPermanentRedirect)
 	} else {
 		writeJsonError(w, r, http.StatusNotFound, fmt.Errorf("volume id %s not found: %s", vid, location.Error))
 	}
@@ -124,19 +125,19 @@ func (ms *MasterServer) selfUrl(r *http.Request) string {
 }
 func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *http.Request) {
 	if ms.Topo.IsLeader() {
-		submitForClientHandler(w, r, ms.selfUrl(r), ms.grpcDialOption)
+		submitForClientHandler(w, r, func() string { return ms.selfUrl(r) }, ms.grpcDialOption)
 	} else {
 		masterUrl, err := ms.Topo.Leader()
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 		} else {
-			submitForClientHandler(w, r, masterUrl, ms.grpcDialOption)
+			submitForClientHandler(w, r, func() string { return masterUrl }, ms.grpcDialOption)
 		}
 	}
 }
 
 func (ms *MasterServer) HasWritableVolume(option *topology.VolumeGrowOption) bool {
-	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl)
+	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
 	return vl.GetActiveVolumeCount(option) > 0
 }
 
@@ -157,6 +158,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 	if err != nil {
 		return nil, err
 	}
+	diskType := types.ToDiskType(r.FormValue("disk"))
 
 	preallocate := ms.preallocateSize
 	if r.FormValue("preallocate") != "" {
@@ -169,6 +171,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 		Collection:         r.FormValue("collection"),
 		ReplicaPlacement:   replicaPlacement,
 		Ttl:                ttl,
+		DiskType:           diskType,
 		Prealloacte:        preallocate,
 		DataCenter:         r.FormValue("dataCenter"),
 		Rack:               r.FormValue("rack"),

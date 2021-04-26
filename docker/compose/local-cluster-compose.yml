@@ -1,0 +1,75 @@
+version: '2'
+
+services:
+  master0:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9333:9333
+      - 19333:19333
+    command: "master -ip=master0 -port=9333 -peers=master0:9333,master1:9334,master2:9335 -mdir=/data/m1"
+  master1:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9334:9334
+      - 19334:19334
+    command: "master -ip=master1 -port=9334 -peers=master0:9333,master1:9334,master2:9335 -mdir=/data/m2"
+  master2:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9335:9335
+      - 19335:19335
+    command: "master -ip=master2 -port=9335 -peers=master0:9333,master1:9334,master2:9335 -mdir=/data/m3"
+  volume1:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8080:8080
+      - 18080:18080
+    command: 'volume -mserver="master0:9333,master1:9334,master2:9335" -port=8080 -ip=volume1 -publicUrl=localhost:8080 -preStopSeconds=1 -disk=ssd1'
+    depends_on:
+      - master0
+      - master1
+      - master2
+  volume2:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8082:8082
+      - 18082:18082
+    command: 'volume -mserver="master0:9333,master1:9334,master2:9335" -port=8082 -ip=volume2 -publicUrl=localhost:8082 -preStopSeconds=1 -disk=ssd1'
+    depends_on:
+      - master0
+      - master1
+      - master2
+  volume3:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8083:8083
+      - 18083:18083
+    command: 'volume -mserver="master0:9333,master1:9334,master2:9335" -port=8083 -ip=volume3 -publicUrl=localhost:8083 -preStopSeconds=1'
+    depends_on:
+      - master0
+      - master1
+      - master2
+  filer:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8888:8888
+      - 18888:18888
+    command: 'filer -master="master0:9333,master1:9334,master2:9335"'
+    depends_on:
+      - master0
+      - master1
+      - master2
+      - volume1
+      - volume2
+  s3:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8333:8333
+    command: 's3 -filer="filer:8888"'
+    depends_on:
+      - master0
+      - master1
+      - master2
+      - volume1
+      - volume2
+      - filer

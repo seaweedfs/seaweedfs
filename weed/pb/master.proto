@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package master_pb;
 
+option go_package = "github.com/chrislusf/seaweedfs/weed/pb/master_pb";
+
 //////////////////////////////////////////////////
 
 service Seaweed {
@@ -23,8 +25,17 @@ service Seaweed {
     }
     rpc LookupEcVolume (LookupEcVolumeRequest) returns (LookupEcVolumeResponse) {
     }
+    rpc VacuumVolume (VacuumVolumeRequest) returns (VacuumVolumeResponse) {
+    }
     rpc GetMasterConfiguration (GetMasterConfigurationRequest) returns (GetMasterConfigurationResponse) {
     }
+    rpc ListMasterClients (ListMasterClientsRequest) returns (ListMasterClientsResponse) {
+    }
+    rpc LeaseAdminToken (LeaseAdminTokenRequest) returns (LeaseAdminTokenResponse) {
+    }
+    rpc ReleaseAdminToken (ReleaseAdminTokenRequest) returns (ReleaseAdminTokenResponse) {
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -33,7 +44,6 @@ message Heartbeat {
     string ip = 1;
     uint32 port = 2;
     string public_url = 3;
-    uint32 max_volume_count = 4;
     uint64 max_file_key = 5;
     string data_center = 6;
     string rack = 7;
@@ -50,6 +60,8 @@ message Heartbeat {
     repeated VolumeEcShardInformationMessage new_ec_shards = 17;
     repeated VolumeEcShardInformationMessage deleted_ec_shards = 18;
     bool has_no_ec_shards = 19;
+
+    map<string, uint32> max_volume_counts = 4;
 
 }
 
@@ -76,6 +88,7 @@ message VolumeInformationMessage {
     int64 modified_at_second = 12;
     string remote_storage_name = 13;
     string remote_storage_key = 14;
+    string disk_type = 15;
 }
 
 message VolumeShortInformationMessage {
@@ -84,12 +97,14 @@ message VolumeShortInformationMessage {
     uint32 replica_placement = 8;
     uint32 version = 9;
     uint32 ttl = 10;
+    string disk_type = 15;
 }
 
 message VolumeEcShardInformationMessage {
     uint32 id = 1;
     string collection = 2;
     uint32 ec_index_bits = 3;
+    string disk_type = 4;
 }
 
 message StorageBackend {
@@ -112,6 +127,7 @@ message SuperBlockExtra {
 
 message KeepConnectedRequest {
     string name = 1;
+    uint32 grpc_port = 2;
 }
 
 message VolumeLocation {
@@ -120,6 +136,7 @@ message VolumeLocation {
     repeated uint32 new_vids = 3;
     repeated uint32 deleted_vids = 4;
     string leader = 5; // optional when leader is not itself
+    string data_center = 6; // optional when DataCenter is in use
 }
 
 message LookupVolumeRequest {
@@ -150,6 +167,7 @@ message AssignRequest {
     string data_node = 7;
     uint32 memory_map_max_size_mb = 8;
     uint32 Writable_volume_count = 9;
+    string disk_type = 10;
 }
 message AssignResponse {
     string fid = 1;
@@ -164,11 +182,9 @@ message StatisticsRequest {
     string replication = 1;
     string collection = 2;
     string ttl = 3;
+    string disk_type = 4;
 }
 message StatisticsResponse {
-    string replication = 1;
-    string collection = 2;
-    string ttl = 3;
     uint64 total_size = 4;
     uint64 used_size = 5;
     uint64 file_count = 6;
@@ -177,11 +193,6 @@ message StatisticsResponse {
 //
 // collection related
 //
-
-message StorageType {
-    string replication = 1;
-    string ttl = 2;
-}
 message Collection {
     string name = 1;
 }
@@ -202,8 +213,8 @@ message CollectionDeleteResponse {
 //
 // volume related
 //
-message DataNodeInfo {
-    string id = 1;
+message DiskInfo {
+    string type = 1;
     uint64 volume_count = 2;
     uint64 max_volume_count = 3;
     uint64 free_volume_count = 4;
@@ -212,32 +223,24 @@ message DataNodeInfo {
     repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
     uint64 remote_volume_count = 8;
 }
+message DataNodeInfo {
+    string id = 1;
+    map<string, DiskInfo> diskInfos = 2;
+}
 message RackInfo {
     string id = 1;
-    uint64 volume_count = 2;
-    uint64 max_volume_count = 3;
-    uint64 free_volume_count = 4;
-    uint64 active_volume_count = 5;
-    repeated DataNodeInfo data_node_infos = 6;
-    uint64 remote_volume_count = 7;
+    repeated DataNodeInfo data_node_infos = 2;
+    map<string, DiskInfo> diskInfos = 3;
 }
 message DataCenterInfo {
     string id = 1;
-    uint64 volume_count = 2;
-    uint64 max_volume_count = 3;
-    uint64 free_volume_count = 4;
-    uint64 active_volume_count = 5;
-    repeated RackInfo rack_infos = 6;
-    uint64 remote_volume_count = 7;
+    repeated RackInfo rack_infos = 2;
+    map<string, DiskInfo> diskInfos = 3;
 }
 message TopologyInfo {
     string id = 1;
-    uint64 volume_count = 2;
-    uint64 max_volume_count = 3;
-    uint64 free_volume_count = 4;
-    uint64 active_volume_count = 5;
-    repeated DataCenterInfo data_center_infos = 6;
-    uint64 remote_volume_count = 7;
+    repeated DataCenterInfo data_center_infos = 2;
+    map<string, DiskInfo> diskInfos = 3;
 }
 message VolumeListRequest {
 }
@@ -258,9 +261,44 @@ message LookupEcVolumeResponse {
     repeated EcShardIdLocation shard_id_locations = 2;
 }
 
+message VacuumVolumeRequest {
+    float garbage_threshold = 1;
+}
+message VacuumVolumeResponse {
+}
+
 message GetMasterConfigurationRequest {
 }
 message GetMasterConfigurationResponse {
     string metrics_address = 1;
     uint32 metrics_interval_seconds = 2;
+    repeated StorageBackend storage_backends = 3;
+    string default_replication = 4;
+    string leader = 5;
+}
+
+message ListMasterClientsRequest {
+    string client_type = 1;
+}
+message ListMasterClientsResponse {
+    repeated string grpc_addresses = 1;
+}
+
+message LeaseAdminTokenRequest {
+    int64 previous_token = 1;
+    int64 previous_lock_time = 2;
+    string lock_name = 3;
+    string client_name = 4;
+}
+message LeaseAdminTokenResponse {
+    int64 token = 1;
+    int64 lock_ts_ns = 2;
+}
+
+message ReleaseAdminTokenRequest {
+    int64 previous_token = 1;
+    int64 previous_lock_time = 2;
+    string lock_name = 3;
+}
+message ReleaseAdminTokenResponse {
 }

@@ -27,13 +27,13 @@ func (k *GooglePubSubInput) GetName() string {
 	return "google_pub_sub"
 }
 
-func (k *GooglePubSubInput) Initialize(configuration util.Configuration) error {
-	glog.V(0).Infof("notification.google_pub_sub.project_id: %v", configuration.GetString("project_id"))
-	glog.V(0).Infof("notification.google_pub_sub.topic: %v", configuration.GetString("topic"))
+func (k *GooglePubSubInput) Initialize(configuration util.Configuration, prefix string) error {
+	glog.V(0).Infof("notification.google_pub_sub.project_id: %v", configuration.GetString(prefix+"project_id"))
+	glog.V(0).Infof("notification.google_pub_sub.topic: %v", configuration.GetString(prefix+"topic"))
 	return k.initialize(
-		configuration.GetString("google_application_credentials"),
-		configuration.GetString("project_id"),
-		configuration.GetString("topic"),
+		configuration.GetString(prefix+"google_application_credentials"),
+		configuration.GetString(prefix+"project_id"),
+		configuration.GetString(prefix+"topic"),
 	)
 }
 
@@ -85,15 +85,21 @@ func (k *GooglePubSubInput) initialize(google_application_credentials, projectId
 
 	go k.sub.Receive(ctx, func(ctx context.Context, m *pubsub.Message) {
 		k.messageChan <- m
-		m.Ack()
 	})
 
 	return err
 }
 
-func (k *GooglePubSubInput) ReceiveMessage() (key string, message *filer_pb.EventNotification, err error) {
+func (k *GooglePubSubInput) ReceiveMessage() (key string, message *filer_pb.EventNotification, onSuccessFn func(), onFailureFn func(), err error) {
 
 	m := <-k.messageChan
+
+	onSuccessFn = func() {
+		m.Ack()
+	}
+	onFailureFn = func() {
+		m.Nack()
+	}
 
 	// process the message
 	key = m.Attributes["key"]

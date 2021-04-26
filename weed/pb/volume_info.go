@@ -15,39 +15,49 @@ import (
 )
 
 // MaybeLoadVolumeInfo load the file data as *volume_server_pb.VolumeInfo, the returned volumeInfo will not be nil
-func MaybeLoadVolumeInfo(fileName string) (*volume_server_pb.VolumeInfo, bool) {
+func MaybeLoadVolumeInfo(fileName string) (volumeInfo *volume_server_pb.VolumeInfo, hasRemoteFile bool, hasVolumeInfoFile bool, err error) {
 
-	volumeInfo := &volume_server_pb.VolumeInfo{}
+	volumeInfo = &volume_server_pb.VolumeInfo{}
 
 	glog.V(1).Infof("maybeLoadVolumeInfo checks %s", fileName)
 	if exists, canRead, _, _, _ := util.CheckFile(fileName); !exists || !canRead {
 		if !exists {
-			return volumeInfo, false
+			return
 		}
+		hasVolumeInfoFile = true
 		if !canRead {
 			glog.Warningf("can not read %s", fileName)
+			err = fmt.Errorf("can not read %s", fileName)
+			return
 		}
-		return volumeInfo, false
+		return
 	}
+
+	hasVolumeInfoFile = true
 
 	glog.V(1).Infof("maybeLoadVolumeInfo reads %s", fileName)
 	tierData, readErr := ioutil.ReadFile(fileName)
 	if readErr != nil {
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
-		return volumeInfo, false
+		err = fmt.Errorf("fail to read %s : %v", fileName, readErr)
+		return
+
 	}
 
 	glog.V(1).Infof("maybeLoadVolumeInfo Unmarshal volume info %v", fileName)
-	if err := jsonpb.Unmarshal(bytes.NewReader(tierData), volumeInfo); err != nil {
+	if err = jsonpb.Unmarshal(bytes.NewReader(tierData), volumeInfo); err != nil {
 		glog.Warningf("unmarshal error: %v", err)
-		return volumeInfo, false
+		err = fmt.Errorf("unmarshal error: %v", err)
+		return
 	}
 
 	if len(volumeInfo.GetFiles()) == 0 {
-		return volumeInfo, false
+		return
 	}
 
-	return volumeInfo, true
+	hasRemoteFile = true
+
+	return
 }
 
 func SaveVolumeInfo(fileName string, volumeInfo *volume_server_pb.VolumeInfo) error {

@@ -11,7 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
@@ -20,11 +21,13 @@ import (
 )
 
 type S3Sink struct {
-	conn        s3iface.S3API
-	region      string
-	bucket      string
-	dir         string
-	filerSource *source.FilerSource
+	conn          s3iface.S3API
+	region        string
+	bucket        string
+	dir           string
+	endpoint      string
+	filerSource   *source.FilerSource
+	isIncremental bool
 }
 
 func init() {
@@ -39,16 +42,24 @@ func (s3sink *S3Sink) GetSinkToDirectory() string {
 	return s3sink.dir
 }
 
-func (s3sink *S3Sink) Initialize(configuration util.Configuration) error {
-	glog.V(0).Infof("sink.s3.region: %v", configuration.GetString("region"))
-	glog.V(0).Infof("sink.s3.bucket: %v", configuration.GetString("bucket"))
-	glog.V(0).Infof("sink.s3.directory: %v", configuration.GetString("directory"))
+func (s3sink *S3Sink) IsIncremental() bool {
+	return s3sink.isIncremental
+}
+
+func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string) error {
+	glog.V(0).Infof("sink.s3.region: %v", configuration.GetString(prefix+"region"))
+	glog.V(0).Infof("sink.s3.bucket: %v", configuration.GetString(prefix+"bucket"))
+	glog.V(0).Infof("sink.s3.directory: %v", configuration.GetString(prefix+"directory"))
+	glog.V(0).Infof("sink.s3.endpoint: %v", configuration.GetString(prefix+"endpoint"))
+	glog.V(0).Infof("sink.s3.is_incremental: %v", configuration.GetString(prefix+"is_incremental"))
+	s3sink.isIncremental = configuration.GetBool(prefix + "is_incremental")
 	return s3sink.initialize(
-		configuration.GetString("aws_access_key_id"),
-		configuration.GetString("aws_secret_access_key"),
-		configuration.GetString("region"),
-		configuration.GetString("bucket"),
-		configuration.GetString("directory"),
+		configuration.GetString(prefix+"aws_access_key_id"),
+		configuration.GetString(prefix+"aws_secret_access_key"),
+		configuration.GetString(prefix+"region"),
+		configuration.GetString(prefix+"bucket"),
+		configuration.GetString(prefix+"directory"),
+		configuration.GetString(prefix+"endpoint"),
 	)
 }
 
@@ -56,13 +67,16 @@ func (s3sink *S3Sink) SetSourceFiler(s *source.FilerSource) {
 	s3sink.filerSource = s
 }
 
-func (s3sink *S3Sink) initialize(awsAccessKeyId, awsSecretAccessKey, region, bucket, dir string) error {
+func (s3sink *S3Sink) initialize(awsAccessKeyId, awsSecretAccessKey, region, bucket, dir, endpoint string) error {
 	s3sink.region = region
 	s3sink.bucket = bucket
 	s3sink.dir = dir
+	s3sink.endpoint = endpoint
 
 	config := &aws.Config{
-		Region: aws.String(s3sink.region),
+		Region:           aws.String(s3sink.region),
+		Endpoint:         aws.String(s3sink.endpoint),
+		S3ForcePathStyle: aws.Bool(true),
 	}
 	if awsAccessKeyId != "" && awsSecretAccessKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, awsSecretAccessKey, "")
@@ -77,7 +91,7 @@ func (s3sink *S3Sink) initialize(awsAccessKeyId, awsSecretAccessKey, region, buc
 	return nil
 }
 
-func (s3sink *S3Sink) DeleteEntry(ctx context.Context, key string, isDirectory, deleteIncludeChunks bool) error {
+func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	key = cleanKey(key)
 
@@ -89,8 +103,7 @@ func (s3sink *S3Sink) DeleteEntry(ctx context.Context, key string, isDirectory, 
 
 }
 
-func (s3sink *S3Sink) CreateEntry(ctx context.Context, key string, entry *filer_pb.Entry) error {
-
+func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
 	key = cleanKey(key)
 
 	if entry.IsDirectory {
@@ -99,38 +112,40 @@ func (s3sink *S3Sink) CreateEntry(ctx context.Context, key string, entry *filer_
 
 	uploadId, err := s3sink.createMultipartUpload(key, entry)
 	if err != nil {
-		return err
+		return fmt.Errorf("createMultipartUpload: %v", err)
 	}
 
-	totalSize := filer2.TotalSize(entry.Chunks)
-	chunkViews := filer2.ViewFromChunks(entry.Chunks, 0, int(totalSize))
+	totalSize := filer.FileSize(entry)
+	chunkViews := filer.ViewFromChunks(s3sink.filerSource.LookupFileId, entry.Chunks, 0, int64(totalSize))
 
-	var parts []*s3.CompletedPart
+	parts := make([]*s3.CompletedPart, len(chunkViews))
+
 	var wg sync.WaitGroup
 	for chunkIndex, chunk := range chunkViews {
 		partId := chunkIndex + 1
 		wg.Add(1)
-		go func(chunk *filer2.ChunkView) {
+		go func(chunk *filer.ChunkView, index int) {
 			defer wg.Done()
-			if part, uploadErr := s3sink.uploadPart(ctx, key, uploadId, partId, chunk); uploadErr != nil {
+			if part, uploadErr := s3sink.uploadPart(key, uploadId, partId, chunk); uploadErr != nil {
 				err = uploadErr
+				glog.Errorf("uploadPart: %v", uploadErr)
 			} else {
-				parts = append(parts, part)
+				parts[index] = part
 			}
-		}(chunk)
+		}(chunk, chunkIndex)
 	}
 	wg.Wait()
 
 	if err != nil {
 		s3sink.abortMultipartUpload(key, uploadId)
-		return err
+		return fmt.Errorf("uploadPart: %v", err)
 	}
 
-	return s3sink.completeMultipartUpload(ctx, key, uploadId, parts)
+	return s3sink.completeMultipartUpload(context.Background(), key, uploadId, parts)
 
 }
 
-func (s3sink *S3Sink) UpdateEntry(ctx context.Context, key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool) (foundExistingEntry bool, err error) {
+func (s3sink *S3Sink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParentPath string, newEntry *filer_pb.Entry, deleteIncludeChunks bool, signatures []int32) (foundExistingEntry bool, err error) {
 	key = cleanKey(key)
 	// TODO improve efficiency
 	return false, nil

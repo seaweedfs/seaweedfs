@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/chrislusf/raft"
+
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"

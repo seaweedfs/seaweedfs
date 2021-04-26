@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -43,18 +42,19 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	needle, originalSize, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation)
+	reqNeedle, originalSize, contentMd5, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes)
 	if ne != nil {
 		writeJsonError(w, r, http.StatusBadRequest, ne)
 		return
 	}
 
 	ret := operation.UploadResult{}
-	_, isUnchanged, writeError := topology.ReplicatedWrite(vs.GetMaster(), vs.store, volumeId, needle, r)
+	isUnchanged, writeError := topology.ReplicatedWrite(vs.GetMaster, vs.store, volumeId, reqNeedle, r)
 
-	// http 304 status code does not allow body
+	// http 204 status code does not allow body
 	if writeError == nil && isUnchanged {
-		w.WriteHeader(http.StatusNotModified)
+		setEtag(w, reqNeedle.Etag())
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
@@ -63,12 +63,14 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		httpStatus = http.StatusInternalServerError
 		ret.Error = writeError.Error()
 	}
-	if needle.HasName() {
-		ret.Name = string(needle.Name)
+	if reqNeedle.HasName() {
+		ret.Name = string(reqNeedle.Name)
 	}
 	ret.Size = uint32(originalSize)
-	ret.ETag = needle.Etag()
+	ret.ETag = reqNeedle.Etag()
+	ret.Mime = string(reqNeedle.Mime)
 	setEtag(w, ret.ETag)
+	w.Header().Set("Content-MD5", contentMd5)
 	writeJsonQuiet(w, r, httpStatus, ret)
 }
 
@@ -97,12 +99,12 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	ecVolume, hasEcVolume := vs.store.FindEcVolume(volumeId)
 
 	if hasEcVolume {
-		count, err := vs.store.DeleteEcShardNeedle(context.Background(), ecVolume, n, cookie)
+		count, err := vs.store.DeleteEcShardNeedle(ecVolume, n, cookie)
 		writeDeleteResult(err, count, w, r)
 		return
 	}
 
-	_, ok := vs.store.ReadVolumeNeedle(volumeId, n)
+	_, ok := vs.store.ReadVolumeNeedle(volumeId, n, nil)
 	if ok != nil {
 		m := make(map[string]uint32)
 		m["size"] = 0
@@ -119,13 +121,13 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	count := int64(n.Size)
 
 	if n.IsChunkedManifest() {
-		chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsGzipped())
+		chunkManifest, e := operation.LoadChunkManifest(n.Data, n.IsCompressed())
 		if e != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Load chunks manifest error: %v", e))
 			return
 		}
 		// make sure all chunks had deleted before delete manifest
-		if e := chunkManifest.DeleteChunks(vs.GetMaster(), vs.grpcDialOption); e != nil {
+		if e := chunkManifest.DeleteChunks(vs.GetMaster, false, vs.grpcDialOption); e != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("Delete chunks error: %v", e))
 			return
 		}
@@ -140,7 +142,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, err := topology.ReplicatedDelete(vs.GetMaster(), vs.store, volumeId, n, r)
+	_, err := topology.ReplicatedDelete(vs.GetMaster, vs.store, volumeId, n, r)
 
 	writeDeleteResult(err, count, w, r)
 
@@ -164,4 +166,12 @@ func setEtag(w http.ResponseWriter, etag string) {
 			w.Header().Set("ETag", "\""+etag+"\"")
 		}
 	}
+}
+
+func getEtag(resp *http.Response) (etag string) {
+	etag = resp.Header.Get("ETag")
+	if strings.HasPrefix(etag, "\"") && strings.HasSuffix(etag, "\"") {
+		return etag[1 : len(etag)-1]
+	}
+	return
 }

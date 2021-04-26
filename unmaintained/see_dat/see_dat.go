@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -31,7 +32,8 @@ func (scanner *VolumeFileScanner4SeeDat) ReadNeedleBody() bool {
 
 func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	t := time.Unix(int64(n.AppendAtNs)/int64(time.Second), int64(n.AppendAtNs)%int64(time.Second))
-	glog.V(0).Infof("%d,%s%x offset %d size %d cookie %x appendedAt %v", *volumeId, n.Id, n.Cookie, offset, n.Size, n.Cookie, t)
+	glog.V(0).Infof("%d,%s%x offset %d size %d(%s) cookie %x appendedAt %v",
+		*volumeId, n.Id, n.Cookie, offset, n.Size, util.BytesToHumanReadable(uint64(n.Size)), n.Cookie, t)
 	return nil
 }
 

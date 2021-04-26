@@ -1,0 +1,18 @@
+{{- if .Values.filer.metricsPort }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ template "seaweedfs.name" . }}-filer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "seaweedfs.name" . }}
+    component: filer
+spec:
+  endpoints:
+    - interval: 30s
+      port: swfs-filer-metrics
+      scrapeTimeout: 5s
+  selector:
+    app: {{ template "seaweedfs.name" . }}
+    component: filer
+{{- end }}

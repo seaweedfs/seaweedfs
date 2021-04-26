@@ -7,10 +7,10 @@ import (
 	"log"
 	"os"
 
-	"github.com/chrislusf/seaweedfs/weed/filer2"
+	"github.com/golang/protobuf/proto"
+
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/golang/protobuf/proto"
 )
 
 var (
@@ -58,7 +58,7 @@ func walkMetaFile(dst *os.File) error {
 			return err
 		}
 
-		fmt.Fprintf(os.Stdout, "file %s %v\n", filer2.FullPath(fullEntry.Dir).Child(fullEntry.Entry.Name), fullEntry.Entry.Attributes.String())
+		fmt.Fprintf(os.Stdout, "file %s %v\n", util.FullPath(fullEntry.Dir).Child(fullEntry.Entry.Name), fullEntry.Entry.Attributes.String())
 		for i, chunk := range fullEntry.Entry.Chunks {
 			fmt.Fprintf(os.Stdout, "  chunk %d %v\n", i+1, chunk.String())
 		}

@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"context"
 	"io"
 )
 
@@ -17,41 +16,33 @@ func (c *commandFsCd) Name() string {
 }
 
 func (c *commandFsCd) Help() string {
-	return `change directory to http://<filer_server>:<port>/dir/
+	return `change directory to a directory /path/to/dir
 
 	The full path can be too long to type. For example,
-		fs.ls http://<filer_server>:<port>/some/path/to/file_name
+		fs.ls /some/path/to/file_name
 
 	can be simplified as
 
-		fs.cd http://<filer_server>:<port>/some/path
+		fs.cd /some/path
 		fs.ls to/file_name
 `
 }
 
 func (c *commandFsCd) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	input := findInputDirectory(args)
-
-	filerServer, filerPort, path, err := commandEnv.parseUrl(input)
+	path, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {
 		return err
 	}
 
 	if path == "/" {
-		commandEnv.option.FilerHost = filerServer
-		commandEnv.option.FilerPort = filerPort
 		commandEnv.option.Directory = "/"
 		return nil
 	}
 
-	ctx := context.Background()
-
-	err = commandEnv.checkDirectory(ctx, filerServer, filerPort, path)
+	err = commandEnv.checkDirectory(path)
 
 	if err == nil {
-		commandEnv.option.FilerHost = filerServer
-		commandEnv.option.FilerPort = filerPort
 		commandEnv.option.Directory = path
 	}
 

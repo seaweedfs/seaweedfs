@@ -14,6 +14,14 @@ var cmdScaffold = &Command{
 	Short:     "generate basic configuration files",
 	Long: `Generate filer.toml with all possible configurations for you to customize.
 
+	The options can also be overwritten by environment variables.
+	For example, the filer.toml mysql password can be overwritten by environment variable
+		export WEED_MYSQL_PASSWORD=some_password
+	Environment variable rules:
+		* Prefix the variable name with "WEED_"
+		* Upppercase the reset of variable name.
+		* Replace '.' with '_'
+
   `,
 }
 
@@ -36,6 +44,8 @@ func runScaffold(cmd *Command, args []string) bool {
 		content = SECURITY_TOML_EXAMPLE
 	case "master":
 		content = MASTER_TOML_EXAMPLE
+	case "shell":
+		content = SHELL_TOML_EXAMPLE
 	}
 	if content == "" {
 		println("need a valid -config option")
@@ -59,21 +69,43 @@ const (
 #    $HOME/.seaweedfs/filer.toml
 #    /etc/seaweedfs/filer.toml
 
+####################################################
+# Customizable filer server options
+####################################################
+[filer.options]
+# with http DELETE, by default the filer would check whether a folder is empty.
+# recursive_delete will delete all sub folders and files, similar to "rm -Rf"
+recursive_delete = false
+# directories under this folder will be automatically creating a separate bucket
+buckets_folder = "/buckets"
+
+####################################################
+# The following are filer store options
+####################################################
+
 [leveldb2]
 # local on disk, mostly for simple single-machine setup, fairly scalable
 # faster than previous leveldb, recommended.
 enabled = true
-dir = "."					# directory to store level db files
+dir = "./filerldb2"					# directory to store level db files
 
-####################################################
-# multiple filers on shared storage, fairly scalable
-####################################################
+[leveldb3]
+# similar to leveldb2.
+# each bucket has its own meta store.
+enabled = false
+dir = "./filerldb3"					# directory to store level db files
 
-[mysql]  # or tidb
+[rocksdb]
+# local on disk, similar to leveldb
+# since it is using a C wrapper, you need to install rocksdb and build it by yourself
+enabled = false
+dir = "./filerrdb"					# directory to store rocksdb files
+
+[mysql]  # or memsql, tidb
 # CREATE TABLE IF NOT EXISTS filemeta (
-#   dirhash     BIGINT         COMMENT 'first 64 bits of MD5 hash value of directory field',
-#   name        VARCHAR(1000)  COMMENT 'directory or file name',
-#   directory   TEXT           COMMENT 'full path to parent directory',
+#   dirhash     BIGINT               COMMENT 'first 64 bits of MD5 hash value of directory field',
+#   name        VARCHAR(1000) BINARY COMMENT 'directory or file name',
+#   directory   TEXT                 COMMENT 'full path to parent directory',
 #   meta        LONGBLOB,
 #   PRIMARY KEY (dirhash, name)
 # ) DEFAULT CHARSET=utf8;
@@ -86,9 +118,37 @@ password = ""
 database = ""              # create or use an existing database
 connection_max_idle = 2
 connection_max_open = 100
+connection_max_lifetime_seconds = 0
 interpolateParams = false
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+enableUpsert = true
+upsertQuery = """INSERT INTO ` + "`%s`" + ` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
 
-[postgres] # or cockroachdb
+[mysql2]  # or memsql, tidb
+enabled = false
+createTable = """
+  CREATE TABLE IF NOT EXISTS ` + "`%s`" + ` (
+    dirhash BIGINT,
+    name VARCHAR(1000) BINARY,
+    directory TEXT,
+    meta LONGBLOB,
+    PRIMARY KEY (dirhash, name)
+  ) DEFAULT CHARSET=utf8;
+"""
+hostname = "localhost"
+port = 3306
+username = "root"
+password = ""
+database = ""              # create or use an existing database
+connection_max_idle = 2
+connection_max_open = 100
+connection_max_lifetime_seconds = 0
+interpolateParams = false
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+enableUpsert = true
+upsertQuery = """INSERT INTO ` + "`%s`" + ` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
+
+[postgres] # or cockroachdb, YugabyteDB
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT,
 #   name        VARCHAR(65535),
@@ -101,10 +161,40 @@ hostname = "localhost"
 port = 5432
 username = "postgres"
 password = ""
-database = ""              # create or use an existing database
+database = "postgres"          # create or use an existing database
+schema = ""
 sslmode = "disable"
 connection_max_idle = 100
 connection_max_open = 100
+connection_max_lifetime_seconds = 0
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+enableUpsert = true
+upsertQuery = """INSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT (dirhash,name) DO UPDATE SET meta = EXCLUDED.meta WHERE "%[1]s".meta != EXCLUDED.meta"""
+
+[postgres2]
+enabled = false
+createTable = """
+  CREATE TABLE IF NOT EXISTS "%s" (
+    dirhash   BIGINT, 
+    name      VARCHAR(65535), 
+    directory VARCHAR(65535), 
+    meta      bytea, 
+    PRIMARY KEY (dirhash, name)
+  );
+"""
+hostname = "localhost"
+port = 5432
+username = "postgres"
+password = ""
+database = "postgres"          # create or use an existing database
+schema = ""
+sslmode = "disable"
+connection_max_idle = 100
+connection_max_open = 100
+connection_max_lifetime_seconds = 0
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+enableUpsert = true
+upsertQuery = """INSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT (dirhash,name) DO UPDATE SET meta = EXCLUDED.meta WHERE "%[1]s".meta != EXCLUDED.meta"""
 
 [cassandra]
 # CREATE TABLE filemeta (
@@ -118,14 +208,25 @@ keyspace="seaweedfs"
 hosts=[
 	"localhost:9042",
 ]
+username=""
+password=""
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
 
-[redis]
+[hbase]
+enabled = false
+zkquorum = ""
+table = "seaweedfs"
+
+[redis2]
 enabled = false
 address  = "localhost:6379"
 password = ""
 database = 0
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
 
-[redis_cluster]
+[redis_cluster2]
 enabled = false
 addresses = [
     "localhost:30001",
@@ -136,20 +237,58 @@ addresses = [
     "localhost:30006",
 ]
 password = ""
-// allows reads from slave servers or the master, but all writes still go to the master
-readOnly = true
-// automatically use the closest Redis server for reads
-routeByLatency = true
+# allows reads from slave servers or the master, but all writes still go to the master
+readOnly = false
+# automatically use the closest Redis server for reads
+routeByLatency = false
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
 
 [etcd]
 enabled = false
 servers = "localhost:2379"
 timeout = "3s"
 
-[tikv]
+[mongodb]
 enabled = false
-pdAddress = "192.168.199.113:2379"
+uri = "mongodb://localhost:27017"
+option_pool_size = 0
+database = "seaweedfs"
 
+[elastic7]
+enabled = false
+servers = [
+    "http://localhost1:9200",
+    "http://localhost2:9200",
+    "http://localhost3:9200",
+]
+username = ""
+password = ""
+sniff_enabled = false
+healthcheck_enabled = false
+# increase the value is recommend, be sure the value in Elastic is greater or equal here
+index.max_result_window = 10000
+
+
+
+##########################
+##########################
+# To add path-specific filer store:
+#
+# 1. Add a name following the store type separated by a dot ".". E.g., cassandra.tmp
+# 2. Add a location configuraiton. E.g., location = "/tmp/"
+# 3. Copy and customize all other configurations. 
+#     Make sure they are not the same if using the same store type!
+# 4. Set enabled to true
+#
+# The following is just using redis as an example
+##########################
+[redis2.tmp]
+enabled = false
+location = "/tmp/"
+address  = "localhost:6379"
+password = ""
+database = 1
 
 `
 
@@ -204,7 +343,8 @@ enabled = false
 # This URL will Dial the RabbitMQ server at the URL in the environment
 # variable RABBIT_SERVER_URL and open the exchange "myexchange".
 # The exchange must have already been created by some other means, like
-# the RabbitMQ management plugin.
+# the RabbitMQ management plugin. Сreate myexchange of type fanout and myqueue then
+# create binding myexchange => myqueue
 topic_url = "rabbit://myexchange"
 sub_url = "rabbit://myqueue"
 `
@@ -225,6 +365,19 @@ grpcAddress = "localhost:18888"
 # i.e., all files with this "prefix" are sent to notification message queue.
 directory = "/buckets"
 
+[sink.local]
+enabled = false
+directory = "/data"
+# all replicated files are under modified time as yyyy-mm-dd directories
+# so each date directory contains all new and updated files.
+is_incremental = false
+
+[sink.local_incremental]
+# all replicated files are under modified time as yyyy-mm-dd directories
+# so each date directory contains all new and updated files.
+enabled = false
+directory = "/backup"
+
 [sink.filer]
 enabled = false
 grpcAddress = "localhost:18888"
@@ -235,6 +388,7 @@ directory = "/backup"
 replication = ""
 collection = ""
 ttlSec = 0
+is_incremental = false
 
 [sink.s3]
 # read credentials doc at https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/sessions.html
@@ -245,6 +399,8 @@ aws_secret_access_key = ""     # if empty, loads from the shared credentials fil
 region = "us-east-2"
 bucket = "your_bucket_name"    # an existing bucket
 directory = "/"                # destination directory
+endpoint = ""
+is_incremental = false
 
 [sink.google_cloud_storage]
 # read credentials doc at https://cloud.google.com/docs/authentication/getting-started
@@ -252,6 +408,7 @@ enabled = false
 google_application_credentials = "/path/to/x.json" # path to json credential file
 bucket = "your_bucket_seaweedfs"    # an existing bucket
 directory = "/"                     # destination directory
+is_incremental = false
 
 [sink.azure]
 # experimental, let me know if it works
@@ -260,6 +417,7 @@ account_name = ""
 account_key  = ""
 container = "mycontainer"      # an existing container
 directory = "/"                # destination directory
+is_incremental = false
 
 [sink.backblaze]
 enabled = false
@@ -267,6 +425,7 @@ b2_account_id = ""
 b2_master_application_key  = ""
 bucket = "mybucket"            # an existing bucket
 directory = "/"                # destination directory
+is_incremental = false
 
 `
 
@@ -293,25 +452,34 @@ expires_after_seconds = 10           # seconds
 # the host name is not checked, so the PERM files can be shared.
 [grpc]
 ca = ""
+# Set wildcard domain for enable TLS authentication by common names
+allowed_wildcard_domain = "" # .mycompany.com
 
 [grpc.volume]
 cert = ""
 key  = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
 
 [grpc.master]
 cert = ""
 key  = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
 
 [grpc.filer]
 cert = ""
 key  = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
+
+[grpc.msg_broker]
+cert = ""
+key  = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
 
 # use this for any place needs a grpc client
 # i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
 [grpc.client]
 cert = ""
 key  = ""
-
 
 # volume server https options
 # Note: work in progress!
@@ -335,23 +503,29 @@ key  = ""
 [master.maintenance]
 # periodically run these scripts are the same as running them from 'weed shell'
 scripts = """
+  lock
   ec.encode -fullPercent=95 -quietFor=1h
   ec.rebuild -force
   ec.balance -force
   volume.balance -force
+  volume.fix.replication
+  unlock
 """
 sleep_minutes = 17          # sleep minutes between each script execution
 
 [master.filer]
-default_filer_url = "http://localhost:8888/"
+default = "localhost:8888"    # used by maintenance scripts if the scripts needs to use fs related commands
+
 
 [master.sequencer]
-type = "memory"     # Choose [memory|etcd] type for storing the file id sequence
+type = "raft"     # Choose [raft|etcd|snowflake] type for storing the file id sequence
 # when sequencer.type = etcd, set listen client urls of etcd cluster that store file id sequence
 # example : http://127.0.0.1:2379,http://127.0.0.1:2389
 sequencer_etcd_urls = "http://127.0.0.1:2379"
 
 
+# configurations for tiered cloud storage
+# old volumes are transparently moved to cloud for cost efficiency
 [storage.backend]
 	[storage.backend.s3.default]
 	enabled = false
@@ -359,6 +533,41 @@ sequencer_etcd_urls = "http://127.0.0.1:2379"
 	aws_secret_access_key = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
 	region = "us-east-2"
 	bucket = "your_bucket_name"    # an existing bucket
+	endpoint = ""
+
+# create this number of logical volumes if no more writable volumes
+# count_x means how many copies of data.
+# e.g.:
+#   000 has only one copy, copy_1
+#   010 and 001 has two copies, copy_2
+#   011 has only 3 copies, copy_3
+[master.volume_growth]
+copy_1 = 7                # create 1 x 7 = 7 actual volumes
+copy_2 = 6                # create 2 x 6 = 12 actual volumes
+copy_3 = 3                # create 3 x 3 = 9 actual volumes
+copy_other = 1            # create n x 1 = n actual volumes
+
+# configuration flags for replication
+[master.replication]
+# any replication counts should be considered minimums. If you specify 010 and
+# have 3 different racks, that's still considered writable. Writes will still
+# try to replicate to all available volumes. You should only use this option
+# if you are doing your own replication or periodic sync of volumes.
+treat_replication_as_minimums = false
+
+`
+	SHELL_TOML_EXAMPLE = `
+
+[cluster]
+default = "c1"
+
+[cluster.c1]
+master = "localhost:9333"    # comma-separated master servers
+filer = "localhost:8888"     # filer host and port
+
+[cluster.c2]
+master = ""
+filer = ""
 
 `
 )

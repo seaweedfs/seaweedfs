@@ -3,17 +3,16 @@ package needle
 import (
 	"errors"
 	"fmt"
-	"io"
-	"math"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"io"
+	"math"
 )
 
 const (
-	FlagGzip                = 0x01
+	FlagIsCompressed        = 0x01
 	FlagHasName             = 0x02
 	FlagHasMime             = 0x04
 	FlagHasLastModifiedDate = 0x08
@@ -24,11 +23,13 @@ const (
 	TtlBytesLength          = 2
 )
 
+var ErrorSizeMismatch = errors.New("size mismatch")
+
 func (n *Needle) DiskSize(version Version) int64 {
 	return GetActualSize(n.Size, version)
 }
 
-func (n *Needle) prepareWriteBuffer(version Version) ([]byte, uint32, int64, error) {
+func (n *Needle) prepareWriteBuffer(version Version) ([]byte, Size, int64, error) {
 
 	writeBytes := make([]byte, 0)
 
@@ -37,8 +38,8 @@ func (n *Needle) prepareWriteBuffer(version Version) ([]byte, uint32, int64, err
 		header := make([]byte, NeedleHeaderSize)
 		CookieToBytes(header[0:CookieSize], n.Cookie)
 		NeedleIdToBytes(header[CookieSize:CookieSize+NeedleIdSize], n.Id)
-		n.Size = uint32(len(n.Data))
-		util.Uint32toBytes(header[CookieSize+NeedleIdSize:CookieSize+NeedleIdSize+SizeSize], n.Size)
+		n.Size = Size(len(n.Data))
+		SizeToBytes(header[CookieSize+NeedleIdSize:CookieSize+NeedleIdSize+SizeSize], n.Size)
 		size := n.Size
 		actualSize := NeedleHeaderSize + int64(n.Size)
 		writeBytes = append(writeBytes, header...)
@@ -58,12 +59,12 @@ func (n *Needle) prepareWriteBuffer(version Version) ([]byte, uint32, int64, err
 		}
 		n.DataSize, n.MimeSize = uint32(len(n.Data)), uint8(len(n.Mime))
 		if n.DataSize > 0 {
-			n.Size = 4 + n.DataSize + 1
+			n.Size = 4 + Size(n.DataSize) + 1
 			if n.HasName() {
-				n.Size = n.Size + 1 + uint32(n.NameSize)
+				n.Size = n.Size + 1 + Size(n.NameSize)
 			}
 			if n.HasMime() {
-				n.Size = n.Size + 1 + uint32(n.MimeSize)
+				n.Size = n.Size + 1 + Size(n.MimeSize)
 			}
 			if n.HasLastModifiedDate() {
 				n.Size = n.Size + LastModifiedBytesLength
@@ -72,12 +73,12 @@ func (n *Needle) prepareWriteBuffer(version Version) ([]byte, uint32, int64, err
 				n.Size = n.Size + TtlBytesLength
 			}
 			if n.HasPairs() {
-				n.Size += 2 + uint32(n.PairsSize)
+				n.Size += 2 + Size(n.PairsSize)
 			}
 		} else {
 			n.Size = 0
 		}
-		util.Uint32toBytes(header[CookieSize+NeedleIdSize:CookieSize+NeedleIdSize+SizeSize], n.Size)
+		SizeToBytes(header[CookieSize+NeedleIdSize:CookieSize+NeedleIdSize+SizeSize], n.Size)
 		writeBytes = append(writeBytes, header[0:NeedleHeaderSize]...)
 		if n.DataSize > 0 {
 			util.Uint32toBytes(header[0:4], n.DataSize)
@@ -119,13 +120,42 @@ func (n *Needle) prepareWriteBuffer(version Version) ([]byte, uint32, int64, err
 			writeBytes = append(writeBytes, header[0:NeedleChecksumSize+TimestampSize+padding]...)
 		}
 
-		return writeBytes, n.DataSize, GetActualSize(n.Size, version), nil
+		return writeBytes, Size(n.DataSize), GetActualSize(n.Size, version), nil
 	}
 
 	return writeBytes, 0, 0, fmt.Errorf("Unsupported Version! (%d)", version)
 }
 
-func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset uint64, size uint32, actualSize int64, err error) {
+func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset uint64, size Size, actualSize int64, err error) {
+
+	if end, _, e := w.GetStat(); e == nil {
+		defer func(w backend.BackendStorageFile, off int64) {
+			if err != nil {
+				if te := w.Truncate(end); te != nil {
+					glog.V(0).Infof("Failed to truncate %s back to %d with error: %v", w.Name(), end, te)
+				}
+			}
+		}(w, end)
+		offset = uint64(end)
+	} else {
+		err = fmt.Errorf("Cannot Read Current Volume Position: %v", e)
+		return
+	}
+	if offset >= MaxPossibleVolumeSize {
+		err = fmt.Errorf("Volume Size %d Exeededs %d", offset, MaxPossibleVolumeSize)
+		return
+	}
+
+	bytesToWrite, size, actualSize, err := n.prepareWriteBuffer(version)
+
+	if err == nil {
+		_, err = w.WriteAt(bytesToWrite, int64(offset))
+	}
+
+	return offset, size, actualSize, err
+}
+
+func WriteNeedleBlob(w backend.BackendStorageFile, dataSlice []byte, size Size, appendAtNs uint64, version Version) (offset uint64, err error) {
 
 	if end, _, e := w.GetStat(); e == nil {
 		defer func(w backend.BackendStorageFile, off int64) {
@@ -141,30 +171,47 @@ func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset u
 		return
 	}
 
-	bytesToWrite, size, actualSize, err := n.prepareWriteBuffer(version)
-
-	if err == nil {
-		_, err = w.WriteAt(bytesToWrite, int64(offset))
+	if version == Version3 {
+		tsOffset := NeedleHeaderSize + size + NeedleChecksumSize
+		util.Uint64toBytes(dataSlice[tsOffset:tsOffset+TimestampSize], appendAtNs)
 	}
 
-	return offset, size, actualSize, err
+	if err == nil {
+		_, err = w.WriteAt(dataSlice, int64(offset))
+	}
+
+	return
+
 }
 
-func ReadNeedleBlob(r backend.BackendStorageFile, offset int64, size uint32, version Version) (dataSlice []byte, err error) {
+func ReadNeedleBlob(r backend.BackendStorageFile, offset int64, size Size, version Version) (dataSlice []byte, err error) {
 
 	dataSize := GetActualSize(size, version)
 	dataSlice = make([]byte, int(dataSize))
 
-	_, err = r.ReadAt(dataSlice, offset)
+	var n int
+	n, err = r.ReadAt(dataSlice, offset)
+	if err != nil && int64(n) == dataSize {
+		err = nil
+	}
+	if err != nil {
+		fileSize, _, _ := r.GetStat()
+		println("n", n, "dataSize", dataSize, "offset", offset, "fileSize", fileSize)
+	}
 	return dataSlice, err
 
 }
 
 // ReadBytes hydrates the needle from the bytes buffer, with only n.Id is set.
-func (n *Needle) ReadBytes(bytes []byte, offset int64, size uint32, version Version) (err error) {
+func (n *Needle) ReadBytes(bytes []byte, offset int64, size Size, version Version) (err error) {
 	n.ParseNeedleHeader(bytes)
 	if n.Size != size {
-		return fmt.Errorf("entry not found: offset %d found id %d size %d, expected size %d", offset, n.Id, n.Size, size)
+		// cookie is not always passed in for this API. Use size to do preliminary checking.
+		if OffsetSize == 4 && offset < int64(MaxPossibleVolumeSize) {
+			glog.Errorf("entry not found1: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
+			return ErrorSizeMismatch
+		}
+		return fmt.Errorf("entry not found: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
 	}
 	switch version {
 	case Version1:
@@ -191,7 +238,7 @@ func (n *Needle) ReadBytes(bytes []byte, offset int64, size uint32, version Vers
 }
 
 // ReadData hydrates the needle from the file, with only n.Id is set.
-func (n *Needle) ReadData(r backend.BackendStorageFile, offset int64, size uint32, version Version) (err error) {
+func (n *Needle) ReadData(r backend.BackendStorageFile, offset int64, size Size, version Version) (err error) {
 	bytes, err := ReadNeedleBlob(r, offset, size, version)
 	if err != nil {
 		return err
@@ -202,7 +249,7 @@ func (n *Needle) ReadData(r backend.BackendStorageFile, offset int64, size uint3
 func (n *Needle) ParseNeedleHeader(bytes []byte) {
 	n.Cookie = BytesToCookie(bytes[0:CookieSize])
 	n.Id = BytesToNeedleId(bytes[CookieSize : CookieSize+NeedleIdSize])
-	n.Size = util.BytesToUint32(bytes[CookieSize+NeedleIdSize : NeedleHeaderSize])
+	n.Size = BytesToSize(bytes[CookieSize+NeedleIdSize : NeedleHeaderSize])
 }
 
 func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
@@ -284,7 +331,7 @@ func ReadNeedleHeader(r backend.BackendStorageFile, version Version, offset int6
 	return
 }
 
-func PaddingLength(needleSize uint32, version Version) uint32 {
+func PaddingLength(needleSize Size, version Version) Size {
 	if version == Version3 {
 		// this is same value as version2, but just listed here for clarity
 		return NeedlePaddingSize - ((NeedleHeaderSize + needleSize + NeedleChecksumSize + TimestampSize) % NeedlePaddingSize)
@@ -292,7 +339,7 @@ func PaddingLength(needleSize uint32, version Version) uint32 {
 	return NeedlePaddingSize - ((NeedleHeaderSize + needleSize + NeedleChecksumSize) % NeedlePaddingSize)
 }
 
-func NeedleBodyLength(needleSize uint32, version Version) int64 {
+func NeedleBodyLength(needleSize Size, version Version) int64 {
 	if version == Version3 {
 		return int64(needleSize) + NeedleChecksumSize + TimestampSize + int64(PaddingLength(needleSize, version))
 	}
@@ -339,11 +386,11 @@ func (n *Needle) ReadNeedleBodyBytes(needleBody []byte, version Version) (err er
 	return
 }
 
-func (n *Needle) IsGzipped() bool {
-	return n.Flags&FlagGzip > 0
+func (n *Needle) IsCompressed() bool {
+	return n.Flags&FlagIsCompressed > 0
 }
-func (n *Needle) SetGzipped() {
-	n.Flags = n.Flags | FlagGzip
+func (n *Needle) SetIsCompressed() {
+	n.Flags = n.Flags | FlagIsCompressed
 }
 func (n *Needle) HasName() bool {
 	return n.Flags&FlagHasName > 0
@@ -386,6 +433,6 @@ func (n *Needle) SetHasPairs() {
 	n.Flags = n.Flags | FlagHasPairs
 }
 
-func GetActualSize(size uint32, version Version) int64 {
+func GetActualSize(size Size, version Version) int64 {
 	return NeedleHeaderSize + NeedleBodyLength(size, version)
 }

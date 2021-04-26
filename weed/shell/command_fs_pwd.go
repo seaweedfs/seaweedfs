@@ -22,11 +22,7 @@ func (c *commandFsPwd) Help() string {
 
 func (c *commandFsPwd) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	fmt.Fprintf(writer, "http://%s:%d%s\n",
-		commandEnv.option.FilerHost,
-		commandEnv.option.FilerPort,
-		commandEnv.option.Directory,
-	)
+	fmt.Fprintf(writer, "%s\n", commandEnv.option.Directory)
 
 	return nil
 }

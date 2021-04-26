@@ -1,11 +1,12 @@
 package needle
 
 import (
+	"fmt"
 	"strconv"
 )
 
 const (
-	//stored unit types
+	// stored unit types
 	Empty byte = iota
 	Minute
 	Hour
@@ -69,6 +70,9 @@ func (t *TTL) ToBytes(output []byte) {
 }
 
 func (t *TTL) ToUint32() (output uint32) {
+	if t == nil || t.Count == 0 {
+		return 0
+	}
 	output = uint32(t.Count) << 8
 	output += uint32(t.Unit)
 	return output
@@ -130,9 +134,49 @@ func (t TTL) Minutes() uint32 {
 	case Week:
 		return uint32(t.Count) * 60 * 24 * 7
 	case Month:
-		return uint32(t.Count) * 60 * 24 * 31
+		return uint32(t.Count) * 60 * 24 * 30
 	case Year:
 		return uint32(t.Count) * 60 * 24 * 365
 	}
 	return 0
+}
+
+func SecondsToTTL(seconds int32) string {
+	if seconds == 0 {
+		return ""
+	}
+	if seconds%(3600*24*365) == 0 && seconds/(3600*24*365) < 256 {
+		return fmt.Sprintf("%dy", seconds/(3600*24*365))
+	}
+	if seconds%(3600*24*30) == 0 && seconds/(3600*24*30) < 256 {
+		return fmt.Sprintf("%dM", seconds/(3600*24*30))
+	}
+	if seconds%(3600*24*7) == 0 && seconds/(3600*24*7) < 256 {
+		return fmt.Sprintf("%dw", seconds/(3600*24*7))
+	}
+	if seconds%(3600*24) == 0 && seconds/(3600*24) < 256 {
+		return fmt.Sprintf("%dd", seconds/(3600*24))
+	}
+	if seconds%(3600) == 0 && seconds/(3600) < 256 {
+		return fmt.Sprintf("%dh", seconds/(3600))
+	}
+	if seconds/60 < 256 {
+		return fmt.Sprintf("%dm", seconds/60)
+	}
+	if seconds/(3600) < 256 {
+		return fmt.Sprintf("%dh", seconds/(3600))
+	}
+	if seconds/(3600*24) < 256 {
+		return fmt.Sprintf("%dd", seconds/(3600*24))
+	}
+	if seconds/(3600*24*7) < 256 {
+		return fmt.Sprintf("%dw", seconds/(3600*24*7))
+	}
+	if seconds/(3600*24*30) < 256 {
+		return fmt.Sprintf("%dM", seconds/(3600*24*30))
+	}
+	if seconds/(3600*24*365) < 256 {
+		return fmt.Sprintf("%dy", seconds/(3600*24*365))
+	}
+	return ""
 }

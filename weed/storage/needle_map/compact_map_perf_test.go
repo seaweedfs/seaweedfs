@@ -9,7 +9,6 @@ import (
 	"time"
 
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 /*
@@ -32,7 +31,7 @@ func TestMemoryUsage(t *testing.T) {
 
 	startTime := time.Now()
 	for i := 0; i < 10; i++ {
-		indexFile, ie := os.OpenFile("../../../test/sample.idx", os.O_RDWR|os.O_RDONLY, 0644)
+		indexFile, ie := os.OpenFile("../../../test/data/sample.idx", os.O_RDWR|os.O_RDONLY, 0644)
 		if ie != nil {
 			log.Fatalln(ie)
 		}
@@ -60,7 +59,7 @@ func loadNewNeedleMap(file *os.File) (*CompactMap, uint64) {
 			rowCount++
 			key := BytesToNeedleId(bytes[i : i+NeedleIdSize])
 			offset := BytesToOffset(bytes[i+NeedleIdSize : i+NeedleIdSize+OffsetSize])
-			size := util.BytesToUint32(bytes[i+NeedleIdSize+OffsetSize : i+NeedleIdSize+OffsetSize+SizeSize])
+			size := BytesToSize(bytes[i+NeedleIdSize+OffsetSize : i+NeedleIdSize+OffsetSize+SizeSize])
 
 			if !offset.IsZero() {
 				m.Set(NeedleId(key), offset, size)
