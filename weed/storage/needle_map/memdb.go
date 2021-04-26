@@ -2,6 +2,7 @@ package needle_map
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/syndtr/goleveldb/leveldb"
@@ -104,7 +105,13 @@ func (cm *MemDb) LoadFromIdx(idxName string) (ret error) {
 	}
 	defer idxFile.Close()
 
-	return idx.WalkIndexFile(idxFile, func(key NeedleId, offset Offset, size Size) error {
+	return cm.LoadFromReaderAt(idxFile)
+
+}
+
+func (cm *MemDb) LoadFromReaderAt(readerAt io.ReaderAt) (ret error) {
+
+	return idx.WalkIndexFile(readerAt, func(key NeedleId, offset Offset, size Size) error {
 		if offset.IsZero() || size.IsDeleted() {
 			return cm.Delete(key)
 		}

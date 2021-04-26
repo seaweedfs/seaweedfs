@@ -79,7 +79,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		w.Header().Set("Last-Modified", entry.Attr.Mtime.UTC().Format(http.TimeFormat))
 		if r.Header.Get("If-Modified-Since") != "" {
 			if t, parseError := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since")); parseError == nil {
-				if t.After(entry.Attr.Mtime) {
+				if !t.Before(entry.Attr.Mtime) {
 					w.WriteHeader(http.StatusNotModified)
 					return
 				}
@@ -131,6 +131,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
+		processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
+			return filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size, true)
+		})
 		return
 	}
 
@@ -150,16 +153,15 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 
-	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64, httpStatusCode int) error {
-		if httpStatusCode != 0 {
-			w.WriteHeader(httpStatusCode)
-		}
+	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
 		if offset+size <= int64(len(entry.Content)) {
 			_, err := writer.Write(entry.Content[offset : offset+size])
-			glog.Errorf("failed to write entry content: %v", err)
+			if err != nil {
+				glog.Errorf("failed to write entry content: %v", err)
+			}
 			return err
 		}
-		return filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size)
+		return filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size, false)
 	})
 
 }

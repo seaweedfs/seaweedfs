@@ -21,6 +21,8 @@ type VirtualFilerStore interface {
 	DeleteHardLink(ctx context.Context, hardLinkId HardLinkId) error
 	DeleteOneEntry(ctx context.Context, entry *Entry) error
 	AddPathSpecificStore(path string, storeId string, store FilerStore)
+	OnBucketCreation(bucket string)
+	OnBucketDeletion(bucket string)
 }
 
 type FilerStoreWrapper struct {
@@ -37,6 +39,27 @@ func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
 		defaultStore:   store,
 		pathToStore:    ptrie.New(),
 		storeIdToStore: make(map[string]FilerStore),
+	}
+}
+
+func (fsw *FilerStoreWrapper) OnBucketCreation(bucket string) {
+	for _, store := range fsw.storeIdToStore {
+		if ba, ok := store.(BucketAware); ok {
+			ba.OnBucketCreation(bucket)
+		}
+	}
+	if ba, ok := fsw.defaultStore.(BucketAware); ok {
+		ba.OnBucketCreation(bucket)
+	}
+}
+func (fsw *FilerStoreWrapper) OnBucketDeletion(bucket string) {
+	for _, store := range fsw.storeIdToStore {
+		if ba, ok := store.(BucketAware); ok {
+			ba.OnBucketDeletion(bucket)
+		}
+	}
+	if ba, ok := fsw.defaultStore.(BucketAware); ok {
+		ba.OnBucketDeletion(bucket)
 	}
 }
 
@@ -126,8 +149,8 @@ func (fsw *FilerStoreWrapper) FindEntry(ctx context.Context, fp util.FullPath) (
 		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "find").Observe(time.Since(start).Seconds())
 	}()
 
-	glog.V(4).Infof("FindEntry %s", fp)
 	entry, err = actualStore.FindEntry(ctx, fp)
+	glog.V(4).Infof("FindEntry %s: %v", fp, err)
 	if err != nil {
 		return nil, err
 	}

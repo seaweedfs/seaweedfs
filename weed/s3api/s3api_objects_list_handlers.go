@@ -206,7 +206,6 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		isTruncated = isTruncated || subIsTruncated
 		maxKeys -= subCounter
 		nextMarker = subDir + "/" + subNextMarker
-		counter += subCounter
 		// finished processing this sub directory
 		marker = subDir
 	}

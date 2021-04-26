@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"math/rand"
 	"sync"
 	"time"
@@ -60,6 +61,7 @@ const (
 type AdminLock struct {
 	accessSecret   int64
 	accessLockTime time.Time
+	lastClient     string
 }
 
 type AdminLocks struct {
@@ -73,14 +75,15 @@ func NewAdminLocks() *AdminLocks {
 	}
 }
 
-func (locks *AdminLocks) isLocked(lockName string) bool {
+func (locks *AdminLocks) isLocked(lockName string) (clientName string, isLocked bool) {
 	locks.RLock()
 	defer locks.RUnlock()
 	adminLock, found := locks.locks[lockName]
 	if !found {
-		return false
+		return "", false
 	}
-	return adminLock.accessLockTime.Add(LockDuration).After(time.Now())
+	glog.V(4).Infof("isLocked %v", adminLock.lastClient)
+	return adminLock.lastClient, adminLock.accessLockTime.Add(LockDuration).After(time.Now())
 }
 
 func (locks *AdminLocks) isValidToken(lockName string, ts time.Time, token int64) bool {
@@ -93,12 +96,13 @@ func (locks *AdminLocks) isValidToken(lockName string, ts time.Time, token int64
 	return adminLock.accessLockTime.Equal(ts) && adminLock.accessSecret == token
 }
 
-func (locks *AdminLocks) generateToken(lockName string) (ts time.Time, token int64) {
+func (locks *AdminLocks) generateToken(lockName string, clientName string) (ts time.Time, token int64) {
 	locks.Lock()
 	defer locks.Unlock()
 	lock := &AdminLock{
 		accessSecret:   rand.Int63(),
 		accessLockTime: time.Now(),
+		lastClient:     clientName,
 	}
 	locks.locks[lockName] = lock
 	return lock.accessLockTime, lock.accessSecret
@@ -113,18 +117,19 @@ func (locks *AdminLocks) deleteLock(lockName string) {
 func (ms *MasterServer) LeaseAdminToken(ctx context.Context, req *master_pb.LeaseAdminTokenRequest) (*master_pb.LeaseAdminTokenResponse, error) {
 	resp := &master_pb.LeaseAdminTokenResponse{}
 
-	if ms.adminLocks.isLocked(req.LockName) {
+	if lastClient, isLocked := ms.adminLocks.isLocked(req.LockName); isLocked {
+		glog.V(4).Infof("LeaseAdminToken %v", lastClient)
 		if req.PreviousToken != 0 && ms.adminLocks.isValidToken(req.LockName, time.Unix(0, req.PreviousLockTime), req.PreviousToken) {
 			// for renew
-			ts, token := ms.adminLocks.generateToken(req.LockName)
+			ts, token := ms.adminLocks.generateToken(req.LockName, req.ClientName)
 			resp.Token, resp.LockTsNs = token, ts.UnixNano()
 			return resp, nil
 		}
 		// refuse since still locked
-		return resp, fmt.Errorf("already locked")
+		return resp, fmt.Errorf("already locked by " + lastClient)
 	}
 	// for fresh lease request
-	ts, token := ms.adminLocks.generateToken(req.LockName)
+	ts, token := ms.adminLocks.generateToken(req.LockName, req.ClientName)
 	resp.Token, resp.LockTsNs = token, ts.UnixNano()
 	return resp, nil
 }

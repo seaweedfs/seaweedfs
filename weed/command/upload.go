@@ -43,7 +43,7 @@ func init() {
 	upload.dataCenter = cmdUpload.Flag.String("dataCenter", "", "optional data center name")
 	upload.diskType = cmdUpload.Flag.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	upload.ttl = cmdUpload.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
-	upload.maxMB = cmdUpload.Flag.Int("maxMB", 32, "split files larger than the limit")
+	upload.maxMB = cmdUpload.Flag.Int("maxMB", 4, "split files larger than the limit")
 	upload.usePublicUrl = cmdUpload.Flag.Bool("usePublicUrl", false, "upload to public url from volume server")
 }
 

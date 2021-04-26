@@ -40,6 +40,7 @@ jobs:
           goarch: ${{ matrix.goarch }}
           release_tag: dev
           overwrite: true
+          pre_command: export CGO_ENABLED=0
           build_flags: -tags 5BytesOffset # optional, default is
           ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
@@ -55,8 +56,9 @@ jobs:
           goarch: ${{ matrix.goarch }}
           release_tag: dev
           overwrite: true
+          pre_command: export CGO_ENABLED=0
           ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
           project_path: weed
-          binary_name: weed-
+          binary_name: weed
           asset_name: "weed-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"

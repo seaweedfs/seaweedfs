@@ -176,6 +176,11 @@ func moveAwayOneEcVolume(commandEnv *CommandEnv, ecShardInfo *master_pb.VolumeEc
 
 func moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, vol *master_pb.VolumeInformationMessage, thisNode *Node, otherNodes []*Node, applyChange bool) (hasMoved bool, err error) {
 	fn := capacityByFreeVolumeCount(types.ToDiskType(vol.DiskType))
+	for _, n := range otherNodes {
+		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
+			return v.DiskType == vol.DiskType
+		})
+	}
 	sort.Slice(otherNodes, func(i, j int) bool {
 		return otherNodes[i].localVolumeRatio(fn) > otherNodes[j].localVolumeRatio(fn)
 	})

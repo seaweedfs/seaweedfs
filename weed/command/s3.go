@@ -137,7 +137,7 @@ func runS3(cmd *Command, args []string) bool {
 
 func (s3opt *S3Options) startS3Server() bool {
 
-	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(*s3opt.filer)
+	filerGrpcAddress, err := pb.ParseServerToGrpcAddress(*s3opt.filer)
 	if err != nil {
 		glog.Fatal(err)
 		return false

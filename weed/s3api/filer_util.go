@@ -31,6 +31,10 @@ func (s3a *S3ApiServer) list(parentDirectoryPath, prefix, startFrom string, incl
 		return nil
 	}, startFrom, inclusive, limit)
 
+	if len(entries) == 0 {
+		isLast = true
+	}
+
 	return
 
 }
@@ -72,6 +76,12 @@ func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath strin
 func (s3a *S3ApiServer) exists(parentDirectoryPath string, entryName string, isDirectory bool) (exists bool, err error) {
 
 	return filer_pb.Exists(s3a, parentDirectoryPath, entryName, isDirectory)
+
+}
+
+func (s3a *S3ApiServer) touch(parentDirectoryPath string, entryName string, entry *filer_pb.Entry) (err error) {
+
+	return filer_pb.Touch(s3a, parentDirectoryPath, entryName, entry)
 
 }
 

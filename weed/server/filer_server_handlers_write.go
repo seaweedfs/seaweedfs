@@ -52,7 +52,7 @@ func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, u
 	return
 }
 
-func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
+func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, contentLength int64) {
 
 	ctx := context.Background()
 
@@ -66,7 +66,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		query.Get("rack"),
 	)
 
-	fs.autoChunk(ctx, w, r, so)
+	fs.autoChunk(ctx, w, r, contentLength, so)
 	util.CloseRequest(r)
 
 }

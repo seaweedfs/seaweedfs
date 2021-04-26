@@ -1,0 +1,47 @@
+version: '2'
+
+services:
+  master:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9333:9333
+      - 19333:19333
+    command: "master -ip=master"
+  volume:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 7455:8080
+      - 9325:9325
+    volumes:
+      - /Volumes/mobile_disk/99:/data
+    command: 'volume -mserver="master:9333" -port=8080 -metricsPort=9325 -preStopSeconds=1 -publicUrl=localhost:7455'
+    depends_on:
+      - master
+  filer:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8888:8888
+      - 18888:18888
+      - 9326:9326
+    volumes:
+      - /Volumes/mobile_disk/99:/data
+    command: 'filer -master="master:9333"  -metricsPort=9326'
+    tty: true
+    stdin_open: true
+    depends_on:
+      - master
+      - volume
+  mount:
+    image: chrislusf/seaweedfs:local
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - fuse
+    volumes:
+      - /Volumes/mobile_disk/99:/data
+    entrypoint: '/bin/sh -c "mkdir -p t1 && weed mount -filer=filer:8888 -dir=./t1 -cacheCapacityMB=0 -memprofile=/data/mount.mem.pprof"'
+    depends_on:
+      - master
+      - volume
+      - filer

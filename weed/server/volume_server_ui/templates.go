@@ -1,4 +1,4 @@
-package master_ui
+package volume_server_ui
 
 import (
 	"fmt"

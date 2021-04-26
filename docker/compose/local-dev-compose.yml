@@ -6,33 +6,50 @@ services:
     ports:
       - 9333:9333
       - 19333:19333
-    command: "master -ip=master"
+    command: "-v=1 master -ip=master"
+    volumes:
+      - ./tls:/etc/seaweedfs/tls
+    env_file:
+     - ${ENV_FILE:-dev.env}
   volume:
     image: chrislusf/seaweedfs:local
     ports:
       - 8080:8080
       - 18080:18080
-    command: "volume -mserver=master:9333 -port=8080 -ip=volume -preStopSeconds=1"
+    command: "-v=1 volume -mserver=master:9333 -port=8080 -ip=volume -preStopSeconds=1"
     depends_on:
       - master
+    volumes:
+      - ./tls:/etc/seaweedfs/tls
+    env_file:
+      - ${ENV_FILE:-dev.env}
   filer:
     image: chrislusf/seaweedfs:local
     ports:
+      - 8111:8111
       - 8888:8888
       - 18888:18888
-    command: 'filer -master="master:9333"'
+    command: '-v=1 filer -master="master:9333" -iam'
     depends_on:
       - master
       - volume
+    volumes:
+      - ./tls:/etc/seaweedfs/tls
+    env_file:
+      - ${ENV_FILE:-dev.env}
   s3:
     image: chrislusf/seaweedfs:local
     ports:
       - 8333:8333
-    command: 's3 -filer="filer:8888"'
+    command: '-v=1 s3 -filer="filer:8888"'
     depends_on:
       - master
       - volume
       - filer
+    volumes:
+      - ./tls:/etc/seaweedfs/tls
+    env_file:
+      - ${ENV_FILE:-dev.env}
   mount:
     image: chrislusf/seaweedfs:local
     privileged: true
@@ -40,6 +57,10 @@ services:
       - SYS_ADMIN
     mem_limit: 4096m
     command: '-v=4 mount -filer="filer:8888" -dirAutoCreate -dir=/mnt/seaweedfs -cacheCapacityMB=100 -concurrentWriters=128'
+    volumes:
+      - ./tls:/etc/seaweedfs/tls
+    env_file:
+      - ${ENV_FILE:-dev.env}
     depends_on:
       - master
       - volume

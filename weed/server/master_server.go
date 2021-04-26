@@ -277,6 +277,13 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 			glog.Error(err)
 			seq = nil
 		}
+	case "snowflake":
+		var err error
+		seq, err = sequence.NewSnowflakeSequencer(fmt.Sprintf("%s:%d", option.Host, option.Port))
+		if err != nil {
+			glog.Error(err)
+			seq = nil
+		}
 	default:
 		seq = sequence.NewMemorySequencer()
 	}

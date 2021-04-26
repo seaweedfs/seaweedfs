@@ -52,6 +52,11 @@ service VolumeServer {
     rpc CopyFile (CopyFileRequest) returns (stream CopyFileResponse) {
     }
 
+    rpc ReadNeedleBlob (ReadNeedleBlobRequest) returns (ReadNeedleBlobResponse) {
+    }
+    rpc WriteNeedleBlob (WriteNeedleBlobRequest) returns (WriteNeedleBlobResponse) {
+    }
+
     rpc VolumeTailSender (VolumeTailSenderRequest) returns (stream VolumeTailSenderResponse) {
     }
     rpc VolumeTailReceiver (VolumeTailReceiverRequest) returns (VolumeTailReceiverResponse) {
@@ -251,6 +256,25 @@ message CopyFileRequest {
 }
 message CopyFileResponse {
     bytes file_content = 1;
+}
+
+message ReadNeedleBlobRequest {
+    uint32 volume_id = 1;
+    uint64 needle_id = 2;
+    int64 offset = 3; // actual offset
+    int32 size = 4;
+}
+message ReadNeedleBlobResponse {
+    bytes needle_blob = 1;
+}
+
+message WriteNeedleBlobRequest {
+    uint32 volume_id = 1;
+    uint64 needle_id = 2;
+    int32 size = 3;
+    bytes needle_blob = 4;
+}
+message WriteNeedleBlobResponse {
 }
 
 message VolumeTailSenderRequest {

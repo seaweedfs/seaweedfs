@@ -94,8 +94,12 @@ func (m *SortedFileNeedleMap) Delete(key NeedleId, offset Offset) error {
 }
 
 func (m *SortedFileNeedleMap) Close() {
-	m.indexFile.Close()
-	m.dbFile.Close()
+	if m.indexFile != nil {
+		m.indexFile.Close()
+	}
+	if m.dbFile != nil {
+		m.dbFile.Close()
+	}
 }
 
 func (m *SortedFileNeedleMap) Destroy() error {

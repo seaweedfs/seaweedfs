@@ -64,19 +64,28 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 		return fuse.EIO
 	}
 
-	// fmt.Printf("rename path: %v => %v\n", oldPath, newPath)
-	dir.wfs.fsNodeCache.Move(oldPath, newPath)
+	oldFsNode := NodeWithId(oldPath.AsInode())
+	newFsNode := NodeWithId(newPath.AsInode())
+	dir.wfs.Server.InvalidateInternalNode(oldFsNode, newFsNode, func(internalNode fs.Node) {
+		if file, ok := internalNode.(*File); ok {
+			glog.V(4).Infof("internal node %s", file.Name)
+			file.Name = req.NewName
+			file.id = uint64(newFsNode)
+		}
+	})
 
 	// change file handle
 	dir.wfs.handlesLock.Lock()
 	defer dir.wfs.handlesLock.Unlock()
 	inodeId := oldPath.AsInode()
 	existingHandle, found := dir.wfs.handles[inodeId]
+	glog.V(4).Infof("has open filehandle %s: %v", oldPath, found)
 	if !found || existingHandle == nil {
-		return err
+		return nil
 	}
+	glog.V(4).Infof("opened filehandle %s => %s", oldPath, newPath)
 	delete(dir.wfs.handles, inodeId)
 	dir.wfs.handles[newPath.AsInode()] = existingHandle
 
-	return err
+	return nil
 }

@@ -53,7 +53,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	filer := *option.filer
 	// parse filer grpc address
-	filerGrpcAddress, err := pb.ParseFilerGrpcAddress(filer)
+	filerGrpcAddress, err := pb.ParseServerToGrpcAddress(filer)
 	if err != nil {
 		glog.V(0).Infof("ParseFilerGrpcAddress: %v", err)
 		return true
@@ -63,16 +63,23 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	// try to connect to filer, filerBucketsPath may be useful later
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	var cipher bool
-	err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+	for i := 0; i < 10; i++ {
+		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+			if err != nil {
+				return fmt.Errorf("get filer grpc address %s configuration: %v", filerGrpcAddress, err)
+			}
+			cipher = resp.Cipher
+			return nil
+		})
 		if err != nil {
-			return fmt.Errorf("get filer grpc address %s configuration: %v", filerGrpcAddress, err)
+			glog.V(0).Infof("failed to talk to filer %s: %v", filerGrpcAddress, err)
+			glog.V(0).Infof("wait for %d seconds ...", i+1)
+			time.Sleep(time.Duration(i+1) * time.Second)
 		}
-		cipher = resp.Cipher
-		return nil
-	})
+	}
 	if err != nil {
-		glog.Infof("failed to talk to filer %s: %v", filerGrpcAddress, err)
+		glog.Errorf("failed to talk to filer %s: %v", filerGrpcAddress, err)
 		return true
 	}
 
@@ -142,8 +149,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fuse.Subtype("seaweedfs"),
 		// fuse.NoAppleDouble(), // include .DS_Store, otherwise can not delete non-empty folders
 		fuse.NoAppleXattr(),
-		fuse.NoBrowse(),
-		fuse.AutoXattr(),
 		fuse.ExclCreate(),
 		fuse.DaemonTimeout("3600"),
 		fuse.AllowSUID(),
@@ -161,6 +166,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 	if *option.nonempty {
 		options = append(options, fuse.AllowNonEmptyMount())
+	}
+	if *option.readOnly {
+		options = append(options, fuse.ReadOnly())
 	}
 
 	// find mount point
@@ -186,7 +194,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		CacheDir:           *option.cacheDir,
 		CacheSizeMB:        *option.cacheSizeMB,
 		DataCenter:         *option.dataCenter,
-		EntryCacheTtl:      3 * time.Second,
 		MountUid:           uid,
 		MountGid:           gid,
 		MountMode:          mountMode,

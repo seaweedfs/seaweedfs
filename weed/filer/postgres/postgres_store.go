@@ -29,6 +29,8 @@ func (store *PostgresStore) GetName() string {
 
 func (store *PostgresStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return store.initialize(
+		configuration.GetString(prefix+"upsertQuery"),
+		configuration.GetBool(prefix+"enableUpsert"),
 		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetString(prefix+"hostname"),
@@ -42,12 +44,16 @@ func (store *PostgresStore) Initialize(configuration util.Configuration, prefix 
 	)
 }
 
-func (store *PostgresStore) initialize(user, password, hostname string, port int, database, schema, sslmode string, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
+func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database, schema, sslmode string, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
 
 	store.SupportBucketTable = false
+	if !enableUpsert {
+		upsertQuery = ""
+	}
 	store.SqlGenerator = &SqlGenPostgres{
 		CreateTableSqlTemplate: "",
 		DropTableSqlTemplate:   `drop table "%s"`,
+		UpsertQueryTemplate:    upsertQuery,
 	}
 
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, hostname, port, sslmode)

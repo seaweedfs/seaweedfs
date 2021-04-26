@@ -4,6 +4,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/stats"
@@ -47,18 +48,34 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 			fs.DeleteHandler(w, r)
 		}
 		stats.FilerRequestHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds())
-	case "PUT":
-		stats.FilerRequestCounter.WithLabelValues("put").Inc()
-		if _, ok := r.URL.Query()["tagging"]; ok {
-			fs.PutTaggingHandler(w, r)
-		} else {
-			fs.PostHandler(w, r)
+	case "POST", "PUT":
+
+		// wait until in flight data is less than the limit
+		contentLength := getContentLength(r)
+		fs.inFlightDataLimitCond.L.Lock()
+		for atomic.LoadInt64(&fs.inFlightDataSize) > fs.option.ConcurrentUploadLimit {
+			fs.inFlightDataLimitCond.Wait()
 		}
-		stats.FilerRequestHistogram.WithLabelValues("put").Observe(time.Since(start).Seconds())
-	case "POST":
-		stats.FilerRequestCounter.WithLabelValues("post").Inc()
-		fs.PostHandler(w, r)
-		stats.FilerRequestHistogram.WithLabelValues("post").Observe(time.Since(start).Seconds())
+		atomic.AddInt64(&fs.inFlightDataSize, contentLength)
+		fs.inFlightDataLimitCond.L.Unlock()
+		defer func() {
+			atomic.AddInt64(&fs.inFlightDataSize, -contentLength)
+			fs.inFlightDataLimitCond.Signal()
+		}()
+
+		if r.Method == "PUT" {
+			stats.FilerRequestCounter.WithLabelValues("put").Inc()
+			if _, ok := r.URL.Query()["tagging"]; ok {
+				fs.PutTaggingHandler(w, r)
+			} else {
+				fs.PostHandler(w, r, contentLength)
+			}
+			stats.FilerRequestHistogram.WithLabelValues("put").Observe(time.Since(start).Seconds())
+		} else { // method == "POST"
+			stats.FilerRequestCounter.WithLabelValues("post").Inc()
+			fs.PostHandler(w, r, contentLength)
+			stats.FilerRequestHistogram.WithLabelValues("post").Observe(time.Since(start).Seconds())
+		}
 	case "OPTIONS":
 		stats.FilerRequestCounter.WithLabelValues("options").Inc()
 		OptionsHandler(w, r, false)

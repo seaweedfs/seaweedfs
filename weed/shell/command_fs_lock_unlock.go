@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
 )
 
@@ -26,7 +27,7 @@ func (c *commandLock) Help() string {
 
 func (c *commandLock) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	commandEnv.locker.RequestLock()
+	commandEnv.locker.RequestLock(util.DetectedHostAddress())
 
 	return nil
 }

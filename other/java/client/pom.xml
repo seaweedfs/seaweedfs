@@ -5,7 +5,7 @@
 
     <groupId>com.github.chrislusf</groupId>
     <artifactId>seaweedfs-client</artifactId>
-    <version>1.6.2</version>
+    <version>1.6.4</version>
 
     <parent>
         <groupId>org.sonatype.oss</groupId>
@@ -17,7 +17,7 @@
         <protobuf.version>3.9.1</protobuf.version>
         <!-- follow https://github.com/grpc/grpc-java -->
         <grpc.version>1.23.0</grpc.version>
-        <guava.version>28.0-jre</guava.version>
+        <guava.version>30.0-jre</guava.version>
     </properties>
 
     <dependencies>

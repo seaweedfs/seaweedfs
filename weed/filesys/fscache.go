@@ -124,8 +124,9 @@ func (c *FsCache) Move(oldPath util.FullPath, newPath util.FullPath) *FsNode {
 	}
 	if f, ok := src.node.(*File); ok {
 		f.Name = target.name
-		if f.entry != nil {
-			f.entry.Name = f.Name
+		entry := f.getEntry()
+		if entry != nil {
+			entry.Name = f.Name
 		}
 	}
 	parent.disconnectChild(target)

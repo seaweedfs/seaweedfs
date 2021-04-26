@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -101,12 +102,16 @@ func SeaweedList(client SeaweedFilerClient, parentDirectoryPath, prefix string, 
 }
 
 func doSeaweedList(client SeaweedFilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunciton, startFrom string, inclusive bool, limit uint32) (err error) {
-
+	// Redundancy limit to make it correctly judge whether it is the last file.
+	redLimit := limit
+	if limit != math.MaxInt32 && limit != 0 {
+		redLimit = limit + 1
+	}
 	request := &ListEntriesRequest{
 		Directory:          string(fullDirPath),
 		Prefix:             prefix,
 		StartFromFileName:  startFrom,
-		Limit:              limit,
+		Limit:              redLimit,
 		InclusiveStartFrom: inclusive,
 	}
 
@@ -119,6 +124,7 @@ func doSeaweedList(client SeaweedFilerClient, fullDirPath util.FullPath, prefix 
 	}
 
 	var prevEntry *Entry
+	count := 0
 	for {
 		resp, recvErr := stream.Recv()
 		if recvErr != nil {
@@ -139,6 +145,10 @@ func doSeaweedList(client SeaweedFilerClient, fullDirPath util.FullPath, prefix 
 			}
 		}
 		prevEntry = resp.Entry
+		count++
+		if count > int(limit) && limit != 0 {
+			prevEntry = nil
+		}
 	}
 
 	return nil
@@ -170,6 +180,26 @@ func Exists(filerClient FilerClient, parentDirectoryPath string, entryName strin
 	})
 
 	return
+}
+
+func Touch(filerClient FilerClient, parentDirectoryPath string, entryName string, entry *Entry) (err error) {
+
+	return filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
+
+		request := &UpdateEntryRequest{
+			Directory: parentDirectoryPath,
+			Entry:     entry,
+		}
+
+		glog.V(4).Infof("touch entry %v/%v: %v", parentDirectoryPath, entryName, request)
+		if err := UpdateEntry(client, request); err != nil {
+			glog.V(0).Infof("touch exists entry %v: %v", request, err)
+			return fmt.Errorf("touch exists entry %s/%s: %v", parentDirectoryPath, entryName, err)
+		}
+
+		return nil
+	})
+
 }
 
 func Mkdir(filerClient FilerClient, parentDirectoryPath string, dirName string, fn func(entry *Entry)) error {

@@ -103,9 +103,9 @@ dir = "./filerrdb"					# directory to store rocksdb files
 
 [mysql]  # or memsql, tidb
 # CREATE TABLE IF NOT EXISTS filemeta (
-#   dirhash     BIGINT         COMMENT 'first 64 bits of MD5 hash value of directory field',
-#   name        VARCHAR(1000)  COMMENT 'directory or file name',
-#   directory   TEXT           COMMENT 'full path to parent directory',
+#   dirhash     BIGINT               COMMENT 'first 64 bits of MD5 hash value of directory field',
+#   name        VARCHAR(1000) BINARY COMMENT 'directory or file name',
+#   directory   TEXT                 COMMENT 'full path to parent directory',
 #   meta        LONGBLOB,
 #   PRIMARY KEY (dirhash, name)
 # ) DEFAULT CHARSET=utf8;
@@ -120,13 +120,16 @@ connection_max_idle = 2
 connection_max_open = 100
 connection_max_lifetime_seconds = 0
 interpolateParams = false
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+enableUpsert = true
+upsertQuery = """INSERT INTO ` + "`%s`" + ` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
 
 [mysql2]  # or memsql, tidb
 enabled = false
 createTable = """
   CREATE TABLE IF NOT EXISTS ` + "`%s`" + ` (
     dirhash BIGINT,
-    name VARCHAR(1000),
+    name VARCHAR(1000) BINARY,
     directory TEXT,
     meta LONGBLOB,
     PRIMARY KEY (dirhash, name)
@@ -141,6 +144,9 @@ connection_max_idle = 2
 connection_max_open = 100
 connection_max_lifetime_seconds = 0
 interpolateParams = false
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+enableUpsert = true
+upsertQuery = """INSERT INTO ` + "`%s`" + ` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
 
 [postgres] # or cockroachdb, YugabyteDB
 # CREATE TABLE IF NOT EXISTS filemeta (
@@ -161,6 +167,9 @@ sslmode = "disable"
 connection_max_idle = 100
 connection_max_open = 100
 connection_max_lifetime_seconds = 0
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+enableUpsert = true
+upsertQuery = """INSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT (dirhash,name) DO UPDATE SET meta = EXCLUDED.meta WHERE "%[1]s".meta != EXCLUDED.meta"""
 
 [postgres2]
 enabled = false
@@ -183,6 +192,9 @@ sslmode = "disable"
 connection_max_idle = 100
 connection_max_open = 100
 connection_max_lifetime_seconds = 0
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+enableUpsert = true
+upsertQuery = """INSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT (dirhash,name) DO UPDATE SET meta = EXCLUDED.meta WHERE "%[1]s".meta != EXCLUDED.meta"""
 
 [cassandra]
 # CREATE TABLE filemeta (
@@ -269,7 +281,7 @@ index.max_result_window = 10000
 #     Make sure they are not the same if using the same store type!
 # 4. Set enabled to true
 #
-# The following is just using cassandra as an example
+# The following is just using redis as an example
 ##########################
 [redis2.tmp]
 enabled = false
@@ -440,29 +452,34 @@ expires_after_seconds = 10           # seconds
 # the host name is not checked, so the PERM files can be shared.
 [grpc]
 ca = ""
+# Set wildcard domain for enable TLS authentication by common names
+allowed_wildcard_domain = "" # .mycompany.com
 
 [grpc.volume]
 cert = ""
 key  = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
 
 [grpc.master]
 cert = ""
 key  = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
 
 [grpc.filer]
 cert = ""
 key  = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
 
 [grpc.msg_broker]
 cert = ""
 key  = ""
+allowed_commonNames = ""	# comma-separated SSL certificate common names
 
 # use this for any place needs a grpc client
 # i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
 [grpc.client]
 cert = ""
 key  = ""
-
 
 # volume server https options
 # Note: work in progress!
@@ -501,7 +518,7 @@ default = "localhost:8888"    # used by maintenance scripts if the scripts needs
 
 
 [master.sequencer]
-type = "raft"     # Choose [raft|etcd] type for storing the file id sequence
+type = "raft"     # Choose [raft|etcd|snowflake] type for storing the file id sequence
 # when sequencer.type = etcd, set listen client urls of etcd cluster that store file id sequence
 # example : http://127.0.0.1:2379,http://127.0.0.1:2389
 sequencer_etcd_urls = "http://127.0.0.1:2379"

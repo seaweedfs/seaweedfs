@@ -110,7 +110,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	uploadUrl := fmt.Sprintf("http://%s%s/%s/%s", s3a.option.Filer, s3a.option.BucketsPath, bucket, object)
+	uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer, s3a.option.BucketsPath, bucket, urlPathEscape(object))
 
 	etag, errCode := s3a.putToFiler(r, uploadUrl, fileBody)
 

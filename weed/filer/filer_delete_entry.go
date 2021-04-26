@@ -11,6 +11,10 @@ import (
 
 type HardLinkId []byte
 
+const (
+	MsgFailDelNonEmptyFolder = "fail to delete non-empty folder"
+)
+
 func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32) (err error) {
 	if p == "/" {
 		return nil
@@ -69,7 +73,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 	includeLastFile := false
 	if !isDeletingBucket {
 		for {
-			entries, _, err := f.ListDirectoryEntries(ctx, entry.FullPath, lastFileName, includeLastFile, PaginationSize, "", "")
+			entries, _, err := f.ListDirectoryEntries(ctx, entry.FullPath, lastFileName, includeLastFile, PaginationSize, "", "", "")
 			if err != nil {
 				glog.Errorf("list folder %s: %v", entry.FullPath, err)
 				return nil, nil, fmt.Errorf("list folder %s: %v", entry.FullPath, err)
@@ -77,7 +81,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 			if lastFileName == "" && !isRecursive && len(entries) > 0 {
 				// only for first iteration in the loop
 				glog.Errorf("deleting a folder %s has children: %+v ...", entry.FullPath, entries[0].Name())
-				return nil, nil, fmt.Errorf("fail to delete non-empty folder: %s", entry.FullPath)
+				return nil, nil, fmt.Errorf("%s: %s", MsgFailDelNonEmptyFolder, entry.FullPath)
 			}
 
 			for _, sub := range entries {

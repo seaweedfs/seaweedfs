@@ -7,6 +7,7 @@
 [![GoDoc](https://godoc.org/github.com/chrislusf/seaweedfs/weed?status.svg)](https://godoc.org/github.com/chrislusf/seaweedfs/weed)
 [![Wiki](https://img.shields.io/badge/docs-wiki-blue.svg)](https://github.com/chrislusf/seaweedfs/wiki)
 [![Docker Pulls](https://img.shields.io/docker/pulls/chrislusf/seaweedfs.svg?maxAge=4800)](https://hub.docker.com/r/chrislusf/seaweedfs/)
+[![SeaweedFS on Maven Central](https://img.shields.io/maven-central/v/com.github.chrislusf/seaweedfs-client)](https://search.maven.org/search?q=g:com.github.chrislusf)
 
 
 ![SeaweedFS Logo](https://raw.githubusercontent.com/chrislusf/seaweedfs/master/note/seaweedfs.png)
@@ -42,6 +43,7 @@ Your support will be really appreciated by me and other supporters!
 - [SeaweedFS on Twitter](https://twitter.com/SeaweedFS)
 - [SeaweedFS Mailing List](https://groups.google.com/d/forum/seaweedfs)
 - [Wiki Documentation](https://github.com/chrislusf/seaweedfs/wiki)
+- [SeaweedFS White Paper](https://github.com/chrislusf/seaweedfs/wiki/SeaweedFS_Architecture.pdf)
 - [SeaweedFS Introduction Slides](https://www.slideshare.net/chrislusf/seaweedfs-introduction)
 
 Table of Contents
@@ -70,7 +72,7 @@ Table of Contents
 * Download the latest binary from https://github.com/chrislusf/seaweedfs/releases and unzip a single binary file `weed` or `weed.exe`
 * Run `weed server -dir=/some/data/dir -s3` to start one master, one volume server, one filer, and one S3 gateway.
 
-Also, to increase capacity, just add more volume servers by running `weed volume -dir="/some/data/dir2" -mserver="<master_host>:9333" -port=8081` locally, or on a different machine, or on thoudsands of machines. That is it!
+Also, to increase capacity, just add more volume servers by running `weed volume -dir="/some/data/dir2" -mserver="<master_host>:9333" -port=8081` locally, or on a different machine, or on thousands of machines. That is it!
 
 ## Introduction ##
 
@@ -79,17 +81,34 @@ SeaweedFS is a simple and highly scalable distributed file system. There are two
 1. to store billions of files!
 2. to serve the files fast!
 
-SeaweedFS started as an Object Store to handle small files efficiently. Instead of managing all file metadata in a central master, the central master only manages volumes on volume servers, and these volume servers manage files and their metadata. This relieves concurrency pressure from the central master and spreads file metadata into volume servers, allowing faster file access (O(1), usually just one disk read operation).
+SeaweedFS started as an Object Store to handle small files efficiently. 
+Instead of managing all file metadata in a central master, 
+the central master only manages volumes on volume servers, 
+and these volume servers manage files and their metadata. 
+This relieves concurrency pressure from the central master and spreads file metadata into volume servers, 
+allowing faster file access (O(1), usually just one disk read operation).
 
-SeaweedFS can transparently integrate with the cloud. With hot data on local cluster, and warm data on the cloud with O(1) access time, SeaweedFS can achieve both fast local access time and elastic cloud storage capacity. What's more, the cloud storage access API cost is minimized. Faster and Cheaper than direct cloud storage!
+SeaweedFS can transparently integrate with the cloud. 
+With hot data on local cluster, and warm data on the cloud with O(1) access time, 
+SeaweedFS can achieve both fast local access time and elastic cloud storage capacity. 
+What's more, the cloud storage access API cost is minimized. 
+Faster and Cheaper than direct cloud storage!
+Signup for future managed SeaweedFS cluster offering at "seaweedfilesystem at gmail dot com".
 
-There is only 40 bytes of disk storage overhead for each file's metadata. It is so simple with O(1) disk reads that you are welcome to challenge the performance with your actual use cases.
+There is only 40 bytes of disk storage overhead for each file's metadata. 
+It is so simple with O(1) disk reads that you are welcome to challenge the performance with your actual use cases.
 
-SeaweedFS started by implementing [Facebook's Haystack design paper](http://www.usenix.org/event/osdi10/tech/full_papers/Beaver.pdf). Also, SeaweedFS implements erasure coding with ideas from [f4: Facebook’s Warm BLOB Storage System](https://www.usenix.org/system/files/conference/osdi14/osdi14-paper-muralidhar.pdf)
+SeaweedFS started by implementing [Facebook's Haystack design paper](http://www.usenix.org/event/osdi10/tech/full_papers/Beaver.pdf). 
+Also, SeaweedFS implements erasure coding with ideas from 
+[f4: Facebook’s Warm BLOB Storage System](https://www.usenix.org/system/files/conference/osdi14/osdi14-paper-muralidhar.pdf), and has a lot of similarities with [Facebook’s Tectonic Filesystem](https://www.usenix.org/system/files/fast21-pan.pdf)
 
-On top of the object store, optional [Filer] can support directories and POSIX attributes. Filer is a separate linearly-scalable stateless server with customizable metadata stores, e.g., MySql, Postgres, Redis, Cassandra, HBase, Mongodb, Elastic Search, LevelDB, RocksDB, MemSql, TiDB, Etcd, CockroachDB, etc.
+On top of the object store, optional [Filer] can support directories and POSIX attributes. 
+Filer is a separate linearly-scalable stateless server with customizable metadata stores, 
+e.g., MySql, Postgres, Redis, Cassandra, HBase, Mongodb, Elastic Search, LevelDB, RocksDB, MemSql, TiDB, Etcd, CockroachDB, etc.
 
-For any distributed key value stores, the large values can be offloaded to SeaweedFS. With the fast access speed and linearly scalable capacity, SeaweedFS can work as a distributed [Key-Large-Value store][KeyLargeValueStore].
+For any distributed key value stores, the large values can be offloaded to SeaweedFS. 
+With the fast access speed and linearly scalable capacity, 
+SeaweedFS can work as a distributed [Key-Large-Value store][KeyLargeValueStore].
 
 [Back to TOC](#table-of-contents)
 
@@ -105,6 +124,7 @@ For any distributed key value stores, the large values can be offloaded to Seawe
 * Support ETag, Accept-Range, Last-Modified, etc.
 * Support in-memory/leveldb/readonly mode tuning for memory/performance balance.
 * Support rebalancing the writable and readonly volumes.
+* [Customizable Multiple Storage Tiers][TieredStorage]: Customizable storage disk types to balance performance and cost.
 * [Transparent cloud integration][CloudTier]: unlimited capacity via tiered cloud storage for warm data.
 * [Erasure Coding for warm storage][ErasureCoding]  Rack-Aware 10.4 erasure coding reduces storage cost and increases availability.
 
@@ -135,6 +155,7 @@ For any distributed key value stores, the large values can be offloaded to Seawe
 [Hadoop]: https://github.com/chrislusf/seaweedfs/wiki/Hadoop-Compatible-File-System
 [WebDAV]: https://github.com/chrislusf/seaweedfs/wiki/WebDAV
 [ErasureCoding]: https://github.com/chrislusf/seaweedfs/wiki/Erasure-coding-for-warm-storage
+[TieredStorage]: https://github.com/chrislusf/seaweedfs/wiki/Tiered-Storage
 [CloudTier]: https://github.com/chrislusf/seaweedfs/wiki/Cloud-Tier
 [FilerDataEncryption]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Data-Encryption
 [FilerTTL]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Stores

@@ -124,6 +124,27 @@ func Delete(url string, jwt string) error {
 	return errors.New(string(body))
 }
 
+func DeleteProxied(url string, jwt string) (body []byte, httpStatus int, err error) {
+	req, err := http.NewRequest("DELETE", url, nil)
+	if jwt != "" {
+		req.Header.Set("Authorization", "BEARER "+string(jwt))
+	}
+	if err != nil {
+		return
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	body, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return
+	}
+	httpStatus = resp.StatusCode
+	return
+}
+
 func GetBufferStream(url string, values url.Values, allocatedBytes []byte, eachBuffer func([]byte)) error {
 	r, err := client.PostForm(url, values)
 	if err != nil {
@@ -313,7 +334,7 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 }
 
 func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (bool, error) {
-	encryptedData, retryable, err := FastGet(fileUrl)
+	encryptedData, retryable, err := Get(fileUrl)
 	if err != nil {
 		return retryable, fmt.Errorf("fetch %s: %v", fileUrl, err)
 	}

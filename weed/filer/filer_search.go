@@ -20,9 +20,9 @@ func splitPattern(pattern string) (prefix string, restPattern string) {
 }
 
 // For now, prefix and namePattern are mutually exclusive
-func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, namePattern string) (entries []*Entry, hasMore bool, err error) {
+func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, namePattern string, namePatternExclude string) (entries []*Entry, hasMore bool, err error) {
 
-	_, err = f.StreamListDirectoryEntries(ctx, p, startFileName, inclusive, limit+1, prefix, namePattern, func(entry *Entry) bool {
+	_, err = f.StreamListDirectoryEntries(ctx, p, startFileName, inclusive, limit+1, prefix, namePattern, namePatternExclude, func(entry *Entry) bool {
 		entries = append(entries, entry)
 		return true
 	})
@@ -36,7 +36,7 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, start
 }
 
 // For now, prefix and namePattern are mutually exclusive
-func (f *Filer) StreamListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, namePattern string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {
+func (f *Filer) StreamListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, namePattern string, namePatternExclude string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error) {
 	if strings.HasSuffix(string(p), "/") && len(p) > 1 {
 		p = p[0 : len(p)-1]
 	}
@@ -47,30 +47,38 @@ func (f *Filer) StreamListDirectoryEntries(ctx context.Context, p util.FullPath,
 	}
 	var missedCount int64
 
-	missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, startFileName, inclusive, limit, prefix, restNamePattern, eachEntryFunc)
+	missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, startFileName, inclusive, limit, prefix, restNamePattern, namePatternExclude, eachEntryFunc)
 
 	for missedCount > 0 && err == nil {
-		missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, lastFileName, false, missedCount, prefix, restNamePattern, eachEntryFunc)
+		missedCount, lastFileName, err = f.doListPatternMatchedEntries(ctx, p, lastFileName, false, missedCount, prefix, restNamePattern, namePatternExclude, eachEntryFunc)
 	}
 
 	return
 }
 
-func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix, restNamePattern string, eachEntryFunc ListEachEntryFunc) (missedCount int64, lastFileName string, err error) {
+func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix, restNamePattern string, namePatternExclude string, eachEntryFunc ListEachEntryFunc) (missedCount int64, lastFileName string, err error) {
 
-	if len(restNamePattern) == 0 {
+	if len(restNamePattern) == 0 && len(namePatternExclude) == 0{
 		lastFileName, err = f.doListValidEntries(ctx, p, startFileName, inclusive, limit, prefix, eachEntryFunc)
 		return 0, lastFileName, err
 	}
 
 	lastFileName, err = f.doListValidEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) bool {
-		nameToTest := strings.ToLower(entry.Name())
-		if matched, matchErr := filepath.Match(restNamePattern, nameToTest[len(prefix):]); matchErr == nil && matched {
-			if !eachEntryFunc(entry) {
-				return false
+		nameToTest := entry.Name()
+		if len(namePatternExclude) > 0 {
+			if matched, matchErr := filepath.Match(namePatternExclude, nameToTest); matchErr == nil && matched {
+				missedCount++
+				return true
 			}
-		} else {
-			missedCount++
+		}
+		if len(restNamePattern) > 0 {
+			if matched, matchErr := filepath.Match(restNamePattern, nameToTest[len(prefix):]); matchErr == nil && !matched {
+				missedCount++
+				return true
+			}
+		}
+		if !eachEntryFunc(entry) {
+			return false
 		}
 		return true
 	})

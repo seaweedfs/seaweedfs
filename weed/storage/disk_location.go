@@ -131,7 +131,7 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 	l.SetVolume(vid, v)
 
 	size, _, _ := v.FileStat()
-	glog.V(0).Infof("data file %s, replicaPlacement=%s v=%d size=%d ttl=%s",
+	glog.V(0).Infof("data file %s, replication=%s v=%d size=%d ttl=%s",
 		l.Directory+"/"+volumeName+".dat", v.ReplicaPlacement, v.Version(), size, v.Ttl.String())
 	return true
 }

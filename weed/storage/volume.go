@@ -234,10 +234,16 @@ func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 	return false
 }
 
-func (v *Volume) CollectStatus() (maxFileKey types.NeedleId, datFileSize int64, modTime time.Time, fileCount, deletedCount, deletedSize uint64) {
+func (v *Volume) collectStatus() (maxFileKey types.NeedleId, datFileSize int64, modTime time.Time, fileCount, deletedCount, deletedSize uint64, ok bool) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
-	glog.V(3).Infof("CollectStatus volume %d", v.Id)
+	glog.V(3).Infof("collectStatus volume %d", v.Id)
+
+	if v.nm == nil {
+		return
+	}
+
+	ok = true
 
 	maxFileKey = v.nm.MaxFileKey()
 	datFileSize, modTime, _ = v.DataBackend.GetStat()
@@ -251,7 +257,11 @@ func (v *Volume) CollectStatus() (maxFileKey types.NeedleId, datFileSize int64, 
 
 func (v *Volume) ToVolumeInformationMessage() (types.NeedleId, *master_pb.VolumeInformationMessage) {
 
-	maxFileKey, volumeSize, modTime, fileCount, deletedCount, deletedSize := v.CollectStatus()
+	maxFileKey, volumeSize, modTime, fileCount, deletedCount, deletedSize, ok := v.collectStatus()
+
+	if !ok {
+		return 0, nil
+	}
 
 	volumeInfo := &master_pb.VolumeInformationMessage{
 		Id:               uint32(v.Id),
