@@ -23,9 +23,10 @@ type DiskLocation struct {
 	DiskType               types.DiskType
 	MaxVolumeCount         int
 	OriginalMaxVolumeCount int
-	MinFreeSpacePercent    float32
-	volumes                map[needle.VolumeId]*Volume
-	volumesLock            sync.RWMutex
+	// MinFreeSpace limits the minimum free space (<=100 as percentage, > 100 as bytes)
+	MinFreeSpace float32
+	volumes      map[needle.VolumeId]*Volume
+	volumesLock  sync.RWMutex
 
 	// erasure coding
 	ecVolumes     map[needle.VolumeId]*erasure_coding.EcVolume
@@ -34,7 +35,7 @@ type DiskLocation struct {
 	isDiskSpaceLow bool
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32, idxDir string, diskType types.DiskType) *DiskLocation {
+func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpace float32, idxDir string, diskType types.DiskType) *DiskLocation {
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
 		idxDir = dir
@@ -47,7 +48,7 @@ func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpacePercent float32
 		DiskType:               diskType,
 		MaxVolumeCount:         maxVolumeCount,
 		OriginalMaxVolumeCount: maxVolumeCount,
-		MinFreeSpacePercent:    minFreeSpacePercent,
+		MinFreeSpace:           minFreeSpace,
 	}
 	location.volumes = make(map[needle.VolumeId]*Volume)
 	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
@@ -361,14 +362,19 @@ func (l *DiskLocation) CheckDiskSpace() {
 			stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "all").Set(float64(s.All))
 			stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "used").Set(float64(s.Used))
 			stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "free").Set(float64(s.Free))
-			if (s.PercentFree < l.MinFreeSpacePercent) != l.isDiskSpaceLow {
+
+			isLow := l.MinFreeSpace < 100 && s.PercentFree < l.MinFreeSpace || s.Free < uint64(l.MinFreeSpace)
+			if isLow != l.isDiskSpaceLow {
 				l.isDiskSpaceLow = !l.isDiskSpaceLow
 			}
+
+			logLevel := glog.Level(4)
 			if l.isDiskSpaceLow {
-				glog.V(0).Infof("dir %s freePercent %.2f%% < min %.2f%%, isLowDiskSpace: %v", dir, s.PercentFree, l.MinFreeSpacePercent, l.isDiskSpaceLow)
-			} else {
-				glog.V(4).Infof("dir %s freePercent %.2f%% < min %.2f%%, isLowDiskSpace: %v", dir, s.PercentFree, l.MinFreeSpacePercent, l.isDiskSpaceLow)
+				logLevel = glog.Level(0)
 			}
+
+			glog.V(logLevel).Infof("dir %s freePercent %.2f%% < min %.2f%%, isLowDiskSpace: %v",
+				dir, s.PercentFree, l.MinFreeSpace, l.isDiskSpaceLow)
 		}
 		time.Sleep(time.Minute)
 	}

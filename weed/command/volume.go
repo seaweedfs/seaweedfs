@@ -57,7 +57,7 @@ type VolumeServerOptions struct {
 	compactionMBPerSecond   *int
 	fileSizeLimitMB         *int
 	concurrentUploadLimitMB *int
-	minFreeSpacePercents    []float32
+	minFreeSpaces           []float32
 	pprof                   *bool
 	preStopSeconds          *int
 	metricsHttpPort         *int
@@ -105,7 +105,8 @@ var (
 	volumeFolders         = cmdVolume.Flag.String("dir", os.TempDir(), "directories to store data files. dir[,dir]...")
 	maxVolumeCounts       = cmdVolume.Flag.String("max", "8", "maximum numbers of volumes, count[,count]... If set to zero, the limit will be auto configured.")
 	volumeWhiteListOption = cmdVolume.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
-	minFreeSpacePercent   = cmdVolume.Flag.String("minFreeSpacePercent", "1", "minimum free disk space (default to 1%). Low disk space will mark all volumes as ReadOnly.")
+	minFreeSpacePercent   = cmdVolume.Flag.String("minFreeSpacePercent", "1", "minimum free disk space (default to 1%). Low disk space will mark all volumes as ReadOnly (deprecated, use minFreeSpace instead).")
+	minFreeSpace          = cmdVolume.Flag.String("minFreeSpace", "", "min free disk space (value<=100 as percentage like 1, other as human readable bytes, like 10GiB). Low disk space will mark all volumes as ReadOnly.")
 )
 
 func runVolume(cmd *Command, args []string) bool {
@@ -120,12 +121,13 @@ func runVolume(cmd *Command, args []string) bool {
 
 	go stats_collect.StartMetricsServer(*v.metricsHttpPort)
 
-	v.startVolumeServer(*volumeFolders, *maxVolumeCounts, *volumeWhiteListOption, *minFreeSpacePercent)
+	v.startVolumeServer(*volumeFolders, *maxVolumeCounts, *volumeWhiteListOption,
+		util.EmptyTo(*minFreeSpace, *minFreeSpacePercent))
 
 	return true
 }
 
-func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, volumeWhiteListOption, minFreeSpacePercent string) {
+func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, volumeWhiteListOption, minFreeSpace string) {
 
 	// Set multiple folders and each folder's max volume count limit'
 	v.folders = strings.Split(volumeFolders, ",")
@@ -154,21 +156,21 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	}
 
 	// set minFreeSpacePercent
-	minFreeSpacePercentStrings := strings.Split(minFreeSpacePercent, ",")
-	for _, freeString := range minFreeSpacePercentStrings {
-		if value, e := strconv.ParseFloat(freeString, 32); e == nil {
-			v.minFreeSpacePercents = append(v.minFreeSpacePercents, float32(value))
+	minFreeSpaceStrings := strings.Split(minFreeSpace, ",")
+	for _, freeString := range minFreeSpaceStrings {
+		if vv, e := util.ParseMinFreeSpace(freeString); e == nil {
+			v.minFreeSpaces = append(v.minFreeSpaces, vv)
 		} else {
-			glog.Fatalf("The value specified in -minFreeSpacePercent not a valid value %s", freeString)
+			glog.Fatalf("The value specified in -minFreeSpace not a valid value %s", freeString)
 		}
 	}
-	if len(v.minFreeSpacePercents) == 1 && len(v.folders) > 1 {
+	if len(v.minFreeSpaces) == 1 && len(v.folders) > 1 {
 		for i := 0; i < len(v.folders)-1; i++ {
-			v.minFreeSpacePercents = append(v.minFreeSpacePercents, v.minFreeSpacePercents[0])
+			v.minFreeSpaces = append(v.minFreeSpaces, v.minFreeSpaces[0])
 		}
 	}
-	if len(v.folders) != len(v.minFreeSpacePercents) {
-		glog.Fatalf("%d directories by -dir, but only %d minFreeSpacePercent is set by -minFreeSpacePercent", len(v.folders), len(v.minFreeSpacePercents))
+	if len(v.folders) != len(v.minFreeSpaces) {
+		glog.Fatalf("%d directories by -dir, but only %d minFreeSpacePercent is set by -minFreeSpacePercent", len(v.folders), len(v.minFreeSpaces))
 	}
 
 	// set disk types
@@ -231,7 +233,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.publicUrl,
-		v.folders, v.folderMaxLimits, v.minFreeSpacePercents, diskTypes,
+		v.folders, v.folderMaxLimits, v.minFreeSpaces, diskTypes,
 		*v.idxFolder,
 		volumeNeedleMapKind,
 		strings.Split(masters, ","), 5, *v.dataCenter, *v.rack,
