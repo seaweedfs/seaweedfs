@@ -23,10 +23,9 @@ type DiskLocation struct {
 	DiskType               types.DiskType
 	MaxVolumeCount         int
 	OriginalMaxVolumeCount int
-	// MinFreeSpace limits the minimum free space (<=100 as percentage, > 100 as bytes)
-	MinFreeSpace float32
-	volumes      map[needle.VolumeId]*Volume
-	volumesLock  sync.RWMutex
+	MinFreeSpace           util.MinFreeSpace
+	volumes                map[needle.VolumeId]*Volume
+	volumesLock            sync.RWMutex
 
 	// erasure coding
 	ecVolumes     map[needle.VolumeId]*erasure_coding.EcVolume
@@ -35,7 +34,7 @@ type DiskLocation struct {
 	isDiskSpaceLow bool
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpace float32, idxDir string, diskType types.DiskType) *DiskLocation {
+func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType) *DiskLocation {
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
 		idxDir = dir
@@ -363,7 +362,7 @@ func (l *DiskLocation) CheckDiskSpace() {
 			stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "used").Set(float64(s.Used))
 			stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "free").Set(float64(s.Free))
 
-			isLow := l.MinFreeSpace < 100 && s.PercentFree < l.MinFreeSpace || s.Free < uint64(l.MinFreeSpace)
+			isLow, desc := l.MinFreeSpace.IsLow(s.Free, s.PercentFree)
 			if isLow != l.isDiskSpaceLow {
 				l.isDiskSpaceLow = !l.isDiskSpaceLow
 			}
@@ -373,8 +372,7 @@ func (l *DiskLocation) CheckDiskSpace() {
 				logLevel = glog.Level(0)
 			}
 
-			glog.V(logLevel).Infof("dir %s freePercent %.2f%% < min %.2f%%, isLowDiskSpace: %v",
-				dir, s.PercentFree, l.MinFreeSpace, l.isDiskSpaceLow)
+			glog.V(logLevel).Infof("dir %s %s", dir, desc)
 		}
 		time.Sleep(time.Minute)
 	}

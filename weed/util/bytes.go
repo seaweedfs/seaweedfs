@@ -5,7 +5,6 @@ import (
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -176,23 +175,12 @@ func EmptyTo(s, to string) string {
 	return s
 }
 
-var ErrMinFreeSpaceBadValue = errors.New("minFreeSpace is invalid")
-
-// ParseMinFreeSpace parses min free space expression s as percentage like 1,10 or human readable size like 10G
-func ParseMinFreeSpace(s string) (float32, error) {
-	if value, e := strconv.ParseFloat(s, 32); e == nil {
-		if value < 0 || value > 100 {
-			return 0, ErrMinFreeSpaceBadValue
-		}
-		return float32(value), nil
-	} else if directSize, e2 := ParseBytes(s); e2 == nil {
-		if directSize <= 100 {
-			return 0, ErrMinFreeSpaceBadValue
-		}
-		return float32(directSize), nil
+// IfElse works like b ? this : that.
+func IfElse(b bool, this, that string) string {
+	if b {
+		return this
 	}
-
-	return 0, ErrMinFreeSpaceBadValue
+	return that
 }
 
 // ParseBytes parses a string representation of bytes into the number

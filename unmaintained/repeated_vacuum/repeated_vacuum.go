@@ -52,7 +52,7 @@ func main() {
 }
 
 func genFile(grpcDialOption grpc.DialOption, i int) (*operation.AssignResult, string) {
-	assignResult, err := operation.Assign(*master, grpcDialOption, &operation.VolumeAssignRequest{
+	assignResult, err := operation.Assign(func() string { return *master }, grpcDialOption, &operation.VolumeAssignRequest{
 		Count:       1,
 		Replication: *replication,
 	})

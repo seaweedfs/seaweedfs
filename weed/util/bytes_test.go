@@ -2,32 +2,6 @@ package util
 
 import "testing"
 
-func TestParseMinFreeSpace(t *testing.T) {
-	tests := []struct {
-		in    string
-		ok    bool
-		value float32
-	}{
-		{in: "42", ok: true, value: 42},
-		{in: "-1", ok: false, value: 0},
-		{in: "101", ok: false, value: 0},
-		{in: "100B", ok: false, value: 0},
-		{in: "100Ki", ok: true, value: 100 * 1024},
-		{in: "100GiB", ok: true, value: 100 * 1024 * 1024 * 1024},
-		{in: "42M", ok: true, value: 42 * 1000 * 1000},
-	}
-
-	for _, p := range tests {
-		got, err := ParseMinFreeSpace(p.in)
-		if p.ok != (err == nil) {
-			t.Errorf("failed to test %v", p.in)
-		}
-		if p.ok && err == nil && got != p.value {
-			t.Errorf("failed to test %v", p.in)
-		}
-	}
-}
-
 func TestByteParsing(t *testing.T) {
 	tests := []struct {
 		in  string

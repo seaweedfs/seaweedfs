@@ -57,7 +57,6 @@ type VolumeServerOptions struct {
 	compactionMBPerSecond   *int
 	fileSizeLimitMB         *int
 	concurrentUploadLimitMB *int
-	minFreeSpaces           []float32
 	pprof                   *bool
 	preStopSeconds          *int
 	metricsHttpPort         *int
@@ -121,13 +120,13 @@ func runVolume(cmd *Command, args []string) bool {
 
 	go stats_collect.StartMetricsServer(*v.metricsHttpPort)
 
-	v.startVolumeServer(*volumeFolders, *maxVolumeCounts, *volumeWhiteListOption,
-		util.EmptyTo(*minFreeSpace, *minFreeSpacePercent))
+	minFreeSpaces := util.MustParseMinFreeSpace(*minFreeSpace, *minFreeSpacePercent)
+	v.startVolumeServer(*volumeFolders, *maxVolumeCounts, *volumeWhiteListOption, minFreeSpaces)
 
 	return true
 }
 
-func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, volumeWhiteListOption, minFreeSpace string) {
+func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, volumeWhiteListOption string, minFreeSpaces []util.MinFreeSpace) {
 
 	// Set multiple folders and each folder's max volume count limit'
 	v.folders = strings.Split(volumeFolders, ",")
@@ -155,22 +154,13 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		glog.Fatalf("%d directories by -dir, but only %d max is set by -max", len(v.folders), len(v.folderMaxLimits))
 	}
 
-	// set minFreeSpacePercent
-	minFreeSpaceStrings := strings.Split(minFreeSpace, ",")
-	for _, freeString := range minFreeSpaceStrings {
-		if vv, e := util.ParseMinFreeSpace(freeString); e == nil {
-			v.minFreeSpaces = append(v.minFreeSpaces, vv)
-		} else {
-			glog.Fatalf("The value specified in -minFreeSpace not a valid value %s", freeString)
-		}
-	}
-	if len(v.minFreeSpaces) == 1 && len(v.folders) > 1 {
+	if len(minFreeSpaces) == 1 && len(v.folders) > 1 {
 		for i := 0; i < len(v.folders)-1; i++ {
-			v.minFreeSpaces = append(v.minFreeSpaces, v.minFreeSpaces[0])
+			minFreeSpaces = append(minFreeSpaces, minFreeSpaces[0])
 		}
 	}
-	if len(v.folders) != len(v.minFreeSpaces) {
-		glog.Fatalf("%d directories by -dir, but only %d minFreeSpacePercent is set by -minFreeSpacePercent", len(v.folders), len(v.minFreeSpaces))
+	if len(v.folders) != len(minFreeSpaces) {
+		glog.Fatalf("%d directories by -dir, but only %d minFreeSpacePercent is set by -minFreeSpacePercent", len(v.folders), len(minFreeSpaces))
 	}
 
 	// set disk types
@@ -233,7 +223,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.publicUrl,
-		v.folders, v.folderMaxLimits, v.minFreeSpaces, diskTypes,
+		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes,
 		*v.idxFolder,
 		volumeNeedleMapKind,
 		strings.Split(masters, ","), 5, *v.dataCenter, *v.rack,
