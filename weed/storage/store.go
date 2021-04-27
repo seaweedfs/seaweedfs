@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -52,11 +53,12 @@ func (s *Store) String() (str string) {
 	return
 }
 
-func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int, minFreeSpacePercents []float32, idxFolder string, needleMapKind NeedleMapKind, diskTypes []DiskType) (s *Store) {
+func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int,
+	minFreeSpaces []util.MinFreeSpace, idxFolder string, needleMapKind NeedleMapKind, diskTypes []DiskType) (s *Store) {
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, PublicUrl: publicUrl, NeedleMapKind: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
-		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i], minFreeSpacePercents[i], idxFolder, diskTypes[i])
+		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i], minFreeSpaces[i], idxFolder, diskTypes[i])
 		location.loadExistingVolumes(needleMapKind)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
