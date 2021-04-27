@@ -3,14 +3,14 @@ package s3api
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
-	"io/ioutil"
-	"net/http"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
 	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	"io/ioutil"
+	"net/http"
+	"strings"
 )
 
 type Action string
@@ -255,11 +255,21 @@ func (identity *Identity) canDo(action Action, bucket string) bool {
 	limitedByBucket := string(action) + ":" + bucket
 	adminLimitedByBucket := s3_constants.ACTION_ADMIN + ":" + bucket
 	for _, a := range identity.Actions {
-		if string(a) == limitedByBucket {
-			return true
-		}
-		if string(a) == adminLimitedByBucket {
-			return true
+		act := string(a)
+		if strings.HasSuffix(act, "*") {
+			if strings.HasPrefix(limitedByBucket, act[:len(act)-1]) {
+				return true
+			}
+			if strings.HasPrefix(adminLimitedByBucket, act[:len(act)-1]) {
+				return true
+			}
+		} else {
+			if act == limitedByBucket {
+				return true
+			}
+			if act == adminLimitedByBucket {
+				return true
+			}
 		}
 	}
 	return false
