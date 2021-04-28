@@ -139,13 +139,15 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 		}
 		glog.V(4).Infof("read [%d,%d), %d/%d chunk %s [%d,%d)", chunkStart, chunkStop, i, len(c.chunkViews), chunk.FileId, chunk.LogicOffset-chunk.Offset, chunk.LogicOffset-chunk.Offset+int64(chunk.Size))
 		var buffer []byte
-		buffer, err = c.readFromWholeChunkData(chunk, nextChunk)
+		bufferOffset := chunkStart - chunk.LogicOffset + chunk.Offset
+		bufferLength := chunkStop - chunkStart
+		buffer, err = c.readChunkSlice(chunk, nextChunk, uint64(bufferOffset), uint64(bufferLength))
 		if err != nil {
 			glog.Errorf("fetching chunk %+v: %v\n", chunk, err)
 			return
 		}
-		bufferOffset := chunkStart - chunk.LogicOffset + chunk.Offset
-		copied := copy(p[startOffset-offset:chunkStop-chunkStart+startOffset-offset], buffer[bufferOffset:bufferOffset+chunkStop-chunkStart])
+
+		copied := copy(p[startOffset-offset:chunkStop-chunkStart+startOffset-offset], buffer)
 		n += copied
 		startOffset, remaining = startOffset+int64(copied), remaining-int64(copied)
 	}
@@ -165,6 +167,20 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 	return
 
+}
+
+func (c *ChunkReadAt) readChunkSlice(chunkView *ChunkView, nextChunkViews *ChunkView, offset, length uint64) ([]byte, error) {
+
+	chunkSlice := c.chunkCache.GetChunkSlice(chunkView.FileId, offset, length)
+	if len(chunkSlice) > 0 {
+		return chunkSlice, nil
+	}
+	chunkData, err := c.readFromWholeChunkData(chunkView, nextChunkViews)
+	if err != nil {
+		return nil, err
+	}
+	wanted := min(int64(length), int64(len(chunkData))-int64(offset))
+	return chunkData[offset : int64(offset)+wanted], nil
 }
 
 func (c *ChunkReadAt) readFromWholeChunkData(chunkView *ChunkView, nextChunkViews ...*ChunkView) (chunkData []byte, err error) {

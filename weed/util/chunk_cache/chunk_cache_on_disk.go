@@ -90,11 +90,11 @@ func (v *ChunkCacheVolume) Shutdown() {
 
 func (v *ChunkCacheVolume) doReset() {
 	v.Shutdown()
-	os.Truncate(v.fileName + ".dat", 0)
-	os.Truncate(v.fileName + ".idx", 0)
-	glog.V(4).Infof("cache removeAll %s ...", v.fileName + ".ldb")
+	os.Truncate(v.fileName+".dat", 0)
+	os.Truncate(v.fileName+".idx", 0)
+	glog.V(4).Infof("cache removeAll %s ...", v.fileName+".ldb")
 	os.RemoveAll(v.fileName + ".ldb")
-	glog.V(4).Infof("cache removed %s", v.fileName + ".ldb")
+	glog.V(4).Infof("cache removed %s", v.fileName+".ldb")
 }
 
 func (v *ChunkCacheVolume) Reset() (*ChunkCacheVolume, error) {
@@ -115,6 +115,29 @@ func (v *ChunkCacheVolume) GetNeedle(key types.NeedleId) ([]byte, error) {
 	} else {
 		if readSize != int(nv.Size) {
 			return nil, fmt.Errorf("read %d, expected %d", readSize, nv.Size)
+		}
+	}
+
+	return data, nil
+}
+
+func (v *ChunkCacheVolume) getNeedleSlice(key types.NeedleId, offset, length uint64) ([]byte, error) {
+	nv, ok := v.nm.Get(key)
+	if !ok {
+		return nil, storage.ErrorNotFound
+	}
+	wanted := min(int(length), int(nv.Size)-int(offset))
+	if wanted < 0 {
+		// should never happen, but better than panicing
+		return nil, ErrorOutOfBounds
+	}
+	data := make([]byte, wanted)
+	if readSize, readErr := v.DataBackend.ReadAt(data, nv.Offset.ToActualOffset()+int64(offset)); readErr != nil {
+		return nil, fmt.Errorf("read %s.dat [%d,%d): %v",
+			v.fileName, nv.Offset.ToActualOffset()+int64(offset), int(nv.Offset.ToActualOffset())+int(offset)+wanted, readErr)
+	} else {
+		if readSize != wanted {
+			return nil, fmt.Errorf("read %d, expected %d", readSize, wanted)
 		}
 	}
 
