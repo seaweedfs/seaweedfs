@@ -39,7 +39,7 @@ func (uploadResult *UploadResult) ToPbFileChunk(fileId string, offset int64) *fi
 		Offset:       offset,
 		Size:         uint64(uploadResult.Size),
 		Mtime:        time.Now().UnixNano(),
-		ETag:         uploadResult.ETag,
+		ETag:         uploadResult.ContentMd5,
 		CipherKey:    uploadResult.CipherKey,
 		IsCompressed: uploadResult.Gzip > 0,
 		Fid:          fid,
