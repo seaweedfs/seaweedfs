@@ -147,6 +147,9 @@ func IsZstdContent(data []byte) bool {
 		if strings.HasSuffix(mtype, "script") {
 			return true, true
 		}
+		if strings.HasSuffix(mtype, "vnd.rar) {
+			return false, true
+		}
 	}
 
 	if strings.HasPrefix(mtype, "audio/") {
