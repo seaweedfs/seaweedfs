@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"crypto/md5"
 	"hash"
 	"io"
@@ -70,6 +71,11 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 		// if last chunk exhausted the reader exactly at the border
 		if uploadResult.Size == 0 {
 			break
+		}
+		uploadedMd5 := util.Base64Md5ToBytes(uploadResult.ContentMd5)
+		readedMd5 := md5Hash.Sum(nil)
+		if !bytes.Equal(uploadedMd5, readedMd5) {
+			glog.Errorf("md5 %x does not match %x uploaded chunk %s to the volume server", readedMd5, uploadedMd5, uploadResult.Name)
 		}
 
 		// Save to chunk manifest structure

@@ -2,7 +2,6 @@ package filer
 
 import (
 	"bytes"
-	"encoding/hex"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"math"
@@ -43,12 +42,11 @@ func ETagEntry(entry *Entry) (etag string) {
 
 func ETagChunks(chunks []*filer_pb.FileChunk) (etag string) {
 	if len(chunks) == 1 {
-		return chunks[0].ETag
+		return fmt.Sprintf("%x", util.Base64Md5ToBytes(chunks[0].ETag))
 	}
 	md5_digests := [][]byte{}
 	for _, c := range chunks {
-		md5_decoded, _ := hex.DecodeString(c.ETag)
-		md5_digests = append(md5_digests, md5_decoded)
+		md5_digests = append(md5_digests, util.Base64Md5ToBytes(c.ETag))
 	}
 	return fmt.Sprintf("%x-%d", util.Md5(bytes.Join(md5_digests, nil)), len(chunks))
 }
