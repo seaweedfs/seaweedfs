@@ -114,7 +114,11 @@ func (iama *IamApiServer) ListUsers(s3cfg *iam_pb.S3ApiConfiguration, values url
 
 func (iama *IamApiServer) ListAccessKeys(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp ListAccessKeysResponse) {
 	status := iam.StatusTypeActive
+	userName := values.Get("UserName")
 	for _, ident := range s3cfg.Identities {
+		if userName != "" && userName != ident.Name {
+			continue
+		}
 		for _, cred := range ident.Credentials {
 			resp.ListAccessKeysResult.AccessKeyMetadata = append(resp.ListAccessKeysResult.AccessKeyMetadata,
 				&iam.AccessKeyMetadata{UserName: &ident.Name, AccessKeyId: &cred.AccessKey, Status: &status},
