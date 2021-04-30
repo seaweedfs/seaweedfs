@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
@@ -22,14 +21,19 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"github.com/gorilla/mux"
+	statik "github.com/rakyll/statik/fs"
+
+	_ "github.com/chrislusf/seaweedfs/weed/statik"
 )
 
 var serverStats *stats.ServerStats
 var startTime = time.Now()
+var statikFS http.FileSystem
 
 func init() {
 	serverStats = stats.NewServerStats()
 	go serverStats.Start()
+	statikFS, _ = statik.New()
 }
 
 func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) (err error) {
@@ -208,16 +212,14 @@ func statsMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
 
-var StaticFS fs.FS
-
 func handleStaticResources(defaultMux *http.ServeMux) {
-	defaultMux.Handle("/favicon.ico", http.FileServer(http.FS(StaticFS)))
-	defaultMux.Handle("/seaweedfsstatic/", http.StripPrefix("/seaweedfsstatic", http.FileServer(http.FS(StaticFS))))
+	defaultMux.Handle("/favicon.ico", http.FileServer(statikFS))
+	defaultMux.Handle("/seaweedfsstatic/", http.StripPrefix("/seaweedfsstatic", http.FileServer(statikFS)))
 }
 
 func handleStaticResources2(r *mux.Router) {
-	r.Handle("/favicon.ico", http.FileServer(http.FS(StaticFS)))
-	r.PathPrefix("/seaweedfsstatic/").Handler(http.StripPrefix("/seaweedfsstatic", http.FileServer(http.FS(StaticFS))))
+	r.Handle("/favicon.ico", http.FileServer(statikFS))
+	r.PathPrefix("/seaweedfsstatic/").Handler(http.StripPrefix("/seaweedfsstatic", http.FileServer(statikFS)))
 }
 
 func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, filename string) {

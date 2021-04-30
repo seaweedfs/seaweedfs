@@ -1,6 +1,6 @@
 module github.com/chrislusf/seaweedfs
 
-go 1.16
+go 1.12
 
 require (
 	cloud.google.com/go v0.58.0 // indirect
@@ -60,6 +60,7 @@ require (
 	github.com/peterh/liner v1.1.0
 	github.com/pierrec/lz4 v2.2.7+incompatible // indirect
 	github.com/prometheus/client_golang v1.3.0
+	github.com/rakyll/statik v0.1.7
 	github.com/rcrowley/go-metrics v0.0.0-20190826022208-cac0b30c2563 // indirect
 	github.com/seaweedfs/fuse v1.1.4
 	github.com/seaweedfs/goexif v1.0.2
@@ -75,6 +76,7 @@ require (
 	github.com/tidwall/match v1.0.1
 	github.com/tsuna/gohbase v0.0.0-20201125011725-348991136365
 	github.com/valyala/bytebufferpool v1.0.0
+	github.com/valyala/fasthttp v1.20.0
 	github.com/viant/assertly v0.5.4 // indirect
 	github.com/viant/ptrie v0.3.0
 	github.com/viant/toolbox v0.33.2 // indirect
