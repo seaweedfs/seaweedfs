@@ -33,7 +33,7 @@ jobs:
         run: echo BUILD_TIME=$(date -u +%Y-%m-%d-%H-%M) >> ${GITHUB_ENV}
 
       - name: Go Release Binaries
-        uses: wangyoucao577/go-release-action@v1.14
+        uses: wangyoucao577/go-release-action@v1.17
         with:
           goversion: 1.16
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -50,7 +50,7 @@ jobs:
           asset_name: "weed-large-disk-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
 
       - name: Go Release Binaries
-        uses: wangyoucao577/go-release-action@v1.14
+        uses: wangyoucao577/go-release-action@v1.17
         with:
           goversion: 1.16
           github_token: ${{ secrets.GITHUB_TOKEN }}
