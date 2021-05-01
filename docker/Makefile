@@ -5,7 +5,9 @@ all: gen
 gen: dev
 
 binary:
-	cd ../weed; CGO_ENABLED=0 GOOS=linux go build -ldflags "-extldflags -static"; mv weed ../docker/
+	export SWCOMMIT=$(shell git rev-parse --short HEAD)
+	export SWLDFLAGS="-X github.com/chrislusf/seaweedfs/weed/util.COMMIT=$(SWCOMMIT)"
+	cd ../weed; CGO_ENABLED=0 GOOS=linux go build -ldflags "-extldflags -static $(SWLDFLAGS)"; mv weed ../docker/
 
 build: binary
 	docker build --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.local .
