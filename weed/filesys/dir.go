@@ -29,7 +29,7 @@ type Dir struct {
 
 var _ = fs.Node(&Dir{})
 
-//var _ = fs.NodeIdentifier(&Dir{})
+var _ = fs.NodeIdentifier(&Dir{})
 var _ = fs.NodeCreater(&Dir{})
 var _ = fs.NodeMknoder(&Dir{})
 var _ = fs.NodeMkdirer(&Dir{})
@@ -45,7 +45,10 @@ var _ = fs.NodeRemovexattrer(&Dir{})
 var _ = fs.NodeListxattrer(&Dir{})
 var _ = fs.NodeForgetter(&Dir{})
 
-func (dir *Dir) xId() uint64 {
+func (dir *Dir) Id() uint64 {
+	if dir.parent == nil {
+		return 1
+	}
 	return dir.id
 }
 
@@ -66,7 +69,7 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 		return err
 	}
 
-	// attr.Inode = dir.Id()
+	attr.Inode = dir.Id()
 	attr.Mode = os.FileMode(entry.Attributes.FileMode) | os.ModeDir
 	attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
 	attr.Crtime = time.Unix(entry.Attributes.Crtime, 0)
@@ -93,7 +96,7 @@ func (dir *Dir) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *f
 func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
 	// attr.Inode = 1 // filer2.FullPath(dir.Path).AsInode()
 	attr.Valid = time.Second
-	attr.Inode = 1 // dir.Id()
+	attr.Inode = dir.Id()
 	attr.Uid = dir.wfs.option.MountUid
 	attr.Gid = dir.wfs.option.MountGid
 	attr.Mode = dir.wfs.option.MountMode
@@ -328,6 +331,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		// resp.EntryValid = time.Second
 		resp.Attr.Inode = fullFilePath.AsInode()
 		resp.Attr.Valid = time.Second
+		resp.Attr.Size = localEntry.FileSize
 		resp.Attr.Mtime = localEntry.Attr.Mtime
 		resp.Attr.Crtime = localEntry.Attr.Crtime
 		resp.Attr.Mode = localEntry.Attr.Mode

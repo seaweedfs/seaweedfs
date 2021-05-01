@@ -111,6 +111,9 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 
 		dir, name := filePath.DirAndName()
 		parent := NodeWithId(util.FullPath(dir).AsInode())
+		if dir == option.FilerMountRootPath {
+			parent = NodeWithId(1)
+		}
 		if err := wfs.Server.InvalidateEntry(parent, name); err != nil {
 			glog.V(4).Infof("InvalidateEntry %s : %v", filePath, err)
 		}
@@ -121,7 +124,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.metaCache.Shutdown()
 	})
 
-	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs}
+	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs, id: 1}
 	wfs.fsNodeCache = newFsCache(wfs.root)
 
 	if wfs.option.ConcurrentWriters > 0 {

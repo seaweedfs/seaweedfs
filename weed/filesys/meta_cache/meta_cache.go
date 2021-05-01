@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
@@ -31,9 +30,6 @@ func NewMetaCache(dbFolder string, baseDir util.FullPath, uidGidMapper *UidGidMa
 		visitedBoundary: bounded_tree.NewBoundedTree(baseDir),
 		uidGidMapper:    uidGidMapper,
 		invalidateFunc: func(fullpath util.FullPath) {
-			if baseDir != "/" && strings.HasPrefix(string(fullpath), string(baseDir)) {
-				fullpath = fullpath[len(baseDir):]
-			}
 			invalidateFunc(fullpath)
 		},
 	}
