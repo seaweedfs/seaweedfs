@@ -44,19 +44,14 @@ func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_serv
 
 	resp := &volume_server_pb.VacuumVolumeCommitResponse{}
 
-	err := vs.store.CommitCompactVolume(needle.VolumeId(req.VolumeId))
+	readOnly, err := vs.store.CommitCompactVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
 		glog.Errorf("commit volume %d: %v", req.VolumeId, err)
 	} else {
 		glog.V(1).Infof("commit volume %d", req.VolumeId)
 	}
-	if err == nil {
-		if vs.store.GetVolume(needle.VolumeId(req.VolumeId)).IsReadOnly() {
-			resp.IsReadOnly = true
-		}
-	}
-
+	resp.IsReadOnly = readOnly
 	return resp, err
 
 }

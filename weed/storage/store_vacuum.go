@@ -25,11 +25,11 @@ func (s *Store) CompactVolume(vid needle.VolumeId, preallocate int64, compaction
 	}
 	return fmt.Errorf("volume id %d is not found during compact", vid)
 }
-func (s *Store) CommitCompactVolume(vid needle.VolumeId) error {
+func (s *Store) CommitCompactVolume(vid needle.VolumeId) (bool, error) {
 	if v := s.findVolume(vid); v != nil {
-		return v.CommitCompact()
+		return v.IsReadOnly(), v.CommitCompact()
 	}
-	return fmt.Errorf("volume id %d is not found during commit compact", vid)
+	return false, fmt.Errorf("volume id %d is not found during commit compact", vid)
 }
 func (s *Store) CommitCleanupVolume(vid needle.VolumeId) error {
 	if v := s.findVolume(vid); v != nil {
