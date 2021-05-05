@@ -326,11 +326,7 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) {
 	for k, v := range proxyResponse.Header {
 		w.Header()[k] = v
 	}
-	if proxyResponse.Header.Get("Content-Range") != "" && proxyResponse.StatusCode == 200 {
-		w.WriteHeader(http.StatusPartialContent)
-	} else {
-		w.WriteHeader(proxyResponse.StatusCode)
-	}
+	w.WriteHeader(proxyResponse.StatusCode)
 	io.Copy(w, proxyResponse.Body)
 }
 
