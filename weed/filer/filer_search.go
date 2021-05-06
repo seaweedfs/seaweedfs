@@ -58,7 +58,7 @@ func (f *Filer) StreamListDirectoryEntries(ctx context.Context, p util.FullPath,
 
 func (f *Filer) doListPatternMatchedEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix, restNamePattern string, namePatternExclude string, eachEntryFunc ListEachEntryFunc) (missedCount int64, lastFileName string, err error) {
 
-	if len(restNamePattern) == 0 && len(namePatternExclude) == 0{
+	if len(restNamePattern) == 0 && len(namePatternExclude) == 0 {
 		lastFileName, err = f.doListValidEntries(ctx, p, startFileName, inclusive, limit, prefix, eachEntryFunc)
 		return 0, lastFileName, err
 	}

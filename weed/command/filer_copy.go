@@ -299,7 +299,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 	var assignResult *filer_pb.AssignVolumeResponse
 	var assignError error
 
-	if task.fileMode & os.ModeDir == 0 && task.fileSize > 0 {
+	if task.fileMode&os.ModeDir == 0 && task.fileSize > 0 {
 
 		mimeType = detectMimeType(f)
 		data, err := ioutil.ReadAll(f)

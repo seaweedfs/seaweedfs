@@ -33,7 +33,6 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 		fileId2Url[chunkView.FileId] = urlStrings
 	}
 
-
 	for _, chunkView := range chunkViews {
 
 		urlStrings := fileId2Url[chunkView.FileId]

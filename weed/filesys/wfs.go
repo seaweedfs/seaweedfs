@@ -270,6 +270,7 @@ func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
 }
 
 type NodeWithId uint64
+
 func (n NodeWithId) Id() uint64 {
 	return uint64(n)
 }
