@@ -4,14 +4,67 @@ import (
 	"context"
 	"fmt"
 	"github.com/chrislusf/raft"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"reflect"
+	"sync"
+	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 )
+
+func (ms *MasterServer) ProcessGrowRequest() {
+	go func() {
+		filter := sync.Map{}
+		for {
+			req, ok := <-ms.vgCh
+			if !ok {
+				break
+			}
+
+			if !ms.Topo.IsLeader() {
+				//discard buffered requests
+				time.Sleep(time.Second * 1)
+				continue
+			}
+
+			// filter out identical requests being processed
+			found := false
+			filter.Range(func(k, v interface{}) bool {
+				if reflect.DeepEqual(k, req) {
+					found = true
+				}
+				return !found
+			})
+
+			// not atomic but it's okay
+			if !found && ms.shouldVolumeGrow(req.Option) {
+				filter.Store(req, nil)
+				// we have lock called inside vg
+				go func() {
+					glog.V(1).Infoln("starting automatic volume grow")
+					start := time.Now()
+					_, err := ms.vg.AutomaticGrowByType(req.Option, ms.grpcDialOption, ms.Topo, req.Count)
+					glog.V(1).Infoln("finished automatic volume grow, cost ", time.Now().Sub(start))
+
+					if req.ErrCh != nil {
+						req.ErrCh <- err
+						close(req.ErrCh)
+					}
+
+					filter.Delete(req)
+				}()
+
+			} else {
+				glog.V(4).Infoln("discard volume grow request")
+			}
+		}
+	}()
+}
 
 func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error) {
 
@@ -68,38 +121,45 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		ReplicaPlacement:   replicaPlacement,
 		Ttl:                ttl,
 		DiskType:           diskType,
-		Prealloacte:        ms.preallocateSize,
+		Preallocate:        ms.preallocateSize,
 		DataCenter:         req.DataCenter,
 		Rack:               req.Rack,
 		DataNode:           req.DataNode,
 		MemoryMapMaxSizeMb: req.MemoryMapMaxSizeMb,
 	}
 
-	if !ms.Topo.HasWritableVolume(option) {
+	if ms.shouldVolumeGrow(option) {
 		if ms.Topo.AvailableSpaceFor(option) <= 0 {
 			return nil, fmt.Errorf("no free volumes left for " + option.String())
 		}
-		ms.vgLock.Lock()
-		if !ms.Topo.HasWritableVolume(option) {
-			if _, err = ms.vg.AutomaticGrowByType(option, ms.grpcDialOption, ms.Topo, int(req.WritableVolumeCount)); err != nil {
-				ms.vgLock.Unlock()
-				return nil, fmt.Errorf("Cannot grow volume group! %v", err)
-			}
+		ms.vgCh <- &topology.VolumeGrowRequest{
+			Option: option,
+			Count:  int(req.WritableVolumeCount),
 		}
-		ms.vgLock.Unlock()
-	}
-	fid, count, dn, err := ms.Topo.PickForWrite(req.Count, option)
-	if err != nil {
-		return nil, fmt.Errorf("%v", err)
 	}
 
-	return &master_pb.AssignResponse{
-		Fid:       fid,
-		Url:       dn.Url(),
-		PublicUrl: dn.PublicUrl,
-		Count:     count,
-		Auth:      string(security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
-	}, nil
+	var (
+		lastErr    error
+		maxTimeout = time.Second * 10
+		startTime  = time.Now()
+	)
+	
+	for time.Now().Sub(startTime) < maxTimeout {
+		fid, count, dn, err := ms.Topo.PickForWrite(req.Count, option)
+		if err == nil {
+			return &master_pb.AssignResponse{
+				Fid:       fid,
+				Url:       dn.Url(),
+				PublicUrl: dn.PublicUrl,
+				Count:     count,
+				Auth:      string(security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
+			}, nil
+		}
+		//glog.V(4).Infoln("waiting for volume growing...")
+		lastErr = err
+		time.Sleep(200 * time.Millisecond)
+	}
+	return nil, lastErr
 }
 
 func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.StatisticsRequest) (*master_pb.StatisticsResponse, error) {

@@ -10,6 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/topology"
 )
 
 func (ms *MasterServer) lookupVolumeId(vids []string, collection string) (volumeLocations map[string]operation.LookupResult) {
@@ -111,19 +112,20 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !ms.Topo.HasWritableVolume(option) {
+	if ms.shouldVolumeGrow(option) {
 		if ms.Topo.AvailableSpaceFor(option) <= 0 {
 			writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left for " + option.String()})
 			return
 		}
-		ms.vgLock.Lock()
-		defer ms.vgLock.Unlock()
-		if !ms.Topo.HasWritableVolume(option) {
-			if _, err = ms.vg.AutomaticGrowByType(option, ms.grpcDialOption, ms.Topo, writableVolumeCount); err != nil {
-				writeJsonError(w, r, http.StatusInternalServerError,
-					fmt.Errorf("Cannot grow volume group! %v", err))
-				return
-			}
+		errCh := make(chan error, 1)
+		ms.vgCh <- &topology.VolumeGrowRequest{
+			Option: option,
+			Count:  writableVolumeCount,
+			ErrCh:  errCh,
+		}
+		if err := <- errCh; err != nil {
+			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("cannot grow volume group! %v", err))
+			return
 		}
 	}
 	fid, count, dn, err := ms.Topo.PickForWrite(requestedCount, option)

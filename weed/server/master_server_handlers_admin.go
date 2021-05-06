@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -14,6 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/backend/memory_map"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -136,9 +136,11 @@ func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *
 	}
 }
 
-func (ms *MasterServer) HasWritableVolume(option *topology.VolumeGrowOption) bool {
+func (ms *MasterServer) shouldVolumeGrow(option *topology.VolumeGrowOption) bool {
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
-	return vl.GetActiveVolumeCount(option) > 0
+	active, high := vl.GetActiveVolumeCount(option)
+	//glog.V(0).Infof("active volume: %d, high usage volume: %d\n", active, high)
+	return active <= high
 }
 
 func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGrowOption, error) {
@@ -172,7 +174,7 @@ func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGr
 		ReplicaPlacement:   replicaPlacement,
 		Ttl:                ttl,
 		DiskType:           diskType,
-		Prealloacte:        preallocate,
+		Preallocate:        preallocate,
 		DataCenter:         r.FormValue("dataCenter"),
 		Rack:               r.FormValue("rack"),
 		DataNode:           r.FormValue("dataNode"),
