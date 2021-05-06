@@ -72,10 +72,12 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 		if uploadResult.Size == 0 {
 			break
 		}
-		uploadedMd5 := util.Base64Md5ToBytes(uploadResult.ContentMd5)
-		readedMd5 := md5Hash.Sum(nil)
-		if !bytes.Equal(uploadedMd5, readedMd5) && chunkOffset == 0 {
-			glog.Errorf("md5 %x does not match %x uploaded chunk %s to the volume server", readedMd5, uploadedMd5, uploadResult.Name)
+		if chunkOffset == 0 {
+			uploadedMd5 := util.Base64Md5ToBytes(uploadResult.ContentMd5)
+			readedMd5 := md5Hash.Sum(nil)
+			if !bytes.Equal(uploadedMd5, readedMd5) {
+				glog.Errorf("md5 %x does not match %x uploaded chunk %s to the volume server", readedMd5, uploadedMd5, uploadResult.Name)
+			}
 		}
 
 		// Save to chunk manifest structure
