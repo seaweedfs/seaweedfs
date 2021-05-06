@@ -176,7 +176,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 		},
 	}
 	file.dirtyMetadata = true
-	fh := dir.wfs.AcquireHandle(file, req.Uid, req.Gid)
+	fh := dir.wfs.AcquireHandle(file, req.Uid, req.Gid, req.Flags & fuse.OpenWriteOnly > 0)
 	return file, fh, nil
 
 }

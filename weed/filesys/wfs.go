@@ -138,7 +138,7 @@ func (wfs *WFS) Root() (fs.Node, error) {
 	return wfs.root, nil
 }
 
-func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHandle) {
+func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32, writeOnly bool) (fileHandle *FileHandle) {
 
 	fullpath := file.fullpath()
 	glog.V(4).Infof("AcquireHandle %s uid=%d gid=%d", fullpath, uid, gid)
@@ -150,6 +150,9 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 	wfs.handlesLock.Unlock()
 	if found && existingHandle != nil {
 		existingHandle.f.isOpen++
+		if existingHandle.writeOnly {
+			existingHandle.writeOnly = writeOnly
+		}
 		glog.V(4).Infof("Acquired Handle %s open %d", fullpath, existingHandle.f.isOpen)
 		return existingHandle
 	}
@@ -157,6 +160,7 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHand
 	entry, _ := file.maybeLoadEntry(context.Background())
 	file.entry = entry
 	fileHandle = newFileHandle(file, uid, gid)
+	fileHandle.writeOnly = writeOnly
 	file.isOpen++
 
 	wfs.handlesLock.Lock()

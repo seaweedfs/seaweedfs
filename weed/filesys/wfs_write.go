@@ -13,7 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFunctionType {
+func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath, writeOnly bool) filer.SaveDataAsChunkFunctionType {
 
 	return func(reader io.Reader, filename string, offset int64) (chunk *filer_pb.FileChunk, collection, replication string, err error) {
 		var fileId, host string
@@ -67,7 +67,9 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 			return nil, "", "", fmt.Errorf("upload result: %v", uploadResult.Error)
 		}
 
-		wfs.chunkCache.SetChunk(fileId, data)
+		if !writeOnly {
+			wfs.chunkCache.SetChunk(fileId, data)
+		}
 
 		chunk = uploadResult.ToPbFileChunk(fileId, offset)
 		return chunk, collection, replication, nil

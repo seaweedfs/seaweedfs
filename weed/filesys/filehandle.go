@@ -32,7 +32,7 @@ type FileHandle struct {
 	NodeId    fuse.NodeID    // file or directory the request is about
 	Uid       uint32         // user ID of process making request
 	Gid       uint32         // group ID of process making request
-
+	writeOnly bool
 }
 
 func newFileHandle(file *File, uid, gid uint32) *FileHandle {
@@ -42,6 +42,7 @@ func newFileHandle(file *File, uid, gid uint32) *FileHandle {
 		Uid:        uid,
 		Gid:        gid,
 	}
+	fh.dirtyPages.fh = fh
 	entry := fh.f.getEntry()
 	if entry != nil {
 		entry.Attributes.FileSize = filer.FileSize(entry)
@@ -289,7 +290,7 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.Chunks)
 
 		chunks, _ := filer.CompactFileChunks(fh.f.wfs.LookupFn(), nonManifestChunks)
-		chunks, manifestErr := filer.MaybeManifestize(fh.f.wfs.saveDataAsChunk(fh.f.fullpath()), chunks)
+		chunks, manifestErr := filer.MaybeManifestize(fh.f.wfs.saveDataAsChunk(fh.f.fullpath(), fh.writeOnly), chunks)
 		if manifestErr != nil {
 			// not good, but should be ok
 			glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
