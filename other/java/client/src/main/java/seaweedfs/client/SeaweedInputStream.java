@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.EOFException;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -34,6 +35,10 @@ public class SeaweedInputStream extends InputStream {
         this.entry = filerClient.lookupEntry(
                 SeaweedOutputStream.getParentDirectory(fullpath),
                 SeaweedOutputStream.getFileName(fullpath));
+        if(entry == null){
+            throw new FileNotFoundException();
+        }
+
         this.contentLength = SeaweedRead.fileSize(entry);
 
         this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerClient, entry.getChunksList());
