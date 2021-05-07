@@ -308,25 +308,27 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 		}
 
 		// assign a volume
-		err = pb.WithGrpcFilerClient(worker.filerGrpcAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err = util.Retry("assignVolume", func() error {
+			return pb.WithGrpcFilerClient(worker.filerGrpcAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 
-			request := &filer_pb.AssignVolumeRequest{
-				Count:       1,
-				Replication: *worker.options.replication,
-				Collection:  *worker.options.collection,
-				TtlSec:      worker.options.ttlSec,
-				DiskType:    *worker.options.diskType,
-				Path:        task.destinationUrlPath,
-			}
+				request := &filer_pb.AssignVolumeRequest{
+					Count:       1,
+					Replication: *worker.options.replication,
+					Collection:  *worker.options.collection,
+					TtlSec:      worker.options.ttlSec,
+					DiskType:    *worker.options.diskType,
+					Path:        task.destinationUrlPath,
+				}
 
-			assignResult, assignError = client.AssignVolume(context.Background(), request)
-			if assignError != nil {
-				return fmt.Errorf("assign volume failure %v: %v", request, assignError)
-			}
-			if assignResult.Error != "" {
-				return fmt.Errorf("assign volume failure %v: %v", request, assignResult.Error)
-			}
-			return nil
+				assignResult, assignError = client.AssignVolume(context.Background(), request)
+				if assignError != nil {
+					return fmt.Errorf("assign volume failure %v: %v", request, assignError)
+				}
+				if assignResult.Error != "" {
+					return fmt.Errorf("assign volume failure %v: %v", request, assignResult.Error)
+				}
+				return nil
+			})
 		})
 		if err != nil {
 			return fmt.Errorf("Failed to assign from %v: %v\n", worker.options.masters, err)
@@ -404,24 +406,26 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 			// assign a volume
 			var assignResult *filer_pb.AssignVolumeResponse
 			var assignError error
-			err := pb.WithGrpcFilerClient(worker.filerGrpcAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-				request := &filer_pb.AssignVolumeRequest{
-					Count:       1,
-					Replication: *worker.options.replication,
-					Collection:  *worker.options.collection,
-					TtlSec:      worker.options.ttlSec,
-					DiskType:    *worker.options.diskType,
-					Path:        task.destinationUrlPath + fileName,
-				}
+			err := util.Retry("assignVolume", func() error {
+				return pb.WithGrpcFilerClient(worker.filerGrpcAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+					request := &filer_pb.AssignVolumeRequest{
+						Count:       1,
+						Replication: *worker.options.replication,
+						Collection:  *worker.options.collection,
+						TtlSec:      worker.options.ttlSec,
+						DiskType:    *worker.options.diskType,
+						Path:        task.destinationUrlPath + fileName,
+					}
 
-				assignResult, assignError = client.AssignVolume(context.Background(), request)
-				if assignError != nil {
-					return fmt.Errorf("assign volume failure %v: %v", request, assignError)
-				}
-				if assignResult.Error != "" {
-					return fmt.Errorf("assign volume failure %v: %v", request, assignResult.Error)
-				}
-				return nil
+					assignResult, assignError = client.AssignVolume(context.Background(), request)
+					if assignError != nil {
+						return fmt.Errorf("assign volume failure %v: %v", request, assignError)
+					}
+					if assignResult.Error != "" {
+						return fmt.Errorf("assign volume failure %v: %v", request, assignResult.Error)
+					}
+					return nil
+				})
 			})
 			if err != nil {
 				fmt.Printf("Failed to assign from %v: %v\n", worker.options.masters, err)

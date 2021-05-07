@@ -380,25 +380,32 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 
 		ctx := context.Background()
 
-		request := &filer_pb.AssignVolumeRequest{
-			Count:       1,
-			Replication: f.fs.option.Replication,
-			Collection:  f.fs.option.Collection,
-			DiskType:    f.fs.option.DiskType,
-			Path:        name,
-		}
+		assignErr := util.Retry("assignVolume", func() error {
+			request := &filer_pb.AssignVolumeRequest{
+				Count:       1,
+				Replication: f.fs.option.Replication,
+				Collection:  f.fs.option.Collection,
+				DiskType:    f.fs.option.DiskType,
+				Path:        name,
+			}
 
-		resp, err := client.AssignVolume(ctx, request)
-		if err != nil {
-			glog.V(0).Infof("assign volume failure %v: %v", request, err)
-			return err
-		}
-		if resp.Error != "" {
-			return fmt.Errorf("assign volume failure %v: %v", request, resp.Error)
-		}
+			resp, err := client.AssignVolume(ctx, request)
+			if err != nil {
+				glog.V(0).Infof("assign volume failure %v: %v", request, err)
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("assign volume failure %v: %v", request, resp.Error)
+			}
 
-		fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
-		f.collection, f.replication = resp.Collection, resp.Replication
+			fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
+			f.collection, f.replication = resp.Collection, resp.Replication
+
+			return nil
+		})
+		if assignErr != nil {
+			return assignErr
+		}
 
 		return nil
 	}); flushErr != nil {

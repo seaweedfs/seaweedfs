@@ -71,29 +71,30 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 	var auth security.EncodedJwt
 
 	if err := fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		return util.Retry("assignVolume", func() error {
+			request := &filer_pb.AssignVolumeRequest{
+				Count:       1,
+				Replication: fs.replication,
+				Collection:  fs.collection,
+				TtlSec:      fs.ttlSec,
+				DataCenter:  fs.dataCenter,
+				DiskType:    fs.diskType,
+				Path:        path,
+			}
 
-		request := &filer_pb.AssignVolumeRequest{
-			Count:       1,
-			Replication: fs.replication,
-			Collection:  fs.collection,
-			TtlSec:      fs.ttlSec,
-			DataCenter:  fs.dataCenter,
-			DiskType:    fs.diskType,
-			Path:        path,
-		}
+			resp, err := client.AssignVolume(context.Background(), request)
+			if err != nil {
+				glog.V(0).Infof("assign volume failure %v: %v", request, err)
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("assign volume failure %v: %v", request, resp.Error)
+			}
 
-		resp, err := client.AssignVolume(context.Background(), request)
-		if err != nil {
-			glog.V(0).Infof("assign volume failure %v: %v", request, err)
-			return err
-		}
-		if resp.Error != "" {
-			return fmt.Errorf("assign volume failure %v: %v", request, resp.Error)
-		}
+			fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
 
-		fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
-
-		return nil
+			return nil
+		})
 	}); err != nil {
 		return "", fmt.Errorf("filerGrpcAddress assign volume: %v", err)
 	}
