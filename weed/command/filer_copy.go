@@ -426,9 +426,6 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 			if err != nil {
 				fmt.Printf("Failed to assign from %v: %v\n", worker.options.masters, err)
 			}
-			if err != nil {
-				fmt.Printf("Failed to assign from %v: %v\n", worker.options.masters, err)
-			}
 
 			targetUrl := "http://" + assignResult.Url + "/" + assignResult.FileId
 			if collection == "" {
