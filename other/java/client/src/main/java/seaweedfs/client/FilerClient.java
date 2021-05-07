@@ -128,7 +128,14 @@ public class FilerClient extends FilerGrpcClient {
 
     public boolean exists(String path){
         File pathFile = new File(path);
-        return lookupEntry(pathFile.getParent(), pathFile.getName()) != null;
+        String parent = pathFile.getParent();
+        String entryName = pathFile.getName();
+        if(parent == null) {
+            parent = path;
+            entryName  ="";
+        }
+        return lookupEntry(parent, entryName) != null;
+
     }
 
     public boolean rm(String path, boolean isRecursive, boolean ignoreRecusiveError) {

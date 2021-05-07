@@ -25,5 +25,8 @@ public class SeaweedFilerTest {
         if(filerClient.exists("/new_folder/new_empty_file")){
             System.out.println("/new_folder/new_empty_file should not exists");
         }
+        if(!filerClient.exists("/")){
+            System.out.println("/ should exists");
+        }
     }
 }
