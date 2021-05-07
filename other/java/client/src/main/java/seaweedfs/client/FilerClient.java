@@ -126,6 +126,11 @@ public class FilerClient extends FilerGrpcClient {
 
     }
 
+    public boolean exists(String path){
+        File pathFile = new File(path);
+        return lookupEntry(pathFile.getParent(), pathFile.getName()) != null;
+    }
+
     public boolean rm(String path, boolean isRecursive, boolean ignoreRecusiveError) {
 
         File pathFile = new File(path);
