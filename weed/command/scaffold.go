@@ -281,7 +281,7 @@ index.max_result_window = 10000
 #     Make sure they are not the same if using the same store type!
 # 4. Set enabled to true
 #
-# The following is just using cassandra as an example
+# The following is just using redis as an example
 ##########################
 [redis2.tmp]
 enabled = false

@@ -126,7 +126,7 @@ func IsZstdContent(data []byte) bool {
 
 	// by file name extension
 	switch ext {
-	case ".zip", ".rar", ".gz", ".bz2", ".xz", ".zst":
+	case ".zip", ".rar", ".gz", ".bz2", ".xz", ".zst", ".br":
 		return false, true
 	case ".pdf", ".txt", ".html", ".htm", ".css", ".js", ".json":
 		return true, true
@@ -146,6 +146,9 @@ func IsZstdContent(data []byte) bool {
 		}
 		if strings.HasSuffix(mtype, "script") {
 			return true, true
+		}
+		if strings.HasSuffix(mtype, "vnd.rar") {
+			return false, true
 		}
 	}
 

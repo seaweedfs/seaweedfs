@@ -142,6 +142,14 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		if fileName != "" {
 			path += fileName
 		}
+	} else {
+		if fileName != "" {
+			if possibleDirEntry, findDirErr := fs.filer.FindEntry(ctx, util.FullPath(path)); findDirErr == nil {
+				if possibleDirEntry.IsDirectory() {
+					path += "/" + fileName
+				}
+			}
+		}
 	}
 
 	var entry *filer.Entry

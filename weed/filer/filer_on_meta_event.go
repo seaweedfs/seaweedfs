@@ -52,7 +52,7 @@ func (f *Filer) maybeReloadFilerConfiguration(event *filer_pb.SubscribeMetadataR
 
 func (f *Filer) readEntry(chunks []*filer_pb.FileChunk) ([]byte, error) {
 	var buf bytes.Buffer
-	err := StreamContent(f.MasterClient, &buf, chunks, 0, math.MaxInt64, false)
+	err := StreamContent(f.MasterClient, &buf, chunks, 0, math.MaxInt64)
 	if err != nil {
 		return nil, err
 	}

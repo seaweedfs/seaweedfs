@@ -22,7 +22,7 @@ func AllocateVolume(dn *DataNode, grpcDialOption grpc.DialOption, vid needle.Vol
 			Collection:         option.Collection,
 			Replication:        option.ReplicaPlacement.String(),
 			Ttl:                option.Ttl.String(),
-			Preallocate:        option.Prealloacte,
+			Preallocate:        option.Preallocate,
 			MemoryMapMaxSizeMb: option.MemoryMapMaxSizeMb,
 			DiskType:           string(option.DiskType),
 		})

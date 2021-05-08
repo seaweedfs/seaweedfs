@@ -45,7 +45,7 @@ func getChunkSignature(secretKey string, seedSignature string, region string, da
 		hashedChunk
 
 	// Get hmac signing key.
-	signingKey := getSigningKey(secretKey, date, region)
+	signingKey := getSigningKey(secretKey, date, region, "s3")
 
 	// Calculate signature.
 	newSignature := getSignature(signingKey, stringToSign)
@@ -117,7 +117,7 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 	stringToSign := getStringToSign(canonicalRequest, date, signV4Values.Credential.getScope())
 
 	// Get hmac signing key.
-	signingKey := getSigningKey(cred.SecretKey, signV4Values.Credential.scope.date, region)
+	signingKey := getSigningKey(cred.SecretKey, signV4Values.Credential.scope.date, region, "s3")
 
 	// Calculate signature.
 	newSignature := getSignature(signingKey, stringToSign)

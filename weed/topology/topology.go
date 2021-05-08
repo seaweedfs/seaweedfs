@@ -34,9 +34,10 @@ type Topology struct {
 
 	Sequence sequence.Sequencer
 
-	chanFullVolumes chan storage.VolumeInfo
+	chanFullVolumes    chan *storage.VolumeInfo
+	chanCrowdedVolumes chan *storage.VolumeInfo
 
-	Configuration *Configuration
+	Configuration      *Configuration
 
 	RaftServer raft.Server
 }
@@ -56,7 +57,8 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 
 	t.Sequence = seq
 
-	t.chanFullVolumes = make(chan storage.VolumeInfo)
+	t.chanFullVolumes = make(chan *storage.VolumeInfo)
+	t.chanCrowdedVolumes = make(chan *storage.VolumeInfo)
 
 	t.Configuration = &Configuration{}
 
@@ -122,9 +124,11 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	return next, nil
 }
 
+// deprecated
 func (t *Topology) HasWritableVolume(option *VolumeGrowOption) bool {
 	vl := t.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
-	return vl.GetActiveVolumeCount(option) > 0
+	active, _ := vl.GetActiveVolumeCount(option)
+	return active > 0
 }
 
 func (t *Topology) PickForWrite(count uint64, option *VolumeGrowOption) (string, uint64, *DataNode, error) {

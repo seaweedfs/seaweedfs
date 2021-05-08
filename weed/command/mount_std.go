@@ -149,8 +149,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fuse.Subtype("seaweedfs"),
 		// fuse.NoAppleDouble(), // include .DS_Store, otherwise can not delete non-empty folders
 		fuse.NoAppleXattr(),
-		fuse.NoBrowse(),
-		fuse.AutoXattr(),
 		fuse.ExclCreate(),
 		fuse.DaemonTimeout("3600"),
 		fuse.AllowSUID(),
@@ -168,6 +166,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 	if *option.nonempty {
 		options = append(options, fuse.AllowNonEmptyMount())
+	}
+	if *option.readOnly {
+		options = append(options, fuse.ReadOnly())
 	}
 
 	// find mount point
@@ -193,7 +194,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		CacheDir:           *option.cacheDir,
 		CacheSizeMB:        *option.cacheSizeMB,
 		DataCenter:         *option.dataCenter,
-		EntryCacheTtl:      3 * time.Second,
 		MountUid:           uid,
 		MountGid:           gid,
 		MountMode:          mountMode,
@@ -203,7 +203,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		VolumeServerAccess: *mountOptions.volumeServerAccess,
 		Cipher:             cipher,
 		UidGidMapper:       uidGidMapper,
-		ReadOnly:           *option.readOnly,
 	})
 
 	// mount

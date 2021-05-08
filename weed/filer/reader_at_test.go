@@ -20,6 +20,11 @@ func (m *mockChunkCache) GetChunk(fileId string, minSize uint64) (data []byte) {
 	}
 	return data
 }
+
+func (m *mockChunkCache) GetChunkSlice(fileId string, offset, length uint64) []byte {
+	return nil
+}
+
 func (m *mockChunkCache) SetChunk(fileId string, data []byte) {
 }
 

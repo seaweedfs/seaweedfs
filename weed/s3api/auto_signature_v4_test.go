@@ -370,7 +370,7 @@ func preSignV4(req *http.Request, accessKeyID, secretAccessKey string, expires i
 	queryStr := strings.Replace(query.Encode(), "+", "%20", -1)
 	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, unsignedPayload, queryStr, req.URL.Path, req.Method)
 	stringToSign := getStringToSign(canonicalRequest, date, scope)
-	signingKey := getSigningKey(secretAccessKey, date, region)
+	signingKey := getSigningKey(secretAccessKey, date, region, "s3")
 	signature := getSignature(signingKey, stringToSign)
 
 	req.URL.RawQuery = query.Encode()

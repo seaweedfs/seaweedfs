@@ -3,7 +3,6 @@ package filer
 import (
 	"bytes"
 	"fmt"
-	"golang.org/x/sync/errgroup"
 	"io"
 	"math"
 	"strings"
@@ -14,7 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
-func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64, isCheck bool) error {
+func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
 
 	glog.V(9).Infof("start to stream content for chunks: %+v\n", chunks)
 	chunkViews := ViewFromChunks(masterClient.GetLookupFileIdFunction(), chunks, offset, size)
@@ -34,17 +33,6 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 		fileId2Url[chunkView.FileId] = urlStrings
 	}
 
-	if isCheck {
-		// Pre-check all chunkViews urls
-		gErr := new(errgroup.Group)
-		CheckAllChunkViews(chunkViews, &fileId2Url, gErr)
-		if err := gErr.Wait(); err != nil {
-			glog.Errorf("check all chunks: %v", err)
-			return fmt.Errorf("check all chunks: %v", err)
-		}
-		return nil
-	}
-
 	for _, chunkView := range chunkViews {
 
 		urlStrings := fileId2Url[chunkView.FileId]
@@ -53,7 +41,6 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 			glog.Errorf("read chunk: %v", err)
 			return fmt.Errorf("read chunk: %v", err)
 		}
-
 		_, err = w.Write(data)
 		if err != nil {
 			glog.Errorf("write chunk: %v", err)
@@ -63,17 +50,6 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 
 	return nil
 
-}
-
-func CheckAllChunkViews(chunkViews []*ChunkView, fileId2Url *map[string][]string, gErr *errgroup.Group) {
-	for _, chunkView := range chunkViews {
-		urlStrings := (*fileId2Url)[chunkView.FileId]
-		glog.V(9).Infof("Check chunk: %+v\n url: %v", chunkView, urlStrings)
-		gErr.Go(func() error {
-			_, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
-			return err
-		})
-	}
 }
 
 // ----------------  ReadAllReader ----------------------------------

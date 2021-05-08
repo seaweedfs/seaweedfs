@@ -200,7 +200,6 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 				return
 			}
 			glog.V(0).Infof("clearing ec shard %d.%d locations: %v", ecVolume.VolumeId, shardId, err)
-			forgetShardId(ecVolume, shardId)
 		}
 
 		// try reading by recovering from other shards
@@ -303,7 +302,7 @@ func (s *Store) doReadRemoteEcShardInterval(sourceDataNode string, needleId type
 				break
 			}
 			if receiveErr != nil {
-				return fmt.Errorf("receiving ec shard %d.%d from %s: %v", vid, shardId, sourceDataNode, err)
+				return fmt.Errorf("receiving ec shard %d.%d from %s: %v", vid, shardId, sourceDataNode, receiveErr)
 			}
 			if resp.IsDeleted {
 				is_deleted = true

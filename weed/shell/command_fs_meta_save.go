@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,6 +48,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	fsMetaSaveCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	verbose := fsMetaSaveCommand.Bool("v", false, "print out each processed files")
 	outputFileName := fsMetaSaveCommand.String("o", "", "output the meta data to this file")
+	isObfuscate := fsMetaSaveCommand.Bool("obfuscate", false, "obfuscate the file names")
 	// chunksFileName := fsMetaSaveCommand.String("chunks", "", "output all the chunks to this file")
 	if err = fsMetaSaveCommand.Parse(args); err != nil {
 		return nil
@@ -69,6 +72,11 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 	defer dst.Close()
 
+	var cipherKey util.CipherKey
+	if *isObfuscate {
+		cipherKey = util.GenCipherKey()
+	}
+
 	err = doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(outputChan chan interface{}) {
 		sizeBuf := make([]byte, 4)
 		for item := range outputChan {
@@ -78,6 +86,13 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 			dst.Write(b)
 		}
 	}, func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
+		if !entry.Entry.IsDirectory {
+			ext := filepath.Ext(entry.Entry.Name)
+			if encrypted, encErr := util.Encrypt([]byte(entry.Entry.Name), cipherKey); encErr == nil {
+				entry.Entry.Name = util.Base64Encode(encrypted)[:len(entry.Entry.Name)] + ext
+				entry.Entry.Name = strings.ReplaceAll(entry.Entry.Name, "/", "x")
+			}
+		}
 		bytes, err := proto.Marshal(entry)
 		if err != nil {
 			fmt.Fprintf(writer, "marshall error: %v\n", err)

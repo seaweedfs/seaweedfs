@@ -78,11 +78,27 @@ func (fs *FilerServer) DeleteTaggingHandler(w http.ResponseWriter, r *http.Reque
 		existingEntry.Extended = make(map[string][]byte)
 	}
 
+	// parse out tags to be deleted
+	toDelete := strings.Split(r.URL.Query().Get("tagging"), ",")
+	deletions := make(map[string]struct{})
+	for _, deletion := range toDelete {
+		deletions[deletion] = struct{}{}
+	}
+
+	// delete all tags or specific tags
 	hasDeletion := false
 	for header, _ := range existingEntry.Extended {
 		if strings.HasPrefix(header, needle.PairNamePrefix) {
-			delete(existingEntry.Extended, header)
-			hasDeletion = true
+			if len(deletions) == 0 {
+				delete(existingEntry.Extended, header)
+				hasDeletion = true
+			} else {
+				tag := header[len(needle.PairNamePrefix):]
+				if _, found := deletions[tag]; found {
+					delete(existingEntry.Extended, header)
+					hasDeletion = true
+				}
+			}
 		}
 	}
 

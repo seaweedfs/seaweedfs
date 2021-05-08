@@ -51,9 +51,9 @@ type MasterServer struct {
 
 	preallocateSize int64
 
-	Topo   *topology.Topology
-	vg     *topology.VolumeGrowth
-	vgLock sync.Mutex
+	Topo *topology.Topology
+	vg   *topology.VolumeGrowth
+	vgCh chan *topology.VolumeGrowRequest
 
 	boundedLeaderChan chan int
 
@@ -82,6 +82,12 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 	v.SetDefault("master.replication.treat_replication_as_minimums", false)
 	replicationAsMin := v.GetBool("master.replication.treat_replication_as_minimums")
 
+	v.SetDefault("master.volume_growth.copy_1", 7)
+	v.SetDefault("master.volume_growth.copy_2", 6)
+	v.SetDefault("master.volume_growth.copy_3", 3)
+	v.SetDefault("master.volume_growth.copy_other", 1)
+	v.SetDefault("master.volume_growth.threshold", 0.9)
+
 	var preallocateSize int64
 	if option.VolumePreallocate {
 		preallocateSize = int64(option.VolumeSizeLimitMB) * (1 << 20)
@@ -91,6 +97,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 	ms := &MasterServer{
 		option:          option,
 		preallocateSize: preallocateSize,
+		vgCh:            make(chan *topology.VolumeGrowRequest, 1 << 6),
 		clientChans:     make(map[string]chan *master_pb.VolumeLocation),
 		grpcDialOption:  grpcDialOption,
 		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "master", option.Host, 0, "", peers),
@@ -128,7 +135,14 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 		r.HandleFunc("/{fileId}", ms.redirectHandler)
 	}
 
-	ms.Topo.StartRefreshWritableVolumes(ms.grpcDialOption, ms.option.GarbageThreshold, ms.preallocateSize)
+	ms.Topo.StartRefreshWritableVolumes(
+		ms.grpcDialOption,
+		ms.option.GarbageThreshold,
+		v.GetFloat64("master.volume_growth.threshold"),
+		ms.preallocateSize,
+	)
+
+	ms.ProcessGrowRequest()
 
 	ms.startAdminScripts()
 

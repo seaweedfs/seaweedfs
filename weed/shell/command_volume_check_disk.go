@@ -85,6 +85,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 			}
 			if a.info.ReadOnly || b.info.ReadOnly {
 				fmt.Fprintf(writer, "skipping readonly volume %d on %s and %s\n", a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id)
+				replicas = replicas[1:]
 				continue
 			}
 

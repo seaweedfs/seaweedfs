@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"io"
 	"os"
 	"path"
@@ -25,6 +26,9 @@ func RunShell(options ShellOptions) {
 
 	line = liner.NewLiner()
 	defer line.Close()
+	grace.OnInterrupt(func() {
+		line.Close()
+	})
 
 	line.SetCtrlCAborts(true)
 

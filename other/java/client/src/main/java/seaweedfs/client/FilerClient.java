@@ -126,6 +126,18 @@ public class FilerClient extends FilerGrpcClient {
 
     }
 
+    public boolean exists(String path){
+        File pathFile = new File(path);
+        String parent = pathFile.getParent();
+        String entryName = pathFile.getName();
+        if(parent == null) {
+            parent = path;
+            entryName  ="";
+        }
+        return lookupEntry(parent, entryName) != null;
+
+    }
+
     public boolean rm(String path, boolean isRecursive, boolean ignoreRecusiveError) {
 
         File pathFile = new File(path);
@@ -142,10 +154,12 @@ public class FilerClient extends FilerGrpcClient {
 
     public boolean touch(String path, int mode) {
         String currentUser = System.getProperty("user.name");
-        return touch(path, mode, 0, 0, currentUser, new String[]{});
+
+        long now = System.currentTimeMillis() / 1000L;
+        return touch(path, now, mode, 0, 0, currentUser, new String[]{});
     }
 
-    public boolean touch(String path, int mode, int uid, int gid, String userName, String[] groupNames) {
+    public boolean touch(String path, long modifiedTimeSecond, int mode, int uid, int gid, String userName, String[] groupNames) {
 
         File pathFile = new File(path);
         String parent = pathFile.getParent().replace('\\','/');
@@ -155,17 +169,25 @@ public class FilerClient extends FilerGrpcClient {
         if (entry == null) {
             return createEntry(
                     parent,
-                    newFileEntry(name, mode, uid, gid, userName, groupNames).build()
+                    newFileEntry(name, modifiedTimeSecond, mode, uid, gid, userName, groupNames).build()
             );
         }
-        long now = System.currentTimeMillis() / 1000L;
-        FilerProto.FuseAttributes.Builder attr = entry.getAttributes().toBuilder()
-                .setMtime(now)
-                .setUid(uid)
-                .setGid(gid)
-                .setUserName(userName)
-                .clearGroupName()
-                .addAllGroupName(Arrays.asList(groupNames));
+        FilerProto.FuseAttributes.Builder attr = entry.getAttributes().toBuilder();
+        if (modifiedTimeSecond>0) {
+            attr.setMtime(modifiedTimeSecond);
+        }
+        if (uid>0) {
+            attr.setUid(uid);
+        }
+        if (gid>0) {
+            attr.setGid(gid);
+        }
+        if (userName!=null) {
+            attr.setUserName(userName);
+        }
+        if (groupNames!=null) {
+            attr.clearGroupName().addAllGroupName(Arrays.asList(groupNames));
+        }
         return updateEntry(parent, entry.toBuilder().setAttributes(attr).build());
     }
 
@@ -188,17 +210,15 @@ public class FilerClient extends FilerGrpcClient {
                         .addAllGroupName(Arrays.asList(groupNames)));
     }
 
-    public FilerProto.Entry.Builder newFileEntry(String name, int mode,
+    public FilerProto.Entry.Builder newFileEntry(String name, long modifiedTimeSecond, int mode,
                                                  int uid, int gid, String userName, String[] groupNames) {
-
-        long now = System.currentTimeMillis() / 1000L;
 
         return FilerProto.Entry.newBuilder()
                 .setName(name)
                 .setIsDirectory(false)
                 .setAttributes(FilerProto.FuseAttributes.newBuilder()
-                        .setMtime(now)
-                        .setCrtime(now)
+                        .setMtime(modifiedTimeSecond)
+                        .setCrtime(modifiedTimeSecond)
                         .setUid(uid)
                         .setGid(gid)
                         .setFileMode(mode)

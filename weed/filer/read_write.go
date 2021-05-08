@@ -27,7 +27,7 @@ func ReadEntry(masterClient *wdclient.MasterClient, filerClient filer_pb.Seaweed
 		return err
 	}
 
-	return StreamContent(masterClient, byteBuffer, respLookupEntry.Entry.Chunks, 0, math.MaxInt64, false)
+	return StreamContent(masterClient, byteBuffer, respLookupEntry.Entry.Chunks, 0, math.MaxInt64)
 
 }
 
@@ -41,8 +41,12 @@ func ReadContent(filerAddress string, dir, name string) ([]byte, error) {
 }
 
 func SaveAs(host string, port int, dir, name string, contentType string, byteBuffer *bytes.Buffer) error {
-
-	target := fmt.Sprintf("http://%s:%d%s/%s", host, port, dir, name)
+	var target string
+	if port == 0 {
+		target = fmt.Sprintf("http://%s%s/%s", host, dir, name)
+	} else {
+		target = fmt.Sprintf("http://%s:%d%s/%s", host, port, dir, name)
+	}
 
 	// set the HTTP method, url, and request body
 	req, err := http.NewRequest(http.MethodPut, target, byteBuffer)

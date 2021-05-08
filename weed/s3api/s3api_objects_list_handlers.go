@@ -63,6 +63,14 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
 	}
+
+	if len(response.Contents) == 0 {
+		if exists, existErr := s3a.exists(s3a.option.BucketsPath, bucket, true); existErr == nil && !exists {
+			writeErrorResponse(w, s3err.ErrNoSuchBucket, r.URL)
+			return
+		}
+	}
+
 	responseV2 := &ListBucketResultV2{
 		XMLName:               response.XMLName,
 		Name:                  response.Name,
@@ -104,6 +112,13 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
 		return
+	}
+
+	if len(response.Contents) == 0 {
+		if exists, existErr := s3a.exists(s3a.option.BucketsPath, bucket, true); existErr == nil && !exists {
+			writeErrorResponse(w, s3err.ErrNoSuchBucket, r.URL)
+			return
+		}
 	}
 
 	writeSuccessResponseXML(w, encodeResponse(response))

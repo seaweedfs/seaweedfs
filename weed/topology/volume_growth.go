@@ -3,18 +3,17 @@ package topology
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"math/rand"
 	"sync"
-
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
-	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 /*
@@ -25,12 +24,18 @@ This package is created to resolve these replica placement issues:
 4. volume allocation for each bucket
 */
 
+type VolumeGrowRequest struct {
+	Option *VolumeGrowOption
+	Count  int
+	ErrCh  chan error
+}
+
 type VolumeGrowOption struct {
 	Collection         string                        `json:"collection,omitempty"`
 	ReplicaPlacement   *super_block.ReplicaPlacement `json:"replication,omitempty"`
 	Ttl                *needle.TTL                   `json:"ttl,omitempty"`
 	DiskType           types.DiskType                `json:"disk,omitempty"`
-	Prealloacte        int64                         `json:"prealloacte,omitempty"`
+	Preallocate        int64                         `json:"preallocate,omitempty"`
 	DataCenter         string                        `json:"dataCenter,omitempty"`
 	Rack               string                        `json:"rack,omitempty"`
 	DataNode           string                        `json:"dataNode,omitempty"`
@@ -46,6 +51,11 @@ func (o *VolumeGrowOption) String() string {
 	return string(blob)
 }
 
+func (o *VolumeGrowOption) Threshold() float64 {
+	v := util.GetViper()
+	return v.GetFloat64("master.volume_growth.threshold")
+}
+
 func NewDefaultVolumeGrowth() *VolumeGrowth {
 	return &VolumeGrowth{}
 }
@@ -54,10 +64,6 @@ func NewDefaultVolumeGrowth() *VolumeGrowth {
 // given copyCount, how many logical volumes to create
 func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count int) {
 	v := util.GetViper()
-	v.SetDefault("master.volume_growth.copy_1", 7)
-	v.SetDefault("master.volume_growth.copy_2", 6)
-	v.SetDefault("master.volume_growth.copy_3", 3)
-	v.SetDefault("master.volume_growth.copy_other", 1)
 	switch copyCount {
 	case 1:
 		count = v.GetInt("master.volume_growth.copy_1")

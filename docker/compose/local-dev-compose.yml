@@ -26,9 +26,10 @@ services:
   filer:
     image: chrislusf/seaweedfs:local
     ports:
+      - 8111:8111
       - 8888:8888
       - 18888:18888
-    command: '-v=1 filer -master="master:9333"'
+    command: '-v=1 filer -master="master:9333" -iam'
     depends_on:
       - master
       - volume

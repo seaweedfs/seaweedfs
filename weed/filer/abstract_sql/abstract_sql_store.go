@@ -276,7 +276,9 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 		}
 	}
 
-	res, err := db.ExecContext(ctx, store.GetSqlDeleteFolderChildren(bucket), util.HashStringToLong(string(shortPath)), fullpath)
+	glog.V(4).Infof("delete %s SQL %s %d", string(shortPath), store.GetSqlDeleteFolderChildren(bucket), util.HashStringToLong(string(shortPath)))
+
+	res, err := db.ExecContext(ctx, store.GetSqlDeleteFolderChildren(bucket), util.HashStringToLong(string(shortPath)), string(shortPath))
 	if err != nil {
 		return fmt.Errorf("deleteFolderChildren %s: %s", fullpath, err)
 	}

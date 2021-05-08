@@ -16,7 +16,7 @@ debug_shell:
 
 debug_mount:
 	go build -gcflags="all=-N -l"
-	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- mount -dir=~/tmp/mm -cacheCapacityMB=0 -filer.path=/buckets
+	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- -v=4 mount -dir=~/tmp/mm -cacheCapacityMB=0 -filer.path=/buckets
 
 debug_server:
 	go build -gcflags="all=-N -l"

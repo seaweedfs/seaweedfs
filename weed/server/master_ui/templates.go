@@ -22,8 +22,12 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
       <div class="row">
         <div class="col-sm-6">
           <h2>Cluster status</h2>
-          <table class="table">
+          <table class="table table-condensed table-striped">
             <tbody>
+              <tr>
+                <th>Volume Size Limit</th>
+                <td>{{ .VolumeSizeLimitMB }}MB</td>
+              </tr>
               <tr>
                 <th>Free</th>
                 <td>{{ .Topology.Free }}</td>
@@ -38,8 +42,8 @@ var StatusTpl = template.Must(template.New("status").Parse(`<!DOCTYPE html>
                 <td><a href="http://{{ .Leader }}">{{ .Leader }}</a></td>
               </tr>
               <tr>
-                <td class="col-sm-2 field-label"><label>Other Masters:</label></td>
-                <td class="col-sm-10"><ul class="list-unstyled">
+                <th>Other Masters</th>
+                <td class="col-sm-5"><ul class="list-unstyled">
                 {{ range $k, $p := .Peers }}
                   <li><a href="http://{{ $p.Name }}/ui/index.html">{{ $p.Name }}</a></li>
                 {{ end }}
