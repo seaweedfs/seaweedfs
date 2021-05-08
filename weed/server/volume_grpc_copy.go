@@ -151,7 +151,7 @@ todo: maybe should check the received count and deleted count of the volume
 func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse, idxFileName, datFileName string) error {
 	stat, err := os.Stat(idxFileName)
 	if err != nil {
-		return fmt.Errorf("stat idx file %s failed, %v", idxFileName, err)
+		return fmt.Errorf("stat idx file %s failed: %v", idxFileName, err)
 	}
 	if originFileInf.IdxFileSize != uint64(stat.Size()) {
 		return fmt.Errorf("idx file %s size [%v] is not same as origin file size [%v]",
