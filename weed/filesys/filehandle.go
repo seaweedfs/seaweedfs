@@ -239,12 +239,8 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 	// send the data to the OS
 	glog.V(4).Infof("doFlush %s fh %d", fh.f.fullpath(), fh.handle)
 
-	fh.dirtyPages.saveExistingPagesToStorage()
-
-	fh.dirtyPages.writeWaitGroup.Wait()
-
-	if fh.dirtyPages.lastErr != nil {
-		glog.Errorf("%v doFlush last err: %v", fh.f.fullpath(), fh.dirtyPages.lastErr)
+	if err := fh.dirtyPages.FlushData(); err != nil {
+		glog.Errorf("%v doFlush: %v", fh.f.fullpath(), err)
 		return fuse.EIO
 	}
 

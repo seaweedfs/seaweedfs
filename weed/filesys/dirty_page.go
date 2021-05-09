@@ -2,6 +2,7 @@ package filesys
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -56,6 +57,16 @@ func (pages *ContinuousDirtyPages) flushAndSave(offset int64, data []byte) {
 	pages.saveToStorage(bytes.NewReader(data), offset, int64(len(data)))
 
 	return
+}
+
+func (pages *ContinuousDirtyPages) FlushData() error {
+
+	pages.saveExistingPagesToStorage()
+	pages.writeWaitGroup.Wait()
+	if pages.lastErr != nil {
+		return fmt.Errorf("flush data: %v", pages.lastErr)
+	}
+	return nil
 }
 
 func (pages *ContinuousDirtyPages) saveExistingPagesToStorage() {
