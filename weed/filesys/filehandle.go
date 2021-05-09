@@ -267,8 +267,7 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 			}
 			entry.Attributes.Mtime = time.Now().Unix()
 			entry.Attributes.FileMode = uint32(os.FileMode(entry.Attributes.FileMode) &^ fh.f.wfs.option.Umask)
-			entry.Attributes.Collection = fh.dirtyPages.collection
-			entry.Attributes.Replication = fh.dirtyPages.replication
+			entry.Attributes.Collection, entry.Attributes.Replication = fh.dirtyPages.GetStorageOptions()
 		}
 
 		request := &filer_pb.CreateEntryRequest{

@@ -144,3 +144,7 @@ func min(x, y int64) int64 {
 func (pages *ContinuousDirtyPages) ReadDirtyDataAt(data []byte, startOffset int64) (maxStop int64) {
 	return pages.intervals.ReadDataAt(data, startOffset)
 }
+
+func (pages *ContinuousDirtyPages) GetStorageOptions() (collection, replication string) {
+	return pages.collection, pages.replication
+}
