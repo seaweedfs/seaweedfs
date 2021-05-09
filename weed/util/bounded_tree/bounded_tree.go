@@ -41,9 +41,9 @@ func (t *BoundedTree) EnsureVisited(p util.FullPath, visitFn VisitNodeFunc) (vis
 	if t.root == nil {
 		return
 	}
-	components := util.FullPath(p[len(t.baseDir):]).Split()
+	components := p.Split()
 	// fmt.Printf("components %v %d\n", components, len(components))
-	canDelete, err := t.ensureVisited(t.root, t.baseDir, components, 0, visitFn)
+	canDelete, err := t.ensureVisited(t.root, util.FullPath("/"), components, 0, visitFn)
 	if err != nil {
 		return err
 	}
