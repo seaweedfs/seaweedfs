@@ -14,7 +14,7 @@ import (
 type ContinuousDirtyPages struct {
 	intervals      *ContinuousIntervals
 	f              *File
-	fh             *FileHandle
+	writeOnly      bool
 	writeWaitGroup sync.WaitGroup
 	chunkAddLock   sync.Mutex
 	lastErr        error
@@ -22,10 +22,11 @@ type ContinuousDirtyPages struct {
 	replication    string
 }
 
-func newDirtyPages(file *File) *ContinuousDirtyPages {
+func newDirtyPages(file *File, writeOnly bool) *ContinuousDirtyPages {
 	dirtyPages := &ContinuousDirtyPages{
 		intervals: &ContinuousIntervals{},
 		f:         file,
+		writeOnly: writeOnly,
 	}
 	return dirtyPages
 }
@@ -106,7 +107,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 		defer pages.writeWaitGroup.Done()
 
 		reader = io.LimitReader(reader, size)
-		chunk, collection, replication, err := pages.f.wfs.saveDataAsChunk(pages.f.fullpath(), pages.fh.writeOnly)(reader, pages.f.Name, offset)
+		chunk, collection, replication, err := pages.f.wfs.saveDataAsChunk(pages.f.fullpath(), pages.writeOnly)(reader, pages.f.Name, offset)
 		if err != nil {
 			glog.V(0).Infof("%s saveToStorage [%d,%d): %v", pages.f.fullpath(), offset, offset+size, err)
 			pages.lastErr = err

@@ -35,14 +35,13 @@ type FileHandle struct {
 	writeOnly bool
 }
 
-func newFileHandle(file *File, uid, gid uint32) *FileHandle {
+func newFileHandle(file *File, uid, gid uint32, writeOnly bool) *FileHandle {
 	fh := &FileHandle{
 		f:          file,
-		dirtyPages: newDirtyPages(file),
+		dirtyPages: newDirtyPages(file, writeOnly),
 		Uid:        uid,
 		Gid:        gid,
 	}
-	fh.dirtyPages.fh = fh
 	entry := fh.f.getEntry()
 	if entry != nil {
 		entry.Attributes.FileSize = filer.FileSize(entry)

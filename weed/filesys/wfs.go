@@ -159,8 +159,7 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32, writeOnly bool) (file
 
 	entry, _ := file.maybeLoadEntry(context.Background())
 	file.entry = entry
-	fileHandle = newFileHandle(file, uid, gid)
-	fileHandle.writeOnly = writeOnly
+	fileHandle = newFileHandle(file, uid, gid, writeOnly)
 	file.isOpen++
 
 	wfs.handlesLock.Lock()
