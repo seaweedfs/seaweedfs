@@ -22,7 +22,7 @@ type ContinuousDirtyPages struct {
 	replication    string
 }
 
-func newDirtyPages(file *File, writeOnly bool) *ContinuousDirtyPages {
+func newContinuousDirtyPages(file *File, writeOnly bool) *ContinuousDirtyPages {
 	dirtyPages := &ContinuousDirtyPages{
 		intervals: &ContinuousIntervals{},
 		f:         file,

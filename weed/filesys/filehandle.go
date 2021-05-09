@@ -20,7 +20,7 @@ import (
 
 type FileHandle struct {
 	// cache file has been written to
-	dirtyPages     *ContinuousDirtyPages
+	dirtyPages     DirtyPages
 	entryViewCache []filer.VisibleInterval
 	reader         io.ReaderAt
 	contentType    string
@@ -38,7 +38,7 @@ type FileHandle struct {
 func newFileHandle(file *File, uid, gid uint32, writeOnly bool) *FileHandle {
 	fh := &FileHandle{
 		f:          file,
-		dirtyPages: newDirtyPages(file, writeOnly),
+		dirtyPages: newContinuousDirtyPages(file, writeOnly),
 		Uid:        uid,
 		Gid:        gid,
 	}
