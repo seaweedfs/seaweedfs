@@ -1,5 +1,5 @@
-FROM frolvlad/alpine-glibc as builder
-RUN apk add git go g++ fuse
+FROM amd64/golang:1.16-alpine as builder
+RUN apk add git g++ fuse
 RUN mkdir -p /go/src/github.com/chrislusf/
 RUN git clone https://github.com/chrislusf/seaweedfs /go/src/github.com/chrislusf/seaweedfs
 ARG BRANCH=${BRANCH:-master}
@@ -10,7 +10,7 @@ RUN cd /go/src/github.com/chrislusf/seaweedfs/weed \
 
 FROM alpine AS final
 LABEL author="Chris Lu"
-COPY --from=builder /root/go/bin/weed /usr/bin/
+COPY --from=builder /go/bin/weed /usr/bin/
 RUN mkdir -p /etc/seaweedfs
 COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/filer.toml /etc/seaweedfs/filer.toml
 COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/entrypoint.sh /entrypoint.sh
