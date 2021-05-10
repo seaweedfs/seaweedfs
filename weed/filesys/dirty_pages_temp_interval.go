@@ -255,6 +255,9 @@ func newFileSectionReader(tempfile *os.File, offset int64, dataOffset int64, siz
 
 func (f *FileSectionReader) Read(p []byte) (n int, err error) {
 	dataLen := min(f.dataStop-f.Offset, int64(len(p)))
+	if dataLen < 0 {
+		return 0, io.EOF
+	}
 	glog.V(4).Infof("reading %v [%d,%d)", f.file.Name(), f.Offset, f.Offset+dataLen)
 	n, err = f.file.ReadAt(p[:dataLen], f.Offset)
 	if n > 0 {
