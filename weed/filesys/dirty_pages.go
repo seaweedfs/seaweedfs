@@ -5,4 +5,6 @@ type DirtyPages interface {
 	FlushData() error
 	ReadDirtyDataAt(data []byte, startOffset int64) (maxStop int64)
 	GetStorageOptions() (collection, replication string)
+	SetWriteOnly(writeOnly bool)
+	GetWriteOnly() (writeOnly bool)
 }

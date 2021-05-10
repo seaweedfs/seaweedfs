@@ -148,3 +148,13 @@ func (pages *ContinuousDirtyPages) ReadDirtyDataAt(data []byte, startOffset int6
 func (pages *ContinuousDirtyPages) GetStorageOptions() (collection, replication string) {
 	return pages.collection, pages.replication
 }
+
+func (pages *ContinuousDirtyPages) SetWriteOnly(writeOnly bool) {
+	if pages.writeOnly {
+		pages.writeOnly = writeOnly
+	}
+}
+
+func (pages *ContinuousDirtyPages) GetWriteOnly() (writeOnly bool) {
+	return pages.writeOnly
+}
