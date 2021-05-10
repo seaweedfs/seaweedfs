@@ -49,7 +49,12 @@ func (t *Topology) SetVolumeCapacityFull(volumeInfo *storage.VolumeInfo) bool {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
 
-	for _, dn := range vl.vid2location[volumeInfo.Id].list {
+	vidLocations, found := vl.vid2location[volumeInfo.Id]
+	if !found {
+		return false
+	}
+
+	for _, dn := range vidLocations.list {
 		if !volumeInfo.ReadOnly {
 
 			disk := dn.getOrCreateDisk(volumeInfo.DiskType)
