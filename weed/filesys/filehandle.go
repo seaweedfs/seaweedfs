@@ -38,8 +38,8 @@ type FileHandle struct {
 func newFileHandle(file *File, uid, gid uint32, writeOnly bool) *FileHandle {
 	fh := &FileHandle{
 		f:          file,
-		dirtyPages: newContinuousDirtyPages(file, writeOnly),
-		/// dirtyPages: newTempFileDirtyPages(file, writeOnly),
+		// dirtyPages: newContinuousDirtyPages(file, writeOnly),
+		dirtyPages: newTempFileDirtyPages(file, writeOnly),
 		Uid:        uid,
 		Gid:        gid,
 	}
