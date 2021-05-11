@@ -56,17 +56,22 @@ func (pages *TempFileDirtyPages) AddPage(offset int64, data []byte) {
 		}
 		pages.tf = tf
 		pages.writtenIntervals.tempFile = tf
+		pages.writtenIntervals.lastOffset = 0
 	}
 
-	writtenOffset := pages.writtenIntervals.TotalSize()
+	writtenOffset := pages.writtenIntervals.lastOffset
+	dataSize := int64(len(data))
 
-	glog.V(4).Infof("%s AddPage %v at %d [%d,%d)", pages.f.fullpath(), pages.tf.Name(), writtenOffset, offset, offset+int64(len(data)))
+	// glog.V(4).Infof("%s AddPage %v at %d [%d,%d)", pages.f.fullpath(), pages.tf.Name(), writtenOffset, offset, offset+dataSize)
 
 	if _, err := pages.tf.WriteAt(data, writtenOffset); err != nil {
 		pages.lastErr = err
 	} else {
 		pages.writtenIntervals.AddInterval(writtenOffset, len(data), offset)
+		pages.writtenIntervals.lastOffset += dataSize
 	}
+
+	// pages.writtenIntervals.debug()
 
 	return
 }
@@ -81,6 +86,11 @@ func (pages *TempFileDirtyPages) FlushData() error {
 	pages.pageAddLock.Lock()
 	defer pages.pageAddLock.Unlock()
 	if pages.tf != nil {
+
+		pages.writtenIntervals.tempFile = nil
+		pages.writtenIntervals.lists = nil
+
+		pages.tf.Close()
 		os.Remove(pages.tf.Name())
 		pages.tf = nil
 	}
@@ -91,15 +101,16 @@ func (pages *TempFileDirtyPages) saveExistingPagesToStorage() {
 
 	pageSize := pages.f.wfs.option.ChunkSizeLimit
 
-	uploadedSize := int64(0)
+	// glog.V(4).Infof("%v saveExistingPagesToStorage %d lists", pages.f.Name, len(pages.writtenIntervals.lists))
+
 	for _, list := range pages.writtenIntervals.lists {
-		for {
-			start, stop := max(list.Offset(), uploadedSize), min(list.Offset()+list.Size(), uploadedSize+pageSize)
+		listStopOffset := list.Offset() + list.Size()
+		for uploadedOffset:=int64(0); uploadedOffset < listStopOffset; uploadedOffset += pageSize {
+			start, stop := max(list.Offset(), uploadedOffset), min(listStopOffset, uploadedOffset+pageSize)
 			if start >= stop {
-				break
+				continue
 			}
-			uploadedSize = stop
-			glog.V(4).Infof("uploading %v [%d,%d)", pages.f.Name, start, stop)
+			// glog.V(4).Infof("uploading %v [%d,%d) %d/%d", pages.f.Name, start, stop, i, len(pages.writtenIntervals.lists))
 			pages.saveToStorage(list.ToReader(start, stop), start, stop-start)
 		}
 	}

@@ -38,8 +38,8 @@ type FileHandle struct {
 func newFileHandle(file *File, uid, gid uint32, writeOnly bool) *FileHandle {
 	fh := &FileHandle{
 		f:          file,
-		dirtyPages: newContinuousDirtyPages(file, writeOnly),
-		/// dirtyPages: newTempFileDirtyPages(file, writeOnly),
+		// dirtyPages: newContinuousDirtyPages(file, writeOnly),
+		dirtyPages: newTempFileDirtyPages(file, writeOnly),
 		Uid:        uid,
 		Gid:        gid,
 	}
@@ -149,7 +149,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		glog.Errorf("file handle read %s: %v", fileFullPath, err)
 	}
 
-	glog.V(4).Infof("file handle read %s [%d,%d] %d : %v", fileFullPath, offset, offset+int64(totalRead), totalRead, err)
+	// glog.V(4).Infof("file handle read %s [%d,%d] %d : %v", fileFullPath, offset, offset+int64(totalRead), totalRead, err)
 
 	return int64(totalRead), err
 }
@@ -175,7 +175,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	entry.Content = nil
 	entry.Attributes.FileSize = uint64(max(req.Offset+int64(len(data)), int64(entry.Attributes.FileSize)))
-	glog.V(4).Infof("%v write [%d,%d) %d", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)), len(req.Data))
+	// glog.V(4).Infof("%v write [%d,%d) %d", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)), len(req.Data))
 
 	fh.dirtyPages.AddPage(req.Offset, data)
 

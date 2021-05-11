@@ -1,8 +1,8 @@
 package filesys
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"io"
+	"log"
 	"os"
 )
 
@@ -20,8 +20,9 @@ type WrittenIntervalLinkedList struct {
 }
 
 type WrittenContinuousIntervals struct {
-	tempFile *os.File
-	lists    []*WrittenIntervalLinkedList
+	tempFile   *os.File
+	lastOffset int64
+	lists      []*WrittenIntervalLinkedList
 }
 
 func (list *WrittenIntervalLinkedList) Offset() int64 {
@@ -93,6 +94,21 @@ func (list *WrittenIntervalLinkedList) subList(start, stop int64) *WrittenInterv
 		Head:     nodes[0],
 		Tail:     nodes[len(nodes)-1],
 	}
+}
+
+func (c *WrittenContinuousIntervals) debug() {
+	log.Printf("++")
+	for _, l := range c.lists {
+		log.Printf("++++")
+		for t := l.Head; ; t = t.Next {
+			log.Printf("[%d,%d) => [%d,%d) %d", t.DataOffset, t.DataOffset+t.Size, t.TempOffset, t.TempOffset+t.Size, t.Size)
+			if t.Next == nil {
+				break
+			}
+		}
+		log.Printf("----")
+	}
+	log.Printf("--")
 }
 
 func (c *WrittenContinuousIntervals) AddInterval(tempOffset int64, dataSize int, dataOffset int64) {
@@ -223,6 +239,7 @@ func (l *WrittenIntervalLinkedList) ToReader(start int64, stop int64) io.Reader 
 	for t := l.Head; ; t = t.Next {
 		startOffset, stopOffset := max(t.DataOffset, start), min(t.DataOffset+t.Size, stop)
 		if startOffset < stopOffset {
+			// log.Printf("ToReader read [%d,%d) from [%d,%d) %d", t.DataOffset, t.DataOffset+t.Size, t.TempOffset, t.TempOffset+t.Size, t.Size)
 			readers = append(readers, newFileSectionReader(l.tempFile, startOffset-t.DataOffset+t.TempOffset, startOffset, stopOffset-startOffset))
 		}
 		if t.Next == nil {
@@ -236,29 +253,32 @@ func (l *WrittenIntervalLinkedList) ToReader(start int64, stop int64) io.Reader 
 }
 
 type FileSectionReader struct {
-	file      *os.File
-	Offset    int64
-	dataStart int64
-	dataStop  int64
+	file            *os.File
+	tempStartOffset int64
+	Offset          int64
+	dataStart       int64
+	dataStop        int64
 }
 
 var _ = io.Reader(&FileSectionReader{})
 
 func newFileSectionReader(tempfile *os.File, offset int64, dataOffset int64, size int64) *FileSectionReader {
 	return &FileSectionReader{
-		file:      tempfile,
-		Offset:    offset,
-		dataStart: dataOffset,
-		dataStop:  dataOffset + size,
+		file:            tempfile,
+		tempStartOffset: offset,
+		Offset:          offset,
+		dataStart:       dataOffset,
+		dataStop:        dataOffset + size,
 	}
 }
 
 func (f *FileSectionReader) Read(p []byte) (n int, err error) {
-	dataLen := min(f.dataStop-f.Offset, int64(len(p)))
-	if dataLen < 0 {
+	remaining := (f.dataStop - f.dataStart) - (f.Offset - f.tempStartOffset)
+	if remaining <= 0 {
 		return 0, io.EOF
 	}
-	glog.V(4).Infof("reading %v [%d,%d)", f.file.Name(), f.Offset, f.Offset+dataLen)
+	dataLen := min(remaining, int64(len(p)))
+	// glog.V(4).Infof("reading [%d,%d) from %v [%d,%d)/[%d,%d) %d", f.Offset-f.tempStartOffset+f.dataStart, f.Offset-f.tempStartOffset+f.dataStart+dataLen, f.file.Name(), f.Offset, f.Offset+dataLen, f.tempStartOffset, f.tempStartOffset+f.dataStop-f.dataStart, f.dataStop-f.dataStart)
 	n, err = f.file.ReadAt(p[:dataLen], f.Offset)
 	if n > 0 {
 		f.Offset += int64(n)

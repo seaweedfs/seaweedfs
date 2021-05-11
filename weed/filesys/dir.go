@@ -296,7 +296,7 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (node fs.Node, err error) {
 
 	dirPath := util.FullPath(dir.FullPath())
-	glog.V(4).Infof("dir Lookup %s: %s by %s", dirPath, req.Name, req.Header.String())
+	// glog.V(4).Infof("dir Lookup %s: %s by %s", dirPath, req.Name, req.Header.String())
 
 	fullFilePath := dirPath.Child(req.Name)
 	visitErr := meta_cache.EnsureVisited(dir.wfs.metaCache, dir.wfs, dirPath)
