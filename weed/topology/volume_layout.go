@@ -108,7 +108,7 @@ type VolumeLayout struct {
 	diskType         types.DiskType
 	vid2location     map[needle.VolumeId]*VolumeLocationList
 	writables        []needle.VolumeId // transient array of writable volume id
-	crowded          map[needle.VolumeId]interface{}
+	crowded          map[needle.VolumeId]struct{}
 	readonlyVolumes  *volumesBinaryState // readonly volumes
 	oversizedVolumes *volumesBinaryState // oversized volumes
 	volumeSizeLimit  uint64
@@ -129,7 +129,7 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 		diskType:         diskType,
 		vid2location:     make(map[needle.VolumeId]*VolumeLocationList),
 		writables:        *new([]needle.VolumeId),
-		crowded:          make(map[needle.VolumeId]interface{}),
+		crowded:          make(map[needle.VolumeId]struct{}),
 		readonlyVolumes:  NewVolumesBinaryState(readOnlyState, rp, ExistCopies()),
 		oversizedVolumes: NewVolumesBinaryState(oversizedState, rp, ExistCopies()),
 		volumeSizeLimit:  volumeSizeLimit,
@@ -421,7 +421,7 @@ func (vl *VolumeLayout) removeFromCrowded(vid needle.VolumeId) {
 
 func (vl *VolumeLayout) setVolumeCrowded(vid needle.VolumeId) {
 	if _, ok := vl.crowded[vid]; !ok {
-		vl.crowded[vid] = nil
+		vl.crowded[vid] = struct{}{}
 		glog.V(0).Infoln("Volume", vid, "becomes crowded")
 	}
 }
