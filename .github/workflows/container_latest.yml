@@ -53,7 +53,7 @@ jobs:
         name: Build
         uses: docker/build-push-action@v2
         with:
-          context: .
+          context: ./docker
           push: false
           file: ./docker/Dockerfile
           platforms: linux/amd64
