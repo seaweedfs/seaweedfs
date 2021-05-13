@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -24,7 +25,7 @@ type TempFileDirtyPages struct {
 }
 
 var (
-	tmpDir = os.TempDir() + "sw"
+	tmpDir = filepath.Join(os.TempDir(), "sw")
 )
 
 func init() {
