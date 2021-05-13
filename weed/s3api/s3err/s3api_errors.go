@@ -116,7 +116,7 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	},
 	ErrBucketAlreadyExists: {
 		Code:           "BucketAlreadyExists",
-		Description:    "The requested bucket name is not available. The bucket namespace is shared by all users of the system. Please select a different name and try again.",
+		Description:    "The requested bucket name is not available. The bucket name can not be an existing collection, and the bucket namespace is shared by all users of the system. Please select a different name and try again.",
 		HTTPStatusCode: http.StatusConflict,
 	},
 	ErrBucketAlreadyOwnedByYou: {
