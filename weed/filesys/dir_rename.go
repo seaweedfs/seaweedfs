@@ -68,9 +68,14 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 	newFsNode := NodeWithId(newPath.AsInode())
 	dir.wfs.Server.InvalidateInternalNode(oldFsNode, newFsNode, func(internalNode fs.Node) {
 		if file, ok := internalNode.(*File); ok {
-			glog.V(4).Infof("internal node %s", file.Name)
+			glog.V(4).Infof("internal file node %s", file.Name)
 			file.Name = req.NewName
 			file.id = uint64(newFsNode)
+		}
+		if dir, ok := internalNode.(*Dir); ok {
+			glog.V(4).Infof("internal dir node %s", dir.name)
+			dir.name = req.NewName
+			dir.id = uint64(newFsNode)
 		}
 	})
 
