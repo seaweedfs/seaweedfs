@@ -83,7 +83,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 
 func (file *File) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *fuse.GetxattrResponse) error {
 
-	glog.V(4).Infof("file Getxattr %s", file.fullpath())
+	// glog.V(4).Infof("file Getxattr %s", file.fullpath())
 
 	entry, err := file.maybeLoadEntry(ctx)
 	if err != nil {
@@ -267,7 +267,7 @@ func (file *File) maybeLoadEntry(ctx context.Context) (entry *filer_pb.Entry, er
 	file.wfs.handlesLock.Unlock()
 	entry = file.entry
 	if found {
-		glog.V(4).Infof("maybeLoadEntry found opened file %s/%s", file.dir.FullPath(), file.Name)
+		// glog.V(4).Infof("maybeLoadEntry found opened file %s/%s", file.dir.FullPath(), file.Name)
 		entry = handle.f.entry
 	}
 
