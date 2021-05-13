@@ -53,8 +53,8 @@ func (list *WrittenIntervalLinkedList) ReadData(buf []byte, start, stop int64) {
 
 		nodeStart, nodeStop := max(start, t.DataOffset), min(stop, t.DataOffset+t.Size)
 		if nodeStart < nodeStop {
-			// glog.V(0).Infof("copying start=%d stop=%d t=[%d,%d) t.data=%d => bufSize=%d nodeStart=%d, nodeStop=%d", start, stop, t.Offset, t.Offset+t.Size, len(t.Data), len(buf), nodeStart, nodeStop)
-			list.tempFile.ReadAt(buf[nodeStart-start:nodeStop-start], nodeStart-t.TempOffset)
+			// glog.V(4).Infof("copying start=%d stop=%d t=[%d,%d) => bufSize=%d nodeStart=%d, nodeStop=%d", start, stop, t.DataOffset, t.DataOffset+t.Size, len(buf), nodeStart, nodeStop)
+			list.tempFile.ReadAt(buf[nodeStart-start:nodeStop-start], t.TempOffset + nodeStart - t.DataOffset)
 		}
 
 		if t.Next == nil {
@@ -239,7 +239,7 @@ func (l *WrittenIntervalLinkedList) ToReader(start int64, stop int64) io.Reader 
 	for t := l.Head; ; t = t.Next {
 		startOffset, stopOffset := max(t.DataOffset, start), min(t.DataOffset+t.Size, stop)
 		if startOffset < stopOffset {
-			// log.Printf("ToReader read [%d,%d) from [%d,%d) %d", t.DataOffset, t.DataOffset+t.Size, t.TempOffset, t.TempOffset+t.Size, t.Size)
+			// glog.V(4).Infof("ToReader read [%d,%d) from [%d,%d) %d", t.DataOffset, t.DataOffset+t.Size, t.TempOffset, t.TempOffset+t.Size, t.Size)
 			readers = append(readers, newFileSectionReader(l.tempFile, startOffset-t.DataOffset+t.TempOffset, startOffset, stopOffset-startOffset))
 		}
 		if t.Next == nil {
