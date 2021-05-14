@@ -71,11 +71,13 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 			glog.V(4).Infof("internal file node %s", file.Name)
 			file.Name = req.NewName
 			file.id = uint64(newFsNode)
+			file.dir = newDir
 		}
 		if dir, ok := internalNode.(*Dir); ok {
 			glog.V(4).Infof("internal dir node %s", dir.name)
 			dir.name = req.NewName
 			dir.id = uint64(newFsNode)
+			dir.parent = newDir
 		}
 	})
 
