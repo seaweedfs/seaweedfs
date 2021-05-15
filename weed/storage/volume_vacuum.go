@@ -158,10 +158,10 @@ func (v *Volume) cleanupCompact() error {
 
 	e1 := os.Remove(v.FileName(".cpd"))
 	e2 := os.Remove(v.FileName(".cpx"))
-	if e1 != nil {
+	if e1 != nil && !os.IsNotExist(e1) {
 		return e1
 	}
-	if e2 != nil {
+	if e2 != nil && !os.IsNotExist(e2) {
 		return e2
 	}
 	return nil
