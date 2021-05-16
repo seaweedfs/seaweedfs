@@ -2,6 +2,7 @@ package filesys
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -13,7 +14,7 @@ import (
 type ContinuousDirtyPages struct {
 	intervals      *ContinuousIntervals
 	f              *File
-	fh             *FileHandle
+	writeOnly      bool
 	writeWaitGroup sync.WaitGroup
 	chunkAddLock   sync.Mutex
 	lastErr        error
@@ -21,10 +22,11 @@ type ContinuousDirtyPages struct {
 	replication    string
 }
 
-func newDirtyPages(file *File) *ContinuousDirtyPages {
+func newContinuousDirtyPages(file *File, writeOnly bool) *ContinuousDirtyPages {
 	dirtyPages := &ContinuousDirtyPages{
 		intervals: &ContinuousIntervals{},
 		f:         file,
+		writeOnly: writeOnly,
 	}
 	return dirtyPages
 }
@@ -56,6 +58,16 @@ func (pages *ContinuousDirtyPages) flushAndSave(offset int64, data []byte) {
 	pages.saveToStorage(bytes.NewReader(data), offset, int64(len(data)))
 
 	return
+}
+
+func (pages *ContinuousDirtyPages) FlushData() error {
+
+	pages.saveExistingPagesToStorage()
+	pages.writeWaitGroup.Wait()
+	if pages.lastErr != nil {
+		return fmt.Errorf("flush data: %v", pages.lastErr)
+	}
+	return nil
 }
 
 func (pages *ContinuousDirtyPages) saveExistingPagesToStorage() {
@@ -95,7 +107,7 @@ func (pages *ContinuousDirtyPages) saveToStorage(reader io.Reader, offset int64,
 		defer pages.writeWaitGroup.Done()
 
 		reader = io.LimitReader(reader, size)
-		chunk, collection, replication, err := pages.f.wfs.saveDataAsChunk(pages.f.fullpath(), pages.fh.writeOnly)(reader, pages.f.Name, offset)
+		chunk, collection, replication, err := pages.f.wfs.saveDataAsChunk(pages.f.fullpath(), pages.writeOnly)(reader, pages.f.Name, offset)
 		if err != nil {
 			glog.V(0).Infof("%s saveToStorage [%d,%d): %v", pages.f.fullpath(), offset, offset+size, err)
 			pages.lastErr = err
@@ -131,4 +143,18 @@ func min(x, y int64) int64 {
 
 func (pages *ContinuousDirtyPages) ReadDirtyDataAt(data []byte, startOffset int64) (maxStop int64) {
 	return pages.intervals.ReadDataAt(data, startOffset)
+}
+
+func (pages *ContinuousDirtyPages) GetStorageOptions() (collection, replication string) {
+	return pages.collection, pages.replication
+}
+
+func (pages *ContinuousDirtyPages) SetWriteOnly(writeOnly bool) {
+	if pages.writeOnly {
+		pages.writeOnly = writeOnly
+	}
+}
+
+func (pages *ContinuousDirtyPages) GetWriteOnly() (writeOnly bool) {
+	return pages.writeOnly
 }

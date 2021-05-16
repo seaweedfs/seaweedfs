@@ -242,9 +242,9 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 			for _, v := range dn.GetVolumes() {
 				if v.Size >= volumeSizeLimit {
 					//fmt.Println("volume",v.Id,"size",v.Size,">",volumeSizeLimit)
-					n.GetTopology().chanFullVolumes <- &v
+					n.GetTopology().chanFullVolumes <- v
 				}else if float64(v.Size) > float64(volumeSizeLimit) * growThreshold {
-					n.GetTopology().chanCrowdedVolumes <- &v
+					n.GetTopology().chanCrowdedVolumes <- v
 				}
 			}
 		}

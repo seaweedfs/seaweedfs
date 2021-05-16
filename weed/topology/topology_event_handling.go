@@ -39,7 +39,7 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 		}
 	}()
 }
-func (t *Topology) SetVolumeCapacityFull(volumeInfo *storage.VolumeInfo) bool {
+func (t *Topology) SetVolumeCapacityFull(volumeInfo storage.VolumeInfo) bool {
 	diskType := types.ToDiskType(volumeInfo.DiskType)
 	vl := t.GetVolumeLayout(volumeInfo.Collection, volumeInfo.ReplicaPlacement, volumeInfo.Ttl, diskType)
 	if !vl.SetVolumeCapacityFull(volumeInfo.Id) {
@@ -49,7 +49,12 @@ func (t *Topology) SetVolumeCapacityFull(volumeInfo *storage.VolumeInfo) bool {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
 
-	for _, dn := range vl.vid2location[volumeInfo.Id].list {
+	vidLocations, found := vl.vid2location[volumeInfo.Id]
+	if !found {
+		return false
+	}
+
+	for _, dn := range vidLocations.list {
 		if !volumeInfo.ReadOnly {
 
 			disk := dn.getOrCreateDisk(volumeInfo.DiskType)
@@ -63,7 +68,7 @@ func (t *Topology) SetVolumeCapacityFull(volumeInfo *storage.VolumeInfo) bool {
 	return true
 }
 
-func (t *Topology) SetVolumeCrowded(volumeInfo *storage.VolumeInfo) {
+func (t *Topology) SetVolumeCrowded(volumeInfo storage.VolumeInfo) {
 	diskType := types.ToDiskType(volumeInfo.DiskType)
 	vl := t.GetVolumeLayout(volumeInfo.Collection, volumeInfo.ReplicaPlacement, volumeInfo.Ttl, diskType)
 	vl.SetVolumeCrowded(volumeInfo.Id)

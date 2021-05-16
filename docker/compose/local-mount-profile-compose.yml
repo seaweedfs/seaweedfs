@@ -40,7 +40,7 @@ services:
       - fuse
     volumes:
       - /Volumes/mobile_disk/99:/data
-    entrypoint: '/bin/sh -c "mkdir -p t1 && weed mount -filer=filer:8888 -dir=./t1 -cacheCapacityMB=0 -memprofile=/data/mount.mem.pprof"'
+    entrypoint: '/bin/sh -c "mkdir -p t1 && weed -v=4 mount -filer=filer:8888 -dir=./t1 -cacheCapacityMB=0 -memprofile=/data/mount.mem.pprof"'
     depends_on:
       - master
       - volume

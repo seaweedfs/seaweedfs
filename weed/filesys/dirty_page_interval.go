@@ -1,7 +1,6 @@
 package filesys
 
 import (
-	"bytes"
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -214,7 +213,7 @@ func (l *IntervalLinkedList) ToReader() io.Reader {
 	readers = append(readers, util.NewBytesReader(t.Data))
 	for t.Next != nil {
 		t = t.Next
-		readers = append(readers, bytes.NewReader(t.Data))
+		readers = append(readers, util.NewBytesReader(t.Data))
 	}
 	if len(readers) == 1 {
 		return readers[0]

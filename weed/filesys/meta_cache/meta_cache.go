@@ -74,7 +74,7 @@ func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath uti
 				// skip the unnecessary deletion
 				// leave the update to the following InsertEntry operation
 			} else {
-				glog.V(3).Infof("DeleteEntry %s/%s", oldPath, oldPath.Name())
+				glog.V(3).Infof("DeleteEntry %s", oldPath)
 				if err := mc.localStore.DeleteEntry(ctx, oldPath); err != nil {
 					return err
 				}

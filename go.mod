@@ -1,6 +1,6 @@
 module github.com/chrislusf/seaweedfs
 
-go 1.12
+go 1.16
 
 require (
 	cloud.google.com/go v0.58.0 // indirect
@@ -15,7 +15,7 @@ require (
 	github.com/buraksezer/consistent v0.0.0-20191006190839-693edf70fd72
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/cespare/xxhash v1.1.0
-	github.com/chrislusf/raft v1.0.6
+	github.com/chrislusf/raft v1.0.7
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/disintegration/imaging v1.6.2
@@ -60,7 +60,6 @@ require (
 	github.com/peterh/liner v1.1.0
 	github.com/pierrec/lz4 v2.2.7+incompatible // indirect
 	github.com/prometheus/client_golang v1.3.0
-	github.com/rakyll/statik v0.1.7
 	github.com/rcrowley/go-metrics v0.0.0-20190826022208-cac0b30c2563 // indirect
 	github.com/seaweedfs/fuse v1.1.6
 	github.com/seaweedfs/goexif v1.0.2
@@ -76,7 +75,6 @@ require (
 	github.com/tidwall/match v1.0.1
 	github.com/tsuna/gohbase v0.0.0-20201125011725-348991136365
 	github.com/valyala/bytebufferpool v1.0.0
-	github.com/valyala/fasthttp v1.20.0
 	github.com/viant/assertly v0.5.4 // indirect
 	github.com/viant/ptrie v0.3.0
 	github.com/viant/toolbox v0.33.2 // indirect

@@ -150,17 +150,14 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32, writeOnly bool) (file
 	wfs.handlesLock.Unlock()
 	if found && existingHandle != nil {
 		existingHandle.f.isOpen++
-		if existingHandle.writeOnly {
-			existingHandle.writeOnly = writeOnly
-		}
+		existingHandle.dirtyPages.SetWriteOnly(writeOnly)
 		glog.V(4).Infof("Acquired Handle %s open %d", fullpath, existingHandle.f.isOpen)
 		return existingHandle
 	}
 
 	entry, _ := file.maybeLoadEntry(context.Background())
 	file.entry = entry
-	fileHandle = newFileHandle(file, uid, gid)
-	fileHandle.writeOnly = writeOnly
+	fileHandle = newFileHandle(file, uid, gid, writeOnly)
 	file.isOpen++
 
 	wfs.handlesLock.Lock()

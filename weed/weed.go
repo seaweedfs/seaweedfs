@@ -1,12 +1,12 @@
-//go:generate statik -src=./static
-// install this first "go get github.com/rakyll/statik"
-
 package main
 
 import (
+	"embed"
 	"fmt"
+	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 	flag "github.com/chrislusf/seaweedfs/weed/util/fla9"
 	"io"
+	"io/fs"
 	"math/rand"
 	"os"
 	"strings"
@@ -33,6 +33,13 @@ func setExitStatus(n int) {
 		exitStatus = n
 	}
 	exitMu.Unlock()
+}
+
+//go:embed static
+var static embed.FS
+
+func init() {
+	weed_server.StaticFS, _ = fs.Sub(static, "static")
 }
 
 func main() {
