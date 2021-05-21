@@ -62,6 +62,12 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			writeErrorResponse(w, s3ErrCode, r.URL)
 			return
 		}
+	} else {
+		rAuthType := getRequestAuthType(r)
+		if authTypeAnonymous != rAuthType {
+			writeErrorResponse(w, s3err.ErrAuthNotSetup, r.URL)
+			return
+		}
 	}
 	defer dataReader.Close()
 
