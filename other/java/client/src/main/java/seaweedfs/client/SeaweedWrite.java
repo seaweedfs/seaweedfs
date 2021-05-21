@@ -46,7 +46,7 @@ public class SeaweedWrite {
         FilerProto.AssignVolumeResponse response = filerClient.getBlockingStub().assignVolume(
                 FilerProto.AssignVolumeRequest.newBuilder()
                         .setCollection(filerClient.getCollection())
-                        .setReplication(replication == null ? filerClient.getReplication() : replication)
+                        .setReplication(Strings.isNullOrEmpty(replication) ? filerClient.getReplication() : replication)
                         .setDataCenter("")
                         .setTtlSec(0)
                         .setPath(path)
