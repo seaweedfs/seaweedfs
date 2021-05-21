@@ -37,7 +37,7 @@ var (
 
 func init() {
 	cmdMount.Run = runMount // break init cycle
-	mountOptions.filer = cmdMount.Flag.String("filer", "localhost:8888", "weed filer location")
+	mountOptions.filer = cmdMount.Flag.String("filer", "localhost:8888", "comma-separated weed filer location")
 	mountOptions.filerMountRootPath = cmdMount.Flag.String("filer.path", "/", "mount this remote path from filer server")
 	mountOptions.dir = cmdMount.Flag.String("dir", ".", "mount weed filer to this directory")
 	mountOptions.dirAutoCreate = cmdMount.Flag.Bool("dirAutoCreate", false, "auto create the directory to mount to")
