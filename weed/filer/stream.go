@@ -7,14 +7,16 @@ import (
 	"io"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
-func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64, isCheck bool) error {
+func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
 
 	glog.V(9).Infof("start to stream content for chunks: %+v\n", chunks)
 	chunkViews := ViewFromChunks(masterClient.GetLookupFileIdFunction(), chunks, offset, size)
@@ -34,31 +36,23 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 		fileId2Url[chunkView.FileId] = urlStrings
 	}
 
-	if isCheck {
-		// Pre-check all chunkViews urls
-		gErr := new(errgroup.Group)
-		CheckAllChunkViews(chunkViews, &fileId2Url, gErr)
-		if err := gErr.Wait(); err != nil {
-			glog.Errorf("check all chunks: %v", err)
-			return fmt.Errorf("check all chunks: %v", err)
-		}
-		return nil
-	}
-
 	for _, chunkView := range chunkViews {
 
 		urlStrings := fileId2Url[chunkView.FileId]
+		start := time.Now()
 		data, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
+		stats.FilerRequestHistogram.WithLabelValues("chunkDownload").Observe(time.Since(start).Seconds())
 		if err != nil {
-			glog.Errorf("read chunk: %v", err)
+			stats.FilerRequestCounter.WithLabelValues("chunkDownloadError").Inc()
 			return fmt.Errorf("read chunk: %v", err)
 		}
 
 		_, err = w.Write(data)
 		if err != nil {
-			glog.Errorf("write chunk: %v", err)
+			stats.FilerRequestCounter.WithLabelValues("chunkDownloadedError").Inc()
 			return fmt.Errorf("write chunk: %v", err)
 		}
+		stats.FilerRequestCounter.WithLabelValues("chunkDownload").Inc()
 	}
 
 	return nil
