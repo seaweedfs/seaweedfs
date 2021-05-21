@@ -36,9 +36,7 @@ func NewMasterClient(grpcDialOption grpc.DialOption, clientType string, clientHo
 }
 
 func (mc *MasterClient) GetMaster() string {
-	for mc.currentMaster == "" {
-		time.Sleep(time.Duration(rand.Int31n(200)) * time.Millisecond)
-	}
+	mc.WaitUntilConnected()
 	return mc.currentMaster
 }
 
