@@ -1,5 +1,6 @@
 package seaweedfs.client;
 
+import com.google.common.base.Strings;
 import com.google.protobuf.ByteString;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
@@ -50,6 +51,11 @@ public class SeaweedWrite {
                         .setTtlSec(0)
                         .setPath(path)
                         .build());
+
+        if (!Strings.isNullOrEmpty(response.getError())) {
+            throw new IOException(response.getError());
+        }
+
         String fileId = response.getFileId();
         String auth = response.getAuth();
 
