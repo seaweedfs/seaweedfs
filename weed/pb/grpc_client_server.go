@@ -111,6 +111,16 @@ func WithCachedGrpcClient(fn func(*grpc.ClientConn) error, address string, opts 
 func ParseServerToGrpcAddress(server string) (serverGrpcAddress string, err error) {
 	return ParseServerAddress(server, 10000)
 }
+func ParseServersToGrpcAddresses(servers []string) (serverGrpcAddresses []string, err error) {
+	for _, server := range servers {
+		if serverGrpcAddress, parseErr := ParseServerToGrpcAddress(server); parseErr == nil {
+			serverGrpcAddresses = append(serverGrpcAddresses, serverGrpcAddress)
+		} else {
+			return nil, parseErr
+		}
+	}
+	return
+}
 
 func ParseServerAddress(server string, deltaPort int) (newServerAddress string, err error) {
 
@@ -201,4 +211,19 @@ func WithGrpcFilerClient(filerGrpcAddress string, grpcDialOption grpc.DialOption
 		return fn(client)
 	}, filerGrpcAddress, grpcDialOption)
 
+}
+
+func WithOneOfGrpcFilerClients(filerGrpcAddresses []string, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) (err error) {
+
+	for _, filerGrpcAddress := range filerGrpcAddresses {
+		err = WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
+			client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+			return fn(client)
+		}, filerGrpcAddress, grpcDialOption)
+		if err == nil {
+			return nil
+		}
+	}
+
+	return err
 }
