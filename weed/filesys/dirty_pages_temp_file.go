@@ -6,7 +6,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"io"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 )
@@ -22,14 +21,6 @@ type TempFileDirtyPages struct {
 	lastErr          error
 	collection       string
 	replication      string
-}
-
-var (
-	tmpDir = filepath.Join(os.TempDir(), "sw")
-)
-
-func init() {
-	os.Mkdir(tmpDir, 0755)
 }
 
 func newTempFileDirtyPages(file *File, writeOnly bool) *TempFileDirtyPages {
@@ -49,7 +40,7 @@ func (pages *TempFileDirtyPages) AddPage(offset int64, data []byte) {
 	defer pages.pageAddLock.Unlock()
 
 	if pages.tf == nil {
-		tf, err := os.CreateTemp(tmpDir, "")
+		tf, err := os.CreateTemp(pages.f.wfs.option.getTempFilePageDir(), "")
 		if err != nil {
 			glog.Errorf("create temp file: %v", err)
 			pages.lastErr = err
