@@ -7,6 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"math"
+	"math/rand"
 	"os"
 	"path"
 	"sync"
@@ -96,6 +97,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		},
 		signature: util.RandomInt32(),
 	}
+	wfs.option.filerIndex = rand.Intn(len(option.FilerAddresses))
 	cacheUniqueId := util.Md5String([]byte(option.MountDirectory + option.FilerGrpcAddresses[0] + option.FilerMountRootPath + util.Version()))[0:8]
 	cacheDir := path.Join(option.CacheDir, cacheUniqueId)
 	if option.CacheSizeMB > 0 {
