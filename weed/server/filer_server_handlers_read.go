@@ -150,10 +150,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 
-	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64, httpStatusCode int) error {
-		if httpStatusCode != 0 {
-			w.WriteHeader(httpStatusCode)
-		}
+	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
 		if offset+size <= int64(len(entry.Content)) {
 			_, err := writer.Write(entry.Content[offset : offset+size])
 			if err != nil {
@@ -161,7 +158,10 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 			}
 			return err
 		}
-		return filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size)
+		err = filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size)
+		if err != nil {
+			glog.Errorf("failed to stream content %s: %v", r.URL, err)
+		}
+		return err
 	})
-
 }

@@ -43,13 +43,12 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 		stats.FilerRequestHistogram.WithLabelValues("chunkDownload").Observe(time.Since(start).Seconds())
 		if err != nil {
 			stats.FilerRequestCounter.WithLabelValues("chunkDownloadError").Inc()
-			glog.Errorf("read chunk: %v", err)
 			return fmt.Errorf("read chunk: %v", err)
 		}
+
 		_, err = w.Write(data)
 		if err != nil {
 			stats.FilerRequestCounter.WithLabelValues("chunkDownloadedError").Inc()
-			glog.Errorf("write chunk: %v", err)
 			return fmt.Errorf("write chunk: %v", err)
 		}
 		stats.FilerRequestCounter.WithLabelValues("chunkDownload").Inc()
