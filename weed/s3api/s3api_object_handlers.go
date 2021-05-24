@@ -6,12 +6,14 @@ import (
 	"encoding/xml"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/pquerna/cachecontrol/cacheobject"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 
@@ -44,6 +46,20 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		writeErrorResponse(w, s3err.ErrInvalidDigest, r.URL)
 		return
+	}
+
+	if r.Header.Get("Cache-Control") != "" {
+		if _, err = cacheobject.ParseRequestCacheControl(r.Header.Get("Cache-Control")); err != nil {
+			writeErrorResponse(w, s3err.ErrInvalidDigest, r.URL)
+			return
+		}
+	}
+
+	if r.Header.Get("Expires") != "" {
+		if _, err = time.Parse(http.TimeFormat, r.Header.Get("Expires")); err != nil {
+			writeErrorResponse(w, s3err.ErrInvalidDigest, r.URL)
+			return
+		}
 	}
 
 	dataReader := r.Body
