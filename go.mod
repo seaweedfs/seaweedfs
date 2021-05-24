@@ -88,9 +88,8 @@ require (
 	gocloud.dev/pubsub/rabbitpubsub v0.20.0
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1 // indirect
 	golang.org/x/net v0.0.0-20201202161906-c7110b5ffcbb
-	golang.org/x/sync v0.0.0-20200930132711-30421366ff76 // indirect
-	golang.org/x/sys v0.0.0-20201022201747-fb209a7c41cd
-	golang.org/x/tools v0.0.0-20200608174601-1b747fd94509
+	golang.org/x/sys v0.0.0-20210124154548-22da62e12c0c
+	golang.org/x/tools v0.0.0-20201124115921-2c860bdd6e78
 	google.golang.org/api v0.26.0
 	google.golang.org/grpc v1.29.1
 	google.golang.org/protobuf v1.24.0
@@ -98,6 +97,7 @@ require (
 	gopkg.in/jcmturner/goidentity.v3 v3.0.0 // indirect
 	gopkg.in/jcmturner/gokrb5.v7 v7.3.0 // indirect
 	gopkg.in/karlseguin/expect.v1 v1.0.1 // indirect
+	modernc.org/sqlite v1.10.7 // indirect
 )
 
 // replace github.com/seaweedfs/fuse => /Users/chris/go/src/github.com/seaweedfs/fuse

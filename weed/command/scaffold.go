@@ -101,6 +101,11 @@ dir = "./filerldb3"					# directory to store level db files
 enabled = false
 dir = "./filerrdb"					# directory to store rocksdb files
 
+[sqlite]
+# local on disk, similar to leveldb
+enabled = false
+dbFile = "./filer.db"				# sqlite db file
+
 [mysql]  # or memsql, tidb
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT               COMMENT 'first 64 bits of MD5 hash value of directory field',
