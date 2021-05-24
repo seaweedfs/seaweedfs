@@ -46,6 +46,9 @@ func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer i
 	}
 
 	err = filer_pb.List(commandEnv, filerBucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
+		if !entry.IsDirectory {
+			return nil
+		}
 		if entry.Attributes.Replication == "" || entry.Attributes.Replication == "000" {
 			fmt.Fprintf(writer, "  %s\n", entry.Name)
 		} else {

@@ -71,6 +71,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, peer string
 
 	// when filer store is not shared by multiple filers
 	if peerSignature != f.Signature {
+		lastTsNs = 0
 		if prevTsNs, err := ma.readOffset(f, peer, peerSignature); err == nil {
 			lastTsNs = prevTsNs
 		}

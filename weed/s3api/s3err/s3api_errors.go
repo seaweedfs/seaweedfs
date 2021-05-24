@@ -91,6 +91,7 @@ const (
 	ErrRequestNotReadyYet
 	ErrMissingDateHeader
 	ErrInvalidRequest
+	ErrAuthNotSetup
 	ErrNotImplemented
 
 	ErrExistingObjectIsDirectory
@@ -339,6 +340,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidRequest: {
 		Code:           "InvalidRequest",
 		Description:    "Invalid Request",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrAuthNotSetup : {
+		Code:           "InvalidRequest",
+		Description:    "Signed request requires setting up SeaweedFS S3 authentication",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrNotImplemented: {

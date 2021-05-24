@@ -51,9 +51,9 @@ func runMount(cmd *Command, args []string) bool {
 
 func RunMount(option *MountOptions, umask os.FileMode) bool {
 
-	filer := *option.filer
+	filers := strings.Split(*option.filer, ",")
 	// parse filer grpc address
-	filerGrpcAddress, err := pb.ParseServerToGrpcAddress(filer)
+	filerGrpcAddresses, err := pb.ParseServersToGrpcAddresses(filers)
 	if err != nil {
 		glog.V(0).Infof("ParseFilerGrpcAddress: %v", err)
 		return true
@@ -64,22 +64,22 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	var cipher bool
 	for i := 0; i < 10; i++ {
-		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err = pb.WithOneOfGrpcFilerClients(filerGrpcAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
-				return fmt.Errorf("get filer grpc address %s configuration: %v", filerGrpcAddress, err)
+				return fmt.Errorf("get filer grpc address %v configuration: %v", filerGrpcAddresses, err)
 			}
 			cipher = resp.Cipher
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("failed to talk to filer %s: %v", filerGrpcAddress, err)
+			glog.V(0).Infof("failed to talk to filer %v: %v", filerGrpcAddresses, err)
 			glog.V(0).Infof("wait for %d seconds ...", i+1)
 			time.Sleep(time.Duration(i+1) * time.Second)
 		}
 	}
 	if err != nil {
-		glog.Errorf("failed to talk to filer %s: %v", filerGrpcAddress, err)
+		glog.Errorf("failed to talk to filer %v: %v", filerGrpcAddresses, err)
 		return true
 	}
 
@@ -145,7 +145,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	options := []fuse.MountOption{
 		fuse.VolumeName(mountName),
-		fuse.FSName(filer + ":" + filerMountRootPath),
+		fuse.FSName(*option.filer + ":" + filerMountRootPath),
 		fuse.Subtype("seaweedfs"),
 		// fuse.NoAppleDouble(), // include .DS_Store, otherwise can not delete non-empty folders
 		fuse.NoAppleXattr(),
@@ -181,8 +181,8 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	seaweedFileSystem := filesys.NewSeaweedFileSystem(&filesys.Option{
 		MountDirectory:     dir,
-		FilerAddress:       filer,
-		FilerGrpcAddress:   filerGrpcAddress,
+		FilerAddresses:     filers,
+		FilerGrpcAddresses: filerGrpcAddresses,
 		GrpcDialOption:     grpcDialOption,
 		FilerMountRootPath: mountRoot,
 		Collection:         *option.collection,
@@ -218,7 +218,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		c.Close()
 	})
 
-	glog.V(0).Infof("mounted %s%s to %s", filer, mountRoot, dir)
+	glog.V(0).Infof("mounted %s%s to %v", *option.filer, mountRoot, dir)
 	server := fs.New(c, nil)
 	seaweedFileSystem.Server = server
 	err = server.Serve(seaweedFileSystem)
