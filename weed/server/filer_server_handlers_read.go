@@ -61,6 +61,13 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	// set etag
+	etag := filer.ETagEntry(entry)
+	if ifm := r.Header.Get("If-Match"); ifm != "" && ifm != "\""+etag+"\"" {
+		w.WriteHeader(http.StatusPreconditionFailed)
+		return
+	}
+
 	w.Header().Set("Accept-Ranges", "bytes")
 
 	// mime type
@@ -115,8 +122,6 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 
-	// set etag
-	etag := filer.ETagEntry(entry)
 	if inm := r.Header.Get("If-None-Match"); inm == "\""+etag+"\"" {
 		w.WriteHeader(http.StatusNotModified)
 		return
