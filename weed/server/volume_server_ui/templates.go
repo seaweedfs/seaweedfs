@@ -31,7 +31,7 @@ var StatusTpl = template.Must(template.New("status").Funcs(funcMap).Parse(`<!DOC
   <head>
     <title>SeaweedFS {{ .Version }}</title>
 	<link rel="stylesheet" href="/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
-	<script type="text/javascript" src="/seaweedfsstatic/javascript/jquery-2.1.3.min.js"></script>
+	<script type="text/javascript" src="/seaweedfsstatic/javascript/jquery-3.6.0.min.js"></script>
 	<script type="text/javascript" src="/seaweedfsstatic/javascript/jquery-sparklines/2.1.2/jquery.sparkline.min.js"></script>
     <script type="text/javascript">
     $(function() {
