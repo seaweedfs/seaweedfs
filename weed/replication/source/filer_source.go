@@ -58,7 +58,6 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrls []string, err error) 
 
 	err = fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		glog.V(4).Infof("read lookup volume id locations: %v", vid)
 		resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
 			VolumeIds: []string{vid},
 		})
