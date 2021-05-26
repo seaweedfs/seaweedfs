@@ -43,88 +43,90 @@ func runFuse(cmd *Command, args []string) bool {
 			continue
 		}
 
+		key, value := parts[0], parts[1]
+
 		// switch key keeping "weed mount" parameters
-		switch parts[0] {
+		switch key {
 			case "filer":
-				mountOptions.filer = &parts[1]
+				mountOptions.filer = &value
 			case "filer.path":
-				mountOptions.filerMountRootPath = &parts[1]
+				mountOptions.filerMountRootPath = &value
 			case "dirAutoCreate":
-				if value, err := strconv.ParseBool(parts[1]); err != nil {
-					mountOptions.dirAutoCreate = &value
+				if parsed, err := strconv.ParseBool(value); err != nil {
+					mountOptions.dirAutoCreate = &parsed
 				} else {
 					panic(fmt.Errorf("dirAutoCreate: %s", err))
 				}
 			case "collection":
-				mountOptions.collection = &parts[1]
+				mountOptions.collection = &value
 			case "replication":
-				mountOptions.replication = &parts[1]
+				mountOptions.replication = &value
 			case "disk":
-				mountOptions.diskType = &parts[1]
+				mountOptions.diskType = &value
 			case "ttl":
-				if value, err := strconv.ParseInt(parts[1], 0, 32); err != nil {
-					intValue := int(value)
+				if parsed, err := strconv.ParseInt(value, 0, 32); err != nil {
+					intValue := int(parsed)
 					mountOptions.ttlSec = &intValue
 				} else {
 					panic(fmt.Errorf("ttl: %s", err))
 				}
 			case "chunkSizeLimitMB":
-				if value, err := strconv.ParseInt(parts[1], 0, 32); err != nil {
-					intValue := int(value)
+				if parsed, err := strconv.ParseInt(value, 0, 32); err != nil {
+					intValue := int(parsed)
 					mountOptions.chunkSizeLimitMB = &intValue
 				} else {
 					panic(fmt.Errorf("chunkSizeLimitMB: %s", err))
 				}
 			case "concurrentWriters":
-				if value, err := strconv.ParseInt(parts[1], 0, 32); err != nil {
-					intValue := int(value)
+				if parsed, err := strconv.ParseInt(value, 0, 32); err != nil {
+					intValue := int(parsed)
 					mountOptions.concurrentWriters = &intValue
 				} else {
 					panic(fmt.Errorf("concurrentWriters: %s", err))
 				}
 			case "cacheDir":
-				mountOptions.cacheDir = &parts[1]
+				mountOptions.cacheDir = &value
 			case "cacheCapacityMB":
-				if value, err := strconv.ParseInt(parts[1], 0, 64); err != nil {
-					mountOptions.cacheSizeMB = &value
+				if parsed, err := strconv.ParseInt(value, 0, 64); err != nil {
+					mountOptions.cacheSizeMB = &parsed
 				} else {
 					panic(fmt.Errorf("cacheCapacityMB: %s", err))
 				}
 			case "dataCenter":
-				mountOptions.dataCenter = &parts[1]
+				mountOptions.dataCenter = &value
 			case "allowOthers":
-				if value, err := strconv.ParseBool(parts[1]); err != nil {
-					mountOptions.allowOthers = &value
+				if parsed, err := strconv.ParseBool(value); err != nil {
+					mountOptions.allowOthers = &parsed
 				} else {
 					panic(fmt.Errorf("allowOthers: %s", err))
 				}
 			case "umask":
-				mountOptions.umaskString = &parts[1]
+				mountOptions.umaskString = &value
 			case "nonempty":
-				if value, err := strconv.ParseBool(parts[1]); err != nil {
-					mountOptions.nonempty = &value
+				if parsed, err := strconv.ParseBool(value); err != nil {
+					mountOptions.nonempty = &parsed
 				} else {
 					panic(fmt.Errorf("nonempty: %s", err))
 				}
 			case "volumeServerAccess":
-				mountOptions.volumeServerAccess = &parts[1]
+				mountOptions.volumeServerAccess = &value
 			case "map.uid":
-				mountOptions.uidMap = &parts[1]
+				mountOptions.uidMap = &value
 			case "map.gid":
-				mountOptions.gidMap = &parts[1]
+				mountOptions.gidMap = &value
 			case "readOnly":
-				if value, err := strconv.ParseBool(parts[1]); err != nil {
-					mountOptions.readOnly = &value
+				if parsed, err := strconv.ParseBool(value); err != nil {
+					mountOptions.readOnly = &parsed
 				} else {
 					panic(fmt.Errorf("readOnly: %s", err))
 				}
 			case "cpuprofile":
-				mountCpuProfile = &parts[1]
+				mountCpuProfile = &value
 			case "memprofile":
-				mountMemProfile = &parts[1]
+				mountMemProfile = &value
 			case "readRetryTime":
-				if value, err := time.ParseDuration(parts[1]); err != nil {
-					mountReadRetryTime = &value
+				if parsed, err := time.ParseDuration(value); err != nil {
+					mountReadRetryTime = &parsed
 				} else {
 					panic(fmt.Errorf("readRetryTime: %s", err))
 				}
@@ -141,22 +143,22 @@ func runFuse(cmd *Command, args []string) bool {
 }
 
 var cmdFuse = &Command{
-	UsageLine: "fuse /mnt/mount/point -o \"filer=localhost:8888,filer.remote=/\"",
+	UsageLine: "fuse /mnt/mount/point -o \"filer=localhost:8888,filer.path=/\"",
 	Short: "Allow use weed with linux's mount command",
 	Long: `Allow use weed with linux's mount command
 
   You can use -t weed on mount command:
   mv weed /sbin/mount.weed
-  mount -t weed fuse /mnt -o "filer=localhost:8888,filer.remote=/"
+  mount -t weed fuse /mnt -o "filer=localhost:8888,filer.path=/"
 
   Or you can use -t fuse on mount command:
   mv weed /sbin/weed
-  mount -t fuse.weed fuse /mnt -o "filer=localhost:8888,filer.remote=/"
-  mount -t fuse "weed#fuse" /mnt -o "filer=localhost:8888,filer.remote=/"
+  mount -t fuse.weed fuse /mnt -o "filer=localhost:8888,filer.path=/"
+  mount -t fuse "weed#fuse" /mnt -o "filer=localhost:8888,filer.path=/"
 
   To use without mess with your /sbin:
-  mount -t fuse./home/user/bin/weed fuse /mnt -o "filer=localhost:8888,filer.remote=/"
-  mount -t fuse "/home/user/bin/weed#fuse" /mnt -o "filer=localhost:8888,filer.remote=/"
+  mount -t fuse./home/user/bin/weed fuse /mnt -o "filer=localhost:8888,filer.path=/"
+  mount -t fuse "/home/user/bin/weed#fuse" /mnt -o "filer=localhost:8888,filer.path=/"
 
   To check valid options look "weed mount --help"
   `,
