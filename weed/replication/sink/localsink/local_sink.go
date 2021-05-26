@@ -8,7 +8,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,8 +85,18 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 		}
 	}
 
+	if entry.IsDirectory {
+		return os.Mkdir(key, os.FileMode(entry.Attributes.FileMode))
+	}
+
+	dstFile, err := os.OpenFile(key, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(entry.Attributes.FileMode))
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
 	writeFunc := func(data []byte) error {
-		writeErr := ioutil.WriteFile(key, data, 0755)
+		_, writeErr := dstFile.Write(data)
 		return writeErr
 	}
 
@@ -104,5 +113,7 @@ func (localsink *LocalSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, ne
 	}
 	glog.V(4).Infof("Update Entry key: %s", key)
 	// do delete and create
-	return false, nil
+	foundExistingEntry = util.FileExists(key)
+	err = localsink.CreateEntry(key, newEntry, signatures)
+	return
 }
