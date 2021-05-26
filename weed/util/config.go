@@ -26,8 +26,6 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 	viper.AddConfigPath("/usr/local/etc/seaweedfs/") // search path for bsd-style config directory in
 	viper.AddConfigPath("/etc/seaweedfs/")           // path to look for the config file in
 
-	glog.V(1).Infof("Reading %s.toml from %s", configFileName, viper.ConfigFileUsed())
-
 	if err := viper.MergeInConfig(); err != nil { // Handle errors reading the config file
 		if strings.Contains(err.Error(), "Not Found") {
 			glog.V(1).Infof("Reading %s: %v", viper.ConfigFileUsed(), err)
@@ -43,6 +41,7 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 			return false
 		}
 	}
+	glog.V(1).Infof("Reading %s.toml from %s", configFileName, viper.ConfigFileUsed())
 
 	return true
 }

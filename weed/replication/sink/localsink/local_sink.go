@@ -15,8 +15,9 @@ import (
 )
 
 type LocalSink struct {
-	Dir         string
-	filerSource *source.FilerSource
+	Dir           string
+	filerSource   *source.FilerSource
+	isIncremental bool
 }
 
 func init() {
@@ -35,15 +36,17 @@ func (localsink *LocalSink) isMultiPartEntry(key string) bool {
 	return strings.HasSuffix(key, ".part") && strings.Contains(key, "/.uploads/")
 }
 
-func (localsink *LocalSink) initialize(dir string) error {
+func (localsink *LocalSink) initialize(dir string, isIncremental bool) error {
 	localsink.Dir = dir
+	localsink.isIncremental = isIncremental
 	return nil
 }
 
 func (localsink *LocalSink) Initialize(configuration util.Configuration, prefix string) error {
 	dir := configuration.GetString(prefix + "directory")
+	isIncremental := configuration.GetBool(prefix + "is_incremental")
 	glog.V(4).Infof("sink.local.directory: %v", dir)
-	return localsink.initialize(dir)
+	return localsink.initialize(dir, isIncremental)
 }
 
 func (localsink *LocalSink) GetSinkToDirectory() string {
@@ -51,7 +54,7 @@ func (localsink *LocalSink) GetSinkToDirectory() string {
 }
 
 func (localsink *LocalSink) IsIncremental() bool {
-	return true
+	return localsink.isIncremental
 }
 
 func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {

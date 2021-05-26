@@ -377,12 +377,6 @@ directory = "/data"
 # so each date directory contains all new and updated files.
 is_incremental = false
 
-[sink.local_incremental]
-# all replicated files are under modified time as yyyy-mm-dd directories
-# so each date directory contains all new and updated files.
-enabled = false
-directory = "/backup"
-
 [sink.filer]
 enabled = false
 grpcAddress = "localhost:18888"
