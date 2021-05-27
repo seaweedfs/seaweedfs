@@ -69,6 +69,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 	defer util.CloseResponse(resp)
 
+        // PATCH
+        sourceEntry, sourceErr := s3a.getEntry(s3a.option.BucketsPath, srcBucket+srcObject)
+
 	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
 	etag, errCode := s3a.putToFiler(r, dstUrl, resp.Body)
 
@@ -76,6 +79,17 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		writeErrorResponse(w, errCode, r.URL)
 		return
 	}
+
+        // PATCH
+        dstEntry, dstErr := s3a.getEntry(s3a.option.BucketsPath, dstBucket+dstObject)
+        if sourceErr == nil && dstErr == nil && len(sourceEntry.Extended) > 0 {
+           dstEntry.Extended = sourceEntry.Extended
+
+           touchErr := s3a.touch(s3a.option.BucketsPath+"/"+dstBucket, dstObject, dstEntry)
+           if touchErr != nil {
+              glog.V(0).Infof("error: %v ", touchErr)
+           }
+        }
 
 	setEtag(w, etag)
 
