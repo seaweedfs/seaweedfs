@@ -356,13 +356,14 @@ sub_url = "rabbit://myqueue"
 
 	REPLICATION_TOML_EXAMPLE = `
 # A sample TOML config file for replicating SeaweedFS filer
-# Used with "weed filer.replicate"
+# Used with "weed filer.backup"
+# Using with "weed filer.replicate" is deprecated.
 # Put this file to one of the location, with descending priority
 #    ./replication.toml
 #    $HOME/.seaweedfs/replication.toml
 #    /etc/seaweedfs/replication.toml
 
-[source.filer]
+[source.filer]  # deprecated. Only useful with "weed filer.replicate"
 enabled = true
 grpcAddress = "localhost:18888"
 # all files under this directory tree are replicated.
