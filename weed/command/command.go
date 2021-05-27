@@ -22,6 +22,7 @@ var Commands = []*Command{
 	cmdFilerReplicate,
 	cmdFilerSynchronize,
 	cmdFix,
+	cmdFuse,
 	cmdGateway,
 	cmdMaster,
 	cmdMount,

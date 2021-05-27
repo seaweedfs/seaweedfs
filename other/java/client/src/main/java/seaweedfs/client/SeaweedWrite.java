@@ -1,5 +1,6 @@
 package seaweedfs.client;
 
+import com.google.common.base.Strings;
 import com.google.protobuf.ByteString;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
@@ -45,11 +46,16 @@ public class SeaweedWrite {
         FilerProto.AssignVolumeResponse response = filerClient.getBlockingStub().assignVolume(
                 FilerProto.AssignVolumeRequest.newBuilder()
                         .setCollection(filerClient.getCollection())
-                        .setReplication(replication == null ? filerClient.getReplication() : replication)
+                        .setReplication(Strings.isNullOrEmpty(replication) ? filerClient.getReplication() : replication)
                         .setDataCenter("")
                         .setTtlSec(0)
                         .setPath(path)
                         .build());
+
+        if (!Strings.isNullOrEmpty(response.getError())) {
+            throw new IOException(response.getError());
+        }
+
         String fileId = response.getFileId();
         String auth = response.getAuth();
 

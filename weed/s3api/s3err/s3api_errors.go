@@ -91,7 +91,9 @@ const (
 	ErrRequestNotReadyYet
 	ErrMissingDateHeader
 	ErrInvalidRequest
+	ErrAuthNotSetup
 	ErrNotImplemented
+	ErrPreconditionFailed
 
 	ErrExistingObjectIsDirectory
 )
@@ -341,10 +343,20 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "Invalid Request",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
+	ErrAuthNotSetup: {
+		Code:           "InvalidRequest",
+		Description:    "Signed request requires setting up SeaweedFS S3 authentication",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
 	ErrNotImplemented: {
 		Code:           "NotImplemented",
 		Description:    "A header you provided implies functionality that is not implemented",
 		HTTPStatusCode: http.StatusNotImplemented,
+	},
+	ErrPreconditionFailed: {
+		Code:           "PreconditionFailed",
+		Description:    "At least one of the pre-conditions you specified did not hold",
+		HTTPStatusCode: http.StatusPreconditionFailed,
 	},
 	ErrExistingObjectIsDirectory: {
 		Code:           "ExistingObjectIsDirectory",

@@ -30,6 +30,7 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer/mongodb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/mysql"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/mysql2"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/sqlite"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/postgres"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/postgres2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis"
@@ -128,7 +129,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.filer.DirBucketsPath = v.GetString("filer.options.buckets_folder")
 	// TODO deprecated, will be be removed after 2020-12-31
 	// replaced by https://github.com/chrislusf/seaweedfs/wiki/Path-Specific-Configuration
-	fs.filer.FsyncBuckets = v.GetStringSlice("filer.options.buckets_fsync")
+	// fs.filer.FsyncBuckets = v.GetStringSlice("filer.options.buckets_fsync")
 	fs.filer.LoadConfiguration(v)
 
 	notification.LoadConfiguration(v, "notification.")

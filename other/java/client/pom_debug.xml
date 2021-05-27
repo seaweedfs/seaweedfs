@@ -5,7 +5,7 @@
 
     <groupId>com.github.chrislusf</groupId>
     <artifactId>seaweedfs-client</artifactId>
-    <version>1.6.4</version>
+    <version>1.6.6</version>
 
     <parent>
         <groupId>org.sonatype.oss</groupId>

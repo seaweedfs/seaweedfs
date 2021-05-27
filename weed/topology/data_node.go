@@ -177,7 +177,13 @@ func (dn *DataNode) GetVolumesById(id needle.VolumeId) (vInfo storage.VolumeInfo
 
 func (dn *DataNode) GetDataCenter() *DataCenter {
 	rack := dn.Parent()
+	if rack == nil {
+		return nil
+	}
 	dcNode := rack.Parent()
+	if dcNode == nil {
+		return nil
+	}
 	dcValue := dcNode.GetValue()
 	return dcValue.(*DataCenter)
 }

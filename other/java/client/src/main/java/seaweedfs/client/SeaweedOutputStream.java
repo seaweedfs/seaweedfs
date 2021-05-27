@@ -39,7 +39,7 @@ public class SeaweedOutputStream extends OutputStream {
     }
 
     public SeaweedOutputStream(FilerClient filerClient, final String fullpath, final String replication) {
-        this(filerClient, fullpath, null, 0, 8 * 1024 * 1024, "000");
+        this(filerClient, fullpath, null, 0, 8 * 1024 * 1024, replication);
     }
 
     public SeaweedOutputStream(FilerClient filerClient, final String path, FilerProto.Entry.Builder entry,
