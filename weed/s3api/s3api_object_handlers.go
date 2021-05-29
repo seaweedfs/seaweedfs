@@ -108,9 +108,11 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
                 if newEntryErr == nil {
                    newEntry.Extended = weed_server.SaveAmzMetaData(r, newEntry.Extended, true)
 
-                   touchErr := s3a.touch(s3a.option.BucketsPath+"/"+bucket, object, newEntry)
-                   if touchErr != nil {
-                        glog.V(0).Infof("error: %v ", touchErr)
+                   if len(newEntry.Extended) > 0 {
+                      touchErr := s3a.touch(s3a.option.BucketsPath+"/"+bucket, object, newEntry)
+                      if touchErr != nil {
+                         glog.V(0).Infof("error: %v ", touchErr)
+                      }
                    }
                 }
 
