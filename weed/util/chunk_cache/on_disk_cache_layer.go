@@ -42,6 +42,10 @@ func NewOnDiskCacheLayer(dir, namePrefix string, diskSize int64, segmentCount in
 
 func (c *OnDiskCacheLayer) setChunk(needleId types.NeedleId, data []byte) {
 
+	if len(c.diskCaches) == 0 {
+		return
+	}
+
 	if c.diskCaches[0].fileSize+int64(len(data)) > c.diskCaches[0].sizeLimit {
 		t, resetErr := c.diskCaches[len(c.diskCaches)-1].Reset()
 		if resetErr != nil {
