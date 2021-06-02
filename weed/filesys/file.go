@@ -115,16 +115,6 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 	if err != nil {
 		return err
 	}
-	if file.isOpen > 0 {
-		file.wfs.handlesLock.Lock()
-		fh := file.wfs.handles[file.Id()]
-		file.wfs.handlesLock.Unlock()
-
-		if fh != nil {
-			fh.Lock()
-			defer fh.Unlock()
-		}
-	}
 
 	if req.Valid.Size() {
 
