@@ -54,27 +54,26 @@ func (dir *Dir) Id() uint64 {
 
 func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 
-	// https://github.com/bazil/fuse/issues/196
-	attr.Valid = time.Second
-
-	if dir.FullPath() == dir.wfs.option.FilerMountRootPath {
-		dir.setRootDirAttributes(attr)
-		glog.V(3).Infof("root dir Attr %s, attr: %+v", dir.FullPath(), attr)
-		return nil
-	}
-
 	entry, err := dir.maybeLoadEntry()
 	if err != nil {
-		glog.V(3).Infof("dir Attr %s,err: %+v", dir.FullPath(), err)
+		glog.V(3).Infof("dir Attr %s, err: %+v", dir.FullPath(), err)
 		return err
 	}
 
+	// https://github.com/bazil/fuse/issues/196
+	attr.Valid = time.Second
 	attr.Inode = dir.Id()
 	attr.Mode = os.FileMode(entry.Attributes.FileMode) | os.ModeDir
 	attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
 	attr.Crtime = time.Unix(entry.Attributes.Crtime, 0)
+	attr.Ctime = time.Unix(entry.Attributes.Crtime, 0)
+	attr.Atime = time.Unix(entry.Attributes.Mtime, 0)
 	attr.Gid = entry.Attributes.Gid
 	attr.Uid = entry.Attributes.Uid
+
+	if dir.FullPath() == dir.wfs.option.FilerMountRootPath {
+		attr.BlockSize = blockSize
+	}
 
 	glog.V(4).Infof("dir Attr %s, attr: %+v", dir.FullPath(), attr)
 
@@ -91,20 +90,6 @@ func (dir *Dir) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp *f
 	}
 
 	return getxattr(entry, req, resp)
-}
-
-func (dir *Dir) setRootDirAttributes(attr *fuse.Attr) {
-	// attr.Inode = 1 // filer2.FullPath(dir.Path).AsInode()
-	attr.Valid = time.Second
-	attr.Inode = dir.Id()
-	attr.Uid = dir.wfs.option.MountUid
-	attr.Gid = dir.wfs.option.MountGid
-	attr.Mode = dir.wfs.option.MountMode
-	attr.Crtime = dir.wfs.option.MountCtime
-	attr.Ctime = dir.wfs.option.MountCtime
-	attr.Mtime = dir.wfs.option.MountMtime
-	attr.Atime = dir.wfs.option.MountMtime
-	attr.BlockSize = blockSize
 }
 
 func (dir *Dir) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
@@ -375,6 +360,28 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 		glog.Errorf("list meta cache: %v", listErr)
 		return nil, fuse.EIO
 	}
+
+	// create proper . and .. directories
+	ret = append(ret, fuse.Dirent{
+		Inode: dirPath.AsInode(),
+		Name:  ".",
+		Type:  fuse.DT_Dir,
+	})
+
+	// return the correct parent inode for the mount root
+	var inode uint64
+	if string(dirPath) == dir.wfs.option.FilerMountRootPath {
+		inode = dir.wfs.option.MountParentInode
+	} else {
+		inode = util.FullPath(dir.parent.FullPath()).AsInode()
+	}
+
+	ret = append(ret, fuse.Dirent{
+		Inode: inode,
+		Name:  "..",
+		Type:  fuse.DT_Dir,
+	})
+
 	return
 }
 

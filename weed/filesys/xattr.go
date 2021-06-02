@@ -113,6 +113,21 @@ func (wfs *WFS) maybeLoadEntry(dir, name string) (entry *filer_pb.Entry, err err
 	fullpath := util.NewFullPath(dir, name)
 	// glog.V(3).Infof("read entry cache miss %s", fullpath)
 
+	// return a valid entry for the mount root
+	if string(fullpath) == wfs.option.FilerMountRootPath {
+		return &filer_pb.Entry{
+			Name:        wfs.option.FilerMountRootPath,
+			IsDirectory: true,
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime:    wfs.option.MountMtime.Unix(),
+				FileMode: uint32(wfs.option.MountMode),
+				Uid:      wfs.option.MountUid,
+				Gid:      wfs.option.MountGid,
+				Crtime:   wfs.option.MountCtime.Unix(),
+			},
+		}, nil
+	}
+
 	// read from async meta cache
 	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir))
 	cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
