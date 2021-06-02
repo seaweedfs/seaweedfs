@@ -93,13 +93,6 @@ and these volume servers manage files and their metadata.
 This relieves concurrency pressure from the central master and spreads file metadata into volume servers, 
 allowing faster file access (O(1), usually just one disk read operation).
 
-SeaweedFS can transparently integrate with the cloud. 
-With hot data on local cluster, and warm data on the cloud with O(1) access time, 
-SeaweedFS can achieve both fast local access time and elastic cloud storage capacity. 
-What's more, the cloud storage access API cost is minimized. 
-Faster and Cheaper than direct cloud storage!
-Signup for future managed SeaweedFS cluster offering at "seaweedfilesystem at gmail dot com".
-
 There is only 40 bytes of disk storage overhead for each file's metadata. 
 It is so simple with O(1) disk reads that you are welcome to challenge the performance with your actual use cases.
 
@@ -114,6 +107,12 @@ e.g., MySql, Postgres, Redis, Cassandra, HBase, Mongodb, Elastic Search, LevelDB
 For any distributed key value stores, the large values can be offloaded to SeaweedFS. 
 With the fast access speed and linearly scalable capacity, 
 SeaweedFS can work as a distributed [Key-Large-Value store][KeyLargeValueStore].
+
+SeaweedFS can transparently integrate with the cloud. 
+With hot data on local cluster, and warm data on the cloud with O(1) access time, 
+SeaweedFS can achieve both fast local access time and elastic cloud storage capacity.
+What's more, the cloud storage access API cost is minimized. 
+Faster and Cheaper than direct cloud storage!
 
 [Back to TOC](#table-of-contents)
 
