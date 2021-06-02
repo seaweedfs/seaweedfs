@@ -117,12 +117,12 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 	}
 	if file.isOpen > 0 {
 		file.wfs.handlesLock.Lock()
-		fileHandle := file.wfs.handles[file.Id()]
+		fh := file.wfs.handles[file.Id()]
 		file.wfs.handlesLock.Unlock()
 
-		if fileHandle != nil {
-			fileHandle.Lock()
-			defer fileHandle.Unlock()
+		if fh != nil {
+			fh.Lock()
+			defer fh.Unlock()
 		}
 	}
 
@@ -207,6 +207,11 @@ func (file *File) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error
 	if err := setxattr(entry, req); err != nil {
 		return err
 	}
+	file.dirtyMetadata = true
+
+	if file.isOpen > 0 {
+		return nil
+	}
 
 	return file.saveEntry(entry)
 
@@ -223,6 +228,11 @@ func (file *File) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest)
 
 	if err := removexattr(entry, req); err != nil {
 		return err
+	}
+	file.dirtyMetadata = true
+
+	if file.isOpen > 0 {
+		return nil
 	}
 
 	return file.saveEntry(entry)
@@ -350,6 +360,8 @@ func (file *File) saveEntry(entry *filer_pb.Entry) error {
 		}
 
 		file.wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
+
+		file.dirtyMetadata = false
 
 		return nil
 	})
