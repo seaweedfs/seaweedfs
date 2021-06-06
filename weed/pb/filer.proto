@@ -361,6 +361,7 @@ message FilerConf {
         string disk_type = 5;
         bool fsync = 6;
         uint32 volume_growth_count = 7;
+        bool read_only = 8;
     }
     repeated PathConf locations = 2;
 }

@@ -126,6 +126,9 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 	if b.VolumeGrowthCount > 0 {
 		a.VolumeGrowthCount = b.VolumeGrowthCount
 	}
+	if b.ReadOnly {
+		a.ReadOnly = b.ReadOnly
+	}
 }
 
 func (fc *FilerConf) ToProto() *filer_pb.FilerConf {

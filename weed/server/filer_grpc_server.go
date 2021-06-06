@@ -259,14 +259,14 @@ func (fs *FilerServer) cleanupChunks(fullpath string, existingEntry *filer.Entry
 	garbage = append(garbage, coveredChunks...)
 
 	if newEntry.Attributes != nil {
-		so := fs.detectStorageOption(fullpath,
+		so, _ := fs.detectStorageOption(fullpath,
 			newEntry.Attributes.Collection,
 			newEntry.Attributes.Replication,
 			newEntry.Attributes.TtlSec,
 			newEntry.Attributes.DiskType,
 			"",
 			"",
-		)
+		) // ignore readonly error for capacity needed to manifestize
 		chunks, err = filer.MaybeManifestize(fs.saveAsChunk(so), chunks)
 		if err != nil {
 			// not good, but should be ok
@@ -307,7 +307,11 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	}
 
 	entry.Chunks = append(entry.Chunks, req.Chunks...)
-	so := fs.detectStorageOption(string(fullpath), entry.Collection, entry.Replication, entry.TtlSec, entry.DiskType, "", "")
+	so, err := fs.detectStorageOption(string(fullpath), entry.Collection, entry.Replication, entry.TtlSec, entry.DiskType, "", "")
+	if err != nil {
+		glog.Warningf("detectStorageOption: %v", err)
+		return &filer_pb.AppendToEntryResponse{}, err
+	}
 	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(so), entry.Chunks)
 	if err != nil {
 		// not good, but should be ok
@@ -333,7 +337,11 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVolumeRequest) (resp *filer_pb.AssignVolumeResponse, err error) {
 
-	so := fs.detectStorageOption(req.Path, req.Collection, req.Replication, req.TtlSec, req.DiskType, req.DataCenter, req.Rack)
+	so, err := fs.detectStorageOption(req.Path, req.Collection, req.Replication, req.TtlSec, req.DiskType, req.DataCenter, req.Rack)
+	if err != nil {
+		glog.V(3).Infof("AssignVolume: %v", err)
+		return &filer_pb.AssignVolumeResponse{Error: fmt.Sprintf("assign volume: %v", err)}, nil
+	}
 
 	assignRequest, altRequest := so.ToAssignRequests(int(req.Count))
 

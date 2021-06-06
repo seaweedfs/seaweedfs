@@ -63,8 +63,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	dataReader := r.Body
+	rAuthType := getRequestAuthType(r)
 	if s3a.iam.isEnabled() {
-		rAuthType := getRequestAuthType(r)
 		var s3ErrCode s3err.ErrorCode
 		switch rAuthType {
 		case authTypeStreamingSigned:
@@ -79,8 +79,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	} else {
-		rAuthType := getRequestAuthType(r)
-		if authTypeAnonymous != rAuthType {
+		if authTypeStreamingSigned == rAuthType {
 			writeErrorResponse(w, s3err.ErrAuthNotSetup, r.URL)
 			return
 		}

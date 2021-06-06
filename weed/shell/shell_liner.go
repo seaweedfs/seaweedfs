@@ -31,6 +31,7 @@ func RunShell(options ShellOptions) {
 	})
 
 	line.SetCtrlCAborts(true)
+	line.SetTabCompletionStyle(liner.TabPrints)
 
 	setCompletionHandler()
 	loadHistory()

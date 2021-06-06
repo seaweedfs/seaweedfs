@@ -5,14 +5,17 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"os"
 	"os/user"
 	"path"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 
 	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 
@@ -47,6 +50,21 @@ func runMount(cmd *Command, args []string) bool {
 	}
 
 	return RunMount(&mountOptions, os.FileMode(umask))
+}
+
+func getParentInode(mountDir string) (uint64, error) {
+	parentDir := filepath.Clean(filepath.Join(mountDir, ".."))
+	fi, err := os.Stat(parentDir)
+	if err != nil {
+		return 0, err
+	}
+
+	stat, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, nil
+	}
+
+	return stat.Ino, nil
 }
 
 func RunMount(option *MountOptions, umask os.FileMode) bool {
@@ -85,13 +103,19 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	filerMountRootPath := *option.filerMountRootPath
 	dir := util.ResolvePath(*option.dir)
-	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
+	parentInode, err := getParentInode(dir)
+	if err != nil {
+		glog.Errorf("failed to retrieve inode for parent directory of %s: %v", dir, err)
+		return true
+	}
 
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.Version(), runtime.GOOS, runtime.GOARCH)
 	if dir == "" {
 		fmt.Printf("Please specify the mount directory via \"-dir\"")
 		return false
 	}
+
+	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
 	if chunkSizeLimitMB <= 0 {
 		fmt.Printf("Please specify a reasonable buffer size.")
 		return false
@@ -199,6 +223,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		MountMode:          mountMode,
 		MountCtime:         fileInfo.ModTime(),
 		MountMtime:         time.Now(),
+		MountParentInode:   parentInode,
 		Umask:              umask,
 		VolumeServerAccess: *mountOptions.volumeServerAccess,
 		Cipher:             cipher,

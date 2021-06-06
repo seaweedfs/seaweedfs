@@ -359,16 +359,19 @@ func genProcessFunction(sourcePath string, targetPath string, dataSink sink.Repl
 	return processEventFn
 }
 
-func buildKey(dataSink sink.ReplicationSink, message *filer_pb.EventNotification, targetPath string, sourceKey util.FullPath, sourcePath string) string {
+func buildKey(dataSink sink.ReplicationSink, message *filer_pb.EventNotification, targetPath string, sourceKey util.FullPath, sourcePath string) (key string) {
 	if !dataSink.IsIncremental() {
-		return util.Join(targetPath, string(sourceKey)[len(sourcePath):])
+		key = util.Join(targetPath, string(sourceKey)[len(sourcePath):])
+	} else {
+		var mTime int64
+		if message.NewEntry != nil {
+			mTime = message.NewEntry.Attributes.Mtime
+		} else if message.OldEntry != nil {
+			mTime = message.OldEntry.Attributes.Mtime
+		}
+		dateKey := time.Unix(mTime, 0).Format("2006-01-02")
+		key = util.Join(targetPath, dateKey, string(sourceKey)[len(sourcePath):])
 	}
-	var mTime int64
-	if message.NewEntry != nil {
-		mTime = message.NewEntry.Attributes.Mtime
-	} else if message.OldEntry != nil {
-		mTime = message.OldEntry.Attributes.Mtime
-	}
-	dateKey := time.Unix(mTime, 0).Format("2006-01-02")
-	return util.Join(targetPath, dateKey, string(sourceKey)[len(sourcePath):])
+
+	return escapeKey(key)
 }
