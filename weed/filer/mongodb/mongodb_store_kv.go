@@ -7,6 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func (store *MongodbStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
@@ -15,11 +16,11 @@ func (store *MongodbStore) KvPut(ctx context.Context, key []byte, value []byte) 
 
 	c := store.connect.Database(store.database).Collection(store.collectionName)
 
-	_, err = c.InsertOne(ctx, Model{
-		Directory: dir,
-		Name:      name,
-		Meta:      value,
-	})
+	opts := options.Update().SetUpsert(true)
+	filter := bson.D{{"directory", dir}, {"name", name}}
+	update := bson.D{{"$set", bson.D{{"meta", value}}}}
+
+	_, err = c.UpdateOne(ctx, filter, update, opts)
 
 	if err != nil {
 		return fmt.Errorf("kv put: %v", err)
