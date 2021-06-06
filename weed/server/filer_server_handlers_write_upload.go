@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
@@ -19,6 +20,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
+}
+
 func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Request, reader io.Reader, chunkSize int32, fileName, contentType string, contentLength int64, so *operation.StorageOption) ([]*filer_pb.FileChunk, hash.Hash, int64, error, []byte) {
 	var fileChunks []*filer_pb.FileChunk
 
@@ -28,21 +35,28 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 	chunkOffset := int64(0)
 	var smallContent []byte
 
+	bytesBuffer := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(bytesBuffer)
 	for {
 		limitedReader := io.LimitReader(partReader, int64(chunkSize))
 
-		data, err := ioutil.ReadAll(limitedReader)
+		bytesBuffer.Reset()
+
+		dataSize, err := bytesBuffer.ReadFrom(limitedReader)
+
+		// data, err := ioutil.ReadAll(limitedReader)
 		if err != nil {
 			return nil, nil, 0, err, nil
 		}
 		if chunkOffset == 0 && !isAppend(r) {
-			if len(data) < int(fs.option.SaveToFilerLimit) || strings.HasPrefix(r.URL.Path, filer.DirectoryEtcRoot) && len(data) < 4*1024 {
-				smallContent = data
-				chunkOffset += int64(len(data))
+			if dataSize < fs.option.SaveToFilerLimit || strings.HasPrefix(r.URL.Path, filer.DirectoryEtcRoot) && dataSize < 4*1024 {
+				chunkOffset += dataSize
+				smallContent = make([]byte, dataSize)
+				bytesBuffer.Write(smallContent)
 				break
 			}
 		}
-		dataReader := util.NewBytesReader(data)
+		dataReader := util.NewBytesReader(bytesBuffer.Bytes())
 
 		// retry to assign a different file id
 		var fileId, urlLocation string

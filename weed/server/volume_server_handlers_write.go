@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net/http"
@@ -42,7 +43,10 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reqNeedle, originalSize, contentMd5, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes)
+	bytesBuffer := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(bytesBuffer)
+
+	reqNeedle, originalSize, contentMd5, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes, bytesBuffer)
 	if ne != nil {
 		writeJsonError(w, r, http.StatusBadRequest, ne)
 		return

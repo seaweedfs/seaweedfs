@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -104,7 +105,9 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn ope
 	}
 
 	debug("parsing upload file...")
-	pu, pe := needle.ParseUpload(r, 256*1024*1024)
+	bytesBuffer := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(bytesBuffer)
+	pu, pe := needle.ParseUpload(r, 256*1024*1024, bytesBuffer)
 	if pe != nil {
 		writeJsonError(w, r, http.StatusBadRequest, pe)
 		return
