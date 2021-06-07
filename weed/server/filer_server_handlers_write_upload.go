@@ -67,7 +67,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 		go func(offset int64) {
 			defer wg.Done()
 
-			chunk, toChunkErr := fs.dataToChunk(fileName, contentType, bytesBuffer.Bytes(), offset, so, md5Hash)
+			chunk, toChunkErr := fs.dataToChunk(fileName, contentType, bytesBuffer.Bytes(), offset, so)
 			if toChunkErr != nil {
 				uploadErr = toChunkErr
 			}
@@ -114,7 +114,7 @@ func (fs *FilerServer) doUpload(urlLocation string, limitedReader io.Reader, fil
 	return uploadResult, err, data
 }
 
-func (fs *FilerServer) dataToChunk(fileName, contentType string, data []byte, chunkOffset int64, so *operation.StorageOption, md5Hash hash.Hash) (*filer_pb.FileChunk, error) {
+func (fs *FilerServer) dataToChunk(fileName, contentType string, data []byte, chunkOffset int64, so *operation.StorageOption) (*filer_pb.FileChunk, error) {
 	dataReader := util.NewBytesReader(data)
 
 	// retry to assign a different file id
@@ -148,13 +148,6 @@ func (fs *FilerServer) dataToChunk(fileName, contentType string, data []byte, ch
 	// if last chunk exhausted the reader exactly at the border
 	if uploadResult.Size == 0 {
 		return nil, nil
-	}
-	if chunkOffset == 0 {
-		uploadedMd5 := util.Base64Md5ToBytes(uploadResult.ContentMd5)
-		readedMd5 := md5Hash.Sum(nil)
-		if !bytes.Equal(uploadedMd5, readedMd5) {
-			glog.Errorf("md5 %x does not match %x uploaded chunk %s to the volume server", readedMd5, uploadedMd5, uploadResult.Name)
-		}
 	}
 
 	return uploadResult.ToPbFileChunk(fileId, chunkOffset), nil
