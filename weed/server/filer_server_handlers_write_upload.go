@@ -58,7 +58,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			if dataSize < fs.option.SaveToFilerLimit || strings.HasPrefix(r.URL.Path, filer.DirectoryEtcRoot) && dataSize < 4*1024 {
 				chunkOffset += dataSize
 				smallContent = make([]byte, dataSize)
-				bytesBuffer.Write(smallContent)
+				bytesBuffer.Read(smallContent)
 				break
 			}
 		}
