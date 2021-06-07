@@ -125,8 +125,6 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			glog.V(4).Infof("InvalidateEntry %s : %v", filePath, err)
 		}
 	})
-	startTime := time.Now()
-	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
 	grace.OnInterrupt(func() {
 		wfs.metaCache.Shutdown()
 	})
@@ -139,6 +137,11 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 
 	return wfs
+}
+
+func (wfs *WFS) StartBackgroundTasks() {
+	startTime := time.Now()
+	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
 }
 
 func (wfs *WFS) Root() (fs.Node, error) {
