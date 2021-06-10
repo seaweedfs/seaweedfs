@@ -150,7 +150,7 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 			f(w, r)
 			return
 		}
-		writeErrorResponse(w, errCode, r.URL)
+		writeErrorResponse(w, errCode, r)
 	}
 }
 

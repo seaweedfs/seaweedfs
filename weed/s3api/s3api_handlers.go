@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"net/http"
-	"net/url"
 	"strconv"
 	"time"
 
@@ -57,12 +56,12 @@ func (s3a *S3ApiServer) AdjustedUrl(location *filer_pb.Location) string {
 // If none of the http routes match respond with MethodNotAllowed
 func notFoundHandler(w http.ResponseWriter, r *http.Request) {
 	glog.V(0).Infof("unsupported %s %s", r.Method, r.RequestURI)
-	writeErrorResponse(w, s3err.ErrMethodNotAllowed, r.URL)
+	writeErrorResponse(w, s3err.ErrMethodNotAllowed, r)
 }
 
-func writeErrorResponse(w http.ResponseWriter, errorCode s3err.ErrorCode, reqURL *url.URL) {
+func writeErrorResponse(w http.ResponseWriter, errorCode s3err.ErrorCode, r *http.Request) {
 	apiError := s3err.GetAPIError(errorCode)
-	errorResponse := getRESTErrorResponse(apiError, reqURL.Path)
+	errorResponse := getRESTErrorResponse(apiError, r.URL.Path)
 	encodedErrorResponse := encodeResponse(errorResponse)
 	writeResponse(w, apiError.HTTPStatusCode, encodedErrorResponse, mimeXML)
 }

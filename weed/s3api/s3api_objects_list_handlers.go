@@ -44,11 +44,11 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	originalPrefix, continuationToken, startAfter, delimiter, _, maxKeys := getListObjectsV2Args(r.URL.Query())
 
 	if maxKeys < 0 {
-		writeErrorResponse(w, s3err.ErrInvalidMaxKeys, r.URL)
+		writeErrorResponse(w, s3err.ErrInvalidMaxKeys, r)
 		return
 	}
 	if delimiter != "" && delimiter != "/" {
-		writeErrorResponse(w, s3err.ErrNotImplemented, r.URL)
+		writeErrorResponse(w, s3err.ErrNotImplemented, r)
 		return
 	}
 
@@ -60,13 +60,13 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker, delimiter)
 
 	if err != nil {
-		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r)
 		return
 	}
 
 	if len(response.Contents) == 0 {
 		if exists, existErr := s3a.exists(s3a.option.BucketsPath, bucket, true); existErr == nil && !exists {
-			writeErrorResponse(w, s3err.ErrNoSuchBucket, r.URL)
+			writeErrorResponse(w, s3err.ErrNoSuchBucket, r)
 			return
 		}
 	}
@@ -99,24 +99,24 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	originalPrefix, marker, delimiter, maxKeys := getListObjectsV1Args(r.URL.Query())
 
 	if maxKeys < 0 {
-		writeErrorResponse(w, s3err.ErrInvalidMaxKeys, r.URL)
+		writeErrorResponse(w, s3err.ErrInvalidMaxKeys, r)
 		return
 	}
 	if delimiter != "" && delimiter != "/" {
-		writeErrorResponse(w, s3err.ErrNotImplemented, r.URL)
+		writeErrorResponse(w, s3err.ErrNotImplemented, r)
 		return
 	}
 
 	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker, delimiter)
 
 	if err != nil {
-		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r)
 		return
 	}
 
 	if len(response.Contents) == 0 {
 		if exists, existErr := s3a.exists(s3a.option.BucketsPath, bucket, true); existErr == nil && !exists {
-			writeErrorResponse(w, s3err.ErrNoSuchBucket, r.URL)
+			writeErrorResponse(w, s3err.ErrNoSuchBucket, r)
 			return
 		}
 	}

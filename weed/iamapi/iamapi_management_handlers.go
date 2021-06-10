@@ -362,7 +362,7 @@ func (iama *IamApiServer) DeleteAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 
 func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		writeErrorResponse(w, s3err.ErrInvalidRequest, r.URL)
+		writeErrorResponse(w, s3err.ErrInvalidRequest, r)
 		return
 	}
 	values := r.PostForm
@@ -370,7 +370,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	s3cfgLock.RLock()
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 	if err := iama.s3ApiConfig.GetS3ApiConfiguration(s3cfg); err != nil {
-		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
+		writeErrorResponse(w, s3err.ErrInternalError, r)
 		return
 	}
 	s3cfgLock.RUnlock()
@@ -411,14 +411,14 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		response, err = iama.CreatePolicy(s3cfg, values)
 		if err != nil {
 			glog.Errorf("CreatePolicy:  %+v", err)
-			writeErrorResponse(w, s3err.ErrInvalidRequest, r.URL)
+			writeErrorResponse(w, s3err.ErrInvalidRequest, r)
 			return
 		}
 	case "PutUserPolicy":
 		response, err = iama.PutUserPolicy(s3cfg, values)
 		if err != nil {
 			glog.Errorf("PutUserPolicy:  %+v", err)
-			writeErrorResponse(w, s3err.ErrInvalidRequest, r.URL)
+			writeErrorResponse(w, s3err.ErrInvalidRequest, r)
 			return
 		}
 	case "GetUserPolicy":
