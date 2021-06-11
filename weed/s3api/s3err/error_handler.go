@@ -5,8 +5,10 @@ import (
 	"encoding/xml"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/gorilla/mux"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,18 +28,27 @@ func WriteEmptyResponse(w http.ResponseWriter, statusCode int) {
 }
 
 func WriteErrorResponse(w http.ResponseWriter, errorCode ErrorCode, r *http.Request) {
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+	object := vars["object"]
+	if !strings.HasPrefix(object, "/") {
+		object = "/" + object
+	}
+
 	apiError := GetAPIError(errorCode)
-	errorResponse := getRESTErrorResponse(apiError, r.URL.Path)
+	errorResponse := getRESTErrorResponse(apiError, r.URL.Path, bucket, object)
 	encodedErrorResponse := EncodeXMLResponse(errorResponse)
 	WriteResponse(w, apiError.HTTPStatusCode, encodedErrorResponse, MimeXML)
 }
 
-func getRESTErrorResponse(err APIError, resource string) RESTErrorResponse {
+func getRESTErrorResponse(err APIError, resource string, bucket, object string) RESTErrorResponse {
 	return RESTErrorResponse{
-		Code:      err.Code,
-		Message:   err.Description,
-		Resource:  resource,
-		RequestID: fmt.Sprintf("%d", time.Now().UnixNano()),
+		Code:       err.Code,
+		BucketName: bucket,
+		Key:        object[1:],
+		Message:    err.Description,
+		Resource:   resource,
+		RequestID:  fmt.Sprintf("%d", time.Now().UnixNano()),
 	}
 }
 
