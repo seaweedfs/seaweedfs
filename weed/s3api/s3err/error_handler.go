@@ -31,8 +31,8 @@ func WriteErrorResponse(w http.ResponseWriter, errorCode ErrorCode, r *http.Requ
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 	object := vars["object"]
-	if !strings.HasPrefix(object, "/") {
-		object = "/" + object
+	if strings.HasPrefix(object, "/") {
+		object = object[1:]
 	}
 
 	apiError := GetAPIError(errorCode)
@@ -45,7 +45,7 @@ func getRESTErrorResponse(err APIError, resource string, bucket, object string) 
 	return RESTErrorResponse{
 		Code:       err.Code,
 		BucketName: bucket,
-		Key:        object[1:],
+		Key:        object,
 		Message:    err.Description,
 		Resource:   resource,
 		RequestID:  fmt.Sprintf("%d", time.Now().UnixNano()),
