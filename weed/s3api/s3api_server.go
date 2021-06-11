@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	. "github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"net/http"
 	"strings"
 	"time"
@@ -132,6 +133,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	apiRouter.Methods("GET").Path("/").HandlerFunc(track(s3a.ListBucketsHandler, "LIST"))
 
 	// NotFound
-	apiRouter.NotFoundHandler = http.HandlerFunc(notFoundHandler)
+	apiRouter.NotFoundHandler = http.HandlerFunc(s3err.NotFoundHandler)
 
 }

@@ -44,20 +44,20 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
-		writeErrorResponse(w, s3err.ErrInvalidDigest, r)
+		s3err.WriteErrorResponse(w, s3err.ErrInvalidDigest, r)
 		return
 	}
 
 	if r.Header.Get("Cache-Control") != "" {
 		if _, err = cacheobject.ParseRequestCacheControl(r.Header.Get("Cache-Control")); err != nil {
-			writeErrorResponse(w, s3err.ErrInvalidDigest, r)
+			s3err.WriteErrorResponse(w, s3err.ErrInvalidDigest, r)
 			return
 		}
 	}
 
 	if r.Header.Get("Expires") != "" {
 		if _, err = time.Parse(http.TimeFormat, r.Header.Get("Expires")); err != nil {
-			writeErrorResponse(w, s3err.ErrInvalidDigest, r)
+			s3err.WriteErrorResponse(w, s3err.ErrInvalidDigest, r)
 			return
 		}
 	}
@@ -75,12 +75,12 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
 		}
 		if s3ErrCode != s3err.ErrNone {
-			writeErrorResponse(w, s3ErrCode, r)
+			s3err.WriteErrorResponse(w, s3ErrCode, r)
 			return
 		}
 	} else {
 		if authTypeStreamingSigned == rAuthType {
-			writeErrorResponse(w, s3err.ErrAuthNotSetup, r)
+			s3err.WriteErrorResponse(w, s3err.ErrAuthNotSetup, r)
 			return
 		}
 	}
@@ -88,7 +88,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	if strings.HasSuffix(object, "/") {
 		if err := s3a.mkdir(s3a.option.BucketsPath, bucket+object, nil); err != nil {
-			writeErrorResponse(w, s3err.ErrInternalError, r)
+			s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
 			return
 		}
 	} else {
@@ -97,7 +97,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
 
 		if errCode != s3err.ErrNone {
-			writeErrorResponse(w, errCode, r)
+			s3err.WriteErrorResponse(w, errCode, r)
 			return
 		}
 
@@ -120,7 +120,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	bucket, object := getBucketAndObject(r)
 
 	if strings.HasSuffix(r.URL.Path, "/") {
-		writeErrorResponse(w, s3err.ErrNotImplemented, r)
+		s3err.WriteErrorResponse(w, s3err.ErrNotImplemented, r)
 		return
 	}
 
@@ -195,13 +195,13 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 	deleteXMLBytes, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		writeErrorResponse(w, s3err.ErrInternalError, r)
+		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
 		return
 	}
 
 	deleteObjects := &DeleteObjectsRequest{}
 	if err := xml.Unmarshal(deleteXMLBytes, deleteObjects); err != nil {
-		writeErrorResponse(w, s3err.ErrMalformedXML, r)
+		s3err.WriteErrorResponse(w, s3err.ErrMalformedXML, r)
 		return
 	}
 
@@ -253,7 +253,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	}
 	deleteResp.Errors = deleteErrors
 
-	writeSuccessResponseXML(w, encodeResponse(deleteResp))
+	writeSuccessResponseXML(w, deleteResp)
 
 }
 
@@ -297,7 +297,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", destUrl, err)
-		writeErrorResponse(w, s3err.ErrInternalError, r)
+		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
 		return
 	}
 
@@ -327,19 +327,19 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
-		writeErrorResponse(w, s3err.ErrInternalError, r)
+		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
 		return
 	}
 	defer util.CloseResponse(resp)
 
 	if resp.StatusCode == http.StatusPreconditionFailed {
-		writeErrorResponse(w, s3err.ErrPreconditionFailed, r)
+		s3err.WriteErrorResponse(w, s3err.ErrPreconditionFailed, r)
 		return
 	}
 
 	if (resp.ContentLength == -1 || resp.StatusCode == 404) && resp.StatusCode != 304 {
 		if r.Method != "DELETE" {
-			writeErrorResponse(w, s3err.ErrNoSuchKey, r)
+			s3err.WriteErrorResponse(w, s3err.ErrNoSuchKey, r)
 			return
 		}
 	}

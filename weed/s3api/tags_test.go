@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/xml"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
@@ -41,7 +42,7 @@ func TestXMLMarshall(t *testing.T) {
 		},
 	}
 
-	actual := string(encodeResponse(tags))
+	actual := string(s3err.EncodeXMLResponse(tags))
 
 	expected := `<?xml version="1.0" encoding="UTF-8"?>
 <Tagging xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><TagSet><Tag><Key>key1</Key><Value>value1</Value></Tag></TagSet></Tagging>`
