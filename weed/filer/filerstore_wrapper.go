@@ -23,6 +23,7 @@ type VirtualFilerStore interface {
 	AddPathSpecificStore(path string, storeId string, store FilerStore)
 	OnBucketCreation(bucket string)
 	OnBucketDeletion(bucket string)
+	CanDropWholeBucket() bool
 }
 
 type FilerStoreWrapper struct {
@@ -40,6 +41,13 @@ func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
 		pathToStore:    ptrie.New(),
 		storeIdToStore: make(map[string]FilerStore),
 	}
+}
+
+func (fsw *FilerStoreWrapper) CanDropWholeBucket() bool {
+	if ba, ok := fsw.defaultStore.(BucketAware); ok {
+		return ba.IsDropBucketAltogether()
+	}
+	return false
 }
 
 func (fsw *FilerStoreWrapper) OnBucketCreation(bucket string) {

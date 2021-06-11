@@ -32,6 +32,9 @@ type AbstractSqlStore struct {
 	dbsLock            sync.Mutex
 }
 
+func (store *AbstractSqlStore) CanDropWholeBucket() bool {
+	return store.SupportBucketTable
+}
 func (store *AbstractSqlStore) OnBucketCreation(bucket string) {
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
