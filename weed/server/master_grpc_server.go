@@ -205,8 +205,8 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 			_, err := stream.Recv()
 			if err != nil {
 				glog.V(2).Infof("- client %v: %v", clientName, err)
-				stopChan <- true
-				break
+				close(stopChan)
+				return
 			}
 		}
 	}()
