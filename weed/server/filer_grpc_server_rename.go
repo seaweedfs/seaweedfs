@@ -115,8 +115,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, oldParent util.FullPat
 		Extended: entry.Extended,
 		Content:  entry.Content,
 	}
-	createErr := fs.filer.CreateEntry(ctx, newEntry, false, false, nil)
-	if createErr != nil {
+	if createErr := fs.filer.CreateEntry(ctx, newEntry, false, false, nil); createErr != nil {
 		return createErr
 	}
 
