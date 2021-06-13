@@ -45,7 +45,7 @@ func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
 
 func (fsw *FilerStoreWrapper) CanDropWholeBucket() bool {
 	if ba, ok := fsw.defaultStore.(BucketAware); ok {
-		return ba.IsDropBucketAltogether()
+		return ba.CanDropWholeBucket()
 	}
 	return false
 }
