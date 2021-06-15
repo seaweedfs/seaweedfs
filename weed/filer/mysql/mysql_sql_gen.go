@@ -38,7 +38,7 @@ func (gen *SqlGenMysql) GetSqlDelete(tableName string) string {
 }
 
 func (gen *SqlGenMysql) GetSqlDeleteFolderChildren(tableName string) string {
-	return fmt.Sprintf("DELETE FROM `%s` WHERE dirhash=? AND directory=?", tableName)
+	return fmt.Sprintf("DELETE FROM `%s` WHERE dirhash=? AND directory=? LIMIT ?", tableName)
 }
 
 func (gen *SqlGenMysql) GetSqlListExclusive(tableName string) string {
