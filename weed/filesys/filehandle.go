@@ -33,11 +33,12 @@ type FileHandle struct {
 	Uid       uint32         // user ID of process making request
 	Gid       uint32         // group ID of process making request
 	writeOnly bool
+	isDeleted bool
 }
 
 func newFileHandle(file *File, uid, gid uint32, writeOnly bool) *FileHandle {
 	fh := &FileHandle{
-		f:          file,
+		f: file,
 		// dirtyPages: newContinuousDirtyPages(file, writeOnly),
 		dirtyPages: newTempFileDirtyPages(file, writeOnly),
 		Uid:        uid,
@@ -221,6 +222,11 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 	glog.V(4).Infof("Flush %v fh %d", fh.f.fullpath(), fh.handle)
+
+	if fh.isDeleted {
+		glog.V(4).Infof("Flush %v fh %d skip deleted", fh.f.fullpath(), fh.handle)
+		return nil
+	}
 
 	fh.Lock()
 	defer fh.Unlock()
