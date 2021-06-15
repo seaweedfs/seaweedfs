@@ -100,10 +100,10 @@ func (t *FilerStorePathTranlator) DeleteOneEntry(ctx context.Context, existingEn
 	return t.actualStore.DeleteEntry(ctx, existingEntry.FullPath)
 }
 
-func (t *FilerStorePathTranlator) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {
+func (t *FilerStorePathTranlator) DeleteFolderChildren(ctx context.Context, fp util.FullPath, limit int64) (err error) {
 	newFullPath := t.translatePath(fp)
 
-	return t.actualStore.DeleteFolderChildren(ctx, newFullPath)
+	return t.actualStore.DeleteFolderChildren(ctx, newFullPath, limit)
 }
 
 func (t *FilerStorePathTranlator) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (string, error) {

@@ -245,7 +245,7 @@ func (store *LevelDB3Store) DeleteEntry(ctx context.Context, fullpath weed_util.
 	return nil
 }
 
-func (store *LevelDB3Store) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
+func (store *LevelDB3Store) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath, limit int64) (err error) {
 
 	db, bucket, shortPath, err := store.findDB(fullpath, true)
 	if err != nil {

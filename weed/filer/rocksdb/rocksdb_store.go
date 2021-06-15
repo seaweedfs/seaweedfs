@@ -148,7 +148,7 @@ func (store *RocksDBStore) DeleteEntry(ctx context.Context, fullpath weed_util.F
 	return nil
 }
 
-func (store *RocksDBStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
+func (store *RocksDBStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath, limit int64) (err error) {
 	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
 
 	batch := gorocksdb.NewWriteBatch()

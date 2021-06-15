@@ -167,7 +167,7 @@ func (store *MongodbStore) DeleteEntry(ctx context.Context, fullpath util.FullPa
 	return nil
 }
 
-func (store *MongodbStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) error {
+func (store *MongodbStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath, limit int64) error {
 
 	where := bson.M{"directory": fullpath}
 	_, err := store.connect.Database(store.database).Collection(store.collectionName).DeleteMany(ctx, where)

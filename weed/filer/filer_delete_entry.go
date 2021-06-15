@@ -115,7 +115,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 
 	glog.V(3).Infof("deleting directory %v delete %d chunks: %v", entry.FullPath, len(chunks), shouldDeleteChunks)
 
-	if storeDeletionErr := f.Store.DeleteFolderChildren(ctx, entry.FullPath); storeDeletionErr != nil {
+	if storeDeletionErr := f.Store.DeleteFolderChildren(ctx, entry.FullPath, DeleteMaxRows); storeDeletionErr != nil {
 		return nil, nil, fmt.Errorf("filer store delete: %v", storeDeletionErr)
 	}
 

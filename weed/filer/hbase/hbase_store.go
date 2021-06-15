@@ -109,7 +109,7 @@ func (store *HbaseStore) DeleteEntry(ctx context.Context, path util.FullPath) (e
 	return store.doDelete(ctx, store.cfMetaDir, []byte(path))
 }
 
-func (store *HbaseStore) DeleteFolderChildren(ctx context.Context, path util.FullPath) (err error) {
+func (store *HbaseStore) DeleteFolderChildren(ctx context.Context, path util.FullPath, limit int64) (err error) {
 
 	family := map[string][]string{store.cfMetaDir: {COLUMN_NAME}}
 	expectedPrefix := []byte(path.Child(""))

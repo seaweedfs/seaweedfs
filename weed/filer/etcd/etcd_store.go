@@ -130,7 +130,7 @@ func (store *EtcdStore) DeleteEntry(ctx context.Context, fullpath weed_util.Full
 	return nil
 }
 
-func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
+func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath, limit int64) (err error) {
 	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
 
 	if _, err := store.client.Delete(ctx, string(directoryPrefix), clientv3.WithPrefix()); err != nil {

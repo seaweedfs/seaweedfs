@@ -144,7 +144,7 @@ func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath weed_util.
 	return nil
 }
 
-func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
+func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath, limit int64) (err error) {
 	directoryPrefix, partitionId := genDirectoryKeyPrefix(fullpath, "", store.dbCount)
 
 	batch := new(leveldb.Batch)

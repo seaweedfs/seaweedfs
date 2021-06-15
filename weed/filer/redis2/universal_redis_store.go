@@ -127,7 +127,7 @@ func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath uti
 	return nil
 }
 
-func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) (err error) {
+func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath, limit int64) (err error) {
 
 	if store.isSuperLargeDirectory(string(fullpath)) {
 		return nil

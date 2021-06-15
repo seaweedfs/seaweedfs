@@ -107,7 +107,7 @@ func (store *UniversalRedisStore) DeleteEntry(ctx context.Context, fullpath util
 	return nil
 }
 
-func (store *UniversalRedisStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) (err error) {
+func (store *UniversalRedisStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath, limit int64) (err error) {
 
 	members, err := store.Client.SMembers(ctx, genDirectoryListKey(string(fullpath))).Result()
 	if err != nil {
