@@ -71,6 +71,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	defer aDB.Close()
 	defer bDB.Close()
 
+REPLICAS:
 	for _, replicas := range volumeReplicas {
 		sort.Slice(replicas, func(i, j int) bool {
 			return fileCount(replicas[i]) > fileCount(replicas[j])
@@ -96,18 +97,22 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 
 			// read index db
 			if err := c.readIndexDatabase(aDB, a.info.Collection, a.info.Id, a.location.dataNode.Id, *verbose, writer); err != nil {
-				return err
+				fmt.Fprintln(writer, err.Error())
+				continue REPLICAS
 			}
 			if err := c.readIndexDatabase(bDB, b.info.Collection, b.info.Id, b.location.dataNode.Id, *verbose, writer); err != nil {
-				return err
+				fmt.Fprintln(writer, err.Error())
+				continue REPLICAS
 			}
 
 			// find and make up the differnces
 			if err := c.doVolumeCheckDisk(aDB, bDB, a, b, *verbose, writer, *applyChanges, *nonRepairThreshold); err != nil {
-				return err
+				fmt.Fprintln(writer, err.Error())
+				continue REPLICAS
 			}
 			if err := c.doVolumeCheckDisk(bDB, aDB, b, a, *verbose, writer, *applyChanges, *nonRepairThreshold); err != nil {
-				return err
+				fmt.Fprintln(writer, err.Error())
+				continue REPLICAS
 			}
 			replicas = replicas[1:]
 		}
