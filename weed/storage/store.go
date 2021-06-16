@@ -250,6 +250,11 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			}
 			if !deleteVolume {
 				collectionVolumeSize[v.Collection] += volumeMessage.Size
+			} else {
+				collectionVolumeSize[v.Collection] -= volumeMessage.Size
+				if collectionVolumeSize[v.Collection] <= 0 {
+					delete(collectionVolumeSize, v.Collection)
+				}
 			}
 
 			if _, exist := collectionVolumeReadOnlyCount[v.Collection]; !exist {
