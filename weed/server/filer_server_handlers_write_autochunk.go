@@ -208,10 +208,14 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		return
 	}
 	entry.Chunks = mergedChunks
-
+	var fids []string
+	for _, value := range entry.Chunks {
+		fids = append(fids, value.FileId)
+	}
 	filerResult = &FilerPostResult{
 		Name: fileName,
 		Size: int64(entry.FileSize),
+		Fid:  strings.Join(fids, "|"),
 	}
 
 	if entry.Extended == nil {
