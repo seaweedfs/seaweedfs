@@ -8,7 +8,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.BatchDeleteRequest) (*volume_server_pb.BatchDeleteResponse, error) {
@@ -30,7 +29,7 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 		n := new(needle.Needle)
 		volumeId, _ := needle.NewVolumeId(vid)
 		if req.SkipCookieCheck {
-			n.Id, err = types.ParseNeedleId(id_cookie)
+			n.Id, _, err = needle.ParseNeedleIdCookie(id_cookie)
 			if err != nil {
 				resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
 					FileId: fid,
