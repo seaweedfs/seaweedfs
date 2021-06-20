@@ -22,6 +22,7 @@ func runFuse(cmd *Command, args []string) bool {
 	rawArgsLen := len(rawArgs)
 	option := strings.Builder{}
 	options := []parameter{}
+	masterProcess := true
 
 	// first parameter
 	i := 0
@@ -98,6 +99,8 @@ func runFuse(cmd *Command, args []string) bool {
 		parameter := options[i]
 
 		switch parameter.name  {
+		case "child":
+			masterProcess = false
 		case "arg0":
 			mountOptions.dir = &parameter.value
 		case "filer":
@@ -185,6 +188,27 @@ func runFuse(cmd *Command, args []string) bool {
 				panic(fmt.Errorf("readRetryTime: %s", err))
 			}
 		}
+	}
+
+	// the master start the child, release it then finish himself
+	if masterProcess {
+		arg0 := os.Args[0]
+		argv := append(os.Args, "-o", "child")
+
+		attr := os.ProcAttr{}
+		child, err := os.StartProcess(arg0, argv, &attr)
+
+		if err != nil {
+			panic(fmt.Errorf("master process can not start child process: %s", err))
+		}
+
+		err = child.Release()
+
+		if err != nil {
+			panic(fmt.Errorf("master process can not release child process: %s", err))
+		}
+
+		return true
 	}
 
 	// I don't know why PATH environment variable is lost
