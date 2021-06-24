@@ -3,10 +3,8 @@ module github.com/chrislusf/seaweedfs
 go 1.16
 
 require (
-	cloud.google.com/go v0.58.0 // indirect
 	cloud.google.com/go/pubsub v1.3.1
 	cloud.google.com/go/storage v1.9.0
-	github.com/Azure/azure-pipeline-go v0.2.2 // indirect
 	github.com/Azure/azure-storage-blob-go v0.9.0
 	github.com/OneOfOne/xxhash v1.2.2
 	github.com/Shopify/sarama v1.23.1
@@ -43,7 +41,6 @@ require (
 	github.com/jcmturner/gofork v1.0.0 // indirect
 	github.com/jinzhu/copier v0.2.8
 	github.com/json-iterator/go v1.1.11
-	github.com/karlseguin/ccache v2.0.3+incompatible // indirect
 	github.com/karlseguin/ccache/v2 v2.0.7
 	github.com/klauspost/compress v1.10.9 // indirect
 	github.com/klauspost/cpuid v1.2.1 // indirect
@@ -51,9 +48,7 @@ require (
 	github.com/klauspost/reedsolomon v1.9.2
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.0
-	github.com/lunixbochs/vtclean v1.0.0 // indirect
 	github.com/magiconair/properties v1.8.1 // indirect
-	github.com/mattn/go-colorable v0.1.2 // indirect
 	github.com/mattn/go-runewidth v0.0.4 // indirect
 	github.com/olivere/elastic/v7 v7.0.19
 	github.com/peterh/liner v1.1.0
@@ -80,7 +75,6 @@ require (
 	github.com/viant/toolbox v0.33.2 // indirect
 	github.com/willf/bitset v1.1.10 // indirect
 	github.com/willf/bloom v2.0.3+incompatible
-	github.com/wsxiaoys/terminal v0.0.0-20160513160801-0940f3fc43a0 // indirect
 	go.etcd.io/etcd v3.3.15+incompatible
 	go.mongodb.org/mongo-driver v1.3.2
 	gocloud.dev v0.20.0
@@ -93,10 +87,8 @@ require (
 	google.golang.org/api v0.26.0
 	google.golang.org/grpc v1.29.1
 	google.golang.org/protobuf v1.26.0-rc.1
-	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 	gopkg.in/jcmturner/goidentity.v3 v3.0.0 // indirect
 	gopkg.in/jcmturner/gokrb5.v7 v7.3.0 // indirect
-	gopkg.in/karlseguin/expect.v1 v1.0.1 // indirect
 	modernc.org/sqlite v1.10.7
 )
 
