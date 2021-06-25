@@ -92,6 +92,12 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 
 	// volume file ids substract filer file ids
+	err = c.findExtraChunksInVolumeServers(volumeIdToVInfo, tempFolder, writer, verbose, applyPurging)
+
+	return err
+}
+
+func (c *commandVolumeFsck) findExtraChunksInVolumeServers(volumeIdToVInfo map[uint32]VInfo, tempFolder string, writer io.Writer, verbose *bool, applyPurging *bool) (error) {
 	var totalInUseCount, totalOrphanChunkCount, totalOrphanDataSize uint64
 	for volumeId, vinfo := range volumeIdToVInfo {
 		inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(tempFolder, volumeId, writer, *verbose)
@@ -112,7 +118,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 			if vinfo.isEcVolume {
 				fmt.Fprintf(writer, "Skip purging for Erasure Coded volumes.\n")
 			}
-			if err = c.purgeFileIdsForOneVolume(volumeId, orphanFileIds, writer); err != nil {
+			if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds, writer); err != nil {
 				return fmt.Errorf("purge for volume %d: %v\n", volumeId, err)
 			}
 		}
@@ -130,7 +136,6 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 
 		fmt.Fprintf(writer, "This could be normal if multiple filers or no filers are used.\n")
 	}
-
 	return nil
 }
 
