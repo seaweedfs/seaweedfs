@@ -195,7 +195,9 @@ func runFuse(cmd *Command, args []string) bool {
 		arg0 := os.Args[0]
 		argv := append(os.Args, "-o", "child")
 
-		attr := os.ProcAttr{}
+		attr := os.ProcAttr{}		
+		attr.Env = os.Environ() 
+		
 		child, err := os.StartProcess(arg0, argv, &attr)
 
 		if err != nil {
@@ -209,11 +211,6 @@ func runFuse(cmd *Command, args []string) bool {
 		}
 
 		return true
-	}
-
-	// I don't know why PATH environment variable is lost
-	if err := os.Setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin"); err != nil {
-		panic(fmt.Errorf("setenv: %s", err))
 	}
 
 	// just call "weed mount" command
