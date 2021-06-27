@@ -164,6 +164,10 @@ func (m *LogBuffer) copyToFlush() *dataToFlush {
 				stopTime:  m.stopTime,
 				data:      copiedBytes(m.buf[:m.pos]),
 			}
+			// glog.V(4).Infof("%s flushing [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
+		} else {
+			// glog.V(4).Infof("%s removed from memory [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
+			m.lastFlushTime = m.stopTime
 		}
 		m.buf = m.prevBuffers.SealBuffer(m.startTime, m.stopTime, m.buf, m.pos)
 		m.pos = 0
