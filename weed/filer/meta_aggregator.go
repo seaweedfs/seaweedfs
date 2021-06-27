@@ -34,7 +34,7 @@ func NewMetaAggregator(filers []string, grpcDialOption grpc.DialOption) *MetaAgg
 		grpcDialOption: grpcDialOption,
 	}
 	t.ListenersCond = sync.NewCond(&t.ListenersLock)
-	t.MetaLogBuffer = log_buffer.NewLogBuffer(LogFlushInterval, nil, func() {
+	t.MetaLogBuffer = log_buffer.NewLogBuffer("aggr", LogFlushInterval, nil, func() {
 		t.ListenersCond.Broadcast()
 	})
 	return t
@@ -118,6 +118,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self string, peer string
 	}
 
 	for {
+		glog.V(4).Infof("subscribing remote %s meta change: %v", peer, time.Unix(0, lastTsNs))
 		err := pb.WithFilerClient(peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

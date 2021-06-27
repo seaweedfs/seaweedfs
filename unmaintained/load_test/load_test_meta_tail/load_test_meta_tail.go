@@ -4,18 +4,20 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc"
 	"io"
 	"strconv"
+	"time"
 )
 
 var (
 	dir       = flag.String("dir", "/tmp", "directory to create files")
 	n         = flag.Int("n", 100, "the number of metadata")
 	tailFiler = flag.String("filer", "localhost:8888", "the filer address")
-	isWrite = flag.Bool("write", false, "only write")
+	isWrite   = flag.Bool("write", false, "only write")
 )
 
 func main() {
@@ -33,7 +35,7 @@ func main() {
 			return nil
 		}
 		name := event.EventNotification.NewEntry.Name
-		fmt.Printf("=> %s\n", name)
+		glog.V(0).Infof("=> %s ts:%+v", name, time.Unix(0, event.TsNs))
 		id := name[4:]
 		if x, err := strconv.Atoi(id); err == nil {
 			if x != expected {
@@ -43,6 +45,7 @@ func main() {
 		} else {
 			return err
 		}
+		time.Sleep(10 * time.Millisecond)
 		return nil
 	})
 
@@ -96,6 +99,7 @@ func startSubscribeMetadata(eachEntryFunc func(event *filer_pb.SubscribeMetadata
 				return listenErr
 			}
 			if err = eachEntryFunc(resp); err != nil {
+				glog.V(0).Infof("tail last record:%+v", time.Unix(0, lastTsNs))
 				return err
 			}
 			lastTsNs = resp.TsNs

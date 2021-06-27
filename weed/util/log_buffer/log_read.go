@@ -17,10 +17,7 @@ var (
 	ResumeFromDiskError = fmt.Errorf("resumeFromDisk")
 )
 
-func (logBuffer *LogBuffer) LoopProcessLogData(
-	startTreadTime time.Time,
-	waitForDataFn func() bool,
-	eachLogDataFn func(logEntry *filer_pb.LogEntry) error) (lastReadTime time.Time, err error) {
+func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startTreadTime time.Time, waitForDataFn func() bool, eachLogDataFn func(logEntry *filer_pb.LogEntry) error) (lastReadTime time.Time, err error) {
 	// loop through all messages
 	var bytesBuf *bytes.Buffer
 	lastReadTime = startTreadTime
@@ -39,7 +36,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(
 		if err == ResumeFromDiskError {
 			return lastReadTime, ResumeFromDiskError
 		}
-		// fmt.Printf("ReadFromBuffer by %v\n", lastReadTime)
+		// glog.V(4).Infof("%s ReadFromBuffer by %v", readerName, lastReadTime)
 		if bytesBuf == nil {
 			if waitForDataFn() {
 				continue
@@ -49,7 +46,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(
 		}
 
 		buf := bytesBuf.Bytes()
-		// fmt.Printf("ReadFromBuffer by %v size %d\n", lastReadTime, len(buf))
+		// fmt.Printf("ReadFromBuffer %s by %v size %d\n", readerName, lastReadTime, len(buf))
 
 		batchSize := 0
 		var startReadTime time.Time
@@ -59,7 +56,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(
 			size := util.BytesToUint32(buf[pos : pos+4])
 			if pos+4+int(size) > len(buf) {
 				err = ResumeError
-				glog.Errorf("LoopProcessLogData: read buffer %v read %d [%d,%d) from [0,%d)", lastReadTime, batchSize, pos, pos+int(size)+4, len(buf))
+				glog.Errorf("LoopProcessLogData: %s read buffer %v read %d [%d,%d) from [0,%d)", readerName, lastReadTime, batchSize, pos, pos+int(size)+4, len(buf))
 				return
 			}
 			entryData := buf[pos+4 : pos+4+int(size)]
@@ -81,9 +78,10 @@ func (logBuffer *LogBuffer) LoopProcessLogData(
 
 			pos += 4 + int(size)
 			batchSize++
+
 		}
 
-		// fmt.Printf("sent message ts[%d,%d] size %d\n", startReadTime.UnixNano(), lastReadTime.UnixNano(), batchSize)
+		// glog.V(4).Infof("%s sent messages ts[%+v,%+v] size %d\n", readerName, startReadTime, lastReadTime, batchSize)
 	}
 
 }
