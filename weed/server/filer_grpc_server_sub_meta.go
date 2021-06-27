@@ -55,14 +55,16 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		}, eachLogEntryFn)
 		if err != nil {
 			if err == log_buffer.ResumeFromDiskError {
+				time.Sleep(5127 * time.Millisecond)
 				continue
 			}
 			glog.Errorf("processed to %v: %v", lastReadTime, err)
-			time.Sleep(3127 * time.Millisecond)
 			if err != log_buffer.ResumeError {
 				break
 			}
 		}
+
+		time.Sleep(5127 * time.Millisecond)
 	}
 
 	return err
