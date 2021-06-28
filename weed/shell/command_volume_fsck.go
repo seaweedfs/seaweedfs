@@ -62,7 +62,8 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	fsckCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	verbose := fsckCommand.Bool("v", false, "verbose mode")
-	findMissingChunksInFiler := fsckCommand.Bool("findMissingChunksInFiler", false, "see help volume.fsck")
+	findMissingChunksInFiler := fsckCommand.Bool("findMissingChunksInFiler", false, "see \"help volume.fsck\"")
+	findMissingChunksInFilerPath := fsckCommand.String("findMissingChunksInFilerPath", "/", "used together with findMissingChunksInFiler")
 	applyPurging := fsckCommand.Bool("reallyDeleteFromVolume", false, "<expert only> delete data not referenced by the filer")
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
@@ -96,7 +97,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	if *findMissingChunksInFiler {
 		// collect all filer file ids and paths
-		if err = c.collectFilerFileIdAndPaths(volumeIdToVInfo, tempFolder, writer, *verbose, applyPurging); err != nil {
+		if err = c.collectFilerFileIdAndPaths(volumeIdToVInfo, tempFolder, writer, *findMissingChunksInFilerPath, *verbose, applyPurging); err != nil {
 			return fmt.Errorf("collectFilerFileIdAndPaths: %v", err)
 		}
 		// for each volume, check filer file ids
@@ -117,7 +118,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	return nil
 }
 
-func (c *commandVolumeFsck) collectFilerFileIdAndPaths(volumeIdToServer map[uint32]VInfo, tempFolder string, writer io.Writer, verbose bool, applyPurging *bool) error {
+func (c *commandVolumeFsck) collectFilerFileIdAndPaths(volumeIdToServer map[uint32]VInfo, tempFolder string, writer io.Writer, filerPath string, verbose bool, applyPurging *bool) error {
 
 	if verbose {
 		fmt.Fprintf(writer, "checking each file from filer ...\n")
@@ -143,22 +144,25 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(volumeIdToServer map[uint
 		cookie  uint32
 		path    util.FullPath
 	}
-	return doTraverseBfsAndSaving(c.env, nil, "/", false, func(outputChan chan interface{}) {
-		buffer := make([]byte, 8)
+	return doTraverseBfsAndSaving(c.env, nil, filerPath, false, func(outputChan chan interface{}) {
+		buffer := make([]byte, 16)
 		for item := range outputChan {
 			i := item.(*Item)
 			if f, ok := files[i.vid]; ok {
 				util.Uint64toBytes(buffer, i.fileKey)
-				f.Write(buffer)
-				util.Uint32toBytes(buffer, i.cookie)
-				util.Uint32toBytes(buffer[4:], uint32(len(i.path)))
+				util.Uint32toBytes(buffer[8:], i.cookie)
+				util.Uint32toBytes(buffer[12:], uint32(len(i.path)))
 				f.Write(buffer)
 				f.Write([]byte(i.path))
+				// fmt.Fprintf(writer, "%d,%x%08x %d %s\n", i.vid, i.fileKey, i.cookie, len(i.path), i.path)
 			} else {
 				fmt.Fprintf(writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
 			}
 		}
 	}, func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
+		if verbose && entry.Entry.IsDirectory {
+			fmt.Fprintf(writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
+		}
 		dChunks, mChunks, resolveErr := filer.ResolveChunkManifest(filer.LookupFn(c.env), entry.Entry.Chunks)
 		if resolveErr != nil {
 			return nil
@@ -317,6 +321,10 @@ func (c *commandVolumeFsck) collectFilerFileIds(tempFolder string, volumeIdToSer
 
 func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(tempFolder string, volumeId uint32, writer io.Writer, verbose bool) (err error) {
 
+	if verbose {
+		fmt.Fprintf(writer, "find missing file chuns in volume %d ...\n", volumeId)
+	}
+
 	db := needle_map.NewMemDb()
 	defer db.Close()
 
@@ -342,7 +350,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(tempFolder string, vo
 	item := &Item{}
 	var readSize int
 	for {
-		readSize, err = br.Read(buffer)
+		readSize, err = io.ReadFull(br, buffer)
 		if err != nil || readSize != 16 {
 			if err == io.EOF {
 				return nil
@@ -355,11 +363,17 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(tempFolder string, vo
 		item.cookie = util.BytesToUint32(buffer[8:12])
 		pathSize := util.BytesToUint32(buffer[12:16])
 		pathBytes := make([]byte, int(pathSize))
-		_, err = br.Read(pathBytes)
+		n, err := io.ReadFull(br, pathBytes)
+		if err != nil {
+			fmt.Fprintf(writer, "%d,%x%08x in unexpected error: %v\n", volumeId, item.fileKey, item.cookie, err)
+		}
+		if n != int(pathSize) {
+			fmt.Fprintf(writer, "%d,%x%08x %d unexpected file name size %d\n", volumeId, item.fileKey, item.cookie, pathSize, n)
+		}
 		item.path = util.FullPath(string(pathBytes))
 
 		if _, found := db.Get(types.NeedleId(item.fileKey)); !found {
-			fmt.Fprintf(writer, "%d,%x%08x in %s not found\n", volumeId, item.fileKey, item.cookie, item.path)
+			fmt.Fprintf(writer, "%d,%x%08x in %s %d not found\n", volumeId, item.fileKey, item.cookie, item.path, pathSize)
 		}
 
 	}
