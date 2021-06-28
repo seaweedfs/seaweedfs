@@ -96,6 +96,7 @@ func (cs *CompactSection) setOverflowEntry(skey SectionalNeedleId, offset Offset
 			cs.overflowExtra[i] = cs.overflowExtra[i-1]
 		}
 		cs.overflow[insertCandidate] = needleValue
+		cs.overflowExtra[insertCandidate] = needleValueExtra
 	}
 }
 
