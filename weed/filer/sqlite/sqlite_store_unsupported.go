@@ -1,4 +1,4 @@
-// +build !linux,!darwin,!windows,!s390,!ppc64le
+// +build !linux,!darwin,!windows,!s390,!ppc64le,!mips64
 
 // limited GOOS due to modernc.org/libc/unistd
 
