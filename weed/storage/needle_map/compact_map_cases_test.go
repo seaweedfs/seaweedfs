@@ -22,7 +22,7 @@ func Test5bytesIndexLoading(t *testing.T) {
 
 	println("total entries:", rowCount)
 
-	key := types.NeedleId(0x671b905)
+	key := types.NeedleId(0x671b905) // 108116229
 
 	needle, found := m.Get(types.NeedleId(0x671b905))
 
