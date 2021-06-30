@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -82,7 +81,6 @@ func getContentLength(r *http.Request) int64 {
 }
 
 func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("publicReadOnlyHandler in.")
 	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
 	if r.Header.Get("Origin") != "" {
 		w.Header().Set("Access-Control-Allow-Origin", "*")

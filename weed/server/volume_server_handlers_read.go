@@ -70,7 +70,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		if vs.ReadMode == "remote" {
+		if vs.ReadMode == "proxy" {
 			// proxy client request to target server
 			u, _ := url.Parse(util.NormalizeUrl(lookupResult.Locations[0].Url))
 			r.URL.Host = u.Host
