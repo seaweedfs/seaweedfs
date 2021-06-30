@@ -73,6 +73,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
 		case authTypePresigned, authTypeSigned:
 			_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
+			dataReader = r.Body
 		}
 		if s3ErrCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, s3ErrCode, r)

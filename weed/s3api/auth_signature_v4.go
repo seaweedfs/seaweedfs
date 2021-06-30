@@ -57,6 +57,7 @@ const (
 	unsignedPayload = "UNSIGNED-PAYLOAD"
 )
 
+
 // Returns SHA256 for calculating canonical-request.
 func getContentSha256Cksum(r *http.Request) string {
 	var (
@@ -70,6 +71,20 @@ func getContentSha256Cksum(r *http.Request) string {
 		// X-Amz-Content-Sha256, if not set in presigned requests, checksum
 		// will default to 'UNSIGNED-PAYLOAD'.
 		defaultSha256Cksum = unsignedPayload
+		if (r.Method == "PUT" || r.Method == "POST") && r.Body != nil {
+
+			buf, _ := ioutil.ReadAll(r.Body)
+			r.Body.Close()
+			r.Body = ioutil.NopCloser(bytes.NewBuffer(buf))
+
+			b, _ := ioutil.ReadAll(bytes.NewBuffer(buf))
+			hashedPayload := ""
+			if len(b) != 0 {
+				bodyHash := sha256.Sum256(b)
+				hashedPayload = hex.EncodeToString(bodyHash[:])
+			}
+			return hashedPayload
+		}
 		v, ok = r.URL.Query()["X-Amz-Content-Sha256"]
 		if !ok {
 			v, ok = r.Header["X-Amz-Content-Sha256"]
@@ -365,6 +380,7 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	}
 	// Construct new query.
 	query := make(url.Values)
+
 	if req.URL.Query().Get("X-Amz-Content-Sha256") != "" {
 		query.Set("X-Amz-Content-Sha256", hashedPayload)
 	}
@@ -426,6 +442,7 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	if req.URL.Query().Get("X-Amz-Credential") != query.Get("X-Amz-Credential") {
 		return nil, s3err.ErrSignatureDoesNotMatch
 	}
+
 	// Verify if sha256 payload query is same.
 	if req.URL.Query().Get("X-Amz-Content-Sha256") != "" {
 		if req.URL.Query().Get("X-Amz-Content-Sha256") != query.Get("X-Amz-Content-Sha256") {
