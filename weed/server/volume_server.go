@@ -28,7 +28,7 @@ type VolumeServer struct {
 
 	needleMapKind           storage.NeedleMapKind
 	FixJpgOrientation       bool
-	ReadRedirect            bool
+	ReadMode            	string
 	compactionBytePerSecond int64
 	metricsAddress          string
 	metricsIntervalSec      int
@@ -50,7 +50,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	dataCenter string, rack string,
 	whiteList []string,
 	fixJpgOrientation bool,
-	readRedirect bool,
+	readMode string,
 	compactionMBPerSecond int,
 	fileSizeLimitMB int,
 	concurrentUploadLimit int64,
@@ -72,7 +72,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		rack:                    rack,
 		needleMapKind:           needleMapKind,
 		FixJpgOrientation:       fixJpgOrientation,
-		ReadRedirect:            readRedirect,
+		ReadMode:				 readMode,
 		grpcDialOption:          security.LoadClientTLS(util.GetViper(), "grpc.volume"),
 		compactionBytePerSecond: int64(compactionMBPerSecond) * 1024 * 1024,
 		fileSizeLimitBytes:      int64(fileSizeLimitMB) * 1024 * 1024,
