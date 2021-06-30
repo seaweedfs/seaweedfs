@@ -144,17 +144,17 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		file.dirtyMetadata = true
 	}
 
-	if req.Valid.Mode() {
+	if req.Valid.Mode() && entry.Attributes.FileMode != uint32(req.Mode){
 		entry.Attributes.FileMode = uint32(req.Mode)
 		file.dirtyMetadata = true
 	}
 
-	if req.Valid.Uid() {
+	if req.Valid.Uid() && entry.Attributes.Uid != req.Uid {
 		entry.Attributes.Uid = req.Uid
 		file.dirtyMetadata = true
 	}
 
-	if req.Valid.Gid() {
+	if req.Valid.Gid() && entry.Attributes.Gid != req.Gid {
 		entry.Attributes.Gid = req.Gid
 		file.dirtyMetadata = true
 	}
@@ -164,7 +164,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		file.dirtyMetadata = true
 	}
 
-	if req.Valid.Mtime() {
+	if req.Valid.Mtime() && entry.Attributes.Mtime != req.Mtime.Unix() {
 		entry.Attributes.Mtime = req.Mtime.Unix()
 		file.dirtyMetadata = true
 	}
