@@ -144,7 +144,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		file.dirtyMetadata = true
 	}
 
-	if req.Valid.Mode() && entry.Attributes.FileMode != uint32(req.Mode){
+	if req.Valid.Mode() && entry.Attributes.FileMode != uint32(req.Mode) {
 		entry.Attributes.FileMode = uint32(req.Mode)
 		file.dirtyMetadata = true
 	}

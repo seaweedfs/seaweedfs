@@ -51,7 +51,7 @@ type VolumeServerOptions struct {
 	indexType               *string
 	diskType                *string
 	fixJpgOrientation       *bool
-	readMode            	*string
+	readMode                *string
 	cpuProfile              *string
 	memProfile              *string
 	compactionMBPerSecond   *int

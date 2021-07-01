@@ -110,7 +110,7 @@ func runUpload(cmd *Command, args []string) bool {
 		})
 		if err != nil {
 			fmt.Println(err.Error())
-			return false;
+			return false
 		}
 	} else {
 		parts, e := operation.NewFileParts(args)

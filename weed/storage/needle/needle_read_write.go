@@ -52,7 +52,7 @@ func (n *Needle) prepareWriteBuffer(version Version, writeBytes *bytes.Buffer) (
 		writeBytes.Write(n.Data)
 		padding := PaddingLength(n.Size, version)
 		util.Uint32toBytes(header[0:NeedleChecksumSize], n.Checksum.Value())
-		writeBytes.Write(header[0:NeedleChecksumSize+padding])
+		writeBytes.Write(header[0 : NeedleChecksumSize+padding])
 		return size, actualSize, nil
 	case Version2, Version3:
 		header := make([]byte, NeedleHeaderSize+TimestampSize) // adding timestamp to reuse it and avoid extra allocation
@@ -104,7 +104,7 @@ func (n *Needle) prepareWriteBuffer(version Version, writeBytes *bytes.Buffer) (
 			}
 			if n.HasLastModifiedDate() {
 				util.Uint64toBytes(header[0:8], n.LastModified)
-				writeBytes.Write(header[8-LastModifiedBytesLength:8])
+				writeBytes.Write(header[8-LastModifiedBytesLength : 8])
 			}
 			if n.HasTtl() && n.Ttl != nil {
 				n.Ttl.ToBytes(header[0:TtlBytesLength])
@@ -119,11 +119,11 @@ func (n *Needle) prepareWriteBuffer(version Version, writeBytes *bytes.Buffer) (
 		padding := PaddingLength(n.Size, version)
 		util.Uint32toBytes(header[0:NeedleChecksumSize], n.Checksum.Value())
 		if version == Version2 {
-			writeBytes.Write(header[0:NeedleChecksumSize+padding])
+			writeBytes.Write(header[0 : NeedleChecksumSize+padding])
 		} else {
 			// version3
 			util.Uint64toBytes(header[NeedleChecksumSize:NeedleChecksumSize+TimestampSize], n.AppendAtNs)
-			writeBytes.Write(header[0:NeedleChecksumSize+TimestampSize+padding])
+			writeBytes.Write(header[0 : NeedleChecksumSize+TimestampSize+padding])
 		}
 
 		return Size(n.DataSize), GetActualSize(n.Size, version), nil

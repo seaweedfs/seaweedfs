@@ -143,7 +143,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		maxTimeout = time.Second * 10
 		startTime  = time.Now()
 	)
-	
+
 	for time.Now().Sub(startTime) < maxTimeout {
 		fid, count, dn, err := ms.Topo.PickForWrite(req.Count, option)
 		if err == nil {

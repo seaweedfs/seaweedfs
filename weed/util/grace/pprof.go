@@ -21,21 +21,21 @@ func SetupProfiling(cpuProfile, memProfile string) {
 			pprof.StopCPUProfile()
 
 			// write block pprof
-			blockF, err := os.Create(cpuProfile+".block")
+			blockF, err := os.Create(cpuProfile + ".block")
 			if err != nil {
 				return
 			}
 			p := pprof.Lookup("block")
-			p.WriteTo(blockF,0)
+			p.WriteTo(blockF, 0)
 			blockF.Close()
 
 			// write mutex pprof
-			mutexF, err := os.Create(cpuProfile+".mutex")
+			mutexF, err := os.Create(cpuProfile + ".mutex")
 			if err != nil {
 				return
 			}
 			p = pprof.Lookup("mutex")
-			p.WriteTo(mutexF,0)
+			p.WriteTo(mutexF, 0)
 			mutexF.Close()
 
 		})

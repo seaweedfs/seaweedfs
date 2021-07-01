@@ -65,7 +65,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 		lookupResult, err := operation.Lookup(vs.GetMaster, volumeId.String())
 		glog.V(2).Infoln("volume", volumeId, "found on", lookupResult, "error", err)
-		if err != nil || len(lookupResult.Locations) <= 0{
+		if err != nil || len(lookupResult.Locations) <= 0 {
 			glog.V(0).Infoln("lookup error:", err, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 			return

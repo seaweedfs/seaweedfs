@@ -97,7 +97,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 	ms := &MasterServer{
 		option:          option,
 		preallocateSize: preallocateSize,
-		vgCh:            make(chan *topology.VolumeGrowRequest, 1 << 6),
+		vgCh:            make(chan *topology.VolumeGrowRequest, 1<<6),
 		clientChans:     make(map[string]chan *master_pb.VolumeLocation),
 		grpcDialOption:  grpcDialOption,
 		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "master", option.Host, 0, "", peers),

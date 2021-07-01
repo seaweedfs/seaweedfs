@@ -2,10 +2,10 @@ package command
 
 import (
 	"fmt"
-	"strings"
-	"strconv"
-	"time"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 )
 
 func init() {
@@ -13,7 +13,7 @@ func init() {
 }
 
 type parameter struct {
-	name string
+	name  string
 	value string
 }
 
@@ -42,7 +42,7 @@ func runFuse(cmd *Command, args []string) bool {
 				option.Reset()
 			}
 
-		// dash separator read option until next space
+			// dash separator read option until next space
 		} else if rawArgs[i] == '-' {
 			for i++; i < rawArgsLen && rawArgs[i] != ' '; i++ {
 				option.WriteByte(rawArgs[i])
@@ -50,7 +50,7 @@ func runFuse(cmd *Command, args []string) bool {
 			options = append(options, parameter{option.String(), "true"})
 			option.Reset()
 
-		// equal separator start option with pending value
+			// equal separator start option with pending value
 		} else if rawArgs[i] == '=' {
 			name := option.String()
 			option.Reset()
@@ -62,13 +62,13 @@ func runFuse(cmd *Command, args []string) bool {
 						option.WriteByte(rawArgs[i])
 					}
 
-				// single quote separator read option until next single quote
+					// single quote separator read option until next single quote
 				} else if rawArgs[i] == '\'' {
 					for i++; i < rawArgsLen && rawArgs[i] != '\''; i++ {
 						option.WriteByte(rawArgs[i])
 					}
 
-				// add chars before comma
+					// add chars before comma
 				} else if rawArgs[i] != ' ' {
 					option.WriteByte(rawArgs[i])
 				}
@@ -77,12 +77,12 @@ func runFuse(cmd *Command, args []string) bool {
 			options = append(options, parameter{name, option.String()})
 			option.Reset()
 
-		// comma separator just read current option
+			// comma separator just read current option
 		} else if rawArgs[i] == ',' {
 			options = append(options, parameter{option.String(), "true"})
 			option.Reset()
 
-		// what is not a separator fill option buffer
+			// what is not a separator fill option buffer
 		} else {
 			option.WriteByte(rawArgs[i])
 		}
@@ -99,7 +99,7 @@ func runFuse(cmd *Command, args []string) bool {
 	for i := 0; i < len(options); i++ {
 		parameter := options[i]
 
-		switch parameter.name  {
+		switch parameter.name {
 		case "child":
 			masterProcess = false
 		case "arg0":
@@ -198,9 +198,9 @@ func runFuse(cmd *Command, args []string) bool {
 		arg0 := os.Args[0]
 		argv := append(os.Args, "-o", "child")
 
-		attr := os.ProcAttr{}		
-		attr.Env = os.Environ() 
-		
+		attr := os.ProcAttr{}
+		attr.Env = os.Environ()
+
 		child, err := os.StartProcess(arg0, argv, &attr)
 
 		if err != nil {
@@ -232,7 +232,7 @@ func runFuse(cmd *Command, args []string) bool {
 
 var cmdFuse = &Command{
 	UsageLine: "fuse /mnt/mount/point -o \"filer=localhost:8888,filer.path=/\"",
-	Short: "Allow use weed with linux's mount command",
+	Short:     "Allow use weed with linux's mount command",
 	Long: `Allow use weed with linux's mount command
 
   You can use -t weed on mount command:

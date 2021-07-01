@@ -54,7 +54,7 @@ func (list *WrittenIntervalLinkedList) ReadData(buf []byte, start, stop int64) {
 		nodeStart, nodeStop := max(start, t.DataOffset), min(stop, t.DataOffset+t.Size)
 		if nodeStart < nodeStop {
 			// glog.V(4).Infof("copying start=%d stop=%d t=[%d,%d) => bufSize=%d nodeStart=%d, nodeStop=%d", start, stop, t.DataOffset, t.DataOffset+t.Size, len(buf), nodeStart, nodeStop)
-			list.tempFile.ReadAt(buf[nodeStart-start:nodeStop-start], t.TempOffset + nodeStart - t.DataOffset)
+			list.tempFile.ReadAt(buf[nodeStart-start:nodeStop-start], t.TempOffset+nodeStart-t.DataOffset)
 		}
 
 		if t.Next == nil {

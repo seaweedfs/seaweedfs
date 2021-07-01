@@ -123,7 +123,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 			Count:  writableVolumeCount,
 			ErrCh:  errCh,
 		}
-		if err := <- errCh; err != nil {
+		if err := <-errCh; err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("cannot grow volume group! %v", err))
 			return
 		}
