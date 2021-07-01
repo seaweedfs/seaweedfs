@@ -208,6 +208,7 @@ message AtomicRenameEntryRequest {
     string old_name = 2;
     string new_directory = 3;
     string new_name = 4;
+    repeated int32 signatures = 5;
 }
 
 message AtomicRenameEntryResponse {

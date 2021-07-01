@@ -25,7 +25,20 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	lastReadTime := time.Unix(0, req.SinceNs)
 	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-	eachEventNotificationFn := fs.eachEventNotificationFn(req, stream, clientName, req.Signature)
+	t := fs.eachEventNotificationFn(req, stream, clientName, req.Signature)
+
+	eachEventNotificationFn := func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+		found := false
+		for _, sig := range eventNotification.Signatures {
+			if req.Signature == sig {
+				found = true
+			}
+		}
+		if !found {
+			glog.V(0).Infof("fresh message for %s(%d) %s %s", clientName, req.Signature, dirPath, eventNotification.String())
+		}
+		return t(dirPath, eventNotification, tsNs)
+	}
 
 	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
 

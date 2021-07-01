@@ -3,14 +3,12 @@ package meta_cache
 import (
 	"context"
 	"fmt"
-	"os"
-	"sync"
-
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/filer/leveldb"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/bounded_tree"
+	"os"
 )
 
 // need to have logic similar to FilerStoreWrapper
@@ -18,7 +16,7 @@ import (
 
 type MetaCache struct {
 	localStore filer.VirtualFilerStore
-	sync.RWMutex
+	// sync.RWMutex
 	visitedBoundary *bounded_tree.BoundedTree
 	uidGidMapper    *UidGidMapper
 	invalidateFunc  func(util.FullPath)
@@ -54,8 +52,8 @@ func openMetaStore(dbFolder string) filer.VirtualFilerStore {
 }
 
 func (mc *MetaCache) InsertEntry(ctx context.Context, entry *filer.Entry) error {
-	mc.Lock()
-	defer mc.Unlock()
+	//mc.Lock()
+	//defer mc.Unlock()
 	return mc.doInsertEntry(ctx, entry)
 }
 
@@ -64,8 +62,8 @@ func (mc *MetaCache) doInsertEntry(ctx context.Context, entry *filer.Entry) erro
 }
 
 func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath util.FullPath, newEntry *filer.Entry) error {
-	mc.Lock()
-	defer mc.Unlock()
+	//mc.Lock()
+	//defer mc.Unlock()
 
 	oldDir, _ := oldPath.DirAndName()
 	if mc.visitedBoundary.HasVisited(util.FullPath(oldDir)) {
@@ -97,14 +95,14 @@ func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath uti
 }
 
 func (mc *MetaCache) UpdateEntry(ctx context.Context, entry *filer.Entry) error {
-	mc.Lock()
-	defer mc.Unlock()
+	//mc.Lock()
+	//defer mc.Unlock()
 	return mc.localStore.UpdateEntry(ctx, entry)
 }
 
 func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *filer.Entry, err error) {
-	mc.RLock()
-	defer mc.RUnlock()
+	//mc.RLock()
+	//defer mc.RUnlock()
 	entry, err = mc.localStore.FindEntry(ctx, fp)
 	if err != nil {
 		return nil, err
@@ -114,14 +112,14 @@ func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *fi
 }
 
 func (mc *MetaCache) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {
-	mc.Lock()
-	defer mc.Unlock()
+	//mc.Lock()
+	//defer mc.Unlock()
 	return mc.localStore.DeleteEntry(ctx, fp)
 }
 
 func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) error {
-	mc.RLock()
-	defer mc.RUnlock()
+	//mc.RLock()
+	//defer mc.RUnlock()
 
 	if !mc.visitedBoundary.HasVisited(dirPath) {
 		return fmt.Errorf("unsynchronized dir: %v", dirPath)
@@ -138,8 +136,8 @@ func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.Full
 }
 
 func (mc *MetaCache) Shutdown() {
-	mc.Lock()
-	defer mc.Unlock()
+	//mc.Lock()
+	//defer mc.Unlock()
 	mc.localStore.Shutdown()
 }
 
