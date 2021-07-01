@@ -141,7 +141,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	var node fs.Node
 	if isDirectory {
 		node = dir.newDirectory(util.NewFullPath(dir.FullPath(), req.Name))
-		return node, nil, nil
+		return node, node, nil
 	}
 
 	node = dir.newFile(req.Name)
