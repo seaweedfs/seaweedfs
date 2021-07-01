@@ -23,6 +23,7 @@ func runFuse(cmd *Command, args []string) bool {
 	option := strings.Builder{}
 	options := []parameter{}
 	masterProcess := true
+	fusermountPath := ""
 
 	// first parameter
 	i := 0
@@ -187,6 +188,8 @@ func runFuse(cmd *Command, args []string) bool {
 			} else {
 				panic(fmt.Errorf("readRetryTime: %s", err))
 			}
+		case "fusermount.path":
+			fusermountPath = parameter.value
 		}
 	}
 
@@ -211,6 +214,16 @@ func runFuse(cmd *Command, args []string) bool {
 		}
 
 		return true
+	}
+
+	if fusermountPath != "" {
+		if err := os.Setenv("PATH", fusermountPath); err != nil {
+			panic(fmt.Errorf("setenv: %s", err))
+		}
+	} else if os.Getenv("PATH") == "" {
+		if err := os.Setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin"); err != nil {
+			panic(fmt.Errorf("setenv: %s", err))
+		}
 	}
 
 	// just call "weed mount" command
