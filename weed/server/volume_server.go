@@ -17,6 +17,10 @@ import (
 )
 
 type VolumeServer struct {
+	inFlightDataSize      int64
+	concurrentUploadLimit int64
+	inFlightDataLimitCond *sync.Cond
+
 	SeedMasterNodes []string
 	currentMaster   string
 	pulseSeconds    int
@@ -35,10 +39,6 @@ type VolumeServer struct {
 	fileSizeLimitBytes      int64
 	isHeartbeating          bool
 	stopChan                chan bool
-
-	inFlightDataSize      int64
-	inFlightDataLimitCond *sync.Cond
-	concurrentUploadLimit int64
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
