@@ -71,6 +71,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		return nil, s3err.ErrNoSuchUpload
 	}
 
+	pentry, err := s3a.getEntry(s3a.genUploadsFolder(*input.Bucket),*input.UploadId)
+	if err != nil {
+		glog.Errorf("completeMultipartUpload %s %s error: %v", *input.Bucket, *input.UploadId, err)
+		return nil, s3err.ErrNoSuchUpload
+	}
+
 	var finalParts []*filer_pb.FileChunk
 	var offset int64
 
@@ -106,7 +112,16 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		dirName = dirName[:len(dirName)-1]
 	}
 
-	err = s3a.mkFile(dirName, entryName, finalParts)
+	err = s3a.mkFile(dirName, entryName, finalParts,func(entry *filer_pb.Entry) {
+		if entry.Extended == nil {
+			entry.Extended = make(map[string][]byte)
+		}
+		for k,v := range pentry.Extended{
+			if k != "key" {
+				entry.Extended[k] = v
+			}
+		}
+	})
 
 	if err != nil {
 		glog.Errorf("completeMultipartUpload %s/%s error: %v", dirName, entryName, err)

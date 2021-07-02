@@ -236,7 +236,7 @@ func Mkdir(filerClient FilerClient, parentDirectoryPath string, dirName string, 
 	})
 }
 
-func MkFile(filerClient FilerClient, parentDirectoryPath string, fileName string, chunks []*FileChunk) error {
+func MkFile(filerClient FilerClient, parentDirectoryPath string, fileName string, chunks []*FileChunk, fn func(entry *Entry)) error {
 	return filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
 
 		entry := &Entry{
@@ -250,6 +250,10 @@ func MkFile(filerClient FilerClient, parentDirectoryPath string, fileName string
 				Gid:      OS_GID,
 			},
 			Chunks: chunks,
+		}
+
+		if fn != nil {
+			fn(entry)
 		}
 
 		request := &CreateEntryRequest{
