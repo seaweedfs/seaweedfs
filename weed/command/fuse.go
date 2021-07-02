@@ -55,14 +55,14 @@ func runFuse(cmd *Command, args []string) bool {
 			name := option.String()
 			option.Reset()
 
-			for i++; i < rawArgsLen && rawArgs[i] != ','; i++ {
+			for i++; i < rawArgsLen && rawArgs[i] != ',' && rawArgs[i] != ' '; i++ {
 				// double quote separator read option until next double quote
 				if rawArgs[i] == '"' {
 					for i++; i < rawArgsLen && rawArgs[i] != '"'; i++ {
 						option.WriteByte(rawArgs[i])
 					}
 
-					// single quote separator read option until next single quote
+				// single quote separator read option until next single quote
 				} else if rawArgs[i] == '\'' {
 					for i++; i < rawArgsLen && rawArgs[i] != '\''; i++ {
 						option.WriteByte(rawArgs[i])
