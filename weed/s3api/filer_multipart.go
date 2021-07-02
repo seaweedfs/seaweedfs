@@ -35,6 +35,9 @@ func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInp
 			entry.Extended = make(map[string][]byte)
 		}
 		entry.Extended["key"] = []byte(*input.Key)
+		for k, v := range input.Metadata {
+			entry.Extended[k] = []byte(*v)
+		}
 	}); err != nil {
 		glog.Errorf("NewMultipartUpload error: %v", err)
 		return nil, s3err.ErrInternalError

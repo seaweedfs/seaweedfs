@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -24,10 +25,18 @@ const (
 func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, object := getBucketAndObject(r)
 
-	response, errCode := s3a.createMultipartUpload(&s3.CreateMultipartUploadInput{
-		Bucket: aws.String(bucket),
-		Key:    objectKey(aws.String(object)),
-	})
+	createMultipartUploadInput := &s3.CreateMultipartUploadInput{
+		Bucket:   aws.String(bucket),
+		Key:      objectKey(aws.String(object)),
+		Metadata: make(map[string]*string),
+	}
+
+	metadata := weed_server.SaveAmzMetaData(r, nil, false)
+	for k, v := range metadata {
+		createMultipartUploadInput.Metadata[k] = aws.String(string(v))
+	}
+
+	response, errCode := s3a.createMultipartUpload(createMultipartUploadInput)
 
 	glog.V(2).Info("NewMultipartUploadHandler", s3err.EncodeXMLResponse(response), errCode)
 
