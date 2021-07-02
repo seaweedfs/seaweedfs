@@ -15,9 +15,9 @@ func (s3a *S3ApiServer) mkdir(parentDirectoryPath string, dirName string, fn fun
 
 }
 
-func (s3a *S3ApiServer) mkFile(parentDirectoryPath string, fileName string, chunks []*filer_pb.FileChunk) error {
+func (s3a *S3ApiServer) mkFile(parentDirectoryPath string, fileName string, chunks []*filer_pb.FileChunk, fn func(entry *filer_pb.Entry)) error {
 
-	return filer_pb.MkFile(s3a, parentDirectoryPath, fileName, chunks)
+	return filer_pb.MkFile(s3a, parentDirectoryPath, fileName, chunks,fn)
 
 }
 
