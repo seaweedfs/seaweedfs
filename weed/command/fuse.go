@@ -195,7 +195,11 @@ func runFuse(cmd *Command, args []string) bool {
 
 	// the master start the child, release it then finish himself
 	if masterProcess {
-		arg0 := os.Args[0]
+		arg0, err := os.Executable()
+		if err != nil {
+			panic(err)
+		}
+
 		argv := append(os.Args, "-o", "child")
 
 		attr := os.ProcAttr{}
