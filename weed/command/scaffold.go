@@ -217,6 +217,8 @@ username=""
 password=""
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
+# Name of the datacenter local to this filer, used as host selection fallback.
+localDC=""
 
 [hbase]
 enabled = false

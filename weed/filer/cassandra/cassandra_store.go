@@ -32,6 +32,7 @@ func (store *CassandraStore) Initialize(configuration util.Configuration, prefix
 		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetStringSlice(prefix+"superLargeDirectories"),
+		configuration.GetString(prefix+"localDC"),
 	)
 }
 
@@ -40,13 +41,19 @@ func (store *CassandraStore) isSuperLargeDirectory(dir string) (dirHash string, 
 	return
 }
 
-func (store *CassandraStore) initialize(keyspace string, hosts []string, username string, password string, superLargeDirectories []string) (err error) {
+func (store *CassandraStore) initialize(keyspace string, hosts []string, username string, password string, superLargeDirectories []string, localDC string) (err error) {
 	store.cluster = gocql.NewCluster(hosts...)
 	if username != "" && password != "" {
 		store.cluster.Authenticator = gocql.PasswordAuthenticator{Username: username, Password: password}
 	}
 	store.cluster.Keyspace = keyspace
+	fallback := gocql.RoundRobinHostPolicy()
+	if localDC != "" {
+		fallback = gocql.DCAwareRoundRobinPolicy(localDC)
+	}
+	store.cluster.PoolConfig.HostSelectionPolicy = gocql.TokenAwareHostPolicy(fallback)
 	store.cluster.Consistency = gocql.LocalQuorum
+
 	store.session, err = store.cluster.CreateSession()
 	if err != nil {
 		glog.V(0).Infof("Failed to open cassandra store, hosts %v, keyspace %s", hosts, keyspace)
