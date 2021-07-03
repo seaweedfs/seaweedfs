@@ -63,18 +63,6 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 		return fuse.EIO
 	}
 
-	// change file handle
-	dir.wfs.handlesLock.Lock()
-	defer dir.wfs.handlesLock.Unlock()
-	inodeId := oldPath.AsInode()
-	existingHandle, found := dir.wfs.handles[inodeId]
-	glog.V(4).Infof("has open filehandle %s: %v", oldPath, found)
-	if !found || existingHandle == nil {
-		return nil
-	}
-	glog.V(4).Infof("opened filehandle %s => %s", oldPath, newPath)
-	delete(dir.wfs.handles, inodeId)
-	dir.wfs.handles[newPath.AsInode()] = existingHandle
 
 	return nil
 }
@@ -83,10 +71,12 @@ func (dir *Dir) moveEntry(ctx context.Context, oldParent util.FullPath, entry *f
 
 	oldName := entry.Name()
 
+	oldPath := oldParent.Child(oldName)
+	newPath := newParent.Child(newName)
 	if err := dir.moveSelfEntry(ctx, oldParent, entry, newParent, newName, func() error {
 
-		oldFsNode := NodeWithId(oldParent.Child(oldName).AsInode())
-		newFsNode := NodeWithId(newParent.Child(newName).AsInode())
+		oldFsNode := NodeWithId(oldPath.AsInode())
+		newFsNode := NodeWithId(newPath.AsInode())
 		newDirNode, found := dir.wfs.Server.FindInternalNode(NodeWithId(newParent.AsInode()))
 		var newDir *Dir
 		if found {
@@ -111,6 +101,16 @@ func (dir *Dir) moveEntry(ctx context.Context, oldParent util.FullPath, entry *f
 			}
 		})
 
+		// change file handle
+		inodeId := oldPath.AsInode()
+		dir.wfs.handlesLock.Lock()
+		if existingHandle, found := dir.wfs.handles[inodeId]; found && existingHandle == nil {
+			glog.V(4).Infof("opened file handle %s => %s", oldPath, newPath)
+			delete(dir.wfs.handles, inodeId)
+			dir.wfs.handles[newPath.AsInode()] = existingHandle
+		}
+		dir.wfs.handlesLock.Unlock()
+
 		if entry.IsDirectory() {
 			if err := dir.moveFolderSubEntries(ctx, oldParent, oldName, newParent, newName); err != nil {
 				return err
@@ -118,7 +118,7 @@ func (dir *Dir) moveEntry(ctx context.Context, oldParent util.FullPath, entry *f
 		}
 		return nil
 	}); err != nil {
-		return fmt.Errorf("fail to move %s => %s: %v", oldParent.Child(oldName), newParent.Child(newName), err)
+		return fmt.Errorf("fail to move %s => %s: %v", oldPath, newPath, err)
 	}
 
 	return nil
