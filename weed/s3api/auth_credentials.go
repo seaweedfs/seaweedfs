@@ -190,7 +190,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		return identity, s3Err
 	}
 
-	glog.V(3).Infof("user name: %v actions: %v", identity.Name, identity.Actions)
+	glog.V(3).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
 
 	bucket, _ := getBucketAndObject(r)
 
