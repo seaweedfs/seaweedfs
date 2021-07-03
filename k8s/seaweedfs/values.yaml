@@ -175,8 +175,8 @@ volume:
   # Volume server's data center name
   dataCenter: null
 
-  # Redirect moved or non-local volumes. (default true)
-  readRedirect: true
+  # Redirect moved or non-local volumes. (default proxy)
+  readMode: proxy
 
   # Comma separated Ip addresses having write permission. No limit if empty.
   whiteList: null

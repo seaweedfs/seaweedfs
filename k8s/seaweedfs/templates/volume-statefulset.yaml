@@ -110,7 +110,7 @@ spec:
                 -dataCenter={{ .Values.volume.dataCenter }} \
                 {{- end }}
                 -ip.bind={{ .Values.volume.ipBind }} \
-                -read.redirect={{ .Values.volume.readRedirect }} \
+                -readMode={{ .Values.volume.readMode }} \
                 {{- if .Values.volume.whiteList }}
                 -whiteList={{ .Values.volume.whiteList }} \
                 {{- end }}
