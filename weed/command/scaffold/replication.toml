@@ -5,7 +5,6 @@
 #    ./replication.toml
 #    $HOME/.seaweedfs/replication.toml
 #    /etc/seaweedfs/replication.toml
-
 [source.filer]  # deprecated. Only useful with "weed filer.replicate"
 enabled = true
 grpcAddress = "localhost:18888"
@@ -13,14 +12,12 @@ grpcAddress = "localhost:18888"
 # this is not a directory on your hard drive, but on your filer.
 # i.e., all files with this "prefix" are sent to notification message queue.
 directory = "/buckets"
-
 [sink.local]
 enabled = false
 directory = "/data"
 # all replicated files are under modified time as yyyy-mm-dd directories
 # so each date directory contains all new and updated files.
 is_incremental = false
-
 [sink.filer]
 enabled = false
 grpcAddress = "localhost:18888"
@@ -32,7 +29,6 @@ replication = ""
 collection = ""
 ttlSec = 0
 is_incremental = false
-
 [sink.s3]
 # read credentials doc at https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/sessions.html
 # default loads credentials from the shared credentials file (~/.aws/credentials).
@@ -44,7 +40,6 @@ bucket = "your_bucket_name"    # an existing bucket
 directory = "/"                # destination directory
 endpoint = ""
 is_incremental = false
-
 [sink.google_cloud_storage]
 # read credentials doc at https://cloud.google.com/docs/authentication/getting-started
 enabled = false
@@ -52,7 +47,6 @@ google_application_credentials = "/path/to/x.json" # path to json credential fil
 bucket = "your_bucket_seaweedfs"    # an existing bucket
 directory = "/"                     # destination directory
 is_incremental = false
-
 [sink.azure]
 # experimental, let me know if it works
 enabled = false
@@ -61,7 +55,6 @@ account_key = ""
 container = "mycontainer"      # an existing container
 directory = "/"                # destination directory
 is_incremental = false
-
 [sink.backblaze]
 enabled = false
 b2_account_id = ""
@@ -69,3 +62,4 @@ b2_master_application_key = ""
 bucket = "mybucket"            # an existing bucket
 directory = "/"                # destination directory
 is_incremental = false
+

@@ -4,7 +4,6 @@
 #    ./notification.toml
 #    $HOME/.seaweedfs/notification.toml
 #    /etc/seaweedfs/notification.toml
-
 ####################################################
 # notification
 # send and receive filer updates for each file to an external message queue
@@ -12,8 +11,6 @@
 [notification.log]
 # this is only for debugging perpose and does not work with "weed filer.replicate"
 enabled = false
-
-
 [notification.kafka]
 enabled = false
 hosts = [
@@ -22,8 +19,6 @@ hosts = [
 topic = "seaweedfs_filer"
 offsetFile = "./last.offset"
 offsetSaveIntervalSeconds = 10
-
-
 [notification.aws_sqs]
 # experimental, let me know if it works
 enabled = false
@@ -31,15 +26,12 @@ aws_access_key_id = ""        # if empty, loads from the shared credentials file
 aws_secret_access_key = ""        # if empty, loads from the shared credentials file (~/.aws/credentials).
 region = "us-east-2"
 sqs_queue_name = "my_filer_queue" # an existing queue name
-
-
 [notification.google_pub_sub]
 # read credentials doc at https://cloud.google.com/docs/authentication/getting-started
 enabled = false
 google_application_credentials = "/path/to/x.json" # path to json credential file
 project_id = ""                       # an existing project id
 topic = "seaweedfs_filer_topic"       # a topic, auto created if does not exists
-
 [notification.gocdk_pub_sub]
 # The Go Cloud Development Kit (https://gocloud.dev).
 # PubSub API (https://godoc.org/gocloud.dev/pubsub).
@@ -51,4 +43,4 @@ enabled = false
 # the RabbitMQ management plugin. Сreate myexchange of type fanout and myqueue then
 # create binding myexchange => myqueue
 topic_url = "rabbit://myexchange"
-sub_url = "rabbit://myqueue"
+
