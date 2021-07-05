@@ -18,10 +18,10 @@ const (
 )
 
 type ExclusiveLocker struct {
-	masterClient *wdclient.MasterClient
 	token        int64
 	lockTsNs     int64
 	isLocking    bool
+	masterClient *wdclient.MasterClient
 }
 
 func NewExclusiveLocker(masterClient *wdclient.MasterClient) *ExclusiveLocker {
