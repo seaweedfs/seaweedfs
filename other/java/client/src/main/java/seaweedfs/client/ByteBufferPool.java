@@ -10,7 +10,7 @@ import java.util.List;
 
 public class ByteBufferPool {
 
-    private static final int MIN_BUFFER_SIZE = 8 * 1024 * 1024;
+    private static final int MIN_BUFFER_SIZE = 1 * 1024 * 1024;
     private static final Logger LOG = LoggerFactory.getLogger(ByteBufferPool.class);
 
     private static final List<ByteBuffer> bufferList = new ArrayList<>();
