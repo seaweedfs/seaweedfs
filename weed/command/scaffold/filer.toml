@@ -1,0 +1,234 @@
+# A sample TOML config file for SeaweedFS filer store
+# Used with "weed filer" or "weed server -filer"
+# Put this file to one of the location, with descending priority
+#    ./filer.toml
+#    $HOME/.seaweedfs/filer.toml
+#    /etc/seaweedfs/filer.toml
+
+####################################################
+# Customizable filer server options
+####################################################
+[filer.options]
+# with http DELETE, by default the filer would check whether a folder is empty.
+# recursive_delete will delete all sub folders and files, similar to "rm -Rf"
+recursive_delete = false
+# directories under this folder will be automatically creating a separate bucket
+buckets_folder = "/buckets"
+
+####################################################
+# The following are filer store options
+####################################################
+
+[leveldb2]
+# local on disk, mostly for simple single-machine setup, fairly scalable
+# faster than previous leveldb, recommended.
+enabled = true
+dir = "./filerldb2"                    # directory to store level db files
+
+[leveldb3]
+# similar to leveldb2.
+# each bucket has its own meta store.
+enabled = false
+dir = "./filerldb3"                    # directory to store level db files
+
+[rocksdb]
+# local on disk, similar to leveldb
+# since it is using a C wrapper, you need to install rocksdb and build it by yourself
+enabled = false
+dir = "./filerrdb"                    # directory to store rocksdb files
+
+[sqlite]
+# local on disk, similar to leveldb
+enabled = false
+dbFile = "./filer.db"                # sqlite db file
+
+[mysql]  # or memsql, tidb
+# CREATE TABLE IF NOT EXISTS filemeta (
+#   dirhash     BIGINT               COMMENT 'first 64 bits of MD5 hash value of directory field',
+#   name        VARCHAR(1000) BINARY COMMENT 'directory or file name',
+#   directory   TEXT                 COMMENT 'full path to parent directory',
+#   meta        LONGBLOB,
+#   PRIMARY KEY (dirhash, name)
+# ) DEFAULT CHARSET=utf8;
+
+enabled = false
+hostname = "localhost"
+port = 3306
+username = "root"
+password = ""
+database = ""              # create or use an existing database
+connection_max_idle = 2
+connection_max_open = 100
+connection_max_lifetime_seconds = 0
+interpolateParams = false
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+enableUpsert = true
+upsertQuery = """INSERT INTO ` + "`%s`" + ` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
+
+[mysql2]  # or memsql, tidb
+enabled = false
+createTable = """
+  CREATE TABLE IF NOT EXISTS ` + "`%s`" + ` (
+    dirhash BIGINT,
+    name VARCHAR(1000) BINARY,
+    directory TEXT,
+    meta LONGBLOB,
+    PRIMARY KEY (dirhash, name)
+  ) DEFAULT CHARSET=utf8;
+"""
+hostname = "localhost"
+port = 3306
+username = "root"
+password = ""
+database = ""              # create or use an existing database
+connection_max_idle = 2
+connection_max_open = 100
+connection_max_lifetime_seconds = 0
+interpolateParams = false
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+enableUpsert = true
+upsertQuery = """INSERT INTO ` + "`%s`" + ` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
+
+[postgres] # or cockroachdb, YugabyteDB
+# CREATE TABLE IF NOT EXISTS filemeta (
+#   dirhash     BIGINT,
+#   name        VARCHAR(65535),
+#   directory   VARCHAR(65535),
+#   meta        bytea,
+#   PRIMARY KEY (dirhash, name)
+# );
+enabled = false
+hostname = "localhost"
+port = 5432
+username = "postgres"
+password = ""
+database = "postgres"          # create or use an existing database
+schema = ""
+sslmode = "disable"
+connection_max_idle = 100
+connection_max_open = 100
+connection_max_lifetime_seconds = 0
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+enableUpsert = true
+upsertQuery = """INSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT (dirhash,name) DO UPDATE SET meta = EXCLUDED.meta WHERE "%[1]s".meta != EXCLUDED.meta"""
+
+[postgres2]
+enabled = false
+createTable = """
+  CREATE TABLE IF NOT EXISTS "%s" (
+    dirhash   BIGINT,
+    name      VARCHAR(65535),
+    directory VARCHAR(65535),
+    meta      bytea,
+    PRIMARY KEY (dirhash, name)
+  );
+"""
+hostname = "localhost"
+port = 5432
+username = "postgres"
+password = ""
+database = "postgres"          # create or use an existing database
+schema = ""
+sslmode = "disable"
+connection_max_idle = 100
+connection_max_open = 100
+connection_max_lifetime_seconds = 0
+# if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
+enableUpsert = true
+upsertQuery = """INSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT (dirhash,name) DO UPDATE SET meta = EXCLUDED.meta WHERE "%[1]s".meta != EXCLUDED.meta"""
+
+[cassandra]
+# CREATE TABLE filemeta (
+#    directory varchar,
+#    name varchar,
+#    meta blob,
+#    PRIMARY KEY (directory, name)
+# ) WITH CLUSTERING ORDER BY (name ASC);
+enabled = false
+keyspace = "seaweedfs"
+hosts = [
+    "localhost:9042",
+]
+username = ""
+password = ""
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
+# Name of the datacenter local to this filer, used as host selection fallback.
+localDC = ""
+
+[hbase]
+enabled = false
+zkquorum = ""
+table = "seaweedfs"
+
+[redis2]
+enabled = false
+address = "localhost:6379"
+password = ""
+database = 0
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
+
+[redis_cluster2]
+enabled = false
+addresses = [
+    "localhost:30001",
+    "localhost:30002",
+    "localhost:30003",
+    "localhost:30004",
+    "localhost:30005",
+    "localhost:30006",
+]
+password = ""
+# allows reads from slave servers or the master, but all writes still go to the master
+readOnly = false
+# automatically use the closest Redis server for reads
+routeByLatency = false
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
+
+[etcd]
+enabled = false
+servers = "localhost:2379"
+timeout = "3s"
+
+[mongodb]
+enabled = false
+uri = "mongodb://localhost:27017"
+option_pool_size = 0
+database = "seaweedfs"
+
+[elastic7]
+enabled = false
+servers = [
+    "http://localhost1:9200",
+    "http://localhost2:9200",
+    "http://localhost3:9200",
+]
+username = ""
+password = ""
+sniff_enabled = false
+healthcheck_enabled = false
+# increase the value is recommend, be sure the value in Elastic is greater or equal here
+index.max_result_window = 10000
+
+
+
+##########################
+##########################
+# To add path-specific filer store:
+#
+# 1. Add a name following the store type separated by a dot ".". E.g., cassandra.tmp
+# 2. Add a location configuraiton. E.g., location = "/tmp/"
+# 3. Copy and customize all other configurations.
+#     Make sure they are not the same if using the same store type!
+# 4. Set enabled to true
+#
+# The following is just using redis as an example
+##########################
+[redis2.tmp]
+enabled = false
+location = "/tmp/"
+address = "localhost:6379"
+password = ""
+database = 1

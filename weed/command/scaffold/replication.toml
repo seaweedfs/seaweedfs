@@ -1,0 +1,71 @@
+# A sample TOML config file for replicating SeaweedFS filer
+# Used with "weed filer.backup"
+# Using with "weed filer.replicate" is deprecated.
+# Put this file to one of the location, with descending priority
+#    ./replication.toml
+#    $HOME/.seaweedfs/replication.toml
+#    /etc/seaweedfs/replication.toml
+
+[source.filer]  # deprecated. Only useful with "weed filer.replicate"
+enabled = true
+grpcAddress = "localhost:18888"
+# all files under this directory tree are replicated.
+# this is not a directory on your hard drive, but on your filer.
+# i.e., all files with this "prefix" are sent to notification message queue.
+directory = "/buckets"
+
+[sink.local]
+enabled = false
+directory = "/data"
+# all replicated files are under modified time as yyyy-mm-dd directories
+# so each date directory contains all new and updated files.
+is_incremental = false
+
+[sink.filer]
+enabled = false
+grpcAddress = "localhost:18888"
+# all replicated files are under this directory tree
+# this is not a directory on your hard drive, but on your filer.
+# i.e., all received files will be "prefixed" to this directory.
+directory = "/backup"
+replication = ""
+collection = ""
+ttlSec = 0
+is_incremental = false
+
+[sink.s3]
+# read credentials doc at https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/sessions.html
+# default loads credentials from the shared credentials file (~/.aws/credentials).
+enabled = false
+aws_access_key_id = ""         # if empty, loads from the shared credentials file (~/.aws/credentials).
+aws_secret_access_key = ""     # if empty, loads from the shared credentials file (~/.aws/credentials).
+region = "us-east-2"
+bucket = "your_bucket_name"    # an existing bucket
+directory = "/"                # destination directory
+endpoint = ""
+is_incremental = false
+
+[sink.google_cloud_storage]
+# read credentials doc at https://cloud.google.com/docs/authentication/getting-started
+enabled = false
+google_application_credentials = "/path/to/x.json" # path to json credential file
+bucket = "your_bucket_seaweedfs"    # an existing bucket
+directory = "/"                     # destination directory
+is_incremental = false
+
+[sink.azure]
+# experimental, let me know if it works
+enabled = false
+account_name = ""
+account_key = ""
+container = "mycontainer"      # an existing container
+directory = "/"                # destination directory
+is_incremental = false
+
+[sink.backblaze]
+enabled = false
+b2_account_id = ""
+b2_master_application_key = ""
+bucket = "mybucket"            # an existing bucket
+directory = "/"                # destination directory
+is_incremental = false
