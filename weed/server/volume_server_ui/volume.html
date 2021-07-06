@@ -133,6 +133,7 @@
         </table>
     </div>
 
+    {{ if isNotEmpty .RemoteVolumes }}
     <div class="row">
         <h2>Remote Volumes</h2>
         <table class="table table-striped">
@@ -162,7 +163,9 @@
             </tbody>
         </table>
     </div>
+    {{ end }}
 
+    {{ if isNotEmpty .EcVolumes }}
     <div class="row">
         <h2>Erasure Coding Shards</h2>
         <table class="table table-striped">
@@ -188,7 +191,7 @@
             </tbody>
         </table>
     </div>
-
+    {{ end }}
 </div>
 </body>
 </html>
