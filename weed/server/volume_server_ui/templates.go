@@ -25,6 +25,7 @@ var funcMap = template.FuncMap{
 	"join":                 join,
 	"bytesToHumanReadable": util.BytesToHumanReadable,
 	"percentFrom":          percentFrom,
+	"isNotEmpty":           util.IsNotEmpty,
 }
 
 //go:embed volume.html
