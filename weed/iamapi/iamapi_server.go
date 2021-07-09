@@ -96,8 +96,8 @@ func (iam IamS3ApiConfigure) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfigurat
 
 func (iam IamS3ApiConfigure) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
 	buf := bytes.Buffer{}
-	if err := filer.S3ConfigurationToText(&buf, s3cfg); err != nil {
-		return fmt.Errorf("S3ConfigurationToText: %s", err)
+	if err := filer.ProtoToText(&buf, s3cfg); err != nil {
+		return fmt.Errorf("ProtoToText: %s", err)
 	}
 	return pb.WithGrpcFilerClient(
 		iam.option.FilerGrpcAddress,
