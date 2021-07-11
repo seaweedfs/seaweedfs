@@ -206,7 +206,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(volumeIdToVInfo map[u
 
 		if verbose {
 			for _, fid := range orphanFileIds {
-				fmt.Fprintf(writer, "%sxxxxxxxx\n", fid)
+				fmt.Fprintf(writer, "%s\n", fid)
 			}
 		}
 
@@ -410,7 +410,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(tempFolder stri
 	var orphanFileCount uint64
 	db.AscendingVisit(func(n needle_map.NeedleValue) error {
 		// fmt.Printf("%d,%x\n", volumeId, n.Key)
-		orphanFileIds = append(orphanFileIds, fmt.Sprintf("%d,%s", volumeId, n.Key.String()))
+		orphanFileIds = append(orphanFileIds, fmt.Sprintf("%d,%s00000000", volumeId, n.Key.String()))
 		orphanFileCount++
 		orphanDataSize += uint64(n.Size)
 		return nil
