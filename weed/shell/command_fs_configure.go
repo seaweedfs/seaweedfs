@@ -30,17 +30,17 @@ func (c *commandFsConfigure) Help() string {
 	fs.configure
 
 	# trying the changes and see the possible configuration file content
-	fs.configure -locationPrfix=/my/folder -collection=abc
-	fs.configure -locationPrfix=/my/folder -collection=abc -ttl=7d
+	fs.configure -locationPrefix=/my/folder -collection=abc
+	fs.configure -locationPrefix=/my/folder -collection=abc -ttl=7d
 
 	# example: configure adding only 1 physical volume for each bucket collection
-	fs.configure -locationPrfix=/buckets/ -volumeGrowthCount=1
+	fs.configure -locationPrefix=/buckets/ -volumeGrowthCount=1
 
 	# apply the changes
-	fs.configure -locationPrfix=/my/folder -collection=abc -apply
+	fs.configure -locationPrefix=/my/folder -collection=abc -apply
 
 	# delete the changes
-	fs.configure -locationPrfix=/my/folder -delete -apply
+	fs.configure -locationPrefix=/my/folder -delete -apply
 
 `
 }
