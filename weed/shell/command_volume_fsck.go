@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"io"
 	"io/ioutil"
 	"math"
@@ -214,8 +215,14 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(volumeIdToVInfo map[u
 			if vinfo.isEcVolume {
 				fmt.Fprintf(writer, "Skip purging for Erasure Coded volumes.\n")
 			}
-			if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds, writer); err != nil {
-				return fmt.Errorf("purge for volume %d: %v\n", volumeId, err)
+			if inUseCount == 0 {
+				if err := deleteVolume(c.env.option.GrpcDialOption, needle.VolumeId(volumeId), vinfo.server); err != nil {
+					return fmt.Errorf("delete volume %d: %v\n", volumeId, err)
+				}
+			} else {
+				if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds, writer); err != nil {
+					return fmt.Errorf("purge for volume %d: %v\n", volumeId, err)
+				}
 			}
 		}
 	}
