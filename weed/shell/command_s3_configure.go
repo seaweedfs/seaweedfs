@@ -164,7 +164,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	buf.Reset()
-	filer.S3ConfigurationToText(&buf, s3cfg)
+	filer.ProtoToText(&buf, s3cfg)
 
 	fmt.Fprintf(writer, string(buf.Bytes()))
 	fmt.Fprintln(writer)

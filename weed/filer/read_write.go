@@ -2,13 +2,9 @@ package filer
 
 import (
 	"bytes"
-	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"io/ioutil"
 	"math"
-	"net/http"
 	"time"
 )
 
@@ -31,50 +27,17 @@ func ReadEntry(masterClient *wdclient.MasterClient, filerClient filer_pb.Seaweed
 
 }
 
-func ReadContent(filerAddress string, dir, name string) ([]byte, error) {
-
-	target := fmt.Sprintf("http://%s%s/%s", filerAddress, dir, name)
-
-	data, _, err := util.Get(target)
-
-	return data, err
-}
-
-func SaveAs(host string, port int, dir, name string, contentType string, byteBuffer *bytes.Buffer) error {
-	var target string
-	if port == 0 {
-		target = fmt.Sprintf("http://%s%s/%s", host, dir, name)
-	} else {
-		target = fmt.Sprintf("http://%s:%d%s/%s", host, port, dir, name)
+func ReadInsideFiler(filerClient filer_pb.SeaweedFilerClient, dir, name string) (content []byte, err error) {
+	request := &filer_pb.LookupDirectoryEntryRequest{
+		Directory: dir,
+		Name:      name,
 	}
-
-	// set the HTTP method, url, and request body
-	req, err := http.NewRequest(http.MethodPut, target, byteBuffer)
+	respLookupEntry, err := filer_pb.LookupEntry(filerClient, request)
 	if err != nil {
-		return err
+		return
 	}
-
-	// set the request header Content-Type for json
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer util.CloseResponse(resp)
-
-	b, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("%s: %s %v", target, resp.Status, string(b))
-	}
-
-	return nil
-
+	content = respLookupEntry.Entry.Content
+	return
 }
 
 func SaveInsideFiler(client filer_pb.SeaweedFilerClient, dir, name string, content []byte) error {
