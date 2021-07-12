@@ -293,6 +293,7 @@ message GetFilerConfigurationResponse {
     int32 signature = 8;
     string metrics_address = 9;
     int32 metrics_interval_sec = 10;
+    string version = 11;
 }
 
 message SubscribeMetadataRequest {

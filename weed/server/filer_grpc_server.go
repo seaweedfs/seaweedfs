@@ -444,6 +444,7 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 		Signature:          fs.filer.Signature,
 		MetricsAddress:     fs.metricsAddress,
 		MetricsIntervalSec: int32(fs.metricsIntervalSec),
+		Version:            util.Version(),
 	}
 
 	glog.V(4).Infof("GetFilerConfiguration: %v", t)
