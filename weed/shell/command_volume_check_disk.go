@@ -150,7 +150,7 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(subtrahend, minuend *needle_m
 
 		needleBlob, err := c.readSourceNeedleBlob(source.location.dataNode.Id, source.info.Id, needleValue)
 		if err != nil {
-			return
+			return hasChanges, err
 		}
 
 		if !applyChanges {
@@ -164,7 +164,7 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(subtrahend, minuend *needle_m
 		hasChanges = true
 
 		if err = c.writeNeedleBlobToTarget(target.location.dataNode.Id, source.info.Id, needleValue, needleBlob); err != nil {
-			return
+			return hasChanges, err
 		}
 
 	}
