@@ -46,6 +46,7 @@ type Store struct {
 	DeletedVolumesChan  chan master_pb.VolumeShortInformationMessage
 	NewEcShardsChan     chan master_pb.VolumeEcShardInformationMessage
 	DeletedEcShardsChan chan master_pb.VolumeEcShardInformationMessage
+	isStopping          bool
 }
 
 func (s *Store) String() (str string) {
@@ -321,6 +322,10 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 }
 
+func (s *Store) SetStopping() {
+	s.isStopping = true
+}
+
 func (s *Store) Close() {
 	for _, location := range s.Locations {
 		location.Close()
@@ -333,7 +338,7 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, fsync boo
 			err = fmt.Errorf("volume %d is read only", i)
 			return
 		}
-		_, _, isUnchanged, err = v.writeNeedle2(n, fsync)
+		_, _, isUnchanged, err = v.writeNeedle2(n, fsync && s.isStopping)
 		return
 	}
 	glog.V(0).Infoln("volume", i, "not found!")
