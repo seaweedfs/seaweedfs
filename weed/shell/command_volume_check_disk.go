@@ -89,25 +89,28 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 				continue
 			}
 
-			// reset index db
-			aDB.Close()
-			bDB.Close()
-			aDB, bDB = needle_map.NewMemDb(), needle_map.NewMemDb()
+			aHasChanges, bHasChanges := true, true
+			for aHasChanges || bHasChanges {
+				// reset index db
+				aDB.Close()
+				bDB.Close()
+				aDB, bDB = needle_map.NewMemDb(), needle_map.NewMemDb()
 
-			// read index db
-			if err := c.readIndexDatabase(aDB, a.info.Collection, a.info.Id, a.location.dataNode.Id, *verbose, writer); err != nil {
-				return err
-			}
-			if err := c.readIndexDatabase(bDB, b.info.Collection, b.info.Id, b.location.dataNode.Id, *verbose, writer); err != nil {
-				return err
-			}
+				// read index db
+				if err := c.readIndexDatabase(aDB, a.info.Collection, a.info.Id, a.location.dataNode.Id, *verbose, writer); err != nil {
+					return err
+				}
+				if err := c.readIndexDatabase(bDB, b.info.Collection, b.info.Id, b.location.dataNode.Id, *verbose, writer); err != nil {
+					return err
+				}
 
-			// find and make up the differnces
-			if err := c.doVolumeCheckDisk(aDB, bDB, a, b, *verbose, writer, *applyChanges, *nonRepairThreshold); err != nil {
-				return err
-			}
-			if err := c.doVolumeCheckDisk(bDB, aDB, b, a, *verbose, writer, *applyChanges, *nonRepairThreshold); err != nil {
-				return err
+				// find and make up the differences
+				if aHasChanges, err = c.doVolumeCheckDisk(aDB, bDB, a, b, *verbose, writer, *applyChanges, *nonRepairThreshold); err != nil {
+					return err
+				}
+				if bHasChanges, err = c.doVolumeCheckDisk(bDB, aDB, b, a, *verbose, writer, *applyChanges, *nonRepairThreshold); err != nil {
+					return err
+				}
 			}
 			replicas = replicas[1:]
 		}
@@ -116,7 +119,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	return nil
 }
 
-func (c *commandVolumeCheckDisk) doVolumeCheckDisk(subtrahend, minuend *needle_map.MemDb, source, target *VolumeReplica, verbose bool, writer io.Writer, applyChanges bool, nonRepairThreshold float64) error {
+func (c *commandVolumeCheckDisk) doVolumeCheckDisk(subtrahend, minuend *needle_map.MemDb, source, target *VolumeReplica, verbose bool, writer io.Writer, applyChanges bool, nonRepairThreshold float64) (hasChanges bool, err error) {
 
 	// find missing keys
 	// hash join, can be more efficient
@@ -133,12 +136,12 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(subtrahend, minuend *needle_m
 	fmt.Fprintf(writer, "volume %d %s has %d entries, %s missed %d entries\n", source.info.Id, source.location.dataNode.Id, counter, target.location.dataNode.Id, len(missingNeedles))
 
 	if counter == 0 || len(missingNeedles) == 0 {
-		return nil
+		return false, nil
 	}
 
 	missingNeedlesFraction := float64(len(missingNeedles)) / float64(counter)
 	if missingNeedlesFraction > nonRepairThreshold {
-		return fmt.Errorf(
+		return false, fmt.Errorf(
 			"failed to start repair volume %d, percentage of missing keys is greater than the threshold: %.2f > %.2f",
 			source.info.Id, missingNeedlesFraction, nonRepairThreshold)
 	}
@@ -147,7 +150,7 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(subtrahend, minuend *needle_m
 
 		needleBlob, err := c.readSourceNeedleBlob(source.location.dataNode.Id, source.info.Id, needleValue)
 		if err != nil {
-			return err
+			return
 		}
 
 		if !applyChanges {
@@ -158,13 +161,15 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(subtrahend, minuend *needle_m
 			fmt.Fprintf(writer, "read %d,%x %s => %s \n", source.info.Id, needleValue.Key, source.location.dataNode.Id, target.location.dataNode.Id)
 		}
 
-		if err := c.writeNeedleBlobToTarget(target.location.dataNode.Id, source.info.Id, needleValue, needleBlob); err != nil {
-			return err
+		hasChanges = true
+
+		if err = c.writeNeedleBlobToTarget(target.location.dataNode.Id, source.info.Id, needleValue, needleBlob); err != nil {
+			return
 		}
 
 	}
 
-	return nil
+	return
 }
 
 func (c *commandVolumeCheckDisk) readSourceNeedleBlob(sourceVolumeServer string, volumeId uint32, needleValue needle_map.NeedleValue) (needleBlob []byte, err error) {
