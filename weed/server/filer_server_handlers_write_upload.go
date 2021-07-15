@@ -28,19 +28,14 @@ var bufPool = sync.Pool{
 	},
 }
 
-func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Request, reader io.Reader, chunkSize int32, fileName, contentType string, contentLength int64, so *operation.StorageOption) ([]*filer_pb.FileChunk, hash.Hash, int64, error, []byte) {
+func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Request, reader io.Reader, chunkSize int32, fileName, contentType string, contentLength int64, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, chunkOffset int64, uploadErr error, smallContent []byte) {
 
-	md5Hash := md5.New()
+	md5Hash = md5.New()
 	var partReader = ioutil.NopCloser(io.TeeReader(reader, md5Hash))
-
-	chunkOffset := int64(0)
-	var smallContent []byte
-	var uploadErr error
 
 	var wg sync.WaitGroup
 	var bytesBufferCounter int64
 	bytesBufferLimitCond := sync.NewCond(new(sync.Mutex))
-	var fileChunks []*filer_pb.FileChunk
 	var fileChunksLock sync.Mutex
 	for {
 
@@ -67,7 +62,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			bufPool.Put(bytesBuffer)
 			atomic.AddInt64(&bytesBufferCounter, -1)
 			bytesBufferLimitCond.Signal()
-			return nil, md5Hash, 0, err, nil
+			break
 		}
 		if chunkOffset == 0 && !isAppend(r) {
 			if dataSize < fs.option.SaveToFilerLimit || strings.HasPrefix(r.URL.Path, filer.DirectoryEtcRoot) {
