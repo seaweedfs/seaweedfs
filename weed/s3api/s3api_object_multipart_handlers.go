@@ -38,7 +38,7 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 
 	response, errCode := s3a.createMultipartUpload(createMultipartUploadInput)
 
-	glog.V(2).Info("NewMultipartUploadHandler", s3err.EncodeXMLResponse(response), errCode)
+	glog.V(2).Info("NewMultipartUploadHandler", string(s3err.EncodeXMLResponse(response)), errCode)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, errCode, r)
@@ -62,7 +62,7 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 		UploadId: aws.String(uploadID),
 	})
 
-	glog.V(2).Info("CompleteMultipartUploadHandler", s3err.EncodeXMLResponse(response), errCode)
+	glog.V(2).Info("CompleteMultipartUploadHandler", string(s3err.EncodeXMLResponse(response)), errCode)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, errCode, r)
@@ -91,7 +91,7 @@ func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	glog.V(2).Info("AbortMultipartUploadHandler", s3err.EncodeXMLResponse(response))
+	glog.V(2).Info("AbortMultipartUploadHandler", string(s3err.EncodeXMLResponse(response)))
 
 	writeSuccessResponseXML(w, response)
 
@@ -124,7 +124,7 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 		UploadIdMarker: aws.String(uploadIDMarker),
 	})
 
-	glog.V(2).Info("ListMultipartUploadsHandler", s3err.EncodeXMLResponse(response), errCode)
+	glog.V(2).Info("ListMultipartUploadsHandler", string(s3err.EncodeXMLResponse(response)), errCode)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, errCode, r)
@@ -158,7 +158,7 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 		UploadId:         aws.String(uploadID),
 	})
 
-	glog.V(2).Info("ListObjectPartsHandler", s3err.EncodeXMLResponse(response), errCode)
+	glog.V(2).Info("ListObjectPartsHandler", string(s3err.EncodeXMLResponse(response)), errCode)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, errCode, r)
