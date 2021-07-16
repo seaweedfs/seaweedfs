@@ -52,6 +52,7 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 	volumeServer := vsEvacuateCommand.String("node", "", "<host>:<port> of the volume server")
 	skipNonMoveable := vsEvacuateCommand.Bool("skipNonMoveable", false, "skip volumes that can not be moved")
 	applyChange := vsEvacuateCommand.Bool("force", false, "actually apply the changes")
+	retryCount := vsEvacuateCommand.Int("retry", 0, "how many times to retry")
 	if err = vsEvacuateCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -60,7 +61,13 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 		return fmt.Errorf("need to specify volume server by -node=<host>:<port>")
 	}
 
-	return volumeServerEvacuate(commandEnv, *volumeServer, *skipNonMoveable, *applyChange, writer)
+	for i:=0;i<*retryCount+1;i++{
+		if err = volumeServerEvacuate(commandEnv, *volumeServer, *skipNonMoveable, *applyChange, writer); err == nil {
+			return nil
+		}
+	}
+
+	return
 
 }
 
