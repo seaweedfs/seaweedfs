@@ -89,33 +89,40 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 				continue
 			}
 
-			aHasChanges, bHasChanges := true, true
-			for aHasChanges || bHasChanges {
-				// reset index db
-				aDB.Close()
-				bDB.Close()
-				aDB, bDB = needle_map.NewMemDb(), needle_map.NewMemDb()
-
-				// read index db
-				if err := c.readIndexDatabase(aDB, a.info.Collection, a.info.Id, a.location.dataNode.Id, *verbose, writer); err != nil {
-					return err
-				}
-				if err := c.readIndexDatabase(bDB, b.info.Collection, b.info.Id, b.location.dataNode.Id, *verbose, writer); err != nil {
-					return err
-				}
-
-				// find and make up the differences
-				if aHasChanges, err = c.doVolumeCheckDisk(aDB, bDB, a, b, *verbose, writer, *applyChanges, *nonRepairThreshold); err != nil {
-					return err
-				}
-				if bHasChanges, err = c.doVolumeCheckDisk(bDB, aDB, b, a, *verbose, writer, *applyChanges, *nonRepairThreshold); err != nil {
-					return err
-				}
+			if err := c.syncTwoReplicas(aDB, bDB, a, verbose, writer, b, err, applyChanges, nonRepairThreshold); err != nil {
+				fmt.Fprintf(writer, "snyc volume %d on %s and %s: %v\n", a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id, err)
 			}
 			replicas = replicas[1:]
 		}
 	}
 
+	return nil
+}
+
+func (c *commandVolumeCheckDisk) syncTwoReplicas(aDB *needle_map.MemDb, bDB *needle_map.MemDb, a *VolumeReplica, verbose *bool, writer io.Writer, b *VolumeReplica, err error, applyChanges *bool, nonRepairThreshold *float64) error {
+	aHasChanges, bHasChanges := true, true
+	for aHasChanges || bHasChanges {
+		// reset index db
+		aDB.Close()
+		bDB.Close()
+		aDB, bDB = needle_map.NewMemDb(), needle_map.NewMemDb()
+
+		// read index db
+		if err := c.readIndexDatabase(aDB, a.info.Collection, a.info.Id, a.location.dataNode.Id, *verbose, writer); err != nil {
+			return err
+		}
+		if err := c.readIndexDatabase(bDB, b.info.Collection, b.info.Id, b.location.dataNode.Id, *verbose, writer); err != nil {
+			return err
+		}
+
+		// find and make up the differences
+		if aHasChanges, err = c.doVolumeCheckDisk(aDB, bDB, a, b, *verbose, writer, *applyChanges, *nonRepairThreshold); err != nil {
+			return err
+		}
+		if bHasChanges, err = c.doVolumeCheckDisk(bDB, aDB, b, a, *verbose, writer, *applyChanges, *nonRepairThreshold); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
