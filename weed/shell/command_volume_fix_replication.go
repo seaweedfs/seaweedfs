@@ -157,61 +157,69 @@ func (c *commandVolumeFixReplication) fixOverReplicatedVolumes(commandEnv *Comma
 func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *CommandEnv, writer io.Writer, takeAction bool, underReplicatedVolumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, allLocations []location) error {
 
 	for _, vid := range underReplicatedVolumeIds {
-		replicas := volumeReplicas[vid]
-		replica := pickOneReplicaToCopyFrom(replicas)
-		replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
-		foundNewLocation := false
-		hasSkippedCollection := false
-		keepDataNodesSorted(allLocations, types.ToDiskType(replica.info.DiskType))
-		fn := capacityByFreeVolumeCount(types.ToDiskType(replica.info.DiskType))
-		for _, dst := range allLocations {
-			// check whether data nodes satisfy the constraints
-			if fn(dst.dataNode) > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
-				// check collection name pattern
-				if *c.collectionPattern != "" {
-					matched, err := filepath.Match(*c.collectionPattern, replica.info.Collection)
-					if err != nil {
-						return fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
-					}
-					if !matched {
-						hasSkippedCollection = true
-						break
-					}
+		err := c.fixOneUnderReplicatedVolume(commandEnv, writer, takeAction, volumeReplicas, vid, allLocations)
+		if err != nil {
+			return err
+		}
+
+	}
+	return nil
+}
+
+func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *CommandEnv, writer io.Writer, takeAction bool, volumeReplicas map[uint32][]*VolumeReplica, vid uint32, allLocations []location) error {
+	replicas := volumeReplicas[vid]
+	replica := pickOneReplicaToCopyFrom(replicas)
+	replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
+	foundNewLocation := false
+	hasSkippedCollection := false
+	keepDataNodesSorted(allLocations, types.ToDiskType(replica.info.DiskType))
+	fn := capacityByFreeVolumeCount(types.ToDiskType(replica.info.DiskType))
+	for _, dst := range allLocations {
+		// check whether data nodes satisfy the constraints
+		if fn(dst.dataNode) > 0 && satisfyReplicaPlacement(replicaPlacement, replicas, dst) {
+			// check collection name pattern
+			if *c.collectionPattern != "" {
+				matched, err := filepath.Match(*c.collectionPattern, replica.info.Collection)
+				if err != nil {
+					return fmt.Errorf("match pattern %s with collection %s: %v", *c.collectionPattern, replica.info.Collection, err)
 				}
-
-				// ask the volume server to replicate the volume
-				foundNewLocation = true
-				fmt.Fprintf(writer, "replicating volume %d %s from %s to dataNode %s ...\n", replica.info.Id, replicaPlacement, replica.location.dataNode.Id, dst.dataNode.Id)
-
-				if !takeAction {
+				if !matched {
+					hasSkippedCollection = true
 					break
 				}
+			}
 
-				err := operation.WithVolumeServerClient(dst.dataNode.Id, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-					_, replicateErr := volumeServerClient.VolumeCopy(context.Background(), &volume_server_pb.VolumeCopyRequest{
-						VolumeId:       replica.info.Id,
-						SourceDataNode: replica.location.dataNode.Id,
-					})
-					if replicateErr != nil {
-						return fmt.Errorf("copying from %s => %s : %v", replica.location.dataNode.Id, dst.dataNode.Id, replicateErr)
-					}
-					return nil
-				})
+			// ask the volume server to replicate the volume
+			foundNewLocation = true
+			fmt.Fprintf(writer, "replicating volume %d %s from %s to dataNode %s ...\n", replica.info.Id, replicaPlacement, replica.location.dataNode.Id, dst.dataNode.Id)
 
-				if err != nil {
-					return err
-				}
-
-				// adjust free volume count
-				dst.dataNode.DiskInfos[replica.info.DiskType].FreeVolumeCount--
+			if !takeAction {
 				break
 			}
-		}
 
-		if !foundNewLocation && !hasSkippedCollection {
-			fmt.Fprintf(writer, "failed to place volume %d replica as %s, existing:%+v\n", replica.info.Id, replicaPlacement, len(replicas))
-		}
+			err := operation.WithVolumeServerClient(dst.dataNode.Id, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+				_, replicateErr := volumeServerClient.VolumeCopy(context.Background(), &volume_server_pb.VolumeCopyRequest{
+					VolumeId:       replica.info.Id,
+					SourceDataNode: replica.location.dataNode.Id,
+				})
+				if replicateErr != nil {
+					return fmt.Errorf("copying from %s => %s : %v", replica.location.dataNode.Id, dst.dataNode.Id, replicateErr)
+				}
+				return nil
+			})
 
+			if err != nil {
+				return err
+			}
+
+			// adjust free volume count
+			dst.dataNode.DiskInfos[replica.info.DiskType].FreeVolumeCount--
+			break
+		}
+	}
+
+	if !foundNewLocation && !hasSkippedCollection {
+		fmt.Fprintf(writer, "failed to place volume %d replica as %s, existing:%+v\n", replica.info.Id, replicaPlacement, len(replicas))
 	}
 	return nil
 }
