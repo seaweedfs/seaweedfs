@@ -35,11 +35,11 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		stats.FilerRequestCounter.WithLabelValues("get").Inc()
-		fs.GetOrHeadHandler(w, r, true)
+		fs.GetOrHeadHandler(w, r)
 		stats.FilerRequestHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds())
 	case "HEAD":
 		stats.FilerRequestCounter.WithLabelValues("head").Inc()
-		fs.GetOrHeadHandler(w, r, false)
+		fs.GetOrHeadHandler(w, r)
 		stats.FilerRequestHistogram.WithLabelValues("head").Observe(time.Since(start).Seconds())
 	case "DELETE":
 		stats.FilerRequestCounter.WithLabelValues("delete").Inc()
@@ -95,11 +95,11 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 	switch r.Method {
 	case "GET":
 		stats.FilerRequestCounter.WithLabelValues("get").Inc()
-		fs.GetOrHeadHandler(w, r, true)
+		fs.GetOrHeadHandler(w, r)
 		stats.FilerRequestHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds())
 	case "HEAD":
 		stats.FilerRequestCounter.WithLabelValues("head").Inc()
-		fs.GetOrHeadHandler(w, r, false)
+		fs.GetOrHeadHandler(w, r)
 		stats.FilerRequestHistogram.WithLabelValues("head").Observe(time.Since(start).Seconds())
 	case "OPTIONS":
 		stats.FilerRequestCounter.WithLabelValues("options").Inc()

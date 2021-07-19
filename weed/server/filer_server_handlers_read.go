@@ -21,7 +21,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
+func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
 
 	path := r.URL.Path
 	isForDirectory := strings.HasSuffix(path, "/")
