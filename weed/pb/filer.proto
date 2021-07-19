@@ -374,3 +374,11 @@ message FilerConf {
     }
     repeated PathConf locations = 2;
 }
+
+message RemoteConf {
+    string type = 1;
+    string name = 2;
+    string url = 3;
+    string access_key = 4;
+    string secret_key = 5;
+}
