@@ -124,7 +124,7 @@ func (store *CassandraStore) FindEntry(ctx context.Context, fullpath util.FullPa
 	var data []byte
 	if err := store.session.Query(
 		"SELECT meta FROM filemeta WHERE directory=? AND name=?",
-		dir, name).Consistency(gocql.LocalOne).Scan(&data); err != nil {
+		dir, name).Scan(&data); err != nil {
 		if err != gocql.ErrNotFound {
 			return nil, filer_pb.ErrNotFound
 		}
