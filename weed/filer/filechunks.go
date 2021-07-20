@@ -53,7 +53,7 @@ func ETagChunks(chunks []*filer_pb.FileChunk) (etag string) {
 
 func CompactFileChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (compacted, garbage []*filer_pb.FileChunk) {
 
-	visibles, _ := NonOverlappingVisibleIntervals(lookupFileIdFn, chunks)
+	visibles, _ := NonOverlappingVisibleIntervals(lookupFileIdFn, chunks, 0, math.MaxInt64)
 
 	fileIds := make(map[string]bool)
 	for _, interval := range visibles {
@@ -72,11 +72,11 @@ func CompactFileChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks 
 
 func MinusChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk, err error) {
 
-	aData, aMeta, aErr := ResolveChunkManifest(lookupFileIdFn, as)
+	aData, aMeta, aErr := ResolveChunkManifest(lookupFileIdFn, as, 0, math.MaxInt64)
 	if aErr != nil {
 		return nil, aErr
 	}
-	bData, bMeta, bErr := ResolveChunkManifest(lookupFileIdFn, bs)
+	bData, bMeta, bErr := ResolveChunkManifest(lookupFileIdFn, bs, 0, math.MaxInt64)
 	if bErr != nil {
 		return nil, bErr
 	}
@@ -117,7 +117,7 @@ func (cv *ChunkView) IsFullChunk() bool {
 
 func ViewFromChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (views []*ChunkView) {
 
-	visibles, _ := NonOverlappingVisibleIntervals(lookupFileIdFn, chunks)
+	visibles, _ := NonOverlappingVisibleIntervals(lookupFileIdFn, chunks, offset, offset+size)
 
 	return ViewFromVisibleIntervals(visibles, offset, size)
 
@@ -221,9 +221,9 @@ func MergeIntoVisibles(visibles []VisibleInterval, chunk *filer_pb.FileChunk) (n
 
 // NonOverlappingVisibleIntervals translates the file chunk into VisibleInterval in memory
 // If the file chunk content is a chunk manifest
-func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (visibles []VisibleInterval, err error) {
+func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles []VisibleInterval, err error) {
 
-	chunks, _, err = ResolveChunkManifest(lookupFileIdFn, chunks)
+	chunks, _, err = ResolveChunkManifest(lookupFileIdFn, chunks, startOffset, stopOffset)
 
 	sort.Slice(chunks, func(i, j int) bool {
 		if chunks[i].Mtime == chunks[j].Mtime {
