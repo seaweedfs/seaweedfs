@@ -90,7 +90,7 @@ func TestRandomFileChunksCompact(t *testing.T) {
 		}
 	}
 
-	visibles, _ := NonOverlappingVisibleIntervals(nil, chunks)
+	visibles, _ := NonOverlappingVisibleIntervals(nil, chunks, 0, math.MaxInt64)
 
 	for _, v := range visibles {
 		for x := v.start; x < v.stop; x++ {
@@ -227,7 +227,7 @@ func TestIntervalMerging(t *testing.T) {
 
 	for i, testcase := range testcases {
 		log.Printf("++++++++++ merged test case %d ++++++++++++++++++++", i)
-		intervals, _ := NonOverlappingVisibleIntervals(nil, testcase.Chunks)
+		intervals, _ := NonOverlappingVisibleIntervals(nil, testcase.Chunks, 0, math.MaxInt64)
 		for x, interval := range intervals {
 			log.Printf("test case %d, interval %d, start=%d, stop=%d, fileId=%s",
 				i, x, interval.start, interval.stop, interval.fileId)
