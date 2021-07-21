@@ -62,7 +62,7 @@ func runFuse(cmd *Command, args []string) bool {
 						option.WriteByte(rawArgs[i])
 					}
 
-				// single quote separator read option until next single quote
+					// single quote separator read option until next single quote
 				} else if rawArgs[i] == '\'' {
 					for i++; i < rawArgsLen && rawArgs[i] != '\''; i++ {
 						option.WriteByte(rawArgs[i])
@@ -109,7 +109,7 @@ func runFuse(cmd *Command, args []string) bool {
 		case "filer.path":
 			mountOptions.filerMountRootPath = &parameter.value
 		case "dirAutoCreate":
-			if parsed, err := strconv.ParseBool(parameter.value); err != nil {
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
 				mountOptions.dirAutoCreate = &parsed
 			} else {
 				panic(fmt.Errorf("dirAutoCreate: %s", err))
@@ -121,14 +121,14 @@ func runFuse(cmd *Command, args []string) bool {
 		case "disk":
 			mountOptions.diskType = &parameter.value
 		case "ttl":
-			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err != nil {
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
 				intValue := int(parsed)
 				mountOptions.ttlSec = &intValue
 			} else {
 				panic(fmt.Errorf("ttl: %s", err))
 			}
 		case "chunkSizeLimitMB":
-			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err != nil {
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
 				intValue := int(parsed)
 				mountOptions.chunkSizeLimitMB = &intValue
 			} else {
@@ -136,7 +136,7 @@ func runFuse(cmd *Command, args []string) bool {
 			}
 		case "concurrentWriters":
 			i++
-			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err != nil {
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
 				intValue := int(parsed)
 				mountOptions.concurrentWriters = &intValue
 			} else {
@@ -145,7 +145,7 @@ func runFuse(cmd *Command, args []string) bool {
 		case "cacheDir":
 			mountOptions.cacheDir = &parameter.value
 		case "cacheCapacityMB":
-			if parsed, err := strconv.ParseInt(parameter.value, 0, 64); err != nil {
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 64); err == nil {
 				mountOptions.cacheSizeMB = &parsed
 			} else {
 				panic(fmt.Errorf("cacheCapacityMB: %s", err))
@@ -153,7 +153,7 @@ func runFuse(cmd *Command, args []string) bool {
 		case "dataCenter":
 			mountOptions.dataCenter = &parameter.value
 		case "allowOthers":
-			if parsed, err := strconv.ParseBool(parameter.value); err != nil {
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
 				mountOptions.allowOthers = &parsed
 			} else {
 				panic(fmt.Errorf("allowOthers: %s", err))
@@ -161,7 +161,7 @@ func runFuse(cmd *Command, args []string) bool {
 		case "umask":
 			mountOptions.umaskString = &parameter.value
 		case "nonempty":
-			if parsed, err := strconv.ParseBool(parameter.value); err != nil {
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
 				mountOptions.nonempty = &parsed
 			} else {
 				panic(fmt.Errorf("nonempty: %s", err))
@@ -173,7 +173,7 @@ func runFuse(cmd *Command, args []string) bool {
 		case "map.gid":
 			mountOptions.gidMap = &parameter.value
 		case "readOnly":
-			if parsed, err := strconv.ParseBool(parameter.value); err != nil {
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
 				mountOptions.readOnly = &parsed
 			} else {
 				panic(fmt.Errorf("readOnly: %s", err))
@@ -183,7 +183,7 @@ func runFuse(cmd *Command, args []string) bool {
 		case "memprofile":
 			mountMemProfile = &parameter.value
 		case "readRetryTime":
-			if parsed, err := time.ParseDuration(parameter.value); err != nil {
+			if parsed, err := time.ParseDuration(parameter.value); err == nil {
 				mountReadRetryTime = &parsed
 			} else {
 				panic(fmt.Errorf("readRetryTime: %s", err))
