@@ -170,8 +170,8 @@ func (m *LogBuffer) copyToFlush() *dataToFlush {
 			m.lastFlushTime = m.stopTime
 		}
 		m.buf = m.prevBuffers.SealBuffer(m.startTime, m.stopTime, m.buf, m.pos)
-		m.startTime = time.Unix(0,0)
-		m.stopTime = time.Unix(0,0)
+		m.startTime = time.Unix(0, 0)
+		m.stopTime = time.Unix(0, 0)
 		m.pos = 0
 		m.idx = m.idx[:0]
 		return d

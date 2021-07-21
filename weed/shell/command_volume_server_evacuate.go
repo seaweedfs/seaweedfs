@@ -61,7 +61,7 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 		return fmt.Errorf("need to specify volume server by -node=<host>:<port>")
 	}
 
-	for i:=0;i<*retryCount+1;i++{
+	for i := 0; i < *retryCount+1; i++ {
 		if err = volumeServerEvacuate(commandEnv, *volumeServer, *skipNonMoveable, *applyChange, writer); err == nil {
 			return nil
 		}

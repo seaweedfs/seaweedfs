@@ -13,13 +13,13 @@ import (
 )
 
 const (
-	DirectoryEtcRoot       = "/etc"
-	DirectoryEtcSeaweedFS  = "/etc/seaweedfs"
-	DirectoryEtcRemote     = "/etc/remote"
-	FilerConfName          = "filer.conf"
-	IamConfigDirecotry     = "/etc/iam"
-	IamIdentityFile        = "identity.json"
-	IamPoliciesFile        = "policies.json"
+	DirectoryEtcRoot      = "/etc"
+	DirectoryEtcSeaweedFS = "/etc/seaweedfs"
+	DirectoryEtcRemote    = "/etc/remote"
+	FilerConfName         = "filer.conf"
+	IamConfigDirecotry    = "/etc/iam"
+	IamIdentityFile       = "identity.json"
+	IamPoliciesFile       = "policies.json"
 )
 
 type FilerConf struct {

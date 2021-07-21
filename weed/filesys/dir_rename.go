@@ -63,7 +63,6 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 		return fuse.EIO
 	}
 
-
 	return nil
 }
 
