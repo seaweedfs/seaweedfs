@@ -378,7 +378,8 @@ message FilerConf {
 message RemoteConf {
     string type = 1;
     string name = 2;
-    string url = 3;
-    string access_key = 4;
-    string secret_key = 5;
+    string s3_access_key = 4;
+    string s3_secret_key = 5;
+    string s3_region = 6;
+    string s3_endpoint = 7;
 }
