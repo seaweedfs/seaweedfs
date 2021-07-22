@@ -43,5 +43,5 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 }
 
 func IsHiddenSystemEntry(dir, name string) bool {
-	return dir == "/" && name == "topics"
+	return dir == "/" && (name == "topics" || name == "etc")
 }
