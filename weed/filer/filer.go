@@ -19,7 +19,6 @@ import (
 const (
 	LogFlushInterval = time.Minute
 	PaginationSize   = 1024
-	DeleteMaxRows    = 10000
 	FilerStoreId     = "filer.store.id"
 )
 

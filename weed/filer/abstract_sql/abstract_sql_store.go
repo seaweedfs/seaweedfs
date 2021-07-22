@@ -10,7 +10,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"strings"
 	"sync"
-	"time"
 )
 
 type SqlGenerator interface {
@@ -262,7 +261,7 @@ func (store *AbstractSqlStore) DeleteEntry(ctx context.Context, fullpath util.Fu
 	return nil
 }
 
-func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath, limit int64) error {
+func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) error {
 
 	db, bucket, shortPath, err := store.getTxOrDB(ctx, fullpath, true)
 	if err != nil {
@@ -280,22 +279,15 @@ func (store *AbstractSqlStore) DeleteFolderChildren(ctx context.Context, fullpat
 		}
 	}
 
-	for {
-		glog.V(4).Infof("delete %s SQL %s %d", string(shortPath), store.GetSqlDeleteFolderChildren(bucket), util.HashStringToLong(string(shortPath)))
-		res, err := db.ExecContext(ctx, store.GetSqlDeleteFolderChildren(bucket), util.HashStringToLong(string(shortPath)), string(shortPath), limit)
-		if err != nil {
-			return fmt.Errorf("deleteFolderChildren %s: %s", fullpath, err)
-		}
+	glog.V(4).Infof("delete %s SQL %s %d", string(shortPath), store.GetSqlDeleteFolderChildren(bucket), util.HashStringToLong(string(shortPath)))
+	res, err := db.ExecContext(ctx, store.GetSqlDeleteFolderChildren(bucket), util.HashStringToLong(string(shortPath)), string(shortPath))
+	if err != nil {
+		return fmt.Errorf("deleteFolderChildren %s: %s", fullpath, err)
+	}
 
-		rowCount, err := res.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("deleteFolderChildren %s but no rows affected: %s", fullpath, err)
-		}
-		if rowCount < limit {
-			break
-		}
-		// to give the Galera Cluster a chance to breath
-		time.Sleep(time.Second)
+	_, err = res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("deleteFolderChildren %s but no rows affected: %s", fullpath, err)
 	}
 	return nil
 }

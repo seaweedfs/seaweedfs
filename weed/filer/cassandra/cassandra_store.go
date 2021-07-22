@@ -161,7 +161,7 @@ func (store *CassandraStore) DeleteEntry(ctx context.Context, fullpath util.Full
 	return nil
 }
 
-func (store *CassandraStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath, limit int64) error {
+func (store *CassandraStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) error {
 	if _, ok := store.isSuperLargeDirectory(string(fullpath)); ok {
 		return nil // filer.ErrUnsupportedSuperLargeDirectoryListing
 	}
