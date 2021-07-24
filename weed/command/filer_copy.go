@@ -381,6 +381,9 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 				if assignResult.Error != "" {
 					return fmt.Errorf("assign volume failure %v: %v", request, assignResult.Error)
 				}
+				if assignResult.Url == "" {
+					return fmt.Errorf("assign volume failure %v: %v", request, assignResult)
+				}
 				return nil
 			})
 		})
