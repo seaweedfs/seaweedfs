@@ -11,6 +11,8 @@ import (
 	"github.com/disintegration/imaging"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+
+	_ "golang.org/x/image/webp"
 )
 
 func Resized(ext string, read io.ReadSeeker, width, height int, mode string) (resized io.ReadSeeker, w int, h int) {
@@ -47,6 +49,9 @@ func Resized(ext string, read io.ReadSeeker, width, height int, mode string) (re
 			jpeg.Encode(&buf, dstImage, nil)
 		case ".gif":
 			gif.Encode(&buf, dstImage, nil)
+		case ".webp":
+			// Webp does not have golang encoder.
+			png.Encode(&buf, dstImage)
 		}
 		return bytes.NewReader(buf.Bytes()), dstImage.Bounds().Dx(), dstImage.Bounds().Dy()
 	} else {
