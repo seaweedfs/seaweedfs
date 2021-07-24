@@ -264,7 +264,7 @@ func conditionallyResizeImages(originalDataReaderSeeker io.ReadSeeker, ext strin
 }
 
 func shouldResizeImages(ext string, r *http.Request) (width, height int, mode string, shouldResize bool) {
-	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" {
+	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".gif" || ext == ".webp" {
 		if r.FormValue("width") != "" {
 			width, _ = strconv.Atoi(r.FormValue("width"))
 		}
