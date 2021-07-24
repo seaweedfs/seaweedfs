@@ -28,6 +28,7 @@ import (
 const (
 	SequencerType     = "master.sequencer.type"
 	SequencerEtcdUrls = "master.sequencer.sequencer_etcd_urls"
+	SequencerSnowflakeId = "master.sequencer.sequencer_snowflake_id"
 )
 
 type MasterOption struct {
@@ -293,7 +294,8 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 		}
 	case "snowflake":
 		var err error
-		seq, err = sequence.NewSnowflakeSequencer(fmt.Sprintf("%s:%d", option.Host, option.Port))
+		snowflakeId := v.GetInt(SequencerSnowflakeId)
+		seq, err = sequence.NewSnowflakeSequencer(fmt.Sprintf("%s:%d", option.Host, option.Port), snowflakeId)
 		if err != nil {
 			glog.Error(err)
 			seq = nil
