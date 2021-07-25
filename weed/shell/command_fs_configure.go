@@ -62,18 +62,9 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
-	var buf bytes.Buffer
-	if err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		return filer.ReadEntry(commandEnv.MasterClient, client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, &buf)
-	}); err != nil && err != filer_pb.ErrNotFound {
+	fc, err := readFilerConf(commandEnv)
+	if err != nil {
 		return err
-	}
-
-	fc := filer.NewFilerConf()
-	if buf.Len() > 0 {
-		if err = fc.LoadFromBytes(buf.Bytes()); err != nil {
-			return err
-		}
 	}
 
 	if *locationPrefix != "" {
@@ -112,16 +103,16 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 		}
 	}
 
-	buf.Reset()
-	fc.ToText(&buf)
+	var buf2 bytes.Buffer
+	fc.ToText(&buf2)
 
-	fmt.Fprintf(writer, string(buf.Bytes()))
+	fmt.Fprintf(writer, string(buf2.Bytes()))
 	fmt.Fprintln(writer)
 
 	if *apply {
 
 		if err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-			return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
+			return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf2.Bytes())
 		}); err != nil && err != filer_pb.ErrNotFound {
 			return err
 		}
@@ -130,4 +121,21 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	return nil
 
+}
+
+func readFilerConf(commandEnv *CommandEnv) (*filer.FilerConf, error) {
+	var buf bytes.Buffer
+	if err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		return filer.ReadEntry(commandEnv.MasterClient, client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, &buf)
+	}); err != nil && err != filer_pb.ErrNotFound {
+		return nil, fmt.Errorf("read %s/%s: %v", filer.DirectoryEtcSeaweedFS, filer.FilerConfName, err)
+	}
+
+	fc := filer.NewFilerConf()
+	if buf.Len() > 0 {
+		if err := fc.LoadFromBytes(buf.Bytes()); err != nil {
+			return nil, fmt.Errorf("parse %s/%s: %v", filer.DirectoryEtcSeaweedFS, filer.FilerConfName, err)
+		}
+	}
+	return fc, nil
 }
