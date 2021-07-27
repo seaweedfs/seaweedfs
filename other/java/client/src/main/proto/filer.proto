@@ -92,6 +92,12 @@ message ListEntriesResponse {
     Entry entry = 1;
 }
 
+message RemoteEntry {
+    int64 last_modified_at = 1;
+    int64 size = 2;
+    string e_tag = 3;
+    string storage_name = 4;
+}
 message Entry {
     string name = 1;
     bool is_directory = 2;
@@ -102,12 +108,7 @@ message Entry {
     int32 hard_link_counter = 8; // only exists in hard link meta data
     bytes content = 9; // if not empty, the file content
 
-    message Remote {
-        int64 last_modified_at = 1;
-        int64 size = 2;
-        string e_tag = 3;
-    }
-    Remote remote = 10;
+    RemoteEntry remote_entry = 10;
 }
 
 message FullEntry {
