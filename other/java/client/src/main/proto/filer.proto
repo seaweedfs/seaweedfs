@@ -392,10 +392,6 @@ message RemoteConf {
     string s3_endpoint = 7;
 }
 
-message RemoteStorageMappingList {
-    repeated RemoteStorageMapping mappings = 1;
-}
 message RemoteStorageMapping {
-    string dir = 1;
-    string remote_storage_name = 2;
+    map<string,string> mappings = 1;
 }

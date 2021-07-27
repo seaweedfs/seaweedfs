@@ -10,7 +10,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"strings"
 )
 
 func init() {
@@ -45,15 +44,9 @@ type s3RemoteStorageClient struct {
 	conn s3iface.S3API
 }
 
-func (s s3RemoteStorageClient) Traverse(rootDir string, visitFn remote_storage.VisitFunc) (err error) {
-	if !strings.HasPrefix(rootDir, "/") {
-		return fmt.Errorf("remote directory %s should start with /", rootDir)
-	}
-	bucket := strings.Split(rootDir[1:], "/")[0]
-	prefix := rootDir[1+len(bucket):]
-	if len(prefix) > 0 && strings.HasPrefix(prefix, "/") {
-		prefix = prefix[1:]
-	}
+func (s s3RemoteStorageClient) Traverse(remote remote_storage.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
+
+	_, bucket, pathKey := remote.NameBucketPath()
 
 	listInput := &s3.ListObjectsV2Input{
 		Bucket:              aws.String(bucket),
@@ -63,7 +56,7 @@ func (s s3RemoteStorageClient) Traverse(rootDir string, visitFn remote_storage.V
 		ExpectedBucketOwner: nil,
 		FetchOwner:          nil,
 		MaxKeys:             nil, // aws.Int64(1000),
-		Prefix:              aws.String(prefix),
+		Prefix:              aws.String(pathKey[1:]),
 		RequestPayer:        nil,
 		StartAfter:          nil,
 	}
@@ -71,8 +64,13 @@ func (s s3RemoteStorageClient) Traverse(rootDir string, visitFn remote_storage.V
 	for !isLastPage && err == nil {
 		listErr := s.conn.ListObjectsV2Pages(listInput, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
 			for _, content := range page.Contents {
-				key := *content.Key
-				dir, name := util.FullPath("/" + key).DirAndName()
+				key := (*content.Key)
+				if len(pathKey) == 1 {
+					key = "/" + key
+				} else {
+					key = key[len(pathKey)-1:]
+				}
+				dir, name := util.FullPath(key).DirAndName()
 				if err := visitFn(dir, name, false, &filer_pb.RemoteEntry{
 					LastModifiedAt: (*content.LastModified).Unix(),
 					Size:           *content.Size,
@@ -87,7 +85,7 @@ func (s s3RemoteStorageClient) Traverse(rootDir string, visitFn remote_storage.V
 			return true
 		})
 		if listErr != nil {
-			err = fmt.Errorf("list %v: %v", rootDir, listErr)
+			err = fmt.Errorf("list %v: %v", remote, listErr)
 		}
 	}
 	return

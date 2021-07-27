@@ -60,12 +60,12 @@ func (rs *FilerRemoteStorage) loadRemoteStorageConfigurations(filer *Filer) (err
 }
 
 func (rs *FilerRemoteStorage) loadRemoteStorageMountMapping(data []byte) (err error) {
-	mappings := &filer_pb.RemoteStorageMappingList{}
+	mappings := &filer_pb.RemoteStorageMapping{}
 	if err := proto.Unmarshal(data, mappings); err != nil {
 		return fmt.Errorf("unmarshal %s/%s: %v", DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE, err)
 	}
-	for _, mapping := range mappings.Mappings {
-		rs.mapDirectoryToRemoteStorage(util.FullPath(mapping.Dir), mapping.RemoteStorageName)
+	for dir, storageLocation := range mappings.Mappings {
+		rs.mapDirectoryToRemoteStorage(util.FullPath(dir), storageLocation)
 	}
 	return nil
 }
@@ -75,15 +75,17 @@ func (rs *FilerRemoteStorage) mapDirectoryToRemoteStorage(dir util.FullPath, rem
 }
 
 func (rs *FilerRemoteStorage) FindRemoteStorageClient(p util.FullPath) (client remote_storage.RemoteStorageClient, found bool) {
-	var storageName string
+	var storageLocation string
 	rs.rules.MatchPrefix([]byte(p), func(key []byte, value interface{}) bool {
-		storageName = value.(string)
+		storageLocation = value.(string)
 		return true
 	})
 
-	if storageName == "" {
+	if storageLocation == "" {
 		return
 	}
+
+	storageName, _, _ := remote_storage.RemoteStorageLocation(storageLocation).NameBucketPath()
 
 	remoteConf, ok := rs.storageNameToConf[storageName]
 	if !ok {
@@ -95,5 +97,25 @@ func (rs *FilerRemoteStorage) FindRemoteStorageClient(p util.FullPath) (client r
 		found = true
 		return
 	}
+	return
+}
+
+func AddMapping(oldContent []byte, dir string, storageLocation remote_storage.RemoteStorageLocation) (newContent []byte, err error) {
+	mappings := &filer_pb.RemoteStorageMapping{
+		Mappings: make(map[string]string),
+	}
+	if len(oldContent) > 0 {
+		if err = proto.Unmarshal(oldContent, mappings); err != nil {
+			return oldContent, fmt.Errorf("unmarshal existing mappings: %v", err)
+		}
+	}
+
+	// set the new mapping
+	mappings.Mappings[dir] = string(storageLocation)
+
+	if newContent, err = proto.Marshal(mappings); err != nil {
+		return oldContent, fmt.Errorf("unmarshal existing mappings: %v", err)
+	}
+
 	return
 }
