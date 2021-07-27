@@ -344,7 +344,9 @@ message LocateBrokerResponse {
     repeated Resource resources = 2;
 }
 
+/////////////////////////
 // Key-Value operations
+/////////////////////////
 message KvGetRequest {
     bytes key = 1;
 }
@@ -360,7 +362,9 @@ message KvPutResponse {
     string error = 1;
 }
 
+/////////////////////////
 // path-based configurations
+/////////////////////////
 message FilerConf {
     int32 version = 1;
     message PathConf {
@@ -376,6 +380,9 @@ message FilerConf {
     repeated PathConf locations = 2;
 }
 
+/////////////////////////
+// Remote Storage related
+/////////////////////////
 message RemoteConf {
     string type = 1;
     string name = 2;
@@ -383,4 +390,12 @@ message RemoteConf {
     string s3_secret_key = 5;
     string s3_region = 6;
     string s3_endpoint = 7;
+}
+
+message RemoteStorageMappingList {
+    repeated RemoteStorageMapping mappings = 1;
+}
+message RemoteStorageMapping {
+    string dir = 1;
+    string remote_storage_name = 2;
 }

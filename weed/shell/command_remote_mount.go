@@ -7,7 +7,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
-	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/s3"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
 	"io"
@@ -82,7 +81,7 @@ func (c *commandRemoteMount) findRemoteStorageConfiguration(commandEnv *CommandE
 	// read storage configuration data
 	var confBytes []byte
 	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		confBytes, err = filer.ReadInsideFiler(client, filer.DirectoryEtcRemote, storageName)
+		confBytes, err = filer.ReadInsideFiler(client, filer.DirectoryEtcRemote, storageName+filer.REMOTE_STORAGE_CONF_SUFFIX)
 		return err
 	})
 	if err != nil {
