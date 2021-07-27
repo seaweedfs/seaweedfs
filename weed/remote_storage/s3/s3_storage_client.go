@@ -47,6 +47,7 @@ type s3RemoteStorageClient struct {
 func (s s3RemoteStorageClient) Traverse(remote remote_storage.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
 	_, bucket, pathKey := remote.NameBucketPath()
+	pathKey = pathKey[1:]
 
 	listInput := &s3.ListObjectsV2Input{
 		Bucket:              aws.String(bucket),
@@ -56,7 +57,7 @@ func (s s3RemoteStorageClient) Traverse(remote remote_storage.RemoteStorageLocat
 		ExpectedBucketOwner: nil,
 		FetchOwner:          nil,
 		MaxKeys:             nil, // aws.Int64(1000),
-		Prefix:              aws.String(pathKey[1:]),
+		Prefix:              aws.String(pathKey),
 		RequestPayer:        nil,
 		StartAfter:          nil,
 	}
@@ -65,10 +66,10 @@ func (s s3RemoteStorageClient) Traverse(remote remote_storage.RemoteStorageLocat
 		listErr := s.conn.ListObjectsV2Pages(listInput, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
 			for _, content := range page.Contents {
 				key := (*content.Key)
-				if len(pathKey) == 1 {
+				if len(pathKey) == 0 {
 					key = "/" + key
 				} else {
-					key = key[len(pathKey)-1:]
+					key = key[len(pathKey):]
 				}
 				dir, name := util.FullPath(key).DirAndName()
 				if err := visitFn(dir, name, false, &filer_pb.RemoteEntry{
