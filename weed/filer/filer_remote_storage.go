@@ -70,11 +70,11 @@ func (rs *FilerRemoteStorage) loadRemoteStorageMountMapping(data []byte) (err er
 	return nil
 }
 
-func (rs *FilerRemoteStorage) mapDirectoryToRemoteStorage(dir util.FullPath, remoteStorageName string) {
-	rs.rules.Put([]byte(dir+"/"), remoteStorageName)
+func (rs *FilerRemoteStorage) mapDirectoryToRemoteStorage(dir util.FullPath, loc *filer_pb.RemoteStorageLocation) {
+	rs.rules.Put([]byte(dir+"/"), loc)
 }
 
-func (rs *FilerRemoteStorage) FindMountDirectory(p util.FullPath) (mountDir util.FullPath, remoteLocation remote_storage.RemoteStorageLocation) {
+func (rs *FilerRemoteStorage) FindMountDirectory(p util.FullPath) (mountDir util.FullPath, remoteLocation *filer_pb.RemoteStorageLocation) {
 	var storageLocation string
 	rs.rules.MatchPrefix([]byte(p), func(key []byte, value interface{}) bool {
 		mountDir = util.FullPath(string(key))
@@ -84,7 +84,7 @@ func (rs *FilerRemoteStorage) FindMountDirectory(p util.FullPath) (mountDir util
 	if storageLocation == "" {
 		return
 	}
-	remoteLocation = remote_storage.RemoteStorageLocation(storageLocation)
+	remoteLocation = remote_storage.ParseLocation(storageLocation)
 	return
 }
 
@@ -99,9 +99,9 @@ func (rs *FilerRemoteStorage) FindRemoteStorageClient(p util.FullPath) (client r
 		return
 	}
 
-	storageName, _, _ := remote_storage.RemoteStorageLocation(storageLocation).NameBucketPath()
+	loc := remote_storage.ParseLocation(storageLocation)
 
-	return rs.GetRemoteStorageClient(storageName)
+	return rs.GetRemoteStorageClient(loc.Name)
 }
 
 func (rs *FilerRemoteStorage) GetRemoteStorageClient(storageName string) (client remote_storage.RemoteStorageClient, remoteConf *filer_pb.RemoteConf, found bool) {
@@ -118,21 +118,21 @@ func (rs *FilerRemoteStorage) GetRemoteStorageClient(storageName string) (client
 	return
 }
 
-func AddMapping(oldContent []byte, dir string, storageLocation remote_storage.RemoteStorageLocation) (newContent []byte, err error) {
+func AddMapping(oldContent []byte, dir string, storageLocation *filer_pb.RemoteStorageLocation) (newContent []byte, err error) {
 	mappings := &filer_pb.RemoteStorageMapping{
-		Mappings: make(map[string]string),
+		Mappings: make(map[string]*filer_pb.RemoteStorageLocation),
 	}
 	if len(oldContent) > 0 {
 		if err = proto.Unmarshal(oldContent, mappings); err != nil {
-			return oldContent, fmt.Errorf("unmarshal existing mappings: %v", err)
+			glog.Warningf("unmarshal existing mappings: %v", err)
 		}
 	}
 
 	// set the new mapping
-	mappings.Mappings[dir] = string(storageLocation)
+	mappings.Mappings[dir] = storageLocation
 
 	if newContent, err = proto.Marshal(mappings); err != nil {
-		return oldContent, fmt.Errorf("unmarshal existing mappings: %v", err)
+		return oldContent, fmt.Errorf("marshal mappings: %v", err)
 	}
 
 	return

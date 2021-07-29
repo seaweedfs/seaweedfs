@@ -393,5 +393,10 @@ message RemoteConf {
 }
 
 message RemoteStorageMapping {
-    map<string,string> mappings = 1;
+    map<string,RemoteStorageLocation> mappings = 1;
+}
+message RemoteStorageLocation {
+    string name = 1;
+    string bucket = 2;
+    string path = 3;
 }

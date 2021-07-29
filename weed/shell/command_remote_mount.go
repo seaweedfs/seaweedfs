@@ -49,7 +49,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
-	remoteStorageLocation := remote_storage.RemoteStorageLocation(*remote)
+	remoteStorageLocation := remote_storage.ParseLocation(*remote)
 
 	// find configuration for remote storage
 	// remotePath is /<bucket>/path/to/dir
@@ -71,33 +71,30 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	return nil
 }
 
-func (c *commandRemoteMount) findRemoteStorageConfiguration(commandEnv *CommandEnv, writer io.Writer, remote remote_storage.RemoteStorageLocation) (conf *filer_pb.RemoteConf, err error) {
-
-	// find remote configuration
-	storageName, _, _ := remote.NameBucketPath()
+func (c *commandRemoteMount) findRemoteStorageConfiguration(commandEnv *CommandEnv, writer io.Writer, remote *filer_pb.RemoteStorageLocation) (conf *filer_pb.RemoteConf, err error) {
 
 	// read storage configuration data
 	var confBytes []byte
 	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		confBytes, err = filer.ReadInsideFiler(client, filer.DirectoryEtcRemote, storageName+filer.REMOTE_STORAGE_CONF_SUFFIX)
+		confBytes, err = filer.ReadInsideFiler(client, filer.DirectoryEtcRemote, remote.Name+filer.REMOTE_STORAGE_CONF_SUFFIX)
 		return err
 	})
 	if err != nil {
-		err = fmt.Errorf("no remote storage configuration for %s : %v", storageName, err)
+		err = fmt.Errorf("no remote storage configuration for %s : %v", remote.Name, err)
 		return
 	}
 
 	// unmarshal storage configuration
 	conf = &filer_pb.RemoteConf{}
 	if unMarshalErr := proto.Unmarshal(confBytes, conf); unMarshalErr != nil {
-		err = fmt.Errorf("unmarshal %s/%s: %v", filer.DirectoryEtcRemote, storageName, unMarshalErr)
+		err = fmt.Errorf("unmarshal %s/%s: %v", filer.DirectoryEtcRemote, remote.Name, unMarshalErr)
 		return
 	}
 
 	return
 }
 
-func (c *commandRemoteMount) pullMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *filer_pb.RemoteConf, remote remote_storage.RemoteStorageLocation) error {
+func (c *commandRemoteMount) pullMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *filer_pb.RemoteConf, remote *filer_pb.RemoteStorageLocation) error {
 
 	// find existing directory, and ensure the directory is empty
 	var mountToDir *filer_pb.Entry
@@ -198,7 +195,7 @@ func (c *commandRemoteMount) pullMetadata(commandEnv *CommandEnv, writer io.Writ
 	return nil
 }
 
-func (c *commandRemoteMount) saveMountMapping(commandEnv *CommandEnv, writer io.Writer, dir string, remoteStorageLocation remote_storage.RemoteStorageLocation) (err error) {
+func (c *commandRemoteMount) saveMountMapping(commandEnv *CommandEnv, writer io.Writer, dir string, remoteStorageLocation *filer_pb.RemoteStorageLocation) (err error) {
 
 	// read current mapping
 	var oldContent, newContent []byte

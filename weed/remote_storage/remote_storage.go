@@ -8,22 +8,21 @@ import (
 	"sync"
 )
 
-type RemoteStorageLocation string
-
-func (remote RemoteStorageLocation) NameBucketPath() (storageName, bucket, remotePath string) {
+func ParseLocation(remote string) (loc *filer_pb.RemoteStorageLocation) {
+	loc = &filer_pb.RemoteStorageLocation{}
 	if strings.HasSuffix(string(remote), "/") {
 		remote = remote[:len(remote)-1]
 	}
 	parts := strings.SplitN(string(remote), "/", 3)
 	if len(parts) >= 1 {
-		storageName = parts[0]
+		loc.Name = parts[0]
 	}
 	if len(parts) >= 2 {
-		bucket = parts[1]
+		loc.Bucket = parts[1]
 	}
-	remotePath = string(remote[len(storageName)+1+len(bucket):])
-	if remotePath == "" {
-		remotePath = "/"
+	loc.Path = string(remote[len(loc.Name)+1+len(loc.Bucket):])
+	if loc.Path == "" {
+		loc.Path = "/"
 	}
 	return
 }
@@ -31,8 +30,8 @@ func (remote RemoteStorageLocation) NameBucketPath() (storageName, bucket, remot
 type VisitFunc func(dir string, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error
 
 type RemoteStorageClient interface {
-	Traverse(remote RemoteStorageLocation, visitFn VisitFunc) error
-	ReadFile(bucket, key string, offset int64, size int64, writeFn func(w io.Writer) error) error
+	Traverse(loc *filer_pb.RemoteStorageLocation, visitFn VisitFunc) error
+	ReadFile(loc *filer_pb.RemoteStorageLocation, offset int64, size int64, writeFn func(w io.Writer) error) error
 }
 
 type RemoteStorageClientMaker interface {

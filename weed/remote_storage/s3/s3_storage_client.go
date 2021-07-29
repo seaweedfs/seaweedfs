@@ -10,6 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"io"
 )
 
 func init() {
@@ -44,13 +45,12 @@ type s3RemoteStorageClient struct {
 	conn s3iface.S3API
 }
 
-func (s s3RemoteStorageClient) Traverse(remote remote_storage.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
+func (s s3RemoteStorageClient) Traverse(remote *filer_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
-	_, bucket, pathKey := remote.NameBucketPath()
-	pathKey = pathKey[1:]
+	pathKey := remote.Path[1:]
 
 	listInput := &s3.ListObjectsV2Input{
-		Bucket:              aws.String(bucket),
+		Bucket:              aws.String(remote.Bucket),
 		ContinuationToken:   nil,
 		Delimiter:           nil, // not aws.String("/"), iterate through all entries
 		EncodingType:        nil,
@@ -90,4 +90,7 @@ func (s s3RemoteStorageClient) Traverse(remote remote_storage.RemoteStorageLocat
 		}
 	}
 	return
+}
+func (s s3RemoteStorageClient) ReadFile(loc *filer_pb.RemoteStorageLocation, offset int64, size int64, writeFn func(w io.Writer) error) error {
+	return nil
 }
