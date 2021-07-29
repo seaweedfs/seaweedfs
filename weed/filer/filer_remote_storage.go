@@ -31,7 +31,7 @@ func NewFilerRemoteStorage() (rs *FilerRemoteStorage) {
 	return rs
 }
 
-func (rs *FilerRemoteStorage) loadRemoteStorageConfigurations(filer *Filer) (err error) {
+func (rs *FilerRemoteStorage) LoadRemoteStorageConfigurationsAndMapping(filer *Filer) (err error) {
 	// execute this on filer
 
 	entries, _, err := filer.ListDirectoryEntries(context.Background(), DirectoryEtcRemote, "", false, math.MaxInt64, "", "", "")
@@ -74,7 +74,21 @@ func (rs *FilerRemoteStorage) mapDirectoryToRemoteStorage(dir util.FullPath, rem
 	rs.rules.Put([]byte(dir+"/"), remoteStorageName)
 }
 
-func (rs *FilerRemoteStorage) FindRemoteStorageClient(p util.FullPath) (client remote_storage.RemoteStorageClient, found bool) {
+func (rs *FilerRemoteStorage) FindMountDirectory(p util.FullPath) (mountDir util.FullPath, remoteLocation remote_storage.RemoteStorageLocation) {
+	var storageLocation string
+	rs.rules.MatchPrefix([]byte(p), func(key []byte, value interface{}) bool {
+		mountDir = util.FullPath(string(key))
+		storageLocation = value.(string)
+		return true
+	})
+	if storageLocation == "" {
+		return
+	}
+	remoteLocation = remote_storage.RemoteStorageLocation(storageLocation)
+	return
+}
+
+func (rs *FilerRemoteStorage) FindRemoteStorageClient(p util.FullPath) (client remote_storage.RemoteStorageClient, remoteConf *filer_pb.RemoteConf, found bool) {
 	var storageLocation string
 	rs.rules.MatchPrefix([]byte(p), func(key []byte, value interface{}) bool {
 		storageLocation = value.(string)
@@ -87,8 +101,12 @@ func (rs *FilerRemoteStorage) FindRemoteStorageClient(p util.FullPath) (client r
 
 	storageName, _, _ := remote_storage.RemoteStorageLocation(storageLocation).NameBucketPath()
 
-	remoteConf, ok := rs.storageNameToConf[storageName]
-	if !ok {
+	return rs.GetRemoteStorageClient(storageName)
+}
+
+func (rs *FilerRemoteStorage) GetRemoteStorageClient(storageName string) (client remote_storage.RemoteStorageClient, remoteConf *filer_pb.RemoteConf, found bool) {
+	remoteConf, found = rs.storageNameToConf[storageName]
+	if !found {
 		return
 	}
 

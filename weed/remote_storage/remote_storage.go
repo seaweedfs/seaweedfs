@@ -3,6 +3,7 @@ package remote_storage
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"io"
 	"strings"
 	"sync"
 )
@@ -14,10 +15,10 @@ func (remote RemoteStorageLocation) NameBucketPath() (storageName, bucket, remot
 		remote = remote[:len(remote)-1]
 	}
 	parts := strings.SplitN(string(remote), "/", 3)
-	if len(parts)>=1 {
+	if len(parts) >= 1 {
 		storageName = parts[0]
 	}
-	if len(parts)>=2 {
+	if len(parts) >= 2 {
 		bucket = parts[1]
 	}
 	remotePath = string(remote[len(storageName)+1+len(bucket):])
@@ -31,6 +32,7 @@ type VisitFunc func(dir string, name string, isDirectory bool, remoteEntry *file
 
 type RemoteStorageClient interface {
 	Traverse(remote RemoteStorageLocation, visitFn VisitFunc) error
+	ReadFile(bucket, key string, offset int64, size int64, writeFn func(w io.Writer) error) error
 }
 
 type RemoteStorageClientMaker interface {

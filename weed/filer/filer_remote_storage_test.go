@@ -16,15 +16,15 @@ func TestFilerRemoteStorage_FindRemoteStorageClient(t *testing.T) {
 
 	rs.mapDirectoryToRemoteStorage("/a/b/c", "s7")
 
-	_, found := rs.FindRemoteStorageClient("/a/b/c/d/e/f")
+	_, _, found := rs.FindRemoteStorageClient("/a/b/c/d/e/f")
 	assert.Equal(t, true, found, "find storage client")
 
-	_, found2 := rs.FindRemoteStorageClient("/a/b")
+	_, _, found2 := rs.FindRemoteStorageClient("/a/b")
 	assert.Equal(t, false, found2, "should not find storage client")
 
-	_, found3 := rs.FindRemoteStorageClient("/a/b/c")
+	_, _, found3 := rs.FindRemoteStorageClient("/a/b/c")
 	assert.Equal(t, false, found3, "should not find storage client")
 
-	_, found4 := rs.FindRemoteStorageClient("/a/b/cc")
+	_, _, found4 := rs.FindRemoteStorageClient("/a/b/cc")
 	assert.Equal(t, false, found4, "should not find storage client")
 }
