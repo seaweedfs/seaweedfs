@@ -103,7 +103,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		}
 		// for each volume, check filer file ids
 		if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, tempFolder, writer, *verbose, applyPurging); err != nil {
-			return fmt.Errorf("findExtraChunksInVolumeServers: %v", err)
+			return fmt.Errorf("findFilerChunksMissingInVolumeServers: %v", err)
 		}
 	} else {
 		// collect all filer file ids
