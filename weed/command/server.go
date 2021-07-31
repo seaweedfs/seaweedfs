@@ -143,7 +143,7 @@ func init() {
 func runServer(cmd *Command, args []string) bool {
 
 	if *serverOptions.debug {
-		go http.ListenAndServe("localhost:6060", nil)
+		go http.ListenAndServe(":6060", nil)
 	}
 
 	util.LoadConfiguration("security", false)

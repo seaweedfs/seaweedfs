@@ -126,7 +126,7 @@ var cmdFiler = &Command{
 
 func runFiler(cmd *Command, args []string) bool {
 	if *f.debug {
-		go http.ListenAndServe("localhost:6060", nil)
+		go http.ListenAndServe(":6060", nil)
 	}
 
 	util.LoadConfiguration("security", false)
