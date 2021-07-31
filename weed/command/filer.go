@@ -3,6 +3,7 @@ package command
 import (
 	"fmt"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"strconv"
 	"strings"
@@ -50,6 +51,7 @@ type FilerOptions struct {
 	saveToFilerLimit        *int
 	defaultLevelDbDirectory *string
 	concurrentUploadLimitMB *int
+	debug                   *bool
 }
 
 func init() {
@@ -73,6 +75,7 @@ func init() {
 	f.saveToFilerLimit = cmdFiler.Flag.Int("saveToFilerLimit", 0, "files smaller than this limit will be saved in filer store")
 	f.defaultLevelDbDirectory = cmdFiler.Flag.String("defaultStoreDir", ".", "if filer.toml is empty, use an embedded filer store in the directory")
 	f.concurrentUploadLimitMB = cmdFiler.Flag.Int("concurrentUploadLimitMB", 128, "limit total concurrent upload size")
+	f.debug = cmdFiler.Flag.Bool("debug", false, "generate full goroutine stack dump http://localhost:6060/debug/pprof/goroutine?debug=2")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -122,6 +125,9 @@ var cmdFiler = &Command{
 }
 
 func runFiler(cmd *Command, args []string) bool {
+	if *f.debug {
+		go http.ListenAndServe("localhost:6060", nil)
+	}
 
 	util.LoadConfiguration("security", false)
 
