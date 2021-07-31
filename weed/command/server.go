@@ -3,6 +3,7 @@ package command
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -16,6 +17,8 @@ import (
 type ServerOptions struct {
 	cpuprofile *string
 	memprofile *string
+	debug      *bool
+	debugPort  *int
 	v          VolumeServerOptions
 }
 
@@ -78,6 +81,8 @@ var (
 func init() {
 	serverOptions.cpuprofile = cmdServer.Flag.String("cpuprofile", "", "cpu profile output file")
 	serverOptions.memprofile = cmdServer.Flag.String("memprofile", "", "memory profile output file")
+	serverOptions.debug = cmdServer.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:6060/debug/pprof/goroutine?debug=2")
+	serverOptions.debugPort = cmdServer.Flag.Int("debug.port", 6060, "http port for debugging")
 
 	masterOptions.port = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
 	masterOptions.metaFolder = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
@@ -138,6 +143,10 @@ func init() {
 }
 
 func runServer(cmd *Command, args []string) bool {
+
+	if *serverOptions.debug {
+		go http.ListenAndServe(fmt.Sprintf(":%d", *serverOptions.debugPort), nil)
+	}
 
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("master", false)

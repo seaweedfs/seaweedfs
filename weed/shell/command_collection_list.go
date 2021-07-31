@@ -22,6 +22,14 @@ func (c *commandCollectionList) Help() string {
 	return `list all collections`
 }
 
+type CollectionInfo struct {
+	FileCount        uint64
+	DeleteCount      uint64
+	DeletedByteCount uint64
+	Size             uint64
+	VolumeCount      int
+}
+
 func (c *commandCollectionList) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	collections, err := ListCollectionNames(commandEnv, true, true)
@@ -30,8 +38,21 @@ func (c *commandCollectionList) Do(args []string, commandEnv *CommandEnv, writer
 		return err
 	}
 
+	topologyInfo, _, err := collectTopologyInfo(commandEnv)
+	if err != nil {
+		return err
+	}
+
+	collectionInfos := make(map[string]*CollectionInfo)
+
+	writeCollectionInfo(writer, topologyInfo, collectionInfos)
+
 	for _, c := range collections {
-		fmt.Fprintf(writer, "collection:\"%s\"\n", c)
+		cif, found := collectionInfos[c]
+		if !found {
+			continue
+		}
+		fmt.Fprintf(writer, "collection:\"%s\"\tvolumeCount:%d\tsize:%d\tfileCount:%d\tdeletedBytes:%d\tdeletion:%d\n", c, cif.VolumeCount, cif.Size, cif.FileCount, cif.DeletedByteCount, cif.DeleteCount)
 	}
 
 	fmt.Fprintf(writer, "Total %d collections.\n", len(collections))
@@ -55,4 +76,35 @@ func ListCollectionNames(commandEnv *CommandEnv, includeNormalVolumes, includeEc
 		collections = append(collections, c.Name)
 	}
 	return
+}
+
+func addToCollection(collectionInfos map[string]*CollectionInfo, vif *master_pb.VolumeInformationMessage) {
+	c := vif.Collection
+	cif, found := collectionInfos[c]
+	if !found {
+		cif = &CollectionInfo{}
+		collectionInfos[c] = cif
+	}
+	cif.Size += vif.Size
+	cif.DeleteCount += vif.DeleteCount
+	cif.FileCount += vif.FileCount
+	cif.DeletedByteCount += vif.DeletedByteCount
+	cif.VolumeCount++
+}
+
+func writeCollectionInfo(writer io.Writer, t *master_pb.TopologyInfo, collectionInfos map[string]*CollectionInfo) {
+	for _, dc := range t.DataCenterInfos {
+		for _, r := range dc.RackInfos {
+			for _, dn := range r.DataNodeInfos {
+				for _, diskInfo := range dn.DiskInfos {
+					for _, vi := range diskInfo.VolumeInfos {
+						addToCollection(collectionInfos, vi)
+					}
+					//for _, ecShardInfo := range diskInfo.EcShardInfos {
+					//
+					//}
+				}
+			}
+		}
+	}
 }
