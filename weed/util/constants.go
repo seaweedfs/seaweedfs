@@ -5,7 +5,7 @@ import (
 )
 
 var (
-	VERSION = fmt.Sprintf("%s %d.%02d", sizeLimit, 2, 60)
+	VERSION = fmt.Sprintf("%s %.02f", sizeLimit, 2.61)
 	COMMIT  = ""
 )
 
