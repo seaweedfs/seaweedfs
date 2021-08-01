@@ -163,7 +163,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			}
 			return err
 		}
-		if entry.IsRemoteOnly() {
+		if entry.IsInRemoteOnly() {
 			var data []byte
 			data, err = fs.filer.ReadRemote(entry, offset, size)
 			if err != nil {

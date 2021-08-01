@@ -5,7 +5,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
-func (entry *Entry) IsRemoteOnly() bool {
+func (entry *Entry) IsInRemoteOnly() bool {
 	return len(entry.Chunks) == 0 && entry.Remote != nil && entry.Remote.Size > 0
 }
 
