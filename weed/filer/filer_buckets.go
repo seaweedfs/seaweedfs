@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"math"
+	"strings"
 	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -76,6 +77,9 @@ func (f *Filer) isBucket(entry *Entry) bool {
 	}
 	parent, dirName := entry.FullPath.DirAndName()
 	if parent != f.DirBucketsPath {
+		return false
+	}
+	if strings.HasPrefix(dirName, ".") {
 		return false
 	}
 
