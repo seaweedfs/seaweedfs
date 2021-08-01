@@ -164,10 +164,12 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			return err
 		}
 		if entry.IsRemoteOnly() {
-			err = fs.filer.ReadRemote(writer, entry, offset, size)
+			var data []byte
+			data, err = fs.filer.ReadRemote(entry, offset, size)
 			if err != nil {
 				glog.Errorf("failed to read remote %s: %v", r.URL, err)
 			}
+			_, err = w.Write(data)
 		} else {
 			err = filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size)
 			if err != nil {

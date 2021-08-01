@@ -7,10 +7,10 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"io"
 )
 
 func init() {
@@ -65,7 +65,7 @@ func (s s3RemoteStorageClient) Traverse(remote *filer_pb.RemoteStorageLocation, 
 	for !isLastPage && err == nil {
 		listErr := s.conn.ListObjectsV2Pages(listInput, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
 			for _, content := range page.Contents {
-				key := (*content.Key)
+				key := *content.Key
 				if len(pathKey) == 0 {
 					key = "/" + key
 				} else {
@@ -91,6 +91,23 @@ func (s s3RemoteStorageClient) Traverse(remote *filer_pb.RemoteStorageLocation, 
 	}
 	return
 }
-func (s s3RemoteStorageClient) ReadFile(loc *filer_pb.RemoteStorageLocation, offset int64, size int64, writeFn func(w io.Writer) error) error {
-	return nil
+func (s s3RemoteStorageClient) ReadFile(loc *filer_pb.RemoteStorageLocation, offset int64, size int64) (data[]byte, err error) {
+	downloader := s3manager.NewDownloaderWithClient(s.conn, func(u *s3manager.Downloader) {
+		u.PartSize = int64(4 * 1024 * 1024)
+		u.Concurrency = 1
+	})
+	
+	dataSlice := make([]byte, int(size))
+	writerAt := aws.NewWriteAtBuffer(dataSlice)
+
+	_, err = downloader.Download(writerAt, &s3.GetObjectInput{
+		Bucket:                     aws.String(loc.Bucket),
+		Key:                        aws.String(loc.Path[1:]),
+		Range:                      aws.String(fmt.Sprintf("bytes=%d-%d", offset, offset+size-1)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to download file %s%s: %v", loc.Bucket, loc.Path, err)
+	}
+
+	return writerAt.Bytes(), nil
 }

@@ -45,7 +45,10 @@ func (rs *FilerRemoteStorage) LoadRemoteStorageConfigurationsAndMapping(filer *F
 
 	for _, entry := range entries {
 		if entry.Name() == REMOTE_STORAGE_MOUNT_FILE {
-			rs.loadRemoteStorageMountMapping(entry.Content)
+			if err := rs.loadRemoteStorageMountMapping(entry.Content); err != nil {
+				return err
+			}
+			continue
 		}
 		if !strings.HasSuffix(entry.Name(), REMOTE_STORAGE_CONF_SUFFIX) {
 			return nil
@@ -75,16 +78,11 @@ func (rs *FilerRemoteStorage) mapDirectoryToRemoteStorage(dir util.FullPath, loc
 }
 
 func (rs *FilerRemoteStorage) FindMountDirectory(p util.FullPath) (mountDir util.FullPath, remoteLocation *filer_pb.RemoteStorageLocation) {
-	var storageLocation string
 	rs.rules.MatchPrefix([]byte(p), func(key []byte, value interface{}) bool {
-		mountDir = util.FullPath(string(key))
-		storageLocation = value.(string)
+		mountDir = util.FullPath(string(key[:len(key)-1]))
+		remoteLocation = value.(*filer_pb.RemoteStorageLocation)
 		return true
 	})
-	if storageLocation == "" {
-		return
-	}
-	remoteLocation = remote_storage.ParseLocation(storageLocation)
 	return
 }
 
@@ -118,14 +116,22 @@ func (rs *FilerRemoteStorage) GetRemoteStorageClient(storageName string) (client
 	return
 }
 
-func AddMapping(oldContent []byte, dir string, storageLocation *filer_pb.RemoteStorageLocation) (newContent []byte, err error) {
-	mappings := &filer_pb.RemoteStorageMapping{
+func UnmarshalRemoteStorageMappings(oldContent []byte) (mappings *filer_pb.RemoteStorageMapping, err error) {
+	mappings = &filer_pb.RemoteStorageMapping{
 		Mappings: make(map[string]*filer_pb.RemoteStorageLocation),
 	}
 	if len(oldContent) > 0 {
 		if err = proto.Unmarshal(oldContent, mappings); err != nil {
 			glog.Warningf("unmarshal existing mappings: %v", err)
 		}
+	}
+	return
+}
+
+func AddRemoteStorageMapping(oldContent []byte, dir string, storageLocation *filer_pb.RemoteStorageLocation) (newContent []byte, err error) {
+	mappings, unmarshalErr := UnmarshalRemoteStorageMappings(oldContent)
+	if unmarshalErr != nil {
+		// skip
 	}
 
 	// set the new mapping

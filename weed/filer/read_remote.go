@@ -3,17 +3,16 @@ package filer
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"io"
 )
 
 func (entry *Entry) IsRemoteOnly() bool {
 	return len(entry.Chunks) == 0 && entry.Remote != nil && entry.Remote.Size > 0
 }
 
-func (f *Filer) ReadRemote(w io.Writer, entry *Entry, offset int64, size int64) error {
+func (f *Filer) ReadRemote(entry *Entry, offset int64, size int64) (data[]byte, err error) {
 	client, _, found := f.RemoteStorage.GetRemoteStorageClient(entry.Remote.StorageName)
 	if !found {
-		return fmt.Errorf("remote storage %v not found", entry.Remote.StorageName)
+		return nil, fmt.Errorf("remote storage %v not found", entry.Remote.StorageName)
 	}
 
 	mountDir, remoteLoation := f.RemoteStorage.FindMountDirectory(entry.FullPath)
@@ -26,8 +25,5 @@ func (f *Filer) ReadRemote(w io.Writer, entry *Entry, offset int64, size int64) 
 		Path:   remoteFullPath,
 	}
 
-	client.ReadFile(sourceLoc, offset, size, func(w io.Writer) error {
-		return nil
-	})
-	return nil
+	return client.ReadFile(sourceLoc, offset, size)
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
 	"io"
 )
@@ -49,6 +50,10 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
+	if *dir == "" {
+		return c.listExistingRemoteStorageMounts(commandEnv, writer)
+	}
+
 	remoteStorageLocation := remote_storage.ParseLocation(*remote)
 
 	// find configuration for remote storage
@@ -69,6 +74,34 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	return nil
+}
+
+func (c *commandRemoteMount) listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (err error) {
+
+	// read current mapping
+	var oldContent []byte
+	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		oldContent, err = filer.ReadInsideFiler(client, filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE)
+		return err
+	})
+	if err != nil {
+		if err != filer_pb.ErrNotFound {
+			return fmt.Errorf("read existing mapping: %v", err)
+		}
+	}
+
+	mappings, unmarshalErr := filer.UnmarshalRemoteStorageMappings(oldContent)
+	if unmarshalErr != nil {
+		return unmarshalErr
+	}
+
+	m := jsonpb.Marshaler{
+		EmitDefaults: false,
+		Indent:       "  ",
+	}
+
+	return m.Marshal(writer, mappings)
+
 }
 
 func (c *commandRemoteMount) findRemoteStorageConfiguration(commandEnv *CommandEnv, writer io.Writer, remote *filer_pb.RemoteStorageLocation) (conf *filer_pb.RemoteConf, err error) {
@@ -178,7 +211,7 @@ func (c *commandRemoteMount) pullMetadata(commandEnv *CommandEnv, writer io.Writ
 					existingEntry.Attributes.Mtime = remoteEntry.LastModifiedAt
 					_, updateErr := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
 						Directory: localDir,
-						Entry: existingEntry,
+						Entry:     existingEntry,
 					})
 					return updateErr
 				}
@@ -210,7 +243,7 @@ func (c *commandRemoteMount) saveMountMapping(commandEnv *CommandEnv, writer io.
 	}
 
 	// add new mapping
-	newContent, err = filer.AddMapping(oldContent, dir, remoteStorageLocation)
+	newContent, err = filer.AddRemoteStorageMapping(oldContent, dir, remoteStorageLocation)
 	if err != nil {
 		return fmt.Errorf("add mapping %s~%s: %v", dir, remoteStorageLocation, err)
 	}
