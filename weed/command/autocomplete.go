@@ -15,7 +15,6 @@ func AutocompleteMain(commands []*Command) bool {
 		cmd.Flag.VisitAll(func(flag *flag.Flag) {
 			flags["-"+flag.Name] = complete.PredictAnything
 		})
-		flags["-h"] = complete.PredictNothing
 
 		subCommands[cmd.Name()] = complete.Command{
 			Flags: flags,
@@ -28,11 +27,11 @@ func AutocompleteMain(commands []*Command) bool {
 	flag.VisitAll(func(flag *flag.Flag) {
 		globalFlags["-"+flag.Name] = complete.PredictAnything
 	})
-	globalFlags["-h"] = complete.PredictNothing
 
 	weedCmd := complete.Command{
-		Sub:   subCommands,
-		Flags: globalFlags,
+		Sub:         subCommands,
+		Flags:       globalFlags,
+		GlobalFlags: complete.Flags{"-h": complete.PredictNothing},
 	}
 	cmp := complete.New("weed", weedCmd)
 
