@@ -8,6 +8,8 @@ import (
 )
 
 var Commands = []*Command{
+	cmdAutocomplete,
+	cmdUnautocomplete,
 	cmdBackup,
 	cmdBenchmark,
 	cmdCompact,
@@ -36,8 +38,6 @@ var Commands = []*Command{
 	cmdVersion,
 	cmdVolume,
 	cmdWebDav,
-	cmdAutocomplete,
-	cmdUnautocomplete,
 }
 
 type Command struct {

@@ -41,7 +41,7 @@ func AutocompleteMain(commands []*Command) bool {
 
 func installAutoCompletion() bool {
 	if runtime.GOOS == "windows" {
-		fmt.Printf("windows is not supported")
+		fmt.Println("windows is not supported")
 		return false
 	}
 
@@ -56,7 +56,7 @@ func installAutoCompletion() bool {
 
 func uninstallAutoCompletion() bool {
 	if runtime.GOOS == "windows" {
-		fmt.Printf("windows is not supported")
+		fmt.Println("windows is not supported")
 		return false
 	}
 
@@ -91,7 +91,7 @@ func runAutocomplete(cmd *Command, args []string) bool {
 
 var cmdUnautocomplete = &Command{
 	Run:       runUnautocomplete,
-	UsageLine: "unautocomplete",
+	UsageLine: "autocomplete.uninstall",
 	Short:     "uninstall autocomplete",
 	Long: `weed autocomplete is uninstalled in the shell.
 
