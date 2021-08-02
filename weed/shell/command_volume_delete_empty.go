@@ -3,11 +3,10 @@ package shell
 import (
 	"flag"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"io"
 	"log"
 	"time"
-
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
 func init() {
@@ -24,7 +23,7 @@ func (c *commandVolumeDeleteEmpty) Name() string {
 func (c *commandVolumeDeleteEmpty) Help() string {
 	return `delete empty volumes from all volume servers
 
-	volume.deleteEmpty -quietFor=24h
+	volume.deleteEmpty -quietFor=24h -force
 
 	This command deletes all empty volumes from one volume server.
 
@@ -39,6 +38,7 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 
 	volDeleteCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	quietPeriod := volDeleteCommand.Duration("quietFor", 24*time.Hour, "select empty volumes with no recent writes, avoid newly created ones")
+	applyBalancing := volDeleteCommand.Bool("force", false, "apply to delete empty volumes")
 	if err = volDeleteCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -55,10 +55,15 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 	eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
-				if v.Size <= 8 && v.ModifiedAtSecond + quietSeconds < nowUnixSeconds {
-					log.Printf("deleting empty volume %d from %s", v.Id, dn.Id)
-					if deleteErr := deleteVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id), dn.Id); deleteErr != nil {
-						err = deleteErr
+				if v.Size <= 8 && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds {
+					if *applyBalancing {
+						log.Printf("deleting empty volume %d from %s", v.Id, dn.Id)
+						if deleteErr := deleteVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id), dn.Id); deleteErr != nil {
+							err = deleteErr
+						}
+						continue
+					} else {
+						log.Printf("empty volume %d from %s", v.Id, dn.Id)
 					}
 				}
 			}
