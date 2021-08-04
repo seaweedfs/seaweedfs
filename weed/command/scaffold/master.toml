@@ -11,7 +11,7 @@ scripts = """
   ec.encode -fullPercent=95 -quietFor=1h
   ec.rebuild -force
   ec.balance -force
-  volume.deleteEmpty -quietFor=24h
+  volume.deleteEmpty -quietFor=24h -force
   volume.balance -force
   volume.fix.replication
   unlock

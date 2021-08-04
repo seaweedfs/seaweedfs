@@ -45,6 +45,7 @@ var (
 
 func runFilerMetaTail(cmd *Command, args []string) bool {
 
+	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	var filterFunc func(dir, fname string) bool

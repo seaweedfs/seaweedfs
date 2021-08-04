@@ -71,13 +71,13 @@ func runUpload(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
-	defaultCollection, err := readMasterConfiguration(grpcDialOption, *upload.master)
+	defaultReplication, err := readMasterConfiguration(grpcDialOption, *upload.master)
 	if err != nil {
 		fmt.Printf("upload: %v", err)
 		return false
 	}
 	if *upload.replication == "" {
-		*upload.replication = defaultCollection
+		*upload.replication = defaultReplication
 	}
 
 	if len(args) == 0 {

@@ -160,7 +160,7 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 	for _, vid := range underReplicatedVolumeIds {
 		for i := 0; i < retryCount+1; i++ {
 			if err = c.fixOneUnderReplicatedVolume(commandEnv, writer, takeAction, volumeReplicas, vid, allLocations); err == nil {
-				continue
+				break
 			}
 		}
 	}

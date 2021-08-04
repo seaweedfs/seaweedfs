@@ -8,6 +8,8 @@ import (
 )
 
 var Commands = []*Command{
+	cmdAutocomplete,
+	cmdUnautocomplete,
 	cmdBackup,
 	cmdBenchmark,
 	cmdCompact,

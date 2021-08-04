@@ -52,10 +52,10 @@ var cmdFilerBackup = &Command{
 
 func runFilerBackup(cmd *Command, args []string) bool {
 
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
-
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("replication", true)
+
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	for {
 		err := doFilerBackup(grpcDialOption, &filerBackupOptions)
