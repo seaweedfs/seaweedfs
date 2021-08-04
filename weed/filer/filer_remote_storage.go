@@ -87,19 +87,18 @@ func (rs *FilerRemoteStorage) FindMountDirectory(p util.FullPath) (mountDir util
 }
 
 func (rs *FilerRemoteStorage) FindRemoteStorageClient(p util.FullPath) (client remote_storage.RemoteStorageClient, remoteConf *filer_pb.RemoteConf, found bool) {
-	var storageLocation string
+	var storageLocation *filer_pb.RemoteStorageLocation
 	rs.rules.MatchPrefix([]byte(p), func(key []byte, value interface{}) bool {
-		storageLocation = value.(string)
+		storageLocation = value.(*filer_pb.RemoteStorageLocation)
 		return true
 	})
 
-	if storageLocation == "" {
+	if storageLocation == nil {
+		found = false
 		return
 	}
 
-	loc := remote_storage.ParseLocation(storageLocation)
-
-	return rs.GetRemoteStorageClient(loc.Name)
+	return rs.GetRemoteStorageClient(storageLocation.Name)
 }
 
 func (rs *FilerRemoteStorage) GetRemoteStorageClient(storageName string) (client remote_storage.RemoteStorageClient, remoteConf *filer_pb.RemoteConf, found bool) {

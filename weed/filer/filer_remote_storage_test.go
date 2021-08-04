@@ -14,7 +14,11 @@ func TestFilerRemoteStorage_FindRemoteStorageClient(t *testing.T) {
 	rs := NewFilerRemoteStorage()
 	rs.storageNameToConf[conf.Name] = conf
 
-	rs.mapDirectoryToRemoteStorage("/a/b/c", "s7")
+	rs.mapDirectoryToRemoteStorage("/a/b/c", &filer_pb.RemoteStorageLocation{
+		Name:   "s7",
+		Bucket: "some",
+		Path:   "/dir",
+	})
 
 	_, _, found := rs.FindRemoteStorageClient("/a/b/c/d/e/f")
 	assert.Equal(t, true, found, "find storage client")

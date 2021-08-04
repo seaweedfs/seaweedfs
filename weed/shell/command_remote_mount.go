@@ -130,17 +130,15 @@ func (c *commandRemoteMount) findRemoteStorageConfiguration(commandEnv *CommandE
 func (c *commandRemoteMount) pullMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *filer_pb.RemoteConf, remote *filer_pb.RemoteStorageLocation) error {
 
 	// find existing directory, and ensure the directory is empty
-	var mountToDir *filer_pb.Entry
 	err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		parent, name := util.FullPath(dir).DirAndName()
-		resp, lookupErr := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+		_, lookupErr := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parent,
 			Name:      name,
 		})
 		if lookupErr != nil {
 			return fmt.Errorf("lookup %s: %v", dir, lookupErr)
 		}
-		mountToDir = resp.Entry
 
 		mountToDirIsEmpty := true
 		listErr := filer_pb.SeaweedList(client, dir, "", func(entry *filer_pb.Entry, isLast bool) error {
