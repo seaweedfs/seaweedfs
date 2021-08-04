@@ -55,6 +55,7 @@ func runShell(command *Command, args []string) bool {
 
 	var err error
 	shellOptions.FilerHost, shellOptions.FilerPort, err = util.ParseHostPort(*shellInitialFiler)
+	shellOptions.FilerAddress = *shellInitialFiler
 	if err != nil {
 		fmt.Printf("failed to parse filer %s: %v\n", *shellInitialFiler, err)
 		return false

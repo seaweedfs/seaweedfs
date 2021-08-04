@@ -79,20 +79,9 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 func (c *commandRemoteMount) listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	// read current mapping
-	var oldContent []byte
-	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		oldContent, err = filer.ReadInsideFiler(client, filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE)
-		return err
-	})
-	if err != nil {
-		if err != filer_pb.ErrNotFound {
-			return fmt.Errorf("read existing mapping: %v", err)
-		}
-	}
-
-	mappings, unmarshalErr := filer.UnmarshalRemoteStorageMappings(oldContent)
-	if unmarshalErr != nil {
-		return unmarshalErr
+	mappings, readErr := remote_storage.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
+	if readErr != nil {
+		return readErr
 	}
 
 	m := jsonpb.Marshaler{
