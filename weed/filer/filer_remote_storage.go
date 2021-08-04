@@ -3,10 +3,12 @@ package filer
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/s3"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
+	"google.golang.org/grpc"
 	"math"
 	"strings"
 
@@ -138,6 +140,43 @@ func AddRemoteStorageMapping(oldContent []byte, dir string, storageLocation *fil
 
 	if newContent, err = proto.Marshal(mappings); err != nil {
 		return oldContent, fmt.Errorf("marshal mappings: %v", err)
+	}
+
+	return
+}
+
+
+func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress string) (mappings *filer_pb.RemoteStorageMapping, readErr error) {
+	var oldContent []byte
+	if readErr = pb.WithFilerClient(filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		oldContent, readErr = ReadInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
+		return readErr
+	}); readErr != nil {
+		return nil, readErr
+	}
+
+	mappings, readErr = UnmarshalRemoteStorageMappings(oldContent)
+	if readErr != nil {
+		return nil, fmt.Errorf("unmarshal mappings: %v", readErr)
+	}
+
+	return
+}
+
+func ReadRemoteStorageConf(grpcDialOption grpc.DialOption, filerAddress string, storageName string) (conf *filer_pb.RemoteConf, readErr error) {
+	var oldContent []byte
+	if readErr = pb.WithFilerClient(filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		oldContent, readErr = ReadInsideFiler(client, DirectoryEtcRemote, storageName+REMOTE_STORAGE_CONF_SUFFIX)
+		return readErr
+	}); readErr != nil {
+		return nil, readErr
+	}
+
+	// unmarshal storage configuration
+	conf = &filer_pb.RemoteConf{}
+	if unMarshalErr := proto.Unmarshal(oldContent, conf); unMarshalErr != nil {
+		readErr = fmt.Errorf("unmarshal %s/%s: %v", DirectoryEtcRemote, storageName+REMOTE_STORAGE_CONF_SUFFIX, unMarshalErr)
+		return
 	}
 
 	return

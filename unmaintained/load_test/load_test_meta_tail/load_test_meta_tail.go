@@ -1,14 +1,12 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc"
-	"io"
 	"strconv"
 	"time"
 )
@@ -74,38 +72,9 @@ func startGenerateMetadata() {
 
 func startSubscribeMetadata(eachEntryFunc func(event *filer_pb.SubscribeMetadataResponse) error) {
 
-	lastTsNs := int64(0)
+	tailErr := pb.FollowMetadata(*tailFiler, grpc.WithInsecure(),	"tail",
+		*dir, 0, 0, eachEntryFunc, false)
 
-	tailErr := pb.WithFilerClient(*tailFiler, grpc.WithInsecure(), func(client filer_pb.SeaweedFilerClient) error {
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
-			ClientName: "tail",
-			PathPrefix: *dir,
-			SinceNs:    lastTsNs,
-		})
-		if err != nil {
-			return fmt.Errorf("listen: %v", err)
-		}
-
-		for {
-			resp, listenErr := stream.Recv()
-			if listenErr == io.EOF {
-				return nil
-			}
-			if listenErr != nil {
-				return listenErr
-			}
-			if err = eachEntryFunc(resp); err != nil {
-				glog.V(0).Infof("tail last record:%+v", time.Unix(0, lastTsNs))
-				return err
-			}
-			lastTsNs = resp.TsNs
-		}
-
-	})
 	if tailErr != nil {
 		fmt.Printf("tail %s: %v\n", *tailFiler, tailErr)
 	}

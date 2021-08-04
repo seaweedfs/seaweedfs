@@ -9,7 +9,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/jsonpb"
-	"github.com/golang/protobuf/proto"
 	"io"
 )
 
@@ -79,7 +78,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 func (c *commandRemoteMount) listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	// read current mapping
-	mappings, readErr := remote_storage.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
+	mappings, readErr := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
 	if readErr != nil {
 		return readErr
 	}
@@ -95,7 +94,7 @@ func (c *commandRemoteMount) listExistingRemoteStorageMounts(commandEnv *Command
 
 func (c *commandRemoteMount) findRemoteStorageConfiguration(commandEnv *CommandEnv, writer io.Writer, remote *filer_pb.RemoteStorageLocation) (conf *filer_pb.RemoteConf, err error) {
 
-	return remote_storage.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, remote.Name)
+	return filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, remote.Name)
 
 }
 
