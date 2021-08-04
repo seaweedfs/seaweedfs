@@ -95,25 +95,8 @@ func (c *commandRemoteMount) listExistingRemoteStorageMounts(commandEnv *Command
 
 func (c *commandRemoteMount) findRemoteStorageConfiguration(commandEnv *CommandEnv, writer io.Writer, remote *filer_pb.RemoteStorageLocation) (conf *filer_pb.RemoteConf, err error) {
 
-	// read storage configuration data
-	var confBytes []byte
-	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		confBytes, err = filer.ReadInsideFiler(client, filer.DirectoryEtcRemote, remote.Name+filer.REMOTE_STORAGE_CONF_SUFFIX)
-		return err
-	})
-	if err != nil {
-		err = fmt.Errorf("no remote storage configuration for %s : %v", remote.Name, err)
-		return
-	}
+	return remote_storage.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, remote.Name)
 
-	// unmarshal storage configuration
-	conf = &filer_pb.RemoteConf{}
-	if unMarshalErr := proto.Unmarshal(confBytes, conf); unMarshalErr != nil {
-		err = fmt.Errorf("unmarshal %s/%s: %v", filer.DirectoryEtcRemote, remote.Name, unMarshalErr)
-		return
-	}
-
-	return
 }
 
 func (c *commandRemoteMount) pullMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *filer_pb.RemoteConf, remote *filer_pb.RemoteStorageLocation) error {
