@@ -75,7 +75,7 @@ func (ce *CommandEnv) confirmIsLocked() error {
 		return nil
 	}
 
-	return fmt.Errorf("need to lock to continue")
+	return fmt.Errorf("need to run \"lock\" first to continue")
 
 }
 
