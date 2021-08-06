@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
 	"os"
+	"time"
 )
 
 func init() {
@@ -43,6 +44,8 @@ func (c *commandFsMkdir) Do(args []string, commandEnv *CommandEnv, writer io.Wri
 				Name:        name,
 				IsDirectory: true,
 				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					Crtime:   time.Now().Unix(),
 					FileMode: uint32(0777 | os.ModeDir),
 				},
 			},
