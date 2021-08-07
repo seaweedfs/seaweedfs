@@ -2200,6 +2200,2122 @@ func (*WriteNeedleBlobResponse) Descriptor() ([]byte, []int) {
 	return file_volume_server_proto_rawDescGZIP(), []int{41}
 }
 
+type VolumeTailSenderRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId           uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	SinceNs            uint64 `protobuf:"varint,2,opt,name=since_ns,json=sinceNs,proto3" json:"since_ns,omitempty"`
+	IdleTimeoutSeconds uint32 `protobuf:"varint,3,opt,name=idle_timeout_seconds,json=idleTimeoutSeconds,proto3" json:"idle_timeout_seconds,omitempty"`
+}
+
+func (x *VolumeTailSenderRequest) Reset() {
+	*x = VolumeTailSenderRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[42]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeTailSenderRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeTailSenderRequest) ProtoMessage() {}
+
+func (x *VolumeTailSenderRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[42]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeTailSenderRequest.ProtoReflect.Descriptor instead.
+func (*VolumeTailSenderRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *VolumeTailSenderRequest) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *VolumeTailSenderRequest) GetSinceNs() uint64 {
+	if x != nil {
+		return x.SinceNs
+	}
+	return 0
+}
+
+func (x *VolumeTailSenderRequest) GetIdleTimeoutSeconds() uint32 {
+	if x != nil {
+		return x.IdleTimeoutSeconds
+	}
+	return 0
+}
+
+type VolumeTailSenderResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	NeedleHeader []byte `protobuf:"bytes,1,opt,name=needle_header,json=needleHeader,proto3" json:"needle_header,omitempty"`
+	NeedleBody   []byte `protobuf:"bytes,2,opt,name=needle_body,json=needleBody,proto3" json:"needle_body,omitempty"`
+	IsLastChunk  bool   `protobuf:"varint,3,opt,name=is_last_chunk,json=isLastChunk,proto3" json:"is_last_chunk,omitempty"`
+}
+
+func (x *VolumeTailSenderResponse) Reset() {
+	*x = VolumeTailSenderResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[43]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeTailSenderResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeTailSenderResponse) ProtoMessage() {}
+
+func (x *VolumeTailSenderResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[43]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeTailSenderResponse.ProtoReflect.Descriptor instead.
+func (*VolumeTailSenderResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *VolumeTailSenderResponse) GetNeedleHeader() []byte {
+	if x != nil {
+		return x.NeedleHeader
+	}
+	return nil
+}
+
+func (x *VolumeTailSenderResponse) GetNeedleBody() []byte {
+	if x != nil {
+		return x.NeedleBody
+	}
+	return nil
+}
+
+func (x *VolumeTailSenderResponse) GetIsLastChunk() bool {
+	if x != nil {
+		return x.IsLastChunk
+	}
+	return false
+}
+
+type VolumeTailReceiverRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId           uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	SinceNs            uint64 `protobuf:"varint,2,opt,name=since_ns,json=sinceNs,proto3" json:"since_ns,omitempty"`
+	IdleTimeoutSeconds uint32 `protobuf:"varint,3,opt,name=idle_timeout_seconds,json=idleTimeoutSeconds,proto3" json:"idle_timeout_seconds,omitempty"`
+	SourceVolumeServer string `protobuf:"bytes,4,opt,name=source_volume_server,json=sourceVolumeServer,proto3" json:"source_volume_server,omitempty"`
+}
+
+func (x *VolumeTailReceiverRequest) Reset() {
+	*x = VolumeTailReceiverRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[44]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeTailReceiverRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeTailReceiverRequest) ProtoMessage() {}
+
+func (x *VolumeTailReceiverRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[44]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeTailReceiverRequest.ProtoReflect.Descriptor instead.
+func (*VolumeTailReceiverRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *VolumeTailReceiverRequest) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *VolumeTailReceiverRequest) GetSinceNs() uint64 {
+	if x != nil {
+		return x.SinceNs
+	}
+	return 0
+}
+
+func (x *VolumeTailReceiverRequest) GetIdleTimeoutSeconds() uint32 {
+	if x != nil {
+		return x.IdleTimeoutSeconds
+	}
+	return 0
+}
+
+func (x *VolumeTailReceiverRequest) GetSourceVolumeServer() string {
+	if x != nil {
+		return x.SourceVolumeServer
+	}
+	return ""
+}
+
+type VolumeTailReceiverResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *VolumeTailReceiverResponse) Reset() {
+	*x = VolumeTailReceiverResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[45]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeTailReceiverResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeTailReceiverResponse) ProtoMessage() {}
+
+func (x *VolumeTailReceiverResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[45]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeTailReceiverResponse.ProtoReflect.Descriptor instead.
+func (*VolumeTailReceiverResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{45}
+}
+
+type VolumeEcShardsGenerateRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId   uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Collection string `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+}
+
+func (x *VolumeEcShardsGenerateRequest) Reset() {
+	*x = VolumeEcShardsGenerateRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[46]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardsGenerateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardsGenerateRequest) ProtoMessage() {}
+
+func (x *VolumeEcShardsGenerateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[46]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardsGenerateRequest.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardsGenerateRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *VolumeEcShardsGenerateRequest) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *VolumeEcShardsGenerateRequest) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+type VolumeEcShardsGenerateResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *VolumeEcShardsGenerateResponse) Reset() {
+	*x = VolumeEcShardsGenerateResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[47]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardsGenerateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardsGenerateResponse) ProtoMessage() {}
+
+func (x *VolumeEcShardsGenerateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[47]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardsGenerateResponse.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardsGenerateResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{47}
+}
+
+type VolumeEcShardsRebuildRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId   uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Collection string `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+}
+
+func (x *VolumeEcShardsRebuildRequest) Reset() {
+	*x = VolumeEcShardsRebuildRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[48]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardsRebuildRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardsRebuildRequest) ProtoMessage() {}
+
+func (x *VolumeEcShardsRebuildRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[48]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardsRebuildRequest.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardsRebuildRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *VolumeEcShardsRebuildRequest) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *VolumeEcShardsRebuildRequest) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+type VolumeEcShardsRebuildResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	RebuiltShardIds []uint32 `protobuf:"varint,1,rep,packed,name=rebuilt_shard_ids,json=rebuiltShardIds,proto3" json:"rebuilt_shard_ids,omitempty"`
+}
+
+func (x *VolumeEcShardsRebuildResponse) Reset() {
+	*x = VolumeEcShardsRebuildResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[49]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardsRebuildResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardsRebuildResponse) ProtoMessage() {}
+
+func (x *VolumeEcShardsRebuildResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[49]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardsRebuildResponse.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardsRebuildResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *VolumeEcShardsRebuildResponse) GetRebuiltShardIds() []uint32 {
+	if x != nil {
+		return x.RebuiltShardIds
+	}
+	return nil
+}
+
+type VolumeEcShardsCopyRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId       uint32   `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Collection     string   `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+	ShardIds       []uint32 `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
+	CopyEcxFile    bool     `protobuf:"varint,4,opt,name=copy_ecx_file,json=copyEcxFile,proto3" json:"copy_ecx_file,omitempty"`
+	SourceDataNode string   `protobuf:"bytes,5,opt,name=source_data_node,json=sourceDataNode,proto3" json:"source_data_node,omitempty"`
+	CopyEcjFile    bool     `protobuf:"varint,6,opt,name=copy_ecj_file,json=copyEcjFile,proto3" json:"copy_ecj_file,omitempty"`
+	CopyVifFile    bool     `protobuf:"varint,7,opt,name=copy_vif_file,json=copyVifFile,proto3" json:"copy_vif_file,omitempty"`
+}
+
+func (x *VolumeEcShardsCopyRequest) Reset() {
+	*x = VolumeEcShardsCopyRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[50]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardsCopyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardsCopyRequest) ProtoMessage() {}
+
+func (x *VolumeEcShardsCopyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[50]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardsCopyRequest.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardsCopyRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *VolumeEcShardsCopyRequest) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *VolumeEcShardsCopyRequest) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+func (x *VolumeEcShardsCopyRequest) GetShardIds() []uint32 {
+	if x != nil {
+		return x.ShardIds
+	}
+	return nil
+}
+
+func (x *VolumeEcShardsCopyRequest) GetCopyEcxFile() bool {
+	if x != nil {
+		return x.CopyEcxFile
+	}
+	return false
+}
+
+func (x *VolumeEcShardsCopyRequest) GetSourceDataNode() string {
+	if x != nil {
+		return x.SourceDataNode
+	}
+	return ""
+}
+
+func (x *VolumeEcShardsCopyRequest) GetCopyEcjFile() bool {
+	if x != nil {
+		return x.CopyEcjFile
+	}
+	return false
+}
+
+func (x *VolumeEcShardsCopyRequest) GetCopyVifFile() bool {
+	if x != nil {
+		return x.CopyVifFile
+	}
+	return false
+}
+
+type VolumeEcShardsCopyResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *VolumeEcShardsCopyResponse) Reset() {
+	*x = VolumeEcShardsCopyResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[51]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardsCopyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardsCopyResponse) ProtoMessage() {}
+
+func (x *VolumeEcShardsCopyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[51]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardsCopyResponse.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardsCopyResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{51}
+}
+
+type VolumeEcShardsDeleteRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId   uint32   `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Collection string   `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+	ShardIds   []uint32 `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
+}
+
+func (x *VolumeEcShardsDeleteRequest) Reset() {
+	*x = VolumeEcShardsDeleteRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[52]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardsDeleteRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardsDeleteRequest) ProtoMessage() {}
+
+func (x *VolumeEcShardsDeleteRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[52]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardsDeleteRequest.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardsDeleteRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{52}
+}
+
+func (x *VolumeEcShardsDeleteRequest) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *VolumeEcShardsDeleteRequest) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+func (x *VolumeEcShardsDeleteRequest) GetShardIds() []uint32 {
+	if x != nil {
+		return x.ShardIds
+	}
+	return nil
+}
+
+type VolumeEcShardsDeleteResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *VolumeEcShardsDeleteResponse) Reset() {
+	*x = VolumeEcShardsDeleteResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[53]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardsDeleteResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardsDeleteResponse) ProtoMessage() {}
+
+func (x *VolumeEcShardsDeleteResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[53]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardsDeleteResponse.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardsDeleteResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{53}
+}
+
+type VolumeEcShardsMountRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId   uint32   `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Collection string   `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+	ShardIds   []uint32 `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
+}
+
+func (x *VolumeEcShardsMountRequest) Reset() {
+	*x = VolumeEcShardsMountRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[54]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardsMountRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardsMountRequest) ProtoMessage() {}
+
+func (x *VolumeEcShardsMountRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[54]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardsMountRequest.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardsMountRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{54}
+}
+
+func (x *VolumeEcShardsMountRequest) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *VolumeEcShardsMountRequest) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+func (x *VolumeEcShardsMountRequest) GetShardIds() []uint32 {
+	if x != nil {
+		return x.ShardIds
+	}
+	return nil
+}
+
+type VolumeEcShardsMountResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *VolumeEcShardsMountResponse) Reset() {
+	*x = VolumeEcShardsMountResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[55]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardsMountResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardsMountResponse) ProtoMessage() {}
+
+func (x *VolumeEcShardsMountResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[55]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardsMountResponse.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardsMountResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{55}
+}
+
+type VolumeEcShardsUnmountRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId uint32   `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	ShardIds []uint32 `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
+}
+
+func (x *VolumeEcShardsUnmountRequest) Reset() {
+	*x = VolumeEcShardsUnmountRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[56]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardsUnmountRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardsUnmountRequest) ProtoMessage() {}
+
+func (x *VolumeEcShardsUnmountRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[56]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardsUnmountRequest.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardsUnmountRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{56}
+}
+
+func (x *VolumeEcShardsUnmountRequest) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *VolumeEcShardsUnmountRequest) GetShardIds() []uint32 {
+	if x != nil {
+		return x.ShardIds
+	}
+	return nil
+}
+
+type VolumeEcShardsUnmountResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *VolumeEcShardsUnmountResponse) Reset() {
+	*x = VolumeEcShardsUnmountResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[57]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardsUnmountResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardsUnmountResponse) ProtoMessage() {}
+
+func (x *VolumeEcShardsUnmountResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[57]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardsUnmountResponse.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardsUnmountResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{57}
+}
+
+type VolumeEcShardReadRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	ShardId  uint32 `protobuf:"varint,2,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
+	Offset   int64  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	Size     int64  `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`
+	FileKey  uint64 `protobuf:"varint,5,opt,name=file_key,json=fileKey,proto3" json:"file_key,omitempty"`
+}
+
+func (x *VolumeEcShardReadRequest) Reset() {
+	*x = VolumeEcShardReadRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[58]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardReadRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardReadRequest) ProtoMessage() {}
+
+func (x *VolumeEcShardReadRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[58]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardReadRequest.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardReadRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{58}
+}
+
+func (x *VolumeEcShardReadRequest) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *VolumeEcShardReadRequest) GetShardId() uint32 {
+	if x != nil {
+		return x.ShardId
+	}
+	return 0
+}
+
+func (x *VolumeEcShardReadRequest) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *VolumeEcShardReadRequest) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *VolumeEcShardReadRequest) GetFileKey() uint64 {
+	if x != nil {
+		return x.FileKey
+	}
+	return 0
+}
+
+type VolumeEcShardReadResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Data      []byte `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	IsDeleted bool   `protobuf:"varint,2,opt,name=is_deleted,json=isDeleted,proto3" json:"is_deleted,omitempty"`
+}
+
+func (x *VolumeEcShardReadResponse) Reset() {
+	*x = VolumeEcShardReadResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[59]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardReadResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardReadResponse) ProtoMessage() {}
+
+func (x *VolumeEcShardReadResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[59]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardReadResponse.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardReadResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{59}
+}
+
+func (x *VolumeEcShardReadResponse) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *VolumeEcShardReadResponse) GetIsDeleted() bool {
+	if x != nil {
+		return x.IsDeleted
+	}
+	return false
+}
+
+type VolumeEcBlobDeleteRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId   uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Collection string `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+	FileKey    uint64 `protobuf:"varint,3,opt,name=file_key,json=fileKey,proto3" json:"file_key,omitempty"`
+	Version    uint32 `protobuf:"varint,4,opt,name=version,proto3" json:"version,omitempty"`
+}
+
+func (x *VolumeEcBlobDeleteRequest) Reset() {
+	*x = VolumeEcBlobDeleteRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[60]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcBlobDeleteRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcBlobDeleteRequest) ProtoMessage() {}
+
+func (x *VolumeEcBlobDeleteRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[60]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcBlobDeleteRequest.ProtoReflect.Descriptor instead.
+func (*VolumeEcBlobDeleteRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{60}
+}
+
+func (x *VolumeEcBlobDeleteRequest) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *VolumeEcBlobDeleteRequest) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+func (x *VolumeEcBlobDeleteRequest) GetFileKey() uint64 {
+	if x != nil {
+		return x.FileKey
+	}
+	return 0
+}
+
+func (x *VolumeEcBlobDeleteRequest) GetVersion() uint32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+type VolumeEcBlobDeleteResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *VolumeEcBlobDeleteResponse) Reset() {
+	*x = VolumeEcBlobDeleteResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[61]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcBlobDeleteResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcBlobDeleteResponse) ProtoMessage() {}
+
+func (x *VolumeEcBlobDeleteResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[61]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcBlobDeleteResponse.ProtoReflect.Descriptor instead.
+func (*VolumeEcBlobDeleteResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{61}
+}
+
+type VolumeEcShardsToVolumeRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId   uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Collection string `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+}
+
+func (x *VolumeEcShardsToVolumeRequest) Reset() {
+	*x = VolumeEcShardsToVolumeRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[62]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardsToVolumeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardsToVolumeRequest) ProtoMessage() {}
+
+func (x *VolumeEcShardsToVolumeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[62]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardsToVolumeRequest.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardsToVolumeRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{62}
+}
+
+func (x *VolumeEcShardsToVolumeRequest) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *VolumeEcShardsToVolumeRequest) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+type VolumeEcShardsToVolumeResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *VolumeEcShardsToVolumeResponse) Reset() {
+	*x = VolumeEcShardsToVolumeResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[63]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeEcShardsToVolumeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeEcShardsToVolumeResponse) ProtoMessage() {}
+
+func (x *VolumeEcShardsToVolumeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[63]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeEcShardsToVolumeResponse.ProtoReflect.Descriptor instead.
+func (*VolumeEcShardsToVolumeResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{63}
+}
+
+type ReadVolumeFileStatusRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+}
+
+func (x *ReadVolumeFileStatusRequest) Reset() {
+	*x = ReadVolumeFileStatusRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[64]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *ReadVolumeFileStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadVolumeFileStatusRequest) ProtoMessage() {}
+
+func (x *ReadVolumeFileStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[64]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadVolumeFileStatusRequest.ProtoReflect.Descriptor instead.
+func (*ReadVolumeFileStatusRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{64}
+}
+
+func (x *ReadVolumeFileStatusRequest) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+type ReadVolumeFileStatusResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId                uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	IdxFileTimestampSeconds uint64 `protobuf:"varint,2,opt,name=idx_file_timestamp_seconds,json=idxFileTimestampSeconds,proto3" json:"idx_file_timestamp_seconds,omitempty"`
+	IdxFileSize             uint64 `protobuf:"varint,3,opt,name=idx_file_size,json=idxFileSize,proto3" json:"idx_file_size,omitempty"`
+	DatFileTimestampSeconds uint64 `protobuf:"varint,4,opt,name=dat_file_timestamp_seconds,json=datFileTimestampSeconds,proto3" json:"dat_file_timestamp_seconds,omitempty"`
+	DatFileSize             uint64 `protobuf:"varint,5,opt,name=dat_file_size,json=datFileSize,proto3" json:"dat_file_size,omitempty"`
+	FileCount               uint64 `protobuf:"varint,6,opt,name=file_count,json=fileCount,proto3" json:"file_count,omitempty"`
+	CompactionRevision      uint32 `protobuf:"varint,7,opt,name=compaction_revision,json=compactionRevision,proto3" json:"compaction_revision,omitempty"`
+	Collection              string `protobuf:"bytes,8,opt,name=collection,proto3" json:"collection,omitempty"`
+	DiskType                string `protobuf:"bytes,9,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
+}
+
+func (x *ReadVolumeFileStatusResponse) Reset() {
+	*x = ReadVolumeFileStatusResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[65]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *ReadVolumeFileStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadVolumeFileStatusResponse) ProtoMessage() {}
+
+func (x *ReadVolumeFileStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[65]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadVolumeFileStatusResponse.ProtoReflect.Descriptor instead.
+func (*ReadVolumeFileStatusResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{65}
+}
+
+func (x *ReadVolumeFileStatusResponse) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *ReadVolumeFileStatusResponse) GetIdxFileTimestampSeconds() uint64 {
+	if x != nil {
+		return x.IdxFileTimestampSeconds
+	}
+	return 0
+}
+
+func (x *ReadVolumeFileStatusResponse) GetIdxFileSize() uint64 {
+	if x != nil {
+		return x.IdxFileSize
+	}
+	return 0
+}
+
+func (x *ReadVolumeFileStatusResponse) GetDatFileTimestampSeconds() uint64 {
+	if x != nil {
+		return x.DatFileTimestampSeconds
+	}
+	return 0
+}
+
+func (x *ReadVolumeFileStatusResponse) GetDatFileSize() uint64 {
+	if x != nil {
+		return x.DatFileSize
+	}
+	return 0
+}
+
+func (x *ReadVolumeFileStatusResponse) GetFileCount() uint64 {
+	if x != nil {
+		return x.FileCount
+	}
+	return 0
+}
+
+func (x *ReadVolumeFileStatusResponse) GetCompactionRevision() uint32 {
+	if x != nil {
+		return x.CompactionRevision
+	}
+	return 0
+}
+
+func (x *ReadVolumeFileStatusResponse) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+func (x *ReadVolumeFileStatusResponse) GetDiskType() string {
+	if x != nil {
+		return x.DiskType
+	}
+	return ""
+}
+
+type DiskStatus struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Dir         string  `protobuf:"bytes,1,opt,name=dir,proto3" json:"dir,omitempty"`
+	All         uint64  `protobuf:"varint,2,opt,name=all,proto3" json:"all,omitempty"`
+	Used        uint64  `protobuf:"varint,3,opt,name=used,proto3" json:"used,omitempty"`
+	Free        uint64  `protobuf:"varint,4,opt,name=free,proto3" json:"free,omitempty"`
+	PercentFree float32 `protobuf:"fixed32,5,opt,name=percent_free,json=percentFree,proto3" json:"percent_free,omitempty"`
+	PercentUsed float32 `protobuf:"fixed32,6,opt,name=percent_used,json=percentUsed,proto3" json:"percent_used,omitempty"`
+	DiskType    string  `protobuf:"bytes,7,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
+}
+
+func (x *DiskStatus) Reset() {
+	*x = DiskStatus{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[66]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *DiskStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DiskStatus) ProtoMessage() {}
+
+func (x *DiskStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[66]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DiskStatus.ProtoReflect.Descriptor instead.
+func (*DiskStatus) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{66}
+}
+
+func (x *DiskStatus) GetDir() string {
+	if x != nil {
+		return x.Dir
+	}
+	return ""
+}
+
+func (x *DiskStatus) GetAll() uint64 {
+	if x != nil {
+		return x.All
+	}
+	return 0
+}
+
+func (x *DiskStatus) GetUsed() uint64 {
+	if x != nil {
+		return x.Used
+	}
+	return 0
+}
+
+func (x *DiskStatus) GetFree() uint64 {
+	if x != nil {
+		return x.Free
+	}
+	return 0
+}
+
+func (x *DiskStatus) GetPercentFree() float32 {
+	if x != nil {
+		return x.PercentFree
+	}
+	return 0
+}
+
+func (x *DiskStatus) GetPercentUsed() float32 {
+	if x != nil {
+		return x.PercentUsed
+	}
+	return 0
+}
+
+func (x *DiskStatus) GetDiskType() string {
+	if x != nil {
+		return x.DiskType
+	}
+	return ""
+}
+
+type MemStatus struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Goroutines int32  `protobuf:"varint,1,opt,name=goroutines,proto3" json:"goroutines,omitempty"`
+	All        uint64 `protobuf:"varint,2,opt,name=all,proto3" json:"all,omitempty"`
+	Used       uint64 `protobuf:"varint,3,opt,name=used,proto3" json:"used,omitempty"`
+	Free       uint64 `protobuf:"varint,4,opt,name=free,proto3" json:"free,omitempty"`
+	Self       uint64 `protobuf:"varint,5,opt,name=self,proto3" json:"self,omitempty"`
+	Heap       uint64 `protobuf:"varint,6,opt,name=heap,proto3" json:"heap,omitempty"`
+	Stack      uint64 `protobuf:"varint,7,opt,name=stack,proto3" json:"stack,omitempty"`
+}
+
+func (x *MemStatus) Reset() {
+	*x = MemStatus{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[67]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *MemStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MemStatus) ProtoMessage() {}
+
+func (x *MemStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[67]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MemStatus.ProtoReflect.Descriptor instead.
+func (*MemStatus) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{67}
+}
+
+func (x *MemStatus) GetGoroutines() int32 {
+	if x != nil {
+		return x.Goroutines
+	}
+	return 0
+}
+
+func (x *MemStatus) GetAll() uint64 {
+	if x != nil {
+		return x.All
+	}
+	return 0
+}
+
+func (x *MemStatus) GetUsed() uint64 {
+	if x != nil {
+		return x.Used
+	}
+	return 0
+}
+
+func (x *MemStatus) GetFree() uint64 {
+	if x != nil {
+		return x.Free
+	}
+	return 0
+}
+
+func (x *MemStatus) GetSelf() uint64 {
+	if x != nil {
+		return x.Self
+	}
+	return 0
+}
+
+func (x *MemStatus) GetHeap() uint64 {
+	if x != nil {
+		return x.Heap
+	}
+	return 0
+}
+
+func (x *MemStatus) GetStack() uint64 {
+	if x != nil {
+		return x.Stack
+	}
+	return 0
+}
+
+// tired storage on volume servers
+type RemoteFile struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	BackendType  string `protobuf:"bytes,1,opt,name=backend_type,json=backendType,proto3" json:"backend_type,omitempty"`
+	BackendId    string `protobuf:"bytes,2,opt,name=backend_id,json=backendId,proto3" json:"backend_id,omitempty"`
+	Key          string `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
+	Offset       uint64 `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
+	FileSize     uint64 `protobuf:"varint,5,opt,name=file_size,json=fileSize,proto3" json:"file_size,omitempty"`
+	ModifiedTime uint64 `protobuf:"varint,6,opt,name=modified_time,json=modifiedTime,proto3" json:"modified_time,omitempty"`
+	Extension    string `protobuf:"bytes,7,opt,name=extension,proto3" json:"extension,omitempty"`
+}
+
+func (x *RemoteFile) Reset() {
+	*x = RemoteFile{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[68]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *RemoteFile) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoteFile) ProtoMessage() {}
+
+func (x *RemoteFile) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[68]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoteFile.ProtoReflect.Descriptor instead.
+func (*RemoteFile) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{68}
+}
+
+func (x *RemoteFile) GetBackendType() string {
+	if x != nil {
+		return x.BackendType
+	}
+	return ""
+}
+
+func (x *RemoteFile) GetBackendId() string {
+	if x != nil {
+		return x.BackendId
+	}
+	return ""
+}
+
+func (x *RemoteFile) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *RemoteFile) GetOffset() uint64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *RemoteFile) GetFileSize() uint64 {
+	if x != nil {
+		return x.FileSize
+	}
+	return 0
+}
+
+func (x *RemoteFile) GetModifiedTime() uint64 {
+	if x != nil {
+		return x.ModifiedTime
+	}
+	return 0
+}
+
+func (x *RemoteFile) GetExtension() string {
+	if x != nil {
+		return x.Extension
+	}
+	return ""
+}
+
+type VolumeInfo struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Files       []*RemoteFile `protobuf:"bytes,1,rep,name=files,proto3" json:"files,omitempty"`
+	Version     uint32        `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	Replication string        `protobuf:"bytes,3,opt,name=replication,proto3" json:"replication,omitempty"`
+}
+
+func (x *VolumeInfo) Reset() {
+	*x = VolumeInfo{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[69]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeInfo) ProtoMessage() {}
+
+func (x *VolumeInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[69]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeInfo.ProtoReflect.Descriptor instead.
+func (*VolumeInfo) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{69}
+}
+
+func (x *VolumeInfo) GetFiles() []*RemoteFile {
+	if x != nil {
+		return x.Files
+	}
+	return nil
+}
+
+func (x *VolumeInfo) GetVersion() uint32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *VolumeInfo) GetReplication() string {
+	if x != nil {
+		return x.Replication
+	}
+	return ""
+}
+
+// tiered storage
+type VolumeTierMoveDatToRemoteRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId               uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Collection             string `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+	DestinationBackendName string `protobuf:"bytes,3,opt,name=destination_backend_name,json=destinationBackendName,proto3" json:"destination_backend_name,omitempty"`
+	KeepLocalDatFile       bool   `protobuf:"varint,4,opt,name=keep_local_dat_file,json=keepLocalDatFile,proto3" json:"keep_local_dat_file,omitempty"`
+}
+
+func (x *VolumeTierMoveDatToRemoteRequest) Reset() {
+	*x = VolumeTierMoveDatToRemoteRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[70]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeTierMoveDatToRemoteRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeTierMoveDatToRemoteRequest) ProtoMessage() {}
+
+func (x *VolumeTierMoveDatToRemoteRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[70]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeTierMoveDatToRemoteRequest.ProtoReflect.Descriptor instead.
+func (*VolumeTierMoveDatToRemoteRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{70}
+}
+
+func (x *VolumeTierMoveDatToRemoteRequest) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *VolumeTierMoveDatToRemoteRequest) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+func (x *VolumeTierMoveDatToRemoteRequest) GetDestinationBackendName() string {
+	if x != nil {
+		return x.DestinationBackendName
+	}
+	return ""
+}
+
+func (x *VolumeTierMoveDatToRemoteRequest) GetKeepLocalDatFile() bool {
+	if x != nil {
+		return x.KeepLocalDatFile
+	}
+	return false
+}
+
+type VolumeTierMoveDatToRemoteResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Processed           int64   `protobuf:"varint,1,opt,name=processed,proto3" json:"processed,omitempty"`
+	ProcessedPercentage float32 `protobuf:"fixed32,2,opt,name=processedPercentage,proto3" json:"processedPercentage,omitempty"`
+}
+
+func (x *VolumeTierMoveDatToRemoteResponse) Reset() {
+	*x = VolumeTierMoveDatToRemoteResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[71]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeTierMoveDatToRemoteResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeTierMoveDatToRemoteResponse) ProtoMessage() {}
+
+func (x *VolumeTierMoveDatToRemoteResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[71]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeTierMoveDatToRemoteResponse.ProtoReflect.Descriptor instead.
+func (*VolumeTierMoveDatToRemoteResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{71}
+}
+
+func (x *VolumeTierMoveDatToRemoteResponse) GetProcessed() int64 {
+	if x != nil {
+		return x.Processed
+	}
+	return 0
+}
+
+func (x *VolumeTierMoveDatToRemoteResponse) GetProcessedPercentage() float32 {
+	if x != nil {
+		return x.ProcessedPercentage
+	}
+	return 0
+}
+
+type VolumeTierMoveDatFromRemoteRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId          uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	Collection        string `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
+	KeepRemoteDatFile bool   `protobuf:"varint,3,opt,name=keep_remote_dat_file,json=keepRemoteDatFile,proto3" json:"keep_remote_dat_file,omitempty"`
+}
+
+func (x *VolumeTierMoveDatFromRemoteRequest) Reset() {
+	*x = VolumeTierMoveDatFromRemoteRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[72]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeTierMoveDatFromRemoteRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeTierMoveDatFromRemoteRequest) ProtoMessage() {}
+
+func (x *VolumeTierMoveDatFromRemoteRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[72]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeTierMoveDatFromRemoteRequest.ProtoReflect.Descriptor instead.
+func (*VolumeTierMoveDatFromRemoteRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{72}
+}
+
+func (x *VolumeTierMoveDatFromRemoteRequest) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *VolumeTierMoveDatFromRemoteRequest) GetCollection() string {
+	if x != nil {
+		return x.Collection
+	}
+	return ""
+}
+
+func (x *VolumeTierMoveDatFromRemoteRequest) GetKeepRemoteDatFile() bool {
+	if x != nil {
+		return x.KeepRemoteDatFile
+	}
+	return false
+}
+
+type VolumeTierMoveDatFromRemoteResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Processed           int64   `protobuf:"varint,1,opt,name=processed,proto3" json:"processed,omitempty"`
+	ProcessedPercentage float32 `protobuf:"fixed32,2,opt,name=processedPercentage,proto3" json:"processedPercentage,omitempty"`
+}
+
+func (x *VolumeTierMoveDatFromRemoteResponse) Reset() {
+	*x = VolumeTierMoveDatFromRemoteResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[73]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeTierMoveDatFromRemoteResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeTierMoveDatFromRemoteResponse) ProtoMessage() {}
+
+func (x *VolumeTierMoveDatFromRemoteResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[73]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeTierMoveDatFromRemoteResponse.ProtoReflect.Descriptor instead.
+func (*VolumeTierMoveDatFromRemoteResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{73}
+}
+
+func (x *VolumeTierMoveDatFromRemoteResponse) GetProcessed() int64 {
+	if x != nil {
+		return x.Processed
+	}
+	return 0
+}
+
+func (x *VolumeTierMoveDatFromRemoteResponse) GetProcessedPercentage() float32 {
+	if x != nil {
+		return x.ProcessedPercentage
+	}
+	return 0
+}
+
+type VolumeServerStatusRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *VolumeServerStatusRequest) Reset() {
+	*x = VolumeServerStatusRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[74]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeServerStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeServerStatusRequest) ProtoMessage() {}
+
+func (x *VolumeServerStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[74]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeServerStatusRequest.ProtoReflect.Descriptor instead.
+func (*VolumeServerStatusRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{74}
+}
+
+type VolumeServerStatusResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	DiskStatuses []*DiskStatus `protobuf:"bytes,1,rep,name=disk_statuses,json=diskStatuses,proto3" json:"disk_statuses,omitempty"`
+	MemoryStatus *MemStatus    `protobuf:"bytes,2,opt,name=memory_status,json=memoryStatus,proto3" json:"memory_status,omitempty"`
+}
+
+func (x *VolumeServerStatusResponse) Reset() {
+	*x = VolumeServerStatusResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[75]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeServerStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeServerStatusResponse) ProtoMessage() {}
+
+func (x *VolumeServerStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[75]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeServerStatusResponse.ProtoReflect.Descriptor instead.
+func (*VolumeServerStatusResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{75}
+}
+
+func (x *VolumeServerStatusResponse) GetDiskStatuses() []*DiskStatus {
+	if x != nil {
+		return x.DiskStatuses
+	}
+	return nil
+}
+
+func (x *VolumeServerStatusResponse) GetMemoryStatus() *MemStatus {
+	if x != nil {
+		return x.MemoryStatus
+	}
+	return nil
+}
+
+type VolumeServerLeaveRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *VolumeServerLeaveRequest) Reset() {
+	*x = VolumeServerLeaveRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[76]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeServerLeaveRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeServerLeaveRequest) ProtoMessage() {}
+
+func (x *VolumeServerLeaveRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[76]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeServerLeaveRequest.ProtoReflect.Descriptor instead.
+func (*VolumeServerLeaveRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{76}
+}
+
+type VolumeServerLeaveResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *VolumeServerLeaveResponse) Reset() {
+	*x = VolumeServerLeaveResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[77]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *VolumeServerLeaveResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VolumeServerLeaveResponse) ProtoMessage() {}
+
+func (x *VolumeServerLeaveResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[77]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VolumeServerLeaveResponse.ProtoReflect.Descriptor instead.
+func (*VolumeServerLeaveResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{77}
+}
+
+// remote storage
 type FetchAndWriteNeedleRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -2209,7 +4325,7 @@ type FetchAndWriteNeedleRequest struct {
 	NeedleId uint64 `protobuf:"varint,2,opt,name=needle_id,json=needleId,proto3" json:"needle_id,omitempty"`
 	Offset   int64  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
 	Size     int64  `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`
-	// remote info
+	// remote conf
 	RemoteType   string `protobuf:"bytes,5,opt,name=remote_type,json=remoteType,proto3" json:"remote_type,omitempty"`
 	RemoteName   string `protobuf:"bytes,6,opt,name=remote_name,json=remoteName,proto3" json:"remote_name,omitempty"`
 	S3AccessKey  string `protobuf:"bytes,8,opt,name=s3_access_key,json=s3AccessKey,proto3" json:"s3_access_key,omitempty"`
@@ -2223,7 +4339,7 @@ type FetchAndWriteNeedleRequest struct {
 func (x *FetchAndWriteNeedleRequest) Reset() {
 	*x = FetchAndWriteNeedleRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[42]
+		mi := &file_volume_server_proto_msgTypes[78]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2236,7 +4352,7 @@ func (x *FetchAndWriteNeedleRequest) String() string {
 func (*FetchAndWriteNeedleRequest) ProtoMessage() {}
 
 func (x *FetchAndWriteNeedleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[42]
+	mi := &file_volume_server_proto_msgTypes[78]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2249,7 +4365,7 @@ func (x *FetchAndWriteNeedleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchAndWriteNeedleRequest.ProtoReflect.Descriptor instead.
 func (*FetchAndWriteNeedleRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{42}
+	return file_volume_server_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *FetchAndWriteNeedleRequest) GetVolumeId() uint32 {
@@ -2345,7 +4461,7 @@ type FetchAndWriteNeedleResponse struct {
 func (x *FetchAndWriteNeedleResponse) Reset() {
 	*x = FetchAndWriteNeedleResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[43]
+		mi := &file_volume_server_proto_msgTypes[79]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -2358,7 +4474,7 @@ func (x *FetchAndWriteNeedleResponse) String() string {
 func (*FetchAndWriteNeedleResponse) ProtoMessage() {}
 
 func (x *FetchAndWriteNeedleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[43]
+	mi := &file_volume_server_proto_msgTypes[79]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2371,2120 +4487,6 @@ func (x *FetchAndWriteNeedleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchAndWriteNeedleResponse.ProtoReflect.Descriptor instead.
 func (*FetchAndWriteNeedleResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{43}
-}
-
-type VolumeTailSenderRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	VolumeId           uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	SinceNs            uint64 `protobuf:"varint,2,opt,name=since_ns,json=sinceNs,proto3" json:"since_ns,omitempty"`
-	IdleTimeoutSeconds uint32 `protobuf:"varint,3,opt,name=idle_timeout_seconds,json=idleTimeoutSeconds,proto3" json:"idle_timeout_seconds,omitempty"`
-}
-
-func (x *VolumeTailSenderRequest) Reset() {
-	*x = VolumeTailSenderRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[44]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeTailSenderRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeTailSenderRequest) ProtoMessage() {}
-
-func (x *VolumeTailSenderRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[44]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeTailSenderRequest.ProtoReflect.Descriptor instead.
-func (*VolumeTailSenderRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{44}
-}
-
-func (x *VolumeTailSenderRequest) GetVolumeId() uint32 {
-	if x != nil {
-		return x.VolumeId
-	}
-	return 0
-}
-
-func (x *VolumeTailSenderRequest) GetSinceNs() uint64 {
-	if x != nil {
-		return x.SinceNs
-	}
-	return 0
-}
-
-func (x *VolumeTailSenderRequest) GetIdleTimeoutSeconds() uint32 {
-	if x != nil {
-		return x.IdleTimeoutSeconds
-	}
-	return 0
-}
-
-type VolumeTailSenderResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	NeedleHeader []byte `protobuf:"bytes,1,opt,name=needle_header,json=needleHeader,proto3" json:"needle_header,omitempty"`
-	NeedleBody   []byte `protobuf:"bytes,2,opt,name=needle_body,json=needleBody,proto3" json:"needle_body,omitempty"`
-	IsLastChunk  bool   `protobuf:"varint,3,opt,name=is_last_chunk,json=isLastChunk,proto3" json:"is_last_chunk,omitempty"`
-}
-
-func (x *VolumeTailSenderResponse) Reset() {
-	*x = VolumeTailSenderResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[45]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeTailSenderResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeTailSenderResponse) ProtoMessage() {}
-
-func (x *VolumeTailSenderResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[45]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeTailSenderResponse.ProtoReflect.Descriptor instead.
-func (*VolumeTailSenderResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{45}
-}
-
-func (x *VolumeTailSenderResponse) GetNeedleHeader() []byte {
-	if x != nil {
-		return x.NeedleHeader
-	}
-	return nil
-}
-
-func (x *VolumeTailSenderResponse) GetNeedleBody() []byte {
-	if x != nil {
-		return x.NeedleBody
-	}
-	return nil
-}
-
-func (x *VolumeTailSenderResponse) GetIsLastChunk() bool {
-	if x != nil {
-		return x.IsLastChunk
-	}
-	return false
-}
-
-type VolumeTailReceiverRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	VolumeId           uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	SinceNs            uint64 `protobuf:"varint,2,opt,name=since_ns,json=sinceNs,proto3" json:"since_ns,omitempty"`
-	IdleTimeoutSeconds uint32 `protobuf:"varint,3,opt,name=idle_timeout_seconds,json=idleTimeoutSeconds,proto3" json:"idle_timeout_seconds,omitempty"`
-	SourceVolumeServer string `protobuf:"bytes,4,opt,name=source_volume_server,json=sourceVolumeServer,proto3" json:"source_volume_server,omitempty"`
-}
-
-func (x *VolumeTailReceiverRequest) Reset() {
-	*x = VolumeTailReceiverRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[46]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeTailReceiverRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeTailReceiverRequest) ProtoMessage() {}
-
-func (x *VolumeTailReceiverRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[46]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeTailReceiverRequest.ProtoReflect.Descriptor instead.
-func (*VolumeTailReceiverRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{46}
-}
-
-func (x *VolumeTailReceiverRequest) GetVolumeId() uint32 {
-	if x != nil {
-		return x.VolumeId
-	}
-	return 0
-}
-
-func (x *VolumeTailReceiverRequest) GetSinceNs() uint64 {
-	if x != nil {
-		return x.SinceNs
-	}
-	return 0
-}
-
-func (x *VolumeTailReceiverRequest) GetIdleTimeoutSeconds() uint32 {
-	if x != nil {
-		return x.IdleTimeoutSeconds
-	}
-	return 0
-}
-
-func (x *VolumeTailReceiverRequest) GetSourceVolumeServer() string {
-	if x != nil {
-		return x.SourceVolumeServer
-	}
-	return ""
-}
-
-type VolumeTailReceiverResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-}
-
-func (x *VolumeTailReceiverResponse) Reset() {
-	*x = VolumeTailReceiverResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[47]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeTailReceiverResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeTailReceiverResponse) ProtoMessage() {}
-
-func (x *VolumeTailReceiverResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[47]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeTailReceiverResponse.ProtoReflect.Descriptor instead.
-func (*VolumeTailReceiverResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{47}
-}
-
-type VolumeEcShardsGenerateRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	VolumeId   uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Collection string `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
-}
-
-func (x *VolumeEcShardsGenerateRequest) Reset() {
-	*x = VolumeEcShardsGenerateRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[48]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardsGenerateRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardsGenerateRequest) ProtoMessage() {}
-
-func (x *VolumeEcShardsGenerateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[48]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardsGenerateRequest.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardsGenerateRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{48}
-}
-
-func (x *VolumeEcShardsGenerateRequest) GetVolumeId() uint32 {
-	if x != nil {
-		return x.VolumeId
-	}
-	return 0
-}
-
-func (x *VolumeEcShardsGenerateRequest) GetCollection() string {
-	if x != nil {
-		return x.Collection
-	}
-	return ""
-}
-
-type VolumeEcShardsGenerateResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-}
-
-func (x *VolumeEcShardsGenerateResponse) Reset() {
-	*x = VolumeEcShardsGenerateResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[49]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardsGenerateResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardsGenerateResponse) ProtoMessage() {}
-
-func (x *VolumeEcShardsGenerateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[49]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardsGenerateResponse.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardsGenerateResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{49}
-}
-
-type VolumeEcShardsRebuildRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	VolumeId   uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Collection string `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
-}
-
-func (x *VolumeEcShardsRebuildRequest) Reset() {
-	*x = VolumeEcShardsRebuildRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[50]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardsRebuildRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardsRebuildRequest) ProtoMessage() {}
-
-func (x *VolumeEcShardsRebuildRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[50]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardsRebuildRequest.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardsRebuildRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{50}
-}
-
-func (x *VolumeEcShardsRebuildRequest) GetVolumeId() uint32 {
-	if x != nil {
-		return x.VolumeId
-	}
-	return 0
-}
-
-func (x *VolumeEcShardsRebuildRequest) GetCollection() string {
-	if x != nil {
-		return x.Collection
-	}
-	return ""
-}
-
-type VolumeEcShardsRebuildResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	RebuiltShardIds []uint32 `protobuf:"varint,1,rep,packed,name=rebuilt_shard_ids,json=rebuiltShardIds,proto3" json:"rebuilt_shard_ids,omitempty"`
-}
-
-func (x *VolumeEcShardsRebuildResponse) Reset() {
-	*x = VolumeEcShardsRebuildResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[51]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardsRebuildResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardsRebuildResponse) ProtoMessage() {}
-
-func (x *VolumeEcShardsRebuildResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[51]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardsRebuildResponse.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardsRebuildResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{51}
-}
-
-func (x *VolumeEcShardsRebuildResponse) GetRebuiltShardIds() []uint32 {
-	if x != nil {
-		return x.RebuiltShardIds
-	}
-	return nil
-}
-
-type VolumeEcShardsCopyRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	VolumeId       uint32   `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Collection     string   `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
-	ShardIds       []uint32 `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
-	CopyEcxFile    bool     `protobuf:"varint,4,opt,name=copy_ecx_file,json=copyEcxFile,proto3" json:"copy_ecx_file,omitempty"`
-	SourceDataNode string   `protobuf:"bytes,5,opt,name=source_data_node,json=sourceDataNode,proto3" json:"source_data_node,omitempty"`
-	CopyEcjFile    bool     `protobuf:"varint,6,opt,name=copy_ecj_file,json=copyEcjFile,proto3" json:"copy_ecj_file,omitempty"`
-	CopyVifFile    bool     `protobuf:"varint,7,opt,name=copy_vif_file,json=copyVifFile,proto3" json:"copy_vif_file,omitempty"`
-}
-
-func (x *VolumeEcShardsCopyRequest) Reset() {
-	*x = VolumeEcShardsCopyRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[52]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardsCopyRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardsCopyRequest) ProtoMessage() {}
-
-func (x *VolumeEcShardsCopyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[52]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardsCopyRequest.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardsCopyRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{52}
-}
-
-func (x *VolumeEcShardsCopyRequest) GetVolumeId() uint32 {
-	if x != nil {
-		return x.VolumeId
-	}
-	return 0
-}
-
-func (x *VolumeEcShardsCopyRequest) GetCollection() string {
-	if x != nil {
-		return x.Collection
-	}
-	return ""
-}
-
-func (x *VolumeEcShardsCopyRequest) GetShardIds() []uint32 {
-	if x != nil {
-		return x.ShardIds
-	}
-	return nil
-}
-
-func (x *VolumeEcShardsCopyRequest) GetCopyEcxFile() bool {
-	if x != nil {
-		return x.CopyEcxFile
-	}
-	return false
-}
-
-func (x *VolumeEcShardsCopyRequest) GetSourceDataNode() string {
-	if x != nil {
-		return x.SourceDataNode
-	}
-	return ""
-}
-
-func (x *VolumeEcShardsCopyRequest) GetCopyEcjFile() bool {
-	if x != nil {
-		return x.CopyEcjFile
-	}
-	return false
-}
-
-func (x *VolumeEcShardsCopyRequest) GetCopyVifFile() bool {
-	if x != nil {
-		return x.CopyVifFile
-	}
-	return false
-}
-
-type VolumeEcShardsCopyResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-}
-
-func (x *VolumeEcShardsCopyResponse) Reset() {
-	*x = VolumeEcShardsCopyResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[53]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardsCopyResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardsCopyResponse) ProtoMessage() {}
-
-func (x *VolumeEcShardsCopyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[53]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardsCopyResponse.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardsCopyResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{53}
-}
-
-type VolumeEcShardsDeleteRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	VolumeId   uint32   `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Collection string   `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
-	ShardIds   []uint32 `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
-}
-
-func (x *VolumeEcShardsDeleteRequest) Reset() {
-	*x = VolumeEcShardsDeleteRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[54]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardsDeleteRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardsDeleteRequest) ProtoMessage() {}
-
-func (x *VolumeEcShardsDeleteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[54]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardsDeleteRequest.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardsDeleteRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{54}
-}
-
-func (x *VolumeEcShardsDeleteRequest) GetVolumeId() uint32 {
-	if x != nil {
-		return x.VolumeId
-	}
-	return 0
-}
-
-func (x *VolumeEcShardsDeleteRequest) GetCollection() string {
-	if x != nil {
-		return x.Collection
-	}
-	return ""
-}
-
-func (x *VolumeEcShardsDeleteRequest) GetShardIds() []uint32 {
-	if x != nil {
-		return x.ShardIds
-	}
-	return nil
-}
-
-type VolumeEcShardsDeleteResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-}
-
-func (x *VolumeEcShardsDeleteResponse) Reset() {
-	*x = VolumeEcShardsDeleteResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[55]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardsDeleteResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardsDeleteResponse) ProtoMessage() {}
-
-func (x *VolumeEcShardsDeleteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[55]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardsDeleteResponse.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardsDeleteResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{55}
-}
-
-type VolumeEcShardsMountRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	VolumeId   uint32   `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Collection string   `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
-	ShardIds   []uint32 `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
-}
-
-func (x *VolumeEcShardsMountRequest) Reset() {
-	*x = VolumeEcShardsMountRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[56]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardsMountRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardsMountRequest) ProtoMessage() {}
-
-func (x *VolumeEcShardsMountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[56]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardsMountRequest.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardsMountRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{56}
-}
-
-func (x *VolumeEcShardsMountRequest) GetVolumeId() uint32 {
-	if x != nil {
-		return x.VolumeId
-	}
-	return 0
-}
-
-func (x *VolumeEcShardsMountRequest) GetCollection() string {
-	if x != nil {
-		return x.Collection
-	}
-	return ""
-}
-
-func (x *VolumeEcShardsMountRequest) GetShardIds() []uint32 {
-	if x != nil {
-		return x.ShardIds
-	}
-	return nil
-}
-
-type VolumeEcShardsMountResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-}
-
-func (x *VolumeEcShardsMountResponse) Reset() {
-	*x = VolumeEcShardsMountResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[57]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardsMountResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardsMountResponse) ProtoMessage() {}
-
-func (x *VolumeEcShardsMountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[57]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardsMountResponse.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardsMountResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{57}
-}
-
-type VolumeEcShardsUnmountRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	VolumeId uint32   `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	ShardIds []uint32 `protobuf:"varint,3,rep,packed,name=shard_ids,json=shardIds,proto3" json:"shard_ids,omitempty"`
-}
-
-func (x *VolumeEcShardsUnmountRequest) Reset() {
-	*x = VolumeEcShardsUnmountRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[58]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardsUnmountRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardsUnmountRequest) ProtoMessage() {}
-
-func (x *VolumeEcShardsUnmountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[58]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardsUnmountRequest.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardsUnmountRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{58}
-}
-
-func (x *VolumeEcShardsUnmountRequest) GetVolumeId() uint32 {
-	if x != nil {
-		return x.VolumeId
-	}
-	return 0
-}
-
-func (x *VolumeEcShardsUnmountRequest) GetShardIds() []uint32 {
-	if x != nil {
-		return x.ShardIds
-	}
-	return nil
-}
-
-type VolumeEcShardsUnmountResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-}
-
-func (x *VolumeEcShardsUnmountResponse) Reset() {
-	*x = VolumeEcShardsUnmountResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[59]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardsUnmountResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardsUnmountResponse) ProtoMessage() {}
-
-func (x *VolumeEcShardsUnmountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[59]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardsUnmountResponse.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardsUnmountResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{59}
-}
-
-type VolumeEcShardReadRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	ShardId  uint32 `protobuf:"varint,2,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
-	Offset   int64  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
-	Size     int64  `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`
-	FileKey  uint64 `protobuf:"varint,5,opt,name=file_key,json=fileKey,proto3" json:"file_key,omitempty"`
-}
-
-func (x *VolumeEcShardReadRequest) Reset() {
-	*x = VolumeEcShardReadRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[60]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardReadRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardReadRequest) ProtoMessage() {}
-
-func (x *VolumeEcShardReadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[60]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardReadRequest.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardReadRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{60}
-}
-
-func (x *VolumeEcShardReadRequest) GetVolumeId() uint32 {
-	if x != nil {
-		return x.VolumeId
-	}
-	return 0
-}
-
-func (x *VolumeEcShardReadRequest) GetShardId() uint32 {
-	if x != nil {
-		return x.ShardId
-	}
-	return 0
-}
-
-func (x *VolumeEcShardReadRequest) GetOffset() int64 {
-	if x != nil {
-		return x.Offset
-	}
-	return 0
-}
-
-func (x *VolumeEcShardReadRequest) GetSize() int64 {
-	if x != nil {
-		return x.Size
-	}
-	return 0
-}
-
-func (x *VolumeEcShardReadRequest) GetFileKey() uint64 {
-	if x != nil {
-		return x.FileKey
-	}
-	return 0
-}
-
-type VolumeEcShardReadResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	Data      []byte `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
-	IsDeleted bool   `protobuf:"varint,2,opt,name=is_deleted,json=isDeleted,proto3" json:"is_deleted,omitempty"`
-}
-
-func (x *VolumeEcShardReadResponse) Reset() {
-	*x = VolumeEcShardReadResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[61]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardReadResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardReadResponse) ProtoMessage() {}
-
-func (x *VolumeEcShardReadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[61]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardReadResponse.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardReadResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{61}
-}
-
-func (x *VolumeEcShardReadResponse) GetData() []byte {
-	if x != nil {
-		return x.Data
-	}
-	return nil
-}
-
-func (x *VolumeEcShardReadResponse) GetIsDeleted() bool {
-	if x != nil {
-		return x.IsDeleted
-	}
-	return false
-}
-
-type VolumeEcBlobDeleteRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	VolumeId   uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Collection string `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
-	FileKey    uint64 `protobuf:"varint,3,opt,name=file_key,json=fileKey,proto3" json:"file_key,omitempty"`
-	Version    uint32 `protobuf:"varint,4,opt,name=version,proto3" json:"version,omitempty"`
-}
-
-func (x *VolumeEcBlobDeleteRequest) Reset() {
-	*x = VolumeEcBlobDeleteRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[62]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcBlobDeleteRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcBlobDeleteRequest) ProtoMessage() {}
-
-func (x *VolumeEcBlobDeleteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[62]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcBlobDeleteRequest.ProtoReflect.Descriptor instead.
-func (*VolumeEcBlobDeleteRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{62}
-}
-
-func (x *VolumeEcBlobDeleteRequest) GetVolumeId() uint32 {
-	if x != nil {
-		return x.VolumeId
-	}
-	return 0
-}
-
-func (x *VolumeEcBlobDeleteRequest) GetCollection() string {
-	if x != nil {
-		return x.Collection
-	}
-	return ""
-}
-
-func (x *VolumeEcBlobDeleteRequest) GetFileKey() uint64 {
-	if x != nil {
-		return x.FileKey
-	}
-	return 0
-}
-
-func (x *VolumeEcBlobDeleteRequest) GetVersion() uint32 {
-	if x != nil {
-		return x.Version
-	}
-	return 0
-}
-
-type VolumeEcBlobDeleteResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-}
-
-func (x *VolumeEcBlobDeleteResponse) Reset() {
-	*x = VolumeEcBlobDeleteResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[63]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcBlobDeleteResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcBlobDeleteResponse) ProtoMessage() {}
-
-func (x *VolumeEcBlobDeleteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[63]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcBlobDeleteResponse.ProtoReflect.Descriptor instead.
-func (*VolumeEcBlobDeleteResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{63}
-}
-
-type VolumeEcShardsToVolumeRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	VolumeId   uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Collection string `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
-}
-
-func (x *VolumeEcShardsToVolumeRequest) Reset() {
-	*x = VolumeEcShardsToVolumeRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[64]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardsToVolumeRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardsToVolumeRequest) ProtoMessage() {}
-
-func (x *VolumeEcShardsToVolumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[64]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardsToVolumeRequest.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardsToVolumeRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{64}
-}
-
-func (x *VolumeEcShardsToVolumeRequest) GetVolumeId() uint32 {
-	if x != nil {
-		return x.VolumeId
-	}
-	return 0
-}
-
-func (x *VolumeEcShardsToVolumeRequest) GetCollection() string {
-	if x != nil {
-		return x.Collection
-	}
-	return ""
-}
-
-type VolumeEcShardsToVolumeResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-}
-
-func (x *VolumeEcShardsToVolumeResponse) Reset() {
-	*x = VolumeEcShardsToVolumeResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[65]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeEcShardsToVolumeResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeEcShardsToVolumeResponse) ProtoMessage() {}
-
-func (x *VolumeEcShardsToVolumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[65]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeEcShardsToVolumeResponse.ProtoReflect.Descriptor instead.
-func (*VolumeEcShardsToVolumeResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{65}
-}
-
-type ReadVolumeFileStatusRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-}
-
-func (x *ReadVolumeFileStatusRequest) Reset() {
-	*x = ReadVolumeFileStatusRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[66]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *ReadVolumeFileStatusRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ReadVolumeFileStatusRequest) ProtoMessage() {}
-
-func (x *ReadVolumeFileStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[66]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ReadVolumeFileStatusRequest.ProtoReflect.Descriptor instead.
-func (*ReadVolumeFileStatusRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{66}
-}
-
-func (x *ReadVolumeFileStatusRequest) GetVolumeId() uint32 {
-	if x != nil {
-		return x.VolumeId
-	}
-	return 0
-}
-
-type ReadVolumeFileStatusResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	VolumeId                uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	IdxFileTimestampSeconds uint64 `protobuf:"varint,2,opt,name=idx_file_timestamp_seconds,json=idxFileTimestampSeconds,proto3" json:"idx_file_timestamp_seconds,omitempty"`
-	IdxFileSize             uint64 `protobuf:"varint,3,opt,name=idx_file_size,json=idxFileSize,proto3" json:"idx_file_size,omitempty"`
-	DatFileTimestampSeconds uint64 `protobuf:"varint,4,opt,name=dat_file_timestamp_seconds,json=datFileTimestampSeconds,proto3" json:"dat_file_timestamp_seconds,omitempty"`
-	DatFileSize             uint64 `protobuf:"varint,5,opt,name=dat_file_size,json=datFileSize,proto3" json:"dat_file_size,omitempty"`
-	FileCount               uint64 `protobuf:"varint,6,opt,name=file_count,json=fileCount,proto3" json:"file_count,omitempty"`
-	CompactionRevision      uint32 `protobuf:"varint,7,opt,name=compaction_revision,json=compactionRevision,proto3" json:"compaction_revision,omitempty"`
-	Collection              string `protobuf:"bytes,8,opt,name=collection,proto3" json:"collection,omitempty"`
-	DiskType                string `protobuf:"bytes,9,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
-}
-
-func (x *ReadVolumeFileStatusResponse) Reset() {
-	*x = ReadVolumeFileStatusResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[67]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *ReadVolumeFileStatusResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ReadVolumeFileStatusResponse) ProtoMessage() {}
-
-func (x *ReadVolumeFileStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[67]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ReadVolumeFileStatusResponse.ProtoReflect.Descriptor instead.
-func (*ReadVolumeFileStatusResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{67}
-}
-
-func (x *ReadVolumeFileStatusResponse) GetVolumeId() uint32 {
-	if x != nil {
-		return x.VolumeId
-	}
-	return 0
-}
-
-func (x *ReadVolumeFileStatusResponse) GetIdxFileTimestampSeconds() uint64 {
-	if x != nil {
-		return x.IdxFileTimestampSeconds
-	}
-	return 0
-}
-
-func (x *ReadVolumeFileStatusResponse) GetIdxFileSize() uint64 {
-	if x != nil {
-		return x.IdxFileSize
-	}
-	return 0
-}
-
-func (x *ReadVolumeFileStatusResponse) GetDatFileTimestampSeconds() uint64 {
-	if x != nil {
-		return x.DatFileTimestampSeconds
-	}
-	return 0
-}
-
-func (x *ReadVolumeFileStatusResponse) GetDatFileSize() uint64 {
-	if x != nil {
-		return x.DatFileSize
-	}
-	return 0
-}
-
-func (x *ReadVolumeFileStatusResponse) GetFileCount() uint64 {
-	if x != nil {
-		return x.FileCount
-	}
-	return 0
-}
-
-func (x *ReadVolumeFileStatusResponse) GetCompactionRevision() uint32 {
-	if x != nil {
-		return x.CompactionRevision
-	}
-	return 0
-}
-
-func (x *ReadVolumeFileStatusResponse) GetCollection() string {
-	if x != nil {
-		return x.Collection
-	}
-	return ""
-}
-
-func (x *ReadVolumeFileStatusResponse) GetDiskType() string {
-	if x != nil {
-		return x.DiskType
-	}
-	return ""
-}
-
-type DiskStatus struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	Dir         string  `protobuf:"bytes,1,opt,name=dir,proto3" json:"dir,omitempty"`
-	All         uint64  `protobuf:"varint,2,opt,name=all,proto3" json:"all,omitempty"`
-	Used        uint64  `protobuf:"varint,3,opt,name=used,proto3" json:"used,omitempty"`
-	Free        uint64  `protobuf:"varint,4,opt,name=free,proto3" json:"free,omitempty"`
-	PercentFree float32 `protobuf:"fixed32,5,opt,name=percent_free,json=percentFree,proto3" json:"percent_free,omitempty"`
-	PercentUsed float32 `protobuf:"fixed32,6,opt,name=percent_used,json=percentUsed,proto3" json:"percent_used,omitempty"`
-	DiskType    string  `protobuf:"bytes,7,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
-}
-
-func (x *DiskStatus) Reset() {
-	*x = DiskStatus{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[68]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *DiskStatus) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*DiskStatus) ProtoMessage() {}
-
-func (x *DiskStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[68]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use DiskStatus.ProtoReflect.Descriptor instead.
-func (*DiskStatus) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{68}
-}
-
-func (x *DiskStatus) GetDir() string {
-	if x != nil {
-		return x.Dir
-	}
-	return ""
-}
-
-func (x *DiskStatus) GetAll() uint64 {
-	if x != nil {
-		return x.All
-	}
-	return 0
-}
-
-func (x *DiskStatus) GetUsed() uint64 {
-	if x != nil {
-		return x.Used
-	}
-	return 0
-}
-
-func (x *DiskStatus) GetFree() uint64 {
-	if x != nil {
-		return x.Free
-	}
-	return 0
-}
-
-func (x *DiskStatus) GetPercentFree() float32 {
-	if x != nil {
-		return x.PercentFree
-	}
-	return 0
-}
-
-func (x *DiskStatus) GetPercentUsed() float32 {
-	if x != nil {
-		return x.PercentUsed
-	}
-	return 0
-}
-
-func (x *DiskStatus) GetDiskType() string {
-	if x != nil {
-		return x.DiskType
-	}
-	return ""
-}
-
-type MemStatus struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	Goroutines int32  `protobuf:"varint,1,opt,name=goroutines,proto3" json:"goroutines,omitempty"`
-	All        uint64 `protobuf:"varint,2,opt,name=all,proto3" json:"all,omitempty"`
-	Used       uint64 `protobuf:"varint,3,opt,name=used,proto3" json:"used,omitempty"`
-	Free       uint64 `protobuf:"varint,4,opt,name=free,proto3" json:"free,omitempty"`
-	Self       uint64 `protobuf:"varint,5,opt,name=self,proto3" json:"self,omitempty"`
-	Heap       uint64 `protobuf:"varint,6,opt,name=heap,proto3" json:"heap,omitempty"`
-	Stack      uint64 `protobuf:"varint,7,opt,name=stack,proto3" json:"stack,omitempty"`
-}
-
-func (x *MemStatus) Reset() {
-	*x = MemStatus{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[69]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *MemStatus) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*MemStatus) ProtoMessage() {}
-
-func (x *MemStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[69]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use MemStatus.ProtoReflect.Descriptor instead.
-func (*MemStatus) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{69}
-}
-
-func (x *MemStatus) GetGoroutines() int32 {
-	if x != nil {
-		return x.Goroutines
-	}
-	return 0
-}
-
-func (x *MemStatus) GetAll() uint64 {
-	if x != nil {
-		return x.All
-	}
-	return 0
-}
-
-func (x *MemStatus) GetUsed() uint64 {
-	if x != nil {
-		return x.Used
-	}
-	return 0
-}
-
-func (x *MemStatus) GetFree() uint64 {
-	if x != nil {
-		return x.Free
-	}
-	return 0
-}
-
-func (x *MemStatus) GetSelf() uint64 {
-	if x != nil {
-		return x.Self
-	}
-	return 0
-}
-
-func (x *MemStatus) GetHeap() uint64 {
-	if x != nil {
-		return x.Heap
-	}
-	return 0
-}
-
-func (x *MemStatus) GetStack() uint64 {
-	if x != nil {
-		return x.Stack
-	}
-	return 0
-}
-
-// tired storage on volume servers
-type RemoteFile struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	BackendType  string `protobuf:"bytes,1,opt,name=backend_type,json=backendType,proto3" json:"backend_type,omitempty"`
-	BackendId    string `protobuf:"bytes,2,opt,name=backend_id,json=backendId,proto3" json:"backend_id,omitempty"`
-	Key          string `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
-	Offset       uint64 `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
-	FileSize     uint64 `protobuf:"varint,5,opt,name=file_size,json=fileSize,proto3" json:"file_size,omitempty"`
-	ModifiedTime uint64 `protobuf:"varint,6,opt,name=modified_time,json=modifiedTime,proto3" json:"modified_time,omitempty"`
-	Extension    string `protobuf:"bytes,7,opt,name=extension,proto3" json:"extension,omitempty"`
-}
-
-func (x *RemoteFile) Reset() {
-	*x = RemoteFile{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[70]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *RemoteFile) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*RemoteFile) ProtoMessage() {}
-
-func (x *RemoteFile) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[70]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use RemoteFile.ProtoReflect.Descriptor instead.
-func (*RemoteFile) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{70}
-}
-
-func (x *RemoteFile) GetBackendType() string {
-	if x != nil {
-		return x.BackendType
-	}
-	return ""
-}
-
-func (x *RemoteFile) GetBackendId() string {
-	if x != nil {
-		return x.BackendId
-	}
-	return ""
-}
-
-func (x *RemoteFile) GetKey() string {
-	if x != nil {
-		return x.Key
-	}
-	return ""
-}
-
-func (x *RemoteFile) GetOffset() uint64 {
-	if x != nil {
-		return x.Offset
-	}
-	return 0
-}
-
-func (x *RemoteFile) GetFileSize() uint64 {
-	if x != nil {
-		return x.FileSize
-	}
-	return 0
-}
-
-func (x *RemoteFile) GetModifiedTime() uint64 {
-	if x != nil {
-		return x.ModifiedTime
-	}
-	return 0
-}
-
-func (x *RemoteFile) GetExtension() string {
-	if x != nil {
-		return x.Extension
-	}
-	return ""
-}
-
-type VolumeInfo struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	Files       []*RemoteFile `protobuf:"bytes,1,rep,name=files,proto3" json:"files,omitempty"`
-	Version     uint32        `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
-	Replication string        `protobuf:"bytes,3,opt,name=replication,proto3" json:"replication,omitempty"`
-}
-
-func (x *VolumeInfo) Reset() {
-	*x = VolumeInfo{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[71]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeInfo) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeInfo) ProtoMessage() {}
-
-func (x *VolumeInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[71]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeInfo.ProtoReflect.Descriptor instead.
-func (*VolumeInfo) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{71}
-}
-
-func (x *VolumeInfo) GetFiles() []*RemoteFile {
-	if x != nil {
-		return x.Files
-	}
-	return nil
-}
-
-func (x *VolumeInfo) GetVersion() uint32 {
-	if x != nil {
-		return x.Version
-	}
-	return 0
-}
-
-func (x *VolumeInfo) GetReplication() string {
-	if x != nil {
-		return x.Replication
-	}
-	return ""
-}
-
-type VolumeTierMoveDatToRemoteRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	VolumeId               uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Collection             string `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
-	DestinationBackendName string `protobuf:"bytes,3,opt,name=destination_backend_name,json=destinationBackendName,proto3" json:"destination_backend_name,omitempty"`
-	KeepLocalDatFile       bool   `protobuf:"varint,4,opt,name=keep_local_dat_file,json=keepLocalDatFile,proto3" json:"keep_local_dat_file,omitempty"`
-}
-
-func (x *VolumeTierMoveDatToRemoteRequest) Reset() {
-	*x = VolumeTierMoveDatToRemoteRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[72]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeTierMoveDatToRemoteRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeTierMoveDatToRemoteRequest) ProtoMessage() {}
-
-func (x *VolumeTierMoveDatToRemoteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[72]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeTierMoveDatToRemoteRequest.ProtoReflect.Descriptor instead.
-func (*VolumeTierMoveDatToRemoteRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{72}
-}
-
-func (x *VolumeTierMoveDatToRemoteRequest) GetVolumeId() uint32 {
-	if x != nil {
-		return x.VolumeId
-	}
-	return 0
-}
-
-func (x *VolumeTierMoveDatToRemoteRequest) GetCollection() string {
-	if x != nil {
-		return x.Collection
-	}
-	return ""
-}
-
-func (x *VolumeTierMoveDatToRemoteRequest) GetDestinationBackendName() string {
-	if x != nil {
-		return x.DestinationBackendName
-	}
-	return ""
-}
-
-func (x *VolumeTierMoveDatToRemoteRequest) GetKeepLocalDatFile() bool {
-	if x != nil {
-		return x.KeepLocalDatFile
-	}
-	return false
-}
-
-type VolumeTierMoveDatToRemoteResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	Processed           int64   `protobuf:"varint,1,opt,name=processed,proto3" json:"processed,omitempty"`
-	ProcessedPercentage float32 `protobuf:"fixed32,2,opt,name=processedPercentage,proto3" json:"processedPercentage,omitempty"`
-}
-
-func (x *VolumeTierMoveDatToRemoteResponse) Reset() {
-	*x = VolumeTierMoveDatToRemoteResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[73]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeTierMoveDatToRemoteResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeTierMoveDatToRemoteResponse) ProtoMessage() {}
-
-func (x *VolumeTierMoveDatToRemoteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[73]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeTierMoveDatToRemoteResponse.ProtoReflect.Descriptor instead.
-func (*VolumeTierMoveDatToRemoteResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{73}
-}
-
-func (x *VolumeTierMoveDatToRemoteResponse) GetProcessed() int64 {
-	if x != nil {
-		return x.Processed
-	}
-	return 0
-}
-
-func (x *VolumeTierMoveDatToRemoteResponse) GetProcessedPercentage() float32 {
-	if x != nil {
-		return x.ProcessedPercentage
-	}
-	return 0
-}
-
-type VolumeTierMoveDatFromRemoteRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	VolumeId          uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	Collection        string `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
-	KeepRemoteDatFile bool   `protobuf:"varint,3,opt,name=keep_remote_dat_file,json=keepRemoteDatFile,proto3" json:"keep_remote_dat_file,omitempty"`
-}
-
-func (x *VolumeTierMoveDatFromRemoteRequest) Reset() {
-	*x = VolumeTierMoveDatFromRemoteRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[74]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeTierMoveDatFromRemoteRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeTierMoveDatFromRemoteRequest) ProtoMessage() {}
-
-func (x *VolumeTierMoveDatFromRemoteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[74]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeTierMoveDatFromRemoteRequest.ProtoReflect.Descriptor instead.
-func (*VolumeTierMoveDatFromRemoteRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{74}
-}
-
-func (x *VolumeTierMoveDatFromRemoteRequest) GetVolumeId() uint32 {
-	if x != nil {
-		return x.VolumeId
-	}
-	return 0
-}
-
-func (x *VolumeTierMoveDatFromRemoteRequest) GetCollection() string {
-	if x != nil {
-		return x.Collection
-	}
-	return ""
-}
-
-func (x *VolumeTierMoveDatFromRemoteRequest) GetKeepRemoteDatFile() bool {
-	if x != nil {
-		return x.KeepRemoteDatFile
-	}
-	return false
-}
-
-type VolumeTierMoveDatFromRemoteResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	Processed           int64   `protobuf:"varint,1,opt,name=processed,proto3" json:"processed,omitempty"`
-	ProcessedPercentage float32 `protobuf:"fixed32,2,opt,name=processedPercentage,proto3" json:"processedPercentage,omitempty"`
-}
-
-func (x *VolumeTierMoveDatFromRemoteResponse) Reset() {
-	*x = VolumeTierMoveDatFromRemoteResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[75]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeTierMoveDatFromRemoteResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeTierMoveDatFromRemoteResponse) ProtoMessage() {}
-
-func (x *VolumeTierMoveDatFromRemoteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[75]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeTierMoveDatFromRemoteResponse.ProtoReflect.Descriptor instead.
-func (*VolumeTierMoveDatFromRemoteResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{75}
-}
-
-func (x *VolumeTierMoveDatFromRemoteResponse) GetProcessed() int64 {
-	if x != nil {
-		return x.Processed
-	}
-	return 0
-}
-
-func (x *VolumeTierMoveDatFromRemoteResponse) GetProcessedPercentage() float32 {
-	if x != nil {
-		return x.ProcessedPercentage
-	}
-	return 0
-}
-
-type VolumeServerStatusRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-}
-
-func (x *VolumeServerStatusRequest) Reset() {
-	*x = VolumeServerStatusRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[76]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeServerStatusRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeServerStatusRequest) ProtoMessage() {}
-
-func (x *VolumeServerStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[76]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeServerStatusRequest.ProtoReflect.Descriptor instead.
-func (*VolumeServerStatusRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{76}
-}
-
-type VolumeServerStatusResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	DiskStatuses []*DiskStatus `protobuf:"bytes,1,rep,name=disk_statuses,json=diskStatuses,proto3" json:"disk_statuses,omitempty"`
-	MemoryStatus *MemStatus    `protobuf:"bytes,2,opt,name=memory_status,json=memoryStatus,proto3" json:"memory_status,omitempty"`
-}
-
-func (x *VolumeServerStatusResponse) Reset() {
-	*x = VolumeServerStatusResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[77]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeServerStatusResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeServerStatusResponse) ProtoMessage() {}
-
-func (x *VolumeServerStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[77]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeServerStatusResponse.ProtoReflect.Descriptor instead.
-func (*VolumeServerStatusResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{77}
-}
-
-func (x *VolumeServerStatusResponse) GetDiskStatuses() []*DiskStatus {
-	if x != nil {
-		return x.DiskStatuses
-	}
-	return nil
-}
-
-func (x *VolumeServerStatusResponse) GetMemoryStatus() *MemStatus {
-	if x != nil {
-		return x.MemoryStatus
-	}
-	return nil
-}
-
-type VolumeServerLeaveRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-}
-
-func (x *VolumeServerLeaveRequest) Reset() {
-	*x = VolumeServerLeaveRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[78]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeServerLeaveRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeServerLeaveRequest) ProtoMessage() {}
-
-func (x *VolumeServerLeaveRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[78]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeServerLeaveRequest.ProtoReflect.Descriptor instead.
-func (*VolumeServerLeaveRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{78}
-}
-
-type VolumeServerLeaveResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-}
-
-func (x *VolumeServerLeaveResponse) Reset() {
-	*x = VolumeServerLeaveResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[79]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *VolumeServerLeaveResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeServerLeaveResponse) ProtoMessage() {}
-
-func (x *VolumeServerLeaveResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[79]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeServerLeaveResponse.ProtoReflect.Descriptor instead.
-func (*VolumeServerLeaveResponse) Descriptor() ([]byte, []int) {
 	return file_volume_server_proto_rawDescGZIP(), []int{79}
 }
 
@@ -5460,33 +5462,6 @@ var file_volume_server_proto_rawDesc = []byte{
 	0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x5f, 0x62, 0x6c, 0x6f, 0x62, 0x18, 0x04, 0x20, 0x01, 0x28,
 	0x0c, 0x52, 0x0a, 0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x42, 0x6c, 0x6f, 0x62, 0x22, 0x19, 0x0a,
 	0x17, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x42, 0x6c, 0x6f, 0x62,
-	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x8e, 0x03, 0x0a, 0x1a, 0x46, 0x65, 0x74,
-	0x63, 0x68, 0x41, 0x6e, 0x64, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x1b, 0x0a, 0x09, 0x76, 0x6f, 0x6c, 0x75, 0x6d,
-	0x65, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x08, 0x76, 0x6f, 0x6c, 0x75,
-	0x6d, 0x65, 0x49, 0x64, 0x12, 0x1b, 0x0a, 0x09, 0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x5f, 0x69,
-	0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x08, 0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x49,
-	0x64, 0x12, 0x16, 0x0a, 0x06, 0x6f, 0x66, 0x66, 0x73, 0x65, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28,
-	0x03, 0x52, 0x06, 0x6f, 0x66, 0x66, 0x73, 0x65, 0x74, 0x12, 0x12, 0x0a, 0x04, 0x73, 0x69, 0x7a,
-	0x65, 0x18, 0x04, 0x20, 0x01, 0x28, 0x03, 0x52, 0x04, 0x73, 0x69, 0x7a, 0x65, 0x12, 0x1f, 0x0a,
-	0x0b, 0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x5f, 0x74, 0x79, 0x70, 0x65, 0x18, 0x05, 0x20, 0x01,
-	0x28, 0x09, 0x52, 0x0a, 0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x54, 0x79, 0x70, 0x65, 0x12, 0x1f,
-	0x0a, 0x0b, 0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x5f, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x06, 0x20,
-	0x01, 0x28, 0x09, 0x52, 0x0a, 0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x4e, 0x61, 0x6d, 0x65, 0x12,
-	0x22, 0x0a, 0x0d, 0x73, 0x33, 0x5f, 0x61, 0x63, 0x63, 0x65, 0x73, 0x73, 0x5f, 0x6b, 0x65, 0x79,
-	0x18, 0x08, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x73, 0x33, 0x41, 0x63, 0x63, 0x65, 0x73, 0x73,
-	0x4b, 0x65, 0x79, 0x12, 0x22, 0x0a, 0x0d, 0x73, 0x33, 0x5f, 0x73, 0x65, 0x63, 0x72, 0x65, 0x74,
-	0x5f, 0x6b, 0x65, 0x79, 0x18, 0x09, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x73, 0x33, 0x53, 0x65,
-	0x63, 0x72, 0x65, 0x74, 0x4b, 0x65, 0x79, 0x12, 0x1b, 0x0a, 0x09, 0x73, 0x33, 0x5f, 0x72, 0x65,
-	0x67, 0x69, 0x6f, 0x6e, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x73, 0x33, 0x52, 0x65,
-	0x67, 0x69, 0x6f, 0x6e, 0x12, 0x1f, 0x0a, 0x0b, 0x73, 0x33, 0x5f, 0x65, 0x6e, 0x64, 0x70, 0x6f,
-	0x69, 0x6e, 0x74, 0x18, 0x0b, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x73, 0x33, 0x45, 0x6e, 0x64,
-	0x70, 0x6f, 0x69, 0x6e, 0x74, 0x12, 0x23, 0x0a, 0x0d, 0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x5f,
-	0x62, 0x75, 0x63, 0x6b, 0x65, 0x74, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x72, 0x65,
-	0x6d, 0x6f, 0x74, 0x65, 0x42, 0x75, 0x63, 0x6b, 0x65, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65,
-	0x6d, 0x6f, 0x74, 0x65, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09,
-	0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x4b, 0x65, 0x79, 0x22, 0x1d, 0x0a, 0x1b, 0x46, 0x65, 0x74,
-	0x63, 0x68, 0x41, 0x6e, 0x64, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65,
 	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x83, 0x01, 0x0a, 0x17, 0x56, 0x6f, 0x6c,
 	0x75, 0x6d, 0x65, 0x54, 0x61, 0x69, 0x6c, 0x53, 0x65, 0x6e, 0x64, 0x65, 0x72, 0x52, 0x65, 0x71,
 	0x75, 0x65, 0x73, 0x74, 0x12, 0x1b, 0x0a, 0x09, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x69,
@@ -5740,6 +5715,33 @@ var file_volume_server_proto_rawDesc = []byte{
 	0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72, 0x4c, 0x65, 0x61, 0x76, 0x65,
 	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x22, 0x1b, 0x0a, 0x19, 0x56, 0x6f, 0x6c, 0x75, 0x6d,
 	0x65, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72, 0x4c, 0x65, 0x61, 0x76, 0x65, 0x52, 0x65, 0x73, 0x70,
+	0x6f, 0x6e, 0x73, 0x65, 0x22, 0x8e, 0x03, 0x0a, 0x1a, 0x46, 0x65, 0x74, 0x63, 0x68, 0x41, 0x6e,
+	0x64, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x71, 0x75,
+	0x65, 0x73, 0x74, 0x12, 0x1b, 0x0a, 0x09, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x69, 0x64,
+	0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x08, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x49, 0x64,
+	0x12, 0x1b, 0x0a, 0x09, 0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x08, 0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x49, 0x64, 0x12, 0x16, 0x0a,
+	0x06, 0x6f, 0x66, 0x66, 0x73, 0x65, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x6f,
+	0x66, 0x66, 0x73, 0x65, 0x74, 0x12, 0x12, 0x0a, 0x04, 0x73, 0x69, 0x7a, 0x65, 0x18, 0x04, 0x20,
+	0x01, 0x28, 0x03, 0x52, 0x04, 0x73, 0x69, 0x7a, 0x65, 0x12, 0x1f, 0x0a, 0x0b, 0x72, 0x65, 0x6d,
+	0x6f, 0x74, 0x65, 0x5f, 0x74, 0x79, 0x70, 0x65, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a,
+	0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x54, 0x79, 0x70, 0x65, 0x12, 0x1f, 0x0a, 0x0b, 0x72, 0x65,
+	0x6d, 0x6f, 0x74, 0x65, 0x5f, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x0a, 0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x4e, 0x61, 0x6d, 0x65, 0x12, 0x22, 0x0a, 0x0d, 0x73,
+	0x33, 0x5f, 0x61, 0x63, 0x63, 0x65, 0x73, 0x73, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x08, 0x20, 0x01,
+	0x28, 0x09, 0x52, 0x0b, 0x73, 0x33, 0x41, 0x63, 0x63, 0x65, 0x73, 0x73, 0x4b, 0x65, 0x79, 0x12,
+	0x22, 0x0a, 0x0d, 0x73, 0x33, 0x5f, 0x73, 0x65, 0x63, 0x72, 0x65, 0x74, 0x5f, 0x6b, 0x65, 0x79,
+	0x18, 0x09, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x73, 0x33, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74,
+	0x4b, 0x65, 0x79, 0x12, 0x1b, 0x0a, 0x09, 0x73, 0x33, 0x5f, 0x72, 0x65, 0x67, 0x69, 0x6f, 0x6e,
+	0x18, 0x0a, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x73, 0x33, 0x52, 0x65, 0x67, 0x69, 0x6f, 0x6e,
+	0x12, 0x1f, 0x0a, 0x0b, 0x73, 0x33, 0x5f, 0x65, 0x6e, 0x64, 0x70, 0x6f, 0x69, 0x6e, 0x74, 0x18,
+	0x0b, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x73, 0x33, 0x45, 0x6e, 0x64, 0x70, 0x6f, 0x69, 0x6e,
+	0x74, 0x12, 0x23, 0x0a, 0x0d, 0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x5f, 0x62, 0x75, 0x63, 0x6b,
+	0x65, 0x74, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65,
+	0x42, 0x75, 0x63, 0x6b, 0x65, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65,
+	0x5f, 0x6b, 0x65, 0x79, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x72, 0x65, 0x6d, 0x6f,
+	0x74, 0x65, 0x4b, 0x65, 0x79, 0x22, 0x1d, 0x0a, 0x1b, 0x46, 0x65, 0x74, 0x63, 0x68, 0x41, 0x6e,
+	0x64, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x73, 0x70,
 	0x6f, 0x6e, 0x73, 0x65, 0x22, 0xf8, 0x0c, 0x0a, 0x0c, 0x51, 0x75, 0x65, 0x72, 0x79, 0x52, 0x65,
 	0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x1e, 0x0a, 0x0a, 0x73, 0x65, 0x6c, 0x65, 0x63, 0x74, 0x69,
 	0x6f, 0x6e, 0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x09, 0x52, 0x0a, 0x73, 0x65, 0x6c, 0x65, 0x63,
@@ -6004,127 +6006,127 @@ var file_volume_server_proto_rawDesc = []byte{
 	0x73, 0x74, 0x1a, 0x29, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76,
 	0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c,
 	0x65, 0x42, 0x6c, 0x6f, 0x62, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12,
-	0x74, 0x0a, 0x13, 0x46, 0x65, 0x74, 0x63, 0x68, 0x41, 0x6e, 0x64, 0x57, 0x72, 0x69, 0x74, 0x65,
-	0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x12, 0x2c, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f,
-	0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x46, 0x65, 0x74, 0x63, 0x68, 0x41,
-	0x6e, 0x64, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x1a, 0x2d, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65,
-	0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x46, 0x65, 0x74, 0x63, 0x68, 0x41, 0x6e, 0x64,
-	0x57, 0x72, 0x69, 0x74, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f,
-	0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x6d, 0x0a, 0x10, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54,
-	0x61, 0x69, 0x6c, 0x53, 0x65, 0x6e, 0x64, 0x65, 0x72, 0x12, 0x29, 0x2e, 0x76, 0x6f, 0x6c, 0x75,
-	0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c,
-	0x75, 0x6d, 0x65, 0x54, 0x61, 0x69, 0x6c, 0x53, 0x65, 0x6e, 0x64, 0x65, 0x72, 0x52, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x1a, 0x2a, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65,
+	0x6d, 0x0a, 0x10, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54, 0x61, 0x69, 0x6c, 0x53, 0x65, 0x6e,
+	0x64, 0x65, 0x72, 0x12, 0x29, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72,
+	0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54, 0x61, 0x69,
+	0x6c, 0x53, 0x65, 0x6e, 0x64, 0x65, 0x72, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2a,
+	0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70,
+	0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54, 0x61, 0x69, 0x6c, 0x53, 0x65, 0x6e, 0x64,
+	0x65, 0x72, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x30, 0x01, 0x12, 0x71,
+	0x0a, 0x12, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54, 0x61, 0x69, 0x6c, 0x52, 0x65, 0x63, 0x65,
+	0x69, 0x76, 0x65, 0x72, 0x12, 0x2b, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65,
 	0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54, 0x61,
-	0x69, 0x6c, 0x53, 0x65, 0x6e, 0x64, 0x65, 0x72, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
-	0x22, 0x00, 0x30, 0x01, 0x12, 0x71, 0x0a, 0x12, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54, 0x61,
-	0x69, 0x6c, 0x52, 0x65, 0x63, 0x65, 0x69, 0x76, 0x65, 0x72, 0x12, 0x2b, 0x2e, 0x76, 0x6f, 0x6c,
-	0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f,
-	0x6c, 0x75, 0x6d, 0x65, 0x54, 0x61, 0x69, 0x6c, 0x52, 0x65, 0x63, 0x65, 0x69, 0x76, 0x65, 0x72,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2c, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65,
-	0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d,
-	0x65, 0x54, 0x61, 0x69, 0x6c, 0x52, 0x65, 0x63, 0x65, 0x69, 0x76, 0x65, 0x72, 0x52, 0x65, 0x73,
-	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x7d, 0x0a, 0x16, 0x56, 0x6f, 0x6c, 0x75, 0x6d,
-	0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x47, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74,
-	0x65, 0x12, 0x2f, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65,
-	0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61,
-	0x72, 0x64, 0x73, 0x47, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65,
-	0x73, 0x74, 0x1a, 0x30, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76,
-	0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68,
-	0x61, 0x72, 0x64, 0x73, 0x47, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x65, 0x52, 0x65, 0x73, 0x70,
-	0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x7a, 0x0a, 0x15, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65,
-	0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x52, 0x65, 0x62, 0x75, 0x69, 0x6c, 0x64, 0x12,
-	0x2e, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f,
-	0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64,
-	0x73, 0x52, 0x65, 0x62, 0x75, 0x69, 0x6c, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a,
-	0x2f, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f,
-	0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64,
-	0x73, 0x52, 0x65, 0x62, 0x75, 0x69, 0x6c, 0x64, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
-	0x22, 0x00, 0x12, 0x71, 0x0a, 0x12, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68,
-	0x61, 0x72, 0x64, 0x73, 0x43, 0x6f, 0x70, 0x79, 0x12, 0x2b, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d,
-	0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75,
-	0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x43, 0x6f, 0x70, 0x79, 0x52, 0x65,
-	0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2c, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73,
-	0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45,
-	0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x43, 0x6f, 0x70, 0x79, 0x52, 0x65, 0x73, 0x70, 0x6f,
-	0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x77, 0x0a, 0x14, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45,
-	0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x12, 0x2d, 0x2e,
-	0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62,
-	0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x44,
-	0x65, 0x6c, 0x65, 0x74, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2e, 0x2e, 0x76,
+	0x69, 0x6c, 0x52, 0x65, 0x63, 0x65, 0x69, 0x76, 0x65, 0x72, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
+	0x74, 0x1a, 0x2c, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65,
+	0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54, 0x61, 0x69, 0x6c, 0x52,
+	0x65, 0x63, 0x65, 0x69, 0x76, 0x65, 0x72, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22,
+	0x00, 0x12, 0x7d, 0x0a, 0x16, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61,
+	0x72, 0x64, 0x73, 0x47, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x65, 0x12, 0x2f, 0x2e, 0x76, 0x6f,
+	0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56,
+	0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x47, 0x65, 0x6e,
+	0x65, 0x72, 0x61, 0x74, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x30, 0x2e, 0x76,
 	0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e,
-	0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x44, 0x65,
-	0x6c, 0x65, 0x74, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x74,
-	0x0a, 0x13, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73,
-	0x4d, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x2c, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73,
-	0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45,
-	0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x4d, 0x6f, 0x75, 0x6e, 0x74, 0x52, 0x65, 0x71, 0x75,
-	0x65, 0x73, 0x74, 0x1a, 0x2d, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72,
-	0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53,
-	0x68, 0x61, 0x72, 0x64, 0x73, 0x4d, 0x6f, 0x75, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e,
-	0x73, 0x65, 0x22, 0x00, 0x12, 0x7a, 0x0a, 0x15, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63,
-	0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x55, 0x6e, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x2e, 0x2e,
-	0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62,
-	0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x55,
-	0x6e, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2f, 0x2e,
-	0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62,
-	0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x55,
-	0x6e, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00,
-	0x12, 0x70, 0x0a, 0x11, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72,
-	0x64, 0x52, 0x65, 0x61, 0x64, 0x12, 0x2a, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73,
-	0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45,
-	0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x52, 0x65, 0x61, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x1a, 0x2b, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65,
-	0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61,
-	0x72, 0x64, 0x52, 0x65, 0x61, 0x64, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00,
-	0x30, 0x01, 0x12, 0x71, 0x0a, 0x12, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x42, 0x6c,
-	0x6f, 0x62, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x12, 0x2b, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d,
-	0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75,
-	0x6d, 0x65, 0x45, 0x63, 0x42, 0x6c, 0x6f, 0x62, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x52, 0x65,
-	0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2c, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73,
-	0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45,
-	0x63, 0x42, 0x6c, 0x6f, 0x62, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f,
-	0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x7d, 0x0a, 0x16, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45,
-	0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x54, 0x6f, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x12,
-	0x2f, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f,
+	0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x47, 0x65,
+	0x6e, 0x65, 0x72, 0x61, 0x74, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00,
+	0x12, 0x7a, 0x0a, 0x15, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72,
+	0x64, 0x73, 0x52, 0x65, 0x62, 0x75, 0x69, 0x6c, 0x64, 0x12, 0x2e, 0x2e, 0x76, 0x6f, 0x6c, 0x75,
+	0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c,
+	0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x52, 0x65, 0x62, 0x75, 0x69,
+	0x6c, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2f, 0x2e, 0x76, 0x6f, 0x6c, 0x75,
+	0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c,
+	0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x52, 0x65, 0x62, 0x75, 0x69,
+	0x6c, 0x64, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x71, 0x0a, 0x12,
+	0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x43, 0x6f,
+	0x70, 0x79, 0x12, 0x2b, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76,
+	0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68,
+	0x61, 0x72, 0x64, 0x73, 0x43, 0x6f, 0x70, 0x79, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a,
+	0x2c, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f,
 	0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64,
-	0x73, 0x54, 0x6f, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
-	0x1a, 0x30, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72,
-	0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72,
-	0x64, 0x73, 0x54, 0x6f, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e,
-	0x73, 0x65, 0x22, 0x00, 0x12, 0x88, 0x01, 0x0a, 0x19, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54,
-	0x69, 0x65, 0x72, 0x4d, 0x6f, 0x76, 0x65, 0x44, 0x61, 0x74, 0x54, 0x6f, 0x52, 0x65, 0x6d, 0x6f,
-	0x74, 0x65, 0x12, 0x32, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76,
-	0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54, 0x69, 0x65, 0x72,
-	0x4d, 0x6f, 0x76, 0x65, 0x44, 0x61, 0x74, 0x54, 0x6f, 0x52, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x52,
-	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x33, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f,
+	0x73, 0x43, 0x6f, 0x70, 0x79, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12,
+	0x77, 0x0a, 0x14, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64,
+	0x73, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x12, 0x2d, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65,
+	0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d,
+	0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x52,
+	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2e, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f,
 	0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65,
-	0x54, 0x69, 0x65, 0x72, 0x4d, 0x6f, 0x76, 0x65, 0x44, 0x61, 0x74, 0x54, 0x6f, 0x52, 0x65, 0x6d,
-	0x6f, 0x74, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x30, 0x01, 0x12,
-	0x8e, 0x01, 0x0a, 0x1b, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54, 0x69, 0x65, 0x72, 0x4d, 0x6f,
-	0x76, 0x65, 0x44, 0x61, 0x74, 0x46, 0x72, 0x6f, 0x6d, 0x52, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x12,
-	0x34, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f,
+	0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x52, 0x65,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x74, 0x0a, 0x13, 0x56, 0x6f, 0x6c, 0x75,
+	0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x4d, 0x6f, 0x75, 0x6e, 0x74, 0x12,
+	0x2c, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f,
+	0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64,
+	0x73, 0x4d, 0x6f, 0x75, 0x6e, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2d, 0x2e,
+	0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62,
+	0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x4d,
+	0x6f, 0x75, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x7a,
+	0x0a, 0x15, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73,
+	0x55, 0x6e, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x2e, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65,
+	0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d,
+	0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x55, 0x6e, 0x6d, 0x6f, 0x75, 0x6e, 0x74,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2f, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65,
+	0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d,
+	0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x55, 0x6e, 0x6d, 0x6f, 0x75, 0x6e, 0x74,
+	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x70, 0x0a, 0x11, 0x56, 0x6f,
+	0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x52, 0x65, 0x61, 0x64, 0x12,
+	0x2a, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f,
+	0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64,
+	0x52, 0x65, 0x61, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2b, 0x2e, 0x76, 0x6f,
+	0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56,
+	0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x52, 0x65, 0x61, 0x64,
+	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x30, 0x01, 0x12, 0x71, 0x0a, 0x12,
+	0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x42, 0x6c, 0x6f, 0x62, 0x44, 0x65, 0x6c, 0x65,
+	0x74, 0x65, 0x12, 0x2b, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76,
+	0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x42, 0x6c,
+	0x6f, 0x62, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a,
+	0x2c, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f,
+	0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x42, 0x6c, 0x6f, 0x62, 0x44,
+	0x65, 0x6c, 0x65, 0x74, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12,
+	0x7d, 0x0a, 0x16, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64,
+	0x73, 0x54, 0x6f, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x12, 0x2f, 0x2e, 0x76, 0x6f, 0x6c, 0x75,
+	0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c,
+	0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x54, 0x6f, 0x56, 0x6f, 0x6c,
+	0x75, 0x6d, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x30, 0x2e, 0x76, 0x6f, 0x6c,
+	0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f,
+	0x6c, 0x75, 0x6d, 0x65, 0x45, 0x63, 0x53, 0x68, 0x61, 0x72, 0x64, 0x73, 0x54, 0x6f, 0x56, 0x6f,
+	0x6c, 0x75, 0x6d, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x88,
+	0x01, 0x0a, 0x19, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54, 0x69, 0x65, 0x72, 0x4d, 0x6f, 0x76,
+	0x65, 0x44, 0x61, 0x74, 0x54, 0x6f, 0x52, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x12, 0x32, 0x2e, 0x76,
+	0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e,
+	0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54, 0x69, 0x65, 0x72, 0x4d, 0x6f, 0x76, 0x65, 0x44, 0x61,
+	0x74, 0x54, 0x6f, 0x52, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
+	0x1a, 0x33, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72,
+	0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54, 0x69, 0x65, 0x72, 0x4d, 0x6f,
+	0x76, 0x65, 0x44, 0x61, 0x74, 0x54, 0x6f, 0x52, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x52, 0x65, 0x73,
+	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x30, 0x01, 0x12, 0x8e, 0x01, 0x0a, 0x1b, 0x56, 0x6f,
+	0x6c, 0x75, 0x6d, 0x65, 0x54, 0x69, 0x65, 0x72, 0x4d, 0x6f, 0x76, 0x65, 0x44, 0x61, 0x74, 0x46,
+	0x72, 0x6f, 0x6d, 0x52, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x12, 0x34, 0x2e, 0x76, 0x6f, 0x6c, 0x75,
+	0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c,
+	0x75, 0x6d, 0x65, 0x54, 0x69, 0x65, 0x72, 0x4d, 0x6f, 0x76, 0x65, 0x44, 0x61, 0x74, 0x46, 0x72,
+	0x6f, 0x6d, 0x52, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a,
+	0x35, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f,
 	0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54, 0x69, 0x65, 0x72, 0x4d, 0x6f, 0x76,
 	0x65, 0x44, 0x61, 0x74, 0x46, 0x72, 0x6f, 0x6d, 0x52, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x52, 0x65,
-	0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x35, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73,
-	0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x54,
-	0x69, 0x65, 0x72, 0x4d, 0x6f, 0x76, 0x65, 0x44, 0x61, 0x74, 0x46, 0x72, 0x6f, 0x6d, 0x52, 0x65,
-	0x6d, 0x6f, 0x74, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x30, 0x01,
-	0x12, 0x71, 0x0a, 0x12, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72,
-	0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x2b, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f,
-	0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65,
-	0x53, 0x65, 0x72, 0x76, 0x65, 0x72, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x65, 0x71, 0x75,
-	0x65, 0x73, 0x74, 0x1a, 0x2c, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72,
-	0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x53, 0x65, 0x72,
-	0x76, 0x65, 0x72, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
-	0x65, 0x22, 0x00, 0x12, 0x6e, 0x0a, 0x11, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x53, 0x65, 0x72,
-	0x76, 0x65, 0x72, 0x4c, 0x65, 0x61, 0x76, 0x65, 0x12, 0x2a, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d,
-	0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75,
-	0x6d, 0x65, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72, 0x4c, 0x65, 0x61, 0x76, 0x65, 0x52, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x1a, 0x2b, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65,
-	0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x53, 0x65,
-	0x72, 0x76, 0x65, 0x72, 0x4c, 0x65, 0x61, 0x76, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x30, 0x01, 0x12, 0x71, 0x0a, 0x12, 0x56, 0x6f,
+	0x6c, 0x75, 0x6d, 0x65, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73,
+	0x12, 0x2b, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72,
+	0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72,
+	0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2c, 0x2e,
+	0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62,
+	0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72, 0x53, 0x74, 0x61,
+	0x74, 0x75, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x6e, 0x0a,
+	0x11, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72, 0x4c, 0x65, 0x61,
+	0x76, 0x65, 0x12, 0x2a, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76,
+	0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x53, 0x65, 0x72, 0x76,
+	0x65, 0x72, 0x4c, 0x65, 0x61, 0x76, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2b,
+	0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70,
+	0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72, 0x4c, 0x65,
+	0x61, 0x76, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x74, 0x0a,
+	0x13, 0x46, 0x65, 0x74, 0x63, 0x68, 0x41, 0x6e, 0x64, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4e, 0x65,
+	0x65, 0x64, 0x6c, 0x65, 0x12, 0x2c, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65,
+	0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x46, 0x65, 0x74, 0x63, 0x68, 0x41, 0x6e, 0x64,
+	0x57, 0x72, 0x69, 0x74, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65,
+	0x73, 0x74, 0x1a, 0x2d, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76,
+	0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x46, 0x65, 0x74, 0x63, 0x68, 0x41, 0x6e, 0x64, 0x57, 0x72,
+	0x69, 0x74, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
 	0x65, 0x22, 0x00, 0x12, 0x4c, 0x0a, 0x05, 0x51, 0x75, 0x65, 0x72, 0x79, 0x12, 0x1e, 0x2e, 0x76,
 	0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e,
 	0x51, 0x75, 0x65, 0x72, 0x79, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1f, 0x2e, 0x76,
@@ -6200,44 +6202,44 @@ var file_volume_server_proto_goTypes = []interface{}{
 	(*ReadNeedleBlobResponse)(nil),                       // 39: volume_server_pb.ReadNeedleBlobResponse
 	(*WriteNeedleBlobRequest)(nil),                       // 40: volume_server_pb.WriteNeedleBlobRequest
 	(*WriteNeedleBlobResponse)(nil),                      // 41: volume_server_pb.WriteNeedleBlobResponse
-	(*FetchAndWriteNeedleRequest)(nil),                   // 42: volume_server_pb.FetchAndWriteNeedleRequest
-	(*FetchAndWriteNeedleResponse)(nil),                  // 43: volume_server_pb.FetchAndWriteNeedleResponse
-	(*VolumeTailSenderRequest)(nil),                      // 44: volume_server_pb.VolumeTailSenderRequest
-	(*VolumeTailSenderResponse)(nil),                     // 45: volume_server_pb.VolumeTailSenderResponse
-	(*VolumeTailReceiverRequest)(nil),                    // 46: volume_server_pb.VolumeTailReceiverRequest
-	(*VolumeTailReceiverResponse)(nil),                   // 47: volume_server_pb.VolumeTailReceiverResponse
-	(*VolumeEcShardsGenerateRequest)(nil),                // 48: volume_server_pb.VolumeEcShardsGenerateRequest
-	(*VolumeEcShardsGenerateResponse)(nil),               // 49: volume_server_pb.VolumeEcShardsGenerateResponse
-	(*VolumeEcShardsRebuildRequest)(nil),                 // 50: volume_server_pb.VolumeEcShardsRebuildRequest
-	(*VolumeEcShardsRebuildResponse)(nil),                // 51: volume_server_pb.VolumeEcShardsRebuildResponse
-	(*VolumeEcShardsCopyRequest)(nil),                    // 52: volume_server_pb.VolumeEcShardsCopyRequest
-	(*VolumeEcShardsCopyResponse)(nil),                   // 53: volume_server_pb.VolumeEcShardsCopyResponse
-	(*VolumeEcShardsDeleteRequest)(nil),                  // 54: volume_server_pb.VolumeEcShardsDeleteRequest
-	(*VolumeEcShardsDeleteResponse)(nil),                 // 55: volume_server_pb.VolumeEcShardsDeleteResponse
-	(*VolumeEcShardsMountRequest)(nil),                   // 56: volume_server_pb.VolumeEcShardsMountRequest
-	(*VolumeEcShardsMountResponse)(nil),                  // 57: volume_server_pb.VolumeEcShardsMountResponse
-	(*VolumeEcShardsUnmountRequest)(nil),                 // 58: volume_server_pb.VolumeEcShardsUnmountRequest
-	(*VolumeEcShardsUnmountResponse)(nil),                // 59: volume_server_pb.VolumeEcShardsUnmountResponse
-	(*VolumeEcShardReadRequest)(nil),                     // 60: volume_server_pb.VolumeEcShardReadRequest
-	(*VolumeEcShardReadResponse)(nil),                    // 61: volume_server_pb.VolumeEcShardReadResponse
-	(*VolumeEcBlobDeleteRequest)(nil),                    // 62: volume_server_pb.VolumeEcBlobDeleteRequest
-	(*VolumeEcBlobDeleteResponse)(nil),                   // 63: volume_server_pb.VolumeEcBlobDeleteResponse
-	(*VolumeEcShardsToVolumeRequest)(nil),                // 64: volume_server_pb.VolumeEcShardsToVolumeRequest
-	(*VolumeEcShardsToVolumeResponse)(nil),               // 65: volume_server_pb.VolumeEcShardsToVolumeResponse
-	(*ReadVolumeFileStatusRequest)(nil),                  // 66: volume_server_pb.ReadVolumeFileStatusRequest
-	(*ReadVolumeFileStatusResponse)(nil),                 // 67: volume_server_pb.ReadVolumeFileStatusResponse
-	(*DiskStatus)(nil),                                   // 68: volume_server_pb.DiskStatus
-	(*MemStatus)(nil),                                    // 69: volume_server_pb.MemStatus
-	(*RemoteFile)(nil),                                   // 70: volume_server_pb.RemoteFile
-	(*VolumeInfo)(nil),                                   // 71: volume_server_pb.VolumeInfo
-	(*VolumeTierMoveDatToRemoteRequest)(nil),             // 72: volume_server_pb.VolumeTierMoveDatToRemoteRequest
-	(*VolumeTierMoveDatToRemoteResponse)(nil),            // 73: volume_server_pb.VolumeTierMoveDatToRemoteResponse
-	(*VolumeTierMoveDatFromRemoteRequest)(nil),           // 74: volume_server_pb.VolumeTierMoveDatFromRemoteRequest
-	(*VolumeTierMoveDatFromRemoteResponse)(nil),          // 75: volume_server_pb.VolumeTierMoveDatFromRemoteResponse
-	(*VolumeServerStatusRequest)(nil),                    // 76: volume_server_pb.VolumeServerStatusRequest
-	(*VolumeServerStatusResponse)(nil),                   // 77: volume_server_pb.VolumeServerStatusResponse
-	(*VolumeServerLeaveRequest)(nil),                     // 78: volume_server_pb.VolumeServerLeaveRequest
-	(*VolumeServerLeaveResponse)(nil),                    // 79: volume_server_pb.VolumeServerLeaveResponse
+	(*VolumeTailSenderRequest)(nil),                      // 42: volume_server_pb.VolumeTailSenderRequest
+	(*VolumeTailSenderResponse)(nil),                     // 43: volume_server_pb.VolumeTailSenderResponse
+	(*VolumeTailReceiverRequest)(nil),                    // 44: volume_server_pb.VolumeTailReceiverRequest
+	(*VolumeTailReceiverResponse)(nil),                   // 45: volume_server_pb.VolumeTailReceiverResponse
+	(*VolumeEcShardsGenerateRequest)(nil),                // 46: volume_server_pb.VolumeEcShardsGenerateRequest
+	(*VolumeEcShardsGenerateResponse)(nil),               // 47: volume_server_pb.VolumeEcShardsGenerateResponse
+	(*VolumeEcShardsRebuildRequest)(nil),                 // 48: volume_server_pb.VolumeEcShardsRebuildRequest
+	(*VolumeEcShardsRebuildResponse)(nil),                // 49: volume_server_pb.VolumeEcShardsRebuildResponse
+	(*VolumeEcShardsCopyRequest)(nil),                    // 50: volume_server_pb.VolumeEcShardsCopyRequest
+	(*VolumeEcShardsCopyResponse)(nil),                   // 51: volume_server_pb.VolumeEcShardsCopyResponse
+	(*VolumeEcShardsDeleteRequest)(nil),                  // 52: volume_server_pb.VolumeEcShardsDeleteRequest
+	(*VolumeEcShardsDeleteResponse)(nil),                 // 53: volume_server_pb.VolumeEcShardsDeleteResponse
+	(*VolumeEcShardsMountRequest)(nil),                   // 54: volume_server_pb.VolumeEcShardsMountRequest
+	(*VolumeEcShardsMountResponse)(nil),                  // 55: volume_server_pb.VolumeEcShardsMountResponse
+	(*VolumeEcShardsUnmountRequest)(nil),                 // 56: volume_server_pb.VolumeEcShardsUnmountRequest
+	(*VolumeEcShardsUnmountResponse)(nil),                // 57: volume_server_pb.VolumeEcShardsUnmountResponse
+	(*VolumeEcShardReadRequest)(nil),                     // 58: volume_server_pb.VolumeEcShardReadRequest
+	(*VolumeEcShardReadResponse)(nil),                    // 59: volume_server_pb.VolumeEcShardReadResponse
+	(*VolumeEcBlobDeleteRequest)(nil),                    // 60: volume_server_pb.VolumeEcBlobDeleteRequest
+	(*VolumeEcBlobDeleteResponse)(nil),                   // 61: volume_server_pb.VolumeEcBlobDeleteResponse
+	(*VolumeEcShardsToVolumeRequest)(nil),                // 62: volume_server_pb.VolumeEcShardsToVolumeRequest
+	(*VolumeEcShardsToVolumeResponse)(nil),               // 63: volume_server_pb.VolumeEcShardsToVolumeResponse
+	(*ReadVolumeFileStatusRequest)(nil),                  // 64: volume_server_pb.ReadVolumeFileStatusRequest
+	(*ReadVolumeFileStatusResponse)(nil),                 // 65: volume_server_pb.ReadVolumeFileStatusResponse
+	(*DiskStatus)(nil),                                   // 66: volume_server_pb.DiskStatus
+	(*MemStatus)(nil),                                    // 67: volume_server_pb.MemStatus
+	(*RemoteFile)(nil),                                   // 68: volume_server_pb.RemoteFile
+	(*VolumeInfo)(nil),                                   // 69: volume_server_pb.VolumeInfo
+	(*VolumeTierMoveDatToRemoteRequest)(nil),             // 70: volume_server_pb.VolumeTierMoveDatToRemoteRequest
+	(*VolumeTierMoveDatToRemoteResponse)(nil),            // 71: volume_server_pb.VolumeTierMoveDatToRemoteResponse
+	(*VolumeTierMoveDatFromRemoteRequest)(nil),           // 72: volume_server_pb.VolumeTierMoveDatFromRemoteRequest
+	(*VolumeTierMoveDatFromRemoteResponse)(nil),          // 73: volume_server_pb.VolumeTierMoveDatFromRemoteResponse
+	(*VolumeServerStatusRequest)(nil),                    // 74: volume_server_pb.VolumeServerStatusRequest
+	(*VolumeServerStatusResponse)(nil),                   // 75: volume_server_pb.VolumeServerStatusResponse
+	(*VolumeServerLeaveRequest)(nil),                     // 76: volume_server_pb.VolumeServerLeaveRequest
+	(*VolumeServerLeaveResponse)(nil),                    // 77: volume_server_pb.VolumeServerLeaveResponse
+	(*FetchAndWriteNeedleRequest)(nil),                   // 78: volume_server_pb.FetchAndWriteNeedleRequest
+	(*FetchAndWriteNeedleResponse)(nil),                  // 79: volume_server_pb.FetchAndWriteNeedleResponse
 	(*QueryRequest)(nil),                                 // 80: volume_server_pb.QueryRequest
 	(*QueriedStripe)(nil),                                // 81: volume_server_pb.QueriedStripe
 	(*VolumeNeedleStatusRequest)(nil),                    // 82: volume_server_pb.VolumeNeedleStatusRequest
@@ -6253,9 +6255,9 @@ var file_volume_server_proto_goTypes = []interface{}{
 }
 var file_volume_server_proto_depIdxs = []int32{
 	2,  // 0: volume_server_pb.BatchDeleteResponse.results:type_name -> volume_server_pb.DeleteResult
-	70, // 1: volume_server_pb.VolumeInfo.files:type_name -> volume_server_pb.RemoteFile
-	68, // 2: volume_server_pb.VolumeServerStatusResponse.disk_statuses:type_name -> volume_server_pb.DiskStatus
-	69, // 3: volume_server_pb.VolumeServerStatusResponse.memory_status:type_name -> volume_server_pb.MemStatus
+	68, // 1: volume_server_pb.VolumeInfo.files:type_name -> volume_server_pb.RemoteFile
+	66, // 2: volume_server_pb.VolumeServerStatusResponse.disk_statuses:type_name -> volume_server_pb.DiskStatus
+	67, // 3: volume_server_pb.VolumeServerStatusResponse.memory_status:type_name -> volume_server_pb.MemStatus
 	84, // 4: volume_server_pb.QueryRequest.filter:type_name -> volume_server_pb.QueryRequest.Filter
 	85, // 5: volume_server_pb.QueryRequest.input_serialization:type_name -> volume_server_pb.QueryRequest.InputSerialization
 	86, // 6: volume_server_pb.QueryRequest.output_serialization:type_name -> volume_server_pb.QueryRequest.OutputSerialization
@@ -6281,26 +6283,26 @@ var file_volume_server_proto_depIdxs = []int32{
 	30, // 26: volume_server_pb.VolumeServer.VolumeConfigure:input_type -> volume_server_pb.VolumeConfigureRequest
 	32, // 27: volume_server_pb.VolumeServer.VolumeStatus:input_type -> volume_server_pb.VolumeStatusRequest
 	34, // 28: volume_server_pb.VolumeServer.VolumeCopy:input_type -> volume_server_pb.VolumeCopyRequest
-	66, // 29: volume_server_pb.VolumeServer.ReadVolumeFileStatus:input_type -> volume_server_pb.ReadVolumeFileStatusRequest
+	64, // 29: volume_server_pb.VolumeServer.ReadVolumeFileStatus:input_type -> volume_server_pb.ReadVolumeFileStatusRequest
 	36, // 30: volume_server_pb.VolumeServer.CopyFile:input_type -> volume_server_pb.CopyFileRequest
 	38, // 31: volume_server_pb.VolumeServer.ReadNeedleBlob:input_type -> volume_server_pb.ReadNeedleBlobRequest
 	40, // 32: volume_server_pb.VolumeServer.WriteNeedleBlob:input_type -> volume_server_pb.WriteNeedleBlobRequest
-	42, // 33: volume_server_pb.VolumeServer.FetchAndWriteNeedle:input_type -> volume_server_pb.FetchAndWriteNeedleRequest
-	44, // 34: volume_server_pb.VolumeServer.VolumeTailSender:input_type -> volume_server_pb.VolumeTailSenderRequest
-	46, // 35: volume_server_pb.VolumeServer.VolumeTailReceiver:input_type -> volume_server_pb.VolumeTailReceiverRequest
-	48, // 36: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:input_type -> volume_server_pb.VolumeEcShardsGenerateRequest
-	50, // 37: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:input_type -> volume_server_pb.VolumeEcShardsRebuildRequest
-	52, // 38: volume_server_pb.VolumeServer.VolumeEcShardsCopy:input_type -> volume_server_pb.VolumeEcShardsCopyRequest
-	54, // 39: volume_server_pb.VolumeServer.VolumeEcShardsDelete:input_type -> volume_server_pb.VolumeEcShardsDeleteRequest
-	56, // 40: volume_server_pb.VolumeServer.VolumeEcShardsMount:input_type -> volume_server_pb.VolumeEcShardsMountRequest
-	58, // 41: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:input_type -> volume_server_pb.VolumeEcShardsUnmountRequest
-	60, // 42: volume_server_pb.VolumeServer.VolumeEcShardRead:input_type -> volume_server_pb.VolumeEcShardReadRequest
-	62, // 43: volume_server_pb.VolumeServer.VolumeEcBlobDelete:input_type -> volume_server_pb.VolumeEcBlobDeleteRequest
-	64, // 44: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:input_type -> volume_server_pb.VolumeEcShardsToVolumeRequest
-	72, // 45: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:input_type -> volume_server_pb.VolumeTierMoveDatToRemoteRequest
-	74, // 46: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:input_type -> volume_server_pb.VolumeTierMoveDatFromRemoteRequest
-	76, // 47: volume_server_pb.VolumeServer.VolumeServerStatus:input_type -> volume_server_pb.VolumeServerStatusRequest
-	78, // 48: volume_server_pb.VolumeServer.VolumeServerLeave:input_type -> volume_server_pb.VolumeServerLeaveRequest
+	42, // 33: volume_server_pb.VolumeServer.VolumeTailSender:input_type -> volume_server_pb.VolumeTailSenderRequest
+	44, // 34: volume_server_pb.VolumeServer.VolumeTailReceiver:input_type -> volume_server_pb.VolumeTailReceiverRequest
+	46, // 35: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:input_type -> volume_server_pb.VolumeEcShardsGenerateRequest
+	48, // 36: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:input_type -> volume_server_pb.VolumeEcShardsRebuildRequest
+	50, // 37: volume_server_pb.VolumeServer.VolumeEcShardsCopy:input_type -> volume_server_pb.VolumeEcShardsCopyRequest
+	52, // 38: volume_server_pb.VolumeServer.VolumeEcShardsDelete:input_type -> volume_server_pb.VolumeEcShardsDeleteRequest
+	54, // 39: volume_server_pb.VolumeServer.VolumeEcShardsMount:input_type -> volume_server_pb.VolumeEcShardsMountRequest
+	56, // 40: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:input_type -> volume_server_pb.VolumeEcShardsUnmountRequest
+	58, // 41: volume_server_pb.VolumeServer.VolumeEcShardRead:input_type -> volume_server_pb.VolumeEcShardReadRequest
+	60, // 42: volume_server_pb.VolumeServer.VolumeEcBlobDelete:input_type -> volume_server_pb.VolumeEcBlobDeleteRequest
+	62, // 43: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:input_type -> volume_server_pb.VolumeEcShardsToVolumeRequest
+	70, // 44: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:input_type -> volume_server_pb.VolumeTierMoveDatToRemoteRequest
+	72, // 45: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:input_type -> volume_server_pb.VolumeTierMoveDatFromRemoteRequest
+	74, // 46: volume_server_pb.VolumeServer.VolumeServerStatus:input_type -> volume_server_pb.VolumeServerStatusRequest
+	76, // 47: volume_server_pb.VolumeServer.VolumeServerLeave:input_type -> volume_server_pb.VolumeServerLeaveRequest
+	78, // 48: volume_server_pb.VolumeServer.FetchAndWriteNeedle:input_type -> volume_server_pb.FetchAndWriteNeedleRequest
 	80, // 49: volume_server_pb.VolumeServer.Query:input_type -> volume_server_pb.QueryRequest
 	82, // 50: volume_server_pb.VolumeServer.VolumeNeedleStatus:input_type -> volume_server_pb.VolumeNeedleStatusRequest
 	1,  // 51: volume_server_pb.VolumeServer.BatchDelete:output_type -> volume_server_pb.BatchDeleteResponse
@@ -6320,26 +6322,26 @@ var file_volume_server_proto_depIdxs = []int32{
 	31, // 65: volume_server_pb.VolumeServer.VolumeConfigure:output_type -> volume_server_pb.VolumeConfigureResponse
 	33, // 66: volume_server_pb.VolumeServer.VolumeStatus:output_type -> volume_server_pb.VolumeStatusResponse
 	35, // 67: volume_server_pb.VolumeServer.VolumeCopy:output_type -> volume_server_pb.VolumeCopyResponse
-	67, // 68: volume_server_pb.VolumeServer.ReadVolumeFileStatus:output_type -> volume_server_pb.ReadVolumeFileStatusResponse
+	65, // 68: volume_server_pb.VolumeServer.ReadVolumeFileStatus:output_type -> volume_server_pb.ReadVolumeFileStatusResponse
 	37, // 69: volume_server_pb.VolumeServer.CopyFile:output_type -> volume_server_pb.CopyFileResponse
 	39, // 70: volume_server_pb.VolumeServer.ReadNeedleBlob:output_type -> volume_server_pb.ReadNeedleBlobResponse
 	41, // 71: volume_server_pb.VolumeServer.WriteNeedleBlob:output_type -> volume_server_pb.WriteNeedleBlobResponse
-	43, // 72: volume_server_pb.VolumeServer.FetchAndWriteNeedle:output_type -> volume_server_pb.FetchAndWriteNeedleResponse
-	45, // 73: volume_server_pb.VolumeServer.VolumeTailSender:output_type -> volume_server_pb.VolumeTailSenderResponse
-	47, // 74: volume_server_pb.VolumeServer.VolumeTailReceiver:output_type -> volume_server_pb.VolumeTailReceiverResponse
-	49, // 75: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:output_type -> volume_server_pb.VolumeEcShardsGenerateResponse
-	51, // 76: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:output_type -> volume_server_pb.VolumeEcShardsRebuildResponse
-	53, // 77: volume_server_pb.VolumeServer.VolumeEcShardsCopy:output_type -> volume_server_pb.VolumeEcShardsCopyResponse
-	55, // 78: volume_server_pb.VolumeServer.VolumeEcShardsDelete:output_type -> volume_server_pb.VolumeEcShardsDeleteResponse
-	57, // 79: volume_server_pb.VolumeServer.VolumeEcShardsMount:output_type -> volume_server_pb.VolumeEcShardsMountResponse
-	59, // 80: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:output_type -> volume_server_pb.VolumeEcShardsUnmountResponse
-	61, // 81: volume_server_pb.VolumeServer.VolumeEcShardRead:output_type -> volume_server_pb.VolumeEcShardReadResponse
-	63, // 82: volume_server_pb.VolumeServer.VolumeEcBlobDelete:output_type -> volume_server_pb.VolumeEcBlobDeleteResponse
-	65, // 83: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:output_type -> volume_server_pb.VolumeEcShardsToVolumeResponse
-	73, // 84: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:output_type -> volume_server_pb.VolumeTierMoveDatToRemoteResponse
-	75, // 85: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:output_type -> volume_server_pb.VolumeTierMoveDatFromRemoteResponse
-	77, // 86: volume_server_pb.VolumeServer.VolumeServerStatus:output_type -> volume_server_pb.VolumeServerStatusResponse
-	79, // 87: volume_server_pb.VolumeServer.VolumeServerLeave:output_type -> volume_server_pb.VolumeServerLeaveResponse
+	43, // 72: volume_server_pb.VolumeServer.VolumeTailSender:output_type -> volume_server_pb.VolumeTailSenderResponse
+	45, // 73: volume_server_pb.VolumeServer.VolumeTailReceiver:output_type -> volume_server_pb.VolumeTailReceiverResponse
+	47, // 74: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:output_type -> volume_server_pb.VolumeEcShardsGenerateResponse
+	49, // 75: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:output_type -> volume_server_pb.VolumeEcShardsRebuildResponse
+	51, // 76: volume_server_pb.VolumeServer.VolumeEcShardsCopy:output_type -> volume_server_pb.VolumeEcShardsCopyResponse
+	53, // 77: volume_server_pb.VolumeServer.VolumeEcShardsDelete:output_type -> volume_server_pb.VolumeEcShardsDeleteResponse
+	55, // 78: volume_server_pb.VolumeServer.VolumeEcShardsMount:output_type -> volume_server_pb.VolumeEcShardsMountResponse
+	57, // 79: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:output_type -> volume_server_pb.VolumeEcShardsUnmountResponse
+	59, // 80: volume_server_pb.VolumeServer.VolumeEcShardRead:output_type -> volume_server_pb.VolumeEcShardReadResponse
+	61, // 81: volume_server_pb.VolumeServer.VolumeEcBlobDelete:output_type -> volume_server_pb.VolumeEcBlobDeleteResponse
+	63, // 82: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:output_type -> volume_server_pb.VolumeEcShardsToVolumeResponse
+	71, // 83: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:output_type -> volume_server_pb.VolumeTierMoveDatToRemoteResponse
+	73, // 84: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:output_type -> volume_server_pb.VolumeTierMoveDatFromRemoteResponse
+	75, // 85: volume_server_pb.VolumeServer.VolumeServerStatus:output_type -> volume_server_pb.VolumeServerStatusResponse
+	77, // 86: volume_server_pb.VolumeServer.VolumeServerLeave:output_type -> volume_server_pb.VolumeServerLeaveResponse
+	79, // 87: volume_server_pb.VolumeServer.FetchAndWriteNeedle:output_type -> volume_server_pb.FetchAndWriteNeedleResponse
 	81, // 88: volume_server_pb.VolumeServer.Query:output_type -> volume_server_pb.QueriedStripe
 	83, // 89: volume_server_pb.VolumeServer.VolumeNeedleStatus:output_type -> volume_server_pb.VolumeNeedleStatusResponse
 	51, // [51:90] is the sub-list for method output_type
@@ -6860,30 +6862,6 @@ func file_volume_server_proto_init() {
 			}
 		}
 		file_volume_server_proto_msgTypes[42].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*FetchAndWriteNeedleRequest); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_volume_server_proto_msgTypes[43].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*FetchAndWriteNeedleResponse); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_volume_server_proto_msgTypes[44].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeTailSenderRequest); i {
 			case 0:
 				return &v.state
@@ -6895,7 +6873,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[45].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[43].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeTailSenderResponse); i {
 			case 0:
 				return &v.state
@@ -6907,7 +6885,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[46].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[44].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeTailReceiverRequest); i {
 			case 0:
 				return &v.state
@@ -6919,7 +6897,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[47].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[45].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeTailReceiverResponse); i {
 			case 0:
 				return &v.state
@@ -6931,7 +6909,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[48].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[46].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardsGenerateRequest); i {
 			case 0:
 				return &v.state
@@ -6943,7 +6921,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[49].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[47].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardsGenerateResponse); i {
 			case 0:
 				return &v.state
@@ -6955,7 +6933,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[50].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[48].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardsRebuildRequest); i {
 			case 0:
 				return &v.state
@@ -6967,7 +6945,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[51].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[49].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardsRebuildResponse); i {
 			case 0:
 				return &v.state
@@ -6979,7 +6957,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[52].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[50].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardsCopyRequest); i {
 			case 0:
 				return &v.state
@@ -6991,7 +6969,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[53].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[51].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardsCopyResponse); i {
 			case 0:
 				return &v.state
@@ -7003,7 +6981,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[54].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[52].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardsDeleteRequest); i {
 			case 0:
 				return &v.state
@@ -7015,7 +6993,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[55].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[53].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardsDeleteResponse); i {
 			case 0:
 				return &v.state
@@ -7027,7 +7005,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[56].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[54].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardsMountRequest); i {
 			case 0:
 				return &v.state
@@ -7039,7 +7017,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[57].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[55].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardsMountResponse); i {
 			case 0:
 				return &v.state
@@ -7051,7 +7029,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[58].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[56].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardsUnmountRequest); i {
 			case 0:
 				return &v.state
@@ -7063,7 +7041,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[59].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[57].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardsUnmountResponse); i {
 			case 0:
 				return &v.state
@@ -7075,7 +7053,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[60].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[58].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardReadRequest); i {
 			case 0:
 				return &v.state
@@ -7087,7 +7065,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[61].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[59].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardReadResponse); i {
 			case 0:
 				return &v.state
@@ -7099,7 +7077,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[62].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[60].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcBlobDeleteRequest); i {
 			case 0:
 				return &v.state
@@ -7111,7 +7089,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[63].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[61].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcBlobDeleteResponse); i {
 			case 0:
 				return &v.state
@@ -7123,7 +7101,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[64].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[62].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardsToVolumeRequest); i {
 			case 0:
 				return &v.state
@@ -7135,7 +7113,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[65].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[63].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeEcShardsToVolumeResponse); i {
 			case 0:
 				return &v.state
@@ -7147,7 +7125,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[66].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[64].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*ReadVolumeFileStatusRequest); i {
 			case 0:
 				return &v.state
@@ -7159,7 +7137,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[67].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[65].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*ReadVolumeFileStatusResponse); i {
 			case 0:
 				return &v.state
@@ -7171,7 +7149,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[68].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[66].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*DiskStatus); i {
 			case 0:
 				return &v.state
@@ -7183,7 +7161,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[69].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[67].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*MemStatus); i {
 			case 0:
 				return &v.state
@@ -7195,7 +7173,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[70].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[68].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*RemoteFile); i {
 			case 0:
 				return &v.state
@@ -7207,7 +7185,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[71].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[69].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeInfo); i {
 			case 0:
 				return &v.state
@@ -7219,7 +7197,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[72].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[70].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeTierMoveDatToRemoteRequest); i {
 			case 0:
 				return &v.state
@@ -7231,7 +7209,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[73].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[71].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeTierMoveDatToRemoteResponse); i {
 			case 0:
 				return &v.state
@@ -7243,7 +7221,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[74].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[72].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeTierMoveDatFromRemoteRequest); i {
 			case 0:
 				return &v.state
@@ -7255,7 +7233,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[75].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[73].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeTierMoveDatFromRemoteResponse); i {
 			case 0:
 				return &v.state
@@ -7267,7 +7245,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[76].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[74].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeServerStatusRequest); i {
 			case 0:
 				return &v.state
@@ -7279,7 +7257,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[77].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[75].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeServerStatusResponse); i {
 			case 0:
 				return &v.state
@@ -7291,7 +7269,7 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[78].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[76].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeServerLeaveRequest); i {
 			case 0:
 				return &v.state
@@ -7303,8 +7281,32 @@ func file_volume_server_proto_init() {
 				return nil
 			}
 		}
-		file_volume_server_proto_msgTypes[79].Exporter = func(v interface{}, i int) interface{} {
+		file_volume_server_proto_msgTypes[77].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*VolumeServerLeaveResponse); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_volume_server_proto_msgTypes[78].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*FetchAndWriteNeedleRequest); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_volume_server_proto_msgTypes[79].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*FetchAndWriteNeedleResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -7515,7 +7517,6 @@ type VolumeServerClient interface {
 	CopyFile(ctx context.Context, in *CopyFileRequest, opts ...grpc.CallOption) (VolumeServer_CopyFileClient, error)
 	ReadNeedleBlob(ctx context.Context, in *ReadNeedleBlobRequest, opts ...grpc.CallOption) (*ReadNeedleBlobResponse, error)
 	WriteNeedleBlob(ctx context.Context, in *WriteNeedleBlobRequest, opts ...grpc.CallOption) (*WriteNeedleBlobResponse, error)
-	FetchAndWriteNeedle(ctx context.Context, in *FetchAndWriteNeedleRequest, opts ...grpc.CallOption) (*FetchAndWriteNeedleResponse, error)
 	VolumeTailSender(ctx context.Context, in *VolumeTailSenderRequest, opts ...grpc.CallOption) (VolumeServer_VolumeTailSenderClient, error)
 	VolumeTailReceiver(ctx context.Context, in *VolumeTailReceiverRequest, opts ...grpc.CallOption) (*VolumeTailReceiverResponse, error)
 	// erasure coding
@@ -7533,6 +7534,8 @@ type VolumeServerClient interface {
 	VolumeTierMoveDatFromRemote(ctx context.Context, in *VolumeTierMoveDatFromRemoteRequest, opts ...grpc.CallOption) (VolumeServer_VolumeTierMoveDatFromRemoteClient, error)
 	VolumeServerStatus(ctx context.Context, in *VolumeServerStatusRequest, opts ...grpc.CallOption) (*VolumeServerStatusResponse, error)
 	VolumeServerLeave(ctx context.Context, in *VolumeServerLeaveRequest, opts ...grpc.CallOption) (*VolumeServerLeaveResponse, error)
+	// remote storage
+	FetchAndWriteNeedle(ctx context.Context, in *FetchAndWriteNeedleRequest, opts ...grpc.CallOption) (*FetchAndWriteNeedleResponse, error)
 	// <experimental> query
 	Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (VolumeServer_QueryClient, error)
 	VolumeNeedleStatus(ctx context.Context, in *VolumeNeedleStatusRequest, opts ...grpc.CallOption) (*VolumeNeedleStatusResponse, error)
@@ -7781,15 +7784,6 @@ func (c *volumeServerClient) WriteNeedleBlob(ctx context.Context, in *WriteNeedl
 	return out, nil
 }
 
-func (c *volumeServerClient) FetchAndWriteNeedle(ctx context.Context, in *FetchAndWriteNeedleRequest, opts ...grpc.CallOption) (*FetchAndWriteNeedleResponse, error) {
-	out := new(FetchAndWriteNeedleResponse)
-	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/FetchAndWriteNeedle", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *volumeServerClient) VolumeTailSender(ctx context.Context, in *VolumeTailSenderRequest, opts ...grpc.CallOption) (VolumeServer_VolumeTailSenderClient, error) {
 	stream, err := c.cc.NewStream(ctx, &_VolumeServer_serviceDesc.Streams[2], "/volume_server_pb.VolumeServer/VolumeTailSender", opts...)
 	if err != nil {
@@ -8017,6 +8011,15 @@ func (c *volumeServerClient) VolumeServerLeave(ctx context.Context, in *VolumeSe
 	return out, nil
 }
 
+func (c *volumeServerClient) FetchAndWriteNeedle(ctx context.Context, in *FetchAndWriteNeedleRequest, opts ...grpc.CallOption) (*FetchAndWriteNeedleResponse, error) {
+	out := new(FetchAndWriteNeedleResponse)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/FetchAndWriteNeedle", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *volumeServerClient) Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (VolumeServer_QueryClient, error) {
 	stream, err := c.cc.NewStream(ctx, &_VolumeServer_serviceDesc.Streams[6], "/volume_server_pb.VolumeServer/Query", opts...)
 	if err != nil {
@@ -8083,7 +8086,6 @@ type VolumeServerServer interface {
 	CopyFile(*CopyFileRequest, VolumeServer_CopyFileServer) error
 	ReadNeedleBlob(context.Context, *ReadNeedleBlobRequest) (*ReadNeedleBlobResponse, error)
 	WriteNeedleBlob(context.Context, *WriteNeedleBlobRequest) (*WriteNeedleBlobResponse, error)
-	FetchAndWriteNeedle(context.Context, *FetchAndWriteNeedleRequest) (*FetchAndWriteNeedleResponse, error)
 	VolumeTailSender(*VolumeTailSenderRequest, VolumeServer_VolumeTailSenderServer) error
 	VolumeTailReceiver(context.Context, *VolumeTailReceiverRequest) (*VolumeTailReceiverResponse, error)
 	// erasure coding
@@ -8101,6 +8103,8 @@ type VolumeServerServer interface {
 	VolumeTierMoveDatFromRemote(*VolumeTierMoveDatFromRemoteRequest, VolumeServer_VolumeTierMoveDatFromRemoteServer) error
 	VolumeServerStatus(context.Context, *VolumeServerStatusRequest) (*VolumeServerStatusResponse, error)
 	VolumeServerLeave(context.Context, *VolumeServerLeaveRequest) (*VolumeServerLeaveResponse, error)
+	// remote storage
+	FetchAndWriteNeedle(context.Context, *FetchAndWriteNeedleRequest) (*FetchAndWriteNeedleResponse, error)
 	// <experimental> query
 	Query(*QueryRequest, VolumeServer_QueryServer) error
 	VolumeNeedleStatus(context.Context, *VolumeNeedleStatusRequest) (*VolumeNeedleStatusResponse, error)
@@ -8173,9 +8177,6 @@ func (*UnimplementedVolumeServerServer) ReadNeedleBlob(context.Context, *ReadNee
 func (*UnimplementedVolumeServerServer) WriteNeedleBlob(context.Context, *WriteNeedleBlobRequest) (*WriteNeedleBlobResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method WriteNeedleBlob not implemented")
 }
-func (*UnimplementedVolumeServerServer) FetchAndWriteNeedle(context.Context, *FetchAndWriteNeedleRequest) (*FetchAndWriteNeedleResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method FetchAndWriteNeedle not implemented")
-}
 func (*UnimplementedVolumeServerServer) VolumeTailSender(*VolumeTailSenderRequest, VolumeServer_VolumeTailSenderServer) error {
 	return status.Errorf(codes.Unimplemented, "method VolumeTailSender not implemented")
 }
@@ -8220,6 +8221,9 @@ func (*UnimplementedVolumeServerServer) VolumeServerStatus(context.Context, *Vol
 }
 func (*UnimplementedVolumeServerServer) VolumeServerLeave(context.Context, *VolumeServerLeaveRequest) (*VolumeServerLeaveResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VolumeServerLeave not implemented")
+}
+func (*UnimplementedVolumeServerServer) FetchAndWriteNeedle(context.Context, *FetchAndWriteNeedleRequest) (*FetchAndWriteNeedleResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method FetchAndWriteNeedle not implemented")
 }
 func (*UnimplementedVolumeServerServer) Query(*QueryRequest, VolumeServer_QueryServer) error {
 	return status.Errorf(codes.Unimplemented, "method Query not implemented")
@@ -8616,24 +8620,6 @@ func _VolumeServer_WriteNeedleBlob_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
-func _VolumeServer_FetchAndWriteNeedle_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(FetchAndWriteNeedleRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(VolumeServerServer).FetchAndWriteNeedle(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/volume_server_pb.VolumeServer/FetchAndWriteNeedle",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(VolumeServerServer).FetchAndWriteNeedle(ctx, req.(*FetchAndWriteNeedleRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _VolumeServer_VolumeTailSender_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(VolumeTailSenderRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -8916,6 +8902,24 @@ func _VolumeServer_VolumeServerLeave_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VolumeServer_FetchAndWriteNeedle_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FetchAndWriteNeedleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).FetchAndWriteNeedle(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/FetchAndWriteNeedle",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).FetchAndWriteNeedle(ctx, req.(*FetchAndWriteNeedleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _VolumeServer_Query_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(QueryRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -9036,10 +9040,6 @@ var _VolumeServer_serviceDesc = grpc.ServiceDesc{
 			Handler:    _VolumeServer_WriteNeedleBlob_Handler,
 		},
 		{
-			MethodName: "FetchAndWriteNeedle",
-			Handler:    _VolumeServer_FetchAndWriteNeedle_Handler,
-		},
-		{
 			MethodName: "VolumeTailReceiver",
 			Handler:    _VolumeServer_VolumeTailReceiver_Handler,
 		},
@@ -9082,6 +9082,10 @@ var _VolumeServer_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "VolumeServerLeave",
 			Handler:    _VolumeServer_VolumeServerLeave_Handler,
+		},
+		{
+			MethodName: "FetchAndWriteNeedle",
+			Handler:    _VolumeServer_FetchAndWriteNeedle_Handler,
 		},
 		{
 			MethodName: "VolumeNeedleStatus",
