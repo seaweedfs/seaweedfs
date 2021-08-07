@@ -99,6 +99,7 @@ type ChunkStreamReader struct {
 }
 
 var _ = io.ReadSeeker(&ChunkStreamReader{})
+var _ = io.ReaderAt(&ChunkStreamReader{})
 
 func doNewChunkStreamReader(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
@@ -133,6 +134,14 @@ func NewChunkStreamReader(filerClient filer_pb.FilerClient, chunks []*filer_pb.F
 	lookupFileIdFn := LookupFn(filerClient)
 
 	return doNewChunkStreamReader(lookupFileIdFn, chunks)
+}
+
+func (c *ChunkStreamReader) ReadAt(p []byte, off int64) (n int, err error) {
+	_, err = c.Seek(off, io.SeekStart)
+	if err != nil {
+		return
+	}
+	return c.Read(p)
 }
 
 func (c *ChunkStreamReader) Read(p []byte) (n int, err error) {
