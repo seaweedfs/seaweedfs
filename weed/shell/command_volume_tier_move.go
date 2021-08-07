@@ -136,7 +136,7 @@ func doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.Volum
 			for _, loc := range locations {
 				if loc.Url != dst.dataNode.Id {
 					if err = deleteVolume(commandEnv.option.GrpcDialOption, vid, loc.Url); err != nil {
-						fmt.Fprintf(writer, "failed to delete volume %d on %s\n", vid, loc.Url)
+						fmt.Fprintf(writer, "failed to delete volume %d on %s: %v\n", vid, loc.Url, err)
 					}
 				}
 			}
