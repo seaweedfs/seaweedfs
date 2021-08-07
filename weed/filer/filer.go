@@ -209,7 +209,7 @@ func (f *Filer) ensureParentDirecotryEntry(ctx context.Context, entry *Entry, di
 			Attr: Attr{
 				Mtime:       now,
 				Crtime:      now,
-				Mode:        os.ModeDir | entry.Mode | 0110,
+				Mode:        os.ModeDir | entry.Mode | 0111,
 				Uid:         entry.Uid,
 				Gid:         entry.Gid,
 				Collection:  entry.Collection,
