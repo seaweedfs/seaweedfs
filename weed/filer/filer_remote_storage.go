@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
-	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/s3"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
 	"google.golang.org/grpc"

@@ -3,6 +3,7 @@ package remote_storage
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"io"
 	"strings"
 	"sync"
 )
@@ -30,7 +31,10 @@ type VisitFunc func(dir string, name string, isDirectory bool, remoteEntry *file
 
 type RemoteStorageClient interface {
 	Traverse(loc *filer_pb.RemoteStorageLocation, visitFn VisitFunc) error
-	ReadFile(loc *filer_pb.RemoteStorageLocation, offset int64, size int64) (data[]byte, err error)
+	ReadFile(loc *filer_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error)
+	WriteFile(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (err error)
+	UpdateFileMetadata(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error)
+	DeleteFile(loc *filer_pb.RemoteStorageLocation) (err error)
 }
 
 type RemoteStorageClientMaker interface {

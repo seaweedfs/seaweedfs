@@ -88,7 +88,10 @@ func (c *commandRemoteMount) listExistingRemoteStorageMounts(commandEnv *Command
 		Indent:       "  ",
 	}
 
-	return m.Marshal(writer, mappings)
+	err = m.Marshal(writer, mappings)
+	fmt.Fprintln(writer)
+
+	return
 
 }
 

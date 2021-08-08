@@ -21,6 +21,7 @@ var Commands = []*Command{
 	cmdFilerCopy,
 	cmdFilerMetaBackup,
 	cmdFilerMetaTail,
+	cmdFilerRemoteSynchronize,
 	cmdFilerReplicate,
 	cmdFilerSynchronize,
 	cmdFix,

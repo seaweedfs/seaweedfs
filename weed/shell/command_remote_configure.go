@@ -7,6 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
 	"io"
 	"regexp"
@@ -96,9 +97,15 @@ func (c *commandRemoteConfigure) listExistingRemoteStorages(commandEnv *CommandE
 
 		conf.S3SecretKey = ""
 
-		fmt.Fprintf(writer, "%+v\n", conf)
+		m := jsonpb.Marshaler{
+			EmitDefaults: false,
+			Indent:       "  ",
+		}
 
-		return nil
+		err := m.Marshal(writer, conf)
+		fmt.Fprintln(writer)
+
+		return err
 	})
 
 }
