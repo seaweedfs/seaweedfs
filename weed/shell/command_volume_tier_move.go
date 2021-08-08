@@ -122,6 +122,8 @@ func doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.Volum
 			hasFoundTarget = true
 
 			if !applyChanges {
+				// adjust volume count
+				dst.dataNode.DiskInfos[string(toDiskType)].VolumeCount++
 				break
 			}
 
@@ -132,6 +134,9 @@ func doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.Volum
 			if err = LiveMoveVolume(commandEnv.option.GrpcDialOption, vid, sourceVolumeServer, dst.dataNode.Id, 5*time.Second, toDiskType.ReadableString()); err != nil {
 				return fmt.Errorf("move volume %d %s => %s : %v", vid, locations[0].Url, dst.dataNode.Id, err)
 			}
+
+			// adjust volume count
+			dst.dataNode.DiskInfos[string(toDiskType)].VolumeCount++
 
 			// remove the remaining replicas
 			for _, loc := range locations {
