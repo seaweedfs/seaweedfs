@@ -215,13 +215,13 @@ message CollectionDeleteResponse {
 //
 message DiskInfo {
     string type = 1;
-    uint64 volume_count = 2;
-    uint64 max_volume_count = 3;
-    uint64 free_volume_count = 4;
-    uint64 active_volume_count = 5;
+    int64 volume_count = 2;
+    int64 max_volume_count = 3;
+    int64 free_volume_count = 4;
+    int64 active_volume_count = 5;
     repeated VolumeInformationMessage volume_infos = 6;
     repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
-    uint64 remote_volume_count = 8;
+    int64 remote_volume_count = 8;
 }
 message DataNodeInfo {
     string id = 1;
