@@ -62,11 +62,11 @@ func (d *DiskUsages) ToDiskInfo() map[string]*master_pb.DiskInfo {
 	ret := make(map[string]*master_pb.DiskInfo)
 	for diskType, diskUsageCounts := range d.usages {
 		m := &master_pb.DiskInfo{
-			VolumeCount:       uint64(diskUsageCounts.volumeCount),
-			MaxVolumeCount:    uint64(diskUsageCounts.maxVolumeCount),
-			FreeVolumeCount:   uint64(diskUsageCounts.maxVolumeCount - diskUsageCounts.volumeCount),
-			ActiveVolumeCount: uint64(diskUsageCounts.activeVolumeCount),
-			RemoteVolumeCount: uint64(diskUsageCounts.remoteVolumeCount),
+			VolumeCount:       diskUsageCounts.volumeCount,
+			MaxVolumeCount:    diskUsageCounts.maxVolumeCount,
+			FreeVolumeCount:   diskUsageCounts.maxVolumeCount - diskUsageCounts.volumeCount,
+			ActiveVolumeCount: diskUsageCounts.activeVolumeCount,
+			RemoteVolumeCount: diskUsageCounts.remoteVolumeCount,
 		}
 		ret[string(diskType)] = m
 	}
@@ -241,11 +241,11 @@ func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 	diskUsage := d.diskUsages.getOrCreateDisk(types.ToDiskType(string(d.Id())))
 	m := &master_pb.DiskInfo{
 		Type:              string(d.Id()),
-		VolumeCount:       uint64(diskUsage.volumeCount),
-		MaxVolumeCount:    uint64(diskUsage.maxVolumeCount),
-		FreeVolumeCount:   uint64(diskUsage.maxVolumeCount - diskUsage.volumeCount),
-		ActiveVolumeCount: uint64(diskUsage.activeVolumeCount),
-		RemoteVolumeCount: uint64(diskUsage.remoteVolumeCount),
+		VolumeCount:       diskUsage.volumeCount,
+		MaxVolumeCount:    diskUsage.maxVolumeCount,
+		FreeVolumeCount:   diskUsage.maxVolumeCount - diskUsage.volumeCount,
+		ActiveVolumeCount: diskUsage.activeVolumeCount,
+		RemoteVolumeCount: diskUsage.remoteVolumeCount,
 	}
 	for _, v := range d.GetVolumes() {
 		m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())
