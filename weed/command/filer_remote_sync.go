@@ -151,6 +151,10 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 				return nil
 			}
 			fmt.Printf("create: %+v\n", resp)
+			if !shouldSendToRemote(message.NewEntry) {
+				fmt.Printf("skipping creating: %+v\n", resp)
+				return nil
+			}
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
 			reader := filer.NewChunkStreamReader(filerSource, message.NewEntry.Chunks)
 			return client.WriteFile(dest, message.NewEntry, reader)
@@ -163,6 +167,10 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		if message.OldEntry != nil && message.NewEntry != nil {
 			oldDest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
+			if !shouldSendToRemote(message.NewEntry) {
+				fmt.Printf("skipping updating: %+v\n", resp)
+				return nil
+			}
 			if resp.Directory == message.NewParentPath && message.OldEntry.Name == message.NewEntry.Name {
 				if isSameChunks(message.OldEntry.Chunks, message.NewEntry.Chunks) {
 					fmt.Printf("update meta: %+v\n", resp)
@@ -216,4 +224,17 @@ func isSameChunks(a, b []*filer_pb.FileChunk) bool {
 		}
 	}
 	return true
+}
+
+func shouldSendToRemote(entry *filer_pb.Entry) bool {
+	if entry.RemoteEntry == nil {
+		return true
+	}
+	if entry.RemoteEntry.Size != int64(filer.FileSize(entry)) {
+		return true
+	}
+	if entry.RemoteEntry.LastModifiedAt < entry.Attributes.Mtime {
+		return true
+	}
+	return false
 }
