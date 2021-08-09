@@ -9,7 +9,7 @@ func (entry *Entry) IsInRemoteOnly() bool {
 	return len(entry.Chunks) == 0 && entry.Remote != nil && entry.Remote.Size > 0
 }
 
-func (f *Filer) ReadRemote(entry *Entry, offset int64, size int64) (data[]byte, err error) {
+func (f *Filer) ReadRemote(entry *Entry, offset int64, size int64) (data []byte, err error) {
 	client, _, found := f.RemoteStorage.GetRemoteStorageClient(entry.Remote.StorageName)
 	if !found {
 		return nil, fmt.Errorf("remote storage %v not found", entry.Remote.StorageName)

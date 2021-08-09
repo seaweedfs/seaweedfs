@@ -160,8 +160,6 @@ func RemoveRemoteStorageMapping(oldContent []byte, dir string) (newContent []byt
 	return
 }
 
-
-
 func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress string) (mappings *filer_pb.RemoteStorageMapping, readErr error) {
 	var oldContent []byte
 	if readErr = pb.WithFilerClient(filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {

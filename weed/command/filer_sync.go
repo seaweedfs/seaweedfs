@@ -165,12 +165,12 @@ func doSubscribeFilerMetaChanges(grpcDialOption grpc.DialOption, sourceFiler, so
 		return persistEventFn(resp)
 	}
 
-	processEventFnWithOffset := pb.AddOffsetFunc(processEventFn, 3 * time.Second, func(counter int64, lastTsNs int64) error {
+	processEventFnWithOffset := pb.AddOffsetFunc(processEventFn, 3*time.Second, func(counter int64, lastTsNs int64) error {
 		glog.V(0).Infof("sync %s to %s progressed to %v %0.2f/sec", sourceFiler, targetFiler, time.Unix(0, lastTsNs), float64(counter)/float64(3))
 		return setOffset(grpcDialOption, targetFiler, SyncKeyPrefix, sourceFilerSignature, lastTsNs)
 	})
 
-	return pb.FollowMetadata(sourceFiler, grpcDialOption,	"syncTo_" + targetFiler,
+	return pb.FollowMetadata(sourceFiler, grpcDialOption, "syncTo_"+targetFiler,
 		sourcePath, sourceFilerOffsetTsNs, targetFilerSignature, processEventFnWithOffset, false)
 
 }

@@ -174,13 +174,13 @@ func toTagging(attributes map[string][]byte) *s3.Tagging {
 
 func (s *s3RemoteStorageClient) readFileRemoteEntry(loc *filer_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
 	resp, err := s.conn.HeadObject(&s3.HeadObjectInput{
-		Bucket:  aws.String(loc.Bucket),
-		Key:     aws.String(loc.Path[1:]),
+		Bucket: aws.String(loc.Bucket),
+		Key:    aws.String(loc.Path[1:]),
 	})
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &filer_pb.RemoteEntry{
 		LastModifiedAt: resp.LastModified.Unix(),
 		Size:           *resp.ContentLength,
@@ -200,8 +200,8 @@ func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *filer_pb.RemoteStorageLo
 		})
 	} else {
 		_, err = s.conn.DeleteObjectTagging(&s3.DeleteObjectTaggingInput{
-			Bucket:  aws.String(loc.Bucket),
-			Key:     aws.String(loc.Path[1:]),
+			Bucket: aws.String(loc.Bucket),
+			Key:    aws.String(loc.Path[1:]),
 		})
 	}
 	return

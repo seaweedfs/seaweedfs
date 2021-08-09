@@ -18,16 +18,16 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 	}
 
 	remoteConf := &filer_pb.RemoteConf{
-		Type: req.RemoteType,
-		Name: req.RemoteName,
+		Type:        req.RemoteType,
+		Name:        req.RemoteName,
 		S3AccessKey: req.S3AccessKey,
 		S3SecretKey: req.S3SecretKey,
-		S3Region: req.S3Region,
-		S3Endpoint: req.S3Endpoint,
+		S3Region:    req.S3Region,
+		S3Endpoint:  req.S3Endpoint,
 	}
 
 	client, getClientErr := remote_storage.GetRemoteStorage(remoteConf)
-	if getClientErr != nil  {
+	if getClientErr != nil {
 		return nil, fmt.Errorf("get remote client: %v", getClientErr)
 	}
 

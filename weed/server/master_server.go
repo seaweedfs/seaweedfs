@@ -26,8 +26,8 @@ import (
 )
 
 const (
-	SequencerType     = "master.sequencer.type"
-	SequencerEtcdUrls = "master.sequencer.sequencer_etcd_urls"
+	SequencerType        = "master.sequencer.type"
+	SequencerEtcdUrls    = "master.sequencer.sequencer_etcd_urls"
 	SequencerSnowflakeId = "master.sequencer.sequencer_snowflake_id"
 )
 

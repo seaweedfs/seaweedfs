@@ -252,8 +252,8 @@ func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer
 	entry.RemoteEntry = remoteEntry
 	return filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
-			Directory:          dir,
-			Entry:              entry,
+			Directory: dir,
+			Entry:     entry,
 		})
 		return err
 	})
