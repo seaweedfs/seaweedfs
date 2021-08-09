@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -163,18 +164,22 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			}
 			return err
 		}
+		chunks := entry.Chunks
 		if entry.IsInRemoteOnly() {
-			var data []byte
-			data, err = fs.filer.ReadRemote(entry, offset, size)
-			if err != nil {
-				glog.Errorf("failed to read remote %s: %v", r.URL, err)
+			dir, name := entry.FullPath.DirAndName()
+			if resp, err := fs.DownloadToLocal(context.Background(), &filer_pb.DownloadToLocalRequest{
+				Directory: dir,
+				Name:      name,
+			}); err != nil {
+				return fmt.Errorf("cache %s: %v", entry.FileSize, err)
+			} else {
+				chunks = resp.Entry.Chunks
 			}
-			_, err = w.Write(data)
-		} else {
-			err = filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size)
-			if err != nil {
-				glog.Errorf("failed to stream content %s: %v", r.URL, err)
-			}
+		}
+
+		err = filer.StreamContent(fs.filer.MasterClient, writer, chunks, offset, size)
+		if err != nil {
+			glog.Errorf("failed to stream content %s: %v", r.URL, err)
 		}
 		return err
 	})
