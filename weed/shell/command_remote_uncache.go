@@ -52,7 +52,7 @@ func (c *commandRemoteUncache) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 
 	var localMountedDir string
-	for k, _ := range mappings.Mappings {
+	for k := range mappings.Mappings {
 		if strings.HasPrefix(*dir, k) {
 			localMountedDir = k
 		}
@@ -78,6 +78,7 @@ func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer
 			return true // true means recursive traversal should continue
 		}
 		entry.RemoteEntry.LocalMtime = 0
+		entry.Chunks = nil
 
 		println(dir, entry.Name)
 
