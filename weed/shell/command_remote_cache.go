@@ -94,7 +94,7 @@ func recursivelyTraverseDirectory(filerClient filer_pb.FilerClient, dirPath util
 			if err := recursivelyTraverseDirectory(filerClient, subDir, visitEntry); err != nil {
 				return err
 			}
-		}else {
+		} else {
 			if !visitEntry(dirPath, entry) {
 				return nil
 			}

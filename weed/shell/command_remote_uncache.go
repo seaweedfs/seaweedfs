@@ -83,8 +83,8 @@ func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer
 
 		err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 			_, updateErr := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
-				Directory:          string(dir),
-				Entry:              entry,
+				Directory: string(dir),
+				Entry:     entry,
 			})
 			return updateErr
 		})
