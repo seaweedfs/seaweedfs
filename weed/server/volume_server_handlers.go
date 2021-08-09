@@ -45,16 +45,16 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 
 		// wait until in flight data is less than the limit
 		contentLength := getContentLength(r)
-		vs.inFlightDataLimitCond.L.Lock()
-		for vs.concurrentUploadLimit != 0 && atomic.LoadInt64(&vs.inFlightDataSize) > vs.concurrentUploadLimit {
-			glog.V(4).Infof("wait because inflight data %d > %d", vs.inFlightDataSize, vs.concurrentUploadLimit)
-			vs.inFlightDataLimitCond.Wait()
+		vs.inFlightUploadDataLimitCond.L.Lock()
+		for vs.concurrentUploadLimit != 0 && atomic.LoadInt64(&vs.inFlightUploadDataSize) > vs.concurrentUploadLimit {
+			glog.V(4).Infof("wait because inflight data %d > %d", vs.inFlightUploadDataSize, vs.concurrentUploadLimit)
+			vs.inFlightUploadDataLimitCond.Wait()
 		}
-		atomic.AddInt64(&vs.inFlightDataSize, contentLength)
-		vs.inFlightDataLimitCond.L.Unlock()
+		atomic.AddInt64(&vs.inFlightUploadDataSize, contentLength)
+		vs.inFlightUploadDataLimitCond.L.Unlock()
 		defer func() {
-			atomic.AddInt64(&vs.inFlightDataSize, -contentLength)
-			vs.inFlightDataLimitCond.Signal()
+			atomic.AddInt64(&vs.inFlightUploadDataSize, -contentLength)
+			vs.inFlightUploadDataLimitCond.Signal()
 		}()
 
 		// processs uploads

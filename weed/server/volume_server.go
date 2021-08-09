@@ -17,9 +17,9 @@ import (
 )
 
 type VolumeServer struct {
-	inFlightDataSize      int64
-	concurrentUploadLimit int64
-	inFlightDataLimitCond *sync.Cond
+	inFlightUploadDataSize      int64
+	concurrentUploadLimit       int64
+	inFlightUploadDataLimitCond *sync.Cond
 
 	SeedMasterNodes []string
 	currentMaster   string
@@ -68,18 +68,18 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 
 	vs := &VolumeServer{
 		pulseSeconds:            pulseSeconds,
-		dataCenter:              dataCenter,
-		rack:                    rack,
-		needleMapKind:           needleMapKind,
-		FixJpgOrientation:       fixJpgOrientation,
-		ReadMode:                readMode,
-		grpcDialOption:          security.LoadClientTLS(util.GetViper(), "grpc.volume"),
-		compactionBytePerSecond: int64(compactionMBPerSecond) * 1024 * 1024,
-		fileSizeLimitBytes:      int64(fileSizeLimitMB) * 1024 * 1024,
-		isHeartbeating:          true,
-		stopChan:                make(chan bool),
-		inFlightDataLimitCond:   sync.NewCond(new(sync.Mutex)),
-		concurrentUploadLimit:   concurrentUploadLimit,
+		dataCenter:                  dataCenter,
+		rack:                        rack,
+		needleMapKind:               needleMapKind,
+		FixJpgOrientation:           fixJpgOrientation,
+		ReadMode:                    readMode,
+		grpcDialOption:              security.LoadClientTLS(util.GetViper(), "grpc.volume"),
+		compactionBytePerSecond:     int64(compactionMBPerSecond) * 1024 * 1024,
+		fileSizeLimitBytes:          int64(fileSizeLimitMB) * 1024 * 1024,
+		isHeartbeating:              true,
+		stopChan:                    make(chan bool),
+		inFlightUploadDataLimitCond: sync.NewCond(new(sync.Mutex)),
+		concurrentUploadLimit:       concurrentUploadLimit,
 	}
 	vs.SeedMasterNodes = masterNodes
 
