@@ -115,7 +115,7 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 				RemotePath:   string(dest),
 			})
 			if fetchAndWriteErr != nil {
-				return fmt.Errorf("volume server %s fetchAndWrite %s/$s: %v", assignResult.Url, req.Directory, req.Name, fetchAndWriteErr)
+				return fmt.Errorf("volume server %s fetchAndWrite %s: %v", assignResult.Url, dest, fetchAndWriteErr)
 			}
 			return nil
 		})
