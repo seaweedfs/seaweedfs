@@ -116,7 +116,7 @@ func (s *s3RemoteStorageClient) ReadFile(loc *filer_pb.RemoteStorageLocation, of
 	return writerAt.Bytes(), nil
 }
 
-func (s *s3RemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (err error) {
+func (s *s3RemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {
 
 	fileSize := int64(filer.FileSize(entry))
 
@@ -153,10 +153,12 @@ func (s *s3RemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation, e
 
 	//in case it fails to upload
 	if err != nil {
-		return fmt.Errorf("upload to s3 %s/%s%s: %v", loc.Name, loc.Bucket, loc.Path, err)
+		return nil, fmt.Errorf("upload to s3 %s/%s%s: %v", loc.Name, loc.Bucket, loc.Path, err)
 	}
 
-	return nil
+	// read back the remote entry
+	return s.readFileRemoteEntry(loc)
+
 }
 
 func toTagging(attributes map[string][]byte) *s3.Tagging {
@@ -168,6 +170,24 @@ func toTagging(attributes map[string][]byte) *s3.Tagging {
 		})
 	}
 	return tagging
+}
+
+func (s *s3RemoteStorageClient) readFileRemoteEntry(loc *filer_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
+	resp, err := s.conn.HeadObject(&s3.HeadObjectInput{
+		Bucket:  aws.String(loc.Bucket),
+		Key:     aws.String(loc.Path[1:]),
+	})
+	if err != nil {
+		return nil, err
+	}
+	
+	return &filer_pb.RemoteEntry{
+		LastModifiedAt: resp.LastModified.Unix(),
+		Size:           *resp.ContentLength,
+		ETag:           *resp.ETag,
+		StorageName:    s.conf.Name,
+	}, nil
+
 }
 
 func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {

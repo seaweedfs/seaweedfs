@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -157,7 +158,11 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 			}
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
 			reader := filer.NewChunkStreamReader(filerSource, message.NewEntry.Chunks)
-			return client.WriteFile(dest, message.NewEntry, reader)
+			remoteEntry, writeErr := client.WriteFile(dest, message.NewEntry, reader)
+			if writeErr != nil {
+				return writeErr
+			}
+			return updateLocalEntry(&remoteSyncOptions, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 		if message.OldEntry != nil && message.NewEntry == nil {
 			fmt.Printf("delete: %+v\n", resp)
@@ -182,7 +187,11 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 				return err
 			}
 			reader := filer.NewChunkStreamReader(filerSource, message.NewEntry.Chunks)
-			return client.WriteFile(dest, message.NewEntry, reader)
+			remoteEntry, writeErr := client.WriteFile(dest, message.NewEntry, reader)
+			if writeErr != nil {
+				return writeErr
+			}
+			return updateLocalEntry(&remoteSyncOptions, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 
 		return nil
@@ -237,4 +246,15 @@ func shouldSendToRemote(entry *filer_pb.Entry) bool {
 		return true
 	}
 	return false
+}
+
+func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.Entry, remoteEntry *filer_pb.RemoteEntry) error {
+	entry.RemoteEntry = remoteEntry
+	return filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		_, err := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+			Directory:          dir,
+			Entry:              entry,
+		})
+		return err
+	})
 }
