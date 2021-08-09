@@ -144,6 +144,23 @@ func AddRemoteStorageMapping(oldContent []byte, dir string, storageLocation *fil
 	return
 }
 
+func RemoveRemoteStorageMapping(oldContent []byte, dir string) (newContent []byte, err error) {
+	mappings, unmarshalErr := UnmarshalRemoteStorageMappings(oldContent)
+	if unmarshalErr != nil {
+		return nil, unmarshalErr
+	}
+
+	// set the new mapping
+	delete(mappings.Mappings, dir)
+
+	if newContent, err = proto.Marshal(mappings); err != nil {
+		return oldContent, fmt.Errorf("marshal mappings: %v", err)
+	}
+
+	return
+}
+
+
 
 func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress string) (mappings *filer_pb.RemoteStorageMapping, readErr error) {
 	var oldContent []byte

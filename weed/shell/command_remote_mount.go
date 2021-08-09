@@ -9,6 +9,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/jsonpb"
+	"github.com/golang/protobuf/proto"
 	"io"
 )
 
@@ -50,7 +51,8 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	if *dir == "" {
-		return c.listExistingRemoteStorageMounts(commandEnv, writer)
+		_, err = listExistingRemoteStorageMounts(commandEnv, writer)
+		return err
 	}
 
 	remoteStorageLocation := remote_storage.ParseLocation(*remote)
@@ -75,24 +77,29 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	return nil
 }
 
-func (c *commandRemoteMount) listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (err error) {
+func listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (mappings *filer_pb.RemoteStorageMapping, err error) {
 
 	// read current mapping
-	mappings, readErr := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
-	if readErr != nil {
-		return readErr
+	mappings, err = filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
+	if err != nil {
+		return mappings, err
 	}
 
+	jsonPrintln(writer, mappings)
+
+	return
+
+}
+
+func jsonPrintln(writer io.Writer, message proto.Message) error {
 	m := jsonpb.Marshaler{
 		EmitDefaults: false,
 		Indent:       "  ",
 	}
 
-	err = m.Marshal(writer, mappings)
+	err := m.Marshal(writer, message)
 	fmt.Fprintln(writer)
-
-	return
-
+	return err
 }
 
 func (c *commandRemoteMount) findRemoteStorageConfiguration(commandEnv *CommandEnv, writer io.Writer, remote *filer_pb.RemoteStorageLocation) (conf *filer_pb.RemoteConf, err error) {
