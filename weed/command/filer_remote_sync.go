@@ -56,8 +56,8 @@ func init() {
 
 var cmdFilerRemoteSynchronize = &Command{
 	UsageLine: "filer.remote.sync -filer=<filerHost>:<filerPort> -dir=/mount/s3_on_cloud",
-	Short:     "resumeable continuously write back updates to remote storage if the directory is mounted to the remote storage",
-	Long: `resumeable continuously write back updates to remote storage if the directory is mounted to the remote storage
+	Short:     "resumable continuously write back updates to remote storage if the directory is mounted to the remote storage",
+	Long: `resumable continuously write back updates to remote storage if the directory is mounted to the remote storage
 
 	filer.remote.sync listens on filer update events. 
 	If any mounted remote file is updated, it will fetch the updated content,

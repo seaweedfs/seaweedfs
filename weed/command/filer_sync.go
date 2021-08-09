@@ -70,8 +70,8 @@ func init() {
 
 var cmdFilerSynchronize = &Command{
 	UsageLine: "filer.sync -a=<oneFilerHost>:<oneFilerPort> -b=<otherFilerHost>:<otherFilerPort>",
-	Short:     "resumeable continuous synchronization between two active-active or active-passive SeaweedFS clusters",
-	Long: `resumeable continuous synchronization for file changes between two active-active or active-passive filers
+	Short:     "resumable continuous synchronization between two active-active or active-passive SeaweedFS clusters",
+	Long: `resumable continuous synchronization for file changes between two active-active or active-passive filers
 
 	filer.sync listens on filer notifications. If any file is updated, it will fetch the updated content,
 	and write to the other destination. Different from filer.replicate:
