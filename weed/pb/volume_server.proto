@@ -469,17 +469,18 @@ message VolumeServerLeaveResponse {
 message FetchAndWriteNeedleRequest {
     uint32 volume_id = 1;
     uint64 needle_id = 2;
-    int64 offset = 3;
-    int64 size = 4;
+    uint32 cookie = 3;
+    int64 offset = 4;
+    int64 size = 5;
     // remote conf
-    string remote_type = 5;
-    string remote_name = 6;
+    string remote_type = 6;
+    string remote_name = 7;
     string s3_access_key = 8;
     string s3_secret_key = 9;
     string s3_region = 10;
     string s3_endpoint = 11;
     string remote_bucket = 12;
-    string remote_key = 13;
+    string remote_path = 13;
 }
 message FetchAndWriteNeedleResponse {
 }

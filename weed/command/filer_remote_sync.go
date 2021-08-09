@@ -13,7 +13,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
 	"google.golang.org/grpc"
-	"strings"
 	"time"
 )
 
@@ -157,6 +156,9 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 				return nil
 			}
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
+			if message.NewEntry.IsDirectory {
+				return client.WriteDirectory(dest, message.NewEntry)
+			}
 			reader := filer.NewChunkStreamReader(filerSource, message.NewEntry.Chunks)
 			remoteEntry, writeErr := client.WriteFile(dest, message.NewEntry, reader)
 			if writeErr != nil {
@@ -175,6 +177,9 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 			if !shouldSendToRemote(message.NewEntry) {
 				fmt.Printf("skipping updating: %+v\n", resp)
 				return nil
+			}
+			if message.NewEntry.IsDirectory {
+				return client.WriteDirectory(dest, message.NewEntry)
 			}
 			if resp.Directory == message.NewParentPath && message.OldEntry.Name == message.NewEntry.Name {
 				if isSameChunks(message.OldEntry.Chunks, message.NewEntry.Chunks) {
@@ -208,17 +213,12 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 }
 
 func toRemoteStorageLocation(mountDir, sourcePath util.FullPath, remoteMountLocation *filer_pb.RemoteStorageLocation) *filer_pb.RemoteStorageLocation {
-	var dest string
 	source := string(sourcePath[len(mountDir):])
-	if strings.HasSuffix(remoteMountLocation.Path, "/") {
-		dest = remoteMountLocation.Path + source[1:]
-	} else {
-		dest = remoteMountLocation.Path + source
-	}
+	dest := util.FullPath(remoteMountLocation.Path).Child(source)
 	return &filer_pb.RemoteStorageLocation{
 		Name:   remoteMountLocation.Name,
 		Bucket: remoteMountLocation.Bucket,
-		Path:   dest,
+		Path:   string(dest),
 	}
 }
 
@@ -239,10 +239,7 @@ func shouldSendToRemote(entry *filer_pb.Entry) bool {
 	if entry.RemoteEntry == nil {
 		return true
 	}
-	if entry.RemoteEntry.Size != int64(filer.FileSize(entry)) {
-		return true
-	}
-	if entry.RemoteEntry.LastModifiedAt < entry.Attributes.Mtime {
+	if entry.RemoteEntry.LocalMtime < entry.Attributes.Mtime {
 		return true
 	}
 	return false

@@ -77,10 +77,10 @@ func (s *s3RemoteStorageClient) Traverse(remote *filer_pb.RemoteStorageLocation,
 				}
 				dir, name := util.FullPath(key).DirAndName()
 				if err := visitFn(dir, name, false, &filer_pb.RemoteEntry{
-					LastModifiedAt: (*content.LastModified).Unix(),
-					Size:           *content.Size,
-					ETag:           *content.ETag,
-					StorageName:    s.conf.Name,
+					RemoteMtime: (*content.LastModified).Unix(),
+					RemoteSize:  *content.Size,
+					RemoteETag:  *content.ETag,
+					StorageName: s.conf.Name,
 				}); err != nil {
 					return false
 				}
@@ -114,6 +114,10 @@ func (s *s3RemoteStorageClient) ReadFile(loc *filer_pb.RemoteStorageLocation, of
 	}
 
 	return writerAt.Bytes(), nil
+}
+
+func (s *s3RemoteStorageClient) WriteDirectory(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
+	return nil
 }
 
 func (s *s3RemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {
@@ -182,10 +186,10 @@ func (s *s3RemoteStorageClient) readFileRemoteEntry(loc *filer_pb.RemoteStorageL
 	}
 
 	return &filer_pb.RemoteEntry{
-		LastModifiedAt: resp.LastModified.Unix(),
-		Size:           *resp.ContentLength,
-		ETag:           *resp.ETag,
-		StorageName:    s.conf.Name,
+		RemoteMtime: resp.LastModified.Unix(),
+		RemoteSize:  *resp.ContentLength,
+		RemoteETag:  *resp.ETag,
+		StorageName: s.conf.Name,
 	}, nil
 
 }

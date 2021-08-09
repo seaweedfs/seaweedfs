@@ -34,15 +34,22 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 	remoteStorageLocation := &filer_pb.RemoteStorageLocation{
 		Name:   req.RemoteName,
 		Bucket: req.RemoteBucket,
-		Path:   req.RemoteKey,
+		Path:   req.RemotePath,
 	}
 	data, ReadRemoteErr := client.ReadFile(remoteStorageLocation, req.Offset, req.Size)
 	if ReadRemoteErr != nil {
 		return nil, fmt.Errorf("read from remote %+v: %v", remoteStorageLocation, ReadRemoteErr)
 	}
 
-	if err = v.WriteNeedleBlob(types.NeedleId(req.NeedleId), data, types.Size(req.Size)); err != nil {
-		return nil, fmt.Errorf("write blob needle %d size %d: %v", req.NeedleId, req.Size, err)
+	n := new(needle.Needle)
+	n.Id = types.NeedleId(req.NeedleId)
+	n.Cookie = types.Cookie(req.Cookie)
+	n.Data, n.DataSize = data, uint32(len(data))
+	// copied from *Needle.prepareWriteBuffer()
+	n.Size = 4 + types.Size(n.DataSize) + 1
+	n.Checksum = needle.NewCRC(n.Data)
+	if _, err = vs.store.WriteVolumeNeedle(v.Id, n, false); err != nil {
+		return nil, fmt.Errorf("write needle %d size %d: %v", req.NeedleId, req.Size, err)
 	}
 
 	return resp, nil

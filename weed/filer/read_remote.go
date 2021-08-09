@@ -1,12 +1,14 @@
 package filer
 
 import (
+	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (entry *Entry) IsInRemoteOnly() bool {
-	return len(entry.Chunks) == 0 && entry.Remote != nil && entry.Remote.Size > 0
+	return len(entry.Chunks) == 0 && entry.Remote != nil && entry.Remote.RemoteSize > 0
 }
 
 func (f *Filer) ReadRemote(entry *Entry, offset int64, size int64) (data []byte, err error) {
@@ -17,13 +19,27 @@ func (f *Filer) ReadRemote(entry *Entry, offset int64, size int64) (data []byte,
 
 	mountDir, remoteLoation := f.RemoteStorage.FindMountDirectory(entry.FullPath)
 
-	remoteFullPath := remoteLoation.Path + string(entry.FullPath[len(mountDir):])
-
-	sourceLoc := &filer_pb.RemoteStorageLocation{
-		Name:   remoteLoation.Name,
-		Bucket: remoteLoation.Bucket,
-		Path:   remoteFullPath,
-	}
+	sourceLoc := MapFullPathToRemoteStorageLocation(mountDir, remoteLoation, entry.FullPath)
 
 	return client.ReadFile(sourceLoc, offset, size)
+}
+
+func MapFullPathToRemoteStorageLocation(localMountedDir util.FullPath, remoteMountedLocation *filer_pb.RemoteStorageLocation, fp util.FullPath) *filer_pb.RemoteStorageLocation {
+	remoteLocation := &filer_pb.RemoteStorageLocation{
+		Name:   remoteMountedLocation.Name,
+		Bucket: remoteMountedLocation.Bucket,
+		Path:   remoteMountedLocation.Path,
+	}
+	remoteLocation.Path += string(fp)[len(localMountedDir):]
+	return remoteLocation
+}
+
+func DownloadToLocal(filerClient filer_pb.FilerClient, remoteConf *filer_pb.RemoteConf, remoteLocation *filer_pb.RemoteStorageLocation, parent util.FullPath, entry *filer_pb.Entry) error {
+	return filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		_, err := client.DownloadToLocal(context.Background(), &filer_pb.DownloadToLocalRequest{
+			Directory: string(parent),
+			Name:      entry.Name,
+		})
+		return err
+	})
 }

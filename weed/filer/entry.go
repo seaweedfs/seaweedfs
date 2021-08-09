@@ -57,6 +57,23 @@ func (entry *Entry) Timestamp() time.Time {
 	}
 }
 
+func (entry *Entry) ShallowClone() *Entry {
+	if entry == nil {
+		return nil
+	}
+	newEntry := &Entry{}
+	newEntry.FullPath = entry.FullPath
+	newEntry.Attr = entry.Attr
+	newEntry.Chunks = entry.Chunks
+	newEntry.Extended = entry.Extended
+	newEntry.HardLinkId = entry.HardLinkId
+	newEntry.HardLinkCounter = entry.HardLinkCounter
+	newEntry.Content = entry.Content
+	newEntry.Remote = entry.Remote
+
+	return newEntry
+}
+
 func (entry *Entry) ToProtoEntry() *filer_pb.Entry {
 	if entry == nil {
 		return nil

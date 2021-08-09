@@ -178,8 +178,8 @@ func (c *commandRemoteMount) pullMetadata(commandEnv *CommandEnv, writer io.Writ
 						Name:        name,
 						IsDirectory: isDirectory,
 						Attributes: &filer_pb.FuseAttributes{
-							FileSize: uint64(remoteEntry.Size),
-							Mtime:    remoteEntry.LastModifiedAt,
+							FileSize: uint64(remoteEntry.RemoteSize),
+							Mtime:    remoteEntry.RemoteMtime,
 							FileMode: uint32(0644),
 						},
 						RemoteEntry: remoteEntry,
@@ -187,15 +187,8 @@ func (c *commandRemoteMount) pullMetadata(commandEnv *CommandEnv, writer io.Writ
 				})
 				return createErr
 			} else {
-				if existingEntry.RemoteEntry == nil || existingEntry.RemoteEntry.ETag != remoteEntry.ETag {
-					existingEntry.RemoteEntry = remoteEntry
-					existingEntry.Attributes.FileSize = uint64(remoteEntry.Size)
-					existingEntry.Attributes.Mtime = remoteEntry.LastModifiedAt
-					_, updateErr := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
-						Directory: localDir,
-						Entry:     existingEntry,
-					})
-					return updateErr
+				if existingEntry.RemoteEntry == nil || existingEntry.RemoteEntry.RemoteETag != remoteEntry.RemoteETag {
+					return doSaveRemoteEntry(client, localDir, existingEntry, remoteEntry)
 				}
 			}
 			return nil
@@ -238,5 +231,19 @@ func (c *commandRemoteMount) saveMountMapping(commandEnv *CommandEnv, writer io.
 		return fmt.Errorf("save mapping: %v", err)
 	}
 
+	return nil
+}
+
+func doSaveRemoteEntry(client filer_pb.SeaweedFilerClient, localDir string, existingEntry *filer_pb.Entry, remoteEntry *filer_pb.RemoteEntry) error {
+	existingEntry.RemoteEntry = remoteEntry
+	existingEntry.Attributes.FileSize = uint64(remoteEntry.RemoteSize)
+	existingEntry.Attributes.Mtime = remoteEntry.RemoteMtime
+	_, updateErr := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+		Directory: localDir,
+		Entry:     existingEntry,
+	})
+	if updateErr != nil {
+		return updateErr
+	}
 	return nil
 }

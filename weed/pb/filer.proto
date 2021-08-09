@@ -67,6 +67,8 @@ service SeaweedFiler {
     rpc KvPut (KvPutRequest) returns (KvPutResponse) {
     }
 
+    rpc DownloadToLocal (DownloadToLocalRequest) returns (DownloadToLocalResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -93,10 +95,11 @@ message ListEntriesResponse {
 }
 
 message RemoteEntry {
-    int64 last_modified_at = 1;
-    int64 size = 2;
-    string e_tag = 3;
-    string storage_name = 4;
+    string storage_name = 1;
+    int64 local_mtime = 2;
+    string remote_e_tag = 3;
+    int64 remote_mtime = 4;
+    int64 remote_size = 5;
 }
 message Entry {
     string name = 1;
@@ -399,4 +402,11 @@ message RemoteStorageLocation {
     string name = 1;
     string bucket = 2;
     string path = 3;
+}
+message DownloadToLocalRequest {
+    string directory = 1;
+    string name = 2;
+}
+message DownloadToLocalResponse {
+    Entry entry = 1;
 }
