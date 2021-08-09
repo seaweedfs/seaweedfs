@@ -15,7 +15,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"google.golang.org/grpc"
-	"io"
 	"strings"
 	"time"
 )
@@ -166,49 +165,13 @@ func doSubscribeFilerMetaChanges(grpcDialOption grpc.DialOption, sourceFiler, so
 		return persistEventFn(resp)
 	}
 
-	return pb.WithFilerClient(sourceFiler, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
-			ClientName: "syncTo_" + targetFiler,
-			PathPrefix: sourcePath,
-			SinceNs:    sourceFilerOffsetTsNs,
-			Signature:  targetFilerSignature,
-		})
-		if err != nil {
-			return fmt.Errorf("listen: %v", err)
-		}
-
-		var counter int64
-		var lastWriteTime time.Time
-		for {
-			resp, listenErr := stream.Recv()
-			if listenErr == io.EOF {
-				return nil
-			}
-			if listenErr != nil {
-				return listenErr
-			}
-
-			if err := processEventFn(resp); err != nil {
-				return err
-			}
-
-			counter++
-			if lastWriteTime.Add(3 * time.Second).Before(time.Now()) {
-				glog.V(0).Infof("sync %s to %s progressed to %v %0.2f/sec", sourceFiler, targetFiler, time.Unix(0, resp.TsNs), float64(counter)/float64(3))
-				counter = 0
-				lastWriteTime = time.Now()
-				if err := setOffset(grpcDialOption, targetFiler, SyncKeyPrefix, sourceFilerSignature, resp.TsNs); err != nil {
-					return err
-				}
-			}
-
-		}
-
+	processEventFnWithOffset := pb.AddOffsetFunc(processEventFn, 3 * time.Second, func(counter int64, lastTsNs int64) error {
+		glog.V(0).Infof("sync %s to %s progressed to %v %0.2f/sec", sourceFiler, targetFiler, time.Unix(0, lastTsNs), float64(counter)/float64(3))
+		return setOffset(grpcDialOption, targetFiler, SyncKeyPrefix, sourceFilerSignature, lastTsNs)
 	})
+
+	return pb.FollowMetadata(sourceFiler, grpcDialOption,	"syncTo_" + targetFiler,
+		sourcePath, sourceFilerOffsetTsNs, targetFilerSignature, processEventFnWithOffset, false)
 
 }
 

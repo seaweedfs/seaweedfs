@@ -93,6 +93,10 @@ service VolumeServer {
     rpc VolumeServerLeave (VolumeServerLeaveRequest) returns (VolumeServerLeaveResponse) {
     }
 
+    // remote storage
+    rpc FetchAndWriteNeedle (FetchAndWriteNeedleRequest) returns (FetchAndWriteNeedleResponse) {
+    }
+
     // <experimental> query
     rpc Query (QueryRequest) returns (stream QueriedStripe) {
     }
@@ -426,6 +430,7 @@ message VolumeInfo {
     string replication = 3;
 }
 
+// tiered storage
 message VolumeTierMoveDatToRemoteRequest {
     uint32 volume_id = 1;
     string collection = 2;
@@ -458,6 +463,25 @@ message VolumeServerStatusResponse {
 message VolumeServerLeaveRequest {
 }
 message VolumeServerLeaveResponse {
+}
+
+// remote storage
+message FetchAndWriteNeedleRequest {
+    uint32 volume_id = 1;
+    uint64 needle_id = 2;
+    int64 offset = 3;
+    int64 size = 4;
+    // remote conf
+    string remote_type = 5;
+    string remote_name = 6;
+    string s3_access_key = 8;
+    string s3_secret_key = 9;
+    string s3_region = 10;
+    string s3_endpoint = 11;
+    string remote_bucket = 12;
+    string remote_key = 13;
+}
+message FetchAndWriteNeedleResponse {
 }
 
 // select on volume servers

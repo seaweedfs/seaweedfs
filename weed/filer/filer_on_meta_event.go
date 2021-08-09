@@ -12,6 +12,7 @@ import (
 // onMetadataChangeEvent is triggered after filer processed change events from local or remote filers
 func (f *Filer) onMetadataChangeEvent(event *filer_pb.SubscribeMetadataResponse) {
 	f.maybeReloadFilerConfiguration(event)
+	f.maybeReloadRemoteStorageConfigurationAndMapping(event)
 	f.onBucketEvents(event)
 }
 
@@ -83,4 +84,17 @@ func (f *Filer) LoadFilerConf() {
 		return
 	}
 	f.FilerConf = fc
+}
+
+////////////////////////////////////
+// load and maintain remote storages
+////////////////////////////////////
+func (f *Filer) LoadRemoteStorageConfAndMapping() {
+	if err := f.RemoteStorage.LoadRemoteStorageConfigurationsAndMapping(f); err != nil {
+		glog.Errorf("read remote conf and mapping: %v", err)
+		return
+	}
+}
+func (f *Filer) maybeReloadRemoteStorageConfigurationAndMapping(event *filer_pb.SubscribeMetadataResponse) {
+	// FIXME add reloading
 }

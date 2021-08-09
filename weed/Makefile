@@ -37,3 +37,7 @@ debug_s3:
 debug_filer_copy:
 	go build -gcflags="all=-N -l"
 	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- -v=4 filer.backup -filer=localhost:8888 -filerProxy -timeAgo=10h
+
+debug_filer_remote_sync:
+	go build -gcflags="all=-N -l"
+	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- -v=4 filer.remote.sync -filer="localhost:8888" -dir=/buckets/b2 -timeAgo=10000h

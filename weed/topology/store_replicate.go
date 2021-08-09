@@ -50,7 +50,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, s *storage.Store, volumeId 
 	}
 
 	if len(remoteLocations) > 0 { //send to other replica locations
-		if err = distributedOperation(remoteLocations, s, func(location operation.Location) error {
+		if err = DistributedOperation(remoteLocations, func(location operation.Location) error {
 			u := url.URL{
 				Scheme: "http",
 				Host:   location.Url,
@@ -115,7 +115,7 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, store *storage.Store,
 	}
 
 	if len(remoteLocations) > 0 { //send to other replica locations
-		if err = distributedOperation(remoteLocations, store, func(location operation.Location) error {
+		if err = DistributedOperation(remoteLocations, func(location operation.Location) error {
 			return util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
 		}); err != nil {
 			size = 0
@@ -144,7 +144,7 @@ type RemoteResult struct {
 	Error error
 }
 
-func distributedOperation(locations []operation.Location, store *storage.Store, op func(location operation.Location) error) error {
+func DistributedOperation(locations []operation.Location, op func(location operation.Location) error) error {
 	length := len(locations)
 	results := make(chan RemoteResult)
 	for _, location := range locations {

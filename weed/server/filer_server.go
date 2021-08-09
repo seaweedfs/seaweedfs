@@ -149,6 +149,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	fs.filer.LoadFilerConf()
 
+	fs.filer.LoadRemoteStorageConfAndMapping()
+
 	grace.OnInterrupt(func() {
 		fs.filer.Shutdown()
 	})

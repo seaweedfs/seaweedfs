@@ -3901,6 +3901,7 @@ func (x *VolumeInfo) GetReplication() string {
 	return ""
 }
 
+// tiered storage
 type VolumeTierMoveDatToRemoteRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -4314,6 +4315,181 @@ func (*VolumeServerLeaveResponse) Descriptor() ([]byte, []int) {
 	return file_volume_server_proto_rawDescGZIP(), []int{77}
 }
 
+// remote storage
+type FetchAndWriteNeedleRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	VolumeId uint32 `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	NeedleId uint64 `protobuf:"varint,2,opt,name=needle_id,json=needleId,proto3" json:"needle_id,omitempty"`
+	Offset   int64  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	Size     int64  `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`
+	// remote conf
+	RemoteType   string `protobuf:"bytes,5,opt,name=remote_type,json=remoteType,proto3" json:"remote_type,omitempty"`
+	RemoteName   string `protobuf:"bytes,6,opt,name=remote_name,json=remoteName,proto3" json:"remote_name,omitempty"`
+	S3AccessKey  string `protobuf:"bytes,8,opt,name=s3_access_key,json=s3AccessKey,proto3" json:"s3_access_key,omitempty"`
+	S3SecretKey  string `protobuf:"bytes,9,opt,name=s3_secret_key,json=s3SecretKey,proto3" json:"s3_secret_key,omitempty"`
+	S3Region     string `protobuf:"bytes,10,opt,name=s3_region,json=s3Region,proto3" json:"s3_region,omitempty"`
+	S3Endpoint   string `protobuf:"bytes,11,opt,name=s3_endpoint,json=s3Endpoint,proto3" json:"s3_endpoint,omitempty"`
+	RemoteBucket string `protobuf:"bytes,12,opt,name=remote_bucket,json=remoteBucket,proto3" json:"remote_bucket,omitempty"`
+	RemoteKey    string `protobuf:"bytes,13,opt,name=remote_key,json=remoteKey,proto3" json:"remote_key,omitempty"`
+}
+
+func (x *FetchAndWriteNeedleRequest) Reset() {
+	*x = FetchAndWriteNeedleRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[78]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *FetchAndWriteNeedleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchAndWriteNeedleRequest) ProtoMessage() {}
+
+func (x *FetchAndWriteNeedleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[78]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchAndWriteNeedleRequest.ProtoReflect.Descriptor instead.
+func (*FetchAndWriteNeedleRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{78}
+}
+
+func (x *FetchAndWriteNeedleRequest) GetVolumeId() uint32 {
+	if x != nil {
+		return x.VolumeId
+	}
+	return 0
+}
+
+func (x *FetchAndWriteNeedleRequest) GetNeedleId() uint64 {
+	if x != nil {
+		return x.NeedleId
+	}
+	return 0
+}
+
+func (x *FetchAndWriteNeedleRequest) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *FetchAndWriteNeedleRequest) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *FetchAndWriteNeedleRequest) GetRemoteType() string {
+	if x != nil {
+		return x.RemoteType
+	}
+	return ""
+}
+
+func (x *FetchAndWriteNeedleRequest) GetRemoteName() string {
+	if x != nil {
+		return x.RemoteName
+	}
+	return ""
+}
+
+func (x *FetchAndWriteNeedleRequest) GetS3AccessKey() string {
+	if x != nil {
+		return x.S3AccessKey
+	}
+	return ""
+}
+
+func (x *FetchAndWriteNeedleRequest) GetS3SecretKey() string {
+	if x != nil {
+		return x.S3SecretKey
+	}
+	return ""
+}
+
+func (x *FetchAndWriteNeedleRequest) GetS3Region() string {
+	if x != nil {
+		return x.S3Region
+	}
+	return ""
+}
+
+func (x *FetchAndWriteNeedleRequest) GetS3Endpoint() string {
+	if x != nil {
+		return x.S3Endpoint
+	}
+	return ""
+}
+
+func (x *FetchAndWriteNeedleRequest) GetRemoteBucket() string {
+	if x != nil {
+		return x.RemoteBucket
+	}
+	return ""
+}
+
+func (x *FetchAndWriteNeedleRequest) GetRemoteKey() string {
+	if x != nil {
+		return x.RemoteKey
+	}
+	return ""
+}
+
+type FetchAndWriteNeedleResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *FetchAndWriteNeedleResponse) Reset() {
+	*x = FetchAndWriteNeedleResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_volume_server_proto_msgTypes[79]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *FetchAndWriteNeedleResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FetchAndWriteNeedleResponse) ProtoMessage() {}
+
+func (x *FetchAndWriteNeedleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[79]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FetchAndWriteNeedleResponse.ProtoReflect.Descriptor instead.
+func (*FetchAndWriteNeedleResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{79}
+}
+
 // select on volume servers
 type QueryRequest struct {
 	state         protoimpl.MessageState
@@ -4330,7 +4506,7 @@ type QueryRequest struct {
 func (x *QueryRequest) Reset() {
 	*x = QueryRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[78]
+		mi := &file_volume_server_proto_msgTypes[80]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4343,7 +4519,7 @@ func (x *QueryRequest) String() string {
 func (*QueryRequest) ProtoMessage() {}
 
 func (x *QueryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[78]
+	mi := &file_volume_server_proto_msgTypes[80]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4356,7 +4532,7 @@ func (x *QueryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryRequest.ProtoReflect.Descriptor instead.
 func (*QueryRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{78}
+	return file_volume_server_proto_rawDescGZIP(), []int{80}
 }
 
 func (x *QueryRequest) GetSelections() []string {
@@ -4405,7 +4581,7 @@ type QueriedStripe struct {
 func (x *QueriedStripe) Reset() {
 	*x = QueriedStripe{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[79]
+		mi := &file_volume_server_proto_msgTypes[81]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4418,7 +4594,7 @@ func (x *QueriedStripe) String() string {
 func (*QueriedStripe) ProtoMessage() {}
 
 func (x *QueriedStripe) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[79]
+	mi := &file_volume_server_proto_msgTypes[81]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4431,7 +4607,7 @@ func (x *QueriedStripe) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueriedStripe.ProtoReflect.Descriptor instead.
 func (*QueriedStripe) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{79}
+	return file_volume_server_proto_rawDescGZIP(), []int{81}
 }
 
 func (x *QueriedStripe) GetRecords() []byte {
@@ -4453,7 +4629,7 @@ type VolumeNeedleStatusRequest struct {
 func (x *VolumeNeedleStatusRequest) Reset() {
 	*x = VolumeNeedleStatusRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[80]
+		mi := &file_volume_server_proto_msgTypes[82]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4466,7 +4642,7 @@ func (x *VolumeNeedleStatusRequest) String() string {
 func (*VolumeNeedleStatusRequest) ProtoMessage() {}
 
 func (x *VolumeNeedleStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[80]
+	mi := &file_volume_server_proto_msgTypes[82]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4479,7 +4655,7 @@ func (x *VolumeNeedleStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeNeedleStatusRequest.ProtoReflect.Descriptor instead.
 func (*VolumeNeedleStatusRequest) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{80}
+	return file_volume_server_proto_rawDescGZIP(), []int{82}
 }
 
 func (x *VolumeNeedleStatusRequest) GetVolumeId() uint32 {
@@ -4512,7 +4688,7 @@ type VolumeNeedleStatusResponse struct {
 func (x *VolumeNeedleStatusResponse) Reset() {
 	*x = VolumeNeedleStatusResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[81]
+		mi := &file_volume_server_proto_msgTypes[83]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4525,7 +4701,7 @@ func (x *VolumeNeedleStatusResponse) String() string {
 func (*VolumeNeedleStatusResponse) ProtoMessage() {}
 
 func (x *VolumeNeedleStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[81]
+	mi := &file_volume_server_proto_msgTypes[83]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4538,7 +4714,7 @@ func (x *VolumeNeedleStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeNeedleStatusResponse.ProtoReflect.Descriptor instead.
 func (*VolumeNeedleStatusResponse) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{81}
+	return file_volume_server_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *VolumeNeedleStatusResponse) GetNeedleId() uint64 {
@@ -4596,7 +4772,7 @@ type QueryRequest_Filter struct {
 func (x *QueryRequest_Filter) Reset() {
 	*x = QueryRequest_Filter{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[82]
+		mi := &file_volume_server_proto_msgTypes[84]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4609,7 +4785,7 @@ func (x *QueryRequest_Filter) String() string {
 func (*QueryRequest_Filter) ProtoMessage() {}
 
 func (x *QueryRequest_Filter) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[82]
+	mi := &file_volume_server_proto_msgTypes[84]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4622,7 +4798,7 @@ func (x *QueryRequest_Filter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryRequest_Filter.ProtoReflect.Descriptor instead.
 func (*QueryRequest_Filter) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{78, 0}
+	return file_volume_server_proto_rawDescGZIP(), []int{80, 0}
 }
 
 func (x *QueryRequest_Filter) GetField() string {
@@ -4661,7 +4837,7 @@ type QueryRequest_InputSerialization struct {
 func (x *QueryRequest_InputSerialization) Reset() {
 	*x = QueryRequest_InputSerialization{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[83]
+		mi := &file_volume_server_proto_msgTypes[85]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4674,7 +4850,7 @@ func (x *QueryRequest_InputSerialization) String() string {
 func (*QueryRequest_InputSerialization) ProtoMessage() {}
 
 func (x *QueryRequest_InputSerialization) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[83]
+	mi := &file_volume_server_proto_msgTypes[85]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4687,7 +4863,7 @@ func (x *QueryRequest_InputSerialization) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryRequest_InputSerialization.ProtoReflect.Descriptor instead.
 func (*QueryRequest_InputSerialization) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{78, 1}
+	return file_volume_server_proto_rawDescGZIP(), []int{80, 1}
 }
 
 func (x *QueryRequest_InputSerialization) GetCompressionType() string {
@@ -4730,7 +4906,7 @@ type QueryRequest_OutputSerialization struct {
 func (x *QueryRequest_OutputSerialization) Reset() {
 	*x = QueryRequest_OutputSerialization{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[84]
+		mi := &file_volume_server_proto_msgTypes[86]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4743,7 +4919,7 @@ func (x *QueryRequest_OutputSerialization) String() string {
 func (*QueryRequest_OutputSerialization) ProtoMessage() {}
 
 func (x *QueryRequest_OutputSerialization) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[84]
+	mi := &file_volume_server_proto_msgTypes[86]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4756,7 +4932,7 @@ func (x *QueryRequest_OutputSerialization) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryRequest_OutputSerialization.ProtoReflect.Descriptor instead.
 func (*QueryRequest_OutputSerialization) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{78, 2}
+	return file_volume_server_proto_rawDescGZIP(), []int{80, 2}
 }
 
 func (x *QueryRequest_OutputSerialization) GetCsvOutput() *QueryRequest_OutputSerialization_CSVOutput {
@@ -4791,7 +4967,7 @@ type QueryRequest_InputSerialization_CSVInput struct {
 func (x *QueryRequest_InputSerialization_CSVInput) Reset() {
 	*x = QueryRequest_InputSerialization_CSVInput{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[85]
+		mi := &file_volume_server_proto_msgTypes[87]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4804,7 +4980,7 @@ func (x *QueryRequest_InputSerialization_CSVInput) String() string {
 func (*QueryRequest_InputSerialization_CSVInput) ProtoMessage() {}
 
 func (x *QueryRequest_InputSerialization_CSVInput) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[85]
+	mi := &file_volume_server_proto_msgTypes[87]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4817,7 +4993,7 @@ func (x *QueryRequest_InputSerialization_CSVInput) ProtoReflect() protoreflect.M
 
 // Deprecated: Use QueryRequest_InputSerialization_CSVInput.ProtoReflect.Descriptor instead.
 func (*QueryRequest_InputSerialization_CSVInput) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{78, 1, 0}
+	return file_volume_server_proto_rawDescGZIP(), []int{80, 1, 0}
 }
 
 func (x *QueryRequest_InputSerialization_CSVInput) GetFileHeaderInfo() string {
@@ -4880,7 +5056,7 @@ type QueryRequest_InputSerialization_JSONInput struct {
 func (x *QueryRequest_InputSerialization_JSONInput) Reset() {
 	*x = QueryRequest_InputSerialization_JSONInput{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[86]
+		mi := &file_volume_server_proto_msgTypes[88]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4893,7 +5069,7 @@ func (x *QueryRequest_InputSerialization_JSONInput) String() string {
 func (*QueryRequest_InputSerialization_JSONInput) ProtoMessage() {}
 
 func (x *QueryRequest_InputSerialization_JSONInput) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[86]
+	mi := &file_volume_server_proto_msgTypes[88]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4906,7 +5082,7 @@ func (x *QueryRequest_InputSerialization_JSONInput) ProtoReflect() protoreflect.
 
 // Deprecated: Use QueryRequest_InputSerialization_JSONInput.ProtoReflect.Descriptor instead.
 func (*QueryRequest_InputSerialization_JSONInput) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{78, 1, 1}
+	return file_volume_server_proto_rawDescGZIP(), []int{80, 1, 1}
 }
 
 func (x *QueryRequest_InputSerialization_JSONInput) GetType() string {
@@ -4925,7 +5101,7 @@ type QueryRequest_InputSerialization_ParquetInput struct {
 func (x *QueryRequest_InputSerialization_ParquetInput) Reset() {
 	*x = QueryRequest_InputSerialization_ParquetInput{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[87]
+		mi := &file_volume_server_proto_msgTypes[89]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4938,7 +5114,7 @@ func (x *QueryRequest_InputSerialization_ParquetInput) String() string {
 func (*QueryRequest_InputSerialization_ParquetInput) ProtoMessage() {}
 
 func (x *QueryRequest_InputSerialization_ParquetInput) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[87]
+	mi := &file_volume_server_proto_msgTypes[89]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4951,7 +5127,7 @@ func (x *QueryRequest_InputSerialization_ParquetInput) ProtoReflect() protorefle
 
 // Deprecated: Use QueryRequest_InputSerialization_ParquetInput.ProtoReflect.Descriptor instead.
 func (*QueryRequest_InputSerialization_ParquetInput) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{78, 1, 2}
+	return file_volume_server_proto_rawDescGZIP(), []int{80, 1, 2}
 }
 
 type QueryRequest_OutputSerialization_CSVOutput struct {
@@ -4969,7 +5145,7 @@ type QueryRequest_OutputSerialization_CSVOutput struct {
 func (x *QueryRequest_OutputSerialization_CSVOutput) Reset() {
 	*x = QueryRequest_OutputSerialization_CSVOutput{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[88]
+		mi := &file_volume_server_proto_msgTypes[90]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4982,7 +5158,7 @@ func (x *QueryRequest_OutputSerialization_CSVOutput) String() string {
 func (*QueryRequest_OutputSerialization_CSVOutput) ProtoMessage() {}
 
 func (x *QueryRequest_OutputSerialization_CSVOutput) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[88]
+	mi := &file_volume_server_proto_msgTypes[90]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4995,7 +5171,7 @@ func (x *QueryRequest_OutputSerialization_CSVOutput) ProtoReflect() protoreflect
 
 // Deprecated: Use QueryRequest_OutputSerialization_CSVOutput.ProtoReflect.Descriptor instead.
 func (*QueryRequest_OutputSerialization_CSVOutput) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{78, 2, 0}
+	return file_volume_server_proto_rawDescGZIP(), []int{80, 2, 0}
 }
 
 func (x *QueryRequest_OutputSerialization_CSVOutput) GetQuoteFields() string {
@@ -5044,7 +5220,7 @@ type QueryRequest_OutputSerialization_JSONOutput struct {
 func (x *QueryRequest_OutputSerialization_JSONOutput) Reset() {
 	*x = QueryRequest_OutputSerialization_JSONOutput{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_volume_server_proto_msgTypes[89]
+		mi := &file_volume_server_proto_msgTypes[91]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -5057,7 +5233,7 @@ func (x *QueryRequest_OutputSerialization_JSONOutput) String() string {
 func (*QueryRequest_OutputSerialization_JSONOutput) ProtoMessage() {}
 
 func (x *QueryRequest_OutputSerialization_JSONOutput) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[89]
+	mi := &file_volume_server_proto_msgTypes[91]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5070,7 +5246,7 @@ func (x *QueryRequest_OutputSerialization_JSONOutput) ProtoReflect() protoreflec
 
 // Deprecated: Use QueryRequest_OutputSerialization_JSONOutput.ProtoReflect.Descriptor instead.
 func (*QueryRequest_OutputSerialization_JSONOutput) Descriptor() ([]byte, []int) {
-	return file_volume_server_proto_rawDescGZIP(), []int{78, 2, 1}
+	return file_volume_server_proto_rawDescGZIP(), []int{80, 2, 1}
 }
 
 func (x *QueryRequest_OutputSerialization_JSONOutput) GetRecordDelimiter() string {
@@ -5539,6 +5715,33 @@ var file_volume_server_proto_rawDesc = []byte{
 	0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72, 0x4c, 0x65, 0x61, 0x76, 0x65,
 	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x22, 0x1b, 0x0a, 0x19, 0x56, 0x6f, 0x6c, 0x75, 0x6d,
 	0x65, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72, 0x4c, 0x65, 0x61, 0x76, 0x65, 0x52, 0x65, 0x73, 0x70,
+	0x6f, 0x6e, 0x73, 0x65, 0x22, 0x8e, 0x03, 0x0a, 0x1a, 0x46, 0x65, 0x74, 0x63, 0x68, 0x41, 0x6e,
+	0x64, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x71, 0x75,
+	0x65, 0x73, 0x74, 0x12, 0x1b, 0x0a, 0x09, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x69, 0x64,
+	0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x08, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x49, 0x64,
+	0x12, 0x1b, 0x0a, 0x09, 0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x08, 0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x49, 0x64, 0x12, 0x16, 0x0a,
+	0x06, 0x6f, 0x66, 0x66, 0x73, 0x65, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x6f,
+	0x66, 0x66, 0x73, 0x65, 0x74, 0x12, 0x12, 0x0a, 0x04, 0x73, 0x69, 0x7a, 0x65, 0x18, 0x04, 0x20,
+	0x01, 0x28, 0x03, 0x52, 0x04, 0x73, 0x69, 0x7a, 0x65, 0x12, 0x1f, 0x0a, 0x0b, 0x72, 0x65, 0x6d,
+	0x6f, 0x74, 0x65, 0x5f, 0x74, 0x79, 0x70, 0x65, 0x18, 0x05, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a,
+	0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x54, 0x79, 0x70, 0x65, 0x12, 0x1f, 0x0a, 0x0b, 0x72, 0x65,
+	0x6d, 0x6f, 0x74, 0x65, 0x5f, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x0a, 0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x4e, 0x61, 0x6d, 0x65, 0x12, 0x22, 0x0a, 0x0d, 0x73,
+	0x33, 0x5f, 0x61, 0x63, 0x63, 0x65, 0x73, 0x73, 0x5f, 0x6b, 0x65, 0x79, 0x18, 0x08, 0x20, 0x01,
+	0x28, 0x09, 0x52, 0x0b, 0x73, 0x33, 0x41, 0x63, 0x63, 0x65, 0x73, 0x73, 0x4b, 0x65, 0x79, 0x12,
+	0x22, 0x0a, 0x0d, 0x73, 0x33, 0x5f, 0x73, 0x65, 0x63, 0x72, 0x65, 0x74, 0x5f, 0x6b, 0x65, 0x79,
+	0x18, 0x09, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x73, 0x33, 0x53, 0x65, 0x63, 0x72, 0x65, 0x74,
+	0x4b, 0x65, 0x79, 0x12, 0x1b, 0x0a, 0x09, 0x73, 0x33, 0x5f, 0x72, 0x65, 0x67, 0x69, 0x6f, 0x6e,
+	0x18, 0x0a, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x73, 0x33, 0x52, 0x65, 0x67, 0x69, 0x6f, 0x6e,
+	0x12, 0x1f, 0x0a, 0x0b, 0x73, 0x33, 0x5f, 0x65, 0x6e, 0x64, 0x70, 0x6f, 0x69, 0x6e, 0x74, 0x18,
+	0x0b, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x73, 0x33, 0x45, 0x6e, 0x64, 0x70, 0x6f, 0x69, 0x6e,
+	0x74, 0x12, 0x23, 0x0a, 0x0d, 0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x5f, 0x62, 0x75, 0x63, 0x6b,
+	0x65, 0x74, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0c, 0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65,
+	0x42, 0x75, 0x63, 0x6b, 0x65, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65, 0x6d, 0x6f, 0x74, 0x65,
+	0x5f, 0x6b, 0x65, 0x79, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x72, 0x65, 0x6d, 0x6f,
+	0x74, 0x65, 0x4b, 0x65, 0x79, 0x22, 0x1d, 0x0a, 0x1b, 0x46, 0x65, 0x74, 0x63, 0x68, 0x41, 0x6e,
+	0x64, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x73, 0x70,
 	0x6f, 0x6e, 0x73, 0x65, 0x22, 0xf8, 0x0c, 0x0a, 0x0c, 0x51, 0x75, 0x65, 0x72, 0x79, 0x52, 0x65,
 	0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x1e, 0x0a, 0x0a, 0x73, 0x65, 0x6c, 0x65, 0x63, 0x74, 0x69,
 	0x6f, 0x6e, 0x73, 0x18, 0x01, 0x20, 0x03, 0x28, 0x09, 0x52, 0x0a, 0x73, 0x65, 0x6c, 0x65, 0x63,
@@ -5662,7 +5865,7 @@ var file_volume_server_proto_rawDesc = []byte{
 	0x52, 0x0c, 0x6c, 0x61, 0x73, 0x74, 0x4d, 0x6f, 0x64, 0x69, 0x66, 0x69, 0x65, 0x64, 0x12, 0x10,
 	0x0a, 0x03, 0x63, 0x72, 0x63, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x03, 0x63, 0x72, 0x63,
 	0x12, 0x10, 0x0a, 0x03, 0x74, 0x74, 0x6c, 0x18, 0x06, 0x20, 0x01, 0x28, 0x09, 0x52, 0x03, 0x74,
-	0x74, 0x6c, 0x32, 0xa9, 0x21, 0x0a, 0x0c, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x53, 0x65, 0x72,
+	0x74, 0x6c, 0x32, 0x9f, 0x22, 0x0a, 0x0c, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x53, 0x65, 0x72,
 	0x76, 0x65, 0x72, 0x12, 0x5c, 0x0a, 0x0b, 0x42, 0x61, 0x74, 0x63, 0x68, 0x44, 0x65, 0x6c, 0x65,
 	0x74, 0x65, 0x12, 0x24, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76,
 	0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x42, 0x61, 0x74, 0x63, 0x68, 0x44, 0x65, 0x6c, 0x65, 0x74,
@@ -5916,24 +6119,31 @@ var file_volume_server_proto_rawDesc = []byte{
 	0x65, 0x72, 0x4c, 0x65, 0x61, 0x76, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2b,
 	0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70,
 	0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72, 0x4c, 0x65,
-	0x61, 0x76, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x4c, 0x0a,
-	0x05, 0x51, 0x75, 0x65, 0x72, 0x79, 0x12, 0x1e, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f,
-	0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x52,
-	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1f, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f,
-	0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x69, 0x65,
-	0x64, 0x53, 0x74, 0x72, 0x69, 0x70, 0x65, 0x22, 0x00, 0x30, 0x01, 0x12, 0x71, 0x0a, 0x12, 0x56,
-	0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x53, 0x74, 0x61, 0x74, 0x75,
-	0x73, 0x12, 0x2b, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65,
-	0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c,
-	0x65, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x2c,
-	0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70,
-	0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x53, 0x74,
-	0x61, 0x74, 0x75, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x42, 0x39,
-	0x5a, 0x37, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x63, 0x68, 0x72,
-	0x69, 0x73, 0x6c, 0x75, 0x73, 0x66, 0x2f, 0x73, 0x65, 0x61, 0x77, 0x65, 0x65, 0x64, 0x66, 0x73,
-	0x2f, 0x77, 0x65, 0x65, 0x64, 0x2f, 0x70, 0x62, 0x2f, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f,
-	0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f,
-	0x33,
+	0x61, 0x76, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x74, 0x0a,
+	0x13, 0x46, 0x65, 0x74, 0x63, 0x68, 0x41, 0x6e, 0x64, 0x57, 0x72, 0x69, 0x74, 0x65, 0x4e, 0x65,
+	0x65, 0x64, 0x6c, 0x65, 0x12, 0x2c, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65,
+	0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x46, 0x65, 0x74, 0x63, 0x68, 0x41, 0x6e, 0x64,
+	0x57, 0x72, 0x69, 0x74, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65,
+	0x73, 0x74, 0x1a, 0x2d, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76,
+	0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x46, 0x65, 0x74, 0x63, 0x68, 0x41, 0x6e, 0x64, 0x57, 0x72,
+	0x69, 0x74, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
+	0x65, 0x22, 0x00, 0x12, 0x4c, 0x0a, 0x05, 0x51, 0x75, 0x65, 0x72, 0x79, 0x12, 0x1e, 0x2e, 0x76,
+	0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e,
+	0x51, 0x75, 0x65, 0x72, 0x79, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1f, 0x2e, 0x76,
+	0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e,
+	0x51, 0x75, 0x65, 0x72, 0x69, 0x65, 0x64, 0x53, 0x74, 0x72, 0x69, 0x70, 0x65, 0x22, 0x00, 0x30,
+	0x01, 0x12, 0x71, 0x0a, 0x12, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c,
+	0x65, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x12, 0x2b, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65,
+	0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d,
+	0x65, 0x4e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x65, 0x71,
+	0x75, 0x65, 0x73, 0x74, 0x1a, 0x2c, 0x2e, 0x76, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65,
+	0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x4e, 0x65,
+	0x65, 0x64, 0x6c, 0x65, 0x53, 0x74, 0x61, 0x74, 0x75, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e,
+	0x73, 0x65, 0x22, 0x00, 0x42, 0x39, 0x5a, 0x37, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63,
+	0x6f, 0x6d, 0x2f, 0x63, 0x68, 0x72, 0x69, 0x73, 0x6c, 0x75, 0x73, 0x66, 0x2f, 0x73, 0x65, 0x61,
+	0x77, 0x65, 0x65, 0x64, 0x66, 0x73, 0x2f, 0x77, 0x65, 0x65, 0x64, 0x2f, 0x70, 0x62, 0x2f, 0x76,
+	0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x5f, 0x73, 0x65, 0x72, 0x76, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x62,
+	0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -5948,7 +6158,7 @@ func file_volume_server_proto_rawDescGZIP() []byte {
 	return file_volume_server_proto_rawDescData
 }
 
-var file_volume_server_proto_msgTypes = make([]protoimpl.MessageInfo, 90)
+var file_volume_server_proto_msgTypes = make([]protoimpl.MessageInfo, 92)
 var file_volume_server_proto_goTypes = []interface{}{
 	(*BatchDeleteRequest)(nil),                           // 0: volume_server_pb.BatchDeleteRequest
 	(*BatchDeleteResponse)(nil),                          // 1: volume_server_pb.BatchDeleteResponse
@@ -6028,32 +6238,34 @@ var file_volume_server_proto_goTypes = []interface{}{
 	(*VolumeServerStatusResponse)(nil),                   // 75: volume_server_pb.VolumeServerStatusResponse
 	(*VolumeServerLeaveRequest)(nil),                     // 76: volume_server_pb.VolumeServerLeaveRequest
 	(*VolumeServerLeaveResponse)(nil),                    // 77: volume_server_pb.VolumeServerLeaveResponse
-	(*QueryRequest)(nil),                                 // 78: volume_server_pb.QueryRequest
-	(*QueriedStripe)(nil),                                // 79: volume_server_pb.QueriedStripe
-	(*VolumeNeedleStatusRequest)(nil),                    // 80: volume_server_pb.VolumeNeedleStatusRequest
-	(*VolumeNeedleStatusResponse)(nil),                   // 81: volume_server_pb.VolumeNeedleStatusResponse
-	(*QueryRequest_Filter)(nil),                          // 82: volume_server_pb.QueryRequest.Filter
-	(*QueryRequest_InputSerialization)(nil),              // 83: volume_server_pb.QueryRequest.InputSerialization
-	(*QueryRequest_OutputSerialization)(nil),             // 84: volume_server_pb.QueryRequest.OutputSerialization
-	(*QueryRequest_InputSerialization_CSVInput)(nil),     // 85: volume_server_pb.QueryRequest.InputSerialization.CSVInput
-	(*QueryRequest_InputSerialization_JSONInput)(nil),    // 86: volume_server_pb.QueryRequest.InputSerialization.JSONInput
-	(*QueryRequest_InputSerialization_ParquetInput)(nil), // 87: volume_server_pb.QueryRequest.InputSerialization.ParquetInput
-	(*QueryRequest_OutputSerialization_CSVOutput)(nil),   // 88: volume_server_pb.QueryRequest.OutputSerialization.CSVOutput
-	(*QueryRequest_OutputSerialization_JSONOutput)(nil),  // 89: volume_server_pb.QueryRequest.OutputSerialization.JSONOutput
+	(*FetchAndWriteNeedleRequest)(nil),                   // 78: volume_server_pb.FetchAndWriteNeedleRequest
+	(*FetchAndWriteNeedleResponse)(nil),                  // 79: volume_server_pb.FetchAndWriteNeedleResponse
+	(*QueryRequest)(nil),                                 // 80: volume_server_pb.QueryRequest
+	(*QueriedStripe)(nil),                                // 81: volume_server_pb.QueriedStripe
+	(*VolumeNeedleStatusRequest)(nil),                    // 82: volume_server_pb.VolumeNeedleStatusRequest
+	(*VolumeNeedleStatusResponse)(nil),                   // 83: volume_server_pb.VolumeNeedleStatusResponse
+	(*QueryRequest_Filter)(nil),                          // 84: volume_server_pb.QueryRequest.Filter
+	(*QueryRequest_InputSerialization)(nil),              // 85: volume_server_pb.QueryRequest.InputSerialization
+	(*QueryRequest_OutputSerialization)(nil),             // 86: volume_server_pb.QueryRequest.OutputSerialization
+	(*QueryRequest_InputSerialization_CSVInput)(nil),     // 87: volume_server_pb.QueryRequest.InputSerialization.CSVInput
+	(*QueryRequest_InputSerialization_JSONInput)(nil),    // 88: volume_server_pb.QueryRequest.InputSerialization.JSONInput
+	(*QueryRequest_InputSerialization_ParquetInput)(nil), // 89: volume_server_pb.QueryRequest.InputSerialization.ParquetInput
+	(*QueryRequest_OutputSerialization_CSVOutput)(nil),   // 90: volume_server_pb.QueryRequest.OutputSerialization.CSVOutput
+	(*QueryRequest_OutputSerialization_JSONOutput)(nil),  // 91: volume_server_pb.QueryRequest.OutputSerialization.JSONOutput
 }
 var file_volume_server_proto_depIdxs = []int32{
 	2,  // 0: volume_server_pb.BatchDeleteResponse.results:type_name -> volume_server_pb.DeleteResult
 	68, // 1: volume_server_pb.VolumeInfo.files:type_name -> volume_server_pb.RemoteFile
 	66, // 2: volume_server_pb.VolumeServerStatusResponse.disk_statuses:type_name -> volume_server_pb.DiskStatus
 	67, // 3: volume_server_pb.VolumeServerStatusResponse.memory_status:type_name -> volume_server_pb.MemStatus
-	82, // 4: volume_server_pb.QueryRequest.filter:type_name -> volume_server_pb.QueryRequest.Filter
-	83, // 5: volume_server_pb.QueryRequest.input_serialization:type_name -> volume_server_pb.QueryRequest.InputSerialization
-	84, // 6: volume_server_pb.QueryRequest.output_serialization:type_name -> volume_server_pb.QueryRequest.OutputSerialization
-	85, // 7: volume_server_pb.QueryRequest.InputSerialization.csv_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.CSVInput
-	86, // 8: volume_server_pb.QueryRequest.InputSerialization.json_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.JSONInput
-	87, // 9: volume_server_pb.QueryRequest.InputSerialization.parquet_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.ParquetInput
-	88, // 10: volume_server_pb.QueryRequest.OutputSerialization.csv_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.CSVOutput
-	89, // 11: volume_server_pb.QueryRequest.OutputSerialization.json_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.JSONOutput
+	84, // 4: volume_server_pb.QueryRequest.filter:type_name -> volume_server_pb.QueryRequest.Filter
+	85, // 5: volume_server_pb.QueryRequest.input_serialization:type_name -> volume_server_pb.QueryRequest.InputSerialization
+	86, // 6: volume_server_pb.QueryRequest.output_serialization:type_name -> volume_server_pb.QueryRequest.OutputSerialization
+	87, // 7: volume_server_pb.QueryRequest.InputSerialization.csv_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.CSVInput
+	88, // 8: volume_server_pb.QueryRequest.InputSerialization.json_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.JSONInput
+	89, // 9: volume_server_pb.QueryRequest.InputSerialization.parquet_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.ParquetInput
+	90, // 10: volume_server_pb.QueryRequest.OutputSerialization.csv_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.CSVOutput
+	91, // 11: volume_server_pb.QueryRequest.OutputSerialization.json_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.JSONOutput
 	0,  // 12: volume_server_pb.VolumeServer.BatchDelete:input_type -> volume_server_pb.BatchDeleteRequest
 	4,  // 13: volume_server_pb.VolumeServer.VacuumVolumeCheck:input_type -> volume_server_pb.VacuumVolumeCheckRequest
 	6,  // 14: volume_server_pb.VolumeServer.VacuumVolumeCompact:input_type -> volume_server_pb.VacuumVolumeCompactRequest
@@ -6090,48 +6302,50 @@ var file_volume_server_proto_depIdxs = []int32{
 	72, // 45: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:input_type -> volume_server_pb.VolumeTierMoveDatFromRemoteRequest
 	74, // 46: volume_server_pb.VolumeServer.VolumeServerStatus:input_type -> volume_server_pb.VolumeServerStatusRequest
 	76, // 47: volume_server_pb.VolumeServer.VolumeServerLeave:input_type -> volume_server_pb.VolumeServerLeaveRequest
-	78, // 48: volume_server_pb.VolumeServer.Query:input_type -> volume_server_pb.QueryRequest
-	80, // 49: volume_server_pb.VolumeServer.VolumeNeedleStatus:input_type -> volume_server_pb.VolumeNeedleStatusRequest
-	1,  // 50: volume_server_pb.VolumeServer.BatchDelete:output_type -> volume_server_pb.BatchDeleteResponse
-	5,  // 51: volume_server_pb.VolumeServer.VacuumVolumeCheck:output_type -> volume_server_pb.VacuumVolumeCheckResponse
-	7,  // 52: volume_server_pb.VolumeServer.VacuumVolumeCompact:output_type -> volume_server_pb.VacuumVolumeCompactResponse
-	9,  // 53: volume_server_pb.VolumeServer.VacuumVolumeCommit:output_type -> volume_server_pb.VacuumVolumeCommitResponse
-	11, // 54: volume_server_pb.VolumeServer.VacuumVolumeCleanup:output_type -> volume_server_pb.VacuumVolumeCleanupResponse
-	13, // 55: volume_server_pb.VolumeServer.DeleteCollection:output_type -> volume_server_pb.DeleteCollectionResponse
-	15, // 56: volume_server_pb.VolumeServer.AllocateVolume:output_type -> volume_server_pb.AllocateVolumeResponse
-	17, // 57: volume_server_pb.VolumeServer.VolumeSyncStatus:output_type -> volume_server_pb.VolumeSyncStatusResponse
-	19, // 58: volume_server_pb.VolumeServer.VolumeIncrementalCopy:output_type -> volume_server_pb.VolumeIncrementalCopyResponse
-	21, // 59: volume_server_pb.VolumeServer.VolumeMount:output_type -> volume_server_pb.VolumeMountResponse
-	23, // 60: volume_server_pb.VolumeServer.VolumeUnmount:output_type -> volume_server_pb.VolumeUnmountResponse
-	25, // 61: volume_server_pb.VolumeServer.VolumeDelete:output_type -> volume_server_pb.VolumeDeleteResponse
-	27, // 62: volume_server_pb.VolumeServer.VolumeMarkReadonly:output_type -> volume_server_pb.VolumeMarkReadonlyResponse
-	29, // 63: volume_server_pb.VolumeServer.VolumeMarkWritable:output_type -> volume_server_pb.VolumeMarkWritableResponse
-	31, // 64: volume_server_pb.VolumeServer.VolumeConfigure:output_type -> volume_server_pb.VolumeConfigureResponse
-	33, // 65: volume_server_pb.VolumeServer.VolumeStatus:output_type -> volume_server_pb.VolumeStatusResponse
-	35, // 66: volume_server_pb.VolumeServer.VolumeCopy:output_type -> volume_server_pb.VolumeCopyResponse
-	65, // 67: volume_server_pb.VolumeServer.ReadVolumeFileStatus:output_type -> volume_server_pb.ReadVolumeFileStatusResponse
-	37, // 68: volume_server_pb.VolumeServer.CopyFile:output_type -> volume_server_pb.CopyFileResponse
-	39, // 69: volume_server_pb.VolumeServer.ReadNeedleBlob:output_type -> volume_server_pb.ReadNeedleBlobResponse
-	41, // 70: volume_server_pb.VolumeServer.WriteNeedleBlob:output_type -> volume_server_pb.WriteNeedleBlobResponse
-	43, // 71: volume_server_pb.VolumeServer.VolumeTailSender:output_type -> volume_server_pb.VolumeTailSenderResponse
-	45, // 72: volume_server_pb.VolumeServer.VolumeTailReceiver:output_type -> volume_server_pb.VolumeTailReceiverResponse
-	47, // 73: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:output_type -> volume_server_pb.VolumeEcShardsGenerateResponse
-	49, // 74: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:output_type -> volume_server_pb.VolumeEcShardsRebuildResponse
-	51, // 75: volume_server_pb.VolumeServer.VolumeEcShardsCopy:output_type -> volume_server_pb.VolumeEcShardsCopyResponse
-	53, // 76: volume_server_pb.VolumeServer.VolumeEcShardsDelete:output_type -> volume_server_pb.VolumeEcShardsDeleteResponse
-	55, // 77: volume_server_pb.VolumeServer.VolumeEcShardsMount:output_type -> volume_server_pb.VolumeEcShardsMountResponse
-	57, // 78: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:output_type -> volume_server_pb.VolumeEcShardsUnmountResponse
-	59, // 79: volume_server_pb.VolumeServer.VolumeEcShardRead:output_type -> volume_server_pb.VolumeEcShardReadResponse
-	61, // 80: volume_server_pb.VolumeServer.VolumeEcBlobDelete:output_type -> volume_server_pb.VolumeEcBlobDeleteResponse
-	63, // 81: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:output_type -> volume_server_pb.VolumeEcShardsToVolumeResponse
-	71, // 82: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:output_type -> volume_server_pb.VolumeTierMoveDatToRemoteResponse
-	73, // 83: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:output_type -> volume_server_pb.VolumeTierMoveDatFromRemoteResponse
-	75, // 84: volume_server_pb.VolumeServer.VolumeServerStatus:output_type -> volume_server_pb.VolumeServerStatusResponse
-	77, // 85: volume_server_pb.VolumeServer.VolumeServerLeave:output_type -> volume_server_pb.VolumeServerLeaveResponse
-	79, // 86: volume_server_pb.VolumeServer.Query:output_type -> volume_server_pb.QueriedStripe
-	81, // 87: volume_server_pb.VolumeServer.VolumeNeedleStatus:output_type -> volume_server_pb.VolumeNeedleStatusResponse
-	50, // [50:88] is the sub-list for method output_type
-	12, // [12:50] is the sub-list for method input_type
+	78, // 48: volume_server_pb.VolumeServer.FetchAndWriteNeedle:input_type -> volume_server_pb.FetchAndWriteNeedleRequest
+	80, // 49: volume_server_pb.VolumeServer.Query:input_type -> volume_server_pb.QueryRequest
+	82, // 50: volume_server_pb.VolumeServer.VolumeNeedleStatus:input_type -> volume_server_pb.VolumeNeedleStatusRequest
+	1,  // 51: volume_server_pb.VolumeServer.BatchDelete:output_type -> volume_server_pb.BatchDeleteResponse
+	5,  // 52: volume_server_pb.VolumeServer.VacuumVolumeCheck:output_type -> volume_server_pb.VacuumVolumeCheckResponse
+	7,  // 53: volume_server_pb.VolumeServer.VacuumVolumeCompact:output_type -> volume_server_pb.VacuumVolumeCompactResponse
+	9,  // 54: volume_server_pb.VolumeServer.VacuumVolumeCommit:output_type -> volume_server_pb.VacuumVolumeCommitResponse
+	11, // 55: volume_server_pb.VolumeServer.VacuumVolumeCleanup:output_type -> volume_server_pb.VacuumVolumeCleanupResponse
+	13, // 56: volume_server_pb.VolumeServer.DeleteCollection:output_type -> volume_server_pb.DeleteCollectionResponse
+	15, // 57: volume_server_pb.VolumeServer.AllocateVolume:output_type -> volume_server_pb.AllocateVolumeResponse
+	17, // 58: volume_server_pb.VolumeServer.VolumeSyncStatus:output_type -> volume_server_pb.VolumeSyncStatusResponse
+	19, // 59: volume_server_pb.VolumeServer.VolumeIncrementalCopy:output_type -> volume_server_pb.VolumeIncrementalCopyResponse
+	21, // 60: volume_server_pb.VolumeServer.VolumeMount:output_type -> volume_server_pb.VolumeMountResponse
+	23, // 61: volume_server_pb.VolumeServer.VolumeUnmount:output_type -> volume_server_pb.VolumeUnmountResponse
+	25, // 62: volume_server_pb.VolumeServer.VolumeDelete:output_type -> volume_server_pb.VolumeDeleteResponse
+	27, // 63: volume_server_pb.VolumeServer.VolumeMarkReadonly:output_type -> volume_server_pb.VolumeMarkReadonlyResponse
+	29, // 64: volume_server_pb.VolumeServer.VolumeMarkWritable:output_type -> volume_server_pb.VolumeMarkWritableResponse
+	31, // 65: volume_server_pb.VolumeServer.VolumeConfigure:output_type -> volume_server_pb.VolumeConfigureResponse
+	33, // 66: volume_server_pb.VolumeServer.VolumeStatus:output_type -> volume_server_pb.VolumeStatusResponse
+	35, // 67: volume_server_pb.VolumeServer.VolumeCopy:output_type -> volume_server_pb.VolumeCopyResponse
+	65, // 68: volume_server_pb.VolumeServer.ReadVolumeFileStatus:output_type -> volume_server_pb.ReadVolumeFileStatusResponse
+	37, // 69: volume_server_pb.VolumeServer.CopyFile:output_type -> volume_server_pb.CopyFileResponse
+	39, // 70: volume_server_pb.VolumeServer.ReadNeedleBlob:output_type -> volume_server_pb.ReadNeedleBlobResponse
+	41, // 71: volume_server_pb.VolumeServer.WriteNeedleBlob:output_type -> volume_server_pb.WriteNeedleBlobResponse
+	43, // 72: volume_server_pb.VolumeServer.VolumeTailSender:output_type -> volume_server_pb.VolumeTailSenderResponse
+	45, // 73: volume_server_pb.VolumeServer.VolumeTailReceiver:output_type -> volume_server_pb.VolumeTailReceiverResponse
+	47, // 74: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:output_type -> volume_server_pb.VolumeEcShardsGenerateResponse
+	49, // 75: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:output_type -> volume_server_pb.VolumeEcShardsRebuildResponse
+	51, // 76: volume_server_pb.VolumeServer.VolumeEcShardsCopy:output_type -> volume_server_pb.VolumeEcShardsCopyResponse
+	53, // 77: volume_server_pb.VolumeServer.VolumeEcShardsDelete:output_type -> volume_server_pb.VolumeEcShardsDeleteResponse
+	55, // 78: volume_server_pb.VolumeServer.VolumeEcShardsMount:output_type -> volume_server_pb.VolumeEcShardsMountResponse
+	57, // 79: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:output_type -> volume_server_pb.VolumeEcShardsUnmountResponse
+	59, // 80: volume_server_pb.VolumeServer.VolumeEcShardRead:output_type -> volume_server_pb.VolumeEcShardReadResponse
+	61, // 81: volume_server_pb.VolumeServer.VolumeEcBlobDelete:output_type -> volume_server_pb.VolumeEcBlobDeleteResponse
+	63, // 82: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:output_type -> volume_server_pb.VolumeEcShardsToVolumeResponse
+	71, // 83: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:output_type -> volume_server_pb.VolumeTierMoveDatToRemoteResponse
+	73, // 84: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:output_type -> volume_server_pb.VolumeTierMoveDatFromRemoteResponse
+	75, // 85: volume_server_pb.VolumeServer.VolumeServerStatus:output_type -> volume_server_pb.VolumeServerStatusResponse
+	77, // 86: volume_server_pb.VolumeServer.VolumeServerLeave:output_type -> volume_server_pb.VolumeServerLeaveResponse
+	79, // 87: volume_server_pb.VolumeServer.FetchAndWriteNeedle:output_type -> volume_server_pb.FetchAndWriteNeedleResponse
+	81, // 88: volume_server_pb.VolumeServer.Query:output_type -> volume_server_pb.QueriedStripe
+	83, // 89: volume_server_pb.VolumeServer.VolumeNeedleStatus:output_type -> volume_server_pb.VolumeNeedleStatusResponse
+	51, // [51:90] is the sub-list for method output_type
+	12, // [12:51] is the sub-list for method input_type
 	12, // [12:12] is the sub-list for extension type_name
 	12, // [12:12] is the sub-list for extension extendee
 	0,  // [0:12] is the sub-list for field type_name
@@ -7080,7 +7294,7 @@ func file_volume_server_proto_init() {
 			}
 		}
 		file_volume_server_proto_msgTypes[78].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryRequest); i {
+			switch v := v.(*FetchAndWriteNeedleRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -7092,7 +7306,7 @@ func file_volume_server_proto_init() {
 			}
 		}
 		file_volume_server_proto_msgTypes[79].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueriedStripe); i {
+			switch v := v.(*FetchAndWriteNeedleResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -7104,7 +7318,7 @@ func file_volume_server_proto_init() {
 			}
 		}
 		file_volume_server_proto_msgTypes[80].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*VolumeNeedleStatusRequest); i {
+			switch v := v.(*QueryRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -7116,7 +7330,7 @@ func file_volume_server_proto_init() {
 			}
 		}
 		file_volume_server_proto_msgTypes[81].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*VolumeNeedleStatusResponse); i {
+			switch v := v.(*QueriedStripe); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -7128,7 +7342,7 @@ func file_volume_server_proto_init() {
 			}
 		}
 		file_volume_server_proto_msgTypes[82].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryRequest_Filter); i {
+			switch v := v.(*VolumeNeedleStatusRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -7140,7 +7354,7 @@ func file_volume_server_proto_init() {
 			}
 		}
 		file_volume_server_proto_msgTypes[83].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryRequest_InputSerialization); i {
+			switch v := v.(*VolumeNeedleStatusResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -7152,7 +7366,7 @@ func file_volume_server_proto_init() {
 			}
 		}
 		file_volume_server_proto_msgTypes[84].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryRequest_OutputSerialization); i {
+			switch v := v.(*QueryRequest_Filter); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -7164,7 +7378,7 @@ func file_volume_server_proto_init() {
 			}
 		}
 		file_volume_server_proto_msgTypes[85].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryRequest_InputSerialization_CSVInput); i {
+			switch v := v.(*QueryRequest_InputSerialization); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -7176,7 +7390,7 @@ func file_volume_server_proto_init() {
 			}
 		}
 		file_volume_server_proto_msgTypes[86].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryRequest_InputSerialization_JSONInput); i {
+			switch v := v.(*QueryRequest_OutputSerialization); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -7188,7 +7402,7 @@ func file_volume_server_proto_init() {
 			}
 		}
 		file_volume_server_proto_msgTypes[87].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryRequest_InputSerialization_ParquetInput); i {
+			switch v := v.(*QueryRequest_InputSerialization_CSVInput); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -7200,7 +7414,7 @@ func file_volume_server_proto_init() {
 			}
 		}
 		file_volume_server_proto_msgTypes[88].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryRequest_OutputSerialization_CSVOutput); i {
+			switch v := v.(*QueryRequest_InputSerialization_JSONInput); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -7212,6 +7426,30 @@ func file_volume_server_proto_init() {
 			}
 		}
 		file_volume_server_proto_msgTypes[89].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*QueryRequest_InputSerialization_ParquetInput); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_volume_server_proto_msgTypes[90].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*QueryRequest_OutputSerialization_CSVOutput); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_volume_server_proto_msgTypes[91].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*QueryRequest_OutputSerialization_JSONOutput); i {
 			case 0:
 				return &v.state
@@ -7230,7 +7468,7 @@ func file_volume_server_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_volume_server_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   90,
+			NumMessages:   92,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
@@ -7296,6 +7534,8 @@ type VolumeServerClient interface {
 	VolumeTierMoveDatFromRemote(ctx context.Context, in *VolumeTierMoveDatFromRemoteRequest, opts ...grpc.CallOption) (VolumeServer_VolumeTierMoveDatFromRemoteClient, error)
 	VolumeServerStatus(ctx context.Context, in *VolumeServerStatusRequest, opts ...grpc.CallOption) (*VolumeServerStatusResponse, error)
 	VolumeServerLeave(ctx context.Context, in *VolumeServerLeaveRequest, opts ...grpc.CallOption) (*VolumeServerLeaveResponse, error)
+	// remote storage
+	FetchAndWriteNeedle(ctx context.Context, in *FetchAndWriteNeedleRequest, opts ...grpc.CallOption) (*FetchAndWriteNeedleResponse, error)
 	// <experimental> query
 	Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (VolumeServer_QueryClient, error)
 	VolumeNeedleStatus(ctx context.Context, in *VolumeNeedleStatusRequest, opts ...grpc.CallOption) (*VolumeNeedleStatusResponse, error)
@@ -7771,6 +8011,15 @@ func (c *volumeServerClient) VolumeServerLeave(ctx context.Context, in *VolumeSe
 	return out, nil
 }
 
+func (c *volumeServerClient) FetchAndWriteNeedle(ctx context.Context, in *FetchAndWriteNeedleRequest, opts ...grpc.CallOption) (*FetchAndWriteNeedleResponse, error) {
+	out := new(FetchAndWriteNeedleResponse)
+	err := c.cc.Invoke(ctx, "/volume_server_pb.VolumeServer/FetchAndWriteNeedle", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *volumeServerClient) Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (VolumeServer_QueryClient, error) {
 	stream, err := c.cc.NewStream(ctx, &_VolumeServer_serviceDesc.Streams[6], "/volume_server_pb.VolumeServer/Query", opts...)
 	if err != nil {
@@ -7854,6 +8103,8 @@ type VolumeServerServer interface {
 	VolumeTierMoveDatFromRemote(*VolumeTierMoveDatFromRemoteRequest, VolumeServer_VolumeTierMoveDatFromRemoteServer) error
 	VolumeServerStatus(context.Context, *VolumeServerStatusRequest) (*VolumeServerStatusResponse, error)
 	VolumeServerLeave(context.Context, *VolumeServerLeaveRequest) (*VolumeServerLeaveResponse, error)
+	// remote storage
+	FetchAndWriteNeedle(context.Context, *FetchAndWriteNeedleRequest) (*FetchAndWriteNeedleResponse, error)
 	// <experimental> query
 	Query(*QueryRequest, VolumeServer_QueryServer) error
 	VolumeNeedleStatus(context.Context, *VolumeNeedleStatusRequest) (*VolumeNeedleStatusResponse, error)
@@ -7970,6 +8221,9 @@ func (*UnimplementedVolumeServerServer) VolumeServerStatus(context.Context, *Vol
 }
 func (*UnimplementedVolumeServerServer) VolumeServerLeave(context.Context, *VolumeServerLeaveRequest) (*VolumeServerLeaveResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VolumeServerLeave not implemented")
+}
+func (*UnimplementedVolumeServerServer) FetchAndWriteNeedle(context.Context, *FetchAndWriteNeedleRequest) (*FetchAndWriteNeedleResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method FetchAndWriteNeedle not implemented")
 }
 func (*UnimplementedVolumeServerServer) Query(*QueryRequest, VolumeServer_QueryServer) error {
 	return status.Errorf(codes.Unimplemented, "method Query not implemented")
@@ -8648,6 +8902,24 @@ func _VolumeServer_VolumeServerLeave_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VolumeServer_FetchAndWriteNeedle_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FetchAndWriteNeedleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).FetchAndWriteNeedle(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/volume_server_pb.VolumeServer/FetchAndWriteNeedle",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).FetchAndWriteNeedle(ctx, req.(*FetchAndWriteNeedleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _VolumeServer_Query_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(QueryRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -8810,6 +9082,10 @@ var _VolumeServer_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "VolumeServerLeave",
 			Handler:    _VolumeServer_VolumeServerLeave_Handler,
+		},
+		{
+			MethodName: "FetchAndWriteNeedle",
+			Handler:    _VolumeServer_FetchAndWriteNeedle_Handler,
 		},
 		{
 			MethodName: "VolumeNeedleStatus",

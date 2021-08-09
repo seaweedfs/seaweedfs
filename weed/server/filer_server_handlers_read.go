@@ -101,7 +101,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	//Seaweed custom header are not visible to Vue or javascript
 	seaweedHeaders := []string{}
-	for header, _ := range w.Header() {
+	for header := range w.Header() {
 		if strings.HasPrefix(header, "Seaweed-") {
 			seaweedHeaders = append(seaweedHeaders, header)
 		}
@@ -163,9 +163,18 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			}
 			return err
 		}
-		err = filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size)
-		if err != nil {
-			glog.Errorf("failed to stream content %s: %v", r.URL, err)
+		if entry.IsInRemoteOnly() {
+			var data []byte
+			data, err = fs.filer.ReadRemote(entry, offset, size)
+			if err != nil {
+				glog.Errorf("failed to read remote %s: %v", r.URL, err)
+			}
+			_, err = w.Write(data)
+		} else {
+			err = filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size)
+			if err != nil {
+				glog.Errorf("failed to stream content %s: %v", r.URL, err)
+			}
 		}
 		return err
 	})

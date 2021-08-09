@@ -134,7 +134,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 				Attributes:  entry.Attributes,
 				Chunks:      replicatedChunks,
 				Content:     entry.Content,
-				Remote:      entry.Remote,
+				RemoteEntry: entry.RemoteEntry,
 			},
 			IsFromOtherCluster: true,
 			Signatures:         signatures,

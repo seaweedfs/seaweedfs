@@ -7,9 +7,11 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
 	"io"
 	"regexp"
+	"strings"
 )
 
 func init() {
@@ -84,6 +86,9 @@ func (c *commandRemoteConfigure) listExistingRemoteStorages(commandEnv *CommandE
 			fmt.Fprintf(writer, "skipping %s\n", entry.Name)
 			return nil
 		}
+		if !strings.HasSuffix(entry.Name, filer.REMOTE_STORAGE_CONF_SUFFIX) {
+			return nil
+		}
 		conf := &filer_pb.RemoteConf{}
 
 		if err := proto.Unmarshal(entry.Content, conf); err != nil {
@@ -92,9 +97,15 @@ func (c *commandRemoteConfigure) listExistingRemoteStorages(commandEnv *CommandE
 
 		conf.S3SecretKey = ""
 
-		fmt.Fprintf(writer, "%+v\n", conf)
+		m := jsonpb.Marshaler{
+			EmitDefaults: false,
+			Indent:       "  ",
+		}
 
-		return nil
+		err := m.Marshal(writer, conf)
+		fmt.Fprintln(writer)
+
+		return err
 	})
 
 }
@@ -105,7 +116,7 @@ func (c *commandRemoteConfigure) deleteRemoteStorage(commandEnv *CommandEnv, wri
 
 		request := &filer_pb.DeleteEntryRequest{
 			Directory:            filer.DirectoryEtcRemote,
-			Name:                 storageName,
+			Name:                 storageName + filer.REMOTE_STORAGE_CONF_SUFFIX,
 			IgnoreRecursiveError: false,
 			IsDeleteData:         true,
 			IsRecursive:          true,
@@ -132,7 +143,7 @@ func (c *commandRemoteConfigure) saveRemoteStorage(commandEnv *CommandEnv, write
 	}
 
 	if err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		return filer.SaveInsideFiler(client, filer.DirectoryEtcRemote, conf.Name, data)
+		return filer.SaveInsideFiler(client, filer.DirectoryEtcRemote, conf.Name+filer.REMOTE_STORAGE_CONF_SUFFIX, data)
 	}); err != nil && err != filer_pb.ErrNotFound {
 		return err
 	}

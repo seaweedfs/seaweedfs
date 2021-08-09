@@ -42,6 +42,7 @@ type Filer struct {
 	MetaAggregator      *MetaAggregator
 	Signature           int32
 	FilerConf           *FilerConf
+	RemoteStorage       *FilerRemoteStorage
 }
 
 func NewFiler(masters []string, grpcDialOption grpc.DialOption,
@@ -51,6 +52,7 @@ func NewFiler(masters []string, grpcDialOption grpc.DialOption,
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 		FilerConf:           NewFilerConf(),
+		RemoteStorage:       NewFilerRemoteStorage(),
 	}
 	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, notifyFn)
 	f.metaLogCollection = collection
