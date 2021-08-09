@@ -171,7 +171,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				Directory: dir,
 				Name:      name,
 			}); err != nil {
-				return fmt.Errorf("cache %s: %v", entry.FileSize, err)
+				return fmt.Errorf("cache %s: %v", entry.FullPath, err)
 			} else {
 				chunks = resp.Entry.Chunks
 			}
