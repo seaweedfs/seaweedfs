@@ -69,7 +69,7 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 	// find a good chunk size
 	chunkSize := int64(5 * 1024 * 1024)
 	chunkCount := entry.Remote.RemoteSize/chunkSize + 1
-	for chunkCount > 1000 {
+	for chunkCount > 1000 && chunkSize < int64(fs.option.MaxMB)*1024*1024/2 {
 		chunkSize *= 2
 		chunkCount = entry.Remote.RemoteSize/chunkSize + 1
 	}
@@ -78,6 +78,7 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 
 	var chunks []*filer_pb.FileChunk
 
+	// FIXME limit on parallel
 	for offset := int64(0); offset < entry.Remote.RemoteSize; offset += chunkSize {
 		size := chunkSize
 		if offset+chunkSize > entry.Remote.RemoteSize {
