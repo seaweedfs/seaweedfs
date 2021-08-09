@@ -13,7 +13,7 @@ import (
 )
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
-func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, error) {
+func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSizeFn func(size Size)) (int, error) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
 
@@ -32,6 +32,9 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption) (int, erro
 	}
 	if readSize == 0 {
 		return 0, nil
+	}
+	if onReadSizeFn != nil {
+		onReadSizeFn(readSize)
 	}
 	err := n.ReadData(v.DataBackend, nv.Offset.ToActualOffset(), readSize, v.Version())
 	if err == needle.ErrorSizeMismatch && OffsetSize == 4 {

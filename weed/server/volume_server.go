@@ -17,9 +17,12 @@ import (
 )
 
 type VolumeServer struct {
-	inFlightUploadDataSize      int64
-	concurrentUploadLimit       int64
-	inFlightUploadDataLimitCond *sync.Cond
+	inFlightUploadDataSize        int64
+	inFlightDownloadDataSize      int64
+	concurrentUploadLimit         int64
+	concurrentDownloadLimit       int64
+	inFlightUploadDataLimitCond   *sync.Cond
+	inFlightDownloadDataLimitCond *sync.Cond
 
 	SeedMasterNodes []string
 	currentMaster   string
@@ -54,6 +57,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	compactionMBPerSecond int,
 	fileSizeLimitMB int,
 	concurrentUploadLimit int64,
+	concurrentDownloadLimit int64,
 ) *VolumeServer {
 
 	v := util.GetViper()
@@ -67,19 +71,21 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	readExpiresAfterSec := v.GetInt("jwt.signing.read.expires_after_seconds")
 
 	vs := &VolumeServer{
-		pulseSeconds:            pulseSeconds,
-		dataCenter:                  dataCenter,
-		rack:                        rack,
-		needleMapKind:               needleMapKind,
-		FixJpgOrientation:           fixJpgOrientation,
-		ReadMode:                    readMode,
-		grpcDialOption:              security.LoadClientTLS(util.GetViper(), "grpc.volume"),
-		compactionBytePerSecond:     int64(compactionMBPerSecond) * 1024 * 1024,
-		fileSizeLimitBytes:          int64(fileSizeLimitMB) * 1024 * 1024,
-		isHeartbeating:              true,
-		stopChan:                    make(chan bool),
-		inFlightUploadDataLimitCond: sync.NewCond(new(sync.Mutex)),
-		concurrentUploadLimit:       concurrentUploadLimit,
+		pulseSeconds:                  pulseSeconds,
+		dataCenter:                    dataCenter,
+		rack:                          rack,
+		needleMapKind:                 needleMapKind,
+		FixJpgOrientation:             fixJpgOrientation,
+		ReadMode:                      readMode,
+		grpcDialOption:                security.LoadClientTLS(util.GetViper(), "grpc.volume"),
+		compactionBytePerSecond:       int64(compactionMBPerSecond) * 1024 * 1024,
+		fileSizeLimitBytes:            int64(fileSizeLimitMB) * 1024 * 1024,
+		isHeartbeating:                true,
+		stopChan:                      make(chan bool),
+		inFlightUploadDataLimitCond:   sync.NewCond(new(sync.Mutex)),
+		inFlightDownloadDataLimitCond: sync.NewCond(new(sync.Mutex)),
+		concurrentUploadLimit:         concurrentUploadLimit,
+		concurrentDownloadLimit:       concurrentDownloadLimit,
 	}
 	vs.SeedMasterNodes = masterNodes
 

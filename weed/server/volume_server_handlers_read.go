@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io"
 	"mime"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -123,11 +125,22 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	var count int
-	if hasVolume {
-		count, err = vs.store.ReadVolumeNeedle(volumeId, n, readOption)
-	} else if hasEcVolume {
-		count, err = vs.store.ReadEcShardNeedle(volumeId, n)
+	var needleSize types.Size
+	onReadSizeFn := func(size types.Size) {
+		needleSize = size
+		atomic.AddInt64(&vs.inFlightDownloadDataSize, int64(needleSize))
+		vs.inFlightDownloadDataLimitCond.L.Unlock()
 	}
+	if hasVolume {
+		count, err = vs.store.ReadVolumeNeedle(volumeId, n, readOption, onReadSizeFn)
+	} else if hasEcVolume {
+		count, err = vs.store.ReadEcShardNeedle(volumeId, n, onReadSizeFn)
+	}
+	defer func() {
+		atomic.AddInt64(&vs.inFlightDownloadDataSize, -int64(needleSize))
+		vs.inFlightDownloadDataLimitCond.Signal()
+	}()
+
 	if err != nil && err != storage.ErrorDeleted && r.FormValue("type") != "replicate" && hasVolume {
 		glog.V(4).Infof("read needle: %v", err)
 		// start to fix it from other replicas, if not deleted and hasVolume and is not a replicated request

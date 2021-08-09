@@ -356,9 +356,9 @@ func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (Size, e
 	return 0, fmt.Errorf("volume %d not found on %s:%d", i, s.Ip, s.Port)
 }
 
-func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle, readOption *ReadOption) (int, error) {
+func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle, readOption *ReadOption, onReadSizeFn func(size Size)) (int, error) {
 	if v := s.findVolume(i); v != nil {
-		return v.readNeedle(n, readOption)
+		return v.readNeedle(n, readOption, onReadSizeFn)
 	}
 	return 0, fmt.Errorf("volume %d not found", i)
 }
