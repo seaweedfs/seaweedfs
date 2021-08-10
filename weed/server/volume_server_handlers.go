@@ -42,6 +42,7 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 			glog.V(4).Infof("wait because inflight download data %d > %d", vs.inFlightDownloadDataSize, vs.concurrentDownloadLimit)
 			vs.inFlightDownloadDataLimitCond.Wait()
 		}
+		vs.inFlightDownloadDataLimitCond.L.Unlock()
 		vs.GetOrHeadHandler(w, r)
 	case "DELETE":
 		stats.DeleteRequest()
@@ -55,8 +56,8 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 			glog.V(4).Infof("wait because inflight upload data %d > %d", vs.inFlightUploadDataSize, vs.concurrentUploadLimit)
 			vs.inFlightUploadDataLimitCond.Wait()
 		}
-		atomic.AddInt64(&vs.inFlightUploadDataSize, contentLength)
 		vs.inFlightUploadDataLimitCond.L.Unlock()
+		atomic.AddInt64(&vs.inFlightUploadDataSize, contentLength)
 		defer func() {
 			atomic.AddInt64(&vs.inFlightUploadDataSize, -contentLength)
 			vs.inFlightUploadDataLimitCond.Signal()
@@ -92,11 +93,14 @@ func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Req
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
 	switch r.Method {
-	case "GET":
+	case "GET", "HEAD":
 		stats.ReadRequest()
-		vs.GetOrHeadHandler(w, r)
-	case "HEAD":
-		stats.ReadRequest()
+		vs.inFlightDownloadDataLimitCond.L.Lock()
+		for vs.concurrentDownloadLimit != 0 && atomic.LoadInt64(&vs.inFlightDownloadDataSize) > vs.concurrentDownloadLimit {
+			glog.V(4).Infof("wait because inflight download data %d > %d", vs.inFlightDownloadDataSize, vs.concurrentDownloadLimit)
+			vs.inFlightDownloadDataLimitCond.Wait()
+		}
+		vs.inFlightDownloadDataLimitCond.L.Unlock()
 		vs.GetOrHeadHandler(w, r)
 	case "OPTIONS":
 		stats.ReadRequest()

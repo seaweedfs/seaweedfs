@@ -58,8 +58,8 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 			glog.V(4).Infof("wait because inflight data %d > %d", fs.inFlightDataSize, fs.option.ConcurrentUploadLimit)
 			fs.inFlightDataLimitCond.Wait()
 		}
-		atomic.AddInt64(&fs.inFlightDataSize, contentLength)
 		fs.inFlightDataLimitCond.L.Unlock()
+		atomic.AddInt64(&fs.inFlightDataSize, contentLength)
 		defer func() {
 			atomic.AddInt64(&fs.inFlightDataSize, -contentLength)
 			fs.inFlightDataLimitCond.Signal()

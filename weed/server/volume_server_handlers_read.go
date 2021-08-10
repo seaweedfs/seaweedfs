@@ -129,7 +129,6 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	onReadSizeFn := func(size types.Size) {
 		needleSize = size
 		atomic.AddInt64(&vs.inFlightDownloadDataSize, int64(needleSize))
-		vs.inFlightDownloadDataLimitCond.L.Unlock()
 	}
 	if hasVolume {
 		count, err = vs.store.ReadVolumeNeedle(volumeId, n, readOption, onReadSizeFn)
