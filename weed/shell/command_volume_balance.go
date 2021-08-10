@@ -120,6 +120,21 @@ func balanceVolumeServers(commandEnv *CommandEnv, diskTypes []types.DiskType, vo
 
 func balanceVolumeServersByDiskType(commandEnv *CommandEnv, diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, volumeSizeLimit uint64, collection string, applyBalancing bool) error {
 
+	// balance read only volumes
+	for _, n := range nodes {
+		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
+			if collection != "ALL_COLLECTIONS" {
+				if v.Collection != collection {
+					return false
+				}
+			}
+			return v.DiskType == string(diskType) && (v.ReadOnly || v.Size >= volumeSizeLimit)
+		})
+	}
+	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxVolumeCount(diskType), sortReadOnlyVolumes, applyBalancing); err != nil {
+		return err
+	}
+
 	// balance writable volumes
 	for _, n := range nodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
@@ -132,21 +147,6 @@ func balanceVolumeServersByDiskType(commandEnv *CommandEnv, diskType types.DiskT
 		})
 	}
 	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxVolumeCount(diskType), sortWritableVolumes, applyBalancing); err != nil {
-		return err
-	}
-
-	// balance readable volumes
-	for _, n := range nodes {
-		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
-			if collection != "ALL_COLLECTIONS" {
-				if v.Collection != collection {
-					return false
-				}
-			}
-			return v.DiskType == string(diskType) && (v.ReadOnly || v.Size >= volumeSizeLimit)
-		})
-	}
-	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxVolumeCount(diskType), sortReadOnlyVolumes, applyBalancing); err != nil {
 		return err
 	}
 
@@ -340,7 +340,7 @@ func moveVolume(commandEnv *CommandEnv, v *master_pb.VolumeInformationMessage, f
 	}
 	fmt.Fprintf(os.Stdout, "  moving %s volume %s%d %s => %s\n", v.DiskType, collectionPrefix, v.Id, fullNode.info.Id, emptyNode.info.Id)
 	if applyChange {
-		return LiveMoveVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id), fullNode.info.Id, emptyNode.info.Id, 5*time.Second, v.DiskType)
+		return LiveMoveVolume(commandEnv.option.GrpcDialOption, os.Stderr, needle.VolumeId(v.Id), fullNode.info.Id, emptyNode.info.Id, 5*time.Second, v.DiskType, false)
 	}
 	return nil
 }

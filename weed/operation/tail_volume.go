@@ -71,7 +71,10 @@ func TailVolumeFromSource(volumeServer string, grpcDialOption grpc.DialOption, v
 
 			n := new(needle.Needle)
 			n.ParseNeedleHeader(needleHeader)
-			n.ReadNeedleBodyBytes(needleBody, needle.CurrentVersion)
+			err = n.ReadNeedleBodyBytes(needleBody, needle.CurrentVersion)
+			if err != nil {
+				return err
+			}
 
 			err = fn(n)
 

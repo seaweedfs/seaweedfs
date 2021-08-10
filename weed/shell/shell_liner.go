@@ -31,6 +31,7 @@ func RunShell(options ShellOptions) {
 	})
 
 	line.SetCtrlCAborts(true)
+	line.SetTabCompletionStyle(liner.TabPrints)
 
 	setCompletionHandler()
 	loadHistory()
@@ -147,9 +148,11 @@ func loadHistory() {
 
 func saveHistory() {
 	if f, err := os.Create(historyPath); err != nil {
-		fmt.Printf("Error writing history file: %v\n", err)
+		fmt.Printf("Error creating history file: %v\n", err)
 	} else {
-		line.WriteHistory(f)
+		if _, err = line.WriteHistory(f); err != nil {
+			fmt.Printf("Error writing history file: %v\n", err)
+		}
 		f.Close()
 	}
 }

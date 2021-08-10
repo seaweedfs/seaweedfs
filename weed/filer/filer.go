@@ -42,6 +42,7 @@ type Filer struct {
 	MetaAggregator      *MetaAggregator
 	Signature           int32
 	FilerConf           *FilerConf
+	RemoteStorage       *FilerRemoteStorage
 }
 
 func NewFiler(masters []string, grpcDialOption grpc.DialOption,
@@ -51,8 +52,9 @@ func NewFiler(masters []string, grpcDialOption grpc.DialOption,
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 		FilerConf:           NewFilerConf(),
+		RemoteStorage:       NewFilerRemoteStorage(),
 	}
-	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer(LogFlushInterval, f.logFlushFunc, notifyFn)
+	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, notifyFn)
 	f.metaLogCollection = collection
 	f.metaLogReplication = replication
 
@@ -207,7 +209,7 @@ func (f *Filer) ensureParentDirecotryEntry(ctx context.Context, entry *Entry, di
 			Attr: Attr{
 				Mtime:       now,
 				Crtime:      now,
-				Mode:        os.ModeDir | entry.Mode | 0110,
+				Mode:        os.ModeDir | entry.Mode | 0111,
 				Uid:         entry.Uid,
 				Gid:         entry.Gid,
 				Collection:  entry.Collection,

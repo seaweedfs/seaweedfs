@@ -15,6 +15,7 @@ import (
 const (
 	DirectoryEtcRoot      = "/etc"
 	DirectoryEtcSeaweedFS = "/etc/seaweedfs"
+	DirectoryEtcRemote    = "/etc/remote"
 	FilerConfName         = "filer.conf"
 	IamConfigDirecotry    = "/etc/iam"
 	IamIdentityFile       = "identity.json"
@@ -125,6 +126,9 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 	a.Fsync = b.Fsync || a.Fsync
 	if b.VolumeGrowthCount > 0 {
 		a.VolumeGrowthCount = b.VolumeGrowthCount
+	}
+	if b.ReadOnly {
+		a.ReadOnly = b.ReadOnly
 	}
 }
 

@@ -64,11 +64,31 @@ func (cs *CompactSection) Set(key NeedleId, offset Offset, size Size) (oldOffset
 		needOverflow := cs.counter >= batch
 		needOverflow = needOverflow || cs.counter > 0 && cs.values[cs.counter-1].Key > skey
 		if needOverflow {
-			//println("start", cs.start, "counter", cs.counter, "key", key)
-			if oldValueExtra, oldValue, found := cs.findOverflowEntry(skey); found {
-				oldOffset.OffsetHigher, oldOffset.OffsetLower, oldSize = oldValueExtra.OffsetHigher, oldValue.OffsetLower, oldValue.Size
+			lookBackIndex := cs.counter - 128
+			if lookBackIndex < 0 {
+				lookBackIndex = 0
 			}
-			cs.setOverflowEntry(skey, offset, size)
+			if cs.counter < batch && cs.values[lookBackIndex].Key < skey {
+				// still has capacity and only partially out of order
+				p := &cs.values[cs.counter]
+				p.Key, cs.valuesExtra[cs.counter].OffsetHigher, p.OffsetLower, p.Size = skey, offset.OffsetHigher, offset.OffsetLower, size
+				//println("added index", cs.counter, "key", key, cs.values[cs.counter].Key)
+				for x := cs.counter - 1; x >= lookBackIndex; x-- {
+					if cs.values[x].Key > cs.values[x+1].Key {
+						cs.values[x], cs.values[x+1] = cs.values[x+1], cs.values[x]
+						cs.valuesExtra[x], cs.valuesExtra[x+1] = cs.valuesExtra[x+1], cs.valuesExtra[x]
+					} else {
+						break
+					}
+				}
+				cs.counter++
+			} else {
+				//println("start", cs.start, "counter", cs.counter, "key", key)
+				if oldValueExtra, oldValue, found := cs.findOverflowEntry(skey); found {
+					oldOffset.OffsetHigher, oldOffset.OffsetLower, oldSize = oldValueExtra.OffsetHigher, oldValue.OffsetLower, oldValue.Size
+				}
+				cs.setOverflowEntry(skey, offset, size)
+			}
 		} else {
 			p := &cs.values[cs.counter]
 			p.Key, cs.valuesExtra[cs.counter].OffsetHigher, p.OffsetLower, p.Size = skey, offset.OffsetHigher, offset.OffsetLower, size
@@ -96,6 +116,7 @@ func (cs *CompactSection) setOverflowEntry(skey SectionalNeedleId, offset Offset
 			cs.overflowExtra[i] = cs.overflowExtra[i-1]
 		}
 		cs.overflow[insertCandidate] = needleValue
+		cs.overflowExtra[insertCandidate] = needleValueExtra
 	}
 }
 

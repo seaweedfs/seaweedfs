@@ -18,7 +18,7 @@ type MockClient struct {
 }
 
 func (m *MockClient) Do(req *http.Request) (*http.Response, error) {
-	n, originalSize, _, err := needle.CreateNeedleFromRequest(req, false, 1024*1024)
+	n, originalSize, _, err := needle.CreateNeedleFromRequest(req, false, 1024*1024, &bytes.Buffer{})
 	if m.needleHandling != nil {
 		m.needleHandling(n, originalSize, err)
 	}

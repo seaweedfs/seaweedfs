@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	ManifestBatch = 1000
+	ManifestBatch = 10000
 )
 
 func HasChunkManifest(chunks []*filer_pb.FileChunk) bool {
@@ -39,9 +39,14 @@ func SeparateManifestChunks(chunks []*filer_pb.FileChunk) (manifestChunks, nonMa
 	return
 }
 
-func ResolveChunkManifest(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+func ResolveChunkManifest(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset, stopOffset int64) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
 	// TODO maybe parallel this
 	for _, chunk := range chunks {
+
+		if max(chunk.Offset, startOffset) >= min(chunk.Offset+int64(chunk.Size), stopOffset) {
+			continue
+		}
+
 		if !chunk.IsChunkManifest {
 			dataChunks = append(dataChunks, chunk)
 			continue
@@ -54,7 +59,7 @@ func ResolveChunkManifest(lookupFileIdFn wdclient.LookupFileIdFunctionType, chun
 
 		manifestChunks = append(manifestChunks, chunk)
 		// recursive
-		dchunks, mchunks, subErr := ResolveChunkManifest(lookupFileIdFn, resolvedChunks)
+		dchunks, mchunks, subErr := ResolveChunkManifest(lookupFileIdFn, resolvedChunks, startOffset, stopOffset)
 		if subErr != nil {
 			return chunks, nil, subErr
 		}

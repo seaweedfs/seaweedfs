@@ -12,6 +12,10 @@ import (
 	"github.com/viant/ptrie"
 )
 
+func (entry *Entry) IsInRemoteOnly() bool {
+	return len(entry.Chunks) == 0 && entry.RemoteEntry != nil && entry.RemoteEntry.RemoteSize > 0
+}
+
 func ToFileIdObject(fileIdStr string) (*FileId, error) {
 	t, err := needle.ParseFileIdFromString(fileIdStr)
 	if err != nil {
@@ -144,6 +148,10 @@ func IsRename(event *SubscribeMetadataResponse) bool {
 var _ = ptrie.KeyProvider(&FilerConf_PathConf{})
 
 func (fp *FilerConf_PathConf) Key() interface{} {
+	key, _ := proto.Marshal(fp)
+	return string(key)
+}
+func (fp *RemoteStorageLocation) Key() interface{} {
 	key, _ := proto.Marshal(fp)
 	return string(key)
 }

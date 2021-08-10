@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"math"
 	"path/filepath"
 	"strings"
 )
@@ -26,6 +27,10 @@ func (f *Filer) ListDirectoryEntries(ctx context.Context, p util.FullPath, start
 		entries = append(entries, entry)
 		return true
 	})
+
+	if limit == math.MaxInt64 {
+		limit = math.MaxInt64 - 1
+	}
 
 	hasMore = int64(len(entries)) >= limit+1
 	if hasMore {

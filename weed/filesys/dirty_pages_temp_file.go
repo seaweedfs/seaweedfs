@@ -97,7 +97,7 @@ func (pages *TempFileDirtyPages) saveExistingPagesToStorage() {
 
 	for _, list := range pages.writtenIntervals.lists {
 		listStopOffset := list.Offset() + list.Size()
-		for uploadedOffset:=int64(0); uploadedOffset < listStopOffset; uploadedOffset += pageSize {
+		for uploadedOffset := int64(0); uploadedOffset < listStopOffset; uploadedOffset += pageSize {
 			start, stop := max(list.Offset(), uploadedOffset), min(listStopOffset, uploadedOffset+pageSize)
 			if start >= stop {
 				continue

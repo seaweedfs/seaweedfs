@@ -71,20 +71,20 @@ func runUpload(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
-	defaultCollection, err := readMasterConfiguration(grpcDialOption, *upload.master)
+	defaultReplication, err := readMasterConfiguration(grpcDialOption, *upload.master)
 	if err != nil {
 		fmt.Printf("upload: %v", err)
 		return false
 	}
 	if *upload.replication == "" {
-		*upload.replication = defaultCollection
+		*upload.replication = defaultReplication
 	}
 
 	if len(args) == 0 {
 		if *upload.dir == "" {
 			return false
 		}
-		filepath.Walk(util.ResolvePath(*upload.dir), func(path string, info os.FileInfo, err error) error {
+		err = filepath.Walk(util.ResolvePath(*upload.dir), func(path string, info os.FileInfo, err error) error {
 			if err == nil {
 				if !info.IsDir() {
 					if *upload.include != "" {
@@ -108,12 +108,21 @@ func runUpload(cmd *Command, args []string) bool {
 			}
 			return err
 		})
+		if err != nil {
+			fmt.Println(err.Error())
+			return false
+		}
 	} else {
 		parts, e := operation.NewFileParts(args)
 		if e != nil {
 			fmt.Println(e.Error())
+			return false
 		}
-		results, _ := operation.SubmitFiles(func() string { return *upload.master }, grpcDialOption, parts, *upload.replication, *upload.collection, *upload.dataCenter, *upload.ttl, *upload.diskType, *upload.maxMB, *upload.usePublicUrl)
+		results, err := operation.SubmitFiles(func() string { return *upload.master }, grpcDialOption, parts, *upload.replication, *upload.collection, *upload.dataCenter, *upload.ttl, *upload.diskType, *upload.maxMB, *upload.usePublicUrl)
+		if err != nil {
+			fmt.Println(err.Error())
+			return false
+		}
 		bytes, _ := json.Marshal(results)
 		fmt.Println(string(bytes))
 	}

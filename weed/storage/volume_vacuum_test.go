@@ -113,7 +113,7 @@ func TestCompaction(t *testing.T) {
 		}
 
 		n := newEmptyNeedle(uint64(i))
-		size, err := v.readNeedle(n, nil)
+		size, err := v.readNeedle(n, nil, nil)
 		if err != nil {
 			t.Fatalf("read file %d: %v", i, err)
 		}

@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"strings"
@@ -19,14 +20,14 @@ import (
 var (
 	OS_UID = uint32(os.Getuid())
 	OS_GID = uint32(os.Getgid())
+
+	ErrReadOnly = errors.New("read only")
 )
 
 type FilerPostResult struct {
 	Name  string `json:"name,omitempty"`
 	Size  int64  `json:"size,omitempty"`
 	Error string `json:"error,omitempty"`
-	Fid   string `json:"fid,omitempty"`
-	Url   string `json:"url,omitempty"`
 }
 
 func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
@@ -57,7 +58,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 	ctx := context.Background()
 
 	query := r.URL.Query()
-	so := fs.detectStorageOption0(r.RequestURI,
+	so, err := fs.detectStorageOption0(r.RequestURI,
 		query.Get("collection"),
 		query.Get("replication"),
 		query.Get("ttl"),
@@ -65,6 +66,15 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		query.Get("dataCenter"),
 		query.Get("rack"),
 	)
+	if err != nil {
+		if err == ErrReadOnly {
+			w.WriteHeader(http.StatusInsufficientStorage)
+		} else {
+			glog.V(1).Infoln("post", r.RequestURI, ":", err.Error())
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		return
+	}
 
 	fs.autoChunk(ctx, w, r, contentLength, so)
 	util.CloseRequest(r)
@@ -105,7 +115,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication string, ttlSeconds int32, diskType string, dataCenter, rack string) *operation.StorageOption {
+func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication string, ttlSeconds int32, diskType, dataCenter, rack string) (*operation.StorageOption, error) {
 	collection := util.Nvl(qCollection, fs.option.Collection)
 	replication := util.Nvl(qReplication, fs.option.DefaultReplication)
 
@@ -120,6 +130,10 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	}
 
 	rule := fs.filer.FilerConf.MatchStorageRule(requestURI)
+
+	if rule.ReadOnly {
+		return nil, ErrReadOnly
+	}
 
 	if ttlSeconds == 0 {
 		ttl, err := needle.ReadTTL(rule.GetTtl())
@@ -138,10 +152,10 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 		DiskType:          util.Nvl(diskType, rule.DiskType),
 		Fsync:             fsync || rule.Fsync,
 		VolumeGrowthCount: rule.VolumeGrowthCount,
-	}
+	}, nil
 }
 
-func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplication string, qTtl string, diskType string, dataCenter, rack string) *operation.StorageOption {
+func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplication string, qTtl string, diskType string, dataCenter, rack string) (*operation.StorageOption, error) {
 
 	ttl, err := needle.ReadTTL(qTtl)
 	if err != nil {

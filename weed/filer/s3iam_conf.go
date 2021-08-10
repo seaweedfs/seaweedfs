@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
 	"github.com/golang/protobuf/jsonpb"
+	"github.com/golang/protobuf/proto"
 	"io"
 )
 
@@ -14,7 +15,7 @@ func ParseS3ConfigurationFromBytes(content []byte, config *iam_pb.S3ApiConfigura
 	return nil
 }
 
-func S3ConfigurationToText(writer io.Writer, config *iam_pb.S3ApiConfiguration) error {
+func ProtoToText(writer io.Writer, config proto.Message) error {
 
 	m := jsonpb.Marshaler{
 		EmitDefaults: false,

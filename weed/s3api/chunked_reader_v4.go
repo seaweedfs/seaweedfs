@@ -85,9 +85,15 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 		return nil, "", "", time.Time{}, errCode
 	}
 	// Verify if the access key id matches.
-	_, cred, found := iam.lookupByAccessKey(signV4Values.Credential.accessKey)
+	identity, cred, found := iam.lookupByAccessKey(signV4Values.Credential.accessKey)
 	if !found {
 		return nil, "", "", time.Time{}, s3err.ErrInvalidAccessKeyID
+	}
+
+	bucket, _ := getBucketAndObject(r)
+	if !identity.canDo("Write", bucket) {
+		errCode = s3err.ErrAccessDenied
+		return
 	}
 
 	// Verify if region is valid.

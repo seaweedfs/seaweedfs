@@ -67,6 +67,8 @@ service SeaweedFiler {
     rpc KvPut (KvPutRequest) returns (KvPutResponse) {
     }
 
+    rpc DownloadToLocal (DownloadToLocalRequest) returns (DownloadToLocalResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -92,6 +94,13 @@ message ListEntriesResponse {
     Entry entry = 1;
 }
 
+message RemoteEntry {
+    string storage_name = 1;
+    int64 local_mtime = 2;
+    string remote_e_tag = 3;
+    int64 remote_mtime = 4;
+    int64 remote_size = 5;
+}
 message Entry {
     string name = 1;
     bool is_directory = 2;
@@ -101,6 +110,8 @@ message Entry {
     bytes hard_link_id = 7;
     int32 hard_link_counter = 8; // only exists in hard link meta data
     bytes content = 9; // if not empty, the file content
+
+    RemoteEntry remote_entry = 10;
 }
 
 message FullEntry {
@@ -208,6 +219,7 @@ message AtomicRenameEntryRequest {
     string old_name = 2;
     string new_directory = 3;
     string new_name = 4;
+    repeated int32 signatures = 5;
 }
 
 message AtomicRenameEntryResponse {
@@ -292,6 +304,7 @@ message GetFilerConfigurationResponse {
     int32 signature = 8;
     string metrics_address = 9;
     int32 metrics_interval_sec = 10;
+    string version = 11;
 }
 
 message SubscribeMetadataRequest {
@@ -334,7 +347,9 @@ message LocateBrokerResponse {
     repeated Resource resources = 2;
 }
 
+/////////////////////////
 // Key-Value operations
+/////////////////////////
 message KvGetRequest {
     bytes key = 1;
 }
@@ -350,7 +365,9 @@ message KvPutResponse {
     string error = 1;
 }
 
+/////////////////////////
 // path-based configurations
+/////////////////////////
 message FilerConf {
     int32 version = 1;
     message PathConf {
@@ -361,6 +378,35 @@ message FilerConf {
         string disk_type = 5;
         bool fsync = 6;
         uint32 volume_growth_count = 7;
+        bool read_only = 8;
     }
     repeated PathConf locations = 2;
+}
+
+/////////////////////////
+// Remote Storage related
+/////////////////////////
+message RemoteConf {
+    string type = 1;
+    string name = 2;
+    string s3_access_key = 4;
+    string s3_secret_key = 5;
+    string s3_region = 6;
+    string s3_endpoint = 7;
+}
+
+message RemoteStorageMapping {
+    map<string,RemoteStorageLocation> mappings = 1;
+}
+message RemoteStorageLocation {
+    string name = 1;
+    string bucket = 2;
+    string path = 3;
+}
+message DownloadToLocalRequest {
+    string directory = 1;
+    string name = 2;
+}
+message DownloadToLocalResponse {
+    Entry entry = 1;
 }

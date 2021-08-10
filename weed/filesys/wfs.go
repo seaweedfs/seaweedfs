@@ -3,9 +3,6 @@ package filesys
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"math"
 	"math/rand"
 	"os"
@@ -13,6 +10,10 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
 
 	"google.golang.org/grpc"
 
@@ -46,11 +47,12 @@ type Option struct {
 	DataCenter         string
 	Umask              os.FileMode
 
-	MountUid   uint32
-	MountGid   uint32
-	MountMode  os.FileMode
-	MountCtime time.Time
-	MountMtime time.Time
+	MountUid         uint32
+	MountGid         uint32
+	MountMode        os.FileMode
+	MountCtime       time.Time
+	MountMtime       time.Time
+	MountParentInode uint64
 
 	VolumeServerAccess string // how to access volume servers
 	Cipher             bool   // whether encrypt data on volume server
@@ -123,8 +125,6 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			glog.V(4).Infof("InvalidateEntry %s : %v", filePath, err)
 		}
 	})
-	startTime := time.Now()
-	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
 	grace.OnInterrupt(func() {
 		wfs.metaCache.Shutdown()
 	})
@@ -137,6 +137,11 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 
 	return wfs
+}
+
+func (wfs *WFS) StartBackgroundTasks() {
+	startTime := time.Now()
+	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
 }
 
 func (wfs *WFS) Root() (fs.Node, error) {

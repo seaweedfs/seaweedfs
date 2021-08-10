@@ -8,17 +8,20 @@ import (
 )
 
 var Commands = []*Command{
-	cmdBenchmark,
+	cmdAutocomplete,
+	cmdUnautocomplete,
 	cmdBackup,
+	cmdBenchmark,
 	cmdCompact,
-	cmdCopy,
 	cmdDownload,
 	cmdExport,
 	cmdFiler,
 	cmdFilerBackup,
 	cmdFilerCat,
+	cmdFilerCopy,
 	cmdFilerMetaBackup,
 	cmdFilerMetaTail,
+	cmdFilerRemoteSynchronize,
 	cmdFilerReplicate,
 	cmdFilerSynchronize,
 	cmdFix,

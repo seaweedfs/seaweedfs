@@ -12,14 +12,8 @@ import (
 )
 
 func (entry *Entry) EncodeAttributesAndChunks() ([]byte, error) {
-	message := &filer_pb.Entry{
-		Attributes:      EntryAttributeToPb(entry),
-		Chunks:          entry.Chunks,
-		Extended:        entry.Extended,
-		HardLinkId:      entry.HardLinkId,
-		HardLinkCounter: entry.HardLinkCounter,
-		Content:         entry.Content,
-	}
+	message := &filer_pb.Entry{}
+	entry.ToExistingProtoEntry(message)
 	return proto.Marshal(message)
 }
 
@@ -31,15 +25,7 @@ func (entry *Entry) DecodeAttributesAndChunks(blob []byte) error {
 		return fmt.Errorf("decoding value blob for %s: %v", entry.FullPath, err)
 	}
 
-	entry.Attr = PbToEntryAttribute(message.Attributes)
-
-	entry.Extended = message.Extended
-
-	entry.Chunks = message.Chunks
-
-	entry.HardLinkId = message.HardLinkId
-	entry.HardLinkCounter = message.HardLinkCounter
-	entry.Content = message.Content
+	FromPbEntryToExistingEntry(message, entry)
 
 	return nil
 }
@@ -127,6 +113,9 @@ func EqualEntry(a, b *Entry) bool {
 		return false
 	}
 	if !bytes.Equal(a.Content, b.Content) {
+		return false
+	}
+	if !proto.Equal(a.Remote, b.Remote) {
 		return false
 	}
 	return true

@@ -31,7 +31,8 @@ var (
 
 type versionedGrpcClient struct {
 	*grpc.ClientConn
-	version int
+	version  int
+	errCount int
 }
 
 func init() {
@@ -49,7 +50,7 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             60 * time.Second, // min time a client should wait before sending a ping
-			PermitWithoutStream: false,
+			PermitWithoutStream: true,
 		}),
 		grpc.MaxRecvMsgSize(Max_Message_Size),
 		grpc.MaxSendMsgSize(Max_Message_Size),
@@ -75,7 +76,7 @@ func GrpcDial(ctx context.Context, address string, opts ...grpc.DialOption) (*gr
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                30 * time.Second, // client ping server if no activity for this long
 			Timeout:             20 * time.Second,
-			PermitWithoutStream: false,
+			PermitWithoutStream: true,
 		}))
 	for _, opt := range opts {
 		if opt != nil {
@@ -103,6 +104,7 @@ func getOrCreateConnection(address string, opts ...grpc.DialOption) (*versionedG
 	vgc := &versionedGrpcClient{
 		grpcConnection,
 		rand.Int(),
+		0,
 	}
 	grpcClients[address] = vgc
 
@@ -116,15 +118,20 @@ func WithCachedGrpcClient(fn func(*grpc.ClientConn) error, address string, opts 
 		return fmt.Errorf("getOrCreateConnection %s: %v", address, err)
 	}
 	executionErr := fn(vgc.ClientConn)
-	if executionErr != nil && strings.Contains(executionErr.Error(), "transport") {
-		grpcClientsLock.Lock()
-		if t, ok := grpcClients[address]; ok {
-			if t.version == vgc.version {
-				vgc.Close()
-				delete(grpcClients, address)
+	if executionErr != nil {
+		vgc.errCount++
+		if vgc.errCount > 3 ||
+			strings.Contains(executionErr.Error(), "transport") ||
+			strings.Contains(executionErr.Error(), "connection closed") {
+			grpcClientsLock.Lock()
+			if t, ok := grpcClients[address]; ok {
+				if t.version == vgc.version {
+					vgc.Close()
+					delete(grpcClients, address)
+				}
 			}
+			grpcClientsLock.Unlock()
 		}
-		grpcClientsLock.Unlock()
 	}
 
 	return executionErr

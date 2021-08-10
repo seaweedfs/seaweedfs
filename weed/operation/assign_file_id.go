@@ -73,6 +73,10 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 			ret.Error = resp.Error
 			ret.Auth = security.EncodedJwt(resp.Auth)
 
+			if resp.Error != "" {
+				return fmt.Errorf("assignRequest: %v", resp.Error)
+			}
+
 			return nil
 
 		})

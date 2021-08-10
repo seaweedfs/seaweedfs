@@ -7,7 +7,10 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
@@ -19,85 +22,104 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Request, reader io.Reader, chunkSize int32, fileName, contentType string, contentLength int64, so *operation.StorageOption) ([]*filer_pb.FileChunk, hash.Hash, int64, error, []byte) {
-	var fileChunks []*filer_pb.FileChunk
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
+}
 
-	md5Hash := md5.New()
+func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Request, reader io.Reader, chunkSize int32, fileName, contentType string, contentLength int64, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, chunkOffset int64, uploadErr error, smallContent []byte) {
+
+	md5Hash = md5.New()
 	var partReader = ioutil.NopCloser(io.TeeReader(reader, md5Hash))
 
-	chunkOffset := int64(0)
-	var smallContent []byte
-
+	var wg sync.WaitGroup
+	var bytesBufferCounter int64
+	bytesBufferLimitCond := sync.NewCond(new(sync.Mutex))
+	var fileChunksLock sync.Mutex
 	for {
+
+		// need to throttle used byte buffer
+		bytesBufferLimitCond.L.Lock()
+		for atomic.LoadInt64(&bytesBufferCounter) >= 4 {
+			glog.V(4).Infof("waiting for byte buffer %d", bytesBufferCounter)
+			bytesBufferLimitCond.Wait()
+		}
+		atomic.AddInt64(&bytesBufferCounter, 1)
+		bytesBufferLimitCond.L.Unlock()
+
+		bytesBuffer := bufPool.Get().(*bytes.Buffer)
+		glog.V(4).Infof("received byte buffer %d", bytesBufferCounter)
+
 		limitedReader := io.LimitReader(partReader, int64(chunkSize))
 
-		data, err := ioutil.ReadAll(limitedReader)
-		if err != nil {
-			return nil, nil, 0, err, nil
+		bytesBuffer.Reset()
+
+		dataSize, err := bytesBuffer.ReadFrom(limitedReader)
+
+		// data, err := ioutil.ReadAll(limitedReader)
+		if err != nil || dataSize == 0 {
+			bufPool.Put(bytesBuffer)
+			atomic.AddInt64(&bytesBufferCounter, -1)
+			bytesBufferLimitCond.Signal()
+			break
 		}
 		if chunkOffset == 0 && !isAppend(r) {
-			if len(data) < int(fs.option.SaveToFilerLimit) || strings.HasPrefix(r.URL.Path, filer.DirectoryEtcRoot) && len(data) < 4*1024 {
-				smallContent = data
-				chunkOffset += int64(len(data))
+			if dataSize < fs.option.SaveToFilerLimit || strings.HasPrefix(r.URL.Path, filer.DirectoryEtcRoot) {
+				chunkOffset += dataSize
+				smallContent = make([]byte, dataSize)
+				bytesBuffer.Read(smallContent)
+				bufPool.Put(bytesBuffer)
+				atomic.AddInt64(&bytesBufferCounter, -1)
+				bytesBufferLimitCond.Signal()
 				break
 			}
 		}
-		dataReader := util.NewBytesReader(data)
 
-		// retry to assign a different file id
-		var fileId, urlLocation string
-		var auth security.EncodedJwt
-		var assignErr, uploadErr error
-		var uploadResult *operation.UploadResult
-		for i := 0; i < 3; i++ {
-			// assign one file id for one chunk
-			fileId, urlLocation, auth, assignErr = fs.assignNewFileInfo(so)
-			if assignErr != nil {
-				return nil, nil, 0, assignErr, nil
+		wg.Add(1)
+		go func(offset int64) {
+			defer func() {
+				bufPool.Put(bytesBuffer)
+				atomic.AddInt64(&bytesBufferCounter, -1)
+				bytesBufferLimitCond.Signal()
+				wg.Done()
+			}()
+
+			chunk, toChunkErr := fs.dataToChunk(fileName, contentType, bytesBuffer.Bytes(), offset, so)
+			if toChunkErr != nil {
+				uploadErr = toChunkErr
 			}
-
-			// upload the chunk to the volume server
-			uploadResult, uploadErr, _ = fs.doUpload(urlLocation, w, r, dataReader, fileName, contentType, nil, auth)
-			if uploadErr != nil {
-				time.Sleep(251 * time.Millisecond)
-				continue
+			if chunk != nil {
+				fileChunksLock.Lock()
+				fileChunks = append(fileChunks, chunk)
+				fileChunksLock.Unlock()
+				glog.V(4).Infof("uploaded %s chunk %d to %s [%d,%d)", fileName, len(fileChunks), chunk.FileId, offset, offset+int64(chunk.Size))
 			}
-			break
-		}
-		if uploadErr != nil {
-			return nil, nil, 0, uploadErr, nil
-		}
-
-		// if last chunk exhausted the reader exactly at the border
-		if uploadResult.Size == 0 {
-			break
-		}
-		if chunkOffset == 0 {
-			uploadedMd5 := util.Base64Md5ToBytes(uploadResult.ContentMd5)
-			readedMd5 := md5Hash.Sum(nil)
-			if !bytes.Equal(uploadedMd5, readedMd5) {
-				glog.Errorf("md5 %x does not match %x uploaded chunk %s to the volume server", readedMd5, uploadedMd5, uploadResult.Name)
-			}
-		}
-
-		// Save to chunk manifest structure
-		fileChunks = append(fileChunks, uploadResult.ToPbFileChunk(fileId, chunkOffset))
-
-		glog.V(4).Infof("uploaded %s chunk %d to %s [%d,%d)", fileName, len(fileChunks), fileId, chunkOffset, chunkOffset+int64(uploadResult.Size))
+		}(chunkOffset)
 
 		// reset variables for the next chunk
-		chunkOffset = chunkOffset + int64(uploadResult.Size)
+		chunkOffset = chunkOffset + dataSize
 
 		// if last chunk was not at full chunk size, but already exhausted the reader
-		if int64(uploadResult.Size) < int64(chunkSize) {
+		if dataSize < int64(chunkSize) {
 			break
 		}
 	}
 
+	wg.Wait()
+
+	if uploadErr != nil {
+		return nil, md5Hash, 0, uploadErr, nil
+	}
+
+	sort.Slice(fileChunks, func(i, j int) bool {
+		return fileChunks[i].Offset < fileChunks[j].Offset
+	})
+
 	return fileChunks, md5Hash, chunkOffset, nil, smallContent
 }
 
-func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *http.Request, limitedReader io.Reader, fileName string, contentType string, pairMap map[string]string, auth security.EncodedJwt) (*operation.UploadResult, error, []byte) {
+func (fs *FilerServer) doUpload(urlLocation string, limitedReader io.Reader, fileName string, contentType string, pairMap map[string]string, auth security.EncodedJwt) (*operation.UploadResult, error, []byte) {
 
 	stats.FilerRequestCounter.WithLabelValues("chunkUpload").Inc()
 	start := time.Now()
@@ -110,4 +132,43 @@ func (fs *FilerServer) doUpload(urlLocation string, w http.ResponseWriter, r *ht
 		stats.FilerRequestCounter.WithLabelValues("chunkUploadRetry").Add(float64(uploadResult.RetryCount))
 	}
 	return uploadResult, err, data
+}
+
+func (fs *FilerServer) dataToChunk(fileName, contentType string, data []byte, chunkOffset int64, so *operation.StorageOption) (*filer_pb.FileChunk, error) {
+	dataReader := util.NewBytesReader(data)
+
+	// retry to assign a different file id
+	var fileId, urlLocation string
+	var auth security.EncodedJwt
+	var uploadErr error
+	var uploadResult *operation.UploadResult
+	for i := 0; i < 3; i++ {
+		// assign one file id for one chunk
+		fileId, urlLocation, auth, uploadErr = fs.assignNewFileInfo(so)
+		if uploadErr != nil {
+			glog.V(4).Infof("retry later due to assign error: %v", uploadErr)
+			time.Sleep(time.Duration(i+1) * 251 * time.Millisecond)
+			continue
+		}
+
+		// upload the chunk to the volume server
+		uploadResult, uploadErr, _ = fs.doUpload(urlLocation, dataReader, fileName, contentType, nil, auth)
+		if uploadErr != nil {
+			glog.V(4).Infof("retry later due to upload error: %v", uploadErr)
+			time.Sleep(time.Duration(i+1) * 251 * time.Millisecond)
+			continue
+		}
+		break
+	}
+	if uploadErr != nil {
+		glog.Errorf("upload error: %v", uploadErr)
+		return nil, uploadErr
+	}
+
+	// if last chunk exhausted the reader exactly at the border
+	if uploadResult.Size == 0 {
+		return nil, nil
+	}
+
+	return uploadResult.ToPbFileChunk(fileId, chunkOffset), nil
 }

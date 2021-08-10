@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/md5"
 	"fmt"
-	"github.com/syndtr/goleveldb/leveldb"
-	leveldb_errors "github.com/syndtr/goleveldb/leveldb/errors"
-	"github.com/syndtr/goleveldb/leveldb/opt"
-	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 	"io"
 	"os"
+
+	"github.com/syndtr/goleveldb/leveldb"
+	leveldb_errors "github.com/syndtr/goleveldb/leveldb/errors"
+	"github.com/syndtr/goleveldb/leveldb/filter"
+	"github.com/syndtr/goleveldb/leveldb/opt"
+	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -47,6 +49,7 @@ func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 		BlockCacheCapacity:            32 * 1024 * 1024, // default value is 8MiB
 		WriteBuffer:                   16 * 1024 * 1024, // default value is 4MiB
 		CompactionTableSizeMultiplier: 4,
+		Filter:                        filter.NewBloomFilter(8), // false positive rate 0.02
 	}
 
 	for d := 0; d < dbCount; d++ {

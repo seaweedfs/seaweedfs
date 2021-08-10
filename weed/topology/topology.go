@@ -37,7 +37,7 @@ type Topology struct {
 	chanFullVolumes    chan storage.VolumeInfo
 	chanCrowdedVolumes chan storage.VolumeInfo
 
-	Configuration      *Configuration
+	Configuration *Configuration
 
 	RaftServer raft.Server
 }
@@ -69,6 +69,11 @@ func (t *Topology) IsLeader() bool {
 	if t.RaftServer != nil {
 		if t.RaftServer.State() == raft.Leader {
 			return true
+		}
+		if leader, err := t.Leader(); err == nil {
+			if t.RaftServer.Name() == leader {
+				return true
+			}
 		}
 	}
 	return false

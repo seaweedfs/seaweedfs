@@ -2,12 +2,9 @@ package meta_cache
 
 import (
 	"context"
-	"fmt"
-	"io"
-	"time"
-
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -40,47 +37,30 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 			newEntry = filer.FromPbEntry(dir, message.NewEntry)
 		}
 		err := mc.AtomicUpdateEntryFromFiler(context.Background(), oldPath, newEntry)
-		if err == nil && message.OldEntry != nil && message.NewEntry != nil {
-			key := util.NewFullPath(dir, message.NewEntry.Name)
-			mc.invalidateFunc(key)
+		if err == nil {
+			if message.OldEntry != nil && message.NewEntry != nil {
+				if message.OldEntry.Name == message.NewEntry.Name {
+					// no need to invalidate
+				} else {
+					oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
+					mc.invalidateFunc(oldKey)
+					newKey := util.NewFullPath(dir, message.NewEntry.Name)
+					mc.invalidateFunc(newKey)
+				}
+			} else if message.OldEntry == nil && message.NewEntry != nil {
+				// no need to invaalidate
+			} else if message.OldEntry != nil && message.NewEntry == nil {
+				oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
+				mc.invalidateFunc(oldKey)
+			}
 		}
 
 		return err
 
 	}
 
-	for {
-		err := client.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
-				ClientName: "mount",
-				PathPrefix: dir,
-				SinceNs:    lastTsNs,
-				Signature:  selfSignature,
-			})
-			if err != nil {
-				return fmt.Errorf("subscribe: %v", err)
-			}
+	return util.Retry("followMetaUpdates", func() error {
+		return pb.WithFilerClientFollowMetadata(client, "mount", dir, lastTsNs, selfSignature, processEventFn, true)
+	})
 
-			for {
-				resp, listenErr := stream.Recv()
-				if listenErr == io.EOF {
-					return nil
-				}
-				if listenErr != nil {
-					return listenErr
-				}
-
-				if err := processEventFn(resp); err != nil {
-					glog.Fatalf("process %v: %v", resp, err)
-				}
-				lastTsNs = resp.TsNs
-			}
-		})
-		if err != nil {
-			glog.Errorf("subscribing filer meta change: %v", err)
-		}
-		time.Sleep(time.Second)
-	}
 }

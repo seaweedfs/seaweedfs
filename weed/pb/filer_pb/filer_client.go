@@ -204,39 +204,42 @@ func Touch(filerClient FilerClient, parentDirectoryPath string, entryName string
 
 func Mkdir(filerClient FilerClient, parentDirectoryPath string, dirName string, fn func(entry *Entry)) error {
 	return filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
-
-		entry := &Entry{
-			Name:        dirName,
-			IsDirectory: true,
-			Attributes: &FuseAttributes{
-				Mtime:    time.Now().Unix(),
-				Crtime:   time.Now().Unix(),
-				FileMode: uint32(0777 | os.ModeDir),
-				Uid:      OS_UID,
-				Gid:      OS_GID,
-			},
-		}
-
-		if fn != nil {
-			fn(entry)
-		}
-
-		request := &CreateEntryRequest{
-			Directory: parentDirectoryPath,
-			Entry:     entry,
-		}
-
-		glog.V(1).Infof("mkdir: %v", request)
-		if err := CreateEntry(client, request); err != nil {
-			glog.V(0).Infof("mkdir %v: %v", request, err)
-			return fmt.Errorf("mkdir %s/%s: %v", parentDirectoryPath, dirName, err)
-		}
-
-		return nil
+		return DoMkdir(client, parentDirectoryPath, dirName, fn)
 	})
 }
 
-func MkFile(filerClient FilerClient, parentDirectoryPath string, fileName string, chunks []*FileChunk) error {
+func DoMkdir(client SeaweedFilerClient, parentDirectoryPath string, dirName string, fn func(entry *Entry)) error {
+	entry := &Entry{
+		Name:        dirName,
+		IsDirectory: true,
+		Attributes: &FuseAttributes{
+			Mtime:    time.Now().Unix(),
+			Crtime:   time.Now().Unix(),
+			FileMode: uint32(0777 | os.ModeDir),
+			Uid:      OS_UID,
+			Gid:      OS_GID,
+		},
+	}
+
+	if fn != nil {
+		fn(entry)
+	}
+
+	request := &CreateEntryRequest{
+		Directory: parentDirectoryPath,
+		Entry:     entry,
+	}
+
+	glog.V(1).Infof("mkdir: %v", request)
+	if err := CreateEntry(client, request); err != nil {
+		glog.V(0).Infof("mkdir %v: %v", request, err)
+		return fmt.Errorf("mkdir %s/%s: %v", parentDirectoryPath, dirName, err)
+	}
+
+	return nil
+}
+
+func MkFile(filerClient FilerClient, parentDirectoryPath string, fileName string, chunks []*FileChunk, fn func(entry *Entry)) error {
 	return filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
 
 		entry := &Entry{
@@ -250,6 +253,10 @@ func MkFile(filerClient FilerClient, parentDirectoryPath string, fileName string
 				Gid:      OS_GID,
 			},
 			Chunks: chunks,
+		}
+
+		if fn != nil {
+			fn(entry)
 		}
 
 		request := &CreateEntryRequest{
@@ -269,31 +276,33 @@ func MkFile(filerClient FilerClient, parentDirectoryPath string, fileName string
 
 func Remove(filerClient FilerClient, parentDirectoryPath, name string, isDeleteData, isRecursive, ignoreRecursiveErr, isFromOtherCluster bool, signatures []int32) error {
 	return filerClient.WithFilerClient(func(client SeaweedFilerClient) error {
+		return DoRemove(client, parentDirectoryPath, name, isDeleteData, isRecursive, ignoreRecursiveErr, isFromOtherCluster, signatures)
+	})
+}
 
-		deleteEntryRequest := &DeleteEntryRequest{
-			Directory:            parentDirectoryPath,
-			Name:                 name,
-			IsDeleteData:         isDeleteData,
-			IsRecursive:          isRecursive,
-			IgnoreRecursiveError: ignoreRecursiveErr,
-			IsFromOtherCluster:   isFromOtherCluster,
-			Signatures:           signatures,
+func DoRemove(client SeaweedFilerClient, parentDirectoryPath string, name string, isDeleteData bool, isRecursive bool, ignoreRecursiveErr bool, isFromOtherCluster bool, signatures []int32) error {
+	deleteEntryRequest := &DeleteEntryRequest{
+		Directory:            parentDirectoryPath,
+		Name:                 name,
+		IsDeleteData:         isDeleteData,
+		IsRecursive:          isRecursive,
+		IgnoreRecursiveError: ignoreRecursiveErr,
+		IsFromOtherCluster:   isFromOtherCluster,
+		Signatures:           signatures,
+	}
+	if resp, err := client.DeleteEntry(context.Background(), deleteEntryRequest); err != nil {
+		if strings.Contains(err.Error(), ErrNotFound.Error()) {
+			return nil
 		}
-		if resp, err := client.DeleteEntry(context.Background(), deleteEntryRequest); err != nil {
-			if strings.Contains(err.Error(), ErrNotFound.Error()) {
+		return err
+	} else {
+		if resp.Error != "" {
+			if strings.Contains(resp.Error, ErrNotFound.Error()) {
 				return nil
 			}
-			return err
-		} else {
-			if resp.Error != "" {
-				if strings.Contains(resp.Error, ErrNotFound.Error()) {
-					return nil
-				}
-				return errors.New(resp.Error)
-			}
+			return errors.New(resp.Error)
 		}
+	}
 
-		return nil
-
-	})
+	return nil
 }

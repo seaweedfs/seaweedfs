@@ -214,11 +214,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		Size: int64(entry.FileSize),
 	}
 
-	if entry.Extended == nil {
-		entry.Extended = make(map[string][]byte)
-	}
-
-	SaveAmzMetaData(r, entry.Extended, false)
+	entry.Extended = SaveAmzMetaData(r, entry.Extended, false)
 
 	for k, v := range r.Header {
 		if len(v) > 0 && (strings.HasPrefix(k, needle.PairNamePrefix) || k == "Cache-Control" || k == "Expires") {

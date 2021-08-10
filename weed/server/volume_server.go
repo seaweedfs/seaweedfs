@@ -17,6 +17,13 @@ import (
 )
 
 type VolumeServer struct {
+	inFlightUploadDataSize        int64
+	inFlightDownloadDataSize      int64
+	concurrentUploadLimit         int64
+	concurrentDownloadLimit       int64
+	inFlightUploadDataLimitCond   *sync.Cond
+	inFlightDownloadDataLimitCond *sync.Cond
+
 	SeedMasterNodes []string
 	currentMaster   string
 	pulseSeconds    int
@@ -28,17 +35,13 @@ type VolumeServer struct {
 
 	needleMapKind           storage.NeedleMapKind
 	FixJpgOrientation       bool
-	ReadRedirect            bool
+	ReadMode                string
 	compactionBytePerSecond int64
 	metricsAddress          string
 	metricsIntervalSec      int
 	fileSizeLimitBytes      int64
 	isHeartbeating          bool
 	stopChan                chan bool
-
-	inFlightDataSize      int64
-	inFlightDataLimitCond *sync.Cond
-	concurrentUploadLimit int64
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
@@ -50,10 +53,11 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	dataCenter string, rack string,
 	whiteList []string,
 	fixJpgOrientation bool,
-	readRedirect bool,
+	readMode string,
 	compactionMBPerSecond int,
 	fileSizeLimitMB int,
 	concurrentUploadLimit int64,
+	concurrentDownloadLimit int64,
 ) *VolumeServer {
 
 	v := util.GetViper()
@@ -67,19 +71,21 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	readExpiresAfterSec := v.GetInt("jwt.signing.read.expires_after_seconds")
 
 	vs := &VolumeServer{
-		pulseSeconds:            pulseSeconds,
-		dataCenter:              dataCenter,
-		rack:                    rack,
-		needleMapKind:           needleMapKind,
-		FixJpgOrientation:       fixJpgOrientation,
-		ReadRedirect:            readRedirect,
-		grpcDialOption:          security.LoadClientTLS(util.GetViper(), "grpc.volume"),
-		compactionBytePerSecond: int64(compactionMBPerSecond) * 1024 * 1024,
-		fileSizeLimitBytes:      int64(fileSizeLimitMB) * 1024 * 1024,
-		isHeartbeating:          true,
-		stopChan:                make(chan bool),
-		inFlightDataLimitCond:   sync.NewCond(new(sync.Mutex)),
-		concurrentUploadLimit:   concurrentUploadLimit,
+		pulseSeconds:                  pulseSeconds,
+		dataCenter:                    dataCenter,
+		rack:                          rack,
+		needleMapKind:                 needleMapKind,
+		FixJpgOrientation:             fixJpgOrientation,
+		ReadMode:                      readMode,
+		grpcDialOption:                security.LoadClientTLS(util.GetViper(), "grpc.volume"),
+		compactionBytePerSecond:       int64(compactionMBPerSecond) * 1024 * 1024,
+		fileSizeLimitBytes:            int64(fileSizeLimitMB) * 1024 * 1024,
+		isHeartbeating:                true,
+		stopChan:                      make(chan bool),
+		inFlightUploadDataLimitCond:   sync.NewCond(new(sync.Mutex)),
+		inFlightDownloadDataLimitCond: sync.NewCond(new(sync.Mutex)),
+		concurrentUploadLimit:         concurrentUploadLimit,
+		concurrentDownloadLimit:       concurrentDownloadLimit,
 	}
 	vs.SeedMasterNodes = masterNodes
 
@@ -110,6 +116,11 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	go stats.LoopPushingMetric("volumeServer", fmt.Sprintf("%s:%d", ip, port), vs.metricsAddress, vs.metricsIntervalSec)
 
 	return vs
+}
+
+func (vs *VolumeServer) SetStopping() {
+	glog.V(0).Infoln("Stopping volume server...")
+	vs.store.SetStopping()
 }
 
 func (vs *VolumeServer) Shutdown() {

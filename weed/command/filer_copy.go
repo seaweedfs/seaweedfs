@@ -52,21 +52,21 @@ type CopyOptions struct {
 }
 
 func init() {
-	cmdCopy.Run = runCopy // break init cycle
-	cmdCopy.IsDebug = cmdCopy.Flag.Bool("debug", false, "verbose debug information")
-	copy.include = cmdCopy.Flag.String("include", "", "pattens of files to copy, e.g., *.pdf, *.html, ab?d.txt, works together with -dir")
-	copy.replication = cmdCopy.Flag.String("replication", "", "replication type")
-	copy.collection = cmdCopy.Flag.String("collection", "", "optional collection name")
-	copy.ttl = cmdCopy.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
-	copy.diskType = cmdCopy.Flag.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
-	copy.maxMB = cmdCopy.Flag.Int("maxMB", 4, "split files larger than the limit")
-	copy.concurrenctFiles = cmdCopy.Flag.Int("c", 8, "concurrent file copy goroutines")
-	copy.concurrenctChunks = cmdCopy.Flag.Int("concurrentChunks", 8, "concurrent chunk copy goroutines for each file")
-	copy.checkSize = cmdCopy.Flag.Bool("check.size", false, "copy when the target file size is different from the source file")
-	copy.verbose = cmdCopy.Flag.Bool("verbose", false, "print out details during copying")
+	cmdFilerCopy.Run = runCopy // break init cycle
+	cmdFilerCopy.IsDebug = cmdFilerCopy.Flag.Bool("debug", false, "verbose debug information")
+	copy.include = cmdFilerCopy.Flag.String("include", "", "pattens of files to copy, e.g., *.pdf, *.html, ab?d.txt, works together with -dir")
+	copy.replication = cmdFilerCopy.Flag.String("replication", "", "replication type")
+	copy.collection = cmdFilerCopy.Flag.String("collection", "", "optional collection name")
+	copy.ttl = cmdFilerCopy.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
+	copy.diskType = cmdFilerCopy.Flag.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
+	copy.maxMB = cmdFilerCopy.Flag.Int("maxMB", 4, "split files larger than the limit")
+	copy.concurrenctFiles = cmdFilerCopy.Flag.Int("c", 8, "concurrent file copy goroutines")
+	copy.concurrenctChunks = cmdFilerCopy.Flag.Int("concurrentChunks", 8, "concurrent chunk copy goroutines for each file")
+	copy.checkSize = cmdFilerCopy.Flag.Bool("check.size", false, "copy when the target file size is different from the source file")
+	copy.verbose = cmdFilerCopy.Flag.Bool("verbose", false, "print out details during copying")
 }
 
-var cmdCopy = &Command{
+var cmdFilerCopy = &Command{
 	UsageLine: "filer.copy file_or_dir1 [file_or_dir2 file_or_dir3] http://localhost:8888/path/to/a/folder/",
 	Short:     "copy one or a list of files to a filer folder",
 	Long: `copy one or a list of files, or batch copy one whole folder recursively, to a filer folder
@@ -154,7 +154,7 @@ func runCopy(cmd *Command, args []string) bool {
 	}
 	copy.ttlSec = int32(ttl.Minutes()) * 60
 
-	if *cmdCopy.IsDebug {
+	if *cmdFilerCopy.IsDebug {
 		grace.SetupProfiling("filer.copy.cpu.pprof", "filer.copy.mem.pprof")
 	}
 
@@ -213,11 +213,15 @@ func genFileCopyTask(fileOrDir string, destPath string, fileCopyTaskChan chan Fi
 
 	mode := fi.Mode()
 	uid, gid := util.GetFileUidGid(fi)
+	fileSize := fi.Size()
+	if mode.IsDir() {
+		fileSize = 0
+	}
 
 	fileCopyTaskChan <- FileCopyTask{
 		sourceLocation:     fileOrDir,
 		destinationUrlPath: destPath,
-		fileSize:           fi.Size(),
+		fileSize:           fileSize,
 		fileMode:           fi.Mode(),
 		uid:                uid,
 		gid:                gid,
@@ -376,6 +380,9 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 				}
 				if assignResult.Error != "" {
 					return fmt.Errorf("assign volume failure %v: %v", request, assignResult.Error)
+				}
+				if assignResult.Url == "" {
+					return fmt.Errorf("assign volume failure %v: %v", request, assignResult)
 				}
 				return nil
 			})

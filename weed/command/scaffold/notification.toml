@@ -1,0 +1,54 @@
+# A sample TOML config file for SeaweedFS filer store
+# Used by both "weed filer" or "weed server -filer" and "weed filer.replicate"
+# Put this file to one of the location, with descending priority
+#    ./notification.toml
+#    $HOME/.seaweedfs/notification.toml
+#    /etc/seaweedfs/notification.toml
+
+####################################################
+# notification
+# send and receive filer updates for each file to an external message queue
+####################################################
+[notification.log]
+# this is only for debugging perpose and does not work with "weed filer.replicate"
+enabled = false
+
+
+[notification.kafka]
+enabled = false
+hosts = [
+    "localhost:9092"
+]
+topic = "seaweedfs_filer"
+offsetFile = "./last.offset"
+offsetSaveIntervalSeconds = 10
+
+
+[notification.aws_sqs]
+# experimental, let me know if it works
+enabled = false
+aws_access_key_id = ""        # if empty, loads from the shared credentials file (~/.aws/credentials).
+aws_secret_access_key = ""        # if empty, loads from the shared credentials file (~/.aws/credentials).
+region = "us-east-2"
+sqs_queue_name = "my_filer_queue" # an existing queue name
+
+
+[notification.google_pub_sub]
+# read credentials doc at https://cloud.google.com/docs/authentication/getting-started
+enabled = false
+google_application_credentials = "/path/to/x.json" # path to json credential file
+project_id = ""                       # an existing project id
+topic = "seaweedfs_filer_topic"       # a topic, auto created if does not exists
+
+[notification.gocdk_pub_sub]
+# The Go Cloud Development Kit (https://gocloud.dev).
+# PubSub API (https://godoc.org/gocloud.dev/pubsub).
+# Supports AWS SNS/SQS, Azure Service Bus, Google PubSub, NATS and RabbitMQ.
+enabled = false
+# This URL will Dial the RabbitMQ server at the URL in the environment
+# variable RABBIT_SERVER_URL and open the exchange "myexchange".
+# The exchange must have already been created by some other means, like
+# the RabbitMQ management plugin. Сreate myexchange of type fanout and myqueue then
+# create binding myexchange => myqueue
+topic_url = "rabbit://myexchange"
+sub_url = "rabbit://myqueue"

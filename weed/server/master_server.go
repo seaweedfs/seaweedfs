@@ -26,8 +26,9 @@ import (
 )
 
 const (
-	SequencerType     = "master.sequencer.type"
-	SequencerEtcdUrls = "master.sequencer.sequencer_etcd_urls"
+	SequencerType        = "master.sequencer.type"
+	SequencerEtcdUrls    = "master.sequencer.sequencer_etcd_urls"
+	SequencerSnowflakeId = "master.sequencer.sequencer_snowflake_id"
 )
 
 type MasterOption struct {
@@ -97,7 +98,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 	ms := &MasterServer{
 		option:          option,
 		preallocateSize: preallocateSize,
-		vgCh:            make(chan *topology.VolumeGrowRequest, 1 << 6),
+		vgCh:            make(chan *topology.VolumeGrowRequest, 1<<6),
 		clientChans:     make(map[string]chan *master_pb.VolumeLocation),
 		grpcDialOption:  grpcDialOption,
 		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "master", option.Host, 0, "", peers),
@@ -227,6 +228,7 @@ func (ms *MasterServer) startAdminScripts() {
 	shellOptions.Masters = &masterAddress
 
 	shellOptions.FilerHost, shellOptions.FilerPort, err = util.ParseHostPort(filerHostPort)
+	shellOptions.FilerAddress = filerHostPort
 	shellOptions.Directory = "/"
 	if err != nil {
 		glog.V(0).Infof("failed to parse master.filer.default = %s : %v\n", filerHostPort, err)
@@ -293,7 +295,8 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 		}
 	case "snowflake":
 		var err error
-		seq, err = sequence.NewSnowflakeSequencer(fmt.Sprintf("%s:%d", option.Host, option.Port))
+		snowflakeId := v.GetInt(SequencerSnowflakeId)
+		seq, err = sequence.NewSnowflakeSequencer(fmt.Sprintf("%s:%d", option.Host, option.Port), snowflakeId)
 		if err != nil {
 			glog.Error(err)
 			seq = nil

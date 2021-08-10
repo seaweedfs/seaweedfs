@@ -44,7 +44,7 @@ func TestS3Conf(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	err := S3ConfigurationToText(&buf, s3Conf)
+	err := ProtoToText(&buf, s3Conf)
 	assert.Equal(t, err, nil)
 	s3ConfSaved := &iam_pb.S3ApiConfiguration{}
 	err = ParseS3ConfigurationFromBytes(buf.Bytes(), s3ConfSaved)

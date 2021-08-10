@@ -68,7 +68,7 @@ func (tm *TopicManager) buildLogBuffer(tl *TopicControl, tp TopicPartition, topi
 			glog.V(0).Infof("log write failed %s: %v", targetFile, err)
 		}
 	}
-	logBuffer := log_buffer.NewLogBuffer(time.Minute, flushFn, func() {
+	logBuffer := log_buffer.NewLogBuffer("broker", time.Minute, flushFn, func() {
 		tl.cond.Broadcast()
 	})
 

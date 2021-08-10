@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
 	"github.com/chrislusf/seaweedfs/weed/s3api"
 	. "github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc"
@@ -71,7 +72,7 @@ func (iama *IamApiServer) registerRouter(router *mux.Router) {
 	apiRouter.Methods("POST").Path("/").HandlerFunc(iama.iam.Auth(iama.DoActions, ACTION_ADMIN))
 	//
 	// NotFound
-	apiRouter.NotFoundHandler = http.HandlerFunc(notFoundHandler)
+	apiRouter.NotFoundHandler = http.HandlerFunc(s3err.NotFoundHandler)
 }
 
 func (iam IamS3ApiConfigure) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
@@ -95,8 +96,8 @@ func (iam IamS3ApiConfigure) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfigurat
 
 func (iam IamS3ApiConfigure) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
 	buf := bytes.Buffer{}
-	if err := filer.S3ConfigurationToText(&buf, s3cfg); err != nil {
-		return fmt.Errorf("S3ConfigurationToText: %s", err)
+	if err := filer.ProtoToText(&buf, s3cfg); err != nil {
+		return fmt.Errorf("ProtoToText: %s", err)
 	}
 	return pb.WithGrpcFilerClient(
 		iam.option.FilerGrpcAddress,

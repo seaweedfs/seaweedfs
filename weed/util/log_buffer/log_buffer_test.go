@@ -10,7 +10,7 @@ import (
 )
 
 func TestNewLogBufferFirstBuffer(t *testing.T) {
-	lb := NewLogBuffer(time.Minute, func(startTime, stopTime time.Time, buf []byte) {
+	lb := NewLogBuffer("test", time.Minute, func(startTime, stopTime time.Time, buf []byte) {
 
 	}, func() {
 
@@ -27,7 +27,7 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 	}
 
 	receivedmessageCount := 0
-	lb.LoopProcessLogData(startTime, func() bool {
+	lb.LoopProcessLogData("test", startTime, func() bool {
 		// stop if no more messages
 		return false
 	}, func(logEntry *filer_pb.LogEntry) error {
