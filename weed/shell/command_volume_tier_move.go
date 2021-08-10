@@ -133,9 +133,27 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 				break
 			}
 
-			if err := c.doMoveOneVolume(commandEnv, writer, vid, toDiskType, locations, sourceVolumeServer, dst); err != nil {
-				return err
+			c.activeServersCond.L.Lock()
+			_, isSourceActive := c.activeServers[sourceVolumeServer]
+			_, isDestActive := c.activeServers[dst.dataNode.Id]
+			for isSourceActive || isDestActive {
+				c.activeServersCond.Wait()
+				_, isSourceActive = c.activeServers[sourceVolumeServer]
+				_, isDestActive = c.activeServers[dst.dataNode.Id]
 			}
+			c.activeServers[sourceVolumeServer] = struct{}{}
+			c.activeServers[dst.dataNode.Id] = struct{}{}
+			c.activeServersCond.L.Unlock()
+
+			go func(dst location) {
+				if err := c.doMoveOneVolume(commandEnv, writer, vid, toDiskType, locations, sourceVolumeServer, dst); err != nil {
+					fmt.Fprintf(writer, "move volume %d %s => %s: %v", vid, sourceVolumeServer, dst.dataNode.Id, err)
+				}
+				delete(c.activeServers, sourceVolumeServer)
+				delete(c.activeServers, dst.dataNode.Id)
+				c.activeServersCond.Signal()
+			}(dst)
+
 		}
 	}
 
