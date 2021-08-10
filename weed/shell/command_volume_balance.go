@@ -271,7 +271,7 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 				// no more volume servers with empty slots
 				break
 			}
-			fmt.Fprintf(os.Stdout, "disk %s target ratio %.2f %s %.2f %s %.2f", diskType.ReadableString(), idealVolumeRatio, fullNode.info.Id, fullNode.localVolumeRatio(capacityFunc), emptyNode.info.Id, emptyNode.localVolumeNextRatio(capacityFunc))
+			fmt.Fprintf(os.Stdout, "%s %.2f %.2f:%.2f\t", diskType.ReadableString(), idealVolumeRatio, fullNode.localVolumeRatio(capacityFunc), emptyNode.localVolumeNextRatio(capacityFunc))
 			hasMoved, err = attemptToMoveOneVolume(commandEnv, volumeReplicas, fullNode, candidateVolumes, emptyNode, applyBalancing)
 			if err != nil {
 				return
