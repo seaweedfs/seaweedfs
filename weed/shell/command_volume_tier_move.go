@@ -8,7 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"io"
 	"path/filepath"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -19,6 +19,9 @@ func init() {
 }
 
 type commandVolumeTierMove struct {
+	activeServers     map[string]struct{}
+	activeServersLock sync.Mutex
+	activeServersCond *sync.Cond
 }
 
 func (c *commandVolumeTierMove) Name() string {
@@ -37,6 +40,9 @@ func (c *commandVolumeTierMove) Help() string {
 }
 
 func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
+
+	c.activeServers = make(map[string]struct{})
+	c.activeServersCond = sync.NewCond(new(sync.Mutex))
 
 	if err = commandEnv.confirmIsLocked(); err != nil {
 		return
@@ -75,7 +81,7 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 
 	_, allLocations := collectVolumeReplicaLocations(topologyInfo)
 	for _, vid := range volumeIds {
-		if err = doVolumeTierMove(commandEnv, writer, vid, toDiskType, allLocations, *applyChange); err != nil {
+		if err = c.doVolumeTierMove(commandEnv, writer, vid, toDiskType, allLocations, *applyChange); err != nil {
 			fmt.Printf("tier move volume %d: %v\n", vid, err)
 		}
 	}
@@ -92,7 +98,7 @@ func isOneOf(server string, locations []wdclient.Location) bool {
 	return false
 }
 
-func doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, allLocations []location, applyChanges bool) (err error) {
+func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, allLocations []location, applyChanges bool) (err error) {
 	// find volume location
 	locations, found := commandEnv.MasterClient.GetLocations(uint32(vid))
 	if !found {
@@ -127,26 +133,8 @@ func doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.Volum
 				break
 			}
 
-			// mark all replicas as read only
-			if err = markVolumeReadonly(commandEnv.option.GrpcDialOption, vid, locations); err != nil {
-				return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
-			}
-			if err = LiveMoveVolume(commandEnv.option.GrpcDialOption, vid, sourceVolumeServer, dst.dataNode.Id, 5*time.Second, toDiskType.ReadableString()); err != nil {
-				return fmt.Errorf("move volume %d %s => %s : %v", vid, locations[0].Url, dst.dataNode.Id, err)
-			}
-
-			// adjust volume count
-			dst.dataNode.DiskInfos[string(toDiskType)].VolumeCount++
-
-			// remove the remaining replicas
-			for _, loc := range locations {
-				if loc.Url != dst.dataNode.Id {
-					if err = deleteVolume(commandEnv.option.GrpcDialOption, vid, loc.Url); err != nil {
-						if !strings.Contains(err.Error(), "not found") {
-							fmt.Fprintf(writer, "failed to delete volume %d on %s: %v\n", vid, loc.Url, err)
-						}
-					}
-				}
+			if err := c.doMoveOneVolume(commandEnv, writer, vid, toDiskType, locations, sourceVolumeServer, dst); err != nil {
+				return err
 			}
 		}
 	}
@@ -155,6 +143,30 @@ func doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.Volum
 		fmt.Fprintf(writer, "can not find disk type %s for volume %d\n", toDiskType.ReadableString(), vid)
 	}
 
+	return nil
+}
+
+func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, locations []wdclient.Location, sourceVolumeServer string, dst location) (err error) {
+
+	// mark all replicas as read only
+	if err = markVolumeReadonly(commandEnv.option.GrpcDialOption, vid, locations); err != nil {
+		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
+	}
+	if err = LiveMoveVolume(commandEnv.option.GrpcDialOption, writer, vid, sourceVolumeServer, dst.dataNode.Id, 5*time.Second, toDiskType.ReadableString(), true); err != nil {
+		return fmt.Errorf("move volume %d %s => %s : %v", vid, locations[0].Url, dst.dataNode.Id, err)
+	}
+
+	// adjust volume count
+	dst.dataNode.DiskInfos[string(toDiskType)].VolumeCount++
+
+	// remove the remaining replicas
+	for _, loc := range locations {
+		if loc.Url != dst.dataNode.Id && loc.Url != sourceVolumeServer {
+			if err = deleteVolume(commandEnv.option.GrpcDialOption, vid, loc.Url); err != nil {
+				fmt.Fprintf(writer, "failed to delete volume %d on %s: %v\n", vid, loc.Url, err)
+			}
+		}
+	}
 	return nil
 }
 
