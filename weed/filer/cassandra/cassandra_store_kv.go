@@ -25,7 +25,7 @@ func (store *CassandraStore) KvGet(ctx context.Context, key []byte) (data []byte
 
 	if err := store.session.Query(
 		"SELECT meta FROM filemeta WHERE directory=? AND name=?",
-		dir, name).Consistency(gocql.One).Scan(&data); err != nil {
+		dir, name).Scan(&data); err != nil {
 		if err != gocql.ErrNotFound {
 			return nil, filer.ErrKvNotFound
 		}
