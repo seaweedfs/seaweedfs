@@ -131,7 +131,7 @@ func balanceVolumeServersByDiskType(commandEnv *CommandEnv, diskType types.DiskT
 			return v.DiskType == string(diskType) && (v.ReadOnly || v.Size >= volumeSizeLimit)
 		})
 	}
-	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxVolumeCount(diskType), sortReadOnlyVolumes, applyBalancing); err != nil {
+	if err := balanceSelectedVolume(commandEnv, diskType, volumeReplicas, nodes, capacityByMaxVolumeCount(diskType), sortReadOnlyVolumes, applyBalancing); err != nil {
 		return err
 	}
 
@@ -146,7 +146,7 @@ func balanceVolumeServersByDiskType(commandEnv *CommandEnv, diskType types.DiskT
 			return v.DiskType == string(diskType) && (!v.ReadOnly && v.Size < volumeSizeLimit)
 		})
 	}
-	if err := balanceSelectedVolume(commandEnv, volumeReplicas, nodes, capacityByMaxVolumeCount(diskType), sortWritableVolumes, applyBalancing); err != nil {
+	if err := balanceSelectedVolume(commandEnv, diskType, volumeReplicas, nodes, capacityByMaxVolumeCount(diskType), sortWritableVolumes, applyBalancing); err != nil {
 		return err
 	}
 
@@ -250,7 +250,7 @@ func sortReadOnlyVolumes(volumes []*master_pb.VolumeInformationMessage) {
 	})
 }
 
-func balanceSelectedVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, capacityFunc CapacityFunc, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage), applyBalancing bool) (err error) {
+func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, capacityFunc CapacityFunc, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage), applyBalancing bool) (err error) {
 	selectedVolumeCount, volumeMaxCount := 0, 0
 	var nodesWithCapacity []*Node
 	for _, dn := range nodes {
@@ -287,7 +287,7 @@ func balanceSelectedVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*
 				// no more volume servers with empty slots
 				break
 			}
-			fmt.Fprintf(os.Stdout, "target ratio %.2f %s %.2f %s %.2f", idealVolumeRatio, fullNode.info.Id, fullNode.localVolumeRatio(capacityFunc), emptyNode.info.Id, emptyNode.localVolumeNextRatio(capacityFunc))
+			fmt.Fprintf(os.Stdout, "disk %s target ratio %.2f %s %.2f %s %.2f", diskType.ReadableString(), idealVolumeRatio, fullNode.info.Id, fullNode.localVolumeRatio(capacityFunc), emptyNode.info.Id, emptyNode.localVolumeNextRatio(capacityFunc))
 			hasMoved, err = attemptToMoveOneVolume(commandEnv, volumeReplicas, fullNode, candidateVolumes, emptyNode, applyBalancing)
 			if err != nil {
 				return
