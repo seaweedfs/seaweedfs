@@ -24,10 +24,10 @@ func (c *commandRemoteCache) Name() string {
 func (c *commandRemoteCache) Help() string {
 	return `cache the file content for mounted directories or files
 
-	# assume a remote storage is configured to name "s3_1"
-	remote.configure -name=s3_1 -type=s3 -access_key=xxx -secret_key=yyy
+	# assume a remote storage is configured to name "cloud1"
+	remote.configure -name=cloud1 -type=s3 -access_key=xxx -secret_key=yyy
 	# mount and pull one bucket
-	remote.mount -dir=xxx -remote=s3_1/bucket
+	remote.mount -dir=xxx -remote=cloud1/bucket
 
 	# after mount, run one of these command to cache the content of the files
 	remote.cache -dir=xxx

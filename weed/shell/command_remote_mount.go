@@ -27,13 +27,13 @@ func (c *commandRemoteMount) Name() string {
 func (c *commandRemoteMount) Help() string {
 	return `mount remote storage and pull its metadata
 
-	# assume a remote storage is configured to name "s3_1"
-	remote.configure -name=s3_1 -type=s3 -access_key=xxx -secret_key=yyy
+	# assume a remote storage is configured to name "cloud1"
+	remote.configure -name=cloud1 -type=s3 -access_key=xxx -secret_key=yyy
 
 	# mount and pull one bucket
-	remote.mount -dir=xxx -remote=s3_1/bucket
+	remote.mount -dir=xxx -remote=cloud1/bucket
 	# mount and pull one directory in the bucket
-	remote.mount -dir=xxx -remote=s3_1/bucket/dir1
+	remote.mount -dir=xxx -remote=cloud1/bucket/dir1
 
 	# after mount, start a separate process to write updates to remote storage
 	weed filer.remote.sync -filer=<filerHost>:<filerPort> -dir=xxx
