@@ -155,7 +155,7 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 
 	fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, false, nil)
 
-	resp.Entry = entry.ToProtoEntry()
+	resp.Entry = newEntry.ToProtoEntry()
 
 	return resp, nil
 
