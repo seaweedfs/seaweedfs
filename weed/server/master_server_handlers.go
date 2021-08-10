@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -113,6 +114,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	if ms.shouldVolumeGrow(option) {
+		glog.V(0).Infof("dirAssign volume growth %v from %v", option.String(), r.RemoteAddr)
 		if ms.Topo.AvailableSpaceFor(option) <= 0 {
 			writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left for " + option.String()})
 			return

@@ -74,6 +74,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 		writeJsonError(w, r, http.StatusNotAcceptable, err)
 		return
 	}
+	glog.V(0).Infof("volumeGrowHandler received %v from %v", option.String(), r.RemoteAddr)
 
 	if count, err = strconv.Atoi(r.FormValue("count")); err == nil {
 		if ms.Topo.AvailableSpaceFor(option) < int64(count*option.ReplicaPlacement.GetCopyCount()) {
