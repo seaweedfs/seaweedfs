@@ -19,9 +19,9 @@ public class SeaweedInputStream extends InputStream {
 
     private final FilerClient filerClient;
     private final String path;
-    private final FilerProto.Entry entry;
     private final List<SeaweedRead.VisibleInterval> visibleIntervalList;
     private final long contentLength;
+    private FilerProto.Entry entry;
 
     private long position = 0;  // cursor of the file
 
@@ -35,8 +35,12 @@ public class SeaweedInputStream extends InputStream {
         this.entry = filerClient.lookupEntry(
                 SeaweedOutputStream.getParentDirectory(fullpath),
                 SeaweedOutputStream.getFileName(fullpath));
-        if(entry == null){
+        if (entry == null) {
             throw new FileNotFoundException();
+        }
+
+        if (RemoteUtil.isInRemoteOnly(entry)) {
+            entry = RemoteUtil.downloadRemoteEntry(filerClient, fullpath, entry);
         }
 
         this.contentLength = SeaweedRead.fileSize(entry);
@@ -54,6 +58,11 @@ public class SeaweedInputStream extends InputStream {
         this.filerClient = filerClient;
         this.path = path;
         this.entry = entry;
+
+        if (RemoteUtil.isInRemoteOnly(entry)) {
+            this.entry = RemoteUtil.downloadRemoteEntry(filerClient, path, entry);
+        }
+
         this.contentLength = SeaweedRead.fileSize(entry);
 
         this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerClient, entry.getChunksList());
@@ -111,8 +120,8 @@ public class SeaweedInputStream extends InputStream {
         long bytesRead = 0;
         int len = buf.remaining();
         int start = (int) this.position;
-        if (start+len <= entry.getContent().size()) {
-            entry.getContent().substring(start, start+len).copyTo(buf);
+        if (start + len <= entry.getContent().size()) {
+            entry.getContent().substring(start, start + len).copyTo(buf);
         } else {
             bytesRead = SeaweedRead.read(this.filerClient, this.visibleIntervalList, this.position, buf, SeaweedRead.fileSize(entry));
         }
