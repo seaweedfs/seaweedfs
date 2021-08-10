@@ -412,14 +412,14 @@ func pickOneReplicaToDelete(replicas []*VolumeReplica, replicaPlacement *super_b
 
 	sort.Slice(replicas, func(i, j int) bool {
 		a, b := replicas[i], replicas[j]
-		if a.info.CompactRevision != b.info.CompactRevision {
-			return a.info.CompactRevision < b.info.CompactRevision
+		if a.info.Size != b.info.Size {
+			return a.info.Size < b.info.Size
 		}
 		if a.info.ModifiedAtSecond != b.info.ModifiedAtSecond {
 			return a.info.ModifiedAtSecond < b.info.ModifiedAtSecond
 		}
-		if a.info.Size != b.info.Size {
-			return a.info.Size < b.info.Size
+		if a.info.CompactRevision != b.info.CompactRevision {
+			return a.info.CompactRevision < b.info.CompactRevision
 		}
 		return false
 	})
