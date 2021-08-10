@@ -147,7 +147,7 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 
 			go func(dst location) {
 				if err := c.doMoveOneVolume(commandEnv, writer, vid, toDiskType, locations, sourceVolumeServer, dst); err != nil {
-					fmt.Fprintf(writer, "move volume %d %s => %s: %v", vid, sourceVolumeServer, dst.dataNode.Id, err)
+					fmt.Fprintf(writer, "move volume %d %s => %s: %v\n", vid, sourceVolumeServer, dst.dataNode.Id, err)
 				}
 				delete(c.activeServers, sourceVolumeServer)
 				delete(c.activeServers, dst.dataNode.Id)
