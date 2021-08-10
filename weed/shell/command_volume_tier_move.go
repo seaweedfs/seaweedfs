@@ -109,6 +109,7 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 	hasFoundTarget := false
 	keepDataNodesSorted(allLocations, toDiskType)
 	fn := capacityByFreeVolumeCount(toDiskType)
+	wg := sync.WaitGroup{}
 	for _, dst := range allLocations {
 		if fn(dst.dataNode) > 0 && !hasFoundTarget {
 			// ask the volume server to replicate the volume
@@ -145,6 +146,7 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 			c.activeServers[dst.dataNode.Id] = struct{}{}
 			c.activeServersCond.L.Unlock()
 
+			wg.Add(1)
 			go func(dst location) {
 				if err := c.doMoveOneVolume(commandEnv, writer, vid, toDiskType, locations, sourceVolumeServer, dst); err != nil {
 					fmt.Fprintf(writer, "move volume %d %s => %s: %v\n", vid, sourceVolumeServer, dst.dataNode.Id, err)
@@ -152,10 +154,13 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 				delete(c.activeServers, sourceVolumeServer)
 				delete(c.activeServers, dst.dataNode.Id)
 				c.activeServersCond.Signal()
+				wg.Done()
 			}(dst)
 
 		}
 	}
+
+	wg.Wait()
 
 	if !hasFoundTarget {
 		fmt.Fprintf(writer, "can not find disk type %s for volume %d\n", toDiskType.ReadableString(), vid)
