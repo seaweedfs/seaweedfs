@@ -33,7 +33,7 @@ deps:
 	rm -rf /home/travis/gopath/src/github.com/coreos/etcd/vendor/golang.org/x/net/trace
 	rm -rf /home/travis/gopath/src/go.etcd.io/etcd/vendor/golang.org/x/net/trace
 
-build: deps
+build:
 	go build $(GO_FLAGS) -ldflags "$(LDFLAGS)" -o $(BINARY) $(SOURCE_DIR)
 
 install: deps
