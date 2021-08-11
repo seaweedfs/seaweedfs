@@ -23,7 +23,10 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, prefix string, la
 			dir = message.NewParentPath
 		}
 		if dir == filer.IamConfigDirecotry && message.NewEntry.Name == filer.IamIdentityFile {
-			if err := s3a.iam.loadS3ApiConfigurationFromBytes(message.NewEntry.Content); err != nil {
+			err := util.Retry("updateIamIdentity", func() error {
+				return s3a.iam.loadS3ApiConfigurationFromBytes(message.NewEntry.Content)
+			})
+			if err != nil {
 				return err
 			}
 			glog.V(0).Infof("updated %s/%s", filer.IamConfigDirecotry, filer.IamIdentityFile)

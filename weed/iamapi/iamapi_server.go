@@ -13,6 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/s3api"
 	. "github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc"
@@ -103,7 +104,10 @@ func (iam IamS3ApiConfigure) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfigurat
 		iam.option.FilerGrpcAddress,
 		iam.option.GrpcDialOption,
 		func(client filer_pb.SeaweedFilerClient) error {
-			if err := filer.SaveInsideFiler(client, filer.IamConfigDirecotry, filer.IamIdentityFile, buf.Bytes()); err != nil {
+			err = util.Retry("saveIamIdentity", func() error {
+				return filer.SaveInsideFiler(client, filer.IamConfigDirecotry, filer.IamIdentityFile, buf.Bytes())
+			})
+			if err != nil {
 				return err
 			}
 			return nil
