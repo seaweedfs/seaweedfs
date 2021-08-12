@@ -35,7 +35,9 @@ func NewFilerRemoteStorage() (rs *FilerRemoteStorage) {
 func (rs *FilerRemoteStorage) LoadRemoteStorageConfigurationsAndMapping(filer *Filer) (err error) {
 	// execute this on filer
 
-	entries, _, err := filer.ListDirectoryEntries(context.Background(), DirectoryEtcRemote, "", false, math.MaxInt64, "", "", "")
+	limit := int64(math.MaxInt32)
+
+	entries, _, err := filer.ListDirectoryEntries(context.Background(), DirectoryEtcRemote, "", false, limit, "", "", "")
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			return nil
