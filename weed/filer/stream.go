@@ -16,7 +16,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
-func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
+func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
 
 	glog.V(9).Infof("start to stream content for chunks: %+v\n", chunks)
 	chunkViews := ViewFromChunks(masterClient.GetLookupFileIdFunction(), chunks, offset, size)
@@ -40,17 +40,11 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, w io.Writer, c
 
 		urlStrings := fileId2Url[chunkView.FileId]
 		start := time.Now()
-		data, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
+		err := retriedStreamFetchChunkData(writer, urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
 		stats.FilerRequestHistogram.WithLabelValues("chunkDownload").Observe(time.Since(start).Seconds())
 		if err != nil {
 			stats.FilerRequestCounter.WithLabelValues("chunkDownloadError").Inc()
 			return fmt.Errorf("read chunk: %v", err)
-		}
-
-		_, err = w.Write(data)
-		if err != nil {
-			stats.FilerRequestCounter.WithLabelValues("chunkDownloadedError").Inc()
-			return fmt.Errorf("write chunk: %v", err)
 		}
 		stats.FilerRequestCounter.WithLabelValues("chunkDownload").Inc()
 	}
