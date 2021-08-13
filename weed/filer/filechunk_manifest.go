@@ -143,6 +143,7 @@ func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, cipherKe
 				writer.Write(data)
 				written += len(data)
 			})
+			shouldRetry = shouldRetry && written == 0
 			if !shouldRetry {
 				break
 			}
@@ -155,7 +156,7 @@ func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, cipherKe
 				break
 			}
 		}
-		if err != nil && shouldRetry && written > 0 {
+		if err != nil && shouldRetry {
 			glog.V(0).Infof("retry reading in %v", waitTime)
 			time.Sleep(waitTime)
 		} else {
