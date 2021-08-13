@@ -68,10 +68,6 @@ func (ms *MasterServer) ProcessGrowRequest() {
 
 func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error) {
 
-	if !ms.Topo.IsLeader() {
-		return nil, raft.NotLeaderError
-	}
-
 	resp := &master_pb.LookupVolumeResponse{}
 	volumeLocations := ms.lookupVolumeId(req.VolumeIds, req.Collection)
 

@@ -213,6 +213,21 @@ func WithMasterClient(master string, grpcDialOption grpc.DialOption, fn func(cli
 
 }
 
+func WithOneOfGrpcMasterClients(masterGrpcAddresses []string, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) (err error) {
+
+	for _, masterGrpcAddress := range masterGrpcAddresses {
+		err = WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
+			client := master_pb.NewSeaweedClient(grpcConnection)
+			return fn(client)
+		}, masterGrpcAddress, grpcDialOption)
+		if err == nil {
+			return nil
+		}
+	}
+
+	return err
+}
+
 func WithBrokerGrpcClient(brokerGrpcAddress string, grpcDialOption grpc.DialOption, fn func(client messaging_pb.SeaweedMessagingClient) error) error {
 
 	return WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {

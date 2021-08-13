@@ -275,6 +275,8 @@ message GetMasterConfigurationResponse {
     repeated StorageBackend storage_backends = 3;
     string default_replication = 4;
     string leader = 5;
+    uint32 volume_size_limit_m_b = 6;
+    bool volume_preallocate = 7;
 }
 
 message ListMasterClientsRequest {

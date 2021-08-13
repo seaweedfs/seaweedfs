@@ -28,6 +28,7 @@ var Commands = []*Command{
 	cmdFuse,
 	cmdGateway,
 	cmdMaster,
+	cmdMasterFollower,
 	cmdMount,
 	cmdS3,
 	cmdIam,
