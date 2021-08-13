@@ -48,7 +48,7 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 	// copied from *Needle.prepareWriteBuffer()
 	n.Size = 4 + types.Size(n.DataSize) + 1
 	n.Checksum = needle.NewCRC(n.Data)
-	if _, err = vs.store.WriteVolumeNeedle(v.Id, n, false); err != nil {
+	if _, err = vs.store.WriteVolumeNeedle(v.Id, n, true, false); err != nil {
 		return nil, fmt.Errorf("write needle %d size %d: %v", req.NeedleId, req.Size, err)
 	}
 

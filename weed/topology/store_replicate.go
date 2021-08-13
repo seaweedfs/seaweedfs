@@ -42,7 +42,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 	}
 
 	if s.GetVolume(volumeId) != nil {
-		isUnchanged, err = s.WriteVolumeNeedle(volumeId, n, fsync)
+		isUnchanged, err = s.WriteVolumeNeedle(volumeId, n, true, fsync)
 		if err != nil {
 			err = fmt.Errorf("failed to write to local disk: %v", err)
 			glog.V(0).Infoln(err)
