@@ -10,9 +10,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
-func LookupByMasterClientFn(masterClient *wdclient.MasterClient) func(vids []string) (map[string]operation.LookupResult, error) {
-	return func(vids []string) (map[string]operation.LookupResult, error) {
-		m := make(map[string]operation.LookupResult)
+func LookupByMasterClientFn(masterClient *wdclient.MasterClient) func(vids []string) (map[string]*operation.LookupResult, error) {
+	return func(vids []string) (map[string]*operation.LookupResult, error) {
+		m := make(map[string]*operation.LookupResult)
 		for _, vid := range vids {
 			locs, _ := masterClient.GetVidLocations(vid)
 			var locations []operation.Location
@@ -22,9 +22,9 @@ func LookupByMasterClientFn(masterClient *wdclient.MasterClient) func(vids []str
 					PublicUrl: loc.PublicUrl,
 				})
 			}
-			m[vid] = operation.LookupResult{
-				VolumeId:  vid,
-				Locations: locations,
+			m[vid] = &operation.LookupResult{
+				VolumeOrFileId: vid,
+				Locations:      locations,
 			}
 		}
 		return m, nil

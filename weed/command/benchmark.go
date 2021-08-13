@@ -212,7 +212,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 				}
 				var jwtAuthorization security.EncodedJwt
 				if isSecure {
-					jwtAuthorization = operation.LookupJwt(b.masterClient.GetMaster(), df.fp.Fid)
+					jwtAuthorization = operation.LookupJwt(b.masterClient.GetMaster(), b.grpcDialOption, df.fp.Fid)
 				}
 				if e := util.Delete(fmt.Sprintf("http://%s/%s", df.fp.Server, df.fp.Fid), string(jwtAuthorization)); e == nil {
 					s.completed++

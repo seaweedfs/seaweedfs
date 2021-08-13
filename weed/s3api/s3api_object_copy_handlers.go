@@ -62,7 +62,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
 		s3a.option.Filer, s3a.option.BucketsPath, srcBucket, srcObject)
 
-	_, _, resp, err := util.DownloadFile(srcUrl)
+	_, _, resp, err := util.DownloadFile(srcUrl, "")
 	if err != nil {
 		s3err.WriteErrorResponse(w, s3err.ErrInvalidCopySource, r)
 		return

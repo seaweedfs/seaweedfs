@@ -252,7 +252,7 @@ func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, 
 
 	w.Header().Set("X-File-Store", "chunked")
 
-	chunkedFileReader := operation.NewChunkedFileReader(chunkManifest.Chunks, vs.GetMaster())
+	chunkedFileReader := operation.NewChunkedFileReader(chunkManifest.Chunks, vs.GetMaster(), vs.grpcDialOption)
 	defer chunkedFileReader.Close()
 
 	rs := conditionallyResizeImages(chunkedFileReader, ext, r)

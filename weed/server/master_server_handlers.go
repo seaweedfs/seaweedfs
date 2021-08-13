@@ -86,8 +86,8 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 		err = fmt.Errorf("volume id %s not found", vid)
 	}
 	ret := operation.LookupResult{
-		VolumeId:  vid,
-		Locations: locations,
+		VolumeOrFileId: vid,
+		Locations:      locations,
 	}
 	if err != nil {
 		ret.Error = err.Error()
