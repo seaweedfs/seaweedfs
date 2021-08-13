@@ -143,7 +143,10 @@ func (v *Volume) doWriteRequest(n *needle.Needle) (offset uint64, size Size, isU
 			err = fmt.Errorf("reading existing needle: %v", existingNeedleReadErr)
 			return
 		}
-		if existingNeedle.Cookie != n.Cookie {
+		if n.Cookie == 0 {
+			// this is from batch deletion, and read back again when tailing a remote volume
+			n.Cookie = existingNeedle.Cookie
+		} else if existingNeedle.Cookie != n.Cookie {
 			glog.V(0).Infof("write cookie mismatch: existing %s, new %s",
 				needle.NewFileIdFromNeedle(v.Id, existingNeedle), needle.NewFileIdFromNeedle(v.Id, n))
 			err = fmt.Errorf("mismatching cookie %x", n.Cookie)
