@@ -198,7 +198,7 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		Host:              *m.ip,
 		Port:              *m.port,
 		MetaFolder:        *m.metaFolder,
-		VolumeSizeLimitMB: *m.volumeSizeLimitMB,
+		VolumeSizeLimitMB: uint32(*m.volumeSizeLimitMB),
 		VolumePreallocate: *m.volumePreallocate,
 		// PulseSeconds:            *m.pulseSeconds,
 		DefaultReplicaPlacement: *m.defaultReplication,

@@ -313,6 +313,8 @@ func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_
 		MetricsIntervalSeconds: uint32(ms.option.MetricsIntervalSec),
 		StorageBackends:        backend.ToPbStorageBackends(),
 		DefaultReplication:     ms.option.DefaultReplicaPlacement,
+		VolumeSizeLimitMB:      uint32(ms.option.VolumeSizeLimitMB),
+		VolumePreallocate:      ms.option.VolumePreallocate,
 		Leader:                 leader,
 	}
 

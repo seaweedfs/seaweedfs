@@ -19,7 +19,7 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		RaftServer        raft.Server
 		Stats             map[string]interface{}
 		Counters          *stats.ServerStats
-		VolumeSizeLimitMB uint
+		VolumeSizeLimitMB uint32
 	}{
 		util.Version(),
 		ms.Topo.ToMap(),

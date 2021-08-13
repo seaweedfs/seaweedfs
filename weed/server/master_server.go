@@ -35,7 +35,7 @@ type MasterOption struct {
 	Host              string
 	Port              int
 	MetaFolder        string
-	VolumeSizeLimitMB uint
+	VolumeSizeLimitMB uint32
 	VolumePreallocate bool
 	// PulseSeconds            int
 	DefaultReplicaPlacement string
