@@ -79,16 +79,21 @@ func LookupFileId(masterFn GetMasterFn, fileId string) (fullUrl string, err erro
 	return "http://" + lookup.Locations[rand.Intn(len(lookup.Locations))].Url + "/" + fileId, nil
 }
 
+func LookupVolumeId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vid string) (*LookupResult, error) {
+	results, err := LookupVolumeIds(masterFn, grpcDialOption, []string{vid})
+	return results[vid], err
+}
+
 // LookupVolumeIds find volume locations by cache and actual lookup
-func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids []string) (map[string]LookupResult, error) {
-	ret := make(map[string]LookupResult)
+func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids []string) (map[string]*LookupResult, error) {
+	ret := make(map[string]*LookupResult)
 	var unknown_vids []string
 
 	//check vid cache first
 	for _, vid := range vids {
-		locations, cache_err := vc.Get(vid)
-		if cache_err == nil {
-			ret[vid] = LookupResult{VolumeId: vid, Locations: locations}
+		locations, cacheErr := vc.Get(vid)
+		if cacheErr == nil {
+			ret[vid] = &LookupResult{VolumeId: vid, Locations: locations}
 		} else {
 			unknown_vids = append(unknown_vids, vid)
 		}
@@ -122,7 +127,7 @@ func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids 
 			if vidLocations.Error != "" {
 				vc.Set(vidLocations.VolumeId, locations, 10*time.Minute)
 			}
-			ret[vidLocations.VolumeId] = LookupResult{
+			ret[vidLocations.VolumeId] = &LookupResult{
 				VolumeId:  vidLocations.VolumeId,
 				Locations: locations,
 				Error:     vidLocations.Error,

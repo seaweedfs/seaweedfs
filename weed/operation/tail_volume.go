@@ -13,7 +13,7 @@ import (
 
 func TailVolume(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vid needle.VolumeId, sinceNs uint64, timeoutSeconds int, fn func(n *needle.Needle) error) error {
 	// find volume location, replication, ttl info
-	lookup, err := Lookup(masterFn, vid.String())
+	lookup, err := LookupVolumeId(masterFn, grpcDialOption, vid.String())
 	if err != nil {
 		return fmt.Errorf("look up volume %d: %v", vid, err)
 	}

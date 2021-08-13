@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -18,7 +19,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func ReplicatedWrite(masterFn operation.GetMasterFn, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (isUnchanged bool, err error) {
+func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (isUnchanged bool, err error) {
 
 	//check JWT
 	jwt := security.GetJwt(r)
@@ -27,7 +28,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, s *storage.Store, volumeId 
 	var remoteLocations []operation.Location
 	if r.FormValue("type") != "replicate" {
 		// this is the initial request
-		remoteLocations, err = getWritableRemoteReplications(s, volumeId, masterFn)
+		remoteLocations, err = getWritableRemoteReplications(s, grpcDialOption, volumeId, masterFn)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return
@@ -92,16 +93,14 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, s *storage.Store, volumeId 
 	return
 }
 
-func ReplicatedDelete(masterFn operation.GetMasterFn, store *storage.Store,
-	volumeId needle.VolumeId, n *needle.Needle,
-	r *http.Request) (size types.Size, err error) {
+func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, store *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (size types.Size, err error) {
 
 	//check JWT
 	jwt := security.GetJwt(r)
 
 	var remoteLocations []operation.Location
 	if r.FormValue("type") != "replicate" {
-		remoteLocations, err = getWritableRemoteReplications(store, volumeId, masterFn)
+		remoteLocations, err = getWritableRemoteReplications(store, grpcDialOption, volumeId, masterFn)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return
@@ -161,8 +160,7 @@ func DistributedOperation(locations []operation.Location, op func(location opera
 	return ret.Error()
 }
 
-func getWritableRemoteReplications(s *storage.Store, volumeId needle.VolumeId, masterFn operation.GetMasterFn) (
-	remoteLocations []operation.Location, err error) {
+func getWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, masterFn operation.GetMasterFn) (remoteLocations []operation.Location, err error) {
 
 	v := s.GetVolume(volumeId)
 	if v != nil && v.ReplicaPlacement.GetCopyCount() == 1 {
@@ -170,7 +168,7 @@ func getWritableRemoteReplications(s *storage.Store, volumeId needle.VolumeId, m
 	}
 
 	// not on local store, or has replications
-	lookupResult, lookupErr := operation.Lookup(masterFn, volumeId.String())
+	lookupResult, lookupErr := operation.LookupVolumeId(masterFn, grpcDialOption, volumeId.String())
 	if lookupErr == nil {
 		selfUrl := s.Ip + ":" + strconv.Itoa(s.Port)
 		for _, location := range lookupResult.Locations {
