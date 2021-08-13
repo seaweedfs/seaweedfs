@@ -135,23 +135,30 @@ func retriedFetchChunkData(urlStrings []string, cipherKey []byte, isGzipped bool
 func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int) (err error) {
 
 	var shouldRetry bool
-	var written int
+	var totalWritten int
 
 	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
 		for _, urlString := range urlStrings {
+			var localProcesed int
 			shouldRetry, err = util.ReadUrlAsStream(urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
+				if totalWritten > localProcesed {
+					toBeSkipped := totalWritten - localProcesed
+					if len(data) <= toBeSkipped {
+						localProcesed += len(data)
+						return // skip if already processed
+					}
+					data = data[len(data)-toBeSkipped:]
+					localProcesed += toBeSkipped
+				}
 				writer.Write(data)
-				written += len(data)
+				localProcesed += len(data)
+				totalWritten += len(data)
 			})
-			shouldRetry = shouldRetry && written == 0
 			if !shouldRetry {
 				break
 			}
 			if err != nil {
 				glog.V(0).Infof("read %s failed, err: %v", urlString, err)
-				if written > 0 {
-					break
-				}
 			} else {
 				break
 			}
