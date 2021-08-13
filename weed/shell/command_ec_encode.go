@@ -100,7 +100,7 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	// fmt.Printf("found ec %d shards on %v\n", vid, locations)
 
 	// mark the volume as readonly
-	err = markVolumeReadonly(commandEnv.option.GrpcDialOption, vid, locations)
+	err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, false)
 	if err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 	}
@@ -115,28 +115,6 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	err = spreadEcShards(commandEnv, vid, collection, locations, parallelCopy)
 	if err != nil {
 		return fmt.Errorf("spread ec shards for volume %d from %s: %v", vid, locations[0].Url, err)
-	}
-
-	return nil
-}
-
-func markVolumeReadonly(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, locations []wdclient.Location) error {
-
-	for _, location := range locations {
-
-		fmt.Printf("markVolumeReadonly %d on %s ...\n", volumeId, location.Url)
-
-		err := operation.WithVolumeServerClient(location.Url, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-			_, markErr := volumeServerClient.VolumeMarkReadonly(context.Background(), &volume_server_pb.VolumeMarkReadonlyRequest{
-				VolumeId: uint32(volumeId),
-			})
-			return markErr
-		})
-
-		if err != nil {
-			return err
-		}
-
 	}
 
 	return nil

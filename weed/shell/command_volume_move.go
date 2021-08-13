@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"io"
 	"log"
 	"time"
@@ -189,4 +190,14 @@ func markVolumeWritable(grpcDialOption grpc.DialOption, volumeId needle.VolumeId
 		}
 		return err
 	})
+}
+
+func markVolumeReplicasWritable(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, locations []wdclient.Location, writable bool) error {
+	for _, location := range locations {
+		fmt.Printf("markVolumeReadonly %d on %s ...\n", volumeId, location.Url)
+		if err:= markVolumeWritable(grpcDialOption, volumeId, location.Url, writable); err != nil {
+			return err
+		}
+	}
+	return nil
 }
