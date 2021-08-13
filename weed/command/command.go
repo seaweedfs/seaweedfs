@@ -26,7 +26,6 @@ var Commands = []*Command{
 	cmdFilerSynchronize,
 	cmdFix,
 	cmdFuse,
-	cmdGateway,
 	cmdMaster,
 	cmdMasterFollower,
 	cmdMount,
