@@ -147,7 +147,7 @@ func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, cipherKe
 						localProcesed += len(data)
 						return // skip if already processed
 					}
-					data = data[len(data)-toBeSkipped:]
+					data = data[toBeSkipped:]
 					localProcesed += toBeSkipped
 				}
 				writer.Write(data)
