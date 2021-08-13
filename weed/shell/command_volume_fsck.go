@@ -313,6 +313,9 @@ func (c *commandVolumeFsck) collectFilerFileIds(tempFolder string, volumeIdToSer
 	}, func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 		dChunks, mChunks, resolveErr := filer.ResolveChunkManifest(filer.LookupFn(c.env), entry.Entry.Chunks, 0, math.MaxInt64)
 		if resolveErr != nil {
+			if verbose {
+				fmt.Fprintf(writer, "resolving manifest chunks in %s: %v\n", util.NewFullPath(entry.Dir, entry.Entry.Name), resolveErr)
+			}
 			return nil
 		}
 		dChunks = append(dChunks, mChunks...)
