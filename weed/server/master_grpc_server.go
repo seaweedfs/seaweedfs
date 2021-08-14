@@ -176,9 +176,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 // And clients gets the up-to-date list of volume locations
 func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServer) error {
 
-	req, err := stream.Recv()
-	if err != nil {
-		return err
+	req, recvErr := stream.Recv()
+	if recvErr != nil {
+		return recvErr
 	}
 
 	if !ms.Topo.IsLeader() {
@@ -195,8 +195,8 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	defer ms.deleteClient(clientName)
 
 	for _, message := range ms.Topo.ToVolumeLocations() {
-		if err := stream.Send(message); err != nil {
-			return err
+		if sendErr := stream.Send(message); sendErr != nil {
+			return sendErr
 		}
 	}
 
