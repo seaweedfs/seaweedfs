@@ -118,7 +118,7 @@ func shouldCacheToLocal(entry *filer_pb.Entry) bool {
 	if entry.RemoteEntry == nil {
 		return false
 	}
-	if entry.RemoteEntry.LocalMtime == 0 && entry.RemoteEntry.RemoteSize > 0 {
+	if entry.RemoteEntry.LocalMtime < entry.Attributes.Mtime && entry.RemoteEntry.RemoteSize > 0 {
 		return true
 	}
 	return false

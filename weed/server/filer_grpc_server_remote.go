@@ -153,7 +153,7 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 	newEntry := entry.ShallowClone()
 	newEntry.Chunks = chunks
 	newEntry.Remote = proto.Clone(entry.Remote).(*filer_pb.RemoteEntry)
-	newEntry.Remote.LocalMtime = time.Now().Unix()
+	newEntry.Remote.LocalMtime = entry.Mtime.Unix()
 
 	// this skips meta data log events
 
