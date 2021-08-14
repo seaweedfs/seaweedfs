@@ -146,6 +146,7 @@ Faster and Cheaper than direct cloud storage!
 * [WebDAV] accesses as a mapped drive on Mac and Windows, or from mobile devices.
 * [AES256-GCM Encrypted Storage][FilerDataEncryption] safely stores the encrypted data.
 * [Super Large Files][SuperLargeFiles] stores large or super large files in tens of TB.
+* [Cloud Data Accelerator][RemoteStorage] transparently access cloud at local speed with content cache, metadata cache, and asynchronous write back.
 
 ## Kubernetes ##
 * [Kubernetes CSI Driver][SeaweedFsCsiDriver] A Container Storage Interface (CSI) Driver. [![Docker Pulls](https://img.shields.io/docker/pulls/chrislusf/seaweedfs-csi-driver.svg?maxAge=4800)](https://hub.docker.com/r/chrislusf/seaweedfs-csi-driver/)
@@ -168,6 +169,8 @@ Faster and Cheaper than direct cloud storage!
 [ActiveActiveAsyncReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Active-Active-cross-cluster-continuous-synchronization
 [FilerStoreReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Store-Replication
 [KeyLargeValueStore]: https://github.com/chrislusf/seaweedfs/wiki/Filer-as-a-Key-Large-Value-Store
+[RemoteStorage]: https://github.com/chrislusf/seaweedfs/wiki/Remote-Storage-Architecture
+
 
 [Back to TOC](#table-of-contents)
 
@@ -321,7 +324,7 @@ When requesting a file key, an optional "dataCenter" parameter can limit the ass
 
 [Back to TOC](#table-of-contents)
 
-## Architecture ##
+## Object Store Architecture ##
 
 Usually distributed file systems split each file into chunks, a central master keeps a mapping of filenames, chunk indices to chunk handles, and also which chunks each chunk server has.
 
