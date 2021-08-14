@@ -109,10 +109,8 @@ func startMasterFollower(masterOptions MasterOptions) {
 		return
 	}
 
-
 	option := masterOptions.toMasterOption(nil)
 	option.IsFollower = true
-
 
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, option, masters)
