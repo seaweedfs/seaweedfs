@@ -119,9 +119,7 @@ func WithCachedGrpcClient(fn func(*grpc.ClientConn) error, address string, opts 
 	}
 	executionErr := fn(vgc.ClientConn)
 	if executionErr != nil {
-		vgc.errCount++
-		if vgc.errCount > 3 ||
-			strings.Contains(executionErr.Error(), "transport") ||
+		if strings.Contains(executionErr.Error(), grpc.ErrServerStopped) ||
 			strings.Contains(executionErr.Error(), "connection closed") {
 			grpcClientsLock.Lock()
 			if t, ok := grpcClients[address]; ok {
