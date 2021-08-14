@@ -60,7 +60,7 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 	}
 
 	// detect storage option
-	so, err := fs.detectStorageOption(req.Directory, "", "", 0, "", "", "")
+	so, err := fs.detectStorageOption(req.Directory, "", "000", 0, "", "", "")
 	if err != nil {
 		return resp, err
 	}
