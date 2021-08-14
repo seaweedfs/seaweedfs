@@ -27,10 +27,10 @@ func (c *commandRemoteUnmount) Help() string {
 	# assume a remote storage is configured to name "s3_1"
 	remote.configure -name=s3_1 -type=s3 -access_key=xxx -secret_key=yyy
 	# mount and pull one bucket
-	remote.mount -dir=xxx -remote=s3_1/bucket
+	remote.mount -dir=/xxx -remote=s3_1/bucket
 
 	# unmount the mounted directory and remove its cache
-	remote.unmount -dir=xxx
+	remote.unmount -dir=/xxx
 
 `
 }

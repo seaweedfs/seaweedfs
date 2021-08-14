@@ -31,12 +31,12 @@ func (c *commandRemoteMount) Help() string {
 	remote.configure -name=cloud1 -type=s3 -access_key=xxx -secret_key=yyy
 
 	# mount and pull one bucket
-	remote.mount -dir=xxx -remote=cloud1/bucket
+	remote.mount -dir=/xxx -remote=cloud1/bucket
 	# mount and pull one directory in the bucket
-	remote.mount -dir=xxx -remote=cloud1/bucket/dir1
+	remote.mount -dir=/xxx -remote=cloud1/bucket/dir1
 
 	# after mount, start a separate process to write updates to remote storage
-	weed filer.remote.sync -filer=<filerHost>:<filerPort> -dir=xxx
+	weed filer.remote.sync -filer=<filerHost>:<filerPort> -dir=/xxx
 
 `
 }

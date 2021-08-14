@@ -29,10 +29,10 @@ func (c *commandRemoteUncache) Help() string {
 	This is designed to run regularly. So you can add it to some cronjob.
 	If a file is not synchronized with the remote copy, the file will be skipped to avoid loss of data.
 
-	remote.uncache -dir=xxx
-	remote.uncache -dir=xxx/some/sub/dir
-	remote.uncache -dir=xxx/some/sub/dir -include=*.pdf
-	remote.uncache -dir=xxx/some/sub/dir -exclude=*.txt
+	remote.uncache -dir=/xxx
+	remote.uncache -dir=/xxx/some/sub/dir
+	remote.uncache -dir=/xxx/some/sub/dir -include=*.pdf
+	remote.uncache -dir=/xxx/some/sub/dir -exclude=*.txt
 
 `
 }

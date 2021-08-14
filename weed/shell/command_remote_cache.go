@@ -27,12 +27,12 @@ func (c *commandRemoteCache) Help() string {
 	# assume a remote storage is configured to name "cloud1"
 	remote.configure -name=cloud1 -type=s3 -access_key=xxx -secret_key=yyy
 	# mount and pull one bucket
-	remote.mount -dir=xxx -remote=cloud1/bucket
+	remote.mount -dir=/xxx -remote=cloud1/bucket
 
 	# after mount, run one of these command to cache the content of the files
-	remote.cache -dir=xxx
-	remote.cache -dir=xxx/some/sub/dir
-	remote.cache -dir=xxx/some/sub/dir -include=*.pdf
+	remote.cache -dir=/xxx
+	remote.cache -dir=/xxx/some/sub/dir
+	remote.cache -dir=/xxx/some/sub/dir -include=*.pdf
 
 	This is designed to run regularly. So you can add it to some cronjob.
 	If a file is already synchronized with the remote copy, the file will be skipped to avoid unnecessary copy.
