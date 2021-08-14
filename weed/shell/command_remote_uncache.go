@@ -8,6 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
+	"path/filepath"
 	"strings"
 )
 
@@ -25,19 +26,25 @@ func (c *commandRemoteUncache) Name() string {
 func (c *commandRemoteUncache) Help() string {
 	return `keep the metadata but remote cache the file content for mounted directories or files
 
+	This is designed to run regularly. So you can add it to some cronjob.
+	If a file is not synchronized with the remote copy, the file will be skipped to avoid loss of data.
+
 	remote.uncache -dir=xxx
 	remote.uncache -dir=xxx/some/sub/dir
+	remote.uncache -dir=xxx/some/sub/dir -include=*.pdf
+	remote.uncache -dir=xxx/some/sub/dir -exclude=*.txt
 
 `
 }
 
 func (c *commandRemoteUncache) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	remoteMountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	remoteUnmountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 
-	dir := remoteMountCommand.String("dir", "", "a directory in filer")
+	dir := remoteUnmountCommand.String("dir", "", "a directory in filer")
+	fileFiler := newFileFilter(remoteUnmountCommand)
 
-	if err = remoteMountCommand.Parse(args); err != nil {
+	if err = remoteUnmountCommand.Parse(args); err != nil {
 		return nil
 	}
 
@@ -64,19 +71,28 @@ func (c *commandRemoteUncache) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 
 	// pull content from remote
-	if err = c.uncacheContentData(commandEnv, writer, util.FullPath(*dir)); err != nil {
+	if err = c.uncacheContentData(commandEnv, writer, util.FullPath(*dir), fileFiler); err != nil {
 		return fmt.Errorf("cache content data: %v", err)
 	}
 
 	return nil
 }
 
-func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer io.Writer, dirToCache util.FullPath) error {
+func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer io.Writer, dirToCache util.FullPath, fileFilter *FileFilter) error {
 
 	return recursivelyTraverseDirectory(commandEnv, dirToCache, func(dir util.FullPath, entry *filer_pb.Entry) bool {
 		if !mayHaveCachedToLocal(entry) {
 			return true // true means recursive traversal should continue
 		}
+
+		if fileFilter.matches(entry) {
+			return true
+		}
+
+		if entry.RemoteEntry.LocalMtime < entry.Attributes.Mtime {
+			return true // should not uncache an entry that is not synchronized with remote
+		}
+
 		entry.RemoteEntry.LocalMtime = 0
 		entry.Chunks = nil
 
@@ -96,4 +112,58 @@ func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer
 
 		return true
 	})
+}
+
+type FileFilter struct {
+	include *string
+	exclude *string
+	minSize *int64
+	maxSize *int64
+	minAge  *int64
+	maxAge  *int64
+}
+
+func newFileFilter(remoteMountCommand *flag.FlagSet) (ff *FileFilter) {
+	ff = &FileFilter{}
+	ff.include = remoteMountCommand.String("include", "", "pattens of file names, e.g., *.pdf, *.html, ab?d.txt")
+	ff.exclude = remoteMountCommand.String("exclude", "", "pattens of file names, e.g., *.pdf, *.html, ab?d.txt")
+	ff.minSize = remoteMountCommand.Int64("minSize", -1, "minimum file size in bytes")
+	ff.maxSize = remoteMountCommand.Int64("maxSize", -1, "maximum file size in bytes")
+	ff.minAge = remoteMountCommand.Int64("minAge", -1, "minimum file age in seconds")
+	ff.maxAge = remoteMountCommand.Int64("maxAge", -1, "maximum file age in seconds")
+	return
+}
+
+func (ff *FileFilter) matches(entry *filer_pb.Entry) bool {
+	if *ff.include != "" {
+		if ok, _ := filepath.Match(*ff.include, entry.Name); !ok {
+			return true
+		}
+	}
+	if *ff.exclude != "" {
+		if ok, _ := filepath.Match(*ff.exclude, entry.Name); ok {
+			return true
+		}
+	}
+	if *ff.minSize != -1 {
+		if int64(entry.Attributes.FileSize) < *ff.minSize {
+			return false
+		}
+	}
+	if *ff.maxSize != -1 {
+		if int64(entry.Attributes.FileSize) > *ff.maxSize {
+			return false
+		}
+	}
+	if *ff.minAge != -1 {
+		if entry.Attributes.Crtime < *ff.minAge {
+			return false
+		}
+	}
+	if *ff.maxAge != -1 {
+		if entry.Attributes.Crtime > *ff.maxAge {
+			return false
+		}
+	}
+	return false
 }
