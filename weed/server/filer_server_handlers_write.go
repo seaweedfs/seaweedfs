@@ -116,23 +116,18 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication string, ttlSeconds int32, diskType, dataCenter, rack string) (*operation.StorageOption, error) {
-	collection := util.Nvl(qCollection, fs.option.Collection)
-	replication := util.Nvl(qReplication, fs.option.DefaultReplication)
-
-	// required by buckets folder
-	bucketDefaultReplication, fsync := "", false
-	if strings.HasPrefix(requestURI, fs.filer.DirBucketsPath+"/") {
-		collection = fs.filer.DetectBucket(util.FullPath(requestURI))
-		bucketDefaultReplication, fsync = fs.filer.ReadBucketOption(collection)
-	}
-	if replication == "" {
-		replication = bucketDefaultReplication
-	}
 
 	rule := fs.filer.FilerConf.MatchStorageRule(requestURI)
 
 	if rule.ReadOnly {
 		return nil, ErrReadOnly
+	}
+
+	// required by buckets folder
+	bucketDefaultCollection, bucketDefaultReplication, fsync := "", "", false
+	if strings.HasPrefix(requestURI, fs.filer.DirBucketsPath+"/") {
+		bucketDefaultCollection = fs.filer.DetectBucket(util.FullPath(requestURI))
+		bucketDefaultReplication, fsync = fs.filer.ReadBucketOption(bucketDefaultCollection)
 	}
 
 	if ttlSeconds == 0 {
@@ -144,8 +139,8 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	}
 
 	return &operation.StorageOption{
-		Replication:       util.Nvl(replication, rule.Replication),
-		Collection:        util.Nvl(collection, rule.Collection),
+		Replication:       util.Nvl(qReplication, rule.Replication, bucketDefaultReplication, fs.option.DefaultReplication),
+		Collection:        util.Nvl(qCollection, rule.Collection, bucketDefaultCollection, fs.option.Collection),
 		DataCenter:        util.Nvl(dataCenter, fs.option.DataCenter),
 		Rack:              util.Nvl(rack, fs.option.Rack),
 		TtlSeconds:        ttlSeconds,
