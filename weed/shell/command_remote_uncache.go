@@ -89,11 +89,11 @@ func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer
 			return true
 		}
 
-		if entry.RemoteEntry.LocalMtime < entry.Attributes.Mtime {
+		if entry.RemoteEntry.LastLocalSyncTsNs/1e9 < entry.Attributes.Mtime {
 			return true // should not uncache an entry that is not synchronized with remote
 		}
 
-		entry.RemoteEntry.LocalMtime = 0
+		entry.RemoteEntry.LastLocalSyncTsNs = 0
 		entry.Chunks = nil
 
 		println(dir, entry.Name)

@@ -239,7 +239,7 @@ func shouldSendToRemote(entry *filer_pb.Entry) bool {
 	if entry.RemoteEntry == nil {
 		return true
 	}
-	if entry.RemoteEntry.LocalMtime < entry.Attributes.Mtime {
+	if entry.RemoteEntry.LastLocalSyncTsNs/1e9 < entry.Attributes.Mtime {
 		return true
 	}
 	return false

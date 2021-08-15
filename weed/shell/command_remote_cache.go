@@ -118,7 +118,7 @@ func shouldCacheToLocal(entry *filer_pb.Entry) bool {
 	if entry.RemoteEntry == nil {
 		return false
 	}
-	if entry.RemoteEntry.LocalMtime < entry.Attributes.Mtime && entry.RemoteEntry.RemoteSize > 0 {
+	if entry.RemoteEntry.LastLocalSyncTsNs == 0 && entry.RemoteEntry.RemoteSize > 0 {
 		return true
 	}
 	return false
@@ -131,7 +131,7 @@ func mayHaveCachedToLocal(entry *filer_pb.Entry) bool {
 	if entry.RemoteEntry == nil {
 		return false // should not uncache an entry that is not in remote
 	}
-	if entry.RemoteEntry.LocalMtime > 0 && len(entry.Chunks) > 0 {
+	if entry.RemoteEntry.LastLocalSyncTsNs > 0 && len(entry.Chunks) > 0 {
 		return true
 	}
 	return false
