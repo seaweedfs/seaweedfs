@@ -9,7 +9,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
-	"strings"
 )
 
 func init() {
@@ -69,32 +68,7 @@ func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer
 }
 
 func detectMountInfo(commandEnv *CommandEnv, writer io.Writer, dir string) (*filer_pb.RemoteStorageMapping, string, *filer_pb.RemoteStorageLocation, *filer_pb.RemoteConf, error) {
-	mappings, listErr := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
-	if listErr != nil {
-		return nil, "", nil, nil, listErr
-	}
-	if dir == "" {
-		return mappings, "", nil, nil, fmt.Errorf("need to specify '-dir' option")
-	}
-
-	var localMountedDir string
-	var remoteStorageMountedLocation *filer_pb.RemoteStorageLocation
-	for k, loc := range mappings.Mappings {
-		if strings.HasPrefix(dir, k) {
-			localMountedDir, remoteStorageMountedLocation = k, loc
-		}
-	}
-	if localMountedDir == "" {
-		return mappings, localMountedDir, remoteStorageMountedLocation, nil, fmt.Errorf("%s is not mounted", dir)
-	}
-
-	// find remote storage configuration
-	remoteStorageConf, err := filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, remoteStorageMountedLocation.Name)
-	if err != nil {
-		return mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, err
-	}
-
-	return mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, nil
+	return filer.DetectMountInfo(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, dir)
 }
 
 /*

@@ -197,3 +197,33 @@ func ReadRemoteStorageConf(grpcDialOption grpc.DialOption, filerAddress string, 
 
 	return
 }
+
+func DetectMountInfo(grpcDialOption grpc.DialOption, filerAddress string, dir string) (*filer_pb.RemoteStorageMapping, string, *filer_pb.RemoteStorageLocation, *filer_pb.RemoteConf, error) {
+
+	mappings, listErr := ReadMountMappings(grpcDialOption, filerAddress)
+	if listErr != nil {
+		return nil, "", nil, nil, listErr
+	}
+	if dir == "" {
+		return mappings, "", nil, nil, fmt.Errorf("need to specify '-dir' option")
+	}
+
+	var localMountedDir string
+	var remoteStorageMountedLocation *filer_pb.RemoteStorageLocation
+	for k, loc := range mappings.Mappings {
+		if strings.HasPrefix(dir, k) {
+			localMountedDir, remoteStorageMountedLocation = k, loc
+		}
+	}
+	if localMountedDir == "" {
+		return mappings, localMountedDir, remoteStorageMountedLocation, nil, fmt.Errorf("%s is not mounted", dir)
+	}
+
+	// find remote storage configuration
+	remoteStorageConf, err := ReadRemoteStorageConf(grpcDialOption, filerAddress, remoteStorageMountedLocation.Name)
+	if err != nil {
+		return mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, err
+	}
+
+	return mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, nil
+}

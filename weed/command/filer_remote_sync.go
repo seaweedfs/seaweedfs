@@ -70,43 +70,33 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	remoteSyncOptions.grpcDialOption = grpcDialOption
 
+	dir := *remoteSyncOptions.dir
+	filerAddress := *remoteSyncOptions.filerAddress
+
 	// read filer remote storage mount mappings
-	mappings, readErr := filer.ReadMountMappings(grpcDialOption, *remoteSyncOptions.filerAddress)
-	if readErr != nil {
-		fmt.Printf("read mount mapping: %v", readErr)
+	_, _, remoteStorageMountLocation, storageConf, detectErr := filer.DetectMountInfo(grpcDialOption, filerAddress, dir)
+	if detectErr != nil {
+		fmt.Printf("read mount info: %v", detectErr)
 		return false
 	}
 
 	filerSource := &source.FilerSource{}
 	filerSource.DoInitialize(
-		*remoteSyncOptions.filerAddress,
-		pb.ServerToGrpcAddress(*remoteSyncOptions.filerAddress),
+		filerAddress,
+		pb.ServerToGrpcAddress(filerAddress),
 		"/", // does not matter
 		*remoteSyncOptions.readChunkFromFiler,
 	)
 
-	var found bool
-	for dir, remoteStorageMountLocation := range mappings.Mappings {
-		if *remoteSyncOptions.dir == dir {
-			found = true
-			storageConf, readErr := filer.ReadRemoteStorageConf(grpcDialOption, *remoteSyncOptions.filerAddress, remoteStorageMountLocation.Name)
-			if readErr != nil {
-				fmt.Printf("read remote storage configuration for %s: %v", dir, readErr)
-				continue
-			}
-			fmt.Printf("synchronize %s to remote storage...\n", *remoteSyncOptions.dir)
-			if err := util.Retry("filer.remote.sync "+dir, func() error {
-				return followUpdatesAndUploadToRemote(&remoteSyncOptions, filerSource, dir, storageConf, remoteStorageMountLocation)
-			}); err != nil {
-				fmt.Printf("synchronize %s: %v\n", *remoteSyncOptions.dir, err)
-			}
-			break
+	fmt.Printf("synchronize %s to remote storage...\n", dir)
+	util.RetryForever("filer.remote.sync "+dir, func() error {
+		return followUpdatesAndUploadToRemote(&remoteSyncOptions, filerSource, dir, storageConf, remoteStorageMountLocation)
+	}, func(err error) bool {
+		if err != nil {
+			fmt.Printf("synchronize %s: %v\n", dir, err)
 		}
-	}
-	if !found {
-		fmt.Printf("directory %s is not mounted to any remote storage\n", *remoteSyncOptions.dir)
-		return false
-	}
+		return true
+	})
 
 	return true
 }
