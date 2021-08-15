@@ -7,7 +7,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
-	"strings"
 )
 
 func init() {
@@ -53,33 +52,9 @@ func (c *commandRemoteCache) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
-	mappings, listErr := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
-	if listErr != nil {
-		return listErr
-	}
-	if *dir == "" {
-		jsonPrintln(writer, mappings)
-		fmt.Fprintln(writer, "need to specify '-dir' option")
-		return nil
-	}
-
-	var localMountedDir string
-	var remoteStorageMountedLocation *filer_pb.RemoteStorageLocation
-	for k, loc := range mappings.Mappings {
-		if strings.HasPrefix(*dir, k) {
-			localMountedDir, remoteStorageMountedLocation = k, loc
-		}
-	}
-	if localMountedDir == "" {
-		jsonPrintln(writer, mappings)
-		fmt.Fprintf(writer, "%s is not mounted\n", *dir)
-		return nil
-	}
-
-	// find remote storage configuration
-	remoteStorageConf, err := filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, remoteStorageMountedLocation.Name)
-	if err != nil {
-		return err
+	localMountedDir, remoteStorageMountedLocation, remoteStorageConf, detectErr := detectMountInfo(commandEnv, writer, *dir)
+	if detectErr != nil{
+		return detectErr
 	}
 
 	// pull content from remote

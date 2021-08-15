@@ -30,8 +30,12 @@ func MapFullPathToRemoteStorageLocation(localMountedDir util.FullPath, remoteMou
 		Bucket: remoteMountedLocation.Bucket,
 		Path:   remoteMountedLocation.Path,
 	}
-	remoteLocation.Path += string(fp)[len(localMountedDir):]
+	remoteLocation.Path = string(util.FullPath(remoteLocation.Path).Child(string(fp)[len(localMountedDir):]))
 	return remoteLocation
+}
+
+func MapRemoteStorageLocationPathToFullPath(localMountedDir util.FullPath, remoteMountedLocation *filer_pb.RemoteStorageLocation, remoteLocationPath string)(fp util.FullPath)  {
+	return localMountedDir.Child(remoteLocationPath[len(remoteMountedLocation.Path):])
 }
 
 func DownloadToLocal(filerClient filer_pb.FilerClient, remoteConf *filer_pb.RemoteConf, remoteLocation *filer_pb.RemoteStorageLocation, parent util.FullPath, entry *filer_pb.Entry) error {

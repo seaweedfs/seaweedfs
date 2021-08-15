@@ -70,11 +70,7 @@ func (s *s3RemoteStorageClient) Traverse(remote *filer_pb.RemoteStorageLocation,
 		listErr := s.conn.ListObjectsV2Pages(listInput, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
 			for _, content := range page.Contents {
 				key := *content.Key
-				if len(pathKey) == 0 {
-					key = "/" + key
-				} else {
-					key = key[len(pathKey):]
-				}
+				key = "/" + key
 				dir, name := util.FullPath(key).DirAndName()
 				if err := visitFn(dir, name, false, &filer_pb.RemoteEntry{
 					RemoteMtime: (*content.LastModified).Unix(),

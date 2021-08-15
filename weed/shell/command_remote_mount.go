@@ -67,8 +67,8 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return fmt.Errorf("find configuration for %s: %v", *remote, err)
 	}
 
-	// pull metadata from remote
-	if err = c.pullMetadata(commandEnv, writer, *dir, *nonEmpty, remoteConf, remoteStorageLocation); err != nil {
+	// sync metadata from remote
+	if err = c.syncMetadata(commandEnv, writer, *dir, *nonEmpty, remoteConf, remoteStorageLocation); err != nil {
 		return fmt.Errorf("pull metadata: %v", err)
 	}
 
@@ -111,7 +111,7 @@ func (c *commandRemoteMount) findRemoteStorageConfiguration(commandEnv *CommandE
 
 }
 
-func (c *commandRemoteMount) pullMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *filer_pb.RemoteConf, remote *filer_pb.RemoteStorageLocation) error {
+func (c *commandRemoteMount) syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *filer_pb.RemoteConf, remote *filer_pb.RemoteStorageLocation) error {
 
 	// find existing directory, and ensure the directory is empty
 	err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
@@ -146,58 +146,9 @@ func (c *commandRemoteMount) pullMetadata(commandEnv *CommandEnv, writer io.Writ
 		return err
 	}
 
-	// visit remote storage
-	remoteStorage, err := remote_storage.GetRemoteStorage(remoteConf)
-	if err != nil {
-		return err
-	}
-
-	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		ctx := context.Background()
-		err = remoteStorage.Traverse(remote, func(remoteDir, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
-			localDir := dir + remoteDir
-			println(util.NewFullPath(localDir, name))
-
-			lookupResponse, lookupErr := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
-				Directory: localDir,
-				Name:      name,
-			})
-			var existingEntry *filer_pb.Entry
-			if lookupErr != nil {
-				if lookupErr != filer_pb.ErrNotFound {
-					return lookupErr
-				}
-			} else {
-				existingEntry = lookupResponse.Entry
-			}
-
-			if existingEntry == nil {
-				_, createErr := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
-					Directory: localDir,
-					Entry: &filer_pb.Entry{
-						Name:        name,
-						IsDirectory: isDirectory,
-						Attributes: &filer_pb.FuseAttributes{
-							FileSize: uint64(remoteEntry.RemoteSize),
-							Mtime:    remoteEntry.RemoteMtime,
-							FileMode: uint32(0644),
-						},
-						RemoteEntry: remoteEntry,
-					},
-				})
-				return createErr
-			} else {
-				if existingEntry.RemoteEntry == nil || existingEntry.RemoteEntry.RemoteETag != remoteEntry.RemoteETag {
-					return doSaveRemoteEntry(client, localDir, existingEntry, remoteEntry)
-				}
-			}
-			return nil
-		})
-		return err
-	})
-
-	if err != nil {
-		return err
+	// pull metadata from remote
+	if err = pullMetadata(commandEnv, writer, util.FullPath(dir), remote, util.FullPath(dir), remoteConf); err != nil {
+		return fmt.Errorf("cache content data: %v", err)
 	}
 
 	return nil

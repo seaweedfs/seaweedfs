@@ -31,10 +31,14 @@ func (fp FullPath) Name() string {
 
 func (fp FullPath) Child(name string) FullPath {
 	dir := string(fp)
-	if strings.HasSuffix(dir, "/") {
-		return FullPath(dir + name)
+	noPrefix := name
+	if strings.HasPrefix(name, "/") {
+		noPrefix = name[1:]
 	}
-	return FullPath(dir + "/" + name)
+	if strings.HasSuffix(dir, "/") {
+		return FullPath(dir + noPrefix)
+	}
+	return FullPath(dir + "/" + noPrefix)
 }
 
 func (fp FullPath) AsInode() uint64 {
