@@ -66,4 +66,5 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 		return true
 	})
 
+	return nil
 }
