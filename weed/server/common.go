@@ -34,6 +34,10 @@ func init() {
 }
 
 func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) (err error) {
+	if httpStatus == http.StatusNoContent {
+		return
+	}
+
 	var bytes []byte
 	if obj != nil {
 		if r.FormValue("pretty") != "" {
