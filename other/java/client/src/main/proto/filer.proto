@@ -96,7 +96,7 @@ message ListEntriesResponse {
 
 message RemoteEntry {
     string storage_name = 1;
-    int64 last_local_sync_ts_ms = 2;
+    int64 last_local_sync_ts_ns = 2;
     string remote_e_tag = 3;
     int64 remote_mtime = 4;
     int64 remote_size = 5;
