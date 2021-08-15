@@ -95,6 +95,9 @@ func listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (
 }
 
 func jsonPrintln(writer io.Writer, message proto.Message) error {
+	if message == nil {
+		return nil
+	}
 	m := jsonpb.Marshaler{
 		EmitDefaults: false,
 		Indent:       "  ",

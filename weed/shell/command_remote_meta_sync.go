@@ -54,8 +54,9 @@ func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer
 		return nil
 	}
 
-	localMountedDir, remoteStorageMountedLocation, remoteStorageConf, detectErr := detectMountInfo(commandEnv, writer, *dir)
+	mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, detectErr := detectMountInfo(commandEnv, writer, *dir)
 	if detectErr != nil{
+		jsonPrintln(writer, mappings)
 		return detectErr
 	}
 
@@ -67,14 +68,13 @@ func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer
 	return nil
 }
 
-func detectMountInfo(commandEnv *CommandEnv, writer io.Writer, dir string) (string, *filer_pb.RemoteStorageLocation, *filer_pb.RemoteConf, error) {
+func detectMountInfo(commandEnv *CommandEnv, writer io.Writer, dir string) (*filer_pb.RemoteStorageMapping, string, *filer_pb.RemoteStorageLocation, *filer_pb.RemoteConf, error) {
 	mappings, listErr := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
 	if listErr != nil {
-		return "", nil, nil, listErr
+		return nil, "", nil, nil, listErr
 	}
 	if dir == "" {
-		jsonPrintln(writer, mappings)
-		return "", nil, nil, fmt.Errorf("need to specify '-dir' option")
+		return mappings, "", nil, nil, fmt.Errorf("need to specify '-dir' option")
 	}
 
 	var localMountedDir string
@@ -85,17 +85,16 @@ func detectMountInfo(commandEnv *CommandEnv, writer io.Writer, dir string) (stri
 		}
 	}
 	if localMountedDir == "" {
-		jsonPrintln(writer, mappings)
-		return "", nil, nil, fmt.Errorf("%s is not mounted", dir)
+		return mappings, localMountedDir, remoteStorageMountedLocation, nil, fmt.Errorf("%s is not mounted", dir)
 	}
 
 	// find remote storage configuration
 	remoteStorageConf, err := filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, remoteStorageMountedLocation.Name)
 	if err != nil {
-		return "", nil, nil, err
+		return mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, err
 	}
 
-	return localMountedDir, remoteStorageMountedLocation, remoteStorageConf, nil
+	return mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, nil
 }
 
 /*

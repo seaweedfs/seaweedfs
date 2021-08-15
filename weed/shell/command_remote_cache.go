@@ -52,8 +52,9 @@ func (c *commandRemoteCache) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
-	localMountedDir, remoteStorageMountedLocation, remoteStorageConf, detectErr := detectMountInfo(commandEnv, writer, *dir)
+	mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, detectErr := detectMountInfo(commandEnv, writer, *dir)
 	if detectErr != nil{
+		jsonPrintln(writer, mappings)
 		return detectErr
 	}
 
