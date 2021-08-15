@@ -132,9 +132,10 @@ func NewChunkStreamReader(filerClient filer_pb.FilerClient, chunks []*filer_pb.F
 }
 
 func (c *ChunkStreamReader) ReadAt(p []byte, off int64) (n int, err error) {
-	if err = c.prepareBufferFor(c.logicOffset); err != nil {
+	if err = c.prepareBufferFor(off); err != nil {
 		return
 	}
+	c.logicOffset = off
 	return c.Read(p)
 }
 
