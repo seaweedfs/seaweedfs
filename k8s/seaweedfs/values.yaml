@@ -4,7 +4,6 @@ global:
   registry: ""
   repository: ""
   imageName: chrislusf/seaweedfs
-  # imageTag: "2.50" - started using {.Chart.appVersion}
   imagePullPolicy: IfNotPresent
   imagePullSecrets: imagepullsecret
   restartPolicy: Always
@@ -175,8 +174,8 @@ volume:
   # Volume server's data center name
   dataCenter: null
 
-  # Redirect moved or non-local volumes. (default true)
-  readRedirect: true
+  # Redirect moved or non-local volumes. (default proxy)
+  readMode: proxy
 
   # Comma separated Ip addresses having write permission. No limit if empty.
   whiteList: null

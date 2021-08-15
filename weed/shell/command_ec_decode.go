@@ -223,21 +223,6 @@ func collectTopologyInfo(commandEnv *CommandEnv) (topoInfo *master_pb.TopologyIn
 
 }
 
-func collectEcShardInfos(topoInfo *master_pb.TopologyInfo, selectedCollection string, vid needle.VolumeId) (ecShardInfos []*master_pb.VolumeEcShardInformationMessage) {
-
-	eachDataNode(topoInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		if diskInfo, found := dn.DiskInfos[string(types.HardDriveType)]; found {
-			for _, v := range diskInfo.EcShardInfos {
-				if v.Collection == selectedCollection && v.Id == uint32(vid) {
-					ecShardInfos = append(ecShardInfos, v)
-				}
-			}
-		}
-	})
-
-	return
-}
-
 func collectEcShardIds(topoInfo *master_pb.TopologyInfo, selectedCollection string) (vids []needle.VolumeId) {
 
 	vidMap := make(map[uint32]bool)

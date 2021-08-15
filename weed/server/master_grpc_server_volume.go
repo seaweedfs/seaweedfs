@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/raft"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,12 +69,8 @@ func (ms *MasterServer) ProcessGrowRequest() {
 
 func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error) {
 
-	if !ms.Topo.IsLeader() {
-		return nil, raft.NotLeaderError
-	}
-
 	resp := &master_pb.LookupVolumeResponse{}
-	volumeLocations := ms.lookupVolumeId(req.VolumeIds, req.Collection)
+	volumeLocations := ms.lookupVolumeId(req.VolumeOrFileIds, req.Collection)
 
 	for _, result := range volumeLocations {
 		var locations []*master_pb.Location
@@ -83,10 +80,15 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 				PublicUrl: loc.PublicUrl,
 			})
 		}
+		var auth string
+		if strings.Contains(result.VolumeOrFileId, ",") { // this is a file id
+			auth = string(security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, result.VolumeOrFileId))
+		}
 		resp.VolumeIdLocations = append(resp.VolumeIdLocations, &master_pb.LookupVolumeResponse_VolumeIdLocation{
-			VolumeId:  result.VolumeId,
-			Locations: locations,
-			Error:     result.Error,
+			VolumeOrFileId: result.VolumeOrFileId,
+			Locations:      locations,
+			Error:          result.Error,
+			Auth:           auth,
 		})
 	}
 
@@ -143,7 +145,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		maxTimeout = time.Second * 10
 		startTime  = time.Now()
 	)
-	
+
 	for time.Now().Sub(startTime) < maxTimeout {
 		fid, count, dn, err := ms.Topo.PickForWrite(req.Count, option)
 		if err == nil {

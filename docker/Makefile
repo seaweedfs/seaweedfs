@@ -25,6 +25,9 @@ dev_tls: build certstrap
 dev_mount: build
 	docker-compose -f compose/local-mount-compose.yml -p seaweedfs up
 
+run_image: build
+	docker run --rm -ti --device /dev/fuse --cap-add SYS_ADMIN --entrypoint /bin/sh chrislusf/seaweedfs:local
+
 profile_mount: build
 	docker-compose -f compose/local-mount-profile-compose.yml -p seaweedfs up
 

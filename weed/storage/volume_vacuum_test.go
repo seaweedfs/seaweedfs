@@ -113,7 +113,7 @@ func TestCompaction(t *testing.T) {
 		}
 
 		n := newEmptyNeedle(uint64(i))
-		size, err := v.readNeedle(n, nil)
+		size, err := v.readNeedle(n, nil, nil)
 		if err != nil {
 			t.Fatalf("read file %d: %v", i, err)
 		}
@@ -129,7 +129,7 @@ func TestCompaction(t *testing.T) {
 }
 func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	n := newRandomNeedle(uint64(i))
-	_, size, _, err := v.writeNeedle2(n, false)
+	_, size, _, err := v.writeNeedle2(n, true, false)
 	if err != nil {
 		t.Fatalf("write file %d: %v", i, err)
 	}

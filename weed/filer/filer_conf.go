@@ -15,6 +15,7 @@ import (
 const (
 	DirectoryEtcRoot      = "/etc"
 	DirectoryEtcSeaweedFS = "/etc/seaweedfs"
+	DirectoryEtcRemote    = "/etc/remote"
 	FilerConfName         = "filer.conf"
 	IamConfigDirecotry    = "/etc/iam"
 	IamIdentityFile       = "identity.json"

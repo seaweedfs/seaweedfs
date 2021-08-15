@@ -30,7 +30,7 @@ jobs:
           time: '30s'
 
       - name: Set BUILD_TIME env
-        run: echo BUILD_TIME=$(date -u +%Y-%m-%d-%H-%M) >> ${GITHUB_ENV}
+        run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> ${GITHUB_ENV}
 
       - name: Go Release Binaries
         uses: wangyoucao577/go-release-action@v1.17

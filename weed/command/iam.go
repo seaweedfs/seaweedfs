@@ -49,6 +49,7 @@ func (iamopt *IamOptions) startIamServer() bool {
 		return false
 	}
 
+	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	for {
 		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {

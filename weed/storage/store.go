@@ -46,6 +46,7 @@ type Store struct {
 	DeletedVolumesChan  chan master_pb.VolumeShortInformationMessage
 	NewEcShardsChan     chan master_pb.VolumeEcShardInformationMessage
 	DeletedEcShardsChan chan master_pb.VolumeEcShardInformationMessage
+	isStopping          bool
 }
 
 func (s *Store) String() (str string) {
@@ -250,6 +251,11 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			}
 			if !deleteVolume {
 				collectionVolumeSize[v.Collection] += volumeMessage.Size
+			} else {
+				collectionVolumeSize[v.Collection] -= volumeMessage.Size
+				if collectionVolumeSize[v.Collection] <= 0 {
+					delete(collectionVolumeSize, v.Collection)
+				}
 			}
 
 			if _, exist := collectionVolumeReadOnlyCount[v.Collection]; !exist {
@@ -316,19 +322,23 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 }
 
+func (s *Store) SetStopping() {
+	s.isStopping = true
+}
+
 func (s *Store) Close() {
 	for _, location := range s.Locations {
 		location.Close()
 	}
 }
 
-func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, fsync bool) (isUnchanged bool, err error) {
+func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, checkCookie bool, fsync bool) (isUnchanged bool, err error) {
 	if v := s.findVolume(i); v != nil {
 		if v.IsReadOnly() {
 			err = fmt.Errorf("volume %d is read only", i)
 			return
 		}
-		_, _, isUnchanged, err = v.writeNeedle2(n, fsync)
+		_, _, isUnchanged, err = v.writeNeedle2(n, checkCookie, fsync && s.isStopping)
 		return
 	}
 	glog.V(0).Infoln("volume", i, "not found!")
@@ -346,9 +356,9 @@ func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (Size, e
 	return 0, fmt.Errorf("volume %d not found on %s:%d", i, s.Ip, s.Port)
 }
 
-func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle, readOption *ReadOption) (int, error) {
+func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle, readOption *ReadOption, onReadSizeFn func(size Size)) (int, error) {
 	if v := s.findVolume(i); v != nil {
-		return v.readNeedle(n, readOption)
+		return v.readNeedle(n, readOption, onReadSizeFn)
 	}
 	return 0, fmt.Errorf("volume %d not found", i)
 }

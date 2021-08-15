@@ -12,6 +12,7 @@ import (
 // onMetadataChangeEvent is triggered after filer processed change events from local or remote filers
 func (f *Filer) onMetadataChangeEvent(event *filer_pb.SubscribeMetadataResponse) {
 	f.maybeReloadFilerConfiguration(event)
+	f.maybeReloadRemoteStorageConfigurationAndMapping(event)
 	f.onBucketEvents(event)
 }
 
@@ -24,10 +25,14 @@ func (f *Filer) onBucketEvents(event *filer_pb.SubscribeMetadataResponse) {
 	}
 	if f.DirBucketsPath == event.Directory {
 		if message.OldEntry == nil && message.NewEntry != nil {
-			f.Store.OnBucketCreation(message.NewEntry.Name)
+			if message.NewEntry.IsDirectory {
+				f.Store.OnBucketCreation(message.NewEntry.Name)
+			}
 		}
 		if message.OldEntry != nil && message.NewEntry == nil {
-			f.Store.OnBucketDeletion(message.OldEntry.Name)
+			if message.OldEntry.IsDirectory {
+				f.Store.OnBucketDeletion(message.OldEntry.Name)
+			}
 		}
 	}
 }
@@ -79,4 +84,17 @@ func (f *Filer) LoadFilerConf() {
 		return
 	}
 	f.FilerConf = fc
+}
+
+////////////////////////////////////
+// load and maintain remote storages
+////////////////////////////////////
+func (f *Filer) LoadRemoteStorageConfAndMapping() {
+	if err := f.RemoteStorage.LoadRemoteStorageConfigurationsAndMapping(f); err != nil {
+		glog.Errorf("read remote conf and mapping: %v", err)
+		return
+	}
+}
+func (f *Filer) maybeReloadRemoteStorageConfigurationAndMapping(event *filer_pb.SubscribeMetadataResponse) {
+	// FIXME add reloading
 }

@@ -214,10 +214,6 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		Size: int64(entry.FileSize),
 	}
 
-	if entry.Extended == nil {
-		entry.Extended = make(map[string][]byte)
-	}
-
 	entry.Extended = SaveAmzMetaData(r, entry.Extended, false)
 
 	for k, v := range r.Header {

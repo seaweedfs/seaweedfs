@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	ManifestBatch = 1000
+	ManifestBatch = 10000
 )
 
 func HasChunkManifest(chunks []*filer_pb.FileChunk) bool {
@@ -39,9 +39,14 @@ func SeparateManifestChunks(chunks []*filer_pb.FileChunk) (manifestChunks, nonMa
 	return
 }
 
-func ResolveChunkManifest(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+func ResolveChunkManifest(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset, stopOffset int64) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
 	// TODO maybe parallel this
 	for _, chunk := range chunks {
+
+		if max(chunk.Offset, startOffset) >= min(chunk.Offset+int64(chunk.Size), stopOffset) {
+			continue
+		}
+
 		if !chunk.IsChunkManifest {
 			dataChunks = append(dataChunks, chunk)
 			continue
@@ -54,7 +59,7 @@ func ResolveChunkManifest(lookupFileIdFn wdclient.LookupFileIdFunctionType, chun
 
 		manifestChunks = append(manifestChunks, chunk)
 		// recursive
-		dchunks, mchunks, subErr := ResolveChunkManifest(lookupFileIdFn, resolvedChunks)
+		dchunks, mchunks, subErr := ResolveChunkManifest(lookupFileIdFn, resolvedChunks, startOffset, stopOffset)
 		if subErr != nil {
 			return chunks, nil, subErr
 		}
@@ -124,6 +129,49 @@ func retriedFetchChunkData(urlStrings []string, cipherKey []byte, isGzipped bool
 	}
 
 	return receivedData, err
+
+}
+
+func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int) (err error) {
+
+	var shouldRetry bool
+	var totalWritten int
+
+	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
+		for _, urlString := range urlStrings {
+			var localProcesed int
+			shouldRetry, err = util.ReadUrlAsStream(urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
+				if totalWritten > localProcesed {
+					toBeSkipped := totalWritten - localProcesed
+					if len(data) <= toBeSkipped {
+						localProcesed += len(data)
+						return // skip if already processed
+					}
+					data = data[toBeSkipped:]
+					localProcesed += toBeSkipped
+				}
+				writer.Write(data)
+				localProcesed += len(data)
+				totalWritten += len(data)
+			})
+			if !shouldRetry {
+				break
+			}
+			if err != nil {
+				glog.V(0).Infof("read %s failed, err: %v", urlString, err)
+			} else {
+				break
+			}
+		}
+		if err != nil && shouldRetry {
+			glog.V(0).Infof("retry reading in %v", waitTime)
+			time.Sleep(waitTime)
+		} else {
+			break
+		}
+	}
+
+	return err
 
 }
 

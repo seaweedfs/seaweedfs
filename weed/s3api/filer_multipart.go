@@ -35,6 +35,9 @@ func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInp
 			entry.Extended = make(map[string][]byte)
 		}
 		entry.Extended["key"] = []byte(*input.Key)
+		for k, v := range input.Metadata {
+			entry.Extended[k] = []byte(*v)
+		}
 	}); err != nil {
 		glog.Errorf("NewMultipartUpload error: %v", err)
 		return nil, s3err.ErrInternalError
@@ -65,6 +68,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	entries, _, err := s3a.list(uploadDirectory, "", "", false, 0)
 	if err != nil || len(entries) == 0 {
 		glog.Errorf("completeMultipartUpload %s %s error: %v, entries:%d", *input.Bucket, *input.UploadId, err, len(entries))
+		return nil, s3err.ErrNoSuchUpload
+	}
+
+	pentry, err := s3a.getEntry(s3a.genUploadsFolder(*input.Bucket), *input.UploadId)
+	if err != nil {
+		glog.Errorf("completeMultipartUpload %s %s error: %v", *input.Bucket, *input.UploadId, err)
 		return nil, s3err.ErrNoSuchUpload
 	}
 
@@ -103,7 +112,16 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		dirName = dirName[:len(dirName)-1]
 	}
 
-	err = s3a.mkFile(dirName, entryName, finalParts)
+	err = s3a.mkFile(dirName, entryName, finalParts, func(entry *filer_pb.Entry) {
+		if entry.Extended == nil {
+			entry.Extended = make(map[string][]byte)
+		}
+		for k, v := range pentry.Extended {
+			if k != "key" {
+				entry.Extended[k] = v
+			}
+		}
+	})
 
 	if err != nil {
 		glog.Errorf("completeMultipartUpload %s/%s error: %v", dirName, entryName, err)

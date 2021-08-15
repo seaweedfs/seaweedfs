@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/stretchr/testify/assert"
 	"testing"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -179,5 +181,16 @@ func TestBalance(t *testing.T) {
 	if err := balanceVolumeServers(nil, diskTypes, volumeReplicas, volumeServers, 30*1024*1024*1024, "ALL_COLLECTIONS", false); err != nil {
 		t.Errorf("balance: %v", err)
 	}
+
+}
+
+func TestVolumeSelection(t *testing.T) {
+	topologyInfo := parseOutput(topoData)
+
+	vids, err := collectVolumeIdsForTierChange(nil, topologyInfo, 1000, types.ToDiskType("hdd"), "", 20.0, 0)
+	if err != nil {
+		t.Errorf("collectVolumeIdsForTierChange: %v", err)
+	}
+	assert.Equal(t, 378, len(vids))
 
 }

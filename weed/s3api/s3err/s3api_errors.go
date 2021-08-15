@@ -15,11 +15,13 @@ type APIError struct {
 
 // RESTErrorResponse - error response format
 type RESTErrorResponse struct {
-	XMLName   xml.Name `xml:"Error" json:"-"`
-	Code      string   `xml:"Code" json:"Code"`
-	Message   string   `xml:"Message" json:"Message"`
-	Resource  string   `xml:"Resource" json:"Resource"`
-	RequestID string   `xml:"RequestId" json:"RequestId"`
+	XMLName    xml.Name `xml:"Error" json:"-"`
+	Code       string   `xml:"Code" json:"Code"`
+	Message    string   `xml:"Message" json:"Message"`
+	Resource   string   `xml:"Resource" json:"Resource"`
+	RequestID  string   `xml:"RequestId" json:"RequestId"`
+	Key        string   `xml:"Key,omitempty" json:"Key,omitempty"`
+	BucketName string   `xml:"BucketName,omitempty" json:"BucketName,omitempty"`
 
 	// Underlying HTTP status code for the returned error
 	StatusCode int `xml:"-" json:"-"`

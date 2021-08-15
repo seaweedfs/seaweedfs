@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/client_golang/prometheus/push"
-
-	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 var (
@@ -127,12 +127,12 @@ var (
 )
 
 func init() {
-
 	Gather.MustRegister(FilerRequestCounter)
 	Gather.MustRegister(FilerRequestHistogram)
 	Gather.MustRegister(FilerStoreCounter)
 	Gather.MustRegister(FilerStoreHistogram)
-	Gather.MustRegister(prometheus.NewGoCollector())
+	Gather.MustRegister(collectors.NewGoCollector())
+	Gather.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
 	Gather.MustRegister(VolumeServerRequestCounter)
 	Gather.MustRegister(VolumeServerRequestHistogram)
@@ -147,7 +147,6 @@ func init() {
 }
 
 func LoopPushingMetric(name, instance, addr string, intervalSeconds int) {
-
 	if addr == "" || intervalSeconds == 0 {
 		return
 	}
@@ -165,7 +164,6 @@ func LoopPushingMetric(name, instance, addr string, intervalSeconds int) {
 			intervalSeconds = 15
 		}
 		time.Sleep(time.Duration(intervalSeconds) * time.Second)
-
 	}
 }
 

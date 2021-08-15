@@ -46,6 +46,11 @@ func main() {
 	glog.MaxSize = 1024 * 1024 * 32
 	rand.Seed(time.Now().UnixNano())
 	flag.Usage = usage
+
+	if command.AutocompleteMain(commands) {
+		return
+	}
+
 	flag.Parse()
 
 	args := flag.Args()

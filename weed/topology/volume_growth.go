@@ -228,7 +228,7 @@ func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid
 				ReplicaPlacement: option.ReplicaPlacement,
 				Ttl:              option.Ttl,
 				Version:          needle.CurrentVersion,
-				DiskType:         string(option.DiskType),
+				DiskType:         option.DiskType.String(),
 			}
 			server.AddOrUpdateVolume(vi)
 			topo.RegisterVolumeLayout(vi, server)

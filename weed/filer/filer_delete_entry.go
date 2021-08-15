@@ -71,7 +71,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 
 	lastFileName := ""
 	includeLastFile := false
-	if !isDeletingBucket {
+	if !isDeletingBucket || !f.Store.CanDropWholeBucket() {
 		for {
 			entries, _, err := f.ListDirectoryEntries(ctx, entry.FullPath, lastFileName, includeLastFile, PaginationSize, "", "", "")
 			if err != nil {

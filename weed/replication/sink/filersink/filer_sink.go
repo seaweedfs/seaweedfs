@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"math"
 
 	"google.golang.org/grpc"
 
@@ -133,6 +134,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 				Attributes:  entry.Attributes,
 				Chunks:      replicatedChunks,
 				Content:     entry.Content,
+				RemoteEntry: entry.RemoteEntry,
 			},
 			IsFromOtherCluster: true,
 			Signatures:         signatures,
@@ -227,11 +229,11 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 
 }
 func compareChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, oldEntry, newEntry *filer_pb.Entry) (deletedChunks, newChunks []*filer_pb.FileChunk, err error) {
-	aData, aMeta, aErr := filer.ResolveChunkManifest(lookupFileIdFn, oldEntry.Chunks)
+	aData, aMeta, aErr := filer.ResolveChunkManifest(lookupFileIdFn, oldEntry.Chunks, 0, math.MaxInt64)
 	if aErr != nil {
 		return nil, nil, aErr
 	}
-	bData, bMeta, bErr := filer.ResolveChunkManifest(lookupFileIdFn, newEntry.Chunks)
+	bData, bMeta, bErr := filer.ResolveChunkManifest(lookupFileIdFn, newEntry.Chunks, 0, math.MaxInt64)
 	if bErr != nil {
 		return nil, nil, bErr
 	}

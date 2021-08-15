@@ -141,7 +141,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	var node fs.Node
 	if isDirectory {
 		node = dir.newDirectory(util.NewFullPath(dir.FullPath(), req.Name))
-		return node, nil, nil
+		return node, node, nil
 	}
 
 	node = dir.newFile(req.Name)
@@ -443,7 +443,10 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 	dir.wfs.handlesLock.Lock()
 	defer dir.wfs.handlesLock.Unlock()
 	inodeId := filePath.AsInode()
-	delete(dir.wfs.handles, inodeId)
+	if fh, ok := dir.wfs.handles[inodeId]; ok {
+		delete(dir.wfs.handles, inodeId)
+		fh.isDeleted = true
+	}
 
 	return nil
 

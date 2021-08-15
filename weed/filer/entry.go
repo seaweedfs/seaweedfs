@@ -42,6 +42,7 @@ type Entry struct {
 	HardLinkId      HardLinkId
 	HardLinkCounter int32
 	Content         []byte
+	Remote          *filer_pb.RemoteEntry
 }
 
 func (entry *Entry) Size() uint64 {
@@ -56,20 +57,55 @@ func (entry *Entry) Timestamp() time.Time {
 	}
 }
 
+func (entry *Entry) ShallowClone() *Entry {
+	if entry == nil {
+		return nil
+	}
+	newEntry := &Entry{}
+	newEntry.FullPath = entry.FullPath
+	newEntry.Attr = entry.Attr
+	newEntry.Chunks = entry.Chunks
+	newEntry.Extended = entry.Extended
+	newEntry.HardLinkId = entry.HardLinkId
+	newEntry.HardLinkCounter = entry.HardLinkCounter
+	newEntry.Content = entry.Content
+	newEntry.Remote = entry.Remote
+
+	return newEntry
+}
+
 func (entry *Entry) ToProtoEntry() *filer_pb.Entry {
 	if entry == nil {
 		return nil
 	}
-	return &filer_pb.Entry{
-		Name:            entry.FullPath.Name(),
-		IsDirectory:     entry.IsDirectory(),
-		Attributes:      EntryAttributeToPb(entry),
-		Chunks:          entry.Chunks,
-		Extended:        entry.Extended,
-		HardLinkId:      entry.HardLinkId,
-		HardLinkCounter: entry.HardLinkCounter,
-		Content:         entry.Content,
+	message := &filer_pb.Entry{}
+	message.Name = entry.FullPath.Name()
+	entry.ToExistingProtoEntry(message)
+	return message
+}
+
+func (entry *Entry) ToExistingProtoEntry(message *filer_pb.Entry) {
+	if entry == nil {
+		return
 	}
+	message.IsDirectory = entry.IsDirectory()
+	message.Attributes = EntryAttributeToPb(entry)
+	message.Chunks = entry.Chunks
+	message.Extended = entry.Extended
+	message.HardLinkId = entry.HardLinkId
+	message.HardLinkCounter = entry.HardLinkCounter
+	message.Content = entry.Content
+	message.RemoteEntry = entry.Remote
+}
+
+func FromPbEntryToExistingEntry(message *filer_pb.Entry, fsEntry *Entry) {
+	fsEntry.Attr = PbToEntryAttribute(message.Attributes)
+	fsEntry.Chunks = message.Chunks
+	fsEntry.Extended = message.Extended
+	fsEntry.HardLinkId = HardLinkId(message.HardLinkId)
+	fsEntry.HardLinkCounter = message.HardLinkCounter
+	fsEntry.Content = message.Content
+	fsEntry.Remote = message.RemoteEntry
 }
 
 func (entry *Entry) ToProtoFullEntry() *filer_pb.FullEntry {
@@ -83,26 +119,11 @@ func (entry *Entry) ToProtoFullEntry() *filer_pb.FullEntry {
 	}
 }
 
-func (entry *Entry) Clone() *Entry {
-	return &Entry{
-		FullPath:        entry.FullPath,
-		Attr:            entry.Attr,
-		Chunks:          entry.Chunks,
-		Extended:        entry.Extended,
-		HardLinkId:      entry.HardLinkId,
-		HardLinkCounter: entry.HardLinkCounter,
-	}
-}
-
 func FromPbEntry(dir string, entry *filer_pb.Entry) *Entry {
-	return &Entry{
-		FullPath:        util.NewFullPath(dir, entry.Name),
-		Attr:            PbToEntryAttribute(entry.Attributes),
-		Chunks:          entry.Chunks,
-		HardLinkId:      HardLinkId(entry.HardLinkId),
-		HardLinkCounter: entry.HardLinkCounter,
-		Content:         entry.Content,
-	}
+	t := &Entry{}
+	t.FullPath = util.NewFullPath(dir, entry.Name)
+	FromPbEntryToExistingEntry(entry, t)
+	return t
 }
 
 func maxUint64(x, y uint64) uint64 {

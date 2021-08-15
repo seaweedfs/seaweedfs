@@ -14,7 +14,7 @@ import (
 
 func (s *Store) DeleteEcShardNeedle(ecVolume *erasure_coding.EcVolume, n *needle.Needle, cookie types.Cookie) (int64, error) {
 
-	count, err := s.ReadEcShardNeedle(ecVolume.VolumeId, n)
+	count, err := s.ReadEcShardNeedle(ecVolume.VolumeId, n, nil)
 
 	if err != nil {
 		return 0, err

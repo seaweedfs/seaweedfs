@@ -2,12 +2,13 @@ package s3api
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	. "github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/filer"
+	. "github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc"
 )
@@ -44,6 +45,10 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// API Router
 	apiRouter := router.PathPrefix("/").Subrouter()
+
+	// Readiness Probe
+	apiRouter.Methods("GET").Path("/status").HandlerFunc(s3a.StatusHandler)
+
 	var routers []*mux.Router
 	if s3a.option.DomainName != "" {
 		domainNames := strings.Split(s3a.option.DomainName, ",")
@@ -132,6 +137,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	apiRouter.Methods("GET").Path("/").HandlerFunc(track(s3a.ListBucketsHandler, "LIST"))
 
 	// NotFound
-	apiRouter.NotFoundHandler = http.HandlerFunc(notFoundHandler)
+	apiRouter.NotFoundHandler = http.HandlerFunc(s3err.NotFoundHandler)
 
 }

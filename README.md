@@ -3,7 +3,7 @@
 
 [![Slack](https://img.shields.io/badge/slack-purple)](https://join.slack.com/t/seaweedfs/shared_invite/enQtMzI4MTMwMjU2MzA3LTEyYzZmZWYzOGQ3MDJlZWMzYmI0OTE4OTJiZjJjODBmMzUxNmYwODg0YjY3MTNlMjBmZDQ1NzQ5NDJhZWI2ZmY)
 [![Twitter](https://img.shields.io/twitter/follow/seaweedfs.svg?style=social&label=Follow)](https://twitter.com/intent/follow?screen_name=seaweedfs)
-[![Build Status](https://travis-ci.org/chrislusf/seaweedfs.svg?branch=master)](https://travis-ci.org/chrislusf/seaweedfs)
+[![Build Status](https://travis-ci.com/chrislusf/seaweedfs.svg?branch=master)](https://travis-ci.com/chrislusf/seaweedfs)
 [![GoDoc](https://godoc.org/github.com/chrislusf/seaweedfs/weed?status.svg)](https://godoc.org/github.com/chrislusf/seaweedfs/weed)
 [![Wiki](https://img.shields.io/badge/docs-wiki-blue.svg)](https://github.com/chrislusf/seaweedfs/wiki)
 [![Docker Pulls](https://img.shields.io/docker/pulls/chrislusf/seaweedfs?maxAge=4800)](https://hub.docker.com/r/chrislusf/seaweedfs/)
@@ -69,15 +69,15 @@ Table of Contents
 * [License](#license)
 
 
+## Quick Start for S3 API on Docker ##
+
+`docker run -p 8333:8333 chrislusf/seaweedfs server -s3`
+
 ## Quick Start with single binary ##
 * Download the latest binary from https://github.com/chrislusf/seaweedfs/releases and unzip a single binary file `weed` or `weed.exe`
 * Run `weed server -dir=/some/data/dir -s3` to start one master, one volume server, one filer, and one S3 gateway.
 
 Also, to increase capacity, just add more volume servers by running `weed volume -dir="/some/data/dir2" -mserver="<master_host>:9333" -port=8081` locally, or on a different machine, or on thousands of machines. That is it!
-
-## Quick Start for S3 API on Docker ##
-
-`docker run -p 8333:8333 chrislusf/seaweedfs server -s3`
 
 ## Introduction ##
 
@@ -146,6 +146,7 @@ Faster and Cheaper than direct cloud storage!
 * [WebDAV] accesses as a mapped drive on Mac and Windows, or from mobile devices.
 * [AES256-GCM Encrypted Storage][FilerDataEncryption] safely stores the encrypted data.
 * [Super Large Files][SuperLargeFiles] stores large or super large files in tens of TB.
+* [Cloud Data Accelerator][RemoteStorage] transparently read and write existing cloud data at local speed with content cache, metadata cache, and asynchronous write back.
 
 ## Kubernetes ##
 * [Kubernetes CSI Driver][SeaweedFsCsiDriver] A Container Storage Interface (CSI) Driver. [![Docker Pulls](https://img.shields.io/docker/pulls/chrislusf/seaweedfs-csi-driver.svg?maxAge=4800)](https://hub.docker.com/r/chrislusf/seaweedfs-csi-driver/)
@@ -168,6 +169,8 @@ Faster and Cheaper than direct cloud storage!
 [ActiveActiveAsyncReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Active-Active-cross-cluster-continuous-synchronization
 [FilerStoreReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Store-Replication
 [KeyLargeValueStore]: https://github.com/chrislusf/seaweedfs/wiki/Filer-as-a-Key-Large-Value-Store
+[RemoteStorage]: https://github.com/chrislusf/seaweedfs/wiki/Remote-Storage-Architecture
+
 
 [Back to TOC](#table-of-contents)
 
@@ -321,7 +324,7 @@ When requesting a file key, an optional "dataCenter" parameter can limit the ass
 
 [Back to TOC](#table-of-contents)
 
-## Architecture ##
+## Object Store Architecture ##
 
 Usually distributed file systems split each file into chunks, a central master keeps a mapping of filenames, chunk indices to chunk handles, and also which chunks each chunk server has.
 

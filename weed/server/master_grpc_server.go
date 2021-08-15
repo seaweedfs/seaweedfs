@@ -176,9 +176,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 // And clients gets the up-to-date list of volume locations
 func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServer) error {
 
-	req, err := stream.Recv()
-	if err != nil {
-		return err
+	req, recvErr := stream.Recv()
+	if recvErr != nil {
+		return recvErr
 	}
 
 	if !ms.Topo.IsLeader() {
@@ -195,8 +195,8 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	defer ms.deleteClient(clientName)
 
 	for _, message := range ms.Topo.ToVolumeLocations() {
-		if err := stream.Send(message); err != nil {
-			return err
+		if sendErr := stream.Send(message); sendErr != nil {
+			return sendErr
 		}
 	}
 
@@ -205,8 +205,8 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 			_, err := stream.Recv()
 			if err != nil {
 				glog.V(2).Infof("- client %v: %v", clientName, err)
-				stopChan <- true
-				break
+				close(stopChan)
+				return
 			}
 		}
 	}()
@@ -313,6 +313,8 @@ func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_
 		MetricsIntervalSeconds: uint32(ms.option.MetricsIntervalSec),
 		StorageBackends:        backend.ToPbStorageBackends(),
 		DefaultReplication:     ms.option.DefaultReplicaPlacement,
+		VolumeSizeLimitMB:      uint32(ms.option.VolumeSizeLimitMB),
+		VolumePreallocate:      ms.option.VolumePreallocate,
 		Leader:                 leader,
 	}
 

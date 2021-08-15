@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -85,8 +86,8 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 		err = fmt.Errorf("volume id %s not found", vid)
 	}
 	ret := operation.LookupResult{
-		VolumeId:  vid,
-		Locations: locations,
+		VolumeOrFileId: vid,
+		Locations:      locations,
 	}
 	if err != nil {
 		ret.Error = err.Error()
@@ -113,6 +114,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	if ms.shouldVolumeGrow(option) {
+		glog.V(0).Infof("dirAssign volume growth %v from %v", option.String(), r.RemoteAddr)
 		if ms.Topo.AvailableSpaceFor(option) <= 0 {
 			writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left for " + option.String()})
 			return
@@ -123,7 +125,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 			Count:  writableVolumeCount,
 			ErrCh:  errCh,
 		}
-		if err := <- errCh; err != nil {
+		if err := <-errCh; err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("cannot grow volume group! %v", err))
 			return
 		}

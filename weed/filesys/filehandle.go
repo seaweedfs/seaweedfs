@@ -33,11 +33,12 @@ type FileHandle struct {
 	Uid       uint32         // user ID of process making request
 	Gid       uint32         // group ID of process making request
 	writeOnly bool
+	isDeleted bool
 }
 
 func newFileHandle(file *File, uid, gid uint32, writeOnly bool) *FileHandle {
 	fh := &FileHandle{
-		f:          file,
+		f: file,
 		// dirtyPages: newContinuousDirtyPages(file, writeOnly),
 		dirtyPages: newTempFileDirtyPages(file, writeOnly),
 		Uid:        uid,
@@ -113,6 +114,16 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		return 0, io.EOF
 	}
 
+	if entry.IsInRemoteOnly() {
+		glog.V(4).Infof("download remote entry %s", fh.f.fullpath())
+		newEntry, err := fh.f.downloadRemoteEntry(entry)
+		if err != nil {
+			glog.V(1).Infof("download remote entry %s: %v", fh.f.fullpath(), err)
+			return 0, err
+		}
+		entry = newEntry
+	}
+
 	fileSize := int64(filer.FileSize(entry))
 	fileFullPath := fh.f.fullpath()
 
@@ -129,7 +140,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	var chunkResolveErr error
 	if fh.entryViewCache == nil {
-		fh.entryViewCache, chunkResolveErr = filer.NonOverlappingVisibleIntervals(fh.f.wfs.LookupFn(), entry.Chunks)
+		fh.entryViewCache, chunkResolveErr = filer.NonOverlappingVisibleIntervals(fh.f.wfs.LookupFn(), entry.Chunks, 0, math.MaxInt64)
 		if chunkResolveErr != nil {
 			return 0, fmt.Errorf("fail to resolve chunk manifest: %v", chunkResolveErr)
 		}
@@ -199,7 +210,9 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	fh.Lock()
 	defer fh.Unlock()
 
+	fh.f.wfs.handlesLock.Lock()
 	fh.f.isOpen--
+	fh.f.wfs.handlesLock.Unlock()
 
 	if fh.f.isOpen <= 0 {
 		fh.f.entry = nil
@@ -221,6 +234,11 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 	glog.V(4).Infof("Flush %v fh %d", fh.f.fullpath(), fh.handle)
+
+	if fh.isDeleted {
+		glog.V(4).Infof("Flush %v fh %d skip deleted", fh.f.fullpath(), fh.handle)
+		return nil
+	}
 
 	fh.Lock()
 	defer fh.Unlock()

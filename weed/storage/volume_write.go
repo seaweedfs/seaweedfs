@@ -91,7 +91,7 @@ func (v *Volume) asyncRequestAppend(request *needle.AsyncRequest) {
 	v.asyncRequestsChan <- request
 }
 
-func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size Size, isUnchanged bool, err error) {
+func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	actualSize := needle.GetActualSize(Size(len(n.Data)), v.Version())
 
@@ -103,10 +103,10 @@ func (v *Volume) syncWrite(n *needle.Needle) (offset uint64, size Size, isUnchan
 		return
 	}
 
-	return v.doWriteRequest(n)
+	return v.doWriteRequest(n, checkCookie)
 }
 
-func (v *Volume) writeNeedle2(n *needle.Needle, fsync bool) (offset uint64, size Size, isUnchanged bool, err error) {
+func (v *Volume) writeNeedle2(n *needle.Needle, checkCookie bool, fsync bool) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if n.Ttl == needle.EMPTY_TTL && v.Ttl != needle.EMPTY_TTL {
 		n.SetHasTtl()
@@ -114,7 +114,7 @@ func (v *Volume) writeNeedle2(n *needle.Needle, fsync bool) (offset uint64, size
 	}
 
 	if !fsync {
-		return v.syncWrite(n)
+		return v.syncWrite(n, checkCookie)
 	} else {
 		asyncRequest := needle.NewAsyncRequest(n, true)
 		// using len(n.Data) here instead of n.Size before n.Size is populated in n.Append()
@@ -127,7 +127,7 @@ func (v *Volume) writeNeedle2(n *needle.Needle, fsync bool) (offset uint64, size
 	}
 }
 
-func (v *Volume) doWriteRequest(n *needle.Needle) (offset uint64, size Size, isUnchanged bool, err error) {
+func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool) (offset uint64, size Size, isUnchanged bool, err error) {
 	// glog.V(4).Infof("writing needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	if v.isFileUnchanged(n) {
 		size = Size(n.DataSize)
@@ -142,6 +142,11 @@ func (v *Volume) doWriteRequest(n *needle.Needle) (offset uint64, size Size, isU
 		if existingNeedleReadErr != nil {
 			err = fmt.Errorf("reading existing needle: %v", existingNeedleReadErr)
 			return
+		}
+		if n.Cookie == 0 && !checkCookie {
+			// this is from batch deletion, and read back again when tailing a remote volume
+			// which only happens when checkCookie == false and fsync == false
+			n.Cookie = existingNeedle.Cookie
 		}
 		if existingNeedle.Cookie != n.Cookie {
 			glog.V(0).Infof("write cookie mismatch: existing %s, new %s",
@@ -271,7 +276,7 @@ func (v *Volume) startWorker() {
 
 			for i := 0; i < len(currentRequests); i++ {
 				if currentRequests[i].IsWriteRequest {
-					offset, size, isUnchanged, err := v.doWriteRequest(currentRequests[i].N)
+					offset, size, isUnchanged, err := v.doWriteRequest(currentRequests[i].N, true)
 					currentRequests[i].UpdateResult(offset, uint64(size), isUnchanged, err)
 				} else {
 					size, err := v.doDeleteRequest(currentRequests[i].N)

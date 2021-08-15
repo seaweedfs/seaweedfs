@@ -119,9 +119,7 @@ func WithCachedGrpcClient(fn func(*grpc.ClientConn) error, address string, opts 
 	}
 	executionErr := fn(vgc.ClientConn)
 	if executionErr != nil {
-		vgc.errCount++
-		if vgc.errCount > 3 ||
-			strings.Contains(executionErr.Error(), "transport") ||
+		if strings.Contains(executionErr.Error(), "transport") ||
 			strings.Contains(executionErr.Error(), "connection closed") {
 			grpcClientsLock.Lock()
 			if t, ok := grpcClients[address]; ok {
@@ -211,6 +209,21 @@ func WithMasterClient(master string, grpcDialOption grpc.DialOption, fn func(cli
 		return fn(client)
 	}, masterGrpcAddress, grpcDialOption)
 
+}
+
+func WithOneOfGrpcMasterClients(masterGrpcAddresses []string, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) (err error) {
+
+	for _, masterGrpcAddress := range masterGrpcAddresses {
+		err = WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
+			client := master_pb.NewSeaweedClient(grpcConnection)
+			return fn(client)
+		}, masterGrpcAddress, grpcDialOption)
+		if err == nil {
+			return nil
+		}
+	}
+
+	return err
 }
 
 func WithBrokerGrpcClient(brokerGrpcAddress string, grpcDialOption grpc.DialOption, fn func(client messaging_pb.SeaweedMessagingClient) error) error {

@@ -20,9 +20,10 @@ type ShellOptions struct {
 	Masters        *string
 	GrpcDialOption grpc.DialOption
 	// shell transient context
-	FilerHost string
-	FilerPort int64
-	Directory string
+	FilerHost    string
+	FilerPort    int64
+	FilerAddress string
+	Directory    string
 }
 
 type CommandEnv struct {
@@ -75,7 +76,7 @@ func (ce *CommandEnv) confirmIsLocked() error {
 		return nil
 	}
 
-	return fmt.Errorf("need to lock to continue")
+	return fmt.Errorf("need to run \"lock\" first to continue")
 
 }
 

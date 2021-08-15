@@ -31,16 +31,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 	}
 
 	return &filer_pb.LookupDirectoryEntryResponse{
-		Entry: &filer_pb.Entry{
-			Name:            req.Name,
-			IsDirectory:     entry.IsDirectory(),
-			Attributes:      filer.EntryAttributeToPb(entry),
-			Chunks:          entry.Chunks,
-			Extended:        entry.Extended,
-			HardLinkId:      entry.HardLinkId,
-			HardLinkCounter: entry.HardLinkCounter,
-			Content:         entry.Content,
-		},
+		Entry: entry.ToProtoEntry(),
 	}, nil
 }
 
@@ -66,16 +57,7 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, int64(paginationLimit), req.Prefix, "", "", func(entry *filer.Entry) bool {
 			hasEntries = true
 			if err = stream.Send(&filer_pb.ListEntriesResponse{
-				Entry: &filer_pb.Entry{
-					Name:            entry.Name(),
-					IsDirectory:     entry.IsDirectory(),
-					Chunks:          entry.Chunks,
-					Attributes:      filer.EntryAttributeToPb(entry),
-					Extended:        entry.Extended,
-					HardLinkId:      entry.HardLinkId,
-					HardLinkCounter: entry.HardLinkCounter,
-					Content:         entry.Content,
-				},
+				Entry: entry.ToProtoEntry(),
 			}); err != nil {
 				return false
 			}
@@ -161,15 +143,10 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		return &filer_pb.CreateEntryResponse{}, fmt.Errorf("CreateEntry cleanupChunks %s %s: %v", req.Directory, req.Entry.Name, err2)
 	}
 
-	createErr := fs.filer.CreateEntry(ctx, &filer.Entry{
-		FullPath:        util.JoinPath(req.Directory, req.Entry.Name),
-		Attr:            filer.PbToEntryAttribute(req.Entry.Attributes),
-		Chunks:          chunks,
-		Extended:        req.Entry.Extended,
-		HardLinkId:      filer.HardLinkId(req.Entry.HardLinkId),
-		HardLinkCounter: req.Entry.HardLinkCounter,
-		Content:         req.Entry.Content,
-	}, req.OExcl, req.IsFromOtherCluster, req.Signatures)
+	newEntry := filer.FromPbEntry(req.Directory, req.Entry)
+	newEntry.Chunks = chunks
+
+	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures)
 
 	if createErr == nil {
 		fs.filer.DeleteChunks(garbage)
@@ -196,35 +173,8 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("UpdateEntry cleanupChunks %s: %v", fullpath, err2)
 	}
 
-	newEntry := &filer.Entry{
-		FullPath:        util.JoinPath(req.Directory, req.Entry.Name),
-		Attr:            entry.Attr,
-		Extended:        req.Entry.Extended,
-		Chunks:          chunks,
-		HardLinkId:      filer.HardLinkId(req.Entry.HardLinkId),
-		HardLinkCounter: req.Entry.HardLinkCounter,
-		Content:         req.Entry.Content,
-	}
-
-	glog.V(3).Infof("updating %s: %+v, chunks %d: %v => %+v, chunks %d: %v, extended: %v => %v",
-		fullpath, entry.Attr, len(entry.Chunks), entry.Chunks,
-		req.Entry.Attributes, len(req.Entry.Chunks), req.Entry.Chunks,
-		entry.Extended, req.Entry.Extended)
-
-	if req.Entry.Attributes != nil {
-		if req.Entry.Attributes.Mtime != 0 {
-			newEntry.Attr.Mtime = time.Unix(req.Entry.Attributes.Mtime, 0)
-		}
-		if req.Entry.Attributes.FileMode != 0 {
-			newEntry.Attr.Mode = os.FileMode(req.Entry.Attributes.FileMode)
-		}
-		newEntry.Attr.Uid = req.Entry.Attributes.Uid
-		newEntry.Attr.Gid = req.Entry.Attributes.Gid
-		newEntry.Attr.Mime = req.Entry.Attributes.Mime
-		newEntry.Attr.UserName = req.Entry.Attributes.UserName
-		newEntry.Attr.GroupNames = req.Entry.Attributes.GroupName
-
-	}
+	newEntry := filer.FromPbEntry(req.Directory, req.Entry)
+	newEntry.Chunks = chunks
 
 	if filer.EqualEntry(entry, newEntry) {
 		return &filer_pb.UpdateEntryResponse{}, err
@@ -444,6 +394,7 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 		Signature:          fs.filer.Signature,
 		MetricsAddress:     fs.metricsAddress,
 		MetricsIntervalSec: int32(fs.metricsIntervalSec),
+		Version:            util.Version(),
 	}
 
 	glog.V(4).Infof("GetFilerConfiguration: %v", t)

@@ -144,17 +144,17 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		file.dirtyMetadata = true
 	}
 
-	if req.Valid.Mode() {
+	if req.Valid.Mode() && entry.Attributes.FileMode != uint32(req.Mode) {
 		entry.Attributes.FileMode = uint32(req.Mode)
 		file.dirtyMetadata = true
 	}
 
-	if req.Valid.Uid() {
+	if req.Valid.Uid() && entry.Attributes.Uid != req.Uid {
 		entry.Attributes.Uid = req.Uid
 		file.dirtyMetadata = true
 	}
 
-	if req.Valid.Gid() {
+	if req.Valid.Gid() && entry.Attributes.Gid != req.Gid {
 		entry.Attributes.Gid = req.Gid
 		file.dirtyMetadata = true
 	}
@@ -164,7 +164,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 		file.dirtyMetadata = true
 	}
 
-	if req.Valid.Mtime() {
+	if req.Valid.Mtime() && entry.Attributes.Mtime != req.Mtime.Unix() {
 		entry.Attributes.Mtime = req.Mtime.Unix()
 		file.dirtyMetadata = true
 	}
@@ -359,4 +359,31 @@ func (file *File) saveEntry(entry *filer_pb.Entry) error {
 
 func (file *File) getEntry() *filer_pb.Entry {
 	return file.entry
+}
+
+func (file *File) downloadRemoteEntry(entry *filer_pb.Entry) (*filer_pb.Entry, error) {
+	err := file.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		request := &filer_pb.DownloadToLocalRequest{
+			Directory: file.dir.FullPath(),
+			Name:      entry.Name,
+		}
+
+		glog.V(4).Infof("download entry: %v", request)
+		resp, err := client.DownloadToLocal(context.Background(), request)
+		if err != nil {
+			glog.Errorf("DownloadToLocal file %s/%s: %v", file.dir.FullPath(), file.Name, err)
+			return fuse.EIO
+		}
+
+		entry = resp.Entry
+
+		file.wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, resp.Entry))
+
+		file.dirtyMetadata = false
+
+		return nil
+	})
+
+	return entry, err
 }

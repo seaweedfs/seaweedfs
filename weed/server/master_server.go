@@ -26,15 +26,16 @@ import (
 )
 
 const (
-	SequencerType     = "master.sequencer.type"
-	SequencerEtcdUrls = "master.sequencer.sequencer_etcd_urls"
+	SequencerType        = "master.sequencer.type"
+	SequencerEtcdUrls    = "master.sequencer.sequencer_etcd_urls"
+	SequencerSnowflakeId = "master.sequencer.sequencer_snowflake_id"
 )
 
 type MasterOption struct {
 	Host              string
 	Port              int
 	MetaFolder        string
-	VolumeSizeLimitMB uint
+	VolumeSizeLimitMB uint32
 	VolumePreallocate bool
 	// PulseSeconds            int
 	DefaultReplicaPlacement string
@@ -43,6 +44,7 @@ type MasterOption struct {
 	DisableHttp             bool
 	MetricsAddress          string
 	MetricsIntervalSec      int
+	IsFollower              bool
 }
 
 type MasterServer struct {
@@ -97,7 +99,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 	ms := &MasterServer{
 		option:          option,
 		preallocateSize: preallocateSize,
-		vgCh:            make(chan *topology.VolumeGrowRequest, 1 << 6),
+		vgCh:            make(chan *topology.VolumeGrowRequest, 1<<6),
 		clientChans:     make(map[string]chan *master_pb.VolumeLocation),
 		grpcDialOption:  grpcDialOption,
 		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "master", option.Host, 0, "", peers),
@@ -144,7 +146,9 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 
 	ms.ProcessGrowRequest()
 
-	ms.startAdminScripts()
+	if !option.IsFollower {
+		ms.startAdminScripts()
+	}
 
 	return ms
 }
@@ -192,8 +196,8 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 			proxy.Transport = util.Transport
 			proxy.ServeHTTP(w, r)
 		} else {
-			// drop it to the floor
-			// writeJsonError(w, r, errors.New(ms.Topo.RaftServer.Name()+" does not know Leader yet:"+ms.Topo.RaftServer.Leader()))
+			// handle requests locally
+			f(w, r)
 		}
 	}
 }
@@ -227,6 +231,7 @@ func (ms *MasterServer) startAdminScripts() {
 	shellOptions.Masters = &masterAddress
 
 	shellOptions.FilerHost, shellOptions.FilerPort, err = util.ParseHostPort(filerHostPort)
+	shellOptions.FilerAddress = filerHostPort
 	shellOptions.Directory = "/"
 	if err != nil {
 		glog.V(0).Infof("failed to parse master.filer.default = %s : %v\n", filerHostPort, err)
@@ -293,7 +298,8 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 		}
 	case "snowflake":
 		var err error
-		seq, err = sequence.NewSnowflakeSequencer(fmt.Sprintf("%s:%d", option.Host, option.Port))
+		snowflakeId := v.GetInt(SequencerSnowflakeId)
+		seq, err = sequence.NewSnowflakeSequencer(fmt.Sprintf("%s:%d", option.Host, option.Port), snowflakeId)
 		if err != nil {
 			glog.Error(err)
 			seq = nil

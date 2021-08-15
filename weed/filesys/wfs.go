@@ -125,8 +125,6 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			glog.V(4).Infof("InvalidateEntry %s : %v", filePath, err)
 		}
 	})
-	startTime := time.Now()
-	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
 	grace.OnInterrupt(func() {
 		wfs.metaCache.Shutdown()
 	})
@@ -139,6 +137,11 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 
 	return wfs
+}
+
+func (wfs *WFS) StartBackgroundTasks() {
+	startTime := time.Now()
+	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
 }
 
 func (wfs *WFS) Root() (fs.Node, error) {
@@ -154,20 +157,21 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32, writeOnly bool) (file
 
 	wfs.handlesLock.Lock()
 	existingHandle, found := wfs.handles[inodeId]
-	wfs.handlesLock.Unlock()
-	if found && existingHandle != nil {
+	if found && existingHandle != nil && existingHandle.f.isOpen > 0 {
 		existingHandle.f.isOpen++
+		wfs.handlesLock.Unlock()
 		existingHandle.dirtyPages.SetWriteOnly(writeOnly)
-		glog.V(4).Infof("Acquired Handle %s open %d", fullpath, existingHandle.f.isOpen)
+		glog.V(4).Infof("Reuse AcquiredHandle %s open %d", fullpath, existingHandle.f.isOpen)
 		return existingHandle
 	}
+	wfs.handlesLock.Unlock()
 
 	entry, _ := file.maybeLoadEntry(context.Background())
 	file.entry = entry
 	fileHandle = newFileHandle(file, uid, gid, writeOnly)
-	file.isOpen++
 
 	wfs.handlesLock.Lock()
+	file.isOpen++
 	wfs.handles[inodeId] = fileHandle
 	wfs.handlesLock.Unlock()
 	fileHandle.handle = inodeId

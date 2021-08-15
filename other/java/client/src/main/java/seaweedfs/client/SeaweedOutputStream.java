@@ -32,10 +32,10 @@ public class SeaweedOutputStream extends OutputStream {
     private long lastTotalAppendOffset = 0;
     private ByteBuffer buffer;
     private long outputIndex;
-    private String replication = "000";
+    private String replication = "";
 
     public SeaweedOutputStream(FilerClient filerClient, final String fullpath) {
-        this(filerClient, fullpath, "000");
+        this(filerClient, fullpath, "");
     }
 
     public SeaweedOutputStream(FilerClient filerClient, final String fullpath, final String replication) {

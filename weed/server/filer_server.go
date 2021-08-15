@@ -30,11 +30,11 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer/mongodb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/mysql"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/mysql2"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/sqlite"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/postgres"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/postgres2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis2"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/sqlite"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/aws_sqs"
@@ -148,6 +148,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.filer.LoadBuckets()
 
 	fs.filer.LoadFilerConf()
+
+	fs.filer.LoadRemoteStorageConfAndMapping()
 
 	grace.OnInterrupt(func() {
 		fs.filer.Shutdown()

@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -30,7 +31,10 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 
 	sizeLimit := int64(fs.option.MaxMB) * 1024 * 1024
 
-	pu, err := needle.ParseUpload(r, sizeLimit)
+	bytesBuffer := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(bytesBuffer)
+
+	pu, err := needle.ParseUpload(r, sizeLimit, bytesBuffer)
 	uncompressedData := pu.Data
 	if pu.IsGzipped {
 		uncompressedData = pu.UncompressedData

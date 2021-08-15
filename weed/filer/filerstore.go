@@ -43,4 +43,5 @@ type FilerStore interface {
 type BucketAware interface {
 	OnBucketCreation(bucket string)
 	OnBucketDeletion(bucket string)
+	CanDropWholeBucket() bool
 }

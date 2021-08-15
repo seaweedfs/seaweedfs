@@ -3,14 +3,11 @@ package operation
 import (
 	"context"
 	"fmt"
-	"strings"
-
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type VolumeAssignRequest struct {
@@ -73,6 +70,10 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 			ret.Error = resp.Error
 			ret.Auth = security.EncodedJwt(resp.Auth)
 
+			if resp.Error != "" {
+				return fmt.Errorf("assignRequest: %v", resp.Error)
+			}
+
 			return nil
 
 		})
@@ -92,18 +93,28 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 	return ret, lastError
 }
 
-func LookupJwt(master string, fileId string) security.EncodedJwt {
+func LookupJwt(master string, grpcDialOption grpc.DialOption, fileId string) (token security.EncodedJwt) {
 
-	tokenStr := ""
+	WithMasterServerClient(master, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
-	if h, e := util.Head(fmt.Sprintf("http://%s/dir/lookup?fileId=%s", master, fileId)); e == nil {
-		bearer := h.Get("Authorization")
-		if len(bearer) > 7 && strings.ToUpper(bearer[0:6]) == "BEARER" {
-			tokenStr = bearer[7:]
+		resp, grpcErr := masterClient.LookupVolume(context.Background(), &master_pb.LookupVolumeRequest{
+			VolumeOrFileIds: []string{fileId},
+		})
+		if grpcErr != nil {
+			return grpcErr
 		}
-	}
 
-	return security.EncodedJwt(tokenStr)
+		if len(resp.VolumeIdLocations) == 0 {
+			return nil
+		}
+
+		token = security.EncodedJwt(resp.VolumeIdLocations[0].Auth)
+
+		return nil
+
+	})
+
+	return
 }
 
 type StorageOption struct {

@@ -2,10 +2,10 @@ package command
 
 import (
 	"fmt"
-	"strings"
-	"strconv"
-	"time"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 )
 
 func init() {
@@ -13,7 +13,7 @@ func init() {
 }
 
 type parameter struct {
-	name string
+	name  string
 	value string
 }
 
@@ -22,6 +22,8 @@ func runFuse(cmd *Command, args []string) bool {
 	rawArgsLen := len(rawArgs)
 	option := strings.Builder{}
 	options := []parameter{}
+	masterProcess := true
+	fusermountPath := ""
 
 	// first parameter
 	i := 0
@@ -40,7 +42,7 @@ func runFuse(cmd *Command, args []string) bool {
 				option.Reset()
 			}
 
-		// dash separator read option until next space
+			// dash separator read option until next space
 		} else if rawArgs[i] == '-' {
 			for i++; i < rawArgsLen && rawArgs[i] != ' '; i++ {
 				option.WriteByte(rawArgs[i])
@@ -48,25 +50,25 @@ func runFuse(cmd *Command, args []string) bool {
 			options = append(options, parameter{option.String(), "true"})
 			option.Reset()
 
-		// equal separator start option with pending value
+			// equal separator start option with pending value
 		} else if rawArgs[i] == '=' {
 			name := option.String()
 			option.Reset()
 
-			for i++; i < rawArgsLen && rawArgs[i] != ','; i++ {
+			for i++; i < rawArgsLen && rawArgs[i] != ',' && rawArgs[i] != ' '; i++ {
 				// double quote separator read option until next double quote
 				if rawArgs[i] == '"' {
 					for i++; i < rawArgsLen && rawArgs[i] != '"'; i++ {
 						option.WriteByte(rawArgs[i])
 					}
 
-				// single quote separator read option until next single quote
+					// single quote separator read option until next single quote
 				} else if rawArgs[i] == '\'' {
 					for i++; i < rawArgsLen && rawArgs[i] != '\''; i++ {
 						option.WriteByte(rawArgs[i])
 					}
 
-				// add chars before comma
+					// add chars before comma
 				} else if rawArgs[i] != ' ' {
 					option.WriteByte(rawArgs[i])
 				}
@@ -75,12 +77,12 @@ func runFuse(cmd *Command, args []string) bool {
 			options = append(options, parameter{name, option.String()})
 			option.Reset()
 
-		// comma separator just read current option
+			// comma separator just read current option
 		} else if rawArgs[i] == ',' {
 			options = append(options, parameter{option.String(), "true"})
 			option.Reset()
 
-		// what is not a separator fill option buffer
+			// what is not a separator fill option buffer
 		} else {
 			option.WriteByte(rawArgs[i])
 		}
@@ -97,7 +99,9 @@ func runFuse(cmd *Command, args []string) bool {
 	for i := 0; i < len(options); i++ {
 		parameter := options[i]
 
-		switch parameter.name  {
+		switch parameter.name {
+		case "child":
+			masterProcess = false
 		case "arg0":
 			mountOptions.dir = &parameter.value
 		case "filer":
@@ -105,7 +109,7 @@ func runFuse(cmd *Command, args []string) bool {
 		case "filer.path":
 			mountOptions.filerMountRootPath = &parameter.value
 		case "dirAutoCreate":
-			if parsed, err := strconv.ParseBool(parameter.value); err != nil {
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
 				mountOptions.dirAutoCreate = &parsed
 			} else {
 				panic(fmt.Errorf("dirAutoCreate: %s", err))
@@ -117,14 +121,14 @@ func runFuse(cmd *Command, args []string) bool {
 		case "disk":
 			mountOptions.diskType = &parameter.value
 		case "ttl":
-			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err != nil {
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
 				intValue := int(parsed)
 				mountOptions.ttlSec = &intValue
 			} else {
 				panic(fmt.Errorf("ttl: %s", err))
 			}
 		case "chunkSizeLimitMB":
-			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err != nil {
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
 				intValue := int(parsed)
 				mountOptions.chunkSizeLimitMB = &intValue
 			} else {
@@ -132,7 +136,7 @@ func runFuse(cmd *Command, args []string) bool {
 			}
 		case "concurrentWriters":
 			i++
-			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err != nil {
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
 				intValue := int(parsed)
 				mountOptions.concurrentWriters = &intValue
 			} else {
@@ -141,7 +145,7 @@ func runFuse(cmd *Command, args []string) bool {
 		case "cacheDir":
 			mountOptions.cacheDir = &parameter.value
 		case "cacheCapacityMB":
-			if parsed, err := strconv.ParseInt(parameter.value, 0, 64); err != nil {
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 64); err == nil {
 				mountOptions.cacheSizeMB = &parsed
 			} else {
 				panic(fmt.Errorf("cacheCapacityMB: %s", err))
@@ -149,7 +153,7 @@ func runFuse(cmd *Command, args []string) bool {
 		case "dataCenter":
 			mountOptions.dataCenter = &parameter.value
 		case "allowOthers":
-			if parsed, err := strconv.ParseBool(parameter.value); err != nil {
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
 				mountOptions.allowOthers = &parsed
 			} else {
 				panic(fmt.Errorf("allowOthers: %s", err))
@@ -157,7 +161,7 @@ func runFuse(cmd *Command, args []string) bool {
 		case "umask":
 			mountOptions.umaskString = &parameter.value
 		case "nonempty":
-			if parsed, err := strconv.ParseBool(parameter.value); err != nil {
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
 				mountOptions.nonempty = &parsed
 			} else {
 				panic(fmt.Errorf("nonempty: %s", err))
@@ -169,7 +173,7 @@ func runFuse(cmd *Command, args []string) bool {
 		case "map.gid":
 			mountOptions.gidMap = &parameter.value
 		case "readOnly":
-			if parsed, err := strconv.ParseBool(parameter.value); err != nil {
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
 				mountOptions.readOnly = &parsed
 			} else {
 				panic(fmt.Errorf("readOnly: %s", err))
@@ -179,17 +183,51 @@ func runFuse(cmd *Command, args []string) bool {
 		case "memprofile":
 			mountMemProfile = &parameter.value
 		case "readRetryTime":
-			if parsed, err := time.ParseDuration(parameter.value); err != nil {
+			if parsed, err := time.ParseDuration(parameter.value); err == nil {
 				mountReadRetryTime = &parsed
 			} else {
 				panic(fmt.Errorf("readRetryTime: %s", err))
 			}
+		case "fusermount.path":
+			fusermountPath = parameter.value
 		}
 	}
 
-	// I don't know why PATH environment variable is lost
-	if err := os.Setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin"); err != nil {
-		panic(fmt.Errorf("setenv: %s", err))
+	// the master start the child, release it then finish himself
+	if masterProcess {
+		arg0, err := os.Executable()
+		if err != nil {
+			panic(err)
+		}
+
+		argv := append(os.Args, "-o", "child")
+
+		attr := os.ProcAttr{}
+		attr.Env = os.Environ()
+
+		child, err := os.StartProcess(arg0, argv, &attr)
+
+		if err != nil {
+			panic(fmt.Errorf("master process can not start child process: %s", err))
+		}
+
+		err = child.Release()
+
+		if err != nil {
+			panic(fmt.Errorf("master process can not release child process: %s", err))
+		}
+
+		return true
+	}
+
+	if fusermountPath != "" {
+		if err := os.Setenv("PATH", fusermountPath); err != nil {
+			panic(fmt.Errorf("setenv: %s", err))
+		}
+	} else if os.Getenv("PATH") == "" {
+		if err := os.Setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin"); err != nil {
+			panic(fmt.Errorf("setenv: %s", err))
+		}
 	}
 
 	// just call "weed mount" command
@@ -198,7 +236,7 @@ func runFuse(cmd *Command, args []string) bool {
 
 var cmdFuse = &Command{
 	UsageLine: "fuse /mnt/mount/point -o \"filer=localhost:8888,filer.path=/\"",
-	Short: "Allow use weed with linux's mount command",
+	Short:     "Allow use weed with linux's mount command",
 	Long: `Allow use weed with linux's mount command
 
   You can use -t weed on mount command:

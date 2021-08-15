@@ -24,18 +24,21 @@ func init() {
 
 type options struct {
 	opt *gorocksdb.Options
+	bto *gorocksdb.BlockBasedTableOptions
 	ro  *gorocksdb.ReadOptions
 	wo  *gorocksdb.WriteOptions
 }
 
 func (opt *options) init() {
 	opt.opt = gorocksdb.NewDefaultOptions()
+	opt.bto = gorocksdb.NewDefaultBlockBasedTableOptions()
 	opt.ro = gorocksdb.NewDefaultReadOptions()
 	opt.wo = gorocksdb.NewDefaultWriteOptions()
 }
 
 func (opt *options) close() {
 	opt.opt.Destroy()
+	opt.bto.Destroy()
 	opt.ro.Destroy()
 	opt.wo.Destroy()
 }
@@ -68,6 +71,11 @@ func (store *RocksDBStore) initialize(dir string) (err error) {
 	store.opt.SetLevelCompactionDynamicLevelBytes(true)
 	store.opt.SetCompactionFilter(NewTTLFilter())
 	// store.opt.SetMaxBackgroundCompactions(2)
+
+	// https://github.com/tecbot/gorocksdb/issues/132
+	store.bto.SetFilterPolicy(gorocksdb.NewBloomFilterFull(8))
+	store.opt.SetBlockBasedTableFactory(store.bto)
+	// store.opt.EnableStatistics()
 
 	store.db, err = gorocksdb.OpenDb(store.opt, dir)
 

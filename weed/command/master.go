@@ -54,7 +54,7 @@ func init() {
 	m.volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
 	m.volumePreallocate = cmdMaster.Flag.Bool("volumePreallocate", false, "Preallocate disk space for volumes.")
 	// m.pulseSeconds = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
-	m.defaultReplication = cmdMaster.Flag.String("defaultReplication", "000", "Default replication type if not specified.")
+	m.defaultReplication = cmdMaster.Flag.String("defaultReplication", "", "Default replication type if not specified.")
 	m.garbageThreshold = cmdMaster.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
 	m.whiteList = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 	m.disableHttp = cmdMaster.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
@@ -198,7 +198,7 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		Host:              *m.ip,
 		Port:              *m.port,
 		MetaFolder:        *m.metaFolder,
-		VolumeSizeLimitMB: *m.volumeSizeLimitMB,
+		VolumeSizeLimitMB: uint32(*m.volumeSizeLimitMB),
 		VolumePreallocate: *m.volumePreallocate,
 		// PulseSeconds:            *m.pulseSeconds,
 		DefaultReplicaPlacement: *m.defaultReplication,

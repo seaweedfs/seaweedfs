@@ -32,7 +32,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	if s3a.iam.isEnabled() {
 		identity, s3Err = s3a.iam.authUser(r)
 		if s3Err != s3err.ErrNone {
-			writeErrorResponse(w, s3Err, r.URL)
+			s3err.WriteErrorResponse(w, s3Err, r)
 			return
 		}
 	}
@@ -42,7 +42,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	entries, _, err := s3a.list(s3a.option.BucketsPath, "", "", false, math.MaxInt32)
 
 	if err != nil {
-		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
+		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
 		return
 	}
 
@@ -69,7 +69,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 		Buckets: buckets,
 	}
 
-	writeSuccessResponseXML(w, encodeResponse(response))
+	writeSuccessResponseXML(w, response)
 }
 
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
@@ -95,14 +95,14 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		}
 		return nil
 	}); err != nil {
-		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
+		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
 		return
 	}
 	if exist, err := s3a.exists(s3a.option.BucketsPath, bucket, true); err == nil && exist {
 		errCode = s3err.ErrBucketAlreadyExists
 	}
 	if errCode != s3err.ErrNone {
-		writeErrorResponse(w, errCode, r.URL)
+		s3err.WriteErrorResponse(w, errCode, r)
 		return
 	}
 
@@ -118,7 +118,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	// create the folder for bucket, but lazily create actual collection
 	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, fn); err != nil {
 		glog.Errorf("PutBucketHandler mkdir: %v", err)
-		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
+		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
 		return
 	}
 
@@ -130,7 +130,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	bucket, _ := getBucketAndObject(r)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
-		writeErrorResponse(w, err, r.URL)
+		s3err.WriteErrorResponse(w, err, r)
 		return
 	}
 
@@ -152,11 +152,11 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	err = s3a.rm(s3a.option.BucketsPath, bucket, false, true)
 
 	if err != nil {
-		writeErrorResponse(w, s3err.ErrInternalError, r.URL)
+		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
 		return
 	}
 
-	writeResponse(w, http.StatusNoContent, nil, mimeNone)
+	s3err.WriteEmptyResponse(w, http.StatusNoContent)
 }
 
 func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request) {
@@ -164,7 +164,7 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 	bucket, _ := getBucketAndObject(r)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
-		writeErrorResponse(w, err, r.URL)
+		s3err.WriteErrorResponse(w, err, r)
 		return
 	}
 

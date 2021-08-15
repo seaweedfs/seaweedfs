@@ -1,8 +1,10 @@
 package shell
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -47,6 +49,17 @@ func (c *commandS3BucketDelete) Do(args []string, commandEnv *CommandEnv, writer
 	filerBucketsPath, err = readFilerBucketsPath(commandEnv)
 	if err != nil {
 		return fmt.Errorf("read buckets: %v", err)
+	}
+
+	// delete the collection directly first
+	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+		_, err = client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
+			Name: *bucketName,
+		})
+		return err
+	})
+	if err != nil {
+		return
 	}
 
 	return filer_pb.Remove(commandEnv, filerBucketsPath, *bucketName, false, true, true, false, nil)

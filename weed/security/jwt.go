@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	jwt "github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt"
 )
 
 type EncodedJwt string

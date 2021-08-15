@@ -40,13 +40,14 @@ type ChunkManifest struct {
 
 // seekable chunked file reader
 type ChunkedFileReader struct {
-	totalSize int64
-	chunkList []*ChunkInfo
-	master    string
-	pos       int64
-	pr        *io.PipeReader
-	pw        *io.PipeWriter
-	mutex     sync.Mutex
+	totalSize      int64
+	chunkList      []*ChunkInfo
+	master         string
+	pos            int64
+	pr             *io.PipeReader
+	pw             *io.PipeWriter
+	mutex          sync.Mutex
+	grpcDialOption grpc.DialOption
 }
 
 func (s ChunkList) Len() int           { return len(s) }
@@ -92,7 +93,7 @@ func (cm *ChunkManifest) DeleteChunks(masterFn GetMasterFn, usePublicUrl bool, g
 	return nil
 }
 
-func readChunkNeedle(fileUrl string, w io.Writer, offset int64) (written int64, e error) {
+func readChunkNeedle(fileUrl string, w io.Writer, offset int64, jwt string) (written int64, e error) {
 	req, err := http.NewRequest("GET", fileUrl, nil)
 	if err != nil {
 		return written, err
@@ -126,16 +127,17 @@ func readChunkNeedle(fileUrl string, w io.Writer, offset int64) (written int64, 
 	return io.Copy(w, resp.Body)
 }
 
-func NewChunkedFileReader(chunkList []*ChunkInfo, master string) *ChunkedFileReader {
+func NewChunkedFileReader(chunkList []*ChunkInfo, master string, grpcDialOption grpc.DialOption) *ChunkedFileReader {
 	var totalSize int64
 	for _, chunk := range chunkList {
 		totalSize += chunk.Size
 	}
 	sort.Sort(ChunkList(chunkList))
 	return &ChunkedFileReader{
-		totalSize: totalSize,
-		chunkList: chunkList,
-		master:    master,
+		totalSize:      totalSize,
+		chunkList:      chunkList,
+		master:         master,
+		grpcDialOption: grpcDialOption,
 	}
 }
 
@@ -174,13 +176,13 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 	for ; chunkIndex < len(cf.chunkList); chunkIndex++ {
 		ci := cf.chunkList[chunkIndex]
 		// if we need read date from local volume server first?
-		fileUrl, lookupError := LookupFileId(func() string {
+		fileUrl, jwt, lookupError := LookupFileId(func() string {
 			return cf.master
-		}, ci.Fid)
+		}, cf.grpcDialOption, ci.Fid)
 		if lookupError != nil {
 			return n, lookupError
 		}
-		if wn, e := readChunkNeedle(fileUrl, w, chunkStartOffset); e != nil {
+		if wn, e := readChunkNeedle(fileUrl, w, chunkStartOffset, jwt); e != nil {
 			return n, e
 		} else {
 			n += wn

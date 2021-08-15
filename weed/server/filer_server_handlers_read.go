@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -21,7 +22,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, isGetMethod bool) {
+func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
 
 	path := r.URL.Path
 	isForDirectory := strings.HasSuffix(path, "/")
@@ -40,7 +41,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 			stats.FilerRequestCounter.WithLabelValues("read.notfound").Inc()
 			w.WriteHeader(http.StatusNotFound)
 		} else {
-			glog.V(0).Infof("Internal %s: %v", path, err)
+			glog.Errorf("Internal %s: %v", path, err)
 			stats.FilerRequestCounter.WithLabelValues("read.internalerror").Inc()
 			w.WriteHeader(http.StatusInternalServerError)
 		}
@@ -101,7 +102,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 
 	//Seaweed custom header are not visible to Vue or javascript
 	seaweedHeaders := []string{}
-	for header, _ := range w.Header() {
+	for header := range w.Header() {
 		if strings.HasPrefix(header, "Seaweed-") {
 			seaweedHeaders = append(seaweedHeaders, header)
 		}
@@ -163,7 +164,20 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request, 
 			}
 			return err
 		}
-		err = filer.StreamContent(fs.filer.MasterClient, writer, entry.Chunks, offset, size)
+		chunks := entry.Chunks
+		if entry.IsInRemoteOnly() {
+			dir, name := entry.FullPath.DirAndName()
+			if resp, err := fs.DownloadToLocal(context.Background(), &filer_pb.DownloadToLocalRequest{
+				Directory: dir,
+				Name:      name,
+			}); err != nil {
+				return fmt.Errorf("cache %s: %v", entry.FullPath, err)
+			} else {
+				chunks = resp.Entry.Chunks
+			}
+		}
+
+		err = filer.StreamContent(fs.filer.MasterClient, writer, chunks, offset, size)
 		if err != nil {
 			glog.Errorf("failed to stream content %s: %v", r.URL, err)
 		}

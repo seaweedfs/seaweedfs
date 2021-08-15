@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net/http"
@@ -42,14 +43,17 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reqNeedle, originalSize, contentMd5, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes)
+	bytesBuffer := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(bytesBuffer)
+
+	reqNeedle, originalSize, contentMd5, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes, bytesBuffer)
 	if ne != nil {
 		writeJsonError(w, r, http.StatusBadRequest, ne)
 		return
 	}
 
 	ret := operation.UploadResult{}
-	isUnchanged, writeError := topology.ReplicatedWrite(vs.GetMaster, vs.store, volumeId, reqNeedle, r)
+	isUnchanged, writeError := topology.ReplicatedWrite(vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, reqNeedle, r)
 
 	// http 204 status code does not allow body
 	if writeError == nil && isUnchanged {
@@ -104,7 +108,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, ok := vs.store.ReadVolumeNeedle(volumeId, n, nil)
+	_, ok := vs.store.ReadVolumeNeedle(volumeId, n, nil, nil)
 	if ok != nil {
 		m := make(map[string]uint32)
 		m["size"] = 0
@@ -142,7 +146,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, err := topology.ReplicatedDelete(vs.GetMaster, vs.store, volumeId, n, r)
+	_, err := topology.ReplicatedDelete(vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, n, r)
 
 	writeDeleteResult(err, count, w, r)
 

@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"net/http"
 	"strings"
@@ -34,11 +35,11 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		stats.FilerRequestCounter.WithLabelValues("get").Inc()
-		fs.GetOrHeadHandler(w, r, true)
+		fs.GetOrHeadHandler(w, r)
 		stats.FilerRequestHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds())
 	case "HEAD":
 		stats.FilerRequestCounter.WithLabelValues("head").Inc()
-		fs.GetOrHeadHandler(w, r, false)
+		fs.GetOrHeadHandler(w, r)
 		stats.FilerRequestHistogram.WithLabelValues("head").Observe(time.Since(start).Seconds())
 	case "DELETE":
 		stats.FilerRequestCounter.WithLabelValues("delete").Inc()
@@ -53,11 +54,12 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		// wait until in flight data is less than the limit
 		contentLength := getContentLength(r)
 		fs.inFlightDataLimitCond.L.Lock()
-		for atomic.LoadInt64(&fs.inFlightDataSize) > fs.option.ConcurrentUploadLimit {
+		for fs.option.ConcurrentUploadLimit != 0 && atomic.LoadInt64(&fs.inFlightDataSize) > fs.option.ConcurrentUploadLimit {
+			glog.V(4).Infof("wait because inflight data %d > %d", fs.inFlightDataSize, fs.option.ConcurrentUploadLimit)
 			fs.inFlightDataLimitCond.Wait()
 		}
-		atomic.AddInt64(&fs.inFlightDataSize, contentLength)
 		fs.inFlightDataLimitCond.L.Unlock()
+		atomic.AddInt64(&fs.inFlightDataSize, contentLength)
 		defer func() {
 			atomic.AddInt64(&fs.inFlightDataSize, -contentLength)
 			fs.inFlightDataLimitCond.Signal()
@@ -93,11 +95,11 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 	switch r.Method {
 	case "GET":
 		stats.FilerRequestCounter.WithLabelValues("get").Inc()
-		fs.GetOrHeadHandler(w, r, true)
+		fs.GetOrHeadHandler(w, r)
 		stats.FilerRequestHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds())
 	case "HEAD":
 		stats.FilerRequestCounter.WithLabelValues("head").Inc()
-		fs.GetOrHeadHandler(w, r, false)
+		fs.GetOrHeadHandler(w, r)
 		stats.FilerRequestHistogram.WithLabelValues("head").Observe(time.Since(start).Seconds())
 	case "OPTIONS":
 		stats.FilerRequestCounter.WithLabelValues("options").Inc()

@@ -30,17 +30,17 @@ func (c *commandFsConfigure) Help() string {
 	fs.configure
 
 	# trying the changes and see the possible configuration file content
-	fs.configure -locationPrfix=/my/folder -collection=abc
-	fs.configure -locationPrfix=/my/folder -collection=abc -ttl=7d
+	fs.configure -locationPrefix=/my/folder -collection=abc
+	fs.configure -locationPrefix=/my/folder -collection=abc -ttl=7d
 
 	# example: configure adding only 1 physical volume for each bucket collection
-	fs.configure -locationPrfix=/buckets/ -volumeGrowthCount=1
+	fs.configure -locationPrefix=/buckets/ -volumeGrowthCount=1
 
 	# apply the changes
-	fs.configure -locationPrfix=/my/folder -collection=abc -apply
+	fs.configure -locationPrefix=/my/folder -collection=abc -apply
 
 	# delete the changes
-	fs.configure -locationPrfix=/my/folder -delete -apply
+	fs.configure -locationPrefix=/my/folder -delete -apply
 
 `
 }
@@ -62,18 +62,9 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
-	var buf bytes.Buffer
-	if err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		return filer.ReadEntry(commandEnv.MasterClient, client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, &buf)
-	}); err != nil && err != filer_pb.ErrNotFound {
+	fc, err := readFilerConf(commandEnv)
+	if err != nil {
 		return err
-	}
-
-	fc := filer.NewFilerConf()
-	if buf.Len() > 0 {
-		if err = fc.LoadFromBytes(buf.Bytes()); err != nil {
-			return err
-		}
 	}
 
 	if *locationPrefix != "" {
@@ -112,15 +103,17 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 		}
 	}
 
-	buf.Reset()
-	fc.ToText(&buf)
+	var buf2 bytes.Buffer
+	fc.ToText(&buf2)
 
-	fmt.Fprintf(writer, string(buf.Bytes()))
+	fmt.Fprintf(writer, string(buf2.Bytes()))
 	fmt.Fprintln(writer)
 
 	if *apply {
 
-		if err := filer.SaveAs(commandEnv.option.FilerHost, int(commandEnv.option.FilerPort), filer.DirectoryEtcSeaweedFS, filer.FilerConfName, "text/plain; charset=utf-8", &buf); err != nil {
+		if err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+			return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf2.Bytes())
+		}); err != nil && err != filer_pb.ErrNotFound {
 			return err
 		}
 
@@ -128,4 +121,21 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	return nil
 
+}
+
+func readFilerConf(commandEnv *CommandEnv) (*filer.FilerConf, error) {
+	var buf bytes.Buffer
+	if err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		return filer.ReadEntry(commandEnv.MasterClient, client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, &buf)
+	}); err != nil && err != filer_pb.ErrNotFound {
+		return nil, fmt.Errorf("read %s/%s: %v", filer.DirectoryEtcSeaweedFS, filer.FilerConfName, err)
+	}
+
+	fc := filer.NewFilerConf()
+	if buf.Len() > 0 {
+		if err := fc.LoadFromBytes(buf.Bytes()); err != nil {
+			return nil, fmt.Errorf("parse %s/%s: %v", filer.DirectoryEtcSeaweedFS, filer.FilerConfName, err)
+		}
+	}
+	return fc, nil
 }

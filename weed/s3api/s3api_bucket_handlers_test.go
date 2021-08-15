@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ func TestListBucketsHandler(t *testing.T) {
 		Buckets: buckets,
 	}
 
-	encoded := string(encodeResponse(response))
+	encoded := string(s3err.EncodeXMLResponse(response))
 	if encoded != expected {
 		t.Errorf("unexpected output: %s\nexpecting:%s", encoded, expected)
 	}

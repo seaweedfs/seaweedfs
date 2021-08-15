@@ -2,7 +2,6 @@ package weed_server
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/util/log_buffer"
 	"strings"
 	"time"
 
@@ -12,6 +11,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/util/log_buffer"
+)
+
+const (
+	// MaxUnsyncedEvents send empty notification with timestamp when certain amount of events have been filtered
+	MaxUnsyncedEvents = 1e3
 )
 
 func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
@@ -25,43 +30,54 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	lastReadTime := time.Unix(0, req.SinceNs)
 	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-	eachEventNotificationFn := fs.eachEventNotificationFn(req, stream, clientName, req.Signature)
+	eachEventNotificationFn := fs.eachEventNotificationFn(req, stream, clientName)
 
 	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
 
 	var processedTsNs int64
-	var err error
+	var readPersistedLogErr error
+	var readInMemoryLogErr error
 
 	for {
 
-		processedTsNs, err = fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn)
-		if err != nil {
-			return fmt.Errorf("reading from persisted logs: %v", err)
+		glog.V(4).Infof("read on disk %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
+
+		processedTsNs, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn)
+		if readPersistedLogErr != nil {
+			return fmt.Errorf("reading from persisted logs: %v", readPersistedLogErr)
 		}
 
 		if processedTsNs != 0 {
 			lastReadTime = time.Unix(0, processedTsNs)
+		} else {
+			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
+				time.Sleep(1127 * time.Millisecond)
+				continue
+			}
 		}
 
-		lastReadTime, err = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
+		glog.V(4).Infof("read in memory %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
+
+		lastReadTime, readInMemoryLogErr = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData("aggMeta:"+clientName, lastReadTime, func() bool {
 			fs.filer.MetaAggregator.ListenersLock.Lock()
 			fs.filer.MetaAggregator.ListenersCond.Wait()
 			fs.filer.MetaAggregator.ListenersLock.Unlock()
 			return true
 		}, eachLogEntryFn)
-		if err != nil {
-			if err == log_buffer.ResumeFromDiskError {
+		if readInMemoryLogErr != nil {
+			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
 				continue
 			}
-			glog.Errorf("processed to %v: %v", lastReadTime, err)
-			time.Sleep(3127 * time.Millisecond)
-			if err != log_buffer.ResumeError {
+			glog.Errorf("processed to %v: %v", lastReadTime, readInMemoryLogErr)
+			if readInMemoryLogErr != log_buffer.ResumeError {
 				break
 			}
 		}
+
+		time.Sleep(1127 * time.Millisecond)
 	}
 
-	return err
+	return readInMemoryLogErr
 
 }
 
@@ -76,46 +92,52 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	lastReadTime := time.Unix(0, req.SinceNs)
 	glog.V(0).Infof(" %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-	eachEventNotificationFn := fs.eachEventNotificationFn(req, stream, clientName, req.Signature)
+	eachEventNotificationFn := fs.eachEventNotificationFn(req, stream, clientName)
 
 	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
 
 	var processedTsNs int64
-	var err error
+	var readPersistedLogErr error
+	var readInMemoryLogErr error
 
 	for {
 		// println("reading from persisted logs ...")
-		processedTsNs, err = fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn)
-		if err != nil {
-			return fmt.Errorf("reading from persisted logs: %v", err)
+		glog.V(0).Infof("read on disk %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
+		processedTsNs, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn)
+		if readPersistedLogErr != nil {
+			return fmt.Errorf("reading from persisted logs: %v", readPersistedLogErr)
 		}
 
 		if processedTsNs != 0 {
 			lastReadTime = time.Unix(0, processedTsNs)
+		} else {
+			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
+				time.Sleep(1127 * time.Millisecond)
+				continue
+			}
 		}
-		// glog.V(0).Infof("after local log reads, %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-		// println("reading from in memory logs ...")
+		glog.V(0).Infof("read in memory %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-		lastReadTime, err = fs.filer.LocalMetaLogBuffer.LoopProcessLogData(lastReadTime, func() bool {
+		lastReadTime, readInMemoryLogErr = fs.filer.LocalMetaLogBuffer.LoopProcessLogData("localMeta:"+clientName, lastReadTime, func() bool {
 			fs.listenersLock.Lock()
 			fs.listenersCond.Wait()
 			fs.listenersLock.Unlock()
 			return true
 		}, eachLogEntryFn)
-		if err != nil {
-			if err == log_buffer.ResumeFromDiskError {
+		if readInMemoryLogErr != nil {
+			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
 				continue
 			}
-			glog.Errorf("processed to %v: %v", lastReadTime, err)
-			time.Sleep(3127 * time.Millisecond)
-			if err != log_buffer.ResumeError {
+			glog.Errorf("processed to %v: %v", lastReadTime, readInMemoryLogErr)
+			time.Sleep(1127 * time.Millisecond)
+			if readInMemoryLogErr != log_buffer.ResumeError {
 				break
 			}
 		}
 	}
 
-	return err
+	return readInMemoryLogErr
 
 }
 
@@ -135,12 +157,25 @@ func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotificati
 	}
 }
 
-func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer, clientName string, clientSignature int32) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
-	return func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer, clientName string) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+	filtered := 0
 
+	return func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+		defer func() {
+			if filtered > MaxUnsyncedEvents {
+				if err := stream.Send(&filer_pb.SubscribeMetadataResponse{
+					EventNotification: &filer_pb.EventNotification{},
+					TsNs:              tsNs,
+				}); err == nil {
+					filtered = 0
+				}
+			}
+		}()
+
+		filtered++
 		foundSelf := false
 		for _, sig := range eventNotification.Signatures {
-			if sig == clientSignature && clientSignature != 0 {
+			if sig == req.Signature && req.Signature != 0 {
 				return nil
 			}
 			if sig == fs.filer.Signature {
@@ -187,6 +222,7 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 			glog.V(0).Infof("=> client %v: %+v", clientName, err)
 			return err
 		}
+		filtered = 0
 		return nil
 	}
 }
