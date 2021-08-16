@@ -237,10 +237,25 @@ func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
 
 	// need to seek to a different chunk
 	currentChunkIndex := sort.Search(len(c.chunkViews), func(i int) bool {
-		return c.chunkViews[i].LogicOffset <= offset
+		return offset < c.chunkViews[i].LogicOffset
 	})
 	if currentChunkIndex == len(c.chunkViews) {
-		return io.EOF
+		// not found
+		if c.chunkViews[0].LogicOffset <= offset {
+			currentChunkIndex = 0
+		} else if c.chunkViews[len(c.chunkViews)-1].LogicOffset <= offset {
+			currentChunkIndex = len(c.chunkViews) -1
+		} else {
+			return io.EOF
+		}
+	} else if currentChunkIndex > 0 {
+		if c.chunkViews[currentChunkIndex-1].LogicOffset <= offset {
+			currentChunkIndex -= 1
+		} else {
+			return fmt.Errorf("unexpected1 offset %d", offset)
+		}
+	} else {
+		return fmt.Errorf("unexpected2 offset %d", offset)
 	}
 
 	// positioning within the new chunk
