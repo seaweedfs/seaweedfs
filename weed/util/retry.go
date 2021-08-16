@@ -42,10 +42,10 @@ func RetryForever(name string, job func() error, onErrFn func(err error) bool) {
 		if onErrFn(err) {
 			if strings.Contains(err.Error(), "transport") {
 				glog.V(0).Infof("retry %s: err: %v", name, err)
-				time.Sleep(waitTime)
-				if waitTime < RetryWaitTime {
-					waitTime += waitTime / 2
-				}
+			}
+			time.Sleep(waitTime)
+			if waitTime < RetryWaitTime {
+				waitTime += waitTime / 2
 			}
 			continue
 		}
