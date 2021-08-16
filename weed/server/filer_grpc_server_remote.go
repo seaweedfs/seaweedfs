@@ -148,6 +148,10 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 		})
 	}
 
+	if fetchAndWriteErr != nil {
+		return nil, fetchAndWriteErr
+	}
+
 	garbage := entry.Chunks
 
 	newEntry := entry.ShallowClone()
