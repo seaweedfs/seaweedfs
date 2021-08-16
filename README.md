@@ -169,7 +169,7 @@ Faster and Cheaper than direct cloud storage!
 [ActiveActiveAsyncReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Active-Active-cross-cluster-continuous-synchronization
 [FilerStoreReplication]: https://github.com/chrislusf/seaweedfs/wiki/Filer-Store-Replication
 [KeyLargeValueStore]: https://github.com/chrislusf/seaweedfs/wiki/Filer-as-a-Key-Large-Value-Store
-[RemoteStorage]: https://github.com/chrislusf/seaweedfs/wiki/Remote-Storage-Architecture
+[RemoteStorage]: https://github.com/chrislusf/seaweedfs/wiki/Cloud-Cache-Architecture
 
 
 [Back to TOC](#table-of-contents)
