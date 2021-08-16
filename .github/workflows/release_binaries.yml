@@ -42,7 +42,7 @@ jobs:
           project_path: weed
           binary_name: weed
           asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}"
-      - name: Go Release Binaries
+      - name: Go Release Large Disk Binaries
         uses: wangyoucao577/go-release-action@v1.19
         with:
           goversion: 1.16
