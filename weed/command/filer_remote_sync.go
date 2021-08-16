@@ -176,7 +176,6 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 			if resp.Directory == message.NewParentPath && message.OldEntry.Name == message.NewEntry.Name {
 				if filer.IsSameData(message.OldEntry, message.NewEntry) {
 					glog.V(2).Infof("update meta: %+v", resp)
-					glog.V(0).Infof("delete %s", remote_storage.FormatLocation(dest))
 					return client.UpdateFileMetadata(dest, message.OldEntry, message.NewEntry)
 				}
 			}

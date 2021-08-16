@@ -3,7 +3,6 @@ package filer
 import (
 	"bytes"
 	"fmt"
-	"github.com/golang/protobuf/proto"
 	"io"
 	"math"
 	"sort"
@@ -39,9 +38,14 @@ func isSameChunks(a, b []*filer_pb.FileChunk) bool {
 	if len(a) != len(b) {
 		return false
 	}
+	sort.Slice(a, func(i, j int) bool {
+		return strings.Compare(a[i].ETag, a[j].ETag) < 0
+	})
+	sort.Slice(b, func(i, j int) bool {
+		return strings.Compare(b[i].ETag, b[j].ETag) < 0
+	})
 	for i := 0; i < len(a); i++ {
-		x, y := a[i], b[i]
-		if !proto.Equal(x, y) {
+		if a[i].ETag != b[i].ETag {
 			return false
 		}
 	}
