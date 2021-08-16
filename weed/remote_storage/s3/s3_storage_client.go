@@ -145,9 +145,6 @@ func (s *s3RemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation, e
 		Bucket:               aws.String(loc.Bucket),
 		Key:                  aws.String(loc.Path[1:]),
 		Body:                 reader,
-		ACL:                  aws.String("private"),
-		ServerSideEncryption: aws.String("AES256"),
-		StorageClass:         aws.String("STANDARD_IA"),
 		Tagging:              aws.String(tags),
 	})
 
