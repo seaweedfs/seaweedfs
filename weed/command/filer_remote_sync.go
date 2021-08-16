@@ -146,8 +146,10 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 			}
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
 			if message.NewEntry.IsDirectory {
+				glog.V(0).Infof("mkdir  %s", remote_storage.FormatLocation(dest))
 				return client.WriteDirectory(dest, message.NewEntry)
 			}
+			glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
 			reader := filer.NewFileReader(filerSource, message.NewEntry)
 			remoteEntry, writeErr := client.WriteFile(dest, message.NewEntry, reader)
 			if writeErr != nil {
@@ -158,6 +160,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		if message.OldEntry != nil && message.NewEntry == nil {
 			glog.V(2).Infof("delete: %+v", resp)
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
+			glog.V(0).Infof("delete %s", remote_storage.FormatLocation(dest))
 			return client.DeleteFile(dest)
 		}
 		if message.OldEntry != nil && message.NewEntry != nil {
@@ -173,14 +176,17 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 			if resp.Directory == message.NewParentPath && message.OldEntry.Name == message.NewEntry.Name {
 				if filer.IsSameData(message.OldEntry, message.NewEntry) {
 					glog.V(2).Infof("update meta: %+v", resp)
+					glog.V(0).Infof("delete %s", remote_storage.FormatLocation(dest))
 					return client.UpdateFileMetadata(dest, message.OldEntry, message.NewEntry)
 				}
 			}
 			glog.V(2).Infof("update: %+v", resp)
+			glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
 			if err := client.DeleteFile(oldDest); err != nil {
 				return err
 			}
 			reader := filer.NewFileReader(filerSource, message.NewEntry)
+			glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
 			remoteEntry, writeErr := client.WriteFile(dest, message.NewEntry, reader)
 			if writeErr != nil {
 				return writeErr

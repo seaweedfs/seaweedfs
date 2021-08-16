@@ -27,6 +27,10 @@ func ParseLocation(remote string) (loc *filer_pb.RemoteStorageLocation) {
 	return
 }
 
+func FormatLocation(loc *filer_pb.RemoteStorageLocation) string {
+	return fmt.Sprintf("%s/%s%s", loc.Name, loc.Bucket, loc.Path)
+}
+
 type VisitFunc func(dir string, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error
 
 type RemoteStorageClient interface {
