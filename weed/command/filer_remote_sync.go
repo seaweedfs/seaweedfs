@@ -174,7 +174,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 			if resp.Directory == message.NewParentPath && message.OldEntry.Name == message.NewEntry.Name {
 				if isSameChunks(message.OldEntry.Chunks, message.NewEntry.Chunks) {
 					fmt.Printf("update meta: %+v\n", resp)
-					return client.UpdateFileMetadata(dest, message.NewEntry)
+					return client.UpdateFileMetadata(dest, message.OldEntry, message.NewEntry)
 				}
 			}
 			fmt.Printf("update: %+v\n", resp)

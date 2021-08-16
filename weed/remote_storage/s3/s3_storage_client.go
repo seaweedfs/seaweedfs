@@ -13,6 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
+	"reflect"
 )
 
 func init() {
@@ -187,13 +188,16 @@ func (s *s3RemoteStorageClient) readFileRemoteEntry(loc *filer_pb.RemoteStorageL
 
 }
 
-func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
-	tagging := toTagging(entry.Extended)
+func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *filer_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
+	if reflect.DeepEqual(oldEntry.Extended, newEntry.Extended) {
+		return nil
+	}
+	tagging := toTagging(newEntry.Extended)
 	if len(tagging.TagSet) > 0 {
 		_, err = s.conn.PutObjectTagging(&s3.PutObjectTaggingInput{
 			Bucket:  aws.String(loc.Bucket),
 			Key:     aws.String(loc.Path[1:]),
-			Tagging: toTagging(entry.Extended),
+			Tagging: toTagging(newEntry.Extended),
 		})
 	} else {
 		_, err = s.conn.DeleteObjectTagging(&s3.DeleteObjectTaggingInput{
