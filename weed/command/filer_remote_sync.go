@@ -11,7 +11,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/golang/protobuf/proto"
 	"google.golang.org/grpc"
 	"time"
 )
@@ -93,7 +92,7 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 		return followUpdatesAndUploadToRemote(&remoteSyncOptions, filerSource, dir, storageConf, remoteStorageMountLocation)
 	}, func(err error) bool {
 		if err != nil {
-			fmt.Printf("synchronize %s: %v\n", dir, err)
+			glog.Errorf("synchronize %s: %v", dir, err)
 		}
 		return true
 	})
@@ -137,19 +136,19 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 			return nil
 		}
 		if message.OldEntry == nil && message.NewEntry != nil {
-			if len(message.NewEntry.Chunks) == 0 {
+			if !filer.HasData(message.NewEntry) {
 				return nil
 			}
-			fmt.Printf("create: %+v\n", resp)
+			glog.V(2).Infof("create: %+v", resp)
 			if !shouldSendToRemote(message.NewEntry) {
-				fmt.Printf("skipping creating: %+v\n", resp)
+				glog.V(2).Infof("skipping creating: %+v", resp)
 				return nil
 			}
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
 			if message.NewEntry.IsDirectory {
 				return client.WriteDirectory(dest, message.NewEntry)
 			}
-			reader := filer.NewChunkStreamReader(filerSource, message.NewEntry.Chunks)
+			reader := filer.NewFileReader(filerSource, message.NewEntry)
 			remoteEntry, writeErr := client.WriteFile(dest, message.NewEntry, reader)
 			if writeErr != nil {
 				return writeErr
@@ -157,7 +156,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 			return updateLocalEntry(&remoteSyncOptions, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 		if message.OldEntry != nil && message.NewEntry == nil {
-			fmt.Printf("delete: %+v\n", resp)
+			glog.V(2).Infof("delete: %+v", resp)
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 			return client.DeleteFile(dest)
 		}
@@ -165,23 +164,23 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 			oldDest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
 			if !shouldSendToRemote(message.NewEntry) {
-				fmt.Printf("skipping updating: %+v\n", resp)
+				glog.V(2).Infof("skipping updating: %+v", resp)
 				return nil
 			}
 			if message.NewEntry.IsDirectory {
 				return client.WriteDirectory(dest, message.NewEntry)
 			}
 			if resp.Directory == message.NewParentPath && message.OldEntry.Name == message.NewEntry.Name {
-				if isSameChunks(message.OldEntry.Chunks, message.NewEntry.Chunks) {
-					fmt.Printf("update meta: %+v\n", resp)
+				if filer.IsSameData(message.OldEntry, message.NewEntry) {
+					glog.V(2).Infof("update meta: %+v", resp)
 					return client.UpdateFileMetadata(dest, message.OldEntry, message.NewEntry)
 				}
 			}
-			fmt.Printf("update: %+v\n", resp)
+			glog.V(2).Infof("update: %+v", resp)
 			if err := client.DeleteFile(oldDest); err != nil {
 				return err
 			}
-			reader := filer.NewChunkStreamReader(filerSource, message.NewEntry.Chunks)
+			reader := filer.NewFileReader(filerSource, message.NewEntry)
 			remoteEntry, writeErr := client.WriteFile(dest, message.NewEntry, reader)
 			if writeErr != nil {
 				return writeErr
@@ -210,19 +209,6 @@ func toRemoteStorageLocation(mountDir, sourcePath util.FullPath, remoteMountLoca
 		Bucket: remoteMountLocation.Bucket,
 		Path:   string(dest),
 	}
-}
-
-func isSameChunks(a, b []*filer_pb.FileChunk) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		x, y := a[i], b[i]
-		if !proto.Equal(x, y) {
-			return false
-		}
-	}
-	return true
 }
 
 func shouldSendToRemote(entry *filer_pb.Entry) bool {

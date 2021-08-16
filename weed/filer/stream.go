@@ -3,6 +3,7 @@ package filer
 import (
 	"bytes"
 	"fmt"
+	"github.com/golang/protobuf/proto"
 	"io"
 	"math"
 	"sort"
@@ -15,6 +16,44 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
+
+func HasData(entry *filer_pb.Entry) bool {
+
+	if len(entry.Content) > 0 {
+		return true
+	}
+
+	return len(entry.Chunks) > 0
+}
+
+func IsSameData(a, b *filer_pb.Entry) bool {
+
+	if len(a.Content) > 0 || len(b.Content) > 0 {
+		return bytes.Equal(a.Content, b.Content)
+	}
+
+	return isSameChunks(a.Chunks, b.Chunks)
+}
+
+func isSameChunks(a, b []*filer_pb.FileChunk) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		x, y := a[i], b[i]
+		if !proto.Equal(x, y) {
+			return false
+		}
+	}
+	return true
+}
+
+func NewFileReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry) io.Reader {
+	if len(entry.Content) > 0 {
+		return bytes.NewReader(entry.Content)
+	}
+	return NewChunkStreamReader(filerClient, entry.Chunks)
+}
 
 func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
 
