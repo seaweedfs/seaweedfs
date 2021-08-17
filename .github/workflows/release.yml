@@ -35,7 +35,7 @@ jobs:
       - name: Go Release Binaries
         uses: wangyoucao577/go-release-action@v1.17
         with:
-          goversion: 1.16
+          goversion: 1.17
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
@@ -52,7 +52,7 @@ jobs:
       - name: Go Release Binaries
         uses: wangyoucao577/go-release-action@v1.17
         with:
-          goversion: 1.16
+          goversion: 1.17
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
