@@ -16,7 +16,7 @@ RUN \
     # Install SeaweedFS and Supercronic ( for cron job mode )
     apk add --no-cache --virtual build-dependencies --update wget curl ca-certificates && \
     apk add fuse && \
-    wget -P /tmp https://github.com/$(curl -s -L https://github.com/chrislusf/seaweedfs/releases/${RELEASE} | egrep -o "chrislusf/seaweedfs/releases/download/.*/linux_$ARCH.tar.gz") && \
+    wget -P /tmp https://github.com/$(curl -s -L https://github.com/chrislusf/seaweedfs/releases/${RELEASE} | egrep -o "chrislusf/seaweedfs/releases/download/.*/linux_$ARCH.tar.gz" | head -n 1) && \
     tar -C /usr/bin/ -xzvf /tmp/linux_$ARCH.tar.gz && \
     curl -fsSLO "$SUPERCRONIC_URL" && \
     echo "${SUPERCRONIC_SHA1SUM}  ${SUPERCRONIC}" | sha1sum -c - && \
