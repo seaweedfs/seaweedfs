@@ -57,7 +57,7 @@ require (
 	github.com/pquerna/cachecontrol v0.1.0
 	github.com/prometheus/client_golang v1.11.0
 	github.com/rcrowley/go-metrics v0.0.0-20190826022208-cac0b30c2563 // indirect
-	github.com/seaweedfs/fuse v1.1.9
+	github.com/seaweedfs/fuse v1.2.0
 	github.com/seaweedfs/goexif v1.0.2
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
@@ -84,7 +84,7 @@ require (
 	gocloud.dev/pubsub/rabbitpubsub v0.20.0
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
 	golang.org/x/net v0.0.0-20210813160813-60bc85c4be6d
-	golang.org/x/sys v0.0.0-20210603081109-ebe580a85c40
+	golang.org/x/sys v0.0.0-20210817142637-7d9622a276b7
 	golang.org/x/tools v0.0.0-20201124115921-2c860bdd6e78
 	google.golang.org/api v0.26.0
 	google.golang.org/grpc v1.29.1
