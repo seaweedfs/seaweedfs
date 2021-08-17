@@ -45,7 +45,6 @@ require (
 	github.com/karlseguin/ccache/v2 v2.0.7
 	github.com/klauspost/compress v1.10.9 // indirect
 	github.com/klauspost/cpuid v1.2.1 // indirect
-	github.com/klauspost/crc32 v1.2.0
 	github.com/klauspost/reedsolomon v1.9.2
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.0
@@ -82,7 +81,7 @@ require (
 	gocloud.dev v0.20.0
 	gocloud.dev/pubsub/natspubsub v0.20.0
 	gocloud.dev/pubsub/rabbitpubsub v0.20.0
-	golang.org/x/image v0.0.0-20200119044424-58c23975cae1 // indirect
+	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
 	golang.org/x/net v0.0.0-20201202161906-c7110b5ffcbb
 	golang.org/x/sys v0.0.0-20210603081109-ebe580a85c40
 	golang.org/x/tools v0.0.0-20201124115921-2c860bdd6e78
