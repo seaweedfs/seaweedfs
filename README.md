@@ -590,6 +590,7 @@ The text of this page is available for modification and reuse under the terms of
 
 [Back to TOC](#table-of-contents)
 
-## Stargazers over time ##
+## Stargazers over time
 
-[![Stargazers over time](https://starcharts.herokuapp.com/chrislusf/seaweedfs.svg)](https://starcharts.herokuapp.com/chrislusf/seaweedfs)
+[![Stargazers over time](https://starchart.cc/chrislusf/seaweedfs.svg)](https://starchart.cc/chrislusf/seaweedfs)
+
