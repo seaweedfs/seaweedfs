@@ -36,6 +36,9 @@ deps:
 build: deps
 	go build $(GO_FLAGS) -ldflags "$(LDFLAGS)" -o $(BINARY) $(SOURCE_DIR)
 
+gccgo_build: deps
+	go build $(GO_FLAGS) -ldflags "$(LDFLAGS)" -compiler=gccgo -tags gccgo,noasm -o $(BINARY) $(SOURCE_DIR)
+
 install: deps
 	go install $(GO_FLAGS) -ldflags "$(LDFLAGS)" $(SOURCE_DIR)
 
