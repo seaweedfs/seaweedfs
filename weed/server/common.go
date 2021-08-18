@@ -33,8 +33,21 @@ func init() {
 	go serverStats.Start()
 }
 
+// bodyAllowedForStatus is a copy of http.bodyAllowedForStatus non-exported function.
+func bodyAllowedForStatus(status int) bool {
+	switch {
+	case status >= 100 && status <= 199:
+		return false
+	case status == http.StatusNoContent:
+		return false
+	case status == http.StatusNotModified:
+		return false
+	}
+	return true
+}
+
 func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) (err error) {
-	if httpStatus == http.StatusNoContent {
+	if !bodyAllowedForStatus(httpStatus) {
 		return
 	}
 
