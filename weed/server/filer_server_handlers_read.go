@@ -142,6 +142,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	if rangeReq := r.Header.Get("Range"); rangeReq == "" {
 		ext := filepath.Ext(filename)
+		if len(ext) > 0 {
+			ext = strings.ToLower(ext)
+		}
 		width, height, mode, shouldResize := shouldResizeImages(ext, r)
 		if shouldResize {
 			data, err := filer.ReadAll(fs.filer.MasterClient, entry.Chunks)
