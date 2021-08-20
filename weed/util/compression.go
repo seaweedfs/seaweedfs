@@ -2,10 +2,7 @@ package util
 
 import (
 	"bytes"
-	"compress/flate"
-	"compress/gzip"
 	"fmt"
-	"io/ioutil"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -42,17 +39,21 @@ func MaybeDecompressData(input []byte) []byte {
 }
 
 func GzipData(input []byte) ([]byte, error) {
-	buf := new(bytes.Buffer)
-	w, _ := gzip.NewWriterLevel(buf, flate.BestSpeed)
-	if _, err := w.Write(input); err != nil {
-		glog.V(2).Infof("error gzip data: %v", err)
+	w := new(bytes.Buffer)
+	_, err := GzipStream(w, bytes.NewReader(input))
+	if err != nil {
 		return nil, err
 	}
-	if err := w.Close(); err != nil {
-		glog.V(2).Infof("error closing gzipped data: %v", err)
+	return w.Bytes(), nil
+}
+
+func ungzipData(input []byte) ([]byte, error) {
+	w := new(bytes.Buffer)
+	_, err := GunzipStream(w, bytes.NewReader(input))
+	if err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	return w.Bytes(), nil
 }
 
 func DecompressData(input []byte) ([]byte, error) {
@@ -65,17 +66,6 @@ func DecompressData(input []byte) ([]byte, error) {
 		}
 	*/
 	return input, UnsupportedCompression
-}
-
-func ungzipData(input []byte) ([]byte, error) {
-	buf := bytes.NewBuffer(input)
-	r, _ := gzip.NewReader(buf)
-	defer r.Close()
-	output, err := ioutil.ReadAll(r)
-	if err != nil {
-		glog.V(2).Infof("error ungzip data: %v", err)
-	}
-	return output, err
 }
 
 func IsGzippedContent(data []byte) bool {
