@@ -8,7 +8,6 @@ package bptree
  */
 type BpTree struct {
 	root *BpNode
-	size int
 }
 
 type loc_iterator func() (i int, leaf *BpNode, li loc_iterator)
@@ -16,12 +15,7 @@ type loc_iterator func() (i int, leaf *BpNode, li loc_iterator)
 func NewBpTree(node_size int) *BpTree {
 	return &BpTree{
 		root: NewLeaf(node_size, false),
-		size: 0,
 	}
-}
-
-func (self *BpTree) Size() int {
-	return self.size
 }
 
 func (self *BpTree) Has(key Hashable) bool {
@@ -52,7 +46,6 @@ func (self *BpTree) Add(key Hashable, value interface{}) (err error) {
 		return err
 	}
 	self.root = new_root
-	self.size += 1
 	return nil
 }
 
@@ -100,7 +93,6 @@ func (self *BpTree) RemoveWhere(key Hashable, where WhereFunc) (err error) {
 	} else {
 		self.root = new_root
 	}
-	self.size -= 1
 	return nil
 }
 

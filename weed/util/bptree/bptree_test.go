@@ -110,9 +110,6 @@ func TestAddHasCountFindIterateRemove(t *testing.T) {
 			if err != nil {
 				t.Error(err)
 			}
-			if bpt.Size() != (i + 1) {
-				t.Error("size was wrong", bpt.Size(), i+1)
-			}
 		}
 
 		for i, r := range recs {
@@ -236,9 +233,6 @@ func TestBpMap(t *testing.T) {
 			if err != nil {
 				t.Error(err)
 			}
-			if table.Size() != (i + 1) {
-				t.Error("size was wrong", table.Size(), i+1)
-			}
 		}
 
 		for _, r := range recs {
@@ -273,9 +267,6 @@ func TestBpMap(t *testing.T) {
 				} else if !(val.(String)).Equals(r.value) {
 					t.Error("wrong value")
 				}
-			}
-			if table.Size() != (len(recs) - (i + 1)) {
-				t.Error("size was wrong", table.Size(), (len(recs) - (i + 1)))
 			}
 		}
 	}

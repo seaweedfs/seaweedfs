@@ -32,12 +32,7 @@ type KVIterable interface {
 	Iterate() KVIterator
 }
 
-type Sized interface {
-	Size() int
-}
-
 type MapOperable interface {
-	Sized
 	Has(key Hashable) bool
 	Put(key Hashable, value interface{}) (err error)
 	Get(key Hashable) (value interface{}, err error)
