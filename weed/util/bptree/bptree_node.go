@@ -6,7 +6,6 @@ type BpNode struct {
 	pointers []*BpNode
 	next     *BpNode
 	prev     *BpNode
-	no_dup   bool
 }
 
 func NewInternal(size int) *BpNode {
@@ -19,14 +18,13 @@ func NewInternal(size int) *BpNode {
 	}
 }
 
-func NewLeaf(size int, no_dup bool) *BpNode {
+func NewLeaf(size int) *BpNode {
 	if size < 0 {
 		panic(NegativeSize())
 	}
 	return &BpNode{
 		keys:   make([]Hashable, 0, size),
 		values: make([]interface{}, 0, size),
-		no_dup: no_dup,
 	}
 }
 
@@ -276,13 +274,6 @@ func (self *BpNode) leaf_insert(key Hashable, value interface{}) (a, b *BpNode, 
 	if self.Internal() {
 		return nil, nil, BpTreeError("Expected a leaf node")
 	}
-	if self.no_dup {
-		i, has := self.find(key)
-		if has {
-			self.values[i] = value
-			return self, nil, nil
-		}
-	}
 	if self.Full() {
 		return self.leaf_split(key, value)
 	} else {
@@ -307,7 +298,7 @@ func (self *BpNode) leaf_split(key Hashable, value interface{}) (a, b *BpNode, e
 		return self.pure_leaf_split(key, value)
 	}
 	a = self
-	b = NewLeaf(self.NodeSize(), self.no_dup)
+	b = NewLeaf(self.NodeSize())
 	insert_linked_list_node(b, a, a.next)
 	balance_nodes(a, b)
 	if key.Less(b.keys[0]) {
@@ -339,7 +330,7 @@ func (self *BpNode) pure_leaf_split(key Hashable, value interface{}) (a, b *BpNo
 		return nil, nil, BpTreeError("Expected a pure leaf node")
 	}
 	if key.Less(self.keys[0]) {
-		a = NewLeaf(self.NodeSize(), self.no_dup)
+		a = NewLeaf(self.NodeSize())
 		b = self
 		if err := a.put_kv(key, value); err != nil {
 			return nil, nil, err
@@ -355,7 +346,7 @@ func (self *BpNode) pure_leaf_split(key Hashable, value interface{}) (a, b *BpNo
 			}
 			return a, nil, nil
 		} else {
-			b = NewLeaf(self.NodeSize(), self.no_dup)
+			b = NewLeaf(self.NodeSize())
 			if err := b.put_kv(key, value); err != nil {
 				return nil, nil, err
 			}

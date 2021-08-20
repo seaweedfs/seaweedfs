@@ -11,7 +11,7 @@ type BpMap BpTree
 
 func NewBpMap(node_size int) *BpMap {
 	return &BpMap{
-		root: NewLeaf(node_size, true),
+		root: NewLeaf(node_size),
 	}
 }
 
@@ -47,7 +47,7 @@ func (self *BpMap) Remove(key Hashable) (value interface{}, err error) {
 		return nil, err
 	}
 	if new_root == nil {
-		self.root = NewLeaf(ns, true)
+		self.root = NewLeaf(ns)
 	} else {
 		self.root = new_root
 	}
