@@ -9,6 +9,13 @@ import (
  */
 type BpMap BpTree
 
+func (self *BpMap) getRoot() *BpNode {
+	return self.root
+}
+func (self *BpMap) setRoot(root *BpNode) {
+	self.root = root
+}
+
 func NewBpMap(node_size int) *BpMap {
 	return &BpMap{
 		root: NewLeaf(node_size),
@@ -20,16 +27,16 @@ func (self *BpMap) Has(key Hashable) bool {
 }
 
 func (self *BpMap) Put(key Hashable, value interface{}) (err error) {
-	new_root, err := self.root.put(key, value)
+	new_root, err := self.getRoot().put(key, value)
 	if err != nil {
 		return err
 	}
-	self.root = new_root
+	self.setRoot(new_root)
 	return nil
 }
 
 func (self *BpMap) Get(key Hashable) (value interface{}, err error) {
-	j, l := self.root.get_start(key)
+	j, l := self.getRoot().get_start(key)
 	if l.keys[j].Equals(key) {
 		return l.values[j], nil
 	}
@@ -41,15 +48,15 @@ func (self *BpMap) Remove(key Hashable) (value interface{}, err error) {
 	if err != nil {
 		return nil, err
 	}
-	ns := self.root.NodeSize()
-	new_root, err := self.root.remove(key, func(value interface{}) bool { return true })
+	ns := self.getRoot().NodeSize()
+	new_root, err := self.getRoot().remove(key, func(value interface{}) bool { return true })
 	if err != nil {
 		return nil, err
 	}
 	if new_root == nil {
-		self.root = NewLeaf(ns)
+		self.setRoot(NewLeaf(ns))
 	} else {
-		self.root = new_root
+		self.setRoot(new_root)
 	}
 	return value, nil
 }

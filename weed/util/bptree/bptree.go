@@ -10,6 +10,13 @@ type BpTree struct {
 	root *BpNode
 }
 
+func (self *BpTree) getRoot() *BpNode {
+	return self.root
+}
+func (self *BpTree) setRoot(root *BpNode) {
+	self.root = root
+}
+
 type loc_iterator func() (i int, leaf *BpNode, li loc_iterator)
 
 func NewBpTree(node_size int) *BpTree {
@@ -19,24 +26,24 @@ func NewBpTree(node_size int) *BpTree {
 }
 
 func (self *BpTree) Has(key Hashable) bool {
-	if len(self.root.keys) == 0 {
+	if len(self.getRoot().keys) == 0 {
 		return false
 	}
-	j, l := self.root.get_start(key)
+	j, l := self.getRoot().get_start(key)
 	return l.keys[j].Equals(key)
 }
 
 func (self *BpTree) Add(key Hashable, value interface{}) (err error) {
-	new_root, err := self.root.put(key, value)
+	new_root, err := self.getRoot().put(key, value)
 	if err != nil {
 		return err
 	}
-	self.root = new_root
+	self.setRoot(new_root)
 	return nil
 }
 
 func (self *BpTree) Replace(key Hashable, where WhereFunc, value interface{}) (err error) {
-	li := self.root.forward(key, key)
+	li := self.getRoot().forward(key, key)
 	for i, leaf, next := li(); next != nil; i, leaf, next = next() {
 		if where(leaf.values[i]) {
 			leaf.values[i] = value
@@ -52,9 +59,9 @@ func (self *BpTree) Find(key Hashable) (kvi KVIterator) {
 func (self *BpTree) Range(from, to Hashable) (kvi KVIterator) {
 	var li loc_iterator
 	if !to.Less(from) {
-		li = self.root.forward(from, to)
+		li = self.getRoot().forward(from, to)
 	} else {
-		li = self.root.backward(from, to)
+		li = self.getRoot().backward(from, to)
 	}
 	kvi = func() (key Hashable, value interface{}, next KVIterator) {
 		var i int
@@ -69,21 +76,21 @@ func (self *BpTree) Range(from, to Hashable) (kvi KVIterator) {
 }
 
 func (self *BpTree) RemoveWhere(key Hashable, where WhereFunc) (err error) {
-	ns := self.root.NodeSize()
-	new_root, err := self.root.remove(key, where)
+	ns := self.getRoot().NodeSize()
+	new_root, err := self.getRoot().remove(key, where)
 	if err != nil {
 		return err
 	}
 	if new_root == nil {
-		self.root = NewLeaf(ns)
+		self.setRoot(NewLeaf(ns))
 	} else {
-		self.root = new_root
+		self.setRoot(new_root)
 	}
 	return nil
 }
 
 func (self *BpTree) Keys() (ki KIterator) {
-	li := self.root.all()
+	li := self.getRoot().all()
 	var prev Equatable
 	ki = func() (key Hashable, next KIterator) {
 		var i int
@@ -110,7 +117,7 @@ func (self *BpTree) Items() (vi KIterator) {
 }
 
 func (self *BpTree) Iterate() (kvi KVIterator) {
-	li := self.root.all()
+	li := self.getRoot().all()
 	kvi = func() (key Hashable, value interface{}, next KVIterator) {
 		var i int
 		var leaf *BpNode
@@ -124,7 +131,7 @@ func (self *BpTree) Iterate() (kvi KVIterator) {
 }
 
 func (self *BpTree) Backward() (kvi KVIterator) {
-	li := self.root.all_backward()
+	li := self.getRoot().all_backward()
 	kvi = func() (key Hashable, value interface{}, next KVIterator) {
 		var i int
 		var leaf *BpNode
