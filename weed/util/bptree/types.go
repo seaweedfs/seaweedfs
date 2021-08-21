@@ -25,26 +25,26 @@ func NegativeSize() error {
 	return errors.New("negative size")
 }
 
-type Iterator func() (item interface{}, next Iterator)
+type Iterator func() (item ItemValue, next Iterator)
 type KIterator func() (key Hashable, next KIterator)
-type KVIterator func() (key Hashable, value interface{}, next KVIterator)
+type KVIterator func() (key Hashable, value ItemValue, next KVIterator)
 type KVIterable interface {
 	Iterate() KVIterator
 }
 
 type MapOperable interface {
 	Has(key Hashable) bool
-	Put(key Hashable, value interface{}) (err error)
-	Get(key Hashable) (value interface{}, err error)
-	Remove(key Hashable) (value interface{}, err error)
+	Put(key Hashable, value ItemValue) (err error)
+	Get(key Hashable) (value ItemValue, err error)
+	Remove(key Hashable) (value ItemValue, err error)
 }
 
-type WhereFunc func(value interface{}) bool
+type WhereFunc func(value ItemValue) bool
 
 func MakeValuesIterator(obj KVIterable) Iterator {
 	kv_iterator := obj.Iterate()
 	var v_iterator Iterator
-	v_iterator = func() (value interface{}, next Iterator) {
+	v_iterator = func() (value ItemValue, next Iterator) {
 		_, value, kv_iterator = kv_iterator()
 		if kv_iterator == nil {
 			return nil, nil
@@ -58,7 +58,7 @@ func MakeItemsIterator(obj KVIterable) (kit KIterator) {
 	kv_iterator := obj.Iterate()
 	kit = func() (item Hashable, next KIterator) {
 		var key Hashable
-		var value interface{}
+		var value ItemValue
 		key, value, kv_iterator = kv_iterator()
 		if kv_iterator == nil {
 			return nil, nil
@@ -70,7 +70,7 @@ func MakeItemsIterator(obj KVIterable) (kit KIterator) {
 
 type MapEntry struct {
 	Key   Hashable
-	Value interface{}
+	Value ItemValue
 }
 
 func (m *MapEntry) Equals(other Equatable) bool {

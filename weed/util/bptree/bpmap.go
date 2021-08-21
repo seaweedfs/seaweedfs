@@ -19,7 +19,7 @@ func (self *BpMap) Has(key Hashable) bool {
 	return (*BpTree)(self).Has(key)
 }
 
-func (self *BpMap) Put(key Hashable, value interface{}) (err error) {
+func (self *BpMap) Put(key Hashable, value ItemValue) (err error) {
 	new_root, err := self.getRoot().put(key, value)
 	if err != nil {
 		return err
@@ -28,7 +28,7 @@ func (self *BpMap) Put(key Hashable, value interface{}) (err error) {
 	return nil
 }
 
-func (self *BpMap) Get(key Hashable) (value interface{}, err error) {
+func (self *BpMap) Get(key Hashable) (value ItemValue, err error) {
 	j, l := self.getRoot().get_start(key)
 	if l.keys[j].Equals(key) {
 		return l.values[j], nil
@@ -36,13 +36,13 @@ func (self *BpMap) Get(key Hashable) (value interface{}, err error) {
 	return nil, fmt.Errorf("key not found: %s", key)
 }
 
-func (self *BpMap) Remove(key Hashable) (value interface{}, err error) {
+func (self *BpMap) Remove(key Hashable) (value ItemValue, err error) {
 	value, err = self.Get(key)
 	if err != nil {
 		return nil, err
 	}
 	ns := self.getRoot().NodeSize()
-	new_root, err := self.getRoot().remove(key, func(value interface{}) bool { return true })
+	new_root, err := self.getRoot().remove(key, func(value ItemValue) bool { return true })
 	if err != nil {
 		return nil, err
 	}

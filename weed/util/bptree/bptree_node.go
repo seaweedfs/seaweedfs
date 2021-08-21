@@ -1,12 +1,15 @@
 package bptree
 
+type ItemValue Equatable
+
 type BpNode struct {
-	keys     []Hashable
-	values   []interface{}
-	pointers []*BpNode
-	next     *BpNode
-	prev     *BpNode
-	no_dup   bool
+	keys      []Hashable
+	values    []ItemValue
+	pointers  []*BpNode
+	next      *BpNode
+	prev      *BpNode
+	no_dup    bool
+	protoNode *ProtoNode
 }
 
 func NewInternal(size int) *BpNode {
@@ -25,7 +28,7 @@ func NewLeaf(size int, no_dup bool) *BpNode {
 	}
 	return &BpNode{
 		keys:   make([]Hashable, 0, size),
-		values: make([]interface{}, 0, size),
+		values: make([]ItemValue, 0, size),
 		no_dup: no_dup,
 	}
 }
@@ -176,7 +179,7 @@ func (self *BpNode) leaf_get_start(key Hashable) (i int, leaf *BpNode) {
 /* This puts the k/v pair into the B+Tree rooted at this node and returns the
  * (possibly) new root of the tree.
  */
-func (self *BpNode) put(key Hashable, value interface{}) (root *BpNode, err error) {
+func (self *BpNode) put(key Hashable, value ItemValue) (root *BpNode, err error) {
 	a, b, err := self.insert(key, value)
 	if err != nil {
 		return nil, err
@@ -194,7 +197,7 @@ func (self *BpNode) put(key Hashable, value interface{}) (root *BpNode, err erro
 // left is always set. When split is false left is the pointer to block
 //                     When split is true left is the pointer to the new left
 //                     block
-func (self *BpNode) insert(key Hashable, value interface{}) (a, b *BpNode, err error) {
+func (self *BpNode) insert(key Hashable, value ItemValue) (a, b *BpNode, err error) {
 	if self.Internal() {
 		return self.internal_insert(key, value)
 	} else { // leaf node
@@ -208,7 +211,7 @@ func (self *BpNode) insert(key Hashable, value interface{}) (a, b *BpNode, err e
  *    - if the block is full, split this block
  *    - else insert the new key/pointer into this block
  */
-func (self *BpNode) internal_insert(key Hashable, value interface{}) (a, b *BpNode, err error) {
+func (self *BpNode) internal_insert(key Hashable, value ItemValue) (a, b *BpNode, err error) {
 	if !self.Internal() {
 		return nil, nil, BpTreeError("Expected a internal node")
 	}
@@ -272,7 +275,7 @@ func (self *BpNode) internal_split(key Hashable, ptr *BpNode) (a, b *BpNode, err
  *    a pure block with a matching key)
  * else this leaf will get a new entry.
  */
-func (self *BpNode) leaf_insert(key Hashable, value interface{}) (a, b *BpNode, err error) {
+func (self *BpNode) leaf_insert(key Hashable, value ItemValue) (a, b *BpNode, err error) {
 	if self.Internal() {
 		return nil, nil, BpTreeError("Expected a leaf node")
 	}
@@ -299,7 +302,7 @@ func (self *BpNode) leaf_insert(key Hashable, value interface{}) (a, b *BpNode, 
  *    - the two blocks will be balanced with balanced_nodes
  *    - if the key is less than b.keys[0] it will go in a else b
  */
-func (self *BpNode) leaf_split(key Hashable, value interface{}) (a, b *BpNode, err error) {
+func (self *BpNode) leaf_split(key Hashable, value ItemValue) (a, b *BpNode, err error) {
 	if self.Internal() {
 		return nil, nil, BpTreeError("Expected a leaf node")
 	}
@@ -334,7 +337,7 @@ func (self *BpNode) leaf_split(key Hashable, value interface{}) (a, b *BpNode, e
  *       and putting the new key there.
  *     - always return the current block as "a" and the new block as "b"
  */
-func (self *BpNode) pure_leaf_split(key Hashable, value interface{}) (a, b *BpNode, err error) {
+func (self *BpNode) pure_leaf_split(key Hashable, value ItemValue) (a, b *BpNode, err error) {
 	if self.Internal() || !self.Pure() {
 		return nil, nil, BpTreeError("Expected a pure leaf node")
 	}
@@ -392,7 +395,7 @@ func (self *BpNode) put_kp(key Hashable, ptr *BpNode) error {
 	return nil
 }
 
-func (self *BpNode) put_kv(key Hashable, value interface{}) error {
+func (self *BpNode) put_kv(key Hashable, value ItemValue) error {
 	if self.Full() {
 		return BpTreeError("Block is full.")
 	}
@@ -426,7 +429,7 @@ func (self *BpNode) put_key_at(i int, key Hashable) error {
 	return nil
 }
 
-func (self *BpNode) put_value_at(i int, value interface{}) error {
+func (self *BpNode) put_value_at(i int, value ItemValue) error {
 	if len(self.values) == cap(self.values) {
 		return BpTreeError("Block is full.")
 	}
@@ -573,8 +576,8 @@ func (self *BpNode) remove_ptr_at(i int) error {
 }
 
 func (self *BpNode) find(key Hashable) (int, bool) {
-	var l int = 0
-	var r int = len(self.keys) - 1
+	var l = 0
+	var r = len(self.keys) - 1
 	var m int
 	for l <= r {
 		m = ((r - l) >> 1) + l
@@ -718,7 +721,7 @@ func balance_nodes(a, b *BpNode) {
 			m--
 		}
 	}
-	var lim int = len(a.keys) - m
+	var lim = len(a.keys) - m
 	b.keys = b.keys[:lim]
 	if cap(a.values) > 0 {
 		if cap(a.values) != cap(a.keys) {
