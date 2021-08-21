@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package bptree;
+
+option go_package = "github.com/chrislusf/seaweedfs/weed/util/bptree";
+
+message ProtoNode {
+  repeated bytes keys = 1;
+  repeated bytes values = 2;
+  repeated int64 pointers = 3;
+  int64 next = 4;
+  int64 prev = 5;
+  int64 id = 6;
+}
