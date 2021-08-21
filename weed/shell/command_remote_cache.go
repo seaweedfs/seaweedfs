@@ -32,11 +32,14 @@ func (c *commandRemoteCache) Help() string {
 	remote.cache -dir=/xxx
 	remote.cache -dir=/xxx/some/sub/dir
 	remote.cache -dir=/xxx/some/sub/dir -include=*.pdf
+	remote.cache -dir=/xxx/some/sub/dir -exclude=*.txt
+	remote.cache -maxSize=1024000    # cache files smaller than 100K
+	remote.cache -maxAge=3600        # cache files less than 1 hour old
 
 	This is designed to run regularly. So you can add it to some cronjob.
 	If a file is already synchronized with the remote copy, the file will be skipped to avoid unnecessary copy.
 
-	The actual data copying goes through volume severs.
+	The actual data copying goes through volume severs in parallel.
 
 `
 }

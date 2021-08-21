@@ -33,6 +33,8 @@ func (c *commandRemoteUncache) Help() string {
 	remote.uncache -dir=/xxx/some/sub/dir
 	remote.uncache -dir=/xxx/some/sub/dir -include=*.pdf
 	remote.uncache -dir=/xxx/some/sub/dir -exclude=*.txt
+	remote.uncache -minSize=1024000    # uncache files larger than 100K
+	remote.uncache -minAge=3600        # uncache files older than 1 hour
 
 `
 }
