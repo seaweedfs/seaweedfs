@@ -378,7 +378,7 @@ func Test_get_end(t *testing.T) {
 	}
 	i, n = root.get_end(Int(3))
 	t.Log(n)
-	if n != root.pointers[1].next {
+	if n != root.pointers[1].getNext() {
 		t.Error("wrong node from get_end")
 	}
 	if i != 1 {
@@ -452,11 +452,11 @@ func Test_put_no_root_split(t *testing.T) {
 		if !p.has(Int(1)) {
 			t.Error("p didn't have the right keys", p)
 		}
-		if p.next == nil {
+		if p.getNext() == nil {
 			t.Error("p.next should not be nil")
 		}
 		t.Log(p)
-		t.Log(p.next)
+		t.Log(p.getNext())
 	}
 }
 
@@ -839,34 +839,34 @@ func Test_pure_leaf_insert_split_less(t *testing.T) {
 		if p == nil || len(p.keys) != 1 || !p.keys[0].Equals(Int(2)) {
 			t.Errorf("p did not contain the right key")
 		}
-		if p.prev != nil {
+		if p.getPrev() != nil {
 			t.Errorf("expected p.prev == nil")
 		}
-		if p.next != a {
+		if p.getNext() != a {
 			t.Errorf("expected p.next == a")
 		}
-		if a.prev != p {
+		if a.getPrev() != p {
 			t.Errorf("expected a.prev == p")
 		}
-		if a.next != b {
+		if a.getNext() != b {
 			t.Errorf("expected a.next == b")
 		}
-		if b.prev != a {
+		if b.getPrev() != a {
 			t.Errorf("expected b.prev == a")
 		}
-		if b.next != c {
+		if b.getNext() != c {
 			t.Errorf("expected b.next == c")
 		}
-		if c.prev != b {
+		if c.getPrev() != b {
 			t.Errorf("expected c.prev == b")
 		}
-		if c.next != d {
+		if c.getNext() != d {
 			t.Errorf("expected c.next == d")
 		}
-		if d.prev != c {
+		if d.getPrev() != c {
 			t.Errorf("expected d.prev == c")
 		}
-		if d.next != nil {
+		if d.getNext() != nil {
 			t.Errorf("expected d.next == nil")
 		}
 	}
@@ -912,34 +912,34 @@ func Test_pure_leaf_split_less(t *testing.T) {
 		if p == nil || len(p.keys) != 1 || !p.keys[0].Equals(Int(2)) {
 			t.Errorf("p did not contain the right key")
 		}
-		if p.prev != nil {
+		if p.getPrev() != nil {
 			t.Errorf("expected p.prev == nil")
 		}
-		if p.next != a {
+		if p.getNext() != a {
 			t.Errorf("expected p.next == a")
 		}
-		if a.prev != p {
+		if a.getPrev() != p {
 			t.Errorf("expected a.prev == p")
 		}
-		if a.next != b {
+		if a.getNext() != b {
 			t.Errorf("expected a.next == b")
 		}
-		if b.prev != a {
+		if b.getPrev() != a {
 			t.Errorf("expected b.prev == a")
 		}
-		if b.next != c {
+		if b.getNext() != c {
 			t.Errorf("expected b.next == c")
 		}
-		if c.prev != b {
+		if c.getPrev() != b {
 			t.Errorf("expected c.prev == b")
 		}
-		if c.next != d {
+		if c.getNext() != d {
 			t.Errorf("expected c.next == d")
 		}
-		if d.prev != c {
+		if d.getPrev() != c {
 			t.Errorf("expected d.prev == c")
 		}
-		if d.next != nil {
+		if d.getNext() != nil {
 			t.Errorf("expected d.next == nil")
 		}
 	}
@@ -982,28 +982,28 @@ func Test_pure_leaf_split_equal(t *testing.T) {
 		if q != nil {
 			t.Errorf("q != nil")
 		}
-		if a.prev != nil {
+		if a.getPrev() != nil {
 			t.Errorf("expected a.prev == nil")
 		}
-		if a.next != b {
+		if a.getNext() != b {
 			t.Errorf("expected a.next == b")
 		}
-		if b.prev != a {
+		if b.getPrev() != a {
 			t.Errorf("expected b.prev == a")
 		}
-		if b.next != c {
+		if b.getNext() != c {
 			t.Errorf("expected b.next == c")
 		}
-		if c.prev != b {
+		if c.getPrev() != b {
 			t.Errorf("expected c.prev == b")
 		}
-		if c.next != d {
+		if c.getNext() != d {
 			t.Errorf("expected c.next == d")
 		}
-		if d.prev != c {
+		if d.getPrev() != c {
 			t.Errorf("expected d.prev == c")
 		}
-		if d.next != nil {
+		if d.getNext() != nil {
 			t.Errorf("expected d.next == nil")
 		}
 	}
@@ -1046,34 +1046,34 @@ func Test_pure_leaf_split_greater(t *testing.T) {
 		if q == nil || len(q.keys) != 1 || !q.keys[0].Equals(Int(4)) {
 			t.Errorf("q != nil")
 		}
-		if a.prev != nil {
+		if a.getPrev() != nil {
 			t.Errorf("expected a.prev == nil")
 		}
-		if a.next != b {
+		if a.getNext() != b {
 			t.Errorf("expected a.next == b")
 		}
-		if b.prev != a {
+		if b.getPrev() != a {
 			t.Errorf("expected b.prev == a")
 		}
-		if b.next != c {
+		if b.getNext() != c {
 			t.Errorf("expected b.next == c")
 		}
-		if c.prev != b {
+		if c.getPrev() != b {
 			t.Errorf("expected c.prev == b")
 		}
-		if c.next != q {
+		if c.getNext() != q {
 			t.Errorf("expected c.next == q")
 		}
-		if q.prev != c {
+		if q.getPrev() != c {
 			t.Errorf("expected q.prev == c")
 		}
-		if q.next != d {
+		if q.getNext() != d {
 			t.Errorf("expected q.next == d")
 		}
-		if d.prev != q {
+		if d.getPrev() != q {
 			t.Errorf("expected d.prev == q")
 		}
-		if d.next != nil {
+		if d.getNext() != nil {
 			t.Errorf("expected d.next == nil")
 		}
 	}
@@ -1124,28 +1124,28 @@ func Test_insert_linked_list_node(t *testing.T) {
 	insert_linked_list_node(c, b, nil)
 	d := NewLeaf(4)
 	insert_linked_list_node(d, a, b)
-	if a.prev != nil {
+	if a.getPrev() != nil {
 		t.Errorf("expected a.prev == nil")
 	}
-	if a.next != d {
+	if a.getNext() != d {
 		t.Errorf("expected a.next == d")
 	}
-	if d.prev != a {
+	if d.getPrev() != a {
 		t.Errorf("expected d.prev == a")
 	}
-	if d.next != b {
+	if d.getNext() != b {
 		t.Errorf("expected d.next == b")
 	}
-	if b.prev != d {
+	if b.getPrev() != d {
 		t.Errorf("expected b.prev == d")
 	}
-	if b.next != c {
+	if b.getNext() != c {
 		t.Errorf("expected b.next == c")
 	}
-	if c.prev != b {
+	if c.getPrev() != b {
 		t.Errorf("expected c.prev == b")
 	}
-	if c.next != nil {
+	if c.getNext() != nil {
 		t.Errorf("expected c.next == nil")
 	}
 }
@@ -1159,67 +1159,67 @@ func Test_remove_linked_list_node(t *testing.T) {
 	insert_linked_list_node(c, b, nil)
 	d := NewLeaf(4)
 	insert_linked_list_node(d, a, b)
-	if a.prev != nil {
+	if a.getPrev() != nil {
 		t.Errorf("expected a.prev == nil")
 	}
-	if a.next != d {
+	if a.getNext() != d {
 		t.Errorf("expected a.next == d")
 	}
-	if d.prev != a {
+	if d.getPrev() != a {
 		t.Errorf("expected d.prev == a")
 	}
-	if d.next != b {
+	if d.getNext() != b {
 		t.Errorf("expected d.next == b")
 	}
-	if b.prev != d {
+	if b.getPrev() != d {
 		t.Errorf("expected b.prev == d")
 	}
-	if b.next != c {
+	if b.getNext() != c {
 		t.Errorf("expected b.next == c")
 	}
-	if c.prev != b {
+	if c.getPrev() != b {
 		t.Errorf("expected c.prev == b")
 	}
-	if c.next != nil {
+	if c.getNext() != nil {
 		t.Errorf("expected c.next == nil")
 	}
 	remove_linked_list_node(d)
-	if a.prev != nil {
+	if a.getPrev() != nil {
 		t.Errorf("expected a.prev == nil")
 	}
-	if a.next != b {
+	if a.getNext() != b {
 		t.Errorf("expected a.next == b")
 	}
-	if b.prev != a {
+	if b.getPrev() != a {
 		t.Errorf("expected b.prev == a")
 	}
-	if b.next != c {
+	if b.getNext() != c {
 		t.Errorf("expected b.next == c")
 	}
-	if c.prev != b {
+	if c.getPrev() != b {
 		t.Errorf("expected c.prev == b")
 	}
-	if c.next != nil {
+	if c.getNext() != nil {
 		t.Errorf("expected c.next == nil")
 	}
 	remove_linked_list_node(a)
-	if b.prev != nil {
+	if b.getPrev() != nil {
 		t.Errorf("expected b.prev == nil")
 	}
-	if b.next != c {
+	if b.getNext() != c {
 		t.Errorf("expected b.next == c")
 	}
-	if c.prev != b {
+	if c.getPrev() != b {
 		t.Errorf("expected c.prev == b")
 	}
-	if c.next != nil {
+	if c.getNext() != nil {
 		t.Errorf("expected c.next == nil")
 	}
 	remove_linked_list_node(c)
-	if b.prev != nil {
+	if b.getPrev() != nil {
 		t.Errorf("expected b.prev == nil")
 	}
-	if b.next != nil {
+	if b.getNext() != nil {
 		t.Errorf("expected b.next == nil")
 	}
 	remove_linked_list_node(b)

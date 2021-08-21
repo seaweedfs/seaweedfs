@@ -13,3 +13,16 @@ func (self *BpTree) getRoot() *BpNode {
 func (self *BpTree) setRoot(root *BpNode) {
 	self.root = root
 }
+
+func (self *BpNode) getNext() *BpNode {
+	return self.next
+}
+func (self *BpNode) setNext(next *BpNode) {
+	self.next = next
+}
+func (self *BpNode) getPrev() *BpNode {
+	return self.prev
+}
+func (self *BpNode) setPrev(prev *BpNode) {
+	self.prev = prev
+}

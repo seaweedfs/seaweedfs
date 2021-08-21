@@ -108,9 +108,9 @@ func (self *BpNode) get_start(key Hashable) (i int, leaf *BpNode) {
 
 func next_location(i int, leaf *BpNode) (int, *BpNode, bool) {
 	j := i + 1
-	for j >= len(leaf.keys) && leaf.next != nil {
+	for j >= len(leaf.keys) && leaf.getNext() != nil {
 		j = 0
-		leaf = leaf.next
+		leaf = leaf.getNext()
 	}
 	if j >= len(leaf.keys) {
 		return -1, nil, true
@@ -120,8 +120,8 @@ func next_location(i int, leaf *BpNode) (int, *BpNode, bool) {
 
 func prev_location(i int, leaf *BpNode) (int, *BpNode, bool) {
 	j := i - 1
-	for j < 0 && leaf.prev != nil {
-		leaf = leaf.prev
+	for j < 0 && leaf.getPrev() != nil {
+		leaf = leaf.getPrev()
 		j = len(leaf.keys) - 1
 	}
 	if j < 0 {
@@ -165,8 +165,8 @@ func (self *BpNode) leaf_get_start(key Hashable) (i int, leaf *BpNode) {
 	if i >= len(self.keys) && i > 0 {
 		i = len(self.keys) - 1
 	}
-	if !has && (len(self.keys) == 0 || self.keys[i].Less(key)) && self.next != nil {
-		return self.next.leaf_get_start(key)
+	if !has && (len(self.keys) == 0 || self.keys[i].Less(key)) && self.getNext() != nil {
+		return self.getNext().leaf_get_start(key)
 	}
 	return i, self
 }
@@ -299,7 +299,7 @@ func (self *BpNode) leaf_split(key Hashable, value interface{}) (a, b *BpNode, e
 	}
 	a = self
 	b = NewLeaf(self.NodeSize())
-	insert_linked_list_node(b, a, a.next)
+	insert_linked_list_node(b, a, a.getNext())
 	balance_nodes(a, b)
 	if key.Less(b.keys[0]) {
 		if err := a.put_kv(key, value); err != nil {
@@ -335,7 +335,7 @@ func (self *BpNode) pure_leaf_split(key Hashable, value interface{}) (a, b *BpNo
 		if err := a.put_kv(key, value); err != nil {
 			return nil, nil, err
 		}
-		insert_linked_list_node(a, b.prev, b)
+		insert_linked_list_node(a, b.getPrev(), b)
 		return a, b, nil
 	} else {
 		a = self
@@ -350,7 +350,7 @@ func (self *BpNode) pure_leaf_split(key Hashable, value interface{}) (a, b *BpNo
 			if err := b.put_kv(key, value); err != nil {
 				return nil, nil, err
 			}
-			insert_linked_list_node(b, e, e.next)
+			insert_linked_list_node(b, e, e.getNext())
 			if e.keys[0].Equals(key) {
 				return a, nil, nil
 			}
@@ -516,12 +516,12 @@ func (self *BpNode) leaf_remove(key, stop Hashable, where WhereFunc) (a *BpNode,
 		}
 		if len(l.keys) == 0 {
 			remove_linked_list_node(l)
-			if l.next == nil {
+			if l.getNext() == nil {
 				a = nil
 			} else if stop == nil {
 				a = nil
-			} else if !l.next.keys[0].Equals(stop) {
-				a = l.next
+			} else if !l.getNext().keys[0].Equals(stop) {
+				a = l.getNext()
 			} else {
 				a = nil
 			}
@@ -587,10 +587,10 @@ func (self *BpNode) find(key Hashable) (int, bool) {
 func (self *BpNode) find_end_of_pure_run() *BpNode {
 	k := self.keys[0]
 	p := self
-	n := self.next
+	n := self.getNext()
 	for n != nil && n.Pure() && k.Equals(n.keys[0]) {
 		p = n
-		n = n.next
+		n = n.getNext()
 	}
 	return p
 }
@@ -659,25 +659,25 @@ func (self *BpNode) backward(from, to Hashable) (li loc_iterator) {
 }
 
 func insert_linked_list_node(n, prev, next *BpNode) {
-	if (prev != nil && prev.next != next) || (next != nil && next.prev != prev) {
+	if (prev != nil && prev.getNext() != next) || (next != nil && next.getPrev() != prev) {
 		panic(BpTreeError("prev and next not hooked up"))
 	}
-	n.prev = prev
-	n.next = next
+	n.setPrev(prev)
+	n.setNext(next)
 	if prev != nil {
-		prev.next = n
+		prev.setNext(n)
 	}
 	if next != nil {
-		next.prev = n
+		next.setPrev(n)
 	}
 }
 
 func remove_linked_list_node(n *BpNode) {
-	if n.prev != nil {
-		n.prev.next = n.next
+	if n.getPrev() != nil {
+		n.getPrev().setNext(n.getNext())
 	}
-	if n.next != nil {
-		n.next.prev = n.prev
+	if n.getNext() != nil {
+		n.getNext().setPrev(n.getPrev())
 	}
 }
 
