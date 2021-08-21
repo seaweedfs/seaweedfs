@@ -26,17 +26,17 @@ func NegativeSize() error {
 }
 
 type Iterator func() (item ItemValue, next Iterator)
-type KIterator func() (key Hashable, next KIterator)
-type KVIterator func() (key Hashable, value ItemValue, next KVIterator)
+type KIterator func() (key ItemKey, next KIterator)
+type KVIterator func() (key ItemKey, value ItemValue, next KVIterator)
 type KVIterable interface {
 	Iterate() KVIterator
 }
 
 type MapOperable interface {
-	Has(key Hashable) bool
-	Put(key Hashable, value ItemValue) (err error)
-	Get(key Hashable) (value ItemValue, err error)
-	Remove(key Hashable) (value ItemValue, err error)
+	Has(key ItemKey) bool
+	Put(key ItemKey, value ItemValue) (err error)
+	Get(key ItemKey) (value ItemValue, err error)
+	Remove(key ItemKey) (value ItemValue, err error)
 }
 
 type WhereFunc func(value ItemValue) bool
@@ -56,8 +56,8 @@ func MakeValuesIterator(obj KVIterable) Iterator {
 
 func MakeItemsIterator(obj KVIterable) (kit KIterator) {
 	kv_iterator := obj.Iterate()
-	kit = func() (item Hashable, next KIterator) {
-		var key Hashable
+	kit = func() (item ItemKey, next KIterator) {
+		var key ItemKey
 		var value ItemValue
 		key, value, kv_iterator = kv_iterator()
 		if kv_iterator == nil {
@@ -69,7 +69,7 @@ func MakeItemsIterator(obj KVIterable) (kit KIterator) {
 }
 
 type MapEntry struct {
-	Key   Hashable
+	Key   ItemKey
 	Value ItemValue
 }
 

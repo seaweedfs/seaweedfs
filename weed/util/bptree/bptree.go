@@ -18,7 +18,7 @@ func NewBpTree(node_size int) *BpTree {
 	}
 }
 
-func (self *BpTree) Has(key Hashable) bool {
+func (self *BpTree) Has(key ItemKey) bool {
 	if len(self.getRoot().keys) == 0 {
 		return false
 	}
@@ -26,7 +26,7 @@ func (self *BpTree) Has(key Hashable) bool {
 	return l.keys[j].Equals(key)
 }
 
-func (self *BpTree) Count(key Hashable) int {
+func (self *BpTree) Count(key ItemKey) int {
 	if len(self.root.keys) == 0 {
 		return 0
 	}
@@ -40,7 +40,7 @@ func (self *BpTree) Count(key Hashable) int {
 	return count
 }
 
-func (self *BpTree) Add(key Hashable, value ItemValue) (err error) {
+func (self *BpTree) Add(key ItemKey, value ItemValue) (err error) {
 	new_root, err := self.getRoot().put(key, value)
 	if err != nil {
 		return err
@@ -49,7 +49,7 @@ func (self *BpTree) Add(key Hashable, value ItemValue) (err error) {
 	return nil
 }
 
-func (self *BpTree) Replace(key Hashable, where WhereFunc, value ItemValue) (err error) {
+func (self *BpTree) Replace(key ItemKey, where WhereFunc, value ItemValue) (err error) {
 	li := self.getRoot().forward(key, key)
 	for i, leaf, next := li(); next != nil; i, leaf, next = next() {
 		if where(leaf.values[i]) {
@@ -59,18 +59,18 @@ func (self *BpTree) Replace(key Hashable, where WhereFunc, value ItemValue) (err
 	return nil
 }
 
-func (self *BpTree) Find(key Hashable) (kvi KVIterator) {
+func (self *BpTree) Find(key ItemKey) (kvi KVIterator) {
 	return self.Range(key, key)
 }
 
-func (self *BpTree) Range(from, to Hashable) (kvi KVIterator) {
+func (self *BpTree) Range(from, to ItemKey) (kvi KVIterator) {
 	var li loc_iterator
 	if !to.Less(from) {
 		li = self.getRoot().forward(from, to)
 	} else {
 		li = self.getRoot().backward(from, to)
 	}
-	kvi = func() (key Hashable, value ItemValue, next KVIterator) {
+	kvi = func() (key ItemKey, value ItemValue, next KVIterator) {
 		var i int
 		var leaf *BpNode
 		i, leaf, li = li()
@@ -82,7 +82,7 @@ func (self *BpTree) Range(from, to Hashable) (kvi KVIterator) {
 	return kvi
 }
 
-func (self *BpTree) RemoveWhere(key Hashable, where WhereFunc) (err error) {
+func (self *BpTree) RemoveWhere(key ItemKey, where WhereFunc) (err error) {
 	ns := self.getRoot().NodeSize()
 	new_root, err := self.getRoot().remove(key, where)
 	if err != nil {
@@ -99,7 +99,7 @@ func (self *BpTree) RemoveWhere(key Hashable, where WhereFunc) (err error) {
 func (self *BpTree) Keys() (ki KIterator) {
 	li := self.getRoot().all()
 	var prev Equatable
-	ki = func() (key Hashable, next KIterator) {
+	ki = func() (key ItemKey, next KIterator) {
 		var i int
 		var leaf *BpNode
 		i, leaf, li = li()
@@ -125,7 +125,7 @@ func (self *BpTree) Items() (vi KIterator) {
 
 func (self *BpTree) Iterate() (kvi KVIterator) {
 	li := self.getRoot().all()
-	kvi = func() (key Hashable, value ItemValue, next KVIterator) {
+	kvi = func() (key ItemKey, value ItemValue, next KVIterator) {
 		var i int
 		var leaf *BpNode
 		i, leaf, li = li()
@@ -139,7 +139,7 @@ func (self *BpTree) Iterate() (kvi KVIterator) {
 
 func (self *BpTree) Backward() (kvi KVIterator) {
 	li := self.getRoot().all_backward()
-	kvi = func() (key Hashable, value ItemValue, next KVIterator) {
+	kvi = func() (key ItemKey, value ItemValue, next KVIterator) {
 		var i int
 		var leaf *BpNode
 		i, leaf, li = li()
