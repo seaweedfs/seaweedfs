@@ -14,7 +14,7 @@ type loc_iterator func() (i int, leaf *BpNode, li loc_iterator)
 
 func NewBpTree(node_size int) *BpTree {
 	return &BpTree{
-		root: NewLeaf(node_size),
+		root: NewLeaf(node_size, false),
 	}
 }
 
@@ -24,6 +24,20 @@ func (self *BpTree) Has(key Hashable) bool {
 	}
 	j, l := self.getRoot().get_start(key)
 	return l.keys[j].Equals(key)
+}
+
+func (self *BpTree) Count(key Hashable) int {
+	if len(self.root.keys) == 0 {
+		return 0
+	}
+	j, l := self.root.get_start(key)
+	count := 0
+	end := false
+	for !end && l.keys[j].Equals(key) {
+		count++
+		j, l, end = next_location(j, l)
+	}
+	return count
 }
 
 func (self *BpTree) Add(key Hashable, value interface{}) (err error) {
@@ -75,7 +89,7 @@ func (self *BpTree) RemoveWhere(key Hashable, where WhereFunc) (err error) {
 		return err
 	}
 	if new_root == nil {
-		self.setRoot(NewLeaf(ns))
+		self.setRoot(NewLeaf(ns, false))
 	} else {
 		self.setRoot(new_root)
 	}

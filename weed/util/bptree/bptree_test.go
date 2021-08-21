@@ -119,6 +119,12 @@ func TestAddHasCountFindIterateRemove(t *testing.T) {
 			if has := bpt.Has(randstr(10)); has {
 				t.Error("Table has extra key")
 			}
+			if count := bpt.Count(r.key); count != 1 {
+				t.Error(bpt, "Missing key")
+			}
+			if count := bpt.Count(randstr(10)); count != 0 {
+				t.Error("Table has extra key")
+			}
 			for k, v, next := bpt.Find(r.key)(); next != nil; k, v, next = next() {
 				if !k.Equals(r.key) {
 					t.Error(bpt, "Find Failed Key Error")
@@ -182,6 +188,9 @@ func TestAddHasCountFindIterateRemove(t *testing.T) {
 		}
 		for i, r := range recs {
 			if has := bpt.Has(r.key); !has {
+				t.Error(bpt, "Missing key")
+			}
+			if count := bpt.Count(r.key); count != 1 {
 				t.Error(bpt, "Missing key")
 			}
 			if err := bpt.RemoveWhere(r.key, func(value interface{}) bool { return true }); err != nil {
@@ -266,7 +275,7 @@ func TestBpMap(t *testing.T) {
 }
 
 func Test_get_start(t *testing.T) {
-	root := NewLeaf(2)
+	root := NewLeaf(2, false)
 	root, err := root.put(Int(1), 1)
 	if err != nil {
 		t.Error(err)
@@ -335,7 +344,7 @@ func Test_get_start(t *testing.T) {
 }
 
 func Test_get_end(t *testing.T) {
-	root := NewLeaf(3)
+	root := NewLeaf(3, false)
 	root, err := root.put(Int(1), -1)
 	if err != nil {
 		t.Fatal(err)
@@ -427,7 +436,7 @@ func Test_get_end(t *testing.T) {
 }
 
 func Test_put_no_root_split(t *testing.T) {
-	a := NewLeaf(2)
+	a := NewLeaf(2, false)
 	if err := a.put_kv(Int(1), 1); err != nil {
 		t.Error(err)
 	}
@@ -461,7 +470,7 @@ func Test_put_no_root_split(t *testing.T) {
 }
 
 func Test_put_root_split(t *testing.T) {
-	a := NewLeaf(2)
+	a := NewLeaf(2, false)
 	p, err := a.put(Int(1), 1)
 	if err != nil {
 		t.Error(err)
@@ -511,7 +520,7 @@ func Test_put_root_split(t *testing.T) {
 
 func Test_internal_insert_no_split(t *testing.T) {
 	a := NewInternal(3)
-	leaf := NewLeaf(1)
+	leaf := NewLeaf(1, false)
 	if err := leaf.put_kv(Int(1), 1); err != nil {
 		t.Error(err)
 	}
@@ -539,7 +548,7 @@ func Test_internal_insert_no_split(t *testing.T) {
 
 func Test_internal_insert_split_less(t *testing.T) {
 	a := NewInternal(3)
-	leaf := NewLeaf(1)
+	leaf := NewLeaf(1, false)
 	if err := leaf.put_kv(Int(1), 1); err != nil {
 		t.Error(err)
 	}
@@ -649,7 +658,7 @@ func Test_internal_split_greater(t *testing.T) {
 }
 
 func Test_leaf_insert_no_split(t *testing.T) {
-	a := NewLeaf(3)
+	a := NewLeaf(3, false)
 	insert_linked_list_node(a, nil, nil)
 	if err := a.put_kv(Int(1), 1); err != nil {
 		t.Error(err)
@@ -675,7 +684,7 @@ func Test_leaf_insert_no_split(t *testing.T) {
 
 // tests the defer to split logic
 func Test_leaf_insert_split_less(t *testing.T) {
-	a := NewLeaf(3)
+	a := NewLeaf(3, false)
 	insert_linked_list_node(a, nil, nil)
 	if err := a.put_kv(Int(1), 1); err != nil {
 		t.Error(err)
@@ -706,7 +715,7 @@ func Test_leaf_insert_split_less(t *testing.T) {
 }
 
 func Test_leaf_split_less(t *testing.T) {
-	a := NewLeaf(3)
+	a := NewLeaf(3, false)
 	insert_linked_list_node(a, nil, nil)
 	if err := a.put_kv(Int(1), 1); err != nil {
 		t.Error(err)
@@ -737,7 +746,7 @@ func Test_leaf_split_less(t *testing.T) {
 }
 
 func Test_leaf_split_equal(t *testing.T) {
-	a := NewLeaf(3)
+	a := NewLeaf(3, false)
 	insert_linked_list_node(a, nil, nil)
 	if err := a.put_kv(Int(1), 1); err != nil {
 		t.Error(err)
@@ -768,7 +777,7 @@ func Test_leaf_split_equal(t *testing.T) {
 }
 
 func Test_leaf_split_greater(t *testing.T) {
-	a := NewLeaf(3)
+	a := NewLeaf(3, false)
 	insert_linked_list_node(a, nil, nil)
 	if err := a.put_kv(Int(1), 1); err != nil {
 		t.Error(err)
@@ -800,13 +809,13 @@ func Test_leaf_split_greater(t *testing.T) {
 
 // tests the defer logic
 func Test_pure_leaf_insert_split_less(t *testing.T) {
-	a := NewLeaf(2)
+	a := NewLeaf(2, false)
 	insert_linked_list_node(a, nil, nil)
-	b := NewLeaf(2)
+	b := NewLeaf(2, false)
 	insert_linked_list_node(b, a, nil)
-	c := NewLeaf(2)
+	c := NewLeaf(2, false)
 	insert_linked_list_node(c, b, nil)
-	d := NewLeaf(2)
+	d := NewLeaf(2, false)
 	insert_linked_list_node(d, c, nil)
 	if err := a.put_kv(Int(3), 1); err != nil {
 		t.Error(err)
@@ -873,13 +882,13 @@ func Test_pure_leaf_insert_split_less(t *testing.T) {
 }
 
 func Test_pure_leaf_split_less(t *testing.T) {
-	a := NewLeaf(2)
+	a := NewLeaf(2, false)
 	insert_linked_list_node(a, nil, nil)
-	b := NewLeaf(2)
+	b := NewLeaf(2, false)
 	insert_linked_list_node(b, a, nil)
-	c := NewLeaf(2)
+	c := NewLeaf(2, false)
 	insert_linked_list_node(c, b, nil)
-	d := NewLeaf(2)
+	d := NewLeaf(2, false)
 	insert_linked_list_node(d, c, nil)
 	if err := a.put_kv(Int(3), 1); err != nil {
 		t.Error(err)
@@ -946,13 +955,13 @@ func Test_pure_leaf_split_less(t *testing.T) {
 }
 
 func Test_pure_leaf_split_equal(t *testing.T) {
-	a := NewLeaf(2)
+	a := NewLeaf(2, false)
 	insert_linked_list_node(a, nil, nil)
-	b := NewLeaf(2)
+	b := NewLeaf(2, false)
 	insert_linked_list_node(b, a, nil)
-	c := NewLeaf(2)
+	c := NewLeaf(2, false)
 	insert_linked_list_node(c, b, nil)
-	d := NewLeaf(2)
+	d := NewLeaf(2, false)
 	insert_linked_list_node(d, c, nil)
 	if err := a.put_kv(Int(3), 1); err != nil {
 		t.Error(err)
@@ -1010,13 +1019,13 @@ func Test_pure_leaf_split_equal(t *testing.T) {
 }
 
 func Test_pure_leaf_split_greater(t *testing.T) {
-	a := NewLeaf(2)
+	a := NewLeaf(2, false)
 	insert_linked_list_node(a, nil, nil)
-	b := NewLeaf(2)
+	b := NewLeaf(2, false)
 	insert_linked_list_node(b, a, nil)
-	c := NewLeaf(2)
+	c := NewLeaf(2, false)
 	insert_linked_list_node(c, b, nil)
-	d := NewLeaf(2)
+	d := NewLeaf(2, false)
 	insert_linked_list_node(d, c, nil)
 	if err := a.put_kv(Int(3), 1); err != nil {
 		t.Error(err)
@@ -1080,13 +1089,13 @@ func Test_pure_leaf_split_greater(t *testing.T) {
 }
 
 func Test_find_end_of_pure_run(t *testing.T) {
-	a := NewLeaf(2)
+	a := NewLeaf(2, false)
 	insert_linked_list_node(a, nil, nil)
-	b := NewLeaf(2)
+	b := NewLeaf(2, false)
 	insert_linked_list_node(b, a, nil)
-	c := NewLeaf(2)
+	c := NewLeaf(2, false)
 	insert_linked_list_node(c, b, nil)
-	d := NewLeaf(2)
+	d := NewLeaf(2, false)
 	insert_linked_list_node(d, c, nil)
 	if err := a.put_kv(Int(3), 1); err != nil {
 		t.Error(err)
@@ -1116,13 +1125,13 @@ func Test_find_end_of_pure_run(t *testing.T) {
 }
 
 func Test_insert_linked_list_node(t *testing.T) {
-	a := NewLeaf(1)
+	a := NewLeaf(1, false)
 	insert_linked_list_node(a, nil, nil)
-	b := NewLeaf(2)
+	b := NewLeaf(2, false)
 	insert_linked_list_node(b, a, nil)
-	c := NewLeaf(3)
+	c := NewLeaf(3, false)
 	insert_linked_list_node(c, b, nil)
-	d := NewLeaf(4)
+	d := NewLeaf(4, false)
 	insert_linked_list_node(d, a, b)
 	if a.getPrev() != nil {
 		t.Errorf("expected a.prev == nil")
@@ -1151,13 +1160,13 @@ func Test_insert_linked_list_node(t *testing.T) {
 }
 
 func Test_remove_linked_list_node(t *testing.T) {
-	a := NewLeaf(1)
+	a := NewLeaf(1, false)
 	insert_linked_list_node(a, nil, nil)
-	b := NewLeaf(2)
+	b := NewLeaf(2, false)
 	insert_linked_list_node(b, a, nil)
-	c := NewLeaf(3)
+	c := NewLeaf(3, false)
 	insert_linked_list_node(c, b, nil)
-	d := NewLeaf(4)
+	d := NewLeaf(4, false)
 	insert_linked_list_node(d, a, b)
 	if a.getPrev() != nil {
 		t.Errorf("expected a.prev == nil")
@@ -1226,8 +1235,8 @@ func Test_remove_linked_list_node(t *testing.T) {
 }
 
 func Test_balance_leaf_nodes_with_dup(t *testing.T) {
-	a := NewLeaf(3)
-	b := NewLeaf(3)
+	a := NewLeaf(3, false)
+	b := NewLeaf(3, false)
 	if err := a.put_kv(Int(1), 1); err != nil {
 		t.Error(err)
 	}
@@ -1247,8 +1256,8 @@ func Test_balance_leaf_nodes_with_dup(t *testing.T) {
 }
 
 func Test_balance_leaf_nodes(t *testing.T) {
-	a := NewLeaf(7)
-	b := NewLeaf(7)
+	a := NewLeaf(7, false)
+	b := NewLeaf(7, false)
 	if err := a.put_kv(Int(1), 1); err != nil {
 		t.Error(err)
 	}
