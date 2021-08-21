@@ -9,13 +9,6 @@ import (
  */
 type BpMap BpTree
 
-func (self *BpMap) getRoot() *BpNode {
-	return self.root
-}
-func (self *BpMap) setRoot(root *BpNode) {
-	self.root = root
-}
-
 func NewBpMap(node_size int) *BpMap {
 	return &BpMap{
 		root: NewLeaf(node_size),

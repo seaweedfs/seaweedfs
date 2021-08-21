@@ -10,13 +10,6 @@ type BpTree struct {
 	root *BpNode
 }
 
-func (self *BpTree) getRoot() *BpNode {
-	return self.root
-}
-func (self *BpTree) setRoot(root *BpNode) {
-	self.root = root
-}
-
 type loc_iterator func() (i int, leaf *BpNode, li loc_iterator)
 
 func NewBpTree(node_size int) *BpTree {
