@@ -59,24 +59,43 @@ public class FilerClient extends FilerGrpcClient {
 
     public static FilerProto.Entry afterEntryDeserialization(FilerProto.Entry entry) {
         if (entry.getChunksList().size() <= 0) {
-            return entry;
-        }
-        String fileId = entry.getChunks(0).getFileId();
-        if (fileId != null && fileId.length() != 0) {
-            return entry;
-        }
-        FilerProto.Entry.Builder entryBuilder = entry.toBuilder();
-        entryBuilder.clearChunks();
-        for (FilerProto.FileChunk chunk : entry.getChunksList()) {
-            FilerProto.FileChunk.Builder chunkBuilder = chunk.toBuilder();
-            chunkBuilder.setFileId(toFileId(chunk.getFid()));
-            String sourceFileId = toFileId(chunk.getSourceFid());
-            if (sourceFileId != null) {
-                chunkBuilder.setSourceFileId(sourceFileId);
+            if (entry.getContent().isEmpty()) {
+                return entry;
+            } else {
+                if (entry.getAttributes().getFileSize() <= 0) {
+                    FilerProto.Entry.Builder entryBuilder = entry.toBuilder();
+                    FilerProto.FuseAttributes.Builder attrBuilder = entry.getAttributes().toBuilder();
+                    attrBuilder.setFileSize(entry.getContent().size());
+                    entryBuilder.setAttributes(attrBuilder);
+                    return entryBuilder.build();
+                }
             }
-            entryBuilder.addChunks(chunkBuilder);
+            return entry;
+        } else {
+            String fileId = entry.getChunks(0).getFileId();
+            if (fileId != null && fileId.length() != 0) {
+                return entry;
+            }
+            FilerProto.Entry.Builder entryBuilder = entry.toBuilder();
+            entryBuilder.clearChunks();
+            long fileSize = 0;
+            for (FilerProto.FileChunk chunk : entry.getChunksList()) {
+                fileSize = Math.max(fileSize, chunk.getOffset()+chunk.getSize());
+                FilerProto.FileChunk.Builder chunkBuilder = chunk.toBuilder();
+                chunkBuilder.setFileId(toFileId(chunk.getFid()));
+                String sourceFileId = toFileId(chunk.getSourceFid());
+                if (sourceFileId != null) {
+                    chunkBuilder.setSourceFileId(sourceFileId);
+                }
+                entryBuilder.addChunks(chunkBuilder);
+            }
+            if (entry.getAttributes().getFileSize() <= 0) {
+                FilerProto.FuseAttributes.Builder attrBuilder = entry.getAttributes().toBuilder();
+                attrBuilder.setFileSize(fileSize);
+                entryBuilder.setAttributes(attrBuilder);
+            }
+            return entryBuilder.build();
         }
-        return entryBuilder.build();
     }
 
     public boolean mkdirs(String path, int mode) {
