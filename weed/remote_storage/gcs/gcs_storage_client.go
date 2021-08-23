@@ -179,7 +179,7 @@ func (gcs *gcsRemoteStorageClient) UpdateFileMetadata(loc *filer_pb.RemoteStorag
 func (gcs *gcsRemoteStorageClient) DeleteFile(loc *filer_pb.RemoteStorageLocation) (err error) {
 	key := loc.Path[1:]
 	if err = gcs.client.Bucket(loc.Bucket).Object(key).Delete(context.Background()); err != nil {
-		return fmt.Errorf("gcs delete %gcs%gcs: %v", loc.Bucket, key, err)
+		return fmt.Errorf("gcs delete %s%s: %v", loc.Bucket, key, err)
 	}
 	return
 }
