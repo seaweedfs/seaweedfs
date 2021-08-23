@@ -110,22 +110,14 @@ func (gcs *gcsRemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation
 
 	key := loc.Path[1:]
 
+	metadata := toMetadata(entry.Extended)
 	wc := gcs.client.Bucket(loc.Bucket).Object(key).NewWriter(context.Background())
+	wc.Metadata = metadata
 	if _, err = io.Copy(wc, reader); err != nil {
-		wc.Close()
 		return nil, fmt.Errorf("upload to gcs %s/%s%s: %v", loc.Name, loc.Bucket, loc.Path, err)
 	}
 	if err = wc.Close(); err != nil {
 		return nil, fmt.Errorf("close gcs %s/%s%s: %v", loc.Name, loc.Bucket, loc.Path, err)
-	}
-
-	metadata := toMetadata(entry.Extended)
-	if len(metadata) > 0 {
-		if _, err = gcs.client.Bucket(loc.Bucket).Object(key).Update(context.Background(), storage.ObjectAttrsToUpdate{
-			Metadata:           metadata,
-		}); err != nil {
-			return nil, fmt.Errorf("update metadata gcs %s/%s%s: %v", loc.Name, loc.Bucket, loc.Path, err)
-		}
 	}
 
 	// read back the remote entry
