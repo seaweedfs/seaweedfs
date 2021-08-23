@@ -47,7 +47,9 @@ func (self *BpMap) Remove(key ItemKey) (value ItemValue, err error) {
 		return nil, err
 	}
 	if new_root == nil {
-		self.setRoot(NewLeaf(ns, true))
+		new_root = NewLeaf(ns, false)
+		err = new_root.persist()
+		self.setRoot(new_root)
 	} else {
 		self.setRoot(new_root)
 	}

@@ -2,15 +2,23 @@ package bptree
 
 type ItemKey Hashable
 type ItemValue Equatable
+type PersistFunc func(node *BpNode) error
+type DestroyFunc func(node *BpNode) error
+
+var (
+	PersistFn PersistFunc
+	DestroyFn DestroyFunc
+)
 
 type BpNode struct {
-	keys      []ItemKey
-	values    []ItemValue
-	pointers  []*BpNode
-	next      *BpNode
-	prev      *BpNode
-	no_dup    bool
-	protoNode *ProtoNode
+	keys        []ItemKey
+	values      []ItemValue
+	pointers    []*BpNode
+	next        *BpNode
+	prev        *BpNode
+	no_dup      bool
+	protoNodeId int64
+	protoNode   *ProtoNode
 }
 
 func NewInternal(size int) *BpNode {
@@ -18,8 +26,9 @@ func NewInternal(size int) *BpNode {
 		panic(NegativeSize())
 	}
 	return &BpNode{
-		keys:     make([]ItemKey, 0, size),
-		pointers: make([]*BpNode, 0, size),
+		keys:        make([]ItemKey, 0, size),
+		pointers:    make([]*BpNode, 0, size),
+		protoNodeId: GetProtoNodeId(),
 	}
 }
 
@@ -28,9 +37,10 @@ func NewLeaf(size int, no_dup bool) *BpNode {
 		panic(NegativeSize())
 	}
 	return &BpNode{
-		keys:   make([]ItemKey, 0, size),
-		values: make([]ItemValue, 0, size),
-		no_dup: no_dup,
+		keys:        make([]ItemKey, 0, size),
+		values:      make([]ItemValue, 0, size),
+		no_dup:      no_dup,
+		protoNodeId: GetProtoNodeId(),
 	}
 }
 
@@ -191,7 +201,7 @@ func (self *BpNode) put(key ItemKey, value ItemValue) (root *BpNode, err error) 
 	root = NewInternal(self.NodeSize())
 	root.put_kp(a.keys[0], a)
 	root.put_kp(b.keys[0], b)
-	return root, nil
+	return root, root.persist()
 }
 
 // right is only set on split
@@ -237,10 +247,10 @@ func (self *BpNode) internal_insert(key ItemKey, value ItemValue) (a, b *BpNode,
 			if err := self.put_kp(q.keys[0], q); err != nil {
 				return nil, nil, err
 			}
-			return self, nil, nil
+			return self, nil, self.persist()
 		}
 	}
-	return self, nil, nil
+	return self, nil, self.maybePersist(child != p)
 }
 
 /* On split
@@ -268,7 +278,7 @@ func (self *BpNode) internal_split(key ItemKey, ptr *BpNode) (a, b *BpNode, err 
 			return nil, nil, err
 		}
 	}
-	return a, b, nil
+	return a, b, persist(a, b)
 }
 
 /* if the leaf is full then it will defer to a leaf_split
@@ -284,7 +294,7 @@ func (self *BpNode) leaf_insert(key ItemKey, value ItemValue) (a, b *BpNode, err
 		i, has := self.find(key)
 		if has {
 			self.values[i] = value
-			return self, nil, nil
+			return self, nil, self.persist()
 		}
 	}
 	if self.Full() {
@@ -293,7 +303,7 @@ func (self *BpNode) leaf_insert(key ItemKey, value ItemValue) (a, b *BpNode, err
 		if err := self.put_kv(key, value); err != nil {
 			return nil, nil, err
 		}
-		return self, nil, nil
+		return self, nil, self.persist()
 	}
 }
 
@@ -323,7 +333,7 @@ func (self *BpNode) leaf_split(key ItemKey, value ItemValue) (a, b *BpNode, err 
 			return nil, nil, err
 		}
 	}
-	return a, b, nil
+	return a, b, persist(a, b)
 }
 
 /* a pure leaf split has two cases:
@@ -349,7 +359,7 @@ func (self *BpNode) pure_leaf_split(key ItemKey, value ItemValue) (a, b *BpNode,
 			return nil, nil, err
 		}
 		insert_linked_list_node(a, b.getPrev(), b)
-		return a, b, nil
+		return a, b, persist(a, b)
 	} else {
 		a = self
 		e := self.find_end_of_pure_run()
@@ -357,7 +367,7 @@ func (self *BpNode) pure_leaf_split(key ItemKey, value ItemValue) (a, b *BpNode,
 			if err := e.put_kv(key, value); err != nil {
 				return nil, nil, err
 			}
-			return a, nil, nil
+			return a, nil, a.persist()
 		} else {
 			b = NewLeaf(self.NodeSize(), self.no_dup)
 			if err := b.put_kv(key, value); err != nil {
@@ -367,7 +377,7 @@ func (self *BpNode) pure_leaf_split(key ItemKey, value ItemValue) (a, b *BpNode,
 			if e.keys[0].Equals(key) {
 				return a, nil, nil
 			}
-			return a, b, nil
+			return a, b, persist(a, b)
 		}
 	}
 }
@@ -484,6 +494,7 @@ func (self *BpNode) internal_remove(key ItemKey, sibling *BpNode, where WhereFun
 		sibling = sibling.left_most_leaf()
 	}
 	child := self.pointers[i]
+	oldChild := child
 	if child.Internal() {
 		child, err = child.internal_remove(key, sibling, where)
 	} else {
@@ -508,9 +519,9 @@ func (self *BpNode) internal_remove(key ItemKey, sibling *BpNode, where WhereFun
 		self.pointers[i] = child
 	}
 	if len(self.keys) == 0 {
-		return nil, nil
+		return nil, self.destroy()
 	}
-	return self, nil
+	return self, self.maybePersist(oldChild != child)
 }
 
 func (self *BpNode) leaf_remove(key, stop ItemKey, where WhereFunc) (a *BpNode, err error) {
@@ -518,8 +529,10 @@ func (self *BpNode) leaf_remove(key, stop ItemKey, where WhereFunc) (a *BpNode, 
 		return nil, BpTreeError("Expected a leaf node")
 	}
 	a = self
+	hasChange := false
 	for j, l, next := self.forward(key, key)(); next != nil; j, l, next = next() {
 		if where(l.values[j]) {
+			hasChange = true
 			if err := l.remove_key_at(j); err != nil {
 				return nil, err
 			}
@@ -538,7 +551,13 @@ func (self *BpNode) leaf_remove(key, stop ItemKey, where WhereFunc) (a *BpNode, 
 			} else {
 				a = nil
 			}
+			if err := l.destroy(); err != nil {
+				return nil, err
+			}
 		}
+	}
+	if a != nil {
+		return a, a.maybePersist(hasChange)
 	}
 	return a, nil
 }

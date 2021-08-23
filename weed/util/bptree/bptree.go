@@ -54,9 +54,13 @@ func (self *BpTree) Replace(key ItemKey, where WhereFunc, value ItemValue) (err 
 	for i, leaf, next := li(); next != nil; i, leaf, next = next() {
 		if where(leaf.values[i]) {
 			leaf.values[i] = value
+			if persistErr := leaf.persist(); persistErr != nil && err == nil {
+				err = persistErr
+				break
+			}
 		}
 	}
-	return nil
+	return err
 }
 
 func (self *BpTree) Find(key ItemKey) (kvi KVIterator) {
@@ -89,11 +93,13 @@ func (self *BpTree) RemoveWhere(key ItemKey, where WhereFunc) (err error) {
 		return err
 	}
 	if new_root == nil {
-		self.setRoot(NewLeaf(ns, false))
+		new_root = NewLeaf(ns, false)
+		err = new_root.persist()
+		self.setRoot(new_root)
 	} else {
 		self.setRoot(new_root)
 	}
-	return nil
+	return err
 }
 
 func (self *BpTree) Keys() (ki KIterator) {
