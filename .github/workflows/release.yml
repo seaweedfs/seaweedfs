@@ -18,6 +18,8 @@ jobs:
             goos: darwin
           - goarch: 386
             goos: darwin
+          - goarch: arm64
+            goos: windows
           - goarch: arm
             goos: windows
 
