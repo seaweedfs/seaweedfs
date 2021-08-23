@@ -32,7 +32,8 @@ func (c *commandRemoteConfigure) Help() string {
 	remote.configure
 
 	# set or update a configuration
-	remote.configure -name=cloud1 -type=s3 -access_key=xxx -secret_key=yyy
+	remote.configure -name=cloud1 -type=s3 -s3.access_key=xxx -s3.secret_key=yyy
+	remote.configure -name=cloud2 -type=gcs -gcs.appCredentialsFile=~/service-account-file.json
 
 	# delete one configuration
 	remote.configure -delete -name=cloud1
