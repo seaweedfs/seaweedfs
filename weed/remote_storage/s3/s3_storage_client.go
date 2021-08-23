@@ -29,6 +29,7 @@ func (s s3RemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage.Re
 	config := &aws.Config{
 		Region:           aws.String(conf.S3Region),
 		Endpoint:         aws.String(conf.S3Endpoint),
+		S3ForcePathStyle: aws.Bool(conf.S3ForcePathStyle),
 	}
 	if conf.S3AccessKey != "" && conf.S3SecretKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(conf.S3AccessKey, conf.S3SecretKey, "")
