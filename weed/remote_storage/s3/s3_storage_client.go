@@ -143,10 +143,11 @@ func (s *s3RemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation, e
 
 	// Upload the file to S3.
 	_, err = uploader.Upload(&s3manager.UploadInput{
-		Bucket:               aws.String(loc.Bucket),
-		Key:                  aws.String(loc.Path[1:]),
-		Body:                 reader,
-		Tagging:              aws.String(tags),
+		Bucket:       aws.String(loc.Bucket),
+		Key:          aws.String(loc.Path[1:]),
+		Body:         reader,
+		Tagging:      aws.String(tags),
+		StorageClass: aws.String(s.conf.S3StorageClass),
 	})
 
 	//in case it fails to upload
