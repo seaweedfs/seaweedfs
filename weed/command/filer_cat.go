@@ -108,6 +108,11 @@ func runFilerCat(cmd *Command, args []string) bool {
 			return err
 		}
 
+		if len(respLookupEntry.Entry.Content) > 0 {
+			_, err = writer.Write(respLookupEntry.Entry.Content)
+			return err
+		}
+
 		filerCat.filerClient = client
 
 		return filer.StreamContent(&filerCat, writer, respLookupEntry.Entry.Chunks, 0, math.MaxInt64)
