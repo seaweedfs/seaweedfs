@@ -396,6 +396,8 @@ message RemoteConf {
     string s3_storage_class = 8;
     bool s3_force_path_style = 9;
     string gcs_google_application_credentials = 10;
+    string azure_account_name = 15;
+    string azure_account_key = 16;
 }
 
 message RemoteStorageMapping {
