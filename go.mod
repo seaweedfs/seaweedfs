@@ -6,8 +6,8 @@ require (
 	cloud.google.com/go v0.58.0 // indirect
 	cloud.google.com/go/pubsub v1.3.1
 	cloud.google.com/go/storage v1.9.0
-	github.com/Azure/azure-pipeline-go v0.2.2 // indirect
-	github.com/Azure/azure-storage-blob-go v0.9.0
+	github.com/Azure/azure-pipeline-go v0.2.3
+	github.com/Azure/azure-storage-blob-go v0.14.0
 	github.com/BurntSushi/toml v0.3.1 // indirect
 	github.com/DataDog/zstd v1.3.6-0.20190409195224-796139022798 // indirect
 	github.com/OneOfOne/xxhash v1.2.2
@@ -49,7 +49,7 @@ require (
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/btree v1.0.0
 	github.com/google/go-cmp v0.5.5 // indirect
-	github.com/google/uuid v1.1.1
+	github.com/google/uuid v1.2.0
 	github.com/google/wire v0.4.0 // indirect
 	github.com/googleapis/gax-go v2.0.2+incompatible // indirect
 	github.com/googleapis/gax-go/v2 v2.0.5 // indirect
@@ -140,7 +140,7 @@ require (
 	gocloud.dev v0.20.0
 	gocloud.dev/pubsub/natspubsub v0.20.0
 	gocloud.dev/pubsub/rabbitpubsub v0.20.0
-	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9 // indirect
+	golang.org/x/crypto v0.0.0-20201002170205-7f63de1d35b0 // indirect
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
 	golang.org/x/lint v0.0.0-20200302205851-738671d3881b // indirect
 	golang.org/x/mod v0.3.0 // indirect

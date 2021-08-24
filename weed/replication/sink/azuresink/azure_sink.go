@@ -62,7 +62,7 @@ func (g *AzureSink) initialize(accountName, accountKey, container, dir string) e
 	// Use your Storage account's name and key to create a credential object.
 	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
 	if err != nil {
-		glog.Fatalf("failed to create Azure credential with account name:%s key:%s", accountName, accountKey)
+		glog.Fatalf("failed to create Azure credential with account name:%s: %v", accountName, err)
 	}
 
 	// Create a request pipeline that is used to process HTTP(S) requests and responses.
@@ -109,13 +109,13 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	// Azure Storage account's container.
 	appendBlobURL := g.containerURL.NewAppendBlobURL(key)
 
-	_, err := appendBlobURL.Create(context.Background(), azblob.BlobHTTPHeaders{}, azblob.Metadata{}, azblob.BlobAccessConditions{})
+	_, err := appendBlobURL.Create(context.Background(), azblob.BlobHTTPHeaders{}, azblob.Metadata{}, azblob.BlobAccessConditions{}, azblob.BlobTagsMap{}, azblob.ClientProvidedKeyOptions{})
 	if err != nil {
 		return err
 	}
 
 	writeFunc := func(data []byte) error {
-		_, writeErr := appendBlobURL.AppendBlock(context.Background(), bytes.NewReader(data), azblob.AppendBlobAccessConditions{}, nil)
+		_, writeErr := appendBlobURL.AppendBlock(context.Background(), bytes.NewReader(data), azblob.AppendBlobAccessConditions{}, nil, azblob.ClientProvidedKeyOptions{})
 		return writeErr
 	}
 
