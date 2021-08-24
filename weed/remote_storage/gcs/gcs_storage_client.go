@@ -1,4 +1,4 @@
-package s3
+package gcs
 
 import (
 	"cloud.google.com/go/storage"
