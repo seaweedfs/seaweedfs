@@ -54,7 +54,7 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 	isDelete := remoteConfigureCommand.Bool("delete", false, "delete one remote storage by its name")
 
 	remoteConfigureCommand.StringVar(&conf.Name, "name", "", "a short name to identify the remote storage")
-	remoteConfigureCommand.StringVar(&conf.Type, "type", "s3", "[s3|gcs|azure] storage type")
+	remoteConfigureCommand.StringVar(&conf.Type, "type", "s3", "[s3|gcs|azure|b2] storage type")
 
 	remoteConfigureCommand.StringVar(&conf.S3AccessKey, "s3.access_key", "", "s3 access key")
 	remoteConfigureCommand.StringVar(&conf.S3SecretKey, "s3.secret_key", "", "s3 secret key")
@@ -67,6 +67,10 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 
 	remoteConfigureCommand.StringVar(&conf.AzureAccountName, "azure.account_name", "", "azure account name, default to use env AZURE_STORAGE_ACCOUNT")
 	remoteConfigureCommand.StringVar(&conf.AzureAccountKey, "azure.account_key", "", "azure account name, default to use env AZURE_STORAGE_ACCESS_KEY")
+
+	remoteConfigureCommand.StringVar(&conf.BackblazeKeyId, "b2.key_id", "", "backblaze keyID")
+	remoteConfigureCommand.StringVar(&conf.BackblazeApplicationKey, "b2.application_key", "", "backblaze applicationKey. Note that your Master Application Key will not work with the S3 Compatible API. You must create a new key that is eligible for use. For more information: https://help.backblaze.com/hc/en-us/articles/360047425453")
+	remoteConfigureCommand.StringVar(&conf.BackblazeEndpoint, "b2.endpoint", "", "backblaze endpoint")
 
 	if err = remoteConfigureCommand.Parse(args); err != nil {
 		return nil

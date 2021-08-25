@@ -398,6 +398,9 @@ message RemoteConf {
     string gcs_google_application_credentials = 10;
     string azure_account_name = 15;
     string azure_account_key = 16;
+    string backblaze_key_id = 20;
+    string backblaze_application_key = 21;
+    string backblaze_endpoint = 22;
 }
 
 message RemoteStorageMapping {
