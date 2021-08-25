@@ -76,6 +76,10 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 	remoteConfigureCommand.StringVar(&conf.AliyunSecretKey, "aliyun.secret_key", "", "Aliyun secret key")
 	remoteConfigureCommand.StringVar(&conf.AliyunEndpoint, "aliyun.endpoint", "", "Aliyun endpoint")
 
+	remoteConfigureCommand.StringVar(&conf.TencentSecretId, "tencent.secret_id", "", "Tencent Secret Id")
+	remoteConfigureCommand.StringVar(&conf.TencentSecretKey, "tencent.secret_key", "", "Tencent secret key")
+	remoteConfigureCommand.StringVar(&conf.TencentEndpoint, "tencent.endpoint", "", "Tencent endpoint")
+
 	if err = remoteConfigureCommand.Parse(args); err != nil {
 		return nil
 	}

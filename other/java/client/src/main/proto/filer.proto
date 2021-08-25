@@ -408,6 +408,11 @@ message RemoteConf {
     string aliyun_access_key = 25;
     string aliyun_secret_key = 26;
     string aliyun_endpoint = 27;
+
+    string tencent_secret_id = 30;
+    string tencent_secret_key = 31;
+    string tencent_endpoint = 32;
+
 }
 
 message RemoteStorageMapping {
