@@ -29,11 +29,13 @@ func (s TencentRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_stora
 		Endpoint:         aws.String(conf.TencentEndpoint),
 		S3ForcePathStyle: aws.Bool(true),
 	}
-	config.Credentials = credentials.NewStaticCredentials(accessKey, secretKey, "")
+	if accessKey != "" && secretKey != "" {
+		config.Credentials = credentials.NewStaticCredentials(accessKey, secretKey, "")
+	}
 
 	sess, err := session.NewSession(config)
 	if err != nil {
-		return nil, fmt.Errorf("create aws session: %v", err)
+		return nil, fmt.Errorf("create tencent session: %v", err)
 	}
 	client.conn = s3.New(sess)
 	return client, nil

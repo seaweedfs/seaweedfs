@@ -31,7 +31,7 @@ func (s BackBlazeRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_sto
 
 	sess, err := session.NewSession(config)
 	if err != nil {
-		return nil, fmt.Errorf("create aws session: %v", err)
+		return nil, fmt.Errorf("create backblaze session: %v", err)
 	}
 	client.conn = s3.New(sess)
 	return client, nil

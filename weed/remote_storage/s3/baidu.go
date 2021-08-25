@@ -13,22 +13,22 @@ import (
 )
 
 func init() {
-	remote_storage.RemoteStorageClientMakers["aliyun"] = new(AliyunRemoteStorageMaker)
+	remote_storage.RemoteStorageClientMakers["baidu"] = new(BaiduRemoteStorageMaker)
 }
 
-type AliyunRemoteStorageMaker struct{}
+type BaiduRemoteStorageMaker struct{}
 
-func (s AliyunRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
+func (s BaiduRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
 		conf: conf,
 	}
-	accessKey := util.Nvl(conf.AliyunAccessKey, os.Getenv("ALICLOUD_ACCESS_KEY_ID"))
-	secretKey := util.Nvl(conf.AliyunSecretKey, os.Getenv("ALICLOUD_ACCESS_KEY_SECRET"))
+	accessKey := util.Nvl(conf.BaiduAccessKey, os.Getenv("BDCLOUD_ACCESS_KEY"))
+	secretKey := util.Nvl(conf.BaiduSecretKey, os.Getenv("BDCLOUD_SECRET_KEY"))
 
 	config := &aws.Config{
-		Endpoint:         aws.String(conf.AliyunEndpoint),
-		Region:           aws.String(conf.AliyunRegion),
-		S3ForcePathStyle: aws.Bool(false),
+		Endpoint:         aws.String(conf.BaiduEndpoint),
+		Region:           aws.String(conf.BaiduRegion),
+		S3ForcePathStyle: aws.Bool(true),
 	}
 	if accessKey != "" && secretKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(accessKey, secretKey, "")
@@ -36,7 +36,7 @@ func (s AliyunRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storag
 
 	sess, err := session.NewSession(config)
 	if err != nil {
-		return nil, fmt.Errorf("create aliyun session: %v", err)
+		return nil, fmt.Errorf("create baidu session: %v", err)
 	}
 	client.conn = s3.New(sess)
 	return client, nil
