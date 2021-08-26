@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -80,12 +81,15 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 
 	var chunks []*filer_pb.FileChunk
 	var fetchAndWriteErr error
+	var wg sync.WaitGroup
 
 	limitedConcurrentExecutor := util.NewLimitedConcurrentExecutor(8)
 	for offset := int64(0); offset < entry.Remote.RemoteSize; offset += chunkSize {
 		localOffset := offset
 
+		wg.Add(1)
 		limitedConcurrentExecutor.Execute(func() {
+			defer wg.Done()
 			size := chunkSize
 			if localOffset+chunkSize > entry.Remote.RemoteSize {
 				size = entry.Remote.RemoteSize - localOffset
@@ -147,6 +151,7 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 		})
 	}
 
+	wg.Wait()
 	if fetchAndWriteErr != nil {
 		return nil, fetchAndWriteErr
 	}
