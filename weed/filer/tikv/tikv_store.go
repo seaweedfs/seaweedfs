@@ -16,6 +16,10 @@ import (
 	"github.com/tikv/client-go/v2/txnkv"
 )
 
+var (
+	_ filer.FilerStore = ((*TikvStore)(nil))
+)
+
 func init() {
 	filer.Stores = append(filer.Stores, &TikvStore{})
 }
@@ -36,7 +40,11 @@ func (store *TikvStore) Initialize(config util.Configuration, prefix string) err
 	for _, item := range strings.Split(pdAddrsStr, ",") {
 		pdAddrs = append(pdAddrs, strings.TrimSpace(item))
 	}
-	store.deleteRangeConcurrency = 1
+	drc := config.GetInt(prefix + "deleterange_concurrency")
+	if drc <= 0 {
+		drc = 1
+	}
+	store.deleteRangeConcurrency = drc
 	return store.initialize(pdAddrs)
 }
 
