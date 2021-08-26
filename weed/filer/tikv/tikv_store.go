@@ -21,7 +21,8 @@ func init() {
 }
 
 type TikvStore struct {
-	client *tikv.KVStore
+	client                 *tikv.KVStore
+	deleteRangeConcurrency int
 }
 
 // Basic APIs
@@ -35,6 +36,7 @@ func (store *TikvStore) Initialize(config util.Configuration, prefix string) err
 	for _, item := range strings.Split(pdAddrsStr, ",") {
 		pdAddrs = append(pdAddrs, strings.TrimSpace(item))
 	}
+	store.deleteRangeConcurrency = 1
 	return store.initialize(pdAddrs)
 }
 
@@ -142,7 +144,10 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 	if err != nil {
 		return err
 	}
-
+	var (
+		startKey []byte = nil
+		endKey   []byte = nil
+	)
 	err = txn.RunInTxn(func(txn *txnkv.KVTxn) error {
 		iter, err := txn.Iter(directoryPrefix, nil)
 		if err != nil {
@@ -151,24 +156,37 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 		defer iter.Close()
 		for iter.Valid() {
 			key := iter.Key()
+			endKey = key
 			if !bytes.HasPrefix(key, directoryPrefix) {
 				break
 			}
-			err = txn.Delete(key)
-			if err != nil {
-				return err
+			if startKey == nil {
+				startKey = key
 			}
+
 			err = iter.Next()
 			if err != nil {
 				return err
 			}
+		}
+		// Only one Key matched just delete it.
+		if startKey != nil && bytes.Equal(startKey, endKey) {
+			return txn.Delete(startKey)
 		}
 		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", path, err)
 	}
-	return nil
+
+	if startKey != nil && endKey != nil && !bytes.Equal(startKey, endKey) {
+		// has startKey and endKey and they are not equals, so use delete range
+		_, err = store.client.DeleteRange(context.Background(), startKey, endKey, store.deleteRangeConcurrency)
+		if err != nil {
+			return fmt.Errorf("delete %s : %v", path, err)
+		}
+	}
+	return err
 }
 
 func (store *TikvStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (string, error) {
