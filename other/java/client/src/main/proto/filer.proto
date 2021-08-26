@@ -413,12 +413,17 @@ message RemoteConf {
     string tencent_secret_id = 30;
     string tencent_secret_key = 31;
     string tencent_endpoint = 32;
+    string tencent_region = 33;
 
     string baidu_access_key = 35;
     string baidu_secret_key = 36;
     string baidu_endpoint = 37;
     string baidu_region = 38;
 
+    string wasabi_access_key = 40;
+    string wasabi_secret_key = 41;
+    string wasabi_endpoint = 42;
+    string wasabi_region = 43;
 }
 
 message RemoteStorageMapping {

@@ -54,7 +54,7 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 	isDelete := remoteConfigureCommand.Bool("delete", false, "delete one remote storage by its name")
 
 	remoteConfigureCommand.StringVar(&conf.Name, "name", "", "a short name to identify the remote storage")
-	remoteConfigureCommand.StringVar(&conf.Type, "type", "s3", "[s3|gcs|azure|b2|aliyun|tencent] storage type")
+	remoteConfigureCommand.StringVar(&conf.Type, "type", "s3", "[s3|gcs|azure|b2|aliyun|tencent|baidu|wasabi] storage type")
 
 	remoteConfigureCommand.StringVar(&conf.S3AccessKey, "s3.access_key", "", "s3 access key")
 	remoteConfigureCommand.StringVar(&conf.S3SecretKey, "s3.secret_key", "", "s3 secret key")
@@ -80,11 +80,17 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 	remoteConfigureCommand.StringVar(&conf.TencentSecretId, "tencent.secret_id", "", "Tencent Secret Id, default to use env COS_SECRETID")
 	remoteConfigureCommand.StringVar(&conf.TencentSecretKey, "tencent.secret_key", "", "Tencent secret key, default to use env COS_SECRETKEY")
 	remoteConfigureCommand.StringVar(&conf.TencentEndpoint, "tencent.endpoint", "", "Tencent endpoint")
+	remoteConfigureCommand.StringVar(&conf.TencentRegion, "tencent.region", "", "Tencent region")
 
 	remoteConfigureCommand.StringVar(&conf.BaiduAccessKey, "baidu.access_key", "", "Baidu access key, default to use env BDCLOUD_ACCESS_KEY")
 	remoteConfigureCommand.StringVar(&conf.BaiduSecretKey, "baidu.secret_key", "", "Baidu secret key, default to use env BDCLOUD_SECRET_KEY")
 	remoteConfigureCommand.StringVar(&conf.BaiduEndpoint, "baidu.endpoint", "", "Baidu endpoint")
 	remoteConfigureCommand.StringVar(&conf.BaiduRegion, "baidu.region", "", "Baidu region")
+
+	remoteConfigureCommand.StringVar(&conf.WasabiAccessKey, "wasabi.access_key", "", "Wasabi access key")
+	remoteConfigureCommand.StringVar(&conf.WasabiSecretKey, "wasabi.secret_key", "", "Wasabi secret key")
+	remoteConfigureCommand.StringVar(&conf.WasabiEndpoint, "wasabi.endpoint", "", "Wasabi endpoint, see https://wasabi.com/wp-content/themes/wasabi/docs/API_Guide/index.html#t=topics%2Fapidiff-intro.htm")
+	remoteConfigureCommand.StringVar(&conf.WasabiRegion, "wasabi.region", "", "Wasabi region")
 
 	if err = remoteConfigureCommand.Parse(args); err != nil {
 		return nil

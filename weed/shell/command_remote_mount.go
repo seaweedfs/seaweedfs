@@ -11,6 +11,7 @@ import (
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
 	"io"
+	"strings"
 )
 
 func init() {
@@ -124,7 +125,9 @@ func (c *commandRemoteMount) syncMetadata(commandEnv *CommandEnv, writer io.Writ
 			Name:      name,
 		})
 		if lookupErr != nil {
-			return fmt.Errorf("lookup %s: %v", dir, lookupErr)
+			if !strings.Contains(lookupErr.Error(), filer_pb.ErrNotFound.Error()) {
+				return fmt.Errorf("lookup %s: %v", dir, lookupErr)
+			}
 		}
 
 		mountToDirIsEmpty := true

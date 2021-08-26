@@ -29,6 +29,7 @@ func (s BaiduRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage
 		Endpoint:         aws.String(conf.BaiduEndpoint),
 		Region:           aws.String(conf.BaiduRegion),
 		S3ForcePathStyle: aws.Bool(true),
+		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if accessKey != "" && secretKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(accessKey, secretKey, "")
@@ -38,6 +39,7 @@ func (s BaiduRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage
 	if err != nil {
 		return nil, fmt.Errorf("create baidu session: %v", err)
 	}
+	sess.Handlers.Build.PushFront(skipSha256PayloadSigning)
 	client.conn = s3.New(sess)
 	return client, nil
 }

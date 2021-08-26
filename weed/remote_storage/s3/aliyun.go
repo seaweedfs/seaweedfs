@@ -29,6 +29,7 @@ func (s AliyunRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storag
 		Endpoint:         aws.String(conf.AliyunEndpoint),
 		Region:           aws.String(conf.AliyunRegion),
 		S3ForcePathStyle: aws.Bool(false),
+		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if accessKey != "" && secretKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(accessKey, secretKey, "")
@@ -38,6 +39,7 @@ func (s AliyunRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storag
 	if err != nil {
 		return nil, fmt.Errorf("create aliyun session: %v", err)
 	}
+	sess.Handlers.Build.PushFront(skipSha256PayloadSigning)
 	client.conn = s3.New(sess)
 	return client, nil
 }

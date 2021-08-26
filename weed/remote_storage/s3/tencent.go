@@ -27,7 +27,9 @@ func (s TencentRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_stora
 
 	config := &aws.Config{
 		Endpoint:         aws.String(conf.TencentEndpoint),
+		Region:           aws.String("us-west-2"),
 		S3ForcePathStyle: aws.Bool(true),
+		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if accessKey != "" && secretKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(accessKey, secretKey, "")
@@ -37,6 +39,7 @@ func (s TencentRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_stora
 	if err != nil {
 		return nil, fmt.Errorf("create tencent session: %v", err)
 	}
+	sess.Handlers.Build.PushFront(skipSha256PayloadSigning)
 	client.conn = s3.New(sess)
 	return client, nil
 }

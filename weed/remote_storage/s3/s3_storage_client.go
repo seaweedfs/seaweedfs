@@ -27,9 +27,10 @@ func (s s3RemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage.Re
 		conf: conf,
 	}
 	config := &aws.Config{
-		Region:           aws.String(conf.S3Region),
-		Endpoint:         aws.String(conf.S3Endpoint),
-		S3ForcePathStyle: aws.Bool(conf.S3ForcePathStyle),
+		Region:                        aws.String(conf.S3Region),
+		Endpoint:                      aws.String(conf.S3Endpoint),
+		S3ForcePathStyle:              aws.Bool(conf.S3ForcePathStyle),
+		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if conf.S3AccessKey != "" && conf.S3SecretKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(conf.S3AccessKey, conf.S3SecretKey, "")
@@ -39,6 +40,7 @@ func (s s3RemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage.Re
 	if err != nil {
 		return nil, fmt.Errorf("create aws session: %v", err)
 	}
+	sess.Handlers.Build.PushFront(skipSha256PayloadSigning)
 	client.conn = s3.New(sess)
 	return client, nil
 }
@@ -129,7 +131,7 @@ func (s *s3RemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation, e
 	// Create an uploader with the session and custom options
 	uploader := s3manager.NewUploaderWithClient(s.conn, func(u *s3manager.Uploader) {
 		u.PartSize = partSize
-		u.Concurrency = 5
+		u.Concurrency = 1
 	})
 
 	// process tagging
@@ -152,7 +154,7 @@ func (s *s3RemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation, e
 
 	//in case it fails to upload
 	if err != nil {
-		return nil, fmt.Errorf("upload to s3 %s/%s%s: %v", loc.Name, loc.Bucket, loc.Path, err)
+		return nil, fmt.Errorf("upload to %s/%s%s: %v", loc.Name, loc.Bucket, loc.Path, err)
 	}
 
 	// read back the remote entry

@@ -24,6 +24,7 @@ func (s BackBlazeRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_sto
 		Endpoint:         aws.String(conf.BackblazeEndpoint),
 		Region:           aws.String("us-west-002"),
 		S3ForcePathStyle: aws.Bool(true),
+		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if conf.BackblazeKeyId != "" && conf.BackblazeApplicationKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(conf.BackblazeKeyId, conf.BackblazeApplicationKey, "")
@@ -33,6 +34,7 @@ func (s BackBlazeRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_sto
 	if err != nil {
 		return nil, fmt.Errorf("create backblaze session: %v", err)
 	}
+	sess.Handlers.Build.PushFront(skipSha256PayloadSigning)
 	client.conn = s3.New(sess)
 	return client, nil
 }
