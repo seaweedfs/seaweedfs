@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
@@ -48,7 +49,7 @@ var (
 
 func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	conf := &filer_pb.RemoteConf{}
+	conf := &remote_pb.RemoteConf{}
 
 	remoteConfigureCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	isDelete := remoteConfigureCommand.Bool("delete", false, "delete one remote storage by its name")
@@ -122,7 +123,7 @@ func (c *commandRemoteConfigure) listExistingRemoteStorages(commandEnv *CommandE
 		if !strings.HasSuffix(entry.Name, filer.REMOTE_STORAGE_CONF_SUFFIX) {
 			return nil
 		}
-		conf := &filer_pb.RemoteConf{}
+		conf := &remote_pb.RemoteConf{}
 
 		if err := proto.Unmarshal(entry.Content, conf); err != nil {
 			return fmt.Errorf("unmarshal %s/%s: %v", filer.DirectoryEtcRemote, entry.Name, err)
@@ -168,7 +169,7 @@ func (c *commandRemoteConfigure) deleteRemoteStorage(commandEnv *CommandEnv, wri
 
 }
 
-func (c *commandRemoteConfigure) saveRemoteStorage(commandEnv *CommandEnv, writer io.Writer, conf *filer_pb.RemoteConf) error {
+func (c *commandRemoteConfigure) saveRemoteStorage(commandEnv *CommandEnv, writer io.Writer, conf *remote_pb.RemoteConf) error {
 
 	data, err := proto.Marshal(conf)
 	if err != nil {

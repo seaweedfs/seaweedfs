@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/api/iterator"
@@ -21,7 +22,7 @@ func init() {
 
 type gcsRemoteStorageMaker struct{}
 
-func (s gcsRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
+func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &gcsRemoteStorageClient{
 		conf: conf,
 	}
@@ -48,13 +49,13 @@ func (s gcsRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage.R
 }
 
 type gcsRemoteStorageClient struct {
-	conf *filer_pb.RemoteConf
+	conf *remote_pb.RemoteConf
 	client        *storage.Client
 }
 
 var _ = remote_storage.RemoteStorageClient(&gcsRemoteStorageClient{})
 
-func (gcs *gcsRemoteStorageClient) Traverse(loc *filer_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
+func (gcs *gcsRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
 	pathKey := loc.Path[1:]
 
@@ -86,7 +87,7 @@ func (gcs *gcsRemoteStorageClient) Traverse(loc *filer_pb.RemoteStorageLocation,
 	}
 	return
 }
-func (gcs *gcsRemoteStorageClient) ReadFile(loc *filer_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
+func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
 
 	key := loc.Path[1:]
 	rangeReader, readErr := gcs.client.Bucket(loc.Bucket).Object(key).NewRangeReader(context.Background(), offset, size)
@@ -102,11 +103,11 @@ func (gcs *gcsRemoteStorageClient) ReadFile(loc *filer_pb.RemoteStorageLocation,
 	return
 }
 
-func (gcs *gcsRemoteStorageClient) WriteDirectory(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
+func (gcs *gcsRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
 	return nil
 }
 
-func (gcs *gcsRemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {
+func (gcs *gcsRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {
 
 	key := loc.Path[1:]
 
@@ -125,7 +126,7 @@ func (gcs *gcsRemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation
 
 }
 
-func (gcs *gcsRemoteStorageClient) readFileRemoteEntry(loc *filer_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
+func (gcs *gcsRemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
 	key := loc.Path[1:]
 	attr, err := gcs.client.Bucket(loc.Bucket).Object(key).Attrs(context.Background())
 
@@ -150,7 +151,7 @@ func toMetadata(attributes map[string][]byte) map[string]string {
 	return metadata
 }
 
-func (gcs *gcsRemoteStorageClient) UpdateFileMetadata(loc *filer_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
+func (gcs *gcsRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
 	if reflect.DeepEqual(oldEntry.Extended, newEntry.Extended) {
 		return nil
 	}
@@ -168,7 +169,7 @@ func (gcs *gcsRemoteStorageClient) UpdateFileMetadata(loc *filer_pb.RemoteStorag
 
 	return
 }
-func (gcs *gcsRemoteStorageClient) DeleteFile(loc *filer_pb.RemoteStorageLocation) (err error) {
+func (gcs *gcsRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error) {
 	key := loc.Path[1:]
 	if err = gcs.client.Bucket(loc.Bucket).Object(key).Delete(context.Background()); err != nil {
 		return fmt.Errorf("gcs delete %s%s: %v", loc.Bucket, key, err)

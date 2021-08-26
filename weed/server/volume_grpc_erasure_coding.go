@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
 	"io"
 	"io/ioutil"
 	"math"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
@@ -60,7 +60,7 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	}
 
 	// write .vif files
-	if err := pb.SaveVolumeInfo(baseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}); err != nil {
+	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}); err != nil {
 		return nil, fmt.Errorf("WriteEcFiles %s: %v", baseFileName, err)
 	}
 

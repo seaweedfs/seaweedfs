@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -27,7 +28,7 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 	}
 
 	// find mapping
-	var remoteStorageMountedLocation *filer_pb.RemoteStorageLocation
+	var remoteStorageMountedLocation *remote_pb.RemoteStorageLocation
 	var localMountedDir string
 	for k, loc := range mappings.Mappings {
 		if strings.HasPrefix(req.Directory, k) {
@@ -43,7 +44,7 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 	if err != nil {
 		return nil, err
 	}
-	storageConf := &filer_pb.RemoteConf{}
+	storageConf := &remote_pb.RemoteConf{}
 	if unMarshalErr := proto.Unmarshal(storageConfEntry.Content, storageConf); unMarshalErr != nil {
 		return nil, fmt.Errorf("unmarshal remote storage conf %s/%s: %v", filer.DirectoryEtcRemote, remoteStorageMountedLocation.Name+filer.REMOTE_STORAGE_CONF_SUFFIX, unMarshalErr)
 	}
@@ -114,14 +115,12 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 					Cookie:       uint32(fileId.Cookie),
 					Offset:       localOffset,
 					Size:         size,
-					RemoteType:   storageConf.Type,
-					RemoteName:   storageConf.Name,
-					S3AccessKey:  storageConf.S3AccessKey,
-					S3SecretKey:  storageConf.S3SecretKey,
-					S3Region:     storageConf.S3Region,
-					S3Endpoint:   storageConf.S3Endpoint,
-					RemoteBucket: remoteStorageMountedLocation.Bucket,
-					RemotePath:   string(dest),
+					RemoteConf: storageConf,
+					RemoteLocation: &remote_pb.RemoteStorageLocation{
+						Name:   remoteStorageMountedLocation.Name,
+						Bucket: remoteStorageMountedLocation.Bucket,
+						Path:   string(dest),
+					},
 				})
 				if fetchAndWriteErr != nil {
 					return fmt.Errorf("volume server %s fetchAndWrite %s: %v", assignResult.Url, dest, fetchAndWriteErr)
@@ -129,7 +128,7 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 				return nil
 			})
 
-			if err != nil {
+			if err != nil && fetchAndWriteErr == nil {
 				fetchAndWriteErr = err
 				return
 			}

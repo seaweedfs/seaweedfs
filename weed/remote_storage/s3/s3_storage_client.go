@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
@@ -22,7 +23,7 @@ func init() {
 
 type s3RemoteStorageMaker struct{}
 
-func (s s3RemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
+func (s s3RemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
 		conf: conf,
 	}
@@ -46,13 +47,13 @@ func (s s3RemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage.Re
 }
 
 type s3RemoteStorageClient struct {
-	conf *filer_pb.RemoteConf
+	conf *remote_pb.RemoteConf
 	conn s3iface.S3API
 }
 
 var _ = remote_storage.RemoteStorageClient(&s3RemoteStorageClient{})
 
-func (s *s3RemoteStorageClient) Traverse(remote *filer_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
+func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
 	pathKey := remote.Path[1:]
 
@@ -94,7 +95,7 @@ func (s *s3RemoteStorageClient) Traverse(remote *filer_pb.RemoteStorageLocation,
 	}
 	return
 }
-func (s *s3RemoteStorageClient) ReadFile(loc *filer_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
+func (s *s3RemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
 	downloader := s3manager.NewDownloaderWithClient(s.conn, func(u *s3manager.Downloader) {
 		u.PartSize = int64(4 * 1024 * 1024)
 		u.Concurrency = 1
@@ -115,11 +116,11 @@ func (s *s3RemoteStorageClient) ReadFile(loc *filer_pb.RemoteStorageLocation, of
 	return writerAt.Bytes(), nil
 }
 
-func (s *s3RemoteStorageClient) WriteDirectory(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
+func (s *s3RemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
 	return nil
 }
 
-func (s *s3RemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {
+func (s *s3RemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {
 
 	fileSize := int64(filer.FileSize(entry))
 
@@ -173,7 +174,7 @@ func toTagging(attributes map[string][]byte) *s3.Tagging {
 	return tagging
 }
 
-func (s *s3RemoteStorageClient) readFileRemoteEntry(loc *filer_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
+func (s *s3RemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
 	resp, err := s.conn.HeadObject(&s3.HeadObjectInput{
 		Bucket: aws.String(loc.Bucket),
 		Key:    aws.String(loc.Path[1:]),
@@ -191,7 +192,7 @@ func (s *s3RemoteStorageClient) readFileRemoteEntry(loc *filer_pb.RemoteStorageL
 
 }
 
-func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *filer_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
+func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
 	if reflect.DeepEqual(oldEntry.Extended, newEntry.Extended) {
 		return nil
 	}
@@ -210,7 +211,7 @@ func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *filer_pb.RemoteStorageLo
 	}
 	return
 }
-func (s *s3RemoteStorageClient) DeleteFile(loc *filer_pb.RemoteStorageLocation) (err error) {
+func (s *s3RemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error) {
 	_, err = s.conn.DeleteObject(&s3.DeleteObjectInput{
 		Bucket: aws.String(loc.Bucket),
 		Key:    aws.String(loc.Path[1:]),

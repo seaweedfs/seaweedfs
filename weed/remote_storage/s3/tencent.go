@@ -6,7 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"os"
@@ -18,7 +18,7 @@ func init() {
 
 type TencentRemoteStorageMaker struct{}
 
-func (s TencentRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
+func (s TencentRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
 		conf: conf,
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
 )
@@ -71,7 +72,7 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 	return nil
 }
 
-func (c *commandRemoteUnmount) findRemoteStorageConfiguration(commandEnv *CommandEnv, writer io.Writer, remote *filer_pb.RemoteStorageLocation) (conf *filer_pb.RemoteConf, err error) {
+func (c *commandRemoteUnmount) findRemoteStorageConfiguration(commandEnv *CommandEnv, writer io.Writer, remote *remote_pb.RemoteStorageLocation) (conf *remote_pb.RemoteConf, err error) {
 
 	return filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, remote.Name)
 

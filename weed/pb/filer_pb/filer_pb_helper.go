@@ -151,7 +151,3 @@ func (fp *FilerConf_PathConf) Key() interface{} {
 	key, _ := proto.Marshal(fp)
 	return string(key)
 }
-func (fp *RemoteStorageLocation) Key() interface{} {
-	key, _ := proto.Marshal(fp)
-	return string(key)
-}

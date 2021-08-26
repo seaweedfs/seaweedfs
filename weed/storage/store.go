@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"path/filepath"
 	"strings"
@@ -10,7 +11,6 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
@@ -474,12 +474,12 @@ func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
 		// load, modify, save
 		baseFileName := strings.TrimSuffix(fileInfo.Name(), filepath.Ext(fileInfo.Name()))
 		vifFile := filepath.Join(location.Directory, baseFileName+".vif")
-		volumeInfo, _, _, err := pb.MaybeLoadVolumeInfo(vifFile)
+		volumeInfo, _, _, err := volume_info.MaybeLoadVolumeInfo(vifFile)
 		if err != nil {
 			return fmt.Errorf("volume %d fail to load vif", i)
 		}
 		volumeInfo.Replication = replication
-		err = pb.SaveVolumeInfo(vifFile, volumeInfo)
+		err = volume_info.SaveVolumeInfo(vifFile, volumeInfo)
 		if err != nil {
 			return fmt.Errorf("volume %d fail to save vif", i)
 		}

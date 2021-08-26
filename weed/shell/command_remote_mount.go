@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/jsonpb"
@@ -81,7 +82,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	return nil
 }
 
-func listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (mappings *filer_pb.RemoteStorageMapping, err error) {
+func listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (mappings *remote_pb.RemoteStorageMapping, err error) {
 
 	// read current mapping
 	mappings, err = filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
@@ -109,13 +110,13 @@ func jsonPrintln(writer io.Writer, message proto.Message) error {
 	return err
 }
 
-func (c *commandRemoteMount) findRemoteStorageConfiguration(commandEnv *CommandEnv, writer io.Writer, remote *filer_pb.RemoteStorageLocation) (conf *filer_pb.RemoteConf, err error) {
+func (c *commandRemoteMount) findRemoteStorageConfiguration(commandEnv *CommandEnv, writer io.Writer, remote *remote_pb.RemoteStorageLocation) (conf *remote_pb.RemoteConf, err error) {
 
 	return filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, remote.Name)
 
 }
 
-func (c *commandRemoteMount) syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *filer_pb.RemoteConf, remote *filer_pb.RemoteStorageLocation) error {
+func (c *commandRemoteMount) syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {
 
 	// find existing directory, and ensure the directory is empty
 	err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
@@ -160,7 +161,7 @@ func (c *commandRemoteMount) syncMetadata(commandEnv *CommandEnv, writer io.Writ
 	return nil
 }
 
-func (c *commandRemoteMount) saveMountMapping(commandEnv *CommandEnv, writer io.Writer, dir string, remoteStorageLocation *filer_pb.RemoteStorageLocation) (err error) {
+func (c *commandRemoteMount) saveMountMapping(commandEnv *CommandEnv, writer io.Writer, dir string, remoteStorageLocation *remote_pb.RemoteStorageLocation) (err error) {
 
 	// read current mapping
 	var oldContent, newContent []byte

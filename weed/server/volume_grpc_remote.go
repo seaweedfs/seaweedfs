@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -17,25 +16,15 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 		return nil, fmt.Errorf("not found volume id %d", req.VolumeId)
 	}
 
-	remoteConf := &filer_pb.RemoteConf{
-		Type:        req.RemoteType,
-		Name:        req.RemoteName,
-		S3AccessKey: req.S3AccessKey,
-		S3SecretKey: req.S3SecretKey,
-		S3Region:    req.S3Region,
-		S3Endpoint:  req.S3Endpoint,
-	}
+	remoteConf := req.RemoteConf
 
 	client, getClientErr := remote_storage.GetRemoteStorage(remoteConf)
 	if getClientErr != nil {
 		return nil, fmt.Errorf("get remote client: %v", getClientErr)
 	}
 
-	remoteStorageLocation := &filer_pb.RemoteStorageLocation{
-		Name:   req.RemoteName,
-		Bucket: req.RemoteBucket,
-		Path:   req.RemotePath,
-	}
+	remoteStorageLocation := req.RemoteLocation
+
 	data, ReadRemoteErr := client.ReadFile(remoteStorageLocation, req.Offset, req.Size)
 	if ReadRemoteErr != nil {
 		return nil, fmt.Errorf("read from remote %+v: %v", remoteStorageLocation, ReadRemoteErr)

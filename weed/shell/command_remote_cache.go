@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
 )
@@ -110,13 +111,13 @@ func mayHaveCachedToLocal(entry *filer_pb.Entry) bool {
 	if entry.RemoteEntry == nil {
 		return false // should not uncache an entry that is not in remote
 	}
-	if entry.RemoteEntry.LastLocalSyncTsNs > 0 && len(entry.Chunks) > 0 {
+	if entry.RemoteEntry.LastLocalSyncTsNs > 0 {
 		return true
 	}
 	return false
 }
 
-func (c *commandRemoteCache) cacheContentData(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *filer_pb.RemoteStorageLocation, dirToCache util.FullPath, fileFilter *FileFilter, remoteConf *filer_pb.RemoteConf) error {
+func (c *commandRemoteCache) cacheContentData(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToCache util.FullPath, fileFilter *FileFilter, remoteConf *remote_pb.RemoteConf) error {
 
 	return recursivelyTraverseDirectory(commandEnv, dirToCache, func(dir util.FullPath, entry *filer_pb.Entry) bool {
 		if !shouldCacheToLocal(entry) {
@@ -127,7 +128,7 @@ func (c *commandRemoteCache) cacheContentData(commandEnv *CommandEnv, writer io.
 			return true
 		}
 
-		println(dir, entry.Name)
+		fmt.Fprintf(writer, "Cache %+v ... ", dir.Child(entry.Name))
 
 		remoteLocation := filer.MapFullPathToRemoteStorageLocation(localMountedDir, remoteMountedLocation, dir.Child(entry.Name))
 
@@ -135,6 +136,7 @@ func (c *commandRemoteCache) cacheContentData(commandEnv *CommandEnv, writer io.
 			fmt.Fprintf(writer, "DownloadToLocal %+v: %v\n", remoteLocation, err)
 			return false
 		}
+		fmt.Fprintf(writer, "Done\n")
 
 		return true
 	})

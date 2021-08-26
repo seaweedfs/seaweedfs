@@ -7,6 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
 	"github.com/chrislusf/seaweedfs/weed/security"
@@ -100,7 +101,7 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 	return true
 }
 
-func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *source.FilerSource, mountedDir string, remoteStorage *filer_pb.RemoteConf, remoteStorageMountLocation *filer_pb.RemoteStorageLocation) error {
+func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *source.FilerSource, mountedDir string, remoteStorage *remote_pb.RemoteConf, remoteStorageMountLocation *remote_pb.RemoteStorageLocation) error {
 
 	dirHash := util.HashStringToLong(mountedDir)
 
@@ -206,10 +207,10 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		"filer.remote.sync", mountedDir, lastOffsetTs.UnixNano(), 0, processEventFnWithOffset, false)
 }
 
-func toRemoteStorageLocation(mountDir, sourcePath util.FullPath, remoteMountLocation *filer_pb.RemoteStorageLocation) *filer_pb.RemoteStorageLocation {
+func toRemoteStorageLocation(mountDir, sourcePath util.FullPath, remoteMountLocation *remote_pb.RemoteStorageLocation) *remote_pb.RemoteStorageLocation {
 	source := string(sourcePath[len(mountDir):])
 	dest := util.FullPath(remoteMountLocation.Path).Child(source)
-	return &filer_pb.RemoteStorageLocation{
+	return &remote_pb.RemoteStorageLocation{
 		Name:   remoteMountLocation.Name,
 		Bucket: remoteMountLocation.Bucket,
 		Path:   string(dest),
