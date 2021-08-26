@@ -82,6 +82,7 @@ func (f *Filer) LoadConfiguration(config *util.ViperProxy) {
 func validateOneEnabledStore(config *util.ViperProxy) {
 	enabledStore := ""
 	for _, store := range Stores {
+		glog.V(0).Infof("Store Engines: %v", store.GetName())
 		if config.GetBool(store.GetName() + ".enabled") {
 			if enabledStore == "" {
 				enabledStore = store.GetName()

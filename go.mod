@@ -109,13 +109,14 @@ require (
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/viper v1.4.0
 	github.com/streadway/amqp v0.0.0-20200108173154-1c71cc93ed71
-	github.com/stretchr/testify v1.6.1
+	github.com/stretchr/testify v1.7.0
 	github.com/syndtr/goleveldb v1.0.1-0.20190318030020-c3a204f8e965
 	github.com/tecbot/gorocksdb v0.0.0-20191217155057-f0fad39f321c
 	github.com/tidwall/gjson v1.8.1
 	github.com/tidwall/match v1.0.3
 	github.com/tidwall/pretty v1.1.0 // indirect
 	github.com/tikv/client-go v0.0.0-20210412055529-d811a08025fa
+	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210824090536-16d902a3c7e5 // indirect
 	github.com/tsuna/gohbase v0.0.0-20201125011725-348991136365
 	github.com/valyala/bytebufferpool v1.0.0
 	github.com/viant/assertly v0.5.4 // indirect
@@ -136,14 +137,11 @@ require (
 	gocloud.dev/pubsub/rabbitpubsub v0.20.0
 	golang.org/x/crypto v0.0.0-20201002170205-7f63de1d35b0 // indirect
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
-	golang.org/x/lint v0.0.0-20200302205851-738671d3881b // indirect
-	golang.org/x/mod v0.3.0 // indirect
 	golang.org/x/net v0.0.0-20210813160813-60bc85c4be6d
 	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d // indirect
-	golang.org/x/sync v0.0.0-20201207232520-09787c993a3a // indirect
 	golang.org/x/sys v0.0.0-20210817142637-7d9622a276b7
 	golang.org/x/text v0.3.6 // indirect
-	golang.org/x/tools v0.0.0-20201124115921-2c860bdd6e78
+	golang.org/x/tools v0.1.4
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	google.golang.org/api v0.26.0
 	google.golang.org/appengine v1.6.6 // indirect
@@ -156,9 +154,6 @@ require (
 	gopkg.in/jcmturner/goidentity.v3 v3.0.0 // indirect
 	gopkg.in/jcmturner/gokrb5.v7 v7.3.0 // indirect
 	gopkg.in/jcmturner/rpc.v1 v1.1.0 // indirect
-	gopkg.in/yaml.v2 v2.3.0 // indirect
-	gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c // indirect
-	honnef.co/go/tools v0.0.1-2020.1.4 // indirect
 	modernc.org/b v1.0.0 // indirect
 	modernc.org/cc/v3 v3.33.5 // indirect
 	modernc.org/ccgo/v3 v3.9.4 // indirect

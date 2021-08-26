@@ -30,6 +30,9 @@ func (store *TikvStore) KvGet(ctx context.Context, key []byte) ([]byte, error) {
 		}
 		return err
 	})
+	if isNotExists(err) {
+		return data, filer.ErrKvNotFound
+	}
 	return data, err
 }
 

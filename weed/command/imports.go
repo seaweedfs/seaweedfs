@@ -3,9 +3,9 @@ package command
 import (
 	_ "net/http/pprof"
 
-	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/s3"
-	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/gcs"
 	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/azure"
+	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/gcs"
+	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/s3"
 
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/azuresink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/b2sink"
@@ -29,4 +29,5 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/sqlite"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/tikv"
 )
