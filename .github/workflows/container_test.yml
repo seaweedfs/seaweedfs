@@ -1,6 +1,7 @@
 name: Test Building Container Images
 on:
   push:
+  pull_request:
   workflow_dispatch: []
 
 jobs:
