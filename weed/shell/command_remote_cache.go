@@ -51,7 +51,7 @@ func (c *commandRemoteCache) Do(args []string, commandEnv *CommandEnv, writer io
 	remoteMountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 
 	dir := remoteMountCommand.String("dir", "", "a directory in filer")
-	concurrency := remoteMountCommand.Int("concurrent", 8, "concurrent file downloading")
+	concurrency := remoteMountCommand.Int("concurrent", 32, "concurrent file downloading")
 	fileFiler := newFileFilter(remoteMountCommand)
 
 	if err = remoteMountCommand.Parse(args); err != nil {
