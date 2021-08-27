@@ -72,10 +72,6 @@ public class FilerClient extends FilerGrpcClient {
             }
             return entry;
         } else {
-            String fileId = entry.getChunks(0).getFileId();
-            if (fileId != null && fileId.length() != 0) {
-                return entry;
-            }
             FilerProto.Entry.Builder entryBuilder = entry.toBuilder();
             entryBuilder.clearChunks();
             long fileSize = 0;
