@@ -49,4 +49,3 @@ jobs:
 
       - name: Build
         run: cd weed; GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v .
-        continue-on-error: true
