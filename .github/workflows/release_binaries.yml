@@ -15,12 +15,24 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [linux, windows, darwin, freebsd ]
-        goarch: [amd64, arm]
+        goos: [linux, windows, darwin, freebsd, netbsd, openbsd]
+        goarch: [amd64, arm, arm64, 386, ppc64le, s390x]
         exclude:
           - goarch: arm
             goos: darwin
+          - goarch: 386
+            goos: darwin
+          - goarch: ppc64le
+            goos: darwin
+          - goarch: s390x
+            goos: darwin
           - goarch: arm
+            goos: windows
+          - goarch: arm64
+            goos: windows
+          - goarch: ppc64le
+            goos: windows
+          - goarch: s390x
             goos: windows
 
     # Steps represent a sequence of tasks that will be executed as part of the job
