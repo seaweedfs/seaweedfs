@@ -13,23 +13,15 @@ jobs:
     strategy:
       matrix:
         goos: [linux, windows, darwin, freebsd, netbsd, openbsd]
-        goarch: [amd64, arm, arm64, 386, ppc64le, s390x]
+        goarch: [amd64, arm, arm64, 386]
         exclude:
           - goarch: arm
             goos: darwin
           - goarch: 386
             goos: darwin
-          - goarch: ppc64le
-            goos: darwin
-          - goarch: s390x
-            goos: darwin
           - goarch: arm
             goos: windows
           - goarch: arm64
-            goos: windows
-          - goarch: ppc64le
-            goos: windows
-          - goarch: s390x
             goos: windows
 
     concurrency:
