@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_dispatch: []
 
+concurrency:
+  group: ${{ github.head_ref }}
+  cancel-in-progress: true
+
 jobs:
   build-test:
     runs-on: [ubuntu-latest]
