@@ -38,6 +38,7 @@ func (c *commandRemoteConfigure) Help() string {
 	remote.configure -name=cloud3 -type=azure -azure.account_name=xxx -azure.account_key=yyy
 	remote.configure -name=cloud4 -type=aliyun -aliyun.access_key=xxx -aliyun.secret_key=yyy -aliyun.endpoint=oss-cn-shenzhen.aliyuncs.com -aliyun.region=cn-sehnzhen
 	remote.configure -name=cloud5 -type=tencent -tencent.secret_id=xxx -tencent.secret_key=yyy -tencent.endpoint=cos.ap-guangzhou.myqcloud.com
+	remote.configure -name=cloud6 -type=wasabi -wasabi.access_key=xxx -wasabi.secret_key=yyy -wasabi.endpoint=s3.us-west-1.wasabisys.com -wasabi.region=us-west-1
 
 	# delete one configuration
 	remote.configure -delete -name=cloud1
