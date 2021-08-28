@@ -1,12 +1,22 @@
 name: Test Building Container Images
+
 on:
   push:
   pull_request:
   workflow_dispatch: []
 
+concurrency:
+  group: ${{ github.head_ref }}/container_test
+  cancel-in-progress: true
+
 jobs:
   build-test:
     runs-on: [ubuntu-latest]
+    strategy:
+      matrix:
+        platform: [ linux ]
+        arch: [ amd64, arm, arm64, 386 ]
+
     steps:
       -
         name: Checkout
@@ -39,6 +49,6 @@ jobs:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile
-          platforms: linux/amd64,linux/arm64,linux/ppc64le,linux/s390x,linux/386,linux/arm/v7,linux/arm/v6
+          platforms: ${{ matrix.platform }}/${{ matrix.arch }}
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
