@@ -1,0 +1,46 @@
+name: Build Dev Binaries
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch: []
+
+jobs:
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, windows, darwin, freebsd, netbsd, openbsd]
+        goarch: [amd64, arm, arm64, 386, ppc64le, s390x]
+        exclude:
+          - goarch: arm
+            goos: darwin
+          - goarch: 386
+            goos: darwin
+          - goarch: ppc64le
+            goos: darwin
+          - goarch: s390x
+            goos: darwin
+          - goarch: arm
+            goos: windows
+          - goarch: arm64
+            goos: windows
+          - goarch: ppc64le
+            goos: windows
+          - goarch: s390x
+            goos: windows
+
+    steps:
+
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v2
+
+      - name: Go cross-platform build test
+        uses: thatisuday/go-cross-build@v1
+        with:
+          platforms: ${{ matrix.goos }}/${{ matrix.goarch }}
+          package: 'weed'
+          name: 'weed'
+          dest: '/tmp/dist'
