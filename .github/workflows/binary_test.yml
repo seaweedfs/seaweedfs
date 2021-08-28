@@ -5,10 +5,6 @@ on:
   pull_request:
   workflow_dispatch: []
 
-concurrency:
-  group: ${{ github.head_ref }}/binary_test
-  cancel-in-progress: true
-
 jobs:
 
   build:
@@ -35,6 +31,10 @@ jobs:
             goos: windows
           - goarch: s390x
             goos: windows
+
+    concurrency:
+      group: ${{ github.head_ref }}/binary_test/${{ matrix.goos }}/${{ matrix.goarch }}
+      cancel-in-progress: true
 
     steps:
 
