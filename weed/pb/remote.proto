@@ -36,7 +36,6 @@ message RemoteConf {
   string tencent_secret_id = 30;
   string tencent_secret_key = 31;
   string tencent_endpoint = 32;
-  string tencent_region = 33;
 
   string baidu_access_key = 35;
   string baidu_secret_key = 36;
