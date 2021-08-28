@@ -36,6 +36,7 @@ func (c *commandRemoteConfigure) Help() string {
 	remote.configure -name=cloud1 -type=s3 -s3.access_key=xxx -s3.secret_key=yyy
 	remote.configure -name=cloud2 -type=gcs -gcs.appCredentialsFile=~/service-account-file.json
 	remote.configure -name=cloud3 -type=azure -azure.account_name=xxx -azure.account_key=yyy
+	remote.configure -name=cloud4 -type=aliyun -aliyun.access_key=xxx -aliyun.secret_key=yyy -aliyun.endpoint=oss-cn-shenzhen.aliyuncs.com -aliyun.region=cn-sehnzhen
 
 	# delete one configuration
 	remote.configure -delete -name=cloud1
