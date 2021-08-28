@@ -39,14 +39,10 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 		err := mc.AtomicUpdateEntryFromFiler(context.Background(), oldPath, newEntry)
 		if err == nil {
 			if message.OldEntry != nil && message.NewEntry != nil {
-				if message.OldEntry.Name == message.NewEntry.Name {
-					// no need to invalidate
-				} else {
-					oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
-					mc.invalidateFunc(oldKey)
-					newKey := util.NewFullPath(dir, message.NewEntry.Name)
-					mc.invalidateFunc(newKey)
-				}
+				oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
+				mc.invalidateFunc(oldKey)
+				newKey := util.NewFullPath(dir, message.NewEntry.Name)
+				mc.invalidateFunc(newKey)
 			} else if message.OldEntry == nil && message.NewEntry != nil {
 				// no need to invaalidate
 			} else if message.OldEntry != nil && message.NewEntry == nil {
