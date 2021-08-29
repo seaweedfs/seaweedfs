@@ -1,4 +1,4 @@
-name: Test Building Container Images
+name: "docker: test building container images"
 
 on:
   push:

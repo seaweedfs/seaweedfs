@@ -1,4 +1,4 @@
-name: Cross-platform binary build test
+name: "go: test building cross-platform binary"
 
 on:
   push:

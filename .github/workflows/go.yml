@@ -1,4 +1,4 @@
-name: Go
+name: "go: test building binary"
 
 on:
   push:
