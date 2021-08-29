@@ -1,4 +1,5 @@
-name: Build Latest Containers
+name: "docker: build latest containers"
+
 on:
   push:
     branches:

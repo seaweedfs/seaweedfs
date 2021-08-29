@@ -1,4 +1,4 @@
-name: Build Dev Binaries
+name: "go: build dev binaries"
 
 on:
   push:

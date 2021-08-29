@@ -1,4 +1,4 @@
-name: Cleanup
+name: "chore: cleanup"
 
 on:
   push:

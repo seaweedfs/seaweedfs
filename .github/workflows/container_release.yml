@@ -1,4 +1,4 @@
-name: Build Release Containers
+name: "docker: build release containers"
 
 on:
   push:
