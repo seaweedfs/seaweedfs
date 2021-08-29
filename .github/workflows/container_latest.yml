@@ -8,10 +8,6 @@ on:
 jobs:
   build-latest:
     runs-on: [ubuntu-latest]
-    strategy:
-      matrix:
-        platform: [ linux ]
-        arch: [ amd64, arm, arm64, 386 ]
 
     steps:
       -
@@ -60,16 +56,12 @@ jobs:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile
-          platforms: ${{ matrix.platform }}/${{ matrix.arch }}
+          platforms: linux/amd64, linux/arm, linux/arm64, linux/386
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
 
   build-dev:
     runs-on: [ubuntu-latest]
-    strategy:
-      matrix:
-        platform: [ linux ]
-        arch: [ amd64, arm, arm64, 386 ]
 
     steps:
       -
@@ -119,6 +111,6 @@ jobs:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile.go_build
-          platforms: ${{ matrix.platform }}/${{ matrix.arch }}
+          platforms: linux/amd64, linux/arm, linux/arm64, linux/386
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
