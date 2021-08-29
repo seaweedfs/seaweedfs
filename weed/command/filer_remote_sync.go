@@ -73,13 +73,6 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 	dir := *remoteSyncOptions.dir
 	filerAddress := *remoteSyncOptions.filerAddress
 
-	// read filer remote storage mount mappings
-	_, _, remoteStorageMountLocation, storageConf, detectErr := filer.DetectMountInfo(grpcDialOption, filerAddress, dir)
-	if detectErr != nil {
-		fmt.Printf("read mount info: %v", detectErr)
-		return false
-	}
-
 	filerSource := &source.FilerSource{}
 	filerSource.DoInitialize(
 		filerAddress,
@@ -90,7 +83,7 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 
 	fmt.Printf("synchronize %s to remote storage...\n", dir)
 	util.RetryForever("filer.remote.sync "+dir, func() error {
-		return followUpdatesAndUploadToRemote(&remoteSyncOptions, filerSource, dir, storageConf, remoteStorageMountLocation)
+		return followUpdatesAndUploadToRemote(&remoteSyncOptions, filerSource, dir)
 	}, func(err error) bool {
 		if err != nil {
 			glog.Errorf("synchronize %s: %v", dir, err)
@@ -101,7 +94,13 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 	return true
 }
 
-func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *source.FilerSource, mountedDir string, remoteStorage *remote_pb.RemoteConf, remoteStorageMountLocation *remote_pb.RemoteStorageLocation) error {
+func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *source.FilerSource, mountedDir string) error {
+
+	// read filer remote storage mount mappings
+	_, _, remoteStorageMountLocation, remoteStorage, detectErr := filer.DetectMountInfo(option.grpcDialOption, *option.filerAddress, mountedDir)
+	if detectErr != nil {
+		return fmt.Errorf("read mount info: %v", detectErr)
+	}
 
 	dirHash := util.HashStringToLong(mountedDir)
 
