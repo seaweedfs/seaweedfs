@@ -1,7 +1,6 @@
 name: "docker: test building container images"
 
 on:
-  push:
   pull_request:
   workflow_dispatch: []
 
@@ -47,7 +46,7 @@ jobs:
         uses: docker/build-push-action@v2
         with:
           context: ./docker
-          push: ${{ github.event_name != 'pull_request' }}
+          push: false
           file: ./docker/Dockerfile
           platforms: ${{ matrix.platform }}/${{ matrix.arch }}
           tags: ${{ steps.docker_meta.outputs.tags }}

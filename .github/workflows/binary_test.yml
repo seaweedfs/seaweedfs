@@ -1,7 +1,6 @@
 name: "go: test building cross-platform binary"
 
 on:
-  push:
   pull_request:
   workflow_dispatch: []
 
