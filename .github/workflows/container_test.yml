@@ -2,6 +2,10 @@ name: Test Building Container Images
 
 on:
   push:
+    branches-ignore:
+      - master
+    tags-ignore:
+      - *
   pull_request:
   workflow_dispatch: []
 
