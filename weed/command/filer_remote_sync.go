@@ -116,11 +116,15 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		}
 
 		lastOffsetTsNs, err := getOffset(option.grpcDialOption, *option.filerAddress, RemoteSyncKeyPrefix, int32(dirHash))
-		if err == nil && mountedDirEntry.Attributes.Crtime < lastOffsetTsNs/1000000 {
-			lastOffsetTs = time.Unix(0, lastOffsetTsNs)
-			glog.V(0).Infof("resume from %v", lastOffsetTs)
+		if mountedDirEntry != nil {
+			if err == nil && mountedDirEntry.Attributes.Crtime < lastOffsetTsNs/1000000 {
+				lastOffsetTs = time.Unix(0, lastOffsetTsNs)
+				glog.V(0).Infof("resume from %v", lastOffsetTs)
+			} else {
+				lastOffsetTs = time.Unix(mountedDirEntry.Attributes.Crtime, 0)
+			}
 		} else {
-			lastOffsetTs = time.Unix(mountedDirEntry.Attributes.Crtime, 0)
+			lastOffsetTs = time.Now()
 		}
 	} else {
 		lastOffsetTs = time.Now().Add(-*option.timeAgo)

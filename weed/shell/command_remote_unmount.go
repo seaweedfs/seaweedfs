@@ -31,7 +31,9 @@ func (c *commandRemoteUnmount) Help() string {
 	remote.mount -dir=/xxx -remote=s3_1/bucket
 
 	# unmount the mounted directory and remove its cache
-	remote.unmount -dir=/xxx
+	# Make sure you have stopped "weed filer.remote.sync" first!
+	# Otherwise, the deletion will also be propagated to the remote storage!!!
+	remote.unmount -dir=/xxx -iHaveStoppedRemoteSync
 
 `
 }
@@ -41,6 +43,7 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 	remoteMountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 
 	dir := remoteMountCommand.String("dir", "", "a directory in filer")
+	hasStoppedRemoteSync := remoteMountCommand.Bool("iHaveStoppedRemoteSync", false, "confirm to stop weed filer.remote.sync first")
 
 	if err = remoteMountCommand.Parse(args); err != nil {
 		return nil
@@ -59,6 +62,9 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 		return fmt.Errorf("directory %s is not mounted", *dir)
 	}
 
+	if !*hasStoppedRemoteSync {
+		return fmt.Errorf("make sure \"weed filer.remote.sync\" is stopped to avoid data loss")
+	}
 	// purge mounted data
 	if err = c.purgeMountedData(commandEnv, *dir); err != nil {
 		return fmt.Errorf("purge mounted data: %v", err)
