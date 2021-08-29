@@ -1,11 +1,6 @@
 name: Cross-platform binary build test
 
 on:
-  push:
-    branches-ignore:
-      - master
-    tags-ignore:
-      - *
   pull_request:
   workflow_dispatch: []
 
