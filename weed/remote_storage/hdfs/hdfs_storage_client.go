@@ -66,7 +66,7 @@ var _ = remote_storage.RemoteStorageClient(&hdfsRemoteStorageClient{})
 
 func (c *hdfsRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
-	return TraverseBfs(func(parentDir util.FullPath, visitFn remote_storage.VisitFunc) error {
+	return remote_storage.TraverseBfs(func(parentDir util.FullPath, visitFn remote_storage.VisitFunc) error {
 		children, err := c.client.ReadDir(string(parentDir))
 		if err != nil {
 			return err

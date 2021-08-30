@@ -1,16 +1,15 @@
-package hdfs
+package remote_storage
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"sync"
 	"time"
 )
 
-type ListDirectoryFunc func(parentDir util.FullPath, visitFn remote_storage.VisitFunc) error
+type ListDirectoryFunc func(parentDir util.FullPath, visitFn VisitFunc) error
 
-func TraverseBfs(listDirFn ListDirectoryFunc, parentPath util.FullPath, visitFn remote_storage.VisitFunc) (err error) {
+func TraverseBfs(listDirFn ListDirectoryFunc, parentPath util.FullPath, visitFn VisitFunc) (err error) {
 	K := 5
 
 	var dirQueueWg sync.WaitGroup
@@ -46,7 +45,7 @@ func TraverseBfs(listDirFn ListDirectoryFunc, parentPath util.FullPath, visitFn 
 
 }
 
-func processOneDirectory(listDirFn ListDirectoryFunc, parentPath util.FullPath, visitFn remote_storage.VisitFunc, dirQueue *util.Queue, dirQueueWg *sync.WaitGroup) (error) {
+func processOneDirectory(listDirFn ListDirectoryFunc, parentPath util.FullPath, visitFn VisitFunc, dirQueue *util.Queue, dirQueueWg *sync.WaitGroup) (error) {
 
 	return listDirFn(parentPath, func(dir string, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
 		if err := visitFn(dir, name, isDirectory, remoteEntry); err != nil {
