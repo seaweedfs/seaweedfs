@@ -1,4 +1,5 @@
-name: Build Latest Containers
+name: "docker: build latest containers"
+
 on:
   push:
     branches:
@@ -8,6 +9,7 @@ on:
 jobs:
   build-latest:
     runs-on: [ubuntu-latest]
+
     steps:
       -
         name: Checkout
@@ -15,7 +17,7 @@ jobs:
       -
         name: Docker meta
         id: docker_meta
-        uses: crazy-max/ghaction-docker-meta@v2
+        uses: docker/metadata-action@v3
         with:
           images: |
             chrislusf/seaweedfs
@@ -55,12 +57,13 @@ jobs:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile
-          platforms: linux/amd64
+          platforms: linux/amd64, linux/arm, linux/arm64, linux/386
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
 
   build-dev:
     runs-on: [ubuntu-latest]
+
     steps:
       -
         name: Checkout
@@ -68,7 +71,7 @@ jobs:
       -
         name: Docker meta
         id: docker_meta
-        uses: crazy-max/ghaction-docker-meta@v2
+        uses: docker/metadata-action@v3
         with:
           images: |
             chrislusf/seaweedfs
@@ -109,6 +112,6 @@ jobs:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile.go_build
-          platforms: linux/amd64
+          platforms: linux/amd64, linux/arm, linux/arm64, linux/386
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}

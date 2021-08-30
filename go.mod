@@ -19,6 +19,7 @@ require (
 	github.com/cespare/xxhash v1.1.0
 	github.com/cespare/xxhash/v2 v2.1.1 // indirect
 	github.com/chrislusf/raft v1.0.7
+	github.com/colinmarc/hdfs/v2 v2.2.0
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd/v22 v22.0.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -58,9 +59,10 @@ require (
 	github.com/hailocab/go-hostpool v0.0.0-20160125115350-e80d13ce29ed // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
 	github.com/hashicorp/go-multierror v1.0.0 // indirect
-	github.com/hashicorp/go-uuid v1.0.1 // indirect
+	github.com/hashicorp/go-uuid v1.0.2 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/jcmturner/gofork v1.0.0 // indirect
+	github.com/jcmturner/gokrb5/v8 v8.4.1
 	github.com/jinzhu/copier v0.2.8
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.11
@@ -118,12 +120,11 @@ require (
 	github.com/tikv/client-go v0.0.0-20210412055529-d811a08025fa
 	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210824090536-16d902a3c7e5 // indirect
 	github.com/tsuna/gohbase v0.0.0-20201125011725-348991136365
+	github.com/tylertreat/BoomFilters v0.0.0-20210315201527-1a82519a3e43
 	github.com/valyala/bytebufferpool v1.0.0
 	github.com/viant/assertly v0.5.4 // indirect
 	github.com/viant/ptrie v0.3.0
 	github.com/viant/toolbox v0.33.2 // indirect
-	github.com/willf/bitset v1.1.10 // indirect
-	github.com/willf/bloom v2.0.3+incompatible
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.0.2 // indirect
 	github.com/xdg-go/stringprep v1.0.2 // indirect
@@ -164,6 +165,14 @@ require (
 	modernc.org/sqlite v1.10.7
 	modernc.org/strutil v1.1.0 // indirect
 	modernc.org/token v1.0.0 // indirect
+)
+
+require (
+	github.com/d4l3k/messagediff v1.2.1 // indirect
+	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
+	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
+	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
+	github.com/jcmturner/rpc/v2 v2.0.2 // indirect
 )
 
 // replace github.com/seaweedfs/fuse => /Users/chris/go/src/github.com/seaweedfs/fuse

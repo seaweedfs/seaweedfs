@@ -6,6 +6,7 @@ import (
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
@@ -21,7 +22,11 @@ func init() {
 
 type azureRemoteStorageMaker struct{}
 
-func (s azureRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
+func (s azureRemoteStorageMaker) HasBucket() bool {
+	return true
+}
+
+func (s azureRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 
 	client := &azureRemoteStorageClient{
 		conf: conf,
@@ -52,13 +57,13 @@ func (s azureRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage
 }
 
 type azureRemoteStorageClient struct {
-	conf       *filer_pb.RemoteConf
+	conf       *remote_pb.RemoteConf
 	serviceURL azblob.ServiceURL
 }
 
 var _ = remote_storage.RemoteStorageClient(&azureRemoteStorageClient{})
 
-func (az *azureRemoteStorageClient) Traverse(loc *filer_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
+func (az *azureRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
 	pathKey := loc.Path[1:]
 	containerURL := az.serviceURL.NewContainerURL(loc.Bucket)
@@ -96,7 +101,7 @@ func (az *azureRemoteStorageClient) Traverse(loc *filer_pb.RemoteStorageLocation
 
 	return
 }
-func (az *azureRemoteStorageClient) ReadFile(loc *filer_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
+func (az *azureRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
 
 	key := loc.Path[1:]
 	containerURL := az.serviceURL.NewContainerURL(loc.Bucket)
@@ -119,11 +124,15 @@ func (az *azureRemoteStorageClient) ReadFile(loc *filer_pb.RemoteStorageLocation
 	return
 }
 
-func (az *azureRemoteStorageClient) WriteDirectory(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
+func (az *azureRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
 	return nil
 }
 
-func (az *azureRemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {
+func (az *azureRemoteStorageClient) RemoveDirectory(loc *remote_pb.RemoteStorageLocation) (err error) {
+	return nil
+}
+
+func (az *azureRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {
 
 	key := loc.Path[1:]
 	containerURL := az.serviceURL.NewContainerURL(loc.Bucket)
@@ -155,7 +164,7 @@ func (az *azureRemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocatio
 
 }
 
-func (az *azureRemoteStorageClient) readFileRemoteEntry(loc *filer_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
+func (az *azureRemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
 	key := loc.Path[1:]
 	containerURL := az.serviceURL.NewContainerURL(loc.Bucket)
 	blobURL := containerURL.NewBlockBlobURL(key)
@@ -183,7 +192,7 @@ func toMetadata(attributes map[string][]byte) map[string]string {
 	return metadata
 }
 
-func (az *azureRemoteStorageClient) UpdateFileMetadata(loc *filer_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
+func (az *azureRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
 	if reflect.DeepEqual(oldEntry.Extended, newEntry.Extended) {
 		return nil
 	}
@@ -196,7 +205,7 @@ func (az *azureRemoteStorageClient) UpdateFileMetadata(loc *filer_pb.RemoteStora
 
 	return
 }
-func (az *azureRemoteStorageClient) DeleteFile(loc *filer_pb.RemoteStorageLocation) (err error) {
+func (az *azureRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error) {
 	key := loc.Path[1:]
 	containerURL := az.serviceURL.NewContainerURL(loc.Bucket)
 	if _, err = containerURL.NewBlobURL(key).Delete(context.Background(),

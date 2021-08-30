@@ -6,7 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"os"
@@ -18,7 +18,11 @@ func init() {
 
 type AliyunRemoteStorageMaker struct{}
 
-func (s AliyunRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
+func (s AliyunRemoteStorageMaker) HasBucket() bool {
+	return true
+}
+
+func (s AliyunRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
 		conf: conf,
 	}
@@ -29,6 +33,7 @@ func (s AliyunRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storag
 		Endpoint:         aws.String(conf.AliyunEndpoint),
 		Region:           aws.String(conf.AliyunRegion),
 		S3ForcePathStyle: aws.Bool(false),
+		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if accessKey != "" && secretKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(accessKey, secretKey, "")
@@ -38,6 +43,7 @@ func (s AliyunRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storag
 	if err != nil {
 		return nil, fmt.Errorf("create aliyun session: %v", err)
 	}
+	sess.Handlers.Build.PushFront(skipSha256PayloadSigning)
 	client.conn = s3.New(sess)
 	return client, nil
 }

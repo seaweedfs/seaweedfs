@@ -42,6 +42,7 @@ func (k *AwsSqsInput) initialize(awsAccessKeyId, awsSecretAccessKey, region, que
 
 	config := &aws.Config{
 		Region: aws.String(region),
+		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if awsAccessKeyId != "" && awsSecretAccessKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, awsSecretAccessKey, "")

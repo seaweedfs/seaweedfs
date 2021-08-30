@@ -5,6 +5,7 @@ import (
 
 	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/azure"
 	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/gcs"
+	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/hdfs"
 	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/s3"
 
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/azuresink"

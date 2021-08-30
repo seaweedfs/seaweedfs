@@ -1,6 +1,6 @@
 # This is a basic workflow to help you get started with Actions
 
-name: Build Versioned Releases
+name: "go: build versioned binaries"
 
 on:
   release:
@@ -15,12 +15,16 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [linux, windows, darwin, freebsd ]
-        goarch: [amd64, arm]
+        goos: [linux, windows, darwin, freebsd, netbsd, openbsd]
+        goarch: [amd64, arm, arm64, 386]
         exclude:
           - goarch: arm
             goos: darwin
+          - goarch: 386
+            goos: darwin
           - goarch: arm
+            goos: windows
+          - goarch: arm64
             goos: windows
 
     # Steps represent a sequence of tasks that will be executed as part of the job
@@ -28,9 +32,8 @@ jobs:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v2
       - name: Go Release Binaries
-        uses: wangyoucao577/go-release-action@v1.19
+        uses: wangyoucao577/go-release-action@v1.20
         with:
-          goversion: 1.17
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
@@ -43,9 +46,8 @@ jobs:
           binary_name: weed
           asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}"
       - name: Go Release Large Disk Binaries
-        uses: wangyoucao577/go-release-action@v1.19
+        uses: wangyoucao577/go-release-action@v1.20
         with:
-          goversion: 1.17
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}

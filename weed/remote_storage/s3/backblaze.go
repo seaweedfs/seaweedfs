@@ -6,7 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 )
 
@@ -16,7 +16,11 @@ func init() {
 
 type BackBlazeRemoteStorageMaker struct{}
 
-func (s BackBlazeRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
+func (s BackBlazeRemoteStorageMaker) HasBucket() bool {
+	return true
+}
+
+func (s BackBlazeRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
 		conf: conf,
 	}
@@ -24,6 +28,7 @@ func (s BackBlazeRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_sto
 		Endpoint:         aws.String(conf.BackblazeEndpoint),
 		Region:           aws.String("us-west-002"),
 		S3ForcePathStyle: aws.Bool(true),
+		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if conf.BackblazeKeyId != "" && conf.BackblazeApplicationKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(conf.BackblazeKeyId, conf.BackblazeApplicationKey, "")
@@ -33,6 +38,7 @@ func (s BackBlazeRemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_sto
 	if err != nil {
 		return nil, fmt.Errorf("create backblaze session: %v", err)
 	}
+	sess.Handlers.Build.PushFront(skipSha256PayloadSigning)
 	client.conn = s3.New(sess)
 	return client, nil
 }

@@ -83,6 +83,7 @@ func (c *commandRemoteUncache) Do(args []string, commandEnv *CommandEnv, writer 
 func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer io.Writer, dirToCache util.FullPath, fileFilter *FileFilter) error {
 
 	return recursivelyTraverseDirectory(commandEnv, dirToCache, func(dir util.FullPath, entry *filer_pb.Entry) bool {
+
 		if !mayHaveCachedToLocal(entry) {
 			return true // true means recursive traversal should continue
 		}
@@ -98,7 +99,7 @@ func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer
 		entry.RemoteEntry.LastLocalSyncTsNs = 0
 		entry.Chunks = nil
 
-		println(dir, entry.Name)
+		fmt.Fprintf(writer, "Uncache %+v ... ", dir.Child(entry.Name))
 
 		err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 			_, updateErr := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
@@ -111,6 +112,7 @@ func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer
 			fmt.Fprintf(writer, "uncache %+v: %v\n", dir.Child(entry.Name), err)
 			return false
 		}
+		fmt.Fprintf(writer, "Done\n")
 
 		return true
 	})

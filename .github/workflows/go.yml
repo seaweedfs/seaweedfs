@@ -1,10 +1,14 @@
-name: Go
+name: "go: test building binary"
 
 on:
   push:
     branches: [ master ]
   pull_request:
     branches: [ master ]
+
+concurrency:
+  group: ${{ github.head_ref }}/go
+  cancel-in-progress: true
 
 jobs:
 
