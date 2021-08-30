@@ -64,6 +64,7 @@ require (
 	github.com/hashicorp/go-uuid v1.0.2 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/jcmturner/gofork v1.0.0 // indirect
+	github.com/jcmturner/gokrb5/v8 v8.4.1
 	github.com/jinzhu/copier v0.2.8
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.11
@@ -121,12 +122,11 @@ require (
 	github.com/tidwall/match v1.0.3
 	github.com/tidwall/pretty v1.1.0 // indirect
 	github.com/tsuna/gohbase v0.0.0-20201125011725-348991136365
+	github.com/tylertreat/BoomFilters v0.0.0-20210315201527-1a82519a3e43
 	github.com/valyala/bytebufferpool v1.0.0
 	github.com/viant/assertly v0.5.4 // indirect
 	github.com/viant/ptrie v0.3.0
 	github.com/viant/toolbox v0.33.2 // indirect
-	github.com/willf/bitset v1.1.10 // indirect
-	github.com/willf/bloom v2.0.3+incompatible
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.0.2 // indirect
 	github.com/xdg-go/stringprep v1.0.2 // indirect
@@ -179,10 +179,10 @@ require (
 )
 
 require (
+	github.com/d4l3k/messagediff v1.2.1 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
-	github.com/jcmturner/gokrb5/v8 v8.4.1 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.2 // indirect
 )
 
