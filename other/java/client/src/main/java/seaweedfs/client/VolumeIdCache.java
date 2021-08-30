@@ -26,6 +26,13 @@ public class VolumeIdCache {
         return this.cache.getIfPresent(volumeId);
     }
 
+    public void clearLocations(String volumeId) {
+        if (this.cache == null) {
+            return;
+        }
+        this.cache.invalidate(volumeId);
+    }
+
     public void setLocations(String volumeId, FilerProto.Locations locations) {
         if (this.cache == null) {
             return;

@@ -64,10 +64,11 @@ public class SeaweedRead {
                 startOffset += gap;
             }
 
-            FilerProto.Locations locations = knownLocations.get(parseVolumeId(chunkView.fileId));
+            String volumeId = parseVolumeId(chunkView.fileId);
+            FilerProto.Locations locations = knownLocations.get(volumeId);
             if (locations == null || locations.getLocationsCount() == 0) {
                 LOG.error("failed to locate {}", chunkView.fileId);
-                // log here!
+                volumeIdCache.clearLocations(volumeId);
                 return 0;
             }
 
