@@ -76,7 +76,7 @@ func detectMountInfo(commandEnv *CommandEnv, writer io.Writer, dir string) (*rem
   This function update entry.RemoteEntry if the remote has any changes.
 
   To pull remote updates, or created for the first time, the criteria is:
-    entry == nil or (entry.RemoteEntry != nil and entry.RemoteEntry.RemoteTag != remote.RemoteTag)
+    entry == nil or (entry.RemoteEntry != nil and (entry.RemoteEntry.RemoteTag != remote.RemoteTag or entry.RemoteEntry.RemoteMTime < remote.RemoteMTime ))
   After the meta pull, the entry.RemoteEntry will have:
     remoteEntry.LastLocalSyncTsNs == 0
     Attributes.FileSize = uint64(remoteEntry.RemoteSize)
