@@ -1,3 +1,5 @@
+// +build tikv
+
 package tikv
 
 import (
