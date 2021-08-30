@@ -18,6 +18,10 @@ func init() {
 
 type AliyunRemoteStorageMaker struct{}
 
+func (s AliyunRemoteStorageMaker) HasBucket() bool {
+	return true
+}
+
 func (s AliyunRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
 		conf: conf,

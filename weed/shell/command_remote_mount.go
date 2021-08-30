@@ -60,13 +60,15 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return err
 	}
 
-	remoteStorageLocation := remote_storage.ParseLocation(*remote)
-
 	// find configuration for remote storage
-	// remotePath is /<bucket>/path/to/dir
-	remoteConf, err := c.findRemoteStorageConfiguration(commandEnv, writer, remoteStorageLocation)
+	remoteConf, err := filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, remote_storage.ParseLocationName(*remote))
 	if err != nil {
 		return fmt.Errorf("find configuration for %s: %v", *remote, err)
+	}
+
+	remoteStorageLocation, err := remote_storage.ParseRemoteLocation(remoteConf.Type, *remote)
+	if err != nil {
+		return err
 	}
 
 	// sync metadata from remote

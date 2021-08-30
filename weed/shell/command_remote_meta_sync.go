@@ -55,7 +55,7 @@ func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, detectErr := detectMountInfo(commandEnv, writer, *dir)
-	if detectErr != nil{
+	if detectErr != nil {
 		jsonPrintln(writer, mappings)
 		return detectErr
 	}
@@ -106,7 +106,7 @@ func detectMountInfo(commandEnv *CommandEnv, writer io.Writer, dir string) (*rem
   If entry.RemoteEntry.RemoteTag != remoteEntry.RemoteTag {
     the remote version is updated, need to pull meta
   }
- */
+*/
 func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToCache util.FullPath, remoteConf *remote_pb.RemoteConf) error {
 
 	// visit remote storage
@@ -158,7 +158,7 @@ func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util
 					fmt.Fprintln(writer, " (skip)")
 					return nil
 				}
-				if existingEntry.RemoteEntry.RemoteETag != remoteEntry.RemoteETag {
+				if existingEntry.RemoteEntry.RemoteETag != remoteEntry.RemoteETag || existingEntry.RemoteEntry.RemoteMtime < remoteEntry.RemoteMtime {
 					// the remote version is updated, need to pull meta
 					fmt.Fprintln(writer, " (update)")
 					return doSaveRemoteEntry(client, string(localDir), existingEntry, remoteEntry)

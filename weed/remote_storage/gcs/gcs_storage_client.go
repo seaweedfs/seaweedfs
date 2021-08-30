@@ -22,6 +22,10 @@ func init() {
 
 type gcsRemoteStorageMaker struct{}
 
+func (s gcsRemoteStorageMaker) HasBucket() bool {
+	return true
+}
+
 func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &gcsRemoteStorageClient{
 		conf: conf,

@@ -58,7 +58,7 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 	isDelete := remoteConfigureCommand.Bool("delete", false, "delete one remote storage by its name")
 
 	remoteConfigureCommand.StringVar(&conf.Name, "name", "", "a short name to identify the remote storage")
-	remoteConfigureCommand.StringVar(&conf.Type, "type", "s3", "[s3|gcs|azure|b2|aliyun|tencent|baidu|wasabi] storage type")
+	remoteConfigureCommand.StringVar(&conf.Type, "type", "s3", "[s3|gcs|azure|b2|aliyun|tencent|baidu|wasabi|hdfs] storage type")
 
 	remoteConfigureCommand.StringVar(&conf.S3AccessKey, "s3.access_key", "", "s3 access key")
 	remoteConfigureCommand.StringVar(&conf.S3SecretKey, "s3.secret_key", "", "s3 secret key")
@@ -95,8 +95,25 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 	remoteConfigureCommand.StringVar(&conf.WasabiEndpoint, "wasabi.endpoint", "", "Wasabi endpoint, see https://wasabi.com/wp-content/themes/wasabi/docs/API_Guide/index.html#t=topics%2Fapidiff-intro.htm")
 	remoteConfigureCommand.StringVar(&conf.WasabiRegion, "wasabi.region", "", "Wasabi region")
 
+	var namenodes arrayFlags
+	remoteConfigureCommand.Var(&namenodes, "hdfs.namenodes", "hdfs name node and port, example: namenode1:8020,namenode2:8020")
+	remoteConfigureCommand.StringVar(&conf.HdfsUsername, "hdfs.username", "", "hdfs user name")
+	remoteConfigureCommand.StringVar(&conf.HdfsServicePrincipalName, "hdfs.servicePrincipalName", "", `Kerberos service principal name for the namenode
+
+Example: hdfs/namenode.hadoop.docker
+Namenode running as service 'hdfs' with FQDN 'namenode.hadoop.docker'.
+`)
+	remoteConfigureCommand.StringVar(&conf.HdfsDataTransferProtection, "hdfs.dataTransferProtection", "", "[authentication|integrity|privacy] Kerberos data transfer protection")
+
+
 	if err = remoteConfigureCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if conf.Type != "s3" {
+		// clear out the default values
+		conf.S3Region = ""
+		conf.S3ForcePathStyle = false
 	}
 
 	if conf.Name == "" {
@@ -186,4 +203,15 @@ func (c *commandRemoteConfigure) saveRemoteStorage(commandEnv *CommandEnv, write
 
 	return nil
 
+}
+
+type arrayFlags []string
+
+func (i *arrayFlags) String() string {
+	return "my string representation"
+}
+
+func (i *arrayFlags) Set(value string) error {
+	*i = append(*i, value)
+	return nil
 }

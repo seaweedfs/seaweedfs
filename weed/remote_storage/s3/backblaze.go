@@ -16,6 +16,10 @@ func init() {
 
 type BackBlazeRemoteStorageMaker struct{}
 
+func (s BackBlazeRemoteStorageMaker) HasBucket() bool {
+	return true
+}
+
 func (s BackBlazeRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
 		conf: conf,

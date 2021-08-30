@@ -9,7 +9,18 @@ import (
 	"sync"
 )
 
-func ParseLocation(remote string) (loc *remote_pb.RemoteStorageLocation) {
+func ParseLocationName(remote string) (locationName string) {
+	if strings.HasSuffix(string(remote), "/") {
+		remote = remote[:len(remote)-1]
+	}
+	parts := strings.SplitN(string(remote), "/", 2)
+	if len(parts) >= 1 {
+		return parts[0]
+	}
+	return
+}
+
+func parseBucketLocation(remote string) (loc *remote_pb.RemoteStorageLocation) {
 	loc = &remote_pb.RemoteStorageLocation{}
 	if strings.HasSuffix(string(remote), "/") {
 		remote = remote[:len(remote)-1]
@@ -22,6 +33,22 @@ func ParseLocation(remote string) (loc *remote_pb.RemoteStorageLocation) {
 		loc.Bucket = parts[1]
 	}
 	loc.Path = string(remote[len(loc.Name)+1+len(loc.Bucket):])
+	if loc.Path == "" {
+		loc.Path = "/"
+	}
+	return
+}
+
+func parseNoBucketLocation(remote string) (loc *remote_pb.RemoteStorageLocation) {
+	loc = &remote_pb.RemoteStorageLocation{}
+	if strings.HasSuffix(string(remote), "/") {
+		remote = remote[:len(remote)-1]
+	}
+	parts := strings.SplitN(string(remote), "/", 2)
+	if len(parts) >= 1 {
+		loc.Name = parts[0]
+	}
+	loc.Path = string(remote[len(loc.Name):])
 	if loc.Path == "" {
 		loc.Path = "/"
 	}
@@ -45,6 +72,7 @@ type RemoteStorageClient interface {
 
 type RemoteStorageClientMaker interface {
 	Make(remoteConf *remote_pb.RemoteConf) (RemoteStorageClient, error)
+	HasBucket() bool
 }
 
 var (
@@ -52,6 +80,18 @@ var (
 	remoteStorageClients      = make(map[string]RemoteStorageClient)
 	remoteStorageClientsLock  sync.Mutex
 )
+
+func ParseRemoteLocation(remoteConfType string, remote string) (remoteStorageLocation *remote_pb.RemoteStorageLocation, err error) {
+	maker, found := RemoteStorageClientMakers[remoteConfType]
+	if !found {
+		return nil, fmt.Errorf("remote storage type %s not found", remoteConfType)
+	}
+
+	if !maker.HasBucket() {
+		return parseNoBucketLocation(remote), nil
+	}
+	return parseBucketLocation(remote), nil
+}
 
 func makeRemoteStorageClient(remoteConf *remote_pb.RemoteConf) (RemoteStorageClient, error) {
 	maker, found := RemoteStorageClientMakers[remoteConf.Type]
