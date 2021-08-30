@@ -164,6 +164,10 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		if message.OldEntry != nil && message.NewEntry == nil {
 			glog.V(2).Infof("delete: %+v", resp)
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
+			if message.OldEntry.IsDirectory {
+				glog.V(0).Infof("rmdir  %s", remote_storage.FormatLocation(dest))
+				return client.RemoveDirectory(dest)
+			}
 			glog.V(0).Infof("delete %s", remote_storage.FormatLocation(dest))
 			return client.DeleteFile(dest)
 		}

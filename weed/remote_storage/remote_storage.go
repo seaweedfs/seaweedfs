@@ -65,6 +65,7 @@ type RemoteStorageClient interface {
 	Traverse(loc *remote_pb.RemoteStorageLocation, visitFn VisitFunc) error
 	ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error)
 	WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error)
+	RemoveDirectory(loc *remote_pb.RemoteStorageLocation) (err error)
 	WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error)
 	UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error)
 	DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error)

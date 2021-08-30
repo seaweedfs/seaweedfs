@@ -124,6 +124,10 @@ func (s *s3RemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocat
 	return nil
 }
 
+func (s *s3RemoteStorageClient) RemoveDirectory(loc *remote_pb.RemoteStorageLocation) (err error) {
+	return nil
+}
+
 func (s *s3RemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {
 
 	fileSize := int64(filer.FileSize(entry))

@@ -111,6 +111,10 @@ func (gcs *gcsRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLo
 	return nil
 }
 
+func (gcs *gcsRemoteStorageClient) RemoveDirectory(loc *remote_pb.RemoteStorageLocation) (err error) {
+	return nil
+}
+
 func (gcs *gcsRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {
 
 	key := loc.Path[1:]

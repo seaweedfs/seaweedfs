@@ -104,6 +104,10 @@ func (c *hdfsRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLoc
 	return c.client.MkdirAll(loc.Path, os.FileMode(entry.Attributes.FileMode))
 }
 
+func (c *hdfsRemoteStorageClient) RemoveDirectory(loc *remote_pb.RemoteStorageLocation) (err error) {
+	return c.client.RemoveAll(loc.Path)
+}
+
 func (c *hdfsRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {
 
 	dirname := path.Dir(loc.Path)

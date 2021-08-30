@@ -128,6 +128,10 @@ func (az *azureRemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageL
 	return nil
 }
 
+func (az *azureRemoteStorageClient) RemoveDirectory(loc *remote_pb.RemoteStorageLocation) (err error) {
+	return nil
+}
+
 func (az *azureRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {
 
 	key := loc.Path[1:]
