@@ -305,6 +305,7 @@ message GetFilerConfigurationResponse {
     string metrics_address = 9;
     int32 metrics_interval_sec = 10;
     string version = 11;
+    string cluster_id = 12;
 }
 
 message SubscribeMetadataRequest {
