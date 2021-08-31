@@ -171,7 +171,7 @@ func (c *commandRemoteMount) syncMetadata(commandEnv *CommandEnv, writer io.Writ
 
 	// pull metadata from remote
 	if err = pullMetadata(commandEnv, writer, util.FullPath(dir), remote, util.FullPath(dir), remoteConf); err != nil {
-		return fmt.Errorf("cache content data: %v", err)
+		return fmt.Errorf("cache metadata: %v", err)
 	}
 
 	return nil

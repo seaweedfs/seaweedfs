@@ -62,7 +62,7 @@ func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer
 
 	// pull metadata from remote
 	if err = pullMetadata(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(*dir), remoteStorageConf); err != nil {
-		return fmt.Errorf("cache content data: %v", err)
+		return fmt.Errorf("cache meta data: %v", err)
 	}
 
 	return nil
