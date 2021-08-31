@@ -18,6 +18,7 @@ message RemoteConf {
   string s3_endpoint = 7;
   string s3_storage_class = 8;
   bool s3_force_path_style = 9;
+  bool s3_v4_signature = 11;
 
   string gcs_google_application_credentials = 10;
 
