@@ -12,7 +12,9 @@ import (
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
 	"io"
+	"os"
 	"strings"
+	"time"
 )
 
 func init() {
@@ -129,7 +131,19 @@ func (c *commandRemoteMount) syncMetadata(commandEnv *CommandEnv, writer io.Writ
 		})
 		if lookupErr != nil {
 			if !strings.Contains(lookupErr.Error(), filer_pb.ErrNotFound.Error()) {
-				return fmt.Errorf("lookup %s: %v", dir, lookupErr)
+				_, createErr := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+					Directory: parent,
+					Entry: &filer_pb.Entry{
+						Name:        name,
+						IsDirectory: true,
+						Attributes: &filer_pb.FuseAttributes{
+							Mtime:    time.Now().Unix(),
+							Crtime:   time.Now().Unix(),
+							FileMode: uint32(0644 | os.ModeDir),
+						},
+					},
+				})
+				return createErr
 			}
 		}
 
