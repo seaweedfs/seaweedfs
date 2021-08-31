@@ -53,6 +53,14 @@ message RemoteConf {
   string hdfs_service_principal_name = 52;
   string hdfs_data_transfer_protection = 53;
 
+  string filebase_access_key = 60;
+  string filebase_secret_key = 61;
+  string filebase_endpoint = 62;
+
+  string storj_access_key = 65;
+  string storj_secret_key = 66;
+  string storj_endpoint = 67;
+
 }
 
 message RemoteStorageMapping {
