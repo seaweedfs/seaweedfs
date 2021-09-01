@@ -210,8 +210,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		return setOffset(option.grpcDialOption, *option.filerAddress, RemoteSyncKeyPrefix, int32(dirHash), lastTsNs)
 	})
 
-	return pb.FollowMetadata(*option.filerAddress, option.grpcDialOption,
-		"filer.remote.sync", mountedDir, lastOffsetTs.UnixNano(), 0, processEventFnWithOffset, false)
+	return pb.FollowMetadata(*option.filerAddress, option.grpcDialOption, "filer.remote.sync", mountedDir, nil, lastOffsetTs.UnixNano(), 0, processEventFnWithOffset, false)
 }
 
 func toRemoteStorageLocation(mountDir, sourcePath util.FullPath, remoteMountLocation *remote_pb.RemoteStorageLocation) *remote_pb.RemoteStorageLocation {

@@ -103,17 +103,15 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 		}
 	}
 
-	tailErr := pb.FollowMetadata(*tailFiler, grpcDialOption, "tail",
-		*tailTarget, time.Now().Add(-*tailStart).UnixNano(), 0,
-		func(resp *filer_pb.SubscribeMetadataResponse) error {
-			if !shouldPrint(resp) {
-				return nil
-			}
-			if err := eachEntryFunc(resp); err != nil {
-				return err
-			}
+	tailErr := pb.FollowMetadata(*tailFiler, grpcDialOption, "tail", *tailTarget, nil, time.Now().Add(-*tailStart).UnixNano(), 0, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if !shouldPrint(resp) {
 			return nil
-		}, false)
+		}
+		if err := eachEntryFunc(resp); err != nil {
+			return err
+		}
+		return nil
+	}, false)
 
 	if tailErr != nil {
 		fmt.Printf("tail %s: %v\n", *tailFiler, tailErr)
