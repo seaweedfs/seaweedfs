@@ -3,6 +3,7 @@ package shell
 import (
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"io"
 	"os"
 	"path/filepath"
@@ -124,6 +125,10 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 	var dirCount, fileCount uint64
 
 	err := filer_pb.TraverseBfs(filerClient, util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) {
+
+		if strings.HasPrefix(string(parentPath), filer.SystemLogDir) {
+			return
+		}
 
 		protoMessage := &filer_pb.FullEntry{
 			Dir:   string(parentPath),
