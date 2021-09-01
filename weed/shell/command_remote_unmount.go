@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
+	"time"
 )
 
 func init() {
@@ -30,9 +32,7 @@ func (c *commandRemoteUnmount) Help() string {
 	remote.mount -dir=/xxx -remote=s3_1/bucket
 
 	# unmount the mounted directory and remove its cache
-	# Make sure you have stopped "weed filer.remote.sync" first!
-	# Otherwise, the deletion will also be propagated to the remote storage!!!
-	remote.unmount -dir=/xxx -iHaveStoppedRemoteSync
+	remote.unmount -dir=/xxx
 
 `
 }
@@ -42,7 +42,6 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 	remoteMountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 
 	dir := remoteMountCommand.String("dir", "", "a directory in filer")
-	hasStoppedRemoteSync := remoteMountCommand.Bool("iHaveStoppedRemoteSync", false, "confirm to stop weed filer.remote.sync first")
 
 	if err = remoteMountCommand.Parse(args); err != nil {
 		return nil
@@ -61,17 +60,21 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 		return fmt.Errorf("directory %s is not mounted", *dir)
 	}
 
-	if !*hasStoppedRemoteSync {
-		return fmt.Errorf("make sure \"weed filer.remote.sync\" is stopped to avoid data loss")
+	// store a mount configuration in filer
+	fmt.Fprintf(writer, "deleting mount for %s ...\n", *dir)
+	if err = c.deleteMountMapping(commandEnv, *dir); err != nil {
+		return fmt.Errorf("delete mount mapping: %v", err)
 	}
+
 	// purge mounted data
+	fmt.Fprintf(writer, "purge %s ...\n", *dir)
 	if err = c.purgeMountedData(commandEnv, *dir); err != nil {
 		return fmt.Errorf("purge mounted data: %v", err)
 	}
 
-	// store a mount configuration in filer
-	if err = c.deleteMountMapping(commandEnv, *dir); err != nil {
-		return fmt.Errorf("delete mount mapping: %v", err)
+	// reset remote sync offset in case the folder is mounted again
+	if err = remote_storage.SetSyncOffset(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, *dir, time.Now().UnixNano()); err != nil {
+		return fmt.Errorf("reset remote.sync offset for %s: %v", *dir, err)
 	}
 
 	return nil
@@ -100,6 +103,8 @@ func (c *commandRemoteUnmount) purgeMountedData(commandEnv *CommandEnv, dir stri
 		mkdirErr := filer_pb.DoMkdir(client, parent, name, func(entry *filer_pb.Entry) {
 			entry.Attributes = oldEntry.Attributes
 			entry.Extended = oldEntry.Extended
+			entry.Attributes.Crtime = time.Now().Unix()
+			entry.Attributes.Mtime = time.Now().Unix()
 		})
 		if mkdirErr != nil {
 			return fmt.Errorf("mkdir %s: %v", dir, mkdirErr)
