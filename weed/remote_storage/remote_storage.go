@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
+	"github.com/golang/protobuf/proto"
 	"io"
 	"strings"
 	"sync"
@@ -76,9 +77,14 @@ type RemoteStorageClientMaker interface {
 	HasBucket() bool
 }
 
+type CachedRemoteStorageClient struct {
+	*remote_pb.RemoteConf
+	RemoteStorageClient
+}
+
 var (
 	RemoteStorageClientMakers = make(map[string]RemoteStorageClientMaker)
-	remoteStorageClients      = make(map[string]RemoteStorageClient)
+	remoteStorageClients      = make(map[string]CachedRemoteStorageClient)
 	remoteStorageClientsLock  sync.Mutex
 )
 
@@ -107,8 +113,8 @@ func GetRemoteStorage(remoteConf *remote_pb.RemoteConf) (RemoteStorageClient, er
 	defer remoteStorageClientsLock.Unlock()
 
 	existingRemoteStorageClient, found := remoteStorageClients[remoteConf.Name]
-	if found {
-		return existingRemoteStorageClient, nil
+	if found && proto.Equal(existingRemoteStorageClient.RemoteConf, remoteConf) {
+		return existingRemoteStorageClient.RemoteStorageClient, nil
 	}
 
 	newRemoteStorageClient, err := makeRemoteStorageClient(remoteConf)
@@ -116,7 +122,10 @@ func GetRemoteStorage(remoteConf *remote_pb.RemoteConf) (RemoteStorageClient, er
 		return nil, fmt.Errorf("make remote storage client %s: %v", remoteConf.Name, err)
 	}
 
-	remoteStorageClients[remoteConf.Name] = newRemoteStorageClient
+	remoteStorageClients[remoteConf.Name] = CachedRemoteStorageClient{
+		RemoteConf:          remoteConf,
+		RemoteStorageClient: newRemoteStorageClient,
+	}
 
 	return newRemoteStorageClient, nil
 }
