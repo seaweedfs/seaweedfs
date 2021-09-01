@@ -201,14 +201,18 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 			return nil
 		}
 
-		if !strings.HasPrefix(fullpath, req.PathPrefix) {
-			if eventNotification.NewParentPath != "" {
-				newFullPath := util.Join(eventNotification.NewParentPath, entryName)
-				if !strings.HasPrefix(newFullPath, req.PathPrefix) {
+		if hasPrefixIn(fullpath, req.PathPrefixes) {
+			// good
+		}else {
+			if !strings.HasPrefix(fullpath, req.PathPrefix) {
+				if eventNotification.NewParentPath != "" {
+					newFullPath := util.Join(eventNotification.NewParentPath, entryName)
+					if !strings.HasPrefix(newFullPath, req.PathPrefix) {
+						return nil
+					}
+				} else {
 					return nil
 				}
-			} else {
-				return nil
 			}
 		}
 
@@ -225,6 +229,15 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 		filtered = 0
 		return nil
 	}
+}
+
+func hasPrefixIn(text string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(text, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func (fs *FilerServer) addClient(clientType string, clientAddress string) (clientName string) {
