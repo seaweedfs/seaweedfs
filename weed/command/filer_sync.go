@@ -170,7 +170,8 @@ func doSubscribeFilerMetaChanges(grpcDialOption grpc.DialOption, sourceFiler, so
 		return setOffset(grpcDialOption, targetFiler, SyncKeyPrefix, sourceFilerSignature, lastTsNs)
 	})
 
-	return pb.FollowMetadata(sourceFiler, grpcDialOption, "syncTo_"+targetFiler, sourcePath, nil, sourceFilerOffsetTsNs, targetFilerSignature, processEventFnWithOffset, false)
+	return pb.FollowMetadata(sourceFiler, grpcDialOption, "syncTo_"+targetFiler,
+		sourcePath, nil, sourceFilerOffsetTsNs, targetFilerSignature, processEventFnWithOffset, false)
 
 }
 
