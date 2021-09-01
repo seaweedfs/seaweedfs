@@ -262,6 +262,7 @@ message CopyFileRequest {
 }
 message CopyFileResponse {
     bytes file_content = 1;
+    int64 modified_ts_ns = 2;
 }
 
 message ReadNeedleBlobRequest {
