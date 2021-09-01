@@ -30,9 +30,9 @@ func (s StorjRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storag
 	secretKey := util.Nvl(conf.StorjSecretKey, os.Getenv("AWS_SECRET_ACCESS_KEY"))
 
 	config := &aws.Config{
-		Endpoint:         aws.String(conf.StorjEndpoint),
-		Region:           aws.String("us-west-2"),
-		S3ForcePathStyle: aws.Bool(true),
+		Endpoint:                      aws.String(conf.StorjEndpoint),
+		Region:                        aws.String("us-west-2"),
+		S3ForcePathStyle:              aws.Bool(true),
 		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if accessKey != "" && secretKey != "" {

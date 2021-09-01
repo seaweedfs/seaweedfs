@@ -53,8 +53,8 @@ func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.
 }
 
 type gcsRemoteStorageClient struct {
-	conf *remote_pb.RemoteConf
-	client        *storage.Client
+	conf   *remote_pb.RemoteConf
+	client *storage.Client
 }
 
 var _ = remote_storage.RemoteStorageClient(&gcsRemoteStorageClient{})
@@ -169,7 +169,7 @@ func (gcs *gcsRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStora
 
 	if len(metadata) > 0 {
 		_, err = gcs.client.Bucket(loc.Bucket).Object(key).Update(context.Background(), storage.ObjectAttrsToUpdate{
-			Metadata:           metadata,
+			Metadata: metadata,
 		})
 	} else {
 		// no way to delete the metadata yet

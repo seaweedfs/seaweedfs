@@ -1,3 +1,4 @@
+//go:build linux || darwin || windows
 // +build linux darwin windows
 
 // limited GOOS due to modernc.org/libc/unistd

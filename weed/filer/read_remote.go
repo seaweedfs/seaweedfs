@@ -21,7 +21,7 @@ func MapFullPathToRemoteStorageLocation(localMountedDir util.FullPath, remoteMou
 	return remoteLocation
 }
 
-func MapRemoteStorageLocationPathToFullPath(localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, remoteLocationPath string)(fp util.FullPath)  {
+func MapRemoteStorageLocationPathToFullPath(localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, remoteLocationPath string) (fp util.FullPath) {
 	return localMountedDir.Child(remoteLocationPath[len(remoteMountedLocation.Path):])
 }
 

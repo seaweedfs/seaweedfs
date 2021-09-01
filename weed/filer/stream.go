@@ -127,14 +127,14 @@ func ReadAll(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) 
 
 // ----------------  ChunkStreamReader ----------------------------------
 type ChunkStreamReader struct {
-	chunkViews         []*ChunkView
-	totalSize          int64
-	logicOffset        int64
-	buffer             []byte
-	bufferOffset       int64
-	bufferLock         sync.Mutex
-	chunk              string
-	lookupFileId       wdclient.LookupFileIdFunctionType
+	chunkViews   []*ChunkView
+	totalSize    int64
+	logicOffset  int64
+	buffer       []byte
+	bufferOffset int64
+	bufferLock   sync.Mutex
+	chunk        string
+	lookupFileId wdclient.LookupFileIdFunctionType
 }
 
 var _ = io.ReadSeeker(&ChunkStreamReader{})
@@ -206,7 +206,7 @@ func (c *ChunkStreamReader) doRead(p []byte) (n int, err error) {
 }
 
 func (c *ChunkStreamReader) isBufferEmpty() bool {
-	return len(c.buffer) <= int(c.logicOffset - c.bufferOffset)
+	return len(c.buffer) <= int(c.logicOffset-c.bufferOffset)
 }
 
 func (c *ChunkStreamReader) Seek(offset int64, whence int) (int64, error) {
@@ -261,7 +261,7 @@ func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
 	} else if currentChunkIndex > 0 {
 		if insideChunk(offset, c.chunkViews[currentChunkIndex]) {
 			// good hit
-		} else if insideChunk(offset, c.chunkViews[currentChunkIndex-1]){
+		} else if insideChunk(offset, c.chunkViews[currentChunkIndex-1]) {
 			currentChunkIndex -= 1
 			// fmt.Printf("select -1 chunk %d %s\n", currentChunkIndex, c.chunkViews[currentChunkIndex].FileId)
 		} else {

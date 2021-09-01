@@ -116,7 +116,6 @@ Namenode running as service 'hdfs' with FQDN 'namenode.hadoop.docker'.
 `)
 	remoteConfigureCommand.StringVar(&conf.HdfsDataTransferProtection, "hdfs.dataTransferProtection", "", "[authentication|integrity|privacy] Kerberos data transfer protection")
 
-
 	if err = remoteConfigureCommand.Parse(args); err != nil {
 		return nil
 	}

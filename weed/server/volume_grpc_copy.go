@@ -84,21 +84,21 @@ func (vs *VolumeServer) VolumeCopy(ctx context.Context, req *volume_server_pb.Vo
 			return err
 		}
 		if modifiedTsNs > 0 {
-			os.Chtimes(dataBaseFileName + ".dat", time.Unix(0, modifiedTsNs), time.Unix(0, modifiedTsNs))
+			os.Chtimes(dataBaseFileName+".dat", time.Unix(0, modifiedTsNs), time.Unix(0, modifiedTsNs))
 		}
 
 		if modifiedTsNs, err = vs.doCopyFile(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.IdxFileSize, indexBaseFileName, ".idx", false, false); err != nil {
 			return err
 		}
 		if modifiedTsNs > 0 {
-			os.Chtimes(indexBaseFileName + ".idx", time.Unix(0, modifiedTsNs), time.Unix(0, modifiedTsNs))
+			os.Chtimes(indexBaseFileName+".idx", time.Unix(0, modifiedTsNs), time.Unix(0, modifiedTsNs))
 		}
 
 		if modifiedTsNs, err = vs.doCopyFile(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, dataBaseFileName, ".vif", false, true); err != nil {
 			return err
 		}
 		if modifiedTsNs > 0 {
-			os.Chtimes(dataBaseFileName + ".vif", time.Unix(0, modifiedTsNs), time.Unix(0, modifiedTsNs))
+			os.Chtimes(dataBaseFileName+".vif", time.Unix(0, modifiedTsNs), time.Unix(0, modifiedTsNs))
 		}
 
 		os.Remove(dataBaseFileName + ".note")
@@ -167,7 +167,7 @@ func (vs *VolumeServer) doCopyFile(client volume_server_pb.VolumeServerClient, i
 only check the the differ of the file size
 todo: maybe should check the received count and deleted count of the volume
 */
-func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse, idxFileName, datFileName string) (error) {
+func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse, idxFileName, datFileName string) error {
 	stat, err := os.Stat(idxFileName)
 	if err != nil {
 		return fmt.Errorf("stat idx file %s failed: %v", idxFileName, err)

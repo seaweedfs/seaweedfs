@@ -154,7 +154,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 				os.Exit(0)
 			}
 		}
-		if message.NewEntry.Name == remoteStorage.Name + filer.REMOTE_STORAGE_CONF_SUFFIX {
+		if message.NewEntry.Name == remoteStorage.Name+filer.REMOTE_STORAGE_CONF_SUFFIX {
 			conf := &remote_pb.RemoteConf{}
 			if err := proto.Unmarshal(message.NewEntry.Content, conf); err != nil {
 				return fmt.Errorf("unmarshal %s/%s: %v", filer.DirectoryEtcRemote, message.NewEntry.Name, err)

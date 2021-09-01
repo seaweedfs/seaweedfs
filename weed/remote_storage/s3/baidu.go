@@ -30,9 +30,9 @@ func (s BaiduRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storag
 	secretKey := util.Nvl(conf.BaiduSecretKey, os.Getenv("BDCLOUD_SECRET_KEY"))
 
 	config := &aws.Config{
-		Endpoint:         aws.String(conf.BaiduEndpoint),
-		Region:           aws.String(conf.BaiduRegion),
-		S3ForcePathStyle: aws.Bool(true),
+		Endpoint:                      aws.String(conf.BaiduEndpoint),
+		Region:                        aws.String(conf.BaiduRegion),
+		S3ForcePathStyle:              aws.Bool(true),
 		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if accessKey != "" && secretKey != "" {

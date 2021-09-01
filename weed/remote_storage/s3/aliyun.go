@@ -30,9 +30,9 @@ func (s AliyunRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_stora
 	secretKey := util.Nvl(conf.AliyunSecretKey, os.Getenv("ALICLOUD_ACCESS_KEY_SECRET"))
 
 	config := &aws.Config{
-		Endpoint:         aws.String(conf.AliyunEndpoint),
-		Region:           aws.String(conf.AliyunRegion),
-		S3ForcePathStyle: aws.Bool(false),
+		Endpoint:                      aws.String(conf.AliyunEndpoint),
+		Region:                        aws.String(conf.AliyunRegion),
+		S3ForcePathStyle:              aws.Bool(false),
 		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if accessKey != "" && secretKey != "" {

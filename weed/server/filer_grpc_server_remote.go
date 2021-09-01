@@ -114,11 +114,11 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 			// tell filer to tell volume server to download into needles
 			err = operation.WithVolumeServerClient(assignResult.Url, fs.grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 				_, fetchAndWriteErr := volumeServerClient.FetchAndWriteNeedle(context.Background(), &volume_server_pb.FetchAndWriteNeedleRequest{
-					VolumeId:     uint32(fileId.VolumeId),
-					NeedleId:     uint64(fileId.Key),
-					Cookie:       uint32(fileId.Cookie),
-					Offset:       localOffset,
-					Size:         size,
+					VolumeId:   uint32(fileId.VolumeId),
+					NeedleId:   uint64(fileId.Key),
+					Cookie:     uint32(fileId.Cookie),
+					Offset:     localOffset,
+					Size:       size,
 					RemoteConf: storageConf,
 					RemoteLocation: &remote_pb.RemoteStorageLocation{
 						Name:   remoteStorageMountedLocation.Name,
