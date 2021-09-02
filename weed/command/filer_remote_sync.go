@@ -107,9 +107,25 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 
 	lastOffsetTs := collectLastSyncOffset(option, mountedDir)
 
-	client, err := remote_storage.GetRemoteStorage(remoteStorage)
+	eachEntryFunc, err := makeEventProcessor(remoteStorage, mountedDir, remoteStorageMountLocation, filerSource)
 	if err != nil {
 		return err
+	}
+
+	processEventFnWithOffset := pb.AddOffsetFunc(eachEntryFunc, 3*time.Second, func(counter int64, lastTsNs int64) error {
+		lastTime := time.Unix(0, lastTsNs)
+		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, lastTime, float64(counter)/float64(3))
+		return remote_storage.SetSyncOffset(option.grpcDialOption, *option.filerAddress, mountedDir, lastTsNs)
+	})
+
+	return pb.FollowMetadata(*option.filerAddress, option.grpcDialOption, "filer.remote.sync",
+		mountedDir, []string{filer.DirectoryEtcRemote}, lastOffsetTs.UnixNano(), 0, processEventFnWithOffset, false)
+}
+
+func makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, remoteStorageMountLocation *remote_pb.RemoteStorageLocation, filerSource *source.FilerSource) (pb.ProcessMetadataFunc, error) {
+	client, err := remote_storage.GetRemoteStorage(remoteStorage)
+	if err != nil {
+		return nil, err
 	}
 
 	handleEtcRemoteChanges := func(resp *filer_pb.SubscribeMetadataResponse) error {
@@ -137,8 +153,11 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 				return fmt.Errorf("unmarshal %s/%s: %v", filer.DirectoryEtcRemote, message.NewEntry.Name, err)
 			}
 			remoteStorage = conf
-			client, err = remote_storage.GetRemoteStorage(remoteStorage)
-			return err
+			if newClient, err := remote_storage.GetRemoteStorage(remoteStorage); err == nil {
+				client = newClient
+			} else {
+				return err
+			}
 		}
 
 		return nil
@@ -217,15 +236,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 
 		return nil
 	}
-
-	processEventFnWithOffset := pb.AddOffsetFunc(eachEntryFunc, 3*time.Second, func(counter int64, lastTsNs int64) error {
-		lastTime := time.Unix(0, lastTsNs)
-		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, lastTime, float64(counter)/float64(3))
-		return remote_storage.SetSyncOffset(option.grpcDialOption, *option.filerAddress, mountedDir, lastTsNs)
-	})
-
-	return pb.FollowMetadata(*option.filerAddress, option.grpcDialOption, "filer.remote.sync",
-		mountedDir, []string{filer.DirectoryEtcRemote}, lastOffsetTs.UnixNano(), 0, processEventFnWithOffset, false)
+	return eachEntryFunc, nil
 }
 
 func collectLastSyncOffset(option *RemoteSyncOptions, mountedDir string) (time.Time) {
