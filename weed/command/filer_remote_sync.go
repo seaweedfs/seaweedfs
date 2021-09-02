@@ -105,8 +105,6 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		return fmt.Errorf("read mount info: %v", detectErr)
 	}
 
-	lastOffsetTs := collectLastSyncOffset(option, mountedDir)
-
 	eachEntryFunc, err := makeEventProcessor(remoteStorage, mountedDir, remoteStorageMountLocation, filerSource)
 	if err != nil {
 		return err
@@ -117,6 +115,8 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, lastTime, float64(counter)/float64(3))
 		return remote_storage.SetSyncOffset(option.grpcDialOption, *option.filerAddress, mountedDir, lastTsNs)
 	})
+
+	lastOffsetTs := collectLastSyncOffset(option, mountedDir)
 
 	return pb.FollowMetadata(*option.filerAddress, option.grpcDialOption, "filer.remote.sync",
 		mountedDir, []string{filer.DirectoryEtcRemote}, lastOffsetTs.UnixNano(), 0, processEventFnWithOffset, false)
