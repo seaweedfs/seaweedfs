@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -49,6 +50,9 @@ func (s s3RemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.R
 	if conf.S3V4Signature {
 		sess.Handlers.Sign.PushBackNamed(v4.SignRequestHandler)
 	}
+	sess.Handlers.Build.PushBack(func(r *request.Request) {
+		r.HTTPRequest.Header.Set("User-Agent", "SeaweedFS/"+util.VERSION)
+	})
 	sess.Handlers.Build.PushFront(skipSha256PayloadSigning)
 	client.conn = s3.New(sess)
 	return client, nil
