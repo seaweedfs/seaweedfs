@@ -105,7 +105,6 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 		})
 	}
 
-	storageName := *remoteSyncOptions.createBucketAt
 	remoteSyncOptions.bucketsDir = "/buckets"
 	// check buckets again
 	remoteSyncOptions.WithFilerClient(func(filerClient filer_pb.SeaweedFilerClient) error {
@@ -117,10 +116,11 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 		return nil
 	})
 
+	storageName := *remoteSyncOptions.createBucketAt
 	if storageName != "" {
 		fmt.Printf("synchronize %s, default new bucket creation in %s ...\n", remoteSyncOptions.bucketsDir, storageName)
 		util.RetryForever("filer.remote.sync buckets "+storageName, func() error {
-			return followBucketUpdatesAndUploadToRemote(&remoteSyncOptions, filerSource, storageName)
+			return remoteSyncOptions.followBucketUpdatesAndUploadToRemote(filerSource)
 		}, func(err error) bool {
 			if err != nil {
 				glog.Errorf("synchronize %s to %s: %v", remoteSyncOptions.bucketsDir, storageName, err)

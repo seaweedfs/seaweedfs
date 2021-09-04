@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-func followBucketUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *source.FilerSource, storageName string) error {
+func (option *RemoteSyncOptions) followBucketUpdatesAndUploadToRemote(filerSource *source.FilerSource) error {
 
 	// read filer remote storage mount mappings
 	if detectErr := option.collectRemoteStorageConf(); detectErr != nil {
@@ -46,7 +46,12 @@ func (option *RemoteSyncOptions) makeBucketedEventProcessor(filerSource *source.
 		if !entry.IsDirectory {
 			return nil
 		}
-		client, err := option.findRemoteStorageClient(entry.Name)
+		remoteConf, found := option.remoteConfs[*option.createBucketAt]
+		if !found {
+			return fmt.Errorf("un-configured remote storage %s", *option.createBucketAt)
+		}
+
+		client, err := remote_storage.GetRemoteStorage(remoteConf)
 		if err != nil {
 			return err
 		}
