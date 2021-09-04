@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/golang/protobuf/proto"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -99,6 +100,26 @@ var (
 	remoteStorageClients      = make(map[string]CachedRemoteStorageClient)
 	remoteStorageClientsLock  sync.Mutex
 )
+
+func GetAllRemoteStorageNames() string {
+	var storageNames []string
+	for k := range RemoteStorageClientMakers {
+		storageNames = append(storageNames, k)
+	}
+	sort.Strings(storageNames)
+	return strings.Join(storageNames, "|")
+}
+
+func GetRemoteStorageNamesHasBucket() string {
+	var storageNames []string
+	for k, m := range RemoteStorageClientMakers {
+		if m.HasBucket() {
+			storageNames = append(storageNames, k)
+		}
+	}
+	sort.Strings(storageNames)
+	return strings.Join(storageNames, "|")
+}
 
 func ParseRemoteLocation(remoteConfType string, remote string) (remoteStorageLocation *remote_pb.RemoteStorageLocation, err error) {
 	maker, found := RemoteStorageClientMakers[remoteConfType]
