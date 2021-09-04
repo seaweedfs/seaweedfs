@@ -79,7 +79,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	// store a mount configuration in filer
-	if err = filer.SaveMountMapping(commandEnv, *dir, remoteStorageLocation); err != nil {
+	if err = filer.InsertMountMapping(commandEnv, *dir, remoteStorageLocation); err != nil {
 		return fmt.Errorf("save mount mapping: %v", err)
 	}
 

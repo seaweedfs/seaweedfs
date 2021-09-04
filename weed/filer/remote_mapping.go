@@ -7,7 +7,7 @@ import (
 	"github.com/golang/protobuf/proto"
 )
 
-func SaveMountMapping(filerClient filer_pb.FilerClient, dir string, remoteStorageLocation *remote_pb.RemoteStorageLocation) (err error) {
+func InsertMountMapping(filerClient filer_pb.FilerClient, dir string, remoteStorageLocation *remote_pb.RemoteStorageLocation) (err error) {
 
 	// read current mapping
 	var oldContent, newContent []byte
@@ -22,7 +22,7 @@ func SaveMountMapping(filerClient filer_pb.FilerClient, dir string, remoteStorag
 	}
 
 	// add new mapping
-	newContent, err = AddRemoteStorageMapping(oldContent, dir, remoteStorageLocation)
+	newContent, err = addRemoteStorageMapping(oldContent, dir, remoteStorageLocation)
 	if err != nil {
 		return fmt.Errorf("add mapping %s~%s: %v", dir, remoteStorageLocation, err)
 	}
@@ -53,7 +53,7 @@ func DeleteMountMapping(filerClient filer_pb.FilerClient, dir string) (err error
 	}
 
 	// add new mapping
-	newContent, err = RemoveRemoteStorageMapping(oldContent, dir)
+	newContent, err = removeRemoteStorageMapping(oldContent, dir)
 	if err != nil {
 		return fmt.Errorf("delete mount %s: %v", dir, err)
 	}
@@ -69,7 +69,7 @@ func DeleteMountMapping(filerClient filer_pb.FilerClient, dir string) (err error
 	return nil
 }
 
-func AddRemoteStorageMapping(oldContent []byte, dir string, storageLocation *remote_pb.RemoteStorageLocation) (newContent []byte, err error) {
+func addRemoteStorageMapping(oldContent []byte, dir string, storageLocation *remote_pb.RemoteStorageLocation) (newContent []byte, err error) {
 	mappings, unmarshalErr := UnmarshalRemoteStorageMappings(oldContent)
 	if unmarshalErr != nil {
 		// skip
@@ -85,7 +85,7 @@ func AddRemoteStorageMapping(oldContent []byte, dir string, storageLocation *rem
 	return
 }
 
-func RemoveRemoteStorageMapping(oldContent []byte, dir string) (newContent []byte, err error) {
+func removeRemoteStorageMapping(oldContent []byte, dir string) (newContent []byte, err error) {
 	mappings, unmarshalErr := UnmarshalRemoteStorageMappings(oldContent)
 	if unmarshalErr != nil {
 		return nil, unmarshalErr
