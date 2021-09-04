@@ -79,7 +79,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	// store a mount configuration in filer
-	if err = c.saveMountMapping(commandEnv, *dir, remoteStorageLocation); err != nil {
+	if err = filer.SaveMountMapping(commandEnv, *dir, remoteStorageLocation); err != nil {
 		return fmt.Errorf("save mount mapping: %v", err)
 	}
 
@@ -177,36 +177,6 @@ func (c *commandRemoteMount) syncMetadata(commandEnv *CommandEnv, writer io.Writ
 	return nil
 }
 
-func (c *commandRemoteMount) saveMountMapping(filerClient filer_pb.FilerClient, dir string, remoteStorageLocation *remote_pb.RemoteStorageLocation) (err error) {
-
-	// read current mapping
-	var oldContent, newContent []byte
-	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		oldContent, err = filer.ReadInsideFiler(client, filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE)
-		return err
-	})
-	if err != nil {
-		if err != filer_pb.ErrNotFound {
-			return fmt.Errorf("read existing mapping: %v", err)
-		}
-	}
-
-	// add new mapping
-	newContent, err = filer.AddRemoteStorageMapping(oldContent, dir, remoteStorageLocation)
-	if err != nil {
-		return fmt.Errorf("add mapping %s~%s: %v", dir, remoteStorageLocation, err)
-	}
-
-	// save back
-	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		return filer.SaveInsideFiler(client, filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE, newContent)
-	})
-	if err != nil {
-		return fmt.Errorf("save mapping: %v", err)
-	}
-
-	return nil
-}
 
 // if an entry has synchronized metadata but has not synchronized content
 //    entry.Attributes.FileSize == entry.RemoteEntry.RemoteSize
