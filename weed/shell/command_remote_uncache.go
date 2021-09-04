@@ -141,12 +141,12 @@ func newFileFilter(remoteMountCommand *flag.FlagSet) (ff *FileFilter) {
 func (ff *FileFilter) matches(entry *filer_pb.Entry) bool {
 	if *ff.include != "" {
 		if ok, _ := filepath.Match(*ff.include, entry.Name); !ok {
-			return true
+			return false
 		}
 	}
 	if *ff.exclude != "" {
 		if ok, _ := filepath.Match(*ff.exclude, entry.Name); ok {
-			return true
+			return false
 		}
 	}
 	if *ff.minSize != -1 {
@@ -169,5 +169,5 @@ func (ff *FileFilter) matches(entry *filer_pb.Entry) bool {
 			return false
 		}
 	}
-	return false
+	return true
 }
