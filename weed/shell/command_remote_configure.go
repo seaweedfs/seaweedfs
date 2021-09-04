@@ -34,7 +34,7 @@ func (c *commandRemoteConfigure) Help() string {
 
 	# set or update a configuration
 	remote.configure -name=cloud1 -type=s3 -s3.access_key=xxx -s3.secret_key=yyy -s3.region=us-east-2
-	remote.configure -name=cloud2 -type=gcs -gcs.appCredentialsFile=~/service-account-file.json
+	remote.configure -name=cloud2 -type=gcs -gcs.appCredentialsFile=~/service-account-file.json -gcs.projectId=yyy
 	remote.configure -name=cloud3 -type=azure -azure.account_name=xxx -azure.account_key=yyy
 	remote.configure -name=cloud4 -type=aliyun -aliyun.access_key=xxx -aliyun.secret_key=yyy -aliyun.endpoint=oss-cn-shenzhen.aliyuncs.com -aliyun.region=cn-sehnzhen
 	remote.configure -name=cloud5 -type=tencent -tencent.secret_id=xxx -tencent.secret_key=yyy -tencent.endpoint=cos.ap-guangzhou.myqcloud.com
@@ -71,6 +71,7 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 	remoteConfigureCommand.BoolVar(&conf.S3V4Signature, "s3.v4_signature", false, "s3 V4 signature")
 
 	remoteConfigureCommand.StringVar(&conf.GcsGoogleApplicationCredentials, "gcs.appCredentialsFile", "", "google cloud storage credentials file, default to use env GOOGLE_APPLICATION_CREDENTIALS")
+	remoteConfigureCommand.StringVar(&conf.GcsProjectId, "gcs.projectId", "", "google cloud storage project id, default to use env GOOGLE_CLOUD_PROJECT")
 
 	remoteConfigureCommand.StringVar(&conf.AzureAccountName, "azure.account_name", "", "azure account name, default to use env AZURE_STORAGE_ACCOUNT")
 	remoteConfigureCommand.StringVar(&conf.AzureAccountKey, "azure.account_key", "", "azure account name, default to use env AZURE_STORAGE_ACCESS_KEY")
