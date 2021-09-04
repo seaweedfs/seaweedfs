@@ -3,9 +3,9 @@ module github.com/chrislusf/seaweedfs
 go 1.17
 
 require (
-	cloud.google.com/go v0.58.0 // indirect
+	cloud.google.com/go v0.94.1 // indirect
 	cloud.google.com/go/pubsub v1.3.1
-	cloud.google.com/go/storage v1.9.0
+	cloud.google.com/go/storage v1.16.1
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.14.0
 	github.com/BurntSushi/toml v0.3.1 // indirect
@@ -21,7 +21,7 @@ require (
 	github.com/chrislusf/raft v1.0.7
 	github.com/colinmarc/hdfs/v2 v2.2.0
 	github.com/coreos/go-semver v0.3.0 // indirect
-	github.com/coreos/go-systemd/v22 v22.0.0 // indirect
+	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/disintegration/imaging v1.6.2
@@ -44,15 +44,15 @@ require (
 	github.com/go-zookeeper/zk v1.0.2 // indirect
 	github.com/gocql/gocql v0.0.0-20210707082121-9a3953d1826d
 	github.com/golang-jwt/jwt v3.2.1+incompatible
-	github.com/golang/groupcache v0.0.0-20200121045136-8c9f03a8e57e
-	github.com/golang/protobuf v1.4.3
+	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da
+	github.com/golang/protobuf v1.5.2
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/btree v1.0.0
-	github.com/google/go-cmp v0.5.5 // indirect
+	github.com/google/go-cmp v0.5.6 // indirect
 	github.com/google/uuid v1.3.0
 	github.com/google/wire v0.4.0 // indirect
 	github.com/googleapis/gax-go v2.0.2+incompatible // indirect
-	github.com/googleapis/gax-go/v2 v2.0.5 // indirect
+	github.com/googleapis/gax-go/v2 v2.1.0 // indirect
 	github.com/gorilla/mux v1.7.4
 	github.com/gorilla/websocket v1.4.1 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0
@@ -129,7 +129,7 @@ require (
 	github.com/youmark/pkcs8 v0.0.0-20181117223130-1be2e3e5546d // indirect
 	go.etcd.io/etcd v3.3.25+incompatible
 	go.mongodb.org/mongo-driver v1.7.0
-	go.opencensus.io v0.22.4 // indirect
+	go.opencensus.io v0.23.0 // indirect
 	go.opentelemetry.io/otel v0.15.0 // indirect
 	gocloud.dev v0.20.0
 	gocloud.dev/pubsub/natspubsub v0.20.0
@@ -137,16 +137,16 @@ require (
 	golang.org/x/crypto v0.0.0-20201002170205-7f63de1d35b0 // indirect
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
 	golang.org/x/net v0.0.0-20210813160813-60bc85c4be6d
-	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d // indirect
-	golang.org/x/sys v0.0.0-20210817142637-7d9622a276b7
+	golang.org/x/oauth2 v0.0.0-20210819190943-2bc19b11175f // indirect
+	golang.org/x/sys v0.0.0-20210823070655-63515b42dcdf
 	golang.org/x/text v0.3.6 // indirect
-	golang.org/x/tools v0.1.4
+	golang.org/x/tools v0.1.5
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
-	google.golang.org/api v0.26.0
-	google.golang.org/appengine v1.6.6 // indirect
-	google.golang.org/genproto v0.0.0-20200608115520-7c474a2e3482 // indirect
-	google.golang.org/grpc v1.29.1
-	google.golang.org/protobuf v1.26.0-rc.1
+	google.golang.org/api v0.56.0
+	google.golang.org/appengine v1.6.7 // indirect
+	google.golang.org/genproto v0.0.0-20210903162649-d08c68adba83 // indirect
+	google.golang.org/grpc v1.40.0
+	google.golang.org/protobuf v1.27.1
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/jcmturner/aescts.v1 v1.0.1 // indirect
 	gopkg.in/jcmturner/dnsutils.v1 v1.0.1 // indirect
@@ -166,6 +166,7 @@ require (
 )
 
 require (
+	github.com/coreos/etcd v3.3.10+incompatible // indirect
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548 // indirect
 	github.com/d4l3k/messagediff v1.2.1 // indirect
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2 // indirect
@@ -184,9 +185,12 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/tikv/pd v1.1.0-beta.0.20210323121136-78679e5e209d // indirect
 	github.com/twmb/murmur3 v1.1.3 // indirect
+	go.etcd.io/etcd/api/v3 v3.5.0 // indirect
+	go.etcd.io/etcd/client/pkg/v3 v3.5.0 // indirect
+	go.etcd.io/etcd/client/v3 v3.5.0 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.7.0 // indirect
-	go.uber.org/zap v1.16.0 // indirect
+	go.uber.org/zap v1.17.0 // indirect
 	golang.org/x/lint v0.0.0-20210508222113-6edffad5e616 // indirect
 	golang.org/x/mod v0.4.2 // indirect
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c // indirect
@@ -198,5 +202,3 @@ require (
 
 // replace github.com/seaweedfs/fuse => /Users/chris/go/src/github.com/seaweedfs/fuse
 // replace github.com/chrislusf/raft => /Users/chris/go/src/github.com/chrislusf/raft
-
-replace go.etcd.io/etcd => go.etcd.io/etcd v0.5.0-alpha.5.0.20200425165423-262c93980547

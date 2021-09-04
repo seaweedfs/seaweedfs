@@ -10,6 +10,7 @@ Note :
 import (
 	"context"
 	"fmt"
+	"go.etcd.io/etcd/client"
 	"sync"
 	"time"
 
@@ -19,7 +20,6 @@ import (
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"go.etcd.io/etcd/client"
 )
 
 const (
