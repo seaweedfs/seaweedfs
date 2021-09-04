@@ -88,7 +88,7 @@ func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer
 			return true // true means recursive traversal should continue
 		}
 
-		if fileFilter.matches(entry) {
+		if !fileFilter.matches(entry) {
 			return true
 		}
 

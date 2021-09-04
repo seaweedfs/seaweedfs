@@ -130,7 +130,7 @@ func (c *commandRemoteCache) cacheContentData(commandEnv *CommandEnv, writer io.
 			return true // true means recursive traversal should continue
 		}
 
-		if fileFilter.matches(entry) {
+		if !fileFilter.matches(entry) {
 			return true
 		}
 
