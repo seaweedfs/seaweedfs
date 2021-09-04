@@ -239,7 +239,7 @@ func makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, 
 	return eachEntryFunc, nil
 }
 
-func collectLastSyncOffset(option *RemoteSyncOptions, mountedDir string) (time.Time) {
+func collectLastSyncOffset(option *RemoteSyncOptions, mountedDir string) time.Time {
 	// 1. specified by timeAgo
 	// 2. last offset timestamp for this directory
 	// 3. directory creation time
