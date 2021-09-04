@@ -262,7 +262,7 @@ func (s *s3RemoteStorageClient) CreateBucket(name string) (err error) {
 		ObjectLockEnabledForBucket: nil,
 	})
 	if err != nil {
-		return fmt.Errorf("create bucket %s: %v", name, err)
+		return fmt.Errorf("%s create bucket %s: %v", s.conf.Name, name, err)
 	}
 	return
 }
