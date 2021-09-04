@@ -181,3 +181,11 @@ func (c *hdfsRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocatio
 func (c *hdfsRemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {
 	return
 }
+
+func (c *hdfsRemoteStorageClient) CreateBucket(name string) (err error) {
+	return
+}
+
+func (c *hdfsRemoteStorageClient) DeleteBucket(name string) (err error) {
+	return
+}

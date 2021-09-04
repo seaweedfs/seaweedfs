@@ -248,3 +248,31 @@ func (s *s3RemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket,
 	}
 	return
 }
+
+func (s *s3RemoteStorageClient) CreateBucket(name string) (err error) {
+	_, err = s.conn.CreateBucket(&s3.CreateBucketInput{
+		ACL:                        nil,
+		Bucket:                     aws.String(name),
+		CreateBucketConfiguration:  nil,
+		GrantFullControl:           nil,
+		GrantRead:                  nil,
+		GrantReadACP:               nil,
+		GrantWrite:                 nil,
+		GrantWriteACP:              nil,
+		ObjectLockEnabledForBucket: nil,
+	})
+	if err != nil {
+		return fmt.Errorf("create bucket %s: %v", name, err)
+	}
+	return
+}
+
+func (s *s3RemoteStorageClient) DeleteBucket(name string) (err error) {
+	_, err = s.conn.DeleteBucket(&s3.DeleteBucketInput{
+		Bucket:                     aws.String(name),
+	})
+	if err != nil {
+		return fmt.Errorf("delete bucket %s: %v", name, err)
+	}
+	return
+}

@@ -4,6 +4,7 @@ import (
 	"cloud.google.com/go/storage"
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
@@ -41,6 +42,15 @@ func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.
 		}
 	}
 
+	projectID := conf.GcsProjectId
+	if projectID == "" {
+		found := false
+		projectID, found = os.LookupEnv("GOOGLE_CLOUD_PROJECT")
+		if !found {
+			glog.Warningf("need to specific GOOGLE_CLOUD_PROJECT env variable")
+		}
+	}
+
 	googleApplicationCredentials = util.ResolvePath(googleApplicationCredentials)
 
 	c, err := storage.NewClient(context.Background(), option.WithCredentialsFile(googleApplicationCredentials))
@@ -49,12 +59,14 @@ func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.
 	}
 
 	client.client = c
+	client.projectID = projectID
 	return client, nil
 }
 
 type gcsRemoteStorageClient struct {
-	conf   *remote_pb.RemoteConf
-	client *storage.Client
+	conf      *remote_pb.RemoteConf
+	client    *storage.Client
+	projectID string
 }
 
 var _ = remote_storage.RemoteStorageClient(&gcsRemoteStorageClient{})
@@ -186,5 +198,41 @@ func (gcs *gcsRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocati
 }
 
 func (gcs *gcsRemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {
+	if gcs.projectID == "" {
+		return nil, fmt.Errorf("gcs project id or GOOGLE_CLOUD_PROJECT env variable not set")
+	}
+	iter := gcs.client.Buckets(context.Background(), gcs.projectID)
+	for {
+		b, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return
+		}
+		buckets = append(buckets, &remote_storage.Bucket{
+			Name:      b.Name,
+			CreatedAt: b.Created,
+		})
+	}
+	return
+}
+
+func (gcs *gcsRemoteStorageClient) CreateBucket(name string) (err error) {
+	if gcs.projectID == "" {
+		return fmt.Errorf("gcs project id or GOOGLE_CLOUD_PROJECT env variable not set")
+	}
+	err = gcs.client.Bucket(name).Create(context.Background(), gcs.projectID, &storage.BucketAttrs{})
+	if err != nil {
+		return fmt.Errorf("create bucket %s: %v", name, err)
+	}
+	return
+}
+
+func (gcs *gcsRemoteStorageClient) DeleteBucket(name string) (err error) {
+	err = gcs.client.Bucket(name).Delete(context.Background())
+	if err != nil {
+		return fmt.Errorf("delete bucket %s: %v", name, err)
+	}
 	return
 }

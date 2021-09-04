@@ -80,6 +80,8 @@ type RemoteStorageClient interface {
 	UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error)
 	DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error)
 	ListBuckets() ([]*Bucket, error)
+	CreateBucket(name string) (err error)
+	DeleteBucket(name string) (err error)
 }
 
 type RemoteStorageClientMaker interface {

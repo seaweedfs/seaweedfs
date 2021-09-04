@@ -217,15 +217,36 @@ func (az *azureRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocat
 }
 
 func (az *azureRemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {
-	resp, err := az.ListBuckets()
-	if err != nil {
-		return nil, fmt.Errorf("list buckets: %v", err)
+	ctx := context.Background()
+	for containerMarker := (azblob.Marker{}); containerMarker.NotDone(); {
+		listContainer, err := az.serviceURL.ListContainersSegment(ctx, containerMarker, azblob.ListContainersSegmentOptions{})
+		if err == nil {
+			for _, v := range listContainer.ContainerItems {
+				buckets = append(buckets, &remote_storage.Bucket{
+					Name:      v.Name,
+					CreatedAt: v.Properties.LastModified,
+				})
+			}
+		} else {
+			return buckets, err
+		}
+		containerMarker = listContainer.NextMarker
 	}
-	for _, b := range resp {
-		buckets = append(buckets, &remote_storage.Bucket{
-			Name:      b.Name,
-			CreatedAt: b.CreatedAt,
-		})
+	return
+}
+
+func (az *azureRemoteStorageClient) CreateBucket(name string) (err error) {
+	containerURL := az.serviceURL.NewContainerURL(name)
+	if _, err = containerURL.Create(context.Background(), azblob.Metadata{}, azblob.PublicAccessNone); err != nil {
+		return fmt.Errorf("create bucket %s: %v", name, err)
+	}
+	return
+}
+
+func (az *azureRemoteStorageClient) DeleteBucket(name string) (err error) {
+	containerURL := az.serviceURL.NewContainerURL(name)
+	if _, err = containerURL.Delete(context.Background(), azblob.ContainerAccessConditions{}); err != nil {
+		return fmt.Errorf("delete bucket %s: %v", name, err)
 	}
 	return
 }
