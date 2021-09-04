@@ -184,3 +184,7 @@ func (gcs *gcsRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocati
 	}
 	return
 }
+
+func (gcs *gcsRemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {
+	return
+}

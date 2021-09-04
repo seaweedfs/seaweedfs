@@ -234,3 +234,17 @@ func (s *s3RemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation)
 	})
 	return
 }
+
+func (s *s3RemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {
+	resp, err := s.conn.ListBuckets(&s3.ListBucketsInput{})
+	if err != nil {
+		return nil, fmt.Errorf("list buckets: %v", err)
+	}
+	for _, b := range resp.Buckets {
+		buckets = append(buckets, &remote_storage.Bucket{
+			Name:      *b.Name,
+			CreatedAt: *b.CreationDate,
+		})
+	}
+	return
+}

@@ -170,9 +170,14 @@ func (c *hdfsRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorag
 	}
 	return nil
 }
+
 func (c *hdfsRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error) {
 	if err = c.client.Remove(loc.Path); err != nil {
 		return fmt.Errorf("hdfs delete %s: %v", loc.Path, err)
 	}
+	return
+}
+
+func (c *hdfsRemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {
 	return
 }

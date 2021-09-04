@@ -205,12 +205,27 @@ func (az *azureRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStor
 
 	return
 }
+
 func (az *azureRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error) {
 	key := loc.Path[1:]
 	containerURL := az.serviceURL.NewContainerURL(loc.Bucket)
 	if _, err = containerURL.NewBlobURL(key).Delete(context.Background(),
 		azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{}); err != nil {
 		return fmt.Errorf("azure delete %s%s: %v", loc.Bucket, loc.Path, err)
+	}
+	return
+}
+
+func (az *azureRemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {
+	resp, err := az.ListBuckets()
+	if err != nil {
+		return nil, fmt.Errorf("list buckets: %v", err)
+	}
+	for _, b := range resp {
+		buckets = append(buckets, &remote_storage.Bucket{
+			Name:      b.Name,
+			CreatedAt: b.CreatedAt,
+		})
 	}
 	return
 }
