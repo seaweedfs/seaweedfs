@@ -208,7 +208,7 @@ func (gcs *gcsRemoteStorageClient) ListBuckets() (buckets []*remote_storage.Buck
 			break
 		}
 		if err != nil {
-			return
+			return buckets, err
 		}
 		buckets = append(buckets, &remote_storage.Bucket{
 			Name:      b.Name,
