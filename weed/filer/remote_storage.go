@@ -131,38 +131,6 @@ func UnmarshalRemoteStorageMappings(oldContent []byte) (mappings *remote_pb.Remo
 	return
 }
 
-func AddRemoteStorageMapping(oldContent []byte, dir string, storageLocation *remote_pb.RemoteStorageLocation) (newContent []byte, err error) {
-	mappings, unmarshalErr := UnmarshalRemoteStorageMappings(oldContent)
-	if unmarshalErr != nil {
-		// skip
-	}
-
-	// set the new mapping
-	mappings.Mappings[dir] = storageLocation
-
-	if newContent, err = proto.Marshal(mappings); err != nil {
-		return oldContent, fmt.Errorf("marshal mappings: %v", err)
-	}
-
-	return
-}
-
-func RemoveRemoteStorageMapping(oldContent []byte, dir string) (newContent []byte, err error) {
-	mappings, unmarshalErr := UnmarshalRemoteStorageMappings(oldContent)
-	if unmarshalErr != nil {
-		return nil, unmarshalErr
-	}
-
-	// set the new mapping
-	delete(mappings.Mappings, dir)
-
-	if newContent, err = proto.Marshal(mappings); err != nil {
-		return oldContent, fmt.Errorf("marshal mappings: %v", err)
-	}
-
-	return
-}
-
 func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress string) (mappings *remote_pb.RemoteStorageMapping, readErr error) {
 	var oldContent []byte
 	if readErr = pb.WithFilerClient(filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {

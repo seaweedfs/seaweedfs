@@ -62,7 +62,7 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 
 	// store a mount configuration in filer
 	fmt.Fprintf(writer, "deleting mount for %s ...\n", *dir)
-	if err = c.deleteMountMapping(commandEnv, *dir); err != nil {
+	if err = filer.DeleteMountMapping(commandEnv, *dir); err != nil {
 		return fmt.Errorf("delete mount mapping: %v", err)
 	}
 
@@ -119,33 +119,3 @@ func (c *commandRemoteUnmount) purgeMountedData(commandEnv *CommandEnv, dir stri
 	return nil
 }
 
-func (c *commandRemoteUnmount) deleteMountMapping(commandEnv *CommandEnv, dir string) (err error) {
-
-	// read current mapping
-	var oldContent, newContent []byte
-	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		oldContent, err = filer.ReadInsideFiler(client, filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE)
-		return err
-	})
-	if err != nil {
-		if err != filer_pb.ErrNotFound {
-			return fmt.Errorf("read existing mapping: %v", err)
-		}
-	}
-
-	// add new mapping
-	newContent, err = filer.RemoveRemoteStorageMapping(oldContent, dir)
-	if err != nil {
-		return fmt.Errorf("delete mount %s: %v", dir, err)
-	}
-
-	// save back
-	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		return filer.SaveInsideFiler(client, filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE, newContent)
-	})
-	if err != nil {
-		return fmt.Errorf("save mapping: %v", err)
-	}
-
-	return nil
-}

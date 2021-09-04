@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
+	"github.com/golang/protobuf/proto"
 )
 
 func SaveMountMapping(filerClient filer_pb.FilerClient, dir string, remoteStorageLocation *remote_pb.RemoteStorageLocation) (err error) {
@@ -35,4 +36,67 @@ func SaveMountMapping(filerClient filer_pb.FilerClient, dir string, remoteStorag
 	}
 
 	return nil
+}
+
+func DeleteMountMapping(filerClient filer_pb.FilerClient, dir string) (err error) {
+
+	// read current mapping
+	var oldContent, newContent []byte
+	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		oldContent, err = ReadInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
+		return err
+	})
+	if err != nil {
+		if err != filer_pb.ErrNotFound {
+			return fmt.Errorf("read existing mapping: %v", err)
+		}
+	}
+
+	// add new mapping
+	newContent, err = RemoveRemoteStorageMapping(oldContent, dir)
+	if err != nil {
+		return fmt.Errorf("delete mount %s: %v", dir, err)
+	}
+
+	// save back
+	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		return SaveInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE, newContent)
+	})
+	if err != nil {
+		return fmt.Errorf("save mapping: %v", err)
+	}
+
+	return nil
+}
+
+func AddRemoteStorageMapping(oldContent []byte, dir string, storageLocation *remote_pb.RemoteStorageLocation) (newContent []byte, err error) {
+	mappings, unmarshalErr := UnmarshalRemoteStorageMappings(oldContent)
+	if unmarshalErr != nil {
+		// skip
+	}
+
+	// set the new mapping
+	mappings.Mappings[dir] = storageLocation
+
+	if newContent, err = proto.Marshal(mappings); err != nil {
+		return oldContent, fmt.Errorf("marshal mappings: %v", err)
+	}
+
+	return
+}
+
+func RemoveRemoteStorageMapping(oldContent []byte, dir string) (newContent []byte, err error) {
+	mappings, unmarshalErr := UnmarshalRemoteStorageMappings(oldContent)
+	if unmarshalErr != nil {
+		return nil, unmarshalErr
+	}
+
+	// set the new mapping
+	delete(mappings.Mappings, dir)
+
+	if newContent, err = proto.Marshal(mappings); err != nil {
+		return oldContent, fmt.Errorf("marshal mappings: %v", err)
+	}
+
+	return
 }
