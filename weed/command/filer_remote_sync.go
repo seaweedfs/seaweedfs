@@ -93,6 +93,31 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 		*remoteSyncOptions.readChunkFromFiler,
 	)
 
+	storageName := *remoteSyncOptions.createBucketAt
+	if storageName != "" {
+
+		remoteSyncOptions.bucketsDir = "/buckets"
+		// check buckets again
+		remoteSyncOptions.WithFilerClient(func(filerClient filer_pb.SeaweedFilerClient) error {
+			resp, err := filerClient.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+			if err != nil {
+				return err
+			}
+			remoteSyncOptions.bucketsDir = resp.DirBuckets
+			return nil
+		})
+
+		fmt.Printf("synchronize %s, default new bucket creation in %s ...\n", remoteSyncOptions.bucketsDir, storageName)
+		util.RetryForever("filer.remote.sync buckets "+storageName, func() error {
+			return remoteSyncOptions.followBucketUpdatesAndUploadToRemote(filerSource)
+		}, func(err error) bool {
+			if err != nil {
+				glog.Errorf("synchronize %s to %s: %v", remoteSyncOptions.bucketsDir, storageName, err)
+			}
+			return true
+		})
+	}
+
 	if dir != "" {
 		fmt.Printf("synchronize %s to remote storage...\n", dir)
 		util.RetryForever("filer.remote.sync "+dir, func() error {
@@ -100,30 +125,6 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 		}, func(err error) bool {
 			if err != nil {
 				glog.Errorf("synchronize %s: %v", dir, err)
-			}
-			return true
-		})
-	}
-
-	remoteSyncOptions.bucketsDir = "/buckets"
-	// check buckets again
-	remoteSyncOptions.WithFilerClient(func(filerClient filer_pb.SeaweedFilerClient) error {
-		resp, err := filerClient.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
-		if err != nil {
-			return err
-		}
-		remoteSyncOptions.bucketsDir = resp.DirBuckets
-		return nil
-	})
-
-	storageName := *remoteSyncOptions.createBucketAt
-	if storageName != "" {
-		fmt.Printf("synchronize %s, default new bucket creation in %s ...\n", remoteSyncOptions.bucketsDir, storageName)
-		util.RetryForever("filer.remote.sync buckets "+storageName, func() error {
-			return remoteSyncOptions.followBucketUpdatesAndUploadToRemote(filerSource)
-		}, func(err error) bool {
-			if err != nil {
-				glog.Errorf("synchronize %s to %s: %v", remoteSyncOptions.bucketsDir, storageName, err)
 			}
 			return true
 		})
