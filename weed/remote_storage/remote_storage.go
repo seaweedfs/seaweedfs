@@ -57,6 +57,9 @@ func parseNoBucketLocation(remote string) (loc *remote_pb.RemoteStorageLocation)
 }
 
 func FormatLocation(loc *remote_pb.RemoteStorageLocation) string {
+	if loc.Bucket == "" {
+		return fmt.Sprintf("%s%s", loc.Name, loc.Path)
+	}
 	return fmt.Sprintf("%s/%s%s", loc.Name, loc.Bucket, loc.Path)
 }
 
