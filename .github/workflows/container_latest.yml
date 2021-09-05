@@ -2,8 +2,8 @@ name: "docker: build latest containers"
 
 on:
   push:
-    branches:
-      - master
+    tags:
+      - '*'
   workflow_dispatch: []
 
 jobs:
@@ -14,6 +14,10 @@ jobs:
       -
         name: Checkout
         uses: actions/checkout@v2
+      - name: Wait for the release build
+        uses: jakejarvis/wait-action@master
+        with:
+          time: '120m'
       -
         name: Docker meta
         id: docker_meta
