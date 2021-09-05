@@ -18,6 +18,7 @@ type DataNode struct {
 	Port      int
 	PublicUrl string
 	LastSeen  int64 // unix time in seconds
+	Counter   int   // in race condition, the previous dataNode was not dead
 }
 
 func NewDataNode(id string) *DataNode {
