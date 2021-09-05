@@ -24,7 +24,7 @@ func DetectedHostAddress() string {
 
 		for _, a := range addrs {
 			if ipNet, ok := a.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
-				if ipNet.IP.To4() != nil {
+				if ipNet.IP.To4() != nil || ipNet.IP.To16() != nil {
 					return ipNet.IP.String()
 				}
 			}
