@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
 	"math"
+	"math/rand"
 	"strings"
 	"time"
 )
@@ -56,17 +57,29 @@ func (option *RemoteSyncOptions) makeBucketedEventProcessor(filerSource *source.
 			return err
 		}
 
-		glog.V(0).Infof("create bucket %s", entry.Name)
-		if err := client.CreateBucket(entry.Name); err != nil {
+		bucketName := strings.ToLower(entry.Name)
+		if *option.createBucketRandomSuffix {
+			// https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
+			if len(bucketName)+5 > 63 {
+				bucketName = bucketName[:58]
+			}
+			bucketName = fmt.Sprintf("%s-%4d", bucketName, rand.Uint32()%10000)
+		}
+
+		glog.V(0).Infof("create bucket %s", bucketName)
+		if err := client.CreateBucket(bucketName); err != nil {
 			return err
 		}
 
 		bucketPath := util.FullPath(option.bucketsDir).Child(entry.Name)
 		remoteLocation := &remote_pb.RemoteStorageLocation{
 			Name:   *option.createBucketAt,
-			Bucket: entry.Name,
+			Bucket: bucketName,
 			Path:   "/",
 		}
+
+		// need to add new mapping here before getting upates from metadata tailing
+		option.mappings.Mappings[string(bucketPath)] = remoteLocation
 
 		return filer.InsertMountMapping(option, string(bucketPath), remoteLocation)
 
@@ -76,13 +89,13 @@ func (option *RemoteSyncOptions) makeBucketedEventProcessor(filerSource *source.
 			return nil
 		}
 
-		client, err := option.findRemoteStorageClient(entry.Name)
+		client, remoteStorageMountLocation, err := option.findRemoteStorageClient(entry.Name)
 		if err != nil {
 			return err
 		}
 
-		glog.V(0).Infof("delete bucket %s", entry.Name)
-		if err := client.DeleteBucket(entry.Name); err != nil {
+		glog.V(0).Infof("delete remote bucket %s", remoteStorageMountLocation.Bucket)
+		if err := client.DeleteBucket(remoteStorageMountLocation.Bucket); err != nil {
 			return err
 		}
 
@@ -277,23 +290,24 @@ func (option *RemoteSyncOptions) makeBucketedEventProcessor(filerSource *source.
 	return eachEntryFunc, nil
 }
 
-func (option *RemoteSyncOptions)findRemoteStorageClient(bucketName string) (remote_storage.RemoteStorageClient, error) {
+func (option *RemoteSyncOptions) findRemoteStorageClient(bucketName string) (client remote_storage.RemoteStorageClient, remoteStorageMountLocation *remote_pb.RemoteStorageLocation, err error) {
 	bucket := util.FullPath(option.bucketsDir).Child(bucketName)
 
-	remoteStorageMountLocation, isMounted := option.mappings.Mappings[string(bucket)]
+	var isMounted bool
+	remoteStorageMountLocation, isMounted = option.mappings.Mappings[string(bucket)]
 	if !isMounted {
-		return nil, fmt.Errorf("%s is not mounted", bucket)
+		return nil, remoteStorageMountLocation, fmt.Errorf("%s is not mounted", bucket)
 	}
 	remoteConf, hasClient := option.remoteConfs[remoteStorageMountLocation.Name]
 	if !hasClient {
-		return nil, fmt.Errorf("%s mounted to un-configured %+v", bucket, remoteStorageMountLocation)
+		return nil, remoteStorageMountLocation, fmt.Errorf("%s mounted to un-configured %+v", bucket, remoteStorageMountLocation)
 	}
 
-	client, err := remote_storage.GetRemoteStorage(remoteConf)
+	client, err = remote_storage.GetRemoteStorage(remoteConf)
 	if err != nil {
-		return nil, err
+		return nil, remoteStorageMountLocation, err
 	}
-	return client, nil
+	return client, remoteStorageMountLocation, nil
 }
 
 func (option *RemoteSyncOptions) detectBucketInfo(actualDir string) (bucket util.FullPath, remoteStorageMountLocation *remote_pb.RemoteStorageLocation, remoteConf *remote_pb.RemoteConf, ok bool) {
