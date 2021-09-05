@@ -124,7 +124,7 @@ func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty
 			Name:      name,
 		})
 		if lookupErr != nil {
-			if !strings.Contains(lookupErr.Error(), filer_pb.ErrNotFound.Error()) {
+			if strings.Contains(lookupErr.Error(), filer_pb.ErrNotFound.Error()) {
 				_, createErr := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
 					Directory: parent,
 					Entry: &filer_pb.Entry{
@@ -134,6 +134,9 @@ func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty
 							Mtime:    time.Now().Unix(),
 							Crtime:   time.Now().Unix(),
 							FileMode: uint32(0644 | os.ModeDir),
+						},
+						RemoteEntry: &filer_pb.RemoteEntry{
+							StorageName: remoteConf.Name,
 						},
 					},
 				})
@@ -170,7 +173,6 @@ func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty
 
 	return nil
 }
-
 
 // if an entry has synchronized metadata but has not synchronized content
 //    entry.Attributes.FileSize == entry.RemoteEntry.RemoteSize

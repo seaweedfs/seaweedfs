@@ -47,6 +47,10 @@ func (option *RemoteSyncOptions) makeBucketedEventProcessor(filerSource *source.
 		if !entry.IsDirectory {
 			return nil
 		}
+		if entry.RemoteEntry != nil {
+			// this directory is imported from "remote.mount.buckets" or "remote.mount"
+			return nil
+		}
 		remoteConf, found := option.remoteConfs[*option.createBucketAt]
 		if !found {
 			return fmt.Errorf("un-configured remote storage %s", *option.createBucketAt)
