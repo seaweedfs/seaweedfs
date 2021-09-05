@@ -54,27 +54,30 @@ func (c *commandRemoteUncache) Do(args []string, commandEnv *CommandEnv, writer 
 	if listErr != nil {
 		return listErr
 	}
-	if *dir == "" {
-		jsonPrintln(writer, mappings)
-		fmt.Fprintln(writer, "need to specify '-dir' option")
-		return nil
-	}
-
-	var localMountedDir string
-	for k := range mappings.Mappings {
-		if strings.HasPrefix(*dir, k) {
-			localMountedDir = k
+	if *dir != "" {
+		var localMountedDir string
+		for k := range mappings.Mappings {
+			if strings.HasPrefix(*dir, k) {
+				localMountedDir = k
+			}
 		}
-	}
-	if localMountedDir == "" {
-		jsonPrintln(writer, mappings)
-		fmt.Fprintf(writer, "%s is not mounted\n", *dir)
+		if localMountedDir == "" {
+			jsonPrintln(writer, mappings)
+			fmt.Fprintf(writer, "%s is not mounted\n", *dir)
+			return nil
+		}
+
+		// pull content from remote
+		if err = c.uncacheContentData(commandEnv, writer, util.FullPath(*dir), fileFiler); err != nil {
+			return fmt.Errorf("uncache content data: %v", err)
+		}
 		return nil
 	}
 
-	// pull content from remote
-	if err = c.uncacheContentData(commandEnv, writer, util.FullPath(*dir), fileFiler); err != nil {
-		return fmt.Errorf("uncache content data: %v", err)
+	for key, _ := range mappings.Mappings {
+		if err := c.uncacheContentData(commandEnv, writer, util.FullPath(key), fileFiler); err != nil {
+			return err
+		}
 	}
 
 	return nil

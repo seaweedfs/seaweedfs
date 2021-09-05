@@ -50,7 +50,7 @@ func (c *commandRemoteCache) Do(args []string, commandEnv *CommandEnv, writer io
 
 	remoteMountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 
-	dir := remoteMountCommand.String("dir", "", "a directory in filer")
+	dir := remoteMountCommand.String("dir", "", "a mounted directory or one of its sub folders in filer")
 	concurrency := remoteMountCommand.Int("concurrent", 32, "concurrent file downloading")
 	fileFiler := newFileFilter(remoteMountCommand)
 
@@ -58,15 +58,37 @@ func (c *commandRemoteCache) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
-	mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, detectErr := detectMountInfo(commandEnv, writer, *dir)
+	if *dir != "" {
+		if err := c.doCacheOneDirectory(commandEnv, writer, *dir, fileFiler, *concurrency); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	mappings, err := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
+	if err != nil {
+		return err
+	}
+
+	for key, _ := range mappings.Mappings {
+		if err := c.doCacheOneDirectory(commandEnv, writer, key, fileFiler, *concurrency); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (c *commandRemoteCache) doCacheOneDirectory(commandEnv *CommandEnv, writer io.Writer, dir string, fileFiler *FileFilter, concurrency int) (error) {
+	mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, detectErr := detectMountInfo(commandEnv, writer, dir)
 	if detectErr != nil {
 		jsonPrintln(writer, mappings)
 		return detectErr
 	}
 
 	// pull content from remote
-	if err = c.cacheContentData(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(*dir), fileFiler, remoteStorageConf, *concurrency); err != nil {
-		return fmt.Errorf("cache content data: %v", err)
+	if err := c.cacheContentData(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(dir), fileFiler, remoteStorageConf, concurrency); err != nil {
+		return fmt.Errorf("cache content data on %s: %v", localMountedDir, err)
 	}
 
 	return nil
