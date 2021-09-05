@@ -74,7 +74,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	// sync metadata from remote
-	if err = c.syncMetadata(commandEnv, writer, *dir, *nonEmpty, remoteConf, remoteStorageLocation); err != nil {
+	if err = syncMetadata(commandEnv, writer, *dir, *nonEmpty, remoteConf, remoteStorageLocation); err != nil {
 		return fmt.Errorf("pull metadata: %v", err)
 	}
 
@@ -114,13 +114,7 @@ func jsonPrintln(writer io.Writer, message proto.Message) error {
 	return err
 }
 
-func (c *commandRemoteMount) findRemoteStorageConfiguration(commandEnv *CommandEnv, writer io.Writer, remote *remote_pb.RemoteStorageLocation) (conf *remote_pb.RemoteConf, err error) {
-
-	return filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, remote.Name)
-
-}
-
-func (c *commandRemoteMount) syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {
+func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {
 
 	// find existing directory, and ensure the directory is empty
 	err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
