@@ -160,7 +160,14 @@ func (c *commandRemoteConfigure) listExistingRemoteStorages(commandEnv *CommandE
 			return fmt.Errorf("unmarshal %s/%s: %v", filer.DirectoryEtcRemote, entry.Name, err)
 		}
 
+		// change secret key to stars
 		conf.S3SecretKey = strings.Repeat("*", len(conf.S3SecretKey))
+		conf.AliyunSecretKey = strings.Repeat("*", len(conf.AliyunSecretKey))
+		conf.BaiduAccessKey = strings.Repeat("*", len(conf.BaiduAccessKey))
+		conf.FilebaseSecretKey = strings.Repeat("*", len(conf.FilebaseSecretKey))
+		conf.StorjSecretKey = strings.Repeat("*", len(conf.StorjSecretKey))
+		conf.TencentSecretKey = strings.Repeat("*", len(conf.TencentSecretKey))
+		conf.WasabiSecretKey = strings.Repeat("*", len(conf.WasabiSecretKey))
 
 		m := jsonpb.Marshaler{
 			EmitDefaults: false,
