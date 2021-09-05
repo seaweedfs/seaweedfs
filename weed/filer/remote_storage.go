@@ -131,23 +131,6 @@ func UnmarshalRemoteStorageMappings(oldContent []byte) (mappings *remote_pb.Remo
 	return
 }
 
-func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress string) (mappings *remote_pb.RemoteStorageMapping, readErr error) {
-	var oldContent []byte
-	if readErr = pb.WithFilerClient(filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		oldContent, readErr = ReadInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
-		return readErr
-	}); readErr != nil {
-		return nil, readErr
-	}
-
-	mappings, readErr = UnmarshalRemoteStorageMappings(oldContent)
-	if readErr != nil {
-		return nil, fmt.Errorf("unmarshal mappings: %v", readErr)
-	}
-
-	return
-}
-
 func ReadRemoteStorageConf(grpcDialOption grpc.DialOption, filerAddress string, storageName string) (conf *remote_pb.RemoteConf, readErr error) {
 	var oldContent []byte
 	if readErr = pb.WithFilerClient(filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
