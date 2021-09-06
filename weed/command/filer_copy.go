@@ -392,8 +392,16 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 		}
 
 		targetUrl := "http://" + assignResult.Url + "/" + assignResult.FileId
-
-		uploadResult, err := operation.UploadData(targetUrl, fileName, worker.options.cipher, data, false, mimeType, nil, security.EncodedJwt(assignResult.Auth))
+		uploadOption := &operation.UploadOption{
+			UploadUrl:         targetUrl,
+			Filename:          fileName,
+			Cipher:            worker.options.cipher,
+			IsInputCompressed: false,
+			MimeType:          mimeType,
+			PairMap:           nil,
+			Jwt:               security.EncodedJwt(assignResult.Auth),
+		}
+		uploadResult, err := operation.UploadData(data, uploadOption)
 		if err != nil {
 			return fmt.Errorf("upload data %v to %s: %v\n", fileName, targetUrl, err)
 		}
@@ -498,7 +506,16 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 				replication = assignResult.Replication
 			}
 
-			uploadResult, err, _ := operation.Upload(targetUrl, fileName+"-"+strconv.FormatInt(i+1, 10), worker.options.cipher, io.NewSectionReader(f, i*chunkSize, chunkSize), false, "", nil, security.EncodedJwt(assignResult.Auth))
+			uploadOption := &operation.UploadOption{
+				UploadUrl:         targetUrl,
+				Filename:          fileName+"-"+strconv.FormatInt(i+1, 10),
+				Cipher:            worker.options.cipher,
+				IsInputCompressed: false,
+				MimeType:          "",
+				PairMap:           nil,
+				Jwt:               security.EncodedJwt(assignResult.Auth),
+			}
+			uploadResult, err, _ := operation.Upload(io.NewSectionReader(f, i*chunkSize, chunkSize), uploadOption)
 			if err != nil {
 				uploadError = fmt.Errorf("upload data %v to %s: %v\n", fileName, targetUrl, err)
 				return
@@ -630,8 +647,16 @@ func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, off
 		return nil, collection, replication, fmt.Errorf("filerGrpcAddress assign volume: %v", flushErr)
 	}
 
-	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
-	uploadResult, flushErr, _ := operation.Upload(fileUrl, name, worker.options.cipher, reader, false, "", nil, auth)
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         fmt.Sprintf("http://%s/%s", host, fileId),
+		Filename:          name,
+		Cipher:            worker.options.cipher,
+		IsInputCompressed: false,
+		MimeType:          "",
+		PairMap:           nil,
+		Jwt:               auth,
+	}
+	uploadResult, flushErr, _ := operation.Upload(reader, uploadOption)
 	if flushErr != nil {
 		return nil, collection, replication, fmt.Errorf("upload data: %v", flushErr)
 	}

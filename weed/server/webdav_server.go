@@ -413,7 +413,16 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 	}
 
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
-	uploadResult, flushErr, _ := operation.Upload(fileUrl, f.name, f.fs.option.Cipher, reader, false, "", nil, auth)
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         fileUrl,
+		Filename:          f.name,
+		Cipher:            f.fs.option.Cipher,
+		IsInputCompressed: false,
+		MimeType:          "",
+		PairMap:           nil,
+		Jwt:               auth,
+	}
+	uploadResult, flushErr, _ := operation.Upload(reader, uploadOption)
 	if flushErr != nil {
 		glog.V(0).Infof("upload data %v to %s: %v", f.name, fileUrl, flushErr)
 		return nil, f.collection, f.replication, fmt.Errorf("upload data: %v", flushErr)

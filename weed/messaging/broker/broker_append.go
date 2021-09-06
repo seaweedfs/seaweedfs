@@ -88,7 +88,16 @@ func (broker *MessageBroker) assignAndUpload(topicConfig *messaging_pb.TopicConf
 
 	// upload data
 	targetUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
-	uploadResult, err := operation.UploadData(targetUrl, "", broker.option.Cipher, data, false, "", nil, assignResult.Auth)
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         targetUrl,
+		Filename:          "",
+		Cipher:            broker.option.Cipher,
+		IsInputCompressed: false,
+		MimeType:          "",
+		PairMap:           nil,
+		Jwt:               assignResult.Auth,
+	}
+	uploadResult, err := operation.UploadData(data, uploadOption)
 	if err != nil {
 		return nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
 	}

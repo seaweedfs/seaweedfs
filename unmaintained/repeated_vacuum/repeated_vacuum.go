@@ -65,7 +65,16 @@ func genFile(grpcDialOption grpc.DialOption, i int) (*operation.AssignResult, st
 
 	targetUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
 
-	_, err = operation.UploadData(targetUrl, fmt.Sprintf("test%d", i), false, data, false, "bench/test", nil, assignResult.Auth)
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         targetUrl,
+		Filename:          fmt.Sprintf("test%d", i),
+		Cipher:            false,
+		IsInputCompressed: true,
+		MimeType:          "bench/test",
+		PairMap:           nil,
+		Jwt:               assignResult.Auth,
+	}
+	_, err = operation.UploadData(data, uploadOption)
 	if err != nil {
 		log.Fatalf("upload: %v", err)
 	}

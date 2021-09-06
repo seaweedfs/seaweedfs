@@ -107,7 +107,16 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 	glog.V(4).Infof("replicating %s to %s header:%+v", filename, fileUrl, header)
 
 	// fetch data as is, regardless whether it is encrypted or not
-	uploadResult, err, _ := operation.Upload(fileUrl, filename, false, resp.Body, "gzip" == header.Get("Content-Encoding"), header.Get("Content-Type"), nil, auth)
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         fileUrl,
+		Filename:          filename,
+		Cipher:            false,
+		IsInputCompressed: "gzip" == header.Get("Content-Encoding"),
+		MimeType:          header.Get("Content-Type"),
+		PairMap:           nil,
+		Jwt:               auth,
+	}
+	uploadResult, err, _ := operation.Upload(resp.Body, uploadOption)
 	if err != nil {
 		glog.V(0).Infof("upload source data %v to %s: %v", sourceChunk.GetFileIdString(), fileUrl, err)
 		return "", fmt.Errorf("upload data: %v", err)

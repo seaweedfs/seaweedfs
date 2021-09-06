@@ -241,7 +241,16 @@ func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAs
 		}
 
 		// upload the chunk to the volume server
-		uploadResult, uploadErr, _ := operation.Upload(urlLocation, name, fs.option.Cipher, reader, false, "", nil, auth)
+		uploadOption := &operation.UploadOption{
+			UploadUrl:         urlLocation,
+			Filename:          name,
+			Cipher:            fs.option.Cipher,
+			IsInputCompressed: false,
+			MimeType:          "",
+			PairMap:           nil,
+			Jwt:               auth,
+		}
+		uploadResult, uploadErr, _ := operation.Upload(reader, uploadOption)
 		if uploadErr != nil {
 			return nil, "", "", uploadErr
 		}

@@ -53,7 +53,16 @@ func TestCreateNeedleFromRequest(t *testing.T) {
 			assert.Equal(t, true, util.IsGzippedContent(n.Data), "this should be gzip")
 			fmt.Printf("needle: %v, originalSize: %d\n", n, originalSize)
 		}
-		uploadResult, err, data := Upload("http://localhost:8080/389,0f084d17353afda0", "t.txt", false, bytes.NewReader([]byte(textContent)), false, "", nil, "")
+		uploadOption := &UploadOption{
+			UploadUrl:         "http://localhost:8080/389,0f084d17353afda0",
+			Filename:          "t.txt",
+			Cipher:            false,
+			IsInputCompressed: false,
+			MimeType:          "",
+			PairMap:           nil,
+			Jwt:               "",
+		}
+		uploadResult, err, data := Upload(bytes.NewReader([]byte(textContent)), uploadOption)
 		if len(data) != len(textContent) {
 			t.Errorf("data actual %d expected %d", len(data), len(textContent))
 		}
@@ -72,7 +81,16 @@ func TestCreateNeedleFromRequest(t *testing.T) {
 			fmt.Printf("needle: %v, dataSize:%d originalSize:%d\n", n, len(n.Data), originalSize)
 		}
 		gzippedData, _ := util.GzipData([]byte(textContent))
-		Upload("http://localhost:8080/389,0f084d17353afda0", "t.txt", false, bytes.NewReader(gzippedData), true, "text/plain", nil, "")
+		uploadOption := &UploadOption{
+			UploadUrl:         "http://localhost:8080/389,0f084d17353afda0",
+			Filename:          "t.txt",
+			Cipher:            false,
+			IsInputCompressed: true,
+			MimeType:          "text/plain",
+			PairMap:           nil,
+			Jwt:               "",
+		}
+		Upload(bytes.NewReader(gzippedData), uploadOption)
 	}
 
 	/*

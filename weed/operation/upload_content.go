@@ -20,6 +20,16 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+type UploadOption struct {
+	UploadUrl         string
+	Filename          string
+	Cipher            bool
+	IsInputCompressed bool
+	MimeType          string
+	PairMap           map[string]string
+	Jwt               security.EncodedJwt
+}
+
 type UploadResult struct {
 	Name       string `json:"name,omitempty"`
 	Size       uint32 `json:"size,omitempty"`
@@ -65,18 +75,18 @@ func init() {
 var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 
 // Upload sends a POST request to a volume server to upload the content with adjustable compression level
-func UploadData(uploadUrl string, filename string, cipher bool, data []byte, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error) {
-	uploadResult, err = retriedUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
+func UploadData(data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
+	uploadResult, err = retriedUploadData(data, option)
 	return
 }
 
 // Upload sends a POST request to a volume server to upload the content with fast compression
-func Upload(uploadUrl string, filename string, cipher bool, reader io.Reader, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error, data []byte) {
-	uploadResult, err, data = doUpload(uploadUrl, filename, cipher, reader, isInputCompressed, mtype, pairMap, jwt)
+func Upload(reader io.Reader, option *UploadOption) (uploadResult *UploadResult, err error, data []byte) {
+	uploadResult, err, data = doUpload(reader, option)
 	return
 }
 
-func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error, data []byte) {
+func doUpload(reader io.Reader, option *UploadOption) (uploadResult *UploadResult, err error, data []byte) {
 	bytesReader, ok := reader.(*util.BytesReader)
 	if ok {
 		data = bytesReader.Bytes
@@ -87,38 +97,38 @@ func doUpload(uploadUrl string, filename string, cipher bool, reader io.Reader, 
 			return
 		}
 	}
-	uploadResult, uploadErr := retriedUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
+	uploadResult, uploadErr := retriedUploadData(data, option)
 	return uploadResult, uploadErr, data
 }
 
-func retriedUploadData(uploadUrl string, filename string, cipher bool, data []byte, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error) {
+func retriedUploadData(data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
 	for i := 0; i < 3; i++ {
-		uploadResult, err = doUploadData(uploadUrl, filename, cipher, data, isInputCompressed, mtype, pairMap, jwt)
+		uploadResult, err = doUploadData(data, option)
 		if err == nil {
 			uploadResult.RetryCount = i
 			return
 		} else {
-			glog.Warningf("uploading to %s: %v", uploadUrl, err)
+			glog.Warningf("uploading to %s: %v", option.UploadUrl, err)
 		}
 		time.Sleep(time.Millisecond * time.Duration(237*(i+1)))
 	}
 	return
 }
 
-func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, isInputCompressed bool, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (uploadResult *UploadResult, err error) {
-	contentIsGzipped := isInputCompressed
+func doUploadData(data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
+	contentIsGzipped := option.IsInputCompressed
 	shouldGzipNow := false
-	if !isInputCompressed {
-		if mtype == "" {
-			mtype = http.DetectContentType(data)
-			// println("detect1 mimetype to", mtype)
-			if mtype == "application/octet-stream" {
-				mtype = ""
+	if !option.IsInputCompressed {
+		if option.MimeType == "" {
+			option.MimeType = http.DetectContentType(data)
+			// println("detect1 mimetype to", MimeType)
+			if option.MimeType == "application/octet-stream" {
+				option.MimeType = ""
 			}
 		}
-		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(filepath.Base(filename), mtype); iAmSure && shouldBeCompressed {
+		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(filepath.Base(option.Filename), option.MimeType); iAmSure && shouldBeCompressed {
 			shouldGzipNow = true
-		} else if !iAmSure && mtype == "" && len(data) > 16*1024 {
+		} else if !iAmSure && option.MimeType == "" && len(data) > 16*1024 {
 			var compressed []byte
 			compressed, err = util.GzipData(data[0:128])
 			shouldGzipNow = len(compressed)*10 < 128*9 // can not compress to less than 90%
@@ -131,14 +141,14 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 	// this could be double copying
 	clearDataLen = len(data)
 	clearData := data
-	if shouldGzipNow && !cipher {
+	if shouldGzipNow && !option.Cipher {
 		compressed, compressErr := util.GzipData(data)
 		// fmt.Printf("data is compressed from %d ==> %d\n", len(data), len(compressed))
 		if compressErr == nil {
 			data = compressed
 			contentIsGzipped = true
 		}
-	} else if isInputCompressed {
+	} else if option.IsInputCompressed {
 		// just to get the clear data length
 		clearData, err = util.DecompressData(data)
 		if err == nil {
@@ -146,7 +156,7 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 		}
 	}
 
-	if cipher {
+	if option.Cipher {
 		// encrypt(gzip(data))
 
 		// encrypt
@@ -158,23 +168,23 @@ func doUploadData(uploadUrl string, filename string, cipher bool, data []byte, i
 		}
 
 		// upload data
-		uploadResult, err = upload_content(uploadUrl, func(w io.Writer) (err error) {
+		uploadResult, err = upload_content(option.UploadUrl, func(w io.Writer) (err error) {
 			_, err = w.Write(encryptedData)
 			return
-		}, "", false, len(encryptedData), "", nil, jwt)
+		}, "", false, len(encryptedData), "", nil, option.Jwt)
 		if uploadResult == nil {
 			return
 		}
-		uploadResult.Name = filename
-		uploadResult.Mime = mtype
+		uploadResult.Name = option.Filename
+		uploadResult.Mime = option.MimeType
 		uploadResult.CipherKey = cipherKey
 		uploadResult.Size = uint32(clearDataLen)
 	} else {
 		// upload data
-		uploadResult, err = upload_content(uploadUrl, func(w io.Writer) (err error) {
+		uploadResult, err = upload_content(option.UploadUrl, func(w io.Writer) (err error) {
 			_, err = w.Write(data)
 			return
-		}, filename, contentIsGzipped, len(data), mtype, pairMap, jwt)
+		}, option.Filename, contentIsGzipped, len(data), option.MimeType, option.PairMap, option.Jwt)
 		if uploadResult == nil {
 			return
 		}
