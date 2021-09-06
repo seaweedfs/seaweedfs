@@ -29,6 +29,9 @@ public class SeaweedUtil {
     }
 
     public static String[] toDirAndName(String fullpath) {
+        if (fullpath == null) {
+            return new String[]{"/", ""};
+        }
         if (fullpath.endsWith("/")) {
             fullpath = fullpath.substring(0, fullpath.length() - 1);
         }
