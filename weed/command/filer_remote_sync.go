@@ -29,10 +29,6 @@ type RemoteSyncOptions struct {
 	bucketsDir  string
 }
 
-const (
-	RemoteSyncKeyPrefix = "remote.sync."
-)
-
 var _ = filer_pb.FilerClient(&RemoteSyncOptions{})
 
 func (option *RemoteSyncOptions) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
