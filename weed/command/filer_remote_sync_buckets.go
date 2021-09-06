@@ -51,6 +51,19 @@ func (option *RemoteSyncOptions) makeBucketedEventProcessor(filerSource *source.
 			// this directory is imported from "remote.mount.buckets" or "remote.mount"
 			return nil
 		}
+		if option.mappings.PrimaryBucketStorageName != "" && *option.createBucketAt == "" {
+			*option.createBucketAt = option.mappings.PrimaryBucketStorageName
+			glog.V(0).Infof("%s is set as the primary remote storage", *option.createBucketAt)
+		}
+		if len(option.mappings.Mappings) == 1 && *option.createBucketAt == "" {
+			for k := range option.mappings.Mappings {
+				*option.createBucketAt = k
+				glog.V(0).Infof("%s is set as the only remote storage", *option.createBucketAt)
+			}
+		}
+		if *option.createBucketAt == "" {
+			return nil
+		}
 		remoteConf, found := option.remoteConfs[*option.createBucketAt]
 		if !found {
 			return fmt.Errorf("un-configured remote storage %s", *option.createBucketAt)
@@ -72,7 +85,7 @@ func (option *RemoteSyncOptions) makeBucketedEventProcessor(filerSource *source.
 
 		glog.V(0).Infof("create bucket %s", bucketName)
 		if err := client.CreateBucket(bucketName); err != nil {
-			return err
+			return fmt.Errorf("create bucket %s in %s: %v", bucketName, remoteConf.Name, err)
 		}
 
 		bucketPath := util.FullPath(option.bucketsDir).Child(entry.Name)
@@ -95,12 +108,12 @@ func (option *RemoteSyncOptions) makeBucketedEventProcessor(filerSource *source.
 
 		client, remoteStorageMountLocation, err := option.findRemoteStorageClient(entry.Name)
 		if err != nil {
-			return err
+			return fmt.Errorf("findRemoteStorageClient %s: %v", entry.Name, err)
 		}
 
 		glog.V(0).Infof("delete remote bucket %s", remoteStorageMountLocation.Bucket)
 		if err := client.DeleteBucket(remoteStorageMountLocation.Bucket); err != nil {
-			return err
+			return fmt.Errorf("delete remote bucket %s: %v", remoteStorageMountLocation.Bucket, err)
 		}
 
 		bucketPath := util.FullPath(option.bucketsDir).Child(entry.Name)
@@ -351,6 +364,7 @@ func (option *RemoteSyncOptions) collectRemoteStorageConf() (err error) {
 	}
 
 	option.remoteConfs = make(map[string]*remote_pb.RemoteConf)
+	var lastConfName string
 	err = filer_pb.List(option, filer.DirectoryEtcRemote, "", func(entry *filer_pb.Entry, isLast bool) error {
 		if !strings.HasSuffix(entry.Name, filer.REMOTE_STORAGE_CONF_SUFFIX) {
 			return nil
@@ -360,8 +374,14 @@ func (option *RemoteSyncOptions) collectRemoteStorageConf() (err error) {
 			return fmt.Errorf("unmarshal %s/%s: %v", filer.DirectoryEtcRemote, entry.Name, err)
 		}
 		option.remoteConfs[conf.Name] = conf
+		lastConfName = conf.Name
 		return nil
 	}, "", false, math.MaxUint32)
+
+	if option.mappings.PrimaryBucketStorageName == "" && len(option.remoteConfs) == 1 {
+		glog.V(0).Infof("%s is set to the default remote storage", lastConfName)
+		option.mappings.PrimaryBucketStorageName = lastConfName
+	}
 
 	return
 }

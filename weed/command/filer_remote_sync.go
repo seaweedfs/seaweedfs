@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"os"
 	"time"
 )
 
@@ -47,7 +48,7 @@ var (
 func init() {
 	cmdFilerRemoteSynchronize.Run = runFilerRemoteSynchronize // break init cycle
 	remoteSyncOptions.filerAddress = cmdFilerRemoteSynchronize.Flag.String("filer", "localhost:8888", "filer of the SeaweedFS cluster")
-	remoteSyncOptions.dir = cmdFilerRemoteSynchronize.Flag.String("dir", "/", "a mounted directory on filer")
+	remoteSyncOptions.dir = cmdFilerRemoteSynchronize.Flag.String("dir", "", "a mounted directory on filer")
 	remoteSyncOptions.createBucketAt = cmdFilerRemoteSynchronize.Flag.String("createBucketAt", "", "one remote storage name to create new buckets in")
 	remoteSyncOptions.createBucketRandomSuffix = cmdFilerRemoteSynchronize.Flag.Bool("createBucketWithRandomSuffix", false, "add randomized suffix to bucket name to avoid conflicts")
 	remoteSyncOptions.readChunkFromFiler = cmdFilerRemoteSynchronize.Flag.Bool("filerProxy", false, "read file chunks from filer instead of volume servers")
@@ -66,9 +67,15 @@ var cmdFilerRemoteSynchronize = &Command{
 
 	There are two modes:
 	1)Write back one mounted folder to remote storage
+
 		weed filer.remote.sync -dir=/mount/s3_on_cloud
+
 	2)Watch /buckets folder and write back all changes.
 	  Any new buckets will be created in this remote storage.
+
+		# if there is only one remote storage configured
+		weed filer.remote.sync
+		# if there are multiple remote storages configured
 		weed filer.remote.sync -createBucketAt=cloud1
 
 `,
@@ -91,32 +98,18 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 		*remoteSyncOptions.readChunkFromFiler,
 	)
 
-	storageName := *remoteSyncOptions.createBucketAt
-	if storageName != "" {
+	remoteSyncOptions.bucketsDir = "/buckets"
+	// check buckets again
+	remoteSyncOptions.WithFilerClient(func(filerClient filer_pb.SeaweedFilerClient) error {
+		resp, err := filerClient.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		remoteSyncOptions.bucketsDir = resp.DirBuckets
+		return nil
+	})
 
-		remoteSyncOptions.bucketsDir = "/buckets"
-		// check buckets again
-		remoteSyncOptions.WithFilerClient(func(filerClient filer_pb.SeaweedFilerClient) error {
-			resp, err := filerClient.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
-			if err != nil {
-				return err
-			}
-			remoteSyncOptions.bucketsDir = resp.DirBuckets
-			return nil
-		})
-
-		fmt.Printf("synchronize %s, default new bucket creation in %s ...\n", remoteSyncOptions.bucketsDir, storageName)
-		util.RetryForever("filer.remote.sync buckets "+storageName, func() error {
-			return remoteSyncOptions.followBucketUpdatesAndUploadToRemote(filerSource)
-		}, func(err error) bool {
-			if err != nil {
-				glog.Errorf("synchronize %s to %s: %v", remoteSyncOptions.bucketsDir, storageName, err)
-			}
-			return true
-		})
-	}
-
-	if dir != "" {
+	if dir != "" && dir != remoteSyncOptions.bucketsDir {
 		fmt.Printf("synchronize %s to remote storage...\n", dir)
 		util.RetryForever("filer.remote.sync "+dir, func() error {
 			return followUpdatesAndUploadToRemote(&remoteSyncOptions, filerSource, dir)
@@ -126,7 +119,25 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 			}
 			return true
 		})
+		return true
 	}
 
+	// read filer remote storage mount mappings
+	if detectErr := remoteSyncOptions.collectRemoteStorageConf(); detectErr != nil {
+		fmt.Fprintf(os.Stderr, "read mount info: %v\n", detectErr)
+		return true
+	}
+
+	// synchronize /buckets folder
+	fmt.Printf("synchronize buckets in %s ...\n", remoteSyncOptions.bucketsDir)
+	util.RetryForever("filer.remote.sync buckets", func() error {
+		return remoteSyncOptions.followBucketUpdatesAndUploadToRemote(filerSource)
+	}, func(err error) bool {
+		if err != nil {
+			glog.Errorf("synchronize %s: %v", remoteSyncOptions.bucketsDir, err)
+		}
+		return true
+	})
 	return true
+
 }

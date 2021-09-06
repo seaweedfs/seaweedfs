@@ -66,6 +66,7 @@ message RemoteConf {
 
 message RemoteStorageMapping {
   map<string,RemoteStorageLocation> mappings = 1;
+  string primary_bucket_storage_name = 2;
 }
 message RemoteStorageLocation {
   string name = 1;
