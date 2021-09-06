@@ -147,8 +147,9 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	)
 
 	for time.Now().Sub(startTime) < maxTimeout {
-		fid, count, dn, err := ms.Topo.PickForWrite(req.Count, option)
+		fid, count, dnList, err := ms.Topo.PickForWrite(req.Count, option)
 		if err == nil {
+			dn := dnList.Head()
 			return &master_pb.AssignResponse{
 				Fid:       fid,
 				Url:       dn.Url(),
