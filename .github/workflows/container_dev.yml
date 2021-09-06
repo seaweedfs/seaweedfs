@@ -1,9 +1,8 @@
-name: "docker: build latest containers"
+name: "docker: build dev containers"
 
 on:
   push:
-    tags:
-      - '*'
+    branches: [ master ]
   workflow_dispatch: []
 
 jobs:
