@@ -177,6 +177,11 @@ message AssignResponse {
     uint64 count = 4;
     string error = 5;
     string auth = 6;
+    message Replica {
+        string url = 1;
+        string public_url = 2;
+    }
+    repeated Replica replicas = 7;
 }
 
 message StatisticsRequest {

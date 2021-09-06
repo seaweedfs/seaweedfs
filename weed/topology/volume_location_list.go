@@ -31,6 +31,11 @@ func (dnll *VolumeLocationList) Head() *DataNode {
 	return dnll.list[0]
 }
 
+func (dnll *VolumeLocationList) Rest() []*DataNode {
+	//mark first node as master volume
+	return dnll.list[1:]
+}
+
 func (dnll *VolumeLocationList) Length() int {
 	if dnll == nil {
 		return 0
