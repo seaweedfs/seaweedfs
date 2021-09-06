@@ -4,7 +4,6 @@ import com.google.common.base.Strings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
@@ -108,9 +107,9 @@ public class FilerClient extends FilerGrpcClient {
         if ("/".equals(path)) {
             return true;
         }
-        File pathFile = new File(path);
-        String parent = pathFile.getParent().replace('\\','/');
-        String name = pathFile.getName();
+        String[] dirAndName = SeaweedUtil.toDirAndName(path);
+        String parent = dirAndName[0];
+        String name = dirAndName[1];
 
         mkdirs(parent, mode, uid, gid, userName, groupNames);
 
@@ -129,22 +128,22 @@ public class FilerClient extends FilerGrpcClient {
 
     public boolean mv(String oldPath, String newPath) {
 
-        File oldPathFile = new File(oldPath);
-        String oldParent = oldPathFile.getParent().replace('\\','/');
-        String oldName = oldPathFile.getName();
+        String[] oldDirAndName = SeaweedUtil.toDirAndName(oldPath);
+        String oldParent = oldDirAndName[0];
+        String oldName = oldDirAndName[1];
 
-        File newPathFile = new File(newPath);
-        String newParent = newPathFile.getParent().replace('\\','/');
-        String newName = newPathFile.getName();
+        String[] newDirAndName = SeaweedUtil.toDirAndName(newPath);
+        String newParent = newDirAndName[0];
+        String newName = newDirAndName[1];
 
         return atomicRenameEntry(oldParent, oldName, newParent, newName);
 
     }
 
     public boolean exists(String path){
-        File pathFile = new File(path);
-        String parent = pathFile.getParent();
-        String entryName = pathFile.getName();
+        String[] dirAndName = SeaweedUtil.toDirAndName(path);
+        String parent = dirAndName[0];
+        String entryName = dirAndName[1];
         if(parent == null) {
             parent = path;
             entryName  ="";
@@ -155,9 +154,9 @@ public class FilerClient extends FilerGrpcClient {
 
     public boolean rm(String path, boolean isRecursive, boolean ignoreRecusiveError) {
 
-        File pathFile = new File(path);
-        String parent = pathFile.getParent().replace('\\','/');
-        String name = pathFile.getName();
+        String[] dirAndName = SeaweedUtil.toDirAndName(path);
+        String parent = dirAndName[0];
+        String name = dirAndName[1];
 
         return deleteEntry(
                 parent,
@@ -176,9 +175,9 @@ public class FilerClient extends FilerGrpcClient {
 
     public boolean touch(String path, long modifiedTimeSecond, int mode, int uid, int gid, String userName, String[] groupNames) {
 
-        File pathFile = new File(path);
-        String parent = pathFile.getParent().replace('\\','/');
-        String name = pathFile.getName();
+        String[] dirAndName = SeaweedUtil.toDirAndName(path);
+        String parent = dirAndName[0];
+        String name = dirAndName[1];
 
         FilerProto.Entry entry = lookupEntry(parent, name);
         if (entry == null) {
