@@ -168,10 +168,18 @@ func doUploadData(data []byte, option *UploadOption) (uploadResult *UploadResult
 		}
 
 		// upload data
-		uploadResult, err = upload_content(option.UploadUrl, func(w io.Writer) (err error) {
+		uploadResult, err = upload_content(func(w io.Writer) (err error) {
 			_, err = w.Write(encryptedData)
 			return
-		}, "", false, len(encryptedData), "", nil, option.Jwt)
+		}, len(encryptedData), &UploadOption{
+			UploadUrl:         option.UploadUrl,
+			Filename:          "",
+			Cipher:            false,
+			IsInputCompressed: false,
+			MimeType:          "",
+			PairMap:           nil,
+			Jwt:               option.Jwt,
+		})
 		if uploadResult == nil {
 			return
 		}
@@ -181,10 +189,18 @@ func doUploadData(data []byte, option *UploadOption) (uploadResult *UploadResult
 		uploadResult.Size = uint32(clearDataLen)
 	} else {
 		// upload data
-		uploadResult, err = upload_content(option.UploadUrl, func(w io.Writer) (err error) {
+		uploadResult, err = upload_content(func(w io.Writer) (err error) {
 			_, err = w.Write(data)
 			return
-		}, option.Filename, contentIsGzipped, len(data), option.MimeType, option.PairMap, option.Jwt)
+		}, len(data), &UploadOption{
+			UploadUrl:         option.UploadUrl,
+			Filename:          option.Filename,
+			Cipher:            false,
+			IsInputCompressed: contentIsGzipped,
+			MimeType:          option.MimeType,
+			PairMap:           option.PairMap,
+			Jwt:               option.Jwt,
+		})
 		if uploadResult == nil {
 			return
 		}
@@ -197,20 +213,20 @@ func doUploadData(data []byte, option *UploadOption) (uploadResult *UploadResult
 	return uploadResult, err
 }
 
-func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error, filename string, isGzipped bool, originalDataSize int, mtype string, pairMap map[string]string, jwt security.EncodedJwt) (*UploadResult, error) {
+func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize int, option *UploadOption) (*UploadResult, error) {
 	buf := GetBuffer()
 	defer PutBuffer(buf)
 	body_writer := multipart.NewWriter(buf)
 	h := make(textproto.MIMEHeader)
-	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, fileNameEscaper.Replace(filename)))
-	h.Set("Idempotency-Key", uploadUrl)
-	if mtype == "" {
-		mtype = mime.TypeByExtension(strings.ToLower(filepath.Ext(filename)))
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, fileNameEscaper.Replace(option.Filename)))
+	h.Set("Idempotency-Key", option.UploadUrl)
+	if option.MimeType == "" {
+		option.MimeType = mime.TypeByExtension(strings.ToLower(filepath.Ext(option.Filename)))
 	}
-	if mtype != "" {
-		h.Set("Content-Type", mtype)
+	if option.MimeType != "" {
+		h.Set("Content-Type", option.MimeType)
 	}
-	if isGzipped {
+	if option.IsInputCompressed {
 		h.Set("Content-Encoding", "gzip")
 	}
 
@@ -229,17 +245,17 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 		return nil, err
 	}
 
-	req, postErr := http.NewRequest("POST", uploadUrl, bytes.NewReader(buf.Bytes()))
+	req, postErr := http.NewRequest("POST", option.UploadUrl, bytes.NewReader(buf.Bytes()))
 	if postErr != nil {
-		glog.V(1).Infof("create upload request %s: %v", uploadUrl, postErr)
-		return nil, fmt.Errorf("create upload request %s: %v", uploadUrl, postErr)
+		glog.V(1).Infof("create upload request %s: %v", option.UploadUrl, postErr)
+		return nil, fmt.Errorf("create upload request %s: %v", option.UploadUrl, postErr)
 	}
 	req.Header.Set("Content-Type", content_type)
-	for k, v := range pairMap {
+	for k, v := range option.PairMap {
 		req.Header.Set(k, v)
 	}
-	if jwt != "" {
-		req.Header.Set("Authorization", "BEARER "+string(jwt))
+	if option.Jwt != "" {
+		req.Header.Set("Authorization", "BEARER "+string(option.Jwt))
 	}
 	// print("+")
 	resp, post_err := HttpClient.Do(req)
@@ -250,7 +266,7 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 		}
 	}
 	if post_err != nil {
-		return nil, fmt.Errorf("upload %s %d bytes to %v: %v", filename, originalDataSize, uploadUrl, post_err)
+		return nil, fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)
 	}
 	// print("-")
 	defer util.CloseResponse(resp)
@@ -264,16 +280,16 @@ func upload_content(uploadUrl string, fillBufferFunction func(w io.Writer) error
 
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {
-		return nil, fmt.Errorf("read response body %v: %v", uploadUrl, ra_err)
+		return nil, fmt.Errorf("read response body %v: %v", option.UploadUrl, ra_err)
 	}
 
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
-		glog.Errorf("unmarshal %s: %v", uploadUrl, string(resp_body))
-		return nil, fmt.Errorf("unmarshal %v: %v", uploadUrl, unmarshal_err)
+		glog.Errorf("unmarshal %s: %v", option.UploadUrl, string(resp_body))
+		return nil, fmt.Errorf("unmarshal %v: %v", option.UploadUrl, unmarshal_err)
 	}
 	if ret.Error != "" {
-		return nil, fmt.Errorf("unmarshalled error %v: %v", uploadUrl, ret.Error)
+		return nil, fmt.Errorf("unmarshalled error %v: %v", option.UploadUrl, ret.Error)
 	}
 	ret.ETag = etag
 	ret.ContentMd5 = resp.Header.Get("Content-MD5")
