@@ -141,15 +141,12 @@ public class FilerClient extends FilerGrpcClient {
     }
 
     public boolean exists(String path){
+
         String[] dirAndName = SeaweedUtil.toDirAndName(path);
         String parent = dirAndName[0];
         String entryName = dirAndName[1];
-        if(parent == null) {
-            parent = path;
-            entryName  ="";
-        }
-        return lookupEntry(parent, entryName) != null;
 
+        return lookupEntry(parent, entryName) != null;
     }
 
     public boolean rm(String path, boolean isRecursive, boolean ignoreRecusiveError) {
@@ -167,10 +164,12 @@ public class FilerClient extends FilerGrpcClient {
     }
 
     public boolean touch(String path, int mode) {
+
         String currentUser = System.getProperty("user.name");
 
         long now = System.currentTimeMillis() / 1000L;
         return touch(path, now, mode, 0, 0, currentUser, new String[]{});
+
     }
 
     public boolean touch(String path, long modifiedTimeSecond, int mode, int uid, int gid, String userName, String[] groupNames) {
