@@ -57,7 +57,7 @@ func init() {
 }
 
 var cmdFilerRemoteSynchronize = &Command{
-	UsageLine: "filer.remote.sync -dir=/mount/s3_on_cloud or -createBucketAt=clound1",
+	UsageLine: "filer.remote.sync",
 	Short:     "resumable continuously write back updates to remote storage",
 	Long: `resumable continuously write back updates to remote storage
 
@@ -66,17 +66,19 @@ var cmdFilerRemoteSynchronize = &Command{
 	and write to the remote storage.
 
 	There are two modes:
-	1)Write back one mounted folder to remote storage
 
-		weed filer.remote.sync -dir=/mount/s3_on_cloud
-
-	2)Watch /buckets folder and write back all changes.
-	  Any new buckets will be created in this remote storage.
+	1)By default, watch /buckets folder and write back all changes.
 
 		# if there is only one remote storage configured
 		weed filer.remote.sync
 		# if there are multiple remote storages configured
+		# specify a remote storage to create new buckets.
 		weed filer.remote.sync -createBucketAt=cloud1
+
+	2)Write back one mounted folder to remote storage
+
+		weed filer.remote.sync -dir=/mount/s3_on_cloud
+
 
 `,
 }
