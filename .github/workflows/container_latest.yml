@@ -1,13 +1,13 @@
-name: "go: build dev binaries"
+name: "docker: build dev containers"
 
 on:
   push:
     branches: [ master ]
+  workflow_dispatch: []
 
 jobs:
 
-
-  build-latest-docker-image:
+  build-dev-containers:
     runs-on: [ubuntu-latest]
 
     steps:
@@ -23,9 +23,10 @@ jobs:
             chrislusf/seaweedfs
             ghcr.io/chrislusf/seaweedfs
           tags: |
-            type=raw,value=latest
+            type=raw,value=dev
           labels: |
             org.opencontainers.image.title=seaweedfs
+            org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
             org.opencontainers.image.vendor=Chris Lu
       -
         name: Set up QEMU
@@ -56,7 +57,7 @@ jobs:
         with:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
-          file: ./docker/Dockerfile
-          platforms: linux/amd64, linux/arm, linux/arm64
+          file: ./docker/Dockerfile.go_build
+          platforms: linux/amd64, linux/arm, linux/arm64, linux/386
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
