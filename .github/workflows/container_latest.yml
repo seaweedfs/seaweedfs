@@ -1,4 +1,4 @@
-name: "docker: build dev containers"
+name: "docker: build latest container"
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
 
-  build-dev-containers:
+  build-latest-container:
     runs-on: [ubuntu-latest]
 
     steps:
