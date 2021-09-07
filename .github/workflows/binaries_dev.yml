@@ -31,7 +31,7 @@ jobs:
       - name: Wait for the deletion
         uses: jakejarvis/wait-action@master
         with:
-          time: '30s'
+          time: '60s'
 
       - name: Set BUILD_TIME env
         run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> ${GITHUB_ENV}
