@@ -33,7 +33,7 @@ jobs:
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v2
-      - name: Go Release Binaries
+      - name: Go Release Binaries Normal Volume Size
         uses: wangyoucao577/go-release-action@v1.20
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

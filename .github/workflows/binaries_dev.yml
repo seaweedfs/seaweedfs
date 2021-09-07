@@ -7,7 +7,6 @@ on:
 jobs:
 
   cleanup:
-    name: Build
     runs-on: ubuntu-latest
 
     steps:
@@ -23,7 +22,6 @@ jobs:
 
   build_dev:
     needs: cleanup
-    name: Build
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -44,15 +42,10 @@ jobs:
       - name: Check out code into the Go module directory
         uses: actions/checkout@v2
 
-      - name: Wait for the deletion
-        uses: jakejarvis/wait-action@master
-        with:
-          time: '60s'
-
       - name: Set BUILD_TIME env
         run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> ${GITHUB_ENV}
 
-      - name: Go Release Binaries
+      - name: Go Release Binaries Large Disk
         uses: wangyoucao577/go-release-action@v1.20
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -65,10 +58,10 @@ jobs:
           ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
           project_path: weed
-          binary_name: weed-large-disk
+          binary_name: weed
           asset_name: "weed-large-disk-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
 
-      - name: Go Release Binaries
+      - name: Go Release Binaries Normal Volume Size
         uses: wangyoucao577/go-release-action@v1.20
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
