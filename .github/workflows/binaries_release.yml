@@ -3,8 +3,9 @@
 name: "go: build versioned binaries"
 
 on:
-  release:
-    types: [created]
+  push:
+    tags:
+      - '*'
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
