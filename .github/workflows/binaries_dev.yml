@@ -21,7 +21,8 @@ jobs:
           assets: |
             weed-*
 
-  build:
+  build_dev:
+    needs: cleanup
     name: Build
     runs-on: ubuntu-latest
     strategy:

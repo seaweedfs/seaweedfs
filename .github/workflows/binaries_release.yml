@@ -63,6 +63,7 @@ jobs:
           asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}_large_disk"
 
   build-latest-docker-image:
+    needs: build-release-binaries
     runs-on: [ubuntu-latest]
 
     steps:
