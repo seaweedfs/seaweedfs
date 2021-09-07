@@ -54,7 +54,7 @@ public class FilerGrpcClient {
                         .negotiationType(NegotiationType.TLS)
                         .sslContext(sslContext));
 
-        filerAddress = String.format("%s:%d", host, grpcPort - 10000);
+        filerAddress = SeaweedUtil.joinHostPort(host, grpcPort - 10000);
 
         FilerProto.GetFilerConfigurationResponse filerConfigurationResponse =
                 this.getBlockingStub().getFilerConfiguration(

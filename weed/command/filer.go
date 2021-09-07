@@ -134,7 +134,7 @@ func runFiler(cmd *Command, args []string) bool {
 
 	go stats_collect.StartMetricsServer(*f.metricsHttpPort)
 
-	filerAddress := fmt.Sprintf("%s:%d", *f.ip, *f.port)
+	filerAddress := util.JoinHostPort(*f.ip, *f.port)
 	startDelay := time.Duration(2)
 	if *filerStartS3 {
 		filerS3Options.filer = &filerAddress

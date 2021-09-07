@@ -115,7 +115,7 @@ func runCopy(cmd *Command, args []string) bool {
 	}
 
 	filerGrpcPort := filerPort + 10000
-	filerGrpcAddress := fmt.Sprintf("%s:%d", filerUrl.Hostname(), filerGrpcPort)
+	filerGrpcAddress := util.JoinHostPort(filerUrl.Hostname(), int(filerGrpcPort))
 	copy.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	masters, collection, replication, dirBuckets, maxMB, cipher, err := readFilerConfiguration(copy.grpcDialOption, filerGrpcAddress)

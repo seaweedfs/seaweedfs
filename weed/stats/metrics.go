@@ -3,8 +3,10 @@ package stats
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -180,5 +182,5 @@ func SourceName(port uint32) string {
 	if err != nil {
 		return "unknown"
 	}
-	return fmt.Sprintf("%s:%d", hostname, port)
+	return net.JoinHostPort(hostname, strconv.Itoa(int(port)))
 }

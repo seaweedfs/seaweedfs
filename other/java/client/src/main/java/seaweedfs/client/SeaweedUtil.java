@@ -43,4 +43,14 @@ public class SeaweedUtil {
         String name = fullpath.substring(sep + 1);
         return new String[]{parent, name};
     }
+
+    public static String joinHostPort(String host, int port) {
+        if (host.startsWith("[") && host.endsWith("]")) {
+            return host + ":" + port;
+        }
+        if (host.indexOf(':')>=0) {
+            return "[" + host + "]:" + port;
+        }
+        return host + ":" + port;
+    }
 }

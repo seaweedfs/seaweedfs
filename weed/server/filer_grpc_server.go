@@ -412,7 +412,7 @@ func (fs *FilerServer) KeepConnected(stream filer_pb.SeaweedFiler_KeepConnectedS
 		return err
 	}
 
-	clientName := fmt.Sprintf("%s:%d", req.Name, req.GrpcPort)
+	clientName := util.JoinHostPort(req.Name, int(req.GrpcPort))
 	m := make(map[string]bool)
 	for _, tp := range req.Resources {
 		m[tp] = true

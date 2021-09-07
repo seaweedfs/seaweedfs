@@ -2,8 +2,8 @@ package weed_server
 
 import (
 	"context"
-	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"net"
 	"strings"
 	"time"
@@ -289,7 +289,7 @@ func findClientAddress(ctx context.Context, grpcPort uint32) string {
 	}
 	if tcpAddr, ok := pr.Addr.(*net.TCPAddr); ok {
 		externalIP := tcpAddr.IP
-		return fmt.Sprintf("%s:%d", externalIP, grpcPort)
+		return util.JoinHostPort(externalIP.String(), int(grpcPort))
 	}
 	return pr.Addr.String()
 

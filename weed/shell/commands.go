@@ -98,7 +98,7 @@ var _ = filer_pb.FilerClient(&CommandEnv{})
 
 func (ce *CommandEnv) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	filerGrpcAddress := fmt.Sprintf("%s:%d", ce.option.FilerHost, ce.option.FilerPort+10000)
+	filerGrpcAddress := util.JoinHostPort(ce.option.FilerHost, int(ce.option.FilerPort+10000))
 	return pb.WithGrpcFilerClient(filerGrpcAddress, ce.option.GrpcDialOption, fn)
 
 }
