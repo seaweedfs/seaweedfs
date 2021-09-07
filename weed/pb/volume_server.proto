@@ -475,6 +475,12 @@ message FetchAndWriteNeedleRequest {
     uint32 cookie = 3;
     int64 offset = 4;
     int64 size = 5;
+    message Replica {
+        string url = 1;
+        string public_url = 2;
+    }
+    repeated Replica replicas = 6;
+    string auth = 7;
     // remote conf
     remote_pb.RemoteConf remote_conf = 15;
     remote_pb.RemoteStorageLocation remote_location = 16;

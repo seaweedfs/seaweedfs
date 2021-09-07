@@ -111,6 +111,14 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 				return
 			}
 
+			var replicas []*volume_server_pb.FetchAndWriteNeedleRequest_Replica
+			for _, r := range assignResult.Replicas {
+				replicas = append(replicas, &volume_server_pb.FetchAndWriteNeedleRequest_Replica{
+					Url:       r.Url,
+					PublicUrl: r.PublicUrl,
+				})
+			}
+
 			// tell filer to tell volume server to download into needles
 			err = operation.WithVolumeServerClient(assignResult.Url, fs.grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 				_, fetchAndWriteErr := volumeServerClient.FetchAndWriteNeedle(context.Background(), &volume_server_pb.FetchAndWriteNeedleRequest{
@@ -119,6 +127,8 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 					Cookie:     uint32(fileId.Cookie),
 					Offset:     localOffset,
 					Size:       size,
+					Replicas:   replicas,
+					Auth:       string(assignResult.Auth),
 					RemoteConf: storageConf,
 					RemoteLocation: &remote_pb.RemoteStorageLocation{
 						Name:   remoteStorageMountedLocation.Name,
