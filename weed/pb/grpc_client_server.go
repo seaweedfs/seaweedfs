@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"math/rand"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -158,7 +159,7 @@ func ParseServerAddress(server string, deltaPort int) (newServerAddress string, 
 
 	newPort := int(port) + deltaPort
 
-	return fmt.Sprintf("%s:%d", host, newPort), nil
+	return net.JoinHostPort(host, strconv.Itoa(newPort)), nil
 }
 
 func hostAndPort(address string) (host string, port uint64, err error) {
@@ -183,7 +184,7 @@ func ServerToGrpcAddress(server string) (serverGrpcAddress string) {
 
 	grpcPort := int(port) + 10000
 
-	return fmt.Sprintf("%s:%d", host, grpcPort)
+	return net.JoinHostPort(host, strconv.Itoa(grpcPort))
 }
 
 func GrpcAddressToServerAddress(grpcAddress string) (serverAddress string) {
@@ -194,7 +195,7 @@ func GrpcAddressToServerAddress(grpcAddress string) (serverAddress string) {
 
 	port := int(grpcPort) - 10000
 
-	return fmt.Sprintf("%s:%d", host, port)
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 func WithMasterClient(master string, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) error {
