@@ -62,8 +62,7 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 	}
 
 	// detect storage option
-	// replication level is set to "000" to ensure only need to ask one volume server to fetch the data.
-	so, err := fs.detectStorageOption(req.Directory, "", "000", 0, "", "", "")
+	so, err := fs.detectStorageOption(req.Directory, "", "", 0, "", "", "")
 	if err != nil {
 		return resp, err
 	}

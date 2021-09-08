@@ -10,6 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"sync"
+	"time"
 )
 
 func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_server_pb.FetchAndWriteNeedleRequest) (resp *volume_server_pb.FetchAndWriteNeedleResponse, err error) {
@@ -44,6 +45,8 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 		// copied from *Needle.prepareWriteBuffer()
 		n.Size = 4 + types.Size(n.DataSize) + 1
 		n.Checksum = needle.NewCRC(n.Data)
+		n.LastModified = uint64(time.Now().Unix())
+		n.SetHasLastModifiedDate()
 		if _, localWriteErr := vs.store.WriteVolumeNeedle(v.Id, n, true, false); localWriteErr != nil {
 			if err == nil {
 				err = fmt.Errorf("local write needle %d size %d: %v", req.NeedleId, req.Size, err)

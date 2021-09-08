@@ -74,7 +74,7 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 			ret.PublicUrl = resp.PublicUrl
 			ret.Error = resp.Error
 			ret.Auth = security.EncodedJwt(resp.Auth)
-			for _, r := range ret.Replicas {
+			for _, r := range resp.Replicas {
 				ret.Replicas = append(ret.Replicas, AssignResultReplica{
 					Url:       r.Url,
 					PublicUrl: r.PublicUrl,
