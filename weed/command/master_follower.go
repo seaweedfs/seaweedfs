@@ -13,7 +13,6 @@ import (
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc/reflection"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -114,7 +113,7 @@ func startMasterFollower(masterOptions MasterOptions) {
 
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, option, masters)
-	listeningAddress := *masterOptions.ipBind + ":" + strconv.Itoa(*masterOptions.port)
+	listeningAddress := util.JoinHostPort(*masterOptions.ipBind, *masterOptions.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
 	masterListener, e := util.NewListener(listeningAddress, 0)
 	if e != nil {
@@ -123,7 +122,7 @@ func startMasterFollower(masterOptions MasterOptions) {
 
 	// starting grpc server
 	grpcPort := *masterOptions.port + 10000
-	grpcL, err := util.NewListener(*masterOptions.ipBind+":"+strconv.Itoa(grpcPort), 0)
+	grpcL, err := util.NewListener(util.JoinHostPort(*masterOptions.ipBind, grpcPort), 0)
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}

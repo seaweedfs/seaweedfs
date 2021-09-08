@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -207,7 +206,7 @@ func (fo *FilerOptions) startFiler() {
 	}
 
 	if *fo.publicPort != 0 {
-		publicListeningAddress := *fo.bindIp + ":" + strconv.Itoa(*fo.publicPort)
+		publicListeningAddress := util.JoinHostPort(*fo.bindIp, *fo.publicPort)
 		glog.V(0).Infoln("Start Seaweed filer server", util.Version(), "public at", publicListeningAddress)
 		publicListener, e := util.NewListener(publicListeningAddress, 0)
 		if e != nil {
@@ -222,7 +221,7 @@ func (fo *FilerOptions) startFiler() {
 
 	glog.V(0).Infof("Start Seaweed Filer %s at %s:%d", util.Version(), *fo.ip, *fo.port)
 	filerListener, e := util.NewListener(
-		*fo.bindIp+":"+strconv.Itoa(*fo.port),
+		util.JoinHostPort(*fo.bindIp, *fo.port),
 		time.Duration(10)*time.Second,
 	)
 	if e != nil {
@@ -231,7 +230,7 @@ func (fo *FilerOptions) startFiler() {
 
 	// starting grpc server
 	grpcPort := *fo.port + 10000
-	grpcL, err := util.NewListener(*fo.bindIp+":"+strconv.Itoa(grpcPort), 0)
+	grpcL, err := util.NewListener(util.JoinHostPort(*fo.bindIp, grpcPort), 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}

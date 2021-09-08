@@ -15,6 +15,18 @@ func DetectedHostAddress() string {
 		return ""
 	}
 
+	if v4Address := selectIpV4(netInterfaces, true); v4Address != ""{
+		return v4Address
+	}
+
+	if v6Address := selectIpV4(netInterfaces, false); v6Address != ""{
+		return v6Address
+	}
+
+	return "localhost"
+}
+
+func selectIpV4(netInterfaces []net.Interface, isIpV4 bool) string {
 	for _, netInterface := range netInterfaces {
 		if (netInterface.Flags & net.FlagUp) == 0 {
 			continue
@@ -26,14 +38,19 @@ func DetectedHostAddress() string {
 
 		for _, a := range addrs {
 			if ipNet, ok := a.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
-				if ipNet.IP.To4() != nil {
-					return ipNet.IP.String()
+				if isIpV4 {
+					if ipNet.IP.To4() != nil {
+						return ipNet.IP.String()
+					}
+				} else {
+					if ipNet.IP.To16() != nil {
+						return ipNet.IP.String()
+					}
 				}
 			}
 		}
 	}
-
-	return "localhost"
+	return ""
 }
 
 func JoinHostPort(host string, port int) string {

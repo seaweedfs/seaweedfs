@@ -179,7 +179,7 @@ func getWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 	// not on local store, or has replications
 	lookupResult, lookupErr := operation.LookupVolumeId(masterFn, grpcDialOption, volumeId.String())
 	if lookupErr == nil {
-		selfUrl := s.Ip + ":" + strconv.Itoa(s.Port)
+		selfUrl := util.JoinHostPort(s.Ip, s.Port)
 		for _, location := range lookupResult.Locations {
 			if location.Url != selfUrl {
 				remoteLocations = append(remoteLocations, location)

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -116,7 +115,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), peers)
-	listeningAddress := *masterOption.ipBind + ":" + strconv.Itoa(*masterOption.port)
+	listeningAddress := util.JoinHostPort(*masterOption.ipBind, *masterOption.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
 	masterListener, e := util.NewListener(listeningAddress, 0)
 	if e != nil {
@@ -132,7 +131,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
 	// starting grpc server
 	grpcPort := *masterOption.port + 10000
-	grpcL, err := util.NewListener(*masterOption.ipBind+":"+strconv.Itoa(grpcPort), 0)
+	grpcL, err := util.NewListener(util.JoinHostPort(*masterOption.ipBind, grpcPort), 0)
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}
@@ -163,7 +162,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 func checkPeers(masterIp string, masterPort int, peers string) (masterAddress string, cleanedPeers []string) {
 	glog.V(0).Infof("current: %s:%d peers:%s", masterIp, masterPort, peers)
-	masterAddress = masterIp + ":" + strconv.Itoa(masterPort)
+	masterAddress = util.JoinHostPort(masterIp, masterPort)
 	if peers != "" {
 		cleanedPeers = strings.Split(peers, ",")
 	}

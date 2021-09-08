@@ -2,14 +2,12 @@ package topology
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"strconv"
-
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 )
 
 type DataNode struct {
@@ -207,7 +205,7 @@ func (dn *DataNode) MatchLocation(ip string, port int) bool {
 }
 
 func (dn *DataNode) Url() string {
-	return dn.Ip + ":" + strconv.Itoa(dn.Port)
+	return util.JoinHostPort(dn.Ip, dn.Port)
 }
 
 func (dn *DataNode) ToMap() interface{} {

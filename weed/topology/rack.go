@@ -3,7 +3,7 @@ package topology
 import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"strconv"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"time"
 )
 
@@ -38,7 +38,7 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 			return dn
 		}
 	}
-	dn := NewDataNode(ip + ":" + strconv.Itoa(port))
+	dn := NewDataNode(util.JoinHostPort(ip, port))
 	dn.Ip = ip
 	dn.Port = port
 	dn.PublicUrl = publicUrl
