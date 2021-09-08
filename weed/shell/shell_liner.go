@@ -84,10 +84,12 @@ https://cloud.seaweedfs.com/ui/%s
 
 func processEachCmd(reg *regexp.Regexp, cmd string, commandEnv *CommandEnv) bool {
 	cmds := reg.FindAllString(cmd, -1)
+
+	line.AppendHistory(cmd)
+
 	if len(cmds) == 0 {
 		return false
 	} else {
-		line.AppendHistory(cmd)
 
 		args := make([]string, len(cmds[1:]))
 
