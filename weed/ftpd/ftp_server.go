@@ -3,8 +3,8 @@ package ftpd
 import (
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"net"
+	"github.com/chrislusf/seaweedfs/weed/util"
 
 	ftpserver "github.com/fclairamb/ftpserverlib"
 	"google.golang.org/grpc"
