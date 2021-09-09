@@ -46,10 +46,9 @@ func (store *LevelDBStore) initialize(dir string) (err error) {
 	}
 
 	opts := &opt.Options{
-		BlockCacheCapacity:            32 * 1024 * 1024, // default value is 8MiB
-		WriteBuffer:                   16 * 1024 * 1024, // default value is 4MiB
-		CompactionTableSizeMultiplier: 10,
-		Filter:                        filter.NewBloomFilter(8), // false positive rate 0.02
+		BlockCacheCapacity: 32 * 1024 * 1024,         // default value is 8MiB
+		WriteBuffer:        16 * 1024 * 1024,         // default value is 4MiB
+		Filter:             filter.NewBloomFilter(8), // false positive rate 0.02
 	}
 
 	if store.db, err = leveldb.OpenFile(dir, opts); err != nil {
