@@ -24,8 +24,7 @@ func (vs *VolumeServer) GetMaster() string {
 }
 
 func (vs *VolumeServer) checkWithMaster() (err error) {
-	isConnected := false
-	for !isConnected {
+	for {
 		for _, master := range vs.SeedMasterNodes {
 			err = operation.WithMasterServerClient(master, vs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
@@ -44,7 +43,6 @@ func (vs *VolumeServer) checkWithMaster() (err error) {
 		}
 		time.Sleep(1790 * time.Millisecond)
 	}
-	return
 }
 
 func (vs *VolumeServer) heartbeat() {
