@@ -49,6 +49,17 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 		return nil, fmt.Errorf("existing collection:%v unexpected input: %v", v.Collection, req.Collection)
 	}
 
+	shouldCleanup := true
+	defer func() {
+		if !shouldCleanup {
+			return
+		}
+		for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+			os.Remove(fmt.Sprintf("%s.ec%2d", baseFileName, i))
+		}
+		os.Remove(v.IndexFileName() + ".ecx")
+	}()
+
 	// write .ec00 ~ .ec13 files
 	if err := erasure_coding.WriteEcFiles(baseFileName); err != nil {
 		return nil, fmt.Errorf("WriteEcFiles %s: %v", baseFileName, err)
@@ -63,6 +74,8 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}); err != nil {
 		return nil, fmt.Errorf("WriteEcFiles %s: %v", baseFileName, err)
 	}
+
+	shouldCleanup = false
 
 	return &volume_server_pb.VolumeEcShardsGenerateResponse{}, nil
 }
