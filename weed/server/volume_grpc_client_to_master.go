@@ -126,6 +126,7 @@ func (vs *VolumeServer) doHeartbeat(masterNode, masterGrpcAddress string, grpcDi
 				if vs.store.MaybeAdjustVolumeMax() {
 					if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
 						glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", vs.currentMaster, err)
+						return
 					}
 				}
 			}
