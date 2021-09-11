@@ -428,7 +428,7 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 	}
 
 	for _, location := range s.Locations {
-		if err := location.UnloadVolume(i); err == nil {
+		if err := location.UnloadVolume(i); err == nil || err == ErrVolumeNotFound {
 			glog.V(0).Infof("UnmountVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
@@ -452,7 +452,7 @@ func (s *Store) DeleteVolume(i needle.VolumeId) error {
 		DiskType:         string(v.location.DiskType),
 	}
 	for _, location := range s.Locations {
-		if err := location.DeleteVolume(i); err == nil {
+		if err := location.DeleteVolume(i); err == nil || err == ErrVolumeNotFound {
 			glog.V(0).Infof("DeleteVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
