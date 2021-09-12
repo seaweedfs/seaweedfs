@@ -36,6 +36,7 @@ var (
 
 type VolumeServerOptions struct {
 	port                      *int
+	portGrpc                  *int
 	publicPort                *int
 	folders                   []string
 	folderMaxLimits           []int
@@ -68,6 +69,7 @@ type VolumeServerOptions struct {
 func init() {
 	cmdVolume.Run = runVolume // break init cycle
 	v.port = cmdVolume.Flag.Int("port", 8080, "http listen port")
+	v.portGrpc = cmdVolume.Flag.Int("port.grpc", 18080, "grpc listen port")
 	v.publicPort = cmdVolume.Flag.Int("port.public", 0, "port opened to public")
 	v.ip = cmdVolume.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
 	v.publicUrl = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible address")
@@ -307,7 +309,7 @@ func (v VolumeServerOptions) isSeparatedPublicPort() bool {
 }
 
 func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerServer) *grpc.Server {
-	grpcPort := *v.port + 10000
+	grpcPort := *v.portGrpc
 	grpcL, err := util.NewListener(util.JoinHostPort(*v.bindIp, grpcPort), 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
