@@ -33,6 +33,7 @@ type FilerOptions struct {
 	ip                      *string
 	bindIp                  *string
 	port                    *int
+	portGrpc                *int
 	publicPort              *int
 	collection              *string
 	defaultReplicaPlacement *string
@@ -60,6 +61,7 @@ func init() {
 	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
 	f.bindIp = cmdFiler.Flag.String("ip.bind", "", "ip address to bind to")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
+	f.portGrpc = cmdFiler.Flag.Int("port.grpc", 18888, "filer server grpc listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "", "default replication type. If not specified, use master setting.")
 	f.disableDirListing = cmdFiler.Flag.Bool("disableDirListing", false, "turn off directory listing")
@@ -229,7 +231,7 @@ func (fo *FilerOptions) startFiler() {
 	}
 
 	// starting grpc server
-	grpcPort := *fo.port + 10000
+	grpcPort := *fo.portGrpc
 	grpcL, err := util.NewListener(util.JoinHostPort(*fo.bindIp, grpcPort), 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
