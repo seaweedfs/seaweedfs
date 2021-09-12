@@ -24,6 +24,7 @@ var (
 func init() {
 	cmdMasterFollower.Run = runMasterFollower // break init cycle
 	mf.port = cmdMasterFollower.Flag.Int("port", 9334, "http listen port")
+	mf.portGrpc = cmdMasterFollower.Flag.Int("port.grpc", 19334, "grpc listen port")
 	mf.ipBind = cmdMasterFollower.Flag.String("ip.bind", "", "ip address to bind to")
 	mf.peers = cmdMasterFollower.Flag.String("masters", "localhost:9333", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
 
@@ -121,7 +122,7 @@ func startMasterFollower(masterOptions MasterOptions) {
 	}
 
 	// starting grpc server
-	grpcPort := *masterOptions.port + 10000
+	grpcPort := *masterOptions.portGrpc
 	grpcL, err := util.NewListener(util.JoinHostPort(*masterOptions.ipBind, grpcPort), 0)
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
