@@ -85,6 +85,7 @@ func init() {
 	serverOptions.debugPort = cmdServer.Flag.Int("debug.port", 6060, "http port for debugging")
 
 	masterOptions.port = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
+	masterOptions.portGrpc = cmdServer.Flag.Int("master.port.grpc", 19333, "master server grpc listen port")
 	masterOptions.metaFolder = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
 	masterOptions.peers = cmdServer.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list")
 	masterOptions.volumeSizeLimitMB = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")

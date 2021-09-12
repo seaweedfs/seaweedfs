@@ -27,6 +27,7 @@ var (
 
 type MasterOptions struct {
 	port              *int
+	portGrpc          *int
 	ip                *string
 	ipBind            *string
 	metaFolder        *string
@@ -46,6 +47,7 @@ type MasterOptions struct {
 func init() {
 	cmdMaster.Run = runMaster // break init cycle
 	m.port = cmdMaster.Flag.Int("port", 9333, "http listen port")
+	m.portGrpc = cmdMaster.Flag.Int("port.grpc", 19333, "grpc listen port")
 	m.ip = cmdMaster.Flag.String("ip", util.DetectedHostAddress(), "master <ip>|<server> address, also used as identifier")
 	m.ipBind = cmdMaster.Flag.String("ip.bind", "", "ip address to bind to")
 	m.metaFolder = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
@@ -130,7 +132,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	ms.SetRaftServer(raftServer)
 	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
 	// starting grpc server
-	grpcPort := *masterOption.port + 10000
+	grpcPort := *masterOption.portGrpc
 	grpcL, err := util.NewListener(util.JoinHostPort(*masterOption.ipBind, grpcPort), 0)
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
