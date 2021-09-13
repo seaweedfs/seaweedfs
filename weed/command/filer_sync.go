@@ -93,9 +93,11 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 
 	grace.SetupProfiling(*syncCpuProfile, *syncMemProfile)
 
+	filerA := pb.ServerAddress(*syncOptions.filerA)
+	filerB := pb.ServerAddress(*syncOptions.filerB)
 	go func() {
 		for {
-			err := doSubscribeFilerMetaChanges(grpcDialOption, *syncOptions.filerA, *syncOptions.aPath, *syncOptions.aProxyByFiler, *syncOptions.filerB,
+			err := doSubscribeFilerMetaChanges(grpcDialOption, filerA, *syncOptions.aPath, *syncOptions.aProxyByFiler, filerB,
 				*syncOptions.bPath, *syncOptions.bReplication, *syncOptions.bCollection, *syncOptions.bTtlSec, *syncOptions.bProxyByFiler, *syncOptions.bDiskType, *syncOptions.bDebug)
 			if err != nil {
 				glog.Errorf("sync from %s to %s: %v", *syncOptions.filerA, *syncOptions.filerB, err)
@@ -107,7 +109,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	if !*syncOptions.isActivePassive {
 		go func() {
 			for {
-				err := doSubscribeFilerMetaChanges(grpcDialOption, *syncOptions.filerB, *syncOptions.bPath, *syncOptions.bProxyByFiler, *syncOptions.filerA,
+				err := doSubscribeFilerMetaChanges(grpcDialOption, filerB, *syncOptions.bPath, *syncOptions.bProxyByFiler, filerA,
 					*syncOptions.aPath, *syncOptions.aReplication, *syncOptions.aCollection, *syncOptions.aTtlSec, *syncOptions.aProxyByFiler, *syncOptions.aDiskType, *syncOptions.aDebug)
 				if err != nil {
 					glog.Errorf("sync from %s to %s: %v", *syncOptions.filerB, *syncOptions.filerA, err)
@@ -122,7 +124,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	return true
 }
 
-func doSubscribeFilerMetaChanges(grpcDialOption grpc.DialOption, sourceFiler, sourcePath string, sourceReadChunkFromFiler bool, targetFiler, targetPath string,
+func doSubscribeFilerMetaChanges(grpcDialOption grpc.DialOption, sourceFiler pb.ServerAddress, sourcePath string, sourceReadChunkFromFiler bool, targetFiler pb.ServerAddress, targetPath string,
 	replicationStr, collection string, ttlSec int, sinkWriteChunkByFiler bool, diskType string, debug bool) error {
 
 	// read source filer signature
@@ -147,9 +149,9 @@ func doSubscribeFilerMetaChanges(grpcDialOption grpc.DialOption, sourceFiler, so
 
 	// create filer sink
 	filerSource := &source.FilerSource{}
-	filerSource.DoInitialize(sourceFiler, pb.ServerToGrpcAddress(sourceFiler), sourcePath, sourceReadChunkFromFiler)
+	filerSource.DoInitialize(sourceFiler.ToHttpAddress(), sourceFiler.ToGrpcAddress(), sourcePath, sourceReadChunkFromFiler)
 	filerSink := &filersink.FilerSink{}
-	filerSink.DoInitialize(targetFiler, pb.ServerToGrpcAddress(targetFiler), targetPath, replicationStr, collection, ttlSec, diskType, grpcDialOption, sinkWriteChunkByFiler)
+	filerSink.DoInitialize(targetFiler.ToHttpAddress(), targetFiler.ToGrpcAddress(), targetPath, replicationStr, collection, ttlSec, diskType, grpcDialOption, sinkWriteChunkByFiler)
 	filerSink.SetSourceFiler(filerSource)
 
 	persistEventFn := genProcessFunction(sourcePath, targetPath, filerSink, debug)
@@ -170,7 +172,7 @@ func doSubscribeFilerMetaChanges(grpcDialOption grpc.DialOption, sourceFiler, so
 		return setOffset(grpcDialOption, targetFiler, SyncKeyPrefix, sourceFilerSignature, lastTsNs)
 	})
 
-	return pb.FollowMetadata(sourceFiler, grpcDialOption, "syncTo_"+targetFiler,
+	return pb.FollowMetadata(sourceFiler, grpcDialOption, "syncTo_"+string(targetFiler),
 		sourcePath, nil, sourceFilerOffsetTsNs, targetFilerSignature, processEventFnWithOffset, false)
 
 }
@@ -179,7 +181,7 @@ const (
 	SyncKeyPrefix = "sync."
 )
 
-func getOffset(grpcDialOption grpc.DialOption, filer string, signaturePrefix string, signature int32) (lastOffsetTsNs int64, readErr error) {
+func getOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32) (lastOffsetTsNs int64, readErr error) {
 
 	readErr = pb.WithFilerClient(filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		syncKey := []byte(signaturePrefix + "____")
@@ -206,7 +208,7 @@ func getOffset(grpcDialOption grpc.DialOption, filer string, signaturePrefix str
 
 }
 
-func setOffset(grpcDialOption grpc.DialOption, filer string, signaturePrefix string, signature int32, offsetTsNs int64) error {
+func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32, offsetTsNs int64) error {
 	return pb.WithFilerClient(filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 
 		syncKey := []byte(signaturePrefix + "____")

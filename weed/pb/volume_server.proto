@@ -478,6 +478,7 @@ message FetchAndWriteNeedleRequest {
     message Replica {
         string url = 1;
         string public_url = 2;
+        int32 grpc_port = 3;
     }
     repeated Replica replicas = 6;
     string auth = 7;

@@ -195,7 +195,7 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 		return metaBackup.setOffset(lastTime)
 	})
 
-	return pb.FollowMetadata(*metaBackup.filerAddress, metaBackup.grpcDialOption, "meta_backup",
+	return pb.FollowMetadata(pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOption, "meta_backup",
 		*metaBackup.filerDirectory, nil, startTime.UnixNano(), 0, processEventFnWithOffset, false)
 
 }
@@ -224,7 +224,7 @@ var _ = filer_pb.FilerClient(&FilerMetaBackupOptions{})
 
 func (metaBackup *FilerMetaBackupOptions) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithFilerClient(*metaBackup.filerAddress, metaBackup.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithFilerClient(pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		return fn(client)
 	})
 

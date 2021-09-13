@@ -51,7 +51,7 @@ func main() {
 }
 
 func startGenerateMetadata() {
-	pb.WithFilerClient(*tailFiler, grpc.WithInsecure(), func(client filer_pb.SeaweedFilerClient) error {
+	pb.WithFilerClient(pb.ServerAddress(*tailFiler), grpc.WithInsecure(), func(client filer_pb.SeaweedFilerClient) error {
 
 		for i := 0; i < *n; i++ {
 			name := fmt.Sprintf("file%d", i)
@@ -77,7 +77,7 @@ func startGenerateMetadata() {
 
 func startSubscribeMetadata(eachEntryFunc func(event *filer_pb.SubscribeMetadataResponse) error) {
 
-	tailErr := pb.FollowMetadata(*tailFiler, grpc.WithInsecure(), "tail", *dir, nil, 0, 0, eachEntryFunc, false)
+	tailErr := pb.FollowMetadata(pb.ServerAddress(*tailFiler), grpc.WithInsecure(), "tail", *dir, nil, 0, 0, eachEntryFunc, false)
 
 	if tailErr != nil {
 		fmt.Printf("tail %s: %v\n", *tailFiler, tailErr)

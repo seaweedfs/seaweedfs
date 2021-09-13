@@ -33,7 +33,7 @@ type RemoteSyncOptions struct {
 var _ = filer_pb.FilerClient(&RemoteSyncOptions{})
 
 func (option *RemoteSyncOptions) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithFilerClient(*option.filerAddress, option.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithFilerClient(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		return fn(client)
 	})
 }
@@ -90,12 +90,12 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 	remoteSyncOptions.grpcDialOption = grpcDialOption
 
 	dir := *remoteSyncOptions.dir
-	filerAddress := *remoteSyncOptions.filerAddress
+	filerAddress := pb.ServerAddress(*remoteSyncOptions.filerAddress)
 
 	filerSource := &source.FilerSource{}
 	filerSource.DoInitialize(
-		filerAddress,
-		pb.ServerToGrpcAddress(filerAddress),
+		filerAddress.ToHttpAddress(),
+		filerAddress.ToGrpcAddress(),
 		"/", // does not matter
 		*remoteSyncOptions.readChunkFromFiler,
 	)

@@ -238,13 +238,12 @@ message AssignVolumeRequest {
 
 message AssignVolumeResponse {
     string file_id = 1;
-    string url = 2;
-    string public_url = 3;
     int32 count = 4;
     string auth = 5;
     string collection = 6;
     string replication = 7;
     string error = 8;
+    Location location = 9;
 }
 
 message LookupVolumeRequest {
@@ -258,6 +257,7 @@ message Locations {
 message Location {
     string url = 1;
     string public_url = 2;
+    uint32 grpc_port = 3;
 }
 message LookupVolumeResponse {
     map<string, Locations> locations_map = 1;

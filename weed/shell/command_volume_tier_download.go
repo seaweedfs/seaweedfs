@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"io"
 
 	"google.golang.org/grpc"
@@ -112,7 +113,7 @@ func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, collection s
 	// TODO parallelize this
 	for _, loc := range locations {
 		// copy the .dat file from remote tier to local
-		err = downloadDatFromRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, loc.Url)
+		err = downloadDatFromRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, loc.ServerAddress())
 		if err != nil {
 			return fmt.Errorf("download dat file for volume %d to %s: %v", vid, loc.Url, err)
 		}
@@ -121,7 +122,7 @@ func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, collection s
 	return nil
 }
 
-func downloadDatFromRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, targetVolumeServer string) error {
+func downloadDatFromRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, targetVolumeServer pb.ServerAddress) error {
 
 	err := operation.WithVolumeServerClient(targetVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		stream, downloadErr := volumeServerClient.VolumeTierMoveDatFromRemote(context.Background(), &volume_server_pb.VolumeTierMoveDatFromRemoteRequest{

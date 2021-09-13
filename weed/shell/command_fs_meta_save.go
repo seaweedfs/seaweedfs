@@ -63,8 +63,8 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	fileName := *outputFileName
 	if fileName == "" {
 		t := time.Now()
-		fileName = fmt.Sprintf("%s-%d-%4d%02d%02d-%02d%02d%02d.meta",
-			commandEnv.option.FilerHost, commandEnv.option.FilerPort, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+		fileName = fmt.Sprintf("%s-%4d%02d%02d-%02d%02d%02d.meta",
+			commandEnv.option.FilerAddress.ToHttpAddress(), t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 	}
 
 	dst, openErr := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
@@ -105,7 +105,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	})
 
 	if err == nil {
-		fmt.Fprintf(writer, "meta data for http://%s:%d%s is saved to %s\n", commandEnv.option.FilerHost, commandEnv.option.FilerPort, path, fileName)
+		fmt.Fprintf(writer, "meta data for http://%s%s is saved to %s\n", commandEnv.option.FilerAddress.ToHttpAddress(), path, fileName)
 	}
 
 	return err

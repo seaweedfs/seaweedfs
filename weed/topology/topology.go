@@ -3,6 +3,7 @@ package topology
 import (
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"math/rand"
 	"sync"
@@ -71,7 +72,7 @@ func (t *Topology) IsLeader() bool {
 			return true
 		}
 		if leader, err := t.Leader(); err == nil {
-			if t.RaftServer.Name() == leader {
+			if pb.ServerAddress(t.RaftServer.Name()) == leader {
 				return true
 			}
 		}
@@ -79,11 +80,11 @@ func (t *Topology) IsLeader() bool {
 	return false
 }
 
-func (t *Topology) Leader() (string, error) {
-	l := ""
+func (t *Topology) Leader() (pb.ServerAddress, error) {
+	var l pb.ServerAddress
 	for count := 0; count < 3; count++ {
 		if t.RaftServer != nil {
-			l = t.RaftServer.Leader()
+			l = pb.ServerAddress(t.RaftServer.Leader())
 		} else {
 			return "", errors.New("Raft Server not ready yet!")
 		}

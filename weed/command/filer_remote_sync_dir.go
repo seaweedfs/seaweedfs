@@ -20,7 +20,7 @@ import (
 func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *source.FilerSource, mountedDir string) error {
 
 	// read filer remote storage mount mappings
-	_, _, remoteStorageMountLocation, remoteStorage, detectErr := filer.DetectMountInfo(option.grpcDialOption, *option.filerAddress, mountedDir)
+	_, _, remoteStorageMountLocation, remoteStorage, detectErr := filer.DetectMountInfo(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir)
 	if detectErr != nil {
 		return fmt.Errorf("read mount info: %v", detectErr)
 	}
@@ -33,12 +33,12 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 	processEventFnWithOffset := pb.AddOffsetFunc(eachEntryFunc, 3*time.Second, func(counter int64, lastTsNs int64) error {
 		lastTime := time.Unix(0, lastTsNs)
 		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, lastTime, float64(counter)/float64(3))
-		return remote_storage.SetSyncOffset(option.grpcDialOption, *option.filerAddress, mountedDir, lastTsNs)
+		return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, lastTsNs)
 	})
 
 	lastOffsetTs := collectLastSyncOffset(option, mountedDir)
 
-	return pb.FollowMetadata(*option.filerAddress, option.grpcDialOption, "filer.remote.sync",
+	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, "filer.remote.sync",
 		mountedDir, []string{filer.DirectoryEtcRemote}, lastOffsetTs.UnixNano(), 0, processEventFnWithOffset, false)
 }
 
@@ -171,7 +171,7 @@ func collectLastSyncOffset(option *RemoteSyncOptions, mountedDir string) time.Ti
 			return time.Now()
 		}
 
-		lastOffsetTsNs, err := remote_storage.GetSyncOffset(option.grpcDialOption, *option.filerAddress, mountedDir)
+		lastOffsetTsNs, err := remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir)
 		if mountedDirEntry != nil {
 			if err == nil && mountedDirEntry.Attributes.Crtime < lastOffsetTsNs/1000000 {
 				lastOffsetTs = time.Unix(0, lastOffsetTsNs)

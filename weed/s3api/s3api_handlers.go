@@ -18,7 +18,7 @@ func (s3a *S3ApiServer) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) err
 	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, s3a.option.FilerGrpcAddress, s3a.option.GrpcDialOption)
+	}, s3a.option.Filer.ToGrpcAddress(), s3a.option.GrpcDialOption)
 
 }
 func (s3a *S3ApiServer) AdjustedUrl(location *filer_pb.Location) string {

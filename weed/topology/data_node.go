@@ -3,6 +3,7 @@ package topology
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -14,6 +15,7 @@ type DataNode struct {
 	NodeImpl
 	Ip        string
 	Port      int
+	GrpcPort  int
 	PublicUrl string
 	LastSeen  int64 // unix time in seconds
 	Counter   int   // in race condition, the previous dataNode was not dead
@@ -208,6 +210,10 @@ func (dn *DataNode) Url() string {
 	return util.JoinHostPort(dn.Ip, dn.Port)
 }
 
+func (dn *DataNode) ServerAddress() pb.ServerAddress {
+	return pb.NewServerAddress(dn.Ip, dn.Port, dn.GrpcPort)
+}
+
 func (dn *DataNode) ToMap() interface{} {
 	ret := make(map[string]interface{})
 	ret["Url"] = dn.Url()
@@ -239,6 +245,7 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 	m := &master_pb.DataNodeInfo{
 		Id:        string(dn.Id()),
 		DiskInfos: make(map[string]*master_pb.DiskInfo),
+		GrpcPort:  uint32(dn.GrpcPort),
 	}
 	for _, c := range dn.Children() {
 		disk := c.(*Disk)

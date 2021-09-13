@@ -3,6 +3,7 @@ package shell
 import (
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -44,7 +45,7 @@ func (c *commandVolumeCopy) Do(args []string, commandEnv *CommandEnv, writer io.
 		return nil
 	}
 
-	sourceVolumeServer, targetVolumeServer := *sourceNodeStr, *targetNodeStr
+	sourceVolumeServer, targetVolumeServer := pb.ServerAddress(*sourceNodeStr), pb.ServerAddress(*targetNodeStr)
 
 	volumeId := needle.VolumeId(*volumeIdInt)
 

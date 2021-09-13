@@ -40,11 +40,11 @@ public class FilerGrpcClient {
     private int volumeServerAccess = VOLUME_SERVER_ACCESS_DIRECT;
     private String filerAddress;
 
-    public FilerGrpcClient(String host, int grpcPort) {
-        this(host, grpcPort, sslContext);
+    public FilerGrpcClient(String host, int port, int grpcPort) {
+        this(host, port, grpcPort, sslContext);
     }
 
-    public FilerGrpcClient(String host, int grpcPort, SslContext sslContext) {
+    public FilerGrpcClient(String host, int port, int grpcPort, SslContext sslContext) {
 
         this(sslContext == null ?
                 ManagedChannelBuilder.forAddress(host, grpcPort).usePlaintext()
@@ -54,7 +54,7 @@ public class FilerGrpcClient {
                         .negotiationType(NegotiationType.TLS)
                         .sslContext(sslContext));
 
-        filerAddress = SeaweedUtil.joinHostPort(host, grpcPort - 10000);
+        filerAddress = SeaweedUtil.joinHostPort(host, port);
 
         FilerProto.GetFilerConfigurationResponse filerConfigurationResponse =
                 this.getBlockingStub().getFilerConfiguration(

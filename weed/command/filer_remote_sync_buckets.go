@@ -32,12 +32,12 @@ func (option *RemoteSyncOptions) followBucketUpdatesAndUploadToRemote(filerSourc
 	processEventFnWithOffset := pb.AddOffsetFunc(eachEntryFunc, 3*time.Second, func(counter int64, lastTsNs int64) error {
 		lastTime := time.Unix(0, lastTsNs)
 		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, lastTime, float64(counter)/float64(3))
-		return remote_storage.SetSyncOffset(option.grpcDialOption, *option.filerAddress, option.bucketsDir, lastTsNs)
+		return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), option.bucketsDir, lastTsNs)
 	})
 
 	lastOffsetTs := collectLastSyncOffset(option, option.bucketsDir)
 
-	return pb.FollowMetadata(*option.filerAddress, option.grpcDialOption, "filer.remote.sync",
+	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, "filer.remote.sync",
 		option.bucketsDir, []string{filer.DirectoryEtcRemote}, lastOffsetTs.UnixNano(), 0, processEventFnWithOffset, false)
 }
 
@@ -357,7 +357,7 @@ func extractBucketPath(bucketsDir, dir string) (util.FullPath, bool) {
 
 func (option *RemoteSyncOptions) collectRemoteStorageConf() (err error) {
 
-	if mappings, err := filer.ReadMountMappings(option.grpcDialOption, *option.filerAddress); err != nil {
+	if mappings, err := filer.ReadMountMappings(option.grpcDialOption, pb.ServerAddress(*option.filerAddress)); err != nil {
 		return err
 	} else {
 		option.mappings = mappings

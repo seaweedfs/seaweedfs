@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"flag"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -45,7 +46,7 @@ func (c *commandVolumeUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 		return nil
 	}
 
-	sourceVolumeServer := *nodeStr
+	sourceVolumeServer := pb.ServerAddress(*nodeStr)
 
 	volumeId := needle.VolumeId(*volumeIdInt)
 
@@ -53,7 +54,7 @@ func (c *commandVolumeUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 
 }
 
-func unmountVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer string) (err error) {
+func unmountVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer pb.ServerAddress) (err error) {
 	return operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, unmountErr := volumeServerClient.VolumeUnmount(context.Background(), &volume_server_pb.VolumeUnmountRequest{
 			VolumeId: uint32(volumeId),

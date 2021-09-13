@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"net/http"
 	"os"
@@ -167,21 +168,16 @@ func runServer(cmd *Command, args []string) bool {
 		*isStartingFiler = true
 	}
 
-	if *isStartingMasterServer {
-		_, peerList := checkPeers(*serverIp, *masterOptions.port, *masterOptions.peers)
-		peers := strings.Join(peerList, ",")
-		masterOptions.peers = &peers
-	}
-
 	// ip address
 	masterOptions.ip = serverIp
 	masterOptions.ipBind = serverBindIp
-	filerOptions.masters = masterOptions.peers
+	_, masters := checkPeers(*masterOptions.ip, *masterOptions.port, *masterOptions.portGrpc, *masterOptions.peers)
+	filerOptions.masters = masters
 	filerOptions.ip = serverIp
 	filerOptions.bindIp = serverBindIp
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp
-	serverOptions.v.masters = masterOptions.peers
+	serverOptions.v.masters = masters
 	serverOptions.v.idleConnectionTimeout = serverTimeout
 	serverOptions.v.dataCenter = serverDataCenter
 	serverOptions.v.rack = serverRack
@@ -197,7 +193,7 @@ func runServer(cmd *Command, args []string) bool {
 	filerOptions.disableHttp = serverDisableHttp
 	masterOptions.disableHttp = serverDisableHttp
 
-	filerAddress := util.JoinHostPort(*serverIp, *filerOptions.port)
+	filerAddress := string(pb.NewServerAddress(*serverIp, *filerOptions.port, *filerOptions.portGrpc))
 	s3Options.filer = &filerAddress
 	webdavOptions.filer = &filerAddress
 	msgBrokerOptions.filer = &filerAddress

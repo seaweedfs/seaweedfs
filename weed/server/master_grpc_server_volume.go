@@ -150,17 +150,21 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		fid, count, dnList, err := ms.Topo.PickForWrite(req.Count, option)
 		if err == nil {
 			dn := dnList.Head()
-			var replicas []*master_pb.AssignResponse_Replica
+			var replicas []*master_pb.Location
 			for _, r := range dnList.Rest() {
-				replicas = append(replicas, &master_pb.AssignResponse_Replica{
+				replicas = append(replicas, &master_pb.Location{
 					Url:       r.Url(),
 					PublicUrl: r.PublicUrl,
+					GrpcPort: uint32(r.GrpcPort),
 				})
 			}
 			return &master_pb.AssignResponse{
 				Fid:       fid,
-				Url:       dn.Url(),
-				PublicUrl: dn.PublicUrl,
+				Location: &master_pb.Location{
+					Url:       dn.Url(),
+					PublicUrl: dn.PublicUrl,
+					GrpcPort:  uint32(dn.GrpcPort),
+				},
 				Count:     count,
 				Auth:      string(security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
 				Replicas:  replicas,

@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -32,8 +33,7 @@ const (
 )
 
 type MasterOption struct {
-	Host              string
-	Port              int
+	Master            pb.ServerAddress
 	MetaFolder        string
 	VolumeSizeLimitMB uint32
 	VolumePreallocate bool
@@ -70,7 +70,7 @@ type MasterServer struct {
 	adminLocks *AdminLocks
 }
 
-func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *MasterServer {
+func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddress) *MasterServer {
 
 	v := util.GetViper()
 	signingKey := v.GetString("jwt.signing.key")
@@ -102,7 +102,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []string) *Maste
 		vgCh:            make(chan *topology.VolumeGrowRequest, 1<<6),
 		clientChans:     make(map[string]chan *master_pb.VolumeLocation),
 		grpcDialOption:  grpcDialOption,
-		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "master", option.Host, 0, "", peers),
+		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "master", option.Master, "", peers),
 		adminLocks:      NewAdminLocks(),
 	}
 	ms.boundedLeaderChan = make(chan int, 16)
@@ -224,14 +224,13 @@ func (ms *MasterServer) startAdminScripts() {
 		scriptLines = append(scriptLines, "unlock")
 	}
 
-	masterAddress := util.JoinHostPort(ms.option.Host, ms.option.Port)
+	masterAddress := string(ms.option.Master)
 
 	var shellOptions shell.ShellOptions
 	shellOptions.GrpcDialOption = security.LoadClientTLS(v, "grpc.master")
 	shellOptions.Masters = &masterAddress
 
-	shellOptions.FilerHost, shellOptions.FilerPort, err = util.ParseHostPort(filerHostPort)
-	shellOptions.FilerAddress = filerHostPort
+	shellOptions.FilerAddress = pb.ServerAddress(filerHostPort)
 	shellOptions.Directory = "/"
 	if err != nil {
 		glog.V(0).Infof("failed to parse master.filer.default = %s : %v\n", filerHostPort, err)
@@ -299,7 +298,7 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 	case "snowflake":
 		var err error
 		snowflakeId := v.GetInt(SequencerSnowflakeId)
-		seq, err = sequence.NewSnowflakeSequencer(util.JoinHostPort(option.Host, option.Port), snowflakeId)
+		seq, err = sequence.NewSnowflakeSequencer(string(option.Master), snowflakeId)
 		if err != nil {
 			glog.Error(err)
 			seq = nil

@@ -3,6 +3,7 @@ package filesys
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"math"
 	"math/rand"
 	"os"
@@ -31,9 +32,8 @@ import (
 
 type Option struct {
 	MountDirectory     string
-	FilerAddresses     []string
+	FilerAddresses     []pb.ServerAddress
 	filerIndex         int
-	FilerGrpcAddresses []string
 	GrpcDialOption     grpc.DialOption
 	FilerMountRootPath string
 	Collection         string
@@ -270,17 +270,17 @@ func (wfs *WFS) mapPbIdFromLocalToFiler(entry *filer_pb.Entry) {
 func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
 	if wfs.option.VolumeServerAccess == "filerProxy" {
 		return func(fileId string) (targetUrls []string, err error) {
-			return []string{"http://" + wfs.getCurrentFiler() + "/?proxyChunkId=" + fileId}, nil
+			return []string{"http://" + wfs.getCurrentFiler().ToHttpAddress() + "/?proxyChunkId=" + fileId}, nil
 		}
 	}
 	return filer.LookupFn(wfs)
 }
-func (wfs *WFS) getCurrentFiler() string {
+func (wfs *WFS) getCurrentFiler() pb.ServerAddress {
 	return wfs.option.FilerAddresses[wfs.option.filerIndex]
 }
 
 func (option *Option) setupUniqueCacheDirectory() {
-	cacheUniqueId := util.Md5String([]byte(option.MountDirectory + option.FilerGrpcAddresses[0] + option.FilerMountRootPath + util.Version()))[0:8]
+	cacheUniqueId := util.Md5String([]byte(option.MountDirectory + string(option.FilerAddresses[0]) + option.FilerMountRootPath + util.Version()))[0:8]
 	option.uniqueCacheDir = path.Join(option.CacheDir, cacheUniqueId)
 	option.uniqueCacheTempPageDir = filepath.Join(option.uniqueCacheDir, "sw")
 	os.MkdirAll(option.uniqueCacheTempPageDir, os.FileMode(0777)&^option.Umask)

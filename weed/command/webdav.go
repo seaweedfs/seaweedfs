@@ -78,37 +78,32 @@ func (wo *WebDavOption) startWebDav() bool {
 	}
 
 	// parse filer grpc address
-	filerGrpcAddress, err := pb.ParseServerToGrpcAddress(*wo.filer)
-	if err != nil {
-		glog.Fatal(err)
-		return false
-	}
+	filerAddress := pb.ServerAddress(*wo.filer)
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	var cipher bool
 	// connect to filer
 	for {
-		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithGrpcFilerClient(filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
-				return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
+				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
 			}
 			cipher = resp.Cipher
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *wo.filer, filerGrpcAddress)
+			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *wo.filer, filerAddress.ToGrpcAddress())
 			time.Sleep(time.Second)
 		} else {
-			glog.V(0).Infof("connected to filer %s grpc address %s", *wo.filer, filerGrpcAddress)
+			glog.V(0).Infof("connected to filer %s grpc address %s", *wo.filer, filerAddress.ToGrpcAddress())
 			break
 		}
 	}
 
 	ws, webdavServer_err := weed_server.NewWebDavServer(&weed_server.WebDavOption{
-		Filer:            *wo.filer,
-		FilerGrpcAddress: filerGrpcAddress,
+		Filer:            filerAddress,
 		GrpcDialOption:   grpcDialOption,
 		Collection:       *wo.collection,
 		Replication:      *wo.replication,

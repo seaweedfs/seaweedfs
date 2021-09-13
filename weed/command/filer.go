@@ -29,7 +29,8 @@ var (
 )
 
 type FilerOptions struct {
-	masters                 *string
+	masters                 []pb.ServerAddress
+	mastersString           *string
 	ip                      *string
 	bindIp                  *string
 	port                    *int
@@ -56,7 +57,7 @@ type FilerOptions struct {
 
 func init() {
 	cmdFiler.Run = runFiler // break init cycle
-	f.masters = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
+	f.mastersString = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this default collection")
 	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
 	f.bindIp = cmdFiler.Flag.String("ip.bind", "", "ip address to bind to")
@@ -157,12 +158,14 @@ func runFiler(cmd *Command, args []string) bool {
 
 	if *filerStartIam {
 		filerIamOptions.filer = &filerAddress
-		filerIamOptions.masters = f.masters
+		filerIamOptions.masters = f.mastersString
 		go func() {
 			time.Sleep(startDelay * time.Second)
 			filerIamOptions.startIamServer()
 		}()
 	}
+
+	f.masters = pb.ServerAddresses(*f.mastersString).ToAddresses()
 
 	f.startFiler()
 
@@ -185,8 +188,10 @@ func (fo *FilerOptions) startFiler() {
 		peers = strings.Split(*fo.peers, ",")
 	}
 
+	filerAddress := pb.NewServerAddress(*fo.ip, *fo.port, *fo.portGrpc)
+
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
-		Masters:               strings.Split(*fo.masters, ","),
+		Masters:               fo.masters,
 		Collection:            *fo.collection,
 		DefaultReplication:    *fo.defaultReplicaPlacement,
 		DisableDirListing:     *fo.disableDirListing,
@@ -196,11 +201,10 @@ func (fo *FilerOptions) startFiler() {
 		Rack:                  *fo.rack,
 		DefaultLevelDbDir:     defaultLevelDbDirectory,
 		DisableHttp:           *fo.disableHttp,
-		Host:                  *fo.ip,
-		Port:                  uint32(*fo.port),
+		Host:                  filerAddress,
 		Cipher:                *fo.cipher,
 		SaveToFilerLimit:      int64(*fo.saveToFilerLimit),
-		Filers:                peers,
+		Filers:                pb.FromAddressStrings(peers),
 		ConcurrentUploadLimit: int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
 	})
 	if nfs_err != nil {

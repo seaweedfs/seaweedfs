@@ -71,8 +71,9 @@ func (broker *MessageBroker) assignAndUpload(topicConfig *messaging_pb.TopicConf
 
 			assignResult.Auth = security.EncodedJwt(resp.Auth)
 			assignResult.Fid = resp.FileId
-			assignResult.Url = resp.Url
-			assignResult.PublicUrl = resp.PublicUrl
+			assignResult.Url = resp.Location.Url
+			assignResult.PublicUrl = resp.Location.PublicUrl
+			assignResult.GrpcPort = int(resp.Location.GrpcPort)
 			assignResult.Count = uint64(resp.Count)
 
 			return nil

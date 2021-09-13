@@ -3,6 +3,7 @@ package shell
 import (
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -47,7 +48,7 @@ func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.
 		markWritable = true
 	}
 
-	sourceVolumeServer := *nodeStr
+	sourceVolumeServer := pb.ServerAddress(*nodeStr)
 
 	volumeId := needle.VolumeId(*volumeIdInt)
 

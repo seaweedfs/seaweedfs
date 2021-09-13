@@ -137,11 +137,7 @@ func runS3(cmd *Command, args []string) bool {
 
 func (s3opt *S3Options) startS3Server() bool {
 
-	filerGrpcAddress, err := pb.ParseServerToGrpcAddress(*s3opt.filer)
-	if err != nil {
-		glog.Fatal(err)
-		return false
-	}
+	filerAddress := pb.ServerAddress(*s3opt.filer)
 
 	filerBucketsPath := "/buckets"
 
@@ -152,10 +148,10 @@ func (s3opt *S3Options) startS3Server() bool {
 	var metricsIntervalSec int
 
 	for {
-		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithGrpcFilerClient(filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
-				return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
+				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
 			}
 			filerBucketsPath = resp.DirBuckets
 			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
@@ -163,10 +159,10 @@ func (s3opt *S3Options) startS3Server() bool {
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *s3opt.filer, filerGrpcAddress)
+			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *s3opt.filer, filerAddress.ToGrpcAddress())
 			time.Sleep(time.Second)
 		} else {
-			glog.V(0).Infof("connected to filer %s grpc address %s", *s3opt.filer, filerGrpcAddress)
+			glog.V(0).Infof("connected to filer %s grpc address %s", *s3opt.filer, filerAddress.ToGrpcAddress())
 			break
 		}
 	}
@@ -176,9 +172,8 @@ func (s3opt *S3Options) startS3Server() bool {
 	router := mux.NewRouter().SkipClean(true)
 
 	_, s3ApiServer_err := s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
-		Filer:            *s3opt.filer,
+		Filer:            filerAddress,
 		Port:             *s3opt.port,
-		FilerGrpcAddress: filerGrpcAddress,
 		Config:           *s3opt.config,
 		DomainName:       *s3opt.domainName,
 		BucketsPath:      filerBucketsPath,

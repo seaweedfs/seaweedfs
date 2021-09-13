@@ -13,7 +13,7 @@ const (
 	SyncKeyPrefix = "remote.sync."
 )
 
-func GetSyncOffset(grpcDialOption grpc.DialOption, filer string, dir string) (lastOffsetTsNs int64, readErr error) {
+func GetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir string) (lastOffsetTsNs int64, readErr error) {
 
 	dirHash := uint32(util.HashStringToLong(dir))
 
@@ -42,7 +42,7 @@ func GetSyncOffset(grpcDialOption grpc.DialOption, filer string, dir string) (la
 
 }
 
-func SetSyncOffset(grpcDialOption grpc.DialOption, filer string, dir string, offsetTsNs int64) error {
+func SetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir string, offsetTsNs int64) error {
 
 	dirHash := uint32(util.HashStringToLong(dir))
 

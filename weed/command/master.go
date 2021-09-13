@@ -113,7 +113,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	backend.LoadConfiguration(util.GetViper())
 
-	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.peers)
+	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.portGrpc, *masterOption.peers)
 
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), peers)
@@ -162,16 +162,14 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	select {}
 }
 
-func checkPeers(masterIp string, masterPort int, peers string) (masterAddress string, cleanedPeers []string) {
+func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers string) (masterAddress pb.ServerAddress, cleanedPeers []pb.ServerAddress) {
 	glog.V(0).Infof("current: %s:%d peers:%s", masterIp, masterPort, peers)
-	masterAddress = util.JoinHostPort(masterIp, masterPort)
-	if peers != "" {
-		cleanedPeers = strings.Split(peers, ",")
-	}
+	masterAddress = pb.NewServerAddress(masterIp, masterPort, masterGrpcPort)
+	cleanedPeers = pb.ServerAddresses(peers).ToAddresses()
 
 	hasSelf := false
 	for _, peer := range cleanedPeers {
-		if peer == masterAddress {
+		if peer.ToHttpAddress() == masterAddress.ToHttpAddress() {
 			hasSelf = true
 			break
 		}
@@ -181,13 +179,15 @@ func checkPeers(masterIp string, masterPort int, peers string) (masterAddress st
 		cleanedPeers = append(cleanedPeers, masterAddress)
 	}
 	if len(cleanedPeers)%2 == 0 {
-		glog.Fatalf("Only odd number of masters are supported!")
+		glog.Fatalf("Only odd number of masters are supported: %+v", cleanedPeers)
 	}
 	return
 }
 
-func isTheFirstOne(self string, peers []string) bool {
-	sort.Strings(peers)
+func isTheFirstOne(self pb.ServerAddress, peers []pb.ServerAddress) bool {
+	sort.Slice(peers, func(i, j int) bool {
+		return strings.Compare(string(peers[i]), string(peers[j])) < 0
+	})
 	if len(peers) <= 0 {
 		return true
 	}
@@ -195,9 +195,9 @@ func isTheFirstOne(self string, peers []string) bool {
 }
 
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {
+	masterAddress := pb.NewServerAddress(*m.ip, *m.port, *m.portGrpc)
 	return &weed_server.MasterOption{
-		Host:              *m.ip,
-		Port:              *m.port,
+		Master:            masterAddress,
 		MetaFolder:        *m.metaFolder,
 		VolumeSizeLimitMB: uint32(*m.volumeSizeLimitMB),
 		VolumePreallocate: *m.volumePreallocate,
