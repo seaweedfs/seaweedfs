@@ -2,8 +2,8 @@ package weed_server
 
 import (
 	"context"
-	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"net"
 	"strings"
 	"time"
@@ -22,7 +22,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 	defer func() {
 		if dn != nil {
-
+			dn.Counter--
+			if dn.Counter >  0 {
+				glog.V(0).Infof("disconnect phantom volume server %s:%d remaining %d", dn.Ip, dn.Port, dn.Counter)
+				return
+			}
 			// if the volume server disconnects and reconnects quickly
 			//  the unregister and register can race with each other
 			ms.Topo.UnRegisterDataNode(dn)
@@ -46,7 +50,6 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				}
 				ms.clientChansLock.RUnlock()
 			}
-
 		}
 	}()
 
@@ -68,13 +71,14 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			dc := ms.Topo.GetOrCreateDataCenter(dcName)
 			rack := dc.GetOrCreateRack(rackName)
 			dn = rack.GetOrCreateDataNode(heartbeat.Ip, int(heartbeat.Port), heartbeat.PublicUrl, heartbeat.MaxVolumeCounts)
-			glog.V(0).Infof("added volume server %v:%d", heartbeat.GetIp(), heartbeat.GetPort())
+			glog.V(0).Infof("added volume server %d: %v:%d", dn.Counter, heartbeat.GetIp(), heartbeat.GetPort())
 			if err := stream.Send(&master_pb.HeartbeatResponse{
 				VolumeSizeLimit: uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
 			}); err != nil {
 				glog.Warningf("SendHeartbeat.Send volume size to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
+			dn.Counter++
 		}
 
 		dn.AdjustMaxVolumeCounts(heartbeat.MaxVolumeCounts)
@@ -284,7 +288,7 @@ func findClientAddress(ctx context.Context, grpcPort uint32) string {
 	}
 	if tcpAddr, ok := pr.Addr.(*net.TCPAddr); ok {
 		externalIP := tcpAddr.IP
-		return fmt.Sprintf("%s:%d", externalIP, grpcPort)
+		return util.JoinHostPort(externalIP.String(), int(grpcPort))
 	}
 	return pr.Addr.String()
 

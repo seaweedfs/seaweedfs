@@ -305,6 +305,7 @@ message GetFilerConfigurationResponse {
     string metrics_address = 9;
     int32 metrics_interval_sec = 10;
     string version = 11;
+    string cluster_id = 12;
 }
 
 message SubscribeMetadataRequest {
@@ -312,6 +313,7 @@ message SubscribeMetadataRequest {
     string path_prefix = 2;
     int64 since_ns = 3;
     int32 signature = 4;
+    repeated string path_prefixes = 6;
 }
 message SubscribeMetadataResponse {
     string directory = 1;
@@ -336,6 +338,7 @@ message KeepConnectedResponse {
 message LocateBrokerRequest {
     string resource = 1;
 }
+
 message LocateBrokerResponse {
     bool found = 1;
     // if found, send the exact address
@@ -386,23 +389,6 @@ message FilerConf {
 /////////////////////////
 // Remote Storage related
 /////////////////////////
-message RemoteConf {
-    string type = 1;
-    string name = 2;
-    string s3_access_key = 4;
-    string s3_secret_key = 5;
-    string s3_region = 6;
-    string s3_endpoint = 7;
-}
-
-message RemoteStorageMapping {
-    map<string,RemoteStorageLocation> mappings = 1;
-}
-message RemoteStorageLocation {
-    string name = 1;
-    string bucket = 2;
-    string path = 3;
-}
 message DownloadToLocalRequest {
     string directory = 1;
     string name = 2;

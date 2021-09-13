@@ -194,7 +194,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.publicPort = *v.port
 	}
 	if *v.publicUrl == "" {
-		*v.publicUrl = *v.ip + ":" + strconv.Itoa(*v.publicPort)
+		*v.publicUrl = util.JoinHostPort(*v.ip, *v.publicPort)
 	}
 
 	volumeMux := http.NewServeMux()
@@ -308,7 +308,7 @@ func (v VolumeServerOptions) isSeparatedPublicPort() bool {
 
 func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerServer) *grpc.Server {
 	grpcPort := *v.port + 10000
-	grpcL, err := util.NewListener(*v.bindIp+":"+strconv.Itoa(grpcPort), 0)
+	grpcL, err := util.NewListener(util.JoinHostPort(*v.bindIp, grpcPort), 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
@@ -324,7 +324,7 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 }
 
 func (v VolumeServerOptions) startPublicHttpService(handler http.Handler) httpdown.Server {
-	publicListeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.publicPort)
+	publicListeningAddress := util.JoinHostPort(*v.bindIp, *v.publicPort)
 	glog.V(0).Infoln("Start Seaweed volume server", util.Version(), "public at", publicListeningAddress)
 	publicListener, e := util.NewListener(publicListeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
@@ -351,7 +351,7 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 		keyFile = viper.GetString("https.volume.key")
 	}
 
-	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port)
+	listeningAddress := util.JoinHostPort(*v.bindIp, *v.port)
 	glog.V(0).Infof("Start Seaweed volume server %s at %s", util.Version(), listeningAddress)
 	listener, e := util.NewListener(listeningAddress, time.Duration(*v.idleConnectionTimeout)*time.Second)
 	if e != nil {
@@ -373,7 +373,7 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 }
 
 func (v VolumeServerOptions) startTcpService(volumeServer *weed_server.VolumeServer) {
-	listeningAddress := *v.bindIp + ":" + strconv.Itoa(*v.port+20000)
+	listeningAddress := util.JoinHostPort(*v.bindIp,*v.port+20000)
 	glog.V(0).Infoln("Start Seaweed volume server", util.Version(), "tcp at", listeningAddress)
 	listener, e := util.NewListener(listeningAddress, 0)
 	if e != nil {

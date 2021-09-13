@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"net/http"
 	"sync"
@@ -113,7 +112,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	}
 
 	go vs.heartbeat()
-	go stats.LoopPushingMetric("volumeServer", fmt.Sprintf("%s:%d", ip, port), vs.metricsAddress, vs.metricsIntervalSec)
+	go stats.LoopPushingMetric("volumeServer", util.JoinHostPort(ip, port), vs.metricsAddress, vs.metricsIntervalSec)
 
 	return vs
 }

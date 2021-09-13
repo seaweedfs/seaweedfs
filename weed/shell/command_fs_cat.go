@@ -52,6 +52,11 @@ func (c *commandFsCat) Do(args []string, commandEnv *CommandEnv, writer io.Write
 			return err
 		}
 
+		if len(respLookupEntry.Entry.Content) > 0 {
+			_, err = writer.Write(respLookupEntry.Entry.Content)
+			return err
+		}
+
 		return filer.StreamContent(commandEnv.MasterClient, writer, respLookupEntry.Entry.Chunks, 0, math.MaxInt64)
 
 	})

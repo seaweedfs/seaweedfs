@@ -116,7 +116,7 @@ func (wfs *WFS) maybeLoadEntry(dir, name string) (entry *filer_pb.Entry, err err
 	// return a valid entry for the mount root
 	if string(fullpath) == wfs.option.FilerMountRootPath {
 		return &filer_pb.Entry{
-			Name:        wfs.option.FilerMountRootPath,
+			Name:        name,
 			IsDirectory: true,
 			Attributes: &filer_pb.FuseAttributes{
 				Mtime:    wfs.option.MountMtime.Unix(),

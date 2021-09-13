@@ -224,7 +224,7 @@ func (ms *MasterServer) startAdminScripts() {
 		scriptLines = append(scriptLines, "unlock")
 	}
 
-	masterAddress := fmt.Sprintf("%s:%d", ms.option.Host, ms.option.Port)
+	masterAddress := util.JoinHostPort(ms.option.Host, ms.option.Port)
 
 	var shellOptions shell.ShellOptions
 	shellOptions.GrpcDialOption = security.LoadClientTLS(v, "grpc.master")
@@ -299,7 +299,7 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 	case "snowflake":
 		var err error
 		snowflakeId := v.GetInt(SequencerSnowflakeId)
-		seq, err = sequence.NewSnowflakeSequencer(fmt.Sprintf("%s:%d", option.Host, option.Port), snowflakeId)
+		seq, err = sequence.NewSnowflakeSequencer(util.JoinHostPort(option.Host, option.Port), snowflakeId)
 		if err != nil {
 			glog.Error(err)
 			seq = nil

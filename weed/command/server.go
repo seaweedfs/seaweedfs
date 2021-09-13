@@ -194,7 +194,7 @@ func runServer(cmd *Command, args []string) bool {
 	filerOptions.disableHttp = serverDisableHttp
 	masterOptions.disableHttp = serverDisableHttp
 
-	filerAddress := fmt.Sprintf("%s:%d", *serverIp, *filerOptions.port)
+	filerAddress := util.JoinHostPort(*serverIp, *filerOptions.port)
 	s3Options.filer = &filerAddress
 	webdavOptions.filer = &filerAddress
 	msgBrokerOptions.filer = &filerAddress

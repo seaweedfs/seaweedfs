@@ -29,7 +29,7 @@ func (c *commandVolumeFixReplication) Name() string {
 }
 
 func (c *commandVolumeFixReplication) Help() string {
-	return `add replicas to volumes that are missing replicas
+	return `add or remove replicas to volumes that are missing replicas or over-replicated
 
 	This command finds all over-replicated volumes. If found, it will purge the oldest copies and stop.
 

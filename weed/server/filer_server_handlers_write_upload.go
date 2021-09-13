@@ -127,7 +127,16 @@ func (fs *FilerServer) doUpload(urlLocation string, limitedReader io.Reader, fil
 		stats.FilerRequestHistogram.WithLabelValues("chunkUpload").Observe(time.Since(start).Seconds())
 	}()
 
-	uploadResult, err, data := operation.Upload(urlLocation, fileName, fs.option.Cipher, limitedReader, false, contentType, pairMap, auth)
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         urlLocation,
+		Filename:          fileName,
+		Cipher:            fs.option.Cipher,
+		IsInputCompressed: false,
+		MimeType:          contentType,
+		PairMap:           pairMap,
+		Jwt:               auth,
+	}
+	uploadResult, err, data := operation.Upload(limitedReader, uploadOption)
 	if uploadResult != nil && uploadResult.RetryCount > 0 {
 		stats.FilerRequestCounter.WithLabelValues("chunkUploadRetry").Add(float64(uploadResult.RetryCount))
 	}

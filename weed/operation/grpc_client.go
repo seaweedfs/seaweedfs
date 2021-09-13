@@ -2,6 +2,7 @@ package operation
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"strconv"
 	"strings"
 
@@ -35,7 +36,7 @@ func toVolumeServerGrpcAddress(volumeServer string) (grpcAddress string, err err
 		glog.Errorf("failed to parse volume server address: %v", volumeServer)
 		return "", err
 	}
-	return fmt.Sprintf("%s:%d", volumeServer[0:sepIndex], port+10000), nil
+	return util.JoinHostPort(volumeServer[0:sepIndex], port+10000), nil
 }
 
 func WithMasterServerClient(masterServer string, grpcDialOption grpc.DialOption, fn func(masterClient master_pb.SeaweedClient) error) error {

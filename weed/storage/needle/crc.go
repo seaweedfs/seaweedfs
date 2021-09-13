@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/klauspost/crc32"
+	"hash/crc32"
 
 	"github.com/chrislusf/seaweedfs/weed/util"
 )

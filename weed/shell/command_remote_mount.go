@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
 	"io"
+	"os"
+	"strings"
+	"time"
 )
 
 func init() {
@@ -58,29 +62,31 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return err
 	}
 
-	remoteStorageLocation := remote_storage.ParseLocation(*remote)
-
 	// find configuration for remote storage
-	// remotePath is /<bucket>/path/to/dir
-	remoteConf, err := c.findRemoteStorageConfiguration(commandEnv, writer, remoteStorageLocation)
+	remoteConf, err := filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, remote_storage.ParseLocationName(*remote))
 	if err != nil {
 		return fmt.Errorf("find configuration for %s: %v", *remote, err)
 	}
 
+	remoteStorageLocation, err := remote_storage.ParseRemoteLocation(remoteConf.Type, *remote)
+	if err != nil {
+		return err
+	}
+
 	// sync metadata from remote
-	if err = c.syncMetadata(commandEnv, writer, *dir, *nonEmpty, remoteConf, remoteStorageLocation); err != nil {
+	if err = syncMetadata(commandEnv, writer, *dir, *nonEmpty, remoteConf, remoteStorageLocation); err != nil {
 		return fmt.Errorf("pull metadata: %v", err)
 	}
 
 	// store a mount configuration in filer
-	if err = c.saveMountMapping(commandEnv, writer, *dir, remoteStorageLocation); err != nil {
+	if err = filer.InsertMountMapping(commandEnv, *dir, remoteStorageLocation); err != nil {
 		return fmt.Errorf("save mount mapping: %v", err)
 	}
 
 	return nil
 }
 
-func listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (mappings *filer_pb.RemoteStorageMapping, err error) {
+func listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (mappings *remote_pb.RemoteStorageMapping, err error) {
 
 	// read current mapping
 	mappings, err = filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
@@ -95,6 +101,9 @@ func listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (
 }
 
 func jsonPrintln(writer io.Writer, message proto.Message) error {
+	if message == nil {
+		return nil
+	}
 	m := jsonpb.Marshaler{
 		EmitDefaults: false,
 		Indent:       "  ",
@@ -105,13 +114,7 @@ func jsonPrintln(writer io.Writer, message proto.Message) error {
 	return err
 }
 
-func (c *commandRemoteMount) findRemoteStorageConfiguration(commandEnv *CommandEnv, writer io.Writer, remote *filer_pb.RemoteStorageLocation) (conf *filer_pb.RemoteConf, err error) {
-
-	return filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, remote.Name)
-
-}
-
-func (c *commandRemoteMount) syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *filer_pb.RemoteConf, remote *filer_pb.RemoteStorageLocation) error {
+func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {
 
 	// find existing directory, and ensure the directory is empty
 	err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
@@ -121,7 +124,24 @@ func (c *commandRemoteMount) syncMetadata(commandEnv *CommandEnv, writer io.Writ
 			Name:      name,
 		})
 		if lookupErr != nil {
-			return fmt.Errorf("lookup %s: %v", dir, lookupErr)
+			if strings.Contains(lookupErr.Error(), filer_pb.ErrNotFound.Error()) {
+				_, createErr := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+					Directory: parent,
+					Entry: &filer_pb.Entry{
+						Name:        name,
+						IsDirectory: true,
+						Attributes: &filer_pb.FuseAttributes{
+							Mtime:    time.Now().Unix(),
+							Crtime:   time.Now().Unix(),
+							FileMode: uint32(0644 | os.ModeDir),
+						},
+						RemoteEntry: &filer_pb.RemoteEntry{
+							StorageName: remoteConf.Name,
+						},
+					},
+				})
+				return createErr
+			}
 		}
 
 		mountToDirIsEmpty := true
@@ -148,38 +168,7 @@ func (c *commandRemoteMount) syncMetadata(commandEnv *CommandEnv, writer io.Writ
 
 	// pull metadata from remote
 	if err = pullMetadata(commandEnv, writer, util.FullPath(dir), remote, util.FullPath(dir), remoteConf); err != nil {
-		return fmt.Errorf("cache content data: %v", err)
-	}
-
-	return nil
-}
-
-func (c *commandRemoteMount) saveMountMapping(commandEnv *CommandEnv, writer io.Writer, dir string, remoteStorageLocation *filer_pb.RemoteStorageLocation) (err error) {
-
-	// read current mapping
-	var oldContent, newContent []byte
-	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		oldContent, err = filer.ReadInsideFiler(client, filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE)
-		return err
-	})
-	if err != nil {
-		if err != filer_pb.ErrNotFound {
-			return fmt.Errorf("read existing mapping: %v", err)
-		}
-	}
-
-	// add new mapping
-	newContent, err = filer.AddRemoteStorageMapping(oldContent, dir, remoteStorageLocation)
-	if err != nil {
-		return fmt.Errorf("add mapping %s~%s: %v", dir, remoteStorageLocation, err)
-	}
-
-	// save back
-	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		return filer.SaveInsideFiler(client, filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE, newContent)
-	})
-	if err != nil {
-		return fmt.Errorf("save mapping: %v", err)
+		return fmt.Errorf("cache metadata: %v", err)
 	}
 
 	return nil

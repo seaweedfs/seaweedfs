@@ -6,6 +6,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"io"
 	"math"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -108,6 +110,9 @@ func retriedFetchChunkData(urlStrings []string, cipherKey []byte, isGzipped bool
 	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
 		for _, urlString := range urlStrings {
 			receivedData = receivedData[:0]
+			if strings.Contains(urlString, "%") {
+				urlString = url.PathEscape(urlString)
+			}
 			shouldRetry, err = util.ReadUrlAsStream(urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
 				receivedData = append(receivedData, data...)
 			})

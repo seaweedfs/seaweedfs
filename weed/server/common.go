@@ -33,7 +33,24 @@ func init() {
 	go serverStats.Start()
 }
 
+// bodyAllowedForStatus is a copy of http.bodyAllowedForStatus non-exported function.
+func bodyAllowedForStatus(status int) bool {
+	switch {
+	case status >= 100 && status <= 199:
+		return false
+	case status == http.StatusNoContent:
+		return false
+	case status == http.StatusNotModified:
+		return false
+	}
+	return true
+}
+
 func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) (err error) {
+	if !bodyAllowedForStatus(httpStatus) {
+		return
+	}
+
 	var bytes []byte
 	if obj != nil {
 		if r.FormValue("pretty") != "" {
@@ -144,7 +161,16 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn ope
 	}
 
 	debug("upload file to store", url)
-	uploadResult, err := operation.UploadData(url, pu.FileName, false, pu.Data, pu.IsGzipped, pu.MimeType, pu.PairMap, assignResult.Auth)
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         url,
+		Filename:          pu.FileName,
+		Cipher:            false,
+		IsInputCompressed: pu.IsGzipped,
+		MimeType:          pu.MimeType,
+		PairMap:           pu.PairMap,
+		Jwt:               assignResult.Auth,
+	}
+	uploadResult, err := operation.UploadData(pu.Data, uploadOption)
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return

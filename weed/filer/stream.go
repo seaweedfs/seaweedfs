@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -15,6 +16,49 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
+
+func HasData(entry *filer_pb.Entry) bool {
+
+	if len(entry.Content) > 0 {
+		return true
+	}
+
+	return len(entry.Chunks) > 0
+}
+
+func IsSameData(a, b *filer_pb.Entry) bool {
+
+	if len(a.Content) > 0 || len(b.Content) > 0 {
+		return bytes.Equal(a.Content, b.Content)
+	}
+
+	return isSameChunks(a.Chunks, b.Chunks)
+}
+
+func isSameChunks(a, b []*filer_pb.FileChunk) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sort.Slice(a, func(i, j int) bool {
+		return strings.Compare(a[i].ETag, a[j].ETag) < 0
+	})
+	sort.Slice(b, func(i, j int) bool {
+		return strings.Compare(b[i].ETag, b[j].ETag) < 0
+	})
+	for i := 0; i < len(a); i++ {
+		if a[i].ETag != b[i].ETag {
+			return false
+		}
+	}
+	return true
+}
+
+func NewFileReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry) io.Reader {
+	if len(entry.Content) > 0 {
+		return bytes.NewReader(entry.Content)
+	}
+	return NewChunkStreamReader(filerClient, entry.Chunks)
+}
 
 func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
 
@@ -83,14 +127,14 @@ func ReadAll(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) 
 
 // ----------------  ChunkStreamReader ----------------------------------
 type ChunkStreamReader struct {
-	chunkViews         []*ChunkView
-	totalSize          int64
-	logicOffset        int64
-	buffer             []byte
-	bufferOffset       int64
-	bufferPos          int
-	nextChunkViewIndex int
-	lookupFileId       wdclient.LookupFileIdFunctionType
+	chunkViews   []*ChunkView
+	totalSize    int64
+	logicOffset  int64
+	buffer       []byte
+	bufferOffset int64
+	bufferLock   sync.Mutex
+	chunk        string
+	lookupFileId wdclient.LookupFileIdFunctionType
 }
 
 var _ = io.ReadSeeker(&ChunkStreamReader{})
@@ -132,26 +176,29 @@ func NewChunkStreamReader(filerClient filer_pb.FilerClient, chunks []*filer_pb.F
 }
 
 func (c *ChunkStreamReader) ReadAt(p []byte, off int64) (n int, err error) {
-	if err = c.prepareBufferFor(c.logicOffset); err != nil {
+	c.bufferLock.Lock()
+	defer c.bufferLock.Unlock()
+	if err = c.prepareBufferFor(off); err != nil {
 		return
 	}
-	return c.Read(p)
+	c.logicOffset = off
+	return c.doRead(p)
 }
 
 func (c *ChunkStreamReader) Read(p []byte) (n int, err error) {
+	c.bufferLock.Lock()
+	defer c.bufferLock.Unlock()
+	return c.doRead(p)
+}
+
+func (c *ChunkStreamReader) doRead(p []byte) (n int, err error) {
+	// fmt.Printf("do read [%d,%d) at %s[%d,%d)\n", c.logicOffset, c.logicOffset+int64(len(p)), c.chunk, c.bufferOffset, c.bufferOffset+int64(len(c.buffer)))
 	for n < len(p) {
-		if c.isBufferEmpty() {
-			if c.nextChunkViewIndex >= len(c.chunkViews) {
-				return n, io.EOF
-			}
-			chunkView := c.chunkViews[c.nextChunkViewIndex]
-			if err = c.fetchChunkToBuffer(chunkView); err != nil {
-				return
-			}
-			c.nextChunkViewIndex++
+		// println("read", c.logicOffset)
+		if err = c.prepareBufferFor(c.logicOffset); err != nil {
+			return
 		}
-		t := copy(p[n:], c.buffer[c.bufferPos:])
-		c.bufferPos += t
+		t := copy(p[n:], c.buffer[c.logicOffset-c.bufferOffset:])
 		n += t
 		c.logicOffset += int64(t)
 	}
@@ -159,10 +206,12 @@ func (c *ChunkStreamReader) Read(p []byte) (n int, err error) {
 }
 
 func (c *ChunkStreamReader) isBufferEmpty() bool {
-	return len(c.buffer) <= c.bufferPos
+	return len(c.buffer) <= int(c.logicOffset-c.bufferOffset)
 }
 
 func (c *ChunkStreamReader) Seek(offset int64, whence int) (int64, error) {
+	c.bufferLock.Lock()
+	defer c.bufferLock.Unlock()
 
 	var err error
 	switch whence {
@@ -182,33 +231,59 @@ func (c *ChunkStreamReader) Seek(offset int64, whence int) (int64, error) {
 
 }
 
+func insideChunk(offset int64, chunk *ChunkView) bool {
+	return chunk.LogicOffset <= offset && offset < chunk.LogicOffset+int64(chunk.Size)
+}
+
 func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
 	// stay in the same chunk
-	if !c.isBufferEmpty() {
-		if c.bufferOffset <= offset && offset < c.bufferOffset+int64(len(c.buffer)) {
-			c.bufferPos = int(offset - c.bufferOffset)
-			return nil
-		}
+	if c.bufferOffset <= offset && offset < c.bufferOffset+int64(len(c.buffer)) {
+		return nil
 	}
+
+	// fmt.Printf("fetch for offset %d\n", offset)
 
 	// need to seek to a different chunk
 	currentChunkIndex := sort.Search(len(c.chunkViews), func(i int) bool {
-		return c.chunkViews[i].LogicOffset <= offset
+		return offset < c.chunkViews[i].LogicOffset
 	})
 	if currentChunkIndex == len(c.chunkViews) {
-		return io.EOF
+		// not found
+		if insideChunk(offset, c.chunkViews[0]) {
+			// fmt.Printf("select0 chunk %d %s\n", currentChunkIndex, c.chunkViews[currentChunkIndex].FileId)
+			currentChunkIndex = 0
+		} else if insideChunk(offset, c.chunkViews[len(c.chunkViews)-1]) {
+			currentChunkIndex = len(c.chunkViews) - 1
+			// fmt.Printf("select last chunk %d %s\n", currentChunkIndex, c.chunkViews[currentChunkIndex].FileId)
+		} else {
+			return io.EOF
+		}
+	} else if currentChunkIndex > 0 {
+		if insideChunk(offset, c.chunkViews[currentChunkIndex]) {
+			// good hit
+		} else if insideChunk(offset, c.chunkViews[currentChunkIndex-1]) {
+			currentChunkIndex -= 1
+			// fmt.Printf("select -1 chunk %d %s\n", currentChunkIndex, c.chunkViews[currentChunkIndex].FileId)
+		} else {
+			// glog.Fatalf("unexpected1 offset %d", offset)
+			return fmt.Errorf("unexpected1 offset %d", offset)
+		}
+	} else {
+		// glog.Fatalf("unexpected2 offset %d", offset)
+		return fmt.Errorf("unexpected2 offset %d", offset)
 	}
 
 	// positioning within the new chunk
 	chunk := c.chunkViews[currentChunkIndex]
-	if chunk.LogicOffset <= offset && offset < chunk.LogicOffset+int64(chunk.Size) {
+	if insideChunk(offset, chunk) {
 		if c.isBufferEmpty() || c.bufferOffset != chunk.LogicOffset {
 			if err = c.fetchChunkToBuffer(chunk); err != nil {
 				return
 			}
-			c.nextChunkViewIndex = currentChunkIndex + 1
 		}
-		c.bufferPos = int(offset - c.bufferOffset)
+	} else {
+		// glog.Fatalf("unexpected3 offset %d in %s [%d,%d)", offset, chunk.FileId, chunk.LogicOffset, chunk.LogicOffset+int64(chunk.Size))
+		return fmt.Errorf("unexpected3 offset %d in %s [%d,%d)", offset, chunk.FileId, chunk.LogicOffset, chunk.LogicOffset+int64(chunk.Size))
 	}
 	return
 }
@@ -239,10 +314,10 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 		return err
 	}
 	c.buffer = buffer.Bytes()
-	c.bufferPos = 0
 	c.bufferOffset = chunkView.LogicOffset
+	c.chunk = chunkView.FileId
 
-	// glog.V(0).Infof("read %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
+	// glog.V(0).Infof("fetched %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
 
 	return nil
 }

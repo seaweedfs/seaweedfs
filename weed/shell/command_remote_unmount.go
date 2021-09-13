@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
+	"time"
 )
 
 func init() {
@@ -58,23 +60,24 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 		return fmt.Errorf("directory %s is not mounted", *dir)
 	}
 
+	// store a mount configuration in filer
+	fmt.Fprintf(writer, "deleting mount for %s ...\n", *dir)
+	if err = filer.DeleteMountMapping(commandEnv, *dir); err != nil {
+		return fmt.Errorf("delete mount mapping: %v", err)
+	}
+
 	// purge mounted data
+	fmt.Fprintf(writer, "purge %s ...\n", *dir)
 	if err = c.purgeMountedData(commandEnv, *dir); err != nil {
 		return fmt.Errorf("purge mounted data: %v", err)
 	}
 
-	// store a mount configuration in filer
-	if err = c.deleteMountMapping(commandEnv, *dir); err != nil {
-		return fmt.Errorf("delete mount mapping: %v", err)
+	// reset remote sync offset in case the folder is mounted again
+	if err = remote_storage.SetSyncOffset(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, *dir, time.Now().UnixNano()); err != nil {
+		return fmt.Errorf("reset remote.sync offset for %s: %v", *dir, err)
 	}
 
 	return nil
-}
-
-func (c *commandRemoteUnmount) findRemoteStorageConfiguration(commandEnv *CommandEnv, writer io.Writer, remote *filer_pb.RemoteStorageLocation) (conf *filer_pb.RemoteConf, err error) {
-
-	return filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, remote.Name)
-
 }
 
 func (c *commandRemoteUnmount) purgeMountedData(commandEnv *CommandEnv, dir string) error {
@@ -100,6 +103,8 @@ func (c *commandRemoteUnmount) purgeMountedData(commandEnv *CommandEnv, dir stri
 		mkdirErr := filer_pb.DoMkdir(client, parent, name, func(entry *filer_pb.Entry) {
 			entry.Attributes = oldEntry.Attributes
 			entry.Extended = oldEntry.Extended
+			entry.Attributes.Crtime = time.Now().Unix()
+			entry.Attributes.Mtime = time.Now().Unix()
 		})
 		if mkdirErr != nil {
 			return fmt.Errorf("mkdir %s: %v", dir, mkdirErr)
@@ -114,33 +119,3 @@ func (c *commandRemoteUnmount) purgeMountedData(commandEnv *CommandEnv, dir stri
 	return nil
 }
 
-func (c *commandRemoteUnmount) deleteMountMapping(commandEnv *CommandEnv, dir string) (err error) {
-
-	// read current mapping
-	var oldContent, newContent []byte
-	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		oldContent, err = filer.ReadInsideFiler(client, filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE)
-		return err
-	})
-	if err != nil {
-		if err != filer_pb.ErrNotFound {
-			return fmt.Errorf("read existing mapping: %v", err)
-		}
-	}
-
-	// add new mapping
-	newContent, err = filer.RemoveRemoteStorageMapping(oldContent, dir)
-	if err != nil {
-		return fmt.Errorf("delete mount %s: %v", dir, err)
-	}
-
-	// save back
-	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		return filer.SaveInsideFiler(client, filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE, newContent)
-	})
-	if err != nil {
-		return fmt.Errorf("save mapping: %v", err)
-	}
-
-	return nil
-}

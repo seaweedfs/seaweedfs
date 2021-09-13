@@ -66,17 +66,15 @@ func (store *LevelDB3Store) initialize(dir string) (err error) {
 func (store *LevelDB3Store) loadDB(name string) (*leveldb.DB, error) {
 	bloom := filter.NewBloomFilter(8) // false positive rate 0.02
 	opts := &opt.Options{
-		BlockCacheCapacity:            32 * 1024 * 1024, // default value is 8MiB
-		WriteBuffer:                   16 * 1024 * 1024, // default value is 4MiB
-		CompactionTableSizeMultiplier: 4,
-		Filter:                        bloom,
+		BlockCacheCapacity: 32 * 1024 * 1024, // default value is 8MiB
+		WriteBuffer:        16 * 1024 * 1024, // default value is 4MiB
+		Filter:             bloom,
 	}
 	if name != DEFAULT {
 		opts = &opt.Options{
-			BlockCacheCapacity:            4 * 1024 * 1024, // default value is 8MiB
-			WriteBuffer:                   2 * 1024 * 1024, // default value is 4MiB
-			CompactionTableSizeMultiplier: 4,
-			Filter:                        bloom,
+			BlockCacheCapacity: 4 * 1024 * 1024, // default value is 8MiB
+			WriteBuffer:        2 * 1024 * 1024, // default value is 4MiB
+			Filter:             bloom,
 		}
 	}
 

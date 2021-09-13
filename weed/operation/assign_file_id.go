@@ -22,13 +22,18 @@ type VolumeAssignRequest struct {
 	WritableVolumeCount uint32
 }
 
+type AssignResultReplica struct {
+	Url       string `json:"url,omitempty"`
+	PublicUrl string `json:"publicUrl,omitempty"`
+}
 type AssignResult struct {
-	Fid       string              `json:"fid,omitempty"`
-	Url       string              `json:"url,omitempty"`
-	PublicUrl string              `json:"publicUrl,omitempty"`
-	Count     uint64              `json:"count,omitempty"`
-	Error     string              `json:"error,omitempty"`
-	Auth      security.EncodedJwt `json:"auth,omitempty"`
+	Fid       string                `json:"fid,omitempty"`
+	Url       string                `json:"url,omitempty"`
+	PublicUrl string                `json:"publicUrl,omitempty"`
+	Count     uint64                `json:"count,omitempty"`
+	Error     string                `json:"error,omitempty"`
+	Auth      security.EncodedJwt   `json:"auth,omitempty"`
+	Replicas  []AssignResultReplica `json:"replicas,omitempty"`
 }
 
 func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
@@ -69,6 +74,12 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 			ret.PublicUrl = resp.PublicUrl
 			ret.Error = resp.Error
 			ret.Auth = security.EncodedJwt(resp.Auth)
+			for _, r := range resp.Replicas {
+				ret.Replicas = append(ret.Replicas, AssignResultReplica{
+					Url:       r.Url,
+					PublicUrl: r.PublicUrl,
+				})
+			}
 
 			if resp.Error != "" {
 				return fmt.Errorf("assignRequest: %v", resp.Error)

@@ -171,7 +171,7 @@ func doSubscribeFilerMetaChanges(grpcDialOption grpc.DialOption, sourceFiler, so
 	})
 
 	return pb.FollowMetadata(sourceFiler, grpcDialOption, "syncTo_"+targetFiler,
-		sourcePath, sourceFilerOffsetTsNs, targetFilerSignature, processEventFnWithOffset, false)
+		sourcePath, nil, sourceFilerOffsetTsNs, targetFilerSignature, processEventFnWithOffset, false)
 
 }
 

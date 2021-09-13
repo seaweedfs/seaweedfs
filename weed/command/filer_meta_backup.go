@@ -196,7 +196,7 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 	})
 
 	return pb.FollowMetadata(*metaBackup.filerAddress, metaBackup.grpcDialOption, "meta_backup",
-		*metaBackup.filerDirectory, startTime.UnixNano(), 0, processEventFnWithOffset, false)
+		*metaBackup.filerDirectory, nil, startTime.UnixNano(), 0, processEventFnWithOffset, false)
 
 }
 

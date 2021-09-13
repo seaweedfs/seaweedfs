@@ -34,9 +34,10 @@ func createSession(awsAccessKeyId, awsSecretAccessKey, region, endpoint string) 
 	}
 
 	config := &aws.Config{
-		Region:           aws.String(region),
-		Endpoint:         aws.String(endpoint),
-		S3ForcePathStyle: aws.Bool(true),
+		Region:                        aws.String(region),
+		Endpoint:                      aws.String(endpoint),
+		S3ForcePathStyle:              aws.Bool(true),
+		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if awsAccessKeyId != "" && awsSecretAccessKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, awsSecretAccessKey, "")

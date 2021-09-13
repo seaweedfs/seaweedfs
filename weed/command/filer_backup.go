@@ -113,6 +113,6 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	})
 
 	return pb.FollowMetadata(sourceFiler, grpcDialOption, "backup_"+dataSink.GetName(),
-		sourcePath, startFrom.UnixNano(), 0, processEventFnWithOffset, false)
+		sourcePath, nil, startFrom.UnixNano(), 0, processEventFnWithOffset, false)
 
 }

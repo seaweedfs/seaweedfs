@@ -2,11 +2,11 @@ package storage
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	_ "github.com/chrislusf/seaweedfs/weed/storage/backend/s3_backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	volume_info "github.com/chrislusf/seaweedfs/weed/storage/volume_info"
 )
 
 func (v *Volume) GetVolumeInfo() *volume_server_pb.VolumeInfo {
@@ -16,7 +16,7 @@ func (v *Volume) GetVolumeInfo() *volume_server_pb.VolumeInfo {
 func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 
 	var err error
-	v.volumeInfo, v.hasRemoteFile, found, err = pb.MaybeLoadVolumeInfo(v.FileName(".vif"))
+	v.volumeInfo, v.hasRemoteFile, found, err = volume_info.MaybeLoadVolumeInfo(v.FileName(".vif"))
 
 	if v.volumeInfo.Version == 0 {
 		v.volumeInfo.Version = uint32(needle.CurrentVersion)
@@ -56,6 +56,6 @@ func (v *Volume) SaveVolumeInfo() error {
 
 	tierFileName := v.FileName(".vif")
 
-	return pb.SaveVolumeInfo(tierFileName, v.volumeInfo)
+	return volume_info.SaveVolumeInfo(tierFileName, v.volumeInfo)
 
 }

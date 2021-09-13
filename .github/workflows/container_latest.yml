@@ -1,66 +1,15 @@
-name: Build Latest Containers
+name: "docker: build latest container"
+
 on:
   push:
-    branches:
-      - master
+    branches: [ master ]
   workflow_dispatch: []
 
 jobs:
-  build-latest:
-    runs-on: [ubuntu-latest]
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v2
-      -
-        name: Docker meta
-        id: docker_meta
-        uses: crazy-max/ghaction-docker-meta@v2
-        with:
-          images: |
-            chrislusf/seaweedfs
-            ghcr.io/chrislusf/seaweedfs
-          tags: |
-            type=raw,value=latest
-          labels: |
-            org.opencontainers.image.title=seaweedfs
-            org.opencontainers.image.vendor=Chris Lu
-      -
-        name: Set up QEMU
-        uses: docker/setup-qemu-action@v1
-      -
-        name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
-        with:
-          buildkitd-flags: "--debug"
-      -
-        name: Login to Docker Hub
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v1
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-      -
-        name: Login to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v1
-        with:
-          registry: ghcr.io
-          username: ${{ secrets.GHCR_USERNAME }}
-          password: ${{ secrets.GHCR_TOKEN }}
-      -
-        name: Build
-        uses: docker/build-push-action@v2
-        with:
-          context: ./docker
-          push: ${{ github.event_name != 'pull_request' }}
-          file: ./docker/Dockerfile
-          platforms: linux/amd64
-          tags: ${{ steps.docker_meta.outputs.tags }}
-          labels: ${{ steps.docker_meta.outputs.labels }}
 
-  build-dev:
+  build-latest-container:
     runs-on: [ubuntu-latest]
+
     steps:
       -
         name: Checkout
@@ -68,7 +17,7 @@ jobs:
       -
         name: Docker meta
         id: docker_meta
-        uses: crazy-max/ghaction-docker-meta@v2
+        uses: docker/metadata-action@v3
         with:
           images: |
             chrislusf/seaweedfs
@@ -109,6 +58,6 @@ jobs:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile.go_build
-          platforms: linux/amd64
+          platforms: linux/amd64, linux/arm, linux/arm64, linux/386
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}

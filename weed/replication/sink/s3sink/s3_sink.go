@@ -74,9 +74,10 @@ func (s3sink *S3Sink) initialize(awsAccessKeyId, awsSecretAccessKey, region, buc
 	s3sink.endpoint = endpoint
 
 	config := &aws.Config{
-		Region:           aws.String(s3sink.region),
-		Endpoint:         aws.String(s3sink.endpoint),
-		S3ForcePathStyle: aws.Bool(true),
+		Region:                        aws.String(s3sink.region),
+		Endpoint:                      aws.String(s3sink.endpoint),
+		S3ForcePathStyle:              aws.Bool(true),
+		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if awsAccessKeyId != "" && awsSecretAccessKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, awsSecretAccessKey, "")

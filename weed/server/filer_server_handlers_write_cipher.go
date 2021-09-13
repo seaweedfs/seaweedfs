@@ -44,7 +44,16 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 		// println("detect2 mimetype to", pu.MimeType)
 	}
 
-	uploadResult, uploadError := operation.UploadData(urlLocation, pu.FileName, true, uncompressedData, false, pu.MimeType, pu.PairMap, auth)
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         urlLocation,
+		Filename:          pu.FileName,
+		Cipher:            true,
+		IsInputCompressed: false,
+		MimeType:          pu.MimeType,
+		PairMap:           pu.PairMap,
+		Jwt:               auth,
+	}
+	uploadResult, uploadError := operation.UploadData(uncompressedData, uploadOption)
 	if uploadError != nil {
 		return nil, fmt.Errorf("upload to volume server: %v", uploadError)
 	}

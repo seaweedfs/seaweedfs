@@ -3,8 +3,8 @@ package ftpd
 import (
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"net"
+	"github.com/chrislusf/seaweedfs/weed/util"
 
 	ftpserver "github.com/fclairamb/ftpserverlib"
 	"google.golang.org/grpc"
@@ -51,7 +51,7 @@ func (s *SftpServer) GetSettings() (*ftpserver.Settings, error) {
 
 	return &ftpserver.Settings{
 		Listener:                 s.ftpListener,
-		ListenAddr:               fmt.Sprintf("%s:%d", s.option.IpBind, s.option.Port),
+		ListenAddr:               util.JoinHostPort(s.option.IpBind, s.option.Port),
 		PublicHost:               s.option.IP,
 		PassiveTransferPortRange: portRange,
 		ActiveTransferPortNon20:  true,
