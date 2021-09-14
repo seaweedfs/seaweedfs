@@ -29,10 +29,6 @@ func (c *commandVolumeMark) Help() string {
 
 func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	volMarkCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeIdInt := volMarkCommand.Int("volumeId", 0, "the volume id")
 	nodeStr := volMarkCommand.String("node", "", "the volume server <host>:<port>")
@@ -46,6 +42,10 @@ func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.
 		return fmt.Errorf("use -readonly or -writable")
 	} else if *writable {
 		markWritable = true
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	sourceVolumeServer := pb.ServerAddress(*nodeStr)

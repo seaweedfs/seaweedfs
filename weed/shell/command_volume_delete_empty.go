@@ -33,15 +33,15 @@ func (c *commandVolumeDeleteEmpty) Help() string {
 
 func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	volDeleteCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	quietPeriod := volDeleteCommand.Duration("quietFor", 24*time.Hour, "select empty volumes with no recent writes, avoid newly created ones")
 	applyBalancing := volDeleteCommand.Bool("force", false, "apply to delete empty volumes")
 	if err = volDeleteCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	// collect topology information

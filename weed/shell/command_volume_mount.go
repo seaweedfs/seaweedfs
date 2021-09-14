@@ -35,15 +35,15 @@ func (c *commandVolumeMount) Help() string {
 
 func (c *commandVolumeMount) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	volMountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeIdInt := volMountCommand.Int("volumeId", 0, "the volume id")
 	nodeStr := volMountCommand.String("node", "", "the volume server <host>:<port>")
 	if err = volMountCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	sourceVolumeServer := pb.ServerAddress(*nodeStr)

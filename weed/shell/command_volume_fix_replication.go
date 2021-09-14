@@ -52,16 +52,16 @@ func (c *commandVolumeFixReplication) Help() string {
 
 func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	volFixReplicationCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	c.collectionPattern = volFixReplicationCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
 	skipChange := volFixReplicationCommand.Bool("n", false, "skip the changes")
 	retryCount := volFixReplicationCommand.Int("retry", 0, "how many times to retry")
 	if err = volFixReplicationCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	takeAction := !*skipChange

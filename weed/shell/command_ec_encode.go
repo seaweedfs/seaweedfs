@@ -55,10 +55,6 @@ func (c *commandEcEncode) Help() string {
 
 func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	encodeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := encodeCommand.Int("volumeId", 0, "the volume id")
 	collection := encodeCommand.String("collection", "", "the collection name")
@@ -67,6 +63,10 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	parallelCopy := encodeCommand.Bool("parallelCopy", true, "copy shards in parallel")
 	if err = encodeCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	vid := needle.VolumeId(*volumeId)

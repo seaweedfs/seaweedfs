@@ -31,15 +31,15 @@ func (c *commandVolumeDelete) Help() string {
 
 func (c *commandVolumeDelete) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	volDeleteCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeIdInt := volDeleteCommand.Int("volumeId", 0, "the volume id")
 	nodeStr := volDeleteCommand.String("node", "", "the volume server <host>:<port>")
 	if err = volDeleteCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	sourceVolumeServer := pb.ServerAddress(*nodeStr)

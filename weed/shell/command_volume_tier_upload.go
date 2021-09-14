@@ -57,10 +57,6 @@ func (c *commandVolumeTierUpload) Help() string {
 
 func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	tierCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := tierCommand.Int("volumeId", 0, "the volume id")
 	collection := tierCommand.String("collection", "", "the collection name")
@@ -70,6 +66,10 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	keepLocalDatFile := tierCommand.Bool("keepLocalDatFile", false, "whether keep local dat file")
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	vid := needle.VolumeId(*volumeId)

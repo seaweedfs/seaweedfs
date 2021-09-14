@@ -100,16 +100,16 @@ func (c *commandEcBalance) Help() string {
 
 func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collection := balanceCommand.String("collection", "EACH_COLLECTION", "collection name, or \"EACH_COLLECTION\" for each collection")
 	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
 	applyBalancing := balanceCommand.Bool("force", false, "apply the balancing plan")
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	// collect all ec nodes

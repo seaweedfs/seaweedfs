@@ -50,10 +50,6 @@ func (c *commandVolumeMove) Help() string {
 
 func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	volMoveCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeIdInt := volMoveCommand.Int("volumeId", 0, "the volume id")
 	sourceNodeStr := volMoveCommand.String("source", "", "the source volume server <host>:<port>")
@@ -61,6 +57,10 @@ func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.
 	diskTypeStr := volMoveCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	if err = volMoveCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	sourceVolumeServer, targetVolumeServer := pb.ServerAddress(*sourceNodeStr), pb.ServerAddress(*targetNodeStr)

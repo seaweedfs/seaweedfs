@@ -37,14 +37,14 @@ func (c *commandVolumeServerLeave) Help() string {
 
 func (c *commandVolumeServerLeave) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	vsLeaveCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeServer := vsLeaveCommand.String("node", "", "<host>:<port> of the volume server")
 	if err = vsLeaveCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	if *volumeServer == "" {

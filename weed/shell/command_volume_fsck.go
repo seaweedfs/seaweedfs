@@ -58,10 +58,6 @@ func (c *commandVolumeFsck) Help() string {
 
 func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	fsckCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	verbose := fsckCommand.Bool("v", false, "verbose mode")
 	findMissingChunksInFiler := fsckCommand.Bool("findMissingChunksInFiler", false, "see \"help volume.fsck\"")
@@ -69,6 +65,10 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	applyPurging := fsckCommand.Bool("reallyDeleteFromVolume", false, "<expert only> delete data not referenced by the filer")
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	c.env = commandEnv

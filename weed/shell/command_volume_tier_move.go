@@ -46,10 +46,6 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	c.activeServers = make(map[pb.ServerAddress]struct{})
 	c.activeServersCond = sync.NewCond(new(sync.Mutex))
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	tierCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collectionPattern := tierCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
 	fullPercentage := tierCommand.Float64("fullPercent", 95, "the volume reaches the percentage of max volume size")
@@ -59,6 +55,10 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	applyChange := tierCommand.Bool("force", false, "actually apply the changes")
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	fromDiskType := types.ToDiskType(*source)

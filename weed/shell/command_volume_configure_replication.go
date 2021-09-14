@@ -36,15 +36,15 @@ func (c *commandVolumeConfigureReplication) Help() string {
 
 func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	configureReplicationCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeIdInt := configureReplicationCommand.Int("volumeId", 0, "the volume id")
 	replicationString := configureReplicationCommand.String("replication", "", "the intended replication value")
 	if err = configureReplicationCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	if *replicationString == "" {

@@ -33,16 +33,16 @@ func (c *commandVolumeCopy) Help() string {
 
 func (c *commandVolumeCopy) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	volCopyCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeIdInt := volCopyCommand.Int("volumeId", 0, "the volume id")
 	sourceNodeStr := volCopyCommand.String("source", "", "the source volume server <host>:<port>")
 	targetNodeStr := volCopyCommand.String("target", "", "the target volume server <host>:<port>")
 	if err = volCopyCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	sourceVolumeServer, targetVolumeServer := pb.ServerAddress(*sourceNodeStr), pb.ServerAddress(*targetNodeStr)

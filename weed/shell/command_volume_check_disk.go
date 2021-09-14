@@ -42,10 +42,6 @@ func (c *commandVolumeCheckDisk) Help() string {
 
 func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	fsckCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	slowMode := fsckCommand.Bool("slow", false, "slow mode checks all replicas even file counts are the same")
 	verbose := fsckCommand.Bool("v", false, "verbose mode")
@@ -53,6 +49,10 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	nonRepairThreshold := fsckCommand.Float64("nonRepairThreshold", 0.3, "repair when missing keys is not more than this limit")
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	c.env = commandEnv

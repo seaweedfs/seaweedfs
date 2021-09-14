@@ -44,10 +44,6 @@ func (c *commandVolumeServerEvacuate) Help() string {
 
 func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	vsEvacuateCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeServer := vsEvacuateCommand.String("node", "", "<host>:<port> of the volume server")
 	skipNonMoveable := vsEvacuateCommand.Bool("skipNonMoveable", false, "skip volumes that can not be moved")
@@ -55,6 +51,10 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 	retryCount := vsEvacuateCommand.Int("retry", 0, "how many times to retry")
 	if err = vsEvacuateCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	if *volumeServer == "" {
