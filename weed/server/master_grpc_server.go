@@ -24,7 +24,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 	defer func() {
 		if dn != nil {
 			dn.Counter--
-			if dn.Counter >  0 {
+			if dn.Counter > 0 {
 				glog.V(0).Infof("disconnect phantom volume server %s:%d remaining %d", dn.Ip, dn.Port, dn.Counter)
 				return
 			}

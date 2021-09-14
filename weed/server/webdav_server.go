@@ -27,18 +27,18 @@ import (
 )
 
 type WebDavOption struct {
-	Filer            pb.ServerAddress
-	DomainName       string
-	BucketsPath      string
-	GrpcDialOption   grpc.DialOption
-	Collection       string
-	Replication      string
-	DiskType         string
-	Uid              uint32
-	Gid              uint32
-	Cipher           bool
-	CacheDir         string
-	CacheSizeMB      int64
+	Filer          pb.ServerAddress
+	DomainName     string
+	BucketsPath    string
+	GrpcDialOption grpc.DialOption
+	Collection     string
+	Replication    string
+	DiskType       string
+	Uid            uint32
+	Gid            uint32
+	Cipher         bool
+	CacheDir       string
+	CacheSizeMB    int64
 }
 
 type WebDavServer struct {

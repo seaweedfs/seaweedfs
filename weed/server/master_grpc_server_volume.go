@@ -155,19 +155,19 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 				replicas = append(replicas, &master_pb.Location{
 					Url:       r.Url(),
 					PublicUrl: r.PublicUrl,
-					GrpcPort: uint32(r.GrpcPort),
+					GrpcPort:  uint32(r.GrpcPort),
 				})
 			}
 			return &master_pb.AssignResponse{
-				Fid:       fid,
+				Fid: fid,
 				Location: &master_pb.Location{
 					Url:       dn.Url(),
 					PublicUrl: dn.PublicUrl,
 					GrpcPort:  uint32(dn.GrpcPort),
 				},
-				Count:     count,
-				Auth:      string(security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
-				Replicas:  replicas,
+				Count:    count,
+				Auth:     string(security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
+				Replicas: replicas,
 			}, nil
 		}
 		//glog.V(4).Infoln("waiting for volume growing...")

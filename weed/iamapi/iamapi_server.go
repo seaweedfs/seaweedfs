@@ -33,10 +33,10 @@ type IamS3ApiConfigure struct {
 }
 
 type IamServerOption struct {
-	Masters          []pb.ServerAddress
-	Filer            pb.ServerAddress
-	Port             int
-	GrpcDialOption   grpc.DialOption
+	Masters        []pb.ServerAddress
+	Filer          pb.ServerAddress
+	Port           int
+	GrpcDialOption grpc.DialOption
 }
 
 type IamApiServer struct {
@@ -49,7 +49,7 @@ var s3ApiConfigure IamS3ApiConfig
 func NewIamApiServer(router *mux.Router, option *IamServerOption) (iamApiServer *IamApiServer, err error) {
 	s3ApiConfigure = IamS3ApiConfigure{
 		option:       option,
-		masterClient: wdclient.NewMasterClient(option.GrpcDialOption, pb.AdminShellClient, "", "",option.Masters),
+		masterClient: wdclient.NewMasterClient(option.GrpcDialOption, pb.AdminShellClient, "", "", option.Masters),
 	}
 	s3Option := s3api.S3ApiServerOption{Filer: option.Filer}
 	iamApiServer = &IamApiServer{

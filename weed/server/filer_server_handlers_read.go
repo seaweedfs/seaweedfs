@@ -64,7 +64,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	// set etag
 	etag := filer.ETagEntry(entry)
-	if ifm := r.Header.Get("If-Match"); ifm != "" && (ifm != "\""+etag+"\"" && ifm != etag){
+	if ifm := r.Header.Get("If-Match"); ifm != "" && (ifm != "\""+etag+"\"" && ifm != etag) {
 		w.WriteHeader(http.StatusPreconditionFailed)
 		return
 	}

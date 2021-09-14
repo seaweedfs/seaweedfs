@@ -96,7 +96,7 @@ func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids 
 				locations = append(locations, Location{
 					Url:       loc.Url,
 					PublicUrl: loc.PublicUrl,
-					GrpcPort: int(loc.GrpcPort),
+					GrpcPort:  int(loc.GrpcPort),
 				})
 			}
 			if vidLocations.Error != "" {

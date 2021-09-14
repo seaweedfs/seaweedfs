@@ -103,16 +103,16 @@ func (wo *WebDavOption) startWebDav() bool {
 	}
 
 	ws, webdavServer_err := weed_server.NewWebDavServer(&weed_server.WebDavOption{
-		Filer:            filerAddress,
-		GrpcDialOption:   grpcDialOption,
-		Collection:       *wo.collection,
-		Replication:      *wo.replication,
-		DiskType:         *wo.disk,
-		Uid:              uid,
-		Gid:              gid,
-		Cipher:           cipher,
-		CacheDir:         util.ResolvePath(*wo.cacheDir),
-		CacheSizeMB:      *wo.cacheSizeMB,
+		Filer:          filerAddress,
+		GrpcDialOption: grpcDialOption,
+		Collection:     *wo.collection,
+		Replication:    *wo.replication,
+		DiskType:       *wo.disk,
+		Uid:            uid,
+		Gid:            gid,
+		Cipher:         cipher,
+		CacheDir:       util.ResolvePath(*wo.cacheDir),
+		CacheSizeMB:    *wo.cacheSizeMB,
 	})
 	if webdavServer_err != nil {
 		glog.Fatalf("WebDav Server startup error: %v", webdavServer_err)

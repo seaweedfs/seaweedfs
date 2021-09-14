@@ -269,7 +269,7 @@ func (s *s3RemoteStorageClient) CreateBucket(name string) (err error) {
 
 func (s *s3RemoteStorageClient) DeleteBucket(name string) (err error) {
 	_, err = s.conn.DeleteBucket(&s3.DeleteBucketInput{
-		Bucket:                     aws.String(name),
+		Bucket: aws.String(name),
 	})
 	if err != nil {
 		return fmt.Errorf("delete bucket %s: %v", name, err)

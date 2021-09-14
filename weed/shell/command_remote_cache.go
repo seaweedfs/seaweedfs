@@ -79,7 +79,7 @@ func (c *commandRemoteCache) Do(args []string, commandEnv *CommandEnv, writer io
 	return nil
 }
 
-func (c *commandRemoteCache) doCacheOneDirectory(commandEnv *CommandEnv, writer io.Writer, dir string, fileFiler *FileFilter, concurrency int) (error) {
+func (c *commandRemoteCache) doCacheOneDirectory(commandEnv *CommandEnv, writer io.Writer, dir string, fileFiler *FileFilter, concurrency int) error {
 	mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, detectErr := detectMountInfo(commandEnv, writer, dir)
 	if detectErr != nil {
 		jsonPrintln(writer, mappings)

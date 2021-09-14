@@ -116,7 +116,7 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 				replicas = append(replicas, &volume_server_pb.FetchAndWriteNeedleRequest_Replica{
 					Url:       r.Url,
 					PublicUrl: r.PublicUrl,
-					GrpcPort: int32(r.GrpcPort),
+					GrpcPort:  int32(r.GrpcPort),
 				})
 			}
 
