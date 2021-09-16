@@ -12,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
+	"google.golang.org/grpc"
 	"os"
 	"strings"
 	"time"
@@ -36,7 +37,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, lastTsNs)
 	})
 
-	lastOffsetTs := collectLastSyncOffset(option, mountedDir)
+	lastOffsetTs := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, *option.timeAgo)
 
 	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, "filer.remote.sync",
 		mountedDir, []string{filer.DirectoryEtcRemote}, lastOffsetTs.UnixNano(), 0, processEventFnWithOffset, false)
@@ -159,19 +160,19 @@ func makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, 
 	return eachEntryFunc, nil
 }
 
-func collectLastSyncOffset(option *RemoteSyncOptions, mountedDir string) time.Time {
+func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, mountedDir string, timeAgo time.Duration) time.Time {
 	// 1. specified by timeAgo
 	// 2. last offset timestamp for this directory
 	// 3. directory creation time
 	var lastOffsetTs time.Time
-	if *option.timeAgo == 0 {
-		mountedDirEntry, err := filer_pb.GetEntry(option, util.FullPath(mountedDir))
+	if timeAgo == 0 {
+		mountedDirEntry, err := filer_pb.GetEntry(filerClient, util.FullPath(mountedDir))
 		if err != nil {
 			glog.V(0).Infof("get mounted directory %s: %v", mountedDir, err)
 			return time.Now()
 		}
 
-		lastOffsetTsNs, err := remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir)
+		lastOffsetTsNs, err := remote_storage.GetSyncOffset(grpcDialOption, filerAddress, mountedDir)
 		if mountedDirEntry != nil {
 			if err == nil && mountedDirEntry.Attributes.Crtime < lastOffsetTsNs/1000000 {
 				lastOffsetTs = time.Unix(0, lastOffsetTsNs)
@@ -183,7 +184,7 @@ func collectLastSyncOffset(option *RemoteSyncOptions, mountedDir string) time.Ti
 			lastOffsetTs = time.Now()
 		}
 	} else {
-		lastOffsetTs = time.Now().Add(-*option.timeAgo)
+		lastOffsetTs = time.Now().Add(-timeAgo)
 	}
 	return lastOffsetTs
 }
