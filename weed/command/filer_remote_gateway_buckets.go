@@ -13,6 +13,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"math"
 	"math/rand"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -75,6 +76,16 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 		}
 
 		bucketName := strings.ToLower(entry.Name)
+		if *option.include != "" {
+			if ok, _ := filepath.Match(*option.include, entry.Name); !ok {
+				return nil
+			}
+		}
+		if *option.exclude != "" {
+			if ok, _ := filepath.Match(*option.exclude, entry.Name); ok {
+				return nil
+			}
+		}
 		if *option.createBucketRandomSuffix {
 			// https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
 			if len(bucketName)+5 > 63 {
