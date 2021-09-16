@@ -54,8 +54,8 @@ func init() {
 
 var cmdFilerRemoteGateway = &Command{
 	UsageLine: "filer.remote.gateway",
-	Short:     "resumable continuously write back bucket creation, deletion, and other local updates to remote storage",
-	Long: `resumable continuously write back bucket creation, deletion, and other local updates to remote storage
+	Short:     "resumable continuously write back bucket creation, deletion, and other local updates to remote object store",
+	Long: `resumable continuously write back bucket creation, deletion, and other local updates to remote object store
 
 	filer.remote.gateway listens on filer local buckets update events. 
 	If any bucket is created, deleted, or updated, it will mirror the changes to remote object store.
