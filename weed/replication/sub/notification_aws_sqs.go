@@ -41,7 +41,8 @@ func (k *AwsSqsInput) Initialize(configuration util.Configuration, prefix string
 func (k *AwsSqsInput) initialize(awsAccessKeyId, awsSecretAccessKey, region, queueName string) (err error) {
 
 	config := &aws.Config{
-		Region: aws.String(region),
+		Region:                        aws.String(region),
+		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if awsAccessKeyId != "" && awsSecretAccessKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, awsSecretAccessKey, "")

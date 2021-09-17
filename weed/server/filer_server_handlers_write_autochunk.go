@@ -62,7 +62,8 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 		}
 	} else if reply != nil {
 		if len(md5bytes) > 0 {
-			w.Header().Set("Content-MD5", util.Base64Encode(md5bytes))
+			md5InBase64 := util.Base64Encode(md5bytes)
+			w.Header().Set("Content-MD5", md5InBase64)
 		}
 		writeJsonQuiet(w, r, http.StatusCreated, reply)
 	}
@@ -241,7 +242,16 @@ func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAs
 		}
 
 		// upload the chunk to the volume server
-		uploadResult, uploadErr, _ := operation.Upload(urlLocation, name, fs.option.Cipher, reader, false, "", nil, auth)
+		uploadOption := &operation.UploadOption{
+			UploadUrl:         urlLocation,
+			Filename:          name,
+			Cipher:            fs.option.Cipher,
+			IsInputCompressed: false,
+			MimeType:          "",
+			PairMap:           nil,
+			Jwt:               auth,
+		}
+		uploadResult, uploadErr, _ := operation.Upload(reader, uploadOption)
 		if uploadErr != nil {
 			return nil, "", "", uploadErr
 		}

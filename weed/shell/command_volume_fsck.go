@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"io"
 	"io/ioutil"
@@ -57,10 +58,6 @@ func (c *commandVolumeFsck) Help() string {
 
 func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	fsckCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	verbose := fsckCommand.Bool("v", false, "verbose mode")
 	findMissingChunksInFiler := fsckCommand.Bool("findMissingChunksInFiler", false, "see \"help volume.fsck\"")
@@ -68,6 +65,10 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	applyPurging := fsckCommand.Bool("reallyDeleteFromVolume", false, "<expert only> delete data not referenced by the filer")
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	c.env = commandEnv
@@ -437,7 +438,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(tempFolder stri
 }
 
 type VInfo struct {
-	server     string
+	server     pb.ServerAddress
 	collection string
 	isEcVolume bool
 }
@@ -459,14 +460,14 @@ func (c *commandVolumeFsck) collectVolumeIds(commandEnv *CommandEnv, verbose boo
 		for _, diskInfo := range t.DiskInfos {
 			for _, vi := range diskInfo.VolumeInfos {
 				volumeIdToServer[vi.Id] = VInfo{
-					server:     t.Id,
+					server:     pb.NewServerAddressFromDataNode(t),
 					collection: vi.Collection,
 					isEcVolume: false,
 				}
 			}
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
 				volumeIdToServer[ecShardInfo.Id] = VInfo{
-					server:     t.Id,
+					server:     pb.NewServerAddressFromDataNode(t),
 					collection: ecShardInfo.Collection,
 					isEcVolume: true,
 				}
@@ -491,7 +492,7 @@ func (c *commandVolumeFsck) purgeFileIdsForOneVolume(volumeId uint32, fileIds []
 	var wg sync.WaitGroup
 	for _, location := range locations {
 		wg.Add(1)
-		go func(server string, fidList []string) {
+		go func(server pb.ServerAddress, fidList []string) {
 			defer wg.Done()
 
 			if deleteResults, deleteErr := operation.DeleteFilesAtOneVolumeServer(server, c.env.option.GrpcDialOption, fidList, false); deleteErr != nil {
@@ -500,7 +501,7 @@ func (c *commandVolumeFsck) purgeFileIdsForOneVolume(volumeId uint32, fileIds []
 				resultChan <- deleteResults
 			}
 
-		}(location.Url, fileIds)
+		}(location.ServerAddress(), fileIds)
 	}
 	wg.Wait()
 	close(resultChan)

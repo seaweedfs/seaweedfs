@@ -83,7 +83,16 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 
 			// volume server do not know about encryption
 			// TODO optimize here to compress data only once
-			_, err := operation.UploadData(u.String(), string(n.Name), false, n.Data, n.IsCompressed(), string(n.Mime), pairMap, jwt)
+			uploadOption := &operation.UploadOption{
+				UploadUrl:         u.String(),
+				Filename:          string(n.Name),
+				Cipher:            false,
+				IsInputCompressed: n.IsCompressed(),
+				MimeType:          string(n.Mime),
+				PairMap:           pairMap,
+				Jwt:               jwt,
+			}
+			_, err := operation.UploadData(n.Data, uploadOption)
 			return err
 		}); err != nil {
 			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
@@ -170,7 +179,7 @@ func getWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 	// not on local store, or has replications
 	lookupResult, lookupErr := operation.LookupVolumeId(masterFn, grpcDialOption, volumeId.String())
 	if lookupErr == nil {
-		selfUrl := s.Ip + ":" + strconv.Itoa(s.Port)
+		selfUrl := util.JoinHostPort(s.Ip, s.Port)
 		for _, location := range lookupResult.Locations {
 			if location.Url != selfUrl {
 				remoteLocations = append(remoteLocations, location)

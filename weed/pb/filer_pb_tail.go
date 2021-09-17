@@ -12,12 +12,12 @@ import (
 
 type ProcessMetadataFunc func(resp *filer_pb.SubscribeMetadataResponse) error
 
-func FollowMetadata(filerAddress string, grpcDialOption grpc.DialOption,
-	clientName string, pathPrefix string, lastTsNs int64, selfSignature int32,
+func FollowMetadata(filerAddress ServerAddress, grpcDialOption grpc.DialOption, clientName string,
+	pathPrefix string, additionalPathPrefixes []string, lastTsNs int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, fatalOnError bool) error {
 
-	err := WithFilerClient(filerAddress, grpcDialOption, makeFunc(
-		clientName, pathPrefix, lastTsNs, selfSignature, processEventFn, fatalOnError))
+	err := WithFilerClient(filerAddress, grpcDialOption, makeFunc(clientName,
+		pathPrefix, additionalPathPrefixes, lastTsNs, selfSignature, processEventFn, fatalOnError))
 	if err != nil {
 		return fmt.Errorf("subscribing filer meta change: %v", err)
 	}
@@ -28,8 +28,8 @@ func WithFilerClientFollowMetadata(filerClient filer_pb.FilerClient,
 	clientName string, pathPrefix string, lastTsNs int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, fatalOnError bool) error {
 
-	err := filerClient.WithFilerClient(makeFunc(
-		clientName, pathPrefix, lastTsNs, selfSignature, processEventFn, fatalOnError))
+	err := filerClient.WithFilerClient(makeFunc(clientName,
+		pathPrefix, nil, lastTsNs, selfSignature, processEventFn, fatalOnError))
 	if err != nil {
 		return fmt.Errorf("subscribing filer meta change: %v", err)
 	}
@@ -37,16 +37,17 @@ func WithFilerClientFollowMetadata(filerClient filer_pb.FilerClient,
 	return nil
 }
 
-func makeFunc(clientName string, pathPrefix string, lastTsNs int64, selfSignature int32,
+func makeFunc(clientName string, pathPrefix string, additionalPathPrefixes []string, lastTsNs int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, fatalOnError bool) func(client filer_pb.SeaweedFilerClient) error {
 	return func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
-			ClientName: clientName,
-			PathPrefix: pathPrefix,
-			SinceNs:    lastTsNs,
-			Signature:  selfSignature,
+			ClientName:   clientName,
+			PathPrefix:   pathPrefix,
+			PathPrefixes: additionalPathPrefixes,
+			SinceNs:      lastTsNs,
+			Signature:    selfSignature,
 		})
 		if err != nil {
 			return fmt.Errorf("subscribe: %v", err)

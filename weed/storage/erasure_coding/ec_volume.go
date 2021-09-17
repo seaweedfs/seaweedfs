@@ -3,13 +3,14 @@ package erasure_coding
 import (
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
 	"math"
 	"os"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/idx"
@@ -30,7 +31,7 @@ type EcVolume struct {
 	ecxFileSize               int64
 	ecxCreatedAt              time.Time
 	Shards                    []*EcVolumeShard
-	ShardLocations            map[ShardId][]string
+	ShardLocations            map[ShardId][]pb.ServerAddress
 	ShardLocationsRefreshTime time.Time
 	ShardLocationsLock        sync.RWMutex
 	Version                   needle.Version
@@ -63,13 +64,13 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 
 	// read volume info
 	ev.Version = needle.Version3
-	if volumeInfo, _, found, _ := pb.MaybeLoadVolumeInfo(dataBaseFileName + ".vif"); found {
+	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(dataBaseFileName + ".vif"); found {
 		ev.Version = needle.Version(volumeInfo.Version)
 	} else {
-		pb.SaveVolumeInfo(dataBaseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(ev.Version)})
+		volume_info.SaveVolumeInfo(dataBaseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(ev.Version)})
 	}
 
-	ev.ShardLocations = make(map[ShardId][]string)
+	ev.ShardLocations = make(map[ShardId][]pb.ServerAddress)
 
 	return
 }

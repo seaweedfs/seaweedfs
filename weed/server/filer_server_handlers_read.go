@@ -64,7 +64,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	// set etag
 	etag := filer.ETagEntry(entry)
-	if ifm := r.Header.Get("If-Match"); ifm != "" && ifm != "\""+etag+"\"" {
+	if ifm := r.Header.Get("If-Match"); ifm != "" && (ifm != "\""+etag+"\"" && ifm != etag) {
 		w.WriteHeader(http.StatusPreconditionFailed)
 		return
 	}
@@ -97,7 +97,10 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	// print out the header from extended properties
 	for k, v := range entry.Extended {
-		w.Header().Set(k, string(v))
+		if !strings.HasPrefix(k, "xattr-") {
+			// "xattr-" prefix is set in filesys.XATTR_PREFIX
+			w.Header().Set(k, string(v))
+		}
 	}
 
 	//Seaweed custom header are not visible to Vue or javascript

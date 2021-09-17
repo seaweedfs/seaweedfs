@@ -2,12 +2,17 @@ package filesys
 
 import (
 	"context"
+	"strings"
 
 	"github.com/seaweedfs/fuse"
 
 	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+)
+
+const (
+	XATTR_PREFIX = "xattr-" // same as filer
 )
 
 func getxattr(entry *filer_pb.Entry, req *fuse.GetxattrRequest, resp *fuse.GetxattrResponse) error {
@@ -18,7 +23,7 @@ func getxattr(entry *filer_pb.Entry, req *fuse.GetxattrRequest, resp *fuse.Getxa
 	if entry.Extended == nil {
 		return fuse.ErrNoXattr
 	}
-	data, found := entry.Extended[req.Name]
+	data, found := entry.Extended[XATTR_PREFIX+req.Name]
 	if !found {
 		return fuse.ErrNoXattr
 	}
@@ -47,7 +52,7 @@ func setxattr(entry *filer_pb.Entry, req *fuse.SetxattrRequest) error {
 	if entry.Extended == nil {
 		entry.Extended = make(map[string][]byte)
 	}
-	data, _ := entry.Extended[req.Name]
+	data, _ := entry.Extended[XATTR_PREFIX+req.Name]
 
 	newData := make([]byte, int(req.Position)+len(req.Xattr))
 
@@ -55,7 +60,7 @@ func setxattr(entry *filer_pb.Entry, req *fuse.SetxattrRequest) error {
 
 	copy(newData[int(req.Position):], req.Xattr)
 
-	entry.Extended[req.Name] = newData
+	entry.Extended[XATTR_PREFIX+req.Name] = newData
 
 	return nil
 
@@ -71,13 +76,13 @@ func removexattr(entry *filer_pb.Entry, req *fuse.RemovexattrRequest) error {
 		return fuse.ErrNoXattr
 	}
 
-	_, found := entry.Extended[req.Name]
+	_, found := entry.Extended[XATTR_PREFIX+req.Name]
 
 	if !found {
 		return fuse.ErrNoXattr
 	}
 
-	delete(entry.Extended, req.Name)
+	delete(entry.Extended, XATTR_PREFIX+req.Name)
 
 	return nil
 
@@ -90,7 +95,9 @@ func listxattr(entry *filer_pb.Entry, req *fuse.ListxattrRequest, resp *fuse.Lis
 	}
 
 	for k := range entry.Extended {
-		resp.Append(k)
+		if strings.HasPrefix(k, XATTR_PREFIX) {
+			resp.Append(k[len(XATTR_PREFIX):])
+		}
 	}
 
 	size := req.Size
@@ -116,7 +123,7 @@ func (wfs *WFS) maybeLoadEntry(dir, name string) (entry *filer_pb.Entry, err err
 	// return a valid entry for the mount root
 	if string(fullpath) == wfs.option.FilerMountRootPath {
 		return &filer_pb.Entry{
-			Name:        wfs.option.FilerMountRootPath,
+			Name:        name,
 			IsDirectory: true,
 			Attributes: &filer_pb.FuseAttributes{
 				Mtime:    wfs.option.MountMtime.Unix(),

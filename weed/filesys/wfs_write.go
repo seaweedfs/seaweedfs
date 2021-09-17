@@ -41,10 +41,7 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath, writeOnly bool) filer.Sa
 				}
 
 				fileId, auth = resp.FileId, security.EncodedJwt(resp.Auth)
-				loc := &filer_pb.Location{
-					Url:       resp.Url,
-					PublicUrl: resp.PublicUrl,
-				}
+				loc := resp.Location
 				host = wfs.AdjustedUrl(loc)
 				collection, replication = resp.Collection, resp.Replication
 
@@ -58,7 +55,16 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath, writeOnly bool) filer.Sa
 		if wfs.option.VolumeServerAccess == "filerProxy" {
 			fileUrl = fmt.Sprintf("http://%s/?proxyChunkId=%s", wfs.getCurrentFiler(), fileId)
 		}
-		uploadResult, err, data := operation.Upload(fileUrl, filename, wfs.option.Cipher, reader, false, "", nil, auth)
+		uploadOption := &operation.UploadOption{
+			UploadUrl:         fileUrl,
+			Filename:          filename,
+			Cipher:            wfs.option.Cipher,
+			IsInputCompressed: false,
+			MimeType:          "",
+			PairMap:           nil,
+			Jwt:               auth,
+		}
+		uploadResult, err, data := operation.Upload(reader, uploadOption)
 		if err != nil {
 			glog.V(0).Infof("upload data %v to %s: %v", filename, fileUrl, err)
 			return nil, "", "", fmt.Errorf("upload data: %v", err)

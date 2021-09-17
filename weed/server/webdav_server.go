@@ -27,19 +27,18 @@ import (
 )
 
 type WebDavOption struct {
-	Filer            string
-	FilerGrpcAddress string
-	DomainName       string
-	BucketsPath      string
-	GrpcDialOption   grpc.DialOption
-	Collection       string
-	Replication      string
-	DiskType         string
-	Uid              uint32
-	Gid              uint32
-	Cipher           bool
-	CacheDir         string
-	CacheSizeMB      int64
+	Filer          pb.ServerAddress
+	DomainName     string
+	BucketsPath    string
+	GrpcDialOption grpc.DialOption
+	Collection     string
+	Replication    string
+	DiskType       string
+	Uid            uint32
+	Gid            uint32
+	Cipher         bool
+	CacheDir       string
+	CacheSizeMB    int64
 }
 
 type WebDavServer struct {
@@ -107,7 +106,7 @@ type WebDavFile struct {
 
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 
-	cacheUniqueId := util.Md5String([]byte("webdav" + option.FilerGrpcAddress + util.Version()))[0:8]
+	cacheUniqueId := util.Md5String([]byte("webdav" + string(option.Filer) + util.Version()))[0:8]
 	cacheDir := path.Join(option.CacheDir, cacheUniqueId)
 
 	os.MkdirAll(cacheDir, os.FileMode(0755))
@@ -126,7 +125,7 @@ func (fs *WebDavFileSystem) WithFilerClient(fn func(filer_pb.SeaweedFilerClient)
 	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, fs.option.FilerGrpcAddress, fs.option.GrpcDialOption)
+	}, fs.option.Filer.ToGrpcAddress(), fs.option.GrpcDialOption)
 
 }
 func (fs *WebDavFileSystem) AdjustedUrl(location *filer_pb.Location) string {
@@ -398,7 +397,7 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 				return fmt.Errorf("assign volume failure %v: %v", request, resp.Error)
 			}
 
-			fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
+			fileId, host, auth = resp.FileId, resp.Location.Url, security.EncodedJwt(resp.Auth)
 			f.collection, f.replication = resp.Collection, resp.Replication
 
 			return nil
@@ -413,7 +412,16 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 	}
 
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
-	uploadResult, flushErr, _ := operation.Upload(fileUrl, f.name, f.fs.option.Cipher, reader, false, "", nil, auth)
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         fileUrl,
+		Filename:          f.name,
+		Cipher:            f.fs.option.Cipher,
+		IsInputCompressed: false,
+		MimeType:          "",
+		PairMap:           nil,
+		Jwt:               auth,
+	}
+	uploadResult, flushErr, _ := operation.Upload(reader, uploadOption)
 	if flushErr != nil {
 		glog.V(0).Infof("upload data %v to %s: %v", f.name, fileUrl, flushErr)
 		return nil, f.collection, f.replication, fmt.Errorf("upload data: %v", flushErr)

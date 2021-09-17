@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -107,6 +108,7 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 			locs = append(locs, &filer_pb.Location{
 				Url:       loc.Url,
 				PublicUrl: loc.PublicUrl,
+				GrpcPort:  uint32(loc.GrpcPort),
 			})
 		}
 		resp.LocationsMap[vidString] = &filer_pb.Locations{
@@ -306,10 +308,13 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 	}
 
 	return &filer_pb.AssignVolumeResponse{
-		FileId:      assignResult.Fid,
-		Count:       int32(assignResult.Count),
-		Url:         assignResult.Url,
-		PublicUrl:   assignResult.PublicUrl,
+		FileId: assignResult.Fid,
+		Count:  int32(assignResult.Count),
+		Location: &filer_pb.Location{
+			Url:       assignResult.Url,
+			PublicUrl: assignResult.PublicUrl,
+			GrpcPort:  uint32(assignResult.GrpcPort),
+		},
 		Auth:        string(assignResult.Auth),
 		Collection:  so.Collection,
 		Replication: so.Replication,
@@ -384,8 +389,10 @@ func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsR
 
 func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.GetFilerConfigurationRequest) (resp *filer_pb.GetFilerConfigurationResponse, err error) {
 
+	clusterId, _ := fs.filer.Store.KvGet(context.Background(), []byte("clusterId"))
+
 	t := &filer_pb.GetFilerConfigurationResponse{
-		Masters:            fs.option.Masters,
+		Masters:            pb.ToAddressStrings(fs.option.Masters),
 		Collection:         fs.option.Collection,
 		Replication:        fs.option.DefaultReplication,
 		MaxMb:              uint32(fs.option.MaxMB),
@@ -395,6 +402,7 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 		MetricsAddress:     fs.metricsAddress,
 		MetricsIntervalSec: int32(fs.metricsIntervalSec),
 		Version:            util.Version(),
+		ClusterId:          string(clusterId),
 	}
 
 	glog.V(4).Infof("GetFilerConfiguration: %v", t)
@@ -409,7 +417,7 @@ func (fs *FilerServer) KeepConnected(stream filer_pb.SeaweedFiler_KeepConnectedS
 		return err
 	}
 
-	clientName := fmt.Sprintf("%s:%d", req.Name, req.GrpcPort)
+	clientName := util.JoinHostPort(req.Name, int(req.GrpcPort))
 	m := make(map[string]bool)
 	for _, tp := range req.Resources {
 		m[tp] = true

@@ -2,6 +2,8 @@ package storage
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"path/filepath"
 	"strings"
@@ -10,7 +12,6 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
@@ -31,11 +32,12 @@ type ReadOption struct {
  * A VolumeServer contains one Store
  */
 type Store struct {
-	MasterAddress       string
+	MasterAddress       pb.ServerAddress
 	grpcDialOption      grpc.DialOption
 	volumeSizeLimit     uint64 // read from the master
 	Ip                  string
 	Port                int
+	GrpcPort            int
 	PublicUrl           string
 	Locations           []*DiskLocation
 	dataCenter          string // optional informaton, overwriting master setting if exists
@@ -50,13 +52,13 @@ type Store struct {
 }
 
 func (s *Store) String() (str string) {
-	str = fmt.Sprintf("Ip:%s, Port:%d, PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d", s.Ip, s.Port, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.GetVolumeSizeLimit())
+	str = fmt.Sprintf("Ip:%s, Port:%d, GrpcPort:%d PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d", s.Ip, s.Port, s.GrpcPort, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.GetVolumeSizeLimit())
 	return
 }
 
-func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int,
+func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int, publicUrl string, dirnames []string, maxVolumeCounts []int,
 	minFreeSpaces []util.MinFreeSpace, idxFolder string, needleMapKind NeedleMapKind, diskTypes []DiskType) (s *Store) {
-	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, PublicUrl: publicUrl, NeedleMapKind: needleMapKind}
+	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, GrpcPort: grpcPort, PublicUrl: publicUrl, NeedleMapKind: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
 		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i], minFreeSpaces[i], idxFolder, diskTypes[i])
@@ -311,6 +313,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	return &master_pb.Heartbeat{
 		Ip:              s.Ip,
 		Port:            uint32(s.Port),
+		GrpcPort:        uint32(s.GrpcPort),
 		PublicUrl:       s.PublicUrl,
 		MaxVolumeCounts: maxVolumeCounts,
 		MaxFileKey:      NeedleIdToUint64(maxFileKey),
@@ -428,7 +431,7 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 	}
 
 	for _, location := range s.Locations {
-		if err := location.UnloadVolume(i); err == nil {
+		if err := location.UnloadVolume(i); err == nil || err == ErrVolumeNotFound {
 			glog.V(0).Infof("UnmountVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
@@ -452,7 +455,7 @@ func (s *Store) DeleteVolume(i needle.VolumeId) error {
 		DiskType:         string(v.location.DiskType),
 	}
 	for _, location := range s.Locations {
-		if err := location.DeleteVolume(i); err == nil {
+		if err := location.DeleteVolume(i); err == nil || err == ErrVolumeNotFound {
 			glog.V(0).Infof("DeleteVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
@@ -474,12 +477,12 @@ func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
 		// load, modify, save
 		baseFileName := strings.TrimSuffix(fileInfo.Name(), filepath.Ext(fileInfo.Name()))
 		vifFile := filepath.Join(location.Directory, baseFileName+".vif")
-		volumeInfo, _, _, err := pb.MaybeLoadVolumeInfo(vifFile)
+		volumeInfo, _, _, err := volume_info.MaybeLoadVolumeInfo(vifFile)
 		if err != nil {
 			return fmt.Errorf("volume %d fail to load vif", i)
 		}
 		volumeInfo.Replication = replication
-		err = pb.SaveVolumeInfo(vifFile, volumeInfo)
+		err = volume_info.SaveVolumeInfo(vifFile, volumeInfo)
 		if err != nil {
 			return fmt.Errorf("volume %d fail to save vif", i)
 		}

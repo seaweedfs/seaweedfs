@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
+	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
@@ -22,14 +25,19 @@ func init() {
 
 type s3RemoteStorageMaker struct{}
 
-func (s s3RemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
+func (s s3RemoteStorageMaker) HasBucket() bool {
+	return true
+}
+
+func (s s3RemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
 		conf: conf,
 	}
 	config := &aws.Config{
-		Region:           aws.String(conf.S3Region),
-		Endpoint:         aws.String(conf.S3Endpoint),
-		S3ForcePathStyle: aws.Bool(true),
+		Region:                        aws.String(conf.S3Region),
+		Endpoint:                      aws.String(conf.S3Endpoint),
+		S3ForcePathStyle:              aws.Bool(conf.S3ForcePathStyle),
+		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if conf.S3AccessKey != "" && conf.S3SecretKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(conf.S3AccessKey, conf.S3SecretKey, "")
@@ -39,18 +47,25 @@ func (s s3RemoteStorageMaker) Make(conf *filer_pb.RemoteConf) (remote_storage.Re
 	if err != nil {
 		return nil, fmt.Errorf("create aws session: %v", err)
 	}
+	if conf.S3V4Signature {
+		sess.Handlers.Sign.PushBackNamed(v4.SignRequestHandler)
+	}
+	sess.Handlers.Build.PushBack(func(r *request.Request) {
+		r.HTTPRequest.Header.Set("User-Agent", "SeaweedFS/"+util.VERSION_NUMBER)
+	})
+	sess.Handlers.Build.PushFront(skipSha256PayloadSigning)
 	client.conn = s3.New(sess)
 	return client, nil
 }
 
 type s3RemoteStorageClient struct {
-	conf *filer_pb.RemoteConf
+	conf *remote_pb.RemoteConf
 	conn s3iface.S3API
 }
 
 var _ = remote_storage.RemoteStorageClient(&s3RemoteStorageClient{})
 
-func (s *s3RemoteStorageClient) Traverse(remote *filer_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
+func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
 	pathKey := remote.Path[1:]
 
@@ -92,7 +107,7 @@ func (s *s3RemoteStorageClient) Traverse(remote *filer_pb.RemoteStorageLocation,
 	}
 	return
 }
-func (s *s3RemoteStorageClient) ReadFile(loc *filer_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
+func (s *s3RemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
 	downloader := s3manager.NewDownloaderWithClient(s.conn, func(u *s3manager.Downloader) {
 		u.PartSize = int64(4 * 1024 * 1024)
 		u.Concurrency = 1
@@ -113,11 +128,15 @@ func (s *s3RemoteStorageClient) ReadFile(loc *filer_pb.RemoteStorageLocation, of
 	return writerAt.Bytes(), nil
 }
 
-func (s *s3RemoteStorageClient) WriteDirectory(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
+func (s *s3RemoteStorageClient) WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error) {
 	return nil
 }
 
-func (s *s3RemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {
+func (s *s3RemoteStorageClient) RemoveDirectory(loc *remote_pb.RemoteStorageLocation) (err error) {
+	return nil
+}
+
+func (s *s3RemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry, reader io.Reader) (remoteEntry *filer_pb.RemoteEntry, err error) {
 
 	fileSize := int64(filer.FileSize(entry))
 
@@ -129,7 +148,7 @@ func (s *s3RemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation, e
 	// Create an uploader with the session and custom options
 	uploader := s3manager.NewUploaderWithClient(s.conn, func(u *s3manager.Uploader) {
 		u.PartSize = partSize
-		u.Concurrency = 5
+		u.Concurrency = 1
 	})
 
 	// process tagging
@@ -143,15 +162,16 @@ func (s *s3RemoteStorageClient) WriteFile(loc *filer_pb.RemoteStorageLocation, e
 
 	// Upload the file to S3.
 	_, err = uploader.Upload(&s3manager.UploadInput{
-		Bucket:               aws.String(loc.Bucket),
-		Key:                  aws.String(loc.Path[1:]),
-		Body:                 reader,
-		Tagging:              aws.String(tags),
+		Bucket:       aws.String(loc.Bucket),
+		Key:          aws.String(loc.Path[1:]),
+		Body:         reader,
+		Tagging:      aws.String(tags),
+		StorageClass: aws.String(s.conf.S3StorageClass),
 	})
 
 	//in case it fails to upload
 	if err != nil {
-		return nil, fmt.Errorf("upload to s3 %s/%s%s: %v", loc.Name, loc.Bucket, loc.Path, err)
+		return nil, fmt.Errorf("upload to %s/%s%s: %v", loc.Name, loc.Bucket, loc.Path, err)
 	}
 
 	// read back the remote entry
@@ -170,7 +190,7 @@ func toTagging(attributes map[string][]byte) *s3.Tagging {
 	return tagging
 }
 
-func (s *s3RemoteStorageClient) readFileRemoteEntry(loc *filer_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
+func (s *s3RemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
 	resp, err := s.conn.HeadObject(&s3.HeadObjectInput{
 		Bucket: aws.String(loc.Bucket),
 		Key:    aws.String(loc.Path[1:]),
@@ -188,7 +208,7 @@ func (s *s3RemoteStorageClient) readFileRemoteEntry(loc *filer_pb.RemoteStorageL
 
 }
 
-func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *filer_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
+func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {
 	if reflect.DeepEqual(oldEntry.Extended, newEntry.Extended) {
 		return nil
 	}
@@ -207,10 +227,52 @@ func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *filer_pb.RemoteStorageLo
 	}
 	return
 }
-func (s *s3RemoteStorageClient) DeleteFile(loc *filer_pb.RemoteStorageLocation) (err error) {
+func (s *s3RemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) (err error) {
 	_, err = s.conn.DeleteObject(&s3.DeleteObjectInput{
 		Bucket: aws.String(loc.Bucket),
 		Key:    aws.String(loc.Path[1:]),
 	})
+	return
+}
+
+func (s *s3RemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {
+	resp, err := s.conn.ListBuckets(&s3.ListBucketsInput{})
+	if err != nil {
+		return nil, fmt.Errorf("list buckets: %v", err)
+	}
+	for _, b := range resp.Buckets {
+		buckets = append(buckets, &remote_storage.Bucket{
+			Name:      *b.Name,
+			CreatedAt: *b.CreationDate,
+		})
+	}
+	return
+}
+
+func (s *s3RemoteStorageClient) CreateBucket(name string) (err error) {
+	_, err = s.conn.CreateBucket(&s3.CreateBucketInput{
+		ACL:                        nil,
+		Bucket:                     aws.String(name),
+		CreateBucketConfiguration:  nil,
+		GrantFullControl:           nil,
+		GrantRead:                  nil,
+		GrantReadACP:               nil,
+		GrantWrite:                 nil,
+		GrantWriteACP:              nil,
+		ObjectLockEnabledForBucket: nil,
+	})
+	if err != nil {
+		return fmt.Errorf("%s create bucket %s: %v", s.conf.Name, name, err)
+	}
+	return
+}
+
+func (s *s3RemoteStorageClient) DeleteBucket(name string) (err error) {
+	_, err = s.conn.DeleteBucket(&s3.DeleteBucketInput{
+		Bucket: aws.String(name),
+	})
+	if err != nil {
+		return fmt.Errorf("delete bucket %s: %v", name, err)
+	}
 	return
 }

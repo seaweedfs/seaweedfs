@@ -1,4 +1,5 @@
-name: Build Release Containers
+name: "docker: build release containers"
+
 on:
   push:
     tags:
@@ -6,8 +7,9 @@ on:
   workflow_dispatch: []
 
 jobs:
-  build-default:
+  build-default-release-container:
     runs-on: [ubuntu-latest]
+
     steps:
       -
         name: Checkout
@@ -15,7 +17,7 @@ jobs:
       -
         name: Docker meta
         id: docker_meta
-        uses: crazy-max/ghaction-docker-meta@v2
+        uses: docker/metadata-action@v3
         with:
           images: |
             chrislusf/seaweedfs
@@ -58,11 +60,12 @@ jobs:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile.go_build
-          platforms: linux/amd64
+          platforms: linux/amd64, linux/arm, linux/arm64, linux/386
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
-  build-large:
+  build-large-release-container:
     runs-on: [ubuntu-latest]
+
     steps:
       -
         name: Checkout
@@ -70,7 +73,7 @@ jobs:
       -
         name: Docker meta
         id: docker_meta
-        uses: crazy-max/ghaction-docker-meta@v2
+        uses: docker/metadata-action@v3
         with:
           images: |
             chrislusf/seaweedfs
@@ -113,6 +116,6 @@ jobs:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile.go_build_large
-          platforms: linux/amd64
+          platforms: linux/amd64, linux/arm, linux/arm64, linux/386
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}

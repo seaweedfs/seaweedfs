@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/shell"
@@ -53,13 +54,7 @@ func runShell(command *Command, args []string) bool {
 
 	fmt.Printf("master: %s filer: %s\n", *shellOptions.Masters, *shellInitialFiler)
 
-	var err error
-	shellOptions.FilerHost, shellOptions.FilerPort, err = util.ParseHostPort(*shellInitialFiler)
-	shellOptions.FilerAddress = *shellInitialFiler
-	if err != nil {
-		fmt.Printf("failed to parse filer %s: %v\n", *shellInitialFiler, err)
-		return false
-	}
+	shellOptions.FilerAddress = pb.ServerAddress(*shellInitialFiler)
 	shellOptions.Directory = "/"
 
 	shell.RunShell(shellOptions)

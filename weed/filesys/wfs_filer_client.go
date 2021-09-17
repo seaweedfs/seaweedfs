@@ -16,10 +16,10 @@ func (wfs *WFS) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) (err
 	return util.Retry("filer grpc", func() error {
 
 		i := wfs.option.filerIndex
-		n := len(wfs.option.FilerGrpcAddresses)
+		n := len(wfs.option.FilerAddresses)
 		for x := 0; x < n; x++ {
 
-			filerGrpcAddress := wfs.option.FilerGrpcAddresses[i]
+			filerGrpcAddress := wfs.option.FilerAddresses[i].ToGrpcAddress()
 			err = pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 				client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 				return fn(client)

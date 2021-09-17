@@ -247,13 +247,15 @@ func (l *DiskLocation) LoadVolume(vid needle.VolumeId, needleMapKind NeedleMapKi
 	return false
 }
 
+var ErrVolumeNotFound = fmt.Errorf("volume not found")
+
 func (l *DiskLocation) DeleteVolume(vid needle.VolumeId) error {
 	l.volumesLock.Lock()
 	defer l.volumesLock.Unlock()
 
 	_, ok := l.volumes[vid]
 	if !ok {
-		return fmt.Errorf("Volume not found, VolumeId: %d", vid)
+		return ErrVolumeNotFound
 	}
 	_, err := l.deleteVolumeById(vid)
 	return err
@@ -265,7 +267,7 @@ func (l *DiskLocation) UnloadVolume(vid needle.VolumeId) error {
 
 	v, ok := l.volumes[vid]
 	if !ok {
-		return fmt.Errorf("Volume not loaded, VolumeId: %d", vid)
+		return ErrVolumeNotFound
 	}
 	v.Close()
 	delete(l.volumes, vid)

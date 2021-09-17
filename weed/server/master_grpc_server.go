@@ -2,8 +2,9 @@ package weed_server
 
 import (
 	"context"
-	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"net"
 	"strings"
 	"time"
@@ -22,7 +23,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 	defer func() {
 		if dn != nil {
-
+			dn.Counter--
+			if dn.Counter > 0 {
+				glog.V(0).Infof("disconnect phantom volume server %s:%d remaining %d", dn.Ip, dn.Port, dn.Counter)
+				return
+			}
 			// if the volume server disconnects and reconnects quickly
 			//  the unregister and register can race with each other
 			ms.Topo.UnRegisterDataNode(dn)
@@ -46,7 +51,6 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				}
 				ms.clientChansLock.RUnlock()
 			}
-
 		}
 	}()
 
@@ -67,14 +71,15 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			dcName, rackName := ms.Topo.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
 			dc := ms.Topo.GetOrCreateDataCenter(dcName)
 			rack := dc.GetOrCreateRack(rackName)
-			dn = rack.GetOrCreateDataNode(heartbeat.Ip, int(heartbeat.Port), heartbeat.PublicUrl, heartbeat.MaxVolumeCounts)
-			glog.V(0).Infof("added volume server %v:%d", heartbeat.GetIp(), heartbeat.GetPort())
+			dn = rack.GetOrCreateDataNode(heartbeat.Ip, int(heartbeat.Port), int(heartbeat.GrpcPort), heartbeat.PublicUrl, heartbeat.MaxVolumeCounts)
+			glog.V(0).Infof("added volume server %d: %v:%d", dn.Counter, heartbeat.GetIp(), heartbeat.GetPort())
 			if err := stream.Send(&master_pb.HeartbeatResponse{
 				VolumeSizeLimit: uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
 			}); err != nil {
 				glog.Warningf("SendHeartbeat.Send volume size to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
+			dn.Counter++
 		}
 
 		dn.AdjustMaxVolumeCounts(heartbeat.MaxVolumeCounts)
@@ -164,7 +169,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			return err
 		}
 		if err := stream.Send(&master_pb.HeartbeatResponse{
-			Leader: newLeader,
+			Leader: string(newLeader),
 		}); err != nil {
 			glog.Warningf("SendHeartbeat.Send response to to %s:%d %v", dn.Ip, dn.Port, err)
 			return err
@@ -185,7 +190,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		return ms.informNewLeader(stream)
 	}
 
-	peerAddress := findClientAddress(stream.Context(), req.GrpcPort)
+	peerAddress := pb.ServerAddress(req.ClientAddress)
 
 	// buffer by 1 so we don't end up getting stuck writing to stopChan forever
 	stopChan := make(chan bool, 1)
@@ -237,15 +242,15 @@ func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedSe
 		return raft.NotLeaderError
 	}
 	if err := stream.Send(&master_pb.VolumeLocation{
-		Leader: leader,
+		Leader: string(leader),
 	}); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (ms *MasterServer) addClient(clientType string, clientAddress string) (clientName string, messageChan chan *master_pb.VolumeLocation) {
-	clientName = clientType + "@" + clientAddress
+func (ms *MasterServer) addClient(clientType string, clientAddress pb.ServerAddress) (clientName string, messageChan chan *master_pb.VolumeLocation) {
+	clientName = clientType + "@" + string(clientAddress)
 	glog.V(0).Infof("+ client %v", clientName)
 
 	// we buffer this because otherwise we end up in a potential deadlock where
@@ -284,7 +289,7 @@ func findClientAddress(ctx context.Context, grpcPort uint32) string {
 	}
 	if tcpAddr, ok := pr.Addr.(*net.TCPAddr); ok {
 		externalIP := tcpAddr.IP
-		return fmt.Sprintf("%s:%d", externalIP, grpcPort)
+		return util.JoinHostPort(externalIP.String(), int(grpcPort))
 	}
 	return pr.Addr.String()
 
@@ -315,7 +320,7 @@ func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_
 		DefaultReplication:     ms.option.DefaultReplicaPlacement,
 		VolumeSizeLimitMB:      uint32(ms.option.VolumeSizeLimitMB),
 		VolumePreallocate:      ms.option.VolumePreallocate,
-		Leader:                 leader,
+		Leader:                 string(leader),
 	}
 
 	return resp, nil

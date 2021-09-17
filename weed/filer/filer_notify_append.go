@@ -66,7 +66,16 @@ func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.Assi
 
 	// upload data
 	targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
-	uploadResult, err := operation.UploadData(targetUrl, "", f.Cipher, data, false, "", nil, assignResult.Auth)
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         targetUrl,
+		Filename:          "",
+		Cipher:            f.Cipher,
+		IsInputCompressed: false,
+		MimeType:          "",
+		PairMap:           nil,
+		Jwt:               assignResult.Auth,
+	}
+	uploadResult, err := operation.UploadData(data, uploadOption)
 	if err != nil {
 		return nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
 	}

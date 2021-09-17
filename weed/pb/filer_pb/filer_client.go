@@ -38,9 +38,6 @@ func GetEntry(filerClient FilerClient, fullFilePath util.FullPath) (entry *Entry
 		// glog.V(3).Infof("read %s request: %v", fullFilePath, request)
 		resp, err := LookupEntry(client, request)
 		if err != nil {
-			if err == ErrNotFound {
-				return nil
-			}
 			glog.V(3).Infof("read %s %v: %v", fullFilePath, resp, err)
 			return err
 		}

@@ -103,8 +103,8 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 		}
 	}
 
-	tailErr := pb.FollowMetadata(*tailFiler, grpcDialOption, "tail",
-		*tailTarget, time.Now().Add(-*tailStart).UnixNano(), 0,
+	tailErr := pb.FollowMetadata(pb.ServerAddress(*tailFiler), grpcDialOption, "tail",
+		*tailTarget, nil, time.Now().Add(-*tailStart).UnixNano(), 0,
 		func(resp *filer_pb.SubscribeMetadataResponse) error {
 			if !shouldPrint(resp) {
 				return nil

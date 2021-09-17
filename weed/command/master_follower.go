@@ -13,8 +13,6 @@ import (
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc/reflection"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -25,6 +23,7 @@ var (
 func init() {
 	cmdMasterFollower.Run = runMasterFollower // break init cycle
 	mf.port = cmdMasterFollower.Flag.Int("port", 9334, "http listen port")
+	mf.portGrpc = cmdMasterFollower.Flag.Int("port.grpc", 19334, "grpc listen port")
 	mf.ipBind = cmdMasterFollower.Flag.String("ip.bind", "", "ip address to bind to")
 	mf.peers = cmdMasterFollower.Flag.String("masters", "localhost:9333", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
 
@@ -79,19 +78,15 @@ func runMasterFollower(cmd *Command, args []string) bool {
 func startMasterFollower(masterOptions MasterOptions) {
 
 	// collect settings from main masters
-	masters := strings.Split(*mf.peers, ",")
-	masterGrpcAddresses, err := pb.ParseServersToGrpcAddresses(masters)
-	if err != nil {
-		glog.V(0).Infof("ParseFilerGrpcAddress: %v", err)
-		return
-	}
+	masters := pb.ServerAddresses(*mf.peers).ToAddresses()
 
+	var err error
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.master")
 	for i := 0; i < 10; i++ {
-		err = pb.WithOneOfGrpcMasterClients(masterGrpcAddresses, grpcDialOption, func(client master_pb.SeaweedClient) error {
+		err = pb.WithOneOfGrpcMasterClients(masters, grpcDialOption, func(client master_pb.SeaweedClient) error {
 			resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 			if err != nil {
-				return fmt.Errorf("get master grpc address %v configuration: %v", masterGrpcAddresses, err)
+				return fmt.Errorf("get master grpc address %v configuration: %v", masters, err)
 			}
 			masterOptions.defaultReplication = &resp.DefaultReplication
 			masterOptions.volumeSizeLimitMB = aws.Uint(uint(resp.VolumeSizeLimitMB))
@@ -99,13 +94,13 @@ func startMasterFollower(masterOptions MasterOptions) {
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("failed to talk to filer %v: %v", masterGrpcAddresses, err)
+			glog.V(0).Infof("failed to talk to filer %v: %v", masters, err)
 			glog.V(0).Infof("wait for %d seconds ...", i+1)
 			time.Sleep(time.Duration(i+1) * time.Second)
 		}
 	}
 	if err != nil {
-		glog.Errorf("failed to talk to filer %v: %v", masterGrpcAddresses, err)
+		glog.Errorf("failed to talk to filer %v: %v", masters, err)
 		return
 	}
 
@@ -114,7 +109,7 @@ func startMasterFollower(masterOptions MasterOptions) {
 
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, option, masters)
-	listeningAddress := *masterOptions.ipBind + ":" + strconv.Itoa(*masterOptions.port)
+	listeningAddress := util.JoinHostPort(*masterOptions.ipBind, *masterOptions.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
 	masterListener, e := util.NewListener(listeningAddress, 0)
 	if e != nil {
@@ -122,8 +117,8 @@ func startMasterFollower(masterOptions MasterOptions) {
 	}
 
 	// starting grpc server
-	grpcPort := *masterOptions.port + 10000
-	grpcL, err := util.NewListener(*masterOptions.ipBind+":"+strconv.Itoa(grpcPort), 0)
+	grpcPort := *masterOptions.portGrpc
+	grpcL, err := util.NewListener(util.JoinHostPort(*masterOptions.ipBind, grpcPort), 0)
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}

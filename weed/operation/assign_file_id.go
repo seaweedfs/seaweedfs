@@ -3,6 +3,7 @@ package operation
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc"
 
@@ -26,9 +27,11 @@ type AssignResult struct {
 	Fid       string              `json:"fid,omitempty"`
 	Url       string              `json:"url,omitempty"`
 	PublicUrl string              `json:"publicUrl,omitempty"`
+	GrpcPort  int                 `json:"grpcPort,omitempty"`
 	Count     uint64              `json:"count,omitempty"`
 	Error     string              `json:"error,omitempty"`
 	Auth      security.EncodedJwt `json:"auth,omitempty"`
+	Replicas  []Location          `json:"replicas,omitempty"`
 }
 
 func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
@@ -65,10 +68,17 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 
 			ret.Count = resp.Count
 			ret.Fid = resp.Fid
-			ret.Url = resp.Url
-			ret.PublicUrl = resp.PublicUrl
+			ret.Url = resp.Location.Url
+			ret.PublicUrl = resp.Location.PublicUrl
+			ret.GrpcPort = int(resp.Location.GrpcPort)
 			ret.Error = resp.Error
 			ret.Auth = security.EncodedJwt(resp.Auth)
+			for _, r := range resp.Replicas {
+				ret.Replicas = append(ret.Replicas, Location{
+					Url:       r.Url,
+					PublicUrl: r.PublicUrl,
+				})
+			}
 
 			if resp.Error != "" {
 				return fmt.Errorf("assignRequest: %v", resp.Error)
@@ -93,7 +103,7 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 	return ret, lastError
 }
 
-func LookupJwt(master string, grpcDialOption grpc.DialOption, fileId string) (token security.EncodedJwt) {
+func LookupJwt(master pb.ServerAddress, grpcDialOption grpc.DialOption, fileId string) (token security.EncodedJwt) {
 
 	WithMasterServerClient(master, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 

@@ -1,6 +1,7 @@
 package operation
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"io"
 	"mime"
 	"net/url"
@@ -39,7 +40,7 @@ type SubmitResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
-type GetMasterFn func() string
+type GetMasterFn func() pb.ServerAddress
 
 func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []FilePart, replication string, collection string, dataCenter string, ttl string, diskType string, maxMB int, usePublicUrl bool) ([]SubmitResult, error) {
 	results := make([]SubmitResult, len(files))
@@ -206,7 +207,16 @@ func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jw
 			cm.DeleteChunks(masterFn, usePublicUrl, grpcDialOption)
 		}
 	} else {
-		ret, e, _ := Upload(fileUrl, baseName, false, fi.Reader, false, fi.MimeType, nil, jwt)
+		uploadOption := &UploadOption{
+			UploadUrl:         fileUrl,
+			Filename:          baseName,
+			Cipher:            false,
+			IsInputCompressed: false,
+			MimeType:          fi.MimeType,
+			PairMap:           nil,
+			Jwt:               jwt,
+		}
+		ret, e, _ := Upload(fi.Reader, uploadOption)
 		if e != nil {
 			return 0, e
 		}
@@ -219,7 +229,16 @@ func upload_one_chunk(filename string, reader io.Reader, masterFn GetMasterFn,
 	fileUrl string, jwt security.EncodedJwt,
 ) (size uint32, e error) {
 	glog.V(4).Info("Uploading part ", filename, " to ", fileUrl, "...")
-	uploadResult, uploadError, _ := Upload(fileUrl, filename, false, reader, false, "", nil, jwt)
+	uploadOption := &UploadOption{
+		UploadUrl:         fileUrl,
+		Filename:          filename,
+		Cipher:            false,
+		IsInputCompressed: false,
+		MimeType:          "",
+		PairMap:           nil,
+		Jwt:               jwt,
+	}
+	uploadResult, uploadError, _ := Upload(reader, uploadOption)
 	if uploadError != nil {
 		return 0, uploadError
 	}
@@ -236,6 +255,15 @@ func upload_chunked_file_manifest(fileUrl string, manifest *ChunkManifest, jwt s
 	q := u.Query()
 	q.Set("cm", "true")
 	u.RawQuery = q.Encode()
-	_, e = UploadData(u.String(), manifest.Name, false, buf, false, "application/json", nil, jwt)
+	uploadOption := &UploadOption{
+		UploadUrl:         u.String(),
+		Filename:          manifest.Name,
+		Cipher:            false,
+		IsInputCompressed: false,
+		MimeType:          "application/json",
+		PairMap:           nil,
+		Jwt:               jwt,
+	}
+	_, e = UploadData(buf, uploadOption)
 	return e
 }

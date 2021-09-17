@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -30,10 +29,12 @@ var (
 )
 
 type FilerOptions struct {
-	masters                 *string
+	masters                 []pb.ServerAddress
+	mastersString           *string
 	ip                      *string
 	bindIp                  *string
 	port                    *int
+	portGrpc                *int
 	publicPort              *int
 	collection              *string
 	defaultReplicaPlacement *string
@@ -56,11 +57,12 @@ type FilerOptions struct {
 
 func init() {
 	cmdFiler.Run = runFiler // break init cycle
-	f.masters = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
+	f.mastersString = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this default collection")
 	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
 	f.bindIp = cmdFiler.Flag.String("ip.bind", "", "ip address to bind to")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
+	f.portGrpc = cmdFiler.Flag.Int("port.grpc", 18888, "filer server grpc listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "", "default replication type. If not specified, use master setting.")
 	f.disableDirListing = cmdFiler.Flag.Bool("disableDirListing", false, "turn off directory listing")
@@ -134,7 +136,7 @@ func runFiler(cmd *Command, args []string) bool {
 
 	go stats_collect.StartMetricsServer(*f.metricsHttpPort)
 
-	filerAddress := fmt.Sprintf("%s:%d", *f.ip, *f.port)
+	filerAddress := util.JoinHostPort(*f.ip, *f.port)
 	startDelay := time.Duration(2)
 	if *filerStartS3 {
 		filerS3Options.filer = &filerAddress
@@ -156,12 +158,14 @@ func runFiler(cmd *Command, args []string) bool {
 
 	if *filerStartIam {
 		filerIamOptions.filer = &filerAddress
-		filerIamOptions.masters = f.masters
+		filerIamOptions.masters = f.mastersString
 		go func() {
 			time.Sleep(startDelay * time.Second)
 			filerIamOptions.startIamServer()
 		}()
 	}
+
+	f.masters = pb.ServerAddresses(*f.mastersString).ToAddresses()
 
 	f.startFiler()
 
@@ -184,8 +188,10 @@ func (fo *FilerOptions) startFiler() {
 		peers = strings.Split(*fo.peers, ",")
 	}
 
+	filerAddress := pb.NewServerAddress(*fo.ip, *fo.port, *fo.portGrpc)
+
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
-		Masters:               strings.Split(*fo.masters, ","),
+		Masters:               fo.masters,
 		Collection:            *fo.collection,
 		DefaultReplication:    *fo.defaultReplicaPlacement,
 		DisableDirListing:     *fo.disableDirListing,
@@ -195,11 +201,10 @@ func (fo *FilerOptions) startFiler() {
 		Rack:                  *fo.rack,
 		DefaultLevelDbDir:     defaultLevelDbDirectory,
 		DisableHttp:           *fo.disableHttp,
-		Host:                  *fo.ip,
-		Port:                  uint32(*fo.port),
+		Host:                  filerAddress,
 		Cipher:                *fo.cipher,
 		SaveToFilerLimit:      int64(*fo.saveToFilerLimit),
-		Filers:                peers,
+		Filers:                pb.FromAddressStrings(peers),
 		ConcurrentUploadLimit: int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
 	})
 	if nfs_err != nil {
@@ -207,7 +212,7 @@ func (fo *FilerOptions) startFiler() {
 	}
 
 	if *fo.publicPort != 0 {
-		publicListeningAddress := *fo.bindIp + ":" + strconv.Itoa(*fo.publicPort)
+		publicListeningAddress := util.JoinHostPort(*fo.bindIp, *fo.publicPort)
 		glog.V(0).Infoln("Start Seaweed filer server", util.Version(), "public at", publicListeningAddress)
 		publicListener, e := util.NewListener(publicListeningAddress, 0)
 		if e != nil {
@@ -222,7 +227,7 @@ func (fo *FilerOptions) startFiler() {
 
 	glog.V(0).Infof("Start Seaweed Filer %s at %s:%d", util.Version(), *fo.ip, *fo.port)
 	filerListener, e := util.NewListener(
-		*fo.bindIp+":"+strconv.Itoa(*fo.port),
+		util.JoinHostPort(*fo.bindIp, *fo.port),
 		time.Duration(10)*time.Second,
 	)
 	if e != nil {
@@ -230,8 +235,8 @@ func (fo *FilerOptions) startFiler() {
 	}
 
 	// starting grpc server
-	grpcPort := *fo.port + 10000
-	grpcL, err := util.NewListener(*fo.bindIp+":"+strconv.Itoa(grpcPort), 0)
+	grpcPort := *fo.portGrpc
+	grpcL, err := util.NewListener(util.JoinHostPort(*fo.bindIp, grpcPort), 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}

@@ -205,7 +205,7 @@ func ReadNeedleBlob(r backend.BackendStorageFile, offset int64, size Size, versi
 	}
 	if err != nil {
 		fileSize, _, _ := r.GetStat()
-		println("n", n, "dataSize", dataSize, "offset", offset, "fileSize", fileSize)
+		glog.Errorf("%s read %d dataSize %d offset %d fileSize %d: %v", r.Name(), n, dataSize, offset, fileSize, err)
 	}
 	return dataSlice, err
 

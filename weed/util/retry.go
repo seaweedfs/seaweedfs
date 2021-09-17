@@ -37,6 +37,7 @@ func RetryForever(name string, job func() error, onErrFn func(err error) bool) {
 	for {
 		err := job()
 		if err == nil {
+			waitTime = time.Second
 			break
 		}
 		if onErrFn(err) {

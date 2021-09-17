@@ -33,11 +33,13 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		entry, err := s3a.getEntry(dir, name)
 		if err != nil {
 			s3err.WriteErrorResponse(w, s3err.ErrInvalidCopySource, r)
+			return
 		}
 		entry.Extended = weed_server.SaveAmzMetaData(r, entry.Extended, isReplace(r))
 		err = s3a.touch(dir, name, entry)
 		if err != nil {
 			s3err.WriteErrorResponse(w, s3err.ErrInvalidCopySource, r)
+			return
 		}
 		writeSuccessResponseXML(w, CopyObjectResult{
 			ETag:         fmt.Sprintf("%x", entry.Attributes.Md5),
@@ -51,6 +53,13 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		s3err.WriteErrorResponse(w, s3err.ErrInvalidCopySource, r)
 		return
 	}
+	srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
+	dir, name := srcPath.DirAndName()
+	_, err = s3a.getEntry(dir, name)
+	if err != nil {
+		s3err.WriteErrorResponse(w, s3err.ErrInvalidCopySource, r)
+		return
+	}
 
 	if srcBucket == dstBucket && srcObject == dstObject {
 		s3err.WriteErrorResponse(w, s3err.ErrInvalidCopyDest, r)
@@ -58,9 +67,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	dstUrl := fmt.Sprintf("http://%s%s/%s%s?collection=%s",
-		s3a.option.Filer, s3a.option.BucketsPath, dstBucket, dstObject, dstBucket)
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, dstBucket, dstObject, dstBucket)
 	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer, s3a.option.BucketsPath, srcBucket, srcObject)
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, srcObject)
 
 	_, _, resp, err := util.DownloadFile(srcUrl, "")
 	if err != nil {
@@ -139,9 +148,9 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	rangeHeader := r.Header.Get("x-amz-copy-source-range")
 
 	dstUrl := fmt.Sprintf("http://%s%s/%s/%04d.part?collection=%s",
-		s3a.option.Filer, s3a.genUploadsFolder(dstBucket), uploadID, partID, dstBucket)
+		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(dstBucket), uploadID, partID, dstBucket)
 	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer, s3a.option.BucketsPath, srcBucket, srcObject)
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, srcObject)
 
 	dataReader, err := util.ReadUrlAsReaderCloser(srcUrl, rangeHeader)
 	if err != nil {

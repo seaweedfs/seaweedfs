@@ -7,7 +7,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/storage/idx"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/willf/bloom"
+	"github.com/tylertreat/BoomFilters"
 )
 
 type mapMetric struct {
@@ -93,10 +93,10 @@ func (mm *mapMetric) MaybeSetMaxFileKey(key NeedleId) {
 
 func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
 	mm = &mapMetric{}
-	var bf *bloom.BloomFilter
+	var bf *boom.BloomFilter
 	buf := make([]byte, NeedleIdSize)
 	err = reverseWalkIndexFile(r, func(entryCount int64) {
-		bf = bloom.NewWithEstimates(uint(entryCount), 0.001)
+		bf = boom.NewBloomFilter(uint(entryCount), 0.001)
 	}, func(key NeedleId, offset Offset, size Size) error {
 
 		mm.MaybeSetMaxFileKey(key)
@@ -105,9 +105,8 @@ func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
 			mm.FileByteCounter += uint64(size)
 		}
 
-		if !bf.Test(buf) {
+		if !bf.TestAndAdd(buf) {
 			mm.FileCounter++
-			bf.Add(buf)
 		} else {
 			// deleted file
 			mm.DeletionCounter++

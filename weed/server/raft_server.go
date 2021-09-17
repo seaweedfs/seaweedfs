@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"sort"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -19,10 +20,10 @@ import (
 )
 
 type RaftServer struct {
-	peers      []string // initial peers to join with
+	peers      []pb.ServerAddress // initial peers to join with
 	raftServer raft.Server
 	dataDir    string
-	serverAddr string
+	serverAddr pb.ServerAddress
 	topo       *topology.Topology
 	*raft.GrpcServer
 }
@@ -51,7 +52,7 @@ func (s StateMachine) Recovery(data []byte) error {
 	return nil
 }
 
-func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, dataDir string, topo *topology.Topology, raftResumeState bool) (*RaftServer, error) {
+func NewRaftServer(grpcDialOption grpc.DialOption, peers []pb.ServerAddress, serverAddr pb.ServerAddress, dataDir string, topo *topology.Topology, raftResumeState bool) (*RaftServer, error) {
 	s := &RaftServer{
 		peers:      peers,
 		serverAddr: serverAddr,
@@ -80,7 +81,7 @@ func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, d
 	}
 
 	stateMachine := StateMachine{topo: topo}
-	s.raftServer, err = raft.NewServer(s.serverAddr, s.dataDir, transporter, stateMachine, topo, "")
+	s.raftServer, err = raft.NewServer(string(s.serverAddr), s.dataDir, transporter, stateMachine, topo, "")
 	if err != nil {
 		glog.V(0).Infoln(err)
 		return nil, err
@@ -95,16 +96,17 @@ func NewRaftServer(grpcDialOption grpc.DialOption, peers []string, serverAddr, d
 	}
 
 	for _, peer := range s.peers {
-		if err := s.raftServer.AddPeer(peer, pb.ServerToGrpcAddress(peer)); err != nil {
+		if err := s.raftServer.AddPeer(string(peer), peer.ToGrpcAddress()); err != nil {
 			return nil, err
 		}
 	}
 
 	// Remove deleted peers
 	for existsPeerName := range s.raftServer.Peers() {
-		exists, existingPeer := false, ""
+		exists := false
+		var existingPeer pb.ServerAddress
 		for _, peer := range s.peers {
-			if pb.ServerToGrpcAddress(peer) == existsPeerName {
+			if peer.ToGrpcAddress() == existsPeerName {
 				exists, existingPeer = true, peer
 				break
 			}
@@ -141,8 +143,10 @@ func (s *RaftServer) Peers() (members []string) {
 	return
 }
 
-func isTheFirstOne(self string, peers []string) bool {
-	sort.Strings(peers)
+func isTheFirstOne(self pb.ServerAddress, peers []pb.ServerAddress) bool {
+	sort.Slice(peers, func(i, j int) bool {
+		return strings.Compare(string(peers[i]), string(peers[j])) < 0
+	})
 	if len(peers) <= 0 {
 		return true
 	}
@@ -155,7 +159,7 @@ func (s *RaftServer) DoJoinCommand() {
 
 	if _, err := s.raftServer.Do(&raft.DefaultJoinCommand{
 		Name:             s.raftServer.Name(),
-		ConnectionString: pb.ServerToGrpcAddress(s.serverAddr),
+		ConnectionString: s.serverAddr.ToGrpcAddress(),
 	}); err != nil {
 		glog.Errorf("fail to send join command: %v", err)
 	}

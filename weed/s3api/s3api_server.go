@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"net/http"
 	"strings"
 	"time"
@@ -14,9 +15,8 @@ import (
 )
 
 type S3ApiServerOption struct {
-	Filer            string
+	Filer            pb.ServerAddress
 	Port             int
-	FilerGrpcAddress string
 	Config           string
 	DomainName       string
 	BucketsPath      string

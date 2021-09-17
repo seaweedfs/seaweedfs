@@ -1,3 +1,4 @@
+//go:build rocksdb
 // +build rocksdb
 
 package weed_server

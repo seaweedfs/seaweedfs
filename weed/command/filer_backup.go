@@ -78,7 +78,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		return fmt.Errorf("no data sink configured in replication.toml")
 	}
 
-	sourceFiler := *backupOption.filer
+	sourceFiler := pb.ServerAddress(*backupOption.filer)
 	sourcePath := *backupOption.path
 	timeAgo := *backupOption.timeAgo
 	targetPath := dataSink.GetSinkToDirectory()
@@ -102,7 +102,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 
 	// create filer sink
 	filerSource := &source.FilerSource{}
-	filerSource.DoInitialize(sourceFiler, pb.ServerToGrpcAddress(sourceFiler), sourcePath, *backupOption.proxyByFiler)
+	filerSource.DoInitialize(sourceFiler.ToHttpAddress(), sourceFiler.ToGrpcAddress(), sourcePath, *backupOption.proxyByFiler)
 	dataSink.SetSourceFiler(filerSource)
 
 	processEventFn := genProcessFunction(sourcePath, targetPath, dataSink, debug)
@@ -113,6 +113,6 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	})
 
 	return pb.FollowMetadata(sourceFiler, grpcDialOption, "backup_"+dataSink.GetName(),
-		sourcePath, startFrom.UnixNano(), 0, processEventFnWithOffset, false)
+		sourcePath, nil, startFrom.UnixNano(), 0, processEventFnWithOffset, false)
 
 }

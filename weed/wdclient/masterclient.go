@@ -15,27 +15,25 @@ import (
 
 type MasterClient struct {
 	clientType     string
-	clientHost     string
-	grpcPort       uint32
-	currentMaster  string
-	masters        []string
+	clientHost     pb.ServerAddress
+	currentMaster  pb.ServerAddress
+	masters        []pb.ServerAddress
 	grpcDialOption grpc.DialOption
 
 	vidMap
 }
 
-func NewMasterClient(grpcDialOption grpc.DialOption, clientType string, clientHost string, clientGrpcPort uint32, clientDataCenter string, masters []string) *MasterClient {
+func NewMasterClient(grpcDialOption grpc.DialOption, clientType string, clientHost pb.ServerAddress, clientDataCenter string, masters []pb.ServerAddress) *MasterClient {
 	return &MasterClient{
 		clientType:     clientType,
 		clientHost:     clientHost,
-		grpcPort:       clientGrpcPort,
 		masters:        masters,
 		grpcDialOption: grpcDialOption,
 		vidMap:         newVidMap(clientDataCenter),
 	}
 }
 
-func (mc *MasterClient) GetMaster() string {
+func (mc *MasterClient) GetMaster() pb.ServerAddress {
 	mc.WaitUntilConnected()
 	return mc.currentMaster
 }
@@ -54,7 +52,7 @@ func (mc *MasterClient) KeepConnectedToMaster() {
 	}
 }
 
-func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress string) (leader string) {
+func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress pb.ServerAddress) (leader string) {
 	for _, master := range mc.masters {
 		if master == myMasterAddress {
 			continue
@@ -81,7 +79,7 @@ func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress string) (leader
 }
 
 func (mc *MasterClient) tryAllMasters() {
-	nextHintedLeader := ""
+	var nextHintedLeader pb.ServerAddress
 	for _, master := range mc.masters {
 
 		nextHintedLeader = mc.tryConnectToMaster(master)
@@ -94,8 +92,8 @@ func (mc *MasterClient) tryAllMasters() {
 	}
 }
 
-func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader string) {
-	glog.V(1).Infof("%s masterClient Connecting to master %v", mc.clientType, master)
+func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedLeader pb.ServerAddress) {
+	glog.V(0).Infof("%s masterClient Connecting to master %v", mc.clientType, master)
 	gprcErr := pb.WithMasterClient(master, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -107,7 +105,7 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 			return err
 		}
 
-		if err = stream.Send(&master_pb.KeepConnectedRequest{Name: mc.clientType, GrpcPort: mc.grpcPort}); err != nil {
+		if err = stream.Send(&master_pb.KeepConnectedRequest{Name: mc.clientType, ClientAddress: string(mc.clientHost)}); err != nil {
 			glog.V(0).Infof("%s masterClient failed to send to %s: %v", mc.clientType, master, err)
 			return err
 		}
@@ -125,7 +123,7 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 			// maybe the leader is changed
 			if volumeLocation.Leader != "" {
 				glog.V(0).Infof("redirected to leader %v", volumeLocation.Leader)
-				nextHintedLeader = volumeLocation.Leader
+				nextHintedLeader = pb.ServerAddress(volumeLocation.Leader)
 				return nil
 			}
 
@@ -134,6 +132,7 @@ func (mc *MasterClient) tryConnectToMaster(master string) (nextHintedLeader stri
 				Url:        volumeLocation.Url,
 				PublicUrl:  volumeLocation.PublicUrl,
 				DataCenter: volumeLocation.DataCenter,
+				GrpcPort:   int(volumeLocation.GrpcPort),
 			}
 			for _, newVid := range volumeLocation.NewVids {
 				glog.V(1).Infof("%s: %s masterClient adds volume %d", mc.clientType, loc.Url, newVid)

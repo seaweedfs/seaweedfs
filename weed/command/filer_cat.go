@@ -23,7 +23,7 @@ var (
 
 type FilerCatOptions struct {
 	grpcDialOption grpc.DialOption
-	filerAddress   string
+	filerAddress   pb.ServerAddress
 	filerClient    filer_pb.SeaweedFilerClient
 	output         *string
 }
@@ -78,7 +78,7 @@ func runFilerCat(cmd *Command, args []string) bool {
 		return false
 	}
 
-	filerCat.filerAddress = filerUrl.Host
+	filerCat.filerAddress = pb.ServerAddress(filerUrl.Host)
 	filerCat.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	dir, name := util.FullPath(urlPath).DirAndName()
@@ -105,6 +105,11 @@ func runFilerCat(cmd *Command, args []string) bool {
 		}
 		respLookupEntry, err := filer_pb.LookupEntry(client, request)
 		if err != nil {
+			return err
+		}
+
+		if len(respLookupEntry.Entry.Content) > 0 {
+			_, err = writer.Write(respLookupEntry.Entry.Content)
 			return err
 		}
 

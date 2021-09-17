@@ -1,7 +1,9 @@
 package shell
 
 import (
+	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"io"
 	"os"
@@ -45,6 +47,24 @@ func RunShell(options ShellOptions) {
 	go commandEnv.MasterClient.KeepConnectedToMaster()
 	commandEnv.MasterClient.WaitUntilConnected()
 
+	if commandEnv.option.FilerAddress != "" {
+		commandEnv.WithFilerClient(func(filerClient filer_pb.SeaweedFilerClient) error {
+			resp, err := filerClient.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+			if err != nil {
+				return err
+			}
+			if resp.ClusterId != "" {
+				fmt.Printf(`
+---
+Free Monitoring Data URL:
+https://cloud.seaweedfs.com/ui/%s
+---
+`, resp.ClusterId)
+			}
+			return nil
+		})
+	}
+
 	for {
 		cmd, err := line.Prompt("> ")
 		if err != nil {
@@ -64,10 +84,12 @@ func RunShell(options ShellOptions) {
 
 func processEachCmd(reg *regexp.Regexp, cmd string, commandEnv *CommandEnv) bool {
 	cmds := reg.FindAllString(cmd, -1)
+
+	line.AppendHistory(cmd)
+
 	if len(cmds) == 0 {
 		return false
 	} else {
-		line.AppendHistory(cmd)
 
 		args := make([]string, len(cmds[1:]))
 

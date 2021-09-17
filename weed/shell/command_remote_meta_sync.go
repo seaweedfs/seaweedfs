@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
@@ -54,20 +55,20 @@ func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, detectErr := detectMountInfo(commandEnv, writer, *dir)
-	if detectErr != nil{
+	if detectErr != nil {
 		jsonPrintln(writer, mappings)
 		return detectErr
 	}
 
 	// pull metadata from remote
 	if err = pullMetadata(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(*dir), remoteStorageConf); err != nil {
-		return fmt.Errorf("cache content data: %v", err)
+		return fmt.Errorf("cache meta data: %v", err)
 	}
 
 	return nil
 }
 
-func detectMountInfo(commandEnv *CommandEnv, writer io.Writer, dir string) (*filer_pb.RemoteStorageMapping, string, *filer_pb.RemoteStorageLocation, *filer_pb.RemoteConf, error) {
+func detectMountInfo(commandEnv *CommandEnv, writer io.Writer, dir string) (*remote_pb.RemoteStorageMapping, string, *remote_pb.RemoteStorageLocation, *remote_pb.RemoteConf, error) {
 	return filer.DetectMountInfo(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, dir)
 }
 
@@ -75,7 +76,7 @@ func detectMountInfo(commandEnv *CommandEnv, writer io.Writer, dir string) (*fil
   This function update entry.RemoteEntry if the remote has any changes.
 
   To pull remote updates, or created for the first time, the criteria is:
-    entry == nil or (entry.RemoteEntry != nil and entry.RemoteEntry.RemoteTag != remote.RemoteTag)
+    entry == nil or (entry.RemoteEntry != nil and (entry.RemoteEntry.RemoteTag != remote.RemoteTag or entry.RemoteEntry.RemoteMTime < remote.RemoteMTime ))
   After the meta pull, the entry.RemoteEntry will have:
     remoteEntry.LastLocalSyncTsNs == 0
     Attributes.FileSize = uint64(remoteEntry.RemoteSize)
@@ -105,8 +106,8 @@ func detectMountInfo(commandEnv *CommandEnv, writer io.Writer, dir string) (*fil
   If entry.RemoteEntry.RemoteTag != remoteEntry.RemoteTag {
     the remote version is updated, need to pull meta
   }
- */
-func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *filer_pb.RemoteStorageLocation, dirToCache util.FullPath, remoteConf *filer_pb.RemoteConf) error {
+*/
+func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToCache util.FullPath, remoteConf *remote_pb.RemoteConf) error {
 
 	// visit remote storage
 	remoteStorage, err := remote_storage.GetRemoteStorage(remoteConf)
@@ -157,7 +158,7 @@ func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util
 					fmt.Fprintln(writer, " (skip)")
 					return nil
 				}
-				if existingEntry.RemoteEntry.RemoteETag != remoteEntry.RemoteETag {
+				if existingEntry.RemoteEntry.RemoteETag != remoteEntry.RemoteETag || existingEntry.RemoteEntry.RemoteMtime < remoteEntry.RemoteMtime {
 					// the remote version is updated, need to pull meta
 					fmt.Fprintln(writer, " (update)")
 					return doSaveRemoteEntry(client, string(localDir), existingEntry, remoteEntry)

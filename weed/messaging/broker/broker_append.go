@@ -71,8 +71,9 @@ func (broker *MessageBroker) assignAndUpload(topicConfig *messaging_pb.TopicConf
 
 			assignResult.Auth = security.EncodedJwt(resp.Auth)
 			assignResult.Fid = resp.FileId
-			assignResult.Url = resp.Url
-			assignResult.PublicUrl = resp.PublicUrl
+			assignResult.Url = resp.Location.Url
+			assignResult.PublicUrl = resp.Location.PublicUrl
+			assignResult.GrpcPort = int(resp.Location.GrpcPort)
 			assignResult.Count = uint64(resp.Count)
 
 			return nil
@@ -88,7 +89,16 @@ func (broker *MessageBroker) assignAndUpload(topicConfig *messaging_pb.TopicConf
 
 	// upload data
 	targetUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
-	uploadResult, err := operation.UploadData(targetUrl, "", broker.option.Cipher, data, false, "", nil, assignResult.Auth)
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         targetUrl,
+		Filename:          "",
+		Cipher:            broker.option.Cipher,
+		IsInputCompressed: false,
+		MimeType:          "",
+		PairMap:           nil,
+		Jwt:               assignResult.Auth,
+	}
+	uploadResult, err := operation.UploadData(data, uploadOption)
 	if err != nil {
 		return nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
 	}

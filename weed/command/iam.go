@@ -43,38 +43,35 @@ func runIam(cmd *Command, args []string) bool {
 }
 
 func (iamopt *IamOptions) startIamServer() bool {
-	filerGrpcAddress, err := pb.ParseServerToGrpcAddress(*iamopt.filer)
-	if err != nil {
-		glog.Fatal(err)
-		return false
-	}
+	filerAddress := pb.ServerAddress(*iamopt.filer)
 
 	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	for {
-		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithGrpcFilerClient(filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
-				return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
+				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
 			}
 			glog.V(0).Infof("IAM read filer configuration: %s", resp)
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *iamopt.filer, filerGrpcAddress)
+			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *iamopt.filer, filerAddress.ToGrpcAddress())
 			time.Sleep(time.Second)
 		} else {
-			glog.V(0).Infof("connected to filer %s grpc address %s", *iamopt.filer, filerGrpcAddress)
+			glog.V(0).Infof("connected to filer %s grpc address %s", *iamopt.filer, filerAddress.ToGrpcAddress())
 			break
 		}
 	}
 
+	masters := pb.ServerAddresses(*iamopt.masters).ToAddresses()
 	router := mux.NewRouter().SkipClean(true)
 	_, iamApiServer_err := iamapi.NewIamApiServer(router, &iamapi.IamServerOption{
-		Filer:            *iamopt.filer,
-		Port:             *iamopt.port,
-		FilerGrpcAddress: filerGrpcAddress,
-		GrpcDialOption:   grpcDialOption,
+		Masters:        masters,
+		Filer:          filerAddress,
+		Port:           *iamopt.port,
+		GrpcDialOption: grpcDialOption,
 	})
 	glog.V(0).Info("NewIamApiServer created")
 	if iamApiServer_err != nil {

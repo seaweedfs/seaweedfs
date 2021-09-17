@@ -1,4 +1,4 @@
-package pb
+package volume_info
 
 import (
 	"bytes"
