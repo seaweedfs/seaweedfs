@@ -6,7 +6,7 @@ import (
 )
 
 func TestAddRemove(t *testing.T) {
-	tree := NewBpTree(32)
+	tree := NewBpTree(5)
 	PersistFn = func(node *BpNode) error {
 		println("saving", node.protoNodeId)
 		return nil
@@ -24,11 +24,11 @@ func TestAddRemove(t *testing.T) {
 
 func printTree(node *BpNode, prefix string) {
 	fmt.Printf("%sNode %d\n", prefix, node.protoNodeId)
-	prefix += "  "
+	prefix += " "
 	for i:=0;i<len(node.keys);i++{
-		fmt.Printf("%skey %s\n", prefix, node.keys[i])
+		fmt.Printf("%skey %v\n", prefix, node.keys[i])
 		if i < len(node.pointers) && node.pointers[i] != nil {
-			printTree(node.pointers[i], prefix+"  ")
+			printTree(node.pointers[i], prefix+" ")
 		}
 	}
 }

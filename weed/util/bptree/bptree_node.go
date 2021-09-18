@@ -16,7 +16,6 @@ type BpNode struct {
 	pointers    []*BpNode
 	next        *BpNode
 	prev        *BpNode
-	no_dup      bool
 	protoNodeId int64
 	protoNode   *ProtoNode
 }
@@ -32,14 +31,13 @@ func NewInternal(size int) *BpNode {
 	}
 }
 
-func NewLeaf(size int, no_dup bool) *BpNode {
+func NewLeaf(size int) *BpNode {
 	if size < 0 {
 		panic(NegativeSize())
 	}
 	return &BpNode{
 		keys:        make([]ItemKey, 0, size),
 		values:      make([]ItemValue, 0, size),
-		no_dup:      no_dup,
 		protoNodeId: GetProtoNodeId(),
 	}
 }
@@ -65,7 +63,11 @@ func (self *BpNode) Internal() bool {
 	return cap(self.pointers) > 0
 }
 
-func (self *BpNode) NodeSize() int {
+func (self *BpNode) Len() int {
+	return len(self.keys)
+}
+
+func (self *BpNode) Capacity() int {
 	return cap(self.keys)
 }
 
@@ -76,19 +78,6 @@ func (self *BpNode) Height() int {
 		panic(BpTreeError("Internal node has no pointers but asked for height"))
 	}
 	return self.pointers[0].Height() + 1
-}
-
-func (self *BpNode) count(key ItemKey) int {
-	i, _ := self.find(key)
-	count := 0
-	for ; i < len(self.keys); i++ {
-		if self.keys[i].Equals(key) {
-			count++
-		} else {
-			break
-		}
-	}
-	return count
 }
 
 func (self *BpNode) has(key ItemKey) bool {
@@ -198,7 +187,7 @@ func (self *BpNode) put(key ItemKey, value ItemValue) (root *BpNode, err error) 
 		return a, nil
 	}
 	// else we have root split
-	root = NewInternal(self.NodeSize())
+	root = NewInternal(self.Capacity())
 	root.put_kp(a.keys[0], a)
 	root.put_kp(b.keys[0], b)
 	return root, root.persist()
@@ -267,9 +256,9 @@ func (self *BpNode) internal_split(key ItemKey, ptr *BpNode) (a, b *BpNode, err 
 		return nil, nil, BpTreeError("Tried to split an internal block on duplicate key")
 	}
 	a = self
-	b = NewInternal(self.NodeSize())
-	balance_nodes(a, b)
-	if key.Less(b.keys[0]) {
+	b = NewInternal(self.Capacity())
+	balance_nodes(a, b, key)
+	if b.Len() > 0 && key.Less(b.keys[0]) {
 		if err := a.put_kp(key, ptr); err != nil {
 			return nil, nil, err
 		}
@@ -290,7 +279,7 @@ func (self *BpNode) leaf_insert(key ItemKey, value ItemValue) (a, b *BpNode, err
 	if self.Internal() {
 		return nil, nil, BpTreeError("Expected a leaf node")
 	}
-	if self.no_dup {
+	if true { // no_dup = true
 		i, has := self.find(key)
 		if has {
 			self.values[i] = value
@@ -321,10 +310,10 @@ func (self *BpNode) leaf_split(key ItemKey, value ItemValue) (a, b *BpNode, err 
 		return self.pure_leaf_split(key, value)
 	}
 	a = self
-	b = NewLeaf(self.NodeSize(), self.no_dup)
+	b = NewLeaf(self.Capacity())
 	insert_linked_list_node(b, a, a.getNext())
-	balance_nodes(a, b)
-	if key.Less(b.keys[0]) {
+	balance_nodes(a, b, key)
+	if b.Len() > 0 && key.Less(b.keys[0]) {
 		if err := a.put_kv(key, value); err != nil {
 			return nil, nil, err
 		}
@@ -353,7 +342,7 @@ func (self *BpNode) pure_leaf_split(key ItemKey, value ItemValue) (a, b *BpNode,
 		return nil, nil, BpTreeError("Expected a pure leaf node")
 	}
 	if key.Less(self.keys[0]) {
-		a = NewLeaf(self.NodeSize(), self.no_dup)
+		a = NewLeaf(self.Capacity())
 		b = self
 		if err := a.put_kv(key, value); err != nil {
 			return nil, nil, err
@@ -369,7 +358,7 @@ func (self *BpNode) pure_leaf_split(key ItemKey, value ItemValue) (a, b *BpNode,
 			}
 			return a, nil, a.persist()
 		} else {
-			b = NewLeaf(self.NodeSize(), self.no_dup)
+			b = NewLeaf(self.Capacity())
 			if err := b.put_kv(key, value); err != nil {
 				return nil, nil, err
 			}
@@ -604,11 +593,7 @@ func (self *BpNode) find(key ItemKey) (int, bool) {
 		if key.Less(self.keys[m]) {
 			r = m - 1
 		} else if key.Equals(self.keys[m]) {
-			for j := m; j >= 0; j-- {
-				if j == 0 || !key.Equals(self.keys[j-1]) {
-					return j, true
-				}
-			}
+			return m, true
 		} else {
 			l = m + 1
 		}
@@ -713,9 +698,15 @@ func remove_linked_list_node(n *BpNode) {
 	}
 }
 
-/* a must be full and b must be empty else there will be a panic
+/**
+ * a must be full and b must be empty else there will be a panic
+ *
+ * Different from common btree implementation, this splits the nodes by the inserted key.
+ * Items less than the splitKey stays in a, or moved to b if otherwise.
+ * This should help for monotonically increasing inserts.
+ *
  */
-func balance_nodes(a, b *BpNode) {
+func balance_nodes(a, b *BpNode, splitKey ItemKey) {
 	if len(b.keys) != 0 {
 		panic(BpTreeError("b was not empty"))
 	}
@@ -731,16 +722,8 @@ func balance_nodes(a, b *BpNode) {
 	if cap(a.pointers) != cap(b.pointers) {
 		panic(BpTreeError("cap(a.pointers) != cap(b.pointers)"))
 	}
-	m := len(a.keys) / 2
-	for m < len(a.keys) && a.keys[m-1].Equals(a.keys[m]) {
-		m++
-	}
-	if m == len(a.keys) {
-		m--
-		for m > 0 && a.keys[m-1].Equals(a.keys[m]) {
-			m--
-		}
-	}
+
+	m := find_split_index(a, b, splitKey)
 	var lim = len(a.keys) - m
 	b.keys = b.keys[:lim]
 	if cap(a.values) > 0 {
@@ -772,4 +755,12 @@ func balance_nodes(a, b *BpNode) {
 	if cap(a.pointers) > 0 {
 		a.pointers = a.pointers[:m]
 	}
+}
+
+func find_split_index(a, b *BpNode, splitKey ItemKey) int {
+	m := len(a.keys)
+	for m > 0 && !a.keys[m-1].Less(splitKey) {
+		m--
+	}
+	return m
 }

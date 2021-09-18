@@ -14,7 +14,7 @@ type loc_iterator func() (i int, leaf *BpNode, li loc_iterator)
 
 func NewBpTree(node_size int) *BpTree {
 	return &BpTree{
-		root: NewLeaf(node_size, false),
+		root: NewLeaf(node_size),
 	}
 }
 
@@ -87,13 +87,13 @@ func (self *BpTree) Range(from, to ItemKey) (kvi KVIterator) {
 }
 
 func (self *BpTree) RemoveWhere(key ItemKey, where WhereFunc) (err error) {
-	ns := self.getRoot().NodeSize()
+	ns := self.getRoot().Capacity()
 	new_root, err := self.getRoot().remove(key, where)
 	if err != nil {
 		return err
 	}
 	if new_root == nil {
-		new_root = NewLeaf(ns, false)
+		new_root = NewLeaf(ns)
 		err = new_root.persist()
 		self.setRoot(new_root)
 	} else {
