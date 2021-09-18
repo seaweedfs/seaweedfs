@@ -15,10 +15,20 @@ func TestAddRemove(t *testing.T) {
 		println("delete", node.protoNodeId)
 		return nil
 	}
-	for i:=0;i<1024;i++{
+	for i:=0;i<32;i++{
 		println("++++++++++", i)
-		tree.Add(String(fmt.Sprintf("%02d", i)), String(fmt.Sprintf("%02d", i)))
+		tree.Add(String(fmt.Sprintf("%02d", i)), nil)
 		printTree(tree.root, "")
+	}
+
+	if !tree.Has(String("30")) {
+		t.Errorf("lookup error")
+	}
+	tree.RemoveWhere(String("30"), func(value ItemValue) bool {
+		return true
+	})
+	if tree.Has(String("30")) {
+		t.Errorf("remove error")
 	}
 }
 
