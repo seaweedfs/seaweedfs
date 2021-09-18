@@ -5,29 +5,38 @@ import (
 	"testing"
 )
 
+type nodeStorePrintlnImpl struct {
+}
+
+func (n *nodeStorePrintlnImpl) PersistFunc(node *BpNode) error {
+	println("saving node", node.protoNodeId)
+	return nil
+}
+func (n *nodeStorePrintlnImpl) DestroyFunc(node *BpNode) error {
+	println("delete node", node.protoNodeId)
+	return nil
+}
+
 func TestAddRemove(t *testing.T) {
-	tree := NewBpTree(5)
-	PersistFn = func(node *BpNode) error {
-		println("saving", node.protoNodeId)
-		return nil
-	}
-	DestroyFn = func(node *BpNode) error {
-		println("delete", node.protoNodeId)
-		return nil
-	}
-	for i:=0;i<32;i++{
+
+	tree := NewBpTree(3, &nodeStorePrintlnImpl{})
+	for i:=0;i<9;i++{
 		println("++++++++++", i)
 		tree.Add(String(fmt.Sprintf("%02d", i)), nil)
 		printTree(tree.root, "")
 	}
 
-	if !tree.Has(String("30")) {
+	if !tree.Has(String("08")) {
 		t.Errorf("lookup error")
 	}
-	tree.RemoveWhere(String("30"), func(value ItemValue) bool {
-		return true
-	})
-	if tree.Has(String("30")) {
+	for i:=5;i<9;i++{
+		println("----------", i)
+		tree.RemoveWhere(String(fmt.Sprintf("%02d", i)), func(value ItemValue) bool {
+			return true
+		})
+		printTree(tree.root, "")
+	}
+	if tree.Has(String("08")) {
 		t.Errorf("remove error")
 	}
 }

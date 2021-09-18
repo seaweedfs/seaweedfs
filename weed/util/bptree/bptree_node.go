@@ -2,13 +2,11 @@ package bptree
 
 type ItemKey Hashable
 type ItemValue Equatable
-type PersistFunc func(node *BpNode) error
-type DestroyFunc func(node *BpNode) error
 
-var (
-	PersistFn PersistFunc
-	DestroyFn DestroyFunc
-)
+type NodeStore interface {
+	PersistFunc(node *BpNode) error
+	DestroyFunc(node *BpNode) error
+}
 
 type BpNode struct {
 	keys        []ItemKey
@@ -18,9 +16,10 @@ type BpNode struct {
 	prev        *BpNode
 	protoNodeId int64
 	protoNode   *ProtoNode
+	nodeStore   NodeStore
 }
 
-func NewInternal(size int) *BpNode {
+func NewInternal(size int, nodeStore NodeStore) *BpNode {
 	if size < 0 {
 		panic(NegativeSize())
 	}
@@ -28,10 +27,11 @@ func NewInternal(size int) *BpNode {
 		keys:        make([]ItemKey, 0, size),
 		pointers:    make([]*BpNode, 0, size),
 		protoNodeId: GetProtoNodeId(),
+		nodeStore:   nodeStore,
 	}
 }
 
-func NewLeaf(size int) *BpNode {
+func NewLeaf(size int, nodeStore NodeStore) *BpNode {
 	if size < 0 {
 		panic(NegativeSize())
 	}
@@ -39,6 +39,7 @@ func NewLeaf(size int) *BpNode {
 		keys:        make([]ItemKey, 0, size),
 		values:      make([]ItemValue, 0, size),
 		protoNodeId: GetProtoNodeId(),
+		nodeStore:   nodeStore,
 	}
 }
 
@@ -187,7 +188,7 @@ func (self *BpNode) put(key ItemKey, value ItemValue) (root *BpNode, err error) 
 		return a, nil
 	}
 	// else we have root split
-	root = NewInternal(self.Capacity())
+	root = NewInternal(self.Capacity(), self.nodeStore)
 	root.put_kp(a.keys[0], a)
 	root.put_kp(b.keys[0], b)
 	return root, root.persist()
@@ -256,7 +257,7 @@ func (self *BpNode) internal_split(key ItemKey, ptr *BpNode) (a, b *BpNode, err 
 		return nil, nil, BpTreeError("Tried to split an internal block on duplicate key")
 	}
 	a = self
-	b = NewInternal(self.Capacity())
+	b = NewInternal(self.Capacity(), self.nodeStore)
 	balance_nodes(a, b, key)
 	if b.Len() > 0 && key.Less(b.keys[0]) {
 		if err := a.put_kp(key, ptr); err != nil {
@@ -310,7 +311,7 @@ func (self *BpNode) leaf_split(key ItemKey, value ItemValue) (a, b *BpNode, err 
 		return self.pure_leaf_split(key, value)
 	}
 	a = self
-	b = NewLeaf(self.Capacity())
+	b = NewLeaf(self.Capacity(), self.nodeStore)
 	insert_linked_list_node(b, a, a.getNext())
 	balance_nodes(a, b, key)
 	if b.Len() > 0 && key.Less(b.keys[0]) {
@@ -342,7 +343,7 @@ func (self *BpNode) pure_leaf_split(key ItemKey, value ItemValue) (a, b *BpNode,
 		return nil, nil, BpTreeError("Expected a pure leaf node")
 	}
 	if key.Less(self.keys[0]) {
-		a = NewLeaf(self.Capacity())
+		a = NewLeaf(self.Capacity(), self.nodeStore)
 		b = self
 		if err := a.put_kv(key, value); err != nil {
 			return nil, nil, err
@@ -358,7 +359,7 @@ func (self *BpNode) pure_leaf_split(key ItemKey, value ItemValue) (a, b *BpNode,
 			}
 			return a, nil, a.persist()
 		} else {
-			b = NewLeaf(self.Capacity())
+			b = NewLeaf(self.Capacity(), self.nodeStore)
 			if err := b.put_kv(key, value); err != nil {
 				return nil, nil, err
 			}

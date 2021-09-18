@@ -12,9 +12,9 @@ type BpTree struct {
 
 type loc_iterator func() (i int, leaf *BpNode, li loc_iterator)
 
-func NewBpTree(node_size int) *BpTree {
+func NewBpTree(node_size int, nodeStore NodeStore) *BpTree {
 	return &BpTree{
-		root: NewLeaf(node_size),
+		root: NewLeaf(node_size, nodeStore),
 	}
 }
 
@@ -93,7 +93,7 @@ func (self *BpTree) RemoveWhere(key ItemKey, where WhereFunc) (err error) {
 		return err
 	}
 	if new_root == nil {
-		new_root = NewLeaf(ns)
+		new_root = NewLeaf(ns, self.root.nodeStore)
 		err = new_root.persist()
 		self.setRoot(new_root)
 	} else {

@@ -45,14 +45,14 @@ func (self *BpNode) maybePersist(shouldPersist bool) error {
 	return self.persist()
 }
 func (self *BpNode) persist() error {
-	if PersistFn != nil {
-		return PersistFn(self)
+	if self.nodeStore != nil {
+		return self.nodeStore.PersistFunc(self)
 	}
 	return nil
 }
 func (self *BpNode) destroy() error {
-	if DestroyFn != nil {
-		return DestroyFn(self)
+	if self.nodeStore != nil {
+		return self.nodeStore.DestroyFunc(self)
 	}
 	return nil
 }

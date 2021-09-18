@@ -9,9 +9,9 @@ import (
  */
 type BpMap BpTree
 
-func NewBpMap(node_size int) *BpMap {
+func NewBpMap(node_size int, nodeStore NodeStore) *BpMap {
 	return &BpMap{
-		root: NewLeaf(node_size),
+		root: NewLeaf(node_size, nodeStore),
 	}
 }
 
@@ -47,7 +47,7 @@ func (self *BpMap) Remove(key ItemKey) (value ItemValue, err error) {
 		return nil, err
 	}
 	if new_root == nil {
-		new_root = NewLeaf(ns)
+		new_root = NewLeaf(ns, self.root.nodeStore)
 		err = new_root.persist()
 		self.setRoot(new_root)
 	} else {
