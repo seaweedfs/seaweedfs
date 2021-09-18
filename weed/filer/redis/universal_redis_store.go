@@ -120,6 +120,8 @@ func (store *UniversalRedisStore) DeleteFolderChildren(ctx context.Context, full
 		if err != nil {
 			return fmt.Errorf("delete %s in parent dir: %v", fullpath, err)
 		}
+		// not efficient, but need to remove if it is a directory
+		store.Client.Del(ctx, genDirectoryListKey(string(path)))
 	}
 
 	return nil
