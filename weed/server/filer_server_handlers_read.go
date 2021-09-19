@@ -177,7 +177,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				Directory: dir,
 				Name:      name,
 			}); err != nil {
-				glog.Errorf("cache %s: %v", entry.FullPath, err)
+				glog.Errorf("DownloadToLocal %s: %v", entry.FullPath, err)
 				return fmt.Errorf("cache %s: %v", entry.FullPath, err)
 			} else {
 				chunks = resp.Entry.Chunks
