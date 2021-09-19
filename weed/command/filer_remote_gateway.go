@@ -22,8 +22,8 @@ type RemoteGatewayOptions struct {
 	timeAgo                  *time.Duration
 	createBucketAt           *string
 	createBucketRandomSuffix *bool
-	include *string
-	exclude *string
+	include                  *string
+	exclude                  *string
 
 	mappings    *remote_pb.RemoteStorageMapping
 	remoteConfs map[string]*remote_pb.RemoteConf

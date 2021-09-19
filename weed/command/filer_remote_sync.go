@@ -13,12 +13,11 @@ import (
 )
 
 type RemoteSyncOptions struct {
-	filerAddress             *string
-	grpcDialOption           grpc.DialOption
-	readChunkFromFiler       *bool
-	timeAgo                  *time.Duration
-	dir                      *string
-
+	filerAddress       *string
+	grpcDialOption     grpc.DialOption
+	readChunkFromFiler *bool
+	timeAgo            *time.Duration
+	dir                *string
 }
 
 var _ = filer_pb.FilerClient(&RemoteSyncOptions{})

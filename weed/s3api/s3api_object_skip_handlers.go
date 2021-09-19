@@ -35,4 +35,3 @@ func (s3a *S3ApiServer) PutObjectLockConfigurationHandler(w http.ResponseWriter,
 	w.WriteHeader(http.StatusNoContent)
 
 }
-
