@@ -40,6 +40,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 
 	// collect parameters
 	bucket, _ := getBucketAndObject(r)
+	glog.V(3).Infof("ListObjectsV2Handler %s", bucket)
 
 	originalPrefix, continuationToken, startAfter, delimiter, _, maxKeys := getListObjectsV2Args(r.URL.Query())
 
@@ -95,6 +96,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 
 	// collect parameters
 	bucket, _ := getBucketAndObject(r)
+	glog.V(3).Infof("ListObjectsV1Handler %s", bucket)
 
 	originalPrefix, marker, delimiter, maxKeys := getListObjectsV1Args(r.URL.Query())
 

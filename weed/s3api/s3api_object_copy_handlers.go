@@ -27,6 +27,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	srcBucket, srcObject := pathToBucketAndObject(cpSrcPath)
 
+	glog.V(3).Infof("CopyObjectHandler %s %s => %s %s", srcBucket, srcObject, dstBucket, dstObject)
+
 	if (srcBucket == dstBucket && srcObject == dstObject || cpSrcPath == "") && isReplace(r) {
 		fullPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
 		dir, name := fullPath.DirAndName()
@@ -138,6 +140,8 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		s3err.WriteErrorResponse(w, s3err.ErrInvalidPart, r)
 		return
 	}
+
+	glog.V(3).Infof("CopyObjectPartHandler %s %s => %s part %d", srcBucket, srcObject, dstBucket, partID)
 
 	// check partID with maximum part ID for multipart objects
 	if partID > globalMaxPartID {

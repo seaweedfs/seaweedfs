@@ -193,6 +193,8 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 	bucket, _ := getBucketAndObject(r)
 
+	glog.V(3).Infof("DeleteMultipleObjectsHandler %s", bucket)
+
 	deleteXMLBytes, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
@@ -291,7 +293,7 @@ var passThroughHeaders = []string{
 
 func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, responseFn func(proxyResponse *http.Response, w http.ResponseWriter)) {
 
-	glog.V(2).Infof("s3 proxying %s to %s", r.Method, destUrl)
+	glog.V(3).Infof("s3 proxying %s to %s", r.Method, destUrl)
 
 	proxyReq, err := http.NewRequest(r.Method, destUrl, r.Body)
 

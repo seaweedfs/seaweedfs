@@ -17,6 +17,7 @@ import (
 func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := getBucketAndObject(r)
+	glog.V(3).Infof("GetObjectTaggingHandler %s %s", bucket, object)
 
 	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
 	dir, name := target.DirAndName()
@@ -42,6 +43,7 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := getBucketAndObject(r)
+	glog.V(3).Infof("PutObjectTaggingHandler %s %s", bucket, object)
 
 	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
 	dir, name := target.DirAndName()
@@ -97,6 +99,7 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := getBucketAndObject(r)
+	glog.V(3).Infof("DeleteObjectTaggingHandler %s %s", bucket, object)
 
 	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
 	dir, name := target.DirAndName()
