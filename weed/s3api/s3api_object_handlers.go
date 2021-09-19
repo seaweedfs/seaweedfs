@@ -118,6 +118,7 @@ func urlPathEscape(object string) string {
 func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := getBucketAndObject(r)
+	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
 
 	if strings.HasSuffix(r.URL.Path, "/") {
 		s3err.WriteErrorResponse(w, s3err.ErrNotImplemented, r)
@@ -134,6 +135,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := getBucketAndObject(r)
+	glog.V(3).Infof("HeadObjectHandler %s %s", bucket, object)
 
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
@@ -145,6 +147,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := getBucketAndObject(r)
+	glog.V(3).Infof("DeleteObjectHandler %s %s", bucket, object)
 
 	destUrl := fmt.Sprintf("http://%s%s/%s%s?recursive=true",
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
@@ -192,7 +195,6 @@ type DeleteObjectsResponse struct {
 func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, _ := getBucketAndObject(r)
-
 	glog.V(3).Infof("DeleteMultipleObjectsHandler %s", bucket)
 
 	deleteXMLBytes, err := ioutil.ReadAll(r.Body)
