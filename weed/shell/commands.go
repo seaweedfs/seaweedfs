@@ -49,7 +49,7 @@ func NewCommandEnv(options ShellOptions) *CommandEnv {
 		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, pb.AdminShellClient, "", "", pb.ServerAddresses(*options.Masters).ToAddresses()),
 		option:       options,
 	}
-	ce.locker = exclusive_locks.NewExclusiveLocker(ce.MasterClient)
+	ce.locker = exclusive_locks.NewExclusiveLocker(ce.MasterClient, "admin")
 	return ce
 }
 
