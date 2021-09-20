@@ -13,7 +13,7 @@ type ServerAddress string
 type ServerAddresses string
 
 func NewServerAddress(host string, port int, grpcPort int) ServerAddress {
-	if grpcPort == port+10000 {
+	if grpcPort == 0 || grpcPort == port+10000 {
 		return ServerAddress(util.JoinHostPort(host, port))
 	}
 	return ServerAddress(util.JoinHostPort(host, port) + "." + strconv.Itoa(grpcPort))

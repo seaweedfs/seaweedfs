@@ -23,7 +23,7 @@ var (
 func init() {
 	cmdMasterFollower.Run = runMasterFollower // break init cycle
 	mf.port = cmdMasterFollower.Flag.Int("port", 9334, "http listen port")
-	mf.portGrpc = cmdMasterFollower.Flag.Int("port.grpc", 19334, "grpc listen port")
+	mf.portGrpc = cmdMasterFollower.Flag.Int("port.grpc", 0, "grpc listen port")
 	mf.ipBind = cmdMasterFollower.Flag.String("ip.bind", "", "ip address to bind to")
 	mf.peers = cmdMasterFollower.Flag.String("masters", "localhost:9333", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
 
@@ -69,6 +69,10 @@ func runMasterFollower(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("master", false)
+
+	if *mf.portGrpc == 0 {
+		*mf.portGrpc = 10000 + *mf.port
+	}
 
 	startMasterFollower(mf)
 

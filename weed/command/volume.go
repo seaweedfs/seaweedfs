@@ -70,7 +70,7 @@ type VolumeServerOptions struct {
 func init() {
 	cmdVolume.Run = runVolume // break init cycle
 	v.port = cmdVolume.Flag.Int("port", 8080, "http listen port")
-	v.portGrpc = cmdVolume.Flag.Int("port.grpc", 18080, "grpc listen port")
+	v.portGrpc = cmdVolume.Flag.Int("port.grpc", 0, "grpc listen port")
 	v.publicPort = cmdVolume.Flag.Int("port.public", 0, "port opened to public")
 	v.ip = cmdVolume.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
 	v.publicUrl = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible address")
@@ -196,6 +196,9 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	if *v.publicPort == 0 {
 		*v.publicPort = *v.port
+	}
+	if *v.portGrpc == 0 {
+		*v.portGrpc = 10000 + *v.port
 	}
 	if *v.publicUrl == "" {
 		*v.publicUrl = util.JoinHostPort(*v.ip, *v.publicPort)

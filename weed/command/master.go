@@ -47,7 +47,7 @@ type MasterOptions struct {
 func init() {
 	cmdMaster.Run = runMaster // break init cycle
 	m.port = cmdMaster.Flag.Int("port", 9333, "http listen port")
-	m.portGrpc = cmdMaster.Flag.Int("port.grpc", 19333, "grpc listen port")
+	m.portGrpc = cmdMaster.Flag.Int("port.grpc", 0, "grpc listen port")
 	m.ip = cmdMaster.Flag.String("ip", util.DetectedHostAddress(), "master <ip>|<server> address, also used as identifier")
 	m.ipBind = cmdMaster.Flag.String("ip.bind", "", "ip address to bind to")
 	m.metaFolder = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
@@ -112,6 +112,10 @@ func runMaster(cmd *Command, args []string) bool {
 func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	backend.LoadConfiguration(util.GetViper())
+
+	if *masterOption.portGrpc == 0 {
+		*masterOption.portGrpc = 10000 + *masterOption.port
+	}
 
 	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.portGrpc, *masterOption.peers)
 
