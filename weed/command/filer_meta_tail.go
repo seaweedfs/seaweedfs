@@ -71,11 +71,11 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 	}
 
 	shouldPrint := func(resp *filer_pb.SubscribeMetadataResponse) bool {
-		if filterFunc == nil {
-			return true
-		}
 		if resp.EventNotification.OldEntry == nil && resp.EventNotification.NewEntry == nil {
 			return false
+		}
+		if filterFunc == nil {
+			return true
 		}
 		if resp.EventNotification.OldEntry != nil && filterFunc(resp.Directory, resp.EventNotification.OldEntry.Name) {
 			return true
