@@ -67,7 +67,7 @@ require (
 	github.com/json-iterator/go v1.1.11
 	github.com/karlseguin/ccache/v2 v2.0.7
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
-	github.com/klauspost/compress v1.10.9 // indirect
+	github.com/klauspost/compress v1.12.3 // indirect
 	github.com/klauspost/cpuid v1.2.1 // indirect
 	github.com/klauspost/reedsolomon v1.9.2
 	github.com/konsorten/go-windows-terminal-sequences v1.0.3 // indirect
@@ -103,7 +103,6 @@ require (
 	github.com/seaweedfs/fuse v1.2.0
 	github.com/seaweedfs/goexif v1.0.2
 	github.com/sirupsen/logrus v1.6.0 // indirect
-	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spf13/afero v1.6.0 // indirect
 	github.com/spf13/cast v1.3.0 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
@@ -184,6 +183,14 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
 )
+
+require (
+	github.com/dgraph-io/ristretto v0.1.0 // indirect
+	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b // indirect
+	github.com/google/flatbuffers v1.12.1 // indirect
+)
+
+require github.com/dgraph-io/badger/v3 v3.2103.2
 
 // replace github.com/seaweedfs/fuse => /Users/chris/go/src/github.com/seaweedfs/fuse
 // replace github.com/chrislusf/raft => /Users/chris/go/src/github.com/chrislusf/raft
