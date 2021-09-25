@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"time"
 
@@ -92,8 +93,8 @@ func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 
 	startTime, stopTime = startTime.UTC(), stopTime.UTC()
 
-	targetFile := fmt.Sprintf("%s/%04d-%02d-%02d/%02d-%02d.segment", SystemLogDir,
-		startTime.Year(), startTime.Month(), startTime.Day(), startTime.Hour(), startTime.Minute(),
+	targetFile := fmt.Sprintf("%s/%04d-%02d-%02d/%02d-%02d.%08x", SystemLogDir,
+		startTime.Year(), startTime.Month(), startTime.Day(), startTime.Hour(), startTime.Minute(), f.UniqueFileId,
 		// startTime.Second(), startTime.Nanosecond(),
 	)
 
@@ -111,7 +112,7 @@ func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, eachLogEntryFn func(
 
 	startTime = startTime.UTC()
 	startDate := fmt.Sprintf("%04d-%02d-%02d", startTime.Year(), startTime.Month(), startTime.Day())
-	startHourMinute := fmt.Sprintf("%02d-%02d.segment", startTime.Hour(), startTime.Minute())
+	startHourMinute := fmt.Sprintf("%02d-%02d", startTime.Hour(), startTime.Minute())
 
 	sizeBuf := make([]byte, 4)
 	startTsNs := startTime.UnixNano()
@@ -122,14 +123,15 @@ func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, eachLogEntryFn func(
 	}
 	for _, dayEntry := range dayEntries {
 		// println("checking day", dayEntry.FullPath)
-		hourMinuteEntries, _, listHourMinuteErr := f.ListDirectoryEntries(context.Background(), util.NewFullPath(SystemLogDir, dayEntry.Name()), "", false, 24*60, "", "", "")
+		hourMinuteEntries, _, listHourMinuteErr := f.ListDirectoryEntries(context.Background(), util.NewFullPath(SystemLogDir, dayEntry.Name()), "", false, math.MaxInt32, "", "", "")
 		if listHourMinuteErr != nil {
 			return lastTsNs, fmt.Errorf("fail to list log %s by day: %v", dayEntry.Name(), listHourMinuteErr)
 		}
 		for _, hourMinuteEntry := range hourMinuteEntries {
 			// println("checking hh-mm", hourMinuteEntry.FullPath)
 			if dayEntry.Name() == startDate {
-				if strings.Compare(hourMinuteEntry.Name(), startHourMinute) < 0 {
+				hourMinute := util.FileNameBase(hourMinuteEntry.Name())
+				if strings.Compare(hourMinute, startHourMinute) < 0 {
 					continue
 				}
 			}
