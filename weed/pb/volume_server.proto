@@ -287,11 +287,13 @@ message WriteNeedleBlobResponse {
 }
 
 message ReadAllNeedlesRequest {
-    uint32 volume_id = 1;
+    repeated uint32 volume_ids = 1;
 }
 message ReadAllNeedlesResponse {
-    uint64 needle_id = 1;
-    bytes needle_blob = 2;
+    uint32 volume_id = 1;
+    uint64 needle_id = 2;
+    uint32 cookie = 3;
+    bytes needle_blob = 5;
 }
 
 message VolumeTailSenderRequest {
