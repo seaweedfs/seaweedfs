@@ -58,6 +58,8 @@ service VolumeServer {
     }
     rpc WriteNeedleBlob (WriteNeedleBlobRequest) returns (WriteNeedleBlobResponse) {
     }
+    rpc ReadAllNeedles (ReadAllNeedlesRequest) returns (stream ReadAllNeedlesResponse) {
+    }
 
     rpc VolumeTailSender (VolumeTailSenderRequest) returns (stream VolumeTailSenderResponse) {
     }
@@ -282,6 +284,14 @@ message WriteNeedleBlobRequest {
     bytes needle_blob = 4;
 }
 message WriteNeedleBlobResponse {
+}
+
+message ReadAllNeedlesRequest {
+    uint32 volume_id = 1;
+}
+message ReadAllNeedlesResponse {
+    uint64 needle_id = 1;
+    bytes needle_blob = 2;
 }
 
 message VolumeTailSenderRequest {
