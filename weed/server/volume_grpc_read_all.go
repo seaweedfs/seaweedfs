@@ -19,7 +19,9 @@ func (vs *VolumeServer) ReadAllNeedles(req *volume_server_pb.ReadAllNeedlesReque
 		stream: stream,
 	}
 
-	err = storage.ScanVolumeFileFrom(v.Version(), v.DataBackend, super_block.SuperBlockSize, scanner)
+	offset := int64(v.SuperBlock.BlockSize())
+
+	err = storage.ScanVolumeFileFrom(v.Version(), v.DataBackend, offset, scanner)
 
 	return err
 
