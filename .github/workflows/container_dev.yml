@@ -58,6 +58,6 @@ jobs:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile.go_build
-          platforms: linux/amd64, linux/arm, linux/arm64, linux/386
+          platforms: linux/amd64, linux/arm64
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}

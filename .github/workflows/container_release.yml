@@ -63,6 +63,7 @@ jobs:
           platforms: linux/amd64, linux/arm, linux/arm64, linux/386
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
+
   build-large-release-container:
     runs-on: [ubuntu-latest]
 
