@@ -56,7 +56,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	c.collectionPattern = volFixReplicationCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
 	skipChange := volFixReplicationCommand.Bool("n", false, "skip the changes")
 	retryCount := volFixReplicationCommand.Int("retry", 0, "how many times to retry")
-	volumespPerStep := volFixReplicationCommand.Int("volumes_per_step", 0, "how many volumes to fix in one cycle")
+	volumesPerStep := volFixReplicationCommand.Int("volumesPerStep", 0, "how many volumes to fix in one cycle")
 
 	if err = volFixReplicationCommand.Parse(args); err != nil {
 		return nil
@@ -106,7 +106,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		underReplicatedVolumeIdsCount = len(underReplicatedVolumeIds)
 		if underReplicatedVolumeIdsCount > 0 {
 			// find the most under populated data nodes
-			if err := c.fixUnderReplicatedVolumes(commandEnv, writer, takeAction, underReplicatedVolumeIds, volumeReplicas, allLocations, *retryCount, *volumespPerStep); err != nil {
+			if err := c.fixUnderReplicatedVolumes(commandEnv, writer, takeAction, underReplicatedVolumeIds, volumeReplicas, allLocations, *retryCount, *volumesPerStep); err != nil {
 				return err
 			}
 		}
@@ -168,9 +168,9 @@ func (c *commandVolumeFixReplication) fixOverReplicatedVolumes(commandEnv *Comma
 	return nil
 }
 
-func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *CommandEnv, writer io.Writer, takeAction bool, underReplicatedVolumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, allLocations []location, retryCount int, volumespPerStep int) (err error) {
-	if len(underReplicatedVolumeIds) > volumespPerStep && volumespPerStep > 0 {
-		underReplicatedVolumeIds = underReplicatedVolumeIds[0:volumespPerStep]
+func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *CommandEnv, writer io.Writer, takeAction bool, underReplicatedVolumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, allLocations []location, retryCount int, volumesPerStep int) (err error) {
+	if len(underReplicatedVolumeIds) > volumesPerStep && volumesPerStep > 0 {
+		underReplicatedVolumeIds = underReplicatedVolumeIds[0:volumesPerStep]
 	}
 	for _, vid := range underReplicatedVolumeIds {
 		for i := 0; i < retryCount+1; i++ {
