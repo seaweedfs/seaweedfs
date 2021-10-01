@@ -208,6 +208,18 @@ func collectEcShards(commandEnv *CommandEnv, nodeToEcIndexBits map[pb.ServerAddr
 
 }
 
+func LookupVolumeIds(commandEnv *CommandEnv, volumeIds []string) (err error, volumeIdLocations []*master_pb.LookupVolumeResponse_VolumeIdLocation) {
+	var resp *master_pb.LookupVolumeResponse
+	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+		resp, err = client.LookupVolume(context.Background(), &master_pb.LookupVolumeRequest{VolumeOrFileIds: volumeIds})
+		return err
+	})
+	if err != nil {
+		return err, nil
+	}
+	return nil, resp.VolumeIdLocations
+}
+
 func collectTopologyInfo(commandEnv *CommandEnv) (topoInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, err error) {
 
 	var resp *master_pb.VolumeListResponse
