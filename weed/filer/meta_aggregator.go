@@ -110,7 +110,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self pb.ServerAddress, p
 		}
 		dir := event.Directory
 		// println("received meta change", dir, "size", len(data))
-		ma.MetaLogBuffer.AddToBuffer([]byte(dir), data, 0)
+		ma.MetaLogBuffer.AddToBuffer([]byte(dir), data, event.TsNs)
 		if maybeReplicateMetadataChange != nil {
 			maybeReplicateMetadataChange(event)
 		}

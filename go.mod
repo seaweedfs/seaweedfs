@@ -111,7 +111,6 @@ require (
 	github.com/streadway/amqp v0.0.0-20200108173154-1c71cc93ed71
 	github.com/stretchr/testify v1.7.0
 	github.com/syndtr/goleveldb v1.0.1-0.20190318030020-c3a204f8e965
-	github.com/tecbot/gorocksdb v0.0.0-20191217155057-f0fad39f321c
 	github.com/tidwall/gjson v1.8.1
 	github.com/tidwall/match v1.0.3
 	github.com/tidwall/pretty v1.1.0 // indirect
@@ -133,7 +132,7 @@ require (
 	gocloud.dev v0.20.0
 	gocloud.dev/pubsub/natspubsub v0.20.0
 	gocloud.dev/pubsub/rabbitpubsub v0.20.0
-	golang.org/x/crypto v0.0.0-20201002170205-7f63de1d35b0 // indirect
+	golang.org/x/crypto v0.0.0-20201216223049-8b5274cf687f // indirect
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
 	golang.org/x/net v0.0.0-20210813160813-60bc85c4be6d
 	golang.org/x/oauth2 v0.0.0-20210819190943-2bc19b11175f // indirect
@@ -166,36 +165,25 @@ require (
 
 require (
 	github.com/coreos/etcd v3.3.10+incompatible // indirect
-	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548 // indirect
-	github.com/d4l3k/messagediff v1.2.1 // indirect
-	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.2 // indirect
+	github.com/leodido/go-urn v1.2.0 // indirect
+	github.com/linxGnu/grocksdb v1.6.38 // indirect
 	github.com/mattn/go-runewidth v0.0.7 // indirect
+	github.com/miekg/dns v1.1.25-0.20191211073109-8ebf2e419df7 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
-	github.com/pingcap/errors v0.11.5-0.20201126102027-b0a155152ca3 // indirect
-	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd // indirect
-	github.com/pingcap/kvproto v0.0.0-20210806074406-317f69fb54b4 // indirect
-	github.com/pingcap/log v0.0.0-20210317133921-96f4fcab92a4 // indirect
-	github.com/pingcap/parser v0.0.0-20210525032559-c37778aff307 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
-	github.com/tikv/pd v1.1.0-beta.0.20210323121136-78679e5e209d // indirect
-	github.com/twmb/murmur3 v1.1.3 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.0 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.5.0 // indirect
 	go.etcd.io/etcd/client/v3 v3.5.0 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.7.0 // indirect
 	go.uber.org/zap v1.17.0 // indirect
-	golang.org/x/lint v0.0.0-20210508222113-6edffad5e616 // indirect
-	golang.org/x/mod v0.4.2 // indirect
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
 )
 
 // replace github.com/seaweedfs/fuse => /Users/chris/go/src/github.com/seaweedfs/fuse

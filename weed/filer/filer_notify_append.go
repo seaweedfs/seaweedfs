@@ -33,6 +33,8 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 				Gid:    OS_GID,
 			},
 		}
+	} else if err != nil {
+		return fmt.Errorf("find %s: %v", fullpath, err)
 	} else {
 		offset = int64(TotalSize(entry.Chunks))
 	}

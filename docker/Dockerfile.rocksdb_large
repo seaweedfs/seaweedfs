@@ -1,0 +1,59 @@
+FROM golang:1.17-buster as builder
+
+RUN apt-get update
+RUN apt-get install -y build-essential libsnappy-dev zlib1g-dev libbz2-dev libgflags-dev liblz4-dev libzstd-dev
+
+ENV ROCKSDB_VERSION v6.22.1
+
+# build RocksDB
+RUN cd /tmp && \
+    git clone https://github.com/facebook/rocksdb.git /tmp/rocksdb --depth 1 --single-branch --branch $ROCKSDB_VERSION && \
+    cd rocksdb && \
+    make static_lib && \
+    make install-static
+
+ENV CGO_CFLAGS "-I/tmp/rocksdb/include"
+ENV CGO_LDFLAGS "-L/tmp/rocksdb -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd"
+
+# build SeaweedFS
+RUN mkdir -p /go/src/github.com/chrislusf/
+RUN git clone https://github.com/chrislusf/seaweedfs /go/src/github.com/chrislusf/seaweedfs
+ARG BRANCH=${BRANCH:-master}
+RUN cd /go/src/github.com/chrislusf/seaweedfs && git checkout $BRANCH
+RUN cd /go/src/github.com/chrislusf/seaweedfs/weed \
+  && export LDFLAGS="-X github.com/chrislusf/seaweedfs/weed/util.COMMIT=$(git rev-parse --short HEAD)" \
+  && go install -tags "5BytesOffset rocksdb" -ldflags "-extldflags -static ${LDFLAGS}"
+
+
+FROM alpine AS final
+LABEL author="Chris Lu"
+COPY --from=builder /go/bin/weed /usr/bin/
+RUN mkdir -p /etc/seaweedfs
+COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/filer.toml /etc/seaweedfs/filer.toml
+COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/entrypoint.sh /entrypoint.sh
+RUN apk add fuse snappy gflags
+
+# volume server gprc port
+EXPOSE 18080
+# volume server http port
+EXPOSE 8080
+# filer server gprc port
+EXPOSE 18888
+# filer server http port
+EXPOSE 8888
+# master server shared gprc port
+EXPOSE 19333
+# master server shared http port
+EXPOSE 9333
+# s3 server http port
+EXPOSE 8333
+# webdav server http port
+EXPOSE 7333
+
+RUN mkdir -p /data/filerldb2
+
+VOLUME /data
+
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

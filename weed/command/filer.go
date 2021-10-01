@@ -62,7 +62,7 @@ func init() {
 	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
 	f.bindIp = cmdFiler.Flag.String("ip.bind", "", "ip address to bind to")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
-	f.portGrpc = cmdFiler.Flag.Int("port.grpc", 18888, "filer server grpc listen port")
+	f.portGrpc = cmdFiler.Flag.Int("port.grpc", 0, "filer server grpc listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "", "default replication type. If not specified, use master setting.")
 	f.disableDirListing = cmdFiler.Flag.Bool("disableDirListing", false, "turn off directory listing")
@@ -87,7 +87,7 @@ func init() {
 	filerS3Options.tlsPrivateKey = cmdFiler.Flag.String("s3.key.file", "", "path to the TLS private key file")
 	filerS3Options.tlsCertificate = cmdFiler.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
 	filerS3Options.config = cmdFiler.Flag.String("s3.config", "", "path to the config file")
-	filerS3Options.allowEmptyFolder = cmdFiler.Flag.Bool("s3.allowEmptyFolder", false, "allow empty folders")
+	filerS3Options.allowEmptyFolder = cmdFiler.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
@@ -179,6 +179,9 @@ func (fo *FilerOptions) startFiler() {
 
 	if *fo.publicPort != 0 {
 		publicVolumeMux = http.NewServeMux()
+	}
+	if *fo.portGrpc == 0 {
+		*fo.portGrpc = 10000 + *fo.port
 	}
 
 	defaultLevelDbDirectory := util.ResolvePath(*fo.defaultLevelDbDirectory + "/filerldb2")

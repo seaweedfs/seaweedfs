@@ -13,6 +13,12 @@ build: binary
 	docker build --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.local .
 	rm ./weed
 
+build_gorocksdb:
+	docker build --no-cache -t chrislusf/gorocksdb -f Dockerfile.go_rocksdb .
+
+build_rocksdb:
+	docker build --no-cache -t chrislusf/seaweedfs:rocksdb -f Dockerfile.rocksdb_large .
+
 s3tests_build:
 	docker build --no-cache -t chrislusf/ceph-s3-tests:local -f Dockerfile.s3tests .
 

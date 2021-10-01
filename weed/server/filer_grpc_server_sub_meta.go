@@ -49,11 +49,6 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		if processedTsNs != 0 {
 			lastReadTime = time.Unix(0, processedTsNs)
-		} else {
-			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
-				time.Sleep(1127 * time.Millisecond)
-				continue
-			}
 		}
 
 		glog.V(4).Infof("read in memory %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
@@ -66,6 +61,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
 			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
+				time.Sleep(1127 * time.Millisecond)
 				continue
 			}
 			glog.Errorf("processed to %v: %v", lastReadTime, readInMemoryLogErr)

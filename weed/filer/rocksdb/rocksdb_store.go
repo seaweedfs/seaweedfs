@@ -10,7 +10,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/tecbot/gorocksdb"
+	gorocksdb "github.com/linxGnu/grocksdb"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"

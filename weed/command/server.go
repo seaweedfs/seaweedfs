@@ -86,7 +86,7 @@ func init() {
 	serverOptions.debugPort = cmdServer.Flag.Int("debug.port", 6060, "http port for debugging")
 
 	masterOptions.port = cmdServer.Flag.Int("master.port", 9333, "master server http listen port")
-	masterOptions.portGrpc = cmdServer.Flag.Int("master.port.grpc", 19333, "master server grpc listen port")
+	masterOptions.portGrpc = cmdServer.Flag.Int("master.port.grpc", 0, "master server grpc listen port")
 	masterOptions.metaFolder = cmdServer.Flag.String("master.dir", "", "data directory to store meta data, default to same as -dir specified")
 	masterOptions.peers = cmdServer.Flag.String("master.peers", "", "all master nodes in comma separated ip:masterPort list")
 	masterOptions.volumeSizeLimitMB = cmdServer.Flag.Uint("master.volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
@@ -99,7 +99,7 @@ func init() {
 
 	filerOptions.collection = cmdServer.Flag.String("filer.collection", "", "all data will be stored in this collection")
 	filerOptions.port = cmdServer.Flag.Int("filer.port", 8888, "filer server http listen port")
-	filerOptions.portGrpc = cmdServer.Flag.Int("filer.port.grpc", 18888, "filer server grpc listen port")
+	filerOptions.portGrpc = cmdServer.Flag.Int("filer.port.grpc", 0, "filer server grpc listen port")
 	filerOptions.publicPort = cmdServer.Flag.Int("filer.port.public", 0, "filer server public http listen port")
 	filerOptions.defaultReplicaPlacement = cmdServer.Flag.String("filer.defaultReplicaPlacement", "", "default replication type. If not specified, use master setting.")
 	filerOptions.disableDirListing = cmdServer.Flag.Bool("filer.disableDirListing", false, "turn off directory listing")
@@ -111,7 +111,7 @@ func init() {
 	filerOptions.concurrentUploadLimitMB = cmdServer.Flag.Int("filer.concurrentUploadLimitMB", 64, "limit total concurrent upload size")
 
 	serverOptions.v.port = cmdServer.Flag.Int("volume.port", 8080, "volume server http listen port")
-	serverOptions.v.portGrpc = cmdServer.Flag.Int("volume.port.grpc", 18080, "volume server grpc listen port")
+	serverOptions.v.portGrpc = cmdServer.Flag.Int("volume.port.grpc", 0, "volume server grpc listen port")
 	serverOptions.v.publicPort = cmdServer.Flag.Int("volume.port.public", 0, "volume server public port")
 	serverOptions.v.indexType = cmdServer.Flag.String("volume.index", "memory", "Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.")
 	serverOptions.v.diskType = cmdServer.Flag.String("volume.disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
@@ -132,7 +132,7 @@ func init() {
 	s3Options.tlsPrivateKey = cmdServer.Flag.String("s3.key.file", "", "path to the TLS private key file")
 	s3Options.tlsCertificate = cmdServer.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
 	s3Options.config = cmdServer.Flag.String("s3.config", "", "path to the config file")
-	s3Options.allowEmptyFolder = cmdServer.Flag.Bool("s3.allowEmptyFolder", false, "allow empty folders")
+	s3Options.allowEmptyFolder = cmdServer.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
 
 	webdavOptions.port = cmdServer.Flag.Int("webdav.port", 7333, "webdav server http listen port")
 	webdavOptions.collection = cmdServer.Flag.String("webdav.collection", "", "collection to create the files")

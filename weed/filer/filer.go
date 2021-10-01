@@ -44,6 +44,7 @@ type Filer struct {
 	Signature           int32
 	FilerConf           *FilerConf
 	RemoteStorage       *FilerRemoteStorage
+	UniqueFileId        uint32
 }
 
 func NewFiler(masters []pb.ServerAddress, grpcDialOption grpc.DialOption,
@@ -54,6 +55,7 @@ func NewFiler(masters []pb.ServerAddress, grpcDialOption grpc.DialOption,
 		GrpcDialOption:      grpcDialOption,
 		FilerConf:           NewFilerConf(),
 		RemoteStorage:       NewFilerRemoteStorage(),
+		UniqueFileId:        uint32(util.RandomInt32()),
 	}
 	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, notifyFn)
 	f.metaLogCollection = collection
