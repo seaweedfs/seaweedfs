@@ -110,7 +110,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		underReplicatedVolumeIdsCount = len(underReplicatedVolumeIds)
 		if underReplicatedVolumeIdsCount > 0 {
 			// find the most under populated data nodes
-			err, fixedVolumeReplicas = c.fixUnderReplicatedVolumes(commandEnv, writer, takeAction, underReplicatedVolumeIds, volumeReplicas, allLocations, *retryCount, *volumesPerStep)
+			fixedVolumeReplicas, err = c.fixUnderReplicatedVolumes(commandEnv, writer, takeAction, underReplicatedVolumeIds, volumeReplicas, allLocations, *retryCount, *volumesPerStep)
 			if err != nil {
 				return err
 			}
@@ -126,7 +126,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 			for k, _ := range fixedVolumeReplicas {
 				fixedVolumes = append(fixedVolumes, k)
 			}
-			err, volumeIdLocations := LookupVolumeIds(commandEnv, fixedVolumes)
+			volumeIdLocations, err := lookupVolumeIds(commandEnv, fixedVolumes)
 			if err != nil {
 				return err
 			}
@@ -137,7 +137,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 				for fixedVolumeReplicas[volumeId] >= volumeIdLocationCount {
 					fmt.Fprintf(writer, "the number of locations for volume %s has not increased yet, let's wait\n", volumeId)
 					time.Sleep(time.Duration(i+1) * time.Second * 7)
-					err, volumeLocIds := LookupVolumeIds(commandEnv, []string{volumeId})
+					volumeLocIds, err := lookupVolumeIds(commandEnv, []string{volumeId})
 					if err != nil {
 						return err
 					}
@@ -203,7 +203,7 @@ func (c *commandVolumeFixReplication) fixOverReplicatedVolumes(commandEnv *Comma
 	return nil
 }
 
-func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *CommandEnv, writer io.Writer, takeAction bool, underReplicatedVolumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, allLocations []location, retryCount int, volumesPerStep int) (err error, fixedVolumes map[string]int) {
+func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *CommandEnv, writer io.Writer, takeAction bool, underReplicatedVolumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, allLocations []location, retryCount int, volumesPerStep int) (fixedVolumes map[string]int, err error) {
 	fixedVolumes = map[string]int{}
 	if len(underReplicatedVolumeIds) > volumesPerStep && volumesPerStep > 0 {
 		underReplicatedVolumeIds = underReplicatedVolumeIds[0:volumesPerStep]
@@ -218,7 +218,7 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 			}
 		}
 	}
-	return nil, fixedVolumes
+	return fixedVolumes, nil
 }
 
 func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *CommandEnv, writer io.Writer, takeAction bool, volumeReplicas map[uint32][]*VolumeReplica, vid uint32, allLocations []location) error {
