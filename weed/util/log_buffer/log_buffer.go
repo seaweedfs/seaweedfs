@@ -189,7 +189,7 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 	defer m.RUnlock()
 
 	if !m.lastFlushTime.IsZero() && m.lastFlushTime.After(lastReadTime) {
-		if time.Now().Sub(m.lastFlushTime) < m.flushInterval * 2 {
+		if time.Now().Sub(m.lastFlushTime) < m.flushInterval*2 {
 			diff := m.lastFlushTime.Sub(lastReadTime)
 			glog.V(4).Infof("lastFlush:%v lastRead:%v diff:%v", m.lastFlushTime, lastReadTime, diff)
 			return nil, ResumeFromDiskError
