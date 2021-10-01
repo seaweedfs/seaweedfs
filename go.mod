@@ -181,6 +181,7 @@ require (
 	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.2 // indirect
 	github.com/leodido/go-urn v1.2.0 // indirect
+	github.com/linxGnu/grocksdb v1.6.38 // indirect
 	github.com/mattn/go-runewidth v0.0.7 // indirect
 	github.com/miekg/dns v1.1.25-0.20191211073109-8ebf2e419df7 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
