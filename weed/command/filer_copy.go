@@ -373,7 +373,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 				return assignErr
 			}
 
-			// uplaod data
+			// upload data
 			targetUrl := "http://" + assignResult.Location.Url + "/" + assignResult.FileId
 			uploadOption := &operation.UploadOption{
 				UploadUrl:         targetUrl,
