@@ -2,6 +2,7 @@ package skiplist
 
 import (
 	"bytes"
+	"fmt"
 	"math/rand"
 	"strconv"
 	"testing"
@@ -209,4 +210,48 @@ func TestGetNodeCount(t *testing.T) {
 	if list.GetNodeCount() != maxN {
 		t.Fail()
 	}
+}
+
+func TestFindGreaterOrEqual(t *testing.T) {
+
+	maxNumber := maxN * 100
+
+	var list *SkipList
+	var listPointer *SkipList
+
+	// Test on empty list.
+	if _, ok := listPointer.FindGreaterOrEqual(Element(0)); ok {
+		t.Fail()
+	}
+
+	list = New()
+
+	for i := 0; i < maxN; i++ {
+		list.Insert(Element(rand.Intn(maxNumber)))
+	}
+
+	for i := 0; i < maxN; i++ {
+		key := Element(rand.Intn(maxNumber))
+		if v, ok := list.FindGreaterOrEqual(key); ok {
+			// if f is v should be bigger than the element before
+			if bytes.Compare(v.Prev.Key, key) >= 0 {
+				fmt.Printf("PrevV: %s\n    key: %s\n\n", string(v.Prev.Key), string(key))
+				t.Fail()
+			}
+			// v should be bigger or equal to f
+			// If we compare directly, we get an equal key with a difference on the 10th decimal point, which fails.
+			if bytes.Compare(v.Values[0], key) < 0 {
+				fmt.Printf("v: %s\n    key: %s\n\n", string(v.Values[0]), string(key))
+				t.Fail()
+			}
+		} else {
+			lastV := list.GetLargestNode().GetValue()
+			// It is OK, to fail, as long as f is bigger than the last element.
+			if bytes.Compare(key, lastV) <= 0 {
+				fmt.Printf("lastV: %s\n    key: %s\n\n", string(lastV), string(key))
+				t.Fail()
+			}
+		}
+	}
+
 }
