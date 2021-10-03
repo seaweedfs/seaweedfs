@@ -21,13 +21,14 @@ type SkipList struct {
 	endLevels   [maxLevel]*SkipListElementReference
 	maxNewLevel int
 	maxLevel    int
+	listStore   ListStore
 	// elementCount int
 }
 
 // NewSeedEps returns a new empty, initialized Skiplist.
 // Given a seed, a deterministic height/list behaviour can be achieved.
 // Eps is used to compare keys given by the ExtractKey() function on equality.
-func NewSeed(seed int64) *SkipList {
+func NewSeed(seed int64, listStore ListStore) *SkipList {
 
 	// Initialize random number generator.
 	rand.Seed(seed)
@@ -36,6 +37,7 @@ func NewSeed(seed int64) *SkipList {
 	list := &SkipList{
 		maxNewLevel: maxLevel,
 		maxLevel:    0,
+		listStore:   listStore,
 		// elementCount: 0,
 	}
 
@@ -43,8 +45,8 @@ func NewSeed(seed int64) *SkipList {
 }
 
 // New returns a new empty, initialized Skiplist.
-func New() *SkipList {
-	return NewSeed(time.Now().UTC().UnixNano())
+func New(listStore ListStore) *SkipList {
+	return NewSeed(time.Now().UTC().UnixNano(), listStore)
 }
 
 // IsEmpty checks, if the skiplist is empty.
@@ -75,7 +77,7 @@ func (t *SkipList) findEntryIndex(key []byte, level int) int {
 	return 0
 }
 
-func (t *SkipList) findExtended(key []byte, findGreaterOrEqual bool) (foundElem *SkipListElement, ok bool) {
+func (t *SkipList) findExtended(key []byte, findGreaterOrEqual bool) (foundElem *SkipListElement, ok bool, err error) {
 
 	foundElem = nil
 	ok = false
@@ -87,7 +89,10 @@ func (t *SkipList) findExtended(key []byte, findGreaterOrEqual bool) (foundElem 
 	index := t.findEntryIndex(key, 0)
 	var currentNode *SkipListElement
 
-	currentNode = t.startLevels[index].Load()
+	currentNode, err = t.loadElement(t.startLevels[index])
+	if err != nil {
+		return
+	}
 
 	// In case, that our first element is already greater-or-equal!
 	if findGreaterOrEqual && compareElement(currentNode, key) > 0 {
@@ -106,13 +111,20 @@ func (t *SkipList) findExtended(key []byte, findGreaterOrEqual bool) (foundElem 
 		// Which direction are we continuing next time?
 		if currentNode.Next[index] != nil && bytes.Compare(currentNode.Next[index].Key, key) <= 0 {
 			// Go right
-			currentNode = currentNode.Next[index].Load()
+			currentNode, err = t.loadElement(currentNode.Next[index])
+			if err != nil {
+				return
+			}
 		} else {
 			if index > 0 {
 
 				// Early exit
 				if currentNode.Next[0] != nil && bytes.Compare(currentNode.Next[0].Key, key) == 0 {
-					currentNodeNext := currentNode.Next[0].Load()
+					var currentNodeNext *SkipListElement
+					currentNodeNext, err = t.loadElement(currentNode.Next[0])
+					if err != nil {
+						return
+					}
 					foundElem = currentNodeNext
 					ok = true
 					return
@@ -122,7 +134,10 @@ func (t *SkipList) findExtended(key []byte, findGreaterOrEqual bool) (foundElem 
 			} else {
 				// Element is not found and we reached the bottom.
 				if findGreaterOrEqual {
-					foundElem = currentNode.Next[index].Load()
+					foundElem, err = t.loadElement(currentNode.Next[index])
+					if err != nil {
+						return
+					}
 					ok = foundElem != nil
 				}
 
@@ -135,26 +150,26 @@ func (t *SkipList) findExtended(key []byte, findGreaterOrEqual bool) (foundElem 
 // Find tries to find an element in the skiplist based on the key from the given ListElement.
 // elem can be used, if ok is true.
 // Find runs in approx. O(log(n))
-func (t *SkipList) Find(key []byte) (elem *SkipListElement, ok bool) {
+func (t *SkipList) Find(key []byte) (elem *SkipListElement, ok bool, err error) {
 
 	if t == nil || key == nil {
 		return
 	}
 
-	elem, ok = t.findExtended(key, false)
+	elem, ok, err = t.findExtended(key, false)
 	return
 }
 
 // FindGreaterOrEqual finds the first element, that is greater or equal to the given ListElement e.
 // The comparison is done on the keys (So on ExtractKey()).
 // FindGreaterOrEqual runs in approx. O(log(n))
-func (t *SkipList) FindGreaterOrEqual(key []byte) (elem *SkipListElement, ok bool) {
+func (t *SkipList) FindGreaterOrEqual(key []byte) (elem *SkipListElement, ok bool, err error) {
 
 	if t == nil || key == nil {
 		return
 	}
 
-	elem, ok = t.findExtended(key, true)
+	elem, ok, err = t.findExtended(key, true)
 	return
 }
 
@@ -162,7 +177,7 @@ func (t *SkipList) FindGreaterOrEqual(key []byte) (elem *SkipListElement, ok boo
 // If there are multiple entries with the same value, Delete will remove one of them
 // (Which one will change based on the actual skiplist layout)
 // Delete runs in approx. O(log(n))
-func (t *SkipList) Delete(key []byte) {
+func (t *SkipList) Delete(key []byte) (err error) {
 
 	if t == nil || t.IsEmpty() || key == nil {
 		return
@@ -176,9 +191,12 @@ func (t *SkipList) Delete(key []byte) {
 	for {
 
 		if currentNode == nil {
-			nextNode = t.startLevels[index].Load()
+			nextNode, err = t.loadElement(t.startLevels[index])
 		} else {
-			nextNode = currentNode.Next[index].Load()
+			nextNode, err = t.loadElement(currentNode.Next[index])
+		}
+		if err != nil {
+			return err
 		}
 
 		// Found and remove!
@@ -186,17 +204,26 @@ func (t *SkipList) Delete(key []byte) {
 
 			if currentNode != nil {
 				currentNode.Next[index] = nextNode.Next[index]
-				currentNode.Save()
+				if err = t.saveElement(currentNode); err != nil {
+					return err
+				}
 			}
 
 			if index == 0 {
 				if nextNode.Next[index] != nil {
-					nextNextNode := nextNode.Next[index].Load()
+					nextNextNode, err := t.loadElement(nextNode.Next[index])
+					if err != nil {
+						return err
+					}
 					nextNextNode.Prev = currentNode.Reference()
-					nextNextNode.Save()
+					if err = t.saveElement(nextNextNode); err != nil {
+						return err
+					}
 				}
 				// t.elementCount--
-				nextNode.DeleteSelf()
+				if err = t.deleteElement(nextNode); err != nil {
+					return err
+				}
 			}
 
 			// Link from start needs readjustments.
@@ -227,12 +254,12 @@ func (t *SkipList) Delete(key []byte) {
 			}
 		}
 	}
-
+	return
 }
 
 // Insert inserts the given ListElement into the skiplist.
 // Insert runs in approx. O(log(n))
-func (t *SkipList) Insert(key, value []byte) {
+func (t *SkipList) Insert(key, value []byte) (err error){
 
 	if t == nil || key == nil {
 		return
@@ -288,14 +315,20 @@ func (t *SkipList) Insert(key, value []byte) {
 				elem.Next[index] = nextNodeRef
 				if currentNode != nil {
 					currentNode.Next[index] = elem.Reference()
-					currentNode.Save()
+					if err = t.saveElement(currentNode); err != nil {
+						return
+					}
 				}
 				if index == 0 {
 					elem.Prev = currentNode.Reference()
 					if nextNodeRef != nil {
-						nextNode = nextNodeRef.Load()
+						if nextNode, err = t.loadElement(nextNodeRef); err != nil {
+							return
+						}
 						nextNode.Prev = elem.Reference()
-						nextNode.Save()
+						if err = t.saveElement(nextNode); err != nil {
+							return
+						}
 					}
 				}
 			}
@@ -304,7 +337,9 @@ func (t *SkipList) Insert(key, value []byte) {
 				// Go right
 				if nextNode == nil {
 					// reuse nextNode when index == 0
-					nextNode = nextNodeRef.Load()
+					if nextNode, err = t.loadElement(nextNodeRef); err != nil {
+						return
+					}
 				}
 				currentNode = nextNode
 			} else {
@@ -326,9 +361,14 @@ func (t *SkipList) Insert(key, value []byte) {
 
 			if t.startLevels[i] == nil || bytes.Compare(t.startLevels[i].Key, key) > 0 {
 				if i == 0 && t.startLevels[i] != nil {
-					startLevelElement := t.startLevels[i].Load()
+					startLevelElement, err := t.loadElement(t.startLevels[i])
+					if err != nil {
+						return err
+					}
 					startLevelElement.Prev = elem.Reference()
-					startLevelElement.Save()
+					if err = t.saveElement(startLevelElement); err != nil {
+						return err
+					}
 				}
 				elem.Next[i] = t.startLevels[i]
 				t.startLevels[i] = elem.Reference()
@@ -347,9 +387,14 @@ func (t *SkipList) Insert(key, value []byte) {
 			// This is very important, so we are not linking the very first element (newFirst AND newLast) to itself!
 			if !newFirst {
 				if t.endLevels[i] != nil {
-					endLevelElement := t.endLevels[i].Load()
+					endLevelElement, err := t.loadElement(t.endLevels[i])
+					if err != nil {
+						return err
+					}
 					endLevelElement.Next[i] = elem.Reference()
-					endLevelElement.Save()
+					if err = t.saveElement(endLevelElement); err != nil {
+						return err
+					}
 				}
 				if i == 0 {
 					elem.Prev = t.endLevels[i]
@@ -370,49 +415,51 @@ func (t *SkipList) Insert(key, value []byte) {
 		}
 	}
 
-	elem.Save()
+	if err = t.saveElement(elem); err != nil {
+		return err
+	}
+	return nil
 
 }
 
 // GetSmallestNode returns the very first/smallest node in the skiplist.
 // GetSmallestNode runs in O(1)
-func (t *SkipList) GetSmallestNode() *SkipListElement {
-	return t.startLevels[0].Load()
+func (t *SkipList) GetSmallestNode() (*SkipListElement, error) {
+	return t.loadElement(t.startLevels[0])
 }
 
 // GetLargestNode returns the very last/largest node in the skiplist.
 // GetLargestNode runs in O(1)
-func (t *SkipList) GetLargestNode() *SkipListElement {
-	return t.endLevels[0].Load()
+func (t *SkipList) GetLargestNode() (*SkipListElement, error) {
+	return t.loadElement(t.endLevels[0])
 }
 
 // Next returns the next element based on the given node.
 // Next will loop around to the first node, if you call it on the last!
-func (t *SkipList) Next(e *SkipListElement) *SkipListElement {
+func (t *SkipList) Next(e *SkipListElement) (*SkipListElement, error) {
 	if e.Next[0] == nil {
-		return t.startLevels[0].Load()
+		return t.loadElement(t.startLevels[0])
 	}
-	return e.Next[0].Load()
+	return t.loadElement(e.Next[0])
 }
 
 // Prev returns the previous element based on the given node.
 // Prev will loop around to the last node, if you call it on the first!
-func (t *SkipList) Prev(e *SkipListElement) *SkipListElement {
+func (t *SkipList) Prev(e *SkipListElement) (*SkipListElement, error) {
 	if e.Prev == nil {
-		return t.endLevels[0].Load()
+		return t.loadElement(t.endLevels[0])
 	}
-	return e.Prev.Load()
+	return t.loadElement(e.Prev)
 }
 
 // ChangeValue can be used to change the actual value of a node in the skiplist
 // without the need of Deleting and reinserting the node again.
 // Be advised, that ChangeValue only works, if the actual key from ExtractKey() will stay the same!
 // ok is an indicator, wether the value is actually changed.
-func (t *SkipList) ChangeValue(e *SkipListElement, newValue []byte) (ok bool) {
+func (t *SkipList) ChangeValue(e *SkipListElement, newValue []byte) (err error) {
 	// The key needs to stay correct, so this is very important!
 	e.Value = newValue
-	e.Save()
-	return true
+	return t.saveElement(e)
 }
 
 // String returns a string format of the skiplist. Useful to get a graphical overview and/or debugging.
@@ -437,7 +484,7 @@ func (t *SkipList) println() {
 	nodeRef := t.startLevels[0]
 	for nodeRef != nil {
 		print(fmt.Sprintf("%v: ", string(nodeRef.Key)))
-		node := nodeRef.Load()
+		node, _ := t.loadElement(nodeRef)
 		for i := 0; i <= int(node.Level); i++ {
 
 			l := node.Next[i]

@@ -9,10 +9,6 @@ func compareElement(a *SkipListElement, key []byte) int {
 	return bytes.Compare(a.Key, key)
 }
 
-var (
-	memStore = make(map[int64]*SkipListElement)
-)
-
 func (node *SkipListElement) Reference() *SkipListElementReference {
 	if node == nil {
 		return nil
@@ -22,27 +18,24 @@ func (node *SkipListElement) Reference() *SkipListElementReference {
 		Key:            node.Key,
 	}
 }
-func (node *SkipListElement) Save() {
-	if node == nil {
-		return
-	}
-	memStore[node.Id] = node
-	//println("++ node", node.Id, string(node.Values[0]))
-}
 
-func (node *SkipListElement) DeleteSelf() {
-	if node == nil {
-		return
-	}
-	delete(memStore, node.Id)
-	//println("++ node", node.Id, string(node.Values[0]))
-}
-
-func (ref *SkipListElementReference) Load() *SkipListElement {
-	if ref == nil {
+func (t *SkipList) saveElement(element *SkipListElement) error {
+	if element == nil {
 		return nil
 	}
-	//println("~ node", ref.ElementPointer, string(ref.Key))
-	return memStore[ref.ElementPointer]
+	return t.listStore.SaveElement(element.Id, element)
 }
 
+func (t *SkipList) deleteElement(element *SkipListElement) error {
+	if element == nil {
+		return nil
+	}
+	return t.listStore.DeleteElement(element.Id)
+}
+
+func (t *SkipList) loadElement(ref *SkipListElementReference) (*SkipListElement, error) {
+	if ref == nil {
+		return nil, nil
+	}
+	return t.listStore.LoadElement(ref.ElementPointer)
+}

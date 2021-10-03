@@ -12,6 +12,10 @@ const (
 	maxN = 10000
 )
 
+var (
+	memStore = newMemStore()
+)
+
 func TestInsertAndFind(t *testing.T) {
 
 	k0 := []byte("0")
@@ -19,12 +23,12 @@ func TestInsertAndFind(t *testing.T) {
 
 	var listPointer *SkipList
 	listPointer.Insert(k0, k0)
-	if _, ok := listPointer.Find(k0); ok {
+	if _, ok, _ := listPointer.Find(k0); ok {
 		t.Fail()
 	}
 
-	list = New()
-	if _, ok := list.Find(k0); ok {
+	list = New(memStore)
+	if _, ok, _ := list.Find(k0); ok {
 		t.Fail()
 	}
 	if !list.IsEmpty() {
@@ -33,18 +37,17 @@ func TestInsertAndFind(t *testing.T) {
 
 	// Test at the beginning of the list.
 	for i := 0; i < maxN; i++ {
-		key := []byte(strconv.Itoa(maxN-i))
+		key := []byte(strconv.Itoa(maxN - i))
 		list.Insert(key, key)
 	}
 	for i := 0; i < maxN; i++ {
-		key := []byte(strconv.Itoa(maxN-i))
-		if _, ok := list.Find(key); !ok {
+		key := []byte(strconv.Itoa(maxN - i))
+		if _, ok, _ := list.Find(key); !ok {
 			t.Fail()
 		}
 	}
 
-
-	list = New()
+	list = New(memStore)
 	// Test at the end of the list.
 	for i := 0; i < maxN; i++ {
 		key := []byte(strconv.Itoa(i))
@@ -52,12 +55,12 @@ func TestInsertAndFind(t *testing.T) {
 	}
 	for i := 0; i < maxN; i++ {
 		key := []byte(strconv.Itoa(i))
-		if _, ok := list.Find(key); !ok {
+		if _, ok, _ := list.Find(key); !ok {
 			t.Fail()
 		}
 	}
 
-	list = New()
+	list = New(memStore)
 	// Test at random positions in the list.
 	rList := rand.Perm(maxN)
 	for _, e := range rList {
@@ -68,7 +71,7 @@ func TestInsertAndFind(t *testing.T) {
 	for _, e := range rList {
 		key := []byte(strconv.Itoa(e))
 		// println("find", e)
-		if _, ok := list.Find(key); !ok {
+		if _, ok, _ := list.Find(key); !ok {
 			t.Fail()
 		}
 	}
@@ -90,7 +93,7 @@ func TestDelete(t *testing.T) {
 	// Delete on empty list
 	list.Delete(k0)
 
-	list = New()
+	list = New(memStore)
 
 	list.Delete(k0)
 	if !list.IsEmpty() {
@@ -114,7 +117,7 @@ func TestDelete(t *testing.T) {
 		t.Fail()
 	}
 
-	list = New()
+	list = New(memStore)
 	// Delete elements at the end of the list.
 	for i := 0; i < maxN; i++ {
 		list.Insert(Element(i), Element(i))
@@ -126,7 +129,7 @@ func TestDelete(t *testing.T) {
 		t.Fail()
 	}
 
-	list = New()
+	list = New(memStore)
 	// Delete elements at random positions in the list.
 	rList := rand.Perm(maxN)
 	for _, e := range rList {
@@ -141,61 +144,65 @@ func TestDelete(t *testing.T) {
 }
 
 func TestNext(t *testing.T) {
-	list := New()
+	list := New(memStore)
 
 	for i := 0; i < maxN; i++ {
 		list.Insert(Element(i), Element(i))
 	}
 
-	smallest := list.GetSmallestNode()
-	largest := list.GetLargestNode()
+	smallest, _ := list.GetSmallestNode()
+	largest, _ := list.GetLargestNode()
 
 	lastNode := smallest
 	node := lastNode
 	for node != largest {
-		node = list.Next(node)
+		node, _ = list.Next(node)
 		// Must always be incrementing here!
 		if bytes.Compare(node.Key, lastNode.Key) <= 0 {
 			t.Fail()
 		}
 		// Next.Prev must always point to itself!
-		if list.Next(list.Prev(node)) != node {
+		prevNode, _ := list.Prev(node)
+		nextNode, _ := list.Next(prevNode)
+		if nextNode != node {
 			t.Fail()
 		}
 		lastNode = node
 	}
 
-	if list.Next(largest) != smallest {
+	if nextNode, _ := list.Next(largest); nextNode != smallest {
 		t.Fail()
 	}
 }
 
 func TestPrev(t *testing.T) {
-	list := New()
+	list := New(memStore)
 
 	for i := 0; i < maxN; i++ {
 		list.Insert(Element(i), Element(i))
 	}
 
-	smallest := list.GetSmallestNode()
-	largest := list.GetLargestNode()
+	smallest, _ := list.GetSmallestNode()
+	largest, _ := list.GetLargestNode()
 
 	lastNode := largest
 	node := lastNode
 	for node != smallest {
-		node = list.Prev(node)
+		node, _ = list.Prev(node)
 		// Must always be incrementing here!
 		if bytes.Compare(node.Key, lastNode.Key) >= 0 {
 			t.Fail()
 		}
 		// Next.Prev must always point to itself!
-		if list.Prev(list.Next(node)) != node {
+		nextNode, _ := list.Next(node)
+		prevNode, _ := list.Prev(nextNode)
+		if prevNode != node {
 			t.Fail()
 		}
 		lastNode = node
 	}
 
-	if list.Prev(smallest) != largest {
+	if prevNode, _ := list.Prev(smallest); prevNode != largest {
 		t.Fail()
 	}
 }
@@ -208,11 +215,11 @@ func TestFindGreaterOrEqual(t *testing.T) {
 	var listPointer *SkipList
 
 	// Test on empty list.
-	if _, ok := listPointer.FindGreaterOrEqual(Element(0)); ok {
+	if _, ok, _ := listPointer.FindGreaterOrEqual(Element(0)); ok {
 		t.Fail()
 	}
 
-	list = New()
+	list = New(memStore)
 
 	for i := 0; i < maxN; i++ {
 		list.Insert(Element(rand.Intn(maxNumber)), Element(i))
@@ -220,7 +227,7 @@ func TestFindGreaterOrEqual(t *testing.T) {
 
 	for i := 0; i < maxN; i++ {
 		key := Element(rand.Intn(maxNumber))
-		if v, ok := list.FindGreaterOrEqual(key); ok {
+		if v, ok, _ := list.FindGreaterOrEqual(key); ok {
 			// if f is v should be bigger than the element before
 			if v.Prev != nil && bytes.Compare(v.Prev.Key, key) >= 0 {
 				fmt.Printf("PrevV: %s\n    key: %s\n\n", string(v.Prev.Key), string(key))
@@ -233,7 +240,8 @@ func TestFindGreaterOrEqual(t *testing.T) {
 				t.Fail()
 			}
 		} else {
-			lastV := list.GetLargestNode().GetValue()
+			lastNode, _ := list.GetLargestNode()
+			lastV := lastNode.GetValue()
 			// It is OK, to fail, as long as f is bigger than the last element.
 			if bytes.Compare(key, lastV) <= 0 {
 				fmt.Printf("lastV: %s\n    key: %s\n\n", string(lastV), string(key))
@@ -245,7 +253,7 @@ func TestFindGreaterOrEqual(t *testing.T) {
 }
 
 func TestChangeValue(t *testing.T) {
-	list := New()
+	list := New(memStore)
 
 	for i := 0; i < maxN; i++ {
 		list.Insert(Element(i), []byte("value"))
@@ -253,15 +261,15 @@ func TestChangeValue(t *testing.T) {
 
 	for i := 0; i < maxN; i++ {
 		// The key only looks at the int so the string doesn't matter here!
-		f1, ok := list.Find(Element(i))
+		f1, ok, _ := list.Find(Element(i))
 		if !ok {
 			t.Fail()
 		}
-		ok = list.ChangeValue(f1, []byte("different value"))
-		if !ok {
+		err := list.ChangeValue(f1, []byte("different value"))
+		if err != nil {
 			t.Fail()
 		}
-		f2, ok := list.Find(Element(i))
+		f2, ok, _ := list.Find(Element(i))
 		if !ok {
 			t.Fail()
 		}
