@@ -243,3 +243,30 @@ func TestFindGreaterOrEqual(t *testing.T) {
 	}
 
 }
+
+func TestChangeValue(t *testing.T) {
+	list := New()
+
+	for i := 0; i < maxN; i++ {
+		list.Insert(Element(i), []byte("value"))
+	}
+
+	for i := 0; i < maxN; i++ {
+		// The key only looks at the int so the string doesn't matter here!
+		f1, ok := list.Find(Element(i))
+		if !ok {
+			t.Fail()
+		}
+		ok = list.ChangeValue(f1, []byte("different value"))
+		if !ok {
+			t.Fail()
+		}
+		f2, ok := list.Find(Element(i))
+		if !ok {
+			t.Fail()
+		}
+		if bytes.Compare(f2.GetValue(), []byte("different value")) != 0 {
+			t.Fail()
+		}
+	}
+}
