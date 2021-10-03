@@ -23,12 +23,12 @@ func TestInsertAndFind(t *testing.T) {
 
 	var listPointer *SkipList
 	listPointer.Insert(k0, k0)
-	if _, ok, _ := listPointer.Find(k0); ok {
+	if _, _, ok, _ := listPointer.Find(k0); ok {
 		t.Fail()
 	}
 
 	list = New(memStore)
-	if _, ok, _ := list.Find(k0); ok {
+	if _, _, ok, _ := list.Find(k0); ok {
 		t.Fail()
 	}
 	if !list.IsEmpty() {
@@ -42,7 +42,7 @@ func TestInsertAndFind(t *testing.T) {
 	}
 	for i := 0; i < maxN; i++ {
 		key := []byte(strconv.Itoa(maxN - i))
-		if _, ok, _ := list.Find(key); !ok {
+		if _, _, ok, _ := list.Find(key); !ok {
 			t.Fail()
 		}
 	}
@@ -55,7 +55,7 @@ func TestInsertAndFind(t *testing.T) {
 	}
 	for i := 0; i < maxN; i++ {
 		key := []byte(strconv.Itoa(i))
-		if _, ok, _ := list.Find(key); !ok {
+		if _, _, ok, _ := list.Find(key); !ok {
 			t.Fail()
 		}
 	}
@@ -71,7 +71,7 @@ func TestInsertAndFind(t *testing.T) {
 	for _, e := range rList {
 		key := []byte(strconv.Itoa(e))
 		// println("find", e)
-		if _, ok, _ := list.Find(key); !ok {
+		if _, _, ok, _ := list.Find(key); !ok {
 			t.Fail()
 		}
 	}
@@ -215,7 +215,7 @@ func TestFindGreaterOrEqual(t *testing.T) {
 	var listPointer *SkipList
 
 	// Test on empty list.
-	if _, ok, _ := listPointer.FindGreaterOrEqual(Element(0)); ok {
+	if _, _, ok, _ := listPointer.FindGreaterOrEqual(Element(0)); ok {
 		t.Fail()
 	}
 
@@ -227,7 +227,7 @@ func TestFindGreaterOrEqual(t *testing.T) {
 
 	for i := 0; i < maxN; i++ {
 		key := Element(rand.Intn(maxNumber))
-		if v, ok, _ := list.FindGreaterOrEqual(key); ok {
+		if _, v, ok, _ := list.FindGreaterOrEqual(key); ok {
 			// if f is v should be bigger than the element before
 			if v.Prev != nil && bytes.Compare(v.Prev.Key, key) >= 0 {
 				fmt.Printf("PrevV: %s\n    key: %s\n\n", string(v.Prev.Key), string(key))
@@ -261,7 +261,7 @@ func TestChangeValue(t *testing.T) {
 
 	for i := 0; i < maxN; i++ {
 		// The key only looks at the int so the string doesn't matter here!
-		f1, ok, _ := list.Find(Element(i))
+		_, f1, ok, _ := list.Find(Element(i))
 		if !ok {
 			t.Fail()
 		}
@@ -269,7 +269,7 @@ func TestChangeValue(t *testing.T) {
 		if err != nil {
 			t.Fail()
 		}
-		f2, ok, _ := list.Find(Element(i))
+		_, f2, ok, _ := list.Find(Element(i))
 		if !ok {
 			t.Fail()
 		}

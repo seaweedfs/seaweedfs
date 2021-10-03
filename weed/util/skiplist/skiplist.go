@@ -67,17 +67,17 @@ func (t *SkipList) generateLevel(maxLevel int) int {
 	return level
 }
 
-func (t *SkipList) findEntryIndex(key []byte, level int) int {
+func (t *SkipList) findEntryIndex(key []byte, minLevel int) int {
 	// Find good entry point so we don't accidentally skip half the list.
 	for i := t.maxLevel; i >= 0; i-- {
-		if t.startLevels[i] != nil && bytes.Compare(t.startLevels[i].Key, key) < 0 || i <= level {
+		if t.startLevels[i] != nil && bytes.Compare(t.startLevels[i].Key, key) < 0 || i <= minLevel {
 			return i
 		}
 	}
 	return 0
 }
 
-func (t *SkipList) findExtended(key []byte, findGreaterOrEqual bool) (foundElem *SkipListElement, ok bool, err error) {
+func (t *SkipList) findExtended(key []byte, findGreaterOrEqual bool) (prevElementIfVisited *SkipListElement, foundElem *SkipListElement, ok bool, err error) {
 
 	foundElem = nil
 	ok = false
@@ -120,6 +120,7 @@ func (t *SkipList) findExtended(key []byte, findGreaterOrEqual bool) (foundElem 
 
 				// Early exit
 				if currentNode.Next[0] != nil && bytes.Compare(currentNode.Next[0].Key, key) == 0 {
+					prevElementIfVisited = currentNode
 					var currentNodeNext *SkipListElement
 					currentNodeNext, err = t.loadElement(currentNode.Next[0])
 					if err != nil {
@@ -150,26 +151,26 @@ func (t *SkipList) findExtended(key []byte, findGreaterOrEqual bool) (foundElem 
 // Find tries to find an element in the skiplist based on the key from the given ListElement.
 // elem can be used, if ok is true.
 // Find runs in approx. O(log(n))
-func (t *SkipList) Find(key []byte) (elem *SkipListElement, ok bool, err error) {
+func (t *SkipList) Find(key []byte) (prevIfVisited *SkipListElement, elem *SkipListElement, ok bool, err error) {
 
 	if t == nil || key == nil {
 		return
 	}
 
-	elem, ok, err = t.findExtended(key, false)
+	prevIfVisited, elem, ok, err = t.findExtended(key, false)
 	return
 }
 
 // FindGreaterOrEqual finds the first element, that is greater or equal to the given ListElement e.
 // The comparison is done on the keys (So on ExtractKey()).
 // FindGreaterOrEqual runs in approx. O(log(n))
-func (t *SkipList) FindGreaterOrEqual(key []byte) (elem *SkipListElement, ok bool, err error) {
+func (t *SkipList) FindGreaterOrEqual(key []byte) (prevIfVisited *SkipListElement, elem *SkipListElement, ok bool, err error) {
 
 	if t == nil || key == nil {
 		return
 	}
 
-	elem, ok, err = t.findExtended(key, true)
+	prevIfVisited, elem, ok, err = t.findExtended(key, true)
 	return
 }
 
