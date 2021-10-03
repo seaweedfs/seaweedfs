@@ -15,11 +15,11 @@ const (
 )
 
 type SkipList struct {
-	startLevels  [maxLevel]*SkipListElementReference
-	endLevels    [maxLevel]*SkipListElementReference
-	maxNewLevel  int
-	maxLevel     int
-	elementCount int
+	startLevels [maxLevel]*SkipListElementReference
+	endLevels   [maxLevel]*SkipListElementReference
+	maxNewLevel int
+	maxLevel    int
+	// elementCount int
 }
 
 // NewSeedEps returns a new empty, initialized Skiplist.
@@ -32,9 +32,9 @@ func NewSeed(seed int64) *SkipList {
 	//fmt.Printf("SkipList seed: %v\n", seed)
 
 	list := &SkipList{
-		maxNewLevel:  maxLevel,
-		maxLevel:     0,
-		elementCount: 0,
+		maxNewLevel: maxLevel,
+		maxLevel:    0,
+		// elementCount: 0,
 	}
 
 	return list
@@ -193,7 +193,7 @@ func (t *SkipList) Delete(key []byte) {
 					nextNextNode.Prev = currentNode.Reference()
 					nextNextNode.Save()
 				}
-				t.elementCount--
+				// t.elementCount--
 				nextNode.DeleteSelf()
 			}
 
@@ -230,7 +230,7 @@ func (t *SkipList) Delete(key []byte) {
 
 // Insert inserts the given ListElement into the skiplist.
 // Insert runs in approx. O(log(n))
-func (t *SkipList) Insert(key []byte) {
+func (t *SkipList) Insert(key, value []byte) {
 
 	if t == nil || key == nil {
 		return
@@ -245,13 +245,14 @@ func (t *SkipList) Insert(key []byte) {
 	}
 
 	elem := &SkipListElement{
-		Id:     rand.Int63(),
-		Next:   make([]*SkipListElementReference, t.maxNewLevel, t.maxNewLevel),
-		Level:  int32(level),
-		Values: [][]byte{key},
+		Id:    rand.Int63(),
+		Next:  make([]*SkipListElementReference, t.maxNewLevel, t.maxNewLevel),
+		Level: int32(level),
+		Key:   key,
+		Value: value,
 	}
 
-	t.elementCount++
+	// t.elementCount++
 
 	newFirst := true
 	newLast := true
@@ -371,11 +372,6 @@ func (t *SkipList) Insert(key []byte) {
 
 }
 
-// GetValue extracts the ListElement value from a skiplist node.
-func (e *SkipListElement) GetValue() []byte {
-	return e.Values[0]
-}
-
 // GetSmallestNode returns the very first/smallest node in the skiplist.
 // GetSmallestNode runs in O(1)
 func (t *SkipList) GetSmallestNode() *SkipListElement {
@@ -404,11 +400,6 @@ func (t *SkipList) Prev(e *SkipListElement) *SkipListElement {
 		return t.endLevels[0].Load()
 	}
 	return e.Prev.Load()
-}
-
-// GetNodeCount returns the number of nodes currently in the skiplist.
-func (t *SkipList) GetNodeCount() int {
-	return t.elementCount
 }
 
 // String returns a string format of the skiplist. Useful to get a graphical overview and/or debugging.

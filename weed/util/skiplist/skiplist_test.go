@@ -18,7 +18,7 @@ func TestInsertAndFind(t *testing.T) {
 	var list *SkipList
 
 	var listPointer *SkipList
-	listPointer.Insert(k0)
+	listPointer.Insert(k0, k0)
 	if _, ok := listPointer.Find(k0); ok {
 		t.Fail()
 	}
@@ -34,7 +34,7 @@ func TestInsertAndFind(t *testing.T) {
 	// Test at the beginning of the list.
 	for i := 0; i < maxN; i++ {
 		key := []byte(strconv.Itoa(maxN-i))
-		list.Insert(key)
+		list.Insert(key, key)
 	}
 	for i := 0; i < maxN; i++ {
 		key := []byte(strconv.Itoa(maxN-i))
@@ -48,7 +48,7 @@ func TestInsertAndFind(t *testing.T) {
 	// Test at the end of the list.
 	for i := 0; i < maxN; i++ {
 		key := []byte(strconv.Itoa(i))
-		list.Insert(key)
+		list.Insert(key, key)
 	}
 	for i := 0; i < maxN; i++ {
 		key := []byte(strconv.Itoa(i))
@@ -62,17 +62,17 @@ func TestInsertAndFind(t *testing.T) {
 	rList := rand.Perm(maxN)
 	for _, e := range rList {
 		key := []byte(strconv.Itoa(e))
-		println("insert", e)
-		list.Insert(key)
+		// println("insert", e)
+		list.Insert(key, key)
 	}
 	for _, e := range rList {
 		key := []byte(strconv.Itoa(e))
-		println("find", e)
+		// println("find", e)
 		if _, ok := list.Find(key); !ok {
 			t.Fail()
 		}
 	}
-	println("print list")
+	// println("print list")
 	list.println()
 
 }
@@ -97,7 +97,7 @@ func TestDelete(t *testing.T) {
 		t.Fail()
 	}
 
-	list.Insert(k0)
+	list.Insert(k0, k0)
 	list.Delete(k0)
 	if !list.IsEmpty() {
 		t.Fail()
@@ -105,7 +105,7 @@ func TestDelete(t *testing.T) {
 
 	// Delete elements at the beginning of the list.
 	for i := 0; i < maxN; i++ {
-		list.Insert(Element(i))
+		list.Insert(Element(i), Element(i))
 	}
 	for i := 0; i < maxN; i++ {
 		list.Delete(Element(i))
@@ -117,7 +117,7 @@ func TestDelete(t *testing.T) {
 	list = New()
 	// Delete elements at the end of the list.
 	for i := 0; i < maxN; i++ {
-		list.Insert(Element(i))
+		list.Insert(Element(i), Element(i))
 	}
 	for i := 0; i < maxN; i++ {
 		list.Delete(Element(maxN - i - 1))
@@ -130,7 +130,7 @@ func TestDelete(t *testing.T) {
 	// Delete elements at random positions in the list.
 	rList := rand.Perm(maxN)
 	for _, e := range rList {
-		list.Insert(Element(e))
+		list.Insert(Element(e), Element(e))
 	}
 	for _, e := range rList {
 		list.Delete(Element(e))
@@ -144,7 +144,7 @@ func TestNext(t *testing.T) {
 	list := New()
 
 	for i := 0; i < maxN; i++ {
-		list.Insert(Element(i))
+		list.Insert(Element(i), Element(i))
 	}
 
 	smallest := list.GetSmallestNode()
@@ -155,7 +155,7 @@ func TestNext(t *testing.T) {
 	for node != largest {
 		node = list.Next(node)
 		// Must always be incrementing here!
-		if bytes.Compare(node.Values[0], lastNode.Values[0]) <= 0 {
+		if bytes.Compare(node.Key, lastNode.Key) <= 0 {
 			t.Fail()
 		}
 		// Next.Prev must always point to itself!
@@ -174,7 +174,7 @@ func TestPrev(t *testing.T) {
 	list := New()
 
 	for i := 0; i < maxN; i++ {
-		list.Insert(Element(i))
+		list.Insert(Element(i), Element(i))
 	}
 
 	smallest := list.GetSmallestNode()
@@ -185,7 +185,7 @@ func TestPrev(t *testing.T) {
 	for node != smallest {
 		node = list.Prev(node)
 		// Must always be incrementing here!
-		if bytes.Compare(node.Values[0], lastNode.Values[0]) >= 0 {
+		if bytes.Compare(node.Key, lastNode.Key) >= 0 {
 			t.Fail()
 		}
 		// Next.Prev must always point to itself!
@@ -196,18 +196,6 @@ func TestPrev(t *testing.T) {
 	}
 
 	if list.Prev(smallest) != largest {
-		t.Fail()
-	}
-}
-
-func TestGetNodeCount(t *testing.T) {
-	list := New()
-
-	for i := 0; i < maxN; i++ {
-		list.Insert(Element(i))
-	}
-
-	if list.GetNodeCount() != maxN {
 		t.Fail()
 	}
 }
@@ -227,21 +215,21 @@ func TestFindGreaterOrEqual(t *testing.T) {
 	list = New()
 
 	for i := 0; i < maxN; i++ {
-		list.Insert(Element(rand.Intn(maxNumber)))
+		list.Insert(Element(rand.Intn(maxNumber)), Element(i))
 	}
 
 	for i := 0; i < maxN; i++ {
 		key := Element(rand.Intn(maxNumber))
 		if v, ok := list.FindGreaterOrEqual(key); ok {
 			// if f is v should be bigger than the element before
-			if bytes.Compare(v.Prev.Key, key) >= 0 {
+			if v.Prev != nil && bytes.Compare(v.Prev.Key, key) >= 0 {
 				fmt.Printf("PrevV: %s\n    key: %s\n\n", string(v.Prev.Key), string(key))
 				t.Fail()
 			}
 			// v should be bigger or equal to f
 			// If we compare directly, we get an equal key with a difference on the 10th decimal point, which fails.
-			if bytes.Compare(v.Values[0], key) < 0 {
-				fmt.Printf("v: %s\n    key: %s\n\n", string(v.Values[0]), string(key))
+			if bytes.Compare(v.Key, key) < 0 {
+				fmt.Printf("v: %s\n    key: %s\n\n", string(v.Key), string(key))
 				t.Fail()
 			}
 		} else {

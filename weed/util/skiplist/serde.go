@@ -3,16 +3,10 @@ package skiplist
 import "bytes"
 
 func compareElement(a *SkipListElement, key []byte) int {
-	if len(a.Values) == 0 {
+	if len(a.Key) == 0 {
 		return -1
 	}
-	if bytes.Compare(a.Values[0], key) < 0 {
-		return -1
-	}
-	if bytes.Compare(a.Values[len(a.Values)-1], key) > 0 {
-		return 1
-	}
-	return 0
+	return bytes.Compare(a.Key, key)
 }
 
 var (
@@ -25,7 +19,7 @@ func (node *SkipListElement) Reference() *SkipListElementReference {
 	}
 	return &SkipListElementReference{
 		ElementPointer: node.Id,
-		Key:            node.Values[0],
+		Key:            node.Key,
 	}
 }
 func (node *SkipListElement) Save() {
