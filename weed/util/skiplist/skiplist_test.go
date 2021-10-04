@@ -16,6 +16,21 @@ var (
 	memStore = newMemStore()
 )
 
+func TestReverseInsert(t *testing.T) {
+	list := NewSeed(100, memStore)
+
+	list.Insert([]byte("zzz"), []byte("zzz"))
+	list.Delete([]byte("zzz"))
+
+	list.Insert([]byte("aaa"), []byte("aaa"))
+
+	if list.IsEmpty() {
+		t.Fail()
+	}
+
+}
+
+
 func TestInsertAndFind(t *testing.T) {
 
 	k0 := []byte("0")
