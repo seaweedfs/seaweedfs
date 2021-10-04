@@ -35,7 +35,7 @@ func (nb *NameBatch) DeleteName(name string) {
 }
 func (nb *NameBatch) ListNames(startFrom string, visitNamesFn func(name string) bool) bool {
 	var names []string
-	needFilter := startFrom == ""
+	needFilter := startFrom != ""
 	for n := range nb.names {
 		if !needFilter || strings.Compare(n, startFrom) >= 0 {
 			names = append(names, n)

@@ -9,7 +9,7 @@ type NameList struct {
 	batchSize int
 }
 
-func NewNameList(store ListStore, batchSize int) *NameList {
+func newNameList(store ListStore, batchSize int) *NameList {
 	return &NameList{
 		skipList:  New(store),
 		batchSize: batchSize,
@@ -59,6 +59,7 @@ There are multiple cases after finding the name for greater or equal node
 
 */
 func (nl *NameList) WriteName(name string) error {
+
 	lookupKey := []byte(name)
 	prevNode, nextNode, found, err := nl.skipList.FindGreaterOrEqual(lookupKey)
 	if err != nil {
@@ -300,4 +301,26 @@ func (nl *NameList) ListNames(startFrom string, visitNamesFn func(name string) b
 	}
 
 	return nil
+}
+
+func (nl *NameList) RemoteAllListElement() error {
+
+	t := nl.skipList
+
+	nodeRef := t.startLevels[0]
+	for nodeRef != nil {
+		node, err := t.loadElement(nodeRef)
+		if err != nil {
+			return err
+		}
+		if node == nil {
+			return nil
+		}
+		if err := t.deleteElement(node); err != nil {
+			return err
+		}
+		nodeRef = node.Next[0]
+	}
+	return nil
+
 }

@@ -34,6 +34,7 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer/postgres2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis2"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/redis3"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/sqlite"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/notification"

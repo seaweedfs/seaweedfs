@@ -115,6 +115,8 @@ func (store *UniversalRedis3Store) DeleteFolderChildren(ctx context.Context, ful
 		if err != nil {
 			return fmt.Errorf("DeleteFolderChildren %s in parent dir: %v", fullpath, err)
 		}
+		// not efficient, but need to remove if it is a directory
+		store.Client.Del(ctx, genDirectoryListKey(string(path)))
 		return nil
 	})
 
@@ -127,41 +129,41 @@ func (store *UniversalRedis3Store) ListDirectoryPrefixedEntries(ctx context.Cont
 func (store *UniversalRedis3Store) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
 	dirListKey := genDirectoryListKey(string(dirPath))
-	start := int64(0)
-	if startFileName != "" {
-		start, _ = store.Client.ZRank(ctx, dirListKey, startFileName).Result()
-		if !includeStartFile {
-			start++
-		}
-	}
-	members, err := store.Client.ZRange(ctx, dirListKey, start, start+int64(limit)-1).Result()
-	if err != nil {
-		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
-	}
+	counter := int64(0)
 
-	// fetch entry meta
-	for _, fileName := range members {
+	err = listChildren(ctx, store.Client, dirListKey, startFileName, func(fileName string) bool {
+		if startFileName != "" {
+			if !includeStartFile && startFileName == fileName {
+				return true
+			}
+		}
+
 		path := util.NewFullPath(string(dirPath), fileName)
 		entry, err := store.FindEntry(ctx, path)
 		lastFileName = fileName
 		if err != nil {
 			glog.V(0).Infof("list %s : %v", path, err)
 			if err == filer_pb.ErrNotFound {
-				continue
+				return true
 			}
 		} else {
 			if entry.TtlSec > 0 {
 				if entry.Attr.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
 					store.Client.Del(ctx, string(path)).Result()
 					store.Client.ZRem(ctx, dirListKey, fileName).Result()
-					continue
+					return true
 				}
 			}
+			counter++
 			if !eachEntryFunc(entry) {
-				break
+				return false
+			}
+			if counter >= limit {
+				return false
 			}
 		}
-	}
+		return true
+	})
 
 	return lastFileName, err
 }

@@ -15,7 +15,7 @@ func String(x int) string {
 }
 
 func TestNameList(t *testing.T) {
-	list := NewNameList(memStore, 7)
+	list := newNameList(memStore, 7)
 
 	for i := 0; i < maxNameCount; i++ {
 		list.WriteName(String(i))
@@ -51,7 +51,7 @@ func TestNameList(t *testing.T) {
 	}
 
 	// randomized deletion
-	list = NewNameList(memStore, 7)
+	list = newNameList(memStore, 7)
 	// Delete elements at random positions in the list.
 	rList := rand.Perm(maxN)
 	for _, i := range rList {
