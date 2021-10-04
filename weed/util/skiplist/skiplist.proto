@@ -24,3 +24,7 @@ message SkipListElement {
   bytes value = 5;
   SkipListElementReference prev = 6;
 }
+
+message NameBatchData {
+  repeated bytes names = 1;
+}
