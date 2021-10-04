@@ -34,8 +34,18 @@ func (t *SkipList) deleteElement(element *SkipListElement) error {
 }
 
 func (t *SkipList) loadElement(ref *SkipListElementReference) (*SkipListElement, error) {
-	if ref == nil {
+	if ref.IsNil() {
 		return nil, nil
 	}
 	return t.listStore.LoadElement(ref.ElementPointer)
+}
+
+func (ref *SkipListElementReference) IsNil() bool {
+	if ref == nil {
+		return true
+	}
+	if len(ref.Key) == 0 {
+		return true
+	}
+	return false
 }
