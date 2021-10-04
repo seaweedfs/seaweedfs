@@ -185,6 +185,28 @@ routeByLatency = false
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
 
+[redis3] # beta
+enabled = false
+address = "localhost:6379"
+password = ""
+database = 0
+
+[redis_cluster3] # beta
+enabled = false
+addresses = [
+    "localhost:30001",
+    "localhost:30002",
+    "localhost:30003",
+    "localhost:30004",
+    "localhost:30005",
+    "localhost:30006",
+]
+password = ""
+# allows reads from slave servers or the master, but all writes still go to the master
+readOnly = false
+# automatically use the closest Redis server for reads
+routeByLatency = false
+
 [etcd]
 enabled = false
 servers = "localhost:2379"
