@@ -8,7 +8,7 @@ import (
 	"github.com/go-redis/redis/v8"
 )
 
-const maxNameBatchSizeLimit = 5
+const maxNameBatchSizeLimit = 1000
 
 func insertChild(ctx context.Context, client redis.UniversalClient, key string, name string) error {
 	data, err := client.Get(ctx, key).Result()
