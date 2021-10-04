@@ -177,13 +177,12 @@ func runServer(cmd *Command, args []string) bool {
 	// ip address
 	masterOptions.ip = serverIp
 	masterOptions.ipBind = serverBindIp
-	_, masters := checkPeers(*masterOptions.ip, *masterOptions.port, *masterOptions.portGrpc, *masterOptions.peers)
-	filerOptions.masters = masters
+	filerOptions.masters = pb.ServerAddresses(*masterOptions.peers).ToAddresses()
 	filerOptions.ip = serverIp
 	filerOptions.bindIp = serverBindIp
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp
-	serverOptions.v.masters = masters
+	serverOptions.v.masters = pb.ServerAddresses(*masterOptions.peers).ToAddresses()
 	serverOptions.v.idleConnectionTimeout = serverTimeout
 	serverOptions.v.dataCenter = serverDataCenter
 	serverOptions.v.rack = serverRack
