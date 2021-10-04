@@ -168,6 +168,12 @@ func runServer(cmd *Command, args []string) bool {
 		*isStartingFiler = true
 	}
 
+	if *isStartingMasterServer {
+		_, peerList := checkPeers(*serverIp, *masterOptions.port, *masterOptions.portGrpc, *masterOptions.peers)
+		peers := strings.Join(pb.ToAddressStrings(peerList), ",")
+		masterOptions.peers = &peers
+	}
+
 	// ip address
 	masterOptions.ip = serverIp
 	masterOptions.ipBind = serverBindIp
