@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package skiplist;
+
+option go_package = "github.com/chrislusf/seaweedfs/weed/util/skiplist";
+
+message SkipListProto {
+  repeated SkipListElementReference start_levels = 1;
+  repeated SkipListElementReference end_levels = 2;
+  int32 max_new_level = 3;
+  int32 max_level = 4;
+}
+
+message SkipListElementReference {
+  int64 element_pointer = 1;
+  bytes key = 2;
+}
+
+message SkipListElement {
+  int64 id = 1;
+  repeated SkipListElementReference next = 2;
+  int32 level = 3;
+  bytes key = 4;
+  bytes value = 5;
+  SkipListElementReference prev = 6;
+}
+
+message NameBatchData {
+  repeated bytes names = 1;
+}
