@@ -110,6 +110,9 @@ func (dn *DataNode) DeltaUpdateVolumes(newVolumes, deletedVolumes []storage.Volu
 
 	for _, v := range deletedVolumes {
 		disk := dn.getOrCreateDisk(v.DiskType)
+		if _, found := disk.volumes[v.Id]; !found {
+			continue
+		}
 		delete(disk.volumes, v.Id)
 
 		deltaDiskUsages := newDiskUsages()
