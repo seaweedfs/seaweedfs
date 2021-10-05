@@ -310,6 +310,12 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*n
 	return &vid, count, locationList, nil
 }
 
+func (vl *VolumeLayout) ShouldGrowVolumes(option *VolumeGrowOption) bool {
+	active, crowded := vl.GetActiveVolumeCount(option)
+	//glog.V(0).Infof("active volume: %d, high usage volume: %d\n", active, high)
+	return active <= crowded
+}
+
 func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) (active, crowded int) {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()

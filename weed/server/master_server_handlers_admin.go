@@ -132,13 +132,6 @@ func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *
 	}
 }
 
-func (ms *MasterServer) shouldVolumeGrow(option *topology.VolumeGrowOption) bool {
-	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
-	active, high := vl.GetActiveVolumeCount(option)
-	//glog.V(0).Infof("active volume: %d, high usage volume: %d\n", active, high)
-	return active <= high
-}
-
 func (ms *MasterServer) getVolumeGrowOption(r *http.Request) (*topology.VolumeGrowOption, error) {
 	replicationString := r.FormValue("replication")
 	if replicationString == "" {

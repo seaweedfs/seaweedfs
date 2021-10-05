@@ -42,8 +42,11 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				return !found
 			})
 
+			option := req.Option
+			vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
+
 			// not atomic but it's okay
-			if !found && ms.shouldVolumeGrow(req.Option) {
+			if !found && vl.ShouldGrowVolumes(option) {
 				filter.Store(req, nil)
 				// we have lock called inside vg
 				go func() {
@@ -130,7 +133,9 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		MemoryMapMaxSizeMb: req.MemoryMapMaxSizeMb,
 	}
 
-	if ms.shouldVolumeGrow(option) {
+	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
+
+	if vl.ShouldGrowVolumes(option) {
 		if ms.Topo.AvailableSpaceFor(option) <= 0 {
 			return nil, fmt.Errorf("no free volumes left for " + option.String())
 		}
