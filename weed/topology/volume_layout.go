@@ -114,6 +114,8 @@ type VolumeLayout struct {
 	volumeSizeLimit  uint64
 	replicationAsMin bool
 	accessLock       sync.RWMutex
+	growRequestCount int
+	growRequestTime  time.Time
 }
 
 type VolumeLayoutStats struct {
@@ -308,6 +310,21 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*n
 		}
 	}
 	return &vid, count, locationList, nil
+}
+
+func (vl *VolumeLayout) HasGrowRequest() bool {
+	if vl.growRequestCount > 0 && vl.growRequestTime.Add(time.Minute).After(time.Now()) {
+		return true
+	}
+	return false
+}
+func (vl *VolumeLayout) AddGrowRequest() {
+	vl.growRequestTime = time.Now()
+	vl.growRequestCount++
+}
+func (vl *VolumeLayout) DoneGrowRequest() {
+	vl.growRequestTime = time.Unix(0,0)
+	vl.growRequestCount = 0
 }
 
 func (vl *VolumeLayout) ShouldGrowVolumes(option *VolumeGrowOption) bool {

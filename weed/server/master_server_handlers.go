@@ -115,13 +115,14 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
 
-	if vl.ShouldGrowVolumes(option) {
+	if !vl.HasGrowRequest() && vl.ShouldGrowVolumes(option) {
 		glog.V(0).Infof("dirAssign volume growth %v from %v", option.String(), r.RemoteAddr)
 		if ms.Topo.AvailableSpaceFor(option) <= 0 {
 			writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left for " + option.String()})
 			return
 		}
 		errCh := make(chan error, 1)
+		vl.AddGrowRequest()
 		ms.vgCh <- &topology.VolumeGrowRequest{
 			Option: option,
 			Count:  writableVolumeCount,

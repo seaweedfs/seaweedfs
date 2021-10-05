@@ -54,6 +54,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 					start := time.Now()
 					_, err := ms.vg.AutomaticGrowByType(req.Option, ms.grpcDialOption, ms.Topo, req.Count)
 					glog.V(1).Infoln("finished automatic volume grow, cost ", time.Now().Sub(start))
+					vl.DoneGrowRequest()
 
 					if req.ErrCh != nil {
 						req.ErrCh <- err
@@ -135,10 +136,11 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
 
-	if vl.ShouldGrowVolumes(option) {
+	if !vl.HasGrowRequest() && vl.ShouldGrowVolumes(option) {
 		if ms.Topo.AvailableSpaceFor(option) <= 0 {
 			return nil, fmt.Errorf("no free volumes left for " + option.String())
 		}
+		vl.AddGrowRequest()
 		ms.vgCh <- &topology.VolumeGrowRequest{
 			Option: option,
 			Count:  int(req.WritableVolumeCount),
