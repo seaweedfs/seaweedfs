@@ -4,6 +4,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/go-redis/redis/v8"
+	"github.com/go-redsync/redsync/v4"
+	"github.com/go-redsync/redsync/v4/redis/goredis/v8"
 )
 
 func init() {
@@ -38,5 +40,6 @@ func (store *RedisCluster3Store) initialize(addresses []string, password string,
 		ReadOnly:       readOnly,
 		RouteByLatency: routeByLatency,
 	})
+	store.redsync = redsync.New(goredis.NewPool(store.Client))
 	return
 }

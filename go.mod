@@ -58,7 +58,7 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0
 	github.com/hailocab/go-hostpool v0.0.0-20160125115350-e80d13ce29ed // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
-	github.com/hashicorp/go-multierror v1.0.0 // indirect
+	github.com/hashicorp/go-multierror v1.1.0 // indirect
 	github.com/hashicorp/go-uuid v1.0.2 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/jcmturner/gofork v1.0.0 // indirect
@@ -165,6 +165,7 @@ require (
 
 require (
 	github.com/coreos/etcd v3.3.10+incompatible // indirect
+	github.com/go-redsync/redsync/v4 v4.4.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
@@ -176,6 +177,7 @@ require (
 	github.com/miekg/dns v1.1.25-0.20191211073109-8ebf2e419df7 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
+	github.com/stvp/tempredis v0.0.0-20181119212430-b82af8480203 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.0 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.5.0 // indirect
 	go.etcd.io/etcd/client/v3 v3.5.0 // indirect

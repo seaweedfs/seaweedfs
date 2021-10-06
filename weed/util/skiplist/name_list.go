@@ -300,7 +300,7 @@ func (nl *NameList) ListNames(startFrom string, visitNamesFn func(name string) b
 		}
 	}
 
-	return nil
+ 	return nil
 }
 
 func (nl *NameList) RemoteAllListElement() error {

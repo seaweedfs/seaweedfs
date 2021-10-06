@@ -3,6 +3,7 @@ package redis3
 import (
 	"context"
 	"fmt"
+	"github.com/go-redsync/redsync/v4"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -18,7 +19,8 @@ const (
 )
 
 type UniversalRedis3Store struct {
-	Client                  redis.UniversalClient
+	Client  redis.UniversalClient
+	redsync *redsync.Redsync
 }
 
 func (store *UniversalRedis3Store) BeginTransaction(ctx context.Context) (context.Context, error) {
@@ -49,7 +51,7 @@ func (store *UniversalRedis3Store) InsertEntry(ctx context.Context, entry *filer
 	dir, name := entry.FullPath.DirAndName()
 
 	if name != "" {
-		if err = insertChild(ctx, store.Client, genDirectoryListKey(dir), name); err != nil {
+		if err = insertChild(ctx, store, genDirectoryListKey(dir), name); err != nil {
 			return fmt.Errorf("persisting %s in parent dir: %v", entry.FullPath, err)
 		}
 	}
@@ -99,7 +101,7 @@ func (store *UniversalRedis3Store) DeleteEntry(ctx context.Context, fullpath uti
 	dir, name := fullpath.DirAndName()
 
 	if name != "" {
-		if err = removeChild(ctx, store.Client, genDirectoryListKey(dir), name); err != nil {
+		if err = removeChild(ctx, store, genDirectoryListKey(dir), name); err != nil {
 			return fmt.Errorf("DeleteEntry %s in parent dir: %v", fullpath, err)
 		}
 	}
@@ -109,7 +111,7 @@ func (store *UniversalRedis3Store) DeleteEntry(ctx context.Context, fullpath uti
 
 func (store *UniversalRedis3Store) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) (err error) {
 
-	return removeChildren(ctx, store.Client, genDirectoryListKey(string(fullpath)), func(name string) error {
+	return removeChildren(ctx, store, genDirectoryListKey(string(fullpath)), func(name string) error {
 		path := util.NewFullPath(string(fullpath), name)
 		_, err = store.Client.Del(ctx, string(path)).Result()
 		if err != nil {
@@ -131,7 +133,7 @@ func (store *UniversalRedis3Store) ListDirectoryEntries(ctx context.Context, dir
 	dirListKey := genDirectoryListKey(string(dirPath))
 	counter := int64(0)
 
-	err = listChildren(ctx, store.Client, dirListKey, startFileName, func(fileName string) bool {
+	err = listChildren(ctx, store, dirListKey, startFileName, func(fileName string) bool {
 		if startFileName != "" {
 			if !includeStartFile && startFileName == fileName {
 				return true
