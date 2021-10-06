@@ -117,3 +117,44 @@ func BenchmarkRedis(b *testing.B) {
 		client.ZAddNX(context.Background(),"/yyy/bin", &redis.Z{Score: 0, Member: "name"+strconv.Itoa(i)})
 	}
 }
+
+
+func xBenchmarkNameList(b *testing.B) {
+
+	server, err := tempredis.Start(tempredis.Config{})
+	if err != nil {
+		panic(err)
+	}
+	defer server.Term()
+
+	client := redis.NewClient(&redis.Options{
+		Addr:     "localhost:6379",
+		Password: "",
+		DB:       0,
+	})
+
+	store := newSkipListElementStore("/yyy/bin", client)
+	var data []byte
+	for i := 0; i < b.N; i++ {
+		nameList := skiplist.LoadNameList(data, store, maxNameBatchSizeLimit)
+
+		nameList.WriteName("name"+strconv.Itoa(i))
+
+		if nameList.HasChanges() {
+			data = nameList.ToBytes()
+		}
+	}
+}
+
+func xBenchmarkRedis(b *testing.B) {
+
+	client := redis.NewClient(&redis.Options{
+		Addr:     "localhost:6379",
+		Password: "",
+		DB:       0,
+	})
+
+	for i := 0; i < b.N; i++ {
+		client.ZAddNX(context.Background(),"/xxx/bin", &redis.Z{Score: 0, Member: "name"+strconv.Itoa(i)})
+	}
+}
