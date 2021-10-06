@@ -1,9 +1,11 @@
 package redis3
 
 import (
+	"context"
 	"github.com/chrislusf/seaweedfs/weed/util/skiplist"
-	goredislib "github.com/go-redis/redis/v8"
+	"github.com/go-redis/redis/v8"
 	"github.com/stvp/tempredis"
+	"strconv"
 	"testing"
 )
 
@@ -43,7 +45,7 @@ func TestNameList(t *testing.T) {
 	}
 	defer server.Term()
 
-	client := goredislib.NewClient(&goredislib.Options{
+	client := redis.NewClient(&redis.Options{
 		Network: "unix",
 		Addr:    server.Socket(),
 	})
@@ -55,12 +57,10 @@ func TestNameList(t *testing.T) {
 		nameList.WriteName(name)
 
 		nameList.ListNames("", func(name string) bool {
-			println("  * ", name)
 			return true
 		})
 
 		if nameList.HasChanges() {
-			println("has some changes")
 			data = nameList.ToBytes()
 		}
 		println()
@@ -72,4 +72,48 @@ func TestNameList(t *testing.T) {
 		return true
 	})
 
+}
+
+func BenchmarkNameList(b *testing.B) {
+
+	server, err := tempredis.Start(tempredis.Config{})
+	if err != nil {
+		panic(err)
+	}
+	defer server.Term()
+
+	client := redis.NewClient(&redis.Options{
+		Network: "unix",
+		Addr:    server.Socket(),
+	})
+
+	store := newSkipListElementStore("/yyy/bin", client)
+	var data []byte
+	for i := 0; i < b.N; i++ {
+		nameList := skiplist.LoadNameList(data, store, maxNameBatchSizeLimit)
+
+		nameList.WriteName("name"+strconv.Itoa(i))
+
+		if nameList.HasChanges() {
+			data = nameList.ToBytes()
+		}
+	}
+}
+
+func BenchmarkRedis(b *testing.B) {
+
+	server, err := tempredis.Start(tempredis.Config{})
+	if err != nil {
+		panic(err)
+	}
+	defer server.Term()
+
+	client := redis.NewClient(&redis.Options{
+		Network: "unix",
+		Addr:    server.Socket(),
+	})
+
+	for i := 0; i < b.N; i++ {
+		client.ZAddNX(context.Background(),"/yyy/bin", &redis.Z{Score: 0, Member: "name"+strconv.Itoa(i)})
+	}
 }
