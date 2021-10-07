@@ -4,11 +4,10 @@ import (
 	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/util/skiplist"
 	"github.com/go-redis/redis/v8"
 )
 
-const maxNameBatchSizeLimit = 1000
+const maxNameBatchSizeLimit = 1000000
 
 func insertChild(ctx context.Context, redisStore *UniversalRedis3Store, key string, name string) error {
 
@@ -29,7 +28,7 @@ func insertChild(ctx context.Context, redisStore *UniversalRedis3Store, key stri
 		}
 	}
 	store := newSkipListElementStore(key, client)
-	nameList := skiplist.LoadNameList([]byte(data), store, maxNameBatchSizeLimit)
+	nameList := LoadItemList([]byte(data), key, client, store, maxNameBatchSizeLimit)
 
 	if err := nameList.WriteName(name); err != nil {
 		glog.Errorf("add %s %s: %v", key, name, err)
@@ -64,7 +63,7 @@ func removeChild(ctx context.Context, redisStore *UniversalRedis3Store, key stri
 		}
 	}
 	store := newSkipListElementStore(key, client)
-	nameList := skiplist.LoadNameList([]byte(data), store, maxNameBatchSizeLimit)
+	nameList := LoadItemList([]byte(data), key, client, store, maxNameBatchSizeLimit)
 
 	if err := nameList.DeleteName(name); err != nil {
 		return err
@@ -97,7 +96,7 @@ func removeChildren(ctx context.Context, redisStore *UniversalRedis3Store, key s
 		}
 	}
 	store := newSkipListElementStore(key, client)
-	nameList := skiplist.LoadNameList([]byte(data), store, maxNameBatchSizeLimit)
+	nameList := LoadItemList([]byte(data), key, client, store, maxNameBatchSizeLimit)
 
 	if err = nameList.ListNames("", func(name string) bool {
 		if err := onDeleteFn(name); err != nil {
@@ -126,7 +125,7 @@ func listChildren(ctx context.Context, redisStore *UniversalRedis3Store, key str
 		}
 	}
 	store := newSkipListElementStore(key, client)
-	nameList := skiplist.LoadNameList([]byte(data), store, maxNameBatchSizeLimit)
+	nameList := LoadItemList([]byte(data), key, client, store, maxNameBatchSizeLimit)
 
 	if err = nameList.ListNames(startFileName, func(name string) bool {
 		return eachFn(name)

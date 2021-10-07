@@ -19,10 +19,10 @@ var (
 func TestReverseInsert(t *testing.T) {
 	list := NewSeed(100, memStore)
 
-	list.Insert([]byte("zzz"), []byte("zzz"))
-	list.Delete([]byte("zzz"))
+	list.InsertByKey([]byte("zzz"), 0, []byte("zzz"))
+	list.DeleteByKey([]byte("zzz"))
 
-	list.Insert([]byte("aaa"), []byte("aaa"))
+	list.InsertByKey([]byte("aaa"), 0, []byte("aaa"))
 
 	if list.IsEmpty() {
 		t.Fail()
@@ -37,7 +37,7 @@ func TestInsertAndFind(t *testing.T) {
 	var list *SkipList
 
 	var listPointer *SkipList
-	listPointer.Insert(k0, k0)
+	listPointer.InsertByKey(k0, 0, k0)
 	if _, _, ok, _ := listPointer.Find(k0); ok {
 		t.Fail()
 	}
@@ -53,7 +53,7 @@ func TestInsertAndFind(t *testing.T) {
 	// Test at the beginning of the list.
 	for i := 0; i < maxN; i++ {
 		key := []byte(strconv.Itoa(maxN - i))
-		list.Insert(key, key)
+		list.InsertByKey(key, 0, key)
 	}
 	for i := 0; i < maxN; i++ {
 		key := []byte(strconv.Itoa(maxN - i))
@@ -66,7 +66,7 @@ func TestInsertAndFind(t *testing.T) {
 	// Test at the end of the list.
 	for i := 0; i < maxN; i++ {
 		key := []byte(strconv.Itoa(i))
-		list.Insert(key, key)
+		list.InsertByKey(key, 0, key)
 	}
 	for i := 0; i < maxN; i++ {
 		key := []byte(strconv.Itoa(i))
@@ -81,7 +81,7 @@ func TestInsertAndFind(t *testing.T) {
 	for _, e := range rList {
 		key := []byte(strconv.Itoa(e))
 		// println("insert", e)
-		list.Insert(key, key)
+		list.InsertByKey(key, 0, key)
 	}
 	for _, e := range rList {
 		key := []byte(strconv.Itoa(e))
@@ -106,27 +106,27 @@ func TestDelete(t *testing.T) {
 	var list *SkipList
 
 	// Delete on empty list
-	list.Delete(k0)
+	list.DeleteByKey(k0)
 
 	list = New(memStore)
 
-	list.Delete(k0)
+	list.DeleteByKey(k0)
 	if !list.IsEmpty() {
 		t.Fail()
 	}
 
-	list.Insert(k0, k0)
-	list.Delete(k0)
+	list.InsertByKey(k0, 0, k0)
+	list.DeleteByKey(k0)
 	if !list.IsEmpty() {
 		t.Fail()
 	}
 
 	// Delete elements at the beginning of the list.
 	for i := 0; i < maxN; i++ {
-		list.Insert(Element(i), Element(i))
+		list.InsertByKey(Element(i), 0, Element(i))
 	}
 	for i := 0; i < maxN; i++ {
-		list.Delete(Element(i))
+		list.DeleteByKey(Element(i))
 	}
 	if !list.IsEmpty() {
 		t.Fail()
@@ -135,10 +135,10 @@ func TestDelete(t *testing.T) {
 	list = New(memStore)
 	// Delete elements at the end of the list.
 	for i := 0; i < maxN; i++ {
-		list.Insert(Element(i), Element(i))
+		list.InsertByKey(Element(i), 0, Element(i))
 	}
 	for i := 0; i < maxN; i++ {
-		list.Delete(Element(maxN - i - 1))
+		list.DeleteByKey(Element(maxN - i - 1))
 	}
 	if !list.IsEmpty() {
 		t.Fail()
@@ -148,10 +148,10 @@ func TestDelete(t *testing.T) {
 	// Delete elements at random positions in the list.
 	rList := rand.Perm(maxN)
 	for _, e := range rList {
-		list.Insert(Element(e), Element(e))
+		list.InsertByKey(Element(e), 0, Element(e))
 	}
 	for _, e := range rList {
-		list.Delete(Element(e))
+		list.DeleteByKey(Element(e))
 	}
 	if !list.IsEmpty() {
 		t.Fail()
@@ -162,7 +162,7 @@ func TestNext(t *testing.T) {
 	list := New(memStore)
 
 	for i := 0; i < maxN; i++ {
-		list.Insert(Element(i), Element(i))
+		list.InsertByKey(Element(i), 0, Element(i))
 	}
 
 	smallest, _ := list.GetSmallestNode()
@@ -194,7 +194,7 @@ func TestPrev(t *testing.T) {
 	list := New(memStore)
 
 	for i := 0; i < maxN; i++ {
-		list.Insert(Element(i), Element(i))
+		list.InsertByKey(Element(i), 0, Element(i))
 	}
 
 	smallest, _ := list.GetSmallestNode()
@@ -237,7 +237,7 @@ func TestFindGreaterOrEqual(t *testing.T) {
 	list = New(memStore)
 
 	for i := 0; i < maxN; i++ {
-		list.Insert(Element(rand.Intn(maxNumber)), Element(i))
+		list.InsertByKey(Element(rand.Intn(maxNumber)), 0, Element(i))
 	}
 
 	for i := 0; i < maxN; i++ {
@@ -271,7 +271,7 @@ func TestChangeValue(t *testing.T) {
 	list := New(memStore)
 
 	for i := 0; i < maxN; i++ {
-		list.Insert(Element(i), []byte("value"))
+		list.InsertByKey(Element(i), 0, []byte("value"))
 	}
 
 	for i := 0; i < maxN; i++ {

@@ -78,7 +78,7 @@ func (nl *NameList) WriteName(name string) error {
 	}
 
 	if nextNode != nil && prevNode == nil {
-		prevNode, err = nl.skipList.loadElement(nextNode.Prev)
+		prevNode, err = nl.skipList.LoadElement(nextNode.Prev)
 		if err != nil {
 			return err
 		}
@@ -109,7 +109,7 @@ func (nl *NameList) WriteName(name string) error {
 					return err
 				}
 			} else {
-				if err := nl.skipList.Insert([]byte(x.key), x.ToBytes()); err != nil {
+				if _, err := nl.skipList.InsertByKey([]byte(x.key), 0, x.ToBytes()); err != nil {
 					return err
 				}
 			}
@@ -123,7 +123,7 @@ func (nl *NameList) WriteName(name string) error {
 					return err
 				}
 			} else {
-				if err := nl.skipList.Insert([]byte(y.key), y.ToBytes()); err != nil {
+				if _, err := nl.skipList.InsertByKey([]byte(y.key), 0, y.ToBytes()); err != nil {
 					return err
 				}
 			}
@@ -136,11 +136,11 @@ func (nl *NameList) WriteName(name string) error {
 	if nextNode != nil {
 		nextNameBatch := LoadNameBatch(nextNode.Value)
 		if len(nextNameBatch.names) < nl.batchSize {
-			if err := nl.skipList.Delete(nextNode.Key); err != nil {
+			if _, err := nl.skipList.DeleteByKey(nextNode.Key); err != nil {
 				return err
 			}
 			nextNameBatch.WriteName(name)
-			if err := nl.skipList.Insert([]byte(nextNameBatch.key), nextNameBatch.ToBytes()); err != nil {
+			if _, err := nl.skipList.InsertByKey([]byte(nextNameBatch.key), 0, nextNameBatch.ToBytes()); err != nil {
 				return err
 			}
 			return nil
@@ -151,7 +151,7 @@ func (nl *NameList) WriteName(name string) error {
 	// now prevNode is nil
 	newNameBatch := NewNameBatch()
 	newNameBatch.WriteName(name)
-	if err := nl.skipList.Insert([]byte(newNameBatch.key), newNameBatch.ToBytes()); err != nil {
+	if _, err := nl.skipList.InsertByKey([]byte(newNameBatch.key), 0, newNameBatch.ToBytes()); err != nil {
 		return err
 	}
 
@@ -204,12 +204,12 @@ func (nl *NameList) DeleteName(name string) error {
 		nextNameBatch = LoadNameBatch(nextNode.Value)
 	}
 	if found && bytes.Compare(nextNode.Key, lookupKey) == 0 {
-		if err := nl.skipList.Delete(nextNode.Key); err != nil {
+		if _, err := nl.skipList.DeleteByKey(nextNode.Key); err != nil {
 			return err
 		}
 		nextNameBatch.DeleteName(name)
 		if len(nextNameBatch.names) > 0 {
-			if err := nl.skipList.Insert([]byte(nextNameBatch.key), nextNameBatch.ToBytes()); err != nil {
+			if _, err := nl.skipList.InsertByKey([]byte(nextNameBatch.key), 0, nextNameBatch.ToBytes()); err != nil {
 				return err
 			}
 		}
@@ -224,7 +224,7 @@ func (nl *NameList) DeleteName(name string) error {
 	}
 
 	if nextNode != nil && prevNode == nil {
-		prevNode, err = nl.skipList.loadElement(nextNode.Prev)
+		prevNode, err = nl.skipList.LoadElement(nextNode.Prev)
 		if err != nil {
 			return err
 		}
@@ -244,14 +244,14 @@ func (nl *NameList) DeleteName(name string) error {
 	// case 3
 	prevNameBatch.DeleteName(name)
 	if len(prevNameBatch.names) == 0 {
-		if err := nl.skipList.Delete(prevNode.Key); err != nil {
+		if _, err := nl.skipList.DeleteByKey(prevNode.Key); err != nil {
 			return err
 		}
 		return nil
 	}
 	if nextNameBatch != nil && len(nextNameBatch.names) + len(prevNameBatch.names) < nl.batchSize {
 		// case 3.1 merge nextNode and prevNode
-		if err := nl.skipList.Delete(nextNode.Key); err != nil {
+		if _, err := nl.skipList.DeleteByKey(nextNode.Key); err != nil {
 			return err
 		}
 		for nextName := range nextNameBatch.names {
@@ -294,7 +294,7 @@ func (nl *NameList) ListNames(startFrom string, visitNamesFn func(name string) b
 		if !nextNameBatch.ListNames(startFrom, visitNamesFn) {
 			return nil
 		}
-		nextNode, err = nl.skipList.loadElement(nextNode.Next[0])
+		nextNode, err = nl.skipList.LoadElement(nextNode.Next[0])
 		if err != nil {
 			return err
 		}
@@ -307,16 +307,16 @@ func (nl *NameList) RemoteAllListElement() error {
 
 	t := nl.skipList
 
-	nodeRef := t.startLevels[0]
+	nodeRef := t.StartLevels[0]
 	for nodeRef != nil {
-		node, err := t.loadElement(nodeRef)
+		node, err := t.LoadElement(nodeRef)
 		if err != nil {
 			return err
 		}
 		if node == nil {
 			return nil
 		}
-		if err := t.deleteElement(node); err != nil {
+		if err := t.DeleteElement(node); err != nil {
 			return err
 		}
 		nodeRef = node.Next[0]

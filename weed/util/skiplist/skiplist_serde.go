@@ -19,25 +19,25 @@ func (node *SkipListElement) Reference() *SkipListElementReference {
 	}
 }
 
-func (t *SkipList) saveElement(element *SkipListElement) error {
+func (t *SkipList) SaveElement(element *SkipListElement) error {
 	if element == nil {
 		return nil
 	}
-	return t.listStore.SaveElement(element.Id, element)
+	return t.ListStore.SaveElement(element.Id, element)
 }
 
-func (t *SkipList) deleteElement(element *SkipListElement) error {
+func (t *SkipList) DeleteElement(element *SkipListElement) error {
 	if element == nil {
 		return nil
 	}
-	return t.listStore.DeleteElement(element.Id)
+	return t.ListStore.DeleteElement(element.Id)
 }
 
-func (t *SkipList) loadElement(ref *SkipListElementReference) (*SkipListElement, error) {
+func (t *SkipList) LoadElement(ref *SkipListElementReference) (*SkipListElement, error) {
 	if ref.IsNil() {
 		return nil, nil
 	}
-	return t.listStore.LoadElement(ref.ElementPointer)
+	return t.ListStore.LoadElement(ref.ElementPointer)
 }
 
 func (ref *SkipListElementReference) IsNil() bool {

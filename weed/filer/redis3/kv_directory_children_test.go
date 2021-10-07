@@ -2,11 +2,12 @@ package redis3
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/util/skiplist"
+	"fmt"
 	"github.com/go-redis/redis/v8"
 	"github.com/stvp/tempredis"
 	"strconv"
 	"testing"
+	"time"
 )
 
 var names = []string{
@@ -53,25 +54,119 @@ func TestNameList(t *testing.T) {
 	store := newSkipListElementStore("/yyy/bin", client)
 	var data []byte
 	for _, name := range names {
-		nameList := skiplist.LoadNameList(data, store, maxNameBatchSizeLimit)
+		nameList := LoadItemList(data, "/yyy/bin", client, store, maxNameBatchSizeLimit)
 		nameList.WriteName(name)
 
 		nameList.ListNames("", func(name string) bool {
+			// println(name)
 			return true
 		})
 
 		if nameList.HasChanges() {
 			data = nameList.ToBytes()
 		}
-		println()
+		// println()
 	}
 
-	nameList := skiplist.LoadNameList(data, store, maxNameBatchSizeLimit)
+	nameList := LoadItemList(data, "/yyy/bin", client, store, maxNameBatchSizeLimit)
 	nameList.ListNames("", func(name string) bool {
 		println(name)
 		return true
 	})
 
+}
+
+func xBenchmarkNameList(b *testing.B) {
+
+	server, err := tempredis.Start(tempredis.Config{})
+	if err != nil {
+		panic(err)
+	}
+	defer server.Term()
+
+	client := redis.NewClient(&redis.Options{
+		Network: "unix",
+		Addr:    server.Socket(),
+	})
+
+	store := newSkipListElementStore("/yyy/bin", client)
+	var data []byte
+	for i := 0; i < b.N; i++ {
+		nameList := LoadItemList(data, "/yyy/bin", client, store, maxNameBatchSizeLimit)
+
+		nameList.WriteName(strconv.Itoa(i)+"namexxxxxxxxxxxxxxxxxxx")
+
+		if nameList.HasChanges() {
+			data = nameList.ToBytes()
+		}
+	}
+}
+
+func xBenchmarkRedis(b *testing.B) {
+
+	server, err := tempredis.Start(tempredis.Config{})
+	if err != nil {
+		panic(err)
+	}
+	defer server.Term()
+
+	client := redis.NewClient(&redis.Options{
+		Network: "unix",
+		Addr:    server.Socket(),
+	})
+
+	for i := 0; i < b.N; i++ {
+		client.ZAddNX(context.Background(),"/yyy/bin", &redis.Z{Score: 0, Member: strconv.Itoa(i)+"namexxxxxxxxxxxxxxxxxxx"})
+	}
+}
+
+func TestNameListAdd(t *testing.T) {
+
+	server, err := tempredis.Start(tempredis.Config{})
+	if err != nil {
+		panic(err)
+	}
+	defer server.Term()
+
+	client := redis.NewClient(&redis.Options{
+		Addr:     "localhost:6379",
+		Password: "",
+		DB:       0,
+	})
+
+	client.FlushAll(context.Background())
+
+	N := 364800
+
+	ts0 := time.Now()
+	store := newSkipListElementStore("/y", client)
+	var data []byte
+	nameList := LoadItemList(data, "/y", client, store, 100000)
+	for i := 0; i < N; i++ {
+		nameList.WriteName(fmt.Sprintf("%8d", i))
+	}
+
+	ts1 := time.Now()
+
+	for i := 0; i < N; i++ {
+		client.ZAddNX(context.Background(),"/x", &redis.Z{Score: 0, Member: fmt.Sprintf("name %8d", i)})
+	}
+	ts2 := time.Now()
+
+	fmt.Printf("%v %v", ts1.Sub(ts0), ts2.Sub(ts1))
+
+	/*
+	keys := client.Keys(context.Background(), "/*m").Val()
+	for _, k := range keys {
+		println("key", k)
+		for i, v := range client.ZRangeByLex(context.Background(), k, &redis.ZRangeBy{
+			Min:    "-",
+			Max:    "+",
+		}).Val() {
+			println(" ", i, v)
+		}
+	}
+	 */
 }
 
 func BenchmarkNameList(b *testing.B) {
@@ -83,16 +178,17 @@ func BenchmarkNameList(b *testing.B) {
 	defer server.Term()
 
 	client := redis.NewClient(&redis.Options{
-		Network: "unix",
-		Addr:    server.Socket(),
+		Addr:     "localhost:6379",
+		Password: "",
+		DB:       0,
 	})
 
 	store := newSkipListElementStore("/yyy/bin", client)
 	var data []byte
 	for i := 0; i < b.N; i++ {
-		nameList := skiplist.LoadNameList(data, store, maxNameBatchSizeLimit)
+		nameList := LoadItemList(data, "/yyy/bin", client, store, maxNameBatchSizeLimit)
 
-		nameList.WriteName("name"+strconv.Itoa(i))
+		nameList.WriteName(fmt.Sprintf("name %8d", i))
 
 		if nameList.HasChanges() {
 			data = nameList.ToBytes()
@@ -102,52 +198,6 @@ func BenchmarkNameList(b *testing.B) {
 
 func BenchmarkRedis(b *testing.B) {
 
-	server, err := tempredis.Start(tempredis.Config{})
-	if err != nil {
-		panic(err)
-	}
-	defer server.Term()
-
-	client := redis.NewClient(&redis.Options{
-		Network: "unix",
-		Addr:    server.Socket(),
-	})
-
-	for i := 0; i < b.N; i++ {
-		client.ZAddNX(context.Background(),"/yyy/bin", &redis.Z{Score: 0, Member: "name"+strconv.Itoa(i)})
-	}
-}
-
-
-func xBenchmarkNameList(b *testing.B) {
-
-	server, err := tempredis.Start(tempredis.Config{})
-	if err != nil {
-		panic(err)
-	}
-	defer server.Term()
-
-	client := redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
-		Password: "",
-		DB:       0,
-	})
-
-	store := newSkipListElementStore("/yyy/bin", client)
-	var data []byte
-	for i := 0; i < b.N; i++ {
-		nameList := skiplist.LoadNameList(data, store, maxNameBatchSizeLimit)
-
-		nameList.WriteName("name"+strconv.Itoa(i))
-
-		if nameList.HasChanges() {
-			data = nameList.ToBytes()
-		}
-	}
-}
-
-func xBenchmarkRedis(b *testing.B) {
-
 	client := redis.NewClient(&redis.Options{
 		Addr:     "localhost:6379",
 		Password: "",
@@ -155,6 +205,6 @@ func xBenchmarkRedis(b *testing.B) {
 	})
 
 	for i := 0; i < b.N; i++ {
-		client.ZAddNX(context.Background(),"/xxx/bin", &redis.Z{Score: 0, Member: "name"+strconv.Itoa(i)})
+		client.ZAddNX(context.Background(),"/xxx/bin", &redis.Z{Score: 0, Member: fmt.Sprintf("name %8d", i)})
 	}
 }

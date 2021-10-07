@@ -10,7 +10,7 @@ import (
 )
 
 type SkipListElementStore struct {
-	prefix string
+	Prefix string
 	client redis.UniversalClient
 }
 
@@ -18,13 +18,13 @@ var _ = skiplist.ListStore(&SkipListElementStore{})
 
 func newSkipListElementStore(prefix string, client redis.UniversalClient) *SkipListElementStore {
 	return &SkipListElementStore{
-		prefix: prefix,
+		Prefix: prefix,
 		client: client,
 	}
 }
 
 func (m *SkipListElementStore) SaveElement(id int64, element *skiplist.SkipListElement) error {
-	key := fmt.Sprintf("%s%d", m.prefix, id)
+	key := fmt.Sprintf("%s%d", m.Prefix, id)
 	data, err := proto.Marshal(element)
 	if err != nil {
 		glog.Errorf("marshal %s: %v", key, err)
@@ -33,12 +33,12 @@ func (m *SkipListElementStore) SaveElement(id int64, element *skiplist.SkipListE
 }
 
 func (m *SkipListElementStore) DeleteElement(id int64) error {
-	key := fmt.Sprintf("%s%d", m.prefix, id)
+	key := fmt.Sprintf("%s%d", m.Prefix, id)
 	return m.client.Del(context.Background(), key).Err()
 }
 
 func (m *SkipListElementStore) LoadElement(id int64) (*skiplist.SkipListElement, error) {
-	key := fmt.Sprintf("%s%d", m.prefix, id)
+	key := fmt.Sprintf("%s%d", m.Prefix, id)
 	data, err := m.client.Get(context.Background(), key).Result()
 	if err != nil {
 		if err == redis.Nil {

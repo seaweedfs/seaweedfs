@@ -1,35 +1,39 @@
-package skiplist
+package redis3
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util/skiplist"
+	"github.com/go-redis/redis/v8"
 	"github.com/golang/protobuf/proto"
 )
 
-func LoadNameList(data []byte, store ListStore, batchSize int) *NameList {
+func LoadItemList(data []byte, prefix string, client redis.UniversalClient, store skiplist.ListStore, batchSize int) *ItemList {
 
-	nl := &NameList{
-		skipList:  New(store),
+	nl := &ItemList{
+		skipList:  skiplist.New(store),
 		batchSize: batchSize,
+		client:    client,
+		prefix:    prefix,
 	}
 
 	if len(data) == 0 {
 		return nl
 	}
 
-	message := &SkipListProto{}
+	message := &skiplist.SkipListProto{}
 	if err := proto.Unmarshal(data, message); err != nil {
 		glog.Errorf("loading skiplist: %v", err)
 	}
 	nl.skipList.MaxNewLevel = int(message.MaxNewLevel)
 	nl.skipList.MaxLevel = int(message.MaxLevel)
 	for i, ref := range message.StartLevels {
-		nl.skipList.StartLevels[i] = &SkipListElementReference{
+		nl.skipList.StartLevels[i] = &skiplist.SkipListElementReference{
 			ElementPointer: ref.ElementPointer,
 			Key:            ref.Key,
 		}
 	}
 	for i, ref := range message.EndLevels {
-		nl.skipList.EndLevels[i] = &SkipListElementReference{
+		nl.skipList.EndLevels[i] = &skiplist.SkipListElementReference{
 			ElementPointer: ref.ElementPointer,
 			Key:            ref.Key,
 		}
@@ -37,19 +41,19 @@ func LoadNameList(data []byte, store ListStore, batchSize int) *NameList {
 	return nl
 }
 
-func (nl *NameList) HasChanges() bool {
+func (nl *ItemList) HasChanges() bool {
 	return nl.skipList.HasChanges
 }
 
-func (nl *NameList) ToBytes() []byte {
-	message := &SkipListProto{}
+func (nl *ItemList) ToBytes() []byte {
+	message := &skiplist.SkipListProto{}
 	message.MaxNewLevel = int32(nl.skipList.MaxNewLevel)
 	message.MaxLevel = int32(nl.skipList.MaxLevel)
 	for _, ref := range nl.skipList.StartLevels {
 		if ref == nil {
 			break
 		}
-		message.StartLevels = append(message.StartLevels, &SkipListElementReference{
+		message.StartLevels = append(message.StartLevels, &skiplist.SkipListElementReference{
 			ElementPointer: ref.ElementPointer,
 			Key:            ref.Key,
 		})
@@ -58,7 +62,7 @@ func (nl *NameList) ToBytes() []byte {
 		if ref == nil {
 			break
 		}
-		message.EndLevels = append(message.EndLevels, &SkipListElementReference{
+		message.EndLevels = append(message.EndLevels, &skiplist.SkipListElementReference{
 			ElementPointer: ref.ElementPointer,
 			Key:            ref.Key,
 		})
