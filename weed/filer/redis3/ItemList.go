@@ -96,22 +96,17 @@ func (nl *ItemList) WriteName(name string) error {
 		return nil
 	}
 
+	var prevNodeReference *skiplist.SkipListElementReference
 	if !found {
-		prevNode, err = nl.skipList.GetLargestNode()
-		if err != nil {
-			return err
-		}
+		prevNodeReference = nl.skipList.GetLargestNodeReference()
 	}
 
 	if nextNode != nil && prevNode == nil {
-		prevNode, err = nl.skipList.LoadElement(nextNode.Prev)
-		if err != nil {
-			return err
-		}
+		prevNodeReference = nextNode.Prev
 	}
 
-	if prevNode != nil {
-		alreadyContains, nodeSize, err := nl.canAddMember(prevNode.Reference(), name)
+	if prevNodeReference != nil {
+		alreadyContains, nodeSize, err := nl.canAddMember(prevNodeReference, name)
 		if err != nil {
 			return err
 		}
@@ -122,11 +117,11 @@ func (nl *ItemList) WriteName(name string) error {
 
 		// case 2.2
 		if nodeSize < nl.batchSize {
-			return nl.NodeAddMember(prevNode.Reference(), name)
+			return nl.NodeAddMember(prevNodeReference, name)
 		}
 
 		// case 2.3
-		x := nl.NodeInnerPosition(prevNode.Reference(), name)
+		x := nl.NodeInnerPosition(prevNodeReference, name)
 		y := nodeSize - x
 		addToX := x <= y
 		// add to a new node
@@ -138,12 +133,12 @@ func (nl *ItemList) WriteName(name string) error {
 		}
 		if addToX {
 			// collect names before name, add them to X
-			namesToX, err := nl.NodeRangeBeforeExclusive(prevNode.Reference(), name)
+			namesToX, err := nl.NodeRangeBeforeExclusive(prevNodeReference, name)
 			if err != nil {
 				return nil
 			}
 			// delete skiplist reference to old node
-			if _, err := nl.skipList.DeleteByKey(prevNode.Key); err != nil {
+			if _, err := nl.skipList.DeleteByKey(prevNodeReference.Key); err != nil {
 				return err
 			}
 			// add namesToY and name to a new X
@@ -152,18 +147,18 @@ func (nl *ItemList) WriteName(name string) error {
 				return nil
 			}
 			// remove names less than name from current Y
-			if err := nl.NodeDeleteBeforeExclusive(prevNode.Reference(), name); err != nil {
+			if err := nl.NodeDeleteBeforeExclusive(prevNodeReference, name); err != nil {
 				return nil
 			}
 
 			// point skip list to current Y
-			if err := nl.ItemAdd(lookupKey, prevNode.Id); err != nil {
+			if err := nl.ItemAdd(lookupKey, prevNodeReference.ElementPointer); err != nil {
 				return nil
 			}
 			return nil
 		} else {
 			// collect names after name, add them to Y
-			namesToY, err := nl.NodeRangeAfterExclusive(prevNode.Reference(), name)
+			namesToY, err := nl.NodeRangeAfterExclusive(prevNodeReference, name)
 			if err != nil {
 				return nil
 			}
@@ -173,7 +168,7 @@ func (nl *ItemList) WriteName(name string) error {
 				return nil
 			}
 			// remove names after name from current X
-			if err := nl.NodeDeleteAfterExclusive(prevNode.Reference(), name); err != nil {
+			if err := nl.NodeDeleteAfterExclusive(prevNodeReference, name); err != nil {
 				return nil
 			}
 			return nil
