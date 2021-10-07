@@ -66,6 +66,24 @@ There are multiple cases after finding the name for greater or equal node
       return
 
 */
+
+func (nl *ItemList) canAddMember(node *skiplist.SkipListElementReference, name string) (alreadyContains bool, nodeSize int, err error) {
+	ctx := context.Background()
+	pipe := nl.client.TxPipeline()
+	key := fmt.Sprintf("%s%dm", nl.prefix, node.ElementPointer)
+	countOperation := pipe.ZLexCount(ctx, key, "-", "+")
+	scoreOperationt := pipe.ZScore(ctx, key, name)
+	if _, err = pipe.Exec(ctx); err != nil && err != redis.Nil{
+		return false, 0, err
+	}
+	if err == redis.Nil {
+		err = nil
+	}
+	alreadyContains = scoreOperationt.Err() == nil
+	nodeSize = int(countOperation.Val())
+	return
+}
+
 func (nl *ItemList) WriteName(name string) error {
 
 	lookupKey := []byte(name)
@@ -93,13 +111,16 @@ func (nl *ItemList) WriteName(name string) error {
 	}
 
 	if prevNode != nil {
-		// case 2.1
-		if nl.NodeContainsItem(prevNode.Reference(), name) {
+		alreadyContains, nodeSize, err := nl.canAddMember(prevNode.Reference(), name)
+		if err != nil {
+			return err
+		}
+		if alreadyContains {
+			// case 2.1
 			return nil
 		}
 
 		// case 2.2
-		nodeSize := nl.NodeSize(prevNode.Reference())
 		if nodeSize < nl.batchSize {
 			return nl.NodeAddMember(prevNode.Reference(), name)
 		}

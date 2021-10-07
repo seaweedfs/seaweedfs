@@ -58,14 +58,14 @@ func TestNameList(t *testing.T) {
 		nameList.WriteName(name)
 
 		nameList.ListNames("", func(name string) bool {
-			// println(name)
+			println(name)
 			return true
 		})
 
 		if nameList.HasChanges() {
 			data = nameList.ToBytes()
 		}
-		// println()
+		println()
 	}
 
 	nameList := LoadItemList(data, "/yyy/bin", client, store, maxNameBatchSizeLimit)
@@ -76,7 +76,7 @@ func TestNameList(t *testing.T) {
 
 }
 
-func xBenchmarkNameList(b *testing.B) {
+func BenchmarkNameList(b *testing.B) {
 
 	server, err := tempredis.Start(tempredis.Config{})
 	if err != nil {
@@ -102,7 +102,7 @@ func xBenchmarkNameList(b *testing.B) {
 	}
 }
 
-func xBenchmarkRedis(b *testing.B) {
+func BenchmarkRedis(b *testing.B) {
 
 	server, err := tempredis.Start(tempredis.Config{})
 	if err != nil {
@@ -120,7 +120,7 @@ func xBenchmarkRedis(b *testing.B) {
 	}
 }
 
-func TestNameListAdd(t *testing.T) {
+func xTestNameListAdd(t *testing.T) {
 
 	server, err := tempredis.Start(tempredis.Config{})
 	if err != nil {
@@ -169,7 +169,7 @@ func TestNameListAdd(t *testing.T) {
 	 */
 }
 
-func BenchmarkNameList(b *testing.B) {
+func xBenchmarkNameList(b *testing.B) {
 
 	server, err := tempredis.Start(tempredis.Config{})
 	if err != nil {
@@ -196,7 +196,7 @@ func BenchmarkNameList(b *testing.B) {
 	}
 }
 
-func BenchmarkRedis(b *testing.B) {
+func xBenchmarkRedis(b *testing.B) {
 
 	client := redis.NewClient(&redis.Options{
 		Addr:     "localhost:6379",
