@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/viant/ptrie"
+	"math"
 	"strings"
 	"time"
 
@@ -248,6 +249,9 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 	defer func() {
 		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "prefixList").Observe(time.Since(start).Seconds())
 	}()
+	if limit > math.MaxInt32-1 {
+		limit = math.MaxInt32 - 1
+	}
 	glog.V(4).Infof("ListDirectoryPrefixedEntries %s from %s prefix %s limit %d", dirPath, startFileName, prefix, limit)
 	lastFileName, err = actualStore.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix, eachEntryFunc)
 	if err == ErrUnsupportedListDirectoryPrefixed {

@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"math"
 	"strings"
 )
 
@@ -119,6 +120,10 @@ func (t *FilerStorePathTranlator) ListDirectoryEntries(ctx context.Context, dirP
 func (t *FilerStorePathTranlator) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (string, error) {
 
 	newFullPath := t.translatePath(dirPath)
+
+	if limit > math.MaxInt32-1 {
+		limit = math.MaxInt32 - 1
+	}
 
 	return t.actualStore.ListDirectoryPrefixedEntries(ctx, newFullPath, startFileName, includeStartFile, limit, prefix, func(entry *Entry) bool {
 		entry.FullPath = dirPath[:len(t.storeRoot)-1] + entry.FullPath
