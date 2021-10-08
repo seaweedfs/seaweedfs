@@ -73,7 +73,7 @@ func (nl *ItemList) canAddMember(node *skiplist.SkipListElementReference, name s
 	key := fmt.Sprintf("%s%dm", nl.prefix, node.ElementPointer)
 	countOperation := pipe.ZLexCount(ctx, key, "-", "+")
 	scoreOperationt := pipe.ZScore(ctx, key, name)
-	if _, err = pipe.Exec(ctx); err != nil && err != redis.Nil{
+	if _, err = pipe.Exec(ctx); err != nil && err != redis.Nil {
 		return false, 0, err
 	}
 	if err == redis.Nil {
@@ -286,7 +286,7 @@ func (nl *ItemList) DeleteName(name string) error {
 		return nil
 	}
 	nextSize := nl.NodeSize(nextNode.Reference())
-	if nextSize > 0 && prevSize + nextSize < nl.batchSize {
+	if nextSize > 0 && prevSize+nextSize < nl.batchSize {
 		// case 3.1 merge nextNode and prevNode
 		if _, err := nl.skipList.DeleteByKey(nextNode.Key); err != nil {
 			return err
@@ -414,7 +414,7 @@ func (nl *ItemList) NodeInnerPosition(node *skiplist.SkipListElementReference, n
 func (nl *ItemList) NodeMin(node *skiplist.SkipListElementReference) string {
 	key := fmt.Sprintf("%s%dm", nl.prefix, node.ElementPointer)
 	slice := nl.client.ZPopMin(context.Background(), key).Val()
-	if len(slice)>0{
+	if len(slice) > 0 {
 		s := slice[0].Member.(string)
 		return s
 	}

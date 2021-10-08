@@ -323,7 +323,7 @@ func (vl *VolumeLayout) AddGrowRequest() {
 	vl.growRequestCount++
 }
 func (vl *VolumeLayout) DoneGrowRequest() {
-	vl.growRequestTime = time.Unix(0,0)
+	vl.growRequestTime = time.Unix(0, 0)
 	vl.growRequestCount = 0
 }
 

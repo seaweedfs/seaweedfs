@@ -467,7 +467,7 @@ func (t *SkipList) GetSmallestNode() (*SkipListElement, error) {
 func (t *SkipList) GetLargestNode() (*SkipListElement, error) {
 	return t.LoadElement(t.EndLevels[0])
 }
-func (t *SkipList) GetLargestNodeReference() (*SkipListElementReference) {
+func (t *SkipList) GetLargestNodeReference() *SkipListElementReference {
 	return t.EndLevels[0]
 }
 

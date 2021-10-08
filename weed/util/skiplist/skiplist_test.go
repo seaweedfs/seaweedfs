@@ -30,7 +30,6 @@ func TestReverseInsert(t *testing.T) {
 
 }
 
-
 func TestInsertAndFind(t *testing.T) {
 
 	k0 := []byte("0")

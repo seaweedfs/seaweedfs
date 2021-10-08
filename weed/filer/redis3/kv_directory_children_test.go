@@ -94,7 +94,7 @@ func BenchmarkNameList(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		nameList := LoadItemList(data, "/yyy/bin", client, store, maxNameBatchSizeLimit)
 
-		nameList.WriteName(strconv.Itoa(i)+"namexxxxxxxxxxxxxxxxxxx")
+		nameList.WriteName(strconv.Itoa(i) + "namexxxxxxxxxxxxxxxxxxx")
 
 		if nameList.HasChanges() {
 			data = nameList.ToBytes()
@@ -116,7 +116,7 @@ func BenchmarkRedis(b *testing.B) {
 	})
 
 	for i := 0; i < b.N; i++ {
-		client.ZAddNX(context.Background(),"/yyy/bin", &redis.Z{Score: 0, Member: strconv.Itoa(i)+"namexxxxxxxxxxxxxxxxxxx"})
+		client.ZAddNX(context.Background(), "/yyy/bin", &redis.Z{Score: 0, Member: strconv.Itoa(i) + "namexxxxxxxxxxxxxxxxxxx"})
 	}
 }
 
@@ -149,24 +149,24 @@ func xTestNameListAdd(t *testing.T) {
 	ts1 := time.Now()
 
 	for i := 0; i < N; i++ {
-		client.ZAddNX(context.Background(),"/x", &redis.Z{Score: 0, Member: fmt.Sprintf("name %8d", i)})
+		client.ZAddNX(context.Background(), "/x", &redis.Z{Score: 0, Member: fmt.Sprintf("name %8d", i)})
 	}
 	ts2 := time.Now()
 
 	fmt.Printf("%v %v", ts1.Sub(ts0), ts2.Sub(ts1))
 
 	/*
-	keys := client.Keys(context.Background(), "/*m").Val()
-	for _, k := range keys {
-		println("key", k)
-		for i, v := range client.ZRangeByLex(context.Background(), k, &redis.ZRangeBy{
-			Min:    "-",
-			Max:    "+",
-		}).Val() {
-			println(" ", i, v)
+		keys := client.Keys(context.Background(), "/*m").Val()
+		for _, k := range keys {
+			println("key", k)
+			for i, v := range client.ZRangeByLex(context.Background(), k, &redis.ZRangeBy{
+				Min:    "-",
+				Max:    "+",
+			}).Val() {
+				println(" ", i, v)
+			}
 		}
-	}
-	 */
+	*/
 }
 
 func xBenchmarkNameList(b *testing.B) {
@@ -205,6 +205,6 @@ func xBenchmarkRedis(b *testing.B) {
 	})
 
 	for i := 0; i < b.N; i++ {
-		client.ZAddNX(context.Background(),"/xxx/bin", &redis.Z{Score: 0, Member: fmt.Sprintf("name %8d", i)})
+		client.ZAddNX(context.Background(), "/xxx/bin", &redis.Z{Score: 0, Member: fmt.Sprintf("name %8d", i)})
 	}
 }

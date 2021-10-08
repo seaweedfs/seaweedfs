@@ -249,7 +249,7 @@ func (nl *NameList) DeleteName(name string) error {
 		}
 		return nil
 	}
-	if nextNameBatch != nil && len(nextNameBatch.names) + len(prevNameBatch.names) < nl.batchSize {
+	if nextNameBatch != nil && len(nextNameBatch.names)+len(prevNameBatch.names) < nl.batchSize {
 		// case 3.1 merge nextNode and prevNode
 		if _, err := nl.skipList.DeleteByKey(nextNode.Key); err != nil {
 			return err
@@ -300,7 +300,7 @@ func (nl *NameList) ListNames(startFrom string, visitNamesFn func(name string) b
 		}
 	}
 
- 	return nil
+	return nil
 }
 
 func (nl *NameList) RemoteAllListElement() error {

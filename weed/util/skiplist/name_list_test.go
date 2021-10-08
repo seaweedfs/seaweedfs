@@ -34,7 +34,7 @@ func TestNameList(t *testing.T) {
 	// list.skipList.println()
 
 	deleteBase := 5
-	deleteCount := maxNameCount - 3 * deleteBase
+	deleteCount := maxNameCount - 3*deleteBase
 
 	for i := deleteBase; i < deleteBase+deleteCount; i++ {
 		list.DeleteName(String(i))

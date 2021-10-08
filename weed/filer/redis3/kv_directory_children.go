@@ -12,7 +12,7 @@ const maxNameBatchSizeLimit = 1000000
 func insertChild(ctx context.Context, redisStore *UniversalRedis3Store, key string, name string) error {
 
 	// lock and unlock
-	mutex := redisStore.redsync.NewMutex(key+"lock")
+	mutex := redisStore.redsync.NewMutex(key + "lock")
 	if err := mutex.Lock(); err != nil {
 		return fmt.Errorf("lock %s: %v", key, err)
 	}
@@ -49,7 +49,7 @@ func insertChild(ctx context.Context, redisStore *UniversalRedis3Store, key stri
 func removeChild(ctx context.Context, redisStore *UniversalRedis3Store, key string, name string) error {
 
 	// lock and unlock
-	mutex := redisStore.redsync.NewMutex(key+"lock")
+	mutex := redisStore.redsync.NewMutex(key + "lock")
 	if err := mutex.Lock(); err != nil {
 		return fmt.Errorf("lock %s: %v", key, err)
 	}
@@ -82,7 +82,7 @@ func removeChild(ctx context.Context, redisStore *UniversalRedis3Store, key stri
 func removeChildren(ctx context.Context, redisStore *UniversalRedis3Store, key string, onDeleteFn func(name string) error) error {
 
 	// lock and unlock
-	mutex := redisStore.redsync.NewMutex(key+"lock")
+	mutex := redisStore.redsync.NewMutex(key + "lock")
 	if err := mutex.Lock(); err != nil {
 		return fmt.Errorf("lock %s: %v", key, err)
 	}
@@ -111,7 +111,7 @@ func removeChildren(ctx context.Context, redisStore *UniversalRedis3Store, key s
 	if err = nameList.RemoteAllListElement(); err != nil {
 		return err
 	}
- 
+
 	return nil
 
 }

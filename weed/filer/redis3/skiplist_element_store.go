@@ -49,7 +49,7 @@ func (m *SkipListElementStore) LoadElement(id int64) (*skiplist.SkipListElement,
 	t := &skiplist.SkipListElement{}
 	err = proto.Unmarshal([]byte(data), t)
 	if err == nil {
-		for i:=0;i<len(t.Next);i++{
+		for i := 0; i < len(t.Next); i++ {
 			if t.Next[i].IsNil() {
 				t.Next[i] = nil
 			}
