@@ -15,7 +15,7 @@ public class ChunkCache {
         }
         this.cache = CacheBuilder.newBuilder()
                 .maximumSize(maxEntries)
-                .expireAfterAccess(1, TimeUnit.HOURS)
+                .expireAfterWrite(1, TimeUnit.HOURS)
                 .build();
     }
 
