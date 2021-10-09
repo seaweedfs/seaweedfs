@@ -381,6 +381,9 @@ func (nl *ItemList) NodeContainsItem(node *skiplist.SkipListElementReference, it
 }
 
 func (nl *ItemList) NodeSize(node *skiplist.SkipListElementReference) int {
+	if node == nil {
+		return 0
+	}
 	key := fmt.Sprintf("%s%dm", nl.prefix, node.ElementPointer)
 	return int(nl.client.ZLexCount(context.Background(), key, "-", "+").Val())
 }
@@ -413,9 +416,14 @@ func (nl *ItemList) NodeInnerPosition(node *skiplist.SkipListElementReference, n
 
 func (nl *ItemList) NodeMin(node *skiplist.SkipListElementReference) string {
 	key := fmt.Sprintf("%s%dm", nl.prefix, node.ElementPointer)
-	slice := nl.client.ZPopMin(context.Background(), key).Val()
+	slice := nl.client.ZRangeByLex(context.Background(), key, &redis.ZRangeBy{
+		Min:    "-",
+		Max:    "+",
+		Offset: 0,
+		Count:  1,
+	}).Val()
 	if len(slice) > 0 {
-		s := slice[0].Member.(string)
+		s := slice[0]
 		return s
 	}
 	return ""
