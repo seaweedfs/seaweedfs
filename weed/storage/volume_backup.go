@@ -191,12 +191,13 @@ func (v *Volume) BinarySearchByAppendAtNs(sinceNs uint64) (offset Offset, isLast
 		// read the appendAtNs for entry m
 		offset, err = v.readOffsetFromIndex(m)
 		if err != nil {
+			err = fmt.Errorf("read entry %d: %v", m, err)
 			return
 		}
 
 		mNs, nsReadErr := v.readAppendAtNs(offset)
 		if nsReadErr != nil {
-			err = nsReadErr
+			err = fmt.Errorf("read entry %d offset %d: %v", m, offset, nsReadErr)
 			return
 		}
 
