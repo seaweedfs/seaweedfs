@@ -28,7 +28,6 @@ import (
 
 const (
 	SequencerType        = "master.sequencer.type"
-	SequencerEtcdUrls    = "master.sequencer.sequencer_etcd_urls"
 	SequencerSnowflakeId = "master.sequencer.sequencer_snowflake_id"
 )
 
@@ -286,15 +285,6 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 	seqType := strings.ToLower(v.GetString(SequencerType))
 	glog.V(1).Infof("[%s] : [%s]", SequencerType, seqType)
 	switch strings.ToLower(seqType) {
-	case "etcd":
-		var err error
-		urls := v.GetString(SequencerEtcdUrls)
-		glog.V(0).Infof("[%s] : [%s]", SequencerEtcdUrls, urls)
-		seq, err = sequence.NewEtcdSequencer(urls, option.MetaFolder)
-		if err != nil {
-			glog.Error(err)
-			seq = nil
-		}
 	case "snowflake":
 		var err error
 		snowflakeId := v.GetInt(SequencerSnowflakeId)
