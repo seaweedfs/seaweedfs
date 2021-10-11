@@ -37,6 +37,31 @@ type Credential struct {
 	SecretKey string
 }
 
+func (action Action) isAdmin() bool {
+	return strings.HasPrefix(string(action), s3_constants.ACTION_ADMIN)
+}
+
+func (action Action) isOwner(bucket string) bool {
+	return string(action) == s3_constants.ACTION_ADMIN+":"+bucket
+}
+
+func (action Action) overBucket(bucket string) bool {
+	return strings.HasSuffix(string(action), ":"+bucket) || strings.HasSuffix(string(action), ":*")
+}
+
+func (action Action) getPermission() Permission {
+	switch act := strings.Split(string(action), ":")[0]; act {
+	case s3_constants.ACTION_ADMIN:
+		return Permission("FULL_CONTROL")
+	case s3_constants.ACTION_WRITE:
+		return Permission("WRITE")
+	case s3_constants.ACTION_READ:
+		return Permission("READ")
+	default:
+		return Permission("")
+	}
+}
+
 func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManagement {
 	iam := &IdentityAccessManagement{
 		domain: option.DomainName,

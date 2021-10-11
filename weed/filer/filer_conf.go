@@ -3,6 +3,10 @@ package filer
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"google.golang.org/grpc"
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -24,6 +28,29 @@ const (
 
 type FilerConf struct {
 	rules ptrie.Trie
+}
+
+func ReadFilerConf(filerGrpcAddress pb.ServerAddress, grpcDialOption grpc.DialOption, masterClient *wdclient.MasterClient) (*FilerConf, error) {
+	var buf bytes.Buffer
+	if err := pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		if masterClient != nil {
+			return ReadEntry(masterClient, client, DirectoryEtcSeaweedFS, FilerConfName, &buf)
+		} else {
+			content, err := ReadInsideFiler(client, DirectoryEtcSeaweedFS, FilerConfName)
+			buf = *bytes.NewBuffer(content)
+			return err
+		}
+	}); err != nil && err != filer_pb.ErrNotFound {
+		return nil, fmt.Errorf("read %s/%s: %v", DirectoryEtcSeaweedFS, FilerConfName, err)
+	}
+
+	fc := NewFilerConf()
+	if buf.Len() > 0 {
+		if err := fc.LoadFromBytes(buf.Bytes()); err != nil {
+			return nil, fmt.Errorf("parse %s/%s: %v", DirectoryEtcSeaweedFS, FilerConfName, err)
+		}
+	}
+	return fc, nil
 }
 
 func NewFilerConf() (fc *FilerConf) {

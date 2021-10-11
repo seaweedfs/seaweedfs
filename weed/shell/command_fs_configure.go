@@ -62,7 +62,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
-	fc, err := readFilerConf(commandEnv)
+	fc, err := filer.ReadFilerConf(commandEnv.option.FilerAddress, commandEnv.option.GrpcDialOption, commandEnv.MasterClient)
 	if err != nil {
 		return err
 	}
@@ -121,21 +121,4 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	return nil
 
-}
-
-func readFilerConf(commandEnv *CommandEnv) (*filer.FilerConf, error) {
-	var buf bytes.Buffer
-	if err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		return filer.ReadEntry(commandEnv.MasterClient, client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, &buf)
-	}); err != nil && err != filer_pb.ErrNotFound {
-		return nil, fmt.Errorf("read %s/%s: %v", filer.DirectoryEtcSeaweedFS, filer.FilerConfName, err)
-	}
-
-	fc := filer.NewFilerConf()
-	if buf.Len() > 0 {
-		if err := fc.LoadFromBytes(buf.Bytes()); err != nil {
-			return nil, fmt.Errorf("parse %s/%s: %v", filer.DirectoryEtcSeaweedFS, filer.FilerConfName, err)
-		}
-	}
-	return fc, nil
 }
