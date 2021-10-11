@@ -66,6 +66,10 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 				return grpcErr
 			}
 
+			if resp.Error != "" {
+				return fmt.Errorf("assignRequest: %v", resp.Error)
+			}
+
 			ret.Count = resp.Count
 			ret.Fid = resp.Fid
 			ret.Url = resp.Location.Url
@@ -78,10 +82,6 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 					Url:       r.Url,
 					PublicUrl: r.PublicUrl,
 				})
-			}
-
-			if resp.Error != "" {
-				return fmt.Errorf("assignRequest: %v", resp.Error)
 			}
 
 			return nil
