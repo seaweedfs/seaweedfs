@@ -22,7 +22,6 @@ jobs:
         with:
           images: |
             chrislusf/seaweedfs
-            ghcr.io/chrislusf/seaweedfs
           tags: |
             type=ref,event=tag,suffix=_large_disk
           flavor: |
