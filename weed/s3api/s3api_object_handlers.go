@@ -41,6 +41,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	// http://docs.aws.amazon.com/AmazonS3/latest/dev/UploadingObjects.html
 
 	bucket, object := getBucketAndObject(r)
+	glog.V(3).Infof("PutObjectHandler %s %s", bucket, object)
 
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
@@ -92,7 +93,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	} else {
-		uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer, s3a.option.BucketsPath, bucket, urlPathEscape(object))
+		uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
 
 		etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
 
@@ -118,6 +119,7 @@ func urlPathEscape(object string) string {
 func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := getBucketAndObject(r)
+	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
 
 	if strings.HasSuffix(r.URL.Path, "/") {
 		s3err.WriteErrorResponse(w, s3err.ErrNotImplemented, r)
@@ -125,7 +127,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer, s3a.option.BucketsPath, bucket, urlPathEscape(object))
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
 
 	s3a.proxyToFiler(w, r, destUrl, passThroughResponse)
 
@@ -134,9 +136,10 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := getBucketAndObject(r)
+	glog.V(3).Infof("HeadObjectHandler %s %s", bucket, object)
 
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer, s3a.option.BucketsPath, bucket, urlPathEscape(object))
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
 
 	s3a.proxyToFiler(w, r, destUrl, passThroughResponse)
 
@@ -145,9 +148,10 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := getBucketAndObject(r)
+	glog.V(3).Infof("DeleteObjectHandler %s %s", bucket, object)
 
 	destUrl := fmt.Sprintf("http://%s%s/%s%s?recursive=true",
-		s3a.option.Filer, s3a.option.BucketsPath, bucket, urlPathEscape(object))
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
 
 	s3a.proxyToFiler(w, r, destUrl, func(proxyResponse *http.Response, w http.ResponseWriter) {
 		for k, v := range proxyResponse.Header {
@@ -192,6 +196,7 @@ type DeleteObjectsResponse struct {
 func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, _ := getBucketAndObject(r)
+	glog.V(3).Infof("DeleteMultipleObjectsHandler %s", bucket)
 
 	deleteXMLBytes, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -291,7 +296,7 @@ var passThroughHeaders = []string{
 
 func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, responseFn func(proxyResponse *http.Response, w http.ResponseWriter)) {
 
-	glog.V(2).Infof("s3 proxying %s to %s", r.Method, destUrl)
+	glog.V(3).Infof("s3 proxying %s to %s", r.Method, destUrl)
 
 	proxyReq, err := http.NewRequest(r.Method, destUrl, r.Body)
 
@@ -301,7 +306,6 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		return
 	}
 
-	proxyReq.Header.Set("Host", s3a.option.Filer)
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
 
 	for header, values := range r.Header {
@@ -372,7 +376,6 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		return "", s3err.ErrInternalError
 	}
 
-	proxyReq.Header.Set("Host", s3a.option.Filer)
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
 
 	for header, values := range r.Header {

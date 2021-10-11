@@ -22,7 +22,7 @@ type ShellOptions struct {
 	// shell transient context
 	FilerHost    string
 	FilerPort    int64
-	FilerAddress string
+	FilerAddress pb.ServerAddress
 	Directory    string
 }
 
@@ -46,10 +46,10 @@ var (
 func NewCommandEnv(options ShellOptions) *CommandEnv {
 	ce := &CommandEnv{
 		env:          make(map[string]string),
-		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, pb.AdminShellClient, "", 0, "", strings.Split(*options.Masters, ",")),
+		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, pb.AdminShellClient, "", "", pb.ServerAddresses(*options.Masters).ToAddresses()),
 		option:       options,
 	}
-	ce.locker = exclusive_locks.NewExclusiveLocker(ce.MasterClient)
+	ce.locker = exclusive_locks.NewExclusiveLocker(ce.MasterClient, "admin")
 	return ce
 }
 
@@ -98,8 +98,7 @@ var _ = filer_pb.FilerClient(&CommandEnv{})
 
 func (ce *CommandEnv) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	filerGrpcAddress := util.JoinHostPort(ce.option.FilerHost, int(ce.option.FilerPort+10000))
-	return pb.WithGrpcFilerClient(filerGrpcAddress, ce.option.GrpcDialOption, fn)
+	return pb.WithGrpcFilerClient(ce.option.FilerAddress, ce.option.GrpcDialOption, fn)
 
 }
 

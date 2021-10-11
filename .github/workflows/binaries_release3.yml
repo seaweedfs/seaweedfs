@@ -1,6 +1,6 @@
 # This is a basic workflow to help you get started with Actions
 
-name: "go: build versioned binaries"
+name: "go: build versioned binaries for freebsd"
 
 on:
   push:
@@ -13,21 +13,12 @@ on:
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
 
-  build-release-binaries:
+  build-release-binaries_freebsd:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [linux, windows, darwin, freebsd]
+        goos: [freebsd]
         goarch: [amd64, arm, arm64]
-        exclude:
-          - goarch: arm
-            goos: darwin
-          - goarch: 386
-            goos: darwin
-          - goarch: arm
-            goos: windows
-          - goarch: arm64
-            goos: windows
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:

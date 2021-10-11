@@ -59,7 +59,7 @@ public class SeaweedWrite {
         String fileId = response.getFileId();
         String auth = response.getAuth();
 
-        String targetUrl = filerClient.getChunkUrl(fileId, response.getUrl(), response.getPublicUrl());
+        String targetUrl = filerClient.getChunkUrl(fileId, response.getLocation().getUrl(), response.getLocation().getPublicUrl());
 
         ByteString cipherKeyString = com.google.protobuf.ByteString.EMPTY;
         byte[] cipherKey = null;

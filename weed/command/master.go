@@ -27,6 +27,7 @@ var (
 
 type MasterOptions struct {
 	port              *int
+	portGrpc          *int
 	ip                *string
 	ipBind            *string
 	metaFolder        *string
@@ -46,6 +47,7 @@ type MasterOptions struct {
 func init() {
 	cmdMaster.Run = runMaster // break init cycle
 	m.port = cmdMaster.Flag.Int("port", 9333, "http listen port")
+	m.portGrpc = cmdMaster.Flag.Int("port.grpc", 0, "grpc listen port")
 	m.ip = cmdMaster.Flag.String("ip", util.DetectedHostAddress(), "master <ip>|<server> address, also used as identifier")
 	m.ipBind = cmdMaster.Flag.String("ip.bind", "", "ip address to bind to")
 	m.metaFolder = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
@@ -111,7 +113,11 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	backend.LoadConfiguration(util.GetViper())
 
-	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.peers)
+	if *masterOption.portGrpc == 0 {
+		*masterOption.portGrpc = 10000 + *masterOption.port
+	}
+
+	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.portGrpc, *masterOption.peers)
 
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), peers)
@@ -130,7 +136,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	ms.SetRaftServer(raftServer)
 	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
 	// starting grpc server
-	grpcPort := *masterOption.port + 10000
+	grpcPort := *masterOption.portGrpc
 	grpcL, err := util.NewListener(util.JoinHostPort(*masterOption.ipBind, grpcPort), 0)
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
@@ -160,16 +166,14 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	select {}
 }
 
-func checkPeers(masterIp string, masterPort int, peers string) (masterAddress string, cleanedPeers []string) {
+func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers string) (masterAddress pb.ServerAddress, cleanedPeers []pb.ServerAddress) {
 	glog.V(0).Infof("current: %s:%d peers:%s", masterIp, masterPort, peers)
-	masterAddress = util.JoinHostPort(masterIp, masterPort)
-	if peers != "" {
-		cleanedPeers = strings.Split(peers, ",")
-	}
+	masterAddress = pb.NewServerAddress(masterIp, masterPort, masterGrpcPort)
+	cleanedPeers = pb.ServerAddresses(peers).ToAddresses()
 
 	hasSelf := false
 	for _, peer := range cleanedPeers {
-		if peer == masterAddress {
+		if peer.ToHttpAddress() == masterAddress.ToHttpAddress() {
 			hasSelf = true
 			break
 		}
@@ -179,13 +183,15 @@ func checkPeers(masterIp string, masterPort int, peers string) (masterAddress st
 		cleanedPeers = append(cleanedPeers, masterAddress)
 	}
 	if len(cleanedPeers)%2 == 0 {
-		glog.Fatalf("Only odd number of masters are supported!")
+		glog.Fatalf("Only odd number of masters are supported: %+v", cleanedPeers)
 	}
 	return
 }
 
-func isTheFirstOne(self string, peers []string) bool {
-	sort.Strings(peers)
+func isTheFirstOne(self pb.ServerAddress, peers []pb.ServerAddress) bool {
+	sort.Slice(peers, func(i, j int) bool {
+		return strings.Compare(string(peers[i]), string(peers[j])) < 0
+	})
 	if len(peers) <= 0 {
 		return true
 	}
@@ -193,9 +199,9 @@ func isTheFirstOne(self string, peers []string) bool {
 }
 
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {
+	masterAddress := pb.NewServerAddress(*m.ip, *m.port, *m.portGrpc)
 	return &weed_server.MasterOption{
-		Host:              *m.ip,
-		Port:              *m.port,
+		Master:            masterAddress,
 		MetaFolder:        *m.metaFolder,
 		VolumeSizeLimitMB: uint32(*m.volumeSizeLimitMB),
 		VolumePreallocate: *m.volumePreallocate,

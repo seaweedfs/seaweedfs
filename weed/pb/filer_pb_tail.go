@@ -12,7 +12,7 @@ import (
 
 type ProcessMetadataFunc func(resp *filer_pb.SubscribeMetadataResponse) error
 
-func FollowMetadata(filerAddress string, grpcDialOption grpc.DialOption, clientName string,
+func FollowMetadata(filerAddress ServerAddress, grpcDialOption grpc.DialOption, clientName string,
 	pathPrefix string, additionalPathPrefixes []string, lastTsNs int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, fatalOnError bool) error {
 

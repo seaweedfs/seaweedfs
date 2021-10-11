@@ -58,6 +58,8 @@ service VolumeServer {
     }
     rpc WriteNeedleBlob (WriteNeedleBlobRequest) returns (WriteNeedleBlobResponse) {
     }
+    rpc ReadAllNeedles (ReadAllNeedlesRequest) returns (stream ReadAllNeedlesResponse) {
+    }
 
     rpc VolumeTailSender (VolumeTailSenderRequest) returns (stream VolumeTailSenderResponse) {
     }
@@ -284,6 +286,16 @@ message WriteNeedleBlobRequest {
 message WriteNeedleBlobResponse {
 }
 
+message ReadAllNeedlesRequest {
+    repeated uint32 volume_ids = 1;
+}
+message ReadAllNeedlesResponse {
+    uint32 volume_id = 1;
+    uint64 needle_id = 2;
+    uint32 cookie = 3;
+    bytes needle_blob = 5;
+}
+
 message VolumeTailSenderRequest {
     uint32 volume_id = 1;
     uint64 since_ns = 2;
@@ -478,6 +490,7 @@ message FetchAndWriteNeedleRequest {
     message Replica {
         string url = 1;
         string public_url = 2;
+        int32 grpc_port = 3;
     }
     repeated Replica replicas = 6;
     string auth = 7;

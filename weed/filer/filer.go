@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"os"
 	"strings"
 	"time"
@@ -43,16 +44,18 @@ type Filer struct {
 	Signature           int32
 	FilerConf           *FilerConf
 	RemoteStorage       *FilerRemoteStorage
+	UniqueFileId        uint32
 }
 
-func NewFiler(masters []string, grpcDialOption grpc.DialOption,
-	filerHost string, filerGrpcPort uint32, collection string, replication string, dataCenter string, notifyFn func()) *Filer {
+func NewFiler(masters []pb.ServerAddress, grpcDialOption grpc.DialOption,
+	filerHost pb.ServerAddress, collection string, replication string, dataCenter string, notifyFn func()) *Filer {
 	f := &Filer{
-		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", filerHost, filerGrpcPort, dataCenter, masters),
+		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", filerHost, dataCenter, masters),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 		FilerConf:           NewFilerConf(),
 		RemoteStorage:       NewFilerRemoteStorage(),
+		UniqueFileId:        uint32(util.RandomInt32()),
 	}
 	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, notifyFn)
 	f.metaLogCollection = collection
@@ -63,7 +66,7 @@ func NewFiler(masters []string, grpcDialOption grpc.DialOption,
 	return f
 }
 
-func (f *Filer) AggregateFromPeers(self string, filers []string) {
+func (f *Filer) AggregateFromPeers(self pb.ServerAddress, filers []pb.ServerAddress) {
 
 	// set peers
 	found := false
@@ -110,7 +113,7 @@ func (f *Filer) GetStore() (store FilerStore) {
 	return f.Store
 }
 
-func (fs *Filer) GetMaster() string {
+func (fs *Filer) GetMaster() pb.ServerAddress {
 	return fs.MasterClient.GetMaster()
 }
 

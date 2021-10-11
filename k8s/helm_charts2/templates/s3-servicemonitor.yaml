@@ -1,4 +1,5 @@
 {{- if .Values.s3.metricsPort }}
+{{- if .Values.global.monitoring.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -15,4 +16,5 @@ spec:
   selector:
     app: {{ template "seaweedfs.name" . }}
     component: s3
+{{- end }}
 {{- end }}

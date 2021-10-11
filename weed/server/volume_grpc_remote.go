@@ -53,7 +53,7 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 			}
 		}
 	}()
-	if len(req.Replicas)>0{
+	if len(req.Replicas) > 0 {
 		fileId := needle.NewFileId(v.Id, req.NeedleId, req.Cookie)
 		for _, replica := range req.Replicas {
 			wg.Add(1)

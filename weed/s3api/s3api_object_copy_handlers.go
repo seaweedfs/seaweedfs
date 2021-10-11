@@ -27,6 +27,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	srcBucket, srcObject := pathToBucketAndObject(cpSrcPath)
 
+	glog.V(3).Infof("CopyObjectHandler %s %s => %s %s", srcBucket, srcObject, dstBucket, dstObject)
+
 	if (srcBucket == dstBucket && srcObject == dstObject || cpSrcPath == "") && isReplace(r) {
 		fullPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
 		dir, name := fullPath.DirAndName()
@@ -67,9 +69,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	dstUrl := fmt.Sprintf("http://%s%s/%s%s?collection=%s",
-		s3a.option.Filer, s3a.option.BucketsPath, dstBucket, dstObject, dstBucket)
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, dstBucket, dstObject, dstBucket)
 	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer, s3a.option.BucketsPath, srcBucket, srcObject)
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, srcObject)
 
 	_, _, resp, err := util.DownloadFile(srcUrl, "")
 	if err != nil {
@@ -139,6 +141,8 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	glog.V(3).Infof("CopyObjectPartHandler %s %s => %s part %d", srcBucket, srcObject, dstBucket, partID)
+
 	// check partID with maximum part ID for multipart objects
 	if partID > globalMaxPartID {
 		s3err.WriteErrorResponse(w, s3err.ErrInvalidMaxParts, r)
@@ -148,9 +152,9 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	rangeHeader := r.Header.Get("x-amz-copy-source-range")
 
 	dstUrl := fmt.Sprintf("http://%s%s/%s/%04d.part?collection=%s",
-		s3a.option.Filer, s3a.genUploadsFolder(dstBucket), uploadID, partID, dstBucket)
+		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(dstBucket), uploadID, partID, dstBucket)
 	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer, s3a.option.BucketsPath, srcBucket, srcObject)
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, srcObject)
 
 	dataReader, err := util.ReadUrlAsReaderCloser(srcUrl, rangeHeader)
 	if err != nil {

@@ -27,6 +27,8 @@ type ListAllMyBucketsResult struct {
 
 func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Request) {
 
+	glog.V(3).Infof("ListBucketsHandler")
+
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	if s3a.iam.isEnabled() {
@@ -75,6 +77,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, _ := getBucketAndObject(r)
+	glog.V(3).Infof("PutBucketHandler %s", bucket)
 
 	// avoid duplicated buckets
 	errCode := s3err.ErrNone
@@ -128,6 +131,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, _ := getBucketAndObject(r)
+	glog.V(3).Infof("DeleteBucketHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, err, r)
@@ -162,6 +166,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, _ := getBucketAndObject(r)
+	glog.V(3).Infof("HeadBucketHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, err, r)

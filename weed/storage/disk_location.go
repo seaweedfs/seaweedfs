@@ -95,6 +95,11 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 		return false
 	}
 
+	// skip ec volumes
+	if util.FileExists(l.Directory + "/" + volumeName + ".ecx") {
+		return false
+	}
+
 	// check for incomplete volume
 	noteFile := l.Directory + "/" + volumeName + ".note"
 	if util.FileExists(noteFile) {

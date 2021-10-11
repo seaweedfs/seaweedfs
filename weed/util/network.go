@@ -15,11 +15,11 @@ func DetectedHostAddress() string {
 		return ""
 	}
 
-	if v4Address := selectIpV4(netInterfaces, true); v4Address != ""{
+	if v4Address := selectIpV4(netInterfaces, true); v4Address != "" {
 		return v4Address
 	}
 
-	if v6Address := selectIpV4(netInterfaces, false); v6Address != ""{
+	if v6Address := selectIpV4(netInterfaces, false); v6Address != "" {
 		return v6Address
 	}
 

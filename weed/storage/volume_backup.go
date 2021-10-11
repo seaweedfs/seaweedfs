@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"io"
 	"os"
 
@@ -62,7 +63,7 @@ update needle map when receiving new .dat bytes. But seems not necessary now.)
 
 */
 
-func (v *Volume) IncrementalBackup(volumeServer string, grpcDialOption grpc.DialOption) error {
+func (v *Volume) IncrementalBackup(volumeServer pb.ServerAddress, grpcDialOption grpc.DialOption) error {
 
 	startFromOffset, _, _ := v.FileStat()
 	appendAtNs, err := v.findLastAppendAtNs()
@@ -190,12 +191,13 @@ func (v *Volume) BinarySearchByAppendAtNs(sinceNs uint64) (offset Offset, isLast
 		// read the appendAtNs for entry m
 		offset, err = v.readOffsetFromIndex(m)
 		if err != nil {
+			err = fmt.Errorf("read entry %d: %v", m, err)
 			return
 		}
 
 		mNs, nsReadErr := v.readAppendAtNs(offset)
 		if nsReadErr != nil {
-			err = nsReadErr
+			err = fmt.Errorf("read entry %d offset %d: %v", m, offset, nsReadErr)
 			return
 		}
 

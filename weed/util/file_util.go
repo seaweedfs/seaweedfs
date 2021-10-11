@@ -87,3 +87,11 @@ func ResolvePath(path string) string {
 
 	return path
 }
+
+func FileNameBase(filename string) string {
+	lastDotIndex := strings.LastIndex(filename, ".")
+	if lastDotIndex < 0 {
+		return filename
+	}
+	return filename[:lastDotIndex]
+}

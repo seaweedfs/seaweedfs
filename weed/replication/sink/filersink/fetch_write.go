@@ -91,7 +91,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 				return fmt.Errorf("assign volume failure %v: %v", request, resp.Error)
 			}
 
-			fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
+			fileId, host, auth = resp.FileId, resp.Location.Url, security.EncodedJwt(resp.Auth)
 
 			return nil
 		})

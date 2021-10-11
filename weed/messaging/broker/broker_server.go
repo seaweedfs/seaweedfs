@@ -13,7 +13,7 @@ import (
 )
 
 type MessageBrokerOption struct {
-	Filers             []string
+	Filers             []pb.ServerAddress
 	DefaultReplication string
 	MaxMB              int
 	Ip                 string
@@ -99,13 +99,13 @@ func (broker *MessageBroker) keepConnectedToOneFiler() {
 
 }
 
-func (broker *MessageBroker) withFilerClient(filer string, fn func(filer_pb.SeaweedFilerClient) error) error {
+func (broker *MessageBroker) withFilerClient(filer pb.ServerAddress, fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	return pb.WithFilerClient(filer, broker.grpcDialOption, fn)
 
 }
 
-func (broker *MessageBroker) withMasterClient(master string, fn func(client master_pb.SeaweedClient) error) error {
+func (broker *MessageBroker) withMasterClient(master pb.ServerAddress, fn func(client master_pb.SeaweedClient) error) error {
 
 	return pb.WithMasterClient(master, broker.grpcDialOption, func(client master_pb.SeaweedClient) error {
 		return fn(client)

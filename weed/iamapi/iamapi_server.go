@@ -18,7 +18,6 @@ import (
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc"
 	"net/http"
-	"strings"
 )
 
 type IamS3ApiConfig interface {
@@ -34,11 +33,10 @@ type IamS3ApiConfigure struct {
 }
 
 type IamServerOption struct {
-	Masters          string
-	Filer            string
-	Port             int
-	FilerGrpcAddress string
-	GrpcDialOption   grpc.DialOption
+	Masters        []pb.ServerAddress
+	Filer          pb.ServerAddress
+	Port           int
+	GrpcDialOption grpc.DialOption
 }
 
 type IamApiServer struct {
@@ -51,7 +49,7 @@ var s3ApiConfigure IamS3ApiConfig
 func NewIamApiServer(router *mux.Router, option *IamServerOption) (iamApiServer *IamApiServer, err error) {
 	s3ApiConfigure = IamS3ApiConfigure{
 		option:       option,
-		masterClient: wdclient.NewMasterClient(option.GrpcDialOption, pb.AdminShellClient, "", 0, "", strings.Split(option.Masters, ",")),
+		masterClient: wdclient.NewMasterClient(option.GrpcDialOption, pb.AdminShellClient, "", "", option.Masters),
 	}
 	s3Option := s3api.S3ApiServerOption{Filer: option.Filer}
 	iamApiServer = &IamApiServer{
@@ -78,7 +76,7 @@ func (iama *IamApiServer) registerRouter(router *mux.Router) {
 
 func (iam IamS3ApiConfigure) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
 	var buf bytes.Buffer
-	err = pb.WithGrpcFilerClient(iam.option.FilerGrpcAddress, iam.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithGrpcFilerClient(iam.option.Filer, iam.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		if err = filer.ReadEntry(iam.masterClient, client, filer.IamConfigDirecotry, filer.IamIdentityFile, &buf); err != nil {
 			return err
 		}
@@ -101,7 +99,7 @@ func (iam IamS3ApiConfigure) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfigurat
 		return fmt.Errorf("ProtoToText: %s", err)
 	}
 	return pb.WithGrpcFilerClient(
-		iam.option.FilerGrpcAddress,
+		iam.option.Filer,
 		iam.option.GrpcDialOption,
 		func(client filer_pb.SeaweedFilerClient) error {
 			err = util.Retry("saveIamIdentity", func() error {
@@ -117,7 +115,7 @@ func (iam IamS3ApiConfigure) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfigurat
 
 func (iam IamS3ApiConfigure) GetPolicies(policies *Policies) (err error) {
 	var buf bytes.Buffer
-	err = pb.WithGrpcFilerClient(iam.option.FilerGrpcAddress, iam.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithGrpcFilerClient(iam.option.Filer, iam.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		if err = filer.ReadEntry(iam.masterClient, client, filer.IamConfigDirecotry, filer.IamPoliciesFile, &buf); err != nil {
 			return err
 		}
@@ -142,7 +140,7 @@ func (iam IamS3ApiConfigure) PutPolicies(policies *Policies) (err error) {
 		return err
 	}
 	return pb.WithGrpcFilerClient(
-		iam.option.FilerGrpcAddress,
+		iam.option.Filer,
 		iam.option.GrpcDialOption,
 		func(client filer_pb.SeaweedFilerClient) error {
 			if err := filer.SaveInsideFiler(client, filer.IamConfigDirecotry, filer.IamPoliciesFile, b); err != nil {

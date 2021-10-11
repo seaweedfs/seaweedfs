@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -62,7 +63,7 @@ func (broker *MessageBroker) FindBroker(c context.Context, request *messaging_pb
 func (broker *MessageBroker) checkFilers() {
 
 	// contact a filer about masters
-	var masters []string
+	var masters []pb.ServerAddress
 	found := false
 	for !found {
 		for _, filer := range broker.option.Filers {
@@ -71,7 +72,9 @@ func (broker *MessageBroker) checkFilers() {
 				if err != nil {
 					return err
 				}
-				masters = append(masters, resp.Masters...)
+				for _, m := range resp.Masters {
+					masters = append(masters, pb.ServerAddress(m))
+				}
 				return nil
 			})
 			if err == nil {
@@ -85,7 +88,7 @@ func (broker *MessageBroker) checkFilers() {
 	glog.V(0).Infof("received master list: %s", masters)
 
 	// contact each masters for filers
-	var filers []string
+	var filers []pb.ServerAddress
 	found = false
 	for !found {
 		for _, master := range masters {
@@ -97,7 +100,7 @@ func (broker *MessageBroker) checkFilers() {
 					return err
 				}
 
-				filers = append(filers, resp.GrpcAddresses...)
+				filers = append(filers, pb.FromAddressStrings(resp.GrpcAddresses)...)
 
 				return nil
 			})

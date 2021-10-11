@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/s3api/policy"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"github.com/dustin/go-humanize"
@@ -23,6 +24,8 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-post-example.html
 
 	bucket := mux.Vars(r)["bucket"]
+
+	glog.V(3).Infof("PostPolicyBucketHandler %s", bucket)
 
 	reader, err := r.MultipartReader()
 	if err != nil {
@@ -110,7 +113,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer, s3a.option.BucketsPath, bucket, urlPathEscape(object))
+	uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
 
 	etag, errCode := s3a.putToFiler(r, uploadUrl, fileBody)
 

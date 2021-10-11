@@ -136,20 +136,6 @@ func WithCachedGrpcClient(fn func(*grpc.ClientConn) error, address string, opts 
 	return executionErr
 }
 
-func ParseServerToGrpcAddress(server string) (serverGrpcAddress string, err error) {
-	return ParseServerAddress(server, 10000)
-}
-func ParseServersToGrpcAddresses(servers []string) (serverGrpcAddresses []string, err error) {
-	for _, server := range servers {
-		if serverGrpcAddress, parseErr := ParseServerToGrpcAddress(server); parseErr == nil {
-			serverGrpcAddresses = append(serverGrpcAddresses, serverGrpcAddress)
-		} else {
-			return nil, parseErr
-		}
-	}
-	return
-}
-
 func ParseServerAddress(server string, deltaPort int) (newServerAddress string, err error) {
 
 	host, port, parseErr := hostAndPort(server)
@@ -198,27 +184,21 @@ func GrpcAddressToServerAddress(grpcAddress string) (serverAddress string) {
 	return util.JoinHostPort(host, port)
 }
 
-func WithMasterClient(master string, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) error {
-
-	masterGrpcAddress, parseErr := ParseServerToGrpcAddress(master)
-	if parseErr != nil {
-		return fmt.Errorf("failed to parse master grpc %v: %v", master, parseErr)
-	}
-
+func WithMasterClient(master ServerAddress, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) error {
 	return WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := master_pb.NewSeaweedClient(grpcConnection)
 		return fn(client)
-	}, masterGrpcAddress, grpcDialOption)
+	}, master.ToGrpcAddress(), grpcDialOption)
 
 }
 
-func WithOneOfGrpcMasterClients(masterGrpcAddresses []string, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) (err error) {
+func WithOneOfGrpcMasterClients(masterGrpcAddresses []ServerAddress, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) (err error) {
 
 	for _, masterGrpcAddress := range masterGrpcAddresses {
 		err = WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 			client := master_pb.NewSeaweedClient(grpcConnection)
 			return fn(client)
-		}, masterGrpcAddress, grpcDialOption)
+		}, masterGrpcAddress.ToGrpcAddress(), grpcDialOption)
 		if err == nil {
 			return nil
 		}
@@ -236,33 +216,28 @@ func WithBrokerGrpcClient(brokerGrpcAddress string, grpcDialOption grpc.DialOpti
 
 }
 
-func WithFilerClient(filer string, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) error {
+func WithFilerClient(filer ServerAddress, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) error {
 
-	filerGrpcAddress, parseErr := ParseServerToGrpcAddress(filer)
-	if parseErr != nil {
-		return fmt.Errorf("failed to parse filer grpc %v: %v", filer, parseErr)
-	}
-
-	return WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, fn)
+	return WithGrpcFilerClient(filer, grpcDialOption, fn)
 
 }
 
-func WithGrpcFilerClient(filerGrpcAddress string, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) error {
+func WithGrpcFilerClient(filerGrpcAddress ServerAddress, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) error {
 
 	return WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, filerGrpcAddress, grpcDialOption)
+	}, filerGrpcAddress.ToGrpcAddress(), grpcDialOption)
 
 }
 
-func WithOneOfGrpcFilerClients(filerGrpcAddresses []string, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) (err error) {
+func WithOneOfGrpcFilerClients(filerAddresses []ServerAddress, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) (err error) {
 
-	for _, filerGrpcAddress := range filerGrpcAddresses {
+	for _, filerAddress := range filerAddresses {
 		err = WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 			client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 			return fn(client)
-		}, filerGrpcAddress, grpcDialOption)
+		}, filerAddress.ToGrpcAddress(), grpcDialOption)
 		if err == nil {
 			return nil
 		}

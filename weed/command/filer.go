@@ -29,10 +29,12 @@ var (
 )
 
 type FilerOptions struct {
-	masters                 *string
+	masters                 []pb.ServerAddress
+	mastersString           *string
 	ip                      *string
 	bindIp                  *string
 	port                    *int
+	portGrpc                *int
 	publicPort              *int
 	collection              *string
 	defaultReplicaPlacement *string
@@ -55,11 +57,12 @@ type FilerOptions struct {
 
 func init() {
 	cmdFiler.Run = runFiler // break init cycle
-	f.masters = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
+	f.mastersString = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this default collection")
 	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
 	f.bindIp = cmdFiler.Flag.String("ip.bind", "", "ip address to bind to")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
+	f.portGrpc = cmdFiler.Flag.Int("port.grpc", 0, "filer server grpc listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "", "default replication type. If not specified, use master setting.")
 	f.disableDirListing = cmdFiler.Flag.Bool("disableDirListing", false, "turn off directory listing")
@@ -84,7 +87,7 @@ func init() {
 	filerS3Options.tlsPrivateKey = cmdFiler.Flag.String("s3.key.file", "", "path to the TLS private key file")
 	filerS3Options.tlsCertificate = cmdFiler.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
 	filerS3Options.config = cmdFiler.Flag.String("s3.config", "", "path to the config file")
-	filerS3Options.allowEmptyFolder = cmdFiler.Flag.Bool("s3.allowEmptyFolder", false, "allow empty folders")
+	filerS3Options.allowEmptyFolder = cmdFiler.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
@@ -155,12 +158,14 @@ func runFiler(cmd *Command, args []string) bool {
 
 	if *filerStartIam {
 		filerIamOptions.filer = &filerAddress
-		filerIamOptions.masters = f.masters
+		filerIamOptions.masters = f.mastersString
 		go func() {
 			time.Sleep(startDelay * time.Second)
 			filerIamOptions.startIamServer()
 		}()
 	}
+
+	f.masters = pb.ServerAddresses(*f.mastersString).ToAddresses()
 
 	f.startFiler()
 
@@ -175,6 +180,9 @@ func (fo *FilerOptions) startFiler() {
 	if *fo.publicPort != 0 {
 		publicVolumeMux = http.NewServeMux()
 	}
+	if *fo.portGrpc == 0 {
+		*fo.portGrpc = 10000 + *fo.port
+	}
 
 	defaultLevelDbDirectory := util.ResolvePath(*fo.defaultLevelDbDirectory + "/filerldb2")
 
@@ -183,8 +191,10 @@ func (fo *FilerOptions) startFiler() {
 		peers = strings.Split(*fo.peers, ",")
 	}
 
+	filerAddress := pb.NewServerAddress(*fo.ip, *fo.port, *fo.portGrpc)
+
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
-		Masters:               strings.Split(*fo.masters, ","),
+		Masters:               fo.masters,
 		Collection:            *fo.collection,
 		DefaultReplication:    *fo.defaultReplicaPlacement,
 		DisableDirListing:     *fo.disableDirListing,
@@ -194,11 +204,10 @@ func (fo *FilerOptions) startFiler() {
 		Rack:                  *fo.rack,
 		DefaultLevelDbDir:     defaultLevelDbDirectory,
 		DisableHttp:           *fo.disableHttp,
-		Host:                  *fo.ip,
-		Port:                  uint32(*fo.port),
+		Host:                  filerAddress,
 		Cipher:                *fo.cipher,
 		SaveToFilerLimit:      int64(*fo.saveToFilerLimit),
-		Filers:                peers,
+		Filers:                pb.FromAddressStrings(peers),
 		ConcurrentUploadLimit: int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
 	})
 	if nfs_err != nil {
@@ -229,7 +238,7 @@ func (fo *FilerOptions) startFiler() {
 	}
 
 	// starting grpc server
-	grpcPort := *fo.port + 10000
+	grpcPort := *fo.portGrpc
 	grpcL, err := util.NewListener(util.JoinHostPort(*fo.bindIp, grpcPort), 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)

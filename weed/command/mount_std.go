@@ -70,35 +70,30 @@ func getParentInode(mountDir string) (uint64, error) {
 
 func RunMount(option *MountOptions, umask os.FileMode) bool {
 
-	filers := strings.Split(*option.filer, ",")
-	// parse filer grpc address
-	filerGrpcAddresses, err := pb.ParseServersToGrpcAddresses(filers)
-	if err != nil {
-		glog.V(0).Infof("ParseFilerGrpcAddress: %v", err)
-		return true
-	}
+	filerAddresses := pb.ServerAddresses(*option.filer).ToAddresses()
 
 	util.LoadConfiguration("security", false)
 	// try to connect to filer, filerBucketsPath may be useful later
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	var cipher bool
+	var err error
 	for i := 0; i < 10; i++ {
-		err = pb.WithOneOfGrpcFilerClients(filerGrpcAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err = pb.WithOneOfGrpcFilerClients(filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
-				return fmt.Errorf("get filer grpc address %v configuration: %v", filerGrpcAddresses, err)
+				return fmt.Errorf("get filer grpc address %v configuration: %v", filerAddresses, err)
 			}
 			cipher = resp.Cipher
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("failed to talk to filer %v: %v", filerGrpcAddresses, err)
+			glog.V(0).Infof("failed to talk to filer %v: %v", filerAddresses, err)
 			glog.V(0).Infof("wait for %d seconds ...", i+1)
 			time.Sleep(time.Duration(i+1) * time.Second)
 		}
 	}
 	if err != nil {
-		glog.Errorf("failed to talk to filer %v: %v", filerGrpcAddresses, err)
+		glog.Errorf("failed to talk to filer %v: %v", filerAddresses, err)
 		return true
 	}
 
@@ -206,8 +201,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	seaweedFileSystem := filesys.NewSeaweedFileSystem(&filesys.Option{
 		MountDirectory:     dir,
-		FilerAddresses:     filers,
-		FilerGrpcAddresses: filerGrpcAddresses,
+		FilerAddresses:     filerAddresses,
 		GrpcDialOption:     grpcDialOption,
 		FilerMountRootPath: mountRoot,
 		Collection:         *option.collection,

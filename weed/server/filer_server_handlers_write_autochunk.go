@@ -62,7 +62,8 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 		}
 	} else if reply != nil {
 		if len(md5bytes) > 0 {
-			w.Header().Set("Content-MD5", util.Base64Encode(md5bytes))
+			md5InBase64 := util.Base64Encode(md5bytes)
+			w.Header().Set("Content-MD5", md5InBase64)
 		}
 		writeJsonQuiet(w, r, http.StatusCreated, reply)
 	}

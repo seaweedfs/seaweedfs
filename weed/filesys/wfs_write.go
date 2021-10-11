@@ -41,10 +41,7 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath, writeOnly bool) filer.Sa
 				}
 
 				fileId, auth = resp.FileId, security.EncodedJwt(resp.Auth)
-				loc := &filer_pb.Location{
-					Url:       resp.Url,
-					PublicUrl: resp.PublicUrl,
-				}
+				loc := resp.Location
 				host = wfs.AdjustedUrl(loc)
 				collection, replication = resp.Collection, resp.Replication
 

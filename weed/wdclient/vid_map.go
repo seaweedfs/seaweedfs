@@ -3,6 +3,7 @@ package wdclient
 import (
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,11 @@ type Location struct {
 	Url        string `json:"url,omitempty"`
 	PublicUrl  string `json:"publicUrl,omitempty"`
 	DataCenter string `json:"dataCenter,omitempty"`
+	GrpcPort   int    `json:"grpcPort,omitempty"`
+}
+
+func (l Location) ServerAddress() pb.ServerAddress {
+	return pb.NewServerAddressWithGrpcPort(l.Url, l.GrpcPort)
 }
 
 type vidMap struct {

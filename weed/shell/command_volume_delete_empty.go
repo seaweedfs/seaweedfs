@@ -2,6 +2,7 @@ package shell
 
 import (
 	"flag"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"io"
@@ -32,15 +33,15 @@ func (c *commandVolumeDeleteEmpty) Help() string {
 
 func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	volDeleteCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	quietPeriod := volDeleteCommand.Duration("quietFor", 24*time.Hour, "select empty volumes with no recent writes, avoid newly created ones")
 	applyBalancing := volDeleteCommand.Bool("force", false, "apply to delete empty volumes")
 	if err = volDeleteCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	// collect topology information
@@ -58,7 +59,7 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 				if v.Size <= 8 && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds {
 					if *applyBalancing {
 						log.Printf("deleting empty volume %d from %s", v.Id, dn.Id)
-						if deleteErr := deleteVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id), dn.Id); deleteErr != nil {
+						if deleteErr := deleteVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(v.Id), pb.NewServerAddressFromDataNode(dn)); deleteErr != nil {
 							err = deleteErr
 						}
 						continue

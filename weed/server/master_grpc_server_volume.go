@@ -42,8 +42,11 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				return !found
 			})
 
+			option := req.Option
+			vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
+
 			// not atomic but it's okay
-			if !found && ms.shouldVolumeGrow(req.Option) {
+			if !found && vl.ShouldGrowVolumes(option) {
 				filter.Store(req, nil)
 				// we have lock called inside vg
 				go func() {
@@ -51,6 +54,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 					start := time.Now()
 					_, err := ms.vg.AutomaticGrowByType(req.Option, ms.grpcDialOption, ms.Topo, req.Count)
 					glog.V(1).Infoln("finished automatic volume grow, cost ", time.Now().Sub(start))
+					vl.DoneGrowRequest()
 
 					if req.ErrCh != nil {
 						req.ErrCh <- err
@@ -130,10 +134,13 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		MemoryMapMaxSizeMb: req.MemoryMapMaxSizeMb,
 	}
 
-	if ms.shouldVolumeGrow(option) {
+	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
+
+	if !vl.HasGrowRequest() && vl.ShouldGrowVolumes(option) {
 		if ms.Topo.AvailableSpaceFor(option) <= 0 {
 			return nil, fmt.Errorf("no free volumes left for " + option.String())
 		}
+		vl.AddGrowRequest()
 		ms.vgCh <- &topology.VolumeGrowRequest{
 			Option: option,
 			Count:  int(req.WritableVolumeCount),
@@ -150,20 +157,24 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		fid, count, dnList, err := ms.Topo.PickForWrite(req.Count, option)
 		if err == nil {
 			dn := dnList.Head()
-			var replicas []*master_pb.AssignResponse_Replica
+			var replicas []*master_pb.Location
 			for _, r := range dnList.Rest() {
-				replicas = append(replicas, &master_pb.AssignResponse_Replica{
+				replicas = append(replicas, &master_pb.Location{
 					Url:       r.Url(),
 					PublicUrl: r.PublicUrl,
+					GrpcPort:  uint32(r.GrpcPort),
 				})
 			}
 			return &master_pb.AssignResponse{
-				Fid:       fid,
-				Url:       dn.Url(),
-				PublicUrl: dn.PublicUrl,
-				Count:     count,
-				Auth:      string(security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
-				Replicas:  replicas,
+				Fid: fid,
+				Location: &master_pb.Location{
+					Url:       dn.Url(),
+					PublicUrl: dn.PublicUrl,
+					GrpcPort:  uint32(dn.GrpcPort),
+				},
+				Count:    count,
+				Auth:     string(security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
+				Replicas: replicas,
 			}, nil
 		}
 		//glog.V(4).Infoln("waiting for volume growing...")

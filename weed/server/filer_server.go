@@ -34,6 +34,7 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer/postgres2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis2"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/redis3"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/sqlite"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/notification"
@@ -46,7 +47,7 @@ import (
 )
 
 type FilerOption struct {
-	Masters               []string
+	Masters               []pb.ServerAddress
 	Collection            string
 	DefaultReplication    string
 	DisableDirListing     bool
@@ -56,12 +57,11 @@ type FilerOption struct {
 	Rack                  string
 	DefaultLevelDbDir     string
 	DisableHttp           bool
-	Host                  string
-	Port                  uint32
+	Host                  pb.ServerAddress
 	recursiveDelete       bool
 	Cipher                bool
 	SaveToFilerLimit      int64
-	Filers                []string
+	Filers                []pb.ServerAddress
 	ConcurrentUploadLimit int64
 }
 
@@ -100,14 +100,14 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.Port, option.Collection, option.DefaultReplication, option.DataCenter, func() {
+	fs.filer = filer.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.Collection, option.DefaultReplication, option.DataCenter, func() {
 		fs.listenersCond.Broadcast()
 	})
 	fs.filer.Cipher = option.Cipher
 
 	fs.checkWithMaster()
 
-	go stats.LoopPushingMetric("filer", stats.SourceName(fs.option.Port), fs.metricsAddress, fs.metricsIntervalSec)
+	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
 	go fs.filer.KeepConnectedToMaster()
 
 	v := util.GetViper()
@@ -143,7 +143,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
 
-	fs.filer.AggregateFromPeers(util.JoinHostPort(option.Host, int(option.Port)), option.Filers)
+	fs.filer.AggregateFromPeers(option.Host, option.Filers)
 
 	fs.filer.LoadBuckets()
 
@@ -159,13 +159,6 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 }
 
 func (fs *FilerServer) checkWithMaster() {
-
-	for _, master := range fs.option.Masters {
-		_, err := pb.ParseServerToGrpcAddress(master)
-		if err != nil {
-			glog.Fatalf("invalid master address %s: %v", master, err)
-		}
-	}
 
 	isConnected := false
 	for !isConnected {

@@ -118,4 +118,3 @@ func (c *commandRemoteUnmount) purgeMountedData(commandEnv *CommandEnv, dir stri
 
 	return nil
 }
-

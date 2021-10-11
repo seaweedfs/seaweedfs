@@ -29,14 +29,14 @@ func (c *commandVacuum) Help() string {
 
 func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	volumeVacuumCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	garbageThreshold := volumeVacuumCommand.Float64("garbageThreshold", 0.3, "vacuum when garbage is more than this limit")
 	if err = volumeVacuumCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(); err != nil {
+		return
 	}
 
 	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {

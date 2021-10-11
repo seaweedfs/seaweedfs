@@ -161,7 +161,7 @@ volume:
 
   # Directories to store data files. dir[,dir]... (default "/tmp")
   dir: "/data"
-  # Directories to store index files. dir[,dir]... (default "/tmp")
+  # Directories to store index files. dir[,dir]... (default is the same as "dir")
   dir_idx: null
 
   # Maximum numbers of volumes, count[,count]...
