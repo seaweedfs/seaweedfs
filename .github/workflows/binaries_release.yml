@@ -13,21 +13,132 @@ on:
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
 
-  build-release-binaries:
+  build-release-binaries_windows:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [linux, windows, darwin, freebsd]
+        goos: [windows]
+        goarch: [amd64]
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+      - name: Go Release Binaries Normal Volume Size
+        uses: wangyoucao577/go-release-action@v1.20
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          overwrite: true
+          pre_command: export CGO_ENABLED=0
+          # build_flags: -tags 5BytesOffset # optional, default is
+          ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          # Where to run `go build .`
+          project_path: weed
+          binary_name: weed
+          asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}"
+      - name: Go Release Large Disk Binaries
+        uses: wangyoucao577/go-release-action@v1.20
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          overwrite: true
+          pre_command: export CGO_ENABLED=0
+          build_flags: -tags 5BytesOffset # optional, default is
+          ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          # Where to run `go build .`
+          project_path: weed
+          binary_name: weed
+          asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}_large_disk"
+
+  build-release-binaries_linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux]
         goarch: [amd64, arm, arm64]
-        exclude:
-          - goarch: arm
-            goos: darwin
-          - goarch: 386
-            goos: darwin
-          - goarch: arm
-            goos: windows
-          - goarch: arm64
-            goos: windows
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+      - name: Go Release Binaries Normal Volume Size
+        uses: wangyoucao577/go-release-action@v1.20
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          overwrite: true
+          pre_command: export CGO_ENABLED=0
+          # build_flags: -tags 5BytesOffset # optional, default is
+          ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          # Where to run `go build .`
+          project_path: weed
+          binary_name: weed
+          asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}"
+      - name: Go Release Large Disk Binaries
+        uses: wangyoucao577/go-release-action@v1.20
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          overwrite: true
+          pre_command: export CGO_ENABLED=0
+          build_flags: -tags 5BytesOffset # optional, default is
+          ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          # Where to run `go build .`
+          project_path: weed
+          binary_name: weed
+          asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}_large_disk"
+
+  build-release-binaries_darwin:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [darwin]
+        goarch: [amd64, arm64]
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+      - name: Go Release Binaries Normal Volume Size
+        uses: wangyoucao577/go-release-action@v1.20
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          overwrite: true
+          pre_command: export CGO_ENABLED=0
+          # build_flags: -tags 5BytesOffset # optional, default is
+          ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          # Where to run `go build .`
+          project_path: weed
+          binary_name: weed
+          asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}"
+      - name: Go Release Large Disk Binaries
+        uses: wangyoucao577/go-release-action@v1.20
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          overwrite: true
+          pre_command: export CGO_ENABLED=0
+          build_flags: -tags 5BytesOffset # optional, default is
+          ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          # Where to run `go build .`
+          project_path: weed
+          binary_name: weed
+          asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}_large_disk"
+
+  build-release-binaries_freebsd:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [freebsd]
+        goarch: [amd64, arm, arm64]
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
