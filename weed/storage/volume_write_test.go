@@ -25,7 +25,7 @@ func TestSearchVolumesWithDeletedNeedles(t *testing.T) {
 
 	count := 20
 
-	for i:=1;i<count;i++{
+	for i := 1; i < count; i++ {
 		n := newRandomNeedle(uint64(i))
 		_, _, _, err := v.writeNeedle2(n, true, false)
 		if err != nil {
@@ -33,7 +33,7 @@ func TestSearchVolumesWithDeletedNeedles(t *testing.T) {
 		}
 	}
 
-	for i:=1;i<15;i++{
+	for i := 1; i < 15; i++ {
 		n := newEmptyNeedle(uint64(i))
 		err := v.nm.Put(n.Id, types.Offset{}, types.TombstoneFileSize)
 		if err != nil {
@@ -43,7 +43,7 @@ func TestSearchVolumesWithDeletedNeedles(t *testing.T) {
 
 	ts1 := time.Now().UnixNano()
 
-	for i:=15;i<count;i++{
+	for i := 15; i < count; i++ {
 		n := newEmptyNeedle(uint64(i))
 		_, err := v.doDeleteRequest(n)
 		if err != nil {
