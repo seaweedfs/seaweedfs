@@ -36,6 +36,10 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 		createMultipartUploadInput.Metadata[k] = aws.String(string(v))
 	}
 
+	contentType := r.Header.Get("Content-Type")
+	if contentType != "" {
+		createMultipartUploadInput.ContentType = &contentType
+	}
 	response, errCode := s3a.createMultipartUpload(createMultipartUploadInput)
 
 	glog.V(2).Info("NewMultipartUploadHandler", string(s3err.EncodeXMLResponse(response)), errCode)

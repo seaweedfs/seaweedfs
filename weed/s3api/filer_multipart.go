@@ -38,6 +38,9 @@ func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInp
 		for k, v := range input.Metadata {
 			entry.Extended[k] = []byte(*v)
 		}
+		if input.ContentType != nil {
+			entry.Attributes.Mime = *input.ContentType
+		}
 	}); err != nil {
 		glog.Errorf("NewMultipartUpload error: %v", err)
 		return nil, s3err.ErrInternalError
@@ -120,6 +123,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			if k != "key" {
 				entry.Extended[k] = v
 			}
+		}
+		if pentry.Attributes.Mime != "" {
+			entry.Attributes.Mime = pentry.Attributes.Mime
 		}
 	})
 
