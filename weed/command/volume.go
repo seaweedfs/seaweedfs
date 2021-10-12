@@ -65,8 +65,9 @@ type VolumeServerOptions struct {
 	preStopSeconds            *int
 	metricsHttpPort           *int
 	// pulseSeconds          *int
-	enableTcp     *bool
-	enableIOUring *bool
+	enableTcp      *bool
+	enableIOUring  *bool
+	ioUringEntries *int
 }
 
 func init() {
@@ -98,6 +99,7 @@ func init() {
 	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
 	v.enableTcp = cmdVolume.Flag.Bool("tcp", false, "<exprimental> enable tcp port")
 	v.enableIOUring = cmdVolume.Flag.Bool("iouring", false, "<exprimental> use io_uring")
+	v.ioUringEntries = cmdVolume.Flag.Int("iouringSize", 256, "<exprimental> io_uring entries")
 }
 
 var cmdVolume = &Command{
@@ -138,6 +140,7 @@ func runVolume(cmd *Command, args []string) bool {
 func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, volumeWhiteListOption string, minFreeSpaces []util.MinFreeSpace) {
 	if *v.enableIOUring {
 		backend.EnableIOUring = true
+		backend.IOUringEntries = uint(*v.ioUringEntries)
 	}
 
 	// Set multiple folders and each folder's max volume count limit'

@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	_             BackendStorageFile = &DiskFile{}
-	EnableIOUring                    = false
+	_              BackendStorageFile = &DiskFile{}
+	EnableIOUring                     = false
+	IOUringEntries uint               = 256
 )
 
 type DiskFile struct {
