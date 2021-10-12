@@ -27,6 +27,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/server"
 	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -65,6 +66,7 @@ type VolumeServerOptions struct {
 	metricsHttpPort           *int
 	// pulseSeconds          *int
 	enableTcp *bool
+    enableIOUring *bool
 }
 
 func init() {
@@ -95,6 +97,7 @@ func init() {
 	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
 	v.enableTcp = cmdVolume.Flag.Bool("tcp", false, "<exprimental> enable tcp port")
+    v.enableIOUring = cmdVolume.Flag.Bool("iouring", false, "<exprimental> use io_uring")
 }
 
 var cmdVolume = &Command{
@@ -133,6 +136,9 @@ func runVolume(cmd *Command, args []string) bool {
 }
 
 func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, volumeWhiteListOption string, minFreeSpaces []util.MinFreeSpace) {
+    if *v.enableIOUring {
+        backend.EnableIOUring = true
+    }
 
 	// Set multiple folders and each folder's max volume count limit'
 	v.folders = strings.Split(volumeFolders, ",")
@@ -257,6 +263,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	if *v.enableTcp {
 		go v.startTcpService(volumeServer)
 	}
+
 
 	// starting the cluster http server
 	clusterHttpServer := v.startClusterHttpService(volumeMux)

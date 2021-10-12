@@ -1,18 +1,21 @@
 package backend
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"os"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 var (
 	_ BackendStorageFile = &DiskFile{}
+    EnableIOUring = false
 )
 
 type DiskFile struct {
 	File         *os.File
+    driver       IODriver
 	fullFilePath string
 	fileSize     int64
 	modTime      time.Time
@@ -28,20 +31,23 @@ func NewDiskFile(f *os.File) *DiskFile {
 		offset = offset + (NeedlePaddingSize - offset%NeedlePaddingSize)
 	}
 
+    driver := NewIODriver(f)
+
 	return &DiskFile{
 		fullFilePath: f.Name(),
 		File:         f,
+        driver:       driver,
 		fileSize:     offset,
 		modTime:      stat.ModTime(),
 	}
 }
 
 func (df *DiskFile) ReadAt(p []byte, off int64) (n int, err error) {
-	return df.File.ReadAt(p, off)
+    return df.driver.ReadAt(p, off)
 }
 
 func (df *DiskFile) WriteAt(p []byte, off int64) (n int, err error) {
-	n, err = df.File.WriteAt(p, off)
+    n, err = df.driver.WriteAt(p, off)
 	if err == nil {
 		waterMark := off + int64(n)
 		if waterMark > df.fileSize {
@@ -57,7 +63,7 @@ func (df *DiskFile) Write(p []byte) (n int, err error) {
 }
 
 func (df *DiskFile) Truncate(off int64) error {
-	err := df.File.Truncate(off)
+    err := df.driver.Truncate(off)
 	if err == nil {
 		df.fileSize = off
 		df.modTime = time.Now()
@@ -66,7 +72,7 @@ func (df *DiskFile) Truncate(off int64) error {
 }
 
 func (df *DiskFile) Close() error {
-	return df.File.Close()
+    return df.driver.Close()
 }
 
 func (df *DiskFile) GetStat() (datSize int64, modTime time.Time, err error) {
@@ -78,5 +84,5 @@ func (df *DiskFile) Name() string {
 }
 
 func (df *DiskFile) Sync() error {
-	return df.File.Sync()
+	return df.driver.Sync()
 }

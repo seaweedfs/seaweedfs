@@ -167,6 +167,7 @@ require (
 	cloud.google.com/go/kms v1.0.0 // indirect
 	github.com/d4l3k/messagediff v1.2.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/iceber/iouring-go v0.0.0-20211009021147-43b176a6a8c5 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
