@@ -194,12 +194,31 @@ func (v *Volume) BinarySearchByAppendAtNs(sinceNs uint64) (offset Offset, isLast
 			err = fmt.Errorf("read entry %d: %v", m, err)
 			return
 		}
-		for ; offset.IsZero() && m < h; m++ {
-			offset, err = v.readOffsetFromIndex(m)
-			if err != nil {
-				err = fmt.Errorf("read entry %d: %v", m, err)
+		if offset.IsZero() {
+			leftIndex, _, leftNs, leftErr := v.readLeftNs(m)
+			if leftErr != nil {
+				err = leftErr
 				return
 			}
+			rightIndex, rightOffset, rightNs, rightErr := v.readRightNs(m)
+			if rightErr != nil {
+				err = rightErr
+				return
+			}
+			if rightNs <= sinceNs {
+				l = rightIndex
+				if l == entryCount {
+					return Offset{}, true, nil
+				} else {
+					continue
+				}
+			}
+			if sinceNs < leftNs {
+				h = leftIndex + 1
+				continue
+			}
+			return rightOffset, false, nil
+
 		}
 		if offset.IsZero() {
 			return Offset{}, true, nil
@@ -228,6 +247,38 @@ func (v *Volume) BinarySearchByAppendAtNs(sinceNs uint64) (offset Offset, isLast
 
 	return offset, false, err
 
+}
+
+func (v *Volume) readRightNs(m int64) (index int64, offset Offset, ts uint64, err error) {
+	index = m
+	for offset.IsZero() {
+		index++
+		offset, err = v.readOffsetFromIndex(index)
+		if err != nil {
+			err = fmt.Errorf("read entry %d: %v", index, err)
+			return
+		}
+	}
+	if !offset.IsZero() {
+		ts, err = v.readAppendAtNs(offset)
+	}
+	return
+}
+
+func (v *Volume) readLeftNs(m int64) (index int64, offset Offset, ts uint64, err error) {
+	index = m
+	for offset.IsZero() {
+		index--
+		offset, err = v.readOffsetFromIndex(index)
+		if err != nil {
+			err = fmt.Errorf("read entry %d: %v", index, err)
+			return
+		}
+	}
+	if !offset.IsZero() {
+		ts, err = v.readAppendAtNs(offset)
+	}
+	return
 }
 
 // bytes is of size NeedleMapEntrySize
