@@ -30,6 +30,7 @@ func NewIODriver(f *os.File) IODriver {
 			glog.V(0).Infof("Using iouring driver for file %s", f.Name())
 			return driver
 		}
+		glog.Warningf("iouring driver got error: %v", err)
 	}
 	glog.V(0).Infof("Using syscall driver for file %s", f.Name())
 	return NewSyscallIODriver(f)
