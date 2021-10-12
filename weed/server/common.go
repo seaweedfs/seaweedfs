@@ -256,6 +256,9 @@ func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, file
 		w.Header().Set("Content-Disposition", responseContentDisposition)
 		return
 	}
+	if w.Header().Get("Content-Disposition") != "" {
+		return
+	}
 	if filename != "" {
 		filename = url.QueryEscape(filename)
 		contentDisposition := "inline"
