@@ -250,6 +250,11 @@ func handleStaticResources2(r *mux.Router) {
 }
 
 func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, filename string) {
+	responseContentDisposition := r.FormValue("response-content-disposition")
+	if responseContentDisposition != "" {
+		w.Header().Set("Content-Disposition", responseContentDisposition)
+		return
+	}
 	if filename != "" {
 		contentDisposition := "inline"
 		if r.FormValue("dl") != "" {
