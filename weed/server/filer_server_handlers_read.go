@@ -7,7 +7,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -133,7 +132,6 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	setEtag(w, etag)
 
 	filename := entry.Name()
-	filename = url.QueryEscape(filename)
 	adjustHeaderContentDisposition(w, r, filename)
 
 	totalSize := int64(entry.Size())
