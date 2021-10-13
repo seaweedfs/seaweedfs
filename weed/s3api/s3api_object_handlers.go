@@ -397,11 +397,15 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	defer resp.Body.Close()
 
 	bufferBytes := bufferRead.Bytes()
-	if detectMime {
-		mime = http.DetectContentType(bufferBytes[:512])
-	}
 	hash.Write(bufferBytes)
 	etag = fmt.Sprintf("%x", hash.Sum(nil))
+
+	if detectMime {
+		if len(bufferBytes) > 512 {
+			bufferBytes = bufferBytes[:512]
+		}
+		mime = http.DetectContentType(bufferBytes)
+	}
 
 	resp_body, ra_err := ioutil.ReadAll(resp.Body)
 	if ra_err != nil {

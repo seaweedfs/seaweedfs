@@ -232,7 +232,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 	setEtag(w, etag)
 
-	if mime != "" {
+	if mime != "" && mime != "lol" {
 		if err := s3a.setMime(uploadsFolder+"/"+uploadID, fmt.Sprintf("%04d.part", partID), mime); err != nil {
 			glog.Error(err)
 		}
