@@ -90,6 +90,29 @@ func (s3a *S3ApiServer) getEntry(parentDirectoryPath, entryName string) (entry *
 	return filer_pb.GetEntry(s3a, fullPath)
 }
 
+func (s3a *S3ApiServer) setMime(parentDirectoryPath string, entryName string, mime string) (err error) {
+	return s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+
+		resp, err := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: parentDirectoryPath,
+			Name:      entryName,
+		})
+		if err != nil {
+			return err
+		}
+		resp.Entry.Attributes.Mime = mime
+
+		return filer_pb.UpdateEntry(client, &filer_pb.UpdateEntryRequest{
+			Directory:          parentDirectoryPath,
+			Entry:              resp.Entry,
+			IsFromOtherCluster: false,
+			Signatures:         nil,
+		})
+
+	})
+
+}
+
 func objectKey(key *string) *string {
 	if strings.HasPrefix(*key, "/") {
 		t := (*key)[1:]
