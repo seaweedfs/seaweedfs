@@ -142,6 +142,18 @@ func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf
 	return pathConf
 }
 
+func (fc *FilerConf) GetCollectionTtls(collection string) (ttls map[string]string) {
+	ttls = make(map[string]string)
+	fc.rules.Walk(func(key []byte, value interface{}) bool {
+		t := value.(*filer_pb.FilerConf_PathConf)
+		if t.Collection == collection {
+			ttls[t.LocationPrefix] = t.GetTtl()
+		}
+		return true
+	})
+	return ttls
+}
+
 // merge if values in b is not empty, merge them into a
 func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 	a.Collection = util.Nvl(b.Collection, a.Collection)

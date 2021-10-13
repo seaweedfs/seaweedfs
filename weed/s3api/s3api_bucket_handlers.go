@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"math"
 	"net/http"
 	"time"
@@ -264,7 +265,26 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
 		return
 	}
-	s3err.WriteErrorResponse(w, s3err.ErrNoSuchLifecycleConfiguration, r)
+	ttls := fc.GetCollectionTtls(bucket)
+	if len(ttls) == 0 {
+		s3err.WriteErrorResponse(w, s3err.ErrNoSuchLifecycleConfiguration, r)
+	}
+	response := Lifecycle{}
+	for prefix, internalTtl := range ttls {
+		ttl, _ := needle.ReadTTL(internalTtl)
+		days := int(ttl.Minutes() / 60 / 24)
+		if days == 0 {
+			continue
+		}
+		response.Rules = append(response.Rules, Rule{
+			Status: Enabled, Filter: Filter{
+				Prefix: Prefix{string: prefix, set: true},
+				set:    true,
+			},
+			Expiration: Expiration{Days: days, set: true},
+		})
+	}
+	writeSuccessResponseXML(w, response)
 }
 
 // PutBucketLifecycleConfigurationHandler Put Bucket Lifecycle configuration

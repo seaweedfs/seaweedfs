@@ -67,7 +67,7 @@ services:
       - 8888:8888
       - 18888:18888
       - 8111:8111
-    command: 'filer -defaultReplicaPlacement 000 -iam -master="master0:9333,master1:9334,master2:9335"'
+    command: 'filer -defaultReplicaPlacement 100 -iam -master="master0:9333,master1:9334,master2:9335"'
     depends_on:
       - master0
       - master1
@@ -86,19 +86,3 @@ services:
       - volume1
       - volume2
       - filer
-  minio:
-    image: minio/minio
-    ports:
-      - 9000:9000
-    command: 'minio server /data'
-    environment:
-      MINIO_ACCESS_KEY: "some_access_key1"
-      MINIO_SECRET_KEY: "some_secret_key1"
-    depends_on:
-      - s3
-  nexus:
-    image: registry.tochka-tech.com/oci_nexus/nexus:v3.34.1-2
-    ports:
-      - 8081:8081
-    depends_on:
-      - s3
