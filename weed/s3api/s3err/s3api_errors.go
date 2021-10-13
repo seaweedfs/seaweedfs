@@ -51,6 +51,7 @@ const (
 	ErrBucketAlreadyExists
 	ErrBucketAlreadyOwnedByYou
 	ErrNoSuchBucket
+	ErrNoSuchLifecycleConfiguration
 	ErrNoSuchKey
 	ErrNoSuchUpload
 	ErrInvalidBucketName
@@ -161,6 +162,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrNoSuchBucket: {
 		Code:           "NoSuchBucket",
 		Description:    "The specified bucket does not exist",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrNoSuchLifecycleConfiguration: {
+		Code:           "NoSuchLifecycleConfiguration",
+		Description:    "The lifecycle configuration does not exist",
 		HTTPStatusCode: http.StatusNotFound,
 	},
 	ErrNoSuchKey: {

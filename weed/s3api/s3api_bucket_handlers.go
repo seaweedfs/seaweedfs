@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"math"
 	"net/http"
 	"time"
@@ -204,4 +206,99 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 		}
 	}
 	return true
+}
+
+// GetBucketAclHandler Get Bucket ACL
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketAcl.html
+func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Request) {
+	// collect parameters
+	bucket, _ := getBucketAndObject(r)
+	glog.V(3).Infof("GetBucketAclHandler %s", bucket)
+
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, err, r)
+		return
+	}
+
+	response := AccessControlPolicy{}
+	for _, ident := range s3a.iam.identities {
+		if len(ident.Credentials) == 0 {
+			continue
+		}
+		for _, action := range ident.Actions {
+			if !action.overBucket(bucket) || action.getPermission() == "" {
+				continue
+			}
+			id := ident.Credentials[0].AccessKey
+			if response.Owner.DisplayName == "" && action.isOwner(bucket) && len(ident.Credentials) > 0 {
+				response.Owner.DisplayName = ident.Name
+				response.Owner.ID = id
+			}
+			response.AccessControlList.Grant = append(response.AccessControlList.Grant, Grant{
+				Grantee: Grantee{
+					ID:          id,
+					DisplayName: ident.Name,
+					Type:        "CanonicalUser",
+					XMLXSI:      "CanonicalUser",
+					XMLNS:       "http://www.w3.org/2001/XMLSchema-instance"},
+				Permission: action.getPermission(),
+			})
+		}
+	}
+	writeSuccessResponseXML(w, response)
+}
+
+// GetBucketLifecycleConfigurationHandler Get Bucket Lifecycle configuration
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketLifecycleConfiguration.html
+func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWriter, r *http.Request) {
+	// collect parameters
+	bucket, _ := getBucketAndObject(r)
+	glog.V(3).Infof("GetBucketAclHandler %s", bucket)
+
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, err, r)
+		return
+	}
+	fc, err := filer.ReadFilerConf(s3a.option.Filer, s3a.option.GrpcDialOption, nil)
+	if err != nil {
+		glog.Errorf("GetBucketLifecycleConfigurationHandler: %s", err)
+		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
+		return
+	}
+	ttls := fc.GetCollectionTtls(bucket)
+	if len(ttls) == 0 {
+		s3err.WriteErrorResponse(w, s3err.ErrNoSuchLifecycleConfiguration, r)
+	}
+	response := Lifecycle{}
+	for prefix, internalTtl := range ttls {
+		ttl, _ := needle.ReadTTL(internalTtl)
+		days := int(ttl.Minutes() / 60 / 24)
+		if days == 0 {
+			continue
+		}
+		response.Rules = append(response.Rules, Rule{
+			Status: Enabled, Filter: Filter{
+				Prefix: Prefix{string: prefix, set: true},
+				set:    true,
+			},
+			Expiration: Expiration{Days: days, set: true},
+		})
+	}
+	writeSuccessResponseXML(w, response)
+}
+
+// PutBucketLifecycleConfigurationHandler Put Bucket Lifecycle configuration
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketLifecycleConfiguration.html
+func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWriter, r *http.Request) {
+
+	s3err.WriteErrorResponse(w, s3err.ErrNotImplemented, r)
+
+}
+
+// DeleteBucketMetricsConfiguration Delete Bucket Lifecycle
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketLifecycle.html
+func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *http.Request) {
+
+	s3err.WriteErrorResponse(w, s3err.ErrNotImplemented, r)
+
 }
