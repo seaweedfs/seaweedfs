@@ -102,7 +102,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		setEtag(w, etag)
-		if mime != "" {
+		if mime != "" && mime != "application/octet-stream" {
 			if err := s3a.setMime(s3a.option.BucketsPath+"/"+bucket, object, mime); err != nil {
 				glog.Error(err)
 			}
