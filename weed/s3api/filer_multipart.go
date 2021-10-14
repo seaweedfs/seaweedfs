@@ -82,9 +82,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 
 	var finalParts []*filer_pb.FileChunk
 	var offset int64
+	var mime string
 
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name, ".part") && !entry.IsDirectory {
+			if entry.Name == "0001.part" && entry.Attributes.Mime != "" {
+				mime = entry.Attributes.Mime
+			}
 			for _, chunk := range entry.Chunks {
 				p := &filer_pb.FileChunk{
 					FileId:    chunk.GetFileIdString(),
@@ -126,6 +130,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		}
 		if pentry.Attributes.Mime != "" {
 			entry.Attributes.Mime = pentry.Attributes.Mime
+		} else if mime != "" {
+			entry.Attributes.Mime = mime
 		}
 	})
 

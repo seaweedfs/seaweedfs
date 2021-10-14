@@ -214,10 +214,16 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	}
 	defer dataReader.Close()
 
+	uploadsFolder := s3a.genUploadsFolder(bucket)
 	uploadUrl := fmt.Sprintf("http://%s%s/%s/%04d.part?collection=%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(bucket), uploadID, partID, bucket)
+		s3a.option.Filer.ToHttpAddress(), uploadsFolder, uploadID, partID, bucket)
 
-	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
+	detectMime := false
+	if partID == 1 {
+		detectMime = true
+	}
+
+	etag, mime, errCode := s3a.putToFiler(r, uploadUrl, dataReader, detectMime)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, errCode, r)
@@ -226,6 +232,11 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 	setEtag(w, etag)
 
+	if mime != "" && mime != "application/octet-stream" {
+		if err := s3a.setMime(uploadsFolder+"/"+uploadID, fmt.Sprintf("%04d.part", partID), mime); err != nil {
+			glog.Error(err)
+		}
+	}
 	writeSuccessResponseEmpty(w)
 
 }

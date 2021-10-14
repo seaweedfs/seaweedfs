@@ -1,11 +1,15 @@
 package s3api
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/pquerna/cachecontrol/cacheobject"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"sort"
@@ -94,8 +98,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		}
 	} else {
 		uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
-
-		etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
+		etag, mime, errCode := s3a.putToFiler(r, uploadUrl, dataReader, true)
 
 		if errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, errCode, r)
@@ -103,6 +106,11 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		}
 
 		setEtag(w, etag)
+		if mime != "" && mime != "application/octet-stream" {
+			if err := s3a.setMime(s3a.option.BucketsPath+"/"+bucket, object, mime); err != nil {
+				glog.Error(err)
+			}
+		}
 	}
 
 	writeSuccessResponseEmpty(w)
@@ -364,16 +372,17 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) {
 	io.Copy(w, proxyResponse.Body)
 }
 
-func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader) (etag string, code s3err.ErrorCode) {
+func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, detectMime bool) (etag string, mime string, code s3err.ErrorCode) {
 
 	hash := md5.New()
-	var body = io.TeeReader(dataReader, hash)
+	var bufferRead bytes.Buffer
+	var body = io.TeeReader(dataReader, &bufferRead)
 
 	proxyReq, err := http.NewRequest("PUT", uploadUrl, body)
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", uploadUrl, err)
-		return "", s3err.ErrInternalError
+		return "", "", s3err.ErrInternalError
 	}
 
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
@@ -388,29 +397,38 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
-		return "", s3err.ErrInternalError
+		return "", "", s3err.ErrInternalError
 	}
 	defer resp.Body.Close()
 
+	bufferBytes := bufferRead.Bytes()
+	hash.Write(bufferBytes)
 	etag = fmt.Sprintf("%x", hash.Sum(nil))
+
+	if detectMime {
+		if len(bufferBytes) > 512 {
+			bufferBytes = bufferBytes[:512]
+		}
+		mime = http.DetectContentType(bufferBytes)
+	}
 
 	resp_body, ra_err := io.ReadAll(resp.Body)
 	if ra_err != nil {
 		glog.Errorf("upload to filer response read %d: %v", resp.StatusCode, ra_err)
-		return etag, s3err.ErrInternalError
+		return etag, "", s3err.ErrInternalError
 	}
 	var ret weed_server.FilerPostResult
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
 		glog.Errorf("failing to read upload to %s : %v", uploadUrl, string(resp_body))
-		return "", s3err.ErrInternalError
+		return "", "", s3err.ErrInternalError
 	}
 	if ret.Error != "" {
 		glog.Errorf("upload to filer error: %v", ret.Error)
-		return "", filerErrorToS3Error(ret.Error)
+		return "", "", filerErrorToS3Error(ret.Error)
 	}
 
-	return etag, s3err.ErrNone
+	return etag, mime, s3err.ErrNone
 }
 
 func setEtag(w http.ResponseWriter, etag string) {
