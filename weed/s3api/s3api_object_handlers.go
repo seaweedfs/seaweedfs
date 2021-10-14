@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/json"
 	"encoding/xml"
@@ -34,6 +35,13 @@ func init() {
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
 	}}
+}
+
+func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
+	mimeBuffer := make([]byte, 512)
+	dataReader.Read(mimeBuffer)
+	r.Header.Set("Content-Type", http.DetectContentType(mimeBuffer))
+	return io.NopCloser(io.MultiReader(bytes.NewReader(mimeBuffer), dataReader))
 }
 
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +102,10 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		}
 	} else {
 		uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
+
+		if r.Header.Get("Content-Type") == "" {
+			dataReader = mimeDetect(r, dataReader)
+		}
 
 		etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
 

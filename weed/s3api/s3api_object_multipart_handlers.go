@@ -217,8 +217,11 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	uploadUrl := fmt.Sprintf("http://%s%s/%s/%04d.part?collection=%s",
 		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(bucket), uploadID, partID, bucket)
 
-	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
+	if partID == 1 && r.Header.Get("Content-Type") == "" {
+		dataReader = mimeDetect(r, dataReader)
+	}
 
+	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, errCode, r)
 		return
