@@ -23,8 +23,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -33,6 +32,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 )
 
 func (iam *IdentityAccessManagement) reqSignatureV4Verify(r *http.Request) (*Identity, s3err.ErrorCode) {
@@ -135,9 +136,9 @@ func (iam *IdentityAccessManagement) doesSignatureMatch(hashedPayload string, r 
 
 	// Get hashed Payload
 	if signV4Values.Credential.scope.service != "s3" && hashedPayload == emptySHA256 && r.Body != nil {
-		buf, _ := ioutil.ReadAll(r.Body)
-		r.Body = ioutil.NopCloser(bytes.NewBuffer(buf))
-		b, _ := ioutil.ReadAll(bytes.NewBuffer(buf))
+		buf, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewBuffer(buf))
+		b, _ := io.ReadAll(bytes.NewBuffer(buf))
 		if len(b) != 0 {
 			bodyHash := sha256.Sum256(b)
 			hashedPayload = hex.EncodeToString(bodyHash[:])
@@ -433,7 +434,7 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 		}
 	}
 
-	/// Verify finally if signature is same.
+	// / Verify finally if signature is same.
 
 	// Get canonical request.
 	presignedCanonicalReq := getCanonicalRequest(extractedSignedHeaders, hashedPayload, encodedQuery, req.URL.Path, req.Method)

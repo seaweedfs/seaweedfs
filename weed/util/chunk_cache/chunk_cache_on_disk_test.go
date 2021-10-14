@@ -3,7 +3,6 @@ package chunk_cache
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"testing"
@@ -11,7 +10,7 @@ import (
 
 func TestOnDisk(t *testing.T) {
 
-	tmpDir, _ := ioutil.TempDir("", "c")
+	tmpDir, _ := os.MkdirTemp("", "c")
 	defer os.RemoveAll(tmpDir)
 
 	totalDiskSizeInKB := int64(32)

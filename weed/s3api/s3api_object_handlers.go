@@ -5,15 +5,15 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/pquerna/cachecontrol/cacheobject"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/pquerna/cachecontrol/cacheobject"
 
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 
@@ -198,7 +198,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	bucket, _ := getBucketAndObject(r)
 	glog.V(3).Infof("DeleteMultipleObjectsHandler %s", bucket)
 
-	deleteXMLBytes, err := ioutil.ReadAll(r.Body)
+	deleteXMLBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
 		return
@@ -394,7 +394,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 
 	etag = fmt.Sprintf("%x", hash.Sum(nil))
 
-	resp_body, ra_err := ioutil.ReadAll(resp.Body)
+	resp_body, ra_err := io.ReadAll(resp.Body)
 	if ra_err != nil {
 		glog.Errorf("upload to filer response read %d: %v", resp.StatusCode, ra_err)
 		return etag, s3err.ErrInternalError

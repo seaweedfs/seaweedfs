@@ -2,14 +2,15 @@ package basic
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"strings"
+	"testing"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"io/ioutil"
-	"os"
-	"strings"
-	"testing"
 )
 
 var (
@@ -108,8 +109,8 @@ func TestListBucket(t *testing.T) {
 func TestListObjectV2(t *testing.T) {
 
 	listObj, err := svc.ListObjectsV2(&s3.ListObjectsV2Input{
-		Bucket: aws.String(Bucket),
-		Prefix: aws.String("foo"),
+		Bucket:    aws.String(Bucket),
+		Prefix:    aws.String("foo"),
 		Delimiter: aws.String("/"),
 	})
 	if err != nil {
@@ -169,7 +170,7 @@ func TestObjectOp(t *testing.T) {
 		exitErrorf("Unable to get copy object, %v", err)
 	}
 
-	data, err := ioutil.ReadAll(getObj.Body)
+	data, err := io.ReadAll(getObj.Body)
 	if err != nil {
 		exitErrorf("Unable to read object data, %v", err)
 	}

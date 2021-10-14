@@ -3,15 +3,14 @@ package volume_info
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
-
-	_ "github.com/chrislusf/seaweedfs/weed/storage/backend/s3_backend"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"os"
 
 	"github.com/golang/protobuf/jsonpb"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
+	_ "github.com/chrislusf/seaweedfs/weed/storage/backend/s3_backend"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 // MaybeLoadVolumeInfo load the file data as *volume_server_pb.VolumeInfo, the returned volumeInfo will not be nil
@@ -36,7 +35,7 @@ func MaybeLoadVolumeInfo(fileName string) (volumeInfo *volume_server_pb.VolumeIn
 	hasVolumeInfoFile = true
 
 	glog.V(1).Infof("maybeLoadVolumeInfo reads %s", fileName)
-	tierData, readErr := ioutil.ReadFile(fileName)
+	tierData, readErr := os.ReadFile(fileName)
 	if readErr != nil {
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
 		err = fmt.Errorf("fail to read %s : %v", fileName, readErr)
@@ -76,7 +75,7 @@ func SaveVolumeInfo(fileName string, volumeInfo *volume_server_pb.VolumeInfo) er
 		return fmt.Errorf("marshal to %s: %v", fileName, marshalErr)
 	}
 
-	writeErr := ioutil.WriteFile(fileName, []byte(text), 0755)
+	writeErr := os.WriteFile(fileName, []byte(text), 0755)
 	if writeErr != nil {
 		return fmt.Errorf("fail to write %s : %v", fileName, writeErr)
 	}

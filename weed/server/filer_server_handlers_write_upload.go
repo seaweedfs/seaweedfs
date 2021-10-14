@@ -5,7 +5,6 @@ import (
 	"crypto/md5"
 	"hash"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"sort"
 	"strings"
@@ -31,7 +30,7 @@ var bufPool = sync.Pool{
 func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Request, reader io.Reader, chunkSize int32, fileName, contentType string, contentLength int64, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, chunkOffset int64, uploadErr error, smallContent []byte) {
 
 	md5Hash = md5.New()
-	var partReader = ioutil.NopCloser(io.TeeReader(reader, md5Hash))
+	var partReader = io.NopCloser(io.TeeReader(reader, md5Hash))
 
 	var wg sync.WaitGroup
 	var bytesBufferCounter int64
@@ -57,7 +56,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 
 		dataSize, err := bytesBuffer.ReadFrom(limitedReader)
 
-		// data, err := ioutil.ReadAll(limitedReader)
+		// data, err := io.ReadAll(limitedReader)
 		if err != nil || dataSize == 0 {
 			bufPool.Put(bytesBuffer)
 			atomic.AddInt64(&bytesBufferCounter, -1)
