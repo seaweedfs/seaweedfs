@@ -1,9 +1,13 @@
 package gcs
 
 import (
-	"cloud.google.com/go/storage"
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"reflect"
+
+	"cloud.google.com/go/storage"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
@@ -11,10 +15,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
-	"io"
-	"io/ioutil"
-	"os"
-	"reflect"
 )
 
 func init() {
@@ -110,7 +110,7 @@ func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation
 	if readErr != nil {
 		return nil, readErr
 	}
-	data, err = ioutil.ReadAll(rangeReader)
+	data, err = io.ReadAll(rangeReader)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to download file %s%s: %v", loc.Bucket, loc.Path, err)

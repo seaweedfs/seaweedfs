@@ -5,17 +5,17 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/url"
+	"strings"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/s3api/policy"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"github.com/dustin/go-humanize"
 	"github.com/gorilla/mux"
-	"io"
-	"io/ioutil"
-	"mime/multipart"
-	"net/http"
-	"net/url"
-	"strings"
 )
 
 func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +152,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 
 // Extract form fields and file data from a HTTP POST Policy
 func extractPostPolicyFormValues(form *multipart.Form) (filePart io.ReadCloser, fileName string, fileSize int64, formValues http.Header, err error) {
-	/// HTML Form values
+	// / HTML Form values
 	fileName = ""
 
 	// Canonicalize the form values into http.Header.
@@ -175,7 +175,7 @@ func extractPostPolicyFormValues(form *multipart.Form) (filePart io.ReadCloser, 
 			b.WriteString(v)
 		}
 		fileSize = int64(b.Len())
-		filePart = ioutil.NopCloser(b)
+		filePart = io.NopCloser(b)
 		return filePart, fileName, fileSize, formValues, nil
 	}
 

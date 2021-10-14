@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"math/rand"
 	"mime/multipart"
@@ -36,7 +35,7 @@ func main() {
 
 	var fileNames []string
 
-	files, err := ioutil.ReadDir(*dir)
+	files, err := os.ReadDir(*dir)
 	if err != nil {
 		log.Fatalf("fail to read dir %v: %v", *dir, err)
 	}
@@ -142,7 +141,7 @@ func uploadFileToFiler(client *http.Client, filename, destination string) (size 
 		if err != nil {
 			return 0, fmt.Errorf("read http POST %s response: %v", uri, err)
 		}
-		io.Copy(ioutil.Discard, resp.Body)
+		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 	}
 

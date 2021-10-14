@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
@@ -35,7 +34,7 @@ func Post(url string, values url.Values) ([]byte, error) {
 		return nil, err
 	}
 	defer r.Body.Close()
-	b, err := ioutil.ReadAll(r.Body)
+	b, err := io.ReadAll(r.Body)
 	if r.StatusCode >= 400 {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %d - %s", url, r.StatusCode, string(b))
@@ -71,7 +70,7 @@ func Get(url string) ([]byte, bool, error) {
 		reader = response.Body
 	}
 
-	b, err := ioutil.ReadAll(reader)
+	b, err := io.ReadAll(reader)
 	if response.StatusCode >= 400 {
 		retryable := response.StatusCode >= 500
 		return nil, retryable, fmt.Errorf("%s: %s", url, response.Status)
@@ -107,7 +106,7 @@ func Delete(url string, jwt string) error {
 		return e
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -137,7 +136,7 @@ func DeleteProxied(url string, jwt string) (body []byte, httpStatus int, err err
 		return
 	}
 	defer resp.Body.Close()
-	body, err = ioutil.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
 	if err != nil {
 		return
 	}
@@ -271,7 +270,7 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 		}
 	}
 	// drains the response body to avoid memory leak
-	data, _ := ioutil.ReadAll(reader)
+	data, _ := io.ReadAll(reader)
 	if len(data) != 0 {
 		glog.V(1).Infof("%s reader has remaining %d bytes", contentEncoding, len(data))
 	}
@@ -393,11 +392,11 @@ func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, e
 }
 
 func CloseResponse(resp *http.Response) {
-	io.Copy(ioutil.Discard, resp.Body)
+	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 }
 
 func CloseRequest(req *http.Request) {
-	io.Copy(ioutil.Discard, req.Body)
+	io.Copy(io.Discard, req.Body)
 	req.Body.Close()
 }

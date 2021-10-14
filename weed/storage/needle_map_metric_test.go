@@ -1,8 +1,8 @@
 package storage
 
 import (
-	"io/ioutil"
 	"math/rand"
+	"os"
 	"testing"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -11,7 +11,7 @@ import (
 
 func TestFastLoadingNeedleMapMetrics(t *testing.T) {
 
-	idxFile, _ := ioutil.TempFile("", "tmp.idx")
+	idxFile, _ := os.CreateTemp("", "tmp.idx")
 	nm := NewCompactNeedleMap(idxFile)
 
 	for i := 0; i < 10000; i++ {

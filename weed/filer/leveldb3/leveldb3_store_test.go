@@ -2,7 +2,6 @@ package leveldb
 
 import (
 	"context"
-	"io/ioutil"
 	"os"
 	"testing"
 
@@ -12,7 +11,7 @@ import (
 
 func TestCreateAndFind(t *testing.T) {
 	testFiler := filer.NewFiler(nil, nil, "", "", "", "", nil)
-	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test")
+	dir, _ := os.MkdirTemp("", "seaweedfs_filer_test")
 	defer os.RemoveAll(dir)
 	store := &LevelDB3Store{}
 	store.initialize(dir)
@@ -66,7 +65,7 @@ func TestCreateAndFind(t *testing.T) {
 
 func TestEmptyRoot(t *testing.T) {
 	testFiler := filer.NewFiler(nil, nil, "", "", "", "", nil)
-	dir, _ := ioutil.TempDir("", "seaweedfs_filer_test2")
+	dir, _ := os.MkdirTemp("", "seaweedfs_filer_test2")
 	defer os.RemoveAll(dir)
 	store := &LevelDB3Store{}
 	store.initialize(dir)

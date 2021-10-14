@@ -2,17 +2,17 @@ package command
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"google.golang.org/grpc"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path"
 	"strings"
 
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -82,7 +82,7 @@ func downloadToFile(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpti
 	}
 	defer f.Close()
 	if isFileList {
-		content, err := ioutil.ReadAll(rc.Body)
+		content, err := io.ReadAll(rc.Body)
 		if err != nil {
 			return err
 		}
@@ -119,7 +119,7 @@ func fetchContent(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption
 		return "", nil, e
 	}
 	defer util.CloseResponse(rc)
-	content, e = ioutil.ReadAll(rc.Body)
+	content, e = io.ReadAll(rc.Body)
 	return
 }
 

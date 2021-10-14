@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"math/rand"
 	"mime/multipart"
@@ -45,7 +44,7 @@ func main() {
 			defer wg.Done()
 
 			client := &http.Client{Transport: &http.Transport{
-				MaxIdleConns:     1024,
+				MaxIdleConns:        1024,
 				MaxIdleConnsPerHost: 1024,
 			}}
 			r := rand.New(rand.NewSource(time.Now().UnixNano() + int64(x)))
@@ -128,7 +127,7 @@ func uploadFileToFiler(client *http.Client, data []byte, filename, destination s
 		if err != nil {
 			return 0, fmt.Errorf("read http POST %s response: %v", uri, err)
 		}
-		io.Copy(ioutil.Discard, resp.Body)
+		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 	}
 

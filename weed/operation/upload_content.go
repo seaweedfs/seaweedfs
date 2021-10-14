@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -91,7 +90,7 @@ func doUpload(reader io.Reader, option *UploadOption) (uploadResult *UploadResul
 	if ok {
 		data = bytesReader.Bytes
 	} else {
-		data, err = ioutil.ReadAll(reader)
+		data, err = io.ReadAll(reader)
 		if err != nil {
 			err = fmt.Errorf("read input: %v", err)
 			return
@@ -278,7 +277,7 @@ func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize
 		return &ret, nil
 	}
 
-	resp_body, ra_err := ioutil.ReadAll(resp.Body)
+	resp_body, ra_err := io.ReadAll(resp.Body)
 	if ra_err != nil {
 		return nil, fmt.Errorf("read response body %v: %v", option.UploadUrl, ra_err)
 	}

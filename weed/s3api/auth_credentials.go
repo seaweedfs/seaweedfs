@@ -2,6 +2,10 @@ package s3api
 
 import (
 	"fmt"
+	"net/http"
+	"os"
+	"strings"
+
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -10,9 +14,6 @@ import (
 	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
-	"io/ioutil"
-	"net/http"
-	"strings"
 )
 
 type Action string
@@ -91,7 +92,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3A
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName string) error {
-	content, readErr := ioutil.ReadFile(fileName)
+	content, readErr := os.ReadFile(fileName)
 	if readErr != nil {
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)
