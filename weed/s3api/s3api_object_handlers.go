@@ -6,10 +6,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/pquerna/cachecontrol/cacheobject"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"sort"
@@ -375,9 +372,8 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) {
 func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, detectMime bool) (etag string, mime string, code s3err.ErrorCode) {
 
 	hash := md5.New()
-	var bufferRead bytes.Buffer
-	var body = io.TeeReader(dataReader, &bufferRead)
-
+	var bodyBuf bytes.Buffer
+	var body = io.TeeReader(dataReader, &bodyBuf)
 	proxyReq, err := http.NewRequest("PUT", uploadUrl, body)
 
 	if err != nil {
@@ -401,16 +397,20 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	}
 	defer resp.Body.Close()
 
-	bufferBytes := bufferRead.Bytes()
-	hash.Write(bufferBytes)
-	etag = fmt.Sprintf("%x", hash.Sum(nil))
-
 	if detectMime {
-		if len(bufferBytes) > 512 {
-			bufferBytes = bufferBytes[:512]
+		mimeBuffer := make([]byte, 512)
+		if _, err := bodyBuf.Read(mimeBuffer); err == nil {
+			mime = http.DetectContentType(mimeBuffer)
+		} else {
+			glog.Error(err)
 		}
-		mime = http.DetectContentType(bufferBytes)
 	}
+
+	if _, err := io.Copy(hash, &bodyBuf); err != nil {
+		glog.Error(err)
+	}
+
+	etag = fmt.Sprintf("%x", hash.Sum(nil))
 
 	resp_body, ra_err := io.ReadAll(resp.Body)
 	if ra_err != nil {
