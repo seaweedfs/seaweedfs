@@ -2,7 +2,6 @@ package skiplist
 
 import (
 	"bytes"
-	"fmt"
 	"math/rand"
 	"strconv"
 	"testing"
@@ -243,9 +242,8 @@ func TestFindGreaterOrEqual(t *testing.T) {
 		key := Element(rand.Intn(maxNumber))
 		if _, v, ok, _ := list.FindGreaterOrEqual(key); ok {
 			// if f is v should be bigger than the element before
-			if v.Prev != nil && bytes.Compare(v.Prev.Key, key) >= 0 {
-				fmt.Printf("PrevV: %s\n    key: %s\n\n", string(v.Prev.Key), string(key))
-				t.Fail()
+			if v.Prev != nil && bytes.Compare(key, v.Prev.Key) < 0 {
+				t.Errorf("PrevV: %s\n    key: %s\n\n", string(v.Prev.Key), string(key))
 			}
 			// v should be bigger or equal to f
 			// If we compare directly, we get an equal key with a difference on the 10th decimal point, which fails.
