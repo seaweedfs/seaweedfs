@@ -230,7 +230,7 @@ func TestFindGreaterOrEqual(t *testing.T) {
 
 	// Test on empty list.
 	if _, _, ok, _ := listPointer.FindGreaterOrEqual(Element(0)); ok {
-		t.Fail()
+		t.Errorf("found element 0 in an empty list")
 	}
 
 	list = New(memStore)
@@ -250,16 +250,14 @@ func TestFindGreaterOrEqual(t *testing.T) {
 			// v should be bigger or equal to f
 			// If we compare directly, we get an equal key with a difference on the 10th decimal point, which fails.
 			if bytes.Compare(v.Key, key) < 0 {
-				fmt.Printf("v: %s\n    key: %s\n\n", string(v.Key), string(key))
-				t.Fail()
+				t.Errorf("v: %s\n    key: %s\n\n", string(v.Key), string(key))
 			}
 		} else {
 			lastNode, _ := list.GetLargestNode()
 			lastV := lastNode.GetValue()
 			// It is OK, to fail, as long as f is bigger than the last element.
 			if bytes.Compare(key, lastV) <= 0 {
-				fmt.Printf("lastV: %s\n    key: %s\n\n", string(lastV), string(key))
-				t.Fail()
+				t.Errorf("lastV: %s\n    key: %s\n\n", string(lastV), string(key))
 			}
 		}
 	}
