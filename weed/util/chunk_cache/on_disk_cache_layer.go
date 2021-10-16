@@ -96,7 +96,7 @@ func (c *OnDiskCacheLayer) getChunkSlice(needleId types.NeedleId, offset, length
 			continue
 		}
 		if err != nil {
-			glog.Errorf("failed to read cache file %s id %d", diskCache.fileName, needleId)
+			glog.Warningf("failed to read cache file %s id %d: %v", diskCache.fileName, needleId, err)
 			continue
 		}
 		if len(data) != 0 {
