@@ -225,6 +225,12 @@ func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunction
 
 	chunks, _, err = ResolveChunkManifest(lookupFileIdFn, chunks, startOffset, stopOffset)
 
+	visibles2 := readResolvedChunks(chunks)
+
+	if true {
+		return visibles2, err
+	}
+
 	sort.Slice(chunks, func(i, j int) bool {
 		if chunks[i].Mtime == chunks[j].Mtime {
 			filer_pb.EnsureFid(chunks[i])
@@ -246,7 +252,24 @@ func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunction
 
 	}
 
+	if len(visibles) != len(visibles2) {
+		fmt.Printf("different visibles size %d : %d\n", len(visibles), len(visibles2))
+	} else {
+		for i := 0; i < len(visibles); i++ {
+			checkDifference(visibles[i], visibles2[i])
+		}
+	}
+
 	return
+}
+
+func checkDifference(x, y VisibleInterval) {
+	if x.start != y.start ||
+		x.stop != y.stop ||
+		x.fileId != y.fileId ||
+		x.modifiedTime != y.modifiedTime {
+		fmt.Printf("different visible %+v : %+v\n", x, y)
+	}
 }
 
 // find non-overlapping visible intervals
