@@ -52,7 +52,7 @@ func TestReadResolvedChunks(t *testing.T) {
 
 func TestRandomizedReadResolvedChunks(t *testing.T) {
 
-	var limit int64 = 1024*1024
+	var limit int64 = 1024 * 1024
 	array := make([]int64, limit)
 	var chunks []*filer_pb.FileChunk
 	for ts := int64(0); ts < 1024; ts++ {
@@ -75,7 +75,7 @@ func TestRandomizedReadResolvedChunks(t *testing.T) {
 	visibles := readResolvedChunks(chunks)
 
 	for _, visible := range visibles {
-		for i := visible.start; i<visible.stop;i++{
+		for i := visible.start; i < visible.stop; i++ {
 			if array[i] != visible.modifiedTime {
 				t.Errorf("position %d expected ts %d actual ts %d", i, array[i], visible.modifiedTime)
 			}
@@ -101,12 +101,12 @@ func randomWrite(array []int64, start int64, size int64, ts int64) *filer_pb.Fil
 
 func TestSequentialReadResolvedChunks(t *testing.T) {
 
-	var chunkSize int64 = 1024*1024*2
+	var chunkSize int64 = 1024 * 1024 * 2
 	var chunks []*filer_pb.FileChunk
 	for ts := int64(0); ts < 13; ts++ {
 		chunks = append(chunks, &filer_pb.FileChunk{
 			FileId: "",
-			Offset: chunkSize*ts,
+			Offset: chunkSize * ts,
 			Size:   uint64(chunkSize),
 			Mtime:  1,
 		})
