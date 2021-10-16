@@ -40,7 +40,7 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk) (visibles []VisibleInterva
 	for _, point := range points {
 		if point.isStart {
 			if len(queue) > 0 {
-				lastIndex := len(queue) - 1
+				lastIndex := len(queue) -1
 				lastPoint := queue[lastIndex]
 				if point.x != prevX && lastPoint.ts < point.ts {
 					visibles = addToVisibles(visibles, prevX, lastPoint, point)
