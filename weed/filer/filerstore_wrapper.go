@@ -253,13 +253,14 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 		limit = math.MaxInt32 - 1
 	}
 	glog.V(4).Infof("ListDirectoryPrefixedEntries %s from %s prefix %s limit %d", dirPath, startFileName, prefix, limit)
-	lastFileName, err = actualStore.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix, eachEntryFunc)
+	adjustedEntryFunc := func(entry *Entry) bool {
+		fsw.maybeReadHardLink(ctx, entry)
+		filer_pb.AfterEntryDeserialization(entry.Chunks)
+		return eachEntryFunc(entry)
+	}
+	lastFileName, err = actualStore.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix, adjustedEntryFunc)
 	if err == ErrUnsupportedListDirectoryPrefixed {
-		lastFileName, err = fsw.prefixFilterEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix, func(entry *Entry) bool {
-			fsw.maybeReadHardLink(ctx, entry)
-			filer_pb.AfterEntryDeserialization(entry.Chunks)
-			return eachEntryFunc(entry)
-		})
+		lastFileName, err = fsw.prefixFilterEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix, adjustedEntryFunc)
 	}
 	return lastFileName, err
 }
