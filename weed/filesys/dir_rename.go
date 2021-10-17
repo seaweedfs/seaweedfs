@@ -131,7 +131,7 @@ func (dir *Dir) moveFolderSubEntries(ctx context.Context, oldParent util.FullPat
 	glog.V(1).Infof("moving folder %s => %s", currentDirPath, newDirPath)
 
 	var moveErr error
-	listErr := dir.wfs.metaCache.ListDirectoryEntries(ctx, currentDirPath, "", false, int64(math.MaxInt32), func(item *filer.Entry) bool {
+	listErr := dir.wfs.metaCache.ListDirectoryEntries(ctx, dir.wfs, currentDirPath, "", false, int64(math.MaxInt32), func(item *filer.Entry) bool {
 		moveErr = dir.moveEntry(ctx, currentDirPath, item, newDirPath, item.Name())
 		if moveErr != nil {
 			return false

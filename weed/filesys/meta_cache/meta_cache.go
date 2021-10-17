@@ -2,10 +2,10 @@ package meta_cache
 
 import (
 	"context"
-	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/filer/leveldb"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/bounded_tree"
 	"os"
@@ -117,12 +117,15 @@ func (mc *MetaCache) DeleteEntry(ctx context.Context, fp util.FullPath) (err err
 	return mc.localStore.DeleteEntry(ctx, fp)
 }
 
-func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) error {
+func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, client filer_pb.FilerClient, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) error {
 	//mc.RLock()
 	//defer mc.RUnlock()
 
 	if !mc.visitedBoundary.HasVisited(dirPath) {
-		return fmt.Errorf("unsynchronized dir: %v", dirPath)
+		glog.V(2).Infof("visit unsynchronized dir: %v", dirPath)
+		// this should not happen often
+		// unless, e.g., moving a deep directory
+		EnsureVisited(mc, client, dirPath)
 	}
 
 	_, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *filer.Entry) bool {
