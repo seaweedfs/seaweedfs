@@ -17,7 +17,7 @@ func FollowMetadata(filerAddress ServerAddress, grpcDialOption grpc.DialOption, 
 	processEventFn ProcessMetadataFunc, fatalOnError bool) error {
 
 	err := WithFilerClient(filerAddress, grpcDialOption, makeFunc(clientName,
-		pathPrefix, additionalPathPrefixes, lastTsNs, selfSignature, processEventFn, fatalOnError))
+		pathPrefix, additionalPathPrefixes, &lastTsNs, selfSignature, processEventFn, fatalOnError))
 	if err != nil {
 		return fmt.Errorf("subscribing filer meta change: %v", err)
 	}
@@ -25,7 +25,7 @@ func FollowMetadata(filerAddress ServerAddress, grpcDialOption grpc.DialOption, 
 }
 
 func WithFilerClientFollowMetadata(filerClient filer_pb.FilerClient,
-	clientName string, pathPrefix string, lastTsNs int64, selfSignature int32,
+	clientName string, pathPrefix string, lastTsNs *int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, fatalOnError bool) error {
 
 	err := filerClient.WithFilerClient(makeFunc(clientName,
@@ -37,7 +37,7 @@ func WithFilerClientFollowMetadata(filerClient filer_pb.FilerClient,
 	return nil
 }
 
-func makeFunc(clientName string, pathPrefix string, additionalPathPrefixes []string, lastTsNs int64, selfSignature int32,
+func makeFunc(clientName string, pathPrefix string, additionalPathPrefixes []string, lastTsNs *int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, fatalOnError bool) func(client filer_pb.SeaweedFilerClient) error {
 	return func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -46,7 +46,7 @@ func makeFunc(clientName string, pathPrefix string, additionalPathPrefixes []str
 			ClientName:   clientName,
 			PathPrefix:   pathPrefix,
 			PathPrefixes: additionalPathPrefixes,
-			SinceNs:      lastTsNs,
+			SinceNs:      *lastTsNs,
 			Signature:    selfSignature,
 		})
 		if err != nil {
@@ -69,7 +69,7 @@ func makeFunc(clientName string, pathPrefix string, additionalPathPrefixes []str
 					glog.Errorf("process %v: %v", resp, err)
 				}
 			}
-			lastTsNs = resp.TsNs
+			*lastTsNs = resp.TsNs
 		}
 	}
 }
