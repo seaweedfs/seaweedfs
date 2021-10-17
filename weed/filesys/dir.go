@@ -352,7 +352,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 		glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 		return nil, fuse.EIO
 	}
-	listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), dir.wfs, dirPath, "", false, int64(math.MaxInt32), func(entry *filer.Entry) bool {
+	listErr := dir.wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, "", false, int64(math.MaxInt32), func(entry *filer.Entry) bool {
 		processEachEntryFn(entry, false)
 		return true
 	})
