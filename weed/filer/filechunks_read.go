@@ -100,7 +100,7 @@ func addToVisibles(visibles []VisibleInterval, prevX int64, startPoint *Point, p
 		visibles = append(visibles, VisibleInterval{
 			start:        prevX,
 			stop:         point.x,
-			fileId:       chunk.FileId,
+			fileId:       chunk.GetFileIdString(),
 			modifiedTime: chunk.Mtime,
 			chunkOffset:  prevX - chunk.Offset,
 			chunkSize:    chunk.Size,
