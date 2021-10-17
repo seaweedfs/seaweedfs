@@ -228,7 +228,7 @@ func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunction
 	visibles2 := readResolvedChunks(chunks)
 
 	if true {
-		// return visibles2, err
+		return visibles2, err
 	}
 
 	sort.Slice(chunks, func(i, j int) bool {
