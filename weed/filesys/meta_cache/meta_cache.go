@@ -2,7 +2,6 @@ package meta_cache
 
 import (
 	"context"
-	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/filer/leveldb"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -122,7 +121,8 @@ func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.Full
 	//defer mc.RUnlock()
 
 	if !mc.visitedBoundary.HasVisited(dirPath) {
-		return fmt.Errorf("unsynchronized dir: %v", dirPath)
+		// if this request comes after renaming, it should be fine
+		glog.Warningf("unsynchronized dir: %v", dirPath)
 	}
 
 	_, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *filer.Entry) bool {
