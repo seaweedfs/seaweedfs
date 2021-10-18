@@ -41,7 +41,7 @@ func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
 	mimeBuffer := make([]byte, 512)
 	size, _ := dataReader.Read(mimeBuffer)
 	if size > 0 {
-		r.Header.Set("Content-Type", http.DetectContentType(mimeBuffer))
+		r.Header.Set("Content-Type", http.DetectContentType(mimeBuffer[:size]))
 		return io.NopCloser(io.MultiReader(bytes.NewReader(mimeBuffer[:size]), dataReader))
 	}
 	return io.NopCloser(dataReader)
