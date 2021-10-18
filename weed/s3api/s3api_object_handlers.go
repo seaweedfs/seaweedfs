@@ -39,9 +39,12 @@ func init() {
 
 func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
 	mimeBuffer := make([]byte, 512)
-	dataReader.Read(mimeBuffer)
-	r.Header.Set("Content-Type", http.DetectContentType(mimeBuffer))
-	return io.NopCloser(io.MultiReader(bytes.NewReader(mimeBuffer), dataReader))
+	size, _ := dataReader.Read(mimeBuffer)
+	if size > 0 {
+		r.Header.Set("Content-Type", http.DetectContentType(mimeBuffer))
+		return io.NopCloser(io.MultiReader(bytes.NewReader(mimeBuffer[:size]), dataReader))
+	}
+	return io.NopCloser(dataReader)
 }
 
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
