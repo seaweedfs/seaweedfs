@@ -32,6 +32,7 @@ func TestXMLUnmarshall(t *testing.T) {
 
 func TestXMLMarshall(t *testing.T) {
 	tags := &Tagging{
+		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
 		TagSet: TagSet{
 			[]Tag{
 				{

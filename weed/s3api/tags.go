@@ -16,6 +16,7 @@ type TagSet struct {
 type Tagging struct {
 	XMLName xml.Name `xml:"Tagging"`
 	TagSet  TagSet   `xml:"TagSet"`
+	Xmlns   string   `xml:"xmlns,attr"`
 }
 
 func (t *Tagging) ToTags() map[string]string {
