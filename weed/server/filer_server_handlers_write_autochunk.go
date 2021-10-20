@@ -327,6 +327,8 @@ func SaveAmzMetaData(r *http.Request, existing map[string][]byte, isReplace bool
 			tag := strings.Split(v, "=")
 			if len(tag) == 2 {
 				metadata[xhttp.AmzObjectTagging+"-"+tag[0]] = []byte(tag[1])
+			} else if len(tag) == 1 {
+				metadata[xhttp.AmzObjectTagging+"-"+tag[0]] = nil
 			}
 		}
 	}
