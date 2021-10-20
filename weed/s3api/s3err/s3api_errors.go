@@ -202,7 +202,7 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidTag: {
-		Code:           "InvalidArgument",
+		Code:           "InvalidTag",
 		Description:    "The Tag value you have provided is invalid",
 		HTTPStatusCode: http.StatusBadRequest,
 	},

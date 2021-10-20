@@ -113,16 +113,14 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Access-Control-Expose-Headers", strings.Join(seaweedHeaders, ","))
 
 	//set tag count
-	if r.Method == "GET" {
-		tagCount := 0
-		for k := range entry.Extended {
-			if strings.HasPrefix(k, xhttp.AmzObjectTagging+"-") {
-				tagCount++
-			}
+	tagCount := 0
+	for k := range entry.Extended {
+		if strings.HasPrefix(k, xhttp.AmzObjectTagging+"-") {
+			tagCount++
 		}
-		if tagCount > 0 {
-			w.Header().Set(xhttp.AmzTagCount, strconv.Itoa(tagCount))
-		}
+	}
+	if tagCount > 0 {
+		w.Header().Set(xhttp.AmzTagCount, strconv.Itoa(tagCount))
 	}
 
 	if inm := r.Header.Get("If-None-Match"); inm == "\""+etag+"\"" {
