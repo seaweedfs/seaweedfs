@@ -28,7 +28,7 @@ func (t *Tagging) ToTags() map[string]string {
 }
 
 func FromTags(tags map[string]string) (t *Tagging) {
-	t = &Tagging{}
+	t = &Tagging{Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/"}
 	for k, v := range tags {
 		t.TagSet.Tag = append(t.TagSet.Tag, Tag{
 			Key:   k,
