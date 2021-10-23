@@ -3,10 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
 	"io"
-	"io/ioutil"
 	"math"
 	"os"
 	"path"
@@ -14,11 +11,13 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -200,12 +199,12 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 	existingShardCount := 0
 
 	for _, location := range vs.store.Locations {
-		fileInfos, err := ioutil.ReadDir(location.Directory)
+		fileInfos, err := os.ReadDir(location.Directory)
 		if err != nil {
 			continue
 		}
 		if location.IdxDirectory != location.Directory {
-			idxFileInfos, err := ioutil.ReadDir(location.IdxDirectory)
+			idxFileInfos, err := os.ReadDir(location.IdxDirectory)
 			if err != nil {
 				continue
 			}

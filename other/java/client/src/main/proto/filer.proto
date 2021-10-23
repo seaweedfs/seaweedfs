@@ -30,6 +30,8 @@ service SeaweedFiler {
 
     rpc AtomicRenameEntry (AtomicRenameEntryRequest) returns (AtomicRenameEntryResponse) {
     }
+    rpc StreamRenameEntry (StreamRenameEntryRequest) returns (stream StreamRenameEntryResponse) {
+    }
 
     rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
     }
@@ -225,6 +227,18 @@ message AtomicRenameEntryRequest {
 message AtomicRenameEntryResponse {
 }
 
+message StreamRenameEntryRequest {
+    string old_directory = 1;
+    string old_name = 2;
+    string new_directory = 3;
+    string new_name = 4;
+    repeated int32 signatures = 5;
+}
+message StreamRenameEntryResponse {
+    string directory = 1;
+    EventNotification event_notification = 2;
+    int64 ts_ns = 3;
+}
 message AssignVolumeRequest {
     int32 count = 1;
     string collection = 2;

@@ -2,16 +2,17 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
-	"io/ioutil"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
 func TestSearchVolumesWithDeletedNeedles(t *testing.T) {
-	dir, err := ioutil.TempDir("", "example")
+	dir, err := os.MkdirTemp("", "example")
 	if err != nil {
 		t.Fatalf("temp dir creation: %v", err)
 	}
@@ -22,9 +23,9 @@ func TestSearchVolumesWithDeletedNeedles(t *testing.T) {
 		t.Fatalf("volume creation: %v", err)
 	}
 
-	count := 10
+	count := 20
 
-	for i:=1;i<count;i++{
+	for i := 1; i < count; i++ {
 		n := newRandomNeedle(uint64(i))
 		_, _, _, err := v.writeNeedle2(n, true, false)
 		if err != nil {
@@ -32,9 +33,9 @@ func TestSearchVolumesWithDeletedNeedles(t *testing.T) {
 		}
 	}
 
-	for i:=1;i<5;i++{
+	for i := 1; i < 15; i++ {
 		n := newEmptyNeedle(uint64(i))
-		_, err := v.doDeleteRequest(n)
+		err := v.nm.Put(n.Id, types.Offset{}, types.TombstoneFileSize)
 		if err != nil {
 			t.Fatalf("delete needle %d: %v", i, err)
 		}
@@ -42,15 +43,12 @@ func TestSearchVolumesWithDeletedNeedles(t *testing.T) {
 
 	ts1 := time.Now().UnixNano()
 
-	var ts2 uint64
-
-	for i:=5;i<count;i++{
+	for i := 15; i < count; i++ {
 		n := newEmptyNeedle(uint64(i))
 		_, err := v.doDeleteRequest(n)
 		if err != nil {
 			t.Fatalf("delete needle %d: %v", i, err)
 		}
-		ts2 = n.AppendAtNs
 	}
 
 	offset, isLast, err := v.BinarySearchByAppendAtNs(uint64(ts1))
@@ -58,12 +56,5 @@ func TestSearchVolumesWithDeletedNeedles(t *testing.T) {
 		t.Fatalf("lookup by ts: %v", err)
 	}
 	fmt.Printf("offset: %v, isLast: %v\n", offset.ToActualOffset(), isLast)
-
-	offset, isLast, err = v.BinarySearchByAppendAtNs(uint64(ts2))
-	if err != nil {
-		t.Fatalf("lookup by ts: %v", err)
-	}
-	fmt.Printf("offset: %v, isLast: %v\n", offset.ToActualOffset(), isLast)
-
 
 }

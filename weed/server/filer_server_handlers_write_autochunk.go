@@ -218,7 +218,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	entry.Extended = SaveAmzMetaData(r, entry.Extended, false)
 
 	for k, v := range r.Header {
-		if len(v) > 0 && (strings.HasPrefix(k, needle.PairNamePrefix) || k == "Cache-Control" || k == "Expires") {
+		if len(v) > 0 && (strings.HasPrefix(k, needle.PairNamePrefix) || k == "Cache-Control" || k == "Expires" || k == "Content-Disposition") {
 			entry.Extended[k] = []byte(v[0])
 		}
 	}
@@ -327,6 +327,8 @@ func SaveAmzMetaData(r *http.Request, existing map[string][]byte, isReplace bool
 			tag := strings.Split(v, "=")
 			if len(tag) == 2 {
 				metadata[xhttp.AmzObjectTagging+"-"+tag[0]] = []byte(tag[1])
+			} else if len(tag) == 1 {
+				metadata[xhttp.AmzObjectTagging+"-"+tag[0]] = nil
 			}
 		}
 	}

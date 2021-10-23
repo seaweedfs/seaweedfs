@@ -3,13 +3,13 @@ package s3api
 import (
 	"encoding/xml"
 	"fmt"
+	"io"
+	"net/http"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"io"
-	"io/ioutil"
-	"net/http"
 )
 
 // GetObjectTaggingHandler - GET object tagging
@@ -49,7 +49,7 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 	dir, name := target.DirAndName()
 
 	tagging := &Tagging{}
-	input, err := ioutil.ReadAll(io.LimitReader(r.Body, r.ContentLength))
+	input, err := io.ReadAll(io.LimitReader(r.Body, r.ContentLength))
 	if err != nil {
 		glog.Errorf("PutObjectTaggingHandler read input %s: %v", r.URL, err)
 		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
@@ -90,7 +90,7 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(http.StatusOK)
 
 }
 

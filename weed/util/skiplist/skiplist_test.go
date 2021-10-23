@@ -2,7 +2,6 @@ package skiplist
 
 import (
 	"bytes"
-	"fmt"
 	"math/rand"
 	"strconv"
 	"testing"
@@ -230,7 +229,7 @@ func TestFindGreaterOrEqual(t *testing.T) {
 
 	// Test on empty list.
 	if _, _, ok, _ := listPointer.FindGreaterOrEqual(Element(0)); ok {
-		t.Fail()
+		t.Errorf("found element 0 in an empty list")
 	}
 
 	list = New(memStore)
@@ -243,23 +242,20 @@ func TestFindGreaterOrEqual(t *testing.T) {
 		key := Element(rand.Intn(maxNumber))
 		if _, v, ok, _ := list.FindGreaterOrEqual(key); ok {
 			// if f is v should be bigger than the element before
-			if v.Prev != nil && bytes.Compare(v.Prev.Key, key) >= 0 {
-				fmt.Printf("PrevV: %s\n    key: %s\n\n", string(v.Prev.Key), string(key))
-				t.Fail()
+			if v.Prev != nil && bytes.Compare(key, v.Prev.Key) < 0 {
+				t.Errorf("PrevV: %s\n    key: %s\n\n", string(v.Prev.Key), string(key))
 			}
 			// v should be bigger or equal to f
 			// If we compare directly, we get an equal key with a difference on the 10th decimal point, which fails.
 			if bytes.Compare(v.Key, key) < 0 {
-				fmt.Printf("v: %s\n    key: %s\n\n", string(v.Key), string(key))
-				t.Fail()
+				t.Errorf("v: %s\n    key: %s\n\n", string(v.Key), string(key))
 			}
 		} else {
 			lastNode, _ := list.GetLargestNode()
 			lastV := lastNode.GetValue()
 			// It is OK, to fail, as long as f is bigger than the last element.
 			if bytes.Compare(key, lastV) <= 0 {
-				fmt.Printf("lastV: %s\n    key: %s\n\n", string(lastV), string(key))
-				t.Fail()
+				t.Errorf("lastV: %s\n    key: %s\n\n", string(lastV), string(key))
 			}
 		}
 	}

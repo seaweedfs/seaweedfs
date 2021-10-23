@@ -115,14 +115,30 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.ListObjectsV2Handler, ACTION_LIST), "LIST")).Queries("list-type", "2")
 		// GetObject, but directory listing is not supported
 		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.GetObjectHandler, ACTION_READ), "GET"))
-		// ListObjectsV1 (Legacy)
-		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.ListObjectsV1Handler, ACTION_LIST), "LIST"))
 
 		// PostPolicy
 		bucket.Methods("POST").HeadersRegexp("Content-Type", "multipart/form-data*").HandlerFunc(track(s3a.iam.Auth(s3a.PostPolicyBucketHandler, ACTION_WRITE), "POST"))
 
 		// DeleteMultipleObjects
 		bucket.Methods("POST").HandlerFunc(track(s3a.iam.Auth(s3a.DeleteMultipleObjectsHandler, ACTION_WRITE), "DELETE")).Queries("delete", "")
+
+		// GetBucketACL
+		bucket.Methods("GET").HandlerFunc(s3a.iam.Auth(s3a.GetBucketAclHandler, ACTION_READ)).Queries("acl", "")
+
+		// GetObjectACL
+		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(s3a.iam.Auth(s3a.GetObjectAclHandler, ACTION_READ)).Queries("acl", "")
+
+		// GetBucketLifecycleConfiguration
+		bucket.Methods("GET").HandlerFunc(s3a.iam.Auth(s3a.GetBucketLifecycleConfigurationHandler, ACTION_READ)).Queries("lifecycle", "")
+
+		// PutBucketLifecycleConfiguration
+		bucket.Methods("PUT").HandlerFunc(s3a.iam.Auth(s3a.PutBucketLifecycleConfigurationHandler, ACTION_WRITE)).Queries("lifecycle", "")
+
+		// DeleteBucketLifecycleConfiguration
+		bucket.Methods("DELETE").HandlerFunc(s3a.iam.Auth(s3a.DeleteBucketLifecycleHandler, ACTION_WRITE)).Queries("lifecycle", "")
+
+		// ListObjectsV1 (Legacy)
+		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.ListObjectsV1Handler, ACTION_LIST), "LIST"))
 		/*
 
 			// not implemented
@@ -132,8 +148,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 			bucket.Methods("GET").HandlerFunc(s3a.GetBucketPolicyHandler).Queries("policy", "")
 			// GetObjectACL
 			bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(s3a.GetObjectACLHandler).Queries("acl", "")
-			// GetBucketACL
-			bucket.Methods("GET").HandlerFunc(s3a.GetBucketACLHandler).Queries("acl", "")
 			// PutBucketPolicy
 			bucket.Methods("PUT").HandlerFunc(s3a.PutBucketPolicyHandler).Queries("policy", "")
 			// DeleteBucketPolicy

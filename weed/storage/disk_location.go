@@ -2,8 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -85,9 +84,9 @@ func getValidVolumeName(basename string) string {
 	return ""
 }
 
-func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind NeedleMapKind) bool {
-	basename := fileInfo.Name()
-	if fileInfo.IsDir() {
+func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind NeedleMapKind) bool {
+	basename := dirEntry.Name()
+	if dirEntry.IsDir() {
 		return false
 	}
 	volumeName := getValidVolumeName(basename)
@@ -103,7 +102,7 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 	// check for incomplete volume
 	noteFile := l.Directory + "/" + volumeName + ".note"
 	if util.FileExists(noteFile) {
-		note, _ := ioutil.ReadFile(noteFile)
+		note, _ := os.ReadFile(noteFile)
 		glog.Warningf("volume %s was not completed: %s", volumeName, string(note))
 		removeVolumeFiles(l.Directory + "/" + volumeName)
 		removeVolumeFiles(l.IdxDirectory + "/" + volumeName)
@@ -143,18 +142,18 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 
 func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, concurrency int) {
 
-	task_queue := make(chan os.FileInfo, 10*concurrency)
+	task_queue := make(chan os.DirEntry, 10*concurrency)
 	go func() {
 		foundVolumeNames := make(map[string]bool)
-		if fileInfos, err := ioutil.ReadDir(l.Directory); err == nil {
-			for _, fi := range fileInfos {
-				volumeName := getValidVolumeName(fi.Name())
+		if dirEntries, err := os.ReadDir(l.Directory); err == nil {
+			for _, entry := range dirEntries {
+				volumeName := getValidVolumeName(entry.Name())
 				if volumeName == "" {
 					continue
 				}
 				if _, found := foundVolumeNames[volumeName]; !found {
 					foundVolumeNames[volumeName] = true
-					task_queue <- fi
+					task_queue <- entry
 				}
 			}
 		}
@@ -332,12 +331,12 @@ func (l *DiskLocation) Close() {
 	return
 }
 
-func (l *DiskLocation) LocateVolume(vid needle.VolumeId) (os.FileInfo, bool) {
-	if fileInfos, err := ioutil.ReadDir(l.Directory); err == nil {
-		for _, fileInfo := range fileInfos {
-			volId, _, err := volumeIdFromFileName(fileInfo.Name())
+func (l *DiskLocation) LocateVolume(vid needle.VolumeId) (os.DirEntry, bool) {
+	if dirEntries, err := os.ReadDir(l.Directory); err == nil {
+		for _, entry := range dirEntries {
+			volId, _, err := volumeIdFromFileName(entry.Name())
 			if vid == volId && err == nil {
-				return fileInfo, true
+				return entry, true
 			}
 		}
 	}

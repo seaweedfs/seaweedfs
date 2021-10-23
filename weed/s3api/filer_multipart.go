@@ -38,6 +38,9 @@ func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInp
 		for k, v := range input.Metadata {
 			entry.Extended[k] = []byte(*v)
 		}
+		if input.ContentType != nil {
+			entry.Attributes.Mime = *input.ContentType
+		}
 	}); err != nil {
 		glog.Errorf("NewMultipartUpload error: %v", err)
 		return nil, s3err.ErrInternalError
@@ -65,7 +68,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
 
-	entries, _, err := s3a.list(uploadDirectory, "", "", false, 0)
+	entries, _, err := s3a.list(uploadDirectory, "", "", false, maxPartsList)
 	if err != nil || len(entries) == 0 {
 		glog.Errorf("completeMultipartUpload %s %s error: %v, entries:%d", *input.Bucket, *input.UploadId, err, len(entries))
 		return nil, s3err.ErrNoSuchUpload
@@ -79,9 +82,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 
 	var finalParts []*filer_pb.FileChunk
 	var offset int64
+	var mime string
 
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name, ".part") && !entry.IsDirectory {
+			if entry.Name == "0001.part" && entry.Attributes.Mime != "" {
+				mime = entry.Attributes.Mime
+			}
 			for _, chunk := range entry.Chunks {
 				p := &filer_pb.FileChunk{
 					FileId:    chunk.GetFileIdString(),
@@ -120,6 +127,11 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			if k != "key" {
 				entry.Extended[k] = v
 			}
+		}
+		if pentry.Attributes.Mime != "" {
+			entry.Attributes.Mime = pentry.Attributes.Mime
+		} else if mime != "" {
+			entry.Attributes.Mime = mime
 		}
 	})
 

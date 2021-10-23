@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -250,7 +251,16 @@ func handleStaticResources2(r *mux.Router) {
 }
 
 func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, filename string) {
+	responseContentDisposition := r.FormValue("response-content-disposition")
+	if responseContentDisposition != "" {
+		w.Header().Set("Content-Disposition", responseContentDisposition)
+		return
+	}
+	if w.Header().Get("Content-Disposition") != "" {
+		return
+	}
 	if filename != "" {
+		filename = url.QueryEscape(filename)
 		contentDisposition := "inline"
 		if r.FormValue("dl") != "" {
 			if dl, _ := strconv.ParseBool(r.FormValue("dl")); dl {

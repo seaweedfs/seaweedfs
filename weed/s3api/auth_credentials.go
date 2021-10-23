@@ -2,6 +2,10 @@ package s3api
 
 import (
 	"fmt"
+	"net/http"
+	"os"
+	"strings"
+
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -10,9 +14,6 @@ import (
 	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
-	"io/ioutil"
-	"net/http"
-	"strings"
 )
 
 type Action string
@@ -35,6 +36,31 @@ type Identity struct {
 type Credential struct {
 	AccessKey string
 	SecretKey string
+}
+
+func (action Action) isAdmin() bool {
+	return strings.HasPrefix(string(action), s3_constants.ACTION_ADMIN)
+}
+
+func (action Action) isOwner(bucket string) bool {
+	return string(action) == s3_constants.ACTION_ADMIN+":"+bucket
+}
+
+func (action Action) overBucket(bucket string) bool {
+	return strings.HasSuffix(string(action), ":"+bucket) || strings.HasSuffix(string(action), ":*")
+}
+
+func (action Action) getPermission() Permission {
+	switch act := strings.Split(string(action), ":")[0]; act {
+	case s3_constants.ACTION_ADMIN:
+		return Permission("FULL_CONTROL")
+	case s3_constants.ACTION_WRITE:
+		return Permission("WRITE")
+	case s3_constants.ACTION_READ:
+		return Permission("READ")
+	default:
+		return Permission("")
+	}
 }
 
 func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManagement {
@@ -66,7 +92,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3A
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName string) error {
-	content, readErr := ioutil.ReadFile(fileName)
+	content, readErr := os.ReadFile(fileName)
 	if readErr != nil {
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)

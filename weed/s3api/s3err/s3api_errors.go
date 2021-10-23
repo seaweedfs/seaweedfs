@@ -51,6 +51,7 @@ const (
 	ErrBucketAlreadyExists
 	ErrBucketAlreadyOwnedByYou
 	ErrNoSuchBucket
+	ErrNoSuchLifecycleConfiguration
 	ErrNoSuchKey
 	ErrNoSuchUpload
 	ErrInvalidBucketName
@@ -163,6 +164,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "The specified bucket does not exist",
 		HTTPStatusCode: http.StatusNotFound,
 	},
+	ErrNoSuchLifecycleConfiguration: {
+		Code:           "NoSuchLifecycleConfiguration",
+		Description:    "The lifecycle configuration does not exist",
+		HTTPStatusCode: http.StatusNotFound,
+	},
 	ErrNoSuchKey: {
 		Code:           "NoSuchKey",
 		Description:    "The specified key does not exist.",
@@ -196,7 +202,7 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidTag: {
-		Code:           "InvalidArgument",
+		Code:           "InvalidTag",
 		Description:    "The Tag value you have provided is invalid",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
