@@ -47,7 +47,7 @@ service VolumeServer {
     }
 
     // copy the .idx .dat files, and mount this volume
-    rpc VolumeCopy (VolumeCopyRequest) returns (VolumeCopyResponse) {
+    rpc VolumeCopy (VolumeCopyRequest) returns (stream VolumeCopyResponse) {
     }
     rpc ReadVolumeFileStatus (ReadVolumeFileStatusRequest) returns (ReadVolumeFileStatusResponse) {
     }
@@ -252,6 +252,7 @@ message VolumeCopyRequest {
 }
 message VolumeCopyResponse {
     uint64 last_append_at_ns = 1;
+    int64 processed_bytes = 2;
 }
 
 message CopyFileRequest {

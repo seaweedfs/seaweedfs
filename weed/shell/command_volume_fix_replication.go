@@ -255,13 +255,27 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 			}
 
 			err := operation.WithVolumeServerClient(pb.NewServerAddressFromDataNode(dst.dataNode), commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-				_, replicateErr := volumeServerClient.VolumeCopy(context.Background(), &volume_server_pb.VolumeCopyRequest{
+				stream, replicateErr := volumeServerClient.VolumeCopy(context.Background(), &volume_server_pb.VolumeCopyRequest{
 					VolumeId:       replica.info.Id,
 					SourceDataNode: string(pb.NewServerAddressFromDataNode(replica.location.dataNode)),
 				})
 				if replicateErr != nil {
 					return fmt.Errorf("copying from %s => %s : %v", replica.location.dataNode.Id, dst.dataNode.Id, replicateErr)
 				}
+				for {
+					resp, recvErr := stream.Recv()
+					if recvErr != nil {
+						if recvErr == io.EOF {
+							break
+						} else {
+							return recvErr
+						}
+					}
+					if resp.ProcessedBytes > 0 {
+						fmt.Fprintf(writer, "volume %d processed %d bytes\n", replica.info.Id, resp.ProcessedBytes)
+					}
+				}
+
 				return nil
 			})
 
