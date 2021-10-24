@@ -14,7 +14,7 @@ service VolumeServer {
 
     rpc VacuumVolumeCheck (VacuumVolumeCheckRequest) returns (VacuumVolumeCheckResponse) {
     }
-    rpc VacuumVolumeCompact (VacuumVolumeCompactRequest) returns (VacuumVolumeCompactResponse) {
+    rpc VacuumVolumeCompact (VacuumVolumeCompactRequest) returns (stream VacuumVolumeCompactResponse) {
     }
     rpc VacuumVolumeCommit (VacuumVolumeCommitRequest) returns (VacuumVolumeCommitResponse) {
     }
@@ -142,6 +142,7 @@ message VacuumVolumeCompactRequest {
     int64 preallocate = 2;
 }
 message VacuumVolumeCompactResponse {
+    int64 processed_bytes = 1;
 }
 
 message VacuumVolumeCommitRequest {
