@@ -112,9 +112,9 @@ require (
 	github.com/stretchr/testify v1.7.0
 	github.com/stvp/tempredis v0.0.0-20181119212430-b82af8480203
 	github.com/syndtr/goleveldb v1.0.1-0.20190318030020-c3a204f8e965
-	github.com/tidwall/gjson v1.8.1
-	github.com/tidwall/match v1.0.3
-	github.com/tidwall/pretty v1.1.0 // indirect
+	github.com/tidwall/gjson v1.10.2
+	github.com/tidwall/match v1.1.1
+	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/tsuna/gohbase v0.0.0-20201125011725-348991136365
 	github.com/tylertreat/BoomFilters v0.0.0-20210315201527-1a82519a3e43
 	github.com/valyala/bytebufferpool v1.0.0
