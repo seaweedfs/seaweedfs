@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io"
@@ -40,6 +41,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	encodeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := encodeCommand.Int("volumeId", 0, "the volume id")
 	collection := encodeCommand.String("collection", "", "the collection name")
+	applyChanges := fixCommand.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes")
 	if err = encodeCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -54,6 +56,17 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	topologyInfo, _, err := collectTopologyInfo(commandEnv)
 	if err != nil {
 		return err
+	}
+
+	if !applyChanges {
+		var nodeCount int
+		eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
+			nodeCount++
+		})
+		if nodeCount < erasure_coding.ParityShardsCount {
+			glog.V(0).Infof("skip erasure coding with %d nodes, less than recommended %d nodes", nodeCount, erasure_coding.ParityShardsCount)
+			return nil
+		}
 	}
 
 	// volumeId is provided
