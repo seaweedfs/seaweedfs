@@ -2,7 +2,8 @@ name: "docker: build latest container"
 
 on:
   push:
-    branches: [ master ]
+    tags:
+      - '*'
   workflow_dispatch: []
 
 jobs:
@@ -23,7 +24,7 @@ jobs:
             chrislusf/seaweedfs
             ghcr.io/chrislusf/seaweedfs
           tags: |
-            type=raw,value=dev
+            type=raw,value=latest
           labels: |
             org.opencontainers.image.title=seaweedfs
             org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
