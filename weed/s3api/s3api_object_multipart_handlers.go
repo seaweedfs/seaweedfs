@@ -128,7 +128,7 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 		UploadIdMarker: aws.String(uploadIDMarker),
 	})
 
-	glog.V(2).Info("ListMultipartUploadsHandler", string(s3err.EncodeXMLResponse(response)), errCode)
+	glog.V(2).Infof("ListMultipartUploadsHandler %s errCode=%d", string(s3err.EncodeXMLResponse(response)), errCode)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, errCode, r)
@@ -162,7 +162,7 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 		UploadId:         aws.String(uploadID),
 	})
 
-	glog.V(2).Info("ListObjectPartsHandler", string(s3err.EncodeXMLResponse(response)), errCode)
+	glog.V(2).Infof("ListObjectPartsHandler %s count=%d", string(s3err.EncodeXMLResponse(response)), len(response.Part))
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, errCode, r)
@@ -213,6 +213,8 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	defer dataReader.Close()
+
+	glog.V(2).Infof("PutObjectPartHandler %s %s %04d", bucket, uploadID, partID)
 
 	uploadUrl := fmt.Sprintf("http://%s%s/%s/%04d.part?collection=%s",
 		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(bucket), uploadID, partID, bucket)
