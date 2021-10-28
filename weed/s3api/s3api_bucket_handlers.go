@@ -268,6 +268,7 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 	ttls := fc.GetCollectionTtls(bucket)
 	if len(ttls) == 0 {
 		s3err.WriteErrorResponse(w, s3err.ErrNoSuchLifecycleConfiguration, r)
+		return
 	}
 	response := Lifecycle{}
 	for prefix, internalTtl := range ttls {
@@ -299,6 +300,6 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketLifecycle.html
 func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *http.Request) {
 
-	s3err.WriteErrorResponse(w, s3err.ErrNotImplemented, r)
+	s3err.WriteEmptyResponse(w, http.StatusNoContent)
 
 }
