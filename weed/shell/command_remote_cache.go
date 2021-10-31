@@ -163,10 +163,10 @@ func (c *commandRemoteCache) cacheContentData(commandEnv *CommandEnv, writer io.
 
 			remoteLocation := filer.MapFullPathToRemoteStorageLocation(localMountedDir, remoteMountedLocation, dir.Child(entry.Name))
 
-			if err := filer.DownloadToLocal(commandEnv, remoteConf, remoteLocation, dir, entry); err != nil {
-				fmt.Fprintf(writer, "DownloadToLocal %+v: %v\n", remoteLocation, err)
+			if err := filer.CacheRemoteObjectToLocalCluster(commandEnv, remoteConf, remoteLocation, dir, entry); err != nil {
+				fmt.Fprintf(writer, "CacheRemoteObjectToLocalCluster %+v: %v\n", remoteLocation, err)
 				if executionErr == nil {
-					executionErr = fmt.Errorf("DownloadToLocal %+v: %v\n", remoteLocation, err)
+					executionErr = fmt.Errorf("CacheRemoteObjectToLocalCluster %+v: %v\n", remoteLocation, err)
 				}
 				return
 			}

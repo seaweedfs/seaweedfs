@@ -364,15 +364,15 @@ func (file *File) getEntry() *filer_pb.Entry {
 func (file *File) downloadRemoteEntry(entry *filer_pb.Entry) (*filer_pb.Entry, error) {
 	err := file.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer_pb.DownloadToLocalRequest{
+		request := &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 			Directory: file.dir.FullPath(),
 			Name:      entry.Name,
 		}
 
 		glog.V(4).Infof("download entry: %v", request)
-		resp, err := client.DownloadToLocal(context.Background(), request)
+		resp, err := client.CacheRemoteObjectToLocalCluster(context.Background(), request)
 		if err != nil {
-			glog.Errorf("DownloadToLocal file %s/%s: %v", file.dir.FullPath(), file.Name, err)
+			glog.Errorf("CacheRemoteObjectToLocalCluster file %s/%s: %v", file.dir.FullPath(), file.Name, err)
 			return fuse.EIO
 		}
 

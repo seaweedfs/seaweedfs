@@ -69,7 +69,7 @@ service SeaweedFiler {
     rpc KvPut (KvPutRequest) returns (KvPutResponse) {
     }
 
-    rpc DownloadToLocal (DownloadToLocalRequest) returns (DownloadToLocalResponse) {
+    rpc CacheRemoteObjectToLocalCluster (CacheRemoteObjectToLocalClusterRequest) returns (CacheRemoteObjectToLocalClusterResponse) {
     }
 }
 
@@ -403,10 +403,10 @@ message FilerConf {
 /////////////////////////
 // Remote Storage related
 /////////////////////////
-message DownloadToLocalRequest {
+message CacheRemoteObjectToLocalClusterRequest {
     string directory = 1;
     string name = 2;
 }
-message DownloadToLocalResponse {
+message CacheRemoteObjectToLocalClusterResponse {
     Entry entry = 1;
 }

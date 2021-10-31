@@ -3334,7 +3334,7 @@ func (x *FilerConf) GetLocations() []*FilerConf_PathConf {
 /////////////////////////
 // Remote Storage related
 /////////////////////////
-type DownloadToLocalRequest struct {
+type CacheRemoteObjectToLocalClusterRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
@@ -3343,8 +3343,8 @@ type DownloadToLocalRequest struct {
 	Name      string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 }
 
-func (x *DownloadToLocalRequest) Reset() {
-	*x = DownloadToLocalRequest{}
+func (x *CacheRemoteObjectToLocalClusterRequest) Reset() {
+	*x = CacheRemoteObjectToLocalClusterRequest{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_filer_proto_msgTypes[51]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3352,13 +3352,13 @@ func (x *DownloadToLocalRequest) Reset() {
 	}
 }
 
-func (x *DownloadToLocalRequest) String() string {
+func (x *CacheRemoteObjectToLocalClusterRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*DownloadToLocalRequest) ProtoMessage() {}
+func (*CacheRemoteObjectToLocalClusterRequest) ProtoMessage() {}
 
-func (x *DownloadToLocalRequest) ProtoReflect() protoreflect.Message {
+func (x *CacheRemoteObjectToLocalClusterRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_filer_proto_msgTypes[51]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3370,26 +3370,26 @@ func (x *DownloadToLocalRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use DownloadToLocalRequest.ProtoReflect.Descriptor instead.
-func (*DownloadToLocalRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use CacheRemoteObjectToLocalClusterRequest.ProtoReflect.Descriptor instead.
+func (*CacheRemoteObjectToLocalClusterRequest) Descriptor() ([]byte, []int) {
 	return file_filer_proto_rawDescGZIP(), []int{51}
 }
 
-func (x *DownloadToLocalRequest) GetDirectory() string {
+func (x *CacheRemoteObjectToLocalClusterRequest) GetDirectory() string {
 	if x != nil {
 		return x.Directory
 	}
 	return ""
 }
 
-func (x *DownloadToLocalRequest) GetName() string {
+func (x *CacheRemoteObjectToLocalClusterRequest) GetName() string {
 	if x != nil {
 		return x.Name
 	}
 	return ""
 }
 
-type DownloadToLocalResponse struct {
+type CacheRemoteObjectToLocalClusterResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
@@ -3397,8 +3397,8 @@ type DownloadToLocalResponse struct {
 	Entry *Entry `protobuf:"bytes,1,opt,name=entry,proto3" json:"entry,omitempty"`
 }
 
-func (x *DownloadToLocalResponse) Reset() {
-	*x = DownloadToLocalResponse{}
+func (x *CacheRemoteObjectToLocalClusterResponse) Reset() {
+	*x = CacheRemoteObjectToLocalClusterResponse{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_filer_proto_msgTypes[52]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3406,13 +3406,13 @@ func (x *DownloadToLocalResponse) Reset() {
 	}
 }
 
-func (x *DownloadToLocalResponse) String() string {
+func (x *CacheRemoteObjectToLocalClusterResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*DownloadToLocalResponse) ProtoMessage() {}
+func (*CacheRemoteObjectToLocalClusterResponse) ProtoMessage() {}
 
-func (x *DownloadToLocalResponse) ProtoReflect() protoreflect.Message {
+func (x *CacheRemoteObjectToLocalClusterResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_filer_proto_msgTypes[52]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3424,12 +3424,12 @@ func (x *DownloadToLocalResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use DownloadToLocalResponse.ProtoReflect.Descriptor instead.
-func (*DownloadToLocalResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use CacheRemoteObjectToLocalClusterResponse.ProtoReflect.Descriptor instead.
+func (*CacheRemoteObjectToLocalClusterResponse) Descriptor() ([]byte, []int) {
 	return file_filer_proto_rawDescGZIP(), []int{52}
 }
 
-func (x *DownloadToLocalResponse) GetEntry() *Entry {
+func (x *CacheRemoteObjectToLocalClusterResponse) GetEntry() *Entry {
 	if x != nil {
 		return x.Entry
 	}
@@ -4042,16 +4042,18 @@ var file_filer_proto_rawDesc = []byte{
 	0x68, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x07, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x11, 0x76,
 	0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x47, 0x72, 0x6f, 0x77, 0x74, 0x68, 0x43, 0x6f, 0x75, 0x6e, 0x74,
 	0x12, 0x1b, 0x0a, 0x09, 0x72, 0x65, 0x61, 0x64, 0x5f, 0x6f, 0x6e, 0x6c, 0x79, 0x18, 0x08, 0x20,
-	0x01, 0x28, 0x08, 0x52, 0x08, 0x72, 0x65, 0x61, 0x64, 0x4f, 0x6e, 0x6c, 0x79, 0x22, 0x4a, 0x0a,
-	0x16, 0x44, 0x6f, 0x77, 0x6e, 0x6c, 0x6f, 0x61, 0x64, 0x54, 0x6f, 0x4c, 0x6f, 0x63, 0x61, 0x6c,
+	0x01, 0x28, 0x08, 0x52, 0x08, 0x72, 0x65, 0x61, 0x64, 0x4f, 0x6e, 0x6c, 0x79, 0x22, 0x5a, 0x0a,
+	0x26, 0x43, 0x61, 0x63, 0x68, 0x65, 0x52, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x4f, 0x62, 0x6a, 0x65,
+	0x63, 0x74, 0x54, 0x6f, 0x4c, 0x6f, 0x63, 0x61, 0x6c, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72,
 	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x1c, 0x0a, 0x09, 0x64, 0x69, 0x72, 0x65, 0x63,
 	0x74, 0x6f, 0x72, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x64, 0x69, 0x72, 0x65,
 	0x63, 0x74, 0x6f, 0x72, 0x79, 0x12, 0x12, 0x0a, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x02, 0x20,
-	0x01, 0x28, 0x09, 0x52, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x22, 0x40, 0x0a, 0x17, 0x44, 0x6f, 0x77,
-	0x6e, 0x6c, 0x6f, 0x61, 0x64, 0x54, 0x6f, 0x4c, 0x6f, 0x63, 0x61, 0x6c, 0x52, 0x65, 0x73, 0x70,
+	0x01, 0x28, 0x09, 0x52, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x22, 0x50, 0x0a, 0x27, 0x43, 0x61, 0x63,
+	0x68, 0x65, 0x52, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x4f, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x54, 0x6f,
+	0x4c, 0x6f, 0x63, 0x61, 0x6c, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x52, 0x65, 0x73, 0x70,
 	0x6f, 0x6e, 0x73, 0x65, 0x12, 0x25, 0x0a, 0x05, 0x65, 0x6e, 0x74, 0x72, 0x79, 0x18, 0x01, 0x20,
 	0x01, 0x28, 0x0b, 0x32, 0x0f, 0x2e, 0x66, 0x69, 0x6c, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x45,
-	0x6e, 0x74, 0x72, 0x79, 0x52, 0x05, 0x65, 0x6e, 0x74, 0x72, 0x79, 0x32, 0x98, 0x0e, 0x0a, 0x0c,
+	0x6e, 0x74, 0x72, 0x79, 0x52, 0x05, 0x65, 0x6e, 0x74, 0x72, 0x79, 0x32, 0xc9, 0x0e, 0x0a, 0x0c,
 	0x53, 0x65, 0x61, 0x77, 0x65, 0x65, 0x64, 0x46, 0x69, 0x6c, 0x65, 0x72, 0x12, 0x67, 0x0a, 0x14,
 	0x4c, 0x6f, 0x6f, 0x6b, 0x75, 0x70, 0x44, 0x69, 0x72, 0x65, 0x63, 0x74, 0x6f, 0x72, 0x79, 0x45,
 	0x6e, 0x74, 0x72, 0x79, 0x12, 0x25, 0x2e, 0x66, 0x69, 0x6c, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e,
@@ -4159,18 +4161,21 @@ var file_filer_proto_rawDesc = []byte{
 	0x12, 0x3a, 0x0a, 0x05, 0x4b, 0x76, 0x50, 0x75, 0x74, 0x12, 0x16, 0x2e, 0x66, 0x69, 0x6c, 0x65,
 	0x72, 0x5f, 0x70, 0x62, 0x2e, 0x4b, 0x76, 0x50, 0x75, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
 	0x74, 0x1a, 0x17, 0x2e, 0x66, 0x69, 0x6c, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x4b, 0x76, 0x50,
-	0x75, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x58, 0x0a, 0x0f,
-	0x44, 0x6f, 0x77, 0x6e, 0x6c, 0x6f, 0x61, 0x64, 0x54, 0x6f, 0x4c, 0x6f, 0x63, 0x61, 0x6c, 0x12,
-	0x20, 0x2e, 0x66, 0x69, 0x6c, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x44, 0x6f, 0x77, 0x6e, 0x6c,
-	0x6f, 0x61, 0x64, 0x54, 0x6f, 0x4c, 0x6f, 0x63, 0x61, 0x6c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x1a, 0x21, 0x2e, 0x66, 0x69, 0x6c, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x44, 0x6f, 0x77,
-	0x6e, 0x6c, 0x6f, 0x61, 0x64, 0x54, 0x6f, 0x4c, 0x6f, 0x63, 0x61, 0x6c, 0x52, 0x65, 0x73, 0x70,
-	0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x42, 0x4f, 0x0a, 0x10, 0x73, 0x65, 0x61, 0x77, 0x65, 0x65,
-	0x64, 0x66, 0x73, 0x2e, 0x63, 0x6c, 0x69, 0x65, 0x6e, 0x74, 0x42, 0x0a, 0x46, 0x69, 0x6c, 0x65,
-	0x72, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x5a, 0x2f, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63,
-	0x6f, 0x6d, 0x2f, 0x63, 0x68, 0x72, 0x69, 0x73, 0x6c, 0x75, 0x73, 0x66, 0x2f, 0x73, 0x65, 0x61,
-	0x77, 0x65, 0x65, 0x64, 0x66, 0x73, 0x2f, 0x77, 0x65, 0x65, 0x64, 0x2f, 0x70, 0x62, 0x2f, 0x66,
-	0x69, 0x6c, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x75, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x88, 0x01, 0x0a,
+	0x1f, 0x43, 0x61, 0x63, 0x68, 0x65, 0x52, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x4f, 0x62, 0x6a, 0x65,
+	0x63, 0x74, 0x54, 0x6f, 0x4c, 0x6f, 0x63, 0x61, 0x6c, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72,
+	0x12, 0x30, 0x2e, 0x66, 0x69, 0x6c, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x43, 0x61, 0x63, 0x68,
+	0x65, 0x52, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x4f, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x54, 0x6f, 0x4c,
+	0x6f, 0x63, 0x61, 0x6c, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x52, 0x65, 0x71, 0x75, 0x65,
+	0x73, 0x74, 0x1a, 0x31, 0x2e, 0x66, 0x69, 0x6c, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x43, 0x61,
+	0x63, 0x68, 0x65, 0x52, 0x65, 0x6d, 0x6f, 0x74, 0x65, 0x4f, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x54,
+	0x6f, 0x4c, 0x6f, 0x63, 0x61, 0x6c, 0x43, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x52, 0x65, 0x73,
+	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x42, 0x4f, 0x0a, 0x10, 0x73, 0x65, 0x61, 0x77, 0x65,
+	0x65, 0x64, 0x66, 0x73, 0x2e, 0x63, 0x6c, 0x69, 0x65, 0x6e, 0x74, 0x42, 0x0a, 0x46, 0x69, 0x6c,
+	0x65, 0x72, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x5a, 0x2f, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e,
+	0x63, 0x6f, 0x6d, 0x2f, 0x63, 0x68, 0x72, 0x69, 0x73, 0x6c, 0x75, 0x73, 0x66, 0x2f, 0x73, 0x65,
+	0x61, 0x77, 0x65, 0x65, 0x64, 0x66, 0x73, 0x2f, 0x77, 0x65, 0x65, 0x64, 0x2f, 0x70, 0x62, 0x2f,
+	0x66, 0x69, 0x6c, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -4187,59 +4192,59 @@ func file_filer_proto_rawDescGZIP() []byte {
 
 var file_filer_proto_msgTypes = make([]protoimpl.MessageInfo, 57)
 var file_filer_proto_goTypes = []interface{}{
-	(*LookupDirectoryEntryRequest)(nil),   // 0: filer_pb.LookupDirectoryEntryRequest
-	(*LookupDirectoryEntryResponse)(nil),  // 1: filer_pb.LookupDirectoryEntryResponse
-	(*ListEntriesRequest)(nil),            // 2: filer_pb.ListEntriesRequest
-	(*ListEntriesResponse)(nil),           // 3: filer_pb.ListEntriesResponse
-	(*RemoteEntry)(nil),                   // 4: filer_pb.RemoteEntry
-	(*Entry)(nil),                         // 5: filer_pb.Entry
-	(*FullEntry)(nil),                     // 6: filer_pb.FullEntry
-	(*EventNotification)(nil),             // 7: filer_pb.EventNotification
-	(*FileChunk)(nil),                     // 8: filer_pb.FileChunk
-	(*FileChunkManifest)(nil),             // 9: filer_pb.FileChunkManifest
-	(*FileId)(nil),                        // 10: filer_pb.FileId
-	(*FuseAttributes)(nil),                // 11: filer_pb.FuseAttributes
-	(*CreateEntryRequest)(nil),            // 12: filer_pb.CreateEntryRequest
-	(*CreateEntryResponse)(nil),           // 13: filer_pb.CreateEntryResponse
-	(*UpdateEntryRequest)(nil),            // 14: filer_pb.UpdateEntryRequest
-	(*UpdateEntryResponse)(nil),           // 15: filer_pb.UpdateEntryResponse
-	(*AppendToEntryRequest)(nil),          // 16: filer_pb.AppendToEntryRequest
-	(*AppendToEntryResponse)(nil),         // 17: filer_pb.AppendToEntryResponse
-	(*DeleteEntryRequest)(nil),            // 18: filer_pb.DeleteEntryRequest
-	(*DeleteEntryResponse)(nil),           // 19: filer_pb.DeleteEntryResponse
-	(*AtomicRenameEntryRequest)(nil),      // 20: filer_pb.AtomicRenameEntryRequest
-	(*AtomicRenameEntryResponse)(nil),     // 21: filer_pb.AtomicRenameEntryResponse
-	(*StreamRenameEntryRequest)(nil),      // 22: filer_pb.StreamRenameEntryRequest
-	(*StreamRenameEntryResponse)(nil),     // 23: filer_pb.StreamRenameEntryResponse
-	(*AssignVolumeRequest)(nil),           // 24: filer_pb.AssignVolumeRequest
-	(*AssignVolumeResponse)(nil),          // 25: filer_pb.AssignVolumeResponse
-	(*LookupVolumeRequest)(nil),           // 26: filer_pb.LookupVolumeRequest
-	(*Locations)(nil),                     // 27: filer_pb.Locations
-	(*Location)(nil),                      // 28: filer_pb.Location
-	(*LookupVolumeResponse)(nil),          // 29: filer_pb.LookupVolumeResponse
-	(*Collection)(nil),                    // 30: filer_pb.Collection
-	(*CollectionListRequest)(nil),         // 31: filer_pb.CollectionListRequest
-	(*CollectionListResponse)(nil),        // 32: filer_pb.CollectionListResponse
-	(*DeleteCollectionRequest)(nil),       // 33: filer_pb.DeleteCollectionRequest
-	(*DeleteCollectionResponse)(nil),      // 34: filer_pb.DeleteCollectionResponse
-	(*StatisticsRequest)(nil),             // 35: filer_pb.StatisticsRequest
-	(*StatisticsResponse)(nil),            // 36: filer_pb.StatisticsResponse
-	(*GetFilerConfigurationRequest)(nil),  // 37: filer_pb.GetFilerConfigurationRequest
-	(*GetFilerConfigurationResponse)(nil), // 38: filer_pb.GetFilerConfigurationResponse
-	(*SubscribeMetadataRequest)(nil),      // 39: filer_pb.SubscribeMetadataRequest
-	(*SubscribeMetadataResponse)(nil),     // 40: filer_pb.SubscribeMetadataResponse
-	(*LogEntry)(nil),                      // 41: filer_pb.LogEntry
-	(*KeepConnectedRequest)(nil),          // 42: filer_pb.KeepConnectedRequest
-	(*KeepConnectedResponse)(nil),         // 43: filer_pb.KeepConnectedResponse
-	(*LocateBrokerRequest)(nil),           // 44: filer_pb.LocateBrokerRequest
-	(*LocateBrokerResponse)(nil),          // 45: filer_pb.LocateBrokerResponse
-	(*KvGetRequest)(nil),                  // 46: filer_pb.KvGetRequest
-	(*KvGetResponse)(nil),                 // 47: filer_pb.KvGetResponse
-	(*KvPutRequest)(nil),                  // 48: filer_pb.KvPutRequest
-	(*KvPutResponse)(nil),                 // 49: filer_pb.KvPutResponse
-	(*FilerConf)(nil),                     // 50: filer_pb.FilerConf
-	(*DownloadToLocalRequest)(nil),        // 51: filer_pb.DownloadToLocalRequest
-	(*DownloadToLocalResponse)(nil),       // 52: filer_pb.DownloadToLocalResponse
+	(*LookupDirectoryEntryRequest)(nil),             // 0: filer_pb.LookupDirectoryEntryRequest
+	(*LookupDirectoryEntryResponse)(nil),            // 1: filer_pb.LookupDirectoryEntryResponse
+	(*ListEntriesRequest)(nil),                      // 2: filer_pb.ListEntriesRequest
+	(*ListEntriesResponse)(nil),                     // 3: filer_pb.ListEntriesResponse
+	(*RemoteEntry)(nil),                             // 4: filer_pb.RemoteEntry
+	(*Entry)(nil),                                   // 5: filer_pb.Entry
+	(*FullEntry)(nil),                               // 6: filer_pb.FullEntry
+	(*EventNotification)(nil),                       // 7: filer_pb.EventNotification
+	(*FileChunk)(nil),                               // 8: filer_pb.FileChunk
+	(*FileChunkManifest)(nil),                       // 9: filer_pb.FileChunkManifest
+	(*FileId)(nil),                                  // 10: filer_pb.FileId
+	(*FuseAttributes)(nil),                          // 11: filer_pb.FuseAttributes
+	(*CreateEntryRequest)(nil),                      // 12: filer_pb.CreateEntryRequest
+	(*CreateEntryResponse)(nil),                     // 13: filer_pb.CreateEntryResponse
+	(*UpdateEntryRequest)(nil),                      // 14: filer_pb.UpdateEntryRequest
+	(*UpdateEntryResponse)(nil),                     // 15: filer_pb.UpdateEntryResponse
+	(*AppendToEntryRequest)(nil),                    // 16: filer_pb.AppendToEntryRequest
+	(*AppendToEntryResponse)(nil),                   // 17: filer_pb.AppendToEntryResponse
+	(*DeleteEntryRequest)(nil),                      // 18: filer_pb.DeleteEntryRequest
+	(*DeleteEntryResponse)(nil),                     // 19: filer_pb.DeleteEntryResponse
+	(*AtomicRenameEntryRequest)(nil),                // 20: filer_pb.AtomicRenameEntryRequest
+	(*AtomicRenameEntryResponse)(nil),               // 21: filer_pb.AtomicRenameEntryResponse
+	(*StreamRenameEntryRequest)(nil),                // 22: filer_pb.StreamRenameEntryRequest
+	(*StreamRenameEntryResponse)(nil),               // 23: filer_pb.StreamRenameEntryResponse
+	(*AssignVolumeRequest)(nil),                     // 24: filer_pb.AssignVolumeRequest
+	(*AssignVolumeResponse)(nil),                    // 25: filer_pb.AssignVolumeResponse
+	(*LookupVolumeRequest)(nil),                     // 26: filer_pb.LookupVolumeRequest
+	(*Locations)(nil),                               // 27: filer_pb.Locations
+	(*Location)(nil),                                // 28: filer_pb.Location
+	(*LookupVolumeResponse)(nil),                    // 29: filer_pb.LookupVolumeResponse
+	(*Collection)(nil),                              // 30: filer_pb.Collection
+	(*CollectionListRequest)(nil),                   // 31: filer_pb.CollectionListRequest
+	(*CollectionListResponse)(nil),                  // 32: filer_pb.CollectionListResponse
+	(*DeleteCollectionRequest)(nil),                 // 33: filer_pb.DeleteCollectionRequest
+	(*DeleteCollectionResponse)(nil),                // 34: filer_pb.DeleteCollectionResponse
+	(*StatisticsRequest)(nil),                       // 35: filer_pb.StatisticsRequest
+	(*StatisticsResponse)(nil),                      // 36: filer_pb.StatisticsResponse
+	(*GetFilerConfigurationRequest)(nil),            // 37: filer_pb.GetFilerConfigurationRequest
+	(*GetFilerConfigurationResponse)(nil),           // 38: filer_pb.GetFilerConfigurationResponse
+	(*SubscribeMetadataRequest)(nil),                // 39: filer_pb.SubscribeMetadataRequest
+	(*SubscribeMetadataResponse)(nil),               // 40: filer_pb.SubscribeMetadataResponse
+	(*LogEntry)(nil),                                // 41: filer_pb.LogEntry
+	(*KeepConnectedRequest)(nil),                    // 42: filer_pb.KeepConnectedRequest
+	(*KeepConnectedResponse)(nil),                   // 43: filer_pb.KeepConnectedResponse
+	(*LocateBrokerRequest)(nil),                     // 44: filer_pb.LocateBrokerRequest
+	(*LocateBrokerResponse)(nil),                    // 45: filer_pb.LocateBrokerResponse
+	(*KvGetRequest)(nil),                            // 46: filer_pb.KvGetRequest
+	(*KvGetResponse)(nil),                           // 47: filer_pb.KvGetResponse
+	(*KvPutRequest)(nil),                            // 48: filer_pb.KvPutRequest
+	(*KvPutResponse)(nil),                           // 49: filer_pb.KvPutResponse
+	(*FilerConf)(nil),                               // 50: filer_pb.FilerConf
+	(*CacheRemoteObjectToLocalClusterRequest)(nil),  // 51: filer_pb.CacheRemoteObjectToLocalClusterRequest
+	(*CacheRemoteObjectToLocalClusterResponse)(nil), // 52: filer_pb.CacheRemoteObjectToLocalClusterResponse
 	nil,                                   // 53: filer_pb.Entry.ExtendedEntry
 	nil,                                   // 54: filer_pb.LookupVolumeResponse.LocationsMapEntry
 	(*LocateBrokerResponse_Resource)(nil), // 55: filer_pb.LocateBrokerResponse.Resource
@@ -4269,7 +4274,7 @@ var file_filer_proto_depIdxs = []int32{
 	7,  // 20: filer_pb.SubscribeMetadataResponse.event_notification:type_name -> filer_pb.EventNotification
 	55, // 21: filer_pb.LocateBrokerResponse.resources:type_name -> filer_pb.LocateBrokerResponse.Resource
 	56, // 22: filer_pb.FilerConf.locations:type_name -> filer_pb.FilerConf.PathConf
-	5,  // 23: filer_pb.DownloadToLocalResponse.entry:type_name -> filer_pb.Entry
+	5,  // 23: filer_pb.CacheRemoteObjectToLocalClusterResponse.entry:type_name -> filer_pb.Entry
 	27, // 24: filer_pb.LookupVolumeResponse.LocationsMapEntry.value:type_name -> filer_pb.Locations
 	0,  // 25: filer_pb.SeaweedFiler.LookupDirectoryEntry:input_type -> filer_pb.LookupDirectoryEntryRequest
 	2,  // 26: filer_pb.SeaweedFiler.ListEntries:input_type -> filer_pb.ListEntriesRequest
@@ -4291,7 +4296,7 @@ var file_filer_proto_depIdxs = []int32{
 	44, // 42: filer_pb.SeaweedFiler.LocateBroker:input_type -> filer_pb.LocateBrokerRequest
 	46, // 43: filer_pb.SeaweedFiler.KvGet:input_type -> filer_pb.KvGetRequest
 	48, // 44: filer_pb.SeaweedFiler.KvPut:input_type -> filer_pb.KvPutRequest
-	51, // 45: filer_pb.SeaweedFiler.DownloadToLocal:input_type -> filer_pb.DownloadToLocalRequest
+	51, // 45: filer_pb.SeaweedFiler.CacheRemoteObjectToLocalCluster:input_type -> filer_pb.CacheRemoteObjectToLocalClusterRequest
 	1,  // 46: filer_pb.SeaweedFiler.LookupDirectoryEntry:output_type -> filer_pb.LookupDirectoryEntryResponse
 	3,  // 47: filer_pb.SeaweedFiler.ListEntries:output_type -> filer_pb.ListEntriesResponse
 	13, // 48: filer_pb.SeaweedFiler.CreateEntry:output_type -> filer_pb.CreateEntryResponse
@@ -4312,7 +4317,7 @@ var file_filer_proto_depIdxs = []int32{
 	45, // 63: filer_pb.SeaweedFiler.LocateBroker:output_type -> filer_pb.LocateBrokerResponse
 	47, // 64: filer_pb.SeaweedFiler.KvGet:output_type -> filer_pb.KvGetResponse
 	49, // 65: filer_pb.SeaweedFiler.KvPut:output_type -> filer_pb.KvPutResponse
-	52, // 66: filer_pb.SeaweedFiler.DownloadToLocal:output_type -> filer_pb.DownloadToLocalResponse
+	52, // 66: filer_pb.SeaweedFiler.CacheRemoteObjectToLocalCluster:output_type -> filer_pb.CacheRemoteObjectToLocalClusterResponse
 	46, // [46:67] is the sub-list for method output_type
 	25, // [25:46] is the sub-list for method input_type
 	25, // [25:25] is the sub-list for extension type_name
@@ -4939,7 +4944,7 @@ func file_filer_proto_init() {
 			}
 		}
 		file_filer_proto_msgTypes[51].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DownloadToLocalRequest); i {
+			switch v := v.(*CacheRemoteObjectToLocalClusterRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -4951,7 +4956,7 @@ func file_filer_proto_init() {
 			}
 		}
 		file_filer_proto_msgTypes[52].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DownloadToLocalResponse); i {
+			switch v := v.(*CacheRemoteObjectToLocalClusterResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5039,7 +5044,7 @@ type SeaweedFilerClient interface {
 	LocateBroker(ctx context.Context, in *LocateBrokerRequest, opts ...grpc.CallOption) (*LocateBrokerResponse, error)
 	KvGet(ctx context.Context, in *KvGetRequest, opts ...grpc.CallOption) (*KvGetResponse, error)
 	KvPut(ctx context.Context, in *KvPutRequest, opts ...grpc.CallOption) (*KvPutResponse, error)
-	DownloadToLocal(ctx context.Context, in *DownloadToLocalRequest, opts ...grpc.CallOption) (*DownloadToLocalResponse, error)
+	CacheRemoteObjectToLocalCluster(ctx context.Context, in *CacheRemoteObjectToLocalClusterRequest, opts ...grpc.CallOption) (*CacheRemoteObjectToLocalClusterResponse, error)
 }
 
 type seaweedFilerClient struct {
@@ -5344,9 +5349,9 @@ func (c *seaweedFilerClient) KvPut(ctx context.Context, in *KvPutRequest, opts .
 	return out, nil
 }
 
-func (c *seaweedFilerClient) DownloadToLocal(ctx context.Context, in *DownloadToLocalRequest, opts ...grpc.CallOption) (*DownloadToLocalResponse, error) {
-	out := new(DownloadToLocalResponse)
-	err := c.cc.Invoke(ctx, "/filer_pb.SeaweedFiler/DownloadToLocal", in, out, opts...)
+func (c *seaweedFilerClient) CacheRemoteObjectToLocalCluster(ctx context.Context, in *CacheRemoteObjectToLocalClusterRequest, opts ...grpc.CallOption) (*CacheRemoteObjectToLocalClusterResponse, error) {
+	out := new(CacheRemoteObjectToLocalClusterResponse)
+	err := c.cc.Invoke(ctx, "/filer_pb.SeaweedFiler/CacheRemoteObjectToLocalCluster", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -5375,7 +5380,7 @@ type SeaweedFilerServer interface {
 	LocateBroker(context.Context, *LocateBrokerRequest) (*LocateBrokerResponse, error)
 	KvGet(context.Context, *KvGetRequest) (*KvGetResponse, error)
 	KvPut(context.Context, *KvPutRequest) (*KvPutResponse, error)
-	DownloadToLocal(context.Context, *DownloadToLocalRequest) (*DownloadToLocalResponse, error)
+	CacheRemoteObjectToLocalCluster(context.Context, *CacheRemoteObjectToLocalClusterRequest) (*CacheRemoteObjectToLocalClusterResponse, error)
 }
 
 // UnimplementedSeaweedFilerServer can be embedded to have forward compatible implementations.
@@ -5442,8 +5447,8 @@ func (*UnimplementedSeaweedFilerServer) KvGet(context.Context, *KvGetRequest) (*
 func (*UnimplementedSeaweedFilerServer) KvPut(context.Context, *KvPutRequest) (*KvPutResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method KvPut not implemented")
 }
-func (*UnimplementedSeaweedFilerServer) DownloadToLocal(context.Context, *DownloadToLocalRequest) (*DownloadToLocalResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DownloadToLocal not implemented")
+func (*UnimplementedSeaweedFilerServer) CacheRemoteObjectToLocalCluster(context.Context, *CacheRemoteObjectToLocalClusterRequest) (*CacheRemoteObjectToLocalClusterResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CacheRemoteObjectToLocalCluster not implemented")
 }
 
 func RegisterSeaweedFilerServer(s *grpc.Server, srv SeaweedFilerServer) {
@@ -5830,20 +5835,20 @@ func _SeaweedFiler_KvPut_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
-func _SeaweedFiler_DownloadToLocal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DownloadToLocalRequest)
+func _SeaweedFiler_CacheRemoteObjectToLocalCluster_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CacheRemoteObjectToLocalClusterRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SeaweedFilerServer).DownloadToLocal(ctx, in)
+		return srv.(SeaweedFilerServer).CacheRemoteObjectToLocalCluster(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/filer_pb.SeaweedFiler/DownloadToLocal",
+		FullMethod: "/filer_pb.SeaweedFiler/CacheRemoteObjectToLocalCluster",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedFilerServer).DownloadToLocal(ctx, req.(*DownloadToLocalRequest))
+		return srv.(SeaweedFilerServer).CacheRemoteObjectToLocalCluster(ctx, req.(*CacheRemoteObjectToLocalClusterRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -5913,8 +5918,8 @@ var _SeaweedFiler_serviceDesc = grpc.ServiceDesc{
 			Handler:    _SeaweedFiler_KvPut_Handler,
 		},
 		{
-			MethodName: "DownloadToLocal",
-			Handler:    _SeaweedFiler_DownloadToLocal_Handler,
+			MethodName: "CacheRemoteObjectToLocalCluster",
+			Handler:    _SeaweedFiler_CacheRemoteObjectToLocalCluster_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
