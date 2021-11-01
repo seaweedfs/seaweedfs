@@ -64,6 +64,10 @@ func EncodeXMLResponse(response interface{}) []byte {
 func setCommonHeaders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("x-amz-request-id", fmt.Sprintf("%d", time.Now().UnixNano()))
 	w.Header().Set("Accept-Ranges", "bytes")
+	if r.Header.Get("Origin") != "" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+	}
 }
 
 func WriteResponse(w http.ResponseWriter, r *http.Request, statusCode int, response []byte, mType mimeType) {
