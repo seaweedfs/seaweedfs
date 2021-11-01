@@ -27,7 +27,7 @@ func WriteEmptyResponse(w http.ResponseWriter, r *http.Request, statusCode int) 
 	WriteResponse(w, r, statusCode, []byte{}, mimeNone)
 }
 
-func WriteErrorResponse(w http.ResponseWriter, errorCode ErrorCode, r *http.Request) {
+func WriteErrorResponse(w http.ResponseWriter, r *http.Request, errorCode ErrorCode) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 	object := vars["object"]
@@ -88,5 +88,5 @@ func WriteResponse(w http.ResponseWriter, r *http.Request, statusCode int, respo
 // If none of the http routes match respond with MethodNotAllowed
 func NotFoundHandler(w http.ResponseWriter, r *http.Request) {
 	glog.V(0).Infof("unsupported %s %s", r.Method, r.RequestURI)
-	WriteErrorResponse(w, ErrMethodNotAllowed, r)
+	WriteErrorResponse(w, r, ErrMethodNotAllowed)
 }

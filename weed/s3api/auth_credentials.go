@@ -182,7 +182,7 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 			f(w, r)
 			return
 		}
-		s3err.WriteErrorResponse(w, errCode, r)
+		s3err.WriteErrorResponse(w, r, errCode)
 	}
 }
 

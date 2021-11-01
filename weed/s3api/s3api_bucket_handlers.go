@@ -36,7 +36,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	if s3a.iam.isEnabled() {
 		identity, s3Err = s3a.iam.authUser(r)
 		if s3Err != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, s3Err, r)
+			s3err.WriteErrorResponse(w, r, s3Err)
 			return
 		}
 	}
@@ -46,7 +46,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	entries, _, err := s3a.list(s3a.option.BucketsPath, "", "", false, math.MaxInt32)
 
 	if err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 
@@ -100,14 +100,14 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		}
 		return nil
 	}); err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 	if exist, err := s3a.exists(s3a.option.BucketsPath, bucket, true); err == nil && exist {
 		errCode = s3err.ErrBucketAlreadyExists
 	}
 	if errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, errCode, r)
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
@@ -123,7 +123,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	// create the folder for bucket, but lazily create actual collection
 	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, fn); err != nil {
 		glog.Errorf("PutBucketHandler mkdir: %v", err)
-		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 
@@ -136,7 +136,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	glog.V(3).Infof("DeleteBucketHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, err, r)
+		s3err.WriteErrorResponse(w, r, err)
 		return
 	}
 
@@ -158,7 +158,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	err = s3a.rm(s3a.option.BucketsPath, bucket, false, true)
 
 	if err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 
@@ -171,7 +171,7 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 	glog.V(3).Infof("HeadBucketHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, err, r)
+		s3err.WriteErrorResponse(w, r, err)
 		return
 	}
 
@@ -216,7 +216,7 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 	glog.V(3).Infof("GetBucketAclHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, err, r)
+		s3err.WriteErrorResponse(w, r, err)
 		return
 	}
 
@@ -256,18 +256,18 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 	glog.V(3).Infof("GetBucketAclHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, err, r)
+		s3err.WriteErrorResponse(w, r, err)
 		return
 	}
 	fc, err := filer.ReadFilerConf(s3a.option.Filer, s3a.option.GrpcDialOption, nil)
 	if err != nil {
 		glog.Errorf("GetBucketLifecycleConfigurationHandler: %s", err)
-		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 	ttls := fc.GetCollectionTtls(bucket)
 	if len(ttls) == 0 {
-		s3err.WriteErrorResponse(w, s3err.ErrNoSuchLifecycleConfiguration, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchLifecycleConfiguration)
 		return
 	}
 	response := Lifecycle{}
@@ -292,7 +292,7 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketLifecycleConfiguration.html
 func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWriter, r *http.Request) {
 
-	s3err.WriteErrorResponse(w, s3err.ErrNotImplemented, r)
+	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 
 }
 

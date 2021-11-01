@@ -29,23 +29,23 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 
 	reader, err := r.MultipartReader()
 	if err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrMalformedPOSTRequest, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedPOSTRequest)
 		return
 	}
 	form, err := reader.ReadForm(int64(5 * humanize.MiByte))
 	if err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrMalformedPOSTRequest, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedPOSTRequest)
 		return
 	}
 	defer form.RemoveAll()
 
 	fileBody, fileName, fileSize, formValues, err := extractPostPolicyFormValues(form)
 	if err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrMalformedPOSTRequest, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedPOSTRequest)
 		return
 	}
 	if fileBody == nil {
-		s3err.WriteErrorResponse(w, s3err.ErrPOSTFileRequired, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrPOSTFileRequired)
 		return
 	}
 	defer fileBody.Close()
@@ -63,7 +63,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	if successRedirect != "" {
 		redirectURL, err = url.Parse(successRedirect)
 		if err != nil {
-			s3err.WriteErrorResponse(w, s3err.ErrMalformedPOSTRequest, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrMalformedPOSTRequest)
 			return
 		}
 	}
@@ -71,13 +71,13 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	// Verify policy signature.
 	errCode := s3a.iam.doesPolicySignatureMatch(formValues)
 	if errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, errCode, r)
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
 	policyBytes, err := base64.StdEncoding.DecodeString(formValues.Get("Policy"))
 	if err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrMalformedPOSTRequest, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedPOSTRequest)
 		return
 	}
 
@@ -86,7 +86,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 
 		postPolicyForm, err := policy.ParsePostPolicyForm(string(policyBytes))
 		if err != nil {
-			s3err.WriteErrorResponse(w, s3err.ErrPostPolicyConditionInvalidFormat, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrPostPolicyConditionInvalidFormat)
 			return
 		}
 
@@ -102,12 +102,12 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		lengthRange := postPolicyForm.Conditions.ContentLengthRange
 		if lengthRange.Valid {
 			if fileSize < lengthRange.Min {
-				s3err.WriteErrorResponse(w, s3err.ErrEntityTooSmall, r)
+				s3err.WriteErrorResponse(w, r, s3err.ErrEntityTooSmall)
 				return
 			}
 
 			if fileSize > lengthRange.Max {
-				s3err.WriteErrorResponse(w, s3err.ErrEntityTooLarge, r)
+				s3err.WriteErrorResponse(w, r, s3err.ErrEntityTooLarge)
 				return
 			}
 		}
@@ -118,7 +118,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	etag, errCode := s3a.putToFiler(r, uploadUrl, fileBody)
 
 	if errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, errCode, r)
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
