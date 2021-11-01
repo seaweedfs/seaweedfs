@@ -49,7 +49,7 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	writeSuccessResponseXML(w, response)
+	writeSuccessResponseXML(w, r, response)
 
 }
 
@@ -73,7 +73,7 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 		return
 	}
 
-	writeSuccessResponseXML(w, response)
+	writeSuccessResponseXML(w, r, response)
 
 }
 
@@ -97,7 +97,7 @@ func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *ht
 
 	glog.V(2).Info("AbortMultipartUploadHandler", string(s3err.EncodeXMLResponse(response)))
 
-	writeSuccessResponseXML(w, response)
+	writeSuccessResponseXML(w, r, response)
 
 }
 
@@ -137,7 +137,7 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 
 	// TODO handle encodingType
 
-	writeSuccessResponseXML(w, response)
+	writeSuccessResponseXML(w, r, response)
 }
 
 // ListObjectPartsHandler - Lists object parts in a multipart upload.
@@ -169,7 +169,7 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	writeSuccessResponseXML(w, response)
+	writeSuccessResponseXML(w, r, response)
 
 }
 
@@ -231,7 +231,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 	setEtag(w, etag)
 
-	writeSuccessResponseEmpty(w)
+	writeSuccessResponseEmpty(w, r)
 
 }
 

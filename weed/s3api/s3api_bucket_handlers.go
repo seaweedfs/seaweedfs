@@ -73,7 +73,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 		Buckets: buckets,
 	}
 
-	writeSuccessResponseXML(w, response)
+	writeSuccessResponseXML(w, r, response)
 }
 
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +127,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	writeSuccessResponseEmpty(w)
+	writeSuccessResponseEmpty(w, r)
 }
 
 func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Request) {
@@ -162,7 +162,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	s3err.WriteEmptyResponse(w, http.StatusNoContent)
+	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 }
 
 func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +175,7 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	writeSuccessResponseEmpty(w)
+	writeSuccessResponseEmpty(w, r)
 }
 
 func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorCode {
@@ -245,7 +245,7 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 			})
 		}
 	}
-	writeSuccessResponseXML(w, response)
+	writeSuccessResponseXML(w, r, response)
 }
 
 // GetBucketLifecycleConfigurationHandler Get Bucket Lifecycle configuration
@@ -285,7 +285,7 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 			Expiration: Expiration{Days: days, set: true},
 		})
 	}
-	writeSuccessResponseXML(w, response)
+	writeSuccessResponseXML(w, r, response)
 }
 
 // PutBucketLifecycleConfigurationHandler Put Bucket Lifecycle configuration
@@ -300,6 +300,6 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketLifecycle.html
 func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *http.Request) {
 
-	s3err.WriteEmptyResponse(w, http.StatusNoContent)
+	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 
 }

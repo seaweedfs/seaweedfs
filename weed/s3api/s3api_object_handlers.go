@@ -120,7 +120,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		setEtag(w, etag)
 	}
 
-	writeSuccessResponseEmpty(w)
+	writeSuccessResponseEmpty(w, r)
 }
 
 func urlPathEscape(object string) string {
@@ -273,7 +273,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	}
 	deleteResp.Errors = deleteErrors
 
-	writeSuccessResponseXML(w, deleteResp)
+	writeSuccessResponseXML(w, r, deleteResp)
 
 }
 

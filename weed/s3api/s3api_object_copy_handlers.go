@@ -43,7 +43,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			s3err.WriteErrorResponse(w, s3err.ErrInvalidCopySource, r)
 			return
 		}
-		writeSuccessResponseXML(w, CopyObjectResult{
+		writeSuccessResponseXML(w, r, CopyObjectResult{
 			ETag:         fmt.Sprintf("%x", entry.Attributes.Md5),
 			LastModified: time.Now().UTC(),
 		})
@@ -95,7 +95,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		LastModified: time.Now().UTC(),
 	}
 
-	writeSuccessResponseXML(w, response)
+	writeSuccessResponseXML(w, r, response)
 
 }
 
@@ -178,7 +178,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		LastModified: time.Now().UTC(),
 	}
 
-	writeSuccessResponseXML(w, response)
+	writeSuccessResponseXML(w, r, response)
 
 }
 

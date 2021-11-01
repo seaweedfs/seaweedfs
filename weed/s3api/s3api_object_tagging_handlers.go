@@ -34,7 +34,7 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	writeSuccessResponseXML(w, FromTags(tags))
+	writeSuccessResponseXML(w, r, FromTags(tags))
 
 }
 

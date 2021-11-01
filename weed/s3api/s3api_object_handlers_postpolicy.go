@@ -126,7 +126,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		// Replace raw query params..
 		redirectURL.RawQuery = getRedirectPostRawQuery(bucket, object, etag)
 		w.Header().Set("Location", redirectURL.String())
-		s3err.WriteEmptyResponse(w, http.StatusSeeOther)
+		s3err.WriteEmptyResponse(w, r, http.StatusSeeOther)
 		return
 	}
 
@@ -141,11 +141,11 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 			ETag:     `"` + etag + `"`,
 			Location: w.Header().Get("Location"),
 		}
-		s3err.WriteXMLResponse(w, http.StatusCreated, resp)
+		s3err.WriteXMLResponse(w, r, http.StatusCreated, resp)
 	case "200":
-		s3err.WriteEmptyResponse(w, http.StatusOK)
+		s3err.WriteEmptyResponse(w, r, http.StatusOK)
 	default:
-		writeSuccessResponseEmpty(w)
+		writeSuccessResponseEmpty(w, r)
 	}
 
 }

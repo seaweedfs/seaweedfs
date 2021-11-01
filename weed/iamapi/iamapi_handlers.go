@@ -8,7 +8,7 @@ import (
 	"net/http"
 )
 
-func writeIamErrorResponse(w http.ResponseWriter, err error, object string, value string, msg error) {
+func writeIamErrorResponse(w http.ResponseWriter, r *http.Request, err error, object string, value string, msg error) {
 	errCode := err.Error()
 	errorResp := ErrorResponse{}
 	errorResp.Error.Type = "Sender"
@@ -22,10 +22,10 @@ func writeIamErrorResponse(w http.ResponseWriter, err error, object string, valu
 	case iam.ErrCodeNoSuchEntityException:
 		msg := fmt.Sprintf("The %s with name %s cannot be found.", object, value)
 		errorResp.Error.Message = &msg
-		s3err.WriteXMLResponse(w, http.StatusNotFound, errorResp)
+		s3err.WriteXMLResponse(w, r, http.StatusNotFound, errorResp)
 	case iam.ErrCodeServiceFailureException:
-		s3err.WriteXMLResponse(w, http.StatusInternalServerError, errorResp)
+		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, errorResp)
 	default:
-		s3err.WriteXMLResponse(w, http.StatusInternalServerError, errorResp)
+		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, errorResp)
 	}
 }
