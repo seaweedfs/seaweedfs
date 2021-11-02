@@ -33,7 +33,7 @@ func (c *commandEcEncode) Name() string {
 func (c *commandEcEncode) Help() string {
 	return `apply erasure coding to a volume
 
-	ec.encode [-collection=""] [-fullPercent=95] [-quietFor=1h]
+	ec.encode [-collection=""] [-fullPercent=95 -quietFor=1h]
 	ec.encode [-collection=""] [-volumeId=<volume_id>]
 
 	This command will:
