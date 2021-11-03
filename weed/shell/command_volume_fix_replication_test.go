@@ -261,6 +261,29 @@ func TestSatisfyReplicaPlacement00x(t *testing.T) {
 
 }
 
+func TestSatisfyReplicaPlacement100(t *testing.T) {
+
+	var tests = []testcase{
+		{
+			name:        "test 100",
+			replication: "100",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+				},
+				{
+					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+				},
+			},
+			possibleLocation: location{"dc2", "r3", &master_pb.DataNodeInfo{Id: "dn3"}},
+			expected:         true,
+		},
+	}
+
+	runTests(tests, t)
+
+}
+
 func runTests(tests []testcase, t *testing.T) {
 	for _, tt := range tests {
 		replicaPlacement, _ := super_block.NewReplicaPlacementFromString(tt.replication)
