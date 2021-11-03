@@ -134,8 +134,8 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 	}
 
 	members, err := store.Client.ZRangeByLex(ctx, genDirectoryListKey(string(fullpath)), &redis.ZRangeBy{
-		Min:    "-",
-		Max:    "+",
+		Min: "-",
+		Max: "+",
 	}).Result()
 	if err != nil {
 		return fmt.Errorf("DeleteFolderChildren %s : %v", fullpath, err)

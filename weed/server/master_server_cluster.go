@@ -56,7 +56,7 @@ func (cluster *Cluster) RemoveClusterNode(nodeType string, address pb.ServerAddr
 	}
 }
 
-func (cluster *Cluster) ListClusterNode(nodeType string) (nodes []*ClusterNode){
+func (cluster *Cluster) ListClusterNode(nodeType string) (nodes []*ClusterNode) {
 	switch nodeType {
 	case "filer":
 		cluster.filersLock.RLock()

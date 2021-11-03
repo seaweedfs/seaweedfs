@@ -67,7 +67,6 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 	return nil
 }
 
-
 func (dir *Dir) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamRenameEntryResponse) error {
 	// comes from filer StreamRenameEntry, can only be create or delete entry
 
@@ -119,7 +118,7 @@ func (dir *Dir) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 		}
 		dir.wfs.handlesLock.Unlock()
 
-	}else if resp.EventNotification.OldEntry != nil {
+	} else if resp.EventNotification.OldEntry != nil {
 		// without new entry, only old entry name exists. This is the second step to delete old entry
 		if err := dir.wfs.metaCache.AtomicUpdateEntryFromFiler(ctx, util.NewFullPath(resp.Directory, resp.EventNotification.OldEntry.Name), nil); err != nil {
 			return err

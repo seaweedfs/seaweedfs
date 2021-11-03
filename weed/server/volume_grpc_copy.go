@@ -80,7 +80,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 
 		// println("source:", volFileInfoResp.String())
 		copyResponse := &volume_server_pb.VolumeCopyResponse{}
-		reportInterval := int64(1024*1024*128)
+		reportInterval := int64(1024 * 1024 * 128)
 		nextReportTarget := reportInterval
 		var modifiedTsNs int64
 		var sendErr error

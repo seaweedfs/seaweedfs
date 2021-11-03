@@ -49,10 +49,10 @@ func uploadToS3(sess s3iface.S3API, filename string, destBucket string, destKey 
 	// Upload the file to S3.
 	var result *s3manager.UploadOutput
 	result, err = uploader.Upload(&s3manager.UploadInput{
-		Bucket:               aws.String(destBucket),
-		Key:                  aws.String(destKey),
-		Body:                 fileReader,
-		StorageClass:         aws.String("STANDARD_IA"),
+		Bucket:       aws.String(destBucket),
+		Key:          aws.String(destKey),
+		Body:         fileReader,
+		StorageClass: aws.String("STANDARD_IA"),
 	})
 
 	//in case it fails to upload
