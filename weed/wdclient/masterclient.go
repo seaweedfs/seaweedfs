@@ -93,7 +93,7 @@ func (mc *MasterClient) tryAllMasters() {
 }
 
 func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedLeader pb.ServerAddress) {
-	glog.V(0).Infof("%s masterClient Connecting to master %v", mc.clientType, master)
+	glog.V(1).Infof("%s masterClient Connecting to master %v", mc.clientType, master)
 	gprcErr := pb.WithMasterClient(master, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
 
 		ctx, cancel := context.WithCancel(context.Background())
