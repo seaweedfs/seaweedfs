@@ -67,6 +67,8 @@ type MasterServer struct {
 	MasterClient *wdclient.MasterClient
 
 	adminLocks *AdminLocks
+
+	Cluster *Cluster
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddress) *MasterServer {
@@ -103,6 +105,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddre
 		grpcDialOption:  grpcDialOption,
 		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "master", option.Master, "", peers),
 		adminLocks:      NewAdminLocks(),
+		Cluster:         NewCluster(),
 	}
 	ms.boundedLeaderChan = make(chan int, 16)
 

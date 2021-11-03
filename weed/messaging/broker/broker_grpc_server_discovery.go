@@ -93,14 +93,16 @@ func (broker *MessageBroker) checkFilers() {
 	for !found {
 		for _, master := range masters {
 			err := broker.withMasterClient(master, func(client master_pb.SeaweedClient) error {
-				resp, err := client.ListMasterClients(context.Background(), &master_pb.ListMasterClientsRequest{
+				resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 					ClientType: "filer",
 				})
 				if err != nil {
 					return err
 				}
 
-				filers = append(filers, pb.FromAddressStrings(resp.GrpcAddresses)...)
+				for _, clusterNode := range resp.ClusterNodes {
+					filers = append(filers, pb.ServerAddress(clusterNode.Address))
+				}
 
 				return nil
 			})

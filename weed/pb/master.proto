@@ -29,7 +29,7 @@ service Seaweed {
     }
     rpc GetMasterConfiguration (GetMasterConfigurationRequest) returns (GetMasterConfigurationResponse) {
     }
-    rpc ListMasterClients (ListMasterClientsRequest) returns (ListMasterClientsResponse) {
+    rpc ListClusterNodes (ListClusterNodesRequest) returns (ListClusterNodesResponse) {
     }
     rpc LeaseAdminToken (LeaseAdminTokenRequest) returns (LeaseAdminTokenResponse) {
     }
@@ -127,8 +127,9 @@ message SuperBlockExtra {
 }
 
 message KeepConnectedRequest {
-    string name = 1;
+    string client_type = 1;
     string client_address = 3;
+    string version = 4;
 }
 
 message VolumeLocation {
@@ -284,11 +285,15 @@ message GetMasterConfigurationResponse {
     bool volume_preallocate = 7;
 }
 
-message ListMasterClientsRequest {
+message ListClusterNodesRequest {
     string client_type = 1;
 }
-message ListMasterClientsResponse {
-    repeated string grpc_addresses = 1;
+message ListClusterNodesResponse {
+    message ClusterNode {
+        string address = 1;
+        string version = 2;
+    }
+    repeated ClusterNode cluster_nodes = 1;
 }
 
 message LeaseAdminTokenRequest {

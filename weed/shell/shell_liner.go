@@ -3,9 +3,12 @@ package shell
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"io"
+	"math/rand"
 	"os"
 	"path"
 	"regexp"
@@ -46,6 +49,27 @@ func RunShell(options ShellOptions) {
 
 	go commandEnv.MasterClient.KeepConnectedToMaster()
 	commandEnv.MasterClient.WaitUntilConnected()
+
+	if commandEnv.option.FilerAddress == "" {
+		var filers []pb.ServerAddress
+		commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+				ClientType: "filer",
+			})
+			if err != nil {
+				return err
+			}
+
+			for _, clusterNode := range resp.ClusterNodes {
+				filers = append(filers, pb.ServerAddress(clusterNode.Address))
+			}
+			return nil
+		})
+		if len(filers) > 0 {
+			fmt.Printf("filers: %v\n", filers)
+			commandEnv.option.FilerAddress = filers[rand.Intn(len(filers))]
+		}
+	}
 
 	if commandEnv.option.FilerAddress != "" {
 		commandEnv.WithFilerClient(func(filerClient filer_pb.SeaweedFilerClient) error {

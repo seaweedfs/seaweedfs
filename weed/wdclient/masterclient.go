@@ -105,7 +105,11 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 			return err
 		}
 
-		if err = stream.Send(&master_pb.KeepConnectedRequest{Name: mc.clientType, ClientAddress: string(mc.clientHost)}); err != nil {
+		if err = stream.Send(&master_pb.KeepConnectedRequest{
+			ClientType:    mc.clientType,
+			ClientAddress: string(mc.clientHost),
+			Version:       util.Version(),
+		}); err != nil {
 			glog.V(0).Infof("%s masterClient failed to send to %s: %v", mc.clientType, master, err)
 			return err
 		}
