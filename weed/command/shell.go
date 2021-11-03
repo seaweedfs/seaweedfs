@@ -46,8 +46,6 @@ func runShell(command *Command, args []string) bool {
 		}
 		if cluster == "" {
 			*shellOptions.Masters = "localhost:9333"
-			fmt.Printf("master: %s\n", *shellOptions.Masters)
-
 		} else {
 			*shellOptions.Masters = v.GetString("cluster." + cluster + ".master")
 			*shellInitialFiler = v.GetString("cluster." + cluster + ".filer")
