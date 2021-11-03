@@ -14,6 +14,7 @@ const (
 type ClusterNode struct {
 	address pb.ServerAddress
 	version string
+	counter int
 }
 
 type Cluster struct {
@@ -32,12 +33,14 @@ func (cluster *Cluster) AddClusterNode(nodeType string, address pb.ServerAddress
 	case "filer":
 		cluster.filersLock.Lock()
 		defer cluster.filersLock.Unlock()
-		if _, found := cluster.filers[address]; found {
+		if existingNode, found := cluster.filers[address]; found {
+			existingNode.counter++
 			return
 		}
 		cluster.filers[address] = &ClusterNode{
 			address: address,
 			version: version,
+			counter: 1,
 		}
 	case "master":
 	}
@@ -48,10 +51,14 @@ func (cluster *Cluster) RemoveClusterNode(nodeType string, address pb.ServerAddr
 	case "filer":
 		cluster.filersLock.Lock()
 		defer cluster.filersLock.Unlock()
-		if _, found := cluster.filers[address]; !found {
+		if existingNode, found := cluster.filers[address]; !found {
 			return
+		} else {
+			existingNode.counter--
+			if existingNode.counter <= 0 {
+				delete(cluster.filers, address)
+			}
 		}
-		delete(cluster.filers, address)
 	case "master":
 	}
 }
