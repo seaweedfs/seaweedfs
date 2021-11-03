@@ -176,9 +176,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 	}
 }
 
-// KeepConnected keep a stream gRPC call to the master. Used by clients to know the master is up.
+// SubscribeVolumeLocationUpdates keep a stream gRPC call to the master. Used by clients to know the master is up.
 // And clients gets the up-to-date list of volume locations
-func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServer) error {
+func (ms *MasterServer) SubscribeVolumeLocationUpdates(stream master_pb.Seaweed_SubscribeVolumeLocationUpdatesServer) error {
 
 	req, recvErr := stream.Recv()
 	if recvErr != nil {
@@ -238,7 +238,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 
 }
 
-func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedServer) error {
+func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_SubscribeVolumeLocationUpdatesServer) error {
 	leader, err := ms.Topo.Leader()
 	if err != nil {
 		glog.Errorf("topo leader: %v", err)
@@ -257,7 +257,7 @@ func (ms *MasterServer) addClient(clientType string, clientAddress pb.ServerAddr
 	glog.V(0).Infof("+ client %v", clientName)
 
 	// we buffer this because otherwise we end up in a potential deadlock where
-	// the KeepConnected loop is no longer listening on this channel but we're
+	// the SubscribeVolumeLocationUpdates loop is no longer listening on this channel but we're
 	// trying to send to it in SendHeartbeat and so we can't lock the
 	// clientChansLock to remove the channel and we're stuck writing to it
 	// 100 is probably overkill

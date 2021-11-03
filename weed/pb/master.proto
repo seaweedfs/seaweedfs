@@ -9,7 +9,7 @@ option go_package = "github.com/chrislusf/seaweedfs/weed/pb/master_pb";
 service Seaweed {
     rpc SendHeartbeat (stream Heartbeat) returns (stream HeartbeatResponse) {
     }
-    rpc KeepConnected (stream KeepConnectedRequest) returns (stream VolumeLocation) {
+    rpc SubscribeVolumeLocationUpdates (stream SubscribeVolumeLocationUpdatesRequest) returns (stream VolumeLocation) {
     }
     rpc LookupVolume (LookupVolumeRequest) returns (LookupVolumeResponse) {
     }
@@ -126,7 +126,7 @@ message SuperBlockExtra {
     ErasureCoding erasure_coding = 1;
 }
 
-message KeepConnectedRequest {
+message SubscribeVolumeLocationUpdatesRequest {
     string client_type = 1;
     string client_address = 3;
     string version = 4;

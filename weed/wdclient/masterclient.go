@@ -44,7 +44,7 @@ func (mc *MasterClient) WaitUntilConnected() {
 	}
 }
 
-func (mc *MasterClient) KeepConnectedToMaster() {
+func (mc *MasterClient) LoopConnectToMaster() {
 	glog.V(1).Infof("%s masterClient bootstraps with masters %v", mc.clientType, mc.masters)
 	for {
 		mc.tryAllMasters()
@@ -99,13 +99,13 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		stream, err := client.KeepConnected(ctx)
+		stream, err := client.SubscribeVolumeLocationUpdates(ctx)
 		if err != nil {
 			glog.V(1).Infof("%s masterClient failed to keep connected to %s: %v", mc.clientType, master, err)
 			return err
 		}
 
-		if err = stream.Send(&master_pb.KeepConnectedRequest{
+		if err = stream.Send(&master_pb.SubscribeVolumeLocationUpdatesRequest{
 			ClientType:    mc.clientType,
 			ClientAddress: string(mc.clientHost),
 			Version:       util.Version(),

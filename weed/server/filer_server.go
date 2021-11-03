@@ -108,7 +108,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.checkWithMaster()
 
 	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
-	go fs.filer.KeepConnectedToMaster()
+	go fs.filer.LoopConnectToMaster()
 
 	v := util.GetViper()
 	if !util.LoadConfiguration("filer", false) {

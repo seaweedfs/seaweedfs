@@ -117,8 +117,8 @@ func (fs *Filer) GetMaster() pb.ServerAddress {
 	return fs.MasterClient.GetMaster()
 }
 
-func (fs *Filer) KeepConnectedToMaster() {
-	fs.MasterClient.KeepConnectedToMaster()
+func (fs *Filer) LoopConnectToMaster() {
+	fs.MasterClient.LoopConnectToMaster()
 }
 
 func (f *Filer) BeginTransaction(ctx context.Context) (context.Context, error) {

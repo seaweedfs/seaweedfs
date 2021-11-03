@@ -47,7 +47,7 @@ func RunShell(options ShellOptions) {
 
 	commandEnv := NewCommandEnv(options)
 
-	go commandEnv.MasterClient.KeepConnectedToMaster()
+	go commandEnv.MasterClient.LoopConnectToMaster()
 	commandEnv.MasterClient.WaitUntilConnected()
 
 	if commandEnv.option.FilerAddress == "" {

@@ -157,7 +157,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		}
 	}()
 
-	go ms.MasterClient.KeepConnectedToMaster()
+	go ms.MasterClient.LoopConnectToMaster()
 
 	// start http server
 	httpS := &http.Server{Handler: r}

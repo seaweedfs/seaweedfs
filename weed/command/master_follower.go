@@ -132,7 +132,7 @@ func startMasterFollower(masterOptions MasterOptions) {
 	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOptions.ip, grpcPort)
 	go grpcS.Serve(grpcL)
 
-	go ms.MasterClient.KeepConnectedToMaster()
+	go ms.MasterClient.LoopConnectToMaster()
 
 	// start http server
 	httpS := &http.Server{Handler: r}

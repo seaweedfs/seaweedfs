@@ -57,7 +57,7 @@ service SeaweedFiler {
     rpc SubscribeLocalMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
     }
 
-    rpc KeepConnected (stream KeepConnectedRequest) returns (stream KeepConnectedResponse) {
+    rpc SubscribeVolumeLocationUpdates (stream SubscribeVolumeLocationUpdatesRequest) returns (stream SubscribeVolumeLocationUpdatesResponse) {
     }
 
     rpc LocateBroker (LocateBrokerRequest) returns (LocateBrokerResponse) {
@@ -341,12 +341,12 @@ message LogEntry {
     bytes data = 3;
 }
 
-message KeepConnectedRequest {
+message SubscribeVolumeLocationUpdatesRequest {
     string name = 1;
     uint32 grpc_port = 2;
     repeated string resources = 3;
 }
-message KeepConnectedResponse {
+message SubscribeVolumeLocationUpdatesResponse {
 }
 
 message LocateBrokerRequest {
