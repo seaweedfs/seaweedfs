@@ -85,6 +85,10 @@ func (cluster *Cluster) ListClusterNode(nodeType string) (nodes []*ClusterNode) 
 	return
 }
 
+func (cluster *Cluster) IsOneLeader(address pb.ServerAddress) bool {
+	return cluster.leaders.isOneLeader(address)
+}
+
 func (cluster *Cluster) ensureLeader(isAdd bool, nodeType string, address pb.ServerAddress) (result []*master_pb.KeepConnectedResponse) {
 	if isAdd {
 		if cluster.leaders.addLeaderIfVacant(address) {

@@ -304,6 +304,7 @@ message ListClusterNodesResponse {
   message ClusterNode {
     string address = 1;
     string version = 2;
+    bool is_leader = 3;
   }
   repeated ClusterNode cluster_nodes = 1;
 }

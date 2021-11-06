@@ -14,6 +14,7 @@ func (ms *MasterServer) ListClusterNodes(ctx context.Context, req *master_pb.Lis
 		resp.ClusterNodes = append(resp.ClusterNodes, &master_pb.ListClusterNodesResponse_ClusterNode{
 			Address: string(node.Address),
 			Version: node.Version,
+			IsLeader: ms.Cluster.IsOneLeader(node.Address),
 		})
 	}
 	return resp, nil
