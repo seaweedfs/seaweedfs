@@ -203,7 +203,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	}()
 
 	for _, message := range ms.Topo.ToVolumeLocations() {
-		if sendErr := stream.Send(message); sendErr != nil {
+		if sendErr := stream.Send(&master_pb.KeepConnectedResponse{VolumeLocation: message}); sendErr != nil {
 			return sendErr
 		}
 	}
@@ -223,7 +223,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	for {
 		select {
 		case message := <-messageChan:
-			if err := stream.Send(message); err != nil {
+			if err := stream.Send(&master_pb.KeepConnectedResponse{VolumeLocation: message}); err != nil {
 				glog.V(0).Infof("=> client %v: %+v", clientName, message)
 				return err
 			}
@@ -244,8 +244,10 @@ func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedSe
 		glog.Errorf("topo leader: %v", err)
 		return raft.NotLeaderError
 	}
-	if err := stream.Send(&master_pb.VolumeLocation{
-		Leader: string(leader),
+	if err := stream.Send(&master_pb.KeepConnectedResponse{
+		VolumeLocation: &master_pb.VolumeLocation{
+			Leader: string(leader),
+		},
 	}); err != nil {
 		return err
 	}

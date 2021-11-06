@@ -118,34 +118,37 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 		mc.currentMaster = master
 
 		for {
-			volumeLocation, err := stream.Recv()
+			resp, err := stream.Recv()
 			if err != nil {
 				glog.V(0).Infof("%s masterClient failed to receive from %s: %v", mc.clientType, master, err)
 				return err
 			}
 
-			// maybe the leader is changed
-			if volumeLocation.Leader != "" {
-				glog.V(0).Infof("redirected to leader %v", volumeLocation.Leader)
-				nextHintedLeader = pb.ServerAddress(volumeLocation.Leader)
-				return nil
+			if resp.VolumeLocation != nil {
+				// maybe the leader is changed
+				if resp.VolumeLocation.Leader != "" {
+					glog.V(0).Infof("redirected to leader %v", resp.VolumeLocation.Leader)
+					nextHintedLeader = pb.ServerAddress(resp.VolumeLocation.Leader)
+					return nil
+				}
+
+				// process new volume location
+				loc := Location{
+					Url:        resp.VolumeLocation.Url,
+					PublicUrl:  resp.VolumeLocation.PublicUrl,
+					DataCenter: resp.VolumeLocation.DataCenter,
+					GrpcPort:   int(resp.VolumeLocation.GrpcPort),
+				}
+				for _, newVid := range resp.VolumeLocation.NewVids {
+					glog.V(1).Infof("%s: %s masterClient adds volume %d", mc.clientType, loc.Url, newVid)
+					mc.addLocation(newVid, loc)
+				}
+				for _, deletedVid := range resp.VolumeLocation.DeletedVids {
+					glog.V(1).Infof("%s: %s masterClient removes volume %d", mc.clientType, loc.Url, deletedVid)
+					mc.deleteLocation(deletedVid, loc)
+				}
 			}
 
-			// process new volume location
-			loc := Location{
-				Url:        volumeLocation.Url,
-				PublicUrl:  volumeLocation.PublicUrl,
-				DataCenter: volumeLocation.DataCenter,
-				GrpcPort:   int(volumeLocation.GrpcPort),
-			}
-			for _, newVid := range volumeLocation.NewVids {
-				glog.V(1).Infof("%s: %s masterClient adds volume %d", mc.clientType, loc.Url, newVid)
-				mc.addLocation(newVid, loc)
-			}
-			for _, deletedVid := range volumeLocation.DeletedVids {
-				glog.V(1).Infof("%s: %s masterClient removes volume %d", mc.clientType, loc.Url, deletedVid)
-				mc.deleteLocation(deletedVid, loc)
-			}
 		}
 
 	})
