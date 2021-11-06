@@ -246,8 +246,6 @@ filer:
   maxMB: null
   # encrypt data on volume servers
   encryptVolumeData: false
-  # enable peers sync metadata, for leveldb (localdb for filer but with sync across)
-  enable_peers: false
 
   # Whether proxy or redirect to volume server during file GET request
   redirectOnRead: false

@@ -61,7 +61,6 @@ type FilerOption struct {
 	recursiveDelete       bool
 	Cipher                bool
 	SaveToFilerLimit      int64
-	Filers                []pb.ServerAddress
 	ConcurrentUploadLimit int64
 }
 
