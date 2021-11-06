@@ -244,7 +244,7 @@ func (ms *MasterServer) startAdminScripts() {
 
 	reg, _ := regexp.Compile(`'.*?'|".*?"|\S+`)
 
-	go commandEnv.MasterClient.LoopConnectToMaster()
+	go commandEnv.MasterClient.KeepConnectedToMaster()
 
 	go func() {
 		commandEnv.MasterClient.WaitUntilConnected()

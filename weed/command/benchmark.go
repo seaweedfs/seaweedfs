@@ -130,7 +130,7 @@ func runBenchmark(cmd *Command, args []string) bool {
 	}
 
 	b.masterClient = wdclient.NewMasterClient(b.grpcDialOption, "client", "", "", pb.ServerAddresses(*b.masters).ToAddresses())
-	go b.masterClient.LoopConnectToMaster()
+	go b.masterClient.KeepConnectedToMaster()
 	b.masterClient.WaitUntilConnected()
 
 	if *b.write {

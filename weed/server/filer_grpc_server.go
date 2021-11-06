@@ -410,7 +410,7 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 	return t, nil
 }
 
-func (fs *FilerServer) SubscribeVolumeLocationUpdates(stream filer_pb.SeaweedFiler_SubscribeVolumeLocationUpdatesServer) error {
+func (fs *FilerServer) KeepConnected(stream filer_pb.SeaweedFiler_KeepConnectedServer) error {
 
 	req, err := stream.Recv()
 	if err != nil {
@@ -435,7 +435,7 @@ func (fs *FilerServer) SubscribeVolumeLocationUpdates(stream filer_pb.SeaweedFil
 	}()
 
 	for {
-		if err := stream.Send(&filer_pb.SubscribeVolumeLocationUpdatesResponse{}); err != nil {
+		if err := stream.Send(&filer_pb.KeepConnectedResponse{}); err != nil {
 			glog.V(0).Infof("send broker %v: %+v", clientName, err)
 			return err
 		}
