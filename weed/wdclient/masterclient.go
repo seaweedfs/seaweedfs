@@ -149,6 +149,15 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 				}
 			}
 
+			if resp.ClusterNodeUpdate != nil {
+				update := resp.ClusterNodeUpdate
+				if update.IsAdd {
+					glog.V(0).Infof("+ %s %s leader:%v\n", update.NodeType, update.Address, update.IsLeader)
+				} else {
+					glog.V(0).Infof("- %s %s leader:%v\n", update.NodeType, update.Address, update.IsLeader)
+				}
+			}
+
 		}
 
 	})

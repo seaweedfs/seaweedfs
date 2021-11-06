@@ -44,11 +44,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 
 			if len(message.DeletedVids) > 0 {
-				ms.clientChansLock.RLock()
-				for _, ch := range ms.clientChans {
-					ch <- message
-				}
-				ms.clientChansLock.RUnlock()
+				ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: message})
 			}
 		}
 	}()
@@ -153,12 +149,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		}
 		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 {
-			ms.clientChansLock.RLock()
-			for host, ch := range ms.clientChans {
-				glog.V(0).Infof("master send to %s: %s", host, message.String())
-				ch <- message
-			}
-			ms.clientChansLock.RUnlock()
+			ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: message})
 		}
 
 		// tell the volume servers about the leader
@@ -195,10 +186,14 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	stopChan := make(chan bool, 1)
 
 	clientName, messageChan := ms.addClient(req.ClientType, peerAddress)
-	ms.Cluster.AddClusterNode(req.ClientType, peerAddress, req.Version)
+	for _, update := range ms.Cluster.AddClusterNode(req.ClientType, peerAddress, req.Version) {
+		ms.broadcastToClients(update)
+	}
 
 	defer func() {
-		ms.Cluster.RemoveClusterNode(req.ClientType, peerAddress)
+		for _, update := range ms.Cluster.RemoveClusterNode(req.ClientType, peerAddress) {
+			ms.broadcastToClients(update)
+		}
 		ms.deleteClient(clientName)
 	}()
 
@@ -223,7 +218,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	for {
 		select {
 		case message := <-messageChan:
-			if err := stream.Send(&master_pb.KeepConnectedResponse{VolumeLocation: message}); err != nil {
+			if err := stream.Send(message); err != nil {
 				glog.V(0).Infof("=> client %v: %+v", clientName, message)
 				return err
 			}
@@ -236,6 +231,14 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		}
 	}
 
+}
+
+func (ms *MasterServer) broadcastToClients(message *master_pb.KeepConnectedResponse) {
+	ms.clientChansLock.RLock()
+	for _, ch := range ms.clientChans {
+		ch <- message
+	}
+	ms.clientChansLock.RUnlock()
 }
 
 func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedServer) error {
@@ -254,7 +257,7 @@ func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedSe
 	return nil
 }
 
-func (ms *MasterServer) addClient(clientType string, clientAddress pb.ServerAddress) (clientName string, messageChan chan *master_pb.VolumeLocation) {
+func (ms *MasterServer) addClient(clientType string, clientAddress pb.ServerAddress) (clientName string, messageChan chan *master_pb.KeepConnectedResponse) {
 	clientName = clientType + "@" + string(clientAddress)
 	glog.V(0).Infof("+ client %v", clientName)
 
@@ -263,7 +266,7 @@ func (ms *MasterServer) addClient(clientType string, clientAddress pb.ServerAddr
 	// trying to send to it in SendHeartbeat and so we can't lock the
 	// clientChansLock to remove the channel and we're stuck writing to it
 	// 100 is probably overkill
-	messageChan = make(chan *master_pb.VolumeLocation, 100)
+	messageChan = make(chan *master_pb.KeepConnectedResponse, 100)
 
 	ms.clientChansLock.Lock()
 	ms.clientChans[clientName] = messageChan

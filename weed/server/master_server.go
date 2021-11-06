@@ -61,7 +61,7 @@ type MasterServer struct {
 
 	// notifying clients
 	clientChansLock sync.RWMutex
-	clientChans     map[string]chan *master_pb.VolumeLocation
+	clientChans     map[string]chan *master_pb.KeepConnectedResponse
 
 	grpcDialOption grpc.DialOption
 
@@ -102,7 +102,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddre
 		option:          option,
 		preallocateSize: preallocateSize,
 		vgCh:            make(chan *topology.VolumeGrowRequest, 1<<6),
-		clientChans:     make(map[string]chan *master_pb.VolumeLocation),
+		clientChans:     make(map[string]chan *master_pb.KeepConnectedResponse),
 		grpcDialOption:  grpcDialOption,
 		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "master", option.Master, "", peers),
 		adminLocks:      NewAdminLocks(),
