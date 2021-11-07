@@ -146,11 +146,13 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 
 	for _, ident := range iam.identities {
 		for _, cred := range ident.Credentials {
+			println("checking", ident.Name, cred.AccessKey)
 			if cred.AccessKey == accessKey {
 				return ident, cred, true
 			}
 		}
 	}
+	glog.V(1).Infof("could not find accessKey %s", accessKey)
 	return nil, nil, false
 }
 
