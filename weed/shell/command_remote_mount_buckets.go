@@ -27,7 +27,7 @@ func (c *commandRemoteMountBuckets) Help() string {
 	return `mount all buckets in remote storage and pull its metadata
 
 	# assume a remote storage is configured to name "cloud1"
-	remote.configure -name=cloud1 -type=s3 -access_key=xxx -secret_key=yyy
+	remote.configure -name=cloud1 -type=s3 -s3.access_key=xxx -s3.secret_key=yyy
 
 	# mount all buckets
 	remote.mount.buckets -remote=cloud1

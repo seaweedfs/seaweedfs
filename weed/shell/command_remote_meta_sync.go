@@ -27,7 +27,7 @@ func (c *commandRemoteMetaSync) Help() string {
 	return `synchronize the local file meta data with the remote file metadata
 
 	# assume a remote storage is configured to name "cloud1"
-	remote.configure -name=cloud1 -type=s3 -access_key=xxx -secret_key=yyy
+	remote.configure -name=cloud1 -type=s3 -s3.access_key=xxx -s3.secret_key=yyy
 	# mount and pull one bucket
 	remote.mount -dir=/xxx -remote=cloud1/bucket
 
