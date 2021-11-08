@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/cluster"
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -37,7 +38,7 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 
 	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: "filer",
+			ClientType: cluster.FilerType,
 		})
 
 		fmt.Fprintf(writer, "the cluster has %d filers\n", len(resp.ClusterNodes))

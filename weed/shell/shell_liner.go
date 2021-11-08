@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/cluster"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -54,7 +55,7 @@ func RunShell(options ShellOptions) {
 		var filers []pb.ServerAddress
 		commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
 			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-				ClientType: "filer",
+				ClientType: cluster.FilerType,
 			})
 			if err != nil {
 				return err

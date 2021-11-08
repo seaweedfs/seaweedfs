@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+const (
+	MasterType = "master"
+	FilerType = "filer"
+)
+
 type ClusterNode struct {
 	Address   pb.ServerAddress
 	Version   string
@@ -34,7 +39,7 @@ func NewCluster() *Cluster {
 
 func (cluster *Cluster) AddClusterNode(nodeType string, address pb.ServerAddress, version string) []*master_pb.KeepConnectedResponse {
 	switch nodeType {
-	case "filer":
+	case FilerType:
 		cluster.nodesLock.Lock()
 		defer cluster.nodesLock.Unlock()
 		if existingNode, found := cluster.nodes[address]; found {
@@ -48,14 +53,14 @@ func (cluster *Cluster) AddClusterNode(nodeType string, address pb.ServerAddress
 			createdTs: time.Now(),
 		}
 		return cluster.ensureLeader(true, nodeType, address)
-	case "master":
+	case MasterType:
 	}
 	return nil
 }
 
 func (cluster *Cluster) RemoveClusterNode(nodeType string, address pb.ServerAddress) []*master_pb.KeepConnectedResponse {
 	switch nodeType {
-	case "filer":
+	case FilerType:
 		cluster.nodesLock.Lock()
 		defer cluster.nodesLock.Unlock()
 		if existingNode, found := cluster.nodes[address]; !found {
@@ -67,20 +72,20 @@ func (cluster *Cluster) RemoveClusterNode(nodeType string, address pb.ServerAddr
 				return cluster.ensureLeader(false, nodeType, address)
 			}
 		}
-	case "master":
+	case MasterType:
 	}
 	return nil
 }
 
 func (cluster *Cluster) ListClusterNode(nodeType string) (nodes []*ClusterNode) {
 	switch nodeType {
-	case "filer":
+	case FilerType:
 		cluster.nodesLock.RLock()
 		defer cluster.nodesLock.RUnlock()
 		for _, node := range cluster.nodes {
 			nodes = append(nodes, node)
 		}
-	case "master":
+	case MasterType:
 	}
 	return
 }

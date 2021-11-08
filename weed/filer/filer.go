@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/cluster"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"os"
@@ -51,7 +52,7 @@ type Filer struct {
 func NewFiler(masters []pb.ServerAddress, grpcDialOption grpc.DialOption,
 	filerHost pb.ServerAddress, collection string, replication string, dataCenter string, notifyFn func()) *Filer {
 	f := &Filer{
-		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", filerHost, dataCenter, masters),
+		MasterClient:        wdclient.NewMasterClient(grpcDialOption, cluster.FilerType, filerHost, dataCenter, masters),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 		FilerConf:           NewFilerConf(),
@@ -82,13 +83,13 @@ func (f *Filer) ListExistingPeerUpdates() (existingNodes []*master_pb.ClusterNod
 
 	if grpcErr := pb.WithMasterClient(f.MasterClient.GetMaster(), f.GrpcDialOption, func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: "filer",
+			ClientType: cluster.FilerType,
 		})
 
 		glog.V(0).Infof("the cluster has %d filers\n", len(resp.ClusterNodes))
 		for _, node := range resp.ClusterNodes {
 			existingNodes = append(existingNodes, &master_pb.ClusterNodeUpdate{
-				NodeType: "filer",
+				NodeType: cluster.FilerType,
 				Address:  node.Address,
 				IsLeader: node.IsLeader,
 				IsAdd:    true,
