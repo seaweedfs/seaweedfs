@@ -2,7 +2,7 @@ package weed_server
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/election"
+	"github.com/chrislusf/seaweedfs/weed/cluster"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"net/http"
 	"net/http/httputil"
@@ -69,7 +69,7 @@ type MasterServer struct {
 
 	adminLocks *AdminLocks
 
-	Cluster *election.Cluster
+	Cluster *cluster.Cluster
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddress) *MasterServer {
@@ -106,7 +106,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddre
 		grpcDialOption:  grpcDialOption,
 		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "master", option.Master, "", peers),
 		adminLocks:      NewAdminLocks(),
-		Cluster:         election.NewCluster(),
+		Cluster:         cluster.NewCluster(),
 	}
 	ms.boundedLeaderChan = make(chan int, 16)
 

@@ -1,4 +1,4 @@
-package election
+package cluster
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
