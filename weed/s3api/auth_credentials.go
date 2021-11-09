@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -23,6 +24,8 @@ type Iam interface {
 }
 
 type IdentityAccessManagement struct {
+	m sync.Mutex
+
 	identities []*Identity
 	domain     string
 }
@@ -131,9 +134,12 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 		}
 		identities = append(identities, t)
 	}
-
+	iam.m.Lock()
+	
 	// atomically switch
 	iam.identities = identities
+
+	iam.m.Unlock()
 	return nil
 }
 
