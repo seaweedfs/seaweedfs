@@ -2,7 +2,6 @@ package s3api
 
 import (
 	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"net/http"
 	"strconv"
 	"time"
@@ -28,7 +27,7 @@ func (r *StatusRecorder) Flush() {
 
 func track(f http.HandlerFunc, action string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Server", "SeaweedFS S3 "+util.VERSION)
+		w.Header().Set("Server", "SeaweedFS S3")
 		recorder := NewStatusResponseWriter(w)
 		start := time.Now()
 		f(recorder, r)
