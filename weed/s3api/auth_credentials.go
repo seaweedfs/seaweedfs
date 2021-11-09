@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -23,6 +24,8 @@ type Iam interface {
 }
 
 type IdentityAccessManagement struct {
+	m sync.RWMutex
+
 	identities []*Identity
 	domain     string
 }
@@ -131,19 +134,23 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 		}
 		identities = append(identities, t)
 	}
-
+	iam.m.Lock()
 	// atomically switch
 	iam.identities = identities
+	iam.m.Unlock()
 	return nil
 }
 
 func (iam *IdentityAccessManagement) isEnabled() bool {
-
+	iam.m.RLock()
+	defer iam.m.RUnlock()
 	return len(iam.identities) > 0
 }
 
 func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
 
+	iam.m.RLock()
+	defer iam.m.RUnlock()
 	for _, ident := range iam.identities {
 		for _, cred := range ident.Credentials {
 			// println("checking", ident.Name, cred.AccessKey)
@@ -157,7 +164,8 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 }
 
 func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, found bool) {
-
+	iam.m.RLock()
+	defer iam.m.RUnlock()
 	for _, ident := range iam.identities {
 		if ident.Name == "anonymous" {
 			return ident, true
