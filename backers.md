@@ -17,3 +17,4 @@
 - Yoni Nakache
 - Catalin Constantin
 - MingLi Yuan
+- Leroy van Logchem
