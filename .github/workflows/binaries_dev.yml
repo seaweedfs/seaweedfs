@@ -3,6 +3,8 @@ name: "go: build dev binaries"
 on:
   push:
     branches: [ master ]
+  pull_request:
+    branches: [ master ]
 
 jobs:
 
