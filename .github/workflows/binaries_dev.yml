@@ -36,6 +36,9 @@ jobs:
       - name: Set BUILD_TIME env
         run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> ${GITHUB_ENV}
 
+      - name: disable http2 env
+        run: export GODEBUG=http2client=0
+
       - name: Go Release Binaries Large Disk
         uses: wangyoucao577/go-release-action@bugfix/upload-fail
         with:
