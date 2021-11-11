@@ -111,16 +111,16 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 
 func getVolumeFilter(replicaPlacement *super_block.ReplicaPlacement, volumeId uint32, collectionPattern string) func(message *master_pb.VolumeInformationMessage) bool {
 	replicaPlacementInt32 := uint32(replicaPlacement.Byte())
-	if collectionPattern != "" {
+	if volumeId > 0 {
 		return func(v *master_pb.VolumeInformationMessage) bool {
-			matched, err := filepath.Match(collectionPattern, v.Collection)
-			if err != nil {
-				return false
-			}
-			return matched
+			return v.Id == volumeId && v.ReplicaPlacement != replicaPlacementInt32
 		}
 	}
 	return func(v *master_pb.VolumeInformationMessage) bool {
-		return v.Id == volumeId && v.ReplicaPlacement != replicaPlacementInt32
+		matched, err := filepath.Match(collectionPattern, v.Collection)
+		if err != nil {
+			return false
+		}
+		return matched
 	}
 }
