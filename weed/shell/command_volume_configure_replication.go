@@ -34,7 +34,7 @@ func (c *commandVolumeConfigureReplication) Help() string {
 `
 }
 
-func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
+func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *CommandEnv, _ io.Writer) (err error) {
 
 	configureReplicationCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeIdInt := configureReplicationCommand.Int("volumeId", 0, "the volume id")
