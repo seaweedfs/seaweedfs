@@ -187,6 +187,8 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 				r.Header.Set(xhttp.AmzIdentityId, identity.Name)
 				if identity.isAdmin() {
 					r.Header.Set(xhttp.AmzIsAdmin, "true")
+				} else if _, ok := r.Header[xhttp.AmzIsAdmin]; ok {
+					r.Header.Del(xhttp.AmzIsAdmin)
 				}
 			}
 			f(w, r)
