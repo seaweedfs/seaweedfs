@@ -26,15 +26,15 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			glog.Errorf("GetObjectTaggingHandler %s: %v", r.URL, err)
-			s3err.WriteErrorResponse(w, s3err.ErrNoSuchKey, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 		} else {
 			glog.Errorf("GetObjectTaggingHandler %s: %v", r.URL, err)
-			s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		}
 		return
 	}
 
-	writeSuccessResponseXML(w, FromTags(tags))
+	writeSuccessResponseXML(w, r, FromTags(tags))
 
 }
 
@@ -52,29 +52,29 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 	input, err := io.ReadAll(io.LimitReader(r.Body, r.ContentLength))
 	if err != nil {
 		glog.Errorf("PutObjectTaggingHandler read input %s: %v", r.URL, err)
-		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 	if err = xml.Unmarshal(input, tagging); err != nil {
 		glog.Errorf("PutObjectTaggingHandler Unmarshal %s: %v", r.URL, err)
-		s3err.WriteErrorResponse(w, s3err.ErrMalformedXML, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
 		return
 	}
 	tags := tagging.ToTags()
 	if len(tags) > 10 {
 		glog.Errorf("PutObjectTaggingHandler tags %s: %d tags more than 10", r.URL, len(tags))
-		s3err.WriteErrorResponse(w, s3err.ErrInvalidTag, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
 		return
 	}
 	for k, v := range tags {
 		if len(k) > 128 {
 			glog.Errorf("PutObjectTaggingHandler tags %s: tag key %s longer than 128", r.URL, k)
-			s3err.WriteErrorResponse(w, s3err.ErrInvalidTag, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
 			return
 		}
 		if len(v) > 256 {
 			glog.Errorf("PutObjectTaggingHandler tags %s: tag value %s longer than 256", r.URL, v)
-			s3err.WriteErrorResponse(w, s3err.ErrInvalidTag, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
 			return
 		}
 	}
@@ -82,10 +82,10 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 	if err = s3a.setTags(dir, name, tagging.ToTags()); err != nil {
 		if err == filer_pb.ErrNotFound {
 			glog.Errorf("PutObjectTaggingHandler setTags %s: %v", r.URL, err)
-			s3err.WriteErrorResponse(w, s3err.ErrNoSuchKey, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 		} else {
 			glog.Errorf("PutObjectTaggingHandler setTags %s: %v", r.URL, err)
-			s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		}
 		return
 	}
@@ -108,10 +108,10 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			glog.Errorf("DeleteObjectTaggingHandler %s: %v", r.URL, err)
-			s3err.WriteErrorResponse(w, s3err.ErrNoSuchKey, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 		} else {
 			glog.Errorf("DeleteObjectTaggingHandler %s: %v", r.URL, err)
-			s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		}
 		return
 	}

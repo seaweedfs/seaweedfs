@@ -37,7 +37,7 @@ func runShell(command *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 	shellOptions.GrpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
-	if *shellOptions.Masters == "" && *shellInitialFiler == "" {
+	if *shellOptions.Masters == "" {
 		util.LoadConfiguration("shell", false)
 		v := util.GetViper()
 		cluster := v.GetString("cluster.default")
@@ -45,14 +45,13 @@ func runShell(command *Command, args []string) bool {
 			cluster = *shellCluster
 		}
 		if cluster == "" {
-			*shellOptions.Masters, *shellInitialFiler = "localhost:9333", "localhost:8888"
+			*shellOptions.Masters = "localhost:9333"
 		} else {
 			*shellOptions.Masters = v.GetString("cluster." + cluster + ".master")
 			*shellInitialFiler = v.GetString("cluster." + cluster + ".filer")
+			fmt.Printf("master: %s filer: %s\n", *shellOptions.Masters, *shellInitialFiler)
 		}
 	}
-
-	fmt.Printf("master: %s filer: %s\n", *shellOptions.Masters, *shellInitialFiler)
 
 	shellOptions.FilerAddress = pb.ServerAddress(*shellInitialFiler)
 	shellOptions.Directory = "/"

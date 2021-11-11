@@ -3,7 +3,9 @@ package filer
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/cluster"
 	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"os"
 	"strings"
 	"time"
@@ -50,7 +52,7 @@ type Filer struct {
 func NewFiler(masters []pb.ServerAddress, grpcDialOption grpc.DialOption,
 	filerHost pb.ServerAddress, collection string, replication string, dataCenter string, notifyFn func()) *Filer {
 	f := &Filer{
-		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", filerHost, dataCenter, masters),
+		MasterClient:        wdclient.NewMasterClient(grpcDialOption, cluster.FilerType, filerHost, dataCenter, masters),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 		FilerConf:           NewFilerConf(),
@@ -66,22 +68,38 @@ func NewFiler(masters []pb.ServerAddress, grpcDialOption grpc.DialOption,
 	return f
 }
 
-func (f *Filer) AggregateFromPeers(self pb.ServerAddress, filers []pb.ServerAddress) {
+func (f *Filer) AggregateFromPeers(self pb.ServerAddress) {
 
-	// set peers
-	found := false
-	for _, peer := range filers {
-		if peer == self {
-			found = true
+	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOption)
+	f.MasterClient.OnPeerUpdate = f.MetaAggregator.OnPeerUpdate
+
+	for _, peerUpdate := range f.ListExistingPeerUpdates() {
+		f.MetaAggregator.OnPeerUpdate(peerUpdate)
+	}
+
+}
+
+func (f *Filer) ListExistingPeerUpdates() (existingNodes []*master_pb.ClusterNodeUpdate){
+
+	if grpcErr := pb.WithMasterClient(f.MasterClient.GetMaster(), f.GrpcDialOption, func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.FilerType,
+		})
+
+		glog.V(0).Infof("the cluster has %d filers\n", len(resp.ClusterNodes))
+		for _, node := range resp.ClusterNodes {
+			existingNodes = append(existingNodes, &master_pb.ClusterNodeUpdate{
+				NodeType: cluster.FilerType,
+				Address:  node.Address,
+				IsLeader: node.IsLeader,
+				IsAdd:    true,
+			})
 		}
+		return err
+	}); grpcErr != nil {
+		glog.V(0).Infof("connect to %s: %v", f.MasterClient.GetMaster(), grpcErr)
 	}
-	if !found {
-		filers = append(filers, self)
-	}
-
-	f.MetaAggregator = NewMetaAggregator(filers, f.GrpcDialOption)
-	f.MetaAggregator.StartLoopSubscribe(f, self)
-
+	return
 }
 
 func (f *Filer) SetStore(store FilerStore) {
@@ -117,7 +135,7 @@ func (fs *Filer) GetMaster() pb.ServerAddress {
 	return fs.MasterClient.GetMaster()
 }
 
-func (fs *Filer) KeepConnectedToMaster() {
+func (fs *Filer) KeepMasterClientConnected() {
 	fs.MasterClient.KeepConnectedToMaster()
 }
 

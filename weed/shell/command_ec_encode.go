@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"io"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -33,7 +34,7 @@ func (c *commandEcEncode) Name() string {
 func (c *commandEcEncode) Help() string {
 	return `apply erasure coding to a volume
 
-	ec.encode [-collection=""] [-fullPercent=95] [-quietFor=1h]
+	ec.encode [-collection=""] [-fullPercent=95 -quietFor=1h]
 	ec.encode [-collection=""] [-volumeId=<volume_id>]
 
 	This command will:
@@ -248,7 +249,7 @@ func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServer
 func balancedEcDistribution(servers []*EcNode) (allocated [][]uint32) {
 	allocated = make([][]uint32, len(servers))
 	allocatedShardIdIndex := uint32(0)
-	serverIndex := 0
+	serverIndex := rand.Intn(len(servers))
 	for allocatedShardIdIndex < erasure_coding.TotalShardsCount {
 		if servers[serverIndex].freeEcSlot > 0 {
 			allocated[serverIndex] = append(allocated[serverIndex], allocatedShardIdIndex)

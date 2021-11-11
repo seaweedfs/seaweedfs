@@ -133,11 +133,6 @@ spec:
               -encryptVolumeData \
               {{- end }}
               -ip=${POD_IP} \
-              {{- if .Values.filer.enable_peers }}
-              {{- if gt (.Values.filer.replicas | int) 1 }}
-              -peers=$(echo -n "{{ range $index := until (.Values.filer.replicas | int) }}${SEAWEEDFS_FULLNAME}-filer-{{ $index }}.${SEAWEEDFS_FULLNAME}-filer:{{ $.Values.filer.port }}{{ if lt $index (sub ($.Values.filer.replicas | int) 1) }},{{ end }}{{ end }}" | sed "s/$HOSTNAME.${SEAWEEDFS_FULLNAME}-filer:{{ $.Values.filer.port }}//" | sed 's/,$//; 's/^,//'; s/,,/,/;' )  \
-              {{- end }}
-              {{- end }}
               {{- if .Values.filer.s3.enabled }}
               -s3 \
               -s3.port={{ .Values.filer.s3.port }} \

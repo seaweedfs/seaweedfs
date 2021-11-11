@@ -61,7 +61,6 @@ type FilerOption struct {
 	recursiveDelete       bool
 	Cipher                bool
 	SaveToFilerLimit      int64
-	Filers                []pb.ServerAddress
 	ConcurrentUploadLimit int64
 }
 
@@ -108,7 +107,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.checkWithMaster()
 
 	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
-	go fs.filer.KeepConnectedToMaster()
+	go fs.filer.KeepMasterClientConnected()
 
 	v := util.GetViper()
 	if !util.LoadConfiguration("filer", false) {
@@ -143,7 +142,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
 
-	fs.filer.AggregateFromPeers(option.Host, option.Filers)
+	fs.filer.AggregateFromPeers(option.Host)
 
 	fs.filer.LoadBuckets()
 

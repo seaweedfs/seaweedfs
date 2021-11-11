@@ -2,9 +2,12 @@ BINARY = weed
 
 SOURCE_DIR = .
 
-all: debug_mount
+all: install
 
 .PHONY : clean debug_mount
+
+install:
+	go install
 
 clean:
 	go clean $(SOURCE_DIR)

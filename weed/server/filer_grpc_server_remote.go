@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.DownloadToLocalRequest) (*filer_pb.DownloadToLocalResponse, error) {
+func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
 
 	// load all mappings
 	mappingEntry, err := fs.filer.FindEntry(ctx, util.JoinPath(filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE))
@@ -57,7 +57,7 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 		return nil, err
 	}
 
-	resp := &filer_pb.DownloadToLocalResponse{}
+	resp := &filer_pb.CacheRemoteObjectToLocalClusterResponse{}
 	if entry.Remote == nil || entry.Remote.RemoteSize == 0 {
 		return resp, nil
 	}

@@ -14,10 +14,10 @@ public class RemoteUtil {
         String dir = SeaweedOutputStream.getParentDirectory(fullpath);
         String name = SeaweedOutputStream.getFileName(fullpath);
 
-        final FilerProto.DownloadToLocalResponse downloadToLocalResponse = filerClient.getBlockingStub()
-                .downloadToLocal(FilerProto.DownloadToLocalRequest.newBuilder()
+        final FilerProto.CacheRemoteObjectToLocalClusterResponse response = filerClient.getBlockingStub()
+                .cacheRemoteObjectToLocalCluster(FilerProto.CacheRemoteObjectToLocalClusterRequest.newBuilder()
                 .setDirectory(dir).setName(name).build());
 
-        return downloadToLocalResponse.getEntry();
+        return response.getEntry();
     }
 }

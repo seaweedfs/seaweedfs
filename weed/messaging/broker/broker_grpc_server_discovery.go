@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/cluster"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"time"
 
@@ -93,14 +94,16 @@ func (broker *MessageBroker) checkFilers() {
 	for !found {
 		for _, master := range masters {
 			err := broker.withMasterClient(master, func(client master_pb.SeaweedClient) error {
-				resp, err := client.ListMasterClients(context.Background(), &master_pb.ListMasterClientsRequest{
-					ClientType: "filer",
+				resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+					ClientType: cluster.FilerType,
 				})
 				if err != nil {
 					return err
 				}
 
-				filers = append(filers, pb.FromAddressStrings(resp.GrpcAddresses)...)
+				for _, clusterNode := range resp.ClusterNodes {
+					filers = append(filers, pb.ServerAddress(clusterNode.Address))
+				}
 
 				return nil
 			})

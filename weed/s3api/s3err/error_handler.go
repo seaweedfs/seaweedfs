@@ -19,15 +19,15 @@ const (
 	MimeXML  mimeType = "application/xml"
 )
 
-func WriteXMLResponse(w http.ResponseWriter, statusCode int, response interface{}) {
-	WriteResponse(w, statusCode, EncodeXMLResponse(response), MimeXML)
+func WriteXMLResponse(w http.ResponseWriter, r *http.Request, statusCode int, response interface{}) {
+	WriteResponse(w, r, statusCode, EncodeXMLResponse(response), MimeXML)
 }
 
-func WriteEmptyResponse(w http.ResponseWriter, statusCode int) {
-	WriteResponse(w, statusCode, []byte{}, mimeNone)
+func WriteEmptyResponse(w http.ResponseWriter, r *http.Request, statusCode int) {
+	WriteResponse(w, r, statusCode, []byte{}, mimeNone)
 }
 
-func WriteErrorResponse(w http.ResponseWriter, errorCode ErrorCode, r *http.Request) {
+func WriteErrorResponse(w http.ResponseWriter, r *http.Request, errorCode ErrorCode) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 	object := vars["object"]
@@ -38,7 +38,7 @@ func WriteErrorResponse(w http.ResponseWriter, errorCode ErrorCode, r *http.Requ
 	apiError := GetAPIError(errorCode)
 	errorResponse := getRESTErrorResponse(apiError, r.URL.Path, bucket, object)
 	encodedErrorResponse := EncodeXMLResponse(errorResponse)
-	WriteResponse(w, apiError.HTTPStatusCode, encodedErrorResponse, MimeXML)
+	WriteResponse(w, r, apiError.HTTPStatusCode, encodedErrorResponse, MimeXML)
 }
 
 func getRESTErrorResponse(err APIError, resource string, bucket, object string) RESTErrorResponse {
@@ -61,13 +61,17 @@ func EncodeXMLResponse(response interface{}) []byte {
 	return bytesBuffer.Bytes()
 }
 
-func setCommonHeaders(w http.ResponseWriter) {
+func setCommonHeaders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("x-amz-request-id", fmt.Sprintf("%d", time.Now().UnixNano()))
 	w.Header().Set("Accept-Ranges", "bytes")
+	if r.Header.Get("Origin") != "" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+	}
 }
 
-func WriteResponse(w http.ResponseWriter, statusCode int, response []byte, mType mimeType) {
-	setCommonHeaders(w)
+func WriteResponse(w http.ResponseWriter, r *http.Request, statusCode int, response []byte, mType mimeType) {
+	setCommonHeaders(w, r)
 	if response != nil {
 		w.Header().Set("Content-Length", strconv.Itoa(len(response)))
 	}
@@ -88,5 +92,5 @@ func WriteResponse(w http.ResponseWriter, statusCode int, response []byte, mType
 // If none of the http routes match respond with MethodNotAllowed
 func NotFoundHandler(w http.ResponseWriter, r *http.Request) {
 	glog.V(0).Infof("unsupported %s %s", r.Method, r.RequestURI)
-	WriteErrorResponse(w, ErrMethodNotAllowed, r)
+	WriteErrorResponse(w, r, ErrMethodNotAllowed)
 }

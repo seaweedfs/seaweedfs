@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"google.golang.org/grpc/reflection"
@@ -46,7 +45,6 @@ type FilerOptions struct {
 	enableNotification      *bool
 	disableHttp             *bool
 	cipher                  *bool
-	peers                   *string
 	metricsHttpPort         *int
 	saveToFilerLimit        *int
 	defaultLevelDbDirectory *string
@@ -72,7 +70,6 @@ func init() {
 	f.rack = cmdFiler.Flag.String("rack", "", "prefer to write to volumes in this rack")
 	f.disableHttp = cmdFiler.Flag.Bool("disableHttp", false, "disable http request, only gRpc operations are allowed")
 	f.cipher = cmdFiler.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
-	f.peers = cmdFiler.Flag.String("peers", "", "all filers sharing the same filer store in comma separated ip:port list")
 	f.metricsHttpPort = cmdFiler.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	f.saveToFilerLimit = cmdFiler.Flag.Int("saveToFilerLimit", 0, "files smaller than this limit will be saved in filer store")
 	f.defaultLevelDbDirectory = cmdFiler.Flag.String("defaultStoreDir", ".", "if filer.toml is empty, use an embedded filer store in the directory")
@@ -186,11 +183,6 @@ func (fo *FilerOptions) startFiler() {
 
 	defaultLevelDbDirectory := util.ResolvePath(*fo.defaultLevelDbDirectory + "/filerldb2")
 
-	var peers []string
-	if *fo.peers != "" {
-		peers = strings.Split(*fo.peers, ",")
-	}
-
 	filerAddress := pb.NewServerAddress(*fo.ip, *fo.port, *fo.portGrpc)
 
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
@@ -207,7 +199,6 @@ func (fo *FilerOptions) startFiler() {
 		Host:                  filerAddress,
 		Cipher:                *fo.cipher,
 		SaveToFilerLimit:      int64(*fo.saveToFilerLimit),
-		Filers:                pb.FromAddressStrings(peers),
 		ConcurrentUploadLimit: int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
 	})
 	if nfs_err != nil {

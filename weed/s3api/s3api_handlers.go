@@ -26,12 +26,12 @@ func (s3a *S3ApiServer) AdjustedUrl(location *filer_pb.Location) string {
 	return location.Url
 }
 
-func writeSuccessResponseXML(w http.ResponseWriter, response interface{}) {
-	s3err.WriteXMLResponse(w, http.StatusOK, response)
+func writeSuccessResponseXML(w http.ResponseWriter, r *http.Request, response interface{}) {
+	s3err.WriteXMLResponse(w, r, http.StatusOK, response)
 }
 
-func writeSuccessResponseEmpty(w http.ResponseWriter) {
-	s3err.WriteEmptyResponse(w, http.StatusOK)
+func writeSuccessResponseEmpty(w http.ResponseWriter, r *http.Request) {
+	s3err.WriteEmptyResponse(w, r, http.StatusOK)
 }
 
 func validateContentMd5(h http.Header) ([]byte, error) {

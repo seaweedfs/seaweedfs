@@ -169,11 +169,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		chunks := entry.Chunks
 		if entry.IsInRemoteOnly() {
 			dir, name := entry.FullPath.DirAndName()
-			if resp, err := fs.DownloadToLocal(context.Background(), &filer_pb.DownloadToLocalRequest{
+			if resp, err := fs.CacheRemoteObjectToLocalCluster(context.Background(), &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 				Directory: dir,
 				Name:      name,
 			}); err != nil {
-				glog.Errorf("DownloadToLocal %s: %v", entry.FullPath, err)
+				glog.Errorf("CacheRemoteObjectToLocalCluster %s: %v", entry.FullPath, err)
 				return fmt.Errorf("cache %s: %v", entry.FullPath, err)
 			} else {
 				chunks = resp.Entry.Chunks

@@ -27,7 +27,7 @@ func (vs *VolumeServer) VacuumVolumeCheck(ctx context.Context, req *volume_serve
 func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCompactRequest, stream volume_server_pb.VolumeServer_VacuumVolumeCompactServer) error {
 
 	resp := &volume_server_pb.VacuumVolumeCompactResponse{}
-	reportInterval := int64(1024*1024*128)
+	reportInterval := int64(1024 * 1024 * 128)
 	nextReportTarget := reportInterval
 
 	var sendErr error

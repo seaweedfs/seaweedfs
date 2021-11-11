@@ -362,7 +362,7 @@ func (iama *IamApiServer) DeleteAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 
 func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrInvalidRequest, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
 	}
 	values := r.PostForm
@@ -370,7 +370,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	s3cfgLock.RLock()
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 	if err := iama.s3ApiConfig.GetS3ApiConfiguration(s3cfg); err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 	s3cfgLock.RUnlock()
@@ -392,7 +392,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		userName := values.Get("UserName")
 		response, err = iama.GetUser(s3cfg, userName)
 		if err != nil {
-			writeIamErrorResponse(w, err, "user", userName, nil)
+			writeIamErrorResponse(w, r, err, "user", userName, nil)
 			return
 		}
 		changed = false
@@ -400,7 +400,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		userName := values.Get("UserName")
 		response, err = iama.DeleteUser(s3cfg, userName)
 		if err != nil {
-			writeIamErrorResponse(w, err, "user", userName, nil)
+			writeIamErrorResponse(w, r, err, "user", userName, nil)
 			return
 		}
 	case "CreateAccessKey":
@@ -411,33 +411,33 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		response, err = iama.CreatePolicy(s3cfg, values)
 		if err != nil {
 			glog.Errorf("CreatePolicy:  %+v", err)
-			s3err.WriteErrorResponse(w, s3err.ErrInvalidRequest, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 			return
 		}
 	case "PutUserPolicy":
 		response, err = iama.PutUserPolicy(s3cfg, values)
 		if err != nil {
 			glog.Errorf("PutUserPolicy:  %+v", err)
-			s3err.WriteErrorResponse(w, s3err.ErrInvalidRequest, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 			return
 		}
 	case "GetUserPolicy":
 		response, err = iama.GetUserPolicy(s3cfg, values)
 		if err != nil {
-			writeIamErrorResponse(w, err, "user", values.Get("UserName"), nil)
+			writeIamErrorResponse(w, r, err, "user", values.Get("UserName"), nil)
 			return
 		}
 		changed = false
 	case "DeleteUserPolicy":
 		if response, err = iama.DeleteUserPolicy(s3cfg, values); err != nil {
-			writeIamErrorResponse(w, err, "user", values.Get("UserName"), nil)
+			writeIamErrorResponse(w, r, err, "user", values.Get("UserName"), nil)
 		}
 	default:
 		errNotImplemented := s3err.GetAPIError(s3err.ErrNotImplemented)
 		errorResponse := ErrorResponse{}
 		errorResponse.Error.Code = &errNotImplemented.Code
 		errorResponse.Error.Message = &errNotImplemented.Description
-		s3err.WriteXMLResponse(w, errNotImplemented.HTTPStatusCode, errorResponse)
+		s3err.WriteXMLResponse(w, r, errNotImplemented.HTTPStatusCode, errorResponse)
 		return
 	}
 	if changed {
@@ -445,9 +445,9 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		err := iama.s3ApiConfig.PutS3ApiConfiguration(s3cfg)
 		s3cfgLock.Unlock()
 		if err != nil {
-			writeIamErrorResponse(w, fmt.Errorf(iam.ErrCodeServiceFailureException), "", "", err)
+			writeIamErrorResponse(w, r, fmt.Errorf(iam.ErrCodeServiceFailureException), "", "", err)
 			return
 		}
 	}
-	s3err.WriteXMLResponse(w, http.StatusOK, response)
+	s3err.WriteXMLResponse(w, r, http.StatusOK, response)
 }

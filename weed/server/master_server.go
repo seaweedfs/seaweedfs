@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/cluster"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"net/http"
 	"net/http/httputil"
@@ -60,13 +61,15 @@ type MasterServer struct {
 
 	// notifying clients
 	clientChansLock sync.RWMutex
-	clientChans     map[string]chan *master_pb.VolumeLocation
+	clientChans     map[string]chan *master_pb.KeepConnectedResponse
 
 	grpcDialOption grpc.DialOption
 
 	MasterClient *wdclient.MasterClient
 
 	adminLocks *AdminLocks
+
+	Cluster *cluster.Cluster
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddress) *MasterServer {
@@ -99,10 +102,11 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddre
 		option:          option,
 		preallocateSize: preallocateSize,
 		vgCh:            make(chan *topology.VolumeGrowRequest, 1<<6),
-		clientChans:     make(map[string]chan *master_pb.VolumeLocation),
+		clientChans:     make(map[string]chan *master_pb.KeepConnectedResponse),
 		grpcDialOption:  grpcDialOption,
-		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "master", option.Master, "", peers),
+		MasterClient:    wdclient.NewMasterClient(grpcDialOption, cluster.MasterType, option.Master, "", peers),
 		adminLocks:      NewAdminLocks(),
+		Cluster:         cluster.NewCluster(),
 	}
 	ms.boundedLeaderChan = make(chan int, 16)
 

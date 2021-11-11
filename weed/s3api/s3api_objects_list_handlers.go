@@ -45,11 +45,11 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	originalPrefix, continuationToken, startAfter, delimiter, _, maxKeys := getListObjectsV2Args(r.URL.Query())
 
 	if maxKeys < 0 {
-		s3err.WriteErrorResponse(w, s3err.ErrInvalidMaxKeys, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
 		return
 	}
 	if delimiter != "" && delimiter != "/" {
-		s3err.WriteErrorResponse(w, s3err.ErrNotImplemented, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 		return
 	}
 
@@ -61,13 +61,13 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker, delimiter)
 
 	if err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 
 	if len(response.Contents) == 0 {
 		if exists, existErr := s3a.exists(s3a.option.BucketsPath, bucket, true); existErr == nil && !exists {
-			s3err.WriteErrorResponse(w, s3err.ErrNoSuchBucket, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 			return
 		}
 	}
@@ -87,7 +87,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		StartAfter:            startAfter,
 	}
 
-	writeSuccessResponseXML(w, responseV2)
+	writeSuccessResponseXML(w, r, responseV2)
 }
 
 func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Request) {
@@ -101,29 +101,29 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	originalPrefix, marker, delimiter, maxKeys := getListObjectsV1Args(r.URL.Query())
 
 	if maxKeys < 0 {
-		s3err.WriteErrorResponse(w, s3err.ErrInvalidMaxKeys, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
 		return
 	}
 	if delimiter != "" && delimiter != "/" {
-		s3err.WriteErrorResponse(w, s3err.ErrNotImplemented, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 		return
 	}
 
 	response, err := s3a.listFilerEntries(bucket, originalPrefix, maxKeys, marker, delimiter)
 
 	if err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 
 	if len(response.Contents) == 0 {
 		if exists, existErr := s3a.exists(s3a.option.BucketsPath, bucket, true); existErr == nil && !exists {
-			s3err.WriteErrorResponse(w, s3err.ErrNoSuchBucket, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 			return
 		}
 	}
 
-	writeSuccessResponseXML(w, response)
+	writeSuccessResponseXML(w, r, response)
 }
 
 func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, maxKeys int, marker string, delimiter string) (response ListBucketResult, err error) {
@@ -220,11 +220,15 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			err = subErr
 			return
 		}
+		counter += subCounter
 		isTruncated = isTruncated || subIsTruncated
 		maxKeys -= subCounter
 		nextMarker = subDir + "/" + subNextMarker
 		// finished processing this sub directory
 		marker = subDir
+	}
+	if maxKeys <= 0 {
+		return
 	}
 
 	// now marker is also a direct child of dir
