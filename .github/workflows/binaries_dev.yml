@@ -38,9 +38,6 @@ jobs:
       - name: Set BUILD_TIME env
         run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> ${GITHUB_ENV}
 
-      - name: disable http2 env
-        run: export GODEBUG=http2client=0
-
       - name: Go Release Binaries Large Disk
         uses: wangyoucao577/go-release-action@bugfix/upload-fail
         with:
@@ -49,7 +46,7 @@ jobs:
           goarch: ${{ matrix.goarch }}
           release_tag: dev
           overwrite: true
-          pre_command: export CGO_ENABLED=0
+          pre_command: export CGO_ENABLED=0 && GODEBUG=http2client=0
           build_flags: -tags 5BytesOffset # optional, default is
           ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
@@ -65,7 +62,7 @@ jobs:
           goarch: ${{ matrix.goarch }}
           release_tag: dev
           overwrite: true
-          pre_command: export CGO_ENABLED=0
+          pre_command: export CGO_ENABLED=0 && GODEBUG=http2client=0
           ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
           project_path: weed
@@ -96,7 +93,7 @@ jobs:
           goarch: ${{ matrix.goarch }}
           release_tag: dev
           overwrite: true
-          pre_command: export CGO_ENABLED=0
+          pre_command: export CGO_ENABLED=0 && GODEBUG=http2client=0
           build_flags: -tags 5BytesOffset # optional, default is
           ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
@@ -112,7 +109,7 @@ jobs:
           goarch: ${{ matrix.goarch }}
           release_tag: dev
           overwrite: true
-          pre_command: export CGO_ENABLED=0
+          pre_command: export CGO_ENABLED=0 && GODEBUG=http2client=0
           ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
           project_path: weed
