@@ -39,12 +39,10 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	var readInMemoryLogErr error
 
 	for {
-
 		glog.V(4).Infof("read on disk %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
-
 		processedTsNs, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn)
 		if readPersistedLogErr != nil {
-			return fmt.Errorf("reading from persisted logs: %v", readPersistedLogErr)
+			glog.V(4).Infof("read on disk %v subscribe %s from %+v: %v", clientName, req.PathPrefix, lastReadTime, readPersistedLogErr)
 		}
 
 		if processedTsNs != 0 {
@@ -66,6 +64,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			}
 			glog.Errorf("processed to %v: %v", lastReadTime, readInMemoryLogErr)
 			if readInMemoryLogErr != log_buffer.ResumeError {
+				time.Sleep(1127 * time.Millisecond)
 				break
 			}
 		}
@@ -97,24 +96,17 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	var readInMemoryLogErr error
 
 	for {
-		// println("reading from persisted logs ...")
-		glog.V(0).Infof("read on disk %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
+		glog.V(4).Infof("read on disk %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 		processedTsNs, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn)
 		if readPersistedLogErr != nil {
-			glog.V(0).Infof("read on disk %v local subscribe %s from %+v: %v", clientName, req.PathPrefix, lastReadTime, readPersistedLogErr)
-			return fmt.Errorf("reading from persisted logs: %v", readPersistedLogErr)
+			glog.V(4).Infof("read on disk %v local subscribe %s from %+v: %v", clientName, req.PathPrefix, lastReadTime, readPersistedLogErr)
 		}
 
 		if processedTsNs != 0 {
 			lastReadTime = time.Unix(0, processedTsNs)
-		} else {
-			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
-				time.Sleep(1127 * time.Millisecond)
-				continue
-			}
 		}
 
-		glog.V(0).Infof("read in memory %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
+		glog.V(4).Infof("read in memory %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
 		lastReadTime, readInMemoryLogErr = fs.filer.LocalMetaLogBuffer.LoopProcessLogData("localMeta:"+clientName, lastReadTime, func() bool {
 			fs.listenersLock.Lock()
@@ -124,14 +116,17 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
 			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
+				time.Sleep(1127 * time.Millisecond)
 				continue
 			}
 			glog.Errorf("processed to %v: %v", lastReadTime, readInMemoryLogErr)
-			time.Sleep(1127 * time.Millisecond)
 			if readInMemoryLogErr != log_buffer.ResumeError {
+				time.Sleep(1127 * time.Millisecond)
 				break
 			}
 		}
+
+		time.Sleep(1127 * time.Millisecond)
 	}
 
 	return readInMemoryLogErr
