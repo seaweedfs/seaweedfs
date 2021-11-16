@@ -73,9 +73,9 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 	var sameDcServers, otherDcServers []string
 	for _, loc := range locations {
 		if vc.DataCenter == "" || loc.DataCenter == "" || vc.DataCenter != loc.DataCenter {
-			sameDcServers = append(sameDcServers, loc.Url)
-		} else {
 			otherDcServers = append(otherDcServers, loc.Url)
+		} else {
+			sameDcServers = append(sameDcServers, loc.Url)
 		}
 	}
 	rand.Shuffle(len(sameDcServers), func(i, j int) {
