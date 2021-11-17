@@ -177,8 +177,8 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 	bucket, _ := getBucketAndObject(r)
 	glog.V(3).Infof("HeadBucketHandler %s", bucket)
 
-	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, err)
+	if entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); entry == nil || err == filer_pb.ErrNotFound {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		return
 	}
 
