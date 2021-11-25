@@ -167,6 +167,14 @@ database = 0
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
 
+[redis2_sentinel]
+enabled = false
+addresses = "172.22.12.7:26379,172.22.12.8:26379,172.22.12.9:26379"
+masterName = "master"
+username = ""
+password = ""
+database = 0
+
 [redis_cluster2]
 enabled = false
 addresses = [
