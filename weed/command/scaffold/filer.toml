@@ -169,7 +169,7 @@ superLargeDirectories = []
 
 [redis2_sentinel]
 enabled = false
-addresses = "172.22.12.7:26379,172.22.12.8:26379,172.22.12.9:26379"
+addresses = ["172.22.12.7:26379","172.22.12.8:26379","172.22.12.9:26379"]
 masterName = "master"
 username = ""
 password = ""
