@@ -199,8 +199,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				return client.WriteDirectory(dest, message.NewEntry)
 			}
 			glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
-			reader := filer.NewFileReader(filerSource, message.NewEntry)
-			remoteEntry, writeErr := client.WriteFile(dest, message.NewEntry, reader)
+			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, dest)
 			if writeErr != nil {
 				return writeErr
 			}
@@ -264,9 +263,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 						return client.UpdateFileMetadata(oldDest, message.OldEntry, message.NewEntry)
 					} else {
 						newDest := toRemoteStorageLocation(newBucket, util.NewFullPath(message.NewParentPath, message.NewEntry.Name), newRemoteStorageMountLocation)
-						reader := filer.NewFileReader(filerSource, message.NewEntry)
-						glog.V(0).Infof("create %s", remote_storage.FormatLocation(newDest))
-						remoteEntry, writeErr := client.WriteFile(newDest, message.NewEntry, reader)
+						remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, newDest)
 						if writeErr != nil {
 							return writeErr
 						}
@@ -303,9 +300,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				if message.NewEntry.IsDirectory {
 					return client.WriteDirectory(newDest, message.NewEntry)
 				}
-				reader := filer.NewFileReader(filerSource, message.NewEntry)
-				glog.V(0).Infof("create %s", remote_storage.FormatLocation(newDest))
-				remoteEntry, writeErr := client.WriteFile(newDest, message.NewEntry, reader)
+				remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, newDest)
 				if writeErr != nil {
 					return writeErr
 				}

@@ -6,7 +6,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"io"
 	"math"
-	"math/rand"
 	"net/url"
 	"strings"
 	"time"
@@ -143,9 +142,6 @@ func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, cipherKe
 	var shouldRetry bool
 	var totalWritten int
 
-	rand.Shuffle(len(urlStrings), func(i, j int) {
-		urlStrings[i], urlStrings[j] = urlStrings[j], urlStrings[i]
-	})
 	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
 		for _, urlString := range urlStrings {
 			var localProcesed int
