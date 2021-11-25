@@ -226,7 +226,7 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 		if receiveErr == io.EOF {
 			break
 		}
-		if resp.ModifiedTsNs != 0 {
+		if resp!=nil && resp.ModifiedTsNs != 0 {
 			modifiedTsNs = resp.ModifiedTsNs
 		}
 		if receiveErr != nil {

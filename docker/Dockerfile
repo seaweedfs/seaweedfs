@@ -48,6 +48,7 @@ EXPOSE 7333
 RUN mkdir -p /data/filerldb2
 
 VOLUME /data
+WORKDIR /data
 
 COPY filer.toml /etc/seaweedfs/filer.toml
 COPY entrypoint.sh /entrypoint.sh

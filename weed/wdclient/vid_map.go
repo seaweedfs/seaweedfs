@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -69,13 +70,21 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 	if !found {
 		return nil, fmt.Errorf("volume %d not found", id)
 	}
+	var sameDcServers, otherDcServers []string
 	for _, loc := range locations {
 		if vc.DataCenter == "" || loc.DataCenter == "" || vc.DataCenter != loc.DataCenter {
-			serverUrls = append(serverUrls, loc.Url)
+			otherDcServers = append(otherDcServers, loc.Url)
 		} else {
-			serverUrls = append([]string{loc.Url}, serverUrls...)
+			sameDcServers = append(sameDcServers, loc.Url)
 		}
 	}
+	rand.Shuffle(len(sameDcServers), func(i, j int) {
+		sameDcServers[i], sameDcServers[j] = sameDcServers[j], sameDcServers[i]
+	})
+	rand.Shuffle(len(otherDcServers), func(i, j int) {
+		otherDcServers[i], otherDcServers[j] = otherDcServers[j], otherDcServers[i]
+	})
+	serverUrls = append(sameDcServers, otherDcServers...)
 	return
 }
 

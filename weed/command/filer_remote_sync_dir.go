@@ -108,8 +108,7 @@ func makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, 
 				return client.WriteDirectory(dest, message.NewEntry)
 			}
 			glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
-			reader := filer.NewFileReader(filerSource, message.NewEntry)
-			remoteEntry, writeErr := client.WriteFile(dest, message.NewEntry, reader)
+			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, dest)
 			if writeErr != nil {
 				return writeErr
 			}
@@ -146,9 +145,7 @@ func makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, 
 			if err := client.DeleteFile(oldDest); err != nil {
 				return err
 			}
-			reader := filer.NewFileReader(filerSource, message.NewEntry)
-			glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
-			remoteEntry, writeErr := client.WriteFile(dest, message.NewEntry, reader)
+			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, dest)
 			if writeErr != nil {
 				return writeErr
 			}
@@ -158,6 +155,20 @@ func makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, 
 		return nil
 	}
 	return eachEntryFunc, nil
+}
+
+func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource *source.FilerSource, newEntry *filer_pb.Entry, dest *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
+	var writeErr error
+	err = util.Retry("writeFile", func() error {
+		reader := filer.NewFileReader(filerSource, newEntry)
+		glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
+		remoteEntry, writeErr = client.WriteFile(dest, newEntry, reader)
+		if writeErr != nil {
+			return writeErr
+		}
+		return nil
+	})
+	return
 }
 
 func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, mountedDir string, timeAgo time.Duration) time.Time {
