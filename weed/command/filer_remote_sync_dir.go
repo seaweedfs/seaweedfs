@@ -3,6 +3,10 @@ package command
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -13,9 +17,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
 	"google.golang.org/grpc"
-	"os"
-	"strings"
-	"time"
 )
 
 func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *source.FilerSource, mountedDir string) error {
@@ -168,6 +169,7 @@ func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource *so
 		}
 		return nil
 	})
+	glog.Errorf("write to %s: %v", dest, err)
 	return
 }
 
