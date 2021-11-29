@@ -136,6 +136,7 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 	}
 	if newEntry == nil {
 		f.DeleteChunks(oldEntry.Chunks)
+		return
 	}
 
 	var toDelete []*filer_pb.FileChunk
