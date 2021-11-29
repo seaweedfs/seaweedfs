@@ -216,11 +216,11 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(volumeIdToVInfo map[u
 			}
 			if inUseCount == 0 {
 				if err := deleteVolume(c.env.option.GrpcDialOption, needle.VolumeId(volumeId), vinfo.server); err != nil {
-					return fmt.Errorf("delete volume %d: %v\n", volumeId, err)
+					return fmt.Errorf("delete volume %d: %v", volumeId, err)
 				}
 			} else {
 				if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds, writer); err != nil {
-					return fmt.Errorf("purge for volume %d: %v\n", volumeId, err)
+					return fmt.Errorf("purge for volume %d: %v", volumeId, err)
 				}
 			}
 		}
