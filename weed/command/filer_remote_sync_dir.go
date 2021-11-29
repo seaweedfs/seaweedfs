@@ -169,7 +169,9 @@ func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource *so
 		}
 		return nil
 	})
-	glog.Errorf("write to %s: %v", dest, err)
+	if err != nil {
+		glog.Errorf("write to %s: %v", dest, err)
+	}
 	return
 }
 
