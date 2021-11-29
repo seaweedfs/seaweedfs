@@ -97,6 +97,9 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 
 	md5bytes = md5Hash.Sum(nil)
 	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
+	if replyerr != nil {
+		fs.filer.DeleteChunks(fileChunks)
+	}
 
 	return
 }
@@ -116,6 +119,9 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 
 	md5bytes = md5Hash.Sum(nil)
 	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
+	if replyerr != nil {
+		fs.filer.DeleteChunks(fileChunks)
+	}
 
 	return
 }
@@ -224,7 +230,6 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	}
 
 	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil); dbErr != nil {
-		fs.filer.DeleteChunks(fileChunks)
 		replyerr = dbErr
 		filerResult.Error = dbErr.Error()
 		glog.V(0).Infof("failing to write %s to filer server : %v", path, dbErr)
