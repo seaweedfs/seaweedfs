@@ -326,7 +326,7 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 			return false, nil
 		}
 		if err != nil {
-			return false, err
+			return true, err
 		}
 	}
 
