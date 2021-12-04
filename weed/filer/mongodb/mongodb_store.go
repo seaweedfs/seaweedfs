@@ -193,6 +193,10 @@ func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, dirPath uti
 	optLimit := int64(limit)
 	opts := &options.FindOptions{Limit: &optLimit, Sort: bson.M{"name": 1}}
 	cur, err := store.connect.Database(store.database).Collection(store.collectionName).Find(ctx, where, opts)
+	if err != nil {
+		return lastFileName, fmt.Errorf("failed to list directory entries: find error: %w", err)
+	}
+
 	for cur.Next(ctx) {
 		var data Model
 		err := cur.Decode(&data)
