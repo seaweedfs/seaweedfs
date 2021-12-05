@@ -91,7 +91,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			if len(bucketName)+5 > 63 {
 				bucketName = bucketName[:58]
 			}
-			bucketName = fmt.Sprintf("%s-%4d", bucketName, rand.Uint32()%10000)
+			bucketName = fmt.Sprintf("%s-%04d", bucketName, rand.Uint32()%10000)
 		}
 
 		glog.V(0).Infof("create bucket %s", bucketName)
