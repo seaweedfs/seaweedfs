@@ -49,6 +49,7 @@ type MasterOption struct {
 }
 
 type MasterServer struct {
+	master_pb.UnimplementedSeaweedServer
 	option *MasterOption
 	guard  *security.Guard
 
