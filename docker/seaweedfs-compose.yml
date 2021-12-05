@@ -28,16 +28,6 @@ services:
     depends_on:
       - master
       - volume
-  cronjob:
-    image: chrislusf/seaweedfs # use a remote image
-    command: 'cronjob'
-    environment:
-      # Run re-replication every 2 minutes
-      CRON_SCHEDULE: '*/2 * * * * *' # Default: '*/5 * * * * *'
-      WEED_MASTER: master:9333 # Default: localhost:9333
-    depends_on:
-      - master
-      - volume
   s3:
     image: chrislusf/seaweedfs # use a remote image
     ports:

@@ -429,22 +429,6 @@ s3:
     size: ""
     storageClass: ""
 
-cronjob:
-  enabled: true
-  master: "seaweedfs-master:9333"
-  filer: "seaweedfs-filer-client:8888"
-  tolerations: ""
-  nodeSelector: |
-    sw-backend: "true"
-  replication:
-    enable: true
-    collectionPattern: ""
-  schedule: "*/7 * * * *"
-  resources: null
-  # balance all volumes among volume servers
-  # ALL|EACH_COLLECTION|<collection_name>
-  collection: ""
-
 
 certificates:
   commonName: "SeaweedFS CA"
