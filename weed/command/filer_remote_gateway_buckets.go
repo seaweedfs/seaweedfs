@@ -86,28 +86,32 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				return nil
 			}
 		}
-		if *option.createBucketRandomSuffix {
-			// https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
-			if len(bucketName)+5 > 63 {
-				bucketName = bucketName[:58]
+
+		bucketPath := util.FullPath(option.bucketsDir).Child(entry.Name)
+		remoteLocation, found := option.mappings.Mappings[string(bucketPath)]
+		if !found {
+			if *option.createBucketRandomSuffix {
+				// https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
+				if len(bucketName)+5 > 63 {
+					bucketName = bucketName[:58]
+				}
+				bucketName = fmt.Sprintf("%s-%04d", bucketName, rand.Uint32()%10000)
 			}
-			bucketName = fmt.Sprintf("%s-%04d", bucketName, rand.Uint32()%10000)
+			remoteLocation = &remote_pb.RemoteStorageLocation{
+				Name:   *option.createBucketAt,
+				Bucket: bucketName,
+				Path:   "/",
+			}
+			// need to add new mapping here before getting updates from metadata tailing
+			option.mappings.Mappings[string(bucketPath)] = remoteLocation
+		} else {
+			bucketName = remoteLocation.Bucket
 		}
 
 		glog.V(0).Infof("create bucket %s", bucketName)
 		if err := client.CreateBucket(bucketName); err != nil {
 			return fmt.Errorf("create bucket %s in %s: %v", bucketName, remoteConf.Name, err)
 		}
-
-		bucketPath := util.FullPath(option.bucketsDir).Child(entry.Name)
-		remoteLocation := &remote_pb.RemoteStorageLocation{
-			Name:   *option.createBucketAt,
-			Bucket: bucketName,
-			Path:   "/",
-		}
-
-		// need to add new mapping here before getting upates from metadata tailing
-		option.mappings.Mappings[string(bucketPath)] = remoteLocation
 
 		return filer.InsertMountMapping(option, string(bucketPath), remoteLocation)
 
