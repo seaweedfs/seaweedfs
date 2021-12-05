@@ -83,6 +83,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 
 	if alreadyHasSuperBlock {
 		err = v.readSuperBlock()
+		if err == nil {
+			v.volumeInfo.Version = uint32(v.SuperBlock.Version)
+		}
 		glog.V(0).Infof("readSuperBlock volume %d version %v", v.Id, v.SuperBlock.Version)
 		if v.HasRemoteFile() {
 			// maybe temporary network problem
