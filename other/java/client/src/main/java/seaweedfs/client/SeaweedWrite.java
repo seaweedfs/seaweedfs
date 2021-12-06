@@ -29,6 +29,8 @@ public class SeaweedWrite {
                                  final byte[] bytes,
                                  final long bytesOffset, final long bytesLength,
                                  final String path) throws IOException {
+
+        IOException lastException = null;
         for (long waitTime = 1000L; waitTime < 10 * 1000; waitTime += waitTime / 2) {
             try {
                 FilerProto.FileChunk.Builder chunkBuilder = writeChunk(
