@@ -261,8 +261,8 @@ func (ms *MasterServer) startAdminScripts() {
 	go func() {
 		commandEnv.MasterClient.WaitUntilConnected()
 
-		c := time.Tick(time.Duration(sleepMinutes) * time.Minute)
-		for range c {
+		for {
+			time.Sleep(time.Duration(sleepMinutes) * time.Minute)
 			if ms.Topo.IsLeader() {
 				for _, line := range scriptLines {
 					for _, c := range strings.Split(line, ";") {
