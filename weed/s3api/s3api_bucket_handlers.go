@@ -78,7 +78,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, _ := getBucketAndObject(r)
+	bucket, _ := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("PutBucketHandler %s", bucket)
 
 	// avoid duplicated buckets
@@ -133,13 +133,12 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-
 	writeSuccessResponseEmpty(w, r)
 }
 
 func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, _ := getBucketAndObject(r)
+	bucket, _ := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteBucketHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
@@ -174,7 +173,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, _ := getBucketAndObject(r)
+	bucket, _ := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadBucketHandler %s", bucket)
 
 	if entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); entry == nil || err == filer_pb.ErrNotFound {
@@ -219,7 +218,7 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketAcl.html
 func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Request) {
 	// collect parameters
-	bucket, _ := getBucketAndObject(r)
+	bucket, _ := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("GetBucketAclHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
@@ -259,7 +258,7 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketLifecycleConfiguration.html
 func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWriter, r *http.Request) {
 	// collect parameters
-	bucket, _ := getBucketAndObject(r)
+	bucket, _ := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("GetBucketAclHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {

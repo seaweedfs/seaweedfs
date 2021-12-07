@@ -3,6 +3,7 @@ package s3api
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 	"net/http"
@@ -16,7 +17,7 @@ import (
 
 func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request) {
 
-	dstBucket, dstObject := getBucketAndObject(r)
+	dstBucket, dstObject := xhttp.GetBucketAndObject(r)
 
 	// Copy source path.
 	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
@@ -116,7 +117,7 @@ type CopyPartResult struct {
 func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Request) {
 	// https://docs.aws.amazon.com/AmazonS3/latest/dev/CopyingObjctsUsingRESTMPUapi.html
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
-	dstBucket, _ := getBucketAndObject(r)
+	dstBucket, _ := xhttp.GetBucketAndObject(r)
 
 	// Copy source path.
 	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))

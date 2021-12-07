@@ -25,6 +25,7 @@ func WriteXMLResponse(w http.ResponseWriter, r *http.Request, statusCode int, re
 
 func WriteEmptyResponse(w http.ResponseWriter, r *http.Request, statusCode int) {
 	WriteResponse(w, r, statusCode, []byte{}, mimeNone)
+	PostLog(r, ErrNone)
 }
 
 func WriteErrorResponse(w http.ResponseWriter, r *http.Request, errorCode ErrorCode) {
@@ -39,6 +40,7 @@ func WriteErrorResponse(w http.ResponseWriter, r *http.Request, errorCode ErrorC
 	errorResponse := getRESTErrorResponse(apiError, r.URL.Path, bucket, object)
 	encodedErrorResponse := EncodeXMLResponse(errorResponse)
 	WriteResponse(w, r, apiError.HTTPStatusCode, encodedErrorResponse, MimeXML)
+	PostLog(r, errorCode)
 }
 
 func getRESTErrorResponse(err APIError, resource string, bucket, object string) RESTErrorResponse {
