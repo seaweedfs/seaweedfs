@@ -3,6 +3,7 @@ package s3api
 import (
 	"encoding/xml"
 	"fmt"
+	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"io"
 	"net/http"
 
@@ -16,7 +17,7 @@ import (
 // API reference: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectTagging.html
 func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, object := getBucketAndObject(r)
+	bucket, object := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectTaggingHandler %s %s", bucket, object)
 
 	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
@@ -42,7 +43,7 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 // API reference: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectTagging.html
 func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, object := getBucketAndObject(r)
+	bucket, object := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("PutObjectTaggingHandler %s %s", bucket, object)
 
 	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
@@ -91,14 +92,14 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 	}
 
 	w.WriteHeader(http.StatusOK)
-
+	s3err.PostLog(r, http.StatusOK, s3err.ErrNone)
 }
 
 // DeleteObjectTaggingHandler Delete object tagging
 // API reference: https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjectTagging.html
 func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, object := getBucketAndObject(r)
+	bucket, object := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteObjectTaggingHandler %s %s", bucket, object)
 
 	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
@@ -117,4 +118,5 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+	s3err.PostLog(r, http.StatusNoContent, s3err.ErrNone)
 }

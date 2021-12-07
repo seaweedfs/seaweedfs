@@ -236,7 +236,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 
 	glog.V(3).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
 
-	bucket, _ := getBucketAndObject(r)
+	bucket, _ := xhttp.GetBucketAndObject(r)
 
 	if !identity.canDo(action, bucket) {
 		return identity, s3err.ErrAccessDenied

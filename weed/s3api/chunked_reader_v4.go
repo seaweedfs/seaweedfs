@@ -24,6 +24,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"hash"
 	"io"
@@ -90,7 +91,7 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 		return nil, "", "", time.Time{}, s3err.ErrInvalidAccessKeyID
 	}
 
-	bucket, _ := getBucketAndObject(r)
+	bucket, _ := xhttp.GetBucketAndObject(r)
 	if !identity.canDo("Write", bucket) {
 		errCode = s3err.ErrAccessDenied
 		return

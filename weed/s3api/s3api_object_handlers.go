@@ -16,9 +16,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/pquerna/cachecontrol/cacheobject"
 
+	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
-
-	"github.com/gorilla/mux"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -51,7 +50,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	// http://docs.aws.amazon.com/AmazonS3/latest/dev/UploadingObjects.html
 
-	bucket, object := getBucketAndObject(r)
+	bucket, object := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("PutObjectHandler %s %s", bucket, object)
 
 	_, err := validateContentMd5(r.Header)
@@ -133,7 +132,7 @@ func urlPathEscape(object string) string {
 
 func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, object := getBucketAndObject(r)
+	bucket, object := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
 
 	if strings.HasSuffix(r.URL.Path, "/") {
@@ -145,34 +144,34 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
 
 	s3a.proxyToFiler(w, r, destUrl, passThroughResponse)
-
 }
 
 func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, object := getBucketAndObject(r)
+	bucket, object := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadObjectHandler %s %s", bucket, object)
 
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
 
 	s3a.proxyToFiler(w, r, destUrl, passThroughResponse)
-
 }
 
 func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, object := getBucketAndObject(r)
+	bucket, object := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteObjectHandler %s %s", bucket, object)
 
 	destUrl := fmt.Sprintf("http://%s%s/%s%s?recursive=true",
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
 
-	s3a.proxyToFiler(w, r, destUrl, func(proxyResponse *http.Response, w http.ResponseWriter) {
+	s3a.proxyToFiler(w, r, destUrl, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int) {
+		statusCode = http.StatusNoContent
 		for k, v := range proxyResponse.Header {
 			w.Header()[k] = v
 		}
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(statusCode)
+		return statusCode
 	})
 }
 
@@ -210,7 +209,7 @@ type DeleteObjectsResponse struct {
 // DeleteMultipleObjectsHandler - Delete multiple objects
 func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, _ := getBucketAndObject(r)
+	bucket, _ := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteMultipleObjectsHandler %s", bucket)
 
 	deleteXMLBytes, err := io.ReadAll(r.Body)
@@ -227,14 +226,17 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 	var deletedObjects []ObjectIdentifier
 	var deleteErrors []DeleteError
+	var auditLog *s3err.AccessLog
 
 	directoriesWithDeletion := make(map[string]int)
 
+	if s3err.Logger != nil {
+		auditLog = s3err.GetAccessLog(r, http.StatusNoContent, s3err.ErrNone)
+	}
 	s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 
 		// delete file entries
 		for _, object := range deleteObjects.Objects {
-
 			lastSeparator := strings.LastIndex(object.ObjectName, "/")
 			parentDirectoryPath, entryName, isDeleteData, isRecursive := "", object.ObjectName, true, false
 			if lastSeparator > 0 && lastSeparator+1 < len(object.ObjectName) {
@@ -256,6 +258,10 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 					Message: err.Error(),
 					Key:     object.ObjectName,
 				})
+			}
+			if auditLog != nil {
+				auditLog.Key = entryName
+				s3err.PostAccessLog(auditLog)
 			}
 		}
 
@@ -309,7 +315,7 @@ var passThroughHeaders = []string{
 	"response-expires",
 }
 
-func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, responseFn func(proxyResponse *http.Response, w http.ResponseWriter)) {
+func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, responseFn func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int)) {
 
 	glog.V(3).Infof("s3 proxying %s to %s", r.Method, destUrl)
 
@@ -363,20 +369,23 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		}
 	}
 
-	responseFn(resp, w)
-
+	responseStatusCode := responseFn(resp, w)
+	s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
 }
 
-func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) {
+func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int) {
 	for k, v := range proxyResponse.Header {
 		w.Header()[k] = v
 	}
 	if proxyResponse.Header.Get("Content-Range") != "" && proxyResponse.StatusCode == 200 {
 		w.WriteHeader(http.StatusPartialContent)
+		statusCode = http.StatusPartialContent
 	} else {
-		w.WriteHeader(proxyResponse.StatusCode)
+		statusCode = proxyResponse.StatusCode
 	}
+	w.WriteHeader(statusCode)
 	io.Copy(w, proxyResponse.Body)
+	return statusCode
 }
 
 func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader) (etag string, code s3err.ErrorCode) {
@@ -436,17 +445,6 @@ func setEtag(w http.ResponseWriter, etag string) {
 			w.Header().Set("ETag", "\""+etag+"\"")
 		}
 	}
-}
-
-func getBucketAndObject(r *http.Request) (bucket, object string) {
-	vars := mux.Vars(r)
-	bucket = vars["bucket"]
-	object = vars["object"]
-	if !strings.HasPrefix(object, "/") {
-		object = "/" + object
-	}
-
-	return
 }
 
 func filerErrorToS3Error(errString string) s3err.ErrorCode {
