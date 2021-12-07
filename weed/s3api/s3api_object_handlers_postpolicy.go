@@ -142,7 +142,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 			Location: w.Header().Get("Location"),
 		}
 		s3err.WriteXMLResponse(w, r, http.StatusCreated, resp)
-		s3err.PostLog(r, s3err.ErrNone)
+		s3err.PostLog(r, http.StatusCreated, s3err.ErrNone)
 	case "200":
 		s3err.WriteEmptyResponse(w, r, http.StatusOK)
 	default:

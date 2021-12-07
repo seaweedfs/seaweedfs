@@ -92,7 +92,7 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 	}
 
 	w.WriteHeader(http.StatusOK)
-	s3err.PostLog(r, s3err.ErrNone)
+	s3err.PostLog(r, http.StatusOK, s3err.ErrNone)
 }
 
 // DeleteObjectTaggingHandler Delete object tagging
@@ -118,5 +118,5 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 	}
 
 	w.WriteHeader(http.StatusNoContent)
-	s3err.PostLog(r, s3err.ErrNone)
+	s3err.PostLog(r, http.StatusNoContent, s3err.ErrNone)
 }
