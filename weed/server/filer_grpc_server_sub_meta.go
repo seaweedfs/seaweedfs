@@ -64,15 +64,18 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			}
 			glog.Errorf("processed to %v: %v", lastReadTime, readInMemoryLogErr)
 			if readInMemoryLogErr != log_buffer.ResumeError {
-				time.Sleep(1127 * time.Millisecond)
-				break
+				// Force a progression to avoid infinite loop
+				time.Sleep(10 * time.Millisecond)
+				lastReadTime = lastReadTime.Add(10 * time.Millisecond)
+				continue
 			}
 		}
 
 		time.Sleep(1127 * time.Millisecond)
 	}
 
-	return readInMemoryLogErr
+	// Don't close connection to avoid multiple parallel reconnections
+	// return readInMemoryLogErr
 
 }
 
