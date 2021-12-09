@@ -198,6 +198,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	if len(*s3opt.auditLogConfig) > 0 {
 		s3err.InitAuditLog(*s3opt.auditLogConfig)
 	}
+	defer s3err.Logger.Close()
 
 	if *s3opt.tlsPrivateKey != "" {
 		glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
