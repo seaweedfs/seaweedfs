@@ -159,7 +159,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	}
 	if stream != nil {
 		if err := stream.Send(&filer_pb.StreamRenameEntryResponse{
-			Directory: string(newParent),
+			Directory: string(oldParent),
 			EventNotification: &filer_pb.EventNotification{
 				OldEntry: &filer_pb.Entry{
 					Name: entry.Name(),
