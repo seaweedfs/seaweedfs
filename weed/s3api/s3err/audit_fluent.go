@@ -48,10 +48,9 @@ type AccessLogHTTP struct {
 const tag = "s3.access"
 
 var (
-	Logger       *fluent.Fluent
-	hostname     = os.Getenv("HOSTNAME")
-	environment  = os.Getenv("ENVIRONMENT")
-	fluentConfig *fluent.Config
+	Logger      *fluent.Fluent
+	hostname    = os.Getenv("HOSTNAME")
+	environment = os.Getenv("ENVIRONMENT")
 )
 
 func InitAuditLog(config string) {
@@ -60,8 +59,9 @@ func InitAuditLog(config string) {
 		glog.Errorf("fail to read fluent config %s : %v", config, readErr)
 		return
 	}
+	fluentConfig := &fluent.Config{}
 	if err := json.Unmarshal(configContent, fluentConfig); err != nil {
-		glog.Errorf("fail to parse fluent config %s : %v", config, err)
+		glog.Errorf("fail to parse fluent config %s : %v", string(configContent), err)
 		return
 	}
 	if len(fluentConfig.TagPrefix) == 0 && len(environment) > 0 {
@@ -142,18 +142,19 @@ func GetAccessLog(r *http.Request, HTTPStatusCode int, s3errCode ErrorCode) *Acc
 		hostHeader = r.Host
 	}
 	return &AccessLog{
-		HostHeader: hostHeader,
-		RequestID:  r.Header.Get("X-Request-ID"),
-		RemoteIP:   remoteIP,
-		Requester:  r.Header.Get(xhttp.AmzIdentityId),
-		UserAgent:  r.Header.Get("user-agent"),
-		HostId:     hostname,
-		Bucket:     bucket,
-		HTTPStatus: HTTPStatusCode,
-		Time:       time.Now().Unix(),
-		Key:        key,
-		Operation:  getOperation(key, r),
-		ErrorCode:  errorCode,
+		HostHeader:       hostHeader,
+		RequestID:        r.Header.Get("X-Request-ID"),
+		RemoteIP:         remoteIP,
+		Requester:        r.Header.Get(xhttp.AmzIdentityId),
+		SignatureVersion: r.Header.Get(xhttp.AmzAuthType),
+		UserAgent:        r.Header.Get("user-agent"),
+		HostId:           hostname,
+		Bucket:           bucket,
+		HTTPStatus:       HTTPStatusCode,
+		Time:             time.Now().Unix(),
+		Key:              key,
+		Operation:        getOperation(key, r),
+		ErrorCode:        errorCode,
 	}
 }
 
