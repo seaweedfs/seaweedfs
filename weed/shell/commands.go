@@ -70,11 +70,12 @@ func (ce *CommandEnv) isDirectory(path string) bool {
 
 }
 
-func (ce *CommandEnv) confirmIsLocked() error {
+func (ce *CommandEnv) confirmIsLocked(args []string) error {
 
 	if ce.locker.IsLocking() {
 		return nil
 	}
+	ce.locker.SetMessage(fmt.Sprintf("%v", args))
 
 	return fmt.Errorf("need to run \"lock\" first to continue")
 

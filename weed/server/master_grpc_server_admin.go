@@ -62,6 +62,7 @@ type AdminLock struct {
 	accessSecret   int64
 	accessLockTime time.Time
 	lastClient     string
+	lastMessage    string
 }
 
 type AdminLocks struct {
@@ -75,15 +76,15 @@ func NewAdminLocks() *AdminLocks {
 	}
 }
 
-func (locks *AdminLocks) isLocked(lockName string) (clientName string, isLocked bool) {
+func (locks *AdminLocks) isLocked(lockName string) (clientName string, message string, isLocked bool) {
 	locks.RLock()
 	defer locks.RUnlock()
 	adminLock, found := locks.locks[lockName]
 	if !found {
-		return "", false
+		return "", "", false
 	}
-	glog.V(4).Infof("isLocked %v", adminLock.lastClient)
-	return adminLock.lastClient, adminLock.accessLockTime.Add(LockDuration).After(time.Now())
+	glog.V(4).Infof("isLocked %v: %v", adminLock.lastClient, adminLock.lastMessage)
+	return adminLock.lastClient, adminLock.lastMessage, adminLock.accessLockTime.Add(LockDuration).After(time.Now())
 }
 
 func (locks *AdminLocks) isValidToken(lockName string, ts time.Time, token int64) bool {
@@ -117,7 +118,7 @@ func (locks *AdminLocks) deleteLock(lockName string) {
 func (ms *MasterServer) LeaseAdminToken(ctx context.Context, req *master_pb.LeaseAdminTokenRequest) (*master_pb.LeaseAdminTokenResponse, error) {
 	resp := &master_pb.LeaseAdminTokenResponse{}
 
-	if lastClient, isLocked := ms.adminLocks.isLocked(req.LockName); isLocked {
+	if lastClient, lastMessage, isLocked := ms.adminLocks.isLocked(req.LockName); isLocked {
 		glog.V(4).Infof("LeaseAdminToken %v", lastClient)
 		if req.PreviousToken != 0 && ms.adminLocks.isValidToken(req.LockName, time.Unix(0, req.PreviousLockTime), req.PreviousToken) {
 			// for renew
@@ -126,7 +127,7 @@ func (ms *MasterServer) LeaseAdminToken(ctx context.Context, req *master_pb.Leas
 			return resp, nil
 		}
 		// refuse since still locked
-		return resp, fmt.Errorf("already locked by " + lastClient)
+		return resp, fmt.Errorf("already locked by %v: %v", lastClient, lastMessage)
 	}
 	// for fresh lease request
 	ts, token := ms.adminLocks.generateToken(req.LockName, req.ClientName)
