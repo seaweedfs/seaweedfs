@@ -67,6 +67,12 @@ func InitAuditLog(config string) {
 	if len(fluentConfig.TagPrefix) == 0 && len(environment) > 0 {
 		fluentConfig.TagPrefix = environment
 	}
+	fluentConfig.Async = true
+	fluentConfig.AsyncResultCallback = func(data []byte, err error) {
+		if err != nil {
+			glog.Warning("Error while posting log: ", err)
+		}
+	}
 	var err error
 	Logger, err = fluent.New(*fluentConfig)
 	if err != nil {
@@ -162,11 +168,9 @@ func PostLog(r *http.Request, HTTPStatusCode int, errorCode ErrorCode) {
 	if Logger == nil {
 		return
 	}
-	go func(log *AccessLog) {
-		if err := Logger.Post(tag, *log); err != nil {
-			glog.Warning("Error while posting log: ", err)
-		}
-	}(GetAccessLog(r, HTTPStatusCode, errorCode))
+	if err := Logger.Post(tag, *GetAccessLog(r, HTTPStatusCode, errorCode)); err != nil {
+		glog.Warning("Error while posting log: ", err)
+	}
 }
 
 func PostAccessLog(log AccessLog) {
