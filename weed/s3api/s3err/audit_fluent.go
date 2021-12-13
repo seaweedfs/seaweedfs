@@ -48,23 +48,35 @@ type AccessLogHTTP struct {
 const tag = "s3.access"
 
 var (
-	Logger   *fluent.Fluent
-	hostname = os.Getenv("HOSTNAME")
+	Logger      *fluent.Fluent
+	hostname    = os.Getenv("HOSTNAME")
+	environment = os.Getenv("ENVIRONMENT")
 )
 
 func InitAuditLog(config string) {
 	configContent, readErr := os.ReadFile(config)
 	if readErr != nil {
-		glog.Fatalf("fail to read fluent config %s : %v", config, readErr)
+		glog.Errorf("fail to read fluent config %s : %v", config, readErr)
+		return
 	}
-	var fluentConfig fluent.Config
-	if err := json.Unmarshal(configContent, &fluentConfig); err != nil {
-		glog.Fatalf("fail to parse fluent config %s : %v", config, err)
+	fluentConfig := &fluent.Config{}
+	if err := json.Unmarshal(configContent, fluentConfig); err != nil {
+		glog.Errorf("fail to parse fluent config %s : %v", string(configContent), err)
+		return
+	}
+	if len(fluentConfig.TagPrefix) == 0 && len(environment) > 0 {
+		fluentConfig.TagPrefix = environment
+	}
+	fluentConfig.Async = true
+	fluentConfig.AsyncResultCallback = func(data []byte, err error) {
+		if err != nil {
+			glog.Warning("Error while posting log: ", err)
+		}
 	}
 	var err error
-	Logger, err = fluent.New(fluentConfig)
+	Logger, err = fluent.New(*fluentConfig)
 	if err != nil {
-		glog.Fatalf("fail to load fluent config: %v", err)
+		glog.Errorf("fail to load fluent config: %v", err)
 	}
 }
 
@@ -131,23 +143,24 @@ func GetAccessLog(r *http.Request, HTTPStatusCode int, s3errCode ErrorCode) *Acc
 	if len(remoteIP) == 0 {
 		remoteIP = r.RemoteAddr
 	}
-	hostHeader := r.Header.Get("Host")
+	hostHeader := r.Header.Get("X-Forwarded-Host")
 	if len(hostHeader) == 0 {
-		hostHeader = r.URL.Hostname()
+		hostHeader = r.Host
 	}
 	return &AccessLog{
-		HostHeader: hostHeader,
-		RequestID:  r.Header.Get("X-Request-ID"),
-		RemoteIP:   remoteIP,
-		Requester:  r.Header.Get(xhttp.AmzIdentityId),
-		UserAgent:  r.Header.Get("UserAgent"),
-		HostId:     hostname,
-		Bucket:     bucket,
-		HTTPStatus: HTTPStatusCode,
-		Time:       time.Now().Unix(),
-		Key:        key,
-		Operation:  getOperation(key, r),
-		ErrorCode:  errorCode,
+		HostHeader:       hostHeader,
+		RequestID:        r.Header.Get("X-Request-ID"),
+		RemoteIP:         remoteIP,
+		Requester:        r.Header.Get(xhttp.AmzIdentityId),
+		SignatureVersion: r.Header.Get(xhttp.AmzAuthType),
+		UserAgent:        r.Header.Get("user-agent"),
+		HostId:           hostname,
+		Bucket:           bucket,
+		HTTPStatus:       HTTPStatusCode,
+		Time:             time.Now().Unix(),
+		Key:              key,
+		Operation:        getOperation(key, r),
+		ErrorCode:        errorCode,
 	}
 }
 
@@ -160,11 +173,11 @@ func PostLog(r *http.Request, HTTPStatusCode int, errorCode ErrorCode) {
 	}
 }
 
-func PostAccessLog(log *AccessLog) {
-	if Logger == nil || log == nil {
+func PostAccessLog(log AccessLog) {
+	if Logger == nil || len(log.Key) == 0 {
 		return
 	}
-	if err := Logger.Post(tag, *log); err != nil {
+	if err := Logger.Post(tag, log); err != nil {
 		glog.Warning("Error while posting log: ", err)
 	}
 }

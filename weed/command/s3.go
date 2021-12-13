@@ -197,6 +197,9 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	if len(*s3opt.auditLogConfig) > 0 {
 		s3err.InitAuditLog(*s3opt.auditLogConfig)
+		if s3err.Logger != nil {
+			defer s3err.Logger.Close()
+		}
 	}
 
 	if *s3opt.tlsPrivateKey != "" {
