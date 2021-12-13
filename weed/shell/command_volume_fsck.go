@@ -212,7 +212,8 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(volumeIdToVInfo map[u
 
 		if *applyPurging && len(orphanFileIds) > 0 {
 			if vinfo.isEcVolume {
-				fmt.Fprintf(writer, "Skip purging for Erasure Coded volumes.\n")
+				fmt.Fprintf(writer, "Skip purging for Erasure Coded volume %d.\n", volumeId)
+				continue
 			}
 			if inUseCount == 0 {
 				if err := deleteVolume(c.env.option.GrpcDialOption, needle.VolumeId(volumeId), vinfo.server); err != nil {
