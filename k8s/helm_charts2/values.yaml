@@ -273,9 +273,6 @@ filer:
   # Limit sub dir listing size (default 100000)
   dirListLimit: 100000
 
-  # Turn off directory listing
-  disableDirListing: false
-
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
 
@@ -378,6 +375,7 @@ filer:
     # enable user & permission to s3 (need to inject to all services)
     enableAuth: false
     skipAuthSecretCreation: false
+    auditLogConfig: {}
 
 s3:
   enabled: false
@@ -394,6 +392,7 @@ s3:
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
   skipAuthSecretCreation: false
+  auditLogConfig: {}
 
   # Suffix of the host name, {bucket}.{domainName}
   domainName: ""
