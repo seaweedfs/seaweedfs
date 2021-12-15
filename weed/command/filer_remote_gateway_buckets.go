@@ -181,6 +181,9 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			if message.NewParentPath == option.bucketsDir {
 				return handleCreateBucket(message.NewEntry)
 			}
+			if strings.HasPrefix(message.NewParentPath, option.bucketsDir) && strings.Contains(message.NewParentPath, "/.uploads/") {
+				return nil
+			}
 			if !filer.HasData(message.NewEntry) {
 				return nil
 			}
