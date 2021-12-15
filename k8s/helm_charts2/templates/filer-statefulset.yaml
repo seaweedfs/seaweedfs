@@ -149,6 +149,9 @@ spec:
               {{- if .Values.filer.s3.enableAuth }}
               -s3.config=/etc/sw/seaweedfs_s3_config \
               {{- end }}
+              {{- if .Values.filer.s3.auditLogConfig }}
+              -s3.auditLogConfig=/etc/sw/filer_s3_auditLogConfig.json \
+              {{- end }}
               {{- end }}
               -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
           {{- if or (.Values.global.enableSecurity) (.Values.filer.extraVolumeMounts) }}    
