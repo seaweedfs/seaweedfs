@@ -52,3 +52,12 @@ func GetBucketAndObject(r *http.Request) (bucket, object string) {
 
 	return
 }
+
+var PassThroughHeaders = map[string]string{
+	"response-cache-control":       "Cache-Control",
+	"response-content-disposition": "Content-Disposition",
+	"response-content-encoding":    "Content-Encoding",
+	"response-content-language":    "Content-Language",
+	"response-content-type":        "Content-Type",
+	"response-expires":             "Expires",
+}

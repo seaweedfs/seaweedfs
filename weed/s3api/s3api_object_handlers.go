@@ -306,15 +306,6 @@ func (s3a *S3ApiServer) doDeleteEmptyDirectories(client filer_pb.SeaweedFilerCli
 	return
 }
 
-var passThroughHeaders = []string{
-	"response-cache-control",
-	"response-content-disposition",
-	"response-content-encoding",
-	"response-content-language",
-	"response-content-type",
-	"response-expires",
-}
-
 func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, responseFn func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int)) {
 
 	glog.V(3).Infof("s3 proxying %s to %s", r.Method, destUrl)
@@ -328,24 +319,13 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	}
 
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
-
+	for k, v := range r.URL.Query() {
+		if _, ok := xhttp.PassThroughHeaders[strings.ToLower(k)]; ok {
+			proxyReq.Header[k] = v
+		}
+	}
 	for header, values := range r.Header {
-		// handle s3 related headers
-		passed := false
-		for _, h := range passThroughHeaders {
-			if strings.ToLower(header) == h && len(values) > 0 {
-				proxyReq.Header.Add(header[len("response-"):], values[0])
-				passed = true
-				break
-			}
-		}
-		if passed {
-			continue
-		}
-		// handle other headers
-		for _, value := range values {
-			proxyReq.Header.Add(header, value)
-		}
+		proxyReq.Header[header] = values
 	}
 
 	resp, postErr := client.Do(proxyReq)
