@@ -501,7 +501,7 @@ git clone https://github.com/chrislusf/seaweedfs.git
 Step 3: download, compile, and install the project by executing the following command
 
 ```bash
-make install
+cd seaweedfs/weed && make install
 ```
 
 Once this is done, you will find the executable "weed" in your `$GOPATH/bin` directory
