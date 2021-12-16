@@ -334,12 +334,12 @@ func (l *DiskLocation) Close() {
 }
 
 func (l *DiskLocation) LocateVolume(vid needle.VolumeId) (os.DirEntry, bool) {
-	println("LocateVolume", vid, "on", l.Directory)
+	// println("LocateVolume", vid, "on", l.Directory)
 	if dirEntries, err := os.ReadDir(l.Directory); err == nil {
 		for _, entry := range dirEntries {
-			println("checking", entry.Name(), "...")
+			// println("checking", entry.Name(), "...")
 			volId, _, err := volumeIdFromFileName(entry.Name())
-			println("volId", volId, "err", err)
+			// println("volId", volId, "err", err)
 			if vid == volId && err == nil {
 				return entry, true
 			}
