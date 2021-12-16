@@ -66,7 +66,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		return nil
 	}
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
+	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
 
@@ -180,7 +180,6 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(volumeIdToServer map[uint
 		return nil
 	})
 
-	return nil
 }
 
 func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInfo map[uint32]VInfo, tempFolder string, writer io.Writer, verbose bool, applyPurging *bool) error {
@@ -213,15 +212,16 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(volumeIdToVInfo map[u
 
 		if *applyPurging && len(orphanFileIds) > 0 {
 			if vinfo.isEcVolume {
-				fmt.Fprintf(writer, "Skip purging for Erasure Coded volumes.\n")
+				fmt.Fprintf(writer, "Skip purging for Erasure Coded volume %d.\n", volumeId)
+				continue
 			}
 			if inUseCount == 0 {
 				if err := deleteVolume(c.env.option.GrpcDialOption, needle.VolumeId(volumeId), vinfo.server); err != nil {
-					return fmt.Errorf("delete volume %d: %v\n", volumeId, err)
+					return fmt.Errorf("delete volume %d: %v", volumeId, err)
 				}
 			} else {
 				if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds, writer); err != nil {
-					return fmt.Errorf("purge for volume %d: %v\n", volumeId, err)
+					return fmt.Errorf("purge for volume %d: %v", volumeId, err)
 				}
 			}
 		}

@@ -45,7 +45,7 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 		return nil
 	}
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
+	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
 

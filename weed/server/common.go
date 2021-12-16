@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"io"
 	"io/fs"
 	"mime/multipart"
@@ -250,13 +251,16 @@ func handleStaticResources2(r *mux.Router) {
 	r.PathPrefix("/seaweedfsstatic/").Handler(http.StripPrefix("/seaweedfsstatic", http.FileServer(http.FS(StaticFS))))
 }
 
-func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, filename string) {
-	responseContentDisposition := r.FormValue("response-content-disposition")
-	if responseContentDisposition != "" {
-		w.Header().Set("Content-Disposition", responseContentDisposition)
-		return
+func adjustPassthroughHeaders(w http.ResponseWriter, r *http.Request, filename string) {
+	for header, values := range r.Header {
+		if normalizedHeader, ok := xhttp.PassThroughHeaders[strings.ToLower(header)]; ok {
+			w.Header()[normalizedHeader] = values
+		}
 	}
-	if w.Header().Get("Content-Disposition") != "" {
+	adjustHeaderContentDisposition(w, r, filename)
+}
+func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, filename string) {
+	if contentDisposition := w.Header().Get("Content-Disposition"); contentDisposition != "" {
 		return
 	}
 	if filename != "" {

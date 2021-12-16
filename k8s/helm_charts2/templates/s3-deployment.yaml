@@ -93,6 +93,9 @@ spec:
               {{- if .Values.s3.enableAuth }}
               -config=/etc/sw/seaweedfs_s3_config \
               {{- end }}
+              {{- if .Values.s3.auditLogConfig }}
+              -auditLogConfig=/etc/sw/s3_auditLogConfig.json \
+              {{- end }}
               -filer={{ template "seaweedfs.name" . }}-filer-client:{{ .Values.filer.port }}
           volumeMounts:
             - name: logs

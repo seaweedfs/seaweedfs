@@ -16,6 +16,12 @@
 
 package http
 
+import (
+	"github.com/gorilla/mux"
+	"net/http"
+	"strings"
+)
+
 // Standard S3 HTTP request constants
 const (
 	// S3 storage class
@@ -32,5 +38,26 @@ const (
 // Non-Standard S3 HTTP request constants
 const (
 	AmzIdentityId = "s3-identity-id"
+	AmzAuthType   = "s3-auth-type"
 	AmzIsAdmin    = "s3-is-admin" // only set to http request header as a context
 )
+
+func GetBucketAndObject(r *http.Request) (bucket, object string) {
+	vars := mux.Vars(r)
+	bucket = vars["bucket"]
+	object = vars["object"]
+	if !strings.HasPrefix(object, "/") {
+		object = "/" + object
+	}
+
+	return
+}
+
+var PassThroughHeaders = map[string]string{
+	"response-cache-control":       "Cache-Control",
+	"response-content-disposition": "Content-Disposition",
+	"response-content-encoding":    "Content-Encoding",
+	"response-content-language":    "Content-Language",
+	"response-content-type":        "Content-Type",
+	"response-expires":             "Expires",
+}

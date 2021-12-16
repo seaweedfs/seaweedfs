@@ -84,7 +84,7 @@ func getValidVolumeName(basename string) string {
 	return ""
 }
 
-func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind NeedleMapKind) bool {
+func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind NeedleMapKind, skipIfEcVolumesExists bool) bool {
 	basename := dirEntry.Name()
 	if dirEntry.IsDir() {
 		return false
@@ -94,9 +94,11 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 		return false
 	}
 
-	// skip ec volumes
-	if util.FileExists(l.Directory + "/" + volumeName + ".ecx") {
-		return false
+	// skip if ec volumes exists
+	if skipIfEcVolumesExists {
+		if util.FileExists(l.Directory + "/" + volumeName + ".ecx") {
+			return false
+		}
 	}
 
 	// check for incomplete volume
@@ -166,7 +168,7 @@ func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, con
 		go func() {
 			defer wg.Done()
 			for fi := range task_queue {
-				_ = l.loadExistingVolume(fi, needleMapKind)
+				_ = l.loadExistingVolume(fi, needleMapKind, true)
 			}
 		}()
 	}
@@ -246,7 +248,7 @@ func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId) (found bool, e erro
 
 func (l *DiskLocation) LoadVolume(vid needle.VolumeId, needleMapKind NeedleMapKind) bool {
 	if fileInfo, found := l.LocateVolume(vid); found {
-		return l.loadExistingVolume(fileInfo, needleMapKind)
+		return l.loadExistingVolume(fileInfo, needleMapKind, false)
 	}
 	return false
 }
@@ -332,9 +334,12 @@ func (l *DiskLocation) Close() {
 }
 
 func (l *DiskLocation) LocateVolume(vid needle.VolumeId) (os.DirEntry, bool) {
+	// println("LocateVolume", vid, "on", l.Directory)
 	if dirEntries, err := os.ReadDir(l.Directory); err == nil {
 		for _, entry := range dirEntries {
+			// println("checking", entry.Name(), "...")
 			volId, _, err := volumeIdFromFileName(entry.Name())
+			// println("volId", volId, "err", err)
 			if vid == volId && err == nil {
 				return entry, true
 			}

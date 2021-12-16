@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"net/http"
 	"os"
 	"sync"
@@ -65,6 +66,7 @@ type FilerOption struct {
 }
 
 type FilerServer struct {
+	filer_pb.UnimplementedSeaweedFilerServer
 	option         *FilerOption
 	secret         security.SigningKey
 	filer          *filer.Filer

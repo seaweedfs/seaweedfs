@@ -38,7 +38,6 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 	s3ApiServer.registerRouter(router)
 
 	go s3ApiServer.subscribeMetaEvents("s3", filer.IamConfigDirecotry+"/"+filer.IamIdentityFile, time.Now().UnixNano())
-
 	return s3ApiServer, nil
 }
 
@@ -132,7 +131,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 		// DeleteBucketLifecycleConfiguration
 		bucket.Methods("DELETE").HandlerFunc(s3a.iam.Auth(s3a.DeleteBucketLifecycleHandler, ACTION_WRITE)).Queries("lifecycle", "")
-
 		// ListObjectsV1 (Legacy)
 		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.ListObjectsV1Handler, ACTION_LIST), "LIST"))
 

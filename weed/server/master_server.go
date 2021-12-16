@@ -2,8 +2,6 @@ package weed_server
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/cluster"
-	"github.com/chrislusf/seaweedfs/weed/pb"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -12,6 +10,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/cluster"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 
 	"github.com/chrislusf/raft"
 	"github.com/gorilla/mux"
@@ -48,6 +49,7 @@ type MasterOption struct {
 }
 
 type MasterServer struct {
+	master_pb.UnimplementedSeaweedServer
 	option *MasterOption
 	guard  *security.Guard
 
@@ -210,10 +212,20 @@ func (ms *MasterServer) startAdminScripts() {
 
 	v := util.GetViper()
 	adminScripts := v.GetString("master.maintenance.scripts")
-	glog.V(0).Infof("adminScripts:\n%v", adminScripts)
 	if adminScripts == "" {
-		return
+		adminScripts = `
+		lock
+		ec.encode -fullPercent=95 -quietFor=1h
+		ec.rebuild -force
+		ec.balance -force
+		volume.deleteEmpty -quietFor=24h -force
+		volume.balance -force
+		volume.fix.replication
+		s3.clean.uploads -timeAgo=24h
+		unlock
+	`
 	}
+	glog.V(0).Infof("adminScripts: %v", adminScripts)
 
 	v.SetDefault("master.maintenance.sleep_minutes", 17)
 	sleepMinutes := v.GetInt("master.maintenance.sleep_minutes")
@@ -249,8 +261,8 @@ func (ms *MasterServer) startAdminScripts() {
 	go func() {
 		commandEnv.MasterClient.WaitUntilConnected()
 
-		c := time.Tick(time.Duration(sleepMinutes) * time.Minute)
-		for range c {
+		for {
+			time.Sleep(time.Duration(sleepMinutes) * time.Minute)
 			if ms.Topo.IsLeader() {
 				for _, line := range scriptLines {
 					for _, c := range strings.Split(line, ";") {

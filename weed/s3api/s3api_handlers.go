@@ -28,6 +28,7 @@ func (s3a *S3ApiServer) AdjustedUrl(location *filer_pb.Location) string {
 
 func writeSuccessResponseXML(w http.ResponseWriter, r *http.Request, response interface{}) {
 	s3err.WriteXMLResponse(w, r, http.StatusOK, response)
+	s3err.PostLog(r, http.StatusOK, s3err.ErrNone)
 }
 
 func writeSuccessResponseEmpty(w http.ResponseWriter, r *http.Request) {

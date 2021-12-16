@@ -36,7 +36,7 @@ func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writ
 		return nil
 	}
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
+	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
 

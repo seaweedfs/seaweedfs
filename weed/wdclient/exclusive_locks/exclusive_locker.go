@@ -22,6 +22,7 @@ type ExclusiveLocker struct {
 	isLocking    bool
 	masterClient *wdclient.MasterClient
 	lockName     string
+	message      string
 }
 
 func NewExclusiveLocker(masterClient *wdclient.MasterClient, lockName string) *ExclusiveLocker {
@@ -87,6 +88,7 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 					PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
 					LockName:         l.lockName,
 					ClientName:       clientName,
+					Message:          l.message,
 				})
 				if err == nil {
 					atomic.StoreInt64(&l.token, resp.Token)
@@ -122,4 +124,8 @@ func (l *ExclusiveLocker) ReleaseLock() {
 	})
 	atomic.StoreInt64(&l.token, 0)
 	atomic.StoreInt64(&l.lockTsNs, 0)
+}
+
+func (l *ExclusiveLocker) SetMessage(message string) {
+	l.message = message
 }
