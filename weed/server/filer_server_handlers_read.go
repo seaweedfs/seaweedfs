@@ -72,8 +72,10 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	// mime type
 	mimeType := entry.Attr.Mime
+	filename := entry.Name()
+	ext := filepath.Ext(filename)
 	if mimeType == "" {
-		if ext := filepath.Ext(entry.Name()); ext != "" {
+		if ext != "" {
 			mimeType = mime.TypeByExtension(ext)
 		}
 	}
@@ -127,9 +129,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
+	setCache(w, ext)
 	setEtag(w, etag)
 
-	filename := entry.Name()
 	adjustPassthroughHeaders(w, r, filename)
 
 	totalSize := int64(entry.Size())
@@ -140,7 +142,6 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if rangeReq := r.Header.Get("Range"); rangeReq == "" {
-		ext := filepath.Ext(filename)
 		if len(ext) > 0 {
 			ext = strings.ToLower(ext)
 		}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -178,4 +179,29 @@ func getEtag(resp *http.Response) (etag string) {
 		return etag[1 : len(etag)-1]
 	}
 	return
+}
+
+func setCache(w http.ResponseWriter, ext string) {
+	if len(ext) > 0 {
+		ext = strings.ToLower(ext)
+	}
+	maxAge := "31536000"
+	staleTime := "86400"
+	immutable := false
+
+	if ext == ".m3u8" {
+		maxAge = "6"
+		staleTime = "3"
+	} else if match, _ := regexp.MatchString("\\.(?:css(\\.map)?|js(\\.map)?|jpe?g|png|gif|ico|cur|heic|webp|tiff?|mp3|m4[as]|aac|ogg|midi?|wav|mp4|mov|webm|mpe?g|avi|ogv|flv|wmv|ts)", ext); match {
+		immutable = true
+	}
+
+	cacheHeader := "public, max-age=" + maxAge + ", stale-while-revalidate=" + staleTime
+	if immutable {
+		cacheHeader += ", immutable"
+	}
+
+	w.Header().Set("Pragma", "public")
+	w.Header().Set("Cache-Control", "\""+cacheHeader+"\"")
+
 }
