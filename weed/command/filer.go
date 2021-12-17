@@ -138,6 +138,7 @@ func runFiler(cmd *Command, args []string) bool {
 	startDelay := time.Duration(2)
 	if *filerStartS3 {
 		filerS3Options.filer = &filerAddress
+		filerS3Options.bindIp = f.bindIp
 		go func() {
 			time.Sleep(startDelay * time.Second)
 			filerS3Options.startS3Server()

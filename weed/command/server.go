@@ -180,6 +180,7 @@ func runServer(cmd *Command, args []string) bool {
 	filerOptions.masters = pb.ServerAddresses(*masterOptions.peers).ToAddresses()
 	filerOptions.ip = serverIp
 	filerOptions.bindIp = serverBindIp
+	s3Options.bindIp = serverBindIp
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp
 	serverOptions.v.masters = pb.ServerAddresses(*masterOptions.peers).ToAddresses()
