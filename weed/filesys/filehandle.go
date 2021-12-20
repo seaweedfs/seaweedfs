@@ -174,7 +174,7 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	// write the request to volume servers
 	data := req.Data
-	if len(data) <= 512 {
+	if len(data) <= 512 && req.Offset == 0 {
 		// fuse message cacheable size
 		data = make([]byte, len(req.Data))
 		copy(data, req.Data)
