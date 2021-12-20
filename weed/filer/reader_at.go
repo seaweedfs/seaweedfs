@@ -179,7 +179,10 @@ func (c *ChunkReadAt) readChunkSlice(chunkView *ChunkView, nextChunkViews *Chunk
 		return c.doFetchRangeChunkData(chunkView, offset, length)
 	}
 
-	chunkSlice := c.chunkCache.GetChunkSlice(chunkView.FileId, offset, length)
+	var chunkSlice []byte
+	if chunkView.LogicOffset == 0 {
+		chunkSlice = c.chunkCache.GetChunkSlice(chunkView.FileId, offset, length)
+	}
 	if len(chunkSlice) > 0 {
 		return chunkSlice, nil
 	}
@@ -225,7 +228,10 @@ func (c *ChunkReadAt) readOneWholeChunk(chunkView *ChunkView) (interface{}, erro
 
 		glog.V(4).Infof("readFromWholeChunkData %s offset %d [%d,%d) size at least %d", chunkView.FileId, chunkView.Offset, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size), chunkView.ChunkSize)
 
-		data := c.chunkCache.GetChunk(chunkView.FileId, chunkView.ChunkSize)
+		var data []byte
+		if chunkView.LogicOffset == 0 {
+			data = c.chunkCache.GetChunk(chunkView.FileId, chunkView.ChunkSize)
+		}
 		if data != nil {
 			glog.V(4).Infof("cache hit %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset-chunkView.Offset, chunkView.LogicOffset-chunkView.Offset+int64(len(data)))
 		} else {
@@ -234,7 +240,10 @@ func (c *ChunkReadAt) readOneWholeChunk(chunkView *ChunkView) (interface{}, erro
 			if err != nil {
 				return data, err
 			}
-			c.chunkCache.SetChunk(chunkView.FileId, data)
+			if chunkView.LogicOffset == 0 {
+				// only cache the first chunk
+				c.chunkCache.SetChunk(chunkView.FileId, data)
+			}
 		}
 		return data, err
 	})
