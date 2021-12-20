@@ -37,11 +37,11 @@ type FileHandle struct {
 	isDeleted bool
 }
 
-func newFileHandle(file *File, uid, gid uint32, writeOnly bool) *FileHandle {
+func newFileHandle(file *File, uid, gid uint32) *FileHandle {
 	fh := &FileHandle{
 		f: file,
 		// dirtyPages: newContinuousDirtyPages(file, writeOnly),
-		dirtyPages: newTempFileDirtyPages(file, writeOnly),
+		dirtyPages: newTempFileDirtyPages(file),
 		Uid:        uid,
 		Gid:        gid,
 	}
@@ -305,7 +305,7 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.Chunks)
 
 		chunks, _ := filer.CompactFileChunks(fh.f.wfs.LookupFn(), nonManifestChunks)
-		chunks, manifestErr := filer.MaybeManifestize(fh.f.wfs.saveDataAsChunk(fh.f.fullpath(), fh.dirtyPages.GetWriteOnly()), chunks)
+		chunks, manifestErr := filer.MaybeManifestize(fh.f.wfs.saveDataAsChunk(fh.f.fullpath()), chunks)
 		if manifestErr != nil {
 			// not good, but should be ok
 			glog.V(0).Infof("MaybeManifestize: %v", manifestErr)

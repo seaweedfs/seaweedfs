@@ -15,7 +15,6 @@ type TempFileDirtyPages struct {
 	f                *File
 	tf               *os.File
 	writtenIntervals *page_writer.WrittenContinuousIntervals
-	writeOnly        bool
 	writeWaitGroup   sync.WaitGroup
 	pageAddLock      sync.Mutex
 	chunkAddLock     sync.Mutex
@@ -24,11 +23,10 @@ type TempFileDirtyPages struct {
 	replication      string
 }
 
-func newTempFileDirtyPages(file *File, writeOnly bool) *TempFileDirtyPages {
+func newTempFileDirtyPages(file *File) *TempFileDirtyPages {
 
 	tempFile := &TempFileDirtyPages{
 		f:                file,
-		writeOnly:        writeOnly,
 		writtenIntervals: &page_writer.WrittenContinuousIntervals{},
 	}
 
@@ -118,7 +116,7 @@ func (pages *TempFileDirtyPages) saveToStorage(reader io.Reader, offset int64, s
 		defer pages.writeWaitGroup.Done()
 
 		reader = io.LimitReader(reader, size)
-		chunk, collection, replication, err := pages.f.wfs.saveDataAsChunk(pages.f.fullpath(), pages.writeOnly)(reader, pages.f.Name, offset)
+		chunk, collection, replication, err := pages.f.wfs.saveDataAsChunk(pages.f.fullpath())(reader, pages.f.Name, offset)
 		if err != nil {
 			glog.V(0).Infof("%s saveToStorage [%d,%d): %v", pages.f.fullpath(), offset, offset+size, err)
 			pages.lastErr = err
@@ -145,14 +143,4 @@ func (pages *TempFileDirtyPages) ReadDirtyDataAt(data []byte, startOffset int64)
 
 func (pages *TempFileDirtyPages) GetStorageOptions() (collection, replication string) {
 	return pages.collection, pages.replication
-}
-
-func (pages *TempFileDirtyPages) SetWriteOnly(writeOnly bool) {
-	if pages.writeOnly {
-		pages.writeOnly = writeOnly
-	}
-}
-
-func (pages *TempFileDirtyPages) GetWriteOnly() (writeOnly bool) {
-	return pages.writeOnly
 }
