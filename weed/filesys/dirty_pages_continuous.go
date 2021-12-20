@@ -3,6 +3,7 @@ package filesys
 import (
 	"bytes"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filesys/page_writer"
 	"io"
 	"sync"
 	"time"
@@ -12,7 +13,7 @@ import (
 )
 
 type ContinuousDirtyPages struct {
-	intervals      *ContinuousIntervals
+	intervals      *page_writer.ContinuousIntervals
 	f              *File
 	writeOnly      bool
 	writeWaitGroup sync.WaitGroup
@@ -24,7 +25,7 @@ type ContinuousDirtyPages struct {
 
 func newContinuousDirtyPages(file *File, writeOnly bool) *ContinuousDirtyPages {
 	dirtyPages := &ContinuousDirtyPages{
-		intervals: &ContinuousIntervals{},
+		intervals: &page_writer.ContinuousIntervals{},
 		f:         file,
 		writeOnly: writeOnly,
 	}

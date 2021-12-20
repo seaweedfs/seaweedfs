@@ -1,4 +1,4 @@
-package filesys
+package page_writer
 
 type DirtyPages interface {
 	AddPage(offset int64, data []byte)

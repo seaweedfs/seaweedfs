@@ -3,6 +3,7 @@ package filesys
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filesys/page_writer"
 	"io"
 	"math"
 	"net/http"
@@ -20,7 +21,7 @@ import (
 
 type FileHandle struct {
 	// cache file has been written to
-	dirtyPages     DirtyPages
+	dirtyPages     page_writer.DirtyPages
 	entryViewCache []filer.VisibleInterval
 	reader         io.ReaderAt
 	contentType    string

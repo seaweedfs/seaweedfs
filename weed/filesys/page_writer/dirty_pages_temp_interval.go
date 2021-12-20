@@ -1,4 +1,4 @@
-package filesys
+package page_writer
 
 import (
 	"io"
@@ -20,9 +20,9 @@ type WrittenIntervalLinkedList struct {
 }
 
 type WrittenContinuousIntervals struct {
-	tempFile   *os.File
-	lastOffset int64
-	lists      []*WrittenIntervalLinkedList
+	TempFile   *os.File
+	LastOffset int64
+	Lists      []*WrittenIntervalLinkedList
 }
 
 func (list *WrittenIntervalLinkedList) Offset() int64 {
@@ -65,7 +65,7 @@ func (list *WrittenIntervalLinkedList) ReadData(buf []byte, start, stop int64) {
 }
 
 func (c *WrittenContinuousIntervals) TotalSize() (total int64) {
-	for _, list := range c.lists {
+	for _, list := range c.Lists {
 		total += list.Size()
 	}
 	return
@@ -98,7 +98,7 @@ func (list *WrittenIntervalLinkedList) subList(start, stop int64) *WrittenInterv
 
 func (c *WrittenContinuousIntervals) debug() {
 	log.Printf("++")
-	for _, l := range c.lists {
+	for _, l := range c.Lists {
 		log.Printf("++++")
 		for t := l.Head; ; t = t.Next {
 			log.Printf("[%d,%d) => [%d,%d) %d", t.DataOffset, t.DataOffset+t.Size, t.TempOffset, t.TempOffset+t.Size, t.Size)
@@ -116,8 +116,8 @@ func (c *WrittenContinuousIntervals) AddInterval(tempOffset int64, dataSize int,
 	interval := &WrittenIntervalNode{DataOffset: dataOffset, TempOffset: tempOffset, Size: int64(dataSize)}
 
 	// append to the tail and return
-	if len(c.lists) == 1 {
-		lastSpan := c.lists[0]
+	if len(c.Lists) == 1 {
+		lastSpan := c.Lists[0]
 		if lastSpan.Tail.DataOffset+lastSpan.Tail.Size == dataOffset {
 			lastSpan.addNodeToTail(interval)
 			return
@@ -125,7 +125,7 @@ func (c *WrittenContinuousIntervals) AddInterval(tempOffset int64, dataSize int,
 	}
 
 	var newLists []*WrittenIntervalLinkedList
-	for _, list := range c.lists {
+	for _, list := range c.Lists {
 		// if list is to the left of new interval, add to the new list
 		if list.Tail.DataOffset+list.Tail.Size <= interval.DataOffset {
 			newLists = append(newLists, list)
@@ -147,18 +147,18 @@ func (c *WrittenContinuousIntervals) AddInterval(tempOffset int64, dataSize int,
 		// skip anything that is fully overwritten by the new interval
 	}
 
-	c.lists = newLists
+	c.Lists = newLists
 	// add the new interval to the lists, connecting neighbor lists
 	var prevList, nextList *WrittenIntervalLinkedList
 
-	for _, list := range c.lists {
+	for _, list := range c.Lists {
 		if list.Head.DataOffset == interval.DataOffset+interval.Size {
 			nextList = list
 			break
 		}
 	}
 
-	for _, list := range c.lists {
+	for _, list := range c.Lists {
 		if list.Head.DataOffset+list.Size() == dataOffset {
 			list.addNodeToTail(interval)
 			prevList = list
@@ -176,8 +176,8 @@ func (c *WrittenContinuousIntervals) AddInterval(tempOffset int64, dataSize int,
 		nextList.addNodeToHead(interval)
 	}
 	if prevList == nil && nextList == nil {
-		c.lists = append(c.lists, &WrittenIntervalLinkedList{
-			tempFile: c.tempFile,
+		c.Lists = append(c.Lists, &WrittenIntervalLinkedList{
+			tempFile: c.TempFile,
 			Head:     interval,
 			Tail:     interval,
 		})
@@ -189,7 +189,7 @@ func (c *WrittenContinuousIntervals) AddInterval(tempOffset int64, dataSize int,
 func (c *WrittenContinuousIntervals) RemoveLargestIntervalLinkedList() *WrittenIntervalLinkedList {
 	var maxSize int64
 	maxIndex := -1
-	for k, list := range c.lists {
+	for k, list := range c.Lists {
 		if maxSize <= list.Size() {
 			maxSize = list.Size()
 			maxIndex = k
@@ -199,16 +199,16 @@ func (c *WrittenContinuousIntervals) RemoveLargestIntervalLinkedList() *WrittenI
 		return nil
 	}
 
-	t := c.lists[maxIndex]
-	t.tempFile = c.tempFile
-	c.lists = append(c.lists[0:maxIndex], c.lists[maxIndex+1:]...)
+	t := c.Lists[maxIndex]
+	t.tempFile = c.TempFile
+	c.Lists = append(c.Lists[0:maxIndex], c.Lists[maxIndex+1:]...)
 	return t
 
 }
 
 func (c *WrittenContinuousIntervals) removeList(target *WrittenIntervalLinkedList) {
 	index := -1
-	for k, list := range c.lists {
+	for k, list := range c.Lists {
 		if list.Offset() == target.Offset() {
 			index = k
 		}
@@ -217,12 +217,12 @@ func (c *WrittenContinuousIntervals) removeList(target *WrittenIntervalLinkedLis
 		return
 	}
 
-	c.lists = append(c.lists[0:index], c.lists[index+1:]...)
+	c.Lists = append(c.Lists[0:index], c.Lists[index+1:]...)
 
 }
 
 func (c *WrittenContinuousIntervals) ReadDataAt(data []byte, startOffset int64) (maxStop int64) {
-	for _, list := range c.lists {
+	for _, list := range c.Lists {
 		start := max(startOffset, list.Offset())
 		stop := min(startOffset+int64(len(data)), list.Offset()+list.Size())
 		if start < stop {
@@ -286,4 +286,17 @@ func (f *FileSectionReader) Read(p []byte) (n int, err error) {
 		err = io.EOF
 	}
 	return
+}
+
+func max(x, y int64) int64 {
+	if x > y {
+		return x
+	}
+	return y
+}
+func min(x, y int64) int64 {
+	if x < y {
+		return x
+	}
+	return y
 }

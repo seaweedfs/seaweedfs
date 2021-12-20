@@ -2,6 +2,7 @@ package filesys
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filesys/page_writer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"io"
@@ -13,7 +14,7 @@ import (
 type TempFileDirtyPages struct {
 	f                *File
 	tf               *os.File
-	writtenIntervals *WrittenContinuousIntervals
+	writtenIntervals *page_writer.WrittenContinuousIntervals
 	writeOnly        bool
 	writeWaitGroup   sync.WaitGroup
 	pageAddLock      sync.Mutex
@@ -28,7 +29,7 @@ func newTempFileDirtyPages(file *File, writeOnly bool) *TempFileDirtyPages {
 	tempFile := &TempFileDirtyPages{
 		f:                file,
 		writeOnly:        writeOnly,
-		writtenIntervals: &WrittenContinuousIntervals{},
+		writtenIntervals: &page_writer.WrittenContinuousIntervals{},
 	}
 
 	return tempFile
@@ -47,11 +48,11 @@ func (pages *TempFileDirtyPages) AddPage(offset int64, data []byte) {
 			return
 		}
 		pages.tf = tf
-		pages.writtenIntervals.tempFile = tf
-		pages.writtenIntervals.lastOffset = 0
+		pages.writtenIntervals.TempFile = tf
+		pages.writtenIntervals.LastOffset = 0
 	}
 
-	writtenOffset := pages.writtenIntervals.lastOffset
+	writtenOffset := pages.writtenIntervals.LastOffset
 	dataSize := int64(len(data))
 
 	// glog.V(4).Infof("%s AddPage %v at %d [%d,%d)", pages.f.fullpath(), pages.tf.Name(), writtenOffset, offset, offset+dataSize)
@@ -60,7 +61,7 @@ func (pages *TempFileDirtyPages) AddPage(offset int64, data []byte) {
 		pages.lastErr = err
 	} else {
 		pages.writtenIntervals.AddInterval(writtenOffset, len(data), offset)
-		pages.writtenIntervals.lastOffset += dataSize
+		pages.writtenIntervals.LastOffset += dataSize
 	}
 
 	// pages.writtenIntervals.debug()
@@ -79,8 +80,8 @@ func (pages *TempFileDirtyPages) FlushData() error {
 	defer pages.pageAddLock.Unlock()
 	if pages.tf != nil {
 
-		pages.writtenIntervals.tempFile = nil
-		pages.writtenIntervals.lists = nil
+		pages.writtenIntervals.TempFile = nil
+		pages.writtenIntervals.Lists = nil
 
 		pages.tf.Close()
 		os.Remove(pages.tf.Name())
@@ -95,7 +96,7 @@ func (pages *TempFileDirtyPages) saveExistingPagesToStorage() {
 
 	// glog.V(4).Infof("%v saveExistingPagesToStorage %d lists", pages.f.Name, len(pages.writtenIntervals.lists))
 
-	for _, list := range pages.writtenIntervals.lists {
+	for _, list := range pages.writtenIntervals.Lists {
 		listStopOffset := list.Offset() + list.Size()
 		for uploadedOffset := int64(0); uploadedOffset < listStopOffset; uploadedOffset += pageSize {
 			start, stop := max(list.Offset(), uploadedOffset), min(listStopOffset, uploadedOffset+pageSize)
