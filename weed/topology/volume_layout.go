@@ -281,7 +281,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*n
 		//glog.V(0).Infoln("No more writable volumes!")
 		return nil, 0, nil, errors.New("No more writable volumes!")
 	}
-	if option.DataCenter == "" {
+	if option.DataCenter == "" && option.Rack == "" && option.DataNode == "" {
 		vid := vl.writables[rand.Intn(lenWriters)]
 		locationList := vl.vid2location[vid]
 		if locationList != nil {
@@ -295,17 +295,18 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*n
 	for _, v := range vl.writables {
 		volumeLocationList := vl.vid2location[v]
 		for _, dn := range volumeLocationList.list {
-			if dn.GetDataCenter().Id() == NodeId(option.DataCenter) {
-				if option.Rack != "" && dn.GetRack().Id() != NodeId(option.Rack) {
-					continue
-				}
-				if option.DataNode != "" && dn.Id() != NodeId(option.DataNode) {
-					continue
-				}
-				counter++
-				if rand.Intn(counter) < 1 {
-					vid, locationList = v, volumeLocationList.Copy()
-				}
+			if option.DataCenter != "" && dn.GetDataCenter().Id() != NodeId(option.DataCenter) {
+				continue
+			}
+			if option.Rack != "" && dn.GetRack().Id() != NodeId(option.Rack) {
+				continue
+			}
+			if option.DataNode != "" && dn.Id() != NodeId(option.DataNode) {
+				continue
+			}
+			counter++
+			if rand.Intn(counter) < 1 {
+				vid, locationList = v, volumeLocationList.Copy()
 			}
 		}
 	}
