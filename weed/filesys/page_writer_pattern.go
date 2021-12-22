@@ -1,7 +1,5 @@
 package filesys
 
-import "fmt"
-
 type WriterPattern struct {
 	isStreaming     bool
 	lastWriteOffset int64
@@ -26,10 +24,6 @@ func (rp *WriterPattern) MonitorWriteAt(offset int64, size int) {
 	if rp.lastWriteOffset == 0 {
 	}
 	if rp.lastWriteOffset > offset {
-		if rp.isStreaming {
-			fmt.Printf("file %s ==> non streaming at [%d,%d)\n", rp.fileName, offset, offset+int64(size))
-		}
-		fmt.Printf("write %s [%d,%d)\n", rp.fileName, offset, offset+int64(size))
 		rp.isStreaming = false
 	}
 	rp.lastWriteOffset = offset
