@@ -247,6 +247,7 @@ message AssignVolumeRequest {
     string data_center = 5;
     string path = 6;
     string rack = 7;
+    string data_node = 9;
     string disk_type = 8;
 }
 

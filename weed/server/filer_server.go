@@ -56,6 +56,7 @@ type FilerOption struct {
 	DirListingLimit       int
 	DataCenter            string
 	Rack                  string
+	DataNode              string
 	DefaultLevelDbDir     string
 	DisableHttp           bool
 	Host                  pb.ServerAddress
