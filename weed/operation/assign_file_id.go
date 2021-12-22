@@ -133,6 +133,7 @@ type StorageOption struct {
 	Collection        string
 	DataCenter        string
 	Rack              string
+	DataNode          string
 	TtlSeconds        int32
 	Fsync             bool
 	VolumeGrowthCount uint32
@@ -151,9 +152,10 @@ func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, a
 		DiskType:            so.DiskType,
 		DataCenter:          so.DataCenter,
 		Rack:                so.Rack,
+		DataNode:            so.DataNode,
 		WritableVolumeCount: so.VolumeGrowthCount,
 	}
-	if so.DataCenter != "" || so.Rack != "" {
+	if so.DataCenter != "" || so.Rack != "" || so.DataNode != "" {
 		altRequest = &VolumeAssignRequest{
 			Count:               uint64(count),
 			Replication:         so.Replication,
@@ -162,6 +164,7 @@ func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, a
 			DiskType:            so.DiskType,
 			DataCenter:          "",
 			Rack:                "",
+			DataNode:            "",
 			WritableVolumeCount: so.VolumeGrowthCount,
 		}
 	}
