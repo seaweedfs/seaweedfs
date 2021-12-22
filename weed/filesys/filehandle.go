@@ -41,7 +41,7 @@ func newFileHandle(file *File, uid, gid uint32) *FileHandle {
 	fh := &FileHandle{
 		f: file,
 		// dirtyPages: newContinuousDirtyPages(file, writeOnly),
-		dirtyPages: newTempFileDirtyPages(file),
+		dirtyPages: newPageWriter(file, 2*1024*1024),
 		Uid:        uid,
 		Gid:        gid,
 	}
