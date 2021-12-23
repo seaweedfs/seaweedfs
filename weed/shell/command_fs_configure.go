@@ -55,6 +55,9 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	diskType := fsConfigureCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes")
 	isReadOnly := fsConfigureCommand.Bool("readOnly", false, "disable writes")
+	dataCenter := fsConfigureCommand.String("dataCenter", "", "assign writes to this dataCenter")
+	rack := fsConfigureCommand.String("rack", "", "assign writes to this rack")
+	dataNode := fsConfigureCommand.String("dataNode", "", "assign writes to this dataNode")
 	volumeGrowthCount := fsConfigureCommand.Int("volumeGrowthCount", 0, "the number of physical volumes to add if no writable volumes")
 	isDelete := fsConfigureCommand.Bool("delete", false, "delete the configuration by locationPrefix")
 	apply := fsConfigureCommand.Bool("apply", false, "update and apply filer configuration")
@@ -77,6 +80,9 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			DiskType:          *diskType,
 			VolumeGrowthCount: uint32(*volumeGrowthCount),
 			ReadOnly:          *isReadOnly,
+			DataCenter:        *dataCenter,
+			Rack:              *rack,
+			DataNode:          *dataNode,
 		}
 
 		// check collection
