@@ -64,7 +64,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 	}
 
 	// detect storage option
-	so, err := fs.detectStorageOption(req.Directory, "", "", 0, "", "", "")
+	so, err := fs.detectStorageOption(req.Directory, "", "", 0, "", "", "", "")
 	if err != nil {
 		return resp, err
 	}
