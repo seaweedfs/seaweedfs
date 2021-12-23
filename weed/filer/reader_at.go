@@ -186,6 +186,9 @@ func (c *ChunkReadAt) readChunkSlice(chunkView *ChunkView, nextChunkViews *Chunk
 	if len(chunkSlice) > 0 {
 		return chunkSlice, nil
 	}
+	if c.lookupFileId == nil {
+		return nil, nil
+	}
 	chunkData, err := c.readFromWholeChunkData(chunkView, nextChunkViews)
 	if err != nil {
 		return nil, err
