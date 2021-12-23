@@ -14,17 +14,20 @@ type WriterPattern struct {
 func NewWriterPattern(fileName string, chunkSize int64) *WriterPattern {
 	return &WriterPattern{
 		isStreaming:     true,
-		lastWriteOffset: 0,
+		lastWriteOffset: -1,
 		chunkSize:       chunkSize,
 		fileName:        fileName,
 	}
 }
 
 func (rp *WriterPattern) MonitorWriteAt(offset int64, size int) {
-	if rp.lastWriteOffset == 0 {
-	}
 	if rp.lastWriteOffset > offset {
 		rp.isStreaming = false
+	}
+	if rp.lastWriteOffset == -1 {
+		if offset != 0 {
+			rp.isStreaming = false
+		}
 	}
 	rp.lastWriteOffset = offset
 }
