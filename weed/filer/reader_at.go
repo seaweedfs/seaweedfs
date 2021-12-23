@@ -175,10 +175,6 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 func (c *ChunkReadAt) readChunkSlice(chunkView *ChunkView, nextChunkViews *ChunkView, offset, length uint64) ([]byte, error) {
 
-	if c.readerPattern.IsRandomMode() {
-		return c.doFetchRangeChunkData(chunkView, offset, length)
-	}
-
 	var chunkSlice []byte
 	if chunkView.LogicOffset == 0 {
 		chunkSlice = c.chunkCache.GetChunkSlice(chunkView.FileId, offset, length)
@@ -188,6 +184,9 @@ func (c *ChunkReadAt) readChunkSlice(chunkView *ChunkView, nextChunkViews *Chunk
 	}
 	if c.lookupFileId == nil {
 		return nil, nil
+	}
+	if c.readerPattern.IsRandomMode() {
+		return c.doFetchRangeChunkData(chunkView, offset, length)
 	}
 	chunkData, err := c.readFromWholeChunkData(chunkView, nextChunkViews)
 	if err != nil {
