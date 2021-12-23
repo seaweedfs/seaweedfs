@@ -11,13 +11,18 @@ type ReaderPattern struct {
 func NewReaderPattern() *ReaderPattern {
 	return &ReaderPattern{
 		isStreaming:    true,
-		lastReadOffset: 0,
+		lastReadOffset: -1,
 	}
 }
 
 func (rp *ReaderPattern) MonitorReadAt(offset int64, size int) {
 	if rp.lastReadOffset > offset {
 		rp.isStreaming = false
+	}
+	if rp.lastReadOffset == -1 {
+		if offset != 0 {
+			rp.isStreaming = false
+		}
 	}
 	rp.lastReadOffset = offset
 }
