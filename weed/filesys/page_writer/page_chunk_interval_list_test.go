@@ -6,7 +6,7 @@ import (
 )
 
 func Test_PageChunkWrittenIntervalList(t *testing.T) {
-	list := newPageChunkWrittenIntervalList()
+	list := newChunkWrittenIntervalList()
 
 	assert.Equal(t, 0, list.size(), "empty list")
 

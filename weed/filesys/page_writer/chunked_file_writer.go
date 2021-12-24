@@ -12,7 +12,7 @@ type ChunkedFileWriter struct {
 	dir                     string
 	file                    *os.File
 	logicToActualChunkIndex map[int]int
-	chunkUsages             []*PageChunkWrittenIntervalList
+	chunkUsages             []*ChunkWrittenIntervalList
 	ChunkSize               int64
 	sync.Mutex
 }
@@ -77,7 +77,7 @@ func (cw *ChunkedFileWriter) ReadDataAt(p []byte, off int64) (maxStop int64) {
 	return
 }
 
-func (cw *ChunkedFileWriter) toActualWriteOffset(logicOffset int64) (actualOffset int64, chunkUsage *PageChunkWrittenIntervalList) {
+func (cw *ChunkedFileWriter) toActualWriteOffset(logicOffset int64) (actualOffset int64, chunkUsage *ChunkWrittenIntervalList) {
 	logicChunkIndex := int(logicOffset / cw.ChunkSize)
 	offsetRemainder := logicOffset % cw.ChunkSize
 	existingActualChunkIndex, found := cw.logicToActualChunkIndex[logicChunkIndex]
@@ -85,12 +85,12 @@ func (cw *ChunkedFileWriter) toActualWriteOffset(logicOffset int64) (actualOffse
 		return int64(existingActualChunkIndex)*cw.ChunkSize + offsetRemainder, cw.chunkUsages[existingActualChunkIndex]
 	}
 	cw.logicToActualChunkIndex[logicChunkIndex] = len(cw.chunkUsages)
-	chunkUsage = newPageChunkWrittenIntervalList()
+	chunkUsage = newChunkWrittenIntervalList()
 	cw.chunkUsages = append(cw.chunkUsages, chunkUsage)
 	return int64(len(cw.chunkUsages)-1)*cw.ChunkSize + offsetRemainder, chunkUsage
 }
 
-func (cw *ChunkedFileWriter) toActualReadOffset(logicOffset int64) (actualChunkIndex int, chunkUsage *PageChunkWrittenIntervalList) {
+func (cw *ChunkedFileWriter) toActualReadOffset(logicOffset int64) (actualChunkIndex int, chunkUsage *ChunkWrittenIntervalList) {
 	logicChunkIndex := int(logicOffset / cw.ChunkSize)
 	existingActualChunkIndex, found := cw.logicToActualChunkIndex[logicChunkIndex]
 	if found {
@@ -99,7 +99,7 @@ func (cw *ChunkedFileWriter) toActualReadOffset(logicOffset int64) (actualChunkI
 	return 0, nil
 }
 
-func (cw *ChunkedFileWriter) ProcessEachInterval(process func(file *os.File, logicChunkIndex int, interval *PageChunkWrittenInterval)) {
+func (cw *ChunkedFileWriter) ProcessEachInterval(process func(file *os.File, logicChunkIndex int, interval *ChunkWrittenInterval)) {
 	for logicChunkIndex, actualChunkIndex := range cw.logicToActualChunkIndex {
 		chunkUsage := cw.chunkUsages[actualChunkIndex]
 		for t := chunkUsage.head.next; t != chunkUsage.tail; t = t.next {
@@ -123,7 +123,7 @@ type FileIntervalReader struct {
 
 var _ = io.Reader(&FileIntervalReader{})
 
-func NewFileIntervalReader(cw *ChunkedFileWriter, logicChunkIndex int, interval *PageChunkWrittenInterval) *FileIntervalReader {
+func NewFileIntervalReader(cw *ChunkedFileWriter, logicChunkIndex int, interval *ChunkWrittenInterval) *FileIntervalReader {
 	actualChunkIndex, found := cw.logicToActualChunkIndex[logicChunkIndex]
 	if !found {
 		// this should never happen

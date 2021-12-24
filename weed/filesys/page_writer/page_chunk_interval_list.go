@@ -2,31 +2,31 @@ package page_writer
 
 import "math"
 
-// PageChunkWrittenInterval mark one written interval within one page chunk
-type PageChunkWrittenInterval struct {
+// ChunkWrittenInterval mark one written interval within one page chunk
+type ChunkWrittenInterval struct {
 	startOffset int64
 	stopOffset  int64
-	prev        *PageChunkWrittenInterval
-	next        *PageChunkWrittenInterval
+	prev        *ChunkWrittenInterval
+	next        *ChunkWrittenInterval
 }
 
-func (interval *PageChunkWrittenInterval) Size() int64 {
+func (interval *ChunkWrittenInterval) Size() int64 {
 	return interval.stopOffset - interval.startOffset
 }
 
-// PageChunkWrittenIntervalList mark written intervals within one page chunk
-type PageChunkWrittenIntervalList struct {
-	head *PageChunkWrittenInterval
-	tail *PageChunkWrittenInterval
+// ChunkWrittenIntervalList mark written intervals within one page chunk
+type ChunkWrittenIntervalList struct {
+	head *ChunkWrittenInterval
+	tail *ChunkWrittenInterval
 }
 
-func newPageChunkWrittenIntervalList() *PageChunkWrittenIntervalList {
-	list := &PageChunkWrittenIntervalList{
-		head: &PageChunkWrittenInterval{
+func newChunkWrittenIntervalList() *ChunkWrittenIntervalList {
+	list := &ChunkWrittenIntervalList{
+		head: &ChunkWrittenInterval{
 			startOffset: -1,
 			stopOffset:  -1,
 		},
-		tail: &PageChunkWrittenInterval{
+		tail: &ChunkWrittenInterval{
 			startOffset: math.MaxInt64,
 			stopOffset:  math.MaxInt64,
 		},
@@ -36,14 +36,14 @@ func newPageChunkWrittenIntervalList() *PageChunkWrittenIntervalList {
 	return list
 }
 
-func (list *PageChunkWrittenIntervalList) MarkWritten(startOffset, stopOffset int64) {
-	interval := &PageChunkWrittenInterval{
+func (list *ChunkWrittenIntervalList) MarkWritten(startOffset, stopOffset int64) {
+	interval := &ChunkWrittenInterval{
 		startOffset: startOffset,
 		stopOffset:  stopOffset,
 	}
 	list.addInterval(interval)
 }
-func (list *PageChunkWrittenIntervalList) addInterval(interval *PageChunkWrittenInterval) {
+func (list *ChunkWrittenIntervalList) addInterval(interval *ChunkWrittenInterval) {
 
 	p := list.head
 	for ; p.next != nil && p.next.startOffset <= interval.startOffset; p = p.next {
@@ -81,7 +81,7 @@ func (list *PageChunkWrittenIntervalList) addInterval(interval *PageChunkWritten
 }
 
 // unlinkNodesBetween remove all nodes after start and before stop, exclusive
-func unlinkNodesBetween(start *PageChunkWrittenInterval, stop *PageChunkWrittenInterval) {
+func unlinkNodesBetween(start *ChunkWrittenInterval, stop *ChunkWrittenInterval) {
 	if start.next == stop {
 		return
 	}
@@ -91,7 +91,7 @@ func unlinkNodesBetween(start *PageChunkWrittenInterval, stop *PageChunkWrittenI
 	stop.prev = start
 }
 
-func (list *PageChunkWrittenIntervalList) size() int {
+func (list *ChunkWrittenIntervalList) size() int {
 	var count int
 	for t := list.head; t != nil; t = t.next {
 		count++
