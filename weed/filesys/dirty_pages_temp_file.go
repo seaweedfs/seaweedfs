@@ -63,7 +63,7 @@ func (pages *TempFileDirtyPages) GetStorageOptions() (collection, replication st
 
 func (pages *TempFileDirtyPages) saveChunkedFileToStorage() {
 
-	pages.chunkedFile.ProcessEachInterval(func(file *os.File, logicChunkIndex int, interval *page_writer.ChunkWrittenInterval) {
+	pages.chunkedFile.ProcessEachInterval(func(file *os.File, logicChunkIndex page_writer.LogicChunkIndex, interval *page_writer.ChunkWrittenInterval) {
 		reader := page_writer.NewFileIntervalReader(pages.chunkedFile, logicChunkIndex, interval)
 		pages.saveChunkedFileIntevalToStorage(reader, int64(logicChunkIndex)*pages.chunkedFile.ChunkSize, interval.Size())
 	})
