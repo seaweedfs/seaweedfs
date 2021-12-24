@@ -222,6 +222,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 		fh.reader = nil
 
 		fh.f.wfs.ReleaseHandle(fh.f.fullpath(), fuse.HandleID(fh.handle))
+		fh.dirtyPages.Destroy()
 	}
 
 	if fh.f.isOpen < 0 {

@@ -10,6 +10,10 @@ type PageChunkWrittenInterval struct {
 	next        *PageChunkWrittenInterval
 }
 
+func (interval *PageChunkWrittenInterval) Size() int64 {
+	return interval.stopOffset - interval.startOffset
+}
+
 // PageChunkWrittenIntervalList mark written intervals within one page chunk
 type PageChunkWrittenIntervalList struct {
 	head *PageChunkWrittenInterval

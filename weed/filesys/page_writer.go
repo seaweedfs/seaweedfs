@@ -24,7 +24,7 @@ func newPageWriter(file *File, chunkSize int64) *PageWriter {
 	pw := &PageWriter{
 		f:             file,
 		chunkSize:     chunkSize,
-		randomWriter:  newTempFileDirtyPages(file),
+		randomWriter:  newTempFileDirtyPages(file, chunkSize),
 		streamWriter:  newContinuousDirtyPages(file),
 		writerPattern: NewWriterPattern(file.Name, chunkSize),
 	}
@@ -63,11 +63,23 @@ func (pw *PageWriter) FlushData() error {
 	return pw.randomWriter.FlushData()
 }
 
-func (pw *PageWriter) ReadDirtyDataAt(data []byte, startOffset int64) (maxStop int64) {
-	glog.V(4).Infof("ReadDirtyDataAt %v [%d, %d)", pw.f.fullpath(), startOffset, startOffset+int64(len(data)))
-	m1 := pw.streamWriter.ReadDirtyDataAt(data, startOffset)
-	m2 := pw.randomWriter.ReadDirtyDataAt(data, startOffset)
-	return max(m1, m2)
+func (pw *PageWriter) ReadDirtyDataAt(data []byte, offset int64) (maxStop int64) {
+	glog.V(4).Infof("ReadDirtyDataAt %v [%d, %d)", pw.f.fullpath(), offset, offset+int64(len(data)))
+
+	chunkIndex := offset / pw.chunkSize
+	for i := chunkIndex; len(data) > 0; i++ {
+		readSize := min(int64(len(data)), (i+1)*pw.chunkSize-offset)
+
+		m1 := pw.streamWriter.ReadDirtyDataAt(data[:readSize], offset)
+		m2 := pw.randomWriter.ReadDirtyDataAt(data[:readSize], offset)
+
+		maxStop = max(maxStop, max(m1, m2))
+
+		offset += readSize
+		data = data[readSize:]
+	}
+
+	return
 }
 
 func (pw *PageWriter) GetStorageOptions() (collection, replication string) {
@@ -75,4 +87,8 @@ func (pw *PageWriter) GetStorageOptions() (collection, replication string) {
 		return pw.streamWriter.GetStorageOptions()
 	}
 	return pw.randomWriter.GetStorageOptions()
+}
+
+func (pw *PageWriter) Destroy() {
+	pw.randomWriter.Destroy()
 }

@@ -147,3 +147,5 @@ func (pages *ContinuousDirtyPages) ReadDirtyDataAt(data []byte, startOffset int6
 func (pages *ContinuousDirtyPages) GetStorageOptions() (collection, replication string) {
 	return pages.collection, pages.replication
 }
+func (pages ContinuousDirtyPages) Destroy() {
+}
