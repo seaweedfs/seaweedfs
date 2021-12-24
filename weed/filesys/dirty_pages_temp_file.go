@@ -41,8 +41,6 @@ func (pages *TempFileDirtyPages) AddPage(offset int64, data []byte) {
 		pages.lastErr = err
 	}
 
-	// pages.writtenIntervals.debug()
-
 	return
 }
 
