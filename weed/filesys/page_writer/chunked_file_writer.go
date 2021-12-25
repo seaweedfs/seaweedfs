@@ -64,7 +64,7 @@ func (cw *ChunkedFileWriter) ReadDataAt(p []byte, off int64) (maxStop int64) {
 	actualChunkIndex, chunkUsage := cw.toActualReadOffset(off)
 	if chunkUsage != nil {
 		for t := chunkUsage.head.next; t != chunkUsage.tail; t = t.next {
-			logicStart := max(off, logicChunkIndex*cw.ChunkSize+t.startOffset)
+			logicStart := max(off, logicChunkIndex*cw.ChunkSize+t.StartOffset)
 			logicStop := min(off+int64(len(p)), logicChunkIndex*cw.ChunkSize+t.stopOffset)
 			if logicStart < logicStop {
 				actualStart := logicStart - logicChunkIndex*cw.ChunkSize + int64(actualChunkIndex)*cw.ChunkSize
@@ -110,11 +110,16 @@ func (cw *ChunkedFileWriter) ProcessEachInterval(process func(file *os.File, log
 		}
 	}
 }
-func (cw *ChunkedFileWriter) Destroy() {
+
+// Reset releases used resources
+func (cw *ChunkedFileWriter) Reset() {
 	if cw.file != nil {
 		cw.file.Close()
 		os.Remove(cw.file.Name())
+		cw.file = nil
 	}
+	cw.logicToActualChunkIndex = make(map[LogicChunkIndex]ActualChunkIndex)
+	cw.chunkUsages = cw.chunkUsages[:0]
 }
 
 type FileIntervalReader struct {
@@ -134,7 +139,7 @@ func NewFileIntervalReader(cw *ChunkedFileWriter, logicChunkIndex LogicChunkInde
 	}
 	return &FileIntervalReader{
 		f:           cw.file,
-		startOffset: int64(actualChunkIndex)*cw.ChunkSize + interval.startOffset,
+		startOffset: int64(actualChunkIndex)*cw.ChunkSize + interval.StartOffset,
 		stopOffset:  int64(actualChunkIndex)*cw.ChunkSize + interval.stopOffset,
 		position:    0,
 	}

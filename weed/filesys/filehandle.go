@@ -27,6 +27,7 @@ type FileHandle struct {
 	contentType    string
 	handle         uint64
 	sync.Mutex
+	sync.WaitGroup
 
 	f         *File
 	RequestId fuse.RequestID // unique ID for request
@@ -41,7 +42,7 @@ func newFileHandle(file *File, uid, gid uint32) *FileHandle {
 	fh := &FileHandle{
 		f: file,
 		// dirtyPages: newContinuousDirtyPages(file, writeOnly),
-		dirtyPages: newPageWriter(file, 2*1024*1024),
+		dirtyPages: newPageWriter(file, file.wfs.option.CacheSizeMB*1024*1024),
 		Uid:        uid,
 		Gid:        gid,
 	}
@@ -62,6 +63,9 @@ var _ = fs.HandleWriter(&FileHandle{})
 var _ = fs.HandleReleaser(&FileHandle{})
 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+
+	fh.Add(1)
+	defer fh.Done()
 
 	fh.Lock()
 	defer fh.Unlock()
@@ -170,6 +174,9 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 // Write to the file handle
 func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
 
+	fh.Add(1)
+	defer fh.Done()
+
 	fh.Lock()
 	defer fh.Unlock()
 
@@ -209,8 +216,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 
 	glog.V(4).Infof("Release %v fh %d open=%d", fh.f.fullpath(), fh.handle, fh.f.isOpen)
 
-	fh.Lock()
-	defer fh.Unlock()
+	fh.Wait()
 
 	fh.f.wfs.handlesLock.Lock()
 	fh.f.isOpen--
@@ -243,6 +249,9 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		return nil
 	}
 
+	fh.Add(1)
+	defer fh.Done()
+
 	fh.Lock()
 	defer fh.Unlock()
 
@@ -251,7 +260,6 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 		return err
 	}
 
-	glog.V(4).Infof("Flush %v fh %d success", fh.f.fullpath(), fh.handle)
 	return nil
 }
 

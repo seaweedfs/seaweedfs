@@ -37,6 +37,7 @@ func (pages *TempFileDirtyPages) AddPage(offset int64, data []byte) {
 	pages.pageAddLock.Lock()
 	defer pages.pageAddLock.Unlock()
 
+	glog.V(4).Infof("%v tempfile AddPage [%d, %d)", pages.f.fullpath(), offset, offset+int64(len(data)))
 	if _, err := pages.chunkedFile.WriteAt(data, offset); err != nil {
 		pages.lastErr = err
 	}
@@ -50,6 +51,7 @@ func (pages *TempFileDirtyPages) FlushData() error {
 	if pages.lastErr != nil {
 		return fmt.Errorf("flush data: %v", pages.lastErr)
 	}
+	pages.chunkedFile.Reset()
 	return nil
 }
 
@@ -65,7 +67,7 @@ func (pages *TempFileDirtyPages) saveChunkedFileToStorage() {
 
 	pages.chunkedFile.ProcessEachInterval(func(file *os.File, logicChunkIndex page_writer.LogicChunkIndex, interval *page_writer.ChunkWrittenInterval) {
 		reader := page_writer.NewFileIntervalReader(pages.chunkedFile, logicChunkIndex, interval)
-		pages.saveChunkedFileIntevalToStorage(reader, int64(logicChunkIndex)*pages.chunkedFile.ChunkSize, interval.Size())
+		pages.saveChunkedFileIntevalToStorage(reader, int64(logicChunkIndex)*pages.chunkedFile.ChunkSize+interval.StartOffset, interval.Size())
 	})
 
 }
@@ -100,5 +102,5 @@ func (pages *TempFileDirtyPages) saveChunkedFileIntevalToStorage(reader io.Reade
 }
 
 func (pages TempFileDirtyPages) Destroy() {
-	pages.chunkedFile.Destroy()
+	pages.chunkedFile.Reset()
 }
