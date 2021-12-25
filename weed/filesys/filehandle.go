@@ -42,7 +42,7 @@ func newFileHandle(file *File, uid, gid uint32) *FileHandle {
 	fh := &FileHandle{
 		f: file,
 		// dirtyPages: newContinuousDirtyPages(file, writeOnly),
-		dirtyPages: newPageWriter(file, 2*1024*1024),
+		dirtyPages: newPageWriter(file, file.wfs.option.ChunkSizeLimit),
 		Uid:        uid,
 		Gid:        gid,
 	}
