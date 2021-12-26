@@ -117,7 +117,7 @@ func jsonPrintln(writer io.Writer, message proto.Message) error {
 func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {
 
 	// find existing directory, and ensure the directory is empty
-	err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		parent, name := util.FullPath(dir).DirAndName()
 		_, lookupErr := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parent,

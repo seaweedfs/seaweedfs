@@ -34,7 +34,7 @@ func (broker *MessageBroker) FindBroker(c context.Context, request *messaging_pb
 	targetTopicPartition := fmt.Sprintf(TopicPartitionFmt, request.Namespace, request.Topic, request.Parition)
 
 	for _, filer := range broker.option.Filers {
-		err := broker.withFilerClient(filer, func(client filer_pb.SeaweedFilerClient) error {
+		err := broker.withFilerClient(false, filer, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.LocateBroker(context.Background(), &filer_pb.LocateBrokerRequest{
 				Resource: targetTopicPartition,
 			})
@@ -68,7 +68,7 @@ func (broker *MessageBroker) checkFilers() {
 	found := false
 	for !found {
 		for _, filer := range broker.option.Filers {
-			err := broker.withFilerClient(filer, func(client filer_pb.SeaweedFilerClient) error {
+			err := broker.withFilerClient(false, filer, func(client filer_pb.SeaweedFilerClient) error {
 				resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 				if err != nil {
 					return err
@@ -93,7 +93,7 @@ func (broker *MessageBroker) checkFilers() {
 	found = false
 	for !found {
 		for _, master := range masters {
-			err := broker.withMasterClient(master, func(client master_pb.SeaweedClient) error {
+			err := broker.withMasterClient(false, master, func(client master_pb.SeaweedClient) error {
 				resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 					ClientType: cluster.FilerType,
 				})

@@ -44,7 +44,7 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 
 		if !found {
 			util.Retry("lookup volume "+vid, func() error {
-				err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+				err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 					resp, err := client.LookupVolume(context.Background(), &filer_pb.LookupVolumeRequest{
 						VolumeIds: []string{vid},
 					})

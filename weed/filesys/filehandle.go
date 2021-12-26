@@ -277,7 +277,7 @@ func (fh *FileHandle) doFlush(ctx context.Context, header fuse.Header) error {
 		return nil
 	}
 
-	err := fh.f.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := fh.f.wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		entry := fh.f.getEntry()
 		if entry == nil {

@@ -41,7 +41,7 @@ func (s3a *S3ApiServer) list(parentDirectoryPath, prefix, startFrom string, incl
 
 func (s3a *S3ApiServer) rm(parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
 
-	return s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
 		if err != nil {

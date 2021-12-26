@@ -22,7 +22,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 	glog.V(4).Infof("dir Rename %s => %s", oldPath, newPath)
 
 	// update remote filer
-	err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := dir.wfs.WithFilerClient(true, func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 

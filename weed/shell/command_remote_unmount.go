@@ -83,7 +83,7 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 func (c *commandRemoteUnmount) purgeMountedData(commandEnv *CommandEnv, dir string) error {
 
 	// find existing directory, and ensure the directory is empty
-	err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		parent, name := util.FullPath(dir).DirAndName()
 		lookupResp, lookupErr := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parent,

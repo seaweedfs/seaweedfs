@@ -54,7 +54,7 @@ func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 
 	destinationDir, destinationName := util.FullPath(destinationPath).DirAndName()
 
-	return commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		// collect destination entry info
 		destinationRequest := &filer_pb.LookupDirectoryEntryRequest{

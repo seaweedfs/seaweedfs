@@ -19,7 +19,7 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 		var fileId, host string
 		var auth security.EncodedJwt
 
-		if err := wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		if err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			return util.Retry("assignVolume", func() error {
 				request := &filer_pb.AssignVolumeRequest{
 					Count:       1,

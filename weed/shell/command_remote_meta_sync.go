@@ -117,7 +117,7 @@ func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util
 
 	remote := filer.MapFullPathToRemoteStorageLocation(localMountedDir, remoteMountedLocation, dirToCache)
 
-	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		ctx := context.Background()
 		err = remoteStorage.Traverse(remote, func(remoteDir, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
 			localDir := filer.MapRemoteStorageLocationPathToFullPath(localMountedDir, remoteMountedLocation, remoteDir)

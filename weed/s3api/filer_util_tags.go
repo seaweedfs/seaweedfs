@@ -13,7 +13,7 @@ const (
 
 func (s3a *S3ApiServer) getTags(parentDirectoryPath string, entryName string) (tags map[string]string, err error) {
 
-	err = s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		resp, err := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parentDirectoryPath,
@@ -35,7 +35,7 @@ func (s3a *S3ApiServer) getTags(parentDirectoryPath string, entryName string) (t
 
 func (s3a *S3ApiServer) setTags(parentDirectoryPath string, entryName string, tags map[string]string) (err error) {
 
-	return s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		resp, err := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parentDirectoryPath,
@@ -71,7 +71,7 @@ func (s3a *S3ApiServer) setTags(parentDirectoryPath string, entryName string, ta
 
 func (s3a *S3ApiServer) rmTags(parentDirectoryPath string, entryName string) (err error) {
 
-	return s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		resp, err := filer_pb.LookupEntry(client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parentDirectoryPath,

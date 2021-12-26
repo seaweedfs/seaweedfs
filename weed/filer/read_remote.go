@@ -26,7 +26,7 @@ func MapRemoteStorageLocationPathToFullPath(localMountedDir util.FullPath, remot
 }
 
 func CacheRemoteObjectToLocalCluster(filerClient filer_pb.FilerClient, remoteConf *remote_pb.RemoteConf, remoteLocation *remote_pb.RemoteStorageLocation, parent util.FullPath, entry *filer_pb.Entry) error {
-	return filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.CacheRemoteObjectToLocalCluster(context.Background(), &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 			Directory: string(parent),
 			Name:      entry.Name,

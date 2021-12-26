@@ -87,7 +87,7 @@ func startMasterFollower(masterOptions MasterOptions) {
 	var err error
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.master")
 	for i := 0; i < 10; i++ {
-		err = pb.WithOneOfGrpcMasterClients(masters, grpcDialOption, func(client master_pb.SeaweedClient) error {
+		err = pb.WithOneOfGrpcMasterClients(false, masters, grpcDialOption, func(client master_pb.SeaweedClient) error {
 			resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get master grpc address %v configuration: %v", masters, err)

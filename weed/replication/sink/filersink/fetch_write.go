@@ -70,7 +70,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 	var host string
 	var auth security.EncodedJwt
 
-	if err := fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	if err := fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return util.Retry("assignVolume", func() error {
 			request := &filer_pb.AssignVolumeRequest{
 				Count:       1,
@@ -131,9 +131,9 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 
 var _ = filer_pb.FilerClient(&FilerSink{})
 
-func (fs *FilerSink) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
+func (fs *FilerSink) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
+	return pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
 	}, fs.grpcAddress, fs.grpcDialOption)

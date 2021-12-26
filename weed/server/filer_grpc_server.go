@@ -327,7 +327,7 @@ func (fs *FilerServer) CollectionList(ctx context.Context, req *filer_pb.Collect
 	glog.V(4).Infof("CollectionList %v", req)
 	resp = &filer_pb.CollectionListResponse{}
 
-	err = fs.filer.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+	err = fs.filer.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		masterResp, err := client.CollectionList(context.Background(), &master_pb.CollectionListRequest{
 			IncludeNormalVolumes: req.IncludeNormalVolumes,
 			IncludeEcVolumes:     req.IncludeEcVolumes,
@@ -348,7 +348,7 @@ func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.Delet
 
 	glog.V(4).Infof("DeleteCollection %v", req)
 
-	err = fs.filer.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+	err = fs.filer.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
 			Name: req.GetCollection(),
 		})
@@ -362,7 +362,7 @@ func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsR
 
 	var output *master_pb.StatisticsResponse
 
-	err = fs.filer.MasterClient.WithClient(func(masterClient master_pb.SeaweedClient) error {
+	err = fs.filer.MasterClient.WithClient(false, func(masterClient master_pb.SeaweedClient) error {
 		grpcResponse, grpcErr := masterClient.Statistics(context.Background(), &master_pb.StatisticsRequest{
 			Replication: req.Replication,
 			Collection:  req.Collection,

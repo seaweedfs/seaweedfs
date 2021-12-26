@@ -105,7 +105,7 @@ func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer
 
 		fmt.Fprintf(writer, "Uncache %+v ... ", dir.Child(entry.Name))
 
-		err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			_, updateErr := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
 				Directory: string(dir),
 				Entry:     entry,

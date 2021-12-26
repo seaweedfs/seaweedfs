@@ -45,7 +45,7 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 		return fmt.Errorf("empty bucket name")
 	}
 
-	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
