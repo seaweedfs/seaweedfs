@@ -8,6 +8,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/filer/redis2/stored_procedure"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -56,19 +57,15 @@ func (store *UniversalRedis2Store) InsertEntry(ctx context.Context, entry *filer
 		value = util.MaybeGzipData(value)
 	}
 
-	if err = store.Client.Set(ctx, string(entry.FullPath), value, time.Duration(entry.TtlSec)*time.Second).Err(); err != nil {
-		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
-	}
-
 	dir, name := entry.FullPath.DirAndName()
-	if store.isSuperLargeDirectory(dir) {
-		return nil
-	}
 
-	if name != "" {
-		if err = store.Client.ZAddNX(ctx, genDirectoryListKey(dir), &redis.Z{Score: 0, Member: name}).Err(); err != nil {
-			return fmt.Errorf("persisting %s in parent dir: %v", entry.FullPath, err)
-		}
+	err = stored_procedure.InsertEntryScript.Run(ctx, store.Client,
+		[]string{string(entry.FullPath), genDirectoryListKey(dir)},
+		value, entry.TtlSec,
+		store.isSuperLargeDirectory(dir), 0, name).Err()
+
+	if err != nil {
+		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
 	}
 
 	return nil
@@ -103,25 +100,14 @@ func (store *UniversalRedis2Store) FindEntry(ctx context.Context, fullpath util.
 
 func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath util.FullPath) (err error) {
 
-	_, err = store.Client.Del(ctx, genDirectoryListKey(string(fullpath))).Result()
-	if err != nil {
-		return fmt.Errorf("delete dir list %s : %v", fullpath, err)
-	}
-
-	_, err = store.Client.Del(ctx, string(fullpath)).Result()
-	if err != nil {
-		return fmt.Errorf("delete %s : %v", fullpath, err)
-	}
-
 	dir, name := fullpath.DirAndName()
-	if store.isSuperLargeDirectory(dir) {
-		return nil
-	}
-	if name != "" {
-		_, err = store.Client.ZRem(ctx, genDirectoryListKey(dir), name).Result()
-		if err != nil {
-			return fmt.Errorf("DeleteEntry %s in parent dir: %v", fullpath, err)
-		}
+
+	err = stored_procedure.DeleteEntryScript.Run(ctx, store.Client,
+		[]string{string(fullpath), genDirectoryListKey(string(fullpath)), genDirectoryListKey(dir)},
+		store.isSuperLargeDirectory(dir), name).Err()
+
+	if err != nil {
+		return fmt.Errorf("DeleteEntry %s : %v", fullpath, err)
 	}
 
 	return nil
@@ -133,22 +119,11 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 		return nil
 	}
 
-	members, err := store.Client.ZRangeByLex(ctx, genDirectoryListKey(string(fullpath)), &redis.ZRangeBy{
-		Min: "-",
-		Max: "+",
-	}).Result()
+	err = stored_procedure.DeleteFolderChildrenScript.Run(ctx, store.Client,
+		[]string{string(fullpath)}).Err()
+
 	if err != nil {
 		return fmt.Errorf("DeleteFolderChildren %s : %v", fullpath, err)
-	}
-
-	for _, fileName := range members {
-		path := util.NewFullPath(string(fullpath), fileName)
-		_, err = store.Client.Del(ctx, string(path)).Result()
-		if err != nil {
-			return fmt.Errorf("DeleteFolderChildren %s in parent dir: %v", fullpath, err)
-		}
-		// not efficient, but need to remove if it is a directory
-		store.Client.Del(ctx, genDirectoryListKey(string(path)))
 	}
 
 	return nil
@@ -194,8 +169,7 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 		} else {
 			if entry.TtlSec > 0 {
 				if entry.Attr.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
-					store.Client.Del(ctx, string(path)).Result()
-					store.Client.ZRem(ctx, dirListKey, fileName).Result()
+					store.DeleteEntry(ctx, path)
 					continue
 				}
 			}
