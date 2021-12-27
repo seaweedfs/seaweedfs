@@ -63,6 +63,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		query.Get("replication"),
 		query.Get("ttl"),
 		query.Get("disk"),
+		query.Get("fsync"),
 		query.Get("dataCenter"),
 		query.Get("rack"),
 		query.Get("dataNode"),
@@ -152,12 +153,17 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	}, nil
 }
 
-func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplication string, qTtl string, diskType string, dataCenter, rack, dataNode string) (*operation.StorageOption, error) {
+func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplication string, qTtl string, diskType string, fsync string, dataCenter, rack, dataNode string) (*operation.StorageOption, error) {
 
 	ttl, err := needle.ReadTTL(qTtl)
 	if err != nil {
 		glog.Errorf("fail to parse ttl %s: %v", qTtl, err)
 	}
 
-	return fs.detectStorageOption(requestURI, qCollection, qReplication, int32(ttl.Minutes())*60, diskType, dataCenter, rack, dataNode)
+	so, err := fs.detectStorageOption(requestURI, qCollection, qReplication, int32(ttl.Minutes())*60, diskType, dataCenter, rack, dataNode)
+	if so != nil {
+		so.Fsync = fsync == "true"
+	}
+
+	return so, err
 }
