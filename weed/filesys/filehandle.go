@@ -3,7 +3,6 @@ package filesys
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filesys/page_writer"
 	"io"
 	"math"
 	"net/http"
@@ -21,7 +20,7 @@ import (
 
 type FileHandle struct {
 	// cache file has been written to
-	dirtyPages     page_writer.DirtyPages
+	dirtyPages     *PageWriter
 	entryViewCache []filer.VisibleInterval
 	reader         io.ReaderAt
 	contentType    string
@@ -176,6 +175,8 @@ func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *f
 
 	fh.Add(1)
 	defer fh.Done()
+
+	fh.dirtyPages.writerPattern.MonitorWriteAt(req.Offset, len(req.Data))
 
 	fh.Lock()
 	defer fh.Unlock()

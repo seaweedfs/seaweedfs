@@ -35,8 +35,6 @@ func newPageWriter(file *File, chunkSize int64) *PageWriter {
 
 func (pw *PageWriter) AddPage(offset int64, data []byte) {
 
-	pw.writerPattern.MonitorWriteAt(offset, len(data))
-
 	glog.V(4).Infof("%v AddPage [%d, %d) streaming:%v", pw.f.fullpath(), offset, offset+int64(len(data)), pw.writerPattern.IsStreamingMode())
 
 	chunkIndex := offset / pw.chunkSize
