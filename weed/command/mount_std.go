@@ -175,7 +175,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fuse.DefaultPermissions(),
 		fuse.MaxReadahead(1024 * 128),
 		fuse.AsyncRead(),
-		fuse.WritebackCache(),
+		//fuse.WritebackCache(),
 		fuse.MaxBackground(128),
 		fuse.CongestionThreshold(128),
 	}
