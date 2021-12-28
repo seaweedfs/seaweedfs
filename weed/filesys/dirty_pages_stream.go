@@ -91,7 +91,6 @@ func (pages *StreamDirtyPages) saveChunkedFileIntevalToStorage(reader io.Reader,
 		glog.V(3).Infof("%s saveToStorage %s [%d,%d)", pages.f.fullpath(), chunk.FileId, offset, offset+size)
 		pages.chunkAddLock.Unlock()
 
-		cleanupFn()
 	}
 
 	if pages.f.wfs.concurrentWriters != nil {
