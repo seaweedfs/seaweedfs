@@ -53,7 +53,7 @@ func RunShell(options ShellOptions) {
 
 	if commandEnv.option.FilerAddress == "" {
 		var filers []pb.ServerAddress
-		commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+		commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 				ClientType: cluster.FilerType,
 			})
@@ -75,7 +75,7 @@ func RunShell(options ShellOptions) {
 	}
 
 	if commandEnv.option.FilerAddress != "" {
-		commandEnv.WithFilerClient(func(filerClient filer_pb.SeaweedFilerClient) error {
+		commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
 			resp, err := filerClient.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return err

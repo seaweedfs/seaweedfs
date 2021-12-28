@@ -63,8 +63,10 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		query.Get("replication"),
 		query.Get("ttl"),
 		query.Get("disk"),
+		query.Get("fsync"),
 		query.Get("dataCenter"),
 		query.Get("rack"),
+		query.Get("dataNode"),
 	)
 	if err != nil {
 		if err == ErrReadOnly {
@@ -115,7 +117,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication string, ttlSeconds int32, diskType, dataCenter, rack string) (*operation.StorageOption, error) {
+func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication string, ttlSeconds int32, diskType, dataCenter, rack, dataNode string) (*operation.StorageOption, error) {
 
 	rule := fs.filer.FilerConf.MatchStorageRule(requestURI)
 
@@ -141,8 +143,9 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	return &operation.StorageOption{
 		Replication:       util.Nvl(qReplication, rule.Replication, bucketDefaultReplication, fs.option.DefaultReplication),
 		Collection:        util.Nvl(qCollection, rule.Collection, bucketDefaultCollection, fs.option.Collection),
-		DataCenter:        util.Nvl(dataCenter, fs.option.DataCenter),
-		Rack:              util.Nvl(rack, fs.option.Rack),
+		DataCenter:        util.Nvl(dataCenter, rule.DataCenter, fs.option.DataCenter),
+		Rack:              util.Nvl(rack, rule.Rack, fs.option.Rack),
+		DataNode:          util.Nvl(dataNode, rule.DataNode, fs.option.DataNode),
 		TtlSeconds:        ttlSeconds,
 		DiskType:          util.Nvl(diskType, rule.DiskType),
 		Fsync:             fsync || rule.Fsync,
@@ -150,12 +153,17 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	}, nil
 }
 
-func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplication string, qTtl string, diskType string, dataCenter, rack string) (*operation.StorageOption, error) {
+func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplication string, qTtl string, diskType string, fsync string, dataCenter, rack, dataNode string) (*operation.StorageOption, error) {
 
 	ttl, err := needle.ReadTTL(qTtl)
 	if err != nil {
 		glog.Errorf("fail to parse ttl %s: %v", qTtl, err)
 	}
 
-	return fs.detectStorageOption(requestURI, qCollection, qReplication, int32(ttl.Minutes())*60, diskType, dataCenter, rack)
+	so, err := fs.detectStorageOption(requestURI, qCollection, qReplication, int32(ttl.Minutes())*60, diskType, dataCenter, rack, dataNode)
+	if so != nil {
+		so.Fsync = fsync == "true"
+	}
+
+	return so, err
 }

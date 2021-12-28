@@ -247,6 +247,7 @@ message AssignVolumeRequest {
     string data_center = 5;
     string path = 6;
     string rack = 7;
+    string data_node = 9;
     string disk_type = 8;
 }
 
@@ -396,6 +397,9 @@ message FilerConf {
         bool fsync = 6;
         uint32 volume_growth_count = 7;
         bool read_only = 8;
+        string data_center = 9;
+        string rack = 10;
+        string data_node = 11;
     }
     repeated PathConf locations = 2;
 }

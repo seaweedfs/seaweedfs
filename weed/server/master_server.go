@@ -213,17 +213,7 @@ func (ms *MasterServer) startAdminScripts() {
 	v := util.GetViper()
 	adminScripts := v.GetString("master.maintenance.scripts")
 	if adminScripts == "" {
-		adminScripts = `
-		lock
-		ec.encode -fullPercent=95 -quietFor=1h
-		ec.rebuild -force
-		ec.balance -force
-		volume.deleteEmpty -quietFor=24h -force
-		volume.balance -force
-		volume.fix.replication
-		s3.clean.uploads -timeAgo=24h
-		unlock
-	`
+		return
 	}
 	glog.V(0).Infof("adminScripts: %v", adminScripts)
 

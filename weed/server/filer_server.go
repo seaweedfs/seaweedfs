@@ -56,6 +56,7 @@ type FilerOption struct {
 	DirListingLimit       int
 	DataCenter            string
 	Rack                  string
+	DataNode              string
 	DefaultLevelDbDir     string
 	DisableHttp           bool
 	Host                  pb.ServerAddress
@@ -164,7 +165,7 @@ func (fs *FilerServer) checkWithMaster() {
 	isConnected := false
 	for !isConnected {
 		for _, master := range fs.option.Masters {
-			readErr := operation.WithMasterServerClient(master, fs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+			readErr := operation.WithMasterServerClient(false, master, fs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 				if err != nil {
 					return fmt.Errorf("get master %s configuration: %v", master, err)

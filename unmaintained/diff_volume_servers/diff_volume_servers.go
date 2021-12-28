@@ -122,7 +122,7 @@ type needleState struct {
 
 func getVolumeFiles(v uint32, addr pb.ServerAddress) (map[types.NeedleId]needleState, int64, error) {
 	var idxFile *bytes.Reader
-	err := operation.WithVolumeServerClient(addr, grpcDialOption, func(vs volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClient(false, addr, grpcDialOption, func(vs volume_server_pb.VolumeServerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		copyFileClient, err := vs.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
@@ -180,7 +180,7 @@ func getVolumeFiles(v uint32, addr pb.ServerAddress) (map[types.NeedleId]needleS
 
 func getNeedleFileId(v uint32, nid types.NeedleId, addr pb.ServerAddress) (string, error) {
 	var id string
-	err := operation.WithVolumeServerClient(addr, grpcDialOption, func(vs volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClient(false, addr, grpcDialOption, func(vs volume_server_pb.VolumeServerClient) error {
 		resp, err := vs.VolumeNeedleStatus(context.Background(), &volume_server_pb.VolumeNeedleStatusRequest{
 			VolumeId: v,
 			NeedleId: uint64(nid),

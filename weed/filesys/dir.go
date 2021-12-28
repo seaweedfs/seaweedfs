@@ -161,7 +161,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 		},
 	}
 	file.dirtyMetadata = true
-	fh := dir.wfs.AcquireHandle(file, req.Uid, req.Gid, req.Flags&fuse.OpenWriteOnly > 0)
+	fh := dir.wfs.AcquireHandle(file, req.Uid, req.Gid)
 	return file, fh, nil
 
 }
@@ -201,7 +201,7 @@ func (dir *Dir) doCreateEntry(name string, mode os.FileMode, uid, gid uint32, ex
 	}
 	glog.V(1).Infof("create %s/%s", dirFullPath, name)
 
-	err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := dir.wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		dir.wfs.mapPbIdFromLocalToFiler(request.Entry)
 		defer dir.wfs.mapPbIdFromFilerToLocal(request.Entry)
@@ -242,7 +242,7 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 
 	dirFullPath := dir.FullPath()
 
-	err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := dir.wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		dir.wfs.mapPbIdFromLocalToFiler(newEntry)
 		defer dir.wfs.mapPbIdFromFilerToLocal(newEntry)
@@ -566,7 +566,7 @@ func (dir *Dir) saveEntry(entry *filer_pb.Entry) error {
 
 	parentDir, name := util.FullPath(dir.FullPath()).DirAndName()
 
-	return dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return dir.wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		dir.wfs.mapPbIdFromLocalToFiler(entry)
 		defer dir.wfs.mapPbIdFromFilerToLocal(entry)

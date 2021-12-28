@@ -233,7 +233,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	if s3err.Logger != nil {
 		auditLog = s3err.GetAccessLog(r, http.StatusNoContent, s3err.ErrNone)
 	}
-	s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		// delete file entries
 		for _, object := range deleteObjects.Objects {

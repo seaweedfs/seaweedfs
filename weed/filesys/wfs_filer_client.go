@@ -11,7 +11,7 @@ import (
 
 var _ = filer_pb.FilerClient(&WFS{})
 
-func (wfs *WFS) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) (err error) {
+func (wfs *WFS) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) (err error) {
 
 	return util.Retry("filer grpc", func() error {
 
@@ -20,7 +20,7 @@ func (wfs *WFS) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) (err
 		for x := 0; x < n; x++ {
 
 			filerGrpcAddress := wfs.option.FilerAddresses[i].ToGrpcAddress()
-			err = pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
+			err = pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 				client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 				return fn(client)
 			}, filerGrpcAddress, wfs.option.GrpcDialOption)

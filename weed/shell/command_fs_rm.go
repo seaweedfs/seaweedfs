@@ -56,7 +56,7 @@ func (c *commandFsRm) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 		return fmt.Errorf("need to have arguments")
 	}
 
-	commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		for _, entry := range entiries {
 			targetPath, err := commandEnv.parseUrl(entry)
 			if err != nil {

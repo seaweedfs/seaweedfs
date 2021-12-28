@@ -32,7 +32,7 @@ type FilerConf struct {
 
 func ReadFilerConf(filerGrpcAddress pb.ServerAddress, grpcDialOption grpc.DialOption, masterClient *wdclient.MasterClient) (*FilerConf, error) {
 	var buf bytes.Buffer
-	if err := pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	if err := pb.WithGrpcFilerClient(false, filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		if masterClient != nil {
 			return ReadEntry(masterClient, client, DirectoryEtcSeaweedFS, FilerConfName, &buf)
 		} else {
@@ -159,16 +159,15 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 	a.Collection = util.Nvl(b.Collection, a.Collection)
 	a.Replication = util.Nvl(b.Replication, a.Replication)
 	a.Ttl = util.Nvl(b.Ttl, a.Ttl)
-	if b.DiskType != "" {
-		a.DiskType = b.DiskType
-	}
+	a.DiskType = util.Nvl(b.DiskType, a.DiskType)
 	a.Fsync = b.Fsync || a.Fsync
 	if b.VolumeGrowthCount > 0 {
 		a.VolumeGrowthCount = b.VolumeGrowthCount
 	}
-	if b.ReadOnly {
-		a.ReadOnly = b.ReadOnly
-	}
+	a.ReadOnly = b.ReadOnly || a.ReadOnly
+	a.DataCenter = util.Nvl(b.DataCenter, a.DataCenter)
+	a.Rack = util.Nvl(b.Rack, a.Rack)
+	a.DataNode = util.Nvl(b.DataNode, a.DataNode)
 }
 
 func (fc *FilerConf) ToProto() *filer_pb.FilerConf {

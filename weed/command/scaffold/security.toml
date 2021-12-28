@@ -10,6 +10,13 @@
 key = ""
 expires_after_seconds = 10           # seconds
 
+# by default, if the signing key above is set, the Volume UI over HTTP is disabled.
+# by setting ui.access to true, you can re-enable the Volume UI. Despite
+# some information leakage (as the UI is unauthenticted), this should not
+# pose a security risk.
+[access]
+ui = false
+
 # jwt for read is only supported with master+volume setup. Filer does not support this mode.
 [jwt.signing.read]
 key = ""

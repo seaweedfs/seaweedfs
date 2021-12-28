@@ -97,7 +97,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 	glog.V(4).Infof("file %v open %+v", file.fullpath(), req)
 
-	handle := file.wfs.AcquireHandle(file, req.Uid, req.Gid, req.Flags&fuse.OpenWriteOnly > 0)
+	handle := file.wfs.AcquireHandle(file, req.Uid, req.Gid)
 
 	resp.Handle = fuse.HandleID(handle.handle)
 
@@ -331,7 +331,7 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 }
 
 func (file *File) saveEntry(entry *filer_pb.Entry) error {
-	return file.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return file.wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		file.wfs.mapPbIdFromLocalToFiler(entry)
 		defer file.wfs.mapPbIdFromFilerToLocal(entry)
@@ -362,7 +362,7 @@ func (file *File) getEntry() *filer_pb.Entry {
 }
 
 func (file *File) downloadRemoteEntry(entry *filer_pb.Entry) (*filer_pb.Entry, error) {
-	err := file.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := file.wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 			Directory: file.dir.FullPath(),

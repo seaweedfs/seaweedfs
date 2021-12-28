@@ -65,7 +65,7 @@ func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer i
 }
 
 func readFilerBucketsPath(filerClient filer_pb.FilerClient) (filerBucketsPath string, err error) {
-	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {

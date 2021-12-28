@@ -68,7 +68,7 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 	}
 
 	// apply changes to the filer, and also apply to local metaCache
-	err = dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = dir.wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		dir.wfs.mapPbIdFromLocalToFiler(request.Entry)
 		defer dir.wfs.mapPbIdFromFilerToLocal(request.Entry)
@@ -121,7 +121,7 @@ func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node,
 		Signatures: []int32{dir.wfs.signature},
 	}
 
-	err := dir.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := dir.wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		dir.wfs.mapPbIdFromLocalToFiler(request.Entry)
 		defer dir.wfs.mapPbIdFromFilerToLocal(request.Entry)

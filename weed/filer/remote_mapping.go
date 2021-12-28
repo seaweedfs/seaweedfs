@@ -11,7 +11,7 @@ import (
 
 func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress) (mappings *remote_pb.RemoteStorageMapping, readErr error) {
 	var oldContent []byte
-	if readErr = pb.WithFilerClient(filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	if readErr = pb.WithFilerClient(false, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		oldContent, readErr = ReadInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
 		return readErr
 	}); readErr != nil {
@@ -30,7 +30,7 @@ func InsertMountMapping(filerClient filer_pb.FilerClient, dir string, remoteStor
 
 	// read current mapping
 	var oldContent, newContent []byte
-	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		oldContent, err = ReadInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
 		return err
 	})
@@ -47,7 +47,7 @@ func InsertMountMapping(filerClient filer_pb.FilerClient, dir string, remoteStor
 	}
 
 	// save back
-	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return SaveInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE, newContent)
 	})
 	if err != nil {
@@ -61,7 +61,7 @@ func DeleteMountMapping(filerClient filer_pb.FilerClient, dir string) (err error
 
 	// read current mapping
 	var oldContent, newContent []byte
-	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		oldContent, err = ReadInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
 		return err
 	})
@@ -78,7 +78,7 @@ func DeleteMountMapping(filerClient filer_pb.FilerClient, dir string) (err error
 	}
 
 	// save back
-	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return SaveInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE, newContent)
 	})
 	if err != nil {
