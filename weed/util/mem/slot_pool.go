@@ -16,8 +16,8 @@ func bitCount(size int) (count int) {
 }
 
 func init() {
-	// 1KB ~ 256MB
-	pools = make([]*sync.Pool, bitCount(1024*1024*256))
+	// 1KB ~ 1024MB
+	pools = make([]*sync.Pool, bitCount(1024*1024*1024))
 	for i := 0; i < len(pools); i++ {
 		slotSize := 1024 << i
 		pools[i] = &sync.Pool{
