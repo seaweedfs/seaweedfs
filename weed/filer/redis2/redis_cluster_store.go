@@ -1,6 +1,7 @@
 package redis2
 
 import (
+	"context"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/go-redis/redis/v8"
@@ -40,5 +41,6 @@ func (store *RedisCluster2Store) initialize(addresses []string, password string,
 		RouteByLatency: routeByLatency,
 	})
 	store.loadSuperLargeDirectories(superLargeDirectories)
+	store.detectSupportLuaScript(context.Background())
 	return
 }

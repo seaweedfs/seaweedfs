@@ -1,6 +1,7 @@
 package redis2
 
 import (
+	"context"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/go-redis/redis/v8"
@@ -41,5 +42,6 @@ func (store *Redis2SentinelStore) initialize(addresses []string, masterName stri
 		ReadTimeout:     time.Second * 30,
 		WriteTimeout:    time.Second * 5,
 	})
+	store.detectSupportLuaScript(context.Background())
 	return
 }

@@ -21,11 +21,22 @@ const (
 type UniversalRedis2Store struct {
 	Client                  redis.UniversalClient
 	superLargeDirectoryHash map[string]bool
+	supportLuaScript        bool
 }
 
 func (store *UniversalRedis2Store) isSuperLargeDirectory(dir string) (isSuperLargeDirectory bool) {
 	_, isSuperLargeDirectory = store.superLargeDirectoryHash[dir]
 	return
+}
+
+func (store *UniversalRedis2Store) detectSupportLuaScript(ctx context.Context) bool {
+	result, err := redis.NewScript("return 'hello world'").Run(ctx, store.Client, nil).Result()
+	store.supportLuaScript = err == nil && result == "hello world"
+	return store.supportLuaScript
+}
+
+func (store *UniversalRedis2Store) isSupportLuaScript() bool {
+	return store.supportLuaScript
 }
 
 func (store *UniversalRedis2Store) loadSuperLargeDirectories(superLargeDirectories []string) {
@@ -59,13 +70,29 @@ func (store *UniversalRedis2Store) InsertEntry(ctx context.Context, entry *filer
 
 	dir, name := entry.FullPath.DirAndName()
 
-	err = stored_procedure.InsertEntryScript.Run(ctx, store.Client,
-		[]string{string(entry.FullPath), genDirectoryListKey(dir)},
-		value, entry.TtlSec,
-		store.isSuperLargeDirectory(dir), 0, name).Err()
+	if store.isSupportLuaScript() {
+		err = stored_procedure.InsertEntryScript.Run(ctx, store.Client,
+			[]string{string(entry.FullPath), genDirectoryListKey(dir)},
+			value, entry.TtlSec,
+			store.isSuperLargeDirectory(dir), 0, name).Err()
 
-	if err != nil {
-		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
+		if err != nil {
+			return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
+		}
+	} else {
+		if err = store.Client.Set(ctx, string(entry.FullPath), value, time.Duration(entry.TtlSec)*time.Second).Err(); err != nil {
+			return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
+		}
+
+		if store.isSuperLargeDirectory(dir) {
+			return nil
+		}
+
+		if name != "" {
+			if err = store.Client.ZAddNX(ctx, genDirectoryListKey(dir), &redis.Z{Score: 0, Member: name}).Err(); err != nil {
+				return fmt.Errorf("persisting %s in parent dir: %v", entry.FullPath, err)
+			}
+		}
 	}
 
 	return nil
@@ -102,12 +129,34 @@ func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath uti
 
 	dir, name := fullpath.DirAndName()
 
-	err = stored_procedure.DeleteEntryScript.Run(ctx, store.Client,
-		[]string{string(fullpath), genDirectoryListKey(string(fullpath)), genDirectoryListKey(dir)},
-		store.isSuperLargeDirectory(dir), name).Err()
+	if store.isSupportLuaScript() {
+		err = stored_procedure.DeleteEntryScript.Run(ctx, store.Client,
+			[]string{string(fullpath), genDirectoryListKey(string(fullpath)), genDirectoryListKey(dir)},
+			store.isSuperLargeDirectory(dir), name).Err()
 
-	if err != nil {
-		return fmt.Errorf("DeleteEntry %s : %v", fullpath, err)
+		if err != nil {
+			return fmt.Errorf("DeleteEntry %s : %v", fullpath, err)
+		}
+	} else {
+		_, err = store.Client.Del(ctx, genDirectoryListKey(string(fullpath))).Result()
+		if err != nil {
+			return fmt.Errorf("delete dir list %s : %v", fullpath, err)
+		}
+
+		_, err = store.Client.Del(ctx, string(fullpath)).Result()
+		if err != nil {
+			return fmt.Errorf("delete %s : %v", fullpath, err)
+		}
+
+		if store.isSuperLargeDirectory(dir) {
+			return nil
+		}
+		if name != "" {
+			_, err = store.Client.ZRem(ctx, genDirectoryListKey(dir), name).Result()
+			if err != nil {
+				return fmt.Errorf("DeleteEntry %s in parent dir: %v", fullpath, err)
+			}
+		}
 	}
 
 	return nil
@@ -119,11 +168,31 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 		return nil
 	}
 
-	err = stored_procedure.DeleteFolderChildrenScript.Run(ctx, store.Client,
-		[]string{string(fullpath)}).Err()
+	if store.isSupportLuaScript() {
+		err = stored_procedure.DeleteFolderChildrenScript.Run(ctx, store.Client,
+			[]string{string(fullpath)}).Err()
 
-	if err != nil {
-		return fmt.Errorf("DeleteFolderChildren %s : %v", fullpath, err)
+		if err != nil {
+			return fmt.Errorf("DeleteFolderChildren %s : %v", fullpath, err)
+		}
+	} else {
+		members, err := store.Client.ZRangeByLex(ctx, genDirectoryListKey(string(fullpath)), &redis.ZRangeBy{
+			Min: "-",
+			Max: "+",
+		}).Result()
+		if err != nil {
+			return fmt.Errorf("DeleteFolderChildren %s : %v", fullpath, err)
+		}
+
+		for _, fileName := range members {
+			path := util.NewFullPath(string(fullpath), fileName)
+			_, err = store.Client.Del(ctx, string(path)).Result()
+			if err != nil {
+				return fmt.Errorf("DeleteFolderChildren %s in parent dir: %v", fullpath, err)
+			}
+			// not efficient, but need to remove if it is a directory
+			store.Client.Del(ctx, genDirectoryListKey(string(path)))
+		}
 	}
 
 	return nil
