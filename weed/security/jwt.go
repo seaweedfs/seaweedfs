@@ -13,12 +13,14 @@ import (
 type EncodedJwt string
 type SigningKey []byte
 
+// SeaweedFileIdClaims is created by Master server(s) and consumed by Volume server(s),
+// restricting the access this JWT allows to only a single file.
 type SeaweedFileIdClaims struct {
 	Fid string `json:"fid"`
 	jwt.StandardClaims
 }
 
-func GenJwt(signingKey SigningKey, expiresAfterSec int, fileId string) EncodedJwt {
+func GenJwtForVolumeServer(signingKey SigningKey, expiresAfterSec int, fileId string) EncodedJwt {
 	if len(signingKey) == 0 {
 		return ""
 	}
