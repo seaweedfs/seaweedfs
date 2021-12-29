@@ -57,9 +57,9 @@ func GetJwt(r *http.Request) EncodedJwt {
 	return EncodedJwt(tokenStr)
 }
 
-func DecodeJwt(signingKey SigningKey, tokenString EncodedJwt) (token *jwt.Token, err error) {
+func DecodeJwt(signingKey SigningKey, tokenString EncodedJwt, claims jwt.Claims) (token *jwt.Token, err error) {
 	// check exp, nbf
-	return jwt.ParseWithClaims(string(tokenString), &SeaweedFileIdClaims{}, func(token *jwt.Token) (interface{}, error) {
+	return jwt.ParseWithClaims(string(tokenString), claims, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unknown token method")
 		}
