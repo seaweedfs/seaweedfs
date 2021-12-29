@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"io"
 	"net/http"
 	"net/url"
@@ -143,7 +144,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
 
-	s3a.proxyToFiler(w, r, destUrl, passThroughResponse)
+	s3a.proxyToFiler(w, r, destUrl, false, passThroughResponse)
 }
 
 func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -154,7 +155,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
 
-	s3a.proxyToFiler(w, r, destUrl, passThroughResponse)
+	s3a.proxyToFiler(w, r, destUrl, false, passThroughResponse)
 }
 
 func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +166,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	destUrl := fmt.Sprintf("http://%s%s/%s%s?recursive=true",
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
 
-	s3a.proxyToFiler(w, r, destUrl, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int) {
+	s3a.proxyToFiler(w, r, destUrl, true, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int) {
 		statusCode = http.StatusNoContent
 		for k, v := range proxyResponse.Header {
 			w.Header()[k] = v
@@ -306,11 +307,12 @@ func (s3a *S3ApiServer) doDeleteEmptyDirectories(client filer_pb.SeaweedFilerCli
 	return
 }
 
-func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, responseFn func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int)) {
+func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, isWrite bool, responseFn func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int)) {
 
 	glog.V(3).Infof("s3 proxying %s to %s", r.Method, destUrl)
 
 	proxyReq, err := http.NewRequest(r.Method, destUrl, r.Body)
+	s3a.maybeAddFilerJwtAuthorization(proxyReq, isWrite)
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", destUrl, err)
@@ -374,6 +376,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	var body = io.TeeReader(dataReader, hash)
 
 	proxyReq, err := http.NewRequest("PUT", uploadUrl, body)
+	s3a.maybeAddFilerJwtAuthorization(proxyReq, true)
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", uploadUrl, err)
@@ -432,4 +435,24 @@ func filerErrorToS3Error(errString string) s3err.ErrorCode {
 		return s3err.ErrExistingObjectIsDirectory
 	}
 	return s3err.ErrInternalError
+}
+
+func (s3a *S3ApiServer) maybeAddFilerJwtAuthorization(r *http.Request, isWrite bool) {
+	encodedJwt := s3a.maybeGetFilerJwtAuthorizationToken(isWrite)
+
+	if encodedJwt == "" {
+		return
+	}
+
+	r.Header.Add("Authorization", "BEARER "+string(encodedJwt))
+}
+
+func (s3a *S3ApiServer) maybeGetFilerJwtAuthorizationToken(isWrite bool) string {
+	var encodedJwt security.EncodedJwt
+	if isWrite {
+		encodedJwt = security.GenJwtForFilerServer(s3a.filerGuard.SigningKey, s3a.filerGuard.ExpiresAfterSec)
+	} else {
+		encodedJwt = security.GenJwtForFilerServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec)
+	}
+	return string(encodedJwt)
 }
