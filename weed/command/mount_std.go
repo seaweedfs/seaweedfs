@@ -173,11 +173,11 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fuse.DaemonTimeout("3600"),
 		fuse.AllowSUID(),
 		fuse.DefaultPermissions(),
-		fuse.MaxReadahead(1024 * 128),
+		fuse.MaxReadahead(1024 * 512),
 		fuse.AsyncRead(),
 		// fuse.WritebackCache(),
-		fuse.MaxBackground(128),
-		fuse.CongestionThreshold(128),
+		// fuse.MaxBackground(1024),
+		// fuse.CongestionThreshold(1024),
 	}
 
 	options = append(options, osSpecificMountOptions()...)
