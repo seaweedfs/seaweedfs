@@ -27,7 +27,8 @@ type FilerMetaBackupOptions struct {
 	restart           *bool
 	backupFilerConfig *string
 
-	store filer.FilerStore
+	store    filer.FilerStore
+	clientId int32
 }
 
 func init() {
@@ -36,6 +37,7 @@ func init() {
 	metaBackup.filerDirectory = cmdFilerMetaBackup.Flag.String("filerDir", "/", "a folder on the filer")
 	metaBackup.restart = cmdFilerMetaBackup.Flag.Bool("restart", false, "copy the full metadata before async incremental backup")
 	metaBackup.backupFilerConfig = cmdFilerMetaBackup.Flag.String("config", "", "path to filer.toml specifying backup filer store")
+	metaBackup.clientId = util.RandomInt32()
 }
 
 var cmdFilerMetaBackup = &Command{
@@ -195,7 +197,7 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 		return metaBackup.setOffset(lastTime)
 	})
 
-	return pb.FollowMetadata(pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOption, "meta_backup",
+	return pb.FollowMetadata(pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOption, "meta_backup", metaBackup.clientId,
 		*metaBackup.filerDirectory, nil, startTime.UnixNano(), 0, processEventFnWithOffset, false)
 
 }

@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import javax.net.ssl.SSLException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 public class FilerGrpcClient {
@@ -30,6 +31,7 @@ public class FilerGrpcClient {
     public final int VOLUME_SERVER_ACCESS_PUBLIC_URL = 1;
     public final int VOLUME_SERVER_ACCESS_FILER_PROXY = 2;
     public final Map<String, FilerProto.Locations> vidLocations = new HashMap<>();
+    protected int randomClientId;
     private final ManagedChannel channel;
     private final SeaweedFilerGrpc.SeaweedFilerBlockingStub blockingStub;
     private final SeaweedFilerGrpc.SeaweedFilerStub asyncStub;
@@ -62,6 +64,7 @@ public class FilerGrpcClient {
         cipher = filerConfigurationResponse.getCipher();
         collection = filerConfigurationResponse.getCollection();
         replication = filerConfigurationResponse.getReplication();
+        randomClientId = new Random().nextInt();
 
     }
 

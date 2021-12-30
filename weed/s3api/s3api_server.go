@@ -3,6 +3,7 @@ package s3api
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"net/http"
 	"strings"
 	"time"
@@ -25,14 +26,16 @@ type S3ApiServerOption struct {
 }
 
 type S3ApiServer struct {
-	option *S3ApiServerOption
-	iam    *IdentityAccessManagement
+	option         *S3ApiServerOption
+	iam            *IdentityAccessManagement
+	randomClientId int32
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
 	s3ApiServer = &S3ApiServer{
-		option: option,
-		iam:    NewIdentityAccessManagement(option),
+		option:         option,
+		iam:            NewIdentityAccessManagement(option),
+		randomClientId: util.RandomInt32(),
 	}
 
 	s3ApiServer.registerRouter(router)

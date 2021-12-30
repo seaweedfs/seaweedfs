@@ -28,6 +28,7 @@ type RemoteGatewayOptions struct {
 	mappings    *remote_pb.RemoteStorageMapping
 	remoteConfs map[string]*remote_pb.RemoteConf
 	bucketsDir  string
+	clientId    int32
 }
 
 var _ = filer_pb.FilerClient(&RemoteGatewayOptions{})
@@ -54,6 +55,7 @@ func init() {
 	remoteGatewayOptions.timeAgo = cmdFilerRemoteGateway.Flag.Duration("timeAgo", 0, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
 	remoteGatewayOptions.include = cmdFilerRemoteGateway.Flag.String("include", "", "pattens of new bucket names, e.g., s3*")
 	remoteGatewayOptions.exclude = cmdFilerRemoteGateway.Flag.String("exclude", "", "pattens of new bucket names, e.g., local*")
+	remoteGatewayOptions.clientId = util.RandomInt32()
 }
 
 var cmdFilerRemoteGateway = &Command{
