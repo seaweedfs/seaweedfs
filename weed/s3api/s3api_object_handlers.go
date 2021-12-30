@@ -364,7 +364,9 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (s
 		statusCode = proxyResponse.StatusCode
 	}
 	w.WriteHeader(statusCode)
-	io.Copy(w, proxyResponse.Body)
+	if n, err := io.Copy(w, proxyResponse.Body); err != nil {
+		glog.V(1).Infof("passthrough response read %d bytes: %v", n, err)
+	}
 	return statusCode
 }
 

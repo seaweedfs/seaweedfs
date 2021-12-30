@@ -392,11 +392,30 @@ func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, e
 }
 
 func CloseResponse(resp *http.Response) {
-	io.Copy(io.Discard, resp.Body)
+	reader := &CountingReader{reader: resp.Body}
+	io.Copy(io.Discard, reader)
 	resp.Body.Close()
+	if reader.BytesRead > 0 {
+		glog.V(1).Infof("response leftover %d bytes", reader.BytesRead)
+	}
 }
 
 func CloseRequest(req *http.Request) {
-	io.Copy(io.Discard, req.Body)
+	reader := &CountingReader{reader: req.Body}
+	io.Copy(io.Discard, reader)
 	req.Body.Close()
+	if reader.BytesRead > 0 {
+		glog.V(1).Infof("request leftover %d bytes", reader.BytesRead)
+	}
+}
+
+type CountingReader struct {
+	reader    io.Reader
+	BytesRead int
+}
+
+func (r *CountingReader) Read(p []byte) (n int, err error) {
+	n, err = r.reader.Read(p)
+	r.BytesRead += n
+	return n, err
 }

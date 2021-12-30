@@ -192,7 +192,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	httpS := &http.Server{Handler: router}
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.port)
-	s3ApiListener, err := util.NewListener(listenAddress, time.Duration(10)*time.Second)
+	s3ApiListener, err := util.NewListener(listenAddress, time.Duration(30)*time.Second)
 	if err != nil {
 		glog.Fatalf("S3 API Server listener on %s error: %v", listenAddress, err)
 	}
