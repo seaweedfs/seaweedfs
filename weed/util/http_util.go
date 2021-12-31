@@ -186,7 +186,7 @@ func DownloadFile(fileUrl string, jwt string) (filename string, header http.Head
 	}
 
 	if len(jwt) > 0 {
-		req.Header.Add("Authorization", "BEARER "+jwt)
+		req.Header.Set("Authorization", "BEARER "+jwt)
 	}
 
 	response, err := client.Do(req)
@@ -380,7 +380,7 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (io.R
 	}
 
 	if len(jwt) > 0 {
-		req.Header.Add("Authorization", "BEARER "+jwt)
+		req.Header.Set("Authorization", "BEARER "+jwt)
 	}
 
 	r, err := client.Do(req)

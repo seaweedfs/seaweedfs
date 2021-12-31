@@ -312,7 +312,6 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	glog.V(3).Infof("s3 proxying %s to %s", r.Method, destUrl)
 
 	proxyReq, err := http.NewRequest(r.Method, destUrl, r.Body)
-	s3a.maybeAddFilerJwtAuthorization(proxyReq, isWrite)
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", destUrl, err)
@@ -330,6 +329,9 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		proxyReq.Header[header] = values
 	}
 
+	// ensure that the Authorization header is overriding any previous
+	// Authorization header which might be already present in proxyReq
+	s3a.maybeAddFilerJwtAuthorization(proxyReq, isWrite)
 	resp, postErr := client.Do(proxyReq)
 
 	if postErr != nil {
@@ -376,7 +378,6 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	var body = io.TeeReader(dataReader, hash)
 
 	proxyReq, err := http.NewRequest("PUT", uploadUrl, body)
-	s3a.maybeAddFilerJwtAuthorization(proxyReq, true)
 
 	if err != nil {
 		glog.Errorf("NewRequest %s: %v", uploadUrl, err)
@@ -390,7 +391,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 			proxyReq.Header.Add(header, value)
 		}
 	}
-
+	// ensure that the Authorization header is overriding any previous
+	// Authorization header which might be already present in proxyReq
+	s3a.maybeAddFilerJwtAuthorization(proxyReq, true)
 	resp, postErr := client.Do(proxyReq)
 
 	if postErr != nil {
@@ -444,7 +447,7 @@ func (s3a *S3ApiServer) maybeAddFilerJwtAuthorization(r *http.Request, isWrite b
 		return
 	}
 
-	r.Header.Add("Authorization", "BEARER "+string(encodedJwt))
+	r.Header.Set("Authorization", "BEARER "+string(encodedJwt))
 }
 
 func (s3a *S3ApiServer) maybeGetFilerJwtAuthorizationToken(isWrite bool) string {
