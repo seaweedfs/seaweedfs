@@ -180,7 +180,16 @@ func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) e
 }
 
 func DownloadFile(fileUrl string, jwt string) (filename string, header http.Header, resp *http.Response, e error) {
-	response, err := client.Get(fileUrl)
+	req, err := http.NewRequest("GET", fileUrl, nil)
+	if err != nil {
+		return "", nil, nil, err
+	}
+
+	if len(jwt) > 0 {
+		req.Header.Set("Authorization", "BEARER "+jwt)
+	}
+
+	response, err := client.Do(req)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -358,7 +367,7 @@ func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentCompressed bool
 	return false, nil
 }
 
-func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, error) {
+func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (io.ReadCloser, error) {
 
 	req, err := http.NewRequest("GET", fileUrl, nil)
 	if err != nil {
@@ -368,6 +377,10 @@ func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, e
 		req.Header.Add("Range", rangeHeader)
 	} else {
 		req.Header.Add("Accept-Encoding", "gzip")
+	}
+
+	if len(jwt) > 0 {
+		req.Header.Set("Authorization", "BEARER "+jwt)
 	}
 
 	r, err := client.Do(req)

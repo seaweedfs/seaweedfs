@@ -86,7 +86,7 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 		}
 		var auth string
 		if strings.Contains(result.VolumeOrFileId, ",") { // this is a file id
-			auth = string(security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, result.VolumeOrFileId))
+			auth = string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, result.VolumeOrFileId))
 		}
 		resp.VolumeIdLocations = append(resp.VolumeIdLocations, &master_pb.LookupVolumeResponse_VolumeIdLocation{
 			VolumeOrFileId: result.VolumeOrFileId,
@@ -173,7 +173,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 					GrpcPort:  uint32(dn.GrpcPort),
 				},
 				Count:    count,
-				Auth:     string(security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
+				Auth:     string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
 				Replicas: replicas,
 			}, nil
 		}

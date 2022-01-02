@@ -133,7 +133,7 @@ func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid str
 		return false
 	}
 
-	token, err := security.DecodeJwt(signingKey, tokenStr)
+	token, err := security.DecodeJwt(signingKey, tokenStr, &security.SeaweedFileIdClaims{})
 	if err != nil {
 		glog.V(1).Infof("jwt verification error from %s: %v", r.RemoteAddr, err)
 		return false
