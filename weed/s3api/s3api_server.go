@@ -27,9 +27,10 @@ type S3ApiServerOption struct {
 }
 
 type S3ApiServer struct {
-	option     *S3ApiServerOption
-	iam        *IdentityAccessManagement
-	filerGuard *security.Guard
+	option         *S3ApiServerOption
+	iam            *IdentityAccessManagement
+	randomClientId int32
+	filerGuard     *security.Guard
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -43,9 +44,10 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 	readExpiresAfterSec := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
 
 	s3ApiServer = &S3ApiServer{
-		option:     option,
-		iam:        NewIdentityAccessManagement(option),
-		filerGuard: security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
+		option:         option,
+		iam:            NewIdentityAccessManagement(option),
+		randomClientId: util.RandomInt32(),
+		filerGuard:     security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
 	}
 
 	s3ApiServer.registerRouter(router)

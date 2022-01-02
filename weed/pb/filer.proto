@@ -329,6 +329,7 @@ message SubscribeMetadataRequest {
     int64 since_ns = 3;
     int32 signature = 4;
     repeated string path_prefixes = 6;
+    int32 client_id = 7;
 }
 message SubscribeMetadataResponse {
     string directory = 1;

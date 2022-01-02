@@ -18,6 +18,7 @@ type RemoteSyncOptions struct {
 	readChunkFromFiler *bool
 	timeAgo            *time.Duration
 	dir                *string
+	clientId           int32
 }
 
 var _ = filer_pb.FilerClient(&RemoteSyncOptions{})
@@ -41,6 +42,7 @@ func init() {
 	remoteSyncOptions.dir = cmdFilerRemoteSynchronize.Flag.String("dir", "", "a mounted directory on filer")
 	remoteSyncOptions.readChunkFromFiler = cmdFilerRemoteSynchronize.Flag.Bool("filerProxy", false, "read file chunks from filer instead of volume servers")
 	remoteSyncOptions.timeAgo = cmdFilerRemoteSynchronize.Flag.Duration("timeAgo", 0, "start time before now, skipping previous metadata changes. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
+	remoteSyncOptions.clientId = util.RandomInt32()
 }
 
 var cmdFilerRemoteSynchronize = &Command{

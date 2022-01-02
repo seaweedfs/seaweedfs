@@ -368,6 +368,7 @@ public class FilerClient extends FilerGrpcClient {
                 .setPathPrefix(prefix)
                 .setClientName(clientName)
                 .setSinceNs(sinceNs)
+                .setClientId(this.randomClientId)
                 .build()
         );
     }

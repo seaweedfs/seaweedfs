@@ -12,11 +12,11 @@ import (
 
 type ProcessMetadataFunc func(resp *filer_pb.SubscribeMetadataResponse) error
 
-func FollowMetadata(filerAddress ServerAddress, grpcDialOption grpc.DialOption, clientName string,
+func FollowMetadata(filerAddress ServerAddress, grpcDialOption grpc.DialOption, clientName string, clientId int32,
 	pathPrefix string, additionalPathPrefixes []string, lastTsNs int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, fatalOnError bool) error {
 
-	err := WithFilerClient(true, filerAddress, grpcDialOption, makeFunc(clientName,
+	err := WithFilerClient(true, filerAddress, grpcDialOption, makeFunc(clientName, clientId,
 		pathPrefix, additionalPathPrefixes, &lastTsNs, selfSignature, processEventFn, fatalOnError))
 	if err != nil {
 		return fmt.Errorf("subscribing filer meta change: %v", err)
@@ -25,10 +25,10 @@ func FollowMetadata(filerAddress ServerAddress, grpcDialOption grpc.DialOption, 
 }
 
 func WithFilerClientFollowMetadata(filerClient filer_pb.FilerClient,
-	clientName string, pathPrefix string, lastTsNs *int64, selfSignature int32,
+	clientName string, clientId int32, pathPrefix string, lastTsNs *int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, fatalOnError bool) error {
 
-	err := filerClient.WithFilerClient(true, makeFunc(clientName,
+	err := filerClient.WithFilerClient(true, makeFunc(clientName, clientId,
 		pathPrefix, nil, lastTsNs, selfSignature, processEventFn, fatalOnError))
 	if err != nil {
 		return fmt.Errorf("subscribing filer meta change: %v", err)
@@ -37,7 +37,7 @@ func WithFilerClientFollowMetadata(filerClient filer_pb.FilerClient,
 	return nil
 }
 
-func makeFunc(clientName string, pathPrefix string, additionalPathPrefixes []string, lastTsNs *int64, selfSignature int32,
+func makeFunc(clientName string, clientId int32, pathPrefix string, additionalPathPrefixes []string, lastTsNs *int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, fatalOnError bool) func(client filer_pb.SeaweedFilerClient) error {
 	return func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -48,6 +48,7 @@ func makeFunc(clientName string, pathPrefix string, additionalPathPrefixes []str
 			PathPrefixes: additionalPathPrefixes,
 			SinceNs:      *lastTsNs,
 			Signature:    selfSignature,
+			ClientId:     clientId,
 		})
 		if err != nil {
 			return fmt.Errorf("subscribe: %v", err)
