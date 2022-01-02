@@ -149,9 +149,9 @@ func (ms *MasterServer) maybeAddJwtAuthorization(w http.ResponseWriter, fileId s
 	}
 	var encodedJwt security.EncodedJwt
 	if isWrite {
-		encodedJwt = security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fileId)
+		encodedJwt = security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fileId)
 	} else {
-		encodedJwt = security.GenJwt(ms.guard.ReadSigningKey, ms.guard.ReadExpiresAfterSec, fileId)
+		encodedJwt = security.GenJwtForVolumeServer(ms.guard.ReadSigningKey, ms.guard.ReadExpiresAfterSec, fileId)
 	}
 	if encodedJwt == "" {
 		return
