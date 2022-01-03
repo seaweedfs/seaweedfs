@@ -247,9 +247,9 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 
 	glog.V(3).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
 
-	bucket, _ := xhttp.GetBucketAndObject(r)
+	bucket, object := xhttp.GetBucketAndObject(r)
 
-	if !identity.canDo(action, bucket) {
+	if !identity.canDo(action, bucket, object) {
 		return identity, s3err.ErrAccessDenied
 	}
 
@@ -307,7 +307,7 @@ func (iam *IdentityAccessManagement) authUser(r *http.Request) (*Identity, s3err
 	return identity, s3err.ErrNone
 }
 
-func (identity *Identity) canDo(action Action, bucket string) bool {
+func (identity *Identity) canDo(action Action, bucket string, objectKey string) bool {
 	if identity.isAdmin() {
 		return true
 	}
@@ -319,15 +319,13 @@ func (identity *Identity) canDo(action Action, bucket string) bool {
 	if bucket == "" {
 		return false
 	}
+	target := string(action) + ":" + bucket + "/" + objectKey
 	limitedByBucket := string(action) + ":" + bucket
 	adminLimitedByBucket := s3_constants.ACTION_ADMIN + ":" + bucket
 	for _, a := range identity.Actions {
 		act := string(a)
 		if strings.HasSuffix(act, "*") {
-			if strings.HasPrefix(limitedByBucket, act[:len(act)-1]) {
-				return true
-			}
-			if strings.HasPrefix(adminLimitedByBucket, act[:len(act)-1]) {
+			if strings.HasPrefix(target, act[:len(act)-1]) {
 				return true
 			}
 		} else {
