@@ -309,7 +309,7 @@
     </snapshotRepository>
   </distributionManagement>
   <properties>
-    <seaweedfs.client.version>2.81</seaweedfs.client.version>
+    <seaweedfs.client.version>2.84</seaweedfs.client.version>
     <hadoop.version>3.1.1</hadoop.version>
   </properties>
 </project>
