@@ -319,7 +319,7 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 	if bucket == "" {
 		return false
 	}
-	target := string(action) + ":" + bucket + "/" + objectKey
+	target := string(action) + ":" + bucket + objectKey
 	limitedByBucket := string(action) + ":" + bucket
 	adminLimitedByBucket := s3_constants.ACTION_ADMIN + ":" + bucket
 	for _, a := range identity.Actions {

@@ -78,8 +78,8 @@ func TestCanDo(t *testing.T) {
 		},
 	}
 	// object specific
-	assert.Equal(t, true, ident1.canDo(ACTION_WRITE, "bucket1", "a/b/c/d.txt"))
-	assert.Equal(t, false, ident1.canDo(ACTION_WRITE, "bucket1", "a/b/other/some"), "action without *")
+	assert.Equal(t, true, ident1.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, false, ident1.canDo(ACTION_WRITE, "bucket1", "/a/b/other/some"), "action without *")
 
 	// bucket specific
 	ident2 := &Identity{
@@ -89,9 +89,9 @@ func TestCanDo(t *testing.T) {
 			"Write:bucket1/*",
 		},
 	}
-	assert.Equal(t, true, ident2.canDo(ACTION_READ, "bucket1", "a/b/c/d.txt"))
-	assert.Equal(t, true, ident2.canDo(ACTION_WRITE, "bucket1", "a/b/c/d.txt"))
-	assert.Equal(t, false, ident2.canDo(ACTION_LIST, "bucket1", "a/b/c/d.txt"))
+	assert.Equal(t, true, ident2.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident2.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, false, ident2.canDo(ACTION_LIST, "bucket1", "/a/b/c/d.txt"))
 
 	// across buckets
 	ident3 := &Identity{
@@ -101,9 +101,9 @@ func TestCanDo(t *testing.T) {
 			"Write",
 		},
 	}
-	assert.Equal(t, true, ident3.canDo(ACTION_READ, "bucket1", "a/b/c/d.txt"))
-	assert.Equal(t, true, ident3.canDo(ACTION_WRITE, "bucket1", "a/b/c/d.txt"))
-	assert.Equal(t, false, ident3.canDo(ACTION_LIST, "bucket1", "a/b/other/some"))
+	assert.Equal(t, true, ident3.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident3.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, false, ident3.canDo(ACTION_LIST, "bucket1", "/a/b/other/some"))
 
 	// partial buckets
 	ident4 := &Identity{
@@ -112,7 +112,7 @@ func TestCanDo(t *testing.T) {
 			"Read:special_*",
 		},
 	}
-	assert.Equal(t, true, ident4.canDo(ACTION_READ, "special_bucket", "a/b/c/d.txt"))
-	assert.Equal(t, false, ident4.canDo(ACTION_READ, "bucket1", "a/b/c/d.txt"))
+	assert.Equal(t, true, ident4.canDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
+	assert.Equal(t, false, ident4.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
 
 }
