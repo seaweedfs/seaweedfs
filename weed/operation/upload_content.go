@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -12,11 +16,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type UploadOption struct {
@@ -71,7 +70,7 @@ func init() {
 	}}
 }
 
-var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", "")
 
 // Upload sends a POST request to a volume server to upload the content with adjustable compression level
 func UploadData(data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
@@ -217,7 +216,8 @@ func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize
 	defer PutBuffer(buf)
 	body_writer := multipart.NewWriter(buf)
 	h := make(textproto.MIMEHeader)
-	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, fileNameEscaper.Replace(option.Filename)))
+	filename := fileNameEscaper.Replace(option.Filename)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
 	h.Set("Idempotency-Key", option.UploadUrl)
 	if option.MimeType == "" {
 		option.MimeType = mime.TypeByExtension(strings.ToLower(filepath.Ext(option.Filename)))
