@@ -114,6 +114,8 @@ func (dir *Dir) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 		if existingHandle, found := dir.wfs.handles[inodeId]; found && existingHandle != nil {
 			glog.V(4).Infof("opened file handle %s => %s", oldPath, newPath)
 			delete(dir.wfs.handles, inodeId)
+			existingHandle.handle = newPath.AsInode()
+			existingHandle.f.entry.Name = newName
 			dir.wfs.handles[newPath.AsInode()] = existingHandle
 		}
 		dir.wfs.handlesLock.Unlock()
