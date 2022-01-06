@@ -215,6 +215,10 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(volumeIdToVInfo map[u
 				fmt.Fprintf(writer, "Skip purging for Erasure Coded volume %d.\n", volumeId)
 				continue
 			}
+			if vinfo.isReadOnly {
+				fmt.Fprintf(writer, "Skip purging for read only volume %d.\n", volumeId)
+				continue
+			}
 			if inUseCount == 0 {
 				if err := deleteVolume(c.env.option.GrpcDialOption, needle.VolumeId(volumeId), vinfo.server); err != nil {
 					return fmt.Errorf("delete volume %d: %v", volumeId, err)
@@ -440,6 +444,7 @@ type VInfo struct {
 	server     pb.ServerAddress
 	collection string
 	isEcVolume bool
+	isReadOnly bool
 }
 
 func (c *commandVolumeFsck) collectVolumeIds(commandEnv *CommandEnv, verbose bool, writer io.Writer) (volumeIdToServer map[uint32]VInfo, err error) {
@@ -462,6 +467,7 @@ func (c *commandVolumeFsck) collectVolumeIds(commandEnv *CommandEnv, verbose boo
 					server:     pb.NewServerAddressFromDataNode(t),
 					collection: vi.Collection,
 					isEcVolume: false,
+					isReadOnly: vi.ReadOnly,
 				}
 			}
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
@@ -469,6 +475,7 @@ func (c *commandVolumeFsck) collectVolumeIds(commandEnv *CommandEnv, verbose boo
 					server:     pb.NewServerAddressFromDataNode(t),
 					collection: ecShardInfo.Collection,
 					isEcVolume: true,
+					isReadOnly: true,
 				}
 			}
 		}
