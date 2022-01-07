@@ -14,7 +14,7 @@
     </parent>
 
     <properties>
-        <protobuf.version>3.9.1</protobuf.version>
+        <protobuf.version>3.16.1</protobuf.version>
         <!-- follow https://github.com/grpc/grpc-java -->
         <grpc.version>1.23.0</grpc.version>
         <guava.version>30.0-jre</guava.version>
