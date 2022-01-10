@@ -248,11 +248,12 @@ func (file *File) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, res
 }
 
 func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
-	// fsync works at OS level
+
 	// write the file chunks to the filerGrpcAddress
 	glog.V(4).Infof("%s/%s fsync file %+v", file.dir.FullPath(), file.Name, req)
 
-	return nil
+	return file.wfs.Fsync(file, req.Header)
+
 }
 
 func (file *File) Forget() {
