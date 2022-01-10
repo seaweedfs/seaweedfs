@@ -84,11 +84,11 @@ func AddOffsetFunc(processEventFn ProcessMetadataFunc, offsetInterval time.Durat
 		}
 		counter++
 		if lastWriteTime.Add(offsetInterval).Before(time.Now()) {
-			counter = 0
 			lastWriteTime = time.Now()
 			if err := offsetFunc(counter, resp.TsNs); err != nil {
 				return err
 			}
+			counter = 0
 		}
 		return nil
 	}
