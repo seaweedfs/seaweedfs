@@ -168,6 +168,8 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 
 func (dir *Dir) Mknod(ctx context.Context, req *fuse.MknodRequest) (fs.Node, error) {
 
+	glog.V(3).Infof("dir %s Mknod %+v", dir.FullPath(), req)
+
 	_, err := dir.doCreateEntry(req.Name, req.Mode, req.Uid, req.Gid, false)
 
 	if err != nil {
