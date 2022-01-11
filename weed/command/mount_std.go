@@ -171,6 +171,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fuse.NoAppleXattr(),
 		fuse.ExclCreate(),
 		fuse.DaemonTimeout("3600"),
+		fuse.AllowDev(),
 		fuse.AllowSUID(),
 		fuse.DefaultPermissions(),
 		fuse.MaxReadahead(1024 * 512),
