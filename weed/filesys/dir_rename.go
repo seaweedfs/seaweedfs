@@ -3,13 +3,13 @@ package filesys
 import (
 	"context"
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/seaweedfs/fuse"
-	"github.com/seaweedfs/fuse/fs"
-	"io"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/fuse"
+	"github.com/seaweedfs/fuse/fs"
+	"io"
+	"strings"
 )
 
 func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirectory fs.Node) error {
@@ -37,7 +37,7 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 		stream, err := client.StreamRenameEntry(ctx, request)
 		if err != nil {
 			glog.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, err)
-			return fuse.EXDEV
+			return fuse.EIO
 		}
 
 		for {
@@ -46,11 +46,19 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 				if recvErr == io.EOF {
 					break
 				} else {
+					glog.V(0).Infof("dir Rename %s => %s receive: %v", oldPath, newPath, recvErr)
+					if strings.Contains(recvErr.Error(), "not empty") {
+						return fuse.EEXIST
+					}
+					if strings.Contains(recvErr.Error(), "not directory") {
+						return fuse.ENOTDIR
+					}
 					return recvErr
 				}
 			}
 
 			if err = dir.handleRenameResponse(ctx, resp); err != nil {
+				glog.V(0).Infof("dir Rename %s => %s : %v", oldPath, newPath, err)
 				return err
 			}
 
@@ -59,12 +67,8 @@ func (dir *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDirector
 		return nil
 
 	})
-	if err != nil {
-		glog.V(0).Infof("dir Rename %s => %s : %v", oldPath, newPath, err)
-		return fuse.EIO
-	}
 
-	return nil
+	return err
 }
 
 func (dir *Dir) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamRenameEntryResponse) error {

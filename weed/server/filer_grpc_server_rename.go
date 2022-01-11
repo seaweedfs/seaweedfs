@@ -72,6 +72,21 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 		return fmt.Errorf("%s/%s not found: %v", req.OldDirectory, req.OldName, err)
 	}
 
+	// follow https://pubs.opengroup.org/onlinepubs/000095399/functions/rename.html
+	if oldEntry.IsDirectory() {
+		targetDir := newParent.Child(req.NewName)
+		newEntry, err := fs.filer.FindEntry(ctx, targetDir)
+		if err == nil {
+			if !newEntry.IsDirectory() {
+				fs.filer.RollbackTransaction(ctx)
+				return fmt.Errorf("%s is not directory", targetDir)
+			}
+			if entries, _, _ := fs.filer.ListDirectoryEntries(context.Background(), targetDir, "", false, 1, "", "", ""); len(entries) > 0 {
+				return fmt.Errorf("%s is not empty", targetDir)
+			}
+		}
+	}
+
 	moveErr := fs.moveEntry(ctx, stream, oldParent, oldEntry, newParent, req.NewName, req.Signatures)
 	if moveErr != nil {
 		fs.filer.RollbackTransaction(ctx)
