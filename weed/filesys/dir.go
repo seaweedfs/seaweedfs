@@ -129,6 +129,10 @@ func (dir *Dir) newDirectory(fullpath util.FullPath) fs.Node {
 func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 	resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
 
+	if err := checkName(req.Name); err != nil {
+		return nil, nil, err
+	}
+
 	exclusive := req.Flags&fuse.OpenExclusive != 0
 	isDirectory := req.Mode&os.ModeDir > 0
 
@@ -167,6 +171,10 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 }
 
 func (dir *Dir) Mknod(ctx context.Context, req *fuse.MknodRequest) (fs.Node, error) {
+
+	if err := checkName(req.Name); err != nil {
+		return nil, err
+	}
 
 	glog.V(3).Infof("dir %s Mknod %+v", dir.FullPath(), req)
 
@@ -228,6 +236,10 @@ func (dir *Dir) doCreateEntry(name string, mode os.FileMode, uid, gid uint32, ex
 
 func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
 
+	if err := checkName(req.Name); err != nil {
+		return nil, err
+	}
+
 	glog.V(4).Infof("mkdir %s: %s", dir.FullPath(), req.Name)
 
 	newEntry := &filer_pb.Entry{
@@ -281,6 +293,10 @@ func (dir *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, err
 }
 
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (node fs.Node, err error) {
+
+	if err := checkName(req.Name); err != nil {
+		return nil, err
+	}
 
 	dirPath := util.FullPath(dir.FullPath())
 	// glog.V(4).Infof("dir Lookup %s: %s by %s", dirPath, req.Name, req.Header.String())

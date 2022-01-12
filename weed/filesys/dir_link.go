@@ -24,6 +24,10 @@ const (
 
 func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (fs.Node, error) {
 
+	if err := checkName(req.NewName); err != nil {
+		return nil, err
+	}
+
 	oldFile, ok := old.(*File)
 	if !ok {
 		glog.Errorf("old node is not a file: %+v", old)
@@ -101,6 +105,10 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 }
 
 func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node, error) {
+
+	if err := checkName(req.NewName); err != nil {
+		return nil, err
+	}
 
 	glog.V(4).Infof("Symlink: %v/%v to %v", dir.FullPath(), req.NewName, req.Target)
 

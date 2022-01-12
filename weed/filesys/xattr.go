@@ -3,6 +3,7 @@ package filesys
 import (
 	"context"
 	"strings"
+	"syscall"
 
 	"github.com/seaweedfs/fuse"
 
@@ -142,4 +143,11 @@ func (wfs *WFS) maybeLoadEntry(dir, name string) (entry *filer_pb.Entry, err err
 		return nil, fuse.ENOENT
 	}
 	return cachedEntry.ToProtoEntry(), cacheErr
+}
+
+func checkName(name string) error {
+	if len(name) >= 256 {
+		return syscall.ENAMETOOLONG
+	}
+	return nil
 }
