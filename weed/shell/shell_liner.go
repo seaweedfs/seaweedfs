@@ -46,7 +46,7 @@ func RunShell(options ShellOptions) {
 
 	reg, _ := regexp.Compile(`'.*?'|".*?"|\S+`)
 
-	commandEnv := NewCommandEnv(options)
+	commandEnv := NewCommandEnv(&options)
 
 	go commandEnv.MasterClient.KeepConnectedToMaster()
 	commandEnv.MasterClient.WaitUntilConnected()
