@@ -68,6 +68,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 		glog.V(4).Infof("file Attr %s, open:%v, size: %d", file.fullpath(), file.isOpen, attr.Size)
 	}
 	attr.Crtime = time.Unix(entry.Attributes.Crtime, 0)
+	attr.Ctime = time.Unix(entry.Attributes.Mtime, 0)
 	attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
 	attr.Gid = entry.Attributes.Gid
 	attr.Uid = entry.Attributes.Uid
@@ -141,6 +142,7 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 			}
 			entry.Chunks = chunks
 		}
+		entry.Attributes.Mtime = time.Now().Unix()
 		entry.Attributes.FileSize = req.Size
 		file.dirtyMetadata = true
 	}
