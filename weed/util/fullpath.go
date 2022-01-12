@@ -1,6 +1,7 @@
 package util
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -41,12 +42,25 @@ func (fp FullPath) Child(name string) FullPath {
 	return FullPath(dir + "/" + noPrefix)
 }
 
-func (fp FullPath) AsInode(isDirectory bool) uint64 {
+// AsInode an in-memory only inode representation
+func (fp FullPath) AsInode(fileMode os.FileMode) uint64 {
 	inode := uint64(HashStringToLong(string(fp)))
-	if isDirectory {
-		inode = inode - inode%2 // even
-	} else {
-		inode = inode - inode%2 + 1 // odd
+	inode = inode - inode%16
+	if fileMode == 0 {
+	} else if fileMode&os.ModeDir > 0 {
+		inode += 1
+	} else if fileMode&os.ModeSymlink > 0 {
+		inode += 2
+	} else if fileMode&os.ModeDevice > 0 {
+		inode += 3
+	} else if fileMode&os.ModeNamedPipe > 0 {
+		inode += 4
+	} else if fileMode&os.ModeSocket > 0 {
+		inode += 5
+	} else if fileMode&os.ModeCharDevice > 0 {
+		inode += 6
+	} else if fileMode&os.ModeIrregular > 0 {
+		inode += 7
 	}
 	return inode
 }

@@ -100,10 +100,10 @@ func (dir *Dir) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
 	return nil
 }
 
-func (dir *Dir) newFile(name string) fs.Node {
+func (dir *Dir) newFile(name string, fileMode os.FileMode) fs.Node {
 
 	fileFullPath := util.NewFullPath(dir.FullPath(), name)
-	fileId := fileFullPath.AsInode(false)
+	fileId := fileFullPath.AsInode(fileMode)
 	dir.wfs.handlesLock.Lock()
 	existingHandle, found := dir.wfs.handles[fileId]
 	dir.wfs.handlesLock.Unlock()
@@ -122,7 +122,7 @@ func (dir *Dir) newFile(name string) fs.Node {
 
 func (dir *Dir) newDirectory(fullpath util.FullPath) fs.Node {
 
-	return &Dir{name: fullpath.Name(), wfs: dir.wfs, parent: dir, id: fullpath.AsInode(true)}
+	return &Dir{name: fullpath.Name(), wfs: dir.wfs, parent: dir, id: fullpath.AsInode(os.ModeDir)}
 
 }
 
@@ -148,7 +148,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest,
 		return node, node, nil
 	}
 
-	node = dir.newFile(req.Name)
+	node = dir.newFile(req.Name, req.Mode)
 	file := node.(*File)
 	file.entry = &filer_pb.Entry{
 		Name:        req.Name,
@@ -184,7 +184,7 @@ func (dir *Dir) Mknod(ctx context.Context, req *fuse.MknodRequest) (fs.Node, err
 		return nil, err
 	}
 	var node fs.Node
-	node = dir.newFile(req.Name)
+	node = dir.newFile(req.Name, req.Mode)
 	return node, nil
 }
 
@@ -328,7 +328,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		if localEntry.IsDirectory() {
 			node = dir.newDirectory(fullFilePath)
 		} else {
-			node = dir.newFile(req.Name)
+			node = dir.newFile(req.Name, localEntry.Attr.Mode)
 		}
 
 		// resp.EntryValid = time.Second
@@ -357,10 +357,10 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 	processEachEntryFn := func(entry *filer.Entry, isLast bool) {
 		if entry.IsDirectory() {
-			dirent := fuse.Dirent{Name: entry.Name(), Type: fuse.DT_Dir, Inode: dirPath.Child(entry.Name()).AsInode(true)}
+			dirent := fuse.Dirent{Name: entry.Name(), Type: fuse.DT_Dir, Inode: dirPath.Child(entry.Name()).AsInode(os.ModeDir)}
 			ret = append(ret, dirent)
 		} else {
-			dirent := fuse.Dirent{Name: entry.Name(), Type: findFileType(uint16(entry.Attr.Mode)), Inode: dirPath.Child(entry.Name()).AsInode(false)}
+			dirent := fuse.Dirent{Name: entry.Name(), Type: findFileType(uint16(entry.Attr.Mode)), Inode: dirPath.Child(entry.Name()).AsInode(entry.Attr.Mode)}
 			ret = append(ret, dirent)
 		}
 	}
@@ -380,7 +380,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 
 	// create proper . and .. directories
 	ret = append(ret, fuse.Dirent{
-		Inode: dirPath.AsInode(true),
+		Inode: dirPath.AsInode(os.ModeDir),
 		Name:  ".",
 		Type:  fuse.DT_Dir,
 	})
@@ -390,7 +390,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) (ret []fuse.Dirent, err error) {
 	if string(dirPath) == dir.wfs.option.FilerMountRootPath {
 		inode = dir.wfs.option.MountParentInode
 	} else {
-		inode = util.FullPath(dir.parent.FullPath()).AsInode(true)
+		inode = util.FullPath(dir.parent.FullPath()).AsInode(os.ModeDir)
 	}
 
 	ret = append(ret, fuse.Dirent{
@@ -459,7 +459,7 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 	// remove current file handle if any
 	dir.wfs.handlesLock.Lock()
 	defer dir.wfs.handlesLock.Unlock()
-	inodeId := filePath.AsInode(false)
+	inodeId := filePath.AsInode(0)
 	if fh, ok := dir.wfs.handles[inodeId]; ok {
 		delete(dir.wfs.handles, inodeId)
 		fh.isDeleted = true

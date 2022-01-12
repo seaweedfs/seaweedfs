@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
 	"io"
+	"os"
 	"strings"
 )
 
@@ -91,13 +92,13 @@ func (dir *Dir) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 		oldParent, newParent := util.FullPath(resp.Directory), util.FullPath(resp.EventNotification.NewParentPath)
 		oldName, newName := resp.EventNotification.OldEntry.Name, resp.EventNotification.NewEntry.Name
 
-		isDirectory := newEntry.IsDirectory()
+		entryFileMode := newEntry.Attr.Mode
 
 		oldPath := oldParent.Child(oldName)
 		newPath := newParent.Child(newName)
-		oldFsNode := NodeWithId(oldPath.AsInode(isDirectory))
-		newFsNode := NodeWithId(newPath.AsInode(isDirectory))
-		newDirNode, found := dir.wfs.Server.FindInternalNode(NodeWithId(newParent.AsInode(true)))
+		oldFsNode := NodeWithId(oldPath.AsInode(entryFileMode))
+		newFsNode := NodeWithId(newPath.AsInode(entryFileMode))
+		newDirNode, found := dir.wfs.Server.FindInternalNode(NodeWithId(newParent.AsInode(os.ModeDir)))
 		var newDir *Dir
 		if found {
 			newDir = newDirNode.(*Dir)
@@ -122,16 +123,16 @@ func (dir *Dir) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 		})
 
 		// change file handle
-		if !isDirectory {
-			inodeId := oldPath.AsInode(isDirectory)
+		if !newEntry.IsDirectory() {
+			inodeId := oldPath.AsInode(entryFileMode)
 			dir.wfs.handlesLock.Lock()
 			if existingHandle, found := dir.wfs.handles[inodeId]; found && existingHandle != nil {
 				glog.V(4).Infof("opened file handle %s => %s", oldPath, newPath)
 				delete(dir.wfs.handles, inodeId)
-				existingHandle.handle = newPath.AsInode(isDirectory)
+				existingHandle.handle = newPath.AsInode(entryFileMode)
 				existingHandle.f.entry.Name = newName
-				existingHandle.f.id = newPath.AsInode(isDirectory)
-				dir.wfs.handles[newPath.AsInode(isDirectory)] = existingHandle
+				existingHandle.f.id = newPath.AsInode(entryFileMode)
+				dir.wfs.handles[newPath.AsInode(entryFileMode)] = existingHandle
 			}
 			dir.wfs.handlesLock.Unlock()
 		}

@@ -109,15 +109,15 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDir(), option.CacheSizeMB, 1024*1024)
 	}
 
-	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDir(), "meta"), util.FullPath(option.FilerMountRootPath), option.UidGidMapper, func(filePath util.FullPath, isDirectory bool) {
+	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDir(), "meta"), util.FullPath(option.FilerMountRootPath), option.UidGidMapper, func(filePath util.FullPath, entry *filer_pb.Entry) {
 
-		fsNode := NodeWithId(filePath.AsInode(isDirectory))
+		fsNode := NodeWithId(filePath.AsInode(entry.FileMode()))
 		if err := wfs.Server.InvalidateNodeData(fsNode); err != nil {
 			glog.V(4).Infof("InvalidateNodeData %s : %v", filePath, err)
 		}
 
 		dir, name := filePath.DirAndName()
-		parent := NodeWithId(util.FullPath(dir).AsInode(true))
+		parent := NodeWithId(util.FullPath(dir).AsInode(os.ModeDir))
 		if dir == option.FilerMountRootPath {
 			parent = NodeWithId(1)
 		}

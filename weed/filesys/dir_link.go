@@ -97,7 +97,7 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 	}
 
 	// create new file node
-	newNode := dir.newFile(req.NewName)
+	newNode := dir.newFile(req.NewName, 0)
 	newFile := newNode.(*File)
 
 	return newFile, err
@@ -144,7 +144,7 @@ func (dir *Dir) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.Node,
 		return nil
 	})
 
-	symlink := dir.newFile(req.NewName)
+	symlink := dir.newFile(req.NewName, os.ModeSymlink)
 
 	return symlink, err
 
