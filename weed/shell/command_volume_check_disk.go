@@ -68,9 +68,6 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	fileCount := func(replica *VolumeReplica) uint64 {
 		return replica.info.FileCount - replica.info.DeleteCount
 	}
-	aDB, bDB := needle_map.NewMemDb(), needle_map.NewMemDb()
-	defer aDB.Close()
-	defer bDB.Close()
 
 	for _, replicas := range volumeReplicas {
 		sort.Slice(replicas, func(i, j int) bool {
@@ -90,7 +87,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 				continue
 			}
 
-			if err := c.syncTwoReplicas(aDB, bDB, a, verbose, writer, b, err, applyChanges, nonRepairThreshold); err != nil {
+			if err := c.syncTwoReplicas(a, b, *applyChanges, *nonRepairThreshold, *verbose, writer); err != nil {
 				fmt.Fprintf(writer, "sync volume %d on %s and %s: %v\n", a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id, err)
 			}
 			replicas = replicas[1:]
@@ -100,31 +97,39 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	return nil
 }
 
-func (c *commandVolumeCheckDisk) syncTwoReplicas(aDB *needle_map.MemDb, bDB *needle_map.MemDb, a *VolumeReplica, verbose *bool, writer io.Writer, b *VolumeReplica, err error, applyChanges *bool, nonRepairThreshold *float64) error {
+func (c *commandVolumeCheckDisk) syncTwoReplicas(a *VolumeReplica, b *VolumeReplica, applyChanges bool, nonRepairThreshold float64, verbose bool, writer io.Writer) (err error) {
 	aHasChanges, bHasChanges := true, true
 	for aHasChanges || bHasChanges {
-		// reset index db
-		aDB.Close()
-		bDB.Close()
-		aDB, bDB = needle_map.NewMemDb(), needle_map.NewMemDb()
-
-		// read index db
-		if err := c.readIndexDatabase(aDB, a.info.Collection, a.info.Id, pb.NewServerAddressFromDataNode(a.location.dataNode), *verbose, writer); err != nil {
-			return fmt.Errorf("readIndexDatabase %s volume %d: %v", a.location.dataNode, a.info.Id, err)
-		}
-		if err := c.readIndexDatabase(bDB, b.info.Collection, b.info.Id, pb.NewServerAddressFromDataNode(b.location.dataNode), *verbose, writer); err != nil {
-			return fmt.Errorf("readIndexDatabase %s volume %d: %v", b.location.dataNode, b.info.Id, err)
-		}
-
-		// find and make up the differences
-		if aHasChanges, err = c.doVolumeCheckDisk(bDB, aDB, b, a, *verbose, writer, *applyChanges, *nonRepairThreshold); err != nil {
-			return fmt.Errorf("doVolumeCheckDisk source:%s target:%s volume %d: %v", b.location.dataNode, a.location.dataNode, b.info.Id, err)
-		}
-		if bHasChanges, err = c.doVolumeCheckDisk(aDB, bDB, a, b, *verbose, writer, *applyChanges, *nonRepairThreshold); err != nil {
-			return fmt.Errorf("doVolumeCheckDisk source:%s target:%s volume %d: %v", a.location.dataNode, b.location.dataNode, a.info.Id, err)
+		if aHasChanges, bHasChanges, err = c.checkBoth(a, b, applyChanges, nonRepairThreshold, verbose, writer); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func (c *commandVolumeCheckDisk) checkBoth(a *VolumeReplica, b *VolumeReplica, applyChanges bool, nonRepairThreshold float64, verbose bool, writer io.Writer) (aHasChanges bool, bHasChanges bool, err error) {
+	aDB, bDB := needle_map.NewMemDb(), needle_map.NewMemDb()
+	defer func() {
+		aDB.Close()
+		bDB.Close()
+	}()
+
+	// read index db
+	if err = c.readIndexDatabase(aDB, a.info.Collection, a.info.Id, pb.NewServerAddressFromDataNode(a.location.dataNode), verbose, writer); err != nil {
+		return true, true, fmt.Errorf("readIndexDatabase %s volume %d: %v", a.location.dataNode, a.info.Id, err)
+	}
+	if err := c.readIndexDatabase(bDB, b.info.Collection, b.info.Id, pb.NewServerAddressFromDataNode(b.location.dataNode), verbose, writer); err != nil {
+		return true, true, fmt.Errorf("readIndexDatabase %s volume %d: %v", b.location.dataNode, b.info.Id, err)
+	}
+
+	// find and make up the differences
+	if aHasChanges, err = c.doVolumeCheckDisk(bDB, aDB, b, a, verbose, writer, applyChanges, nonRepairThreshold); err != nil {
+		return true, true, fmt.Errorf("doVolumeCheckDisk source:%s target:%s volume %d: %v", b.location.dataNode, a.location.dataNode, b.info.Id, err)
+	}
+	if bHasChanges, err = c.doVolumeCheckDisk(aDB, bDB, a, b, verbose, writer, applyChanges, nonRepairThreshold); err != nil {
+		return true, true, fmt.Errorf("doVolumeCheckDisk source:%s target:%s volume %d: %v", a.location.dataNode, b.location.dataNode, a.info.Id, err)
+	}
+	return
 }
 
 func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.MemDb, source, target *VolumeReplica, verbose bool, writer io.Writer, applyChanges bool, nonRepairThreshold float64) (hasChanges bool, err error) {
