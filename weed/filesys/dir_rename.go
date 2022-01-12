@@ -84,11 +84,13 @@ func (dir *Dir) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 		oldParent, newParent := util.FullPath(resp.Directory), util.FullPath(resp.EventNotification.NewParentPath)
 		oldName, newName := resp.EventNotification.OldEntry.Name, resp.EventNotification.NewEntry.Name
 
+		isDirectory := newEntry.IsDirectory()
+
 		oldPath := oldParent.Child(oldName)
 		newPath := newParent.Child(newName)
-		oldFsNode := NodeWithId(oldPath.AsInode())
-		newFsNode := NodeWithId(newPath.AsInode())
-		newDirNode, found := dir.wfs.Server.FindInternalNode(NodeWithId(newParent.AsInode()))
+		oldFsNode := NodeWithId(oldPath.AsInode(isDirectory))
+		newFsNode := NodeWithId(newPath.AsInode(isDirectory))
+		newDirNode, found := dir.wfs.Server.FindInternalNode(NodeWithId(newParent.AsInode(true)))
 		var newDir *Dir
 		if found {
 			newDir = newDirNode.(*Dir)
@@ -113,17 +115,19 @@ func (dir *Dir) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 		})
 
 		// change file handle
-		inodeId := oldPath.AsInode()
-		dir.wfs.handlesLock.Lock()
-		if existingHandle, found := dir.wfs.handles[inodeId]; found && existingHandle != nil {
-			glog.V(4).Infof("opened file handle %s => %s", oldPath, newPath)
-			delete(dir.wfs.handles, inodeId)
-			existingHandle.handle = newPath.AsInode()
-			existingHandle.f.entry.Name = newName
-			existingHandle.f.id = newPath.AsInode()
-			dir.wfs.handles[newPath.AsInode()] = existingHandle
+		if !isDirectory {
+			inodeId := oldPath.AsInode(isDirectory)
+			dir.wfs.handlesLock.Lock()
+			if existingHandle, found := dir.wfs.handles[inodeId]; found && existingHandle != nil {
+				glog.V(4).Infof("opened file handle %s => %s", oldPath, newPath)
+				delete(dir.wfs.handles, inodeId)
+				existingHandle.handle = newPath.AsInode(isDirectory)
+				existingHandle.f.entry.Name = newName
+				existingHandle.f.id = newPath.AsInode(isDirectory)
+				dir.wfs.handles[newPath.AsInode(isDirectory)] = existingHandle
+			}
+			dir.wfs.handlesLock.Unlock()
 		}
-		dir.wfs.handlesLock.Unlock()
 
 	} else if resp.EventNotification.OldEntry != nil {
 		// without new entry, only old entry name exists. This is the second step to delete old entry

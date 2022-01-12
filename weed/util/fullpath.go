@@ -41,8 +41,14 @@ func (fp FullPath) Child(name string) FullPath {
 	return FullPath(dir + "/" + noPrefix)
 }
 
-func (fp FullPath) AsInode() uint64 {
-	return uint64(HashStringToLong(string(fp)))
+func (fp FullPath) AsInode(isDirectory bool) uint64 {
+	inode := uint64(HashStringToLong(string(fp)))
+	if isDirectory {
+		inode = inode - inode%2 // even
+	} else {
+		inode = inode - inode%2 + 1 // odd
+	}
+	return inode
 }
 
 // split, but skipping the root

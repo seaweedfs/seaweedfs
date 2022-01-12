@@ -18,16 +18,16 @@ type MetaCache struct {
 	// sync.RWMutex
 	visitedBoundary *bounded_tree.BoundedTree
 	uidGidMapper    *UidGidMapper
-	invalidateFunc  func(util.FullPath)
+	invalidateFunc  func(fullpath util.FullPath, isDirectory bool)
 }
 
-func NewMetaCache(dbFolder string, baseDir util.FullPath, uidGidMapper *UidGidMapper, invalidateFunc func(util.FullPath)) *MetaCache {
+func NewMetaCache(dbFolder string, baseDir util.FullPath, uidGidMapper *UidGidMapper, invalidateFunc func(util.FullPath, bool)) *MetaCache {
 	return &MetaCache{
 		localStore:      openMetaStore(dbFolder),
 		visitedBoundary: bounded_tree.NewBoundedTree(baseDir),
 		uidGidMapper:    uidGidMapper,
-		invalidateFunc: func(fullpath util.FullPath) {
-			invalidateFunc(fullpath)
+		invalidateFunc: func(fullpath util.FullPath, isDirectory bool) {
+			invalidateFunc(fullpath, isDirectory)
 		},
 	}
 }
