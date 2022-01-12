@@ -320,12 +320,16 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 		return false
 	}
 	target := string(action) + ":" + bucket + objectKey
+	adminTarget := s3_constants.ACTION_ADMIN + ":" + bucket + objectKey
 	limitedByBucket := string(action) + ":" + bucket
 	adminLimitedByBucket := s3_constants.ACTION_ADMIN + ":" + bucket
 	for _, a := range identity.Actions {
 		act := string(a)
 		if strings.HasSuffix(act, "*") {
 			if strings.HasPrefix(target, act[:len(act)-1]) {
+				return true
+			}
+			if strings.HasPrefix(adminTarget, act[:len(act)-1]) {
 				return true
 			}
 		} else {

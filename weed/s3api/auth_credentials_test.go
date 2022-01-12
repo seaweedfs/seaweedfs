@@ -115,4 +115,14 @@ func TestCanDo(t *testing.T) {
 	assert.Equal(t, true, ident4.canDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
 	assert.Equal(t, false, ident4.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
 
+	// admin buckets
+	ident5 := &Identity{
+		Name: "anything",
+		Actions: []Action{
+			"Admin:special_*",
+		},
+	}
+	assert.Equal(t, true, ident5.canDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident5.canDo(ACTION_WRITE, "special_bucket", "/a/b/c/d.txt"))
+
 }
