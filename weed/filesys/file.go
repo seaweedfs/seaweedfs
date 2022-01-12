@@ -110,7 +110,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
-	glog.V(4).Infof("%v file setattr %+v", file.fullpath(), req)
+	glog.V(4).Infof("%v file setattr %+v mode=%d", file.fullpath(), req, req.Mode)
 
 	entry, err := file.maybeLoadEntry(ctx)
 	if err != nil {

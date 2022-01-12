@@ -492,7 +492,7 @@ func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 
 func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
-	glog.V(4).Infof("%v dir setattr %+v", dir.FullPath(), req)
+	glog.V(4).Infof("%v dir setattr %+v mode=%d", dir.FullPath(), req, req.Mode)
 
 	entry, err := dir.maybeLoadEntry()
 	if err != nil {
