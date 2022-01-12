@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/viant/ptrie"
+	"io"
 	"math"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 
 var (
 	_ = VirtualFilerStore(&FilerStoreWrapper{})
+	_ = Debuggable(&FilerStoreWrapper{})
 )
 
 type VirtualFilerStore interface {
@@ -332,4 +334,10 @@ func (fsw *FilerStoreWrapper) KvGet(ctx context.Context, key []byte) (value []by
 }
 func (fsw *FilerStoreWrapper) KvDelete(ctx context.Context, key []byte) (err error) {
 	return fsw.getDefaultStore().KvDelete(ctx, key)
+}
+
+func (fsw *FilerStoreWrapper) Debug(writer io.Writer) {
+	if debuggable, ok := fsw.getDefaultStore().(Debuggable); ok {
+		debuggable.Debug(writer)
+	}
 }

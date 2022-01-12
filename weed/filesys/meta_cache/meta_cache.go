@@ -144,3 +144,10 @@ func (mc *MetaCache) Shutdown() {
 func (mc *MetaCache) mapIdFromFilerToLocal(entry *filer.Entry) {
 	entry.Attr.Uid, entry.Attr.Gid = mc.uidGidMapper.FilerToLocal(entry.Attr.Uid, entry.Attr.Gid)
 }
+
+func (mc *MetaCache) Debug() {
+	if debuggable, ok := mc.localStore.(filer.Debuggable); ok {
+		println("start debugging")
+		debuggable.Debug(os.Stderr)
+	}
+}
