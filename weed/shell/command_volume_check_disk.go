@@ -27,7 +27,7 @@ func (c *commandVolumeCheckDisk) Name() string {
 }
 
 func (c *commandVolumeCheckDisk) Help() string {
-	return `check all replicated volumes to find and fix inconsistencies
+	return `check all replicated volumes to find and fix inconsistencies. It is optional and resource intensive.
 
 	How it works:
 	
