@@ -482,7 +482,8 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 				})
 			})
 			if err != nil {
-				fmt.Printf("Failed to assign from %v: %v\n", worker.options.masters, err)
+				uploadError = fmt.Errorf("Failed to assign from %v: %v\n", worker.options.masters, err)
+				return
 			}
 
 			targetUrl := "http://" + assignResult.Location.Url + "/" + assignResult.FileId
