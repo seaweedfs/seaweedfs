@@ -72,8 +72,8 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 		return fmt.Errorf("%s/%s not found: %v", req.OldDirectory, req.OldName, err)
 	}
 
-	// follow https://pubs.opengroup.org/onlinepubs/000095399/functions/rename.html
 	if oldEntry.IsDirectory() {
+		// follow https://pubs.opengroup.org/onlinepubs/000095399/functions/rename.html
 		targetDir := newParent.Child(req.NewName)
 		newEntry, err := fs.filer.FindEntry(ctx, targetDir)
 		if err == nil {
