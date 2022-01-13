@@ -424,19 +424,14 @@ func findFileType(mode uint16) fuse.DirentType {
 
 func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 
-	if err := checkPermission(dir.entry, req.Uid, req.Gid, true); err != nil {
+	parentHasPermission := false
+	parentEntry, err := dir.maybeLoadEntry()
+	if err != nil {
 		return err
 	}
-
-	if !req.Dir {
-		return dir.removeOneFile(req)
+	if err := checkPermission(parentEntry, req.Uid, req.Gid, true); err == nil {
+		parentHasPermission = true
 	}
-
-	return dir.removeFolder(req)
-
-}
-
-func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 
 	dirFullPath := dir.FullPath()
 	filePath := util.NewFullPath(dirFullPath, req.Name)
@@ -444,11 +439,29 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 	if err != nil {
 		return err
 	}
+	if !parentHasPermission {
+		if err := checkPermission(entry, req.Uid, req.Gid, true); err != nil {
+			return err
+		}
+	}
+
+	if !req.Dir {
+		return dir.removeOneFile(entry, req)
+	}
+
+	return dir.removeFolder(entry, req)
+
+}
+
+func (dir *Dir) removeOneFile(entry *filer_pb.Entry, req *fuse.RemoveRequest) error {
+
+	dirFullPath := dir.FullPath()
+	filePath := util.NewFullPath(dirFullPath, req.Name)
 
 	// first, ensure the filer store can correctly delete
 	glog.V(3).Infof("remove file: %v", req)
 	isDeleteData := entry != nil && entry.HardLinkCounter <= 1
-	err = filer_pb.Remove(dir.wfs, dirFullPath, req.Name, isDeleteData, false, false, false, []int32{dir.wfs.signature})
+	err := filer_pb.Remove(dir.wfs, dirFullPath, req.Name, isDeleteData, false, false, false, []int32{dir.wfs.signature})
 	if err != nil {
 		glog.V(3).Infof("not found remove file %s: %v", filePath, err)
 		return fuse.ENOENT
@@ -473,9 +486,10 @@ func (dir *Dir) removeOneFile(req *fuse.RemoveRequest) error {
 
 }
 
-func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
+func (dir *Dir) removeFolder(entry *filer_pb.Entry, req *fuse.RemoveRequest) error {
 
 	dirFullPath := dir.FullPath()
+
 	glog.V(3).Infof("remove directory entry: %v", req)
 	ignoreRecursiveErr := false // ignore recursion error since the OS should manage it
 	err := filer_pb.Remove(dir.wfs, dirFullPath, req.Name, true, false, ignoreRecursiveErr, false, []int32{dir.wfs.signature})
