@@ -424,6 +424,10 @@ func findFileType(mode uint16) fuse.DirentType {
 
 func (dir *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 
+	if err := checkPermission(dir.entry, req.Uid, req.Gid, true); err != nil {
+		return err
+	}
+
 	if !req.Dir {
 		return dir.removeOneFile(req)
 	}
