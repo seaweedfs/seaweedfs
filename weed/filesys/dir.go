@@ -66,7 +66,7 @@ func (dir *Dir) Attr(ctx context.Context, attr *fuse.Attr) error {
 	attr.Mode = os.FileMode(entry.Attributes.FileMode) | os.ModeDir
 	attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
 	attr.Crtime = time.Unix(entry.Attributes.Crtime, 0)
-	attr.Ctime = time.Unix(entry.Attributes.Crtime, 0)
+	attr.Ctime = time.Unix(entry.Attributes.Mtime, 0)
 	attr.Atime = time.Unix(entry.Attributes.Mtime, 0)
 	attr.Gid = entry.Attributes.Gid
 	attr.Uid = entry.Attributes.Uid
@@ -514,6 +514,8 @@ func (dir *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fus
 	if req.Valid.Mtime() {
 		entry.Attributes.Mtime = req.Mtime.Unix()
 	}
+
+	entry.Attributes.Mtime = time.Now().Unix()
 
 	return dir.saveEntry(entry)
 

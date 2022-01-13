@@ -149,21 +149,25 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 
 	if req.Valid.Mode() && entry.Attributes.FileMode != uint32(req.Mode) {
 		entry.Attributes.FileMode = uint32(req.Mode)
+		entry.Attributes.Mtime = time.Now().Unix()
 		file.dirtyMetadata = true
 	}
 
 	if req.Valid.Uid() && entry.Attributes.Uid != req.Uid {
 		entry.Attributes.Uid = req.Uid
+		entry.Attributes.Mtime = time.Now().Unix()
 		file.dirtyMetadata = true
 	}
 
 	if req.Valid.Gid() && entry.Attributes.Gid != req.Gid {
 		entry.Attributes.Gid = req.Gid
+		entry.Attributes.Mtime = time.Now().Unix()
 		file.dirtyMetadata = true
 	}
 
 	if req.Valid.Crtime() {
 		entry.Attributes.Crtime = req.Crtime.Unix()
+		entry.Attributes.Mtime = time.Now().Unix()
 		file.dirtyMetadata = true
 	}
 
