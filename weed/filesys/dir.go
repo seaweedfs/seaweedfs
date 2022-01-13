@@ -473,11 +473,11 @@ func (dir *Dir) removeFolder(req *fuse.RemoveRequest) error {
 
 	dirFullPath := dir.FullPath()
 	glog.V(3).Infof("remove directory entry: %v", req)
-	ignoreRecursiveErr := true // ignore recursion error since the OS should manage it
-	err := filer_pb.Remove(dir.wfs, dirFullPath, req.Name, true, true, ignoreRecursiveErr, false, []int32{dir.wfs.signature})
+	ignoreRecursiveErr := false // ignore recursion error since the OS should manage it
+	err := filer_pb.Remove(dir.wfs, dirFullPath, req.Name, true, false, ignoreRecursiveErr, false, []int32{dir.wfs.signature})
 	if err != nil {
 		glog.V(0).Infof("remove %s/%s: %v", dirFullPath, req.Name, err)
-		if strings.Contains(err.Error(), "non-empty") {
+		if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
 			return fuse.EEXIST
 		}
 		return fuse.ENOENT
