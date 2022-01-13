@@ -57,6 +57,7 @@ func (dir *Dir) Link(ctx context.Context, req *fuse.LinkRequest, old fs.Node) (f
 	}
 
 	// CreateLink 1.2 : update new file to hardlink mode
+	oldEntry.Attributes.Mtime = time.Now().Unix()
 	request := &filer_pb.CreateEntryRequest{
 		Directory: dir.FullPath(),
 		Entry: &filer_pb.Entry{
