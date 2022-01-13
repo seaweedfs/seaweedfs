@@ -52,7 +52,11 @@ func (fp FullPath) AsInode(fileMode os.FileMode) uint64 {
 	} else if fileMode&os.ModeSymlink > 0 {
 		inode += 2
 	} else if fileMode&os.ModeDevice > 0 {
-		inode += 3
+		if fileMode&os.ModeCharDevice > 0 {
+			inode += 6
+		} else {
+			inode += 3
+		}
 	} else if fileMode&os.ModeNamedPipe > 0 {
 		inode += 4
 	} else if fileMode&os.ModeSocket > 0 {
