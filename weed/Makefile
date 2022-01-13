@@ -19,15 +19,15 @@ debug_shell:
 
 debug_mount:
 	go build -gcflags="all=-N -l"
-	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- -v=4 mount -dir=~/tmp/mm -cacheCapacityMB=0 -filer.path=/
+	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- -v=4 mount -dir=~/tmp/mm -cacheCapacityMB=0 -filer.path=/ -umask=000
 
 debug_server:
 	go build -gcflags="all=-N -l"
-	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- server -dir=/Volumes/mobile_disk/99 -filer -volume.port=8343 -s3 -volume.max=0 -master.volumeSizeLimitMB=1024 -volume.preStopSeconds=1
+	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- server -dir=~/tmp/99 -filer -volume.port=8343 -s3 -volume.max=0 -master.volumeSizeLimitMB=1024 -volume.preStopSeconds=1
 
 debug_volume:
 	go build -gcflags="all=-N -l"
-	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- volume -dir=/Volumes/mobile_disk/100 -port 8564 -max=30 -preStopSeconds=2
+	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- volume -dir=~/tmp/100 -port 8564 -max=30 -preStopSeconds=2
 
 debug_webdav:
 	go build -gcflags="all=-N -l"
@@ -52,4 +52,3 @@ debug_filer_remote_sync_buckets:
 debug_master_follower:
 	go build -gcflags="all=-N -l"
 	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- -v=4 master.follower
-
