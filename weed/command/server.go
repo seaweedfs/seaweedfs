@@ -28,6 +28,7 @@ var (
 	masterOptions    MasterOptions
 	filerOptions     FilerOptions
 	s3Options        S3Options
+	iamOptions       IamOptions
 	webdavOptions    WebDavOption
 	msgBrokerOptions MessageBrokerOptions
 )
@@ -71,6 +72,7 @@ var (
 	isStartingVolumeServer = cmdServer.Flag.Bool("volume", true, "whether to start volume server")
 	isStartingFiler        = cmdServer.Flag.Bool("filer", false, "whether to start filer")
 	isStartingS3           = cmdServer.Flag.Bool("s3", false, "whether to start S3 gateway")
+	isStartingIam          = cmdServer.Flag.Bool("iam", false, "whether to start IAM service")
 	isStartingWebDav       = cmdServer.Flag.Bool("webdav", false, "whether to start WebDAV gateway")
 	isStartingMsgBroker    = cmdServer.Flag.Bool("msgBroker", false, "whether to start message broker")
 
@@ -134,6 +136,8 @@ func init() {
 	s3Options.auditLogConfig = cmdServer.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	s3Options.allowEmptyFolder = cmdServer.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
 
+	iamOptions.port = cmdServer.Flag.Int("iam.port", 8111, "iam server http listen port")
+
 	webdavOptions.port = cmdServer.Flag.Int("webdav.port", 7333, "webdav server http listen port")
 	webdavOptions.collection = cmdServer.Flag.String("webdav.collection", "", "collection to create the files")
 	webdavOptions.replication = cmdServer.Flag.String("webdav.replication", "", "replication to create the files")
@@ -159,6 +163,9 @@ func runServer(cmd *Command, args []string) bool {
 	grace.SetupProfiling(*serverOptions.cpuprofile, *serverOptions.memprofile)
 
 	if *isStartingS3 {
+		*isStartingFiler = true
+	}
+	if *isStartingIam {
 		*isStartingFiler = true
 	}
 	if *isStartingWebDav {
@@ -227,25 +234,27 @@ func runServer(cmd *Command, args []string) bool {
 	if *isStartingFiler {
 		go func() {
 			time.Sleep(1 * time.Second)
-
 			filerOptions.startFiler()
-
 		}()
 	}
 
 	if *isStartingS3 {
 		go func() {
 			time.Sleep(2 * time.Second)
-
 			s3Options.startS3Server()
+		}()
+	}
 
+	if *isStartingIam {
+		go func() {
+			time.Sleep(2 * time.Second)
+			iamOptions.startIamServer()
 		}()
 	}
 
 	if *isStartingWebDav {
 		go func() {
 			time.Sleep(2 * time.Second)
-
 			webdavOptions.startWebDav()
 
 		}()
