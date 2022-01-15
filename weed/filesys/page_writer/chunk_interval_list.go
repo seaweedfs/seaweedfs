@@ -6,6 +6,7 @@ import "math"
 type ChunkWrittenInterval struct {
 	StartOffset int64
 	stopOffset  int64
+	flushed     bool
 	prev        *ChunkWrittenInterval
 	next        *ChunkWrittenInterval
 }
@@ -16,6 +17,10 @@ func (interval *ChunkWrittenInterval) Size() int64 {
 
 func (interval *ChunkWrittenInterval) isComplete(chunkSize int64) bool {
 	return interval.stopOffset-interval.StartOffset == chunkSize
+}
+
+func (interval *ChunkWrittenInterval) MarkFlushed() {
+	interval.flushed = true
 }
 
 // ChunkWrittenIntervalList mark written intervals within one page chunk
@@ -64,18 +69,21 @@ func (list *ChunkWrittenIntervalList) addInterval(interval *ChunkWrittenInterval
 	if interval.StartOffset <= p.stopOffset && q.StartOffset <= interval.stopOffset {
 		// merge p and q together
 		p.stopOffset = q.stopOffset
+		p.flushed = false
 		unlinkNodesBetween(p, q.next)
 		return
 	}
 	if interval.StartOffset <= p.stopOffset {
 		// merge new interval into p
 		p.stopOffset = interval.stopOffset
+		p.flushed = false
 		unlinkNodesBetween(p, q)
 		return
 	}
 	if q.StartOffset <= interval.stopOffset {
 		// merge new interval into q
 		q.StartOffset = interval.StartOffset
+		q.flushed = false
 		unlinkNodesBetween(p, q)
 		return
 	}

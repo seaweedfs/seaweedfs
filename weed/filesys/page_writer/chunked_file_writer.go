@@ -106,13 +106,15 @@ func (cw *ChunkedFileWriter) ProcessEachInterval(process func(file *os.File, log
 	for logicChunkIndex, actualChunkIndex := range cw.logicToActualChunkIndex {
 		chunkUsage := cw.chunkUsages[actualChunkIndex]
 		for t := chunkUsage.head.next; t != chunkUsage.tail; t = t.next {
-			process(cw.file, logicChunkIndex, t)
+			if !t.flushed {
+				process(cw.file, logicChunkIndex, t)
+			}
 		}
 	}
 }
 
-// Reset releases used resources
-func (cw *ChunkedFileWriter) Reset() {
+// Destroy releases used resources
+func (cw *ChunkedFileWriter) Destroy() {
 	if cw.file != nil {
 		cw.file.Close()
 		os.Remove(cw.file.Name())

@@ -35,9 +35,9 @@ func writeToFile(cw *ChunkedFileWriter, startOffset int64, stopOffset int64) {
 
 func TestWriteChunkedFile(t *testing.T) {
 	x := NewChunkedFileWriter(os.TempDir(), 20)
-	defer x.Reset()
+	defer x.Destroy()
 	y := NewChunkedFileWriter(os.TempDir(), 12)
-	defer y.Reset()
+	defer y.Destroy()
 
 	batchSize := 4
 	buf := make([]byte, batchSize)

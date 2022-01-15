@@ -10,7 +10,7 @@ func TestWriteChunkedStream(t *testing.T) {
 	x := NewChunkedStreamWriter(20)
 	defer x.Reset()
 	y := NewChunkedFileWriter(os.TempDir(), 12)
-	defer y.Reset()
+	defer y.Destroy()
 
 	batchSize := 4
 	buf := make([]byte, batchSize)

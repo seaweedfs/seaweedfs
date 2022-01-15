@@ -51,7 +51,6 @@ func (pages *TempFileDirtyPages) FlushData() error {
 	if pages.lastErr != nil {
 		return fmt.Errorf("flush data: %v", pages.lastErr)
 	}
-	pages.chunkedFile.Reset()
 	return nil
 }
 
@@ -68,6 +67,7 @@ func (pages *TempFileDirtyPages) saveChunkedFileToStorage() {
 	pages.chunkedFile.ProcessEachInterval(func(file *os.File, logicChunkIndex page_writer.LogicChunkIndex, interval *page_writer.ChunkWrittenInterval) {
 		reader := page_writer.NewFileIntervalReader(pages.chunkedFile, logicChunkIndex, interval)
 		pages.saveChunkedFileIntevalToStorage(reader, int64(logicChunkIndex)*pages.chunkedFile.ChunkSize+interval.StartOffset, interval.Size())
+		interval.MarkFlushed()
 	})
 
 }
@@ -102,5 +102,5 @@ func (pages *TempFileDirtyPages) saveChunkedFileIntevalToStorage(reader io.Reade
 }
 
 func (pages TempFileDirtyPages) Destroy() {
-	pages.chunkedFile.Reset()
+	pages.chunkedFile.Destroy()
 }
