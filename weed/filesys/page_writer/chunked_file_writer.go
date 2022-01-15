@@ -73,6 +73,7 @@ func (cw *ChunkedFileWriter) ReadDataAt(p []byte, off int64) (maxStop int64) {
 					glog.Errorf("reading temp file: %v", err)
 					break
 				}
+				checkByteZero("temp file writer read", p, logicStart-off, logicStop-off)
 				maxStop = max(maxStop, logicStop)
 			}
 		}

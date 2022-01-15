@@ -1,7 +1,6 @@
 package page_writer
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/mem"
 	"io"
@@ -82,16 +81,7 @@ func (cw *ChunkedStreamWriter) ReadDataAt(p []byte, off int64) (maxStop int64) {
 			copy(p[logicStart-off:logicStop-off], memChunk.buf[logicStart-memChunkBaseOffset:logicStop-memChunkBaseOffset])
 			maxStop = max(maxStop, logicStop)
 
-			isAllZero := true
-			for i := logicStart - off; i < logicStop-off; i++ {
-				if p[i] != 0 {
-					isAllZero = false
-					break
-				}
-			}
-			if isAllZero {
-				glog.Errorf("Copied content is all Zero [%d,%d)", logicStart-off, logicStop-off)
-			}
+			checkByteZero("stream writer read", p, logicStart-off, logicStop-off)
 
 		}
 	}

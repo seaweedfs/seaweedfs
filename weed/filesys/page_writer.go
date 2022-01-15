@@ -84,6 +84,8 @@ func (pw *PageWriter) ReadDirtyDataAt(data []byte, offset int64) (maxStop int64)
 		data = data[readSize:]
 	}
 
+	checkByteZero("page writer read", p, 0, maxStop-offset)
+
 	return
 }
 
