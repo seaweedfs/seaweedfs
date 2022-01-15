@@ -2,7 +2,7 @@ package page_writer
 
 import "github.com/chrislusf/seaweedfs/weed/glog"
 
-func checkByteZero(message string, p []byte, start, stop int64) {
+func CheckByteZero(message string, p []byte, start, stop int64) {
 	isAllZero := true
 	for i := start; i < stop; i++ {
 		if p[i] != 0 {

@@ -81,7 +81,7 @@ func (cw *ChunkedStreamWriter) ReadDataAt(p []byte, off int64) (maxStop int64) {
 			copy(p[logicStart-off:logicStop-off], memChunk.buf[logicStart-memChunkBaseOffset:logicStop-memChunkBaseOffset])
 			maxStop = max(maxStop, logicStop)
 
-			checkByteZero("stream writer read", p, logicStart-off, logicStop-off)
+			CheckByteZero("stream writer read", p, logicStart-off, logicStop-off)
 
 		}
 	}
