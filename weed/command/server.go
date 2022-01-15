@@ -208,6 +208,7 @@ func runServer(cmd *Command, args []string) bool {
 
 	filerAddress := string(pb.NewServerAddress(*serverIp, *filerOptions.port, *filerOptions.portGrpc))
 	s3Options.filer = &filerAddress
+	iamOptions.filer = &filerAddress
 	webdavOptions.filer = &filerAddress
 	msgBrokerOptions.filer = &filerAddress
 
