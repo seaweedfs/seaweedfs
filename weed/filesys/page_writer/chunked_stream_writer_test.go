@@ -8,7 +8,7 @@ import (
 
 func TestWriteChunkedStream(t *testing.T) {
 	x := NewChunkedStreamWriter(20)
-	defer x.Reset()
+	defer x.Destroy()
 	y := NewChunkedFileWriter(os.TempDir(), 12)
 	defer y.Destroy()
 

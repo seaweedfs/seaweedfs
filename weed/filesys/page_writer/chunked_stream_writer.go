@@ -57,7 +57,6 @@ func (cw *ChunkedStreamWriter) WriteAt(p []byte, off int64) (n int, err error) {
 	if memChunk.usage.IsComplete(cw.ChunkSize) {
 		if cw.saveToStorageFn != nil {
 			cw.saveOneChunk(memChunk, logicChunkIndex)
-			delete(cw.activeChunks, logicChunkIndex)
 		}
 	}
 
@@ -92,7 +91,6 @@ func (cw *ChunkedStreamWriter) FlushAll() {
 	for logicChunkIndex, memChunk := range cw.activeChunks {
 		if cw.saveToStorageFn != nil {
 			cw.saveOneChunk(memChunk, logicChunkIndex)
-			delete(cw.activeChunks, logicChunkIndex)
 		}
 	}
 }
@@ -102,6 +100,7 @@ func (cw *ChunkedStreamWriter) saveOneChunk(memChunk *MemChunk, logicChunkIndex 
 	for t := memChunk.usage.head.next; t != memChunk.usage.tail; t = t.next {
 		reader := util.NewBytesReader(memChunk.buf[t.StartOffset:t.stopOffset])
 		cw.saveToStorageFn(reader, int64(logicChunkIndex)*cw.ChunkSize+t.StartOffset, t.Size(), func() {
+			delete(cw.activeChunks, logicChunkIndex)
 			atomic.AddInt32(&referenceCounter, -1)
 			if atomic.LoadInt32(&referenceCounter) == 0 {
 				mem.Free(memChunk.buf)
@@ -110,8 +109,8 @@ func (cw *ChunkedStreamWriter) saveOneChunk(memChunk *MemChunk, logicChunkIndex 
 	}
 }
 
-// Reset releases used resources
-func (cw *ChunkedStreamWriter) Reset() {
+// Destroy releases used resources
+func (cw *ChunkedStreamWriter) Destroy() {
 	for t, memChunk := range cw.activeChunks {
 		mem.Free(memChunk.buf)
 		delete(cw.activeChunks, t)

@@ -52,7 +52,6 @@ func (pages *StreamDirtyPages) FlushData() error {
 	if pages.lastErr != nil {
 		return fmt.Errorf("flush data: %v", pages.lastErr)
 	}
-	pages.chunkedStream.Reset()
 	return nil
 }
 
@@ -102,5 +101,5 @@ func (pages *StreamDirtyPages) saveChunkedFileIntevalToStorage(reader io.Reader,
 }
 
 func (pages StreamDirtyPages) Destroy() {
-	pages.chunkedStream.Reset()
+	pages.chunkedStream.Destroy()
 }
