@@ -100,10 +100,10 @@ func (cw *ChunkedStreamWriter) saveOneChunk(memChunk *MemChunk, logicChunkIndex 
 	for t := memChunk.usage.head.next; t != memChunk.usage.tail; t = t.next {
 		reader := util.NewBytesReader(memChunk.buf[t.StartOffset:t.stopOffset])
 		cw.saveToStorageFn(reader, int64(logicChunkIndex)*cw.ChunkSize+t.StartOffset, t.Size(), func() {
-			delete(cw.activeChunks, logicChunkIndex)
 			atomic.AddInt32(&referenceCounter, -1)
 			if atomic.LoadInt32(&referenceCounter) == 0 {
 				mem.Free(memChunk.buf)
+				delete(cw.activeChunks, logicChunkIndex)
 			}
 		})
 	}
