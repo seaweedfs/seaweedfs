@@ -84,7 +84,7 @@ func (pw *PageWriter) ReadDirtyDataAt(data []byte, offset int64) (maxStop int64)
 		maxStop = max(maxStop, m2)
 
 		offset += readSize
-		data = dataSlice[readSize:]
+		dataSlice = dataSlice[readSize:]
 	}
 
 	page_writer.CheckByteZero(fmt.Sprintf("page writer read [%d,%d)", offset, offset+int64(len(data))), data, 0, maxStop-offset)
