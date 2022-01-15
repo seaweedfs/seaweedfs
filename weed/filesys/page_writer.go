@@ -26,7 +26,7 @@ func newPageWriter(file *File, chunkSize int64) *PageWriter {
 		chunkSize:     chunkSize,
 		writerPattern: NewWriterPattern(chunkSize),
 		randomWriter:  newTempFileDirtyPages(file, chunkSize),
-		// streamWriter:  newStreamDirtyPages(file, chunkSize),
+		streamWriter:  newStreamDirtyPages(file, chunkSize),
 		//streamWriter: newContinuousDirtyPages(file),
 		//streamWriter:  nil,
 	}
