@@ -3,6 +3,7 @@ package filesys
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filesys/page_writer"
 	"io"
 	"math"
 	"net/http"
@@ -161,7 +162,8 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		glog.Errorf("file handle read %s: %v", fileFullPath, err)
 	}
 
-	glog.V(4).Infof("file handle read %s [%d,%d] %d : %v", fileFullPath, offset, offset+int64(totalRead), totalRead, err)
+	glog.V(4).Infof("file handle read %s [%d,%d) %d : %v", fileFullPath, offset, offset+int64(totalRead), totalRead, err)
+	page_writer.CheckByteZero(fmt.Sprintf("read %d chunks", len(entry.Chunks)), buff, 0, int64(totalRead))
 
 	return int64(totalRead), err
 }
