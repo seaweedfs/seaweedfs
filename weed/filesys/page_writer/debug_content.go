@@ -10,7 +10,7 @@ func CheckByteZero(message string, p []byte, start, stop int64) {
 			break
 		}
 	}
-	if isAllZero {
+	if isAllZero && start != stop {
 		glog.Errorf("%s is all zeros [%d,%d)", message, start, stop)
 	}
 

@@ -70,24 +70,25 @@ func (pw *PageWriter) FlushData() error {
 func (pw *PageWriter) ReadDirtyDataAt(data []byte, offset int64) (maxStop int64) {
 	glog.V(4).Infof("ReadDirtyDataAt %v [%d, %d)", pw.f.fullpath(), offset, offset+int64(len(data)))
 
-	dataSlice := data
+	originalData := data
+	originalOffset := offset
 
 	chunkIndex := offset / pw.chunkSize
-	for i := chunkIndex; len(dataSlice) > 0; i++ {
-		readSize := min(int64(len(dataSlice)), (i+1)*pw.chunkSize-offset)
+	for i := chunkIndex; len(data) > 0; i++ {
+		readSize := min(int64(len(data)), (i+1)*pw.chunkSize-offset)
 
 		if pw.streamWriter != nil {
-			m1 := pw.streamWriter.ReadDirtyDataAt(dataSlice[:readSize], offset)
+			m1 := pw.streamWriter.ReadDirtyDataAt(data[:readSize], offset)
 			maxStop = max(maxStop, m1)
 		}
-		m2 := pw.randomWriter.ReadDirtyDataAt(dataSlice[:readSize], offset)
+		m2 := pw.randomWriter.ReadDirtyDataAt(data[:readSize], offset)
 		maxStop = max(maxStop, m2)
 
 		offset += readSize
-		dataSlice = dataSlice[readSize:]
+		data = data[readSize:]
 	}
 
-	page_writer.CheckByteZero(fmt.Sprintf("page writer read [%d,%d)", offset, offset+int64(len(data))), data, 0, maxStop-offset)
+	page_writer.CheckByteZero(fmt.Sprintf("page writer read [%d,%d)", originalOffset, originalOffset+int64(len(data))), originalData, 0, maxStop-originalOffset)
 
 	return
 }
