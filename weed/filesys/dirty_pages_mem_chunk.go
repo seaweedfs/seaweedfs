@@ -27,7 +27,7 @@ func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *MemoryChunkPages {
 		fh: fh,
 	}
 
-	dirtyPages.uploadPipeline = page_writer.NewUploadPipeline(
+	dirtyPages.uploadPipeline = page_writer.NewUploadPipeline(fh.f.fullpath(),
 		fh.f.wfs.concurrentWriters, chunkSize, dirtyPages.saveChunkedFileIntevalToStorage)
 
 	return dirtyPages
