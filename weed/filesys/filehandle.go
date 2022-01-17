@@ -28,11 +28,9 @@ type FileHandle struct {
 	sync.Mutex
 
 	f         *File
-	RequestId fuse.RequestID // unique ID for request
-	NodeId    fuse.NodeID    // file or directory the request is about
-	Uid       uint32         // user ID of process making request
-	Gid       uint32         // group ID of process making request
-	writeOnly bool
+	NodeId    fuse.NodeID // file or directory the request is about
+	Uid       uint32      // user ID of process making request
+	Gid       uint32      // group ID of process making request
 	isDeleted bool
 }
 
