@@ -18,6 +18,7 @@ type MemoryChunkPages struct {
 	collection     string
 	replication    string
 	uploadPipeline *page_writer.UploadPipeline
+	hasWrites      bool
 }
 
 func newMemoryChunkPages(file *File, chunkSize int64) *MemoryChunkPages {
@@ -33,6 +34,7 @@ func newMemoryChunkPages(file *File, chunkSize int64) *MemoryChunkPages {
 }
 
 func (pages *MemoryChunkPages) AddPage(offset int64, data []byte) {
+	pages.hasWrites = true
 
 	glog.V(4).Infof("%v memory AddPage [%d, %d)", pages.f.fullpath(), offset, offset+int64(len(data)))
 	pages.uploadPipeline.SaveDataAt(data, offset)
@@ -41,6 +43,9 @@ func (pages *MemoryChunkPages) AddPage(offset int64, data []byte) {
 }
 
 func (pages *MemoryChunkPages) FlushData() error {
+	if !pages.hasWrites {
+		return nil
+	}
 	pages.saveChunkedFileToStorage()
 	pages.writeWaitGroup.Wait()
 	if pages.lastErr != nil {
@@ -50,6 +55,9 @@ func (pages *MemoryChunkPages) FlushData() error {
 }
 
 func (pages *MemoryChunkPages) ReadDirtyDataAt(data []byte, startOffset int64) (maxStop int64) {
+	if !pages.hasWrites {
+		return
+	}
 	return pages.uploadPipeline.MaybeReadDataAt(data, startOffset)
 }
 
