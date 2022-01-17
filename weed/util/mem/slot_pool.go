@@ -35,10 +35,12 @@ func getSlotPool(size int) *sync.Pool {
 }
 
 func Allocate(size int) []byte {
+	return make([]byte, size)
 	slab := *getSlotPool(size).Get().(*[]byte)
 	return slab[:size]
 }
 
 func Free(buf []byte) {
+	return
 	getSlotPool(cap(buf)).Put(&buf)
 }
