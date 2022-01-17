@@ -146,10 +146,10 @@ func (cw *UploadPipeline) moveToSealed(memChunk *MemChunk, logicChunkIndex Logic
 		cw.saveOneChunk(sealedChunk.chunk, logicChunkIndex)
 
 		// then remove from sealed chunks
-		sealedChunk.FreeReference()
 		cw.sealedChunksLock.Lock()
 		defer cw.sealedChunksLock.Unlock()
 		delete(cw.sealedChunks, logicChunkIndex)
+		sealedChunk.FreeReference()
 
 		atomic.AddInt32(&cw.activeWriterCount, -1)
 		glog.V(4).Infof("activeWriterCount %d --> %d", cw.activeWriterCount+1, cw.activeWriterCount)
