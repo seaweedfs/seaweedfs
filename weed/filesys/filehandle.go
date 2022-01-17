@@ -36,12 +36,12 @@ type FileHandle struct {
 
 func newFileHandle(file *File, uid, gid uint32) *FileHandle {
 	fh := &FileHandle{
-		f: file,
-		// dirtyPages: newContinuousDirtyPages(file, writeOnly),
-		dirtyPages: newPageWriter(file, file.wfs.option.ChunkSizeLimit),
-		Uid:        uid,
-		Gid:        gid,
+		f:   file,
+		Uid: uid,
+		Gid: gid,
 	}
+	// dirtyPages: newContinuousDirtyPages(file, writeOnly),
+	fh.dirtyPages = newPageWriter(fh, file.wfs.option.ChunkSizeLimit)
 	entry := fh.f.getEntry()
 	if entry != nil {
 		entry.Attributes.FileSize = filer.FileSize(entry)
@@ -149,6 +149,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 	reader := fh.reader
 	if reader == nil {
 		chunkViews := filer.ViewFromVisibleIntervals(fh.entryViewCache, 0, math.MaxInt64)
+		glog.V(4).Infof("file handle read %s [%d,%d) from %+v", fileFullPath, offset, offset+int64(len(buff)), chunkViews)
 		reader = filer.NewChunkReaderAtFromClient(fh.f.wfs.LookupFn(), chunkViews, fh.f.wfs.chunkCache, fileSize)
 	}
 	fh.reader = reader

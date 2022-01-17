@@ -11,7 +11,7 @@ import (
 )
 
 type MemoryChunkPages struct {
-	f              *File
+	fh             *FileHandle
 	writeWaitGroup sync.WaitGroup
 	chunkAddLock   sync.Mutex
 	lastErr        error
@@ -21,14 +21,14 @@ type MemoryChunkPages struct {
 	hasWrites      bool
 }
 
-func newMemoryChunkPages(file *File, chunkSize int64) *MemoryChunkPages {
+func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *MemoryChunkPages {
 
 	dirtyPages := &MemoryChunkPages{
-		f: file,
+		fh: fh,
 	}
 
 	dirtyPages.uploadPipeline = page_writer.NewUploadPipeline(
-		file.wfs.concurrentWriters, chunkSize, dirtyPages.saveChunkedFileIntevalToStorage)
+		fh.f.wfs.concurrentWriters, chunkSize, dirtyPages.saveChunkedFileIntevalToStorage)
 
 	return dirtyPages
 }
@@ -36,7 +36,7 @@ func newMemoryChunkPages(file *File, chunkSize int64) *MemoryChunkPages {
 func (pages *MemoryChunkPages) AddPage(offset int64, data []byte) {
 	pages.hasWrites = true
 
-	glog.V(4).Infof("%v memory AddPage [%d, %d)", pages.f.fullpath(), offset, offset+int64(len(data)))
+	glog.V(4).Infof("%v memory AddPage [%d, %d)", pages.fh.f.fullpath(), offset, offset+int64(len(data)))
 	pages.uploadPipeline.SaveDataAt(data, offset)
 
 	return
@@ -79,23 +79,24 @@ func (pages *MemoryChunkPages) saveChunkedFileIntevalToStorage(reader io.Reader,
 		defer pages.writeWaitGroup.Done()
 		defer cleanupFn()
 
-		chunk, collection, replication, err := pages.f.wfs.saveDataAsChunk(pages.f.fullpath())(reader, pages.f.Name, offset)
+		chunk, collection, replication, err := pages.fh.f.wfs.saveDataAsChunk(pages.fh.f.fullpath())(reader, pages.fh.f.Name, offset)
 		if err != nil {
-			glog.V(0).Infof("%s saveToStorage [%d,%d): %v", pages.f.fullpath(), offset, offset+size, err)
+			glog.V(0).Infof("%s saveToStorage [%d,%d): %v", pages.fh.f.fullpath(), offset, offset+size, err)
 			pages.lastErr = err
 			return
 		}
 		chunk.Mtime = mtime
 		pages.collection, pages.replication = collection, replication
 		pages.chunkAddLock.Lock()
-		pages.f.addChunks([]*filer_pb.FileChunk{chunk})
-		glog.V(3).Infof("%s saveToStorage %s [%d,%d)", pages.f.fullpath(), chunk.FileId, offset, offset+size)
+		pages.fh.f.addChunks([]*filer_pb.FileChunk{chunk})
+		pages.fh.entryViewCache = nil
+		glog.V(3).Infof("%s saveToStorage %s [%d,%d)", pages.fh.f.fullpath(), chunk.FileId, offset, offset+size)
 		pages.chunkAddLock.Unlock()
 
 	}
 
-	if pages.f.wfs.concurrentWriters != nil {
-		pages.f.wfs.concurrentWriters.Execute(writer)
+	if pages.fh.f.wfs.concurrentWriters != nil {
+		pages.fh.f.wfs.concurrentWriters.Execute(writer)
 	} else {
 		go writer()
 	}

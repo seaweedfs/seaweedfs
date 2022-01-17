@@ -6,7 +6,7 @@ import (
 )
 
 type PageWriter struct {
-	f             *File
+	fh            *FileHandle
 	collection    string
 	replication   string
 	chunkSize     int64
@@ -20,19 +20,19 @@ var (
 	_ = page_writer.DirtyPages(&PageWriter{})
 )
 
-func newPageWriter(file *File, chunkSize int64) *PageWriter {
+func newPageWriter(fh *FileHandle, chunkSize int64) *PageWriter {
 	pw := &PageWriter{
-		f:             file,
+		fh:            fh,
 		chunkSize:     chunkSize,
 		writerPattern: NewWriterPattern(chunkSize),
-		randomWriter:  newMemoryChunkPages(file, chunkSize),
+		randomWriter:  newMemoryChunkPages(fh, chunkSize),
 	}
 	return pw
 }
 
 func (pw *PageWriter) AddPage(offset int64, data []byte) {
 
-	glog.V(4).Infof("%v AddPage [%d, %d) streaming:%v", pw.f.fullpath(), offset, offset+int64(len(data)), pw.writerPattern.IsStreamingMode())
+	glog.V(4).Infof("%v AddPage [%d, %d) streaming:%v", pw.fh.f.fullpath(), offset, offset+int64(len(data)), pw.writerPattern.IsStreamingMode())
 
 	chunkIndex := offset / pw.chunkSize
 	for i := chunkIndex; len(data) > 0; i++ {
@@ -64,7 +64,7 @@ func (pw *PageWriter) FlushData() error {
 }
 
 func (pw *PageWriter) ReadDirtyDataAt(data []byte, offset int64) (maxStop int64) {
-	glog.V(4).Infof("ReadDirtyDataAt %v [%d, %d)", pw.f.fullpath(), offset, offset+int64(len(data)))
+	glog.V(4).Infof("ReadDirtyDataAt %v [%d, %d)", pw.fh.f.fullpath(), offset, offset+int64(len(data)))
 
 	chunkIndex := offset / pw.chunkSize
 	for i := chunkIndex; len(data) > 0; i++ {
