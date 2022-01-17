@@ -142,9 +142,10 @@ func (cw *UploadPipeline) moveToSealed(memChunk *MemChunk, logicChunkIndex Logic
 	cw.sealedChunksLock.Unlock()
 
 	cw.writers.Execute(func() {
+		// first add to the file chunks
 		cw.saveOneChunk(sealedChunk.chunk, logicChunkIndex)
 
-		// remove from sealed chunks
+		// then remove from sealed chunks
 		sealedChunk.FreeReference()
 		cw.sealedChunksLock.Lock()
 		defer cw.sealedChunksLock.Unlock()
@@ -162,6 +163,9 @@ func (cw *UploadPipeline) moveToSealed(memChunk *MemChunk, logicChunkIndex Logic
 }
 
 func (cw *UploadPipeline) saveOneChunk(memChunk *MemChunk, logicChunkIndex LogicChunkIndex) {
+	if cw.saveToStorageFn == nil {
+		return
+	}
 	for t := memChunk.usage.head.next; t != memChunk.usage.tail; t = t.next {
 		reader := util.NewBytesReader(memChunk.buf[t.StartOffset:t.stopOffset])
 		cw.saveToStorageFn(reader, int64(logicChunkIndex)*cw.ChunkSize+t.StartOffset, t.Size(), func() {
