@@ -150,6 +150,9 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 	if reader == nil {
 		chunkViews := filer.ViewFromVisibleIntervals(fh.entryViewCache, 0, math.MaxInt64)
 		glog.V(4).Infof("file handle read %s [%d,%d) from %+v", fileFullPath, offset, offset+int64(len(buff)), chunkViews)
+		for _, chunkView := range chunkViews {
+			glog.V(4).Infof("  read %s [%d,%d) from chunk %+v", fileFullPath, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size), chunkView.FileId)
+		}
 		reader = filer.NewChunkReaderAtFromClient(fh.f.wfs.LookupFn(), chunkViews, fh.f.wfs.chunkCache, fileSize)
 	}
 	fh.reader = reader
