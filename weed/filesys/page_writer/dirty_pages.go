@@ -6,6 +6,8 @@ type DirtyPages interface {
 	ReadDirtyDataAt(data []byte, startOffset int64) (maxStop int64)
 	GetStorageOptions() (collection, replication string)
 	Destroy()
+	LockForRead(startOffset, stopOffset int64)
+	UnlockForRead(startOffset, stopOffset int64)
 }
 
 func max(x, y int64) int64 {
