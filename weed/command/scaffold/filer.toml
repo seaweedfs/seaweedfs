@@ -153,6 +153,8 @@ password = ""
 superLargeDirectories = []
 # Name of the datacenter local to this filer, used as host selection fallback.
 localDC = ""
+# Gocql connection timeout, default: 600ms
+connection_timeout_millisecond = 600
 
 [hbase]
 enabled = false
