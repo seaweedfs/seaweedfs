@@ -25,6 +25,7 @@ func newPageWriter(fh *FileHandle, chunkSize int64) *PageWriter {
 		chunkSize:     chunkSize,
 		writerPattern: NewWriterPattern(chunkSize),
 		randomWriter:  newMemoryChunkPages(fh, chunkSize),
+		// randomWriter: newTempFileDirtyPages(fh.f, chunkSize),
 	}
 	return pw
 }
