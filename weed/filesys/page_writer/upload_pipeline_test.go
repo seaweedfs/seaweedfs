@@ -7,7 +7,7 @@ import (
 
 func TestUploadPipeline(t *testing.T) {
 
-	uploadPipeline := NewUploadPipeline(nil, 2*1024*1024, nil)
+	uploadPipeline := NewUploadPipeline("", nil, 2*1024*1024, nil)
 
 	writeRange(uploadPipeline, 0, 131072)
 	writeRange(uploadPipeline, 131072, 262144)

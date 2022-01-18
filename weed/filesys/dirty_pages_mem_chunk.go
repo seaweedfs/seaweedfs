@@ -21,6 +21,10 @@ type MemoryChunkPages struct {
 	hasWrites      bool
 }
 
+var (
+	_ = page_writer.DirtyPages(&MemoryChunkPages{})
+)
+
 func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *MemoryChunkPages {
 
 	dirtyPages := &MemoryChunkPages{
@@ -87,4 +91,11 @@ func (pages *MemoryChunkPages) saveChunkedFileIntevalToStorage(reader io.Reader,
 
 func (pages MemoryChunkPages) Destroy() {
 	pages.uploadPipeline.Shutdown()
+}
+
+func (pages *MemoryChunkPages) LockForRead(startOffset, stopOffset int64) {
+	pages.uploadPipeline.LockForRead(startOffset, stopOffset)
+}
+func (pages *MemoryChunkPages) UnlockForRead(startOffset, stopOffset int64) {
+	pages.uploadPipeline.UnlockForRead(startOffset, stopOffset)
 }

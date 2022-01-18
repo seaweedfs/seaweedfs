@@ -75,6 +75,8 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 		buff = make([]byte, req.Size)
 	}
 
+	fh.lockForRead(req.Offset, len(buff))
+	defer fh.unlockForRead(req.Offset, len(buff))
 	totalRead, err := fh.readFromChunks(buff, req.Offset)
 	if err == nil || err == io.EOF {
 		maxStop := fh.readFromDirtyPages(buff, req.Offset)
@@ -99,6 +101,13 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	}
 
 	return err
+}
+
+func (fh *FileHandle) lockForRead(startOffset int64, size int) {
+	fh.dirtyPages.LockForRead(startOffset, startOffset+int64(size))
+}
+func (fh *FileHandle) unlockForRead(startOffset int64, size int) {
+	fh.dirtyPages.UnlockForRead(startOffset, startOffset+int64(size))
 }
 
 func (fh *FileHandle) readFromDirtyPages(buff []byte, startOffset int64) (maxStop int64) {
