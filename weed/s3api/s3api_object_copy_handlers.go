@@ -34,11 +34,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		fullPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
 		dir, name := fullPath.DirAndName()
 		entry, err := s3a.getEntry(dir, name)
-		if err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
-			return
-		}
-		if entry.IsDirectory {
+		if err != nil || entry.IsDirectory {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 			return
 		}
@@ -62,8 +58,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 	srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
 	dir, name := srcPath.DirAndName()
-	_, err = s3a.getEntry(dir, name)
-	if err != nil {
+	if entry, err := s3a.getEntry(dir, name); err != nil || entry.IsDirectory {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
