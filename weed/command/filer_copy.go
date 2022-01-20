@@ -212,7 +212,7 @@ func genFileCopyTask(fileOrDir string, destPath string, fileCopyTaskChan chan Fi
 	if mode.IsDir() {
 		files, _ := os.ReadDir(fileOrDir)
 		for _, subFileOrDir := range files {
-			cleanedDestDirectory := filepath.Clean(destPath + fi.Name())
+			cleanedDestDirectory := destPath + fi.Name()
 			if err = genFileCopyTask(fileOrDir+"/"+subFileOrDir.Name(), cleanedDestDirectory+"/", fileCopyTaskChan); err != nil {
 				return err
 			}
