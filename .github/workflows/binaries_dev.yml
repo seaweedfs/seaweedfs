@@ -20,12 +20,12 @@ jobs:
           assets: |
             weed-*
 
-  build_dev_linux:
+  build_dev_linux_windows:
     needs: cleanup
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [linux]
+        goos: [linux, windows]
         goarch: [amd64]
 
     steps:
