@@ -68,7 +68,7 @@ jobs:
           asset_name: "weed-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
 
   build_dev_darwin:
-    needs: build_dev_linux
+    needs: build_dev_linux_windows
     runs-on: ubuntu-latest
     strategy:
       matrix:
