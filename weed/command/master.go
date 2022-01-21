@@ -2,6 +2,7 @@ package command
 
 import (
 	"github.com/chrislusf/raft/protobuf"
+	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc/reflection"
 	"net/http"
@@ -42,6 +43,7 @@ type MasterOptions struct {
 	metricsAddress     *string
 	metricsIntervalSec *int
 	raftResumeState    *bool
+	metricsHttpPort    *int
 }
 
 func init() {
@@ -61,6 +63,7 @@ func init() {
 	m.disableHttp = cmdMaster.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
 	m.metricsAddress = cmdMaster.Flag.String("metrics.address", "", "Prometheus gateway address <host>:<port>")
 	m.metricsIntervalSec = cmdMaster.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
+	m.metricsHttpPort = cmdMaster.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	m.raftResumeState = cmdMaster.Flag.Bool("resumeState", false, "resume previous state on start master server")
 }
 
@@ -104,6 +107,7 @@ func runMaster(cmd *Command, args []string) bool {
 		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
 	}
 
+	go stats_collect.StartMetricsServer(*m.metricsHttpPort)
 	startMaster(m, masterWhiteList)
 
 	return true
