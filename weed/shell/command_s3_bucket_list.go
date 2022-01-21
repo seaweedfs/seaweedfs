@@ -34,6 +34,14 @@ func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer i
 		return nil
 	}
 
+	// collect collection information
+	topologyInfo, _, err := collectTopologyInfo(commandEnv)
+	if err != nil {
+		return err
+	}
+	collectionInfos := make(map[string]*CollectionInfo)
+	collectCollectionInfo(topologyInfo, collectionInfos)
+
 	_, parseErr := commandEnv.parseUrl(findInputDirectory(bucketCommand.Args()))
 	if parseErr != nil {
 		return parseErr
@@ -49,11 +57,13 @@ func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer i
 		if !entry.IsDirectory {
 			return nil
 		}
-		if entry.Attributes.Replication == "" || entry.Attributes.Replication == "000" {
-			fmt.Fprintf(writer, "  %s\n", entry.Name)
-		} else {
-			fmt.Fprintf(writer, "  %s\t\t\treplication: %s\n", entry.Name, entry.Attributes.Replication)
+		collection := entry.Name
+		var collectionSize, fileCount uint64
+		if collectionInfo, found := collectionInfos[collection]; found {
+			collectionSize = collectionInfo.Size
+			fileCount = collectionInfo.FileCount - collectionInfo.DeleteCount
 		}
+		fmt.Fprintf(writer, "  %s\tsize:%d bytes\tfile:%d\treplication: %s\n", entry.Name, collectionSize, fileCount, entry.Attributes.Replication)
 		return nil
 	}, "", false, math.MaxUint32)
 	if err != nil {
