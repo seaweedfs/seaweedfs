@@ -11,28 +11,28 @@ import (
 )
 
 func init() {
-	Commands = append(Commands, &commandS3BucketQuotaCheck{})
+	Commands = append(Commands, &commandS3BucketQuotaEnforce{})
 }
 
-type commandS3BucketQuotaCheck struct {
+type commandS3BucketQuotaEnforce struct {
 }
 
-func (c *commandS3BucketQuotaCheck) Name() string {
-	return "s3.bucket.quota.check"
+func (c *commandS3BucketQuotaEnforce) Name() string {
+	return "s3.bucket.quota.enforce"
 }
 
-func (c *commandS3BucketQuotaCheck) Help() string {
+func (c *commandS3BucketQuotaEnforce) Help() string {
 	return `check quota for all buckets, make the bucket read only if over the limit
 
 	Example:
-		s3.bucket.quota.check -force
+		s3.bucket.quota.enforce -apply
 `
 }
 
-func (c *commandS3BucketQuotaCheck) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
+func (c *commandS3BucketQuotaEnforce) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	enforceQuotaLimit := bucketCommand.Bool("force", false, "actually change the buckets readonly attribute")
+	applyQuotaLimit := bucketCommand.Bool("apply", false, "actually change the buckets readonly attribute")
 	if err = bucketCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -79,10 +79,13 @@ func (c *commandS3BucketQuotaCheck) Do(args []string, commandEnv *CommandEnv, wr
 	}
 
 	// apply the configuration changes
-	if hasConfChanges && *enforceQuotaLimit {
+	if hasConfChanges && *applyQuotaLimit {
 
 		var buf2 bytes.Buffer
 		fc.ToText(&buf2)
+
+		fmt.Fprintf(writer, string(buf2.Bytes()))
+		fmt.Fprintln(writer)
 
 		if err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf2.Bytes())
@@ -95,16 +98,11 @@ func (c *commandS3BucketQuotaCheck) Do(args []string, commandEnv *CommandEnv, wr
 
 }
 
-func (c *commandS3BucketQuotaCheck) processEachBucket(fc *filer.FilerConf, filerBucketsPath string, entry *filer_pb.Entry, writer io.Writer, collectionSize uint64) (hasConfChanges bool) {
+func (c *commandS3BucketQuotaEnforce) processEachBucket(fc *filer.FilerConf, filerBucketsPath string, entry *filer_pb.Entry, writer io.Writer, collectionSize uint64) (hasConfChanges bool) {
 
 	locPrefix := filerBucketsPath + "/" + entry.Name + "/"
 	locConf := fc.MatchStorageRule(locPrefix)
-	if locConf == nil {
-		locConf = &filer_pb.FilerConf_PathConf{
-			LocationPrefix: locPrefix,
-			Collection:     entry.Name,
-		}
-	}
+	locConf.LocationPrefix = locPrefix
 
 	if entry.Quota > 0 {
 		if locConf.ReadOnly {
