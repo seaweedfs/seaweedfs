@@ -114,6 +114,7 @@ message Entry {
     bytes content = 9; // if not empty, the file content
 
     RemoteEntry remote_entry = 10;
+    int64 quota = 11; // for bucket only. Positive/Negative means enabled/disabled.
 }
 
 message FullEntry {
