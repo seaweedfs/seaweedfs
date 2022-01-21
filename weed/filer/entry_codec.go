@@ -118,6 +118,9 @@ func EqualEntry(a, b *Entry) bool {
 	if !proto.Equal(a.Remote, b.Remote) {
 		return false
 	}
+	if a.Quota != b.Quota {
+		return false
+	}
 	return true
 }
 
