@@ -62,7 +62,7 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64) (n int) {
 
 	memChunk, found := up.writableChunks[logicChunkIndex]
 	if !found {
-		if len(up.writableChunks) < 0 {
+		if len(up.writableChunks) < 16 {
 			memChunk = NewMemChunk(logicChunkIndex, up.ChunkSize)
 		} else {
 			memChunk = up.swapFile.NewTempFileChunk(logicChunkIndex)
