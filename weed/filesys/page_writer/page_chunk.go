@@ -11,9 +11,9 @@ type SaveToStorageFunc func(reader io.Reader, offset int64, size int64, cleanupF
 type PageChunk interface {
 	FreeResource()
 	WriteDataAt(src []byte, offset int64) (n int)
-	ReadDataAt(p []byte, off int64, logicChunkIndex LogicChunkIndex, chunkSize int64) (maxStop int64)
-	IsComplete(chunkSize int64) bool
-	SaveContent(saveFn SaveToStorageFunc, logicChunkIndex LogicChunkIndex, chunkSize int64)
+	ReadDataAt(p []byte, off int64) (maxStop int64)
+	IsComplete() bool
+	SaveContent(saveFn SaveToStorageFunc)
 }
 
 var (
@@ -21,8 +21,19 @@ var (
 )
 
 type MemChunk struct {
-	buf   []byte
-	usage *ChunkWrittenIntervalList
+	buf             []byte
+	usage           *ChunkWrittenIntervalList
+	chunkSize       int64
+	logicChunkIndex LogicChunkIndex
+}
+
+func NewMemChunk(logicChunkIndex LogicChunkIndex, chunkSize int64) *MemChunk {
+	return &MemChunk{
+		logicChunkIndex: logicChunkIndex,
+		chunkSize:       chunkSize,
+		buf:             mem.Allocate(int(chunkSize)),
+		usage:           newChunkWrittenIntervalList(),
+	}
 }
 
 func (mc *MemChunk) FreeResource() {
@@ -35,10 +46,10 @@ func (mc *MemChunk) WriteDataAt(src []byte, offset int64) (n int) {
 	return
 }
 
-func (mc *MemChunk) ReadDataAt(p []byte, off int64, logicChunkIndex LogicChunkIndex, chunkSize int64) (maxStop int64) {
-	memChunkBaseOffset := int64(logicChunkIndex) * chunkSize
+func (mc *MemChunk) ReadDataAt(p []byte, off int64) (maxStop int64) {
+	memChunkBaseOffset := int64(mc.logicChunkIndex) * mc.chunkSize
 	for t := mc.usage.head.next; t != mc.usage.tail; t = t.next {
-		logicStart := max(off, int64(logicChunkIndex)*chunkSize+t.StartOffset)
+		logicStart := max(off, int64(mc.logicChunkIndex)*mc.chunkSize+t.StartOffset)
 		logicStop := min(off+int64(len(p)), memChunkBaseOffset+t.stopOffset)
 		if logicStart < logicStop {
 			copy(p[logicStart-off:logicStop-off], mc.buf[logicStart-memChunkBaseOffset:logicStop-memChunkBaseOffset])
@@ -48,17 +59,17 @@ func (mc *MemChunk) ReadDataAt(p []byte, off int64, logicChunkIndex LogicChunkIn
 	return
 }
 
-func (mc *MemChunk) IsComplete(chunkSize int64) bool {
-	return mc.usage.IsComplete(chunkSize)
+func (mc *MemChunk) IsComplete() bool {
+	return mc.usage.IsComplete(mc.chunkSize)
 }
 
-func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc, logicChunkIndex LogicChunkIndex, chunkSize int64) {
+func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc) {
 	if saveFn == nil {
 		return
 	}
 	for t := mc.usage.head.next; t != mc.usage.tail; t = t.next {
 		reader := util.NewBytesReader(mc.buf[t.StartOffset:t.stopOffset])
-		saveFn(reader, int64(logicChunkIndex)*chunkSize+t.StartOffset, t.Size(), func() {
+		saveFn(reader, int64(mc.logicChunkIndex)*mc.chunkSize+t.StartOffset, t.Size(), func() {
 		})
 	}
 }
