@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-type MemoryChunkPages struct {
+type ChunkedDirtyPages struct {
 	fh             *FileHandle
 	writeWaitGroup sync.WaitGroup
 	chunkAddLock   sync.Mutex
@@ -22,12 +22,12 @@ type MemoryChunkPages struct {
 }
 
 var (
-	_ = page_writer.DirtyPages(&MemoryChunkPages{})
+	_ = page_writer.DirtyPages(&ChunkedDirtyPages{})
 )
 
-func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *MemoryChunkPages {
+func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *ChunkedDirtyPages {
 
-	dirtyPages := &MemoryChunkPages{
+	dirtyPages := &ChunkedDirtyPages{
 		fh: fh,
 	}
 
@@ -39,7 +39,7 @@ func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *MemoryChunkPages {
 	return dirtyPages
 }
 
-func (pages *MemoryChunkPages) AddPage(offset int64, data []byte) {
+func (pages *ChunkedDirtyPages) AddPage(offset int64, data []byte) {
 	pages.hasWrites = true
 
 	glog.V(4).Infof("%v memory AddPage [%d, %d)", pages.fh.f.fullpath(), offset, offset+int64(len(data)))
@@ -48,7 +48,7 @@ func (pages *MemoryChunkPages) AddPage(offset int64, data []byte) {
 	return
 }
 
-func (pages *MemoryChunkPages) FlushData() error {
+func (pages *ChunkedDirtyPages) FlushData() error {
 	if !pages.hasWrites {
 		return nil
 	}
@@ -59,18 +59,18 @@ func (pages *MemoryChunkPages) FlushData() error {
 	return nil
 }
 
-func (pages *MemoryChunkPages) ReadDirtyDataAt(data []byte, startOffset int64) (maxStop int64) {
+func (pages *ChunkedDirtyPages) ReadDirtyDataAt(data []byte, startOffset int64) (maxStop int64) {
 	if !pages.hasWrites {
 		return
 	}
 	return pages.uploadPipeline.MaybeReadDataAt(data, startOffset)
 }
 
-func (pages *MemoryChunkPages) GetStorageOptions() (collection, replication string) {
+func (pages *ChunkedDirtyPages) GetStorageOptions() (collection, replication string) {
 	return pages.collection, pages.replication
 }
 
-func (pages *MemoryChunkPages) saveChunkedFileIntevalToStorage(reader io.Reader, offset int64, size int64, cleanupFn func()) {
+func (pages *ChunkedDirtyPages) saveChunkedFileIntevalToStorage(reader io.Reader, offset int64, size int64, cleanupFn func()) {
 
 	mtime := time.Now().UnixNano()
 	defer cleanupFn()
@@ -91,13 +91,13 @@ func (pages *MemoryChunkPages) saveChunkedFileIntevalToStorage(reader io.Reader,
 
 }
 
-func (pages MemoryChunkPages) Destroy() {
+func (pages ChunkedDirtyPages) Destroy() {
 	pages.uploadPipeline.Shutdown()
 }
 
-func (pages *MemoryChunkPages) LockForRead(startOffset, stopOffset int64) {
+func (pages *ChunkedDirtyPages) LockForRead(startOffset, stopOffset int64) {
 	pages.uploadPipeline.LockForRead(startOffset, stopOffset)
 }
-func (pages *MemoryChunkPages) UnlockForRead(startOffset, stopOffset int64) {
+func (pages *ChunkedDirtyPages) UnlockForRead(startOffset, stopOffset int64) {
 	pages.uploadPipeline.UnlockForRead(startOffset, stopOffset)
 }
