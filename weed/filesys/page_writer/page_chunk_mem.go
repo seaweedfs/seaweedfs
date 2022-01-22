@@ -30,8 +30,9 @@ func (mc *MemChunk) FreeResource() {
 }
 
 func (mc *MemChunk) WriteDataAt(src []byte, offset int64) (n int) {
-	n = copy(mc.buf[offset:], src)
-	mc.usage.MarkWritten(offset, offset+int64(n))
+	innerOffset := offset % mc.chunkSize
+	n = copy(mc.buf[innerOffset:], src)
+	mc.usage.MarkWritten(innerOffset, innerOffset+int64(n))
 	return
 }
 

@@ -57,14 +57,13 @@ func (cw *UploadPipeline) SaveDataAt(p []byte, off int64) (n int) {
 	defer cw.writableChunksLock.Unlock()
 
 	logicChunkIndex := LogicChunkIndex(off / cw.ChunkSize)
-	offsetRemainder := off % cw.ChunkSize
 
 	memChunk, found := cw.writableChunks[logicChunkIndex]
 	if !found {
 		memChunk = NewMemChunk(logicChunkIndex, cw.ChunkSize)
 		cw.writableChunks[logicChunkIndex] = memChunk
 	}
-	n = memChunk.WriteDataAt(p, offsetRemainder)
+	n = memChunk.WriteDataAt(p, off)
 	cw.maybeMoveToSealed(memChunk, logicChunkIndex)
 
 	return
