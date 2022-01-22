@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	_ = PageChunk(&TempFileChunk{})
+	_ = PageChunk(&SwapFileChunk{})
 )
 
 type ActualChunkIndex int
@@ -20,7 +20,7 @@ type SwapFile struct {
 	chunkSize               int64
 }
 
-type TempFileChunk struct {
+type SwapFileChunk struct {
 	swapfile         *SwapFile
 	usage            *ChunkWrittenIntervalList
 	logicChunkIndex  LogicChunkIndex
@@ -42,7 +42,7 @@ func (sf *SwapFile) FreeResource() {
 	}
 }
 
-func (sf *SwapFile) NewTempFileChunk(logicChunkIndex LogicChunkIndex) (tc *TempFileChunk) {
+func (sf *SwapFile) NewTempFileChunk(logicChunkIndex LogicChunkIndex) (tc *SwapFileChunk) {
 	if sf.file == nil {
 		var err error
 		sf.file, err = os.CreateTemp(sf.dir, "")
@@ -57,7 +57,7 @@ func (sf *SwapFile) NewTempFileChunk(logicChunkIndex LogicChunkIndex) (tc *TempF
 		sf.logicToActualChunkIndex[logicChunkIndex] = actualChunkIndex
 	}
 
-	return &TempFileChunk{
+	return &SwapFileChunk{
 		swapfile:         sf,
 		usage:            newChunkWrittenIntervalList(),
 		logicChunkIndex:  logicChunkIndex,
@@ -65,30 +65,30 @@ func (sf *SwapFile) NewTempFileChunk(logicChunkIndex LogicChunkIndex) (tc *TempF
 	}
 }
 
-func (tc *TempFileChunk) FreeResource() {
+func (sc *SwapFileChunk) FreeResource() {
 }
 
-func (tc *TempFileChunk) WriteDataAt(src []byte, offset int64) (n int) {
-	innerOffset := offset % tc.swapfile.chunkSize
+func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64) (n int) {
+	innerOffset := offset % sc.swapfile.chunkSize
 	var err error
-	n, err = tc.swapfile.file.WriteAt(src, int64(tc.actualChunkIndex)*tc.swapfile.chunkSize+innerOffset)
+	n, err = sc.swapfile.file.WriteAt(src, int64(sc.actualChunkIndex)*sc.swapfile.chunkSize+innerOffset)
 	if err == nil {
-		tc.usage.MarkWritten(innerOffset, innerOffset+int64(n))
+		sc.usage.MarkWritten(innerOffset, innerOffset+int64(n))
 	} else {
-		glog.Errorf("failed to write swap file %s: %v", tc.swapfile.file.Name(), err)
+		glog.Errorf("failed to write swap file %s: %v", sc.swapfile.file.Name(), err)
 	}
 	return
 }
 
-func (tc *TempFileChunk) ReadDataAt(p []byte, off int64) (maxStop int64) {
-	chunkStartOffset := int64(tc.logicChunkIndex) * tc.swapfile.chunkSize
-	for t := tc.usage.head.next; t != tc.usage.tail; t = t.next {
+func (sc *SwapFileChunk) ReadDataAt(p []byte, off int64) (maxStop int64) {
+	chunkStartOffset := int64(sc.logicChunkIndex) * sc.swapfile.chunkSize
+	for t := sc.usage.head.next; t != sc.usage.tail; t = t.next {
 		logicStart := max(off, chunkStartOffset+t.StartOffset)
 		logicStop := min(off+int64(len(p)), chunkStartOffset+t.stopOffset)
 		if logicStart < logicStop {
-			actualStart := logicStart - chunkStartOffset + int64(tc.actualChunkIndex)*tc.swapfile.chunkSize
-			if _, err := tc.swapfile.file.ReadAt(p[logicStart-off:logicStop-off], actualStart); err != nil {
-				glog.Errorf("failed to reading swap file %s: %v", tc.swapfile.file.Name(), err)
+			actualStart := logicStart - chunkStartOffset + int64(sc.actualChunkIndex)*sc.swapfile.chunkSize
+			if _, err := sc.swapfile.file.ReadAt(p[logicStart-off:logicStop-off], actualStart); err != nil {
+				glog.Errorf("failed to reading swap file %s: %v", sc.swapfile.file.Name(), err)
 				break
 			}
 			maxStop = max(maxStop, logicStop)
@@ -97,19 +97,19 @@ func (tc *TempFileChunk) ReadDataAt(p []byte, off int64) (maxStop int64) {
 	return
 }
 
-func (tc *TempFileChunk) IsComplete() bool {
-	return tc.usage.IsComplete(tc.swapfile.chunkSize)
+func (sc *SwapFileChunk) IsComplete() bool {
+	return sc.usage.IsComplete(sc.swapfile.chunkSize)
 }
 
-func (tc *TempFileChunk) SaveContent(saveFn SaveToStorageFunc) {
+func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {
 	if saveFn == nil {
 		return
 	}
-	for t := tc.usage.head.next; t != tc.usage.tail; t = t.next {
+	for t := sc.usage.head.next; t != sc.usage.tail; t = t.next {
 		data := mem.Allocate(int(t.Size()))
-		tc.swapfile.file.ReadAt(data, t.StartOffset+int64(tc.actualChunkIndex)*tc.swapfile.chunkSize)
+		sc.swapfile.file.ReadAt(data, t.StartOffset+int64(sc.actualChunkIndex)*sc.swapfile.chunkSize)
 		reader := util.NewBytesReader(data)
-		saveFn(reader, int64(tc.logicChunkIndex)*tc.swapfile.chunkSize+t.StartOffset, t.Size(), func() {
+		saveFn(reader, int64(sc.logicChunkIndex)*sc.swapfile.chunkSize+t.StartOffset, t.Size(), func() {
 		})
 		mem.Free(data)
 	}
