@@ -15,16 +15,16 @@ type LogicChunkIndex int
 type UploadPipeline struct {
 	filepath             util.FullPath
 	ChunkSize            int64
-	writers              *util.LimitedConcurrentExecutor
 	writableChunks       map[LogicChunkIndex]*MemChunk
 	writableChunksLock   sync.Mutex
 	sealedChunks         map[LogicChunkIndex]*SealedChunk
 	sealedChunksLock     sync.Mutex
+	writers              *util.LimitedConcurrentExecutor
 	activeWriterCond     *sync.Cond
 	activeWriterCount    int32
+	saveToStorageFn      SaveToStorageFunc
 	activeReadChunks     map[LogicChunkIndex]int
 	activeReadChunksLock sync.Mutex
-	saveToStorageFn      SaveToStorageFunc
 }
 
 type SealedChunk struct {
