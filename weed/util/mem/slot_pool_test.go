@@ -1,6 +1,7 @@
 package mem
 
 import (
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
@@ -23,6 +24,16 @@ func TestAllocateFree(t *testing.T) {
 		t.Errorf("size error")
 	}
 
+}
+
+func TestAllocateFreeEdgeCases(t *testing.T) {
+	assert.Equal(t, 1, bitCount(2048))
+	assert.Equal(t, 2, bitCount(2049))
+
+	buf := Allocate(2048)
+	Free(buf)
+	buf = Allocate(2049)
+	Free(buf)
 }
 
 func TestBitCount(t *testing.T) {

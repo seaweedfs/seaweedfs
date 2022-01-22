@@ -14,7 +14,7 @@ const (
 
 func bitCount(size int) (count int) {
 	for ; size > min_size; count++ {
-		size = size >> 1
+		size = (size + 1) >> 1
 	}
 	return
 }
