@@ -27,7 +27,6 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	if alreadyKnown {
 		return fmt.Errorf("duplicated subscription detected for client %s id %d", clientName, req.ClientId)
 	}
-
 	defer fs.deleteClient(clientName, req.ClientId)
 
 	lastReadTime := time.Unix(0, req.SinceNs)
@@ -84,9 +83,11 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 	peerAddress := findClientAddress(stream.Context(), 0)
 
-	_, clientName := fs.addClient(req.ClientName, peerAddress, 0)
-
-	defer fs.deleteClient(clientName, 0)
+	alreadyKnown, clientName := fs.addClient(req.ClientName, peerAddress, req.ClientId)
+	if alreadyKnown {
+		return fmt.Errorf("duplicated local subscription detected for client %s id %d", clientName, req.ClientId)
+	}
+	defer fs.deleteClient(clientName, req.ClientId)
 
 	lastReadTime := time.Unix(0, req.SinceNs)
 	glog.V(0).Infof(" %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)

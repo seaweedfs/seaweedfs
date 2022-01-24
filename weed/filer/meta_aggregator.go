@@ -165,13 +165,14 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self pb.ServerAddress, p
 
 	for {
 		glog.V(4).Infof("subscribing remote %s meta change: %v", peer, time.Unix(0, lastTsNs))
-		err := pb.WithFilerClient(false, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithFilerClient(true, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			stream, err := client.SubscribeLocalMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
 				ClientName: "filer:" + string(self),
 				PathPrefix: "/",
 				SinceNs:    lastTsNs,
+				ClientId:   int32(ma.filer.UniqueFileId),
 			})
 			if err != nil {
 				return fmt.Errorf("subscribe: %v", err)
