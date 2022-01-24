@@ -101,6 +101,10 @@ func (sc *SwapFileChunk) IsComplete() bool {
 	return sc.usage.IsComplete(sc.swapfile.chunkSize)
 }
 
+func (sc *SwapFileChunk) WrittenSize() int64 {
+	return sc.usage.WrittenSize()
+}
+
 func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {
 	if saveFn == nil {
 		return

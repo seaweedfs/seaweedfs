@@ -65,10 +65,18 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64) (n int) {
 		if len(up.writableChunks) < 16 {
 			memChunk = NewMemChunk(logicChunkIndex, up.ChunkSize)
 		} else {
-			memChunk = up.swapFile.NewTempFileChunk(logicChunkIndex)
-			if memChunk == nil {
-				memChunk = NewMemChunk(logicChunkIndex, up.ChunkSize)
+			fullestChunkIndex, fullness := LogicChunkIndex(-1), int64(0)
+			for lci, mc := range up.writableChunks {
+				chunkFullness := mc.WrittenSize()
+				if fullness < chunkFullness {
+					fullestChunkIndex = lci
+					fullness = chunkFullness
+				}
 			}
+			up.moveToSealed(up.writableChunks[fullestChunkIndex], fullestChunkIndex)
+			delete(up.writableChunks, fullestChunkIndex)
+			fmt.Printf("flush chunk %d with %d bytes written", logicChunkIndex, fullness)
+			memChunk = NewMemChunk(logicChunkIndex, up.ChunkSize)
 		}
 		up.writableChunks[logicChunkIndex] = memChunk
 	}

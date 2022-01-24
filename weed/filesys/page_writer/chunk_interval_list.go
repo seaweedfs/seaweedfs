@@ -51,6 +51,12 @@ func (list *ChunkWrittenIntervalList) MarkWritten(startOffset, stopOffset int64)
 func (list *ChunkWrittenIntervalList) IsComplete(chunkSize int64) bool {
 	return list.size() == 1 && list.head.next.isComplete(chunkSize)
 }
+func (list *ChunkWrittenIntervalList) WrittenSize() (writtenByteCount int64) {
+	for t := list.head; t != nil; t = t.next {
+		writtenByteCount += t.Size()
+	}
+	return
+}
 
 func (list *ChunkWrittenIntervalList) addInterval(interval *ChunkWrittenInterval) {
 

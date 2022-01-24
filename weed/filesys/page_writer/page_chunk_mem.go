@@ -53,6 +53,10 @@ func (mc *MemChunk) IsComplete() bool {
 	return mc.usage.IsComplete(mc.chunkSize)
 }
 
+func (mc *MemChunk) WrittenSize() int64 {
+	return mc.usage.WrittenSize()
+}
+
 func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc) {
 	if saveFn == nil {
 		return
