@@ -113,4 +113,5 @@ func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {
 		})
 		mem.Free(data)
 	}
+	sc.usage = newChunkWrittenIntervalList()
 }
