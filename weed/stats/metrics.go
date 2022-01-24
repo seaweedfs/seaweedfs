@@ -28,6 +28,14 @@ var (
 			Help:      "Counter of master client leader updates.",
 		}, []string{"type"})
 
+	MasterRaftIsleader = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "master",
+			Name:      "is leader",
+			Help:      "is leader",
+		})
+
 	MasterReceivedHeartbeatCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "SeaweedFS",
@@ -153,6 +161,11 @@ var (
 )
 
 func init() {
+	Gather.MustRegister(MasterClientConnectCounter)
+	Gather.MustRegister(MasterRaftIsleader)
+	Gather.MustRegister(MasterReceivedHeartbeatCounter)
+	Gather.MustRegister(MasterLeaderChangeCounter)
+
 	Gather.MustRegister(FilerRequestCounter)
 	Gather.MustRegister(FilerRequestHistogram)
 	Gather.MustRegister(FilerStoreCounter)
