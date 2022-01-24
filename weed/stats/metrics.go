@@ -20,6 +20,30 @@ import (
 var (
 	Gather = prometheus.NewRegistry()
 
+	MasterClientConnectCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "wdclient",
+			Name:      "connect updates",
+			Help:      "Counter of master client leader updates.",
+		}, []string{"type"})
+
+	MasterReceivedHeartbeatCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "master",
+			Name:      "received heartbeats",
+			Help:      "Counter of master received heartbeat.",
+		}, []string{"type"})
+
+	MasterLeaderChangeCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "master",
+			Name:      "leader changes",
+			Help:      "Counter of master leader changes.",
+		}, []string{"type"})
+
 	FilerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "SeaweedFS",
