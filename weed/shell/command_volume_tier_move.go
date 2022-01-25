@@ -24,6 +24,7 @@ type commandVolumeTierMove struct {
 	activeServers     map[pb.ServerAddress]struct{}
 	activeServersLock sync.Mutex
 	activeServersCond *sync.Cond
+	allLocations      []location
 }
 
 func (c *commandVolumeTierMove) Name() string {
@@ -53,6 +54,8 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	source := tierCommand.String("fromDiskType", "", "the source disk type")
 	target := tierCommand.String("toDiskType", "", "the target disk type")
 	applyChange := tierCommand.Bool("force", false, "actually apply the changes")
+	volumesPerStep := tierCommand.Int("volumesPerStep", 0, "how many volumes to parallel move in one cycle")
+
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -68,27 +71,57 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 		return fmt.Errorf("source tier %s is the same as target tier %s", fromDiskType, toDiskType)
 	}
 
-	// collect topology information
-	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv)
+	volumeIdChan := make(chan needle.VolumeId)
+	wg := sync.WaitGroup{}
+	go c.doVolumeTierMove(&wg, commandEnv, writer, volumeIdChan, toDiskType, *applyChange)
+
+	err, volumeIds := c.collectAllVolumeIds(commandEnv, fromDiskType, toDiskType, *collectionPattern, *fullPercentage, *quietPeriod, *volumesPerStep)
 	if err != nil {
 		return err
 	}
-
-	// collect all volumes that should change
-	volumeIds, err := collectVolumeIdsForTierChange(commandEnv, topologyInfo, volumeSizeLimitMb, fromDiskType, *collectionPattern, *fullPercentage, *quietPeriod)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("tier move volumes: %v\n", volumeIds)
-
-	_, allLocations := collectVolumeReplicaLocations(topologyInfo)
-	for _, vid := range volumeIds {
-		if err = c.doVolumeTierMove(commandEnv, writer, vid, toDiskType, allLocations, *applyChange); err != nil {
-			fmt.Printf("tier move volume %d: %v\n", vid, err)
+	for len(volumeIds) > 0 {
+		for _, vid := range volumeIds {
+			volumeIdChan <- vid
+			if *volumesPerStep == 0 {
+				wg.Wait()
+			}
+		}
+		if *volumesPerStep > 0 {
+			wg.Wait()
+			err, volumeIds = c.collectAllVolumeIds(commandEnv, fromDiskType, toDiskType, *collectionPattern, *fullPercentage, *quietPeriod, *volumesPerStep)
+			if err != nil {
+				return err
+			}
+		} else {
+			volumeIds = []needle.VolumeId{}
 		}
 	}
 
+	close(volumeIdChan)
+
 	return nil
+}
+
+func (c *commandVolumeTierMove) collectAllVolumeIds(commandEnv *CommandEnv, fromDiskType types.DiskType, toDiskType types.DiskType, collectionPattern string, fullPercentage float64, quietPeriod time.Duration, volumesPerStep int) (error, []needle.VolumeId) {
+	// collect topology information
+	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv)
+	if err != nil {
+		return err, nil
+	}
+
+	// collect all volumes that should change
+	volumeIds, err := collectVolumeIdsForTierChange(commandEnv, topologyInfo, volumeSizeLimitMb, fromDiskType, collectionPattern, fullPercentage, quietPeriod)
+	if err != nil {
+		return err, nil
+	}
+	if volumesPerStep > 0 && len(volumeIds) > volumesPerStep {
+		volumeIds = volumeIds[0:volumesPerStep]
+	}
+	fmt.Printf("tier move volumes: %v\n", volumeIds)
+
+	_, c.allLocations = collectVolumeReplicaLocations(topologyInfo)
+	keepDataNodesSorted(c.allLocations, toDiskType)
+	return nil, volumeIds
 }
 
 func isOneOf(server string, locations []wdclient.Location) bool {
@@ -100,76 +133,71 @@ func isOneOf(server string, locations []wdclient.Location) bool {
 	return false
 }
 
-func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, allLocations []location, applyChanges bool) (err error) {
-	// find volume location
-	locations, found := commandEnv.MasterClient.GetLocations(uint32(vid))
-	if !found {
-		return fmt.Errorf("volume %d not found", vid)
-	}
+func (c *commandVolumeTierMove) doVolumeTierMove(wg *sync.WaitGroup, commandEnv *CommandEnv, writer io.Writer, vidChan <-chan needle.VolumeId, toDiskType types.DiskType, applyChanges bool) {
+	for vid := range vidChan {
+		// find volume location
+		locations, found := commandEnv.MasterClient.GetLocations(uint32(vid))
+		if !found {
+			fmt.Printf("volume %d not found", vid)
+		}
 
-	// find one server with the most empty volume slots with target disk type
-	hasFoundTarget := false
-	keepDataNodesSorted(allLocations, toDiskType)
-	fn := capacityByFreeVolumeCount(toDiskType)
-	wg := sync.WaitGroup{}
-	for _, dst := range allLocations {
-		if fn(dst.dataNode) > 0 && !hasFoundTarget {
-			// ask the volume server to replicate the volume
-			if isOneOf(dst.dataNode.Id, locations) {
-				continue
-			}
-			var sourceVolumeServer pb.ServerAddress
-			for _, loc := range locations {
-				if loc.Url != dst.dataNode.Id {
-					sourceVolumeServer = loc.ServerAddress()
+		// find one server with the most empty volume slots with target disk type
+		hasFoundTarget := false
+		fn := capacityByFreeVolumeCount(toDiskType)
+		for _, dst := range c.allLocations {
+			if fn(dst.dataNode) > 0 && !hasFoundTarget {
+				// ask the volume server to replicate the volume
+				if isOneOf(dst.dataNode.Id, locations) {
+					continue
 				}
-			}
-			if sourceVolumeServer == "" {
-				continue
-			}
-			fmt.Fprintf(writer, "moving volume %d from %s to %s with disk type %s ...\n", vid, sourceVolumeServer, dst.dataNode.Id, toDiskType.ReadableString())
-			hasFoundTarget = true
-
-			if !applyChanges {
-				// adjust volume count
-				dst.dataNode.DiskInfos[string(toDiskType)].VolumeCount++
-				break
-			}
-
-			destServerAddress := pb.NewServerAddressFromDataNode(dst.dataNode)
-			c.activeServersCond.L.Lock()
-			_, isSourceActive := c.activeServers[sourceVolumeServer]
-			_, isDestActive := c.activeServers[destServerAddress]
-			for isSourceActive || isDestActive {
-				c.activeServersCond.Wait()
-				_, isSourceActive = c.activeServers[sourceVolumeServer]
-				_, isDestActive = c.activeServers[destServerAddress]
-			}
-			c.activeServers[sourceVolumeServer] = struct{}{}
-			c.activeServers[destServerAddress] = struct{}{}
-			c.activeServersCond.L.Unlock()
-
-			wg.Add(1)
-			go func(dst location) {
-				if err := c.doMoveOneVolume(commandEnv, writer, vid, toDiskType, locations, sourceVolumeServer, dst); err != nil {
-					fmt.Fprintf(writer, "move volume %d %s => %s: %v\n", vid, sourceVolumeServer, dst.dataNode.Id, err)
+				var sourceVolumeServer pb.ServerAddress
+				for _, loc := range locations {
+					if loc.Url != dst.dataNode.Id {
+						sourceVolumeServer = loc.ServerAddress()
+					}
 				}
-				delete(c.activeServers, sourceVolumeServer)
-				delete(c.activeServers, destServerAddress)
-				c.activeServersCond.Signal()
-				wg.Done()
-			}(dst)
+				if sourceVolumeServer == "" {
+					continue
+				}
+				fmt.Fprintf(writer, "moving volume %d from %s to %s with disk type %s ...\n", vid, sourceVolumeServer, dst.dataNode.Id, toDiskType.ReadableString())
+				hasFoundTarget = true
 
+				if !applyChanges {
+					// adjust volume count
+					dst.dataNode.DiskInfos[string(toDiskType)].VolumeCount++
+					break
+				}
+
+				destServerAddress := pb.NewServerAddressFromDataNode(dst.dataNode)
+				c.activeServersCond.L.Lock()
+				_, isSourceActive := c.activeServers[sourceVolumeServer]
+				_, isDestActive := c.activeServers[destServerAddress]
+				for isSourceActive || isDestActive {
+					c.activeServersCond.Wait()
+					_, isSourceActive = c.activeServers[sourceVolumeServer]
+					_, isDestActive = c.activeServers[destServerAddress]
+				}
+				c.activeServers[sourceVolumeServer] = struct{}{}
+				c.activeServers[destServerAddress] = struct{}{}
+				c.activeServersCond.L.Unlock()
+
+				wg.Add(1)
+				go func(dst location) {
+					if err := c.doMoveOneVolume(commandEnv, writer, vid, toDiskType, locations, sourceVolumeServer, dst); err != nil {
+						fmt.Fprintf(writer, "move volume %d %s => %s: %v\n", vid, sourceVolumeServer, dst.dataNode.Id, err)
+					}
+					delete(c.activeServers, sourceVolumeServer)
+					delete(c.activeServers, destServerAddress)
+					c.activeServersCond.Signal()
+					wg.Done()
+				}(dst)
+
+			}
+		}
+		if !hasFoundTarget {
+			fmt.Fprintf(writer, "can not find disk type %s for volume %d\n", toDiskType.ReadableString(), vid)
 		}
 	}
-
-	wg.Wait()
-
-	if !hasFoundTarget {
-		fmt.Fprintf(writer, "can not find disk type %s for volume %d\n", toDiskType.ReadableString(), vid)
-	}
-
-	return nil
 }
 
 func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, locations []wdclient.Location, sourceVolumeServer pb.ServerAddress, dst location) (err error) {
