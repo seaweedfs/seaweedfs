@@ -20,6 +20,38 @@ import (
 var (
 	Gather = prometheus.NewRegistry()
 
+	MasterClientConnectCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "wdclient",
+			Name:      "connect_updates",
+			Help:      "Counter of master client leader updates.",
+		}, []string{"type"})
+
+	MasterRaftIsleader = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "master",
+			Name:      "is_leader",
+			Help:      "is leader",
+		})
+
+	MasterReceivedHeartbeatCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "master",
+			Name:      "received_heartbeats",
+			Help:      "Counter of master received heartbeat.",
+		}, []string{"type"})
+
+	MasterLeaderChangeCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "master",
+			Name:      "leader_changes",
+			Help:      "Counter of master leader changes.",
+		}, []string{"type"})
+
 	FilerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "SeaweedFS",
@@ -129,6 +161,11 @@ var (
 )
 
 func init() {
+	Gather.MustRegister(MasterClientConnectCounter)
+	Gather.MustRegister(MasterRaftIsleader)
+	Gather.MustRegister(MasterReceivedHeartbeatCounter)
+	Gather.MustRegister(MasterLeaderChangeCounter)
+
 	Gather.MustRegister(FilerRequestCounter)
 	Gather.MustRegister(FilerRequestHistogram)
 	Gather.MustRegister(FilerStoreCounter)
