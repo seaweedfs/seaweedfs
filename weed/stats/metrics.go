@@ -24,7 +24,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "SeaweedFS",
 			Subsystem: "wdclient",
-			Name:      "connect updates",
+			Name:      "connect_updates",
 			Help:      "Counter of master client leader updates.",
 		}, []string{"type"})
 
@@ -32,7 +32,7 @@ var (
 		prometheus.GaugeOpts{
 			Namespace: "SeaweedFS",
 			Subsystem: "master",
-			Name:      "is leader",
+			Name:      "is_leader",
 			Help:      "is leader",
 		})
 
@@ -40,7 +40,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "SeaweedFS",
 			Subsystem: "master",
-			Name:      "received heartbeats",
+			Name:      "received_heartbeats",
 			Help:      "Counter of master received heartbeat.",
 		}, []string{"type"})
 
@@ -48,7 +48,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "SeaweedFS",
 			Subsystem: "master",
-			Name:      "leader changes",
+			Name:      "leader_changes",
 			Help:      "Counter of master leader changes.",
 		}, []string{"type"})
 
