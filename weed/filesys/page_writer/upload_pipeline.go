@@ -24,7 +24,7 @@ type UploadPipeline struct {
 	saveToStorageFn      SaveToStorageFunc
 	activeReadChunks     map[LogicChunkIndex]int
 	activeReadChunksLock sync.Mutex
-	swapFile             *SwapFile
+	bufferChunkLimit     int
 }
 
 type SealedChunk struct {
@@ -40,7 +40,7 @@ func (sc *SealedChunk) FreeReference(messageOnFree string) {
 	}
 }
 
-func NewUploadPipeline(filepath util.FullPath, writers *util.LimitedConcurrentExecutor, chunkSize int64, saveToStorageFn SaveToStorageFunc, swapFileDir string) *UploadPipeline {
+func NewUploadPipeline(writers *util.LimitedConcurrentExecutor, chunkSize int64, saveToStorageFn SaveToStorageFunc, bufferChunkLimit int) *UploadPipeline {
 	return &UploadPipeline{
 		ChunkSize:         chunkSize,
 		writableChunks:    make(map[LogicChunkIndex]PageChunk),
@@ -48,9 +48,8 @@ func NewUploadPipeline(filepath util.FullPath, writers *util.LimitedConcurrentEx
 		uploaders:         writers,
 		uploaderCountCond: sync.NewCond(&sync.Mutex{}),
 		saveToStorageFn:   saveToStorageFn,
-		filepath:          filepath,
 		activeReadChunks:  make(map[LogicChunkIndex]int),
-		swapFile:          NewSwapFile(swapFileDir, chunkSize),
+		bufferChunkLimit:  bufferChunkLimit,
 	}
 }
 
@@ -62,7 +61,7 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64) (n int) {
 
 	memChunk, found := up.writableChunks[logicChunkIndex]
 	if !found {
-		if len(up.writableChunks) < 16 {
+		if len(up.writableChunks) < up.bufferChunkLimit {
 			memChunk = NewMemChunk(logicChunkIndex, up.ChunkSize)
 		} else {
 			fullestChunkIndex, fullness := LogicChunkIndex(-1), int64(0)
@@ -180,5 +179,4 @@ func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex Logic
 }
 
 func (up *UploadPipeline) Shutdown() {
-	up.swapFile.FreeResource()
 }

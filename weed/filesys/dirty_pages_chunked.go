@@ -31,10 +31,7 @@ func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *ChunkedDirtyPages {
 		fh: fh,
 	}
 
-	swapFileDir := fh.f.wfs.option.getTempFilePageDir()
-
-	dirtyPages.uploadPipeline = page_writer.NewUploadPipeline(fh.f.fullpath(),
-		fh.f.wfs.concurrentWriters, chunkSize, dirtyPages.saveChunkedFileIntevalToStorage, swapFileDir)
+	dirtyPages.uploadPipeline = page_writer.NewUploadPipeline(fh.f.wfs.concurrentWriters, chunkSize, dirtyPages.saveChunkedFileIntevalToStorage, fh.f.wfs.option.ConcurrentWriters)
 
 	return dirtyPages
 }
