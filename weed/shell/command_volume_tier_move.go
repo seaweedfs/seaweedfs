@@ -21,10 +21,11 @@ func init() {
 }
 
 type commandVolumeTierMove struct {
-	activeServers     map[pb.ServerAddress]struct{}
-	activeServersLock sync.Mutex
-	activeServersCond *sync.Cond
-	allLocations      []location
+	activeServers         map[pb.ServerAddress]struct{}
+	activeServersLock     sync.Mutex
+	activeServersCond     *sync.Cond
+	activeDestServersCond *sync.Cond
+	allLocations          []location
 }
 
 func (c *commandVolumeTierMove) Name() string {
@@ -137,6 +138,15 @@ func (c *commandVolumeTierMove) doVolumeTierMove(wg *sync.WaitGroup, commandEnv 
 				if isOneOf(dst.dataNode.Id, locations) {
 					continue
 				}
+
+				destServerAddress := pb.NewServerAddressFromDataNode(dst.dataNode)
+				c.activeServersCond.L.Lock()
+				_, isDestVolumeServerActive := c.activeServers[destServerAddress]
+				c.activeServersCond.L.Unlock()
+				if isDestVolumeServerActive {
+					continue
+				}
+
 				var sourceVolumeServer pb.ServerAddress
 				for _, loc := range locations {
 					if loc.Url != dst.dataNode.Id {
@@ -147,18 +157,10 @@ func (c *commandVolumeTierMove) doVolumeTierMove(wg *sync.WaitGroup, commandEnv 
 					continue
 				}
 
-				c.activeServersCond.L.Lock()
-				_, isVolumeServerActive := c.activeServers[sourceVolumeServer]
-				c.activeServersCond.L.Unlock()
-
-				if isVolumeServerActive {
-					continue
-				}
-
 				c.activeServersCond.L.Unlock()
 				fmt.Fprintf(writer, "moving volume %d from %s to %s with disk type %s ...\n", vid, sourceVolumeServer, dst.dataNode.Id, toDiskType.ReadableString())
 				hasFoundTarget = true
-				vidsMoved = +1
+				vidsMoved += 1
 
 				if !applyChanges {
 					// adjust volume count
@@ -166,7 +168,6 @@ func (c *commandVolumeTierMove) doVolumeTierMove(wg *sync.WaitGroup, commandEnv 
 					break
 				}
 
-				destServerAddress := pb.NewServerAddressFromDataNode(dst.dataNode)
 				c.activeServersCond.L.Lock()
 				_, isSourceActive := c.activeServers[sourceVolumeServer]
 				_, isDestActive := c.activeServers[destServerAddress]
@@ -186,6 +187,7 @@ func (c *commandVolumeTierMove) doVolumeTierMove(wg *sync.WaitGroup, commandEnv 
 					}
 					delete(c.activeServers, sourceVolumeServer)
 					delete(c.activeServers, destServerAddress)
+					c.activeDestServersCond.Broadcast()
 					c.activeServersCond.Signal()
 					wg.Done()
 				}(dst)
@@ -198,6 +200,7 @@ func (c *commandVolumeTierMove) doVolumeTierMove(wg *sync.WaitGroup, commandEnv 
 
 		if !hasFoundTarget {
 			fmt.Fprintf(writer, "can not find disk type %s for volume %d\n", toDiskType.ReadableString(), vid)
+			c.activeServersCond.Wait()
 		}
 	}
 }
