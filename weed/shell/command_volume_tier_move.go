@@ -146,6 +146,16 @@ func (c *commandVolumeTierMove) doVolumeTierMove(wg *sync.WaitGroup, commandEnv 
 				if sourceVolumeServer == "" {
 					continue
 				}
+
+				c.activeServersCond.L.Lock()
+				_, isVolumeServerActive := c.activeServers[sourceVolumeServer]
+				c.activeServersCond.L.Unlock()
+
+				if isVolumeServerActive {
+					continue
+				}
+
+				c.activeServersCond.L.Unlock()
 				fmt.Fprintf(writer, "moving volume %d from %s to %s with disk type %s ...\n", vid, sourceVolumeServer, dst.dataNode.Id, toDiskType.ReadableString())
 				hasFoundTarget = true
 				vidsMoved = +1
