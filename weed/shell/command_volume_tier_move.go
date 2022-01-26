@@ -73,28 +73,15 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 
 	volumeIdChan := make(chan needle.VolumeId)
 	wg := sync.WaitGroup{}
-	go c.doVolumeTierMove(&wg, commandEnv, writer, volumeIdChan, toDiskType, *applyChange)
+	go c.doVolumeTierMove(&wg, commandEnv, writer, volumeIdChan, toDiskType, *applyChange, *volumesPerStep)
 
-	err, volumeIds := c.collectAllVolumeIds(commandEnv, fromDiskType, toDiskType, *collectionPattern, *fullPercentage, *quietPeriod, *volumesPerStep)
+	err, volumeIds := c.collectAllVolumeIds(commandEnv, fromDiskType, toDiskType, *collectionPattern, *fullPercentage, *quietPeriod)
 	if err != nil {
 		return err
 	}
-	for len(volumeIds) > 0 {
-		for _, vid := range volumeIds {
-			volumeIdChan <- vid
-			if *volumesPerStep == 0 {
-				wg.Wait()
-			}
-		}
-		if *volumesPerStep > 0 {
-			wg.Wait()
-			err, volumeIds = c.collectAllVolumeIds(commandEnv, fromDiskType, toDiskType, *collectionPattern, *fullPercentage, *quietPeriod, *volumesPerStep)
-			if err != nil {
-				return err
-			}
-		} else {
-			volumeIds = []needle.VolumeId{}
-		}
+
+	for _, vid := range volumeIds {
+		volumeIdChan <- vid
 	}
 
 	close(volumeIdChan)
@@ -102,7 +89,7 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	return nil
 }
 
-func (c *commandVolumeTierMove) collectAllVolumeIds(commandEnv *CommandEnv, fromDiskType types.DiskType, toDiskType types.DiskType, collectionPattern string, fullPercentage float64, quietPeriod time.Duration, volumesPerStep int) (error, []needle.VolumeId) {
+func (c *commandVolumeTierMove) collectAllVolumeIds(commandEnv *CommandEnv, fromDiskType types.DiskType, toDiskType types.DiskType, collectionPattern string, fullPercentage float64, quietPeriod time.Duration) (error, []needle.VolumeId) {
 	// collect topology information
 	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv)
 	if err != nil {
@@ -114,9 +101,7 @@ func (c *commandVolumeTierMove) collectAllVolumeIds(commandEnv *CommandEnv, from
 	if err != nil {
 		return err, nil
 	}
-	if volumesPerStep > 0 && len(volumeIds) > volumesPerStep {
-		volumeIds = volumeIds[0:volumesPerStep]
-	}
+
 	fmt.Printf("tier move volumes: %v\n", volumeIds)
 
 	_, c.allLocations = collectVolumeReplicaLocations(topologyInfo)
@@ -133,12 +118,14 @@ func isOneOf(server string, locations []wdclient.Location) bool {
 	return false
 }
 
-func (c *commandVolumeTierMove) doVolumeTierMove(wg *sync.WaitGroup, commandEnv *CommandEnv, writer io.Writer, vidChan <-chan needle.VolumeId, toDiskType types.DiskType, applyChanges bool) {
+func (c *commandVolumeTierMove) doVolumeTierMove(wg *sync.WaitGroup, commandEnv *CommandEnv, writer io.Writer, vidChan <-chan needle.VolumeId, toDiskType types.DiskType, applyChanges bool, volumesPerStep int) {
+	vidsMoved := 0
 	for vid := range vidChan {
 		// find volume location
 		locations, found := commandEnv.MasterClient.GetLocations(uint32(vid))
 		if !found {
 			fmt.Printf("volume %d not found", vid)
+			continue
 		}
 
 		// find one server with the most empty volume slots with target disk type
@@ -161,6 +148,7 @@ func (c *commandVolumeTierMove) doVolumeTierMove(wg *sync.WaitGroup, commandEnv 
 				}
 				fmt.Fprintf(writer, "moving volume %d from %s to %s with disk type %s ...\n", vid, sourceVolumeServer, dst.dataNode.Id, toDiskType.ReadableString())
 				hasFoundTarget = true
+				vidsMoved = +1
 
 				if !applyChanges {
 					// adjust volume count
@@ -191,9 +179,13 @@ func (c *commandVolumeTierMove) doVolumeTierMove(wg *sync.WaitGroup, commandEnv 
 					c.activeServersCond.Signal()
 					wg.Done()
 				}(dst)
-
 			}
 		}
+
+		if volumesPerStep == 0 || vidsMoved%volumesPerStep == 0 {
+			wg.Wait()
+		}
+
 		if !hasFoundTarget {
 			fmt.Fprintf(writer, "can not find disk type %s for volume %d\n", toDiskType.ReadableString(), vid)
 		}
