@@ -21,11 +21,10 @@ func init() {
 }
 
 type commandVolumeTierMove struct {
-	activeServers         map[pb.ServerAddress]struct{}
-	activeServersLock     sync.Mutex
-	activeServersCond     *sync.Cond
-	activeDestServersCond *sync.Cond
-	allLocations          []location
+	activeServers     map[pb.ServerAddress]struct{}
+	activeServersLock sync.Mutex
+	activeServersCond *sync.Cond
+	allLocations      []location
 }
 
 func (c *commandVolumeTierMove) Name() string {
@@ -187,8 +186,7 @@ func (c *commandVolumeTierMove) doVolumeTierMove(wg *sync.WaitGroup, commandEnv 
 					}
 					delete(c.activeServers, sourceVolumeServer)
 					delete(c.activeServers, destServerAddress)
-					c.activeDestServersCond.Broadcast()
-					c.activeServersCond.Signal()
+					c.activeServersCond.Broadcast()
 					wg.Done()
 				}(dst)
 			}
