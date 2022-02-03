@@ -51,6 +51,8 @@ const (
 	ErrBucketAlreadyExists
 	ErrBucketAlreadyOwnedByYou
 	ErrNoSuchBucket
+	ErrNoSuchBucketPolicy
+	ErrNoSuchCORSConfiguration
 	ErrNoSuchLifecycleConfiguration
 	ErrNoSuchKey
 	ErrNoSuchUpload
@@ -162,6 +164,16 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrNoSuchBucket: {
 		Code:           "NoSuchBucket",
 		Description:    "The specified bucket does not exist",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrNoSuchBucketPolicy: {
+		Code:           "NoSuchBucketPolicy",
+		Description:    "The bucket policy does not exist",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrNoSuchCORSConfiguration: {
+		Code:           "NoSuchCORSConfiguration",
+		Description:    "The CORS configuration does not exist",
 		HTTPStatusCode: http.StatusNotFound,
 	},
 	ErrNoSuchLifecycleConfiguration: {
