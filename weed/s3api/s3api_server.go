@@ -2,16 +2,16 @@ package s3api
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	. "github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc"
 )
@@ -134,6 +134,28 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 		// GetBucketACL
 		bucket.Methods("GET").HandlerFunc(s3a.iam.Auth(s3a.GetBucketAclHandler, ACTION_READ)).Queries("acl", "")
+		// PutBucketACL
+		bucket.Methods("PUT").HandlerFunc(s3a.iam.Auth(s3a.PutBucketAclHandler, ACTION_WRITE)).Queries("acl", "")
+		// GetBucketPolicy
+		bucket.Methods("GET").HandlerFunc(s3a.iam.Auth(s3a.GetBucketPolicyHandler, ACTION_READ)).Queries("policy", "")
+
+		// PutBucketPolicy
+		bucket.Methods("PUT").HandlerFunc(s3a.iam.Auth(s3a.PutBucketPolicyHandler, ACTION_WRITE)).Queries("policy", "")
+		// DeleteBucketPolicy
+		bucket.Methods("DELETE").HandlerFunc(s3a.iam.Auth(s3a.DeleteBucketPolicyHandler, ACTION_WRITE)).Queries("policy", "")
+
+		// GetBucketCors
+		bucket.Methods("GET").HandlerFunc(s3a.iam.Auth(s3a.GetBucketCorsHandler, ACTION_READ)).Queries("cors", "")
+		// PutBucketCors
+		bucket.Methods("PUT").HandlerFunc(s3a.iam.Auth(s3a.PutBucketCorsHandler, ACTION_WRITE)).Queries("cors", "")
+		// DeleteBucketCors
+		bucket.Methods("DELETE").HandlerFunc(s3a.iam.Auth(s3a.DeleteBucketCorsHandler, ACTION_WRITE)).Queries("cors", "")
+
+		// GetBucketLocation
+		bucket.Methods("GET").HandlerFunc(s3a.iam.Auth(s3a.GetBucketLocationHandler, ACTION_READ)).Queries("location", "")
+
+		// GetBucketRequestPayment
+		bucket.Methods("GET").HandlerFunc(s3a.iam.Auth(s3a.GetBucketRequestPaymentHandler, ACTION_READ)).Queries("requestPayment", "")
 
 		// GetObjectACL
 		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(s3a.iam.Auth(s3a.GetObjectAclHandler, ACTION_READ)).Queries("acl", "")
@@ -154,22 +176,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 		// DeleteBucket
 		bucket.Methods("DELETE").HandlerFunc(track(s3a.iam.Auth(s3a.DeleteBucketHandler, ACTION_WRITE), "DELETE"))
-
-		/*
-
-			// not implemented
-			// GetBucketLocation
-			bucket.Methods("GET").HandlerFunc(s3a.GetBucketLocationHandler).Queries("location", "")
-			// GetBucketPolicy
-			bucket.Methods("GET").HandlerFunc(s3a.GetBucketPolicyHandler).Queries("policy", "")
-			// GetObjectACL
-			bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(s3a.GetObjectACLHandler).Queries("acl", "")
-			// PutBucketPolicy
-			bucket.Methods("PUT").HandlerFunc(s3a.PutBucketPolicyHandler).Queries("policy", "")
-			// DeleteBucketPolicy
-			bucket.Methods("DELETE").HandlerFunc(s3a.DeleteBucketPolicyHandler).Queries("policy", "")
-		*/
-
 	}
 
 	// ListBuckets
