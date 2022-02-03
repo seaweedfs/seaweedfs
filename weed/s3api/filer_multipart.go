@@ -270,6 +270,10 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 		glog.Errorf("listObjectParts %s %s error: %v", *input.Bucket, *input.UploadId, err)
 		return nil, s3err.ErrNoSuchUpload
 	}
+	if len(entries) == 0 {
+		glog.Errorf("listObjectParts %s %s not found", *input.Bucket, *input.UploadId)
+		return nil, s3err.ErrNoSuchUpload
+	}
 
 	output.IsTruncated = aws.Bool(!isLast)
 
