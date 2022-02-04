@@ -162,7 +162,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		if offset+size <= int64(len(entry.Content)) {
 			_, err := writer.Write(entry.Content[offset : offset+size])
 			if err != nil {
-				stats.FilerRequestCounter.WithLabelValues("write.entryfailed").Inc()
+				stats.FilerRequestCounter.WithLabelValues("write.entry.failed").Inc()
 				glog.Errorf("failed to write entry content: %v", err)
 			}
 			return err
@@ -174,7 +174,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				Directory: dir,
 				Name:      name,
 			}); err != nil {
-				stats.FilerRequestCounter.WithLabelValues("read.cachefailed").Inc()
+				stats.FilerRequestCounter.WithLabelValues("read.cache.failed").Inc()
 				glog.Errorf("CacheRemoteObjectToLocalCluster %s: %v", entry.FullPath, err)
 				return fmt.Errorf("cache %s: %v", entry.FullPath, err)
 			} else {
@@ -184,7 +184,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 		err = filer.StreamContent(fs.filer.MasterClient, writer, chunks, offset, size)
 		if err != nil {
-			stats.FilerRequestCounter.WithLabelValues("stream.contentFailed").Inc()
+			stats.FilerRequestCounter.WithLabelValues("read.stream.failed").Inc()
 			glog.Errorf("failed to stream content %s: %v", r.URL, err)
 		}
 		return err
