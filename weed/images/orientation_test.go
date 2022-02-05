@@ -1,6 +1,7 @@
 package images
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"os"
 	"testing"
 )
@@ -12,7 +13,7 @@ func TestXYZ(t *testing.T) {
 
 	fixed_data := FixJpgOrientation(dat)
 
-	os.WriteFile("fixed1.jpg", fixed_data, 0644)
+	util.WriteFile("fixed1.jpg", fixed_data, 0644)
 
 	os.Remove("fixed1.jpg")
 

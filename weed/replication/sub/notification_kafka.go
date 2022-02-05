@@ -137,7 +137,7 @@ func (progress *KafkaProgress) saveProgress() error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal progress: %v", err)
 	}
-	err = os.WriteFile(progress.offsetFile, data, 0640)
+	err = util.WriteFile(progress.offsetFile, data, 0640)
 	if err != nil {
 		return fmt.Errorf("failed to save progress to %s: %v", progress.offsetFile, err)
 	}
