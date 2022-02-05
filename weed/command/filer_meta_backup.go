@@ -21,7 +21,7 @@ var (
 )
 
 type FilerMetaBackupOptions struct {
-	grpcDialOption    grpc.DialOption
+	grpcDialOptions   []grpc.DialOption
 	filerAddress      *string
 	filerDirectory    *string
 	restart           *bool
@@ -55,7 +55,7 @@ The backup writes to another filer store specified in a backup_filer.toml.
 func runFilerMetaBackup(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
-	metaBackup.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
+	metaBackup.grpcDialOptions = security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
 
 	// load backup_filer.toml
 	v := viper.New()
@@ -197,7 +197,7 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 		return metaBackup.setOffset(lastTime)
 	})
 
-	return pb.FollowMetadata(pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOption, "meta_backup", metaBackup.clientId,
+	return pb.FollowMetadata(pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOptions, "meta_backup", metaBackup.clientId,
 		*metaBackup.filerDirectory, nil, startTime.UnixNano(), 0, processEventFnWithOffset, false)
 
 }
@@ -226,7 +226,7 @@ var _ = filer_pb.FilerClient(&FilerMetaBackupOptions{})
 
 func (metaBackup *FilerMetaBackupOptions) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithFilerClient(streamingMode, pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithFilerClient(streamingMode, pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 		return fn(client)
 	})
 

@@ -25,7 +25,7 @@ func main() {
 	flag.Parse()
 
 	util2.LoadConfiguration("security", false)
-	grpcDialOption := security.LoadClientTLS(util2.GetViper(), "grpc.client")
+	grpcDialOptions := security.LoadGrpcClientOptions(util2.GetViper(), "grpc.client")
 
 	vid := needle.VolumeId(*volumeId)
 
@@ -38,7 +38,7 @@ func main() {
 		sinceTimeNs = time.Now().Add(-*rewindDuration).UnixNano()
 	}
 
-	err := operation.TailVolume(func()pb.ServerAddress{return pb.ServerAddress(*master)}, grpcDialOption, vid, uint64(sinceTimeNs), *timeoutSeconds, func(n *needle.Needle) (err error) {
+	err := operation.TailVolume(func() pb.ServerAddress { return pb.ServerAddress(*master) }, grpcDialOptions, vid, uint64(sinceTimeNs), *timeoutSeconds, func(n *needle.Needle) (err error) {
 		if n.Size == 0 {
 			println("-", n.String())
 			return nil

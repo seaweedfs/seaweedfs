@@ -221,13 +221,13 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, locations []wdclient.Location, sourceVolumeServer pb.ServerAddress, dst location) (err error) {
 
 	// mark all replicas as read only
-	if err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, false); err != nil {
+	if err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOptions, vid, locations, false); err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 	}
-	if err = LiveMoveVolume(commandEnv.option.GrpcDialOption, writer, vid, sourceVolumeServer, pb.NewServerAddressFromDataNode(dst.dataNode), 5*time.Second, toDiskType.ReadableString(), true); err != nil {
+	if err = LiveMoveVolume(commandEnv.option.GrpcDialOptions, writer, vid, sourceVolumeServer, pb.NewServerAddressFromDataNode(dst.dataNode), 5*time.Second, toDiskType.ReadableString(), true); err != nil {
 
 		// mark all replicas as writable
-		if err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, true); err != nil {
+		if err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOptions, vid, locations, true); err != nil {
 			glog.Errorf("mark volume %d as writable on %s: %v", vid, locations[0].Url, err)
 		}
 
@@ -237,7 +237,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	// remove the remaining replicas
 	for _, loc := range locations {
 		if loc.Url != dst.dataNode.Id && loc.ServerAddress() != sourceVolumeServer {
-			if err = deleteVolume(commandEnv.option.GrpcDialOption, vid, loc.ServerAddress()); err != nil {
+			if err = deleteVolume(commandEnv.option.GrpcDialOptions, vid, loc.ServerAddress()); err != nil {
 				fmt.Fprintf(writer, "failed to delete volume %d on %s: %v\n", vid, loc.Url, err)
 			}
 			// reduce volume count? Not really necessary since they are "more" full and will not be a candidate to move to

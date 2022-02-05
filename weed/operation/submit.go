@@ -42,7 +42,7 @@ type SubmitResult struct {
 
 type GetMasterFn func() pb.ServerAddress
 
-func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []FilePart, replication string, collection string, dataCenter string, ttl string, diskType string, maxMB int, usePublicUrl bool) ([]SubmitResult, error) {
+func SubmitFiles(masterFn GetMasterFn, grpcDialOptions []grpc.DialOption, files []FilePart, replication string, collection string, dataCenter string, ttl string, diskType string, maxMB int, usePublicUrl bool) ([]SubmitResult, error) {
 	results := make([]SubmitResult, len(files))
 	for index, file := range files {
 		results[index].FileName = file.FileName
@@ -55,7 +55,7 @@ func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []F
 		Ttl:         ttl,
 		DiskType:    diskType,
 	}
-	ret, err := Assign(masterFn, grpcDialOption, ar)
+	ret, err := Assign(masterFn, grpcDialOptions, ar)
 	if err != nil {
 		for index := range files {
 			results[index].Error = err.Error()
@@ -76,7 +76,7 @@ func SubmitFiles(masterFn GetMasterFn, grpcDialOption grpc.DialOption, files []F
 		file.DataCenter = dataCenter
 		file.Ttl = ttl
 		file.DiskType = diskType
-		results[index].Size, err = file.Upload(maxMB, masterFn, usePublicUrl, ret.Auth, grpcDialOption)
+		results[index].Size, err = file.Upload(maxMB, masterFn, usePublicUrl, ret.Auth, grpcDialOptions...)
 		if err != nil {
 			results[index].Error = err.Error()
 		}
@@ -119,7 +119,7 @@ func newFilePart(fullPathFilename string) (ret FilePart, err error) {
 	return ret, nil
 }
 
-func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jwt security.EncodedJwt, grpcDialOption grpc.DialOption) (retSize uint32, err error) {
+func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jwt security.EncodedJwt, grpcDialOptions ...grpc.DialOption) (retSize uint32, err error) {
 	fileUrl := "http://" + fi.Server + "/" + fi.Fid
 	if fi.ModTime != 0 {
 		fileUrl += "?ts=" + strconv.Itoa(int(fi.ModTime))
@@ -151,7 +151,7 @@ func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jw
 				Ttl:         fi.Ttl,
 				DiskType:    fi.DiskType,
 			}
-			ret, err = Assign(masterFn, grpcDialOption, ar)
+			ret, err = Assign(masterFn, grpcDialOptions, ar)
 			if err != nil {
 				return
 			}
@@ -165,10 +165,10 @@ func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jw
 					Ttl:         fi.Ttl,
 					DiskType:    fi.DiskType,
 				}
-				ret, err = Assign(masterFn, grpcDialOption, ar)
+				ret, err = Assign(masterFn, grpcDialOptions, ar)
 				if err != nil {
 					// delete all uploaded chunks
-					cm.DeleteChunks(masterFn, usePublicUrl, grpcDialOption)
+					cm.DeleteChunks(masterFn, usePublicUrl, grpcDialOptions...)
 					return
 				}
 				id = ret.Fid
@@ -189,7 +189,7 @@ func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jw
 				ret.Auth)
 			if e != nil {
 				// delete all uploaded chunks
-				cm.DeleteChunks(masterFn, usePublicUrl, grpcDialOption)
+				cm.DeleteChunks(masterFn, usePublicUrl, grpcDialOptions...)
 				return 0, e
 			}
 			cm.Chunks = append(cm.Chunks,
@@ -204,7 +204,7 @@ func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jw
 		err = upload_chunked_file_manifest(fileUrl, &cm, jwt)
 		if err != nil {
 			// delete all uploaded chunks
-			cm.DeleteChunks(masterFn, usePublicUrl, grpcDialOption)
+			cm.DeleteChunks(masterFn, usePublicUrl, grpcDialOptions...)
 		}
 	} else {
 		uploadOption := &UploadOption{

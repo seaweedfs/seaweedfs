@@ -13,11 +13,11 @@ const (
 	SyncKeyPrefix = "remote.sync."
 )
 
-func GetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir string) (lastOffsetTsNs int64, readErr error) {
+func GetSyncOffset(grpcDialOptions []grpc.DialOption, filer pb.ServerAddress, dir string) (lastOffsetTsNs int64, readErr error) {
 
 	dirHash := uint32(util.HashStringToLong(dir))
 
-	readErr = pb.WithFilerClient(false, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	readErr = pb.WithFilerClient(false, filer, grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 		syncKey := []byte(SyncKeyPrefix + "____")
 		util.Uint32toBytes(syncKey[len(SyncKeyPrefix):len(SyncKeyPrefix)+4], dirHash)
 
@@ -42,11 +42,11 @@ func GetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir s
 
 }
 
-func SetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir string, offsetTsNs int64) error {
+func SetSyncOffset(grpcDialOptions []grpc.DialOption, filer pb.ServerAddress, dir string, offsetTsNs int64) error {
 
 	dirHash := uint32(util.HashStringToLong(dir))
 
-	return pb.WithFilerClient(false, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithFilerClient(false, filer, grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 
 		syncKey := []byte(SyncKeyPrefix + "____")
 		util.Uint32toBytes(syncKey[len(SyncKeyPrefix):len(SyncKeyPrefix)+4], dirHash)

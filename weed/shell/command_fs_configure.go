@@ -65,7 +65,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
-	fc, err := filer.ReadFilerConf(commandEnv.option.FilerAddress, commandEnv.option.GrpcDialOption, commandEnv.MasterClient)
+	fc, err := filer.ReadFilerConf(commandEnv.option.FilerAddress, commandEnv.option.GrpcDialOptions, commandEnv.MasterClient)
 	if err != nil {
 		return err
 	}

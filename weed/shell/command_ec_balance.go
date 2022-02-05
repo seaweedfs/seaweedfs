@@ -216,10 +216,10 @@ func doDeduplicateEcShards(commandEnv *CommandEnv, collection string, vid needle
 
 		duplicatedShardIds := []uint32{uint32(shardId)}
 		for _, ecNode := range ecNodes[1:] {
-			if err := unmountEcShards(commandEnv.option.GrpcDialOption, vid, pb.NewServerAddressFromDataNode(ecNode.info), duplicatedShardIds); err != nil {
+			if err := unmountEcShards(commandEnv.option.GrpcDialOptions, vid, pb.NewServerAddressFromDataNode(ecNode.info), duplicatedShardIds); err != nil {
 				return err
 			}
-			if err := sourceServerDeleteEcShards(commandEnv.option.GrpcDialOption, collection, vid, pb.NewServerAddressFromDataNode(ecNode.info), duplicatedShardIds); err != nil {
+			if err := sourceServerDeleteEcShards(commandEnv.option.GrpcDialOptions, collection, vid, pb.NewServerAddressFromDataNode(ecNode.info), duplicatedShardIds); err != nil {
 				return err
 			}
 			ecNode.deleteEcVolumeShards(vid, duplicatedShardIds)

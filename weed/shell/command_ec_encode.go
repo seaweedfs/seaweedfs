@@ -102,13 +102,13 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	// fmt.Printf("found ec %d shards on %v\n", vid, locations)
 
 	// mark the volume as readonly
-	err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, false)
+	err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOptions, vid, locations, false)
 	if err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 	}
 
 	// generate ec shards
-	err = generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, locations[0].ServerAddress())
+	err = generateEcShards(commandEnv.option.GrpcDialOptions, vid, collection, locations[0].ServerAddress())
 	if err != nil {
 		return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, locations[0].Url, err)
 	}
@@ -122,11 +122,11 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	return nil
 }
 
-func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress) error {
+func generateEcShards(grpcDialOptions []grpc.DialOption, volumeId needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress) error {
 
 	fmt.Printf("generateEcShards %s %d on %s ...\n", collection, volumeId, sourceVolumeServer)
 
-	err := operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOptions, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, genErr := volumeServerClient.VolumeEcShardsGenerate(context.Background(), &volume_server_pb.VolumeEcShardsGenerateRequest{
 			VolumeId:   uint32(volumeId),
 			Collection: collection,
@@ -157,19 +157,19 @@ func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection
 	allocatedEcIds := balancedEcDistribution(allocatedDataNodes)
 
 	// ask the data nodes to copy from the source volume server
-	copiedShardIds, err := parallelCopyEcShardsFromSource(commandEnv.option.GrpcDialOption, allocatedDataNodes, allocatedEcIds, volumeId, collection, existingLocations[0], parallelCopy)
+	copiedShardIds, err := parallelCopyEcShardsFromSource(commandEnv.option.GrpcDialOptions, allocatedDataNodes, allocatedEcIds, volumeId, collection, existingLocations[0], parallelCopy)
 	if err != nil {
 		return err
 	}
 
 	// unmount the to be deleted shards
-	err = unmountEcShards(commandEnv.option.GrpcDialOption, volumeId, existingLocations[0].ServerAddress(), copiedShardIds)
+	err = unmountEcShards(commandEnv.option.GrpcDialOptions, volumeId, existingLocations[0].ServerAddress(), copiedShardIds)
 	if err != nil {
 		return err
 	}
 
 	// ask the source volume server to clean up copied ec shards
-	err = sourceServerDeleteEcShards(commandEnv.option.GrpcDialOption, collection, volumeId, existingLocations[0].ServerAddress(), copiedShardIds)
+	err = sourceServerDeleteEcShards(commandEnv.option.GrpcDialOptions, collection, volumeId, existingLocations[0].ServerAddress(), copiedShardIds)
 	if err != nil {
 		return fmt.Errorf("source delete copied ecShards %s %d.%v: %v", existingLocations[0].Url, volumeId, copiedShardIds, err)
 	}
@@ -177,7 +177,7 @@ func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection
 	// ask the source volume server to delete the original volume
 	for _, location := range existingLocations {
 		fmt.Printf("delete volume %d from %s\n", volumeId, location.Url)
-		err = deleteVolume(commandEnv.option.GrpcDialOption, volumeId, location.ServerAddress())
+		err = deleteVolume(commandEnv.option.GrpcDialOptions, volumeId, location.ServerAddress())
 		if err != nil {
 			return fmt.Errorf("deleteVolume %s volume %d: %v", location.Url, volumeId, err)
 		}
@@ -187,7 +187,7 @@ func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection
 
 }
 
-func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServers []*EcNode, allocatedEcIds [][]uint32, volumeId needle.VolumeId, collection string, existingLocation wdclient.Location, parallelCopy bool) (actuallyCopied []uint32, err error) {
+func parallelCopyEcShardsFromSource(grpcDialOptions []grpc.DialOption, targetServers []*EcNode, allocatedEcIds [][]uint32, volumeId needle.VolumeId, collection string, existingLocation wdclient.Location, parallelCopy bool) (actuallyCopied []uint32, err error) {
 
 	fmt.Printf("parallelCopyEcShardsFromSource %d %s\n", volumeId, existingLocation.Url)
 
@@ -195,7 +195,7 @@ func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServer
 	shardIdChan := make(chan []uint32, len(targetServers))
 	copyFunc := func(server *EcNode, allocatedEcShardIds []uint32) {
 		defer wg.Done()
-		copiedShardIds, copyErr := oneServerCopyAndMountEcShardsFromSource(grpcDialOption, server,
+		copiedShardIds, copyErr := oneServerCopyAndMountEcShardsFromSource(grpcDialOptions, server,
 			allocatedEcShardIds, volumeId, collection, existingLocation.ServerAddress())
 		if copyErr != nil {
 			err = copyErr
@@ -205,10 +205,10 @@ func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServer
 		}
 	}
 	cleanupFunc := func(server *EcNode, allocatedEcShardIds []uint32) {
-		if err := unmountEcShards(grpcDialOption, volumeId, pb.NewServerAddressFromDataNode(server.info), allocatedEcShardIds); err != nil {
+		if err := unmountEcShards(grpcDialOptions, volumeId, pb.NewServerAddressFromDataNode(server.info), allocatedEcShardIds); err != nil {
 			fmt.Printf("unmount aborted shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, server.info.Id, err)
 		}
-		if err := sourceServerDeleteEcShards(grpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(server.info), allocatedEcShardIds); err != nil {
+		if err := sourceServerDeleteEcShards(grpcDialOptions, collection, volumeId, pb.NewServerAddressFromDataNode(server.info), allocatedEcShardIds); err != nil {
 			fmt.Printf("remove aborted shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, server.info.Id, err)
 		}
 	}

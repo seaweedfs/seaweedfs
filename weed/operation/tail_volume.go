@@ -12,9 +12,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 )
 
-func TailVolume(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vid needle.VolumeId, sinceNs uint64, timeoutSeconds int, fn func(n *needle.Needle) error) error {
+func TailVolume(masterFn GetMasterFn, grpcDialOptions []grpc.DialOption, vid needle.VolumeId, sinceNs uint64, timeoutSeconds int, fn func(n *needle.Needle) error) error {
 	// find volume location, replication, ttl info
-	lookup, err := LookupVolumeId(masterFn, grpcDialOption, vid.String())
+	lookup, err := LookupVolumeId(masterFn, grpcDialOptions, vid.String())
 	if err != nil {
 		return fmt.Errorf("look up volume %d: %v", vid, err)
 	}
@@ -24,11 +24,11 @@ func TailVolume(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vid needle
 
 	volumeServer := lookup.Locations[0].ServerAddress()
 
-	return TailVolumeFromSource(volumeServer, grpcDialOption, vid, sinceNs, timeoutSeconds, fn)
+	return TailVolumeFromSource(volumeServer, grpcDialOptions, vid, sinceNs, timeoutSeconds, fn)
 }
 
-func TailVolumeFromSource(volumeServer pb.ServerAddress, grpcDialOption grpc.DialOption, vid needle.VolumeId, sinceNs uint64, idleTimeoutSeconds int, fn func(n *needle.Needle) error) error {
-	return WithVolumeServerClient(true, volumeServer, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+func TailVolumeFromSource(volumeServer pb.ServerAddress, grpcDialOptions []grpc.DialOption, vid needle.VolumeId, sinceNs uint64, idleTimeoutSeconds int, fn func(n *needle.Needle) error) error {
+	return WithVolumeServerClient(true, volumeServer, grpcDialOptions, func(client volume_server_pb.VolumeServerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 

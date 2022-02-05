@@ -34,7 +34,7 @@ type AssignResult struct {
 	Replicas  []Location          `json:"replicas,omitempty"`
 }
 
-func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
+func Assign(masterFn GetMasterFn, grpcDialOptions []grpc.DialOption, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
 
 	var requests []*VolumeAssignRequest
 	requests = append(requests, primaryRequest)
@@ -48,7 +48,7 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 			continue
 		}
 
-		lastError = WithMasterServerClient(false, masterFn(), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+		lastError = WithMasterServerClient(false, masterFn(), grpcDialOptions, func(masterClient master_pb.SeaweedClient) error {
 
 			req := &master_pb.AssignRequest{
 				Count:               request.Count,
@@ -103,9 +103,9 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 	return ret, lastError
 }
 
-func LookupJwt(master pb.ServerAddress, grpcDialOption grpc.DialOption, fileId string) (token security.EncodedJwt) {
+func LookupJwt(master pb.ServerAddress, grpcDialOptions []grpc.DialOption, fileId string) (token security.EncodedJwt) {
 
-	WithMasterServerClient(false, master, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+	WithMasterServerClient(false, master, grpcDialOptions, func(masterClient master_pb.SeaweedClient) error {
 
 		resp, grpcErr := masterClient.LookupVolume(context.Background(), &master_pb.LookupVolumeRequest{
 			VolumeOrFileIds: []string{fileId},

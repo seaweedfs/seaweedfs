@@ -15,16 +15,16 @@ import (
 )
 
 var (
-	volumeServer   = flag.String("volumeServer", "localhost:8080", "a volume server")
-	volumeId       = flag.Int("volumeId", -1, "a volume id to stream read")
-	grpcDialOption grpc.DialOption
+	volumeServer    = flag.String("volumeServer", "localhost:8080", "a volume server")
+	volumeId        = flag.Int("volumeId", -1, "a volume id to stream read")
+	grpcDialOptions []grpc.DialOption
 )
 
 func main() {
 	flag.Parse()
 
 	util.LoadConfiguration("security", false)
-	grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
+	grpcDialOptions = security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
 
 	vid := uint32(*volumeId)
 
@@ -33,7 +33,7 @@ func main() {
 		return nil
 	}
 
-	err := operation.WithVolumeServerClient(true, pb.ServerAddress(*volumeServer), grpcDialOption, func(vs volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClient(true, pb.ServerAddress(*volumeServer), grpcDialOptions, func(vs volume_server_pb.VolumeServerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		copyFileClient, err := vs.ReadAllNeedles(ctx, &volume_server_pb.ReadAllNeedlesRequest{

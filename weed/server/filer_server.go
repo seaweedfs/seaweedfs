@@ -68,11 +68,11 @@ type FilerOption struct {
 
 type FilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	option         *FilerOption
-	secret         security.SigningKey
-	filer          *filer.Filer
-	filerGuard     *security.Guard
-	grpcDialOption grpc.DialOption
+	option          *FilerOption
+	secret          security.SigningKey
+	filer           *filer.Filer
+	filerGuard      *security.Guard
+	grpcDialOptions []grpc.DialOption
 
 	// metrics read from the master
 	metricsAddress     string
@@ -106,7 +106,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	fs = &FilerServer{
 		option:                option,
-		grpcDialOption:        security.LoadClientTLS(util.GetViper(), "grpc.filer"),
+		grpcDialOptions:       security.LoadGrpcClientOptions(util.GetViper(), "grpc.filer"),
 		knownListeners:        make(map[int32]struct{}),
 		brokers:               make(map[string]map[string]bool),
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
@@ -117,7 +117,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.Collection, option.DefaultReplication, option.DataCenter, func() {
+	fs.filer = filer.NewFiler(option.Masters, fs.grpcDialOptions, option.Host, option.Collection, option.DefaultReplication, option.DataCenter, func() {
 		fs.listenersCond.Broadcast()
 	})
 	fs.filer.Cipher = option.Cipher
@@ -181,7 +181,7 @@ func (fs *FilerServer) checkWithMaster() {
 	isConnected := false
 	for !isConnected {
 		for _, master := range fs.option.Masters {
-			readErr := operation.WithMasterServerClient(false, master, fs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+			readErr := operation.WithMasterServerClient(false, master, fs.grpcDialOptions, func(masterClient master_pb.SeaweedClient) error {
 				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 				if err != nil {
 					return fmt.Errorf("get master %s configuration: %v", master, err)

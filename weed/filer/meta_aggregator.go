@@ -23,7 +23,7 @@ type MetaAggregator struct {
 	filer           *Filer
 	self            pb.ServerAddress
 	isLeader        bool
-	grpcDialOption  grpc.DialOption
+	grpcDialOptions []grpc.DialOption
 	MetaLogBuffer   *log_buffer.LogBuffer
 	peerStatues     map[pb.ServerAddress]int
 	peerStatuesLock sync.Mutex
@@ -34,12 +34,12 @@ type MetaAggregator struct {
 
 // MetaAggregator only aggregates data "on the fly". The logs are not re-persisted to disk.
 // The old data comes from what each LocalMetadata persisted on disk.
-func NewMetaAggregator(filer *Filer, self pb.ServerAddress, grpcDialOption grpc.DialOption) *MetaAggregator {
+func NewMetaAggregator(filer *Filer, self pb.ServerAddress, grpcDialOptions ...grpc.DialOption) *MetaAggregator {
 	t := &MetaAggregator{
-		filer:          filer,
-		self:           self,
-		grpcDialOption: grpcDialOption,
-		peerStatues:    make(map[pb.ServerAddress]int),
+		filer:           filer,
+		self:            self,
+		grpcDialOptions: grpcDialOptions,
+		peerStatues:     make(map[pb.ServerAddress]int),
 	}
 	t.ListenersCond = sync.NewCond(&t.ListenersLock)
 	t.MetaLogBuffer = log_buffer.NewLogBuffer("aggr", LogFlushInterval, nil, func() {
@@ -165,7 +165,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self pb.ServerAddress, p
 
 	for {
 		glog.V(4).Infof("subscribing remote %s meta change: %v", peer, time.Unix(0, lastTsNs))
-		err := pb.WithFilerClient(true, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithFilerClient(true, peer, ma.grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			stream, err := client.SubscribeLocalMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
@@ -208,7 +208,7 @@ func (ma *MetaAggregator) subscribeToOneFiler(f *Filer, self pb.ServerAddress, p
 }
 
 func (ma *MetaAggregator) readFilerStoreSignature(peer pb.ServerAddress) (sig int32, err error) {
-	err = pb.WithFilerClient(false, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithFilerClient(false, peer, ma.grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return err

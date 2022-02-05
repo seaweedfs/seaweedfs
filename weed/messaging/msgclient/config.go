@@ -45,7 +45,7 @@ func (mc *MessagingClient) withAnyBroker(fn func(client messaging_pb.SeaweedMess
 
 	var lastErr error
 	for _, broker := range mc.bootstrapBrokers {
-		grpcConnection, err := pb.GrpcDial(context.Background(), broker, mc.grpcDialOption)
+		grpcConnection, err := pb.GrpcDial(context.Background(), broker, mc.grpcDialOptions...)
 		if err != nil {
 			log.Printf("dial broker %s: %v", broker, err)
 			continue

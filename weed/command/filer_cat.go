@@ -21,10 +21,10 @@ var (
 )
 
 type FilerCatOptions struct {
-	grpcDialOption grpc.DialOption
-	filerAddress   pb.ServerAddress
-	filerClient    filer_pb.SeaweedFilerClient
-	output         *string
+	grpcDialOptions []grpc.DialOption
+	filerAddress    pb.ServerAddress
+	filerClient     filer_pb.SeaweedFilerClient
+	output          *string
 }
 
 func (fco *FilerCatOptions) GetLookupFileIdFunction() wdclient.LookupFileIdFunctionType {
@@ -78,7 +78,7 @@ func runFilerCat(cmd *Command, args []string) bool {
 	}
 
 	filerCat.filerAddress = pb.ServerAddress(filerUrl.Host)
-	filerCat.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
+	filerCat.grpcDialOptions = security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
 
 	dir, name := util.FullPath(urlPath).DirAndName()
 
@@ -96,7 +96,7 @@ func runFilerCat(cmd *Command, args []string) bool {
 		writer = f
 	}
 
-	pb.WithFilerClient(false, filerCat.filerAddress, filerCat.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	pb.WithFilerClient(false, filerCat.filerAddress, filerCat.grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Name:      name,

@@ -12,11 +12,11 @@ import (
 
 type ProcessMetadataFunc func(resp *filer_pb.SubscribeMetadataResponse) error
 
-func FollowMetadata(filerAddress ServerAddress, grpcDialOption grpc.DialOption, clientName string, clientId int32,
+func FollowMetadata(filerAddress ServerAddress, grpcDialOptions []grpc.DialOption, clientName string, clientId int32,
 	pathPrefix string, additionalPathPrefixes []string, lastTsNs int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, fatalOnError bool) error {
 
-	err := WithFilerClient(true, filerAddress, grpcDialOption, makeFunc(clientName, clientId,
+	err := WithFilerClient(true, filerAddress, grpcDialOptions, makeFunc(clientName, clientId,
 		pathPrefix, additionalPathPrefixes, &lastTsNs, selfSignature, processEventFn, fatalOnError))
 	if err != nil {
 		return fmt.Errorf("subscribing filer meta change: %v", err)

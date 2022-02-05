@@ -46,9 +46,9 @@ func (iamopt *IamOptions) startIamServer() bool {
 	filerAddress := pb.ServerAddress(*iamopt.filer)
 
 	util.LoadConfiguration("security", false)
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	grpcDialOptions := security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
 	for {
-		err := pb.WithGrpcFilerClient(false, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithGrpcFilerClient(false, filerAddress, grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
@@ -68,10 +68,10 @@ func (iamopt *IamOptions) startIamServer() bool {
 	masters := pb.ServerAddresses(*iamopt.masters).ToAddresses()
 	router := mux.NewRouter().SkipClean(true)
 	_, iamApiServer_err := iamapi.NewIamApiServer(router, &iamapi.IamServerOption{
-		Masters:        masters,
-		Filer:          filerAddress,
-		Port:           *iamopt.port,
-		GrpcDialOption: grpcDialOption,
+		Masters:         masters,
+		Filer:           filerAddress,
+		Port:            *iamopt.port,
+		GrpcDialOptions: grpcDialOptions,
 	})
 	glog.V(0).Info("NewIamApiServer created")
 	if iamApiServer_err != nil {

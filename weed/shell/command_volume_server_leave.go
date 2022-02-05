@@ -51,12 +51,12 @@ func (c *commandVolumeServerLeave) Do(args []string, commandEnv *CommandEnv, wri
 		return fmt.Errorf("need to specify volume server by -node=<host>:<port>")
 	}
 
-	return volumeServerLeave(commandEnv.option.GrpcDialOption, pb.ServerAddress(*volumeServer), writer)
+	return volumeServerLeave(commandEnv.option.GrpcDialOptions, pb.ServerAddress(*volumeServer), writer)
 
 }
 
-func volumeServerLeave(grpcDialOption grpc.DialOption, volumeServer pb.ServerAddress, writer io.Writer) (err error) {
-	return operation.WithVolumeServerClient(false, volumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+func volumeServerLeave(grpcDialOptions []grpc.DialOption, volumeServer pb.ServerAddress, writer io.Writer) (err error) {
+	return operation.WithVolumeServerClient(false, volumeServer, grpcDialOptions, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, leaveErr := volumeServerClient.VolumeServerLeave(context.Background(), &volume_server_pb.VolumeServerLeaveRequest{})
 		if leaveErr != nil {
 			fmt.Fprintf(writer, "ask volume server %s to leave: %v\n", volumeServer, leaveErr)

@@ -47,18 +47,18 @@ var cmdDownload = &Command{
 
 func runDownload(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	grpcDialOptions := security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
 
 	for _, fid := range args {
-		if e := downloadToFile(func() pb.ServerAddress { return pb.ServerAddress(*d.server) }, grpcDialOption, fid, util.ResolvePath(*d.dir)); e != nil {
+		if e := downloadToFile(func() pb.ServerAddress { return pb.ServerAddress(*d.server) }, grpcDialOptions, fid, util.ResolvePath(*d.dir)); e != nil {
 			fmt.Println("Download Error: ", fid, e)
 		}
 	}
 	return true
 }
 
-func downloadToFile(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, fileId, saveDir string) error {
-	fileUrl, jwt, lookupError := operation.LookupFileId(masterFn, grpcDialOption, fileId)
+func downloadToFile(masterFn operation.GetMasterFn, grpcDialOptions []grpc.DialOption, fileId, saveDir string) error {
+	fileUrl, jwt, lookupError := operation.LookupFileId(masterFn, grpcDialOptions, fileId)
 	if lookupError != nil {
 		return lookupError
 	}
@@ -89,7 +89,7 @@ func downloadToFile(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpti
 		fids := strings.Split(string(content), "\n")
 		for _, partId := range fids {
 			var n int
-			_, part, err := fetchContent(masterFn, grpcDialOption, partId)
+			_, part, err := fetchContent(masterFn, grpcDialOptions, partId)
 			if err == nil {
 				n, err = f.Write(part)
 			}
@@ -109,8 +109,8 @@ func downloadToFile(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpti
 	return nil
 }
 
-func fetchContent(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, fileId string) (filename string, content []byte, e error) {
-	fileUrl, jwt, lookupError := operation.LookupFileId(masterFn, grpcDialOption, fileId)
+func fetchContent(masterFn operation.GetMasterFn, grpcDialOptions []grpc.DialOption, fileId string) (filename string, content []byte, e error) {
+	fileUrl, jwt, lookupError := operation.LookupFileId(masterFn, grpcDialOptions, fileId)
 	if lookupError != nil {
 		return "", nil, lookupError
 	}

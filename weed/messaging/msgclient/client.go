@@ -17,21 +17,21 @@ import (
 type MessagingClient struct {
 	bootstrapBrokers []string
 	grpcConnections  map[broker.TopicPartition]*grpc.ClientConn
-	grpcDialOption   grpc.DialOption
+	grpcDialOptions  []grpc.DialOption
 }
 
 func NewMessagingClient(bootstrapBrokers ...string) *MessagingClient {
 	return &MessagingClient{
 		bootstrapBrokers: bootstrapBrokers,
 		grpcConnections:  make(map[broker.TopicPartition]*grpc.ClientConn),
-		grpcDialOption:   security.LoadClientTLS(util.GetViper(), "grpc.msg_client"),
+		grpcDialOptions:  security.LoadGrpcClientOptions(util.GetViper(), "grpc.msg_client"),
 	}
 }
 
 func (mc *MessagingClient) findBroker(tp broker.TopicPartition) (*grpc.ClientConn, error) {
 
 	for _, broker := range mc.bootstrapBrokers {
-		grpcConnection, err := pb.GrpcDial(context.Background(), broker, mc.grpcDialOption)
+		grpcConnection, err := pb.GrpcDial(context.Background(), broker, mc.grpcDialOptions...)
 		if err != nil {
 			log.Printf("dial broker %s: %v", broker, err)
 			continue
@@ -49,7 +49,7 @@ func (mc *MessagingClient) findBroker(tp broker.TopicPartition) (*grpc.ClientCon
 		}
 
 		targetBroker := resp.Broker
-		return pb.GrpcDial(context.Background(), targetBroker, mc.grpcDialOption)
+		return pb.GrpcDial(context.Background(), targetBroker, mc.grpcDialOptions...)
 	}
 	return nil, fmt.Errorf("no broker found for %+v", tp)
 }

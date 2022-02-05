@@ -17,8 +17,8 @@ import (
 )
 
 type ShellOptions struct {
-	Masters        *string
-	GrpcDialOption grpc.DialOption
+	Masters         *string
+	GrpcDialOptions []grpc.DialOption
 	// shell transient context
 	FilerHost    string
 	FilerPort    int64
@@ -46,7 +46,7 @@ var (
 func NewCommandEnv(options *ShellOptions) *CommandEnv {
 	ce := &CommandEnv{
 		env:          make(map[string]string),
-		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, pb.AdminShellClient, "", "", pb.ServerAddresses(*options.Masters).ToAddresses()),
+		MasterClient: wdclient.NewMasterClient(options.GrpcDialOptions, pb.AdminShellClient, "", "", pb.ServerAddresses(*options.Masters).ToAddresses()),
 		option:       options,
 	}
 	ce.locker = exclusive_locks.NewExclusiveLocker(ce.MasterClient, "admin")
@@ -99,7 +99,7 @@ var _ = filer_pb.FilerClient(&CommandEnv{})
 
 func (ce *CommandEnv) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithGrpcFilerClient(streamingMode, ce.option.FilerAddress, ce.option.GrpcDialOption, fn)
+	return pb.WithGrpcFilerClient(streamingMode, ce.option.FilerAddress, ce.option.GrpcDialOptions, fn)
 
 }
 

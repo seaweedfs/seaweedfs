@@ -65,7 +65,7 @@ func (c *commandRemoteCache) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
-	mappings, err := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
+	mappings, err := filer.ReadMountMappings(commandEnv.option.GrpcDialOptions, commandEnv.option.FilerAddress)
 	if err != nil {
 		return err
 	}

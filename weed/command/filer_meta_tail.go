@@ -47,7 +47,7 @@ var (
 func runFilerMetaTail(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	grpcDialOptions := security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
 	clientId := util.RandomInt32()
 
 	var filterFunc func(dir, fname string) bool
@@ -106,7 +106,7 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 		}
 	}
 
-	tailErr := pb.FollowMetadata(pb.ServerAddress(*tailFiler), grpcDialOption, "tail", clientId,
+	tailErr := pb.FollowMetadata(pb.ServerAddress(*tailFiler), grpcDialOptions, "tail", clientId,
 		*tailTarget, nil, time.Now().Add(-*tailStart).UnixNano(), 0,
 		func(resp *filer_pb.SubscribeMetadataResponse) error {
 			if !shouldPrint(resp) {

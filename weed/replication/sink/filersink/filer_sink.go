@@ -28,7 +28,7 @@ type FilerSink struct {
 	ttlSec            int32
 	diskType          string
 	dataCenter        string
-	grpcDialOption    grpc.DialOption
+	grpcDialOptions   []grpc.DialOption
 	address           string
 	writeChunkByFiler bool
 	isIncremental     bool
@@ -60,7 +60,7 @@ func (fs *FilerSink) Initialize(configuration util.Configuration, prefix string)
 		configuration.GetString(prefix+"collection"),
 		configuration.GetInt(prefix+"ttlSec"),
 		configuration.GetString(prefix+"disk"),
-		security.LoadClientTLS(util.GetViper(), "grpc.client"),
+		security.LoadGrpcClientOptions(util.GetViper(), "grpc.client"),
 		false)
 }
 
@@ -69,7 +69,7 @@ func (fs *FilerSink) SetSourceFiler(s *source.FilerSource) {
 }
 
 func (fs *FilerSink) DoInitialize(address, grpcAddress string, dir string,
-	replication string, collection string, ttlSec int, diskType string, grpcDialOption grpc.DialOption, writeChunkByFiler bool) (err error) {
+	replication string, collection string, ttlSec int, diskType string, grpcDialOptions []grpc.DialOption, writeChunkByFiler bool) (err error) {
 	fs.address = address
 	if fs.address == "" {
 		fs.address = pb.GrpcAddressToServerAddress(grpcAddress)
@@ -80,7 +80,7 @@ func (fs *FilerSink) DoInitialize(address, grpcAddress string, dir string,
 	fs.collection = collection
 	fs.ttlSec = int32(ttlSec)
 	fs.diskType = diskType
-	fs.grpcDialOption = grpcDialOption
+	fs.grpcDialOptions = grpcDialOptions
 	fs.writeChunkByFiler = writeChunkByFiler
 	return nil
 }

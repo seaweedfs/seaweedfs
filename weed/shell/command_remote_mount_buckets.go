@@ -57,7 +57,7 @@ func (c *commandRemoteMountBuckets) Do(args []string, commandEnv *CommandEnv, wr
 	}
 
 	// find configuration for remote storage
-	remoteConf, err := filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, *remote)
+	remoteConf, err := filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOptions, commandEnv.option.FilerAddress, *remote)
 	if err != nil {
 		return fmt.Errorf("find configuration for %s: %v", *remote, err)
 	}

@@ -27,7 +27,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	for _, server := range collection.ListVolumeServers() {
-		err := operation.WithVolumeServerClient(false, server.ServerAddress(), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		err := operation.WithVolumeServerClient(false, server.ServerAddress(), ms.grpcDialOptions, func(client volume_server_pb.VolumeServerClient) error {
 			_, deleteErr := client.DeleteCollection(context.Background(), &volume_server_pb.DeleteCollectionRequest{
 				Collection: collection.Name,
 			})
@@ -64,7 +64,7 @@ func (ms *MasterServer) volumeVacuumHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	// glog.Infoln("garbageThreshold =", gcThreshold)
-	ms.Topo.Vacuum(ms.grpcDialOption, gcThreshold, ms.preallocateSize)
+	ms.Topo.Vacuum(ms.grpcDialOptions, gcThreshold, ms.preallocateSize)
 	ms.dirStatusHandler(w, r)
 }
 
@@ -81,7 +81,7 @@ func (ms *MasterServer) volumeGrowHandler(w http.ResponseWriter, r *http.Request
 		if ms.Topo.AvailableSpaceFor(option) < int64(count*option.ReplicaPlacement.GetCopyCount()) {
 			err = fmt.Errorf("only %d volumes left, not enough for %d", ms.Topo.AvailableSpaceFor(option), count*option.ReplicaPlacement.GetCopyCount())
 		} else {
-			count, err = ms.vg.GrowByCountAndType(ms.grpcDialOption, count, option, ms.Topo)
+			count, err = ms.vg.GrowByCountAndType(ms.grpcDialOptions, count, option, ms.Topo)
 		}
 	} else {
 		err = fmt.Errorf("can not parse parameter count %s", r.FormValue("count"))
@@ -121,13 +121,13 @@ func (ms *MasterServer) redirectHandler(w http.ResponseWriter, r *http.Request) 
 
 func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *http.Request) {
 	if ms.Topo.IsLeader() {
-		submitForClientHandler(w, r, func() pb.ServerAddress { return ms.option.Master }, ms.grpcDialOption)
+		submitForClientHandler(w, r, func() pb.ServerAddress { return ms.option.Master }, ms.grpcDialOptions...)
 	} else {
 		masterUrl, err := ms.Topo.Leader()
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 		} else {
-			submitForClientHandler(w, r, func() pb.ServerAddress { return masterUrl }, ms.grpcDialOption)
+			submitForClientHandler(w, r, func() pb.ServerAddress { return masterUrl }, ms.grpcDialOptions...)
 		}
 	}
 }

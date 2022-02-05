@@ -65,7 +65,7 @@ var cmdBackup = &Command{
 func runBackup(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	grpcDialOptions := security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
 
 	if *s.volumeId == -1 {
 		return false
@@ -73,14 +73,14 @@ func runBackup(cmd *Command, args []string) bool {
 	vid := needle.VolumeId(*s.volumeId)
 
 	// find volume location, replication, ttl info
-	lookup, err := operation.LookupVolumeId(func() pb.ServerAddress { return pb.ServerAddress(*s.master) }, grpcDialOption, vid.String())
+	lookup, err := operation.LookupVolumeId(func() pb.ServerAddress { return pb.ServerAddress(*s.master) }, grpcDialOptions, vid.String())
 	if err != nil {
 		fmt.Printf("Error looking up volume %d: %v\n", vid, err)
 		return true
 	}
 	volumeServer := lookup.Locations[0].ServerAddress()
 
-	stats, err := operation.GetVolumeSyncStatus(volumeServer, grpcDialOption, uint32(vid))
+	stats, err := operation.GetVolumeSyncStatus(volumeServer, grpcDialOptions, uint32(vid))
 	if err != nil {
 		fmt.Printf("Error get volume %d status: %v\n", vid, err)
 		return true
@@ -146,7 +146,7 @@ func runBackup(cmd *Command, args []string) bool {
 	}
 	defer v.Close()
 
-	if err := v.IncrementalBackup(volumeServer, grpcDialOption); err != nil {
+	if err := v.IncrementalBackup(volumeServer, grpcDialOptions); err != nil {
 		fmt.Printf("Error synchronizing volume %d: %v\n", vid, err)
 		return true
 	}

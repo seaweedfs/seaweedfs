@@ -34,7 +34,7 @@ type Option struct {
 	MountDirectory     string
 	FilerAddresses     []pb.ServerAddress
 	filerIndex         int
-	GrpcDialOption     grpc.DialOption
+	GrpcDialOptions    []grpc.DialOption
 	FilerMountRootPath string
 	Collection         string
 	Replication        string

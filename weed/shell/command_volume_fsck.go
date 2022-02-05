@@ -220,7 +220,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(volumeIdToVInfo map[u
 				continue
 			}
 			if inUseCount == 0 {
-				if err := deleteVolume(c.env.option.GrpcDialOption, needle.VolumeId(volumeId), vinfo.server); err != nil {
+				if err := deleteVolume(c.env.option.GrpcDialOptions, needle.VolumeId(volumeId), vinfo.server); err != nil {
 					return fmt.Errorf("delete volume %d: %v", volumeId, err)
 				}
 			} else {
@@ -252,7 +252,7 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, volumeId 
 		fmt.Fprintf(writer, "collecting volume %d file ids from %s ...\n", volumeId, vinfo.server)
 	}
 
-	return operation.WithVolumeServerClient(false, vinfo.server, c.env.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	return operation.WithVolumeServerClient(false, vinfo.server, c.env.option.GrpcDialOptions, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
 		ext := ".idx"
 		if vinfo.isEcVolume {
@@ -501,7 +501,7 @@ func (c *commandVolumeFsck) purgeFileIdsForOneVolume(volumeId uint32, fileIds []
 		go func(server pb.ServerAddress, fidList []string) {
 			defer wg.Done()
 
-			if deleteResults, deleteErr := operation.DeleteFilesAtOneVolumeServer(server, c.env.option.GrpcDialOption, fidList, false); deleteErr != nil {
+			if deleteResults, deleteErr := operation.DeleteFilesAtOneVolumeServer(server, c.env.option.GrpcDialOptions, fidList, false); deleteErr != nil {
 				err = deleteErr
 			} else if deleteResults != nil {
 				resultChan <- deleteResults

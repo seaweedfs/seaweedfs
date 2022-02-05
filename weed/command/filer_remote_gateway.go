@@ -17,7 +17,7 @@ import (
 
 type RemoteGatewayOptions struct {
 	filerAddress             *string
-	grpcDialOption           grpc.DialOption
+	grpcDialOptions          []grpc.DialOption
 	readChunkFromFiler       *bool
 	timeAgo                  *time.Duration
 	createBucketAt           *string
@@ -34,7 +34,7 @@ type RemoteGatewayOptions struct {
 var _ = filer_pb.FilerClient(&RemoteGatewayOptions{})
 
 func (option *RemoteGatewayOptions) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithFilerClient(streamingMode, pb.ServerAddress(*option.filerAddress), option.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithFilerClient(streamingMode, pb.ServerAddress(*option.filerAddress), option.grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 		return fn(client)
 	})
 }
@@ -74,8 +74,8 @@ var cmdFilerRemoteGateway = &Command{
 func runFilerRemoteGateway(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
-	remoteGatewayOptions.grpcDialOption = grpcDialOption
+	grpcDialOptions := security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
+	remoteGatewayOptions.grpcDialOptions = grpcDialOptions
 
 	filerAddress := pb.ServerAddress(*remoteGatewayOptions.filerAddress)
 

@@ -111,7 +111,7 @@ var _ = filer_pb.FilerClient(&MessageBroker{})
 func (broker *MessageBroker) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) (err error) {
 
 	for _, filer := range broker.option.Filers {
-		if err = pb.WithFilerClient(streamingMode, filer, broker.grpcDialOption, fn); err != nil {
+		if err = pb.WithFilerClient(streamingMode, filer, broker.grpcDialOptions, fn); err != nil {
 			if err == io.EOF {
 				return
 			}

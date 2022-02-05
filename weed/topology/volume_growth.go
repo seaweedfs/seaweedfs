@@ -77,22 +77,22 @@ func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count int) {
 	return
 }
 
-func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOption grpc.DialOption, topo *Topology, targetCount int) (count int, err error) {
+func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOptions []grpc.DialOption, topo *Topology, targetCount int) (count int, err error) {
 	if targetCount == 0 {
 		targetCount = vg.findVolumeCount(option.ReplicaPlacement.GetCopyCount())
 	}
-	count, err = vg.GrowByCountAndType(grpcDialOption, targetCount, option, topo)
+	count, err = vg.GrowByCountAndType(grpcDialOptions, targetCount, option, topo)
 	if count > 0 && count%option.ReplicaPlacement.GetCopyCount() == 0 {
 		return count, nil
 	}
 	return count, err
 }
-func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targetCount int, option *VolumeGrowOption, topo *Topology) (counter int, err error) {
+func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOptions []grpc.DialOption, targetCount int, option *VolumeGrowOption, topo *Topology) (counter int, err error) {
 	vg.accessLock.Lock()
 	defer vg.accessLock.Unlock()
 
 	for i := 0; i < targetCount; i++ {
-		if c, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
+		if c, e := vg.findAndGrow(grpcDialOptions, topo, option); e == nil {
 			counter += c
 		} else {
 			glog.V(0).Infof("create %d volume, created %d: %v", targetCount, counter, e)
@@ -102,7 +102,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 	return
 }
 
-func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topology, option *VolumeGrowOption) (int, error) {
+func (vg *VolumeGrowth) findAndGrow(grpcDialOptions []grpc.DialOption, topo *Topology, option *VolumeGrowOption) (int, error) {
 	servers, e := vg.findEmptySlotsForOneVolume(topo, option)
 	if e != nil {
 		return 0, e
@@ -111,7 +111,7 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 	if raftErr != nil {
 		return 0, raftErr
 	}
-	err := vg.grow(grpcDialOption, topo, vid, option, servers...)
+	err := vg.grow(grpcDialOptions, topo, vid, option, servers...)
 	return len(servers), err
 }
 
@@ -218,9 +218,9 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	return
 }
 
-func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid needle.VolumeId, option *VolumeGrowOption, servers ...*DataNode) error {
+func (vg *VolumeGrowth) grow(grpcDialOptions []grpc.DialOption, topo *Topology, vid needle.VolumeId, option *VolumeGrowOption, servers ...*DataNode) error {
 	for _, server := range servers {
-		if err := AllocateVolume(server, grpcDialOption, vid, option); err == nil {
+		if err := AllocateVolume(server, grpcDialOptions, vid, option); err == nil {
 			vi := storage.VolumeInfo{
 				Id:               vid,
 				Size:             0,

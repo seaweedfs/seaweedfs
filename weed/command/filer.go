@@ -236,7 +236,7 @@ func (fo *FilerOptions) startFiler() {
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
-	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
+	grpcS := pb.NewGrpcServer(security.LoadGrpcServerOptions(util.GetViper(), "grpc.filer")...)
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
 	reflection.Register(grpcS)
 	go grpcS.Serve(grpcL)

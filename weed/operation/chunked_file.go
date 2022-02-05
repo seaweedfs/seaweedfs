@@ -40,14 +40,14 @@ type ChunkManifest struct {
 
 // seekable chunked file reader
 type ChunkedFileReader struct {
-	totalSize      int64
-	chunkList      []*ChunkInfo
-	master         pb.ServerAddress
-	pos            int64
-	pr             *io.PipeReader
-	pw             *io.PipeWriter
-	mutex          sync.Mutex
-	grpcDialOption grpc.DialOption
+	totalSize       int64
+	chunkList       []*ChunkInfo
+	master          pb.ServerAddress
+	pos             int64
+	pr              *io.PipeReader
+	pw              *io.PipeWriter
+	mutex           sync.Mutex
+	grpcDialOptions []grpc.DialOption
 }
 
 func (s ChunkList) Len() int           { return len(s) }
@@ -73,12 +73,12 @@ func (cm *ChunkManifest) Marshal() ([]byte, error) {
 	return json.Marshal(cm)
 }
 
-func (cm *ChunkManifest) DeleteChunks(masterFn GetMasterFn, usePublicUrl bool, grpcDialOption grpc.DialOption) error {
+func (cm *ChunkManifest) DeleteChunks(masterFn GetMasterFn, usePublicUrl bool, grpcDialOptions ...grpc.DialOption) error {
 	var fileIds []string
 	for _, ci := range cm.Chunks {
 		fileIds = append(fileIds, ci.Fid)
 	}
-	results, err := DeleteFiles(masterFn, usePublicUrl, grpcDialOption, fileIds)
+	results, err := DeleteFiles(masterFn, usePublicUrl, grpcDialOptions, fileIds)
 	if err != nil {
 		glog.V(0).Infof("delete %+v: %v", fileIds, err)
 		return fmt.Errorf("chunk delete: %v", err)
@@ -127,17 +127,17 @@ func readChunkNeedle(fileUrl string, w io.Writer, offset int64, jwt string) (wri
 	return io.Copy(w, resp.Body)
 }
 
-func NewChunkedFileReader(chunkList []*ChunkInfo, master pb.ServerAddress, grpcDialOption grpc.DialOption) *ChunkedFileReader {
+func NewChunkedFileReader(chunkList []*ChunkInfo, master pb.ServerAddress, grpcDialOptions []grpc.DialOption) *ChunkedFileReader {
 	var totalSize int64
 	for _, chunk := range chunkList {
 		totalSize += chunk.Size
 	}
 	sort.Sort(ChunkList(chunkList))
 	return &ChunkedFileReader{
-		totalSize:      totalSize,
-		chunkList:      chunkList,
-		master:         master,
-		grpcDialOption: grpcDialOption,
+		totalSize:       totalSize,
+		chunkList:       chunkList,
+		master:          master,
+		grpcDialOptions: grpcDialOptions,
 	}
 }
 
@@ -178,7 +178,7 @@ func (cf *ChunkedFileReader) WriteTo(w io.Writer) (n int64, err error) {
 		// if we need read date from local volume server first?
 		fileUrl, jwt, lookupError := LookupFileId(func() pb.ServerAddress {
 			return cf.master
-		}, cf.grpcDialOption, ci.Fid)
+		}, cf.grpcDialOptions, ci.Fid)
 		if lookupError != nil {
 			return n, lookupError
 		}

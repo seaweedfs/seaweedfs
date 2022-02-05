@@ -23,7 +23,7 @@ func (wfs *WFS) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFile
 			err = pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 				client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 				return fn(client)
-			}, filerGrpcAddress, wfs.option.GrpcDialOption)
+			}, filerGrpcAddress, wfs.option.GrpcDialOptions...)
 
 			if err != nil {
 				glog.V(0).Infof("WithFilerClient %d %v: %v", x, filerGrpcAddress, err)

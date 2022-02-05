@@ -27,26 +27,26 @@ import (
 )
 
 type WebDavOption struct {
-	Filer          pb.ServerAddress
-	DomainName     string
-	BucketsPath    string
-	GrpcDialOption grpc.DialOption
-	Collection     string
-	Replication    string
-	DiskType       string
-	Uid            uint32
-	Gid            uint32
-	Cipher         bool
-	CacheDir       string
-	CacheSizeMB    int64
+	Filer           pb.ServerAddress
+	DomainName      string
+	BucketsPath     string
+	GrpcDialOptions []grpc.DialOption
+	Collection      string
+	Replication     string
+	DiskType        string
+	Uid             uint32
+	Gid             uint32
+	Cipher          bool
+	CacheDir        string
+	CacheSizeMB     int64
 }
 
 type WebDavServer struct {
-	option         *WebDavOption
-	secret         security.SigningKey
-	filer          *filer.Filer
-	grpcDialOption grpc.DialOption
-	Handler        *webdav.Handler
+	option          *WebDavOption
+	secret          security.SigningKey
+	filer           *filer.Filer
+	grpcDialOptions []grpc.DialOption
+	Handler         *webdav.Handler
 }
 
 func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
@@ -54,8 +54,8 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 	fs, _ := NewWebDavFileSystem(option)
 
 	ws = &WebDavServer{
-		option:         option,
-		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.filer"),
+		option:          option,
+		grpcDialOptions: security.LoadGrpcClientOptions(util.GetViper(), "grpc.filer"),
 		Handler: &webdav.Handler{
 			FileSystem: fs,
 			LockSystem: webdav.NewMemLS(),
@@ -125,7 +125,7 @@ func (fs *WebDavFileSystem) WithFilerClient(streamingMode bool, fn func(filer_pb
 	return pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, fs.option.Filer.ToGrpcAddress(), fs.option.GrpcDialOption)
+	}, fs.option.Filer.ToGrpcAddress(), fs.option.GrpcDialOptions...)
 
 }
 func (fs *WebDavFileSystem) AdjustedUrl(location *filer_pb.Location) string {

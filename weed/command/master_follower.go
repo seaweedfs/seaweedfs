@@ -85,9 +85,9 @@ func startMasterFollower(masterOptions MasterOptions) {
 	masters := pb.ServerAddresses(*mf.peers).ToAddresses()
 
 	var err error
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.master")
+	grpcDialOptions := security.LoadGrpcClientOptions(util.GetViper(), "grpc.master")
 	for i := 0; i < 10; i++ {
-		err = pb.WithOneOfGrpcMasterClients(false, masters, grpcDialOption, func(client master_pb.SeaweedClient) error {
+		err = pb.WithOneOfGrpcMasterClients(false, masters, grpcDialOptions, func(client master_pb.SeaweedClient) error {
 			resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get master grpc address %v configuration: %v", masters, err)
@@ -126,7 +126,7 @@ func startMasterFollower(masterOptions MasterOptions) {
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}
-	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.master"))
+	grpcS := pb.NewGrpcServer(security.LoadGrpcServerOptions(util.GetViper(), "grpc.master")...)
 	master_pb.RegisterSeaweedServer(grpcS, ms)
 	reflection.Register(grpcS)
 	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOptions.ip, grpcPort)

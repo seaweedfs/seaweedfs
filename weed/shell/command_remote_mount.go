@@ -63,7 +63,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	// find configuration for remote storage
-	remoteConf, err := filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress, remote_storage.ParseLocationName(*remote))
+	remoteConf, err := filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOptions, commandEnv.option.FilerAddress, remote_storage.ParseLocationName(*remote))
 	if err != nil {
 		return fmt.Errorf("find configuration for %s: %v", *remote, err)
 	}
@@ -89,7 +89,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 func listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (mappings *remote_pb.RemoteStorageMapping, err error) {
 
 	// read current mapping
-	mappings, err = filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
+	mappings, err = filer.ReadMountMappings(commandEnv.option.GrpcDialOptions, commandEnv.option.FilerAddress)
 	if err != nil {
 		return mappings, err
 	}

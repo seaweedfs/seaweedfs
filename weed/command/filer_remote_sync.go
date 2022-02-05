@@ -14,7 +14,7 @@ import (
 
 type RemoteSyncOptions struct {
 	filerAddress       *string
-	grpcDialOption     grpc.DialOption
+	grpcDialOptions    []grpc.DialOption
 	readChunkFromFiler *bool
 	timeAgo            *time.Duration
 	dir                *string
@@ -24,7 +24,7 @@ type RemoteSyncOptions struct {
 var _ = filer_pb.FilerClient(&RemoteSyncOptions{})
 
 func (option *RemoteSyncOptions) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithFilerClient(streamingMode, pb.ServerAddress(*option.filerAddress), option.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithFilerClient(streamingMode, pb.ServerAddress(*option.filerAddress), option.grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 		return fn(client)
 	})
 }
@@ -67,8 +67,8 @@ var cmdFilerRemoteSynchronize = &Command{
 func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
-	remoteSyncOptions.grpcDialOption = grpcDialOption
+	grpcDialOptions := security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
+	remoteSyncOptions.grpcDialOptions = grpcDialOptions
 
 	dir := *remoteSyncOptions.dir
 	filerAddress := pb.ServerAddress(*remoteSyncOptions.filerAddress)

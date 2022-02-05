@@ -50,12 +50,12 @@ func (c *commandVolumeUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 
 	volumeId := needle.VolumeId(*volumeIdInt)
 
-	return unmountVolume(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer)
+	return unmountVolume(commandEnv.option.GrpcDialOptions, volumeId, sourceVolumeServer)
 
 }
 
-func unmountVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer pb.ServerAddress) (err error) {
-	return operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+func unmountVolume(grpcDialOptions []grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer pb.ServerAddress) (err error) {
+	return operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOptions, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, unmountErr := volumeServerClient.VolumeUnmount(context.Background(), &volume_server_pb.VolumeUnmountRequest{
 			VolumeId: uint32(volumeId),
 		})

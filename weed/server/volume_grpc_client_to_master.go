@@ -26,7 +26,7 @@ func (vs *VolumeServer) GetMaster() pb.ServerAddress {
 func (vs *VolumeServer) checkWithMaster() (err error) {
 	for {
 		for _, master := range vs.SeedMasterNodes {
-			err = operation.WithMasterServerClient(false, master, vs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+			err = operation.WithMasterServerClient(false, master, vs.grpcDialOptions, func(masterClient master_pb.SeaweedClient) error {
 				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 				if err != nil {
 					return fmt.Errorf("get master %s configuration: %v", master, err)
@@ -51,7 +51,7 @@ func (vs *VolumeServer) heartbeat() {
 	vs.store.SetDataCenter(vs.dataCenter)
 	vs.store.SetRack(vs.rack)
 
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.volume")
+	grpcDialOptions := security.LoadGrpcClientOptions(util.GetViper(), "grpc.volume")
 
 	var err error
 	var newLeader pb.ServerAddress
@@ -64,7 +64,7 @@ func (vs *VolumeServer) heartbeat() {
 				master = newLeader
 			}
 			vs.store.MasterAddress = master
-			newLeader, err = vs.doHeartbeat(master, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)
+			newLeader, err = vs.doHeartbeat(master, grpcDialOptions, time.Duration(vs.pulseSeconds)*time.Second)
 			if err != nil {
 				glog.V(0).Infof("heartbeat error: %v", err)
 				time.Sleep(time.Duration(vs.pulseSeconds) * time.Second)
@@ -87,12 +87,12 @@ func (vs *VolumeServer) StopHeartbeat() (isAlreadyStopping bool) {
 	return false
 }
 
-func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader pb.ServerAddress, err error) {
+func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOptions []grpc.DialOption, sleepInterval time.Duration) (newLeader pb.ServerAddress, err error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	grpcConection, err := pb.GrpcDial(ctx, masterAddress.ToGrpcAddress(), grpcDialOption)
+	grpcConection, err := pb.GrpcDial(ctx, masterAddress.ToGrpcAddress(), grpcDialOptions...)
 	if err != nil {
 		return "", fmt.Errorf("fail to dial %s : %v", masterAddress, err)
 	}

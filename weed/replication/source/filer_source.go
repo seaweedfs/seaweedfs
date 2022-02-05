@@ -22,11 +22,11 @@ type ReplicationSource interface {
 }
 
 type FilerSource struct {
-	grpcAddress    string
-	grpcDialOption grpc.DialOption
-	Dir            string
-	address        string
-	proxyByFiler   bool
+	grpcAddress     string
+	grpcDialOptions []grpc.DialOption
+	Dir             string
+	address         string
+	proxyByFiler    bool
 }
 
 func (fs *FilerSource) Initialize(configuration util.Configuration, prefix string) error {
@@ -45,7 +45,7 @@ func (fs *FilerSource) DoInitialize(address, grpcAddress string, dir string, rea
 	}
 	fs.grpcAddress = grpcAddress
 	fs.Dir = dir
-	fs.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
+	fs.grpcDialOptions = security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
 	fs.proxyByFiler = readChunkFromFiler
 	return nil
 }
@@ -123,7 +123,7 @@ func (fs *FilerSource) WithFilerClient(streamingMode bool, fn func(filer_pb.Seaw
 	return pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, fs.grpcAddress, fs.grpcDialOption)
+	}, fs.grpcAddress, fs.grpcDialOptions...)
 
 }
 

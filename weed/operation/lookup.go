@@ -38,12 +38,12 @@ var (
 	vc VidCache // caching of volume locations, re-check if after 10 minutes
 )
 
-func LookupFileId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, fileId string) (fullUrl string, jwt string, err error) {
+func LookupFileId(masterFn GetMasterFn, grpcDialOptions []grpc.DialOption, fileId string) (fullUrl string, jwt string, err error) {
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
 		return "", jwt, errors.New("Invalid fileId " + fileId)
 	}
-	lookup, lookupError := LookupVolumeId(masterFn, grpcDialOption, parts[0])
+	lookup, lookupError := LookupVolumeId(masterFn, grpcDialOptions, parts[0])
 	if lookupError != nil {
 		return "", jwt, lookupError
 	}
@@ -53,13 +53,13 @@ func LookupFileId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, fileId s
 	return "http://" + lookup.Locations[rand.Intn(len(lookup.Locations))].Url + "/" + fileId, lookup.Jwt, nil
 }
 
-func LookupVolumeId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vid string) (*LookupResult, error) {
-	results, err := LookupVolumeIds(masterFn, grpcDialOption, []string{vid})
+func LookupVolumeId(masterFn GetMasterFn, grpcDialOptions []grpc.DialOption, vid string) (*LookupResult, error) {
+	results, err := LookupVolumeIds(masterFn, grpcDialOptions, []string{vid})
 	return results[vid], err
 }
 
 // LookupVolumeIds find volume locations by cache and actual lookup
-func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids []string) (map[string]*LookupResult, error) {
+func LookupVolumeIds(masterFn GetMasterFn, grpcDialOptions []grpc.DialOption, vids []string) (map[string]*LookupResult, error) {
 	ret := make(map[string]*LookupResult)
 	var unknown_vids []string
 
@@ -79,7 +79,7 @@ func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids 
 
 	//only query unknown_vids
 
-	err := WithMasterServerClient(false, masterFn(), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+	err := WithMasterServerClient(false, masterFn(), grpcDialOptions, func(masterClient master_pb.SeaweedClient) error {
 
 		req := &master_pb.LookupVolumeRequest{
 			VolumeOrFileIds: unknown_vids,

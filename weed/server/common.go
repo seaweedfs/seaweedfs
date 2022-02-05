@@ -116,7 +116,7 @@ func debug(params ...interface{}) {
 	glog.V(4).Infoln(params...)
 }
 
-func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption) {
+func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn operation.GetMasterFn, grpcDialOptions ...grpc.DialOption) {
 	m := make(map[string]interface{})
 	if r.Method != "POST" {
 		writeJsonError(w, r, http.StatusMethodNotAllowed, errors.New("Only submit via POST!"))
@@ -151,7 +151,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn ope
 		Ttl:         r.FormValue("ttl"),
 		DiskType:    r.FormValue("disk"),
 	}
-	assignResult, ae := operation.Assign(masterFn, grpcDialOption, ar)
+	assignResult, ae := operation.Assign(masterFn, grpcDialOptions, ar)
 	if ae != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, ae)
 		return

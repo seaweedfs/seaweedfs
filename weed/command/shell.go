@@ -35,7 +35,7 @@ var cmdShell = &Command{
 func runShell(command *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
-	shellOptions.GrpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
+	shellOptions.GrpcDialOptions = security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
 
 	if *shellOptions.Masters == "" {
 		util.LoadConfiguration("shell", false)

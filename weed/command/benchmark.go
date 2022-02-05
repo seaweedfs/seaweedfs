@@ -38,7 +38,7 @@ type BenchmarkOptions struct {
 	diskType         *string
 	cpuprofile       *string
 	maxCpu           *int
-	grpcDialOption   grpc.DialOption
+	grpcDialOptions  []grpc.DialOption
 	masterClient     *wdclient.MasterClient
 	fsync            *bool
 	useTcp           *bool
@@ -113,7 +113,7 @@ var (
 func runBenchmark(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
-	b.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
+	b.grpcDialOptions = security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
 
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.Version(), runtime.GOOS, runtime.GOARCH)
 	if *b.maxCpu < 1 {
@@ -129,7 +129,7 @@ func runBenchmark(cmd *Command, args []string) bool {
 		defer pprof.StopCPUProfile()
 	}
 
-	b.masterClient = wdclient.NewMasterClient(b.grpcDialOption, "client", "", "", pb.ServerAddresses(*b.masters).ToAddresses())
+	b.masterClient = wdclient.NewMasterClient(b.grpcDialOptions, "client", "", "", pb.ServerAddresses(*b.masters).ToAddresses())
 	go b.masterClient.KeepConnectedToMaster()
 	b.masterClient.WaitUntilConnected()
 
@@ -212,7 +212,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 				}
 				var jwtAuthorization security.EncodedJwt
 				if isSecure {
-					jwtAuthorization = operation.LookupJwt(b.masterClient.GetMaster(), b.grpcDialOption, df.fp.Fid)
+					jwtAuthorization = operation.LookupJwt(b.masterClient.GetMaster(), b.grpcDialOptions, df.fp.Fid)
 				}
 				if e := util.Delete(fmt.Sprintf("http://%s/%s", df.fp.Server, df.fp.Fid), string(jwtAuthorization)); e == nil {
 					s.completed++
@@ -242,7 +242,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 			Replication: *b.replication,
 			DiskType:    *b.diskType,
 		}
-		if assignResult, err := operation.Assign(b.masterClient.GetMaster, b.grpcDialOption, ar); err == nil {
+		if assignResult, err := operation.Assign(b.masterClient.GetMaster, b.grpcDialOptions, ar); err == nil {
 			fp.Server, fp.Fid, fp.Collection = assignResult.Url, assignResult.Fid, *b.collection
 			if !isSecure && assignResult.Auth != "" {
 				isSecure = true
@@ -255,7 +255,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 				} else {
 					s.failed++
 				}
-			} else if _, err := fp.Upload(0, b.masterClient.GetMaster, false, assignResult.Auth, b.grpcDialOption); err == nil {
+			} else if _, err := fp.Upload(0, b.masterClient.GetMaster, false, assignResult.Auth, b.grpcDialOptions...); err == nil {
 				if random.Intn(100) < *b.deletePercentage {
 					s.total++
 					delayedDeleteChan <- &delayedFile{time.Now().Add(time.Second), fp}

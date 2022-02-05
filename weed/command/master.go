@@ -132,7 +132,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		glog.Fatalf("Master startup error: %v", e)
 	}
 	// start raftServer
-	raftServer, err := weed_server.NewRaftServer(security.LoadClientTLS(util.GetViper(), "grpc.master"),
+	raftServer, err := weed_server.NewRaftServer(security.LoadGrpcClientOptions(util.GetViper(), "grpc.master"),
 		peers, myMasterAddress, util.ResolvePath(*masterOption.metaFolder), ms.Topo, *masterOption.raftResumeState)
 	if raftServer == nil {
 		glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
@@ -145,7 +145,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}
-	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.master"))
+	grpcS := pb.NewGrpcServer(security.LoadGrpcServerOptions(util.GetViper(), "grpc.master")...)
 	master_pb.RegisterSeaweedServer(grpcS, ms)
 	protobuf.RegisterRaftServer(grpcS, raftServer)
 	reflection.Register(grpcS)

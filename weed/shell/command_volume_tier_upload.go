@@ -102,13 +102,13 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 		return fmt.Errorf("volume %d not found", vid)
 	}
 
-	err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, needle.VolumeId(vid), locations, false)
+	err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOptions, needle.VolumeId(vid), locations, false)
 	if err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 	}
 
 	// copy the .dat file to remote tier
-	err = uploadDatToRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, locations[0].ServerAddress(), dest, keepLocalDatFile)
+	err = uploadDatToRemoteTier(commandEnv.option.GrpcDialOptions, writer, needle.VolumeId(vid), collection, locations[0].ServerAddress(), dest, keepLocalDatFile)
 	if err != nil {
 		return fmt.Errorf("copy dat file for volume %d on %s to %s: %v", vid, locations[0].Url, dest, err)
 	}
@@ -116,9 +116,9 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 	return nil
 }
 
-func uploadDatToRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress, dest string, keepLocalDatFile bool) error {
+func uploadDatToRemoteTier(grpcDialOptions []grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress, dest string, keepLocalDatFile bool) error {
 
-	err := operation.WithVolumeServerClient(true, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClient(true, sourceVolumeServer, grpcDialOptions, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		stream, copyErr := volumeServerClient.VolumeTierMoveDatToRemote(context.Background(), &volume_server_pb.VolumeTierMoveDatToRemoteRequest{
 			VolumeId:               uint32(volumeId),
 			Collection:             collection,

@@ -66,7 +66,7 @@ type MasterServer struct {
 	clientChansLock sync.RWMutex
 	clientChans     map[string]chan *master_pb.KeepConnectedResponse
 
-	grpcDialOption grpc.DialOption
+	grpcDialOptions []grpc.DialOption
 
 	MasterClient *wdclient.MasterClient
 
@@ -100,14 +100,14 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddre
 		preallocateSize = int64(option.VolumeSizeLimitMB) * (1 << 20)
 	}
 
-	grpcDialOption := security.LoadClientTLS(v, "grpc.master")
+	grpcDialOptions := security.LoadGrpcClientOptions(v, "grpc.master")
 	ms := &MasterServer{
 		option:          option,
 		preallocateSize: preallocateSize,
 		vgCh:            make(chan *topology.VolumeGrowRequest, 1<<6),
 		clientChans:     make(map[string]chan *master_pb.KeepConnectedResponse),
-		grpcDialOption:  grpcDialOption,
-		MasterClient:    wdclient.NewMasterClient(grpcDialOption, cluster.MasterType, option.Master, "", peers),
+		grpcDialOptions: grpcDialOptions,
+		MasterClient:    wdclient.NewMasterClient(grpcDialOptions, cluster.MasterType, option.Master, "", peers),
 		adminLocks:      NewAdminLocks(),
 		Cluster:         cluster.NewCluster(),
 	}
@@ -144,7 +144,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddre
 	}
 
 	ms.Topo.StartRefreshWritableVolumes(
-		ms.grpcDialOption,
+		ms.grpcDialOptions,
 		ms.option.GarbageThreshold,
 		v.GetFloat64("master.volume_growth.threshold"),
 		ms.preallocateSize,
@@ -230,7 +230,7 @@ func (ms *MasterServer) startAdminScripts() {
 	masterAddress := string(ms.option.Master)
 
 	var shellOptions shell.ShellOptions
-	shellOptions.GrpcDialOption = security.LoadClientTLS(v, "grpc.master")
+	shellOptions.GrpcDialOptions = security.LoadGrpcClientOptions(v, "grpc.master")
 	shellOptions.Masters = &masterAddress
 
 	shellOptions.Directory = "/"

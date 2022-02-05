@@ -51,7 +51,7 @@ func (f *Filer) loopProcessingDeletion() {
 					fileIds = fileIds[:0]
 				}
 				deletionCount = len(toDeleteFileIds)
-				_, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
+				_, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOptions, toDeleteFileIds, lookupFunc)
 				if err != nil {
 					if !strings.Contains(err.Error(), "already deleted") {
 						glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
@@ -83,7 +83,7 @@ func (f *Filer) doDeleteFileIds(fileIds []string) {
 			fileIds = fileIds[:0]
 		}
 		deletionCount := len(toDeleteFileIds)
-		_, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
+		_, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOptions, toDeleteFileIds, lookupFunc)
 		if err != nil {
 			if !strings.Contains(err.Error(), "already deleted") {
 				glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)

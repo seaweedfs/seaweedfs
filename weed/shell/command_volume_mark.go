@@ -52,5 +52,5 @@ func (c *commandVolumeMark) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	volumeId := needle.VolumeId(*volumeIdInt)
 
-	return markVolumeWritable(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, markWritable)
+	return markVolumeWritable(commandEnv.option.GrpcDialOptions, volumeId, sourceVolumeServer, markWritable)
 }

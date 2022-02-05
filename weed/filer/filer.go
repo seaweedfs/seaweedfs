@@ -34,7 +34,7 @@ type Filer struct {
 	Store               VirtualFilerStore
 	MasterClient        *wdclient.MasterClient
 	fileIdDeletionQueue *util.UnboundedQueue
-	GrpcDialOption      grpc.DialOption
+	GrpcDialOptions     []grpc.DialOption
 	DirBucketsPath      string
 	FsyncBuckets        []string
 	buckets             *FilerBuckets
@@ -49,12 +49,12 @@ type Filer struct {
 	UniqueFileId        uint32
 }
 
-func NewFiler(masters []pb.ServerAddress, grpcDialOption grpc.DialOption,
+func NewFiler(masters []pb.ServerAddress, grpcDialOptions []grpc.DialOption,
 	filerHost pb.ServerAddress, collection string, replication string, dataCenter string, notifyFn func()) *Filer {
 	f := &Filer{
-		MasterClient:        wdclient.NewMasterClient(grpcDialOption, cluster.FilerType, filerHost, dataCenter, masters),
+		MasterClient:        wdclient.NewMasterClient(grpcDialOptions, cluster.FilerType, filerHost, dataCenter, masters),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
-		GrpcDialOption:      grpcDialOption,
+		GrpcDialOptions:     grpcDialOptions,
 		FilerConf:           NewFilerConf(),
 		RemoteStorage:       NewFilerRemoteStorage(),
 		UniqueFileId:        uint32(util.RandomInt32()),
@@ -70,7 +70,7 @@ func NewFiler(masters []pb.ServerAddress, grpcDialOption grpc.DialOption,
 
 func (f *Filer) AggregateFromPeers(self pb.ServerAddress) {
 
-	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOption)
+	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOptions...)
 	f.MasterClient.OnPeerUpdate = f.MetaAggregator.OnPeerUpdate
 
 	for _, peerUpdate := range f.ListExistingPeerUpdates() {
@@ -81,7 +81,7 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress) {
 
 func (f *Filer) ListExistingPeerUpdates() (existingNodes []*master_pb.ClusterNodeUpdate) {
 
-	if grpcErr := pb.WithMasterClient(false, f.MasterClient.GetMaster(), f.GrpcDialOption, func(client master_pb.SeaweedClient) error {
+	if grpcErr := pb.WithMasterClient(false, f.MasterClient.GetMaster(), f.GrpcDialOptions, func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.FilerType,
 		})

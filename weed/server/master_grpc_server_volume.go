@@ -52,7 +52,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				go func() {
 					glog.V(1).Infoln("starting automatic volume grow")
 					start := time.Now()
-					_, err := ms.vg.AutomaticGrowByType(req.Option, ms.grpcDialOption, ms.Topo, req.Count)
+					_, err := ms.vg.AutomaticGrowByType(req.Option, ms.grpcDialOptions, ms.Topo, req.Count)
 					glog.V(1).Infoln("finished automatic volume grow, cost ", time.Now().Sub(start))
 					vl.DoneGrowRequest()
 
@@ -268,7 +268,7 @@ func (ms *MasterServer) VacuumVolume(ctx context.Context, req *master_pb.VacuumV
 
 	resp := &master_pb.VacuumVolumeResponse{}
 
-	ms.Topo.Vacuum(ms.grpcDialOption, float64(req.GarbageThreshold), ms.preallocateSize)
+	ms.Topo.Vacuum(ms.grpcDialOptions, float64(req.GarbageThreshold), ms.preallocateSize)
 
 	return resp, nil
 }

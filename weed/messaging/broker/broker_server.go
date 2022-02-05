@@ -24,16 +24,16 @@ type MessageBrokerOption struct {
 
 type MessageBroker struct {
 	messaging_pb.UnimplementedSeaweedMessagingServer
-	option         *MessageBrokerOption
-	grpcDialOption grpc.DialOption
-	topicManager   *TopicManager
+	option          *MessageBrokerOption
+	grpcDialOptions []grpc.DialOption
+	topicManager    *TopicManager
 }
 
-func NewMessageBroker(option *MessageBrokerOption, grpcDialOption grpc.DialOption) (messageBroker *MessageBroker, err error) {
+func NewMessageBroker(option *MessageBrokerOption, grpcDialOptions ...grpc.DialOption) (messageBroker *MessageBroker, err error) {
 
 	messageBroker = &MessageBroker{
-		option:         option,
-		grpcDialOption: grpcDialOption,
+		option:          option,
+		grpcDialOptions: grpcDialOptions,
 	}
 
 	messageBroker.topicManager = NewTopicManager(messageBroker)
@@ -103,13 +103,13 @@ func (broker *MessageBroker) keepConnectedToOneFiler() {
 
 func (broker *MessageBroker) withFilerClient(streamingMode bool, filer pb.ServerAddress, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithFilerClient(streamingMode, filer, broker.grpcDialOption, fn)
+	return pb.WithFilerClient(streamingMode, filer, broker.grpcDialOptions, fn)
 
 }
 
 func (broker *MessageBroker) withMasterClient(streamingMode bool, master pb.ServerAddress, fn func(client master_pb.SeaweedClient) error) error {
 
-	return pb.WithMasterClient(streamingMode, master, broker.grpcDialOption, func(client master_pb.SeaweedClient) error {
+	return pb.WithMasterClient(streamingMode, master, broker.grpcDialOptions, func(client master_pb.SeaweedClient) error {
 		return fn(client)
 	})
 

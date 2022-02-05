@@ -26,9 +26,9 @@ func main() {
 	flag.Parse()
 
 	util.LoadConfiguration("security", false)
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	grpcDialOptions := security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
 
-	genFile(grpcDialOption, 0)
+	genFile(grpcDialOptions, 0)
 
 	go func() {
 		for {
@@ -44,7 +44,7 @@ func main() {
 	for i := 0; i < *repeat; i++ {
 		// create 2 files, and delete one of them
 
-		assignResult, targetUrl := genFile(grpcDialOption, i)
+		assignResult, targetUrl := genFile(grpcDialOptions, i)
 
 		util.Delete(targetUrl, string(assignResult.Auth))
 
@@ -52,8 +52,8 @@ func main() {
 
 }
 
-func genFile(grpcDialOption grpc.DialOption, i int) (*operation.AssignResult, string) {
-	assignResult, err := operation.Assign(func() pb.ServerAddress { return pb.ServerAddress(*master) }, grpcDialOption, &operation.VolumeAssignRequest{
+func genFile(grpcDialOptions []grpc.DialOption, i int) (*operation.AssignResult, string) {
+	assignResult, err := operation.Assign(func() pb.ServerAddress { return pb.ServerAddress(*master) }, grpcDialOptions, &operation.VolumeAssignRequest{
 		Count:       1,
 		Replication: *replication,
 	})

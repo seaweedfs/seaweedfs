@@ -146,14 +146,14 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	filerBucketsPath := "/buckets"
 
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	grpcDialOptions := security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
 
 	// metrics read from the filer
 	var metricsAddress string
 	var metricsIntervalSec int
 
 	for {
-		err := pb.WithGrpcFilerClient(false, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithGrpcFilerClient(false, filerAddress, grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
@@ -182,7 +182,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		Config:           *s3opt.config,
 		DomainName:       *s3opt.domainName,
 		BucketsPath:      filerBucketsPath,
-		GrpcDialOption:   grpcDialOption,
+		GrpcDialOptions:  grpcDialOptions,
 		AllowEmptyFolder: *s3opt.allowEmptyFolder,
 	})
 	if s3ApiServer_err != nil {

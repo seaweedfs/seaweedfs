@@ -131,9 +131,9 @@ func UnmarshalRemoteStorageMappings(oldContent []byte) (mappings *remote_pb.Remo
 	return
 }
 
-func ReadRemoteStorageConf(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, storageName string) (conf *remote_pb.RemoteConf, readErr error) {
+func ReadRemoteStorageConf(grpcDialOptions []grpc.DialOption, filerAddress pb.ServerAddress, storageName string) (conf *remote_pb.RemoteConf, readErr error) {
 	var oldContent []byte
-	if readErr = pb.WithFilerClient(false, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	if readErr = pb.WithFilerClient(false, filerAddress, grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 		oldContent, readErr = ReadInsideFiler(client, DirectoryEtcRemote, storageName+REMOTE_STORAGE_CONF_SUFFIX)
 		return readErr
 	}); readErr != nil {
@@ -150,9 +150,9 @@ func ReadRemoteStorageConf(grpcDialOption grpc.DialOption, filerAddress pb.Serve
 	return
 }
 
-func DetectMountInfo(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, dir string) (*remote_pb.RemoteStorageMapping, string, *remote_pb.RemoteStorageLocation, *remote_pb.RemoteConf, error) {
+func DetectMountInfo(grpcDialOptions []grpc.DialOption, filerAddress pb.ServerAddress, dir string) (*remote_pb.RemoteStorageMapping, string, *remote_pb.RemoteStorageLocation, *remote_pb.RemoteConf, error) {
 
-	mappings, listErr := ReadMountMappings(grpcDialOption, filerAddress)
+	mappings, listErr := ReadMountMappings(grpcDialOptions, filerAddress)
 	if listErr != nil {
 		return nil, "", nil, nil, listErr
 	}
@@ -172,7 +172,7 @@ func DetectMountInfo(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddre
 	}
 
 	// find remote storage configuration
-	remoteStorageConf, err := ReadRemoteStorageConf(grpcDialOption, filerAddress, remoteStorageMountedLocation.Name)
+	remoteStorageConf, err := ReadRemoteStorageConf(grpcDialOptions, filerAddress, remoteStorageMountedLocation.Name)
 	if err != nil {
 		return mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, err
 	}

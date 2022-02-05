@@ -64,11 +64,11 @@ func (msgBrokerOpt *MessageBrokerOptions) startQueueServer() bool {
 
 	filerAddress := pb.ServerAddress(*msgBrokerOpt.filer)
 
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.msg_broker")
+	grpcDialOptions := security.LoadGrpcClientOptions(util.GetViper(), "grpc.msg_broker")
 	cipher := false
 
 	for {
-		err := pb.WithGrpcFilerClient(false, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithGrpcFilerClient(false, filerAddress, grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
@@ -92,14 +92,14 @@ func (msgBrokerOpt *MessageBrokerOptions) startQueueServer() bool {
 		Ip:                 *msgBrokerOpt.ip,
 		Port:               *msgBrokerOpt.port,
 		Cipher:             cipher,
-	}, grpcDialOption)
+	}, grpcDialOptions...)
 
 	// start grpc listener
 	grpcL, err := util.NewListener(util.JoinHostPort("", *msgBrokerOpt.port), 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", *msgBrokerOpt.port, err)
 	}
-	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.msg_broker"))
+	grpcS := pb.NewGrpcServer(security.LoadGrpcServerOptions(util.GetViper(), "grpc.msg_broker")...)
 	messaging_pb.RegisterSeaweedMessagingServer(grpcS, qs)
 	reflection.Register(grpcS)
 	grpcS.Serve(grpcL)

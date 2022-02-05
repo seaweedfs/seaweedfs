@@ -30,9 +30,9 @@ type FilerConf struct {
 	rules ptrie.Trie
 }
 
-func ReadFilerConf(filerGrpcAddress pb.ServerAddress, grpcDialOption grpc.DialOption, masterClient *wdclient.MasterClient) (*FilerConf, error) {
+func ReadFilerConf(filerGrpcAddress pb.ServerAddress, grpcDialOptions []grpc.DialOption, masterClient *wdclient.MasterClient) (*FilerConf, error) {
 	var buf bytes.Buffer
-	if err := pb.WithGrpcFilerClient(false, filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	if err := pb.WithGrpcFilerClient(false, filerGrpcAddress, grpcDialOptions, func(client filer_pb.SeaweedFilerClient) error {
 		if masterClient != nil {
 			return ReadEntry(masterClient, client, DirectoryEtcSeaweedFS, FilerConfName, &buf)
 		} else {

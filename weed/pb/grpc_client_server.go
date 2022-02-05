@@ -198,21 +198,21 @@ func GrpcAddressToServerAddress(grpcAddress string) (serverAddress string) {
 	return util.JoinHostPort(host, port)
 }
 
-func WithMasterClient(streamingMode bool, master ServerAddress, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) error {
+func WithMasterClient(streamingMode bool, master ServerAddress, grpcDialOptions []grpc.DialOption, fn func(client master_pb.SeaweedClient) error) error {
 	return WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 		client := master_pb.NewSeaweedClient(grpcConnection)
 		return fn(client)
-	}, master.ToGrpcAddress(), grpcDialOption)
+	}, master.ToGrpcAddress(), grpcDialOptions...)
 
 }
 
-func WithOneOfGrpcMasterClients(streamingMode bool, masterGrpcAddresses []ServerAddress, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) (err error) {
+func WithOneOfGrpcMasterClients(streamingMode bool, masterGrpcAddresses []ServerAddress, grpcDialOptions []grpc.DialOption, fn func(client master_pb.SeaweedClient) error) (err error) {
 
 	for _, masterGrpcAddress := range masterGrpcAddresses {
 		err = WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 			client := master_pb.NewSeaweedClient(grpcConnection)
 			return fn(client)
-		}, masterGrpcAddress.ToGrpcAddress(), grpcDialOption)
+		}, masterGrpcAddress.ToGrpcAddress(), grpcDialOptions...)
 		if err == nil {
 			return nil
 		}
@@ -230,28 +230,28 @@ func WithBrokerGrpcClient(streamingMode bool, brokerGrpcAddress string, grpcDial
 
 }
 
-func WithFilerClient(streamingMode bool, filer ServerAddress, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) error {
+func WithFilerClient(streamingMode bool, filer ServerAddress, grpcDialOptions []grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) error {
 
-	return WithGrpcFilerClient(streamingMode, filer, grpcDialOption, fn)
+	return WithGrpcFilerClient(streamingMode, filer, grpcDialOptions, fn)
 
 }
 
-func WithGrpcFilerClient(streamingMode bool, filerGrpcAddress ServerAddress, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) error {
+func WithGrpcFilerClient(streamingMode bool, filerGrpcAddress ServerAddress, grpcDialOptions []grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) error {
 
 	return WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, filerGrpcAddress.ToGrpcAddress(), grpcDialOption)
+	}, filerGrpcAddress.ToGrpcAddress(), grpcDialOptions...)
 
 }
 
-func WithOneOfGrpcFilerClients(streamingMode bool, filerAddresses []ServerAddress, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) (err error) {
+func WithOneOfGrpcFilerClients(streamingMode bool, filerAddresses []ServerAddress, grpcDialOptions []grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) (err error) {
 
 	for _, filerAddress := range filerAddresses {
 		err = WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 			client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 			return fn(client)
-		}, filerAddress.ToGrpcAddress(), grpcDialOption)
+		}, filerAddress.ToGrpcAddress(), grpcDialOptions...)
 		if err == nil {
 			return nil
 		}

@@ -25,7 +25,7 @@ var (
 	serversStr       = flag.String("volumeServers", "", "comma-delimited list of volume servers to diff the volume against")
 	volumeId         = flag.Int("volumeId", -1, "a volume id to diff from servers")
 	volumeCollection = flag.String("collection", "", "the volume collection name")
-	grpcDialOption   grpc.DialOption
+	grpcDialOptions  []grpc.DialOption
 )
 
 /*
@@ -41,7 +41,7 @@ func main() {
 	flag.Parse()
 
 	util.LoadConfiguration("security", false)
-	grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
+	grpcDialOptions = security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
 
 	vid := uint32(*volumeId)
 	servers := pb.ServerAddresses(*serversStr).ToAddresses()
@@ -122,7 +122,7 @@ type needleState struct {
 
 func getVolumeFiles(v uint32, addr pb.ServerAddress) (map[types.NeedleId]needleState, int64, error) {
 	var idxFile *bytes.Reader
-	err := operation.WithVolumeServerClient(false, addr, grpcDialOption, func(vs volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClient(false, addr, grpcDialOptions, func(vs volume_server_pb.VolumeServerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		copyFileClient, err := vs.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
@@ -180,7 +180,7 @@ func getVolumeFiles(v uint32, addr pb.ServerAddress) (map[types.NeedleId]needleS
 
 func getNeedleFileId(v uint32, nid types.NeedleId, addr pb.ServerAddress) (string, error) {
 	var id string
-	err := operation.WithVolumeServerClient(false, addr, grpcDialOption, func(vs volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClient(false, addr, grpcDialOptions, func(vs volume_server_pb.VolumeServerClient) error {
 		resp, err := vs.VolumeNeedleStatus(context.Background(), &volume_server_pb.VolumeNeedleStatusRequest{
 			VolumeId: v,
 			NeedleId: uint64(nid),

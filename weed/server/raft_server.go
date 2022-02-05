@@ -52,7 +52,7 @@ func (s StateMachine) Recovery(data []byte) error {
 	return nil
 }
 
-func NewRaftServer(grpcDialOption grpc.DialOption, peers []pb.ServerAddress, serverAddr pb.ServerAddress, dataDir string, topo *topology.Topology, raftResumeState bool) (*RaftServer, error) {
+func NewRaftServer(grpcDialOptions []grpc.DialOption, peers []pb.ServerAddress, serverAddr pb.ServerAddress, dataDir string, topo *topology.Topology, raftResumeState bool) (*RaftServer, error) {
 	s := &RaftServer{
 		peers:      peers,
 		serverAddr: serverAddr,
@@ -67,7 +67,7 @@ func NewRaftServer(grpcDialOption grpc.DialOption, peers []pb.ServerAddress, ser
 	raft.RegisterCommand(&topology.MaxVolumeIdCommand{})
 
 	var err error
-	transporter := raft.NewGrpcTransporter(grpcDialOption)
+	transporter := raft.NewGrpcTransporter(grpcDialOptions...)
 	glog.V(0).Infof("Starting RaftServer with %v", serverAddr)
 
 	if !raftResumeState {

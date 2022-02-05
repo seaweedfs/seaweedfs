@@ -7,9 +7,9 @@ import (
 	"google.golang.org/grpc"
 )
 
-func GetVolumeSyncStatus(server pb.ServerAddress, grpcDialOption grpc.DialOption, vid uint32) (resp *volume_server_pb.VolumeSyncStatusResponse, err error) {
+func GetVolumeSyncStatus(server pb.ServerAddress, grpcDialOptions []grpc.DialOption, vid uint32) (resp *volume_server_pb.VolumeSyncStatusResponse, err error) {
 
-	WithVolumeServerClient(false, server, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+	WithVolumeServerClient(false, server, grpcDialOptions, func(client volume_server_pb.VolumeServerClient) error {
 
 		resp, err = client.VolumeSyncStatus(context.Background(), &volume_server_pb.VolumeSyncStatusRequest{
 			VolumeId: vid,

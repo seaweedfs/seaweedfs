@@ -33,7 +33,7 @@ type VolumeServer struct {
 	rack            string
 	store           *storage.Store
 	guard           *security.Guard
-	grpcDialOption  grpc.DialOption
+	grpcDialOptions []grpc.DialOption
 
 	needleMapKind           storage.NeedleMapKind
 	FixJpgOrientation       bool
@@ -79,7 +79,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		needleMapKind:                 needleMapKind,
 		FixJpgOrientation:             fixJpgOrientation,
 		ReadMode:                      readMode,
-		grpcDialOption:                security.LoadClientTLS(util.GetViper(), "grpc.volume"),
+		grpcDialOptions:               security.LoadGrpcClientOptions(util.GetViper(), "grpc.volume"),
 		compactionBytePerSecond:       int64(compactionMBPerSecond) * 1024 * 1024,
 		fileSizeLimitBytes:            int64(fileSizeLimitMB) * 1024 * 1024,
 		isHeartbeating:                true,
@@ -93,7 +93,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 
 	vs.checkWithMaster()
 
-	vs.store = storage.NewStore(vs.grpcDialOption, ip, port, grpcPort, publicUrl, folders, maxCounts, minFreeSpaces, idxFolder, vs.needleMapKind, diskTypes)
+	vs.store = storage.NewStore(vs.grpcDialOptions, ip, port, grpcPort, publicUrl, folders, maxCounts, minFreeSpaces, idxFolder, vs.needleMapKind, diskTypes)
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)

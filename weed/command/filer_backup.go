@@ -52,12 +52,12 @@ func runFilerBackup(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("replication", true)
 
-	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	grpcDialOptions := security.LoadGrpcClientOptions(util.GetViper(), "grpc.client")
 
 	clientId := util.RandomInt32()
 
 	for {
-		err := doFilerBackup(grpcDialOption, &filerBackupOptions, clientId)
+		err := doFilerBackup(grpcDialOptions, &filerBackupOptions, clientId)
 		if err != nil {
 			glog.Errorf("backup from %s: %v", *filerBackupOptions.filer, err)
 			time.Sleep(1747 * time.Millisecond)
@@ -71,7 +71,7 @@ const (
 	BackupKeyPrefix = "backup."
 )
 
-func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOptions, clientId int32) error {
+func doFilerBackup(grpcDialOptions []grpc.DialOption, backupOption *FilerBackupOptions, clientId int32) error {
 
 	// find data sink
 	config := util.GetViper()
@@ -90,7 +90,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	startFrom := time.Unix(0, 0)
 	sinkId := util.HashStringToLong(dataSink.GetName() + dataSink.GetSinkToDirectory())
 	if timeAgo.Milliseconds() == 0 {
-		lastOffsetTsNs, err := getOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId))
+		lastOffsetTsNs, err := getOffset(grpcDialOptions, sourceFiler, BackupKeyPrefix, int32(sinkId))
 		if err != nil {
 			glog.V(0).Infof("starting from %v", startFrom)
 		} else {
@@ -111,10 +111,10 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 
 	processEventFnWithOffset := pb.AddOffsetFunc(processEventFn, 3*time.Second, func(counter int64, lastTsNs int64) error {
 		glog.V(0).Infof("backup %s progressed to %v %0.2f/sec", sourceFiler, time.Unix(0, lastTsNs), float64(counter)/float64(3))
-		return setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId), lastTsNs)
+		return setOffset(grpcDialOptions, sourceFiler, BackupKeyPrefix, int32(sinkId), lastTsNs)
 	})
 
-	return pb.FollowMetadata(sourceFiler, grpcDialOption, "backup_"+dataSink.GetName(), clientId,
+	return pb.FollowMetadata(sourceFiler, grpcDialOptions, "backup_"+dataSink.GetName(), clientId,
 		sourcePath, nil, startFrom.UnixNano(), 0, processEventFnWithOffset, false)
 
 }

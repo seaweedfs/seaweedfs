@@ -29,10 +29,10 @@ func ParseFileId(fid string) (vid string, key_cookie string, err error) {
 }
 
 // DeleteFiles batch deletes a list of fileIds
-func DeleteFiles(masterFn GetMasterFn, usePublicUrl bool, grpcDialOption grpc.DialOption, fileIds []string) ([]*volume_server_pb.DeleteResult, error) {
+func DeleteFiles(masterFn GetMasterFn, usePublicUrl bool, grpcDialOptions []grpc.DialOption, fileIds []string) ([]*volume_server_pb.DeleteResult, error) {
 
 	lookupFunc := func(vids []string) (results map[string]*LookupResult, err error) {
-		results, err = LookupVolumeIds(masterFn, grpcDialOption, vids)
+		results, err = LookupVolumeIds(masterFn, grpcDialOptions, vids)
 		if err == nil && usePublicUrl {
 			for _, result := range results {
 				for _, loc := range result.Locations {
@@ -43,11 +43,11 @@ func DeleteFiles(masterFn GetMasterFn, usePublicUrl bool, grpcDialOption grpc.Di
 		return
 	}
 
-	return DeleteFilesWithLookupVolumeId(grpcDialOption, fileIds, lookupFunc)
+	return DeleteFilesWithLookupVolumeId(grpcDialOptions, fileIds, lookupFunc)
 
 }
 
-func DeleteFilesWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []string, lookupFunc func(vid []string) (map[string]*LookupResult, error)) ([]*volume_server_pb.DeleteResult, error) {
+func DeleteFilesWithLookupVolumeId(grpcDialOptions []grpc.DialOption, fileIds []string, lookupFunc func(vid []string) (map[string]*LookupResult, error)) ([]*volume_server_pb.DeleteResult, error) {
 
 	var ret []*volume_server_pb.DeleteResult
 
@@ -102,7 +102,7 @@ func DeleteFilesWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []str
 		go func(server pb.ServerAddress, fidList []string) {
 			defer wg.Done()
 
-			if deleteResults, deleteErr := DeleteFilesAtOneVolumeServer(server, grpcDialOption, fidList, false); deleteErr != nil {
+			if deleteResults, deleteErr := DeleteFilesAtOneVolumeServer(server, grpcDialOptions, fidList, false); deleteErr != nil {
 				err = deleteErr
 			} else if deleteResults != nil {
 				resultChan <- deleteResults
@@ -121,9 +121,9 @@ func DeleteFilesWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []str
 }
 
 // DeleteFilesAtOneVolumeServer deletes a list of files that is on one volume server via gRpc
-func DeleteFilesAtOneVolumeServer(volumeServer pb.ServerAddress, grpcDialOption grpc.DialOption, fileIds []string, includeCookie bool) (ret []*volume_server_pb.DeleteResult, err error) {
+func DeleteFilesAtOneVolumeServer(volumeServer pb.ServerAddress, grpcDialOptions []grpc.DialOption, fileIds []string, includeCookie bool) (ret []*volume_server_pb.DeleteResult, err error) {
 
-	err = WithVolumeServerClient(false, volumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	err = WithVolumeServerClient(false, volumeServer, grpcDialOptions, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
 		req := &volume_server_pb.BatchDeleteRequest{
 			FileIds:         fileIds,
