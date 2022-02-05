@@ -2,6 +2,7 @@ package images
 
 import (
 	"bytes"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"os"
 	"testing"
 )
