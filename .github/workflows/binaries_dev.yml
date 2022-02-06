@@ -20,12 +20,12 @@ jobs:
           assets: |
             weed-*
 
-  build_dev_linux:
+  build_dev_linux_windows:
     needs: cleanup
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [linux]
+        goos: [linux, windows]
         goarch: [amd64]
 
     steps:
@@ -68,7 +68,7 @@ jobs:
           asset_name: "weed-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
 
   build_dev_darwin:
-    needs: build_dev_linux
+    needs: build_dev_linux_windows
     runs-on: ubuntu-latest
     strategy:
       matrix:

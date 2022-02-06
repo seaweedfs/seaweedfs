@@ -145,22 +145,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(volumeIdToServer map[uint
 		cookie  uint32
 		path    util.FullPath
 	}
-	return doTraverseBfsAndSaving(c.env, nil, filerPath, false, func(outputChan chan interface{}) {
-		buffer := make([]byte, 16)
-		for item := range outputChan {
-			i := item.(*Item)
-			if f, ok := files[i.vid]; ok {
-				util.Uint64toBytes(buffer, i.fileKey)
-				util.Uint32toBytes(buffer[8:], i.cookie)
-				util.Uint32toBytes(buffer[12:], uint32(len(i.path)))
-				f.Write(buffer)
-				f.Write([]byte(i.path))
-				// fmt.Fprintf(writer, "%d,%x%08x %d %s\n", i.vid, i.fileKey, i.cookie, len(i.path), i.path)
-			} else {
-				fmt.Fprintf(writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
-			}
-		}
-	}, func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
+	return doTraverseBfsAndSaving(c.env, nil, filerPath, false, func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 		if verbose && entry.Entry.IsDirectory {
 			fmt.Fprintf(writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
 		}
@@ -178,6 +163,21 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(volumeIdToServer map[uint
 			}
 		}
 		return nil
+	}, func(outputChan chan interface{}) {
+		buffer := make([]byte, 16)
+		for item := range outputChan {
+			i := item.(*Item)
+			if f, ok := files[i.vid]; ok {
+				util.Uint64toBytes(buffer, i.fileKey)
+				util.Uint32toBytes(buffer[8:], i.cookie)
+				util.Uint32toBytes(buffer[12:], uint32(len(i.path)))
+				f.Write(buffer)
+				f.Write([]byte(i.path))
+				// fmt.Fprintf(writer, "%d,%x%08x %d %s\n", i.vid, i.fileKey, i.cookie, len(i.path), i.path)
+			} else {
+				fmt.Fprintf(writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
+			}
+		}
 	})
 
 }
@@ -307,14 +307,7 @@ func (c *commandVolumeFsck) collectFilerFileIds(tempFolder string, volumeIdToSer
 		vid     uint32
 		fileKey uint64
 	}
-	return doTraverseBfsAndSaving(c.env, nil, "/", false, func(outputChan chan interface{}) {
-		buffer := make([]byte, 8)
-		for item := range outputChan {
-			i := item.(*Item)
-			util.Uint64toBytes(buffer, i.fileKey)
-			files[i.vid].Write(buffer)
-		}
-	}, func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
+	return doTraverseBfsAndSaving(c.env, nil, "/", false, func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 		dChunks, mChunks, resolveErr := filer.ResolveChunkManifest(filer.LookupFn(c.env), entry.Entry.Chunks, 0, math.MaxInt64)
 		if resolveErr != nil {
 			if verbose {
@@ -330,6 +323,13 @@ func (c *commandVolumeFsck) collectFilerFileIds(tempFolder string, volumeIdToSer
 			}
 		}
 		return nil
+	}, func(outputChan chan interface{}) {
+		buffer := make([]byte, 8)
+		for item := range outputChan {
+			i := item.(*Item)
+			util.Uint64toBytes(buffer, i.fileKey)
+			files[i.vid].Write(buffer)
+		}
 	})
 }
 

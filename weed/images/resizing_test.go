@@ -2,6 +2,7 @@ package images
 
 import (
 	"bytes"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"os"
 	"testing"
 )
@@ -15,7 +16,7 @@ func TestResizing(t *testing.T) {
 	buf := new(bytes.Buffer)
 	buf.ReadFrom(resized)
 
-	os.WriteFile("resized1.png", buf.Bytes(), 0644)
+	util.WriteFile("resized1.png", buf.Bytes(), 0644)
 
 	os.Remove("resized1.png")
 

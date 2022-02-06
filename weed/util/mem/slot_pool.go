@@ -1,6 +1,10 @@
 package mem
 
-import "sync"
+import (
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"sync"
+	"sync/atomic"
+)
 
 var pools []*sync.Pool
 
@@ -10,7 +14,7 @@ const (
 
 func bitCount(size int) (count int) {
 	for ; size > min_size; count++ {
-		size = size >> 1
+		size = (size + 1) >> 1
 	}
 	return
 }
@@ -34,11 +38,17 @@ func getSlotPool(size int) *sync.Pool {
 	return pools[index]
 }
 
+var total int64
+
 func Allocate(size int) []byte {
+	newVal := atomic.AddInt64(&total, 1)
+	glog.V(4).Infof("++> %d", newVal)
 	slab := *getSlotPool(size).Get().(*[]byte)
 	return slab[:size]
 }
 
 func Free(buf []byte) {
+	newVal := atomic.AddInt64(&total, -1)
+	glog.V(4).Infof("--> %d", newVal)
 	getSlotPool(cap(buf)).Put(&buf)
 }

@@ -264,7 +264,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 						// update directory property
 						return nil
 					}
-					if filer.IsSameData(message.OldEntry, message.NewEntry) {
+					if message.OldEntry.RemoteEntry != nil && filer.IsSameData(message.OldEntry, message.NewEntry) {
 						glog.V(2).Infof("update meta: %+v", resp)
 						oldDest := toRemoteStorageLocation(oldBucket, util.NewFullPath(resp.Directory, message.OldEntry.Name), oldRemoteStorageMountLocation)
 						return client.UpdateFileMetadata(oldDest, message.OldEntry, message.NewEntry)

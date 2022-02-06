@@ -45,7 +45,7 @@ func (c *commandCollectionList) Do(args []string, commandEnv *CommandEnv, writer
 
 	collectionInfos := make(map[string]*CollectionInfo)
 
-	writeCollectionInfo(writer, topologyInfo, collectionInfos)
+	collectCollectionInfo(topologyInfo, collectionInfos)
 
 	for _, c := range collections {
 		cif, found := collectionInfos[c]
@@ -92,7 +92,7 @@ func addToCollection(collectionInfos map[string]*CollectionInfo, vif *master_pb.
 	cif.VolumeCount++
 }
 
-func writeCollectionInfo(writer io.Writer, t *master_pb.TopologyInfo, collectionInfos map[string]*CollectionInfo) {
+func collectCollectionInfo(t *master_pb.TopologyInfo, collectionInfos map[string]*CollectionInfo) {
 	for _, dc := range t.DataCenterInfos {
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {

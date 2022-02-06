@@ -646,6 +646,10 @@ type ListVersionsResult struct {
 	CommonPrefixes      []PrefixEntry     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CommonPrefixes,omitempty"`
 }
 
+type LocationConstraint struct {
+	LocationConstraint string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LocationConstraint"`
+}
+
 type LoggingSettings struct {
 	TargetBucket string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ TargetBucket"`
 	TargetPrefix string            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ TargetPrefix"`

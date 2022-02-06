@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -162,6 +163,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	ms.Topo.RaftServer = raftServer.raftServer
 	ms.Topo.RaftServer.AddEventListener(raft.LeaderChangeEventType, func(e raft.Event) {
 		glog.V(0).Infof("leader change event: %+v => %+v", e.PrevValue(), e.Value())
+		stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", e.Value())).Inc()
 		if ms.Topo.RaftServer.Leader() != "" {
 			glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "becomes leader.")
 		}

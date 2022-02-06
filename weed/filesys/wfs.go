@@ -187,15 +187,15 @@ func (wfs *WFS) Fsync(file *File, header fuse.Header) error {
 	existingHandle, found := wfs.handles[inodeId]
 	wfs.handlesLock.Unlock()
 
-	if found && existingHandle != nil && existingHandle.f.isOpen > 0 {
-
-		existingHandle.Add(1)
-		defer existingHandle.Done()
+	if found && existingHandle != nil {
 
 		existingHandle.Lock()
 		defer existingHandle.Unlock()
 
-		return existingHandle.doFlush(context.Background(), header)
+		if existingHandle.f.isOpen > 0 {
+			return existingHandle.doFlush(context.Background(), header)
+		}
+
 	}
 
 	return nil

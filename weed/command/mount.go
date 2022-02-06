@@ -26,6 +26,8 @@ type MountOptions struct {
 	uidMap             *string
 	gidMap             *string
 	readOnly           *bool
+	debug              *bool
+	debugPort          *int
 }
 
 var (
@@ -57,6 +59,8 @@ func init() {
 	mountOptions.uidMap = cmdMount.Flag.String("map.uid", "", "map local uid to uid on filer, comma-separated <local_uid>:<filer_uid>")
 	mountOptions.gidMap = cmdMount.Flag.String("map.gid", "", "map local gid to gid on filer, comma-separated <local_gid>:<filer_gid>")
 	mountOptions.readOnly = cmdMount.Flag.Bool("readOnly", false, "read only")
+	mountOptions.debug = cmdMount.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:<debug.port>/debug/pprof/goroutine?debug=2")
+	mountOptions.debugPort = cmdMount.Flag.Int("debug.port", 6061, "http port for debugging")
 
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
 	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")

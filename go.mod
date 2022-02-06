@@ -8,7 +8,6 @@ require (
 	cloud.google.com/go/storage v1.16.1
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.14.0
-	github.com/DataDog/zstd v1.3.6-0.20190409195224-796139022798 // indirect
 	github.com/OneOfOne/xxhash v1.2.2
 	github.com/Shopify/sarama v1.23.1
 	github.com/aws/aws-sdk-go v1.35.3
@@ -163,20 +162,19 @@ require (
 	modernc.org/token v1.0.0 // indirect
 )
 
+require github.com/fluent/fluent-logger-golang v1.8.0
+
 require (
 	cloud.google.com/go/kms v1.0.0 // indirect
-	github.com/apache/thrift v0.15.0 // indirect
+	github.com/DataDog/zstd v1.3.6-0.20190409195224-796139022798 // indirect
 	github.com/d4l3k/messagediff v1.2.1 // indirect
-	github.com/fluent/fluent-logger-golang v1.8.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.2 // indirect
 	github.com/mattn/go-runewidth v0.0.7 // indirect
 	github.com/mattn/go-sqlite3 v2.0.1+incompatible // indirect
-	github.com/miekg/dns v1.1.44 // indirect
 	github.com/philhofer/fwd v1.1.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/tinylib/msgp v1.1.6 // indirect

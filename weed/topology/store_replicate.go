@@ -13,6 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
@@ -44,6 +45,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 	if s.GetVolume(volumeId) != nil {
 		isUnchanged, err = s.WriteVolumeNeedle(volumeId, n, true, fsync)
 		if err != nil {
+			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorWriteToLocalDisk).Inc()
 			err = fmt.Errorf("failed to write to local disk: %v", err)
 			glog.V(0).Infoln(err)
 			return
@@ -74,6 +76,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 				tmpMap := make(map[string]string)
 				err := json.Unmarshal(n.Pairs, &tmpMap)
 				if err != nil {
+					stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorUnmarshalPairs).Inc()
 					glog.V(0).Infoln("Unmarshal pairs error:", err)
 				}
 				for k, v := range tmpMap {
@@ -95,6 +98,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 			_, err := operation.UploadData(n.Data, uploadOption)
 			return err
 		}); err != nil {
+			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorWriteToReplicas).Inc()
 			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
 			glog.V(0).Infoln(err)
 		}

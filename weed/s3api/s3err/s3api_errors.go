@@ -51,6 +51,8 @@ const (
 	ErrBucketAlreadyExists
 	ErrBucketAlreadyOwnedByYou
 	ErrNoSuchBucket
+	ErrNoSuchBucketPolicy
+	ErrNoSuchCORSConfiguration
 	ErrNoSuchLifecycleConfiguration
 	ErrNoSuchKey
 	ErrNoSuchUpload
@@ -99,6 +101,7 @@ const (
 	ErrPreconditionFailed
 
 	ErrExistingObjectIsDirectory
+	ErrExistingObjectIsFile
 )
 
 // error code to APIError structure, these fields carry respective
@@ -162,6 +165,16 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrNoSuchBucket: {
 		Code:           "NoSuchBucket",
 		Description:    "The specified bucket does not exist",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrNoSuchBucketPolicy: {
+		Code:           "NoSuchBucketPolicy",
+		Description:    "The bucket policy does not exist",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrNoSuchCORSConfiguration: {
+		Code:           "NoSuchCORSConfiguration",
+		Description:    "The CORS configuration does not exist",
 		HTTPStatusCode: http.StatusNotFound,
 	},
 	ErrNoSuchLifecycleConfiguration: {
@@ -369,6 +382,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrExistingObjectIsDirectory: {
 		Code:           "ExistingObjectIsDirectory",
 		Description:    "Existing Object is a directory.",
+		HTTPStatusCode: http.StatusConflict,
+	},
+	ErrExistingObjectIsFile: {
+		Code:           "ExistingObjectIsFile",
+		Description:    "Existing Object is a file.",
 		HTTPStatusCode: http.StatusConflict,
 	},
 }

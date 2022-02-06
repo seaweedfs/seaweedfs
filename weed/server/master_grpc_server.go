@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"net"
@@ -57,6 +58,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			} else {
 				glog.Warningf("SendHeartbeat.Recv: %v", err)
 			}
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("error").Inc()
 			return err
 		}
 
@@ -74,12 +76,15 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				glog.Warningf("SendHeartbeat.Send volume size to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("dataNode").Inc()
 			dn.Counter++
 		}
 
 		dn.AdjustMaxVolumeCounts(heartbeat.MaxVolumeCounts)
 
 		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
+		stats.MasterReceivedHeartbeatCounter.WithLabelValues("total").Inc()
+
 		var dataCenter string
 		if dc := dn.GetDataCenter(); dc != nil {
 			dataCenter = string(dc.Id())
@@ -88,6 +93,12 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			Url:        dn.Url(),
 			PublicUrl:  dn.PublicUrl,
 			DataCenter: dataCenter,
+		}
+		if len(heartbeat.NewVolumes) > 0 {
+			stats.FilerRequestCounter.WithLabelValues("newVolumes").Inc()
+		}
+		if len(heartbeat.DeletedVolumes) > 0 {
+			stats.FilerRequestCounter.WithLabelValues("deletedVolumes").Inc()
 		}
 		if len(heartbeat.NewVolumes) > 0 || len(heartbeat.DeletedVolumes) > 0 {
 			// process delta volume ids if exists for fast volume id updates
@@ -103,6 +114,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		if len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes {
 			// process heartbeat.Volumes
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("Volumes").Inc()
 			newVolumes, deletedVolumes := ms.Topo.SyncDataNodeRegistration(heartbeat.Volumes, dn)
 
 			for _, v := range newVolumes {
@@ -116,7 +128,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		if len(heartbeat.NewEcShards) > 0 || len(heartbeat.DeletedEcShards) > 0 {
-
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("newEcShards").Inc()
 			// update master internal volume layouts
 			ms.Topo.IncrementalSyncDataNodeEcShards(heartbeat.NewEcShards, heartbeat.DeletedEcShards, dn)
 
@@ -133,7 +145,8 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		if len(heartbeat.EcShards) > 0 || heartbeat.HasNoEcShards {
-			glog.V(1).Infof("master received ec shards from %s: %+v", dn.Url(), heartbeat.EcShards)
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("ecShards").Inc()
+			glog.V(4).Infof("master received ec shards from %s: %+v", dn.Url(), heartbeat.EcShards)
 			newShards, deletedShards := ms.Topo.SyncDataNodeEcShards(heartbeat.EcShards, dn)
 
 			// broadcast the ec vid changes to master clients
@@ -224,7 +237,10 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 			}
 		case <-ticker.C:
 			if !ms.Topo.IsLeader() {
+				stats.MasterRaftIsleader.Set(0)
 				return ms.informNewLeader(stream)
+			} else {
+				stats.MasterRaftIsleader.Set(1)
 			}
 		case <-stopChan:
 			return nil

@@ -436,10 +436,14 @@ func setEtag(w http.ResponseWriter, etag string) {
 }
 
 func filerErrorToS3Error(errString string) s3err.ErrorCode {
-	if strings.HasPrefix(errString, "existing ") && strings.HasSuffix(errString, "is a directory") {
+	switch {
+	case strings.HasPrefix(errString, "existing ") && strings.HasSuffix(errString, "is a directory"):
 		return s3err.ErrExistingObjectIsDirectory
+	case strings.HasSuffix(errString, "is a file"):
+		return s3err.ErrExistingObjectIsFile
+	default:
+		return s3err.ErrInternalError
 	}
-	return s3err.ErrInternalError
 }
 
 func (s3a *S3ApiServer) maybeAddFilerJwtAuthorization(r *http.Request, isWrite bool) {

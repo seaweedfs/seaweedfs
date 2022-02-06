@@ -140,7 +140,15 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 					}
 				}
 			}
+			// set the new chunks and reset entry cache
 			entry.Chunks = chunks
+			file.wfs.handlesLock.Lock()
+			existingHandle, found := file.wfs.handles[file.Id()]
+			file.wfs.handlesLock.Unlock()
+			if found {
+				existingHandle.entryViewCache = nil
+			}
+
 		}
 		entry.Attributes.Mtime = time.Now().Unix()
 		entry.Attributes.FileSize = req.Size

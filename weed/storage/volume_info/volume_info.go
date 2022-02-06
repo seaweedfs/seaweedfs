@@ -75,7 +75,7 @@ func SaveVolumeInfo(fileName string, volumeInfo *volume_server_pb.VolumeInfo) er
 		return fmt.Errorf("marshal to %s: %v", fileName, marshalErr)
 	}
 
-	writeErr := os.WriteFile(fileName, []byte(text), 0755)
+	writeErr := util.WriteFile(fileName, []byte(text), 0755)
 	if writeErr != nil {
 		return fmt.Errorf("fail to write %s : %v", fileName, writeErr)
 	}

@@ -43,6 +43,7 @@ type Entry struct {
 	HardLinkCounter int32
 	Content         []byte
 	Remote          *filer_pb.RemoteEntry
+	Quota           int64
 }
 
 func (entry *Entry) Size() uint64 {
@@ -70,6 +71,7 @@ func (entry *Entry) ShallowClone() *Entry {
 	newEntry.HardLinkCounter = entry.HardLinkCounter
 	newEntry.Content = entry.Content
 	newEntry.Remote = entry.Remote
+	newEntry.Quota = entry.Quota
 
 	return newEntry
 }
@@ -96,6 +98,7 @@ func (entry *Entry) ToExistingProtoEntry(message *filer_pb.Entry) {
 	message.HardLinkCounter = entry.HardLinkCounter
 	message.Content = entry.Content
 	message.RemoteEntry = entry.Remote
+	message.Quota = entry.Quota
 }
 
 func FromPbEntryToExistingEntry(message *filer_pb.Entry, fsEntry *Entry) {
@@ -106,6 +109,7 @@ func FromPbEntryToExistingEntry(message *filer_pb.Entry, fsEntry *Entry) {
 	fsEntry.HardLinkCounter = message.HardLinkCounter
 	fsEntry.Content = message.Content
 	fsEntry.Remote = message.RemoteEntry
+	fsEntry.Quota = message.Quota
 }
 
 func (entry *Entry) ToProtoFullEntry() *filer_pb.FullEntry {
