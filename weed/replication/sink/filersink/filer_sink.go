@@ -199,7 +199,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		// delete the chunks that are deleted from the source
 		if deleteIncludeChunks {
 			// remove the deleted chunks. Actual data deletion happens in filer UpdateEntry FindUnusedFileChunks
-			existingEntry.Chunks = filer.DoMinusChunks(existingEntry.Chunks, deletedChunks)
+			existingEntry.Chunks = filer.DoMinusChunksBySourceFileId(existingEntry.Chunks, deletedChunks)
 		}
 
 		// replicate the chunks that are new in the source
