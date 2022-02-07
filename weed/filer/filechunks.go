@@ -101,6 +101,21 @@ func DoMinusChunks(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {
 	return
 }
 
+func DoMinusChunksBySourceFileId(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {
+
+	fileIds := make(map[string]bool)
+	for _, interval := range bs {
+		fileIds[interval.GetFileIdString()] = true
+	}
+	for _, chunk := range as {
+		if _, found := fileIds[chunk.GetSourceFileId()]; !found {
+			delta = append(delta, chunk)
+		}
+	}
+
+	return
+}
+
 type ChunkView struct {
 	FileId      string
 	Offset      int64
