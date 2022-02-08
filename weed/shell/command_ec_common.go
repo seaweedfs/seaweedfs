@@ -206,7 +206,7 @@ func collectEcNodes(commandEnv *CommandEnv, selectedDataCenter string) (ecNodes 
 
 	// list all possible locations
 	// collect topology information
-	topologyInfo, _, err := collectTopologyInfo(commandEnv)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return
 	}

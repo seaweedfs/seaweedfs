@@ -455,7 +455,7 @@ func (c *commandVolumeFsck) collectVolumeIds(commandEnv *CommandEnv, verbose boo
 
 	volumeIdToServer = make(map[uint32]VInfo)
 	// collect topology information
-	topologyInfo, _, err := collectTopologyInfo(commandEnv)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return
 	}

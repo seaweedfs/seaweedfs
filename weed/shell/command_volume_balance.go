@@ -76,7 +76,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 
 	// collect topology information
-	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv)
+	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv, 15*time.Second)
 	if err != nil {
 		return err
 	}

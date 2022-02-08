@@ -78,7 +78,7 @@ func volumeServerEvacuate(commandEnv *CommandEnv, volumeServer string, skipNonMo
 
 	// list all the volumes
 	// collect topology information
-	topologyInfo, _, err := collectTopologyInfo(commandEnv)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
 	}

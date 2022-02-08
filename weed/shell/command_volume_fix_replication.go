@@ -75,7 +75,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		fixedVolumeReplicas := map[string]int{}
 
 		// collect topology information
-		topologyInfo, _, err := collectTopologyInfo(commandEnv)
+		topologyInfo, _, err := collectTopologyInfo(commandEnv, 15*time.Second)
 		if err != nil {
 			return err
 		}

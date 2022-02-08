@@ -57,7 +57,7 @@ func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, wr
 	vid := needle.VolumeId(*volumeId)
 
 	// collect topology information
-	topologyInfo, _, err := collectTopologyInfo(commandEnv)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
 	}

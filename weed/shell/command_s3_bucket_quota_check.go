@@ -38,7 +38,7 @@ func (c *commandS3BucketQuotaEnforce) Do(args []string, commandEnv *CommandEnv, 
 	}
 
 	// collect collection information
-	topologyInfo, _, err := collectTopologyInfo(commandEnv)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
 	}
