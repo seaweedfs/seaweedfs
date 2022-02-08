@@ -65,11 +65,14 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 		case "Disk":
 			if disk == nil {
 				diskType := parts[1][:strings.Index(parts[1], "(")]
+				volumeCountStr := parts[1][strings.Index(parts[1], ":")+1 : strings.Index(parts[1], "/")]
 				maxVolumeCountStr := parts[1][strings.Index(parts[1], "/")+1:]
 				maxVolumeCount, _ := strconv.Atoi(maxVolumeCountStr)
+				volumeCount, _ := strconv.Atoi(volumeCountStr)
 				disk = &master_pb.DiskInfo{
 					Type:           diskType,
 					MaxVolumeCount: int64(maxVolumeCount),
+					VolumeCount:    int64(volumeCount),
 				}
 				dn.DiskInfos[types.ToDiskType(diskType).String()] = disk
 			} else {
