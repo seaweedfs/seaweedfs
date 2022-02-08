@@ -61,3 +61,8 @@ func ParseHostPort(hostPort string) (filerServer string, filerPort int64, err er
 
 	return
 }
+
+func CanonicalizeETag(etag string) string {
+	canonicalETag := strings.TrimPrefix(etag, "\"")
+	return strings.TrimSuffix(canonicalETag, "\"")
+}
