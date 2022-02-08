@@ -75,12 +75,12 @@ func (fc *FilerConf) loadFromFiler(filer *Filer) (err error) {
 		return fc.LoadFromBytes(entry.Content)
 	}
 
-	return fc.loadFromChunks(filer, entry.Content, entry.Chunks)
+	return fc.loadFromChunks(filer, entry.Content, entry.Chunks, entry.Size())
 }
 
-func (fc *FilerConf) loadFromChunks(filer *Filer, content []byte, chunks []*filer_pb.FileChunk) (err error) {
+func (fc *FilerConf) loadFromChunks(filer *Filer, content []byte, chunks []*filer_pb.FileChunk, size uint64) (err error) {
 	if len(content) == 0 {
-		content, err = filer.readEntry(chunks)
+		content, err = filer.readEntry(chunks, size)
 		if err != nil {
 			glog.Errorf("read filer conf content: %v", err)
 			return

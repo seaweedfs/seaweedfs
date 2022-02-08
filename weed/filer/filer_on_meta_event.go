@@ -2,8 +2,6 @@ package filer
 
 import (
 	"bytes"
-	"math"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -55,9 +53,9 @@ func (f *Filer) maybeReloadFilerConfiguration(event *filer_pb.SubscribeMetadataR
 	}
 }
 
-func (f *Filer) readEntry(chunks []*filer_pb.FileChunk) ([]byte, error) {
+func (f *Filer) readEntry(chunks []*filer_pb.FileChunk, size uint64) ([]byte, error) {
 	var buf bytes.Buffer
-	err := StreamContent(f.MasterClient, &buf, chunks, 0, math.MaxInt64)
+	err := StreamContent(f.MasterClient, &buf, chunks, 0, int64(size))
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +64,7 @@ func (f *Filer) readEntry(chunks []*filer_pb.FileChunk) ([]byte, error) {
 
 func (f *Filer) reloadFilerConfiguration(entry *filer_pb.Entry) {
 	fc := NewFilerConf()
-	err := fc.loadFromChunks(f, entry.Content, entry.Chunks)
+	err := fc.loadFromChunks(f, entry.Content, entry.Chunks, FileSize(entry))
 	if err != nil {
 		glog.Errorf("read filer conf chunks: %v", err)
 		return
