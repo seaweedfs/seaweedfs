@@ -2,22 +2,21 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 
-	"google.golang.org/grpc"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
+	"github.com/chrislusf/seaweedfs/weed/util"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -219,6 +218,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var maxFileKey NeedleId
 	collectionVolumeSize := make(map[string]uint64)
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
+	shouldFixReplication := false
 	for _, location := range s.Locations {
 		var deleteVids []needle.VolumeId
 		maxVolumeCounts[string(location.DiskType)] += uint32(location.MaxVolumeCount)
@@ -244,6 +244,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				if v.lastIoError != nil {
 					deleteVids = append(deleteVids, v.Id)
 					deleteVolume = true
+					shouldFixReplication = true
 					glog.Warningf("volume %d has IO error: %v", v.Id, v.lastIoError)
 				}
 			}
@@ -311,16 +312,17 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	}
 
 	return &master_pb.Heartbeat{
-		Ip:              s.Ip,
-		Port:            uint32(s.Port),
-		GrpcPort:        uint32(s.GrpcPort),
-		PublicUrl:       s.PublicUrl,
-		MaxVolumeCounts: maxVolumeCounts,
-		MaxFileKey:      NeedleIdToUint64(maxFileKey),
-		DataCenter:      s.dataCenter,
-		Rack:            s.rack,
-		Volumes:         volumeMessages,
-		HasNoVolumes:    len(volumeMessages) == 0,
+		Ip:                   s.Ip,
+		Port:                 uint32(s.Port),
+		GrpcPort:             uint32(s.GrpcPort),
+		PublicUrl:            s.PublicUrl,
+		MaxVolumeCounts:      maxVolumeCounts,
+		MaxFileKey:           NeedleIdToUint64(maxFileKey),
+		DataCenter:           s.dataCenter,
+		Rack:                 s.rack,
+		Volumes:              volumeMessages,
+		HasNoVolumes:         len(volumeMessages) == 0,
+		ShouldFixReplication: shouldFixReplication,
 	}
 
 }

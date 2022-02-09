@@ -63,7 +63,7 @@ message Heartbeat {
 
   map<string, uint32> max_volume_counts = 4;
   uint32 grpc_port = 20;
-
+  bool should_fix_replication = 21;
 }
 
 message HeartbeatResponse {

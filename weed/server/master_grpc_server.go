@@ -2,20 +2,19 @@ package weed_server
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"net"
 	"time"
 
 	"github.com/chrislusf/raft"
-	"google.golang.org/grpc/peer"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/topology"
+	"github.com/chrislusf/seaweedfs/weed/util"
+	"google.golang.org/grpc/peer"
 )
 
 func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
@@ -60,6 +59,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("error").Inc()
 			return err
+		}
+
+		if heartbeat.ShouldFixReplication && ms.Topo.IsLeader() {
+			glog.V(0).Info("leader received command to start volume replication fix due to i/o error")
+			go func() { ms.fixReplicationC <- struct{}{} }()
 		}
 
 		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)

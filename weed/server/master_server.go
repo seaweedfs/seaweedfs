@@ -1,8 +1,8 @@
 package weed_server
 
 import (
+	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/stats"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -10,23 +10,23 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/cluster"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-
 	"github.com/chrislusf/raft"
-	"github.com/gorilla/mux"
-	"google.golang.org/grpc"
-
+	"github.com/chrislusf/seaweedfs/weed/cluster"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/sequence"
 	"github.com/chrislusf/seaweedfs/weed/shell"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/topology"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/gorilla/mux"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -59,6 +59,8 @@ type MasterServer struct {
 	Topo *topology.Topology
 	vg   *topology.VolumeGrowth
 	vgCh chan *topology.VolumeGrowRequest
+
+	fixReplicationC chan struct{}
 
 	boundedLeaderChan chan int
 
@@ -105,6 +107,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddre
 		option:          option,
 		preallocateSize: preallocateSize,
 		vgCh:            make(chan *topology.VolumeGrowRequest, 1<<6),
+		fixReplicationC: make(chan struct{}, 1),
 		clientChans:     make(map[string]chan *master_pb.KeepConnectedResponse),
 		grpcDialOption:  grpcDialOption,
 		MasterClient:    wdclient.NewMasterClient(grpcDialOption, cluster.MasterType, option.Master, "", peers),
@@ -155,6 +158,8 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddre
 	if !option.IsFollower {
 		ms.startAdminScripts()
 	}
+
+	ms.autoFixReplication()
 
 	return ms
 }
@@ -257,6 +262,85 @@ func (ms *MasterServer) startAdminScripts() {
 					}
 				}
 			}
+		}
+	}()
+}
+
+func (ms *MasterServer) autoFixReplication() {
+	v := util.GetViper()
+	enabled := v.GetBool("master.io_error.autofix.replication.enabled")
+	if !enabled {
+		return
+	}
+
+	glog.V(0).Info("automatic volume fix replication enabled")
+
+	masterAddress := string(ms.option.Master)
+
+	var shellOptions shell.ShellOptions
+	shellOptions.GrpcDialOption = security.LoadClientTLS(v, "grpc.master")
+	shellOptions.Masters = &masterAddress
+
+	shellOptions.Directory = "/"
+
+	commandEnv := shell.NewCommandEnv(&shellOptions)
+
+	go commandEnv.MasterClient.KeepConnectedToMaster()
+
+	retryArg := v.GetInt("master.io_error.autofix.replication.retries")
+	volumesPerStepArg := v.GetInt("master.io_error.autofix.replication.volumes_per_step")
+	volumeFixCmd := fmt.Sprintf("volume.fix.replication -retry=%d -volumesPerStep=%d", retryArg, volumesPerStepArg)
+	if collectionPatternArg := v.GetString("master.io_error.autofix.replication.collectionPattern"); collectionPatternArg != "" {
+		volumeFixCmd += " -collectionPattern=" + collectionPatternArg
+	}
+	timeoutCmd := v.GetDuration("master.io_error.autofix.replication.timeout")
+
+	go func() {
+		commandEnv.MasterClient.WaitUntilConnected()
+
+		re := regexp.MustCompile(`'.*?'|".*?"|\S+`)
+
+		cmds := [3]string{
+			"lock",
+			volumeFixCmd,
+			"unlock",
+		}
+
+		successC := make(chan struct{})
+
+		free := uint32(1)
+		for range ms.fixReplicationC {
+			if !ms.Topo.IsLeader() {
+				continue
+			}
+			if !atomic.CompareAndSwapUint32(&free, 1, 0) {
+				continue
+			}
+
+			// must ensure that there are no leaking goroutines
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), timeoutCmd)
+				defer cancel()
+
+				defer atomic.StoreUint32(&free, 1)
+
+				go func() {
+					for _, cmd := range cmds {
+						processEachCmd(re, cmd, commandEnv)
+					}
+					successC <- struct{}{}
+				}()
+
+				select {
+				case <-ctx.Done():
+					glog.V(0).Infof("automatic fix replication failed due to timeout (%v)", timeoutCmd)
+					// NOTE: should we to perform unlock here?
+					// it looks like we should somehow to sent cancel to the shell
+					return
+				case <-successC:
+					return
+				}
+			}()
 		}
 	}()
 }

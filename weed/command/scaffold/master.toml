@@ -56,3 +56,14 @@ copy_other = 1            # create n x 1 = n actual volumes
 # try to replicate to all available volumes. You should only use this option
 # if you are doing your own replication or periodic sync of volumes.
 treat_replication_as_minimums = false
+
+# Configuration for enabling automatic start for
+# shell's 'volume.fix.replication' command on
+# getting i/o error on a volume.
+# Parameters are keys to the above command except timeout.
+[master.io_error.autofix.replication]
+enabled = false
+retries = 1
+volumes_per_step = 0
+collectionPattern = ""
+timeout = "3600s" # timeout if something went wrong while fixing
