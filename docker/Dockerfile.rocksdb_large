@@ -29,7 +29,7 @@ FROM alpine AS final
 LABEL author="Chris Lu"
 COPY --from=builder /go/bin/weed /usr/bin/
 RUN mkdir -p /etc/seaweedfs
-COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/filer.toml /etc/seaweedfs/filer.toml
+COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/filer_rocksdb.toml /etc/seaweedfs/filer.toml
 COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/entrypoint.sh /entrypoint.sh
 RUN apk add fuse snappy gflags
 
@@ -50,7 +50,7 @@ EXPOSE 8333
 # webdav server http port
 EXPOSE 7333
 
-RUN mkdir -p /data/filerldb2
+RUN mkdir -p /data/filer_rocksdb
 
 VOLUME /data
 
