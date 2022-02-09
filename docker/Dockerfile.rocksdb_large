@@ -9,7 +9,7 @@ ENV ROCKSDB_VERSION v6.22.1
 RUN cd /tmp && \
     git clone https://github.com/facebook/rocksdb.git /tmp/rocksdb --depth 1 --single-branch --branch $ROCKSDB_VERSION && \
     cd rocksdb && \
-    make static_lib && \
+    PORTABLE=1 make static_lib && \
     make install-static
 
 ENV CGO_CFLAGS "-I/tmp/rocksdb/include"
