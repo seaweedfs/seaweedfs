@@ -6,7 +6,7 @@
 
     <properties>
         <seaweedfs.client.version>2.85</seaweedfs.client.version>
-        <hadoop.version>2.9.2</hadoop.version>
+        <hadoop.version>2.10.1</hadoop.version>
     </properties>
 
     <groupId>com.github.chrislusf</groupId>
