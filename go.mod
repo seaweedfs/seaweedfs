@@ -162,14 +162,17 @@ require (
 	modernc.org/token v1.0.0 // indirect
 )
 
-require github.com/fluent/fluent-logger-golang v1.8.0
+require (
+	github.com/fluent/fluent-logger-golang v1.8.0
+	github.com/hanwen/go-fuse v1.0.0
+	github.com/hanwen/go-fuse/v2 v2.1.0
+)
 
 require (
 	cloud.google.com/go/kms v1.0.0 // indirect
 	github.com/DataDog/zstd v1.3.6-0.20190409195224-796139022798 // indirect
 	github.com/d4l3k/messagediff v1.2.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/hanwen/go-fuse/v2 v2.1.0 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect

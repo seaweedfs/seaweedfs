@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/mount"
+	"github.com/chrislusf/seaweedfs/weed/mount/unmount"
 	"github.com/hanwen/go-fuse/v2/fs"
 	"net/http"
 	"os"
@@ -43,6 +44,12 @@ func RunMount2(option *Mount2Options, umask os.FileMode) bool {
 
 	opts := &fs.Options{}
 	opts.Debug = true
+
+	unmount.Unmount(*option.dir)
+	grace.OnInterrupt(func() {
+		unmount.Unmount(*option.dir)
+	})
+
 	server, err := fs.Mount(*option.dir, &mount.WeedFS{}, opts)
 	if err != nil {
 		glog.Fatalf("Mount fail: %v", err)
