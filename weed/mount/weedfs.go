@@ -7,6 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
+	"github.com/hanwen/go-fuse/v2/fuse"
 	"google.golang.org/grpc"
 	"os"
 	"path"
@@ -49,6 +50,8 @@ type Option struct {
 }
 
 type WFS struct {
+	// follow https://github.com/hanwen/go-fuse/blob/master/fuse/api.go
+	fuse.RawFileSystem
 	fs.Inode
 	option    *Option
 	metaCache *meta_cache.MetaCache
@@ -59,8 +62,9 @@ type WFS struct {
 
 func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs := &WFS{
-		option:    option,
-		signature: util.RandomInt32(),
+		RawFileSystem: fuse.NewDefaultRawFileSystem(),
+		option:        option,
+		signature:     util.RandomInt32(),
 	}
 
 	wfs.root = Directory{
