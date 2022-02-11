@@ -15,14 +15,16 @@ import (
 
 const blockSize = 512
 
-var _ = fs.NodeStatfser(&WFS{})
+var _ = fs.NodeStatfser(&Directory{})
 
 type statsCache struct {
 	filer_pb.StatisticsResponse
 	lastChecked int64 // unix time in seconds
 }
 
-func (wfs *WFS) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
+func (dir *Directory) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
+
+	wfs := dir.wfs
 
 	glog.V(4).Infof("reading fs stats")
 

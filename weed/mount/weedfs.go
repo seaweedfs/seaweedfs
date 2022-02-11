@@ -1,7 +1,6 @@
 package mount
 
 import (
-	"context"
 	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -12,11 +11,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
-	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
 type Option struct {
@@ -56,6 +53,7 @@ type WFS struct {
 	option    *Option
 	metaCache *meta_cache.MetaCache
 	stats     statsCache
+	root      Directory
 	signature int32
 }
 
@@ -65,6 +63,13 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		signature: util.RandomInt32(),
 	}
 
+	wfs.root = Directory{
+		name:   "/",
+		wfs:    wfs,
+		entry:  nil,
+		parent: nil,
+	}
+
 	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDir(), "meta"), util.FullPath(option.FilerMountRootPath), option.UidGidMapper, func(filePath util.FullPath, entry *filer_pb.Entry) {
 	})
 	grace.OnInterrupt(func() {
@@ -72,6 +77,10 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	})
 
 	return wfs
+}
+
+func (wfs *WFS) Root() *Directory {
+	return &wfs.root
 }
 
 func (option *Option) setupUniqueCacheDirectory() {
@@ -87,22 +96,3 @@ func (option *Option) getTempFilePageDir() string {
 func (option *Option) getUniqueCacheDir() string {
 	return option.uniqueCacheDir
 }
-
-func (r *WFS) OnAdd(ctx context.Context) {
-	ch := r.NewPersistentInode(
-		ctx, &fs.MemRegularFile{
-			Data: []byte("file.txt"),
-			Attr: fuse.Attr{
-				Mode: 0644,
-			},
-		}, fs.StableAttr{Ino: 2})
-	r.AddChild("file.txt", ch, false)
-}
-
-func (r *WFS) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	out.Mode = 0755
-	return 0
-}
-
-var _ = (fs.NodeGetattrer)((*WFS)(nil))
-var _ = (fs.NodeOnAdder)((*WFS)(nil))

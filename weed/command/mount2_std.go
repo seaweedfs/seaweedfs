@@ -207,7 +207,7 @@ func RunMount2(option *Mount2Options, umask os.FileMode) bool {
 		UidGidMapper:       uidGidMapper,
 	})
 
-	server, err := fs.Mount(dir, seaweedFileSystem, opts)
+	server, err := fs.Mount(dir, seaweedFileSystem.Root(), opts)
 	if err != nil {
 		glog.Fatalf("Mount fail: %v", err)
 	}
