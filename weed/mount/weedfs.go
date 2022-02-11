@@ -55,6 +55,7 @@ type WFS struct {
 	fs.Inode
 	option    *Option
 	metaCache *meta_cache.MetaCache
+	stats     statsCache
 	signature int32
 }
 
