@@ -94,9 +94,10 @@ func (wfs *WFS) String() string {
 	return "seaweedfs"
 }
 
-func (wfs *WFS) maybeReadEntry(inode uint64) (*filer_pb.Entry, fuse.Status) {
-	path := wfs.inodeToPath.GetPath(inode)
-	return wfs.maybeLoadEntry(path)
+func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, entry *filer_pb.Entry, status fuse.Status) {
+	path = wfs.inodeToPath.GetPath(inode)
+	entry, status = wfs.maybeLoadEntry(path)
+	return
 }
 
 func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.Status) {

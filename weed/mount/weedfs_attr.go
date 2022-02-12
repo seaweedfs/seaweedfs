@@ -16,11 +16,12 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 		return fuse.OK
 	}
 
-	entry, status := wfs.maybeReadEntry(input.NodeId)
+	_, entry, status := wfs.maybeReadEntry(input.NodeId)
 	if status != fuse.OK {
 		return status
 	}
-	wfs.setOutAttr(out, input.NodeId, entry)
+	out.AttrValid = 1
+	wfs.setAttrByPbEntry(&out.Attr, input.NodeId, entry)
 
 	return fuse.OK
 }
@@ -54,16 +55,15 @@ func (wfs *WFS) setRootAttr(out *fuse.AttrOut) {
 	out.Mtime = now
 	out.Ctime = now
 	out.Atime = now
-	out.Mode = osToSystemMode(os.ModeDir) | uint32(wfs.option.MountMode)
+	out.Mode = toSystemType(os.ModeDir) | uint32(wfs.option.MountMode)
 	out.Nlink = 1
 }
 
-func (wfs *WFS) setOutAttr(out *fuse.AttrOut, inode uint64, entry *filer_pb.Entry) {
-	out.AttrValid = 1
+func (wfs *WFS) setAttrByPbEntry(out *fuse.Attr, inode uint64, entry *filer_pb.Entry) {
 	out.Ino = inode
 	out.Uid = entry.Attributes.Uid
 	out.Gid = entry.Attributes.Gid
-	out.Mode = modeToSystemMode(entry.Attributes.FileMode)
+	out.Mode = toSystemMode(os.FileMode(entry.Attributes.FileMode))
 	out.Mtime = uint64(entry.Attributes.Mtime)
 	out.Ctime = uint64(entry.Attributes.Mtime)
 	out.Atime = uint64(entry.Attributes.Mtime)
@@ -72,15 +72,32 @@ func (wfs *WFS) setOutAttr(out *fuse.AttrOut, inode uint64, entry *filer_pb.Entr
 	}
 	out.Size = filer.FileSize(entry)
 	out.Blocks = out.Size/blockSize + 1
-	setBlksize(&out.Attr, blockSize)
+	setBlksize(out, blockSize)
 	out.Nlink = 1
 }
 
-func modeToSystemMode(mode uint32) uint32 {
-	return osToSystemMode(os.FileMode(mode)) | mode
+func (wfs *WFS) setAttrByFilerEntry(out *fuse.Attr, inode uint64, entry *filer.Entry) {
+	out.Ino = inode
+	out.Uid = entry.Attr.Uid
+	out.Gid = entry.Attr.Gid
+	out.Mode = toSystemMode(entry.Attr.Mode)
+	out.Mtime = uint64(entry.Attr.Mtime.Unix())
+	out.Ctime = uint64(entry.Attr.Mtime.Unix())
+	out.Atime = uint64(entry.Attr.Mtime.Unix())
+	if entry.HardLinkCounter > 0 {
+		out.Nlink = uint32(entry.HardLinkCounter)
+	}
+	out.Size = entry.FileSize
+	out.Blocks = out.Size/blockSize + 1
+	setBlksize(out, blockSize)
+	out.Nlink = 1
 }
 
-func osToSystemMode(mode os.FileMode) uint32 {
+func toSystemMode(mode os.FileMode) uint32 {
+	return toSystemType(mode) | uint32(mode)
+}
+
+func toSystemType(mode os.FileMode) uint32 {
 	switch mode & os.ModeType {
 	case os.ModeDir:
 		return syscall.S_IFDIR
