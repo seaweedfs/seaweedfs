@@ -20,11 +20,9 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 	if status != fuse.OK {
 		return status
 	}
-	if entry.IsDirectory {
+	wfs.setOutAttr(out, input.NodeId, entry)
 
-	}
-
-	return fuse.ENOSYS
+	return fuse.OK
 }
 
 func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse.AttrOut) (code fuse.Status) {
@@ -56,7 +54,7 @@ func (wfs *WFS) setRootAttr(out *fuse.AttrOut) {
 	out.Mtime = now
 	out.Ctime = now
 	out.Atime = now
-	out.Mode = uint32(syscall.S_IFDIR | wfs.option.MountMode)
+	out.Mode = osToSystemMode(os.ModeDir) | uint32(wfs.option.MountMode)
 	out.Nlink = 1
 }
 
@@ -65,7 +63,7 @@ func (wfs *WFS) setOutAttr(out *fuse.AttrOut, inode uint64, entry *filer_pb.Entr
 	out.Ino = inode
 	out.Uid = entry.Attributes.Uid
 	out.Gid = entry.Attributes.Gid
-	out.Mode = entry.Attributes.FileMode
+	out.Mode = modeToSystemMode(entry.Attributes.FileMode)
 	out.Mtime = uint64(entry.Attributes.Mtime)
 	out.Ctime = uint64(entry.Attributes.Mtime)
 	out.Atime = uint64(entry.Attributes.Mtime)
@@ -78,8 +76,12 @@ func (wfs *WFS) setOutAttr(out *fuse.AttrOut, inode uint64, entry *filer_pb.Entr
 	out.Nlink = 1
 }
 
+func modeToSystemMode(mode uint32) uint32 {
+	return osToSystemMode(os.FileMode(mode)) | mode
+}
+
 func osToSystemMode(mode os.FileMode) uint32 {
-	switch mode & 0x7F {
+	switch mode & os.ModeType {
 	case os.ModeDir:
 		return syscall.S_IFDIR
 	case os.ModeSymlink:
