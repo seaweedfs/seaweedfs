@@ -11,7 +11,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"net/http"
 	"os"
@@ -141,40 +140,26 @@ func RunMount2(option *Mount2Options, umask os.FileMode) bool {
 	}
 
 	// mount fuse
-	sec := time.Second
-	opts := &fs.Options{
-		MountOptions: fuse.MountOptions{
-			AllowOther:               *option.allowOthers,
-			Options:                  nil,
-			MaxBackground:            128,
-			MaxWrite:                 1024 * 1024 * 2,
-			MaxReadAhead:             1024 * 1024 * 2,
-			IgnoreSecurityLabels:     false,
-			RememberInodes:           false,
-			FsName:                   *option.filer + ":" + filerMountRootPath,
-			Name:                     "seaweedfs",
-			SingleThreaded:           false,
-			DisableXAttrs:            false,
-			Debug:                    false,
-			EnableLocks:              false,
-			ExplicitDataCacheControl: false,
-			// SyncRead:                 false, // set to false to enable the FUSE_CAP_ASYNC_READ capability
-			DirectMount:      true,
-			DirectMountFlags: 0,
-			// EnableAcl:                false,
-		},
-		EntryTimeout:      &sec,
-		AttrTimeout:       &sec,
-		NegativeTimeout:   nil,
-		FirstAutomaticIno: 0,
-		OnAdd:             nil,
-		NullPermissions:   false,
-		UID:               0,
-		GID:               0,
-		ServerCallbacks:   nil,
-		Logger:            nil,
+	fuseMountOptions := &fuse.MountOptions{
+		AllowOther:               *option.allowOthers,
+		Options:                  nil,
+		MaxBackground:            128,
+		MaxWrite:                 1024 * 1024 * 2,
+		MaxReadAhead:             1024 * 1024 * 2,
+		IgnoreSecurityLabels:     false,
+		RememberInodes:           false,
+		FsName:                   *option.filer + ":" + filerMountRootPath,
+		Name:                     "seaweedfs",
+		SingleThreaded:           false,
+		DisableXAttrs:            false,
+		Debug:                    true,
+		EnableLocks:              false,
+		ExplicitDataCacheControl: false,
+		// SyncRead:                 false, // set to false to enable the FUSE_CAP_ASYNC_READ capability
+		DirectMount:      true,
+		DirectMountFlags: 0,
+		// EnableAcl:                false,
 	}
-	opts.Debug = true
 
 	// find mount point
 	mountRoot := filerMountRootPath
@@ -207,7 +192,7 @@ func RunMount2(option *Mount2Options, umask os.FileMode) bool {
 		UidGidMapper:       uidGidMapper,
 	})
 
-	server, err := fs.Mount(dir, seaweedFileSystem.Root(), opts)
+	server, err := fuse.NewServer(seaweedFileSystem, dir, fuseMountOptions)
 	if err != nil {
 		glog.Fatalf("Mount fail: %v", err)
 	}
@@ -217,7 +202,7 @@ func RunMount2(option *Mount2Options, umask os.FileMode) bool {
 
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.Version(), runtime.GOOS, runtime.GOARCH)
 
-	server.Wait()
+	server.Serve()
 
 	return true
 }

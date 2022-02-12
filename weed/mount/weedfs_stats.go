@@ -5,26 +5,19 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"math"
-	"os"
-	"syscall"
 	"time"
 )
 
 const blockSize = 512
-
-var _ = fs.NodeStatfser(&Directory{})
 
 type statsCache struct {
 	filer_pb.StatisticsResponse
 	lastChecked int64 // unix time in seconds
 }
 
-func (dir *Directory) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
-
-	wfs := dir.wfs
+func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.StatfsOut) (code fuse.Status) {
 
 	glog.V(4).Infof("reading fs stats")
 
@@ -56,7 +49,7 @@ func (dir *Directory) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.E
 		})
 		if err != nil {
 			glog.V(0).Infof("filer Statistics: %v", err)
-			return fs.ToErrno(os.ErrInvalid)
+			return fuse.OK
 		}
 	}
 
@@ -83,5 +76,5 @@ func (dir *Directory) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.E
 	out.NameLen = 1024
 	out.Frsize = uint32(blockSize)
 
-	return fs.OK
+	return fuse.OK
 }

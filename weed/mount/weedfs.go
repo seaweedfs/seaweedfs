@@ -87,6 +87,10 @@ func (wfs *WFS) Root() *Directory {
 	return &wfs.root
 }
 
+func (wfs *WFS) String() string {
+	return "seaweedfs"
+}
+
 func (option *Option) setupUniqueCacheDirectory() {
 	cacheUniqueId := util.Md5String([]byte(option.MountDirectory + string(option.FilerAddresses[0]) + option.FilerMountRootPath + util.Version()))[0:8]
 	option.uniqueCacheDir = path.Join(option.CacheDir, cacheUniqueId)
