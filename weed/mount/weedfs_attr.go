@@ -78,19 +78,27 @@ func (wfs *WFS) setAttrByPbEntry(out *fuse.Attr, inode uint64, entry *filer_pb.E
 
 func (wfs *WFS) setAttrByFilerEntry(out *fuse.Attr, inode uint64, entry *filer.Entry) {
 	out.Ino = inode
-	out.Uid = entry.Attr.Uid
-	out.Gid = entry.Attr.Gid
-	out.Mode = toSystemMode(entry.Attr.Mode)
-	out.Mtime = uint64(entry.Attr.Mtime.Unix())
-	out.Ctime = uint64(entry.Attr.Mtime.Unix())
-	out.Atime = uint64(entry.Attr.Mtime.Unix())
-	if entry.HardLinkCounter > 0 {
-		out.Nlink = uint32(entry.HardLinkCounter)
-	}
 	out.Size = entry.FileSize
 	out.Blocks = out.Size/blockSize + 1
 	setBlksize(out, blockSize)
+	out.Atime = uint64(entry.Attr.Mtime.Unix())
+	out.Mtime = uint64(entry.Attr.Mtime.Unix())
+	out.Ctime = uint64(entry.Attr.Mtime.Unix())
+	out.Crtime_ = uint64(entry.Attr.Crtime.Unix())
+	out.Mode = toSystemMode(entry.Attr.Mode)
+	if entry.HardLinkCounter > 0 {
+		out.Nlink = uint32(entry.HardLinkCounter)
+	}
 	out.Nlink = 1
+	out.Uid = entry.Attr.Uid
+	out.Gid = entry.Attr.Gid
+}
+
+func (wfs *WFS) outputEntry(out *fuse.EntryOut, inode uint64, entry *filer.Entry) {
+	// out.Generation = 1
+	out.EntryValid = 1
+	out.AttrValid = 1
+	wfs.setAttrByFilerEntry(&out.Attr, inode, entry)
 }
 
 func toSystemMode(mode os.FileMode) uint32 {
