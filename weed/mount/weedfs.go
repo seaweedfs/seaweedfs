@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -53,11 +54,12 @@ type WFS struct {
 	// follow https://github.com/hanwen/go-fuse/blob/master/fuse/api.go
 	fuse.RawFileSystem
 	fs.Inode
-	option    *Option
-	metaCache *meta_cache.MetaCache
-	stats     statsCache
-	root      Directory
-	signature int32
+	option      *Option
+	metaCache   *meta_cache.MetaCache
+	stats       statsCache
+	root        Directory
+	signature   int32
+	inodeToPath *InodeToPath
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
@@ -65,6 +67,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		RawFileSystem: fuse.NewDefaultRawFileSystem(),
 		option:        option,
 		signature:     util.RandomInt32(),
+		inodeToPath:   NewInodeToPath(),
 	}
 
 	wfs.root = Directory{
@@ -89,6 +92,40 @@ func (wfs *WFS) Root() *Directory {
 
 func (wfs *WFS) String() string {
 	return "seaweedfs"
+}
+
+func (wfs *WFS) maybeReadEntry(inode uint64) (*filer_pb.Entry, fuse.Status) {
+	path := wfs.inodeToPath.GetPath(inode)
+	return wfs.maybeLoadEntry(path)
+}
+
+func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.Status) {
+
+	// glog.V(3).Infof("read entry cache miss %s", fullpath)
+	dir, name := fullpath.DirAndName()
+
+	// return a valid entry for the mount root
+	if string(fullpath) == wfs.option.FilerMountRootPath {
+		return &filer_pb.Entry{
+			Name:        name,
+			IsDirectory: true,
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime:    wfs.option.MountMtime.Unix(),
+				FileMode: uint32(wfs.option.MountMode),
+				Uid:      wfs.option.MountUid,
+				Gid:      wfs.option.MountGid,
+				Crtime:   wfs.option.MountCtime.Unix(),
+			},
+		}, fuse.OK
+	}
+
+	// read from async meta cache
+	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir))
+	cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
+	if cacheErr == filer_pb.ErrNotFound {
+		return nil, fuse.ENOENT
+	}
+	return cachedEntry.ToProtoEntry(), fuse.ENOSYS
 }
 
 func (option *Option) setupUniqueCacheDirectory() {
