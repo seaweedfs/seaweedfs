@@ -72,8 +72,8 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 	attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
 	attr.Gid = entry.Attributes.Gid
 	attr.Uid = entry.Attributes.Uid
-	attr.Blocks = attr.Size/blockSize + 1
-	attr.BlockSize = uint32(file.wfs.option.ChunkSizeLimit)
+	attr.BlockSize = blockSize
+	attr.Blocks = (attr.Size + blockSize - 1) / blockSize
 	if entry.HardLinkCounter > 0 {
 		attr.Nlink = uint32(entry.HardLinkCounter)
 	}
