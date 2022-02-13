@@ -26,7 +26,36 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 }
 
 func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse.AttrOut) (code fuse.Status) {
-	return fuse.ENOSYS
+
+	// TODO this is only for directory. Filet setAttr involves open files and truncate to a size
+
+	path, entry, status := wfs.maybeReadEntry(input.NodeId)
+	if status != fuse.OK {
+		return status
+	}
+
+	if mode, ok := input.GetMode(); ok {
+		entry.Attributes.FileMode = uint32(mode)
+	}
+
+	if uid, ok := input.GetUID(); ok {
+		entry.Attributes.Uid = uid
+	}
+
+	if gid, ok := input.GetGID(); ok {
+		entry.Attributes.Gid = gid
+	}
+
+	if mtime, ok := input.GetMTime(); ok {
+		entry.Attributes.Mtime = mtime.Unix()
+	}
+
+	entry.Attributes.Mtime = time.Now().Unix()
+	out.AttrValid = 1
+	wfs.setAttrByPbEntry(&out.Attr, input.NodeId, entry)
+
+	return wfs.saveEntry(path, entry)
+
 }
 func (wfs *WFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string, dest []byte) (size uint32, code fuse.Status) {
 	return 0, fuse.ENOSYS
