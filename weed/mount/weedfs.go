@@ -120,6 +120,7 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.St
 		}, fuse.OK
 	}
 
+	// TODO Use inode to selectively filetering metadata updates
 	// read from async meta cache
 	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir))
 	cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)

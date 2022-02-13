@@ -82,3 +82,15 @@ func (i *InodeToPath) RemovePath(path util.FullPath) {
 		delete(i.inode2path, inode)
 	}
 }
+func (i *InodeToPath) RemoveInode(inode uint64) {
+	if inode == 1 {
+		return
+	}
+	i.RLock()
+	defer i.RUnlock()
+	path, found := i.inode2path[inode]
+	if found {
+		delete(i.path2inode, path)
+		delete(i.inode2path, inode)
+	}
+}
