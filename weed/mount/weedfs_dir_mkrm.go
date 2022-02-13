@@ -8,6 +8,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"os"
+	"strings"
+	"syscall"
 	"time"
 )
 
@@ -66,6 +68,35 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 	inode := wfs.inodeToPath.GetInode(entryFullPath)
 
 	wfs.outputPbEntry(out, inode, newEntry)
+
+	return fuse.OK
+
+}
+
+func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string) (code fuse.Status) {
+
+	if name == "." {
+		return fuse.Status(syscall.EINVAL)
+	}
+	if name == ".." {
+		return fuse.Status(syscall.ENOTEMPTY)
+	}
+
+	dirFullPath := wfs.inodeToPath.GetPath(header.NodeId)
+	entryFullPath := dirFullPath.Child(name)
+
+	glog.V(3).Infof("remove directory: %v", entryFullPath)
+	ignoreRecursiveErr := true // ignore recursion error since the OS should manage it
+	err := filer_pb.Remove(wfs, string(dirFullPath), name, true, true, ignoreRecursiveErr, false, []int32{wfs.signature})
+	if err != nil {
+		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
+		if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
+			return fuse.Status(syscall.ENOTEMPTY)
+		}
+		return fuse.ENOENT
+	}
+
+	wfs.metaCache.DeleteEntry(context.Background(), entryFullPath)
 
 	return fuse.OK
 
