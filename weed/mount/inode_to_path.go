@@ -51,7 +51,8 @@ func (i *InodeToPath) GetInode(path util.FullPath) uint64 {
 	defer i.Unlock()
 	inode, found := i.path2inode[path]
 	if !found {
-		glog.Fatalf("GetInode unknown inode %d", inode)
+		// glog.Fatalf("GetInode unknown inode for %s", path)
+		// this could be the parent for mount point
 	}
 	return inode
 }
