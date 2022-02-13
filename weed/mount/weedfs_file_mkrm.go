@@ -7,13 +7,10 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"os"
-	"strings"
-	"syscall"
 	"time"
 )
 
-func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out *fuse.EntryOut) (code fuse.Status) {
+func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out *fuse.EntryOut) (code fuse.Status) {
 
 	if s := checkName(name); s != fuse.OK {
 		return s
@@ -21,13 +18,16 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 
 	newEntry := &filer_pb.Entry{
 		Name:        name,
-		IsDirectory: true,
+		IsDirectory: false,
 		Attributes: &filer_pb.FuseAttributes{
-			Mtime:    time.Now().Unix(),
-			Crtime:   time.Now().Unix(),
-			FileMode: uint32(os.ModeDir) | in.Mode&^uint32(wfs.option.Umask),
-			Uid:      in.Uid,
-			Gid:      in.Gid,
+			Mtime:       time.Now().Unix(),
+			Crtime:      time.Now().Unix(),
+			FileMode:    uint32(toFileMode(in.Mode) &^ wfs.option.Umask),
+			Uid:         in.Uid,
+			Gid:         in.Gid,
+			Collection:  wfs.option.Collection,
+			Replication: wfs.option.Replication,
+			TtlSec:      wfs.option.TtlSec,
 		},
 	}
 
@@ -46,20 +46,20 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 			Signatures: []int32{wfs.signature},
 		}
 
-		glog.V(1).Infof("mkdir: %v", request)
+		glog.V(1).Infof("mknod: %v", request)
 		if err := filer_pb.CreateEntry(client, request); err != nil {
-			glog.V(0).Infof("mkdir %s: %v", entryFullPath, err)
+			glog.V(0).Infof("mknod %s: %v", entryFullPath, err)
 			return err
 		}
 
 		if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
-			return fmt.Errorf("local mkdir dir %s: %v", entryFullPath, err)
+			return fmt.Errorf("local mknod %s: %v", entryFullPath, err)
 		}
 
 		return nil
 	})
 
-	glog.V(0).Infof("mkdir %s: %v", entryFullPath, err)
+	glog.V(0).Infof("mknod %s: %v", entryFullPath, err)
 
 	if err != nil {
 		return fuse.EIO
@@ -73,31 +73,35 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 
 }
 
-func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string) (code fuse.Status) {
-
-	if name == "." {
-		return fuse.Status(syscall.EINVAL)
-	}
-	if name == ".." {
-		return fuse.Status(syscall.ENOTEMPTY)
-	}
+func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name string) (code fuse.Status) {
 
 	dirFullPath := wfs.inodeToPath.GetPath(header.NodeId)
 	entryFullPath := dirFullPath.Child(name)
 
-	glog.V(3).Infof("remove directory: %v", entryFullPath)
-	ignoreRecursiveErr := true // ignore recursion error since the OS should manage it
-	err := filer_pb.Remove(wfs, string(dirFullPath), name, true, true, ignoreRecursiveErr, false, []int32{wfs.signature})
+	entry, status := wfs.maybeLoadEntry(entryFullPath)
+	if status != fuse.OK {
+		return status
+	}
+
+	// first, ensure the filer store can correctly delete
+	glog.V(3).Infof("remove file: %v", entryFullPath)
+	isDeleteData := entry != nil && entry.HardLinkCounter <= 1
+	err := filer_pb.Remove(wfs, string(dirFullPath), name, isDeleteData, false, false, false, []int32{wfs.signature})
 	if err != nil {
 		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
-		if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
-			return fuse.Status(syscall.ENOTEMPTY)
-		}
 		return fuse.ENOENT
+	}
+
+	// then, delete meta cache
+	if err = wfs.metaCache.DeleteEntry(context.Background(), entryFullPath); err != nil {
+		glog.V(3).Infof("local DeleteEntry %s: %v", entryFullPath, err)
+		return fuse.EIO
 	}
 
 	wfs.metaCache.DeleteEntry(context.Background(), entryFullPath)
 	wfs.inodeToPath.RemovePath(entryFullPath)
+
+	// TODO handle open files, hardlink
 
 	return fuse.OK
 

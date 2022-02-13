@@ -147,3 +147,26 @@ func toSystemType(mode os.FileMode) uint32 {
 		return syscall.S_IFREG
 	}
 }
+
+func toFileType(mode uint32) os.FileMode {
+	switch mode & (syscall.S_IFMT & 0xffff) {
+	case syscall.S_IFDIR:
+		return os.ModeDir
+	case syscall.S_IFLNK:
+		return os.ModeSymlink
+	case syscall.S_IFIFO:
+		return os.ModeNamedPipe
+	case syscall.S_IFSOCK:
+		return os.ModeSocket
+	case syscall.S_IFBLK:
+		return os.ModeDevice
+	case syscall.S_IFCHR:
+		return os.ModeCharDevice
+	default:
+		return 0
+	}
+}
+
+func toFileMode(mode uint32) os.FileMode {
+	return toFileType(mode) | os.FileMode(mode&07777)
+}

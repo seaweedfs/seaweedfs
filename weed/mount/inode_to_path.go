@@ -69,3 +69,16 @@ func (i *InodeToPath) HasInode(inode uint64) bool {
 	_, found := i.inode2path[inode]
 	return found
 }
+
+func (i *InodeToPath) RemovePath(path util.FullPath) {
+	if path == "/" {
+		return
+	}
+	i.Lock()
+	defer i.Unlock()
+	inode, found := i.path2inode[path]
+	if found {
+		delete(i.path2inode, path)
+		delete(i.inode2path, inode)
+	}
+}
