@@ -85,7 +85,7 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		return fuse.EIO
 	}
 
-	inode := wfs.inodeToPath.GetInode(entryFullPath)
+	inode := wfs.inodeToPath.Lookup(entryFullPath)
 
 	wfs.outputPbEntry(out, inode, newEntry)
 

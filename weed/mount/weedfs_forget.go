@@ -43,10 +43,18 @@ package mount
  * @param ino the inode number
  * @param nlookup the number of lookups to forget
  */
+/*
+
+int fuse_reply_entry	(	fuse_req_t 	req,
+const struct fuse_entry_param * 	e
+)
+Reply with a directory entry
+
+Possible requests: lookup, mknod, mkdir, symlink, link
+
+Side effects: increments the lookup count on success
+
+*/
 func (wfs *WFS) Forget(nodeid, nlookup uint64) {
-	if nlookup == 0 {
-		// need to maintain the inode for selective filtering
-		// and caching for metadata updates
-		wfs.inodeToPath.RemoveInode(nodeid)
-	}
+	wfs.inodeToPath.Forget(nodeid, nlookup)
 }

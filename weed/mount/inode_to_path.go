@@ -9,19 +9,23 @@ import (
 type InodeToPath struct {
 	sync.RWMutex
 	nextInodeId uint64
-	inode2path  map[uint64]util.FullPath
+	inode2path  map[uint64]*InodeEntry
 	path2inode  map[util.FullPath]uint64
+}
+type InodeEntry struct {
+	util.FullPath
+	nlookup uint64
 }
 
 func NewInodeToPath() *InodeToPath {
 	return &InodeToPath{
-		inode2path:  make(map[uint64]util.FullPath),
+		inode2path:  make(map[uint64]*InodeEntry),
 		path2inode:  make(map[util.FullPath]uint64),
 		nextInodeId: 2, // the root inode id is 1
 	}
 }
 
-func (i *InodeToPath) GetInode(path util.FullPath) uint64 {
+func (i *InodeToPath) Lookup(path util.FullPath) uint64 {
 	if path == "/" {
 		return 1
 	}
@@ -32,7 +36,22 @@ func (i *InodeToPath) GetInode(path util.FullPath) uint64 {
 		inode = i.nextInodeId
 		i.nextInodeId++
 		i.path2inode[path] = inode
-		i.inode2path[inode] = path
+		i.inode2path[inode] = &InodeEntry{path, 1}
+	} else {
+		i.inode2path[inode].nlookup++
+	}
+	return inode
+}
+
+func (i *InodeToPath) GetInode(path util.FullPath) uint64 {
+	if path == "/" {
+		return 1
+	}
+	i.Lock()
+	defer i.Unlock()
+	inode, found := i.path2inode[path]
+	if !found {
+		glog.Fatalf("GetInode unknown inode %d", inode)
 	}
 	return inode
 }
@@ -45,9 +64,9 @@ func (i *InodeToPath) GetPath(inode uint64) util.FullPath {
 	defer i.RUnlock()
 	path, found := i.inode2path[inode]
 	if !found {
-		glog.Fatal("not found inode %d", inode)
+		glog.Fatalf("not found inode %d", inode)
 	}
-	return path
+	return path.FullPath
 }
 
 func (i *InodeToPath) HasPath(path util.FullPath) bool {
@@ -82,15 +101,19 @@ func (i *InodeToPath) RemovePath(path util.FullPath) {
 		delete(i.inode2path, inode)
 	}
 }
-func (i *InodeToPath) RemoveInode(inode uint64) {
+
+func (i *InodeToPath) Forget(inode, nlookup uint64) {
 	if inode == 1 {
 		return
 	}
-	i.RLock()
-	defer i.RUnlock()
+	i.Lock()
+	defer i.Unlock()
 	path, found := i.inode2path[inode]
 	if found {
-		delete(i.path2inode, path)
-		delete(i.inode2path, inode)
+		path.nlookup -= nlookup
+		if path.nlookup <= 0 {
+			delete(i.path2inode, path.FullPath)
+			delete(i.inode2path, inode)
+		}
 	}
 }
