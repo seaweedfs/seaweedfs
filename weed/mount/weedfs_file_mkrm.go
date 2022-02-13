@@ -21,6 +21,9 @@ import (
  * will be called instead.
  */
 func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, out *fuse.CreateOut) (code fuse.Status) {
+	// if implemented, need to use
+	// 	inode := wfs.inodeToPath.Lookup(entryFullPath)
+	// to ensure nlookup counter
 	return fuse.ENOSYS
 }
 
