@@ -44,6 +44,7 @@ package mount
  * @param nlookup the number of lookups to forget
  */
 /*
+https://libfuse.github.io/doxygen/include_2fuse__lowlevel_8h.html
 
 int fuse_reply_entry	(	fuse_req_t 	req,
 const struct fuse_entry_param * 	e
