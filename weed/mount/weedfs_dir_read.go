@@ -36,8 +36,6 @@ func (wfs *WFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *fus
 func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPlusMode bool) fuse.Status {
 	dirPath := wfs.inodeToPath.GetPath(input.NodeId)
 
-	println("input size", input.Size, "offset", input.Offset, "pid", input.Caller.Pid)
-
 	var counter uint64
 	var dirEntry fuse.DirEntry
 	if input.Offset == 0 {
@@ -64,7 +62,6 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 		}
 		dirEntry.Name = entry.Name()
 		inode := wfs.inodeToPath.GetInode(dirPath.Child(dirEntry.Name))
-		println("entry", dirEntry.Name, "inode", inode)
 		dirEntry.Ino = inode
 		dirEntry.Mode = toSystemMode(entry.Mode)
 		if !isPlusMode {
