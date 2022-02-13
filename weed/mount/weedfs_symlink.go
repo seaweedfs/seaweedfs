@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+/** Create a symbolic link */
 func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target string, name string, out *fuse.EntryOut) (code fuse.Status) {
 
 	if s := checkName(name); s != fuse.OK {
