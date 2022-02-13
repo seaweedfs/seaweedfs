@@ -109,7 +109,15 @@ func (wfs *WFS) setAttrByFilerEntry(out *fuse.Attr, inode uint64, entry *filer.E
 	out.Gid = entry.Attr.Gid
 }
 
-func (wfs *WFS) outputEntry(out *fuse.EntryOut, inode uint64, entry *filer.Entry) {
+func (wfs *WFS) outputPbEntry(out *fuse.EntryOut, inode uint64, entry *filer_pb.Entry) {
+	out.NodeId = inode
+	out.Generation = 1
+	out.EntryValid = 1
+	out.AttrValid = 1
+	wfs.setAttrByPbEntry(&out.Attr, inode, entry)
+}
+
+func (wfs *WFS) outputFilerEntry(out *fuse.EntryOut, inode uint64, entry *filer.Entry) {
 	out.NodeId = inode
 	out.Generation = 1
 	out.EntryValid = 1

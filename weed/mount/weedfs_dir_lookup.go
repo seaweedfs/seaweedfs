@@ -16,6 +16,10 @@ import (
 
 func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name string, out *fuse.EntryOut) (code fuse.Status) {
 
+	if s := checkName(name); s != fuse.OK {
+		return s
+	}
+
 	dirPath := wfs.inodeToPath.GetPath(header.NodeId)
 
 	fullFilePath := dirPath.Child(name)
@@ -48,7 +52,7 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 	inode := wfs.inodeToPath.GetInode(fullFilePath)
 
-	wfs.outputEntry(out, inode, localEntry)
+	wfs.outputFilerEntry(out, inode, localEntry)
 
 	return fuse.OK
 

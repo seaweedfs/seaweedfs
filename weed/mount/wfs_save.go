@@ -8,6 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"syscall"
 )
 
 func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.Status) {
@@ -56,4 +57,11 @@ func (wfs *WFS) mapPbIdFromLocalToFiler(entry *filer_pb.Entry) {
 		return
 	}
 	entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.LocalToFiler(entry.Attributes.Uid, entry.Attributes.Gid)
+}
+
+func checkName(name string) fuse.Status {
+	if len(name) >= 256 {
+		return fuse.Status(syscall.ENAMETOOLONG)
+	}
+	return fuse.OK
 }

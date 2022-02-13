@@ -73,7 +73,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 			if entryOut == nil {
 				return false
 			}
-			wfs.outputEntry(entryOut, inode, entry)
+			wfs.outputFilerEntry(entryOut, inode, entry)
 		}
 		return true
 	}
