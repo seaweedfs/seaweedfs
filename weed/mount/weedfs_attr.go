@@ -46,7 +46,7 @@ func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr 
 }
 
 func (wfs *WFS) setRootAttr(out *fuse.AttrOut) {
-	now := uint64(time.Now().Second())
+	now := uint64(time.Now().Unix())
 	out.AttrValid = 119
 	out.Ino = 1
 	setBlksize(&out.Attr, blockSize)
@@ -69,17 +69,18 @@ func (wfs *WFS) setAttrByPbEntry(out *fuse.Attr, inode uint64, entry *filer_pb.E
 	out.Atime = uint64(entry.Attributes.Mtime)
 	if entry.HardLinkCounter > 0 {
 		out.Nlink = uint32(entry.HardLinkCounter)
+	} else {
+		out.Nlink = 1
 	}
 	out.Size = filer.FileSize(entry)
-	out.Blocks = out.Size/blockSize + 1
+	out.Blocks = (out.Size + blockSize - 1) / blockSize
 	setBlksize(out, blockSize)
-	out.Nlink = 1
 }
 
 func (wfs *WFS) setAttrByFilerEntry(out *fuse.Attr, inode uint64, entry *filer.Entry) {
 	out.Ino = inode
 	out.Size = entry.FileSize
-	out.Blocks = out.Size/blockSize + 1
+	out.Blocks = (out.Size + blockSize - 1) / blockSize
 	setBlksize(out, blockSize)
 	out.Atime = uint64(entry.Attr.Mtime.Unix())
 	out.Mtime = uint64(entry.Attr.Mtime.Unix())
@@ -88,14 +89,16 @@ func (wfs *WFS) setAttrByFilerEntry(out *fuse.Attr, inode uint64, entry *filer.E
 	out.Mode = toSystemMode(entry.Attr.Mode)
 	if entry.HardLinkCounter > 0 {
 		out.Nlink = uint32(entry.HardLinkCounter)
+	} else {
+		out.Nlink = 1
 	}
-	out.Nlink = 1
 	out.Uid = entry.Attr.Uid
 	out.Gid = entry.Attr.Gid
 }
 
 func (wfs *WFS) outputEntry(out *fuse.EntryOut, inode uint64, entry *filer.Entry) {
-	// out.Generation = 1
+	out.NodeId = inode
+	out.Generation = 1
 	out.EntryValid = 1
 	out.AttrValid = 1
 	wfs.setAttrByFilerEntry(&out.Attr, inode, entry)

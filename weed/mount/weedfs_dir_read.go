@@ -14,6 +14,9 @@ import (
 // Directory handling
 
 func (wfs *WFS) OpenDir(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.OpenOut) (code fuse.Status) {
+	if !wfs.inodeToPath.HasInode(input.NodeId) {
+		return fuse.ENOENT
+	}
 	return fuse.OK
 }
 func (wfs *WFS) ReleaseDir(input *fuse.ReleaseIn) {
@@ -35,13 +38,16 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 
 	println("input size", input.Size, "offset", input.Offset, "pid", input.Caller.Pid)
 
+	var counter uint64
 	var dirEntry fuse.DirEntry
 	if input.Offset == 0 {
+		counter++
 		dirEntry.Ino = input.NodeId
 		dirEntry.Name = "."
 		dirEntry.Mode = toSystemMode(os.ModeDir)
 		out.AddDirEntry(dirEntry)
 
+		counter++
 		parentDir, _ := dirPath.DirAndName()
 		parentInode := wfs.inodeToPath.GetInode(util.FullPath(parentDir))
 		dirEntry.Ino = parentInode
@@ -51,7 +57,6 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 
 	}
 
-	var counter uint64
 	processEachEntryFn := func(entry *filer.Entry, isLast bool) bool {
 		counter++
 		if counter <= input.Offset {

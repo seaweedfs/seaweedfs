@@ -59,3 +59,13 @@ func (i *InodeToPath) HasPath(path util.FullPath) bool {
 	_, found := i.path2inode[path]
 	return found
 }
+
+func (i *InodeToPath) HasInode(inode uint64) bool {
+	if inode == 1 {
+		return true
+	}
+	i.RLock()
+	defer i.RUnlock()
+	_, found := i.inode2path[inode]
+	return found
+}
