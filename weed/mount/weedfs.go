@@ -126,7 +126,7 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.St
 	if cacheErr == filer_pb.ErrNotFound {
 		return nil, fuse.ENOENT
 	}
-	return cachedEntry.ToProtoEntry(), fuse.ENOSYS
+	return cachedEntry.ToProtoEntry(), fuse.OK
 }
 
 func (option *Option) setupUniqueCacheDirectory() {
