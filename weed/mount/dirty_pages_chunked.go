@@ -38,7 +38,7 @@ func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *ChunkedDirtyPages {
 func (pages *ChunkedDirtyPages) AddPage(offset int64, data []byte) {
 	pages.hasWrites = true
 
-	glog.V(4).Infof("%v memory AddPage [%d, %d)", pages.fh, offset, offset+int64(len(data)))
+	glog.V(4).Infof("%v memory AddPage [%d, %d)", pages.fh.fh, offset, offset+int64(len(data)))
 	pages.uploadPipeline.SaveDataAt(data, offset)
 
 	return

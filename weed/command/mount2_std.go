@@ -152,7 +152,7 @@ func RunMount2(option *Mount2Options, umask os.FileMode) bool {
 		Name:                     "seaweedfs",
 		SingleThreaded:           false,
 		DisableXAttrs:            false,
-		Debug:                    true,
+		Debug:                    false,
 		EnableLocks:              false,
 		ExplicitDataCacheControl: false,
 		// SyncRead:                 false, // set to false to enable the FUSE_CAP_ASYNC_READ capability
