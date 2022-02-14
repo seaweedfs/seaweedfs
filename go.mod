@@ -162,7 +162,10 @@ require (
 	modernc.org/token v1.0.0 // indirect
 )
 
-require github.com/fluent/fluent-logger-golang v1.8.0
+require (
+	github.com/fluent/fluent-logger-golang v1.8.0
+	github.com/hanwen/go-fuse/v2 v2.1.0
+)
 
 require (
 	cloud.google.com/go/kms v1.0.0 // indirect
