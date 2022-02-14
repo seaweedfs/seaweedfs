@@ -2,6 +2,7 @@ package mount
 
 import (
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"net/http"
 )
 
 /**
@@ -31,5 +32,35 @@ import (
  * @param fi file information
  */
 func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (written uint32, code fuse.Status) {
-	return 0, fuse.ENOSYS
+
+	fh := wfs.GetHandle(FileHandleId(in.Fh))
+	if fh == nil {
+		return 0, fuse.ENOENT
+	}
+
+	fh.Lock()
+	defer fh.Unlock()
+
+	entry := fh.entry
+	if entry == nil {
+		return 0, fuse.OK
+	}
+
+	entry.Content = nil
+	offset := int64(in.Offset)
+	entry.Attributes.FileSize = uint64(max(offset+int64(len(data)), int64(entry.Attributes.FileSize)))
+	// glog.V(4).Infof("%v write [%d,%d) %d", fh.f.fullpath(), req.Offset, req.Offset+int64(len(req.Data)), len(req.Data))
+
+	fh.dirtyPages.AddPage(offset, data)
+
+	written = uint32(len(data))
+
+	if offset == 0 {
+		// detect mime type
+		fh.contentType = http.DetectContentType(data)
+	}
+
+	fh.dirtyMetadata = true
+
+	return written, fuse.OK
 }

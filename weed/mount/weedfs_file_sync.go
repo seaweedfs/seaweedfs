@@ -1,7 +1,14 @@
 package mount
 
 import (
+	"context"
+	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"os"
+	"time"
 )
 
 /**
@@ -43,7 +50,15 @@ import (
  * [close]: http://pubs.opengroup.org/onlinepubs/9699919799/functions/close.html
  */
 func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
-	return fuse.ENOSYS
+	fh := wfs.GetHandle(FileHandleId(in.Fh))
+	if fh == nil {
+		return fuse.ENOENT
+	}
+
+	fh.Lock()
+	defer fh.Unlock()
+
+	return wfs.doFlush(fh, in.Uid, in.Gid)
 }
 
 /**
@@ -66,5 +81,100 @@ func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
  * @param fi file information
  */
 func (wfs *WFS) Fsync(cancel <-chan struct{}, in *fuse.FsyncIn) (code fuse.Status) {
-	return fuse.ENOSYS
+
+	fh := wfs.GetHandle(FileHandleId(in.Fh))
+	if fh == nil {
+		return fuse.ENOENT
+	}
+
+	fh.Lock()
+	defer fh.Unlock()
+
+	return wfs.doFlush(fh, in.Uid, in.Gid)
+
+}
+
+func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
+	// flush works at fh level
+	fileFullPath := fh.FullPath()
+	dir, _ := fileFullPath.DirAndName()
+	// send the data to the OS
+	glog.V(4).Infof("doFlush %s fh %d", fileFullPath, fh.handle)
+
+	if err := fh.dirtyPages.FlushData(); err != nil {
+		glog.Errorf("%v doFlush: %v", fileFullPath, err)
+		return fuse.EIO
+	}
+
+	if !fh.dirtyMetadata {
+		return fuse.OK
+	}
+
+	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+
+		entry := fh.entry
+		if entry == nil {
+			return nil
+		}
+
+		if entry.Attributes != nil {
+			entry.Attributes.Mime = fh.contentType
+			if entry.Attributes.Uid == 0 {
+				entry.Attributes.Uid = uid
+			}
+			if entry.Attributes.Gid == 0 {
+				entry.Attributes.Gid = gid
+			}
+			if entry.Attributes.Crtime == 0 {
+				entry.Attributes.Crtime = time.Now().Unix()
+			}
+			entry.Attributes.Mtime = time.Now().Unix()
+			entry.Attributes.FileMode = uint32(os.FileMode(entry.Attributes.FileMode) &^ wfs.option.Umask)
+			entry.Attributes.Collection, entry.Attributes.Replication = fh.dirtyPages.GetStorageOptions()
+		}
+
+		request := &filer_pb.CreateEntryRequest{
+			Directory:  string(dir),
+			Entry:      entry,
+			Signatures: []int32{wfs.signature},
+		}
+
+		glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.Chunks))
+		for i, chunk := range entry.Chunks {
+			glog.V(4).Infof("%s chunks %d: %v [%d,%d)", fileFullPath, i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
+		}
+
+		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.Chunks)
+
+		chunks, _ := filer.CompactFileChunks(wfs.LookupFn(), nonManifestChunks)
+		chunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), chunks)
+		if manifestErr != nil {
+			// not good, but should be ok
+			glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
+		}
+		entry.Chunks = append(chunks, manifestChunks...)
+
+		wfs.mapPbIdFromLocalToFiler(request.Entry)
+		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
+
+		if err := filer_pb.CreateEntry(client, request); err != nil {
+			glog.Errorf("fh flush create %s: %v", fileFullPath, err)
+			return fmt.Errorf("fh flush create %s: %v", fileFullPath, err)
+		}
+
+		wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
+
+		return nil
+	})
+
+	if err == nil {
+		fh.dirtyMetadata = false
+	}
+
+	if err != nil {
+		glog.Errorf("%v fh %d flush: %v", fileFullPath, fh.handle, err)
+		return fuse.EIO
+	}
+
+	return fuse.OK
 }

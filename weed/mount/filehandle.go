@@ -21,6 +21,7 @@ type FileHandle struct {
 	wfs          *WFS
 
 	// cache file has been written to
+	dirtyMetadata  bool
 	dirtyPages     *PageWriter
 	entryViewCache []filer.VisibleInterval
 	reader         io.ReaderAt
