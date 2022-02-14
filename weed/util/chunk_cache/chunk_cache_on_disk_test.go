@@ -4,14 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
-	"os"
 	"testing"
 )
 
 func TestOnDisk(t *testing.T) {
-
-	tmpDir, _ := os.MkdirTemp("", "c")
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	totalDiskSizeInKB := int64(32)
 
