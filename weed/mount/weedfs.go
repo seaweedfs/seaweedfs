@@ -2,14 +2,18 @@ package mount
 
 import (
 	"context"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"google.golang.org/grpc"
+	"math/rand"
 	"os"
 	"path"
 	"path/filepath"
@@ -54,13 +58,15 @@ type WFS struct {
 	// follow https://github.com/hanwen/go-fuse/blob/master/fuse/api.go
 	fuse.RawFileSystem
 	fs.Inode
-	option      *Option
-	metaCache   *meta_cache.MetaCache
-	stats       statsCache
-	root        Directory
-	signature   int32
-	inodeToPath *InodeToPath
-	fhmap       *FileHandleToInode
+	option            *Option
+	metaCache         *meta_cache.MetaCache
+	stats             statsCache
+	root              Directory
+	chunkCache        *chunk_cache.TieredChunkCache
+	signature         int32
+	concurrentWriters *util.LimitedConcurrentExecutor
+	inodeToPath       *InodeToPath
+	fhmap             *FileHandleToInode
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
@@ -79,12 +85,21 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		parent: nil,
 	}
 
+	wfs.option.filerIndex = rand.Intn(len(option.FilerAddresses))
+	wfs.option.setupUniqueCacheDirectory()
+	if option.CacheSizeMB > 0 {
+		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDir(), option.CacheSizeMB, 1024*1024)
+	}
+
 	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDir(), "meta"), util.FullPath(option.FilerMountRootPath), option.UidGidMapper, func(filePath util.FullPath, entry *filer_pb.Entry) {
 	})
 	grace.OnInterrupt(func() {
 		wfs.metaCache.Shutdown()
 	})
 
+	if wfs.option.ConcurrentWriters > 0 {
+		wfs.concurrentWriters = util.NewLimitedConcurrentExecutor(wfs.option.ConcurrentWriters)
+	}
 	return wfs
 }
 
@@ -130,6 +145,19 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.St
 		return nil, fuse.ENOENT
 	}
 	return cachedEntry.ToProtoEntry(), fuse.OK
+}
+
+func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
+	if wfs.option.VolumeServerAccess == "filerProxy" {
+		return func(fileId string) (targetUrls []string, err error) {
+			return []string{"http://" + wfs.getCurrentFiler().ToHttpAddress() + "/?proxyChunkId=" + fileId}, nil
+		}
+	}
+	return filer.LookupFn(wfs)
+}
+
+func (wfs *WFS) getCurrentFiler() pb.ServerAddress {
+	return wfs.option.FilerAddresses[wfs.option.filerIndex]
 }
 
 func (option *Option) setupUniqueCacheDirectory() {

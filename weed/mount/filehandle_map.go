@@ -5,19 +5,11 @@ import (
 	"sync"
 )
 
-type FileHandleId uint64
-
 type FileHandleToInode struct {
 	sync.RWMutex
 	nextFh   FileHandleId
 	inode2fh map[uint64]*FileHandle
 	fh2inode map[FileHandleId]uint64
-}
-type FileHandle struct {
-	fh      FileHandleId
-	counter int64
-	entry   *filer_pb.Entry
-	inode   uint64
 }
 
 func NewFileHandleToInode() *FileHandleToInode {
@@ -28,16 +20,22 @@ func NewFileHandleToInode() *FileHandleToInode {
 	}
 }
 
-func (i *FileHandleToInode) GetFileHandle(inode uint64) *FileHandle {
+func (i *FileHandleToInode) GetFileHandle(fh FileHandleId) *FileHandle {
+	i.RLock()
+	defer i.RUnlock()
+	inode, found := i.fh2inode[fh]
+	if found {
+		return i.inode2fh[inode]
+	}
+	return nil
+}
+
+func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry) *FileHandle {
 	i.Lock()
 	defer i.Unlock()
 	fh, found := i.inode2fh[inode]
 	if !found {
-		fh = &FileHandle{
-			fh:      i.nextFh,
-			counter: 1,
-			inode:   inode,
-		}
+		fh = newFileHandle(wfs, i.nextFh, inode, entry)
 		i.nextFh++
 		i.inode2fh[inode] = fh
 		i.fh2inode[fh.fh] = inode
