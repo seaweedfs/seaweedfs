@@ -134,7 +134,6 @@ func (wfs *WFS) setAttrByFilerEntry(out *fuse.Attr, inode uint64, entry *filer.E
 	out.Atime = uint64(entry.Attr.Mtime.Unix())
 	out.Mtime = uint64(entry.Attr.Mtime.Unix())
 	out.Ctime = uint64(entry.Attr.Mtime.Unix())
-	out.Crtime_ = uint64(entry.Attr.Crtime.Unix())
 	out.Mode = toSystemMode(entry.Attr.Mode)
 	if entry.HardLinkCounter > 0 {
 		out.Nlink = uint32(entry.HardLinkCounter)
