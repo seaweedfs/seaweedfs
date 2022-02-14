@@ -116,7 +116,6 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 		return true
 	}
 
-	// TODO remove this with checking whether directory is not forgotten
 	if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath); err != nil {
 		glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 		return fuse.EIO

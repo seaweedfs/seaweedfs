@@ -2,6 +2,7 @@ package mount
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"os"
@@ -15,7 +16,7 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 		return fuse.OK
 	}
 
-	_, entry, status := wfs.maybeReadEntry(input.NodeId)
+	_, _, entry, status := wfs.maybeReadEntry(input.NodeId)
 	if status != fuse.OK {
 		return status
 	}
@@ -27,11 +28,41 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 
 func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse.AttrOut) (code fuse.Status) {
 
-	// TODO this is only for directory. Filet setAttr involves open files and truncate to a size
-
-	path, entry, status := wfs.maybeReadEntry(input.NodeId)
+	path, fh, entry, status := wfs.maybeReadEntry(input.NodeId)
 	if status != fuse.OK {
 		return status
+	}
+
+	if size, ok := input.GetSize(); ok {
+		glog.V(4).Infof("%v setattr set size=%v chunks=%d", path, size, len(entry.Chunks))
+		if size < filer.FileSize(entry) {
+			// fmt.Printf("truncate %v \n", fullPath)
+			var chunks []*filer_pb.FileChunk
+			var truncatedChunks []*filer_pb.FileChunk
+			for _, chunk := range entry.Chunks {
+				int64Size := int64(chunk.Size)
+				if chunk.Offset+int64Size > int64(size) {
+					// this chunk is truncated
+					int64Size = int64(size) - chunk.Offset
+					if int64Size > 0 {
+						chunks = append(chunks, chunk)
+						glog.V(4).Infof("truncated chunk %+v from %d to %d\n", chunk.GetFileIdString(), chunk.Size, int64Size)
+						chunk.Size = uint64(int64Size)
+					} else {
+						glog.V(4).Infof("truncated whole chunk %+v\n", chunk.GetFileIdString())
+						truncatedChunks = append(truncatedChunks, chunk)
+					}
+				}
+			}
+			// set the new chunks and reset entry cache
+			entry.Chunks = chunks
+			if fh != nil {
+				fh.entryViewCache = nil
+			}
+		}
+		entry.Attributes.Mtime = time.Now().Unix()
+		entry.Attributes.FileSize = size
+
 	}
 
 	if mode, ok := input.GetMode(); ok {
@@ -53,6 +84,11 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	entry.Attributes.Mtime = time.Now().Unix()
 	out.AttrValid = 1
 	wfs.setAttrByPbEntry(&out.Attr, input.NodeId, entry)
+
+	if fh != nil {
+		fh.dirtyMetadata = true
+		return fuse.OK
+	}
 
 	return wfs.saveEntry(path, entry)
 

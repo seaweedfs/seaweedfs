@@ -32,7 +32,7 @@ func (wfs *WFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr str
 		return 0, fuse.EINVAL
 	}
 
-	_, entry, status := wfs.maybeReadEntry(header.NodeId)
+	_, _, entry, status := wfs.maybeReadEntry(header.NodeId)
 	if status != fuse.OK {
 		return 0, status
 	}
@@ -89,7 +89,7 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 		}
 	}
 
-	path, entry, status := wfs.maybeReadEntry(input.NodeId)
+	path, _, entry, status := wfs.maybeReadEntry(input.NodeId)
 	if status != fuse.OK {
 		return status
 	}
@@ -117,7 +117,7 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 // slice, and return the number of bytes. If the buffer is too
 // small, return ERANGE, with the required buffer size.
 func (wfs *WFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, dest []byte) (n uint32, code fuse.Status) {
-	_, entry, status := wfs.maybeReadEntry(header.NodeId)
+	_, _, entry, status := wfs.maybeReadEntry(header.NodeId)
 	if status != fuse.OK {
 		return 0, status
 	}
@@ -149,7 +149,7 @@ func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr 
 	if len(attr) == 0 {
 		return fuse.EINVAL
 	}
-	path, entry, status := wfs.maybeReadEntry(header.NodeId)
+	path, _, entry, status := wfs.maybeReadEntry(header.NodeId)
 	if status != fuse.OK {
 		return status
 	}

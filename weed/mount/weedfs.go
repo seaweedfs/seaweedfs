@@ -120,8 +120,12 @@ func (wfs *WFS) String() string {
 	return "seaweedfs"
 }
 
-func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, entry *filer_pb.Entry, status fuse.Status) {
+func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle, entry *filer_pb.Entry, status fuse.Status) {
 	path = wfs.inodeToPath.GetPath(inode)
+	var found bool
+	if fh, found = wfs.fhmap.FindFileHandle(inode); found {
+		return path, fh, fh.entry, fuse.OK
+	}
 	entry, status = wfs.maybeLoadEntry(path)
 	return
 }
@@ -146,7 +150,6 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.St
 		}, fuse.OK
 	}
 
-	// TODO Use inode to selectively filetering metadata updates
 	// read from async meta cache
 	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir))
 	cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)

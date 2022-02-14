@@ -30,7 +30,7 @@ func newPageWriter(fh *FileHandle, chunkSize int64) *PageWriter {
 
 func (pw *PageWriter) AddPage(offset int64, data []byte) {
 
-	glog.V(4).Infof("%v AddPage [%d, %d)", pw.fh, offset, offset+int64(len(data)))
+	glog.V(4).Infof("%v AddPage [%d, %d)", pw.fh.fh, offset, offset+int64(len(data)))
 
 	chunkIndex := offset / pw.chunkSize
 	for i := chunkIndex; len(data) > 0; i++ {
@@ -50,7 +50,7 @@ func (pw *PageWriter) FlushData() error {
 }
 
 func (pw *PageWriter) ReadDirtyDataAt(data []byte, offset int64) (maxStop int64) {
-	glog.V(4).Infof("ReadDirtyDataAt %v [%d, %d)", pw.fh, offset, offset+int64(len(data)))
+	glog.V(4).Infof("ReadDirtyDataAt %v [%d, %d)", pw.fh.fh, offset, offset+int64(len(data)))
 
 	chunkIndex := offset / pw.chunkSize
 	for i := chunkIndex; len(data) > 0; i++ {

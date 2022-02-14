@@ -30,6 +30,13 @@ func (i *FileHandleToInode) GetFileHandle(fh FileHandleId) *FileHandle {
 	return nil
 }
 
+func (i *FileHandleToInode) FindFileHandle(inode uint64) (fh *FileHandle, found bool) {
+	i.RLock()
+	defer i.RUnlock()
+	fh, found = i.inode2fh[inode]
+	return
+}
+
 func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry) *FileHandle {
 	i.Lock()
 	defer i.Unlock()
