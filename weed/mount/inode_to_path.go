@@ -37,6 +37,7 @@ func (i *InodeToPath) Lookup(path util.FullPath) uint64 {
 		i.nextInodeId++
 		i.path2inode[path] = inode
 		i.inode2path[inode] = &InodeEntry{path, 1}
+		println("add", path, inode)
 	} else {
 		i.inode2path[inode].nlookup++
 	}
@@ -100,6 +101,30 @@ func (i *InodeToPath) RemovePath(path util.FullPath) {
 	if found {
 		delete(i.path2inode, path)
 		delete(i.inode2path, inode)
+	}
+}
+
+func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) {
+	if sourcePath == "/" || targetPath == "/" {
+		return
+	}
+	i.Lock()
+	defer i.Unlock()
+	sourceInode, sourceFound := i.path2inode[sourcePath]
+	targetInode, targetFound := i.path2inode[targetPath]
+	if sourceFound {
+		delete(i.path2inode, sourcePath)
+		i.path2inode[targetPath] = sourceInode
+	} else {
+		// it is possible some source folder items has not been visited before
+		// so no need to worry about their source inodes
+		return
+	}
+	i.inode2path[sourceInode].FullPath = targetPath
+	if targetFound {
+		delete(i.inode2path, targetInode)
+	} else {
+		i.inode2path[sourceInode].nlookup++
 	}
 }
 
