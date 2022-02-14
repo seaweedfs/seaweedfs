@@ -3,7 +3,7 @@ package mount
 import (
 	"context"
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
+	"github.com/chrislusf/seaweedfs/weed/mount/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
@@ -91,7 +91,11 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDir(), option.CacheSizeMB, 1024*1024)
 	}
 
-	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDir(), "meta"), util.FullPath(option.FilerMountRootPath), option.UidGidMapper, func(filePath util.FullPath, entry *filer_pb.Entry) {
+	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDir(), "meta"), option.UidGidMapper, func(path util.FullPath) {
+		wfs.inodeToPath.MarkChildrenCached(path)
+	}, func(path util.FullPath) bool {
+		return wfs.inodeToPath.IsChildrenCached(path)
+	}, func(filePath util.FullPath, entry *filer_pb.Entry) {
 	})
 	grace.OnInterrupt(func() {
 		wfs.metaCache.Shutdown()
@@ -101,6 +105,11 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.concurrentWriters = util.NewLimitedConcurrentExecutor(wfs.option.ConcurrentWriters)
 	}
 	return wfs
+}
+
+func (wfs *WFS) StartBackgroundTasks() {
+	startTime := time.Now()
+	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
 }
 
 func (wfs *WFS) Root() *Directory {

@@ -3,9 +3,9 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/mount"
+	"github.com/chrislusf/seaweedfs/weed/mount/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/mount/unmount"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -199,6 +199,8 @@ func RunMount2(option *Mount2Options, umask os.FileMode) bool {
 	grace.OnInterrupt(func() {
 		unmount.Unmount(dir)
 	})
+
+	seaweedFileSystem.StartBackgroundTasks()
 
 	fmt.Printf("This is SeaweedFS version %s %s %s\n", util.Version(), runtime.GOOS, runtime.GOARCH)
 

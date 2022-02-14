@@ -3,8 +3,8 @@ package mount
 import (
 	"context"
 	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/mount/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
@@ -50,7 +50,7 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		return fuse.ENOENT
 	}
 
-	inode := wfs.inodeToPath.Lookup(fullFilePath)
+	inode := wfs.inodeToPath.Lookup(fullFilePath, localEntry.IsDirectory())
 
 	wfs.outputFilerEntry(out, inode, localEntry)
 

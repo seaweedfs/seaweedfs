@@ -88,7 +88,7 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		return fuse.EIO
 	}
 
-	inode := wfs.inodeToPath.Lookup(entryFullPath)
+	inode := wfs.inodeToPath.Lookup(entryFullPath, false)
 
 	wfs.outputPbEntry(out, inode, newEntry)
 
@@ -124,8 +124,6 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 	wfs.metaCache.DeleteEntry(context.Background(), entryFullPath)
 	wfs.inodeToPath.RemovePath(entryFullPath)
-
-	// TODO handle open files, hardlink
 
 	return fuse.OK
 

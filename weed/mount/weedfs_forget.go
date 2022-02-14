@@ -1,5 +1,10 @@
 package mount
 
+import (
+	"context"
+	"github.com/chrislusf/seaweedfs/weed/util"
+)
+
 // Forget is called when the kernel discards entries from its
 // dentry cache. This happens on unmount, and when the kernel
 // is short on memory. Since it is not guaranteed to occur at
@@ -57,5 +62,7 @@ Side effects: increments the lookup count on success
 
 */
 func (wfs *WFS) Forget(nodeid, nlookup uint64) {
-	wfs.inodeToPath.Forget(nodeid, nlookup)
+	wfs.inodeToPath.Forget(nodeid, nlookup, func(dir util.FullPath) {
+		wfs.metaCache.DeleteFolderChildren(context.Background(), dir)
+	})
 }

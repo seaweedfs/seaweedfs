@@ -85,7 +85,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		return fuse.EIO
 	}
 
-	inode := wfs.inodeToPath.Lookup(newEntryPath)
+	inode := wfs.inodeToPath.Lookup(newEntryPath, false)
 
 	wfs.outputPbEntry(out, inode, request.Entry)
 
