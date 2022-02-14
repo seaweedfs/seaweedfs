@@ -101,7 +101,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorWriteToReplicas).Inc()
 			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
 			glog.V(0).Infoln(err)
-			return
+			return false, err
 		}
 	}
 	return
