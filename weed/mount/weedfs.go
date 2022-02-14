@@ -60,6 +60,7 @@ type WFS struct {
 	root        Directory
 	signature   int32
 	inodeToPath *InodeToPath
+	fhmap       *FileHandleToInode
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
@@ -68,6 +69,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		option:        option,
 		signature:     util.RandomInt32(),
 		inodeToPath:   NewInodeToPath(),
+		fhmap:         NewFileHandleToInode(),
 	}
 
 	wfs.root = Directory{

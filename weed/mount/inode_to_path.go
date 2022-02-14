@@ -37,7 +37,6 @@ func (i *InodeToPath) Lookup(path util.FullPath) uint64 {
 		i.nextInodeId++
 		i.path2inode[path] = inode
 		i.inode2path[inode] = &InodeEntry{path, 1}
-		println("add", path, inode)
 	} else {
 		i.inode2path[inode].nlookup++
 	}
