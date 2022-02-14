@@ -13,8 +13,7 @@ import (
 
 func TestCreateAndFind(t *testing.T) {
 	testFiler := filer.NewFiler(nil, nil, "", "", "", "", nil)
-	dir, _ := os.MkdirTemp("", "seaweedfs_filer_test")
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 	store := &LevelDBStore{}
 	store.initialize(dir)
 	testFiler.SetStore(store)
@@ -67,8 +66,7 @@ func TestCreateAndFind(t *testing.T) {
 
 func TestEmptyRoot(t *testing.T) {
 	testFiler := filer.NewFiler(nil, nil, "", "", "", "", nil)
-	dir, _ := os.MkdirTemp("", "seaweedfs_filer_test2")
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 	store := &LevelDBStore{}
 	store.initialize(dir)
 	testFiler.SetStore(store)
@@ -90,8 +88,7 @@ func TestEmptyRoot(t *testing.T) {
 
 func BenchmarkInsertEntry(b *testing.B) {
 	testFiler := filer.NewFiler(nil, nil, "", "", "", "", nil)
-	dir, _ := os.MkdirTemp("", "seaweedfs_filer_bench")
-	defer os.RemoveAll(dir)
+	dir := b.TempDir()
 	store := &LevelDBStore{}
 	store.initialize(dir)
 	testFiler.SetStore(store)

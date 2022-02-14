@@ -2,7 +2,6 @@ package storage
 
 import (
 	"math/rand"
-	"os"
 	"testing"
 	"time"
 
@@ -62,11 +61,7 @@ func TestMakeDiff(t *testing.T) {
 }
 
 func TestCompaction(t *testing.T) {
-	dir, err := os.MkdirTemp("", "example")
-	if err != nil {
-		t.Fatalf("temp dir creation: %v", err)
-	}
-	defer os.RemoveAll(dir) // clean up
+	dir := t.TempDir()
 
 	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0)
 	if err != nil {
