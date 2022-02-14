@@ -364,8 +364,8 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 	}
 
 	httpDown := httpdown.HTTP{
-		KillTimeout: 5 * time.Minute,
-		StopTimeout: 5 * time.Minute,
+		KillTimeout: time.Minute,
+		StopTimeout: 30 * time.Second,
 		CertFile:    certFile,
 		KeyFile:     keyFile}
 	clusterHttpServer := httpDown.Serve(&http.Server{Handler: handler}, listener)
