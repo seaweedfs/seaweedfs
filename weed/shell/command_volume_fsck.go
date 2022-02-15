@@ -6,7 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -61,7 +64,8 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	verbose := fsckCommand.Bool("v", false, "verbose mode")
 	findMissingChunksInFiler := fsckCommand.Bool("findMissingChunksInFiler", false, "see \"help volume.fsck\"")
 	findMissingChunksInFilerPath := fsckCommand.String("findMissingChunksInFilerPath", "/", "used together with findMissingChunksInFiler")
-	applyPurging := fsckCommand.Bool("reallyDeleteFromVolume", false, "<expert only> delete data not referenced by the filer")
+	applyPurging := fsckCommand.Bool("reallyDeleteFromVolume", false, "<expert only!> after detection, delete missing data from volumes / delete missing file entries from filer")
+	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -98,20 +102,20 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	if *findMissingChunksInFiler {
 		// collect all filer file ids and paths
-		if err = c.collectFilerFileIdAndPaths(volumeIdToVInfo, tempFolder, writer, *findMissingChunksInFilerPath, *verbose, applyPurging); err != nil {
+		if err = c.collectFilerFileIdAndPaths(volumeIdToVInfo, tempFolder, writer, *findMissingChunksInFilerPath, *verbose, *purgeAbsent); err != nil {
 			return fmt.Errorf("collectFilerFileIdAndPaths: %v", err)
 		}
 		// for each volume, check filer file ids
-		if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, tempFolder, writer, *verbose, applyPurging); err != nil {
+		if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, tempFolder, writer, *verbose, *applyPurging); err != nil {
 			return fmt.Errorf("findFilerChunksMissingInVolumeServers: %v", err)
 		}
 	} else {
 		// collect all filer file ids
-		if err = c.collectFilerFileIds(tempFolder, volumeIdToVInfo, *verbose, writer); err != nil {
+		if err = c.collectFilerFileIds(volumeIdToVInfo, tempFolder, writer, *verbose); err != nil {
 			return fmt.Errorf("failed to collect file ids from filer: %v", err)
 		}
-		// volume file ids substract filer file ids
-		if err = c.findExtraChunksInVolumeServers(volumeIdToVInfo, tempFolder, writer, *verbose, applyPurging); err != nil {
+		// volume file ids subtract filer file ids
+		if err = c.findExtraChunksInVolumeServers(volumeIdToVInfo, tempFolder, writer, *verbose, *applyPurging); err != nil {
 			return fmt.Errorf("findExtraChunksInVolumeServers: %v", err)
 		}
 	}
@@ -119,7 +123,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	return nil
 }
 
-func (c *commandVolumeFsck) collectFilerFileIdAndPaths(volumeIdToServer map[uint32]VInfo, tempFolder string, writer io.Writer, filerPath string, verbose bool, applyPurging *bool) error {
+func (c *commandVolumeFsck) collectFilerFileIdAndPaths(volumeIdToServer map[uint32]VInfo, tempFolder string, writer io.Writer, filerPath string, verbose bool, purgeAbsent bool) error {
 
 	if verbose {
 		fmt.Fprintf(writer, "checking each file from filer ...\n")
@@ -176,16 +180,20 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(volumeIdToServer map[uint
 				// fmt.Fprintf(writer, "%d,%x%08x %d %s\n", i.vid, i.fileKey, i.cookie, len(i.path), i.path)
 			} else {
 				fmt.Fprintf(writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
+				if purgeAbsent {
+					fmt.Printf("deleting path %s after volume not found", i.path)
+					c.httpDelete(i.path, verbose)
+				}
 			}
 		}
 	})
 
 }
 
-func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInfo map[uint32]VInfo, tempFolder string, writer io.Writer, verbose bool, applyPurging *bool) error {
+func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInfo map[uint32]VInfo, tempFolder string, writer io.Writer, verbose bool, applyPurging bool) error {
 
 	for volumeId, vinfo := range volumeIdToVInfo {
-		checkErr := c.oneVolumeFileIdsCheckOneVolume(tempFolder, volumeId, writer, verbose)
+		checkErr := c.oneVolumeFileIdsCheckOneVolume(tempFolder, volumeId, writer, verbose, applyPurging)
 		if checkErr != nil {
 			return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
 		}
@@ -193,8 +201,10 @@ func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInf
 	return nil
 }
 
-func (c *commandVolumeFsck) findExtraChunksInVolumeServers(volumeIdToVInfo map[uint32]VInfo, tempFolder string, writer io.Writer, verbose bool, applyPurging *bool) error {
+func (c *commandVolumeFsck) findExtraChunksInVolumeServers(volumeIdToVInfo map[uint32]VInfo, tempFolder string, writer io.Writer, verbose bool, applyPurging bool) error {
+
 	var totalInUseCount, totalOrphanChunkCount, totalOrphanDataSize uint64
+
 	for volumeId, vinfo := range volumeIdToVInfo {
 		inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(tempFolder, volumeId, writer, verbose)
 		if checkErr != nil {
@@ -210,39 +220,53 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(volumeIdToVInfo map[u
 			}
 		}
 
-		if *applyPurging && len(orphanFileIds) > 0 {
+		if applyPurging && len(orphanFileIds) > 0 {
+			if verbose {
+				fmt.Fprintf(writer, "purging process for volume %d", volumeId)
+			}
+
 			if vinfo.isEcVolume {
-				fmt.Fprintf(writer, "Skip purging for Erasure Coded volume %d.\n", volumeId)
+				fmt.Fprintf(writer, "skip purging for Erasure Coded volume %d.\n", volumeId)
 				continue
 			}
+
+			needleVID := needle.VolumeId(volumeId)
+
 			if vinfo.isReadOnly {
-				fmt.Fprintf(writer, "Skip purging for read only volume %d.\n", volumeId)
-				continue
+				err := markVolumeWritable(c.env.option.GrpcDialOption, needleVID, vinfo.server, true)
+				if err != nil {
+					return fmt.Errorf("mark volume %d read/write: %v", volumeId, err)
+				}
+
+				fmt.Fprintf(writer, "temporarily marked %d on server %v writable for forced purge\n", volumeId, vinfo.server)
+				defer markVolumeWritable(c.env.option.GrpcDialOption, needleVID, vinfo.server, false)
 			}
-			if inUseCount == 0 {
-				if err := deleteVolume(c.env.option.GrpcDialOption, needle.VolumeId(volumeId), vinfo.server); err != nil {
-					return fmt.Errorf("delete volume %d: %v", volumeId, err)
-				}
-			} else {
-				if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds, writer); err != nil {
-					return fmt.Errorf("purge for volume %d: %v", volumeId, err)
-				}
+
+			fmt.Fprintf(writer, "marked %d on server %v writable for forced purge\n", volumeId, vinfo.server)
+
+			if verbose {
+				fmt.Fprintf(writer, "purging files from volume %d\n", volumeId)
+			}
+
+			if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds, writer); err != nil {
+				return fmt.Errorf("purging volume %d: %v", volumeId, err)
 			}
 		}
 	}
 
-	if totalOrphanChunkCount == 0 {
-		fmt.Fprintf(writer, "no orphan data\n")
-		return nil
-	}
-
-	if !*applyPurging {
+	if !applyPurging {
 		pct := float64(totalOrphanChunkCount*100) / (float64(totalOrphanChunkCount + totalInUseCount))
 		fmt.Fprintf(writer, "\nTotal\t\tentries:%d\torphan:%d\t%.2f%%\t%dB\n",
 			totalOrphanChunkCount+totalInUseCount, totalOrphanChunkCount, pct, totalOrphanDataSize)
 
 		fmt.Fprintf(writer, "This could be normal if multiple filers or no filers are used.\n")
 	}
+
+	if totalOrphanChunkCount == 0 {
+		fmt.Fprintf(writer, "no orphan data\n")
+		//return nil
+	}
+
 	return nil
 }
 
@@ -283,7 +307,7 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, volumeId 
 
 }
 
-func (c *commandVolumeFsck) collectFilerFileIds(tempFolder string, volumeIdToServer map[uint32]VInfo, verbose bool, writer io.Writer) error {
+func (c *commandVolumeFsck) collectFilerFileIds(volumeIdToServer map[uint32]VInfo, tempFolder string, writer io.Writer, verbose bool) error {
 
 	if verbose {
 		fmt.Fprintf(writer, "collecting file ids from filer ...\n")
@@ -333,10 +357,10 @@ func (c *commandVolumeFsck) collectFilerFileIds(tempFolder string, volumeIdToSer
 	})
 }
 
-func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(tempFolder string, volumeId uint32, writer io.Writer, verbose bool) (err error) {
+func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(tempFolder string, volumeId uint32, writer io.Writer, verbose bool, applyPurging bool) (err error) {
 
 	if verbose {
-		fmt.Fprintf(writer, "find missing file chuns in volume %d ...\n", volumeId)
+		fmt.Fprintf(writer, "find missing file chunks in volume %d ...\n", volumeId)
 	}
 
 	db := needle_map.NewMemDb()
@@ -366,11 +390,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(tempFolder string, vo
 	for {
 		readSize, err = io.ReadFull(br, buffer)
 		if err != nil || readSize != 16 {
-			if err == io.EOF {
-				return nil
-			} else {
-				break
-			}
+			break
 		}
 
 		item.fileKey = util.BytesToUint64(buffer[:8])
@@ -386,14 +406,51 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(tempFolder string, vo
 		}
 		item.path = util.FullPath(string(pathBytes))
 
-		if _, found := db.Get(types.NeedleId(item.fileKey)); !found {
-			fmt.Fprintf(writer, "%d,%x%08x in %s %d not found\n", volumeId, item.fileKey, item.cookie, item.path, pathSize)
-		}
+		needleId := types.NeedleId(item.fileKey)
+		if _, found := db.Get(needleId); !found {
+			fmt.Fprintf(writer, "%s\n", item.path)
 
+			if applyPurging {
+				// defining the URL this way automatically escapes complex path names
+				c.httpDelete(item.path, verbose)
+			}
+		}
+	}
+	return nil
+}
+
+func (c *commandVolumeFsck) httpDelete(path util.FullPath, verbose bool) {
+	req, err := http.NewRequest(http.MethodDelete, "", nil)
+
+	req.URL = &url.URL{
+		Scheme: "http",
+		Host:   c.env.option.FilerAddress.ToHttpAddress(),
+		Path:   string(path),
+	}
+	if verbose {
+		fmt.Printf("full HTTP delete request to be sent: %v\n", req)
+	}
+	if err != nil {
+		fmt.Errorf("HTTP delete request error: %v\n", err)
 	}
 
-	return
+	client := &http.Client{}
 
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Errorf("DELETE fetch error: %v\n", err)
+	}
+	defer resp.Body.Close()
+
+	_, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Errorf("DELETE response error: %v\n", err)
+	}
+
+	if verbose {
+		fmt.Println("delete response Status : ", resp.Status)
+		fmt.Println("delete response Headers : ", resp.Header)
+	}
 }
 
 func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(tempFolder string, volumeId uint32, writer io.Writer, verbose bool) (inUseCount uint64, orphanFileIds []string, orphanDataSize uint64, err error) {
