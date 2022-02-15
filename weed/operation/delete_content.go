@@ -81,7 +81,7 @@ func DeleteFilesWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []str
 			ret = append(ret, &volume_server_pb.DeleteResult{
 				FileId: vid,
 				Status: http.StatusBadRequest,
-				Error:  err.Error()},
+				Error:  result.Error},
 			)
 			continue
 		}
