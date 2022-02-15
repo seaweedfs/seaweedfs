@@ -76,7 +76,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 
 	var counter uint64
 	var dirEntry fuse.DirEntry
-	if input.Offset == 0 {
+	if input.Offset == 0 && !isPlusMode {
 		counter++
 		dirEntry.Ino = input.NodeId
 		dirEntry.Name = "."
