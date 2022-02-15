@@ -67,6 +67,7 @@ type WFS struct {
 	concurrentWriters *util.LimitedConcurrentExecutor
 	inodeToPath       *InodeToPath
 	fhmap             *FileHandleToInode
+	dhmap             *DirectoryHandleToInode
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
@@ -76,6 +77,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		signature:     util.RandomInt32(),
 		inodeToPath:   NewInodeToPath(),
 		fhmap:         NewFileHandleToInode(),
+		dhmap:         NewDirectoryHandleToInode(),
 	}
 
 	wfs.root = Directory{
