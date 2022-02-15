@@ -19,7 +19,7 @@ type statsCache struct {
 
 func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.StatfsOut) (code fuse.Status) {
 
-	glog.V(4).Infof("reading fs stats")
+	// glog.V(4).Infof("reading fs stats")
 
 	if wfs.stats.lastChecked < time.Now().Unix()-20 {
 
