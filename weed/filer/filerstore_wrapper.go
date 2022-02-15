@@ -2,12 +2,13 @@ package filer
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/viant/ptrie"
 	"io"
 	"math"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/viant/ptrie"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/stats"
@@ -284,27 +285,40 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 	}
 
 	count := int64(0)
+	// limit ListDirectoryEntries calls (5 per 1 second)
+	t := time.NewTicker(200 * time.Millisecond)
+	// 10 retries until exit from function
+	timeoutChan := time.After(2 * time.Second)
+outerLoop:
 	for count < limit && len(notPrefixed) > 0 {
-		for _, entry := range notPrefixed {
-			if strings.HasPrefix(entry.Name(), prefix) {
-				count++
-				if !eachEntryFunc(entry) {
+		select {
+		case <-t.C:
+			for _, entry := range notPrefixed {
+				if strings.HasPrefix(entry.Name(), prefix) {
+					count++
+					if !eachEntryFunc(entry) {
+						return
+					}
+					if count >= limit {
+						break
+					}
+				}
+			}
+			if count < limit {
+				notPrefixed = notPrefixed[:0]
+				lastFileName, err = actualStore.ListDirectoryEntries(ctx,
+					dirPath, lastFileName, false, limit, func(entry *Entry) bool {
+						notPrefixed = append(notPrefixed, entry)
+						return true
+					})
+				if err != nil {
 					return
 				}
-				if count >= limit {
-					break
-				}
 			}
-		}
-		if count < limit {
-			notPrefixed = notPrefixed[:0]
-			lastFileName, err = actualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit, func(entry *Entry) bool {
-				notPrefixed = append(notPrefixed, entry)
-				return true
-			})
-			if err != nil {
-				return
-			}
+		case <-timeoutChan:
+			break outerLoop
+		default:
+			continue
 		}
 	}
 	return
