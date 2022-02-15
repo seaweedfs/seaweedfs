@@ -47,7 +47,7 @@ func init() {
 	mount2Options.chunkSizeLimitMB = cmdMount2.Flag.Int("chunkSizeLimitMB", 2, "local write buffer size, also chunk large files")
 	mount2Options.concurrentWriters = cmdMount2.Flag.Int("concurrentWriters", 32, "limit concurrent goroutine writers if not 0")
 	mount2Options.cacheDir = cmdMount2.Flag.String("cacheDir", os.TempDir(), "local cache directory for file chunks and meta data")
-	mount2Options.cacheSizeMB = cmdMount2.Flag.Int64("cacheCapacityMB", 1000, "local file chunk cache capacity in MB (0 will disable cache)")
+	mount2Options.cacheSizeMB = cmdMount2.Flag.Int64("cacheCapacityMB", 0, "local file chunk cache capacity in MB")
 	mount2Options.dataCenter = cmdMount2.Flag.String("dataCenter", "", "prefer to write to the data center")
 	mount2Options.allowOthers = cmdMount2.Flag.Bool("allowOthers", true, "allows other users to access the file system")
 	mount2Options.umaskString = cmdMount2.Flag.String("umask", "022", "octal umask, e.g., 022, 0111")
