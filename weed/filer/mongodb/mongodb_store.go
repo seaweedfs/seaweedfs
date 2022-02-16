@@ -199,9 +199,13 @@ func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, dirPath uti
 
 	for cur.Next(ctx) {
 		var data Model
-		err := cur.Decode(&data)
-		if err != nil && err != mongo.ErrNoDocuments {
-			return lastFileName, err
+		err = cur.Decode(&data)
+		if err == mongo.ErrNoDocuments {
+			err = nil
+			break
+		}
+		if err != nil {
+			break
 		}
 
 		entry := &filer.Entry{
