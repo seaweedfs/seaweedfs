@@ -52,6 +52,8 @@ Table of Contents
 =================
 
 * [Quick Start](#quick-start)
+    * [Quick Start for S3 API on Docker](#quick-start-for-s3-api-on-docker)
+    * [Quick Start with Single Binary](#quick-start-with-single-binary)
 * [Introduction](#introduction)
 * [Features](#features)
     * [Additional Features](#additional-features)
@@ -74,7 +76,7 @@ Table of Contents
 
 `docker run -p 8333:8333 chrislusf/seaweedfs server -s3`
 
-## Quick Start with single binary ##
+## Quick Start with Single Binary ##
 * Download the latest binary from https://github.com/chrislusf/seaweedfs/releases and unzip a single binary file `weed` or `weed.exe`
 * Run `weed server -dir=/some/data/dir -s3` to start one master, one volume server, one filer, and one S3 gateway.
 
