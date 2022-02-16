@@ -457,11 +457,11 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 				wg.Done()
 				<-concurrentChunks
 			}()
-			// assign a volume
-			var assignResult *filer_pb.AssignVolumeResponse
-			var assignError error
-			err := util.Retry("assignVolume", func() error {
-				return pb.WithGrpcFilerClient(false, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			util.RetryForever("filer.copy.block", func() error {
+				// assign a volume
+				var assignResult *filer_pb.AssignVolumeResponse
+				var assignError error
+				err := pb.WithGrpcFilerClient(false, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 					request := &filer_pb.AssignVolumeRequest{
 						Count:       1,
 						Replication: *worker.options.replication,
@@ -480,41 +480,47 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 					}
 					return nil
 				})
+
+				if err != nil {
+					uploadError = fmt.Errorf("Failed to assign from %v: %v\n", worker.options.masters, err)
+					return uploadError
+				}
+
+				targetUrl := "http://" + assignResult.Location.Url + "/" + assignResult.FileId
+				if collection == "" {
+					collection = assignResult.Collection
+				}
+				if replication == "" {
+					replication = assignResult.Replication
+				}
+
+				uploadOption := &operation.UploadOption{
+					UploadUrl:         targetUrl,
+					Filename:          fileName + "-" + strconv.FormatInt(i+1, 10),
+					Cipher:            worker.options.cipher,
+					IsInputCompressed: false,
+					MimeType:          "",
+					PairMap:           nil,
+					Jwt:               security.EncodedJwt(assignResult.Auth),
+				}
+				uploadResult, err, _ := operation.Upload(io.NewSectionReader(f, i*chunkSize, chunkSize), uploadOption)
+				if err != nil {
+					uploadError = fmt.Errorf("upload data %v to %s: %v\n", fileName, targetUrl, err)
+					return uploadError
+				}
+				if uploadResult.Error != "" {
+					uploadError = fmt.Errorf("upload %v to %s result: %v\n", fileName, targetUrl, uploadResult.Error)
+					return uploadError
+				}
+				chunksChan <- uploadResult.ToPbFileChunk(assignResult.FileId, i*chunkSize)
+
+				fmt.Printf("uploaded %s-%d to %s [%d,%d)\n", fileName, i+1, targetUrl, i*chunkSize, i*chunkSize+int64(uploadResult.Size))
+
+				return nil
+			}, func(err error) bool {
+				fmt.Printf("errors in uploading file block: %v\n", err)
+				return true
 			})
-			if err != nil {
-				uploadError = fmt.Errorf("Failed to assign from %v: %v\n", worker.options.masters, err)
-				return
-			}
-
-			targetUrl := "http://" + assignResult.Location.Url + "/" + assignResult.FileId
-			if collection == "" {
-				collection = assignResult.Collection
-			}
-			if replication == "" {
-				replication = assignResult.Replication
-			}
-
-			uploadOption := &operation.UploadOption{
-				UploadUrl:         targetUrl,
-				Filename:          fileName + "-" + strconv.FormatInt(i+1, 10),
-				Cipher:            worker.options.cipher,
-				IsInputCompressed: false,
-				MimeType:          "",
-				PairMap:           nil,
-				Jwt:               security.EncodedJwt(assignResult.Auth),
-			}
-			uploadResult, err, _ := operation.Upload(io.NewSectionReader(f, i*chunkSize, chunkSize), uploadOption)
-			if err != nil {
-				uploadError = fmt.Errorf("upload data %v to %s: %v\n", fileName, targetUrl, err)
-				return
-			}
-			if uploadResult.Error != "" {
-				uploadError = fmt.Errorf("upload %v to %s result: %v\n", fileName, targetUrl, uploadResult.Error)
-				return
-			}
-			chunksChan <- uploadResult.ToPbFileChunk(assignResult.FileId, i*chunkSize)
-
-			fmt.Printf("uploaded %s-%d to %s [%d,%d)\n", fileName, i+1, targetUrl, i*chunkSize, i*chunkSize+int64(uploadResult.Size))
 		}(i)
 	}
 	wg.Wait()
