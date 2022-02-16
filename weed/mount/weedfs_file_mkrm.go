@@ -82,7 +82,7 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		return nil
 	})
 
-	glog.V(0).Infof("mknod %s: %v", entryFullPath, err)
+	glog.V(3).Infof("mknod %s: %v", entryFullPath, err)
 
 	if err != nil {
 		return fuse.EIO
