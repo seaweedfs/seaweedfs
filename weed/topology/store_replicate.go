@@ -29,7 +29,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 	var remoteLocations []operation.Location
 	if r.FormValue("type") != "replicate" {
 		// this is the initial request
-		remoteLocations, err = getWritableRemoteReplications(s, grpcDialOption, volumeId, masterFn)
+		remoteLocations, err = GetWritableRemoteReplications(s, grpcDialOption, volumeId, masterFn)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return
@@ -114,7 +114,7 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 
 	var remoteLocations []operation.Location
 	if r.FormValue("type") != "replicate" {
-		remoteLocations, err = getWritableRemoteReplications(store, grpcDialOption, volumeId, masterFn)
+		remoteLocations, err = GetWritableRemoteReplications(store, grpcDialOption, volumeId, masterFn)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return
@@ -174,7 +174,7 @@ func DistributedOperation(locations []operation.Location, op func(location opera
 	return ret.Error()
 }
 
-func getWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, masterFn operation.GetMasterFn) (remoteLocations []operation.Location, err error) {
+func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, masterFn operation.GetMasterFn) (remoteLocations []operation.Location, err error) {
 
 	v := s.GetVolume(volumeId)
 	if v != nil && v.ReplicaPlacement.GetCopyCount() == 1 {
