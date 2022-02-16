@@ -59,7 +59,6 @@ type WFS struct {
 	option            *Option
 	metaCache         *meta_cache.MetaCache
 	stats             statsCache
-	root              Directory
 	chunkCache        *chunk_cache.TieredChunkCache
 	signature         int32
 	concurrentWriters *util.LimitedConcurrentExecutor
@@ -76,13 +75,6 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		inodeToPath:   NewInodeToPath(),
 		fhmap:         NewFileHandleToInode(),
 		dhmap:         NewDirectoryHandleToInode(),
-	}
-
-	wfs.root = Directory{
-		name:   "/",
-		wfs:    wfs,
-		entry:  nil,
-		parent: nil,
 	}
 
 	wfs.option.filerIndex = rand.Intn(len(option.FilerAddresses))
@@ -111,10 +103,6 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 func (wfs *WFS) StartBackgroundTasks() {
 	startTime := time.Now()
 	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
-}
-
-func (wfs *WFS) Root() *Directory {
-	return &wfs.root
 }
 
 func (wfs *WFS) String() string {
