@@ -125,6 +125,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	})
 	grace.OnInterrupt(func() {
 		wfs.metaCache.Shutdown()
+		os.RemoveAll(option.getUniqueCacheDir())
 	})
 
 	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs, id: 1}

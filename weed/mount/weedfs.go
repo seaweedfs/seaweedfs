@@ -99,6 +99,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	})
 	grace.OnInterrupt(func() {
 		wfs.metaCache.Shutdown()
+		os.RemoveAll(option.getUniqueCacheDir())
 	})
 
 	if wfs.option.ConcurrentWriters > 0 {
