@@ -135,7 +135,12 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 
 	dh := wfs.GetDirectoryHandle(DirectoryHandleId(input.Fh))
 	if dh.isFinished {
-		return fuse.OK
+		if input.Offset == 0 {
+			dh.isFinished = false
+			dh.lastEntryName = ""
+		} else {
+			return fuse.OK
+		}
 	}
 
 	isEarlyTerminated := false
