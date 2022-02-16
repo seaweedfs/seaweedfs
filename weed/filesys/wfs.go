@@ -8,7 +8,6 @@ import (
 	"math/rand"
 	"os"
 	"path"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -58,8 +57,7 @@ type Option struct {
 	Cipher             bool   // whether encrypt data on volume server
 	UidGidMapper       *meta_cache.UidGidMapper
 
-	uniqueCacheDir         string
-	uniqueCacheTempPageDir string
+	uniqueCacheDir string
 }
 
 var _ = fs.FS(&WFS{})
@@ -303,13 +301,8 @@ func (wfs *WFS) getCurrentFiler() pb.ServerAddress {
 func (option *Option) setupUniqueCacheDirectory() {
 	cacheUniqueId := util.Md5String([]byte(option.MountDirectory + string(option.FilerAddresses[0]) + option.FilerMountRootPath + util.Version()))[0:8]
 	option.uniqueCacheDir = path.Join(option.CacheDir, cacheUniqueId)
-	option.uniqueCacheTempPageDir = filepath.Join(option.uniqueCacheDir, "sw")
-	os.MkdirAll(option.uniqueCacheTempPageDir, os.FileMode(0777)&^option.Umask)
 }
 
-func (option *Option) getTempFilePageDir() string {
-	return option.uniqueCacheTempPageDir
-}
 func (option *Option) getUniqueCacheDir() string {
 	return option.uniqueCacheDir
 }
