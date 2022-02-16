@@ -200,10 +200,6 @@ func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, dirPath uti
 	for cur.Next(ctx) {
 		var data Model
 		err = cur.Decode(&data)
-		if err == mongo.ErrNoDocuments {
-			err = nil
-			break
-		}
 		if err != nil {
 			break
 		}
