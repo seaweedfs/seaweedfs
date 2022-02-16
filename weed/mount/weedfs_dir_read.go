@@ -16,7 +16,6 @@ type DirectoryHandleId uint64
 
 type DirectoryHandle struct {
 	isFinished    bool
-	counter       uint32
 	lastEntryName string
 }
 
@@ -139,17 +138,16 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 		return fuse.OK
 	}
 
+	isEarlyTerminated := false
 	dirPath := wfs.inodeToPath.GetPath(input.NodeId)
 
 	var dirEntry fuse.DirEntry
 	if input.Offset == 0 && !isPlusMode {
-		dh.counter++
 		dirEntry.Ino = input.NodeId
 		dirEntry.Name = "."
 		dirEntry.Mode = toSystemMode(os.ModeDir)
 		out.AddDirEntry(dirEntry)
 
-		dh.counter++
 		parentDir, _ := dirPath.DirAndName()
 		parentInode := wfs.inodeToPath.GetInode(util.FullPath(parentDir))
 		dirEntry.Ino = parentInode
@@ -160,18 +158,19 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 	}
 
 	processEachEntryFn := func(entry *filer.Entry, isLast bool) bool {
-		dh.counter++
 		dirEntry.Name = entry.Name()
 		inode := wfs.inodeToPath.GetInode(dirPath.Child(dirEntry.Name))
 		dirEntry.Ino = inode
 		dirEntry.Mode = toSystemMode(entry.Mode)
 		if !isPlusMode {
 			if !out.AddDirEntry(dirEntry) {
+				isEarlyTerminated = true
 				return false
 			}
 		} else {
 			entryOut := out.AddDirLookupEntry(dirEntry)
 			if entryOut == nil {
+				isEarlyTerminated = true
 				return false
 			}
 			wfs.outputFilerEntry(entryOut, inode, entry)
@@ -191,7 +190,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 		glog.Errorf("list meta cache: %v", listErr)
 		return fuse.EIO
 	}
-	if dh.counter < input.Length {
+	if !isEarlyTerminated {
 		dh.isFinished = true
 	}
 
