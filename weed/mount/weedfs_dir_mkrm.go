@@ -65,7 +65,7 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 		return nil
 	})
 
-	glog.V(0).Infof("mkdir %s: %v", entryFullPath, err)
+	glog.V(3).Infof("mkdir %s: %v", entryFullPath, err)
 
 	if err != nil {
 		return fuse.EIO
