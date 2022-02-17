@@ -5,10 +5,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/mount/meta_cache"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"math"
-	"os"
 	"sync"
 )
 
@@ -147,32 +145,29 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 	dirPath := wfs.inodeToPath.GetPath(input.NodeId)
 
 	var dirEntry fuse.DirEntry
-	if input.Offset == 0 && !isPlusMode {
-		dirEntry.Ino = input.NodeId
-		dirEntry.Name = "."
-		dirEntry.Mode = toSystemMode(os.ModeDir)
-		out.AddDirEntry(dirEntry)
-
-		parentDir, _ := dirPath.DirAndName()
-		parentInode := wfs.inodeToPath.GetInode(util.FullPath(parentDir))
-		dirEntry.Ino = parentInode
-		dirEntry.Name = ".."
-		dirEntry.Mode = toSystemMode(os.ModeDir)
-		out.AddDirEntry(dirEntry)
-
+	if input.Offset == 0 {
+		if !isPlusMode {
+			out.AddDirEntry(fuse.DirEntry{Mode: fuse.S_IFDIR, Name: "."})
+			out.AddDirEntry(fuse.DirEntry{Mode: fuse.S_IFDIR, Name: ".."})
+		} else {
+			out.AddDirLookupEntry(fuse.DirEntry{Mode: fuse.S_IFDIR, Name: "."})
+			out.AddDirLookupEntry(fuse.DirEntry{Mode: fuse.S_IFDIR, Name: ".."})
+		}
 	}
 
 	processEachEntryFn := func(entry *filer.Entry, isLast bool) bool {
 		dirEntry.Name = entry.Name()
-		inode := wfs.inodeToPath.GetInode(dirPath.Child(dirEntry.Name))
-		dirEntry.Ino = inode
 		dirEntry.Mode = toSystemMode(entry.Mode)
 		if !isPlusMode {
+			inode := wfs.inodeToPath.Lookup(dirPath.Child(dirEntry.Name), entry.IsDirectory(), false)
+			dirEntry.Ino = inode
 			if !out.AddDirEntry(dirEntry) {
 				isEarlyTerminated = true
 				return false
 			}
 		} else {
+			inode := wfs.inodeToPath.Lookup(dirPath.Child(dirEntry.Name), entry.IsDirectory(), true)
+			dirEntry.Ino = inode
 			entryOut := out.AddDirLookupEntry(dirEntry)
 			if entryOut == nil {
 				isEarlyTerminated = true
