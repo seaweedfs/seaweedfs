@@ -50,7 +50,7 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		return fuse.ENOENT
 	}
 
-	inode := wfs.inodeToPath.Lookup(fullFilePath, localEntry.IsDirectory())
+	inode := wfs.inodeToPath.Lookup(fullFilePath, localEntry.IsDirectory(), true)
 
 	wfs.outputFilerEntry(out, inode, localEntry)
 

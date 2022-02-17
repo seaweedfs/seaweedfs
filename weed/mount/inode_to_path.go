@@ -30,7 +30,7 @@ func NewInodeToPath() *InodeToPath {
 	return t
 }
 
-func (i *InodeToPath) Lookup(path util.FullPath, isDirectory bool) uint64 {
+func (i *InodeToPath) Lookup(path util.FullPath, isDirectory bool, isLookup bool) uint64 {
 	i.Lock()
 	defer i.Unlock()
 	inode, found := i.path2inode[path]
@@ -38,9 +38,15 @@ func (i *InodeToPath) Lookup(path util.FullPath, isDirectory bool) uint64 {
 		inode = i.nextInodeId
 		i.nextInodeId++
 		i.path2inode[path] = inode
-		i.inode2path[inode] = &InodeEntry{path, 1, isDirectory, false}
+		if !isLookup {
+			i.inode2path[inode] = &InodeEntry{path, 0, isDirectory, false}
+		} else {
+			i.inode2path[inode] = &InodeEntry{path, 1, isDirectory, false}
+		}
 	} else {
-		i.inode2path[inode].nlookup++
+		if isLookup {
+			i.inode2path[inode].nlookup++
+		}
 	}
 	return inode
 }
