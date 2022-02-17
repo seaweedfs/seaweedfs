@@ -140,7 +140,7 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.St
 	}
 
 	// read from async meta cache
-	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir))
+	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir), nil)
 	cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
 	if cacheErr == filer_pb.ErrNotFound {
 		return nil, fuse.ENOENT

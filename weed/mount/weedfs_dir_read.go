@@ -179,17 +179,33 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 		return true
 	}
 
-	if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath); err != nil {
-		glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
+	entryChan := make(chan *filer.Entry, 128)
+	var err error
+	go func() {
+		if err = meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath, entryChan); err != nil {
+			glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
+		}
+		close(entryChan)
+	}()
+	hasData := false
+	for entry := range entryChan {
+		hasData = true
+		processEachEntryFn(entry, false)
+	}
+	if err != nil {
 		return fuse.EIO
 	}
-	listErr := wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, dh.lastEntryName, false, int64(math.MaxInt32), func(entry *filer.Entry) bool {
-		return processEachEntryFn(entry, false)
-	})
-	if listErr != nil {
-		glog.Errorf("list meta cache: %v", listErr)
-		return fuse.EIO
+
+	if !hasData {
+		listErr := wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, dh.lastEntryName, false, int64(math.MaxInt32), func(entry *filer.Entry) bool {
+			return processEachEntryFn(entry, false)
+		})
+		if listErr != nil {
+			glog.Errorf("list meta cache: %v", listErr)
+			return fuse.EIO
+		}
 	}
+
 	if !isEarlyTerminated {
 		dh.isFinished = true
 	}

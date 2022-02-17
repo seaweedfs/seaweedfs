@@ -10,24 +10,32 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath) error {
+func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath, entryChan chan *filer.Entry) error {
+
+	currentPath := dirPath
 
 	for {
 
 		// the directory children are already cached
 		// so no need for this and upper directories
-		if mc.isCachedFn(dirPath) {
+		if mc.isCachedFn(currentPath) {
 			return nil
 		}
 
-		if err := doEnsureVisited(mc, client, dirPath); err != nil {
-			return err
+		if entryChan != nil && dirPath == currentPath {
+			if err := doEnsureVisited(mc, client, currentPath, entryChan); err != nil {
+				return err
+			}
+		} else {
+			if err := doEnsureVisited(mc, client, currentPath, nil); err != nil {
+				return err
+			}
 		}
 
 		// continue to parent directory
-		if dirPath != "/" {
-			parent, _ := dirPath.DirAndName()
-			dirPath = util.FullPath(parent)
+		if currentPath != "/" {
+			parent, _ := currentPath.DirAndName()
+			currentPath = util.FullPath(parent)
 		} else {
 			break
 		}
@@ -37,7 +45,7 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 
 }
 
-func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullPath) error {
+func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullPath, entryChan chan *filer.Entry) error {
 
 	glog.V(4).Infof("ReadDirAllEntries %s ...", path)
 
@@ -50,6 +58,9 @@ func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullP
 			if err := mc.doInsertEntry(context.Background(), entry); err != nil {
 				glog.V(0).Infof("read %s: %v", entry.FullPath, err)
 				return err
+			}
+			if entryChan != nil {
+				entryChan <- entry
 			}
 			return nil
 		})
