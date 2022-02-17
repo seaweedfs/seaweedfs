@@ -62,7 +62,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	isDelete := fsConfigureCommand.Bool("delete", false, "delete the configuration by locationPrefix")
 	apply := fsConfigureCommand.Bool("apply", false, "update and apply filer configuration")
 	if err = fsConfigureCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	fc, err := filer.ReadFilerConf(commandEnv.option.FilerAddress, commandEnv.option.GrpcDialOption, commandEnv.MasterClient)
