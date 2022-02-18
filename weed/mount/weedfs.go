@@ -2,7 +2,6 @@ package mount
 
 import (
 	"context"
-	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/mount/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/pb"
