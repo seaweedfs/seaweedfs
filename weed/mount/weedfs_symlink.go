@@ -32,7 +32,7 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 			Attributes: &filer_pb.FuseAttributes{
 				Mtime:         time.Now().Unix(),
 				Crtime:        time.Now().Unix(),
-				FileMode:      uint32((os.FileMode(0777) | os.ModeSymlink) &^ wfs.option.Umask),
+				FileMode:      uint32(os.FileMode(0777) | os.ModeSymlink),
 				Uid:           header.Uid,
 				Gid:           header.Gid,
 				SymlinkTarget: target,

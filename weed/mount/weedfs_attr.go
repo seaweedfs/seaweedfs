@@ -66,7 +66,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	}
 
 	if mode, ok := input.GetMode(); ok {
-		entry.Attributes.FileMode = uint32(mode)
+		entry.Attributes.FileMode = mode & 07777
 	}
 
 	if uid, ok := input.GetUID(); ok {
@@ -79,6 +79,10 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 
 	if mtime, ok := input.GetMTime(); ok {
 		entry.Attributes.Mtime = mtime.Unix()
+	}
+
+	if atime, ok := input.GetATime(); ok {
+		entry.Attributes.Mtime = atime.Unix()
 	}
 
 	entry.Attributes.Mtime = time.Now().Unix()

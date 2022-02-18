@@ -7,7 +7,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"os"
 	"time"
 )
 
@@ -129,7 +128,6 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 				entry.Attributes.Crtime = time.Now().Unix()
 			}
 			entry.Attributes.Mtime = time.Now().Unix()
-			entry.Attributes.FileMode = uint32(os.FileMode(entry.Attributes.FileMode) &^ wfs.option.Umask)
 			entry.Attributes.Collection, entry.Attributes.Replication = fh.dirtyPages.GetStorageOptions()
 		}
 
