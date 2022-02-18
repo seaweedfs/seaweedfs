@@ -21,7 +21,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-
 // Validates the preconditions. Returns true if GET/HEAD operation should not proceed.
 // Preconditions supported are:
 //  If-Modified-Since
@@ -116,6 +115,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	if isForDirectory {
 		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	if r.URL.Query().Has("metadata") {
+		writeJsonQuiet(w, r, http.StatusOK, entry)
 		return
 	}
 
