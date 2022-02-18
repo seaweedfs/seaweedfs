@@ -104,13 +104,19 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 	dirFullPath, code := wfs.inodeToPath.GetPath(header.NodeId)
 	if code != fuse.OK {
-		return
+		if code == fuse.ENOENT {
+			return fuse.OK
+		}
+		return code
 	}
 	entryFullPath := dirFullPath.Child(name)
 
-	entry, status := wfs.maybeLoadEntry(entryFullPath)
-	if status != fuse.OK {
-		return status
+	entry, code := wfs.maybeLoadEntry(entryFullPath)
+	if code != fuse.OK {
+		if code == fuse.ENOENT {
+			return fuse.OK
+		}
+		return code
 	}
 
 	// first, ensure the filer store can correctly delete
@@ -119,7 +125,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	err := filer_pb.Remove(wfs, string(dirFullPath), name, isDeleteData, false, false, false, []int32{wfs.signature})
 	if err != nil {
 		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
-		return fuse.ENOENT
+		return fuse.OK
 	}
 
 	// then, delete meta cache
