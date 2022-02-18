@@ -20,7 +20,10 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		return s
 	}
 
-	dirPath := wfs.inodeToPath.GetPath(header.NodeId)
+	dirPath, code := wfs.inodeToPath.GetPath(header.NodeId)
+	if code != fuse.OK {
+		return
+	}
 
 	fullFilePath := dirPath.Child(name)
 

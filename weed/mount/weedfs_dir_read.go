@@ -142,7 +142,10 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 	}
 
 	isEarlyTerminated := false
-	dirPath := wfs.inodeToPath.GetPath(input.NodeId)
+	dirPath, code := wfs.inodeToPath.GetPath(input.NodeId)
+	if code != fuse.OK {
+		return code
+	}
 
 	var dirEntry fuse.DirEntry
 	if input.Offset == 0 {

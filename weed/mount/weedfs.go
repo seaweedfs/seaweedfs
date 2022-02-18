@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/mount/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -110,7 +111,10 @@ func (wfs *WFS) String() string {
 }
 
 func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle, entry *filer_pb.Entry, status fuse.Status) {
-	path = wfs.inodeToPath.GetPath(inode)
+	path, status = wfs.inodeToPath.GetPath(inode)
+	if status != fuse.OK {
+		return
+	}
 	var found bool
 	if fh, found = wfs.fhmap.FindFileHandle(inode); found {
 		return path, fh, fh.entry, fuse.OK

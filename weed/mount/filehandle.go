@@ -49,7 +49,8 @@ func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_p
 }
 
 func (fh *FileHandle) FullPath() util.FullPath {
-	return fh.wfs.inodeToPath.GetPath(fh.inode)
+	fp, _ := fh.wfs.inodeToPath.GetPath(fh.inode)
+	return fp
 }
 
 func (fh *FileHandle) addChunks(chunks []*filer_pb.FileChunk) {

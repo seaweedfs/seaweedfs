@@ -18,7 +18,10 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 		return s
 	}
 
-	dirPath := wfs.inodeToPath.GetPath(header.NodeId)
+	dirPath, code := wfs.inodeToPath.GetPath(header.NodeId)
+	if code != fuse.OK {
+		return
+	}
 	entryFullPath := dirPath.Child(name)
 
 	request := &filer_pb.CreateEntryRequest{
@@ -64,7 +67,10 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 }
 
 func (wfs *WFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) (out []byte, code fuse.Status) {
-	entryFullPath := wfs.inodeToPath.GetPath(header.NodeId)
+	entryFullPath, code := wfs.inodeToPath.GetPath(header.NodeId)
+	if code != fuse.OK {
+		return
+	}
 
 	entry, status := wfs.maybeLoadEntry(entryFullPath)
 	if status != fuse.OK {

@@ -54,7 +54,10 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		},
 	}
 
-	dirFullPath := wfs.inodeToPath.GetPath(in.NodeId)
+	dirFullPath, code := wfs.inodeToPath.GetPath(in.NodeId)
+	if code != fuse.OK {
+		return
+	}
 
 	entryFullPath := dirFullPath.Child(name)
 
@@ -99,7 +102,10 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 /** Remove a file */
 func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name string) (code fuse.Status) {
 
-	dirFullPath := wfs.inodeToPath.GetPath(header.NodeId)
+	dirFullPath, code := wfs.inodeToPath.GetPath(header.NodeId)
+	if code != fuse.OK {
+		return
+	}
 	entryFullPath := dirFullPath.Child(name)
 
 	entry, status := wfs.maybeLoadEntry(entryFullPath)

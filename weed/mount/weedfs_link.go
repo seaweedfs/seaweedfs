@@ -21,8 +21,14 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		return s
 	}
 
-	newParentPath := wfs.inodeToPath.GetPath(in.NodeId)
-	oldEntryPath := wfs.inodeToPath.GetPath(in.Oldnodeid)
+	newParentPath, code := wfs.inodeToPath.GetPath(in.NodeId)
+	if code != fuse.OK {
+		return
+	}
+	oldEntryPath, code := wfs.inodeToPath.GetPath(in.Oldnodeid)
+	if code != fuse.OK {
+		return
+	}
 	oldParentPath, _ := oldEntryPath.DirAndName()
 
 	oldEntry, status := wfs.maybeLoadEntry(oldEntryPath)

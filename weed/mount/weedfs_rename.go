@@ -145,9 +145,15 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		return fuse.EINVAL
 	}
 
-	oldDir := wfs.inodeToPath.GetPath(in.NodeId)
+	oldDir, code := wfs.inodeToPath.GetPath(in.NodeId)
+	if code != fuse.OK {
+		return
+	}
 	oldPath := oldDir.Child(oldName)
-	newDir := wfs.inodeToPath.GetPath(in.Newdir)
+	newDir, code := wfs.inodeToPath.GetPath(in.Newdir)
+	if code != fuse.OK {
+		return
+	}
 	newPath := newDir.Child(newName)
 
 	glog.V(4).Infof("dir Rename %s => %s", oldPath, newPath)
