@@ -64,6 +64,7 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
 	fileHandle, code := wfs.AcquireHandle(in.NodeId, in.Uid, in.Gid)
 	if code == fuse.OK {
 		out.Fh = uint64(fileHandle.fh)
+		// TODO https://github.com/libfuse/libfuse/blob/master/include/fuse_common.h#L64
 	}
 	return code
 }
