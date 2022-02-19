@@ -271,6 +271,9 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 		return nil, s3err.ErrNoSuchUpload
 	}
 
+	// Note: The upload directory is sort of a marker of the existence of an multipart upload request.
+	// So can not just delete empty upload folders.
+
 	output.IsTruncated = aws.Bool(!isLast)
 
 	for _, entry := range entries {
