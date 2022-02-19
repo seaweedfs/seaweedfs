@@ -159,7 +159,7 @@ func (store *MongodbStore) DeleteEntry(ctx context.Context, fullpath util.FullPa
 	dir, name := fullpath.DirAndName()
 
 	where := bson.M{"directory": dir, "name": name}
-	_, err := store.connect.Database(store.database).Collection(store.collectionName).DeleteOne(ctx, where)
+	_, err := store.connect.Database(store.database).Collection(store.collectionName).DeleteMany(ctx, where)
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
