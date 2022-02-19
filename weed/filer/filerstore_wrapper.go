@@ -309,6 +309,8 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 			if err != nil {
 				return
 			}
+		} else {
+			break
 		}
 	}
 	return
