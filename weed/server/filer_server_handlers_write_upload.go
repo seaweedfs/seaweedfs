@@ -3,10 +3,12 @@ package weed_server
 import (
 	"bytes"
 	"crypto/md5"
+	"fmt"
 	"hash"
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +30,22 @@ var bufPool = sync.Pool{
 }
 
 func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Request, reader io.Reader, chunkSize int32, fileName, contentType string, contentLength int64, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, chunkOffset int64, uploadErr error, smallContent []byte) {
+	query := r.URL.Query()
+	isAppend := query.Get("op") == "append"
+
+	if query.Has("offset") {
+		offset := query.Get("offset")
+		offsetInt, err := strconv.ParseInt(offset, 10, 64)
+		if err != nil || offsetInt < 0 {
+			err = fmt.Errorf("invalid 'offset': '%s'", offset)
+			return nil, nil, 0, err, nil
+		}
+		if isAppend && offsetInt > 0 {
+			err = fmt.Errorf("cannot set offset when op=append")
+			return nil, nil, 0, err, nil
+		}
+		chunkOffset = offsetInt
+	}
 
 	md5Hash = md5.New()
 	var partReader = io.NopCloser(io.TeeReader(reader, md5Hash))
@@ -63,7 +81,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			bytesBufferLimitCond.Signal()
 			break
 		}
-		if chunkOffset == 0 && !isAppend(r) {
+		if chunkOffset == 0 && !isAppend {
 			if dataSize < fs.option.SaveToFilerLimit || strings.HasPrefix(r.URL.Path, filer.DirectoryEtcRoot) {
 				chunkOffset += dataSize
 				smallContent = make([]byte, dataSize)
