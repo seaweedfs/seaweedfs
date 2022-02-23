@@ -389,8 +389,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 		return err
 	}
 
-	err = nm.SaveToIdx(idxName)
-	return nil
+	return nm.SaveToIdx(idxName)
 }
 
 func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName string, sb super_block.SuperBlock, version needle.Version, preallocate, compactionBytePerSecond int64, progressFn ProgressFunc) (err error) {
@@ -424,7 +423,7 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 
 	writeThrottler := util.NewWriteThrottler(compactionBytePerSecond)
 
-	oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
+	err = oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
 
 		offset, size := value.Offset, value.Size
 
@@ -461,8 +460,10 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
 
-	newNm.SaveToIdx(datIdxName)
+	return newNm.SaveToIdx(datIdxName)
 
-	return nil
 }
