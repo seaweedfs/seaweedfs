@@ -399,7 +399,7 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 		dataFile                     *os.File
 	)
 	if dstDatBackend, err = backend.CreateVolumeFile(dstDatName, preallocate, 0); err != nil {
-		return
+		return err
 	}
 	defer dstDatBackend.Close()
 
@@ -408,7 +408,7 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 	newNm := needle_map.NewMemDb()
 	defer newNm.Close()
 	if err = oldNm.LoadFromIdx(srcIdxName); err != nil {
-		return
+		return err
 	}
 	if dataFile, err = os.Open(srcDatName); err != nil {
 		return err
@@ -464,5 +464,5 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 
 	newNm.SaveToIdx(datIdxName)
 
-	return
+	return nil
 }
