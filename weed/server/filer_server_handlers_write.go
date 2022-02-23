@@ -79,7 +79,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		return
 	}
 
-	if query.Has("from") {
+	if query.Has("mv.from") {
 		fs.move(ctx, w, r, so)
 	} else {
 		fs.autoChunk(ctx, w, r, contentLength, so)
@@ -90,7 +90,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 }
 
 func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) {
-	src := r.URL.Query().Get("from")
+	src := r.URL.Query().Get("mv.from")
 	dst := r.URL.Path
 
 	glog.V(2).Infof("FilerServer.move %v to %v", src, dst)
