@@ -370,7 +370,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 		dst backend.BackendStorageFile
 	)
 	if dst, err = backend.CreateVolumeFile(dstName, preallocate, 0); err != nil {
-		return
+		return err
 	}
 	defer dst.Close()
 
@@ -386,11 +386,11 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 	}
 	err = ScanVolumeFile(v.dir, v.Collection, v.Id, v.needleMapKind, scanner)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	err = nm.SaveToIdx(idxName)
-	return
+	return nil
 }
 
 func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName string, sb super_block.SuperBlock, version needle.Version, preallocate, compactionBytePerSecond int64, progressFn ProgressFunc) (err error) {
