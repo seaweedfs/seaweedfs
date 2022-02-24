@@ -9,12 +9,16 @@ import (
 )
 
 func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx context.Context, entry *Entry) error {
-	if len(entry.HardLinkId) == 0 {
+
+	if entry.IsDirectory() {
 		return nil
 	}
-	// handle hard links
-	if err := fsw.setHardLink(ctx, entry); err != nil {
-		return fmt.Errorf("setHardLink %d: %v", entry.HardLinkId, err)
+
+	if len(entry.HardLinkId) > 0 {
+		// handle hard links
+		if err := fsw.setHardLink(ctx, entry); err != nil {
+			return fmt.Errorf("setHardLink %d: %v", entry.HardLinkId, err)
+		}
 	}
 
 	// check what is existing entry
