@@ -160,7 +160,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 
 	processEachEntryFn := func(entry *filer.Entry, isLast bool) bool {
 		dirEntry.Name = entry.Name()
-		dirEntry.Mode = toSystemMode(entry.Mode)
+		dirEntry.Mode = toSyscallMode(entry.Mode)
 		if !isPlusMode {
 			inode := wfs.inodeToPath.Lookup(dirPath.Child(dirEntry.Name), entry.IsDirectory(), false)
 			dirEntry.Ino = inode

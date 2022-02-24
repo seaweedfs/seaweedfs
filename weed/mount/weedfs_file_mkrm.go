@@ -45,7 +45,7 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		Attributes: &filer_pb.FuseAttributes{
 			Mtime:       time.Now().Unix(),
 			Crtime:      time.Now().Unix(),
-			FileMode:    uint32(toFileMode(in.Mode)),
+			FileMode:    uint32(toOsFileMode(in.Mode)),
 			Uid:         in.Uid,
 			Gid:         in.Gid,
 			Collection:  wfs.option.Collection,
