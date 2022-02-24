@@ -136,6 +136,7 @@ func (wfs *WFS) setAttrByPbEntry(out *fuse.Attr, inode uint64, entry *filer_pb.E
 	}
 	out.Uid = entry.Attributes.Uid
 	out.Gid = entry.Attributes.Gid
+	out.Rdev = entry.Attributes.Rdev
 }
 
 func (wfs *WFS) setAttrByFilerEntry(out *fuse.Attr, inode uint64, entry *filer.Entry) {
@@ -154,6 +155,7 @@ func (wfs *WFS) setAttrByFilerEntry(out *fuse.Attr, inode uint64, entry *filer.E
 	}
 	out.Uid = entry.Attr.Uid
 	out.Gid = entry.Attr.Gid
+	out.Rdev = entry.Attr.Rdev
 }
 
 func (wfs *WFS) outputPbEntry(out *fuse.EntryOut, inode uint64, entry *filer_pb.Entry) {

@@ -51,6 +51,7 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 			Collection:  wfs.option.Collection,
 			Replication: wfs.option.Replication,
 			TtlSec:      wfs.option.TtlSec,
+			Rdev:        in.Rdev,
 		},
 	}
 
