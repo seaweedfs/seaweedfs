@@ -441,7 +441,7 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 		n := new(needle.Needle)
 		err := n.ReadData(srcDatBackend, offset.ToActualOffset(), size, version)
 		if err != nil {
-			return nil
+			return fmt.Errorf("cannot hydrate needle from file: %s", err)
 		}
 
 		if n.HasTtl() && now >= n.LastModified+uint64(sb.Ttl.Minutes()*60) {
