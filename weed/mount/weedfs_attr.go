@@ -17,13 +17,20 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 	}
 
 	_, _, entry, status := wfs.maybeReadEntry(input.NodeId)
-	if status != fuse.OK {
+	if status == fuse.OK {
+		out.AttrValid = 1
+		wfs.setAttrByPbEntry(&out.Attr, input.NodeId, entry)
 		return status
+	} else {
+		if fh, found := wfs.fhmap.FindFileHandle(input.NodeId); found {
+			out.AttrValid = 1
+			wfs.setAttrByPbEntry(&out.Attr, input.NodeId, fh.entry)
+			out.Nlink = 0
+			return fuse.OK
+		}
 	}
-	out.AttrValid = 1
-	wfs.setAttrByPbEntry(&out.Attr, input.NodeId, entry)
 
-	return fuse.OK
+	return status
 }
 
 func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse.AttrOut) (code fuse.Status) {
@@ -66,7 +73,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	}
 
 	if mode, ok := input.GetMode(); ok {
-		glog.V(4).Infof("setAttr mode %o", mode)
+		// glog.V(4).Infof("setAttr mode %o", mode)
 		entry.Attributes.FileMode = chmod(entry.Attributes.FileMode, mode)
 	}
 
