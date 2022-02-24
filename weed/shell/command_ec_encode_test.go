@@ -24,7 +24,8 @@ func TestEcDistribution(t *testing.T) {
 	}
 
 	for _, dn := range allocatedDataNodes {
-		fmt.Printf("info %+v %+v\n", dn.info, dn)
+		// fmt.Printf("info %+v %+v\n", dn.info, dn)
+		fmt.Printf("=> %+v %+v\n", dn.info.Id, dn.freeEcSlot)
 	}
 
 }
