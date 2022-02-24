@@ -176,6 +176,10 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 				isEarlyTerminated = true
 				return false
 			}
+			if fh, found := wfs.fhmap.FindFileHandle(inode); found {
+				glog.V(4).Infof("readdir opened file %s", dirPath.Child(dirEntry.Name))
+				entry = filer.FromPbEntry(string(dirPath), fh.entry)
+			}
 			wfs.outputFilerEntry(entryOut, inode, entry)
 		}
 		dh.lastEntryName = entry.Name()

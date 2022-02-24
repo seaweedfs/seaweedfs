@@ -55,6 +55,11 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 	inode := wfs.inodeToPath.Lookup(fullFilePath, localEntry.IsDirectory(), true)
 
+	if fh, found := wfs.fhmap.FindFileHandle(inode); found {
+		glog.V(4).Infof("lookup opened file %s size %d", dirPath.Child(localEntry.Name()), filer.FileSize(fh.entry))
+		localEntry = filer.FromPbEntry(string(dirPath), fh.entry)
+	}
+
 	wfs.outputFilerEntry(out, inode, localEntry)
 
 	return fuse.OK
