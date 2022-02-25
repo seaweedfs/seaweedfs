@@ -22,7 +22,7 @@ func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx context.Context, entry
 	}
 
 	// check what is existing entry
-	glog.V(4).Infof("handleUpdateToHardLinks FindEntry %s", entry.FullPath)
+	// glog.V(4).Infof("handleUpdateToHardLinks FindEntry %s", entry.FullPath)
 	actualStore := fsw.getActualStore(entry.FullPath)
 	existingEntry, err := actualStore.FindEntry(ctx, entry.FullPath)
 	if err != nil && err != filer_pb.ErrNotFound {

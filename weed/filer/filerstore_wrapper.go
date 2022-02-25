@@ -128,7 +128,7 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 		return err
 	}
 
-	glog.V(4).Infof("InsertEntry %s", entry.FullPath)
+	// glog.V(4).Infof("InsertEntry %s", entry.FullPath)
 	return actualStore.InsertEntry(ctx, entry)
 }
 
@@ -149,7 +149,7 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 		return err
 	}
 
-	glog.V(4).Infof("UpdateEntry %s", entry.FullPath)
+	// glog.V(4).Infof("UpdateEntry %s", entry.FullPath)
 	return actualStore.UpdateEntry(ctx, entry)
 }
 
@@ -193,7 +193,7 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 		}
 	}
 
-	glog.V(4).Infof("DeleteEntry %s", fp)
+	// glog.V(4).Infof("DeleteEntry %s", fp)
 	return actualStore.DeleteEntry(ctx, fp)
 }
 
@@ -213,7 +213,7 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 		}
 	}
 
-	glog.V(4).Infof("DeleteOneEntry %s", existingEntry.FullPath)
+	// glog.V(4).Infof("DeleteOneEntry %s", existingEntry.FullPath)
 	return actualStore.DeleteEntry(ctx, existingEntry.FullPath)
 }
 
@@ -237,7 +237,7 @@ func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.
 		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "deleteFolderChildren").Observe(time.Since(start).Seconds())
 	}()
 
-	glog.V(4).Infof("DeleteFolderChildren %s", fp)
+	// glog.V(4).Infof("DeleteFolderChildren %s", fp)
 	return actualStore.DeleteFolderChildren(ctx, fp)
 }
 
@@ -249,7 +249,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath 
 		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "list").Observe(time.Since(start).Seconds())
 	}()
 
-	glog.V(4).Infof("ListDirectoryEntries %s from %s limit %d", dirPath, startFileName, limit)
+	// glog.V(4).Infof("ListDirectoryEntries %s from %s limit %d", dirPath, startFileName, limit)
 	return actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *Entry) bool {
 		fsw.maybeReadHardLink(ctx, entry)
 		filer_pb.AfterEntryDeserialization(entry.Chunks)
@@ -267,7 +267,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 	if limit > math.MaxInt32-1 {
 		limit = math.MaxInt32 - 1
 	}
-	glog.V(4).Infof("ListDirectoryPrefixedEntries %s from %s prefix %s limit %d", dirPath, startFileName, prefix, limit)
+	// glog.V(4).Infof("ListDirectoryPrefixedEntries %s from %s prefix %s limit %d", dirPath, startFileName, prefix, limit)
 	adjustedEntryFunc := func(entry *Entry) bool {
 		fsw.maybeReadHardLink(ctx, entry)
 		filer_pb.AfterEntryDeserialization(entry.Chunks)
