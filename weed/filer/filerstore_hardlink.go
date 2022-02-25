@@ -50,6 +50,8 @@ func (fsw *FilerStoreWrapper) setHardLink(ctx context.Context, entry *Entry) err
 		return encodeErr
 	}
 
+	glog.V(4).Infof("setHardLink %v nlink:%d", entry.FullPath, entry.HardLinkCounter)
+
 	return fsw.KvPut(ctx, key, newBlob)
 }
 
@@ -59,7 +61,6 @@ func (fsw *FilerStoreWrapper) maybeReadHardLink(ctx context.Context, entry *Entr
 	}
 	key := entry.HardLinkId
 
-	glog.V(4).Infof("maybeReadHardLink KvGet %v", key)
 	value, err := fsw.KvGet(ctx, key)
 	if err != nil {
 		glog.Errorf("read %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
@@ -70,6 +71,8 @@ func (fsw *FilerStoreWrapper) maybeReadHardLink(ctx context.Context, entry *Entr
 		glog.Errorf("decode %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
 		return err
 	}
+
+	glog.V(4).Infof("maybeReadHardLink %v nlink:%d", entry.FullPath, entry.HardLinkCounter)
 
 	return nil
 }
