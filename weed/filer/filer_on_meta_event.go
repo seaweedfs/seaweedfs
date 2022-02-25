@@ -22,12 +22,12 @@ func (f *Filer) onBucketEvents(event *filer_pb.SubscribeMetadataResponse) {
 		}
 	}
 	if f.DirBucketsPath == event.Directory {
-		if message.OldEntry == nil && message.NewEntry != nil {
+		if filer_pb.IsCreate(event) {
 			if message.NewEntry.IsDirectory {
 				f.Store.OnBucketCreation(message.NewEntry.Name)
 			}
 		}
-		if message.OldEntry != nil && message.NewEntry == nil {
+		if filer_pb.IsDelete(event) {
 			if message.OldEntry.IsDirectory {
 				f.Store.OnBucketDeletion(message.OldEntry.Name)
 			}

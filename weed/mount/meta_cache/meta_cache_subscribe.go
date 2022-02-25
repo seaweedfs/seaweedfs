@@ -45,9 +45,9 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 					newKey := util.NewFullPath(dir, message.NewEntry.Name)
 					mc.invalidateFunc(newKey, message.NewEntry)
 				}
-			} else if message.OldEntry == nil && message.NewEntry != nil {
+			} else if filer_pb.IsCreate(resp) {
 				// no need to invaalidate
-			} else if message.OldEntry != nil && message.NewEntry == nil {
+			} else if filer_pb.IsDelete(resp) {
 				oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
 				mc.invalidateFunc(oldKey, message.OldEntry)
 			}

@@ -136,6 +136,9 @@ func LookupEntry(client SeaweedFilerClient, request *LookupDirectoryEntryRequest
 
 var ErrNotFound = errors.New("filer: no entry is found in filer store")
 
+func IsEmpty(event *SubscribeMetadataResponse) bool {
+	return event.EventNotification.NewEntry == nil && event.EventNotification.OldEntry == nil
+}
 func IsCreate(event *SubscribeMetadataResponse) bool {
 	return event.EventNotification.NewEntry != nil && event.EventNotification.OldEntry == nil
 }

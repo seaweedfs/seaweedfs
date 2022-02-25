@@ -262,7 +262,7 @@ func genProcessFunction(sourcePath string, targetPath string, dataSink sink.Repl
 		}
 
 		// handle deletions
-		if message.OldEntry != nil && message.NewEntry == nil {
+		if filer_pb.IsDelete(resp) {
 			if !strings.HasPrefix(string(sourceOldKey), sourcePath) {
 				return nil
 			}
@@ -271,7 +271,7 @@ func genProcessFunction(sourcePath string, targetPath string, dataSink sink.Repl
 		}
 
 		// handle new entries
-		if message.OldEntry == nil && message.NewEntry != nil {
+		if filer_pb.IsCreate(resp) {
 			if !strings.HasPrefix(string(sourceNewKey), sourcePath) {
 				return nil
 			}
@@ -280,7 +280,7 @@ func genProcessFunction(sourcePath string, targetPath string, dataSink sink.Repl
 		}
 
 		// this is something special?
-		if message.OldEntry == nil && message.NewEntry == nil {
+		if filer_pb.IsEmpty(resp) {
 			return nil
 		}
 
