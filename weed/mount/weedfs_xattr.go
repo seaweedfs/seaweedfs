@@ -125,7 +125,7 @@ func (wfs *WFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, dest []
 		return 0, fuse.ENOENT
 	}
 	if entry.Extended == nil {
-		return 0, fuse.ENOATTR
+		return 0, fuse.OK
 	}
 
 	var data []byte
