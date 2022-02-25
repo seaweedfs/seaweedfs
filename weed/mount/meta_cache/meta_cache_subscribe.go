@@ -36,7 +36,7 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 			glog.V(4).Infof("creating %v", key)
 			newEntry = filer.FromPbEntry(dir, message.NewEntry)
 		}
-		err := mc.AtomicUpdateEntryFromFiler(context.Background(), oldPath, newEntry)
+		err := mc.AtomicUpdateEntryFromFiler(context.Background(), oldPath, newEntry, message.DeleteChunks)
 		if err == nil {
 			if message.OldEntry != nil && message.NewEntry != nil {
 				oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
