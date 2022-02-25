@@ -260,7 +260,7 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWriter, r *http.Request) {
 	// collect parameters
 	bucket, _ := xhttp.GetBucketAndObject(r)
-	glog.V(3).Infof("GetBucketAclHandler %s", bucket)
+	glog.V(3).Infof("GetBucketLifecycleConfigurationHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)
