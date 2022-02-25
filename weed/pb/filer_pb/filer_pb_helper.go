@@ -142,7 +142,8 @@ func IsCreate(event *SubscribeMetadataResponse) bool {
 func IsUpdate(event *SubscribeMetadataResponse) bool {
 	return event.EventNotification.NewEntry != nil &&
 		event.EventNotification.OldEntry != nil &&
-		event.Directory == event.EventNotification.NewParentPath
+		event.Directory == event.EventNotification.NewParentPath &&
+		event.EventNotification.NewEntry.Name == event.EventNotification.OldEntry.Name
 }
 func IsDelete(event *SubscribeMetadataResponse) bool {
 	return event.EventNotification.NewEntry == nil && event.EventNotification.OldEntry != nil
@@ -150,7 +151,8 @@ func IsDelete(event *SubscribeMetadataResponse) bool {
 func IsRename(event *SubscribeMetadataResponse) bool {
 	return event.EventNotification.NewEntry != nil &&
 		event.EventNotification.OldEntry != nil &&
-		event.Directory != event.EventNotification.NewParentPath
+		(event.Directory != event.EventNotification.NewParentPath ||
+			event.EventNotification.NewEntry.Name != event.EventNotification.OldEntry.Name)
 }
 
 var _ = ptrie.KeyProvider(&FilerConf_PathConf{})
