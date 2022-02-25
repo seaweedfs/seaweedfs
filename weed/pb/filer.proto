@@ -172,6 +172,7 @@ message FuseAttributes {
     bytes md5 = 14;
     string disk_type = 15;
     uint32 rdev = 16;
+    uint64 inode = 17;
 }
 
 message CreateEntryRequest {

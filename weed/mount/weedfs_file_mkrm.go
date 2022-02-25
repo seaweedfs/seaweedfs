@@ -39,28 +39,30 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		return s
 	}
 
-	newEntry := &filer_pb.Entry{
-		Name:        name,
-		IsDirectory: false,
-		Attributes: &filer_pb.FuseAttributes{
-			Mtime:       time.Now().Unix(),
-			Crtime:      time.Now().Unix(),
-			FileMode:    uint32(toOsFileMode(in.Mode)),
-			Uid:         in.Uid,
-			Gid:         in.Gid,
-			Collection:  wfs.option.Collection,
-			Replication: wfs.option.Replication,
-			TtlSec:      wfs.option.TtlSec,
-			Rdev:        in.Rdev,
-		},
-	}
-
 	dirFullPath, code := wfs.inodeToPath.GetPath(in.NodeId)
 	if code != fuse.OK {
 		return
 	}
 
 	entryFullPath := dirFullPath.Child(name)
+	fileMode := toOsFileMode(in.Mode)
+
+	newEntry := &filer_pb.Entry{
+		Name:        name,
+		IsDirectory: false,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:       time.Now().Unix(),
+			Crtime:      time.Now().Unix(),
+			FileMode:    uint32(fileMode),
+			Uid:         in.Uid,
+			Gid:         in.Gid,
+			Collection:  wfs.option.Collection,
+			Replication: wfs.option.Replication,
+			TtlSec:      wfs.option.TtlSec,
+			Rdev:        in.Rdev,
+			Inode:       entryFullPath.AsInode(fileMode),
+		},
+	}
 
 	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -92,7 +94,7 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		return fuse.EIO
 	}
 
-	inode := wfs.inodeToPath.Lookup(entryFullPath, false, true)
+	inode := wfs.inodeToPath.Lookup(entryFullPath, newEntry.FileMode(), true, 0, true)
 
 	wfs.outputPbEntry(out, inode, newEntry)
 

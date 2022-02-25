@@ -49,6 +49,7 @@ func EntryAttributeToPb(entry *Entry) *filer_pb.FuseAttributes {
 		Md5:           entry.Attr.Md5,
 		FileSize:      entry.Attr.FileSize,
 		Rdev:          entry.Attr.Rdev,
+		Inode:         entry.Attr.Inode,
 	}
 }
 
@@ -76,6 +77,7 @@ func PbToEntryAttribute(attr *filer_pb.FuseAttributes) Attr {
 	t.Md5 = attr.Md5
 	t.FileSize = attr.FileSize
 	t.Rdev = attr.Rdev
+	t.Inode = attr.Inode
 
 	return t
 }

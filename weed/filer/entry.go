@@ -25,6 +25,7 @@ type Attr struct {
 	Md5           []byte
 	FileSize      uint64
 	Rdev          uint32
+	Inode         uint64
 }
 
 func (attr Attr) IsDirectory() bool {

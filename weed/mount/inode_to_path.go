@@ -4,6 +4,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"os"
 	"sync"
 )
 
@@ -22,33 +23,42 @@ type InodeEntry struct {
 
 func NewInodeToPath() *InodeToPath {
 	t := &InodeToPath{
-		inode2path:  make(map[uint64]*InodeEntry),
-		path2inode:  make(map[util.FullPath]uint64),
-		nextInodeId: 2, // the root inode id is 1
+		inode2path: make(map[uint64]*InodeEntry),
+		path2inode: make(map[util.FullPath]uint64),
 	}
 	t.inode2path[1] = &InodeEntry{"/", 1, true, false}
 	t.path2inode["/"] = 1
 	return t
 }
 
-func (i *InodeToPath) Lookup(path util.FullPath, isDirectory bool, isLookup bool) uint64 {
+func (i *InodeToPath) Lookup(path util.FullPath, mode os.FileMode, isCreate bool, possibleInode uint64, isLookup bool) uint64 {
 	i.Lock()
 	defer i.Unlock()
 	inode, found := i.path2inode[path]
 	if !found {
-		inode = i.nextInodeId
-		i.nextInodeId++
-		i.path2inode[path] = inode
-		if !isLookup {
-			i.inode2path[inode] = &InodeEntry{path, 0, isDirectory, false}
+		if possibleInode == 0 {
+			inode = path.AsInode(mode)
+			for _, found := i.inode2path[inode]; found; inode++ {
+				_, found = i.inode2path[inode]
+			}
 		} else {
-			i.inode2path[inode] = &InodeEntry{path, 1, isDirectory, false}
+			inode = possibleInode
 		}
-	} else {
+	}
+	i.path2inode[path] = inode
+
+	if _, found := i.inode2path[inode]; found {
 		if isLookup {
 			i.inode2path[inode].nlookup++
 		}
+	} else {
+		if !isLookup {
+			i.inode2path[inode] = &InodeEntry{path, 0, mode&os.ModeDir > 0, false}
+		} else {
+			i.inode2path[inode] = &InodeEntry{path, 1, mode&os.ModeDir > 0, false}
+		}
 	}
+
 	return inode
 }
 

@@ -9,8 +9,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-type HardLinkId []byte
-
 const (
 	MsgFailDelNonEmptyFolder = "fail to delete non-empty folder"
 )
