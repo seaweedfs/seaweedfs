@@ -124,8 +124,10 @@ func retriedFetchChunkData(buffer []byte, urlStrings []string, cipherKey []byte,
 				urlString = url.PathEscape(urlString)
 			}
 			shouldRetry, err = util.ReadUrlAsStream(urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
-				x := copy(buffer[n:], data)
-				n += x
+				if n < len(buffer) {
+					x := copy(buffer[n:], data)
+					n += x
+				}
 			})
 			if !shouldRetry {
 				break
