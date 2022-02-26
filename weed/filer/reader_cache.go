@@ -2,7 +2,6 @@ package filer
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
 	"github.com/chrislusf/seaweedfs/weed/util/mem"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
@@ -52,7 +51,6 @@ func (rc *ReaderCache) MaybeCache(fileId string, cipherKey []byte, isGzipped boo
 	}
 
 	// if too many, delete one of them?
-	glog.V(0).Infof("downloader2 %d", len(rc.downloaders))
 	if len(rc.downloaders) >= rc.limit {
 		oldestFid, oldestTime := "", time.Now()
 		for fid, downloader := range rc.downloaders {
@@ -94,7 +92,6 @@ func (rc *ReaderCache) ReadChunkAt(buffer []byte, fileId string, cipherKey []byt
 		}
 	}
 
-	glog.V(0).Infof("downloader1 %d", len(rc.downloaders))
 	if len(rc.downloaders) >= rc.limit {
 		oldestFid, oldestTime := "", time.Now()
 		for fid, downloader := range rc.downloaders {
