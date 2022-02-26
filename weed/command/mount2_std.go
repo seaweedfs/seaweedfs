@@ -29,8 +29,8 @@ import (
 
 func runMount2(cmd *Command, args []string) bool {
 
-	if *mountOptions.debug {
-		go http.ListenAndServe(fmt.Sprintf(":%d", *mountOptions.debugPort), nil)
+	if *mount2Options.debug {
+		go http.ListenAndServe(fmt.Sprintf(":%d", *mount2Options.debugPort), nil)
 	}
 
 	grace.SetupProfiling(*mountCpuProfile, *mountMemProfile)
@@ -39,9 +39,9 @@ func runMount2(cmd *Command, args []string) bool {
 	}
 	util.RetryWaitTime = *mountReadRetryTime
 
-	umask, umaskErr := strconv.ParseUint(*mountOptions.umaskString, 8, 64)
+	umask, umaskErr := strconv.ParseUint(*mount2Options.umaskString, 8, 64)
 	if umaskErr != nil {
-		fmt.Printf("can not parse umask %s", *mountOptions.umaskString)
+		fmt.Printf("can not parse umask %s", *mount2Options.umaskString)
 		return false
 	}
 
@@ -55,7 +55,7 @@ func runMount2(cmd *Command, args []string) bool {
 func RunMount2(option *Mount2Options, umask os.FileMode) bool {
 
 	// basic checks
-	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
+	chunkSizeLimitMB := *mount2Options.chunkSizeLimitMB
 	if chunkSizeLimitMB <= 0 {
 		fmt.Printf("Please specify a reasonable buffer size.")
 		return false
@@ -155,7 +155,7 @@ func RunMount2(option *Mount2Options, umask os.FileMode) bool {
 		Name:                     "seaweedfs",
 		SingleThreaded:           false,
 		DisableXAttrs:            false,
-		Debug:                    *option.debug,
+		Debug:                    false, // *option.debug,
 		EnableLocks:              false,
 		ExplicitDataCacheControl: false,
 		// SyncRead:                 false, // set to false to enable the FUSE_CAP_ASYNC_READ capability
@@ -190,7 +190,7 @@ func RunMount2(option *Mount2Options, umask os.FileMode) bool {
 		MountCtime:         fileInfo.ModTime(),
 		MountMtime:         time.Now(),
 		Umask:              umask,
-		VolumeServerAccess: *mountOptions.volumeServerAccess,
+		VolumeServerAccess: *mount2Options.volumeServerAccess,
 		Cipher:             cipher,
 		UidGidMapper:       uidGidMapper,
 	})
