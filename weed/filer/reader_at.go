@@ -109,15 +109,13 @@ func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
 func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 	startOffset, remaining := offset, int64(len(p))
-	var nextChunk *ChunkView
+	var nextChunks []*ChunkView
 	for i, chunk := range c.chunkViews {
 		if remaining <= 0 {
 			break
 		}
 		if i+1 < len(c.chunkViews) {
-			nextChunk = c.chunkViews[i+1]
-		} else {
-			nextChunk = nil
+			nextChunks = c.chunkViews[i+1:]
 		}
 		if startOffset < chunk.LogicOffset {
 			gap := int(chunk.LogicOffset - startOffset)
@@ -135,7 +133,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 		}
 		// glog.V(4).Infof("read [%d,%d), %d/%d chunk %s [%d,%d)", chunkStart, chunkStop, i, len(c.chunkViews), chunk.FileId, chunk.LogicOffset-chunk.Offset, chunk.LogicOffset-chunk.Offset+int64(chunk.Size))
 		bufferOffset := chunkStart - chunk.LogicOffset + chunk.Offset
-		copied, err := c.readChunkSliceAt(p[startOffset-offset:chunkStop-chunkStart+startOffset-offset], chunk, nextChunk, uint64(bufferOffset))
+		copied, err := c.readChunkSliceAt(p[startOffset-offset:chunkStop-chunkStart+startOffset-offset], chunk, nextChunks, uint64(bufferOffset))
 		if err != nil {
 			glog.Errorf("fetching chunk %+v: %v\n", chunk, err)
 			return copied, err
@@ -162,15 +160,19 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 }
 
-func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, nextChunkViews *ChunkView, offset uint64) (n int, err error) {
+func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, nextChunkViews []*ChunkView, offset uint64) (n int, err error) {
 
 	if c.readerPattern.IsRandomMode() {
 		return c.readerCache.ReadChunkAt(buffer, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset), int(chunkView.ChunkSize), chunkView.LogicOffset == 0)
 	}
 
 	n, err = c.readerCache.ReadChunkAt(buffer, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset), int(chunkView.ChunkSize), chunkView.LogicOffset == 0)
-	if nextChunkViews != nil {
-		c.readerCache.MaybeCache(nextChunkViews.FileId, nextChunkViews.CipherKey, nextChunkViews.IsGzipped, int(nextChunkViews.ChunkSize))
+	for i, nextChunk := range nextChunkViews {
+		if i < 2 {
+			c.readerCache.MaybeCache(nextChunk.FileId, nextChunk.CipherKey, nextChunk.IsGzipped, int(nextChunk.ChunkSize))
+		} else {
+			break
+		}
 	}
 	return
 }
