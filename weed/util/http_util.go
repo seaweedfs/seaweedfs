@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util/mem"
 	"io"
 	"net/http"
 	"net/url"
@@ -326,7 +327,8 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 	var (
 		m int
 	)
-	buf := make([]byte, 64*1024)
+	buf := mem.Allocate(64 * 1024)
+	defer mem.Free(buf)
 
 	for {
 		m, err = reader.Read(buf)
