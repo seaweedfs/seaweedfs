@@ -41,14 +41,23 @@ func getSlotPool(size int) *sync.Pool {
 var total int64
 
 func Allocate(size int) []byte {
-	newVal := atomic.AddInt64(&total, 1)
-	glog.V(4).Infof("++> %d", newVal)
-	slab := *getSlotPool(size).Get().(*[]byte)
-	return slab[:size]
+	pool := getSlotPool(size)
+	if pool != nil {
+
+		newVal := atomic.AddInt64(&total, 1)
+		glog.V(4).Infof("++> %d", newVal)
+
+		slab := *pool.Get().(*[]byte)
+		return slab[:size]
+	}
+	return make([]byte, size)
 }
 
 func Free(buf []byte) {
-	newVal := atomic.AddInt64(&total, -1)
-	glog.V(4).Infof("--> %d", newVal)
-	getSlotPool(cap(buf)).Put(&buf)
+	pool := getSlotPool(cap(buf))
+	if pool != nil {
+		newVal := atomic.AddInt64(&total, -1)
+		glog.V(4).Infof("--> %d", newVal)
+		pool.Put(&buf)
+	}
 }
