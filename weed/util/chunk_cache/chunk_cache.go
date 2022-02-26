@@ -13,6 +13,7 @@ var ErrorOutOfBounds = errors.New("attempt to read out of bounds")
 type ChunkCache interface {
 	GetChunk(fileId string, minSize uint64) (data []byte)
 	GetChunkSlice(fileId string, offset, length uint64) []byte
+	ReadChunkAt(data []byte, fileId string, offset uint64) (n int, err error)
 	SetChunk(fileId string, data []byte)
 }
 
@@ -143,6 +144,54 @@ func (c *TieredChunkCache) doGetChunkSlice(fileId string, offset, length uint64)
 	}
 
 	return nil
+}
+
+func (c *TieredChunkCache) ReadChunkAt(data []byte, fileId string, offset uint64) (n int, err error) {
+	if c == nil {
+		return 0, nil
+	}
+
+	c.RLock()
+	defer c.RUnlock()
+
+	minSize := offset + uint64(len(data))
+	if minSize <= c.onDiskCacheSizeLimit0 {
+		n, err = c.memCache.readChunkAt(data, fileId, offset)
+		if err != nil {
+			glog.Errorf("failed to read from memcache: %s", err)
+		}
+		if n >= int(minSize) {
+			return n, nil
+		}
+	}
+
+	fid, err := needle.ParseFileIdFromString(fileId)
+	if err != nil {
+		glog.Errorf("failed to parse file id %s", fileId)
+		return n, nil
+	}
+
+	if minSize <= c.onDiskCacheSizeLimit0 {
+		n, err = c.diskCaches[0].readChunkAt(data, fid.Key, offset)
+		if n >= int(minSize) {
+			return
+		}
+	}
+	if minSize <= c.onDiskCacheSizeLimit1 {
+		n, err = c.diskCaches[1].readChunkAt(data, fid.Key, offset)
+		if n >= int(minSize) {
+			return
+		}
+	}
+	{
+		n, err = c.diskCaches[2].readChunkAt(data, fid.Key, offset)
+		if n >= int(minSize) {
+			return
+		}
+	}
+
+	return 0, nil
+
 }
 
 func (c *TieredChunkCache) SetChunk(fileId string, data []byte) {
