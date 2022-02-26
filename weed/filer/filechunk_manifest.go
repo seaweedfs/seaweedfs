@@ -3,6 +3,7 @@ package filer
 import (
 	"bytes"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util/mem"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"io"
 	"math"
@@ -77,7 +78,9 @@ func ResolveOneChunkManifest(lookupFileIdFn wdclient.LookupFileIdFunctionType, c
 	}
 
 	// IsChunkManifest
-	data, err := fetchChunk(lookupFileIdFn, chunk.GetFileIdString(), chunk.CipherKey, chunk.IsCompressed)
+	data := mem.Allocate(int(chunk.Size))
+	defer mem.Free(data)
+	_, err := fetchChunk(data, lookupFileIdFn, chunk.GetFileIdString(), chunk.CipherKey, chunk.IsCompressed)
 	if err != nil {
 		return nil, fmt.Errorf("fail to read manifest %s: %v", chunk.GetFileIdString(), err)
 	}
@@ -92,38 +95,37 @@ func ResolveOneChunkManifest(lookupFileIdFn wdclient.LookupFileIdFunctionType, c
 }
 
 // TODO fetch from cache for weed mount?
-func fetchChunk(lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool) ([]byte, error) {
+func fetchChunk(data []byte, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool) (int, error) {
 	urlStrings, err := lookupFileIdFn(fileId)
 	if err != nil {
 		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
-		return nil, err
+		return 0, err
 	}
-	return retriedFetchChunkData(urlStrings, cipherKey, isGzipped, true, 0, 0)
+	return retriedFetchChunkData(data, urlStrings, cipherKey, isGzipped, true, 0)
 }
 
-func fetchChunkRange(lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, offset int64, size int) ([]byte, error) {
+func fetchChunkRange(data []byte, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, offset int64) (int, error) {
 	urlStrings, err := lookupFileIdFn(fileId)
 	if err != nil {
 		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
-		return nil, err
+		return 0, err
 	}
-	return retriedFetchChunkData(urlStrings, cipherKey, isGzipped, false, offset, size)
+	return retriedFetchChunkData(data, urlStrings, cipherKey, isGzipped, false, offset)
 }
 
-func retriedFetchChunkData(urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int) ([]byte, error) {
+func retriedFetchChunkData(buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64) (n int, err error) {
 
-	var err error
 	var shouldRetry bool
-	receivedData := make([]byte, 0, size)
 
 	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
 		for _, urlString := range urlStrings {
-			receivedData = receivedData[:0]
+			n = 0
 			if strings.Contains(urlString, "%") {
 				urlString = url.PathEscape(urlString)
 			}
-			shouldRetry, err = util.ReadUrlAsStream(urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
-				receivedData = append(receivedData, data...)
+			shouldRetry, err = util.ReadUrlAsStream(urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
+				x := copy(buffer[n:], data)
+				n += x
 			})
 			if !shouldRetry {
 				break
@@ -142,7 +144,7 @@ func retriedFetchChunkData(urlStrings []string, cipherKey []byte, isGzipped bool
 		}
 	}
 
-	return receivedData, err
+	return n, err
 
 }
 

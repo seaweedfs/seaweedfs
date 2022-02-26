@@ -21,8 +21,12 @@ func (m *mockChunkCache) GetChunk(fileId string, minSize uint64) (data []byte) {
 	return data
 }
 
-func (m *mockChunkCache) GetChunkSlice(fileId string, offset, length uint64) []byte {
-	return m.GetChunk(fileId, length)
+func (m *mockChunkCache) ReadChunkAt(data []byte, fileId string, offset uint64) (n int, err error) {
+	x, _ := strconv.Atoi(fileId)
+	for i := 0; i < len(data); i++ {
+		data[i] = byte(x)
+	}
+	return len(data), nil
 }
 
 func (m *mockChunkCache) SetChunk(fileId string, data []byte) {
@@ -65,10 +69,9 @@ func TestReaderAt(t *testing.T) {
 
 	readerAt := &ChunkReadAt{
 		chunkViews:    ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
-		lookupFileId:  nil,
 		readerLock:    sync.Mutex{},
 		fileSize:      10,
-		chunkCache:    &mockChunkCache{},
+		readerCache:   newReaderCache(3, &mockChunkCache{}, nil),
 		readerPattern: NewReaderPattern(),
 	}
 
@@ -116,10 +119,9 @@ func TestReaderAt0(t *testing.T) {
 
 	readerAt := &ChunkReadAt{
 		chunkViews:    ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
-		lookupFileId:  nil,
 		readerLock:    sync.Mutex{},
 		fileSize:      10,
-		chunkCache:    &mockChunkCache{},
+		readerCache:   newReaderCache(3, &mockChunkCache{}, nil),
 		readerPattern: NewReaderPattern(),
 	}
 
@@ -145,10 +147,9 @@ func TestReaderAt1(t *testing.T) {
 
 	readerAt := &ChunkReadAt{
 		chunkViews:    ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
-		lookupFileId:  nil,
 		readerLock:    sync.Mutex{},
 		fileSize:      20,
-		chunkCache:    &mockChunkCache{},
+		readerCache:   newReaderCache(3, &mockChunkCache{}, nil),
 		readerPattern: NewReaderPattern(),
 	}
 

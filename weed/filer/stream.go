@@ -133,30 +133,30 @@ func writeZero(w io.Writer, size int64) (err error) {
 	return
 }
 
-func ReadAll(masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) ([]byte, error) {
-
-	buffer := bytes.Buffer{}
+func ReadAll(buffer []byte, masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) error {
 
 	lookupFileIdFn := func(fileId string) (targetUrls []string, err error) {
 		return masterClient.LookupFileId(fileId)
 	}
 
-	chunkViews := ViewFromChunks(lookupFileIdFn, chunks, 0, math.MaxInt64)
+	chunkViews := ViewFromChunks(lookupFileIdFn, chunks, 0, int64(len(buffer)))
+
+	idx := 0
 
 	for _, chunkView := range chunkViews {
 		urlStrings, err := lookupFileIdFn(chunkView.FileId)
 		if err != nil {
 			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
-			return nil, err
+			return err
 		}
 
-		data, err := retriedFetchChunkData(urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
+		n, err := retriedFetchChunkData(buffer[idx:idx+int(chunkView.Size)], urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		buffer.Write(data)
+		idx += n
 	}
-	return buffer.Bytes(), nil
+	return nil
 }
 
 // ----------------  ChunkStreamReader ----------------------------------
