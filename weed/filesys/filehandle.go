@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"sync"
@@ -148,7 +147,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	var chunkResolveErr error
 	if fh.entryViewCache == nil {
-		fh.entryViewCache, chunkResolveErr = filer.NonOverlappingVisibleIntervals(fh.f.wfs.LookupFn(), entry.Chunks, 0, math.MaxInt64)
+		fh.entryViewCache, chunkResolveErr = filer.NonOverlappingVisibleIntervals(fh.f.wfs.LookupFn(), entry.Chunks, 0, fileSize)
 		if chunkResolveErr != nil {
 			return 0, fmt.Errorf("fail to resolve chunk manifest: %v", chunkResolveErr)
 		}
@@ -157,7 +156,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	reader := fh.reader
 	if reader == nil {
-		chunkViews := filer.ViewFromVisibleIntervals(fh.entryViewCache, 0, math.MaxInt64)
+		chunkViews := filer.ViewFromVisibleIntervals(fh.entryViewCache, 0, fileSize)
 		glog.V(4).Infof("file handle read %s [%d,%d) from %d views", fileFullPath, offset, offset+int64(len(buff)), len(chunkViews))
 		for _, chunkView := range chunkViews {
 			glog.V(4).Infof("  read %s [%d,%d) from chunk %+v", fileFullPath, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size), chunkView.FileId)

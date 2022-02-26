@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path"
 	"strings"
@@ -540,11 +539,11 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 		return 0, io.EOF
 	}
 	if f.entryViewCache == nil {
-		f.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(filer.LookupFn(f.fs), f.entry.Chunks, 0, math.MaxInt64)
+		f.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(filer.LookupFn(f.fs), f.entry.Chunks, 0, fileSize)
 		f.reader = nil
 	}
 	if f.reader == nil {
-		chunkViews := filer.ViewFromVisibleIntervals(f.entryViewCache, 0, math.MaxInt64)
+		chunkViews := filer.ViewFromVisibleIntervals(f.entryViewCache, 0, fileSize)
 		f.reader = filer.NewChunkReaderAtFromClient(filer.LookupFn(f.fs), chunkViews, f.fs.chunkCache, fileSize)
 	}
 
