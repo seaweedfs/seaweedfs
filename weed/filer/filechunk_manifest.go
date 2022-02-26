@@ -104,15 +104,6 @@ func fetchChunk(data []byte, lookupFileIdFn wdclient.LookupFileIdFunctionType, f
 	return retriedFetchChunkData(data, urlStrings, cipherKey, isGzipped, true, 0)
 }
 
-func fetchChunkRange(data []byte, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, offset int64) (int, error) {
-	urlStrings, err := lookupFileIdFn(fileId)
-	if err != nil {
-		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
-		return 0, err
-	}
-	return retriedFetchChunkData(data, urlStrings, cipherKey, isGzipped, false, offset)
-}
-
 func retriedFetchChunkData(buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64) (n int, err error) {
 
 	var shouldRetry bool
