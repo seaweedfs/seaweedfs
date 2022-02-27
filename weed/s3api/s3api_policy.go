@@ -51,7 +51,7 @@ type Prefix struct {
 	set bool
 }
 
-// MarshalXML - decodes XML data.
+// MarshalXML encodes Prefix field into an XML form.
 func (p Prefix) MarshalXML(e *xml.Encoder, startElement xml.StartElement) error {
 	if !p.set {
 		return nil
@@ -59,6 +59,7 @@ func (p Prefix) MarshalXML(e *xml.Encoder, startElement xml.StartElement) error 
 	return e.EncodeElement(p.string, startElement)
 }
 
+// MarshalXML encodes Filter field into an XML form.
 func (f Filter) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	if err := e.EncodeToken(start); err != nil {
 		return err
