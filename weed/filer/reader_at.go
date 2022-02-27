@@ -168,10 +168,16 @@ func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, next
 	}
 
 	n, err = c.readerCache.ReadChunkAt(buffer, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset), int(chunkView.ChunkSize), chunkView.LogicOffset == 0)
-	if c.lastChunkFid != "" && c.lastChunkFid != chunkView.FileId {
+	if c.lastChunkFid != chunkView.FileId {
 		if chunkView.Offset == 0 { // start of a new chunk
-			c.readerCache.UnCache(c.lastChunkFid)
-			c.readerCache.MaybeCache(nextChunkViews)
+			if c.lastChunkFid != "" {
+				c.readerCache.UnCache(c.lastChunkFid)
+				c.readerCache.MaybeCache(nextChunkViews)
+			} else {
+				if len(nextChunkViews) >= 1 {
+					c.readerCache.MaybeCache(nextChunkViews[:1]) // just read the next chunk if at the very beginning
+				}
+			}
 		}
 	}
 	c.lastChunkFid = chunkView.FileId
