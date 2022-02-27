@@ -27,10 +27,10 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
 )
 
-func runMount2(cmd *Command, args []string) bool {
+func runMount(cmd *Command, args []string) bool {
 
-	if *mount2Options.debug {
-		go http.ListenAndServe(fmt.Sprintf(":%d", *mount2Options.debugPort), nil)
+	if *mountOptions.debug {
+		go http.ListenAndServe(fmt.Sprintf(":%d", *mountOptions.debugPort), nil)
 	}
 
 	grace.SetupProfiling(*mountCpuProfile, *mountMemProfile)
@@ -39,9 +39,9 @@ func runMount2(cmd *Command, args []string) bool {
 	}
 	util.RetryWaitTime = *mountReadRetryTime
 
-	umask, umaskErr := strconv.ParseUint(*mount2Options.umaskString, 8, 64)
+	umask, umaskErr := strconv.ParseUint(*mountOptions.umaskString, 8, 64)
 	if umaskErr != nil {
-		fmt.Printf("can not parse umask %s", *mount2Options.umaskString)
+		fmt.Printf("can not parse umask %s", *mountOptions.umaskString)
 		return false
 	}
 
@@ -49,13 +49,13 @@ func runMount2(cmd *Command, args []string) bool {
 		return false
 	}
 
-	return RunMount2(&mount2Options, os.FileMode(umask))
+	return RunMount2(&mountOptions, os.FileMode(umask))
 }
 
-func RunMount2(option *Mount2Options, umask os.FileMode) bool {
+func RunMount2(option *MountOptions, umask os.FileMode) bool {
 
 	// basic checks
-	chunkSizeLimitMB := *mount2Options.chunkSizeLimitMB
+	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
 	if chunkSizeLimitMB <= 0 {
 		fmt.Printf("Please specify a reasonable buffer size.")
 		return false
@@ -213,7 +213,7 @@ func RunMount2(option *Mount2Options, umask os.FileMode) bool {
 		MountCtime:         fileInfo.ModTime(),
 		MountMtime:         time.Now(),
 		Umask:              umask,
-		VolumeServerAccess: *mount2Options.volumeServerAccess,
+		VolumeServerAccess: *mountOptions.volumeServerAccess,
 		Cipher:             cipher,
 		UidGidMapper:       uidGidMapper,
 	})

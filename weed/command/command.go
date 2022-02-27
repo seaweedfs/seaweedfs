@@ -30,7 +30,6 @@ var Commands = []*Command{
 	cmdMaster,
 	cmdMasterFollower,
 	cmdMount,
-	cmdMount2,
 	cmdS3,
 	cmdIam,
 	cmdMsgBroker,
