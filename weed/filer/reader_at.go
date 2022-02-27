@@ -21,6 +21,7 @@ type ChunkReadAt struct {
 	fileSize      int64
 	readerCache   *ReaderCache
 	readerPattern *ReaderPattern
+	lastChunkFid  string
 }
 
 var _ = io.ReaderAt(&ChunkReadAt{})
@@ -85,7 +86,7 @@ func NewChunkReaderAtFromClient(lookupFn wdclient.LookupFileIdFunctionType, chun
 	return &ChunkReadAt{
 		chunkViews:    chunkViews,
 		fileSize:      fileSize,
-		readerCache:   newReaderCache(5, chunkCache, lookupFn),
+		readerCache:   newReaderCache(32, chunkCache, lookupFn),
 		readerPattern: NewReaderPattern(),
 	}
 }
@@ -167,12 +168,12 @@ func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, next
 	}
 
 	n, err = c.readerCache.ReadChunkAt(buffer, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset), int(chunkView.ChunkSize), chunkView.LogicOffset == 0)
-	for i, nextChunk := range nextChunkViews {
-		if i < 2 {
-			c.readerCache.MaybeCache(nextChunk.FileId, nextChunk.CipherKey, nextChunk.IsGzipped, int(nextChunk.ChunkSize))
-		} else {
-			break
+	if c.lastChunkFid != "" && c.lastChunkFid != chunkView.FileId {
+		if chunkView.Offset == 0 { // start of a new chunk
+			c.readerCache.UnCache(c.lastChunkFid)
+			c.readerCache.MaybeCache(nextChunkViews)
 		}
 	}
+	c.lastChunkFid = chunkView.FileId
 	return
 }
