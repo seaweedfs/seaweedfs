@@ -38,7 +38,9 @@ func (s3sink *S3Sink) createMultipartUpload(key string, entry *filer_pb.Entry) (
 		Bucket:      aws.String(s3sink.bucket),
 		Key:         aws.String(key),
 		ContentType: aws.String(entry.Attributes.Mime),
-		ACL:         aws.String(s3sink.acl),
+	}
+	if s3sink.acl != "" {
+		input.ACL = aws.String(s3sink.acl)
 	}
 
 	result, err := s3sink.conn.CreateMultipartUpload(input)
