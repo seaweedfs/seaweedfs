@@ -65,6 +65,7 @@ type WFS struct {
 	inodeToPath       *InodeToPath
 	fhmap             *FileHandleToInode
 	dhmap             *DirectoryHandleToInode
+	fuseServer        *fuse.Server
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
@@ -107,6 +108,10 @@ func (wfs *WFS) StartBackgroundTasks() {
 
 func (wfs *WFS) String() string {
 	return "seaweedfs"
+}
+
+func (wfs *WFS) Init(server *fuse.Server) {
+	wfs.fuseServer = server
 }
 
 func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle, entry *filer_pb.Entry, status fuse.Status) {

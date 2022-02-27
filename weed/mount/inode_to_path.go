@@ -138,7 +138,7 @@ func (i *InodeToPath) RemovePath(path util.FullPath) {
 	}
 }
 
-func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) {
+func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (replacedInode uint64) {
 	i.Lock()
 	defer i.Unlock()
 	sourceInode, sourceFound := i.path2inode[sourcePath]
@@ -157,6 +157,7 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) {
 	} else {
 		i.inode2path[sourceInode].nlookup++
 	}
+	return targetInode
 }
 
 func (i *InodeToPath) Forget(inode, nlookup uint64, onForgetDir func(dir util.FullPath)) {
