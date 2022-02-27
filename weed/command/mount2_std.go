@@ -158,10 +158,33 @@ func RunMount2(option *Mount2Options, umask os.FileMode) bool {
 		Debug:                    false, // *option.debug,
 		EnableLocks:              false,
 		ExplicitDataCacheControl: false,
-		// SyncRead:                 false, // set to false to enable the FUSE_CAP_ASYNC_READ capability
-		DirectMount:      true,
-		DirectMountFlags: 0,
-		// EnableAcl:                false,
+		DirectMount:              true,
+		DirectMountFlags:         0,
+		//SyncRead:                 false, // set to false to enable the FUSE_CAP_ASYNC_READ capability
+		//EnableAcl:                true,
+	}
+	if *option.nonempty {
+		fuseMountOptions.Options = append(fuseMountOptions.Options, "nonempty")
+	}
+	if *option.readOnly {
+		if runtime.GOOS == "darwin" {
+			fuseMountOptions.Options = append(fuseMountOptions.Options, "rdonly")
+		} else {
+			fuseMountOptions.Options = append(fuseMountOptions.Options, "ro")
+		}
+	}
+	if runtime.GOOS == "darwin" {
+		// https://github-wiki-see.page/m/macfuse/macfuse/wiki/Mount-Options
+		ioSizeMB := 1
+		for ioSizeMB*2 <= *option.chunkSizeLimitMB && ioSizeMB*2 <= 32 {
+			ioSizeMB *= 2
+		}
+		fuseMountOptions.Options = append(fuseMountOptions.Options, "daemon_timeout=600")
+		fuseMountOptions.Options = append(fuseMountOptions.Options, "noapplexattr")
+		fuseMountOptions.Options = append(fuseMountOptions.Options, "novncache")
+		fuseMountOptions.Options = append(fuseMountOptions.Options, "slow_statfs")
+		fuseMountOptions.Options = append(fuseMountOptions.Options, "volname="+*option.filer)
+		fuseMountOptions.Options = append(fuseMountOptions.Options, fmt.Sprintf("iosize=%d", ioSizeMB*1024*1024))
 	}
 
 	// find mount point
