@@ -155,7 +155,7 @@ func RunMount2(option *Mount2Options, umask os.FileMode) bool {
 		Name:                     "seaweedfs",
 		SingleThreaded:           false,
 		DisableXAttrs:            false,
-		Debug:                    false, // *option.debug,
+		Debug:                    *option.debug,
 		EnableLocks:              false,
 		ExplicitDataCacheControl: false,
 		DirectMount:              true,
@@ -181,7 +181,7 @@ func RunMount2(option *Mount2Options, umask os.FileMode) bool {
 		}
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "daemon_timeout=600")
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "noapplexattr")
-		fuseMountOptions.Options = append(fuseMountOptions.Options, "novncache")
+		// fuseMountOptions.Options = append(fuseMountOptions.Options, "novncache") // need to test effectiveness
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "slow_statfs")
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "volname="+*option.filer)
 		fuseMountOptions.Options = append(fuseMountOptions.Options, fmt.Sprintf("iosize=%d", ioSizeMB*1024*1024))
