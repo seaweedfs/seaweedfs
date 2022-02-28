@@ -94,7 +94,7 @@ func init() {
 	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
 	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
-	v.enableTcp = cmdVolume.Flag.Bool("tcp", false, "<exprimental> enable tcp port")
+	v.enableTcp = cmdVolume.Flag.Bool("tcp", false, "<experimental> enable tcp port")
 }
 
 var cmdVolume = &Command{
