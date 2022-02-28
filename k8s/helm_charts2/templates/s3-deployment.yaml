@@ -130,7 +130,7 @@ spec:
               name: swfs-s3
           readinessProbe:
             httpGet:
-              path: /
+              path: /status
               port: {{ .Values.s3.port }}
               scheme: HTTP
             initialDelaySeconds: 15
@@ -140,7 +140,7 @@ spec:
             timeoutSeconds: 10
           livenessProbe:
             httpGet:
-              path: /
+              path: /status
               port: {{ .Values.s3.port }}
               scheme: HTTP
             initialDelaySeconds: 20
