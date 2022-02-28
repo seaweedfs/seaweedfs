@@ -187,7 +187,8 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onForgetDir func(dir util.Fu
 	}
 	i.Unlock()
 	if found {
-		if path.isDirectory && onForgetDir != nil {
+		if path.isDirectory && path.nlookup <= 0 && onForgetDir != nil {
+			path.isChildrenCached = false
 			onForgetDir(path.FullPath)
 		}
 	}
