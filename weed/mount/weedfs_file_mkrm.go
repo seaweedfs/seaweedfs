@@ -46,6 +46,7 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 
 	entryFullPath := dirFullPath.Child(name)
 	fileMode := toOsFileMode(in.Mode)
+	inode := wfs.inodeToPath.AllocateInode(entryFullPath, fileMode)
 
 	newEntry := &filer_pb.Entry{
 		Name:        name,
@@ -60,7 +61,7 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 			Replication: wfs.option.Replication,
 			TtlSec:      wfs.option.TtlSec,
 			Rdev:        in.Rdev,
-			Inode:       entryFullPath.AsInode(fileMode),
+			Inode:       inode,
 		},
 	}
 
@@ -94,7 +95,8 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		return fuse.EIO
 	}
 
-	inode := wfs.inodeToPath.Lookup(entryFullPath, newEntry.FileMode(), true, 0, true)
+	// this is to increase nlookup counter
+	inode = wfs.inodeToPath.Lookup(entryFullPath, fileMode, false, inode, true)
 
 	wfs.outputPbEntry(out, inode, newEntry)
 

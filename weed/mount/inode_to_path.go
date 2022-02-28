@@ -31,18 +31,20 @@ func NewInodeToPath() *InodeToPath {
 	return t
 }
 
-func (i *InodeToPath) Lookup(path util.FullPath, mode os.FileMode, isCreate bool, possibleInode uint64, isLookup bool) uint64 {
+func (i *InodeToPath) Lookup(path util.FullPath, mode os.FileMode, isHardlink bool, possibleInode uint64, isLookup bool) uint64 {
 	i.Lock()
 	defer i.Unlock()
 	inode, found := i.path2inode[path]
 	if !found {
 		if possibleInode == 0 {
 			inode = path.AsInode(mode)
+		} else {
+			inode = possibleInode
+		}
+		if !isHardlink {
 			for _, found := i.inode2path[inode]; found; inode++ {
 				_, found = i.inode2path[inode]
 			}
-		} else {
-			inode = possibleInode
 		}
 	}
 	i.path2inode[path] = inode
@@ -59,6 +61,19 @@ func (i *InodeToPath) Lookup(path util.FullPath, mode os.FileMode, isCreate bool
 		}
 	}
 
+	return inode
+}
+
+func (i *InodeToPath) AllocateInode(path util.FullPath, mode os.FileMode) uint64 {
+	if path == "/" {
+		return 1
+	}
+	i.Lock()
+	defer i.Unlock()
+	inode := path.AsInode(mode)
+	for _, found := i.inode2path[inode]; found; inode++ {
+		_, found = i.inode2path[inode]
+	}
 	return inode
 }
 
