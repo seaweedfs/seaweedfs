@@ -96,7 +96,7 @@ func (wfs *WFS) Fsync(cancel <-chan struct{}, in *fuse.FsyncIn) (code fuse.Statu
 func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 	// flush works at fh level
 	fileFullPath := fh.FullPath()
-	dir, _ := fileFullPath.DirAndName()
+	dir, name := fileFullPath.DirAndName()
 	// send the data to the OS
 	glog.V(4).Infof("doFlush %s fh %d", fileFullPath, fh.handle)
 
@@ -115,6 +115,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		if entry == nil {
 			return nil
 		}
+		entry.Name = name // this flush may be just after a rename operation
 
 		if entry.Attributes != nil {
 			entry.Attributes.Mime = fh.contentType
