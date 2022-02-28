@@ -14,6 +14,7 @@ import (
 // e.g. fill fileId field for chunks
 
 type MetaCache struct {
+	root       util.FullPath
 	localStore filer.VirtualFilerStore
 	// sync.RWMutex
 	uidGidMapper   *UidGidMapper
@@ -22,8 +23,10 @@ type MetaCache struct {
 	invalidateFunc func(fullpath util.FullPath, entry *filer_pb.Entry)
 }
 
-func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(util.FullPath, *filer_pb.Entry)) *MetaCache {
+func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath,
+	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(util.FullPath, *filer_pb.Entry)) *MetaCache {
 	return &MetaCache{
+		root:         root,
 		localStore:   openMetaStore(dbFolder),
 		markCachedFn: markCachedFn,
 		isCachedFn:   isCachedFn,

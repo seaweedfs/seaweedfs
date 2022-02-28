@@ -73,7 +73,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		RawFileSystem: fuse.NewDefaultRawFileSystem(),
 		option:        option,
 		signature:     util.RandomInt32(),
-		inodeToPath:   NewInodeToPath(),
+		inodeToPath:   NewInodeToPath(util.FullPath(option.FilerMountRootPath)),
 		fhmap:         NewFileHandleToInode(),
 		dhmap:         NewDirectoryHandleToInode(),
 	}
@@ -84,12 +84,14 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDir(), option.CacheSizeMB, 1024*1024)
 	}
 
-	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDir(), "meta"), option.UidGidMapper, func(path util.FullPath) {
-		wfs.inodeToPath.MarkChildrenCached(path)
-	}, func(path util.FullPath) bool {
-		return wfs.inodeToPath.IsChildrenCached(path)
-	}, func(filePath util.FullPath, entry *filer_pb.Entry) {
-	})
+	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDir(), "meta"), option.UidGidMapper,
+		util.FullPath(option.FilerMountRootPath),
+		func(path util.FullPath) {
+			wfs.inodeToPath.MarkChildrenCached(path)
+		}, func(path util.FullPath) bool {
+			return wfs.inodeToPath.IsChildrenCached(path)
+		}, func(filePath util.FullPath, entry *filer_pb.Entry) {
+		})
 	grace.OnInterrupt(func() {
 		wfs.metaCache.Shutdown()
 		os.RemoveAll(option.getUniqueCacheDir())

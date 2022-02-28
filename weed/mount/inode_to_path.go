@@ -21,13 +21,13 @@ type InodeEntry struct {
 	isChildrenCached bool
 }
 
-func NewInodeToPath() *InodeToPath {
+func NewInodeToPath(root util.FullPath) *InodeToPath {
 	t := &InodeToPath{
 		inode2path: make(map[uint64]*InodeEntry),
 		path2inode: make(map[util.FullPath]uint64),
 	}
-	t.inode2path[1] = &InodeEntry{"/", 1, true, false}
-	t.path2inode["/"] = 1
+	t.inode2path[1] = &InodeEntry{root, 1, true, false}
+	t.path2inode[root] = 1
 	return t
 }
 

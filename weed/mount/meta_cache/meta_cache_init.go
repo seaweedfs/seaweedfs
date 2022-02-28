@@ -33,7 +33,7 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 		}
 
 		// continue to parent directory
-		if currentPath != "/" {
+		if currentPath != mc.root {
 			parent, _ := currentPath.DirAndName()
 			currentPath = util.FullPath(parent)
 		} else {
