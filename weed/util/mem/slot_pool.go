@@ -33,17 +33,18 @@ func init() {
 	}
 }
 
-func getSlotPool(size int) *sync.Pool {
+func getSlotPool(size int) (*sync.Pool, bool) {
 	index := bitCount(size)
-	return pools[index]
+	if index >= len(pools) {
+		return nil, false
+	}
+	return pools[index], true
 }
 
 var total int64
 
 func Allocate(size int) []byte {
-	pool := getSlotPool(size)
-	if pool != nil {
-
+	if pool, found := getSlotPool(size); found {
 		newVal := atomic.AddInt64(&total, 1)
 		glog.V(4).Infof("++> %d", newVal)
 
@@ -54,8 +55,7 @@ func Allocate(size int) []byte {
 }
 
 func Free(buf []byte) {
-	pool := getSlotPool(cap(buf))
-	if pool != nil {
+	if pool, found := getSlotPool(cap(buf)); found {
 		newVal := atomic.AddInt64(&total, -1)
 		glog.V(4).Infof("--> %d", newVal)
 		pool.Put(&buf)
