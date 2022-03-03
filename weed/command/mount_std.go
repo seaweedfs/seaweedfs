@@ -49,10 +49,10 @@ func runMount(cmd *Command, args []string) bool {
 		return false
 	}
 
-	return RunMount2(&mountOptions, os.FileMode(umask))
+	return RunMount(&mountOptions, os.FileMode(umask))
 }
 
-func RunMount2(option *MountOptions, umask os.FileMode) bool {
+func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	// basic checks
 	chunkSizeLimitMB := *mountOptions.chunkSizeLimitMB
@@ -142,6 +142,8 @@ func RunMount2(option *MountOptions, umask os.FileMode) bool {
 		return true
 	}
 
+	serverFriendlyName := strings.ReplaceAll(*option.filer, ",", "+")
+
 	// mount fuse
 	fuseMountOptions := &fuse.MountOptions{
 		AllowOther:               *option.allowOthers,
@@ -151,7 +153,7 @@ func RunMount2(option *MountOptions, umask os.FileMode) bool {
 		MaxReadAhead:             1024 * 1024 * 2,
 		IgnoreSecurityLabels:     false,
 		RememberInodes:           false,
-		FsName:                   *option.filer + ":" + filerMountRootPath,
+		FsName:                   serverFriendlyName + ":" + filerMountRootPath,
 		Name:                     "seaweedfs",
 		SingleThreaded:           false,
 		DisableXAttrs:            false,
@@ -183,7 +185,7 @@ func RunMount2(option *MountOptions, umask os.FileMode) bool {
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "noapplexattr")
 		// fuseMountOptions.Options = append(fuseMountOptions.Options, "novncache") // need to test effectiveness
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "slow_statfs")
-		fuseMountOptions.Options = append(fuseMountOptions.Options, "volname="+*option.filer)
+		fuseMountOptions.Options = append(fuseMountOptions.Options, "volname="+serverFriendlyName)
 		fuseMountOptions.Options = append(fuseMountOptions.Options, fmt.Sprintf("iosize=%d", ioSizeMB*1024*1024))
 	}
 
