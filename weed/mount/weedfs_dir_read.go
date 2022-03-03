@@ -132,11 +132,11 @@ func (wfs *WFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *fus
 func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPlusMode bool) fuse.Status {
 
 	dh := wfs.GetDirectoryHandle(DirectoryHandleId(input.Fh))
-	if dh.isFinished {
-		if input.Offset == 0 {
-			dh.isFinished = false
-			dh.lastEntryName = ""
-		} else {
+	if input.Offset == 0 {
+		dh.isFinished = false
+		dh.lastEntryName = ""
+	} else {
+		if dh.isFinished {
 			return fuse.OK
 		}
 	}
