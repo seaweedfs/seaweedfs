@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
+	"github.com/chrislusf/seaweedfs/weed/util/mem"
 	"io"
 	"io/fs"
 	"mime/multipart"
@@ -361,7 +362,9 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		w.Header().Set("Content-Length", strconv.FormatInt(sendSize, 10))
 	}
 	w.WriteHeader(http.StatusPartialContent)
-	if _, err := io.CopyN(w, sendContent, sendSize); err != nil {
+	buf := mem.Allocate(128 * 1024)
+	defer mem.Free(buf)
+	if _, err := io.CopyBuffer(w, io.LimitReader(sendContent, sendSize), buf); err != nil {
 		http.Error(w, "Internal Error", http.StatusInternalServerError)
 		return
 	}
