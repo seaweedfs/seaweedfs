@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"io"
 )
 
@@ -23,10 +24,10 @@ func (c *commandCollectionList) Help() string {
 }
 
 type CollectionInfo struct {
-	FileCount        uint64
-	DeleteCount      uint64
-	DeletedByteCount uint64
-	Size             uint64
+	FileCount        float64
+	DeleteCount      float64
+	DeletedByteCount float64
+	Size             float64
 	VolumeCount      int
 }
 
@@ -52,7 +53,7 @@ func (c *commandCollectionList) Do(args []string, commandEnv *CommandEnv, writer
 		if !found {
 			continue
 		}
-		fmt.Fprintf(writer, "collection:\"%s\"\tvolumeCount:%d\tsize:%d\tfileCount:%d\tdeletedBytes:%d\tdeletion:%d\n", c, cif.VolumeCount, cif.Size, cif.FileCount, cif.DeletedByteCount, cif.DeleteCount)
+		fmt.Fprintf(writer, "collection:\"%s\"\tvolumeCount:%d\tsize:%.0f\tfileCount:%.0f\tdeletedBytes:%.0f\tdeletion:%.0f\n", c, cif.VolumeCount, cif.Size, cif.FileCount, cif.DeletedByteCount, cif.DeleteCount)
 	}
 
 	fmt.Fprintf(writer, "Total %d collections.\n", len(collections))
@@ -85,10 +86,12 @@ func addToCollection(collectionInfos map[string]*CollectionInfo, vif *master_pb.
 		cif = &CollectionInfo{}
 		collectionInfos[c] = cif
 	}
-	cif.Size += vif.Size
-	cif.DeleteCount += vif.DeleteCount
-	cif.FileCount += vif.FileCount
-	cif.DeletedByteCount += vif.DeletedByteCount
+	replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(vif.ReplicaPlacement))
+	copyCount := float64(replicaPlacement.GetCopyCount())
+	cif.Size += float64(vif.Size) / copyCount
+	cif.DeleteCount += float64(vif.DeleteCount) / copyCount
+	cif.FileCount += float64(vif.FileCount) / copyCount
+	cif.DeletedByteCount += float64(vif.DeletedByteCount) / copyCount
 	cif.VolumeCount++
 }
 
