@@ -183,6 +183,10 @@ func (s *SingleChunkCacher) readChunkAt(buf []byte, offset int64) (int, error) {
 	s.RLock()
 	defer s.RUnlock()
 
-	return copy(buf, s.data[offset:]), s.err
+	if s.err != nil {
+		return 0, s.err
+	}
+
+	return copy(buf, s.data[offset:]), nil
 
 }
