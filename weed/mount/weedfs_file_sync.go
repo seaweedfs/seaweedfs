@@ -100,13 +100,19 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 	// send the data to the OS
 	glog.V(4).Infof("doFlush %s fh %d", fileFullPath, fh.handle)
 
-	if err := fh.dirtyPages.FlushData(); err != nil {
-		glog.Errorf("%v doFlush: %v", fileFullPath, err)
-		return fuse.EIO
+	if !wfs.IsOverQuota {
+		if err := fh.dirtyPages.FlushData(); err != nil {
+			glog.Errorf("%v doFlush: %v", fileFullPath, err)
+			return fuse.EIO
+		}
 	}
 
 	if !fh.dirtyMetadata {
 		return fuse.OK
+	}
+
+	if wfs.IsOverQuota {
+		return fuse.EPERM
 	}
 
 	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {

@@ -14,6 +14,9 @@ import (
 /** Create a symbolic link */
 func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target string, name string, out *fuse.EntryOut) (code fuse.Status) {
 
+	if wfs.IsOverQuota {
+		return fuse.EPERM
+	}
 	if s := checkName(name); s != fuse.OK {
 		return s
 	}

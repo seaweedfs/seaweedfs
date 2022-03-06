@@ -66,6 +66,7 @@ type WFS struct {
 	fhmap             *FileHandleToInode
 	dhmap             *DirectoryHandleToInode
 	fuseServer        *fuse.Server
+	IsOverQuota       bool
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {

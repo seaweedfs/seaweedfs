@@ -23,6 +23,10 @@ When creating a link:
 /** Create a hard link to a file */
 func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *fuse.EntryOut) (code fuse.Status) {
 
+	if wfs.IsOverQuota {
+		return fuse.EPERM
+	}
+
 	if s := checkName(name); s != fuse.OK {
 		return s
 	}

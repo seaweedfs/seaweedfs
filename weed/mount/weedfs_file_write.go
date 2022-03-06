@@ -33,6 +33,10 @@ import (
  */
 func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (written uint32, code fuse.Status) {
 
+	if wfs.IsOverQuota {
+		return 0, fuse.EPERM
+	}
+
 	fh := wfs.GetHandle(FileHandleId(in.Fh))
 	if fh == nil {
 		return 0, fuse.ENOENT

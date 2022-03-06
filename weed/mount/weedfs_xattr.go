@@ -69,6 +69,11 @@ func (wfs *WFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr str
 //              Perform a pure replace operation, which fails if the named
 //              attribute does not already exist.
 func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
+
+	if wfs.IsOverQuota {
+		return fuse.EPERM
+	}
+
 	//validate attr name
 	if len(attr) > MAX_XATTR_NAME_SIZE {
 		if runtime.GOOS == "darwin" {
