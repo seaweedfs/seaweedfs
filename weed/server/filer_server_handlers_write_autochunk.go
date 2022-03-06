@@ -159,7 +159,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	var mergedChunks []*filer_pb.FileChunk
 
 	isAppend := r.URL.Query().Get("op") == "append"
-	isOffsetWrite := fileChunks[0].Offset > 0
+	isOffsetWrite := len(fileChunks) > 0 && fileChunks[0].Offset > 0
 	// when it is an append
 	if isAppend || isOffsetWrite {
 		existingEntry, findErr := fs.filer.FindEntry(ctx, util.FullPath(path))
