@@ -37,6 +37,7 @@ type Option struct {
 	CacheSizeMB        int64
 	DataCenter         string
 	Umask              os.FileMode
+	Quota              int64
 
 	MountUid         uint32
 	MountGid         uint32
@@ -107,6 +108,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 func (wfs *WFS) StartBackgroundTasks() {
 	startTime := time.Now()
 	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
+	go wfs.loopCheckQuota()
 }
 
 func (wfs *WFS) String() string {

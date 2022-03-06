@@ -209,6 +209,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		CacheDir:           *option.cacheDir,
 		CacheSizeMB:        *option.cacheSizeMB,
 		DataCenter:         *option.dataCenter,
+		Quota:              int64(*option.collectionQuota) * 1024 * 1024,
 		MountUid:           uid,
 		MountGid:           gid,
 		MountMode:          mountMode,
