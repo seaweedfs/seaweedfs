@@ -119,7 +119,16 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if r.URL.Query().Has("metadata") {
+	query := r.URL.Query()
+	if query.Get("metadata") == "true" {
+		if query.Get("resolveManifest") == "true" {
+			if entry.Chunks, _, err = filer.ResolveChunkManifest(
+				fs.filer.MasterClient.GetLookupFileIdFunction(),
+				entry.Chunks, 0, int64(entry.Size())); err != nil {
+				err = fmt.Errorf("failed to resolve chunk manifest, err: %s", err.Error())
+				writeJsonError(w, r, http.StatusInternalServerError, err)
+			}
+		}
 		writeJsonQuiet(w, r, http.StatusOK, entry)
 		return
 	}
