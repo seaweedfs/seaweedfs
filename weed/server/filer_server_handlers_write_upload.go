@@ -32,6 +32,7 @@ var bufPool = sync.Pool{
 func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Request, reader io.Reader, chunkSize int32, fileName, contentType string, contentLength int64, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, chunkOffset int64, uploadErr error, smallContent []byte) {
 	query := r.URL.Query()
 
+	isAppend := isAppend(r)
 	if query.Has("offset") {
 		offset := query.Get("offset")
 		offsetInt, err := strconv.ParseInt(offset, 10, 64)
@@ -39,7 +40,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			err = fmt.Errorf("invalid 'offset': '%s'", offset)
 			return nil, nil, 0, err, nil
 		}
-		if isAppend(r) && offsetInt > 0 {
+		if isAppend && offsetInt > 0 {
 			err = fmt.Errorf("cannot set offset when op=append")
 			return nil, nil, 0, err, nil
 		}
@@ -80,7 +81,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			bytesBufferLimitCond.Signal()
 			break
 		}
-		if chunkOffset == 0 && !isAppend(r) {
+		if chunkOffset == 0 && !isAppend {
 			if dataSize < fs.option.SaveToFilerLimit || strings.HasPrefix(r.URL.Path, filer.DirectoryEtcRoot) {
 				chunkOffset += dataSize
 				smallContent = make([]byte, dataSize)
