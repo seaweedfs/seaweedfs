@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	ManifestBatch = 3
+	ManifestBatch = 10000
 )
 
 var bytesBufferPool = sync.Pool{
