@@ -61,6 +61,7 @@ func (i *FileHandleToInode) ReleaseByInode(inode uint64) {
 		if fh.counter <= 0 {
 			delete(i.inode2fh, inode)
 			delete(i.fh2inode, fh.fh)
+			fh.Release()
 		}
 	}
 }
@@ -77,6 +78,7 @@ func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) {
 			if fhHandle.counter <= 0 {
 				delete(i.inode2fh, inode)
 				delete(i.fh2inode, fhHandle.fh)
+				fhHandle.Release()
 			}
 		}
 

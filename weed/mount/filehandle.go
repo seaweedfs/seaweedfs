@@ -88,6 +88,10 @@ func (fh *FileHandle) addChunks(chunks []*filer_pb.FileChunk) {
 	fh.chunkAddLock.Unlock()
 }
 
+func (fh *FileHandle) Release() {
+	fh.dirtyPages.Destroy()
+}
+
 func lessThan(a, b *filer_pb.FileChunk) bool {
 	if a.Mtime == b.Mtime {
 		return a.Fid.FileKey < b.Fid.FileKey
