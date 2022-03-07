@@ -126,6 +126,10 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 	return
 }
 
+func isAppend(r *http.Request) bool {
+	return r.URL.Query().Get("op") == "append"
+}
+
 func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileName string, contentType string, so *operation.StorageOption, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64, content []byte) (filerResult *FilerPostResult, replyerr error) {
 
 	// detect file mode
@@ -158,10 +162,9 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	var entry *filer.Entry
 	var mergedChunks []*filer_pb.FileChunk
 
-	isAppend := r.URL.Query().Get("op") == "append"
 	isOffsetWrite := len(fileChunks) > 0 && fileChunks[0].Offset > 0
 	// when it is an append
-	if isAppend || isOffsetWrite {
+	if isAppend(r) || isOffsetWrite {
 		existingEntry, findErr := fs.filer.FindEntry(ctx, util.FullPath(path))
 		if findErr != nil && findErr != filer_pb.ErrNotFound {
 			glog.V(0).Infof("failing to find %s: %v", path, findErr)
@@ -172,7 +175,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		entry.Mtime = time.Now()
 		entry.Md5 = nil
 		// adjust chunk offsets
-		if isAppend {
+		if isAppend(r) {
 			for _, chunk := range fileChunks {
 				chunk.Offset += int64(entry.FileSize)
 			}
