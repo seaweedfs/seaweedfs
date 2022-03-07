@@ -1,7 +1,9 @@
 package s3api
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -24,6 +26,7 @@ type S3ApiServerOption struct {
 	BucketsPath      string
 	GrpcDialOption   grpc.DialOption
 	AllowEmptyFolder bool
+	LocalFilerSocket *string
 }
 
 type S3ApiServer struct {
@@ -31,6 +34,7 @@ type S3ApiServer struct {
 	iam            *IdentityAccessManagement
 	randomClientId int32
 	filerGuard     *security.Guard
+	client         *http.Client
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -48,6 +52,20 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 		iam:            NewIdentityAccessManagement(option),
 		randomClientId: util.RandomInt32(),
 		filerGuard:     security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
+	}
+	if option.LocalFilerSocket == nil {
+		s3ApiServer.client = &http.Client{Transport: &http.Transport{
+			MaxIdleConns:        1024,
+			MaxIdleConnsPerHost: 1024,
+		}}
+	} else {
+		s3ApiServer.client = &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+					return net.Dial("unix", *option.LocalFilerSocket)
+				},
+			},
+		}
 	}
 
 	s3ApiServer.registerRouter(router)

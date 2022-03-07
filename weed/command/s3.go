@@ -34,6 +34,7 @@ type S3Options struct {
 	metricsHttpPort  *int
 	allowEmptyFolder *bool
 	auditLogConfig   *string
+	localFilerSocket *string
 }
 
 func init() {
@@ -184,6 +185,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		BucketsPath:      filerBucketsPath,
 		GrpcDialOption:   grpcDialOption,
 		AllowEmptyFolder: *s3opt.allowEmptyFolder,
+		LocalFilerSocket: s3opt.localFilerSocket,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)

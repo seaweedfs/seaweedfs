@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -51,6 +52,7 @@ type FilerOptions struct {
 	concurrentUploadLimitMB *int
 	debug                   *bool
 	debugPort               *int
+	localSocket             *string
 }
 
 func init() {
@@ -76,6 +78,7 @@ func init() {
 	f.concurrentUploadLimitMB = cmdFiler.Flag.Int("concurrentUploadLimitMB", 128, "limit total concurrent upload size")
 	f.debug = cmdFiler.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:<debug.port>/debug/pprof/goroutine?debug=2")
 	f.debugPort = cmdFiler.Flag.Int("debug.port", 6060, "http port for debugging")
+	f.localSocket = cmdFiler.Flag.String("localSocket", "", "default to /tmp/seaweedfs-filer-<port>.sock")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -139,11 +142,14 @@ func runFiler(cmd *Command, args []string) bool {
 	if *filerStartS3 {
 		filerS3Options.filer = &filerAddress
 		filerS3Options.bindIp = f.bindIp
+		filerS3Options.localFilerSocket = f.localSocket
 		go func() {
 			time.Sleep(startDelay * time.Second)
 			filerS3Options.startS3Server()
 		}()
 		startDelay++
+	} else {
+		f.localSocket = nil
 	}
 
 	if *filerStartWebDav {
@@ -230,6 +236,18 @@ func (fo *FilerOptions) startFiler() {
 		glog.Fatalf("Filer listener error: %v", e)
 	}
 
+	// start on local unix socket
+	if *fo.localSocket == "" {
+		*fo.localSocket = fmt.Sprintf("/tmp/seaweefs-filer-%d.sock", *fo.port)
+		if err := os.Remove(*fo.localSocket); err != nil && !os.IsNotExist(err) {
+			glog.Fatalf("Failed to remove %s, error: %s", *fo.localSocket, err.Error())
+		}
+	}
+	filerSocketListener, err := net.Listen("unix", *fo.localSocket)
+	if err != nil {
+		glog.Fatalf("Failed to listen on %s: %v", *fo.localSocket, err)
+	}
+
 	// starting grpc server
 	grpcPort := *fo.portGrpc
 	grpcL, err := util.NewListener(util.JoinHostPort(*fo.bindIp, grpcPort), 0)
@@ -242,6 +260,9 @@ func (fo *FilerOptions) startFiler() {
 	go grpcS.Serve(grpcL)
 
 	httpS := &http.Server{Handler: defaultMux}
+	go func() {
+		httpS.Serve(filerSocketListener)
+	}()
 	if err := httpS.Serve(filerListener); err != nil {
 		glog.Fatalf("Filer Fail to serve: %v", e)
 	}

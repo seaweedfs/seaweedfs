@@ -112,6 +112,7 @@ func init() {
 	filerOptions.cipher = cmdServer.Flag.Bool("filer.encryptVolumeData", false, "encrypt data on volume servers")
 	filerOptions.saveToFilerLimit = cmdServer.Flag.Int("filer.saveToFilerLimit", 0, "Small files smaller than this limit can be cached in filer store.")
 	filerOptions.concurrentUploadLimitMB = cmdServer.Flag.Int("filer.concurrentUploadLimitMB", 64, "limit total concurrent upload size")
+	filerOptions.localSocket = cmdServer.Flag.String("filer.localSocket", "", "default to /tmp/seaweedfs-filer-<port>.sock")
 
 	serverOptions.v.port = cmdServer.Flag.Int("volume.port", 8080, "volume server http listen port")
 	serverOptions.v.portGrpc = cmdServer.Flag.Int("volume.port.grpc", 0, "volume server grpc listen port")
@@ -245,6 +246,7 @@ func runServer(cmd *Command, args []string) bool {
 	if *isStartingS3 {
 		go func() {
 			time.Sleep(2 * time.Second)
+			s3Options.localFilerSocket = filerOptions.localSocket
 			s3Options.startS3Server()
 		}()
 	}
