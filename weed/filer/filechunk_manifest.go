@@ -85,6 +85,7 @@ func ResolveOneChunkManifest(lookupFileIdFn wdclient.LookupFileIdFunctionType, c
 
 	// IsChunkManifest
 	bytesBuffer := bytesBufferPool.Get().(*bytes.Buffer)
+	bytesBuffer.Reset()
 	defer bytesBufferPool.Put(bytesBuffer)
 	err := fetchWholeChunk(bytesBuffer, lookupFileIdFn, chunk.GetFileIdString(), chunk.CipherKey, chunk.IsCompressed)
 	if err != nil {
