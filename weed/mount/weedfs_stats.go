@@ -57,6 +57,13 @@ func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.Stat
 	usedDiskSize := wfs.stats.UsedSize
 	actualFileCount := wfs.stats.FileCount
 
+	if wfs.option.Quota > 0 && totalDiskSize > uint64(wfs.option.Quota) {
+		totalDiskSize = uint64(wfs.option.Quota)
+		if usedDiskSize > totalDiskSize {
+			totalDiskSize = usedDiskSize
+		}
+	}
+
 	// Compute the total number of available blocks
 	out.Blocks = totalDiskSize / blockSize
 
