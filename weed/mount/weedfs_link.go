@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"syscall"
 	"time"
 )
 
@@ -24,7 +25,7 @@ When creating a link:
 func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *fuse.EntryOut) (code fuse.Status) {
 
 	if wfs.IsOverQuota {
-		return fuse.EPERM
+		return fuse.Status(syscall.ENOSPC)
 	}
 
 	if s := checkName(name); s != fuse.OK {

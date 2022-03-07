@@ -8,6 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"os"
+	"syscall"
 	"time"
 )
 
@@ -15,7 +16,7 @@ import (
 func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target string, name string, out *fuse.EntryOut) (code fuse.Status) {
 
 	if wfs.IsOverQuota {
-		return fuse.EPERM
+		return fuse.Status(syscall.ENOSPC)
 	}
 	if s := checkName(name); s != fuse.OK {
 		return s

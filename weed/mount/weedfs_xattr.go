@@ -71,7 +71,7 @@ func (wfs *WFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr str
 func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
 
 	if wfs.IsOverQuota {
-		return fuse.EPERM
+		return fuse.Status(syscall.ENOSPC)
 	}
 
 	//validate attr name
