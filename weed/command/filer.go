@@ -149,7 +149,7 @@ func runFiler(cmd *Command, args []string) bool {
 		}()
 		startDelay++
 	} else {
-		f.localSocket = nil
+		*f.localSocket = ""
 	}
 
 	if *filerStartWebDav {
