@@ -105,8 +105,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	} else {
-		uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
-
+		uploadUrl := s3a.toFilerUrl(bucket, object)
 		if r.Header.Get("Content-Type") == "" {
 			dataReader = mimeDetect(r, dataReader)
 		}
@@ -132,6 +131,12 @@ func urlPathEscape(object string) string {
 	return strings.Join(escapedParts, "/")
 }
 
+func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
+	destUrl := fmt.Sprintf("http://%s%s/%s%s",
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
+	return destUrl
+}
+
 func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := xhttp.GetBucketAndObject(r)
@@ -142,8 +147,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	destUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
+	destUrl := s3a.toFilerUrl(bucket, object)
 
 	s3a.proxyToFiler(w, r, destUrl, false, passThroughResponse)
 }
@@ -153,8 +157,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	bucket, object := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadObjectHandler %s %s", bucket, object)
 
-	destUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
+	destUrl := s3a.toFilerUrl(bucket, object)
 
 	s3a.proxyToFiler(w, r, destUrl, false, passThroughResponse)
 }
@@ -164,8 +167,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 	bucket, object := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteObjectHandler %s %s", bucket, object)
 
-	destUrl := fmt.Sprintf("http://%s%s/%s%s?recursive=true",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
+	destUrl := s3a.toFilerUrl(bucket, object)
 
 	s3a.proxyToFiler(w, r, destUrl, true, func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int) {
 		statusCode = http.StatusNoContent
