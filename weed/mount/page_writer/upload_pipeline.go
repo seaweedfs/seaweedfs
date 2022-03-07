@@ -74,7 +74,7 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64) (n int) {
 			}
 			up.moveToSealed(up.writableChunks[fullestChunkIndex], fullestChunkIndex)
 			delete(up.writableChunks, fullestChunkIndex)
-			fmt.Printf("flush chunk %d with %d bytes written", logicChunkIndex, fullness)
+			// fmt.Printf("flush chunk %d with %d bytes written\n", logicChunkIndex, fullness)
 			memChunk = NewMemChunk(logicChunkIndex, up.ChunkSize)
 		}
 		up.writableChunks[logicChunkIndex] = memChunk
