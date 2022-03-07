@@ -121,7 +121,7 @@ func (c *commandS3BucketQuotaEnforce) processEachBucket(fc *filer.FilerConf, fil
 	}
 
 	if hasConfChanges {
-		fmt.Fprintf(writer, "  %s\tsize:%d", entry.Name, collectionSize)
+		fmt.Fprintf(writer, "  %s\tsize:%.0f", entry.Name, collectionSize)
 		fmt.Fprintf(writer, "\tquota:%d\tusage:%.2f%%", entry.Quota, collectionSize*100/float64(entry.Quota))
 		fmt.Fprintln(writer)
 		if locConf.ReadOnly {
