@@ -144,6 +144,28 @@ func (v *ChunkCacheVolume) getNeedleSlice(key types.NeedleId, offset, length uin
 	return data, nil
 }
 
+func (v *ChunkCacheVolume) readNeedleSliceAt(data []byte, key types.NeedleId, offset uint64) (n int, err error) {
+	nv, ok := v.nm.Get(key)
+	if !ok {
+		return 0, storage.ErrorNotFound
+	}
+	wanted := min(len(data), int(nv.Size)-int(offset))
+	if wanted < 0 {
+		// should never happen, but better than panicing
+		return 0, ErrorOutOfBounds
+	}
+	if n, err = v.DataBackend.ReadAt(data, nv.Offset.ToActualOffset()+int64(offset)); err != nil {
+		return n, fmt.Errorf("read %s.dat [%d,%d): %v",
+			v.fileName, nv.Offset.ToActualOffset()+int64(offset), int(nv.Offset.ToActualOffset())+int(offset)+wanted, err)
+	} else {
+		if n != wanted {
+			return n, fmt.Errorf("read %d, expected %d", n, wanted)
+		}
+	}
+
+	return n, nil
+}
+
 func (v *ChunkCacheVolume) WriteNeedle(key types.NeedleId, data []byte) error {
 
 	offset := v.fileSize

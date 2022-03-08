@@ -9,16 +9,20 @@ import (
 )
 
 func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx context.Context, entry *Entry) error {
-	if len(entry.HardLinkId) == 0 {
+
+	if entry.IsDirectory() {
 		return nil
 	}
-	// handle hard links
-	if err := fsw.setHardLink(ctx, entry); err != nil {
-		return fmt.Errorf("setHardLink %d: %v", entry.HardLinkId, err)
+
+	if len(entry.HardLinkId) > 0 {
+		// handle hard links
+		if err := fsw.setHardLink(ctx, entry); err != nil {
+			return fmt.Errorf("setHardLink %d: %v", entry.HardLinkId, err)
+		}
 	}
 
 	// check what is existing entry
-	glog.V(4).Infof("handleUpdateToHardLinks FindEntry %s", entry.FullPath)
+	// glog.V(4).Infof("handleUpdateToHardLinks FindEntry %s", entry.FullPath)
 	actualStore := fsw.getActualStore(entry.FullPath)
 	existingEntry, err := actualStore.FindEntry(ctx, entry.FullPath)
 	if err != nil && err != filer_pb.ErrNotFound {
@@ -46,6 +50,8 @@ func (fsw *FilerStoreWrapper) setHardLink(ctx context.Context, entry *Entry) err
 		return encodeErr
 	}
 
+	glog.V(4).Infof("setHardLink %v nlink:%d", entry.FullPath, entry.HardLinkCounter)
+
 	return fsw.KvPut(ctx, key, newBlob)
 }
 
@@ -55,7 +61,6 @@ func (fsw *FilerStoreWrapper) maybeReadHardLink(ctx context.Context, entry *Entr
 	}
 	key := entry.HardLinkId
 
-	glog.V(4).Infof("maybeReadHardLink KvGet %v", key)
 	value, err := fsw.KvGet(ctx, key)
 	if err != nil {
 		glog.Errorf("read %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
@@ -66,6 +71,8 @@ func (fsw *FilerStoreWrapper) maybeReadHardLink(ctx context.Context, entry *Entr
 		glog.Errorf("decode %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
 		return err
 	}
+
+	glog.V(4).Infof("maybeReadHardLink %v nlink:%d", entry.FullPath, entry.HardLinkCounter)
 
 	return nil
 }

@@ -163,11 +163,15 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 
 	// add to new directory
 	newEntry := &filer.Entry{
-		FullPath: newPath,
-		Attr:     entry.Attr,
-		Chunks:   entry.Chunks,
-		Extended: entry.Extended,
-		Content:  entry.Content,
+		FullPath:        newPath,
+		Attr:            entry.Attr,
+		Chunks:          entry.Chunks,
+		Extended:        entry.Extended,
+		Content:         entry.Content,
+		HardLinkCounter: entry.HardLinkCounter,
+		HardLinkId:      entry.HardLinkId,
+		Remote:          entry.Remote,
+		Quota:           entry.Quota,
 	}
 	if createErr := fs.filer.CreateEntry(ctx, newEntry, false, false, signatures); createErr != nil {
 		return createErr

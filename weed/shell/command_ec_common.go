@@ -172,7 +172,7 @@ func countFreeShardSlots(dn *master_pb.DataNodeInfo, diskType types.DiskType) (c
 	if diskInfo == nil {
 		return 0
 	}
-	return int(diskInfo.MaxVolumeCount-diskInfo.ActiveVolumeCount)*erasure_coding.DataShardsCount - countShards(diskInfo.EcShardInfos)
+	return int(diskInfo.MaxVolumeCount-diskInfo.VolumeCount)*erasure_coding.DataShardsCount - countShards(diskInfo.EcShardInfos)
 }
 
 type RackId string
@@ -206,7 +206,7 @@ func collectEcNodes(commandEnv *CommandEnv, selectedDataCenter string) (ecNodes 
 
 	// list all possible locations
 	// collect topology information
-	topologyInfo, _, err := collectTopologyInfo(commandEnv)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return
 	}

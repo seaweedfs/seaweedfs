@@ -161,8 +161,11 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 	var entry *filer.Entry
 	var mergedChunks []*filer_pb.FileChunk
+
+	isAppend := isAppend(r)
+	isOffsetWrite := len(fileChunks) > 0 && fileChunks[0].Offset > 0
 	// when it is an append
-	if isAppend(r) {
+	if isAppend || isOffsetWrite {
 		existingEntry, findErr := fs.filer.FindEntry(ctx, util.FullPath(path))
 		if findErr != nil && findErr != filer_pb.ErrNotFound {
 			glog.V(0).Infof("failing to find %s: %v", path, findErr)
@@ -173,11 +176,13 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		entry.Mtime = time.Now()
 		entry.Md5 = nil
 		// adjust chunk offsets
-		for _, chunk := range fileChunks {
-			chunk.Offset += int64(entry.FileSize)
+		if isAppend {
+			for _, chunk := range fileChunks {
+				chunk.Offset += int64(entry.FileSize)
+			}
+			entry.FileSize += uint64(chunkOffset)
 		}
 		mergedChunks = append(entry.Chunks, fileChunks...)
-		entry.FileSize += uint64(chunkOffset)
 
 		// TODO
 		if len(entry.Content) > 0 {
@@ -215,6 +220,10 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		return
 	}
 	entry.Chunks = mergedChunks
+	if isOffsetWrite {
+		entry.Md5 = nil
+		entry.FileSize = entry.Size()
+	}
 
 	filerResult = &FilerPostResult{
 		Name: fileName,

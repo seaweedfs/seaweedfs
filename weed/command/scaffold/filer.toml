@@ -195,6 +195,40 @@ routeByLatency = false
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
 
+[redis_lua]
+enabled = false
+address = "localhost:6379"
+password = ""
+database = 0
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
+
+[redis_lua_sentinel]
+enabled = false
+addresses = ["172.22.12.7:26379","172.22.12.8:26379","172.22.12.9:26379"]
+masterName = "master"
+username = ""
+password = ""
+database = 0
+
+[redis_lua_cluster]
+enabled = false
+addresses = [
+    "localhost:30001",
+    "localhost:30002",
+    "localhost:30003",
+    "localhost:30004",
+    "localhost:30005",
+    "localhost:30006",
+]
+password = ""
+# allows reads from slave servers or the master, but all writes still go to the master
+readOnly = false
+# automatically use the closest Redis server for reads
+routeByLatency = false
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
+
 [redis3] # beta
 enabled = false
 address = "localhost:6379"

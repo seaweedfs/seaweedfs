@@ -74,7 +74,7 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 	}
 
 	shouldPrint := func(resp *filer_pb.SubscribeMetadataResponse) bool {
-		if resp.EventNotification.OldEntry == nil && resp.EventNotification.NewEntry == nil {
+		if filer_pb.IsEmpty(resp) {
 			return false
 		}
 		if filterFunc == nil {

@@ -44,6 +44,8 @@ type MasterOptions struct {
 	metricsIntervalSec *int
 	raftResumeState    *bool
 	metricsHttpPort    *int
+	heartbeatInterval  *time.Duration
+	electionTimeout    *time.Duration
 }
 
 func init() {
@@ -65,6 +67,8 @@ func init() {
 	m.metricsIntervalSec = cmdMaster.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
 	m.metricsHttpPort = cmdMaster.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	m.raftResumeState = cmdMaster.Flag.Bool("resumeState", false, "resume previous state on start master server")
+	m.heartbeatInterval = cmdMaster.Flag.Duration("heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
+	m.electionTimeout = cmdMaster.Flag.Duration("electionTimeout", 10*time.Second, "election timeout of master servers")
 }
 
 var cmdMaster = &Command{
@@ -132,8 +136,17 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		glog.Fatalf("Master startup error: %v", e)
 	}
 	// start raftServer
-	raftServer, err := weed_server.NewRaftServer(security.LoadClientTLS(util.GetViper(), "grpc.master"),
-		peers, myMasterAddress, util.ResolvePath(*masterOption.metaFolder), ms.Topo, *masterOption.raftResumeState)
+	raftServerOption := &weed_server.RaftServerOption{
+		GrpcDialOption:    security.LoadClientTLS(util.GetViper(), "grpc.master"),
+		Peers:             peers,
+		ServerAddr:        myMasterAddress,
+		DataDir:           util.ResolvePath(*masterOption.metaFolder),
+		Topo:              ms.Topo,
+		RaftResumeState:   *masterOption.raftResumeState,
+		HeartbeatInterval: *masterOption.heartbeatInterval,
+		ElectionTimeout:   *masterOption.electionTimeout,
+	}
+	raftServer, err := weed_server.NewRaftServer(raftServerOption)
 	if raftServer == nil {
 		glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
 	}

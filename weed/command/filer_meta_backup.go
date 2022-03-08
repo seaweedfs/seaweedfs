@@ -162,24 +162,21 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 		ctx := context.Background()
 		message := resp.EventNotification
 
-		if message.OldEntry == nil && message.NewEntry == nil {
+		if filer_pb.IsEmpty(resp) {
 			return nil
-		}
-		if message.OldEntry == nil && message.NewEntry != nil {
+		} else if filer_pb.IsCreate(resp) {
 			println("+", util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
 			entry := filer.FromPbEntry(message.NewParentPath, message.NewEntry)
 			return store.InsertEntry(ctx, entry)
-		}
-		if message.OldEntry != nil && message.NewEntry == nil {
+		} else if filer_pb.IsDelete(resp) {
 			println("-", util.FullPath(resp.Directory).Child(message.OldEntry.Name))
 			return store.DeleteEntry(ctx, util.FullPath(resp.Directory).Child(message.OldEntry.Name))
-		}
-		if message.OldEntry != nil && message.NewEntry != nil {
-			if resp.Directory == message.NewParentPath && message.OldEntry.Name == message.NewEntry.Name {
-				println("~", util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
-				entry := filer.FromPbEntry(message.NewParentPath, message.NewEntry)
-				return store.UpdateEntry(ctx, entry)
-			}
+		} else if filer_pb.IsUpdate(resp) {
+			println("~", util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
+			entry := filer.FromPbEntry(message.NewParentPath, message.NewEntry)
+			return store.UpdateEntry(ctx, entry)
+		} else {
+			// renaming
 			println("-", util.FullPath(resp.Directory).Child(message.OldEntry.Name))
 			if err := store.DeleteEntry(ctx, util.FullPath(resp.Directory).Child(message.OldEntry.Name)); err != nil {
 				return err

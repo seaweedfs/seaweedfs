@@ -327,6 +327,9 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 func (s *Store) SetStopping() {
 	s.isStopping = true
+	for _, location := range s.Locations {
+		location.SetStopping()
+	}
 }
 
 func (s *Store) Close() {

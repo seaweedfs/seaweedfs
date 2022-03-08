@@ -91,10 +91,10 @@ func makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, 
 			return handleEtcRemoteChanges(resp)
 		}
 
-		if message.OldEntry == nil && message.NewEntry == nil {
+		if filer_pb.IsEmpty(resp) {
 			return nil
 		}
-		if message.OldEntry == nil && message.NewEntry != nil {
+		if filer_pb.IsCreate(resp) {
 			if !filer.HasData(message.NewEntry) {
 				return nil
 			}
@@ -115,7 +115,7 @@ func makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, 
 			}
 			return updateLocalEntry(&remoteSyncOptions, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
-		if message.OldEntry != nil && message.NewEntry == nil {
+		if filer_pb.IsDelete(resp) {
 			glog.V(2).Infof("delete: %+v", resp)
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 			if message.OldEntry.IsDirectory {

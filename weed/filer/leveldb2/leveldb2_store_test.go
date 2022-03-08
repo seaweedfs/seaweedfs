@@ -2,7 +2,6 @@ package leveldb
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
@@ -11,8 +10,7 @@ import (
 
 func TestCreateAndFind(t *testing.T) {
 	testFiler := filer.NewFiler(nil, nil, "", "", "", "", nil)
-	dir, _ := os.MkdirTemp("", "seaweedfs_filer_test")
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 	store := &LevelDB2Store{}
 	store.initialize(dir, 2)
 	testFiler.SetStore(store)
@@ -65,8 +63,7 @@ func TestCreateAndFind(t *testing.T) {
 
 func TestEmptyRoot(t *testing.T) {
 	testFiler := filer.NewFiler(nil, nil, "", "", "", "", nil)
-	dir, _ := os.MkdirTemp("", "seaweedfs_filer_test2")
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 	store := &LevelDB2Store{}
 	store.initialize(dir, 2)
 	testFiler.SetStore(store)

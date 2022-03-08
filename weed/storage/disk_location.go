@@ -317,6 +317,16 @@ func (l *DiskLocation) VolumesLen() int {
 	return len(l.volumes)
 }
 
+func (l *DiskLocation) SetStopping() {
+	l.volumesLock.Lock()
+	for _, v := range l.volumes {
+		v.SetStopping()
+	}
+	l.volumesLock.Unlock()
+
+	return
+}
+
 func (l *DiskLocation) Close() {
 	l.volumesLock.Lock()
 	for _, v := range l.volumes {

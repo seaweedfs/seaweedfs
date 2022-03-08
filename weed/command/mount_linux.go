@@ -6,8 +6,6 @@ import (
 	"io"
 	"os"
 	"strings"
-
-	"github.com/seaweedfs/fuse"
 )
 
 const (
@@ -135,10 +133,6 @@ func parseInfoFile(r io.Reader) ([]*Info, error) {
 		out = append(out, p)
 	}
 	return out, nil
-}
-
-func osSpecificMountOptions() []fuse.MountOption {
-	return []fuse.MountOption{}
 }
 
 func checkMountPointAvailable(dir string) bool {

@@ -32,7 +32,7 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 	volumeVacuumCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	garbageThreshold := volumeVacuumCommand.Float64("garbageThreshold", 0.3, "vacuum when garbage is more than this limit")
 	if err = volumeVacuumCommand.Parse(args); err != nil {
-		return nil
+		return
 	}
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {

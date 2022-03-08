@@ -8,6 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"io"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -53,7 +54,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	vid := needle.VolumeId(*volumeId)
 
 	// collect topology information
-	topologyInfo, _, err := collectTopologyInfo(commandEnv)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
 	}
@@ -233,7 +234,11 @@ func lookupVolumeIds(commandEnv *CommandEnv, volumeIds []string) (volumeIdLocati
 	return resp.VolumeIdLocations, nil
 }
 
-func collectTopologyInfo(commandEnv *CommandEnv) (topoInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, err error) {
+func collectTopologyInfo(commandEnv *CommandEnv, delayBeforeCollecting time.Duration) (topoInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, err error) {
+
+	if delayBeforeCollecting > 0 {
+		time.Sleep(delayBeforeCollecting)
+	}
 
 	var resp *master_pb.VolumeListResponse
 	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {

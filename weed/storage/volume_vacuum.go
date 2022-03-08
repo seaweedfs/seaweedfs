@@ -289,6 +289,9 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 				return fmt.Errorf("ReadNeedleBlob %s key %d offset %d size %d failed: %v", oldDatFile.Name(), key, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size, err)
 			}
 			dstDatBackend.Write(needleBytes)
+			if err := dstDatBackend.Sync(); err != nil {
+				return fmt.Errorf("cannot sync needle %s: %v", dstDatBackend.File.Name(), err)
+			}
 			util.Uint32toBytes(idxEntryBytes[8:12], uint32(offset/NeedlePaddingSize))
 		} else { //deleted needle
 			//fakeDelNeedle 's default Data field is nil
@@ -308,6 +311,12 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 				newIdxFileName, err)
 		}
 		_, err = idx.Write(idxEntryBytes)
+		if err != nil {
+			return fmt.Errorf("cannot write indexfile %s: %v", newIdxFileName, err)
+		}
+		if err := idx.Sync(); err != nil {
+			return fmt.Errorf("cannot sync indexfile %s: %v", newIdxFileName, err)
+		}
 	}
 
 	return nil
@@ -361,7 +370,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 		dst backend.BackendStorageFile
 	)
 	if dst, err = backend.CreateVolumeFile(dstName, preallocate, 0); err != nil {
-		return
+		return err
 	}
 	defer dst.Close()
 
@@ -377,11 +386,10 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 	}
 	err = ScanVolumeFile(v.dir, v.Collection, v.Id, v.needleMapKind, scanner)
 	if err != nil {
-		return nil
+		return err
 	}
 
-	err = nm.SaveToIdx(idxName)
-	return
+	return nm.SaveToIdx(idxName)
 }
 
 func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName string, sb super_block.SuperBlock, version needle.Version, preallocate, compactionBytePerSecond int64, progressFn ProgressFunc) (err error) {
@@ -390,7 +398,7 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 		dataFile                     *os.File
 	)
 	if dstDatBackend, err = backend.CreateVolumeFile(dstDatName, preallocate, 0); err != nil {
-		return
+		return err
 	}
 	defer dstDatBackend.Close()
 
@@ -399,7 +407,7 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 	newNm := needle_map.NewMemDb()
 	defer newNm.Close()
 	if err = oldNm.LoadFromIdx(srcIdxName); err != nil {
-		return
+		return err
 	}
 	if dataFile, err = os.Open(srcDatName); err != nil {
 		return err
@@ -415,7 +423,7 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 
 	writeThrottler := util.NewWriteThrottler(compactionBytePerSecond)
 
-	oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
+	err = oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
 
 		offset, size := value.Offset, value.Size
 
@@ -432,7 +440,7 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 		n := new(needle.Needle)
 		err := n.ReadData(srcDatBackend, offset.ToActualOffset(), size, version)
 		if err != nil {
-			return nil
+			return fmt.Errorf("cannot hydrate needle from file: %s", err)
 		}
 
 		if n.HasTtl() && now >= n.LastModified+uint64(sb.Ttl.Minutes()*60) {
@@ -452,8 +460,10 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
 
-	newNm.SaveToIdx(datIdxName)
+	return newNm.SaveToIdx(datIdxName)
 
-	return
 }

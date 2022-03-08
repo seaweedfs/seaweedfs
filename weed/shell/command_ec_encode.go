@@ -267,7 +267,7 @@ func balancedEcDistribution(servers []*EcNode) (allocated [][]uint32) {
 func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
 
 	// collect topology information
-	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv)
+	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return
 	}

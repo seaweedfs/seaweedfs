@@ -39,7 +39,7 @@ func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 
 	// collect topology information
-	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv)
+	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
 	}

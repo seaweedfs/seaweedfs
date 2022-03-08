@@ -9,7 +9,7 @@ ENV ROCKSDB_VERSION v6.22.1
 RUN cd /tmp && \
     git clone https://github.com/facebook/rocksdb.git /tmp/rocksdb --depth 1 --single-branch --branch $ROCKSDB_VERSION && \
     cd rocksdb && \
-    make static_lib && \
+    PORTABLE=1 make static_lib && \
     make install-static
 
 ENV CGO_CFLAGS "-I/tmp/rocksdb/include"
@@ -29,7 +29,7 @@ FROM alpine AS final
 LABEL author="Chris Lu"
 COPY --from=builder /go/bin/weed /usr/bin/
 RUN mkdir -p /etc/seaweedfs
-COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/filer.toml /etc/seaweedfs/filer.toml
+COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/filer_rocksdb.toml /etc/seaweedfs/filer.toml
 COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/entrypoint.sh /entrypoint.sh
 RUN apk add fuse snappy gflags
 
@@ -50,7 +50,7 @@ EXPOSE 8333
 # webdav server http port
 EXPOSE 7333
 
-RUN mkdir -p /data/filerldb2
+RUN mkdir -p /data/filer_rocksdb
 
 VOLUME /data
 

@@ -94,7 +94,7 @@ func init() {
 	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
 	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
-	v.enableTcp = cmdVolume.Flag.Bool("tcp", false, "<exprimental> enable tcp port")
+	v.enableTcp = cmdVolume.Flag.Bool("tcp", false, "<experimental> enable tcp port")
 }
 
 var cmdVolume = &Command{
@@ -364,8 +364,8 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 	}
 
 	httpDown := httpdown.HTTP{
-		KillTimeout: 5 * time.Minute,
-		StopTimeout: 5 * time.Minute,
+		KillTimeout: time.Minute,
+		StopTimeout: 30 * time.Second,
 		CertFile:    certFile,
 		KeyFile:     keyFile}
 	clusterHttpServer := httpDown.Serve(&http.Server{Handler: handler}, listener)

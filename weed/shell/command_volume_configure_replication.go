@@ -59,7 +59,7 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	}
 
 	// collect topology information
-	topologyInfo, _, err := collectTopologyInfo(commandEnv)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
 	}

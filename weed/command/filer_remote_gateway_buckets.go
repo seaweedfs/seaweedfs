@@ -174,10 +174,10 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			return handleEtcRemoteChanges(resp)
 		}
 
-		if message.OldEntry == nil && message.NewEntry == nil {
+		if filer_pb.IsEmpty(resp) {
 			return nil
 		}
-		if message.OldEntry == nil && message.NewEntry != nil {
+		if filer_pb.IsCreate(resp) {
 			if message.NewParentPath == option.bucketsDir {
 				return handleCreateBucket(message.NewEntry)
 			}
@@ -212,7 +212,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			}
 			return updateLocalEntry(&remoteSyncOptions, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
-		if message.OldEntry != nil && message.NewEntry == nil {
+		if filer_pb.IsDelete(resp) {
 			if resp.Directory == option.bucketsDir {
 				return handleDeleteBucket(message.OldEntry)
 			}

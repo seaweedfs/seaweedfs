@@ -2,12 +2,10 @@ package shell
 
 import (
 	"fmt"
-	"io"
-	"math"
-
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"io"
 )
 
 func init() {
@@ -57,7 +55,7 @@ func (c *commandFsCat) Do(args []string, commandEnv *CommandEnv, writer io.Write
 			return err
 		}
 
-		return filer.StreamContent(commandEnv.MasterClient, writer, respLookupEntry.Entry.Chunks, 0, math.MaxInt64)
+		return filer.StreamContent(commandEnv.MasterClient, writer, respLookupEntry.Entry.Chunks, 0, int64(filer.FileSize(respLookupEntry.Entry)))
 
 	})
 

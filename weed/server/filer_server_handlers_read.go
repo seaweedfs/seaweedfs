@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util/mem"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"path/filepath"
@@ -20,6 +22,63 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
+
+// Validates the preconditions. Returns true if GET/HEAD operation should not proceed.
+// Preconditions supported are:
+//  If-Modified-Since
+//  If-Unmodified-Since
+//  If-Match
+//  If-None-Match
+func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Entry) bool {
+
+	etag := filer.ETagEntry(entry)
+	/// When more than one conditional request header field is present in a
+	/// request, the order in which the fields are evaluated becomes
+	/// important.  In practice, the fields defined in this document are
+	/// consistently implemented in a single, logical order, since "lost
+	/// update" preconditions have more strict requirements than cache
+	/// validation, a validated cache is more efficient than a partial
+	/// response, and entity tags are presumed to be more accurate than date
+	/// validators. https://tools.ietf.org/html/rfc7232#section-5
+	if entry.Attr.Mtime.IsZero() {
+		return false
+	}
+	w.Header().Set("Last-Modified", entry.Attr.Mtime.UTC().Format(http.TimeFormat))
+
+	ifMatchETagHeader := r.Header.Get("If-Match")
+	ifUnmodifiedSinceHeader := r.Header.Get("If-Unmodified-Since")
+	if ifMatchETagHeader != "" {
+		if util.CanonicalizeETag(etag) != util.CanonicalizeETag(ifMatchETagHeader) {
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return true
+		}
+	} else if ifUnmodifiedSinceHeader != "" {
+		if t, parseError := time.Parse(http.TimeFormat, ifUnmodifiedSinceHeader); parseError == nil {
+			if t.Before(entry.Attr.Mtime) {
+				w.WriteHeader(http.StatusPreconditionFailed)
+				return true
+			}
+		}
+	}
+
+	ifNoneMatchETagHeader := r.Header.Get("If-None-Match")
+	ifModifiedSinceHeader := r.Header.Get("If-Modified-Since")
+	if ifNoneMatchETagHeader != "" {
+		if util.CanonicalizeETag(etag) == util.CanonicalizeETag(ifNoneMatchETagHeader) {
+			w.WriteHeader(http.StatusNotModified)
+			return true
+		}
+	} else if ifModifiedSinceHeader != "" {
+		if t, parseError := time.Parse(http.TimeFormat, ifModifiedSinceHeader); parseError == nil {
+			if t.After(entry.Attr.Mtime) {
+				w.WriteHeader(http.StatusNotModified)
+				return true
+			}
+		}
+	}
+
+	return false
+}
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
 
@@ -61,10 +120,22 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// set etag
+	query := r.URL.Query()
+	if query.Get("metadata") == "true" {
+		if query.Get("resolveManifest") == "true" {
+			if entry.Chunks, _, err = filer.ResolveChunkManifest(
+				fs.filer.MasterClient.GetLookupFileIdFunction(),
+				entry.Chunks, 0, math.MaxInt64); err != nil {
+				err = fmt.Errorf("failed to resolve chunk manifest, err: %s", err.Error())
+				writeJsonError(w, r, http.StatusInternalServerError, err)
+			}
+		}
+		writeJsonQuiet(w, r, http.StatusOK, entry)
+		return
+	}
+
 	etag := filer.ETagEntry(entry)
-	if ifm := r.Header.Get("If-Match"); ifm != "" && (ifm != "\""+etag+"\"" && ifm != etag) {
-		w.WriteHeader(http.StatusPreconditionFailed)
+	if checkPreconditions(w, r, entry) {
 		return
 	}
 
@@ -79,19 +150,6 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	if mimeType != "" {
 		w.Header().Set("Content-Type", mimeType)
-	}
-
-	// if modified since
-	if !entry.Attr.Mtime.IsZero() {
-		w.Header().Set("Last-Modified", entry.Attr.Mtime.UTC().Format(http.TimeFormat))
-		if r.Header.Get("If-Modified-Since") != "" {
-			if t, parseError := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since")); parseError == nil {
-				if !t.Before(entry.Attr.Mtime) {
-					w.WriteHeader(http.StatusNotModified)
-					return
-				}
-			}
-		}
 	}
 
 	// print out the header from extended properties
@@ -123,10 +181,6 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set(xhttp.AmzTagCount, strconv.Itoa(tagCount))
 	}
 
-	if inm := r.Header.Get("If-None-Match"); inm == "\""+etag+"\"" {
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
 	setEtag(w, etag)
 
 	filename := entry.Name()
@@ -146,7 +200,9 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		}
 		width, height, mode, shouldResize := shouldResizeImages(ext, r)
 		if shouldResize {
-			data, err := filer.ReadAll(fs.filer.MasterClient, entry.Chunks)
+			data := mem.Allocate(int(totalSize))
+			defer mem.Free(data)
+			err := filer.ReadAll(data, fs.filer.MasterClient, entry.Chunks)
 			if err != nil {
 				glog.Errorf("failed to read %s: %v", path, err)
 				w.WriteHeader(http.StatusNotModified)
