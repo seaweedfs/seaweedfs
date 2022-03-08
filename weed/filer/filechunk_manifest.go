@@ -68,12 +68,12 @@ func ResolveChunkManifest(lookupFileIdFn wdclient.LookupFileIdFunctionType, chun
 
 		manifestChunks = append(manifestChunks, chunk)
 		// recursive
-		dchunks, mchunks, subErr := ResolveChunkManifest(lookupFileIdFn, resolvedChunks, startOffset, stopOffset)
+		dataChunks, manifestChunks, subErr := ResolveChunkManifest(lookupFileIdFn, resolvedChunks, startOffset, stopOffset)
 		if subErr != nil {
 			return chunks, nil, subErr
 		}
-		dataChunks = append(dataChunks, dchunks...)
-		manifestChunks = append(manifestChunks, mchunks...)
+		dataChunks = append(dataChunks, dataChunks...)
+		manifestChunks = append(manifestChunks, manifestChunks...)
 	}
 	return
 }
