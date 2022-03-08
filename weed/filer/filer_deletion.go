@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"math"
 	"strings"
 	"time"
 
@@ -147,33 +148,33 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 
 	var toDelete []*filer_pb.FileChunk
 	newChunkIds := make(map[string]bool)
-	newDChunks, newMChunks, err := ResolveChunkManifest(f.MasterClient.GetLookupFileIdFunction(),
-		newEntry.Chunks, 0, int64(newEntry.Size()))
+	newDataChunks, newManifestChunks, err := ResolveChunkManifest(f.MasterClient.GetLookupFileIdFunction(),
+		newEntry.Chunks, 0, math.MaxInt64)
 	if err != nil {
 		glog.Errorf("Failed to resolve new entry chunks when delete old entry chunks. new: %s, old: %s",
 			newEntry.Chunks, oldEntry.Chunks)
 		return
 	}
-	for _, newChunk := range newDChunks {
+	for _, newChunk := range newDataChunks {
 		newChunkIds[newChunk.GetFileIdString()] = true
 	}
-	for _, newChunk := range newMChunks {
+	for _, newChunk := range newManifestChunks {
 		newChunkIds[newChunk.GetFileIdString()] = true
 	}
 
-	oldDChunks, oldMChunks, err := ResolveChunkManifest(f.MasterClient.GetLookupFileIdFunction(),
-		oldEntry.Chunks, 0, int64(oldEntry.Size()))
+	oldDataChunks, oldManifestChunks, err := ResolveChunkManifest(f.MasterClient.GetLookupFileIdFunction(),
+		oldEntry.Chunks, 0, math.MaxInt64)
 	if err != nil {
 		glog.Errorf("Failed to resolve old entry chunks when delete old entry chunks. new: %s, old: %s",
 			newEntry.Chunks, oldEntry.Chunks)
 		return
 	}
-	for _, oldChunk := range oldDChunks {
+	for _, oldChunk := range oldDataChunks {
 		if _, found := newChunkIds[oldChunk.GetFileIdString()]; !found {
 			toDelete = append(toDelete, oldChunk)
 		}
 	}
-	for _, oldChunk := range oldMChunks {
+	for _, oldChunk := range oldManifestChunks {
 		if _, found := newChunkIds[oldChunk.GetFileIdString()]; !found {
 			toDelete = append(toDelete, oldChunk)
 		}

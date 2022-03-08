@@ -153,12 +153,12 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(volumeIdToServer map[uint
 		if verbose && entry.Entry.IsDirectory {
 			fmt.Fprintf(writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
 		}
-		dChunks, mChunks, resolveErr := filer.ResolveChunkManifest(filer.LookupFn(c.env), entry.Entry.Chunks, 0, math.MaxInt64)
+		dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(filer.LookupFn(c.env), entry.Entry.Chunks, 0, math.MaxInt64)
 		if resolveErr != nil {
 			return nil
 		}
-		dChunks = append(dChunks, mChunks...)
-		for _, chunk := range dChunks {
+		dataChunks = append(dataChunks, manifestChunks...)
+		for _, chunk := range dataChunks {
 			outputChan <- &Item{
 				vid:     chunk.Fid.VolumeId,
 				fileKey: chunk.Fid.FileKey,
@@ -332,15 +332,15 @@ func (c *commandVolumeFsck) collectFilerFileIds(volumeIdToServer map[uint32]VInf
 		fileKey uint64
 	}
 	return doTraverseBfsAndSaving(c.env, nil, "/", false, func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
-		dChunks, mChunks, resolveErr := filer.ResolveChunkManifest(filer.LookupFn(c.env), entry.Entry.Chunks, 0, math.MaxInt64)
+		dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(filer.LookupFn(c.env), entry.Entry.Chunks, 0, math.MaxInt64)
 		if resolveErr != nil {
 			if verbose {
 				fmt.Fprintf(writer, "resolving manifest chunks in %s: %v\n", util.NewFullPath(entry.Dir, entry.Entry.Name), resolveErr)
 			}
 			return nil
 		}
-		dChunks = append(dChunks, mChunks...)
-		for _, chunk := range dChunks {
+		dataChunks = append(dataChunks, manifestChunks...)
+		for _, chunk := range dataChunks {
 			outputChan <- &Item{
 				vid:     chunk.Fid.VolumeId,
 				fileKey: chunk.Fid.FileKey,
