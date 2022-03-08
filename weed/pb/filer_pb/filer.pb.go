@@ -847,6 +847,7 @@ type FuseAttributes struct {
 	DiskType      string   `protobuf:"bytes,15,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
 	Rdev          uint32   `protobuf:"varint,16,opt,name=rdev,proto3" json:"rdev,omitempty"`
 	Inode         uint64   `protobuf:"varint,17,opt,name=inode,proto3" json:"inode,omitempty"`
+	Version       uint32   `protobuf:"varint,18,opt,name=version,proto3" json:"version,omitempty"`
 }
 
 func (x *FuseAttributes) Reset() {

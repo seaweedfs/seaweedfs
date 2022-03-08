@@ -26,6 +26,7 @@ type Attr struct {
 	FileSize      uint64
 	Rdev          uint32
 	Inode         uint64
+	Version       uint32
 }
 
 func (attr Attr) IsDirectory() bool {

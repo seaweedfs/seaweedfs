@@ -173,6 +173,7 @@ message FuseAttributes {
     string disk_type = 15;
     uint32 rdev = 16;
     uint64 inode = 17;
+    uint32 version = 18;
 }
 
 message CreateEntryRequest {
