@@ -101,6 +101,10 @@ func (store *UniversalRedis2Store) FindEntry(ctx context.Context, fullpath util.
 	return entry, nil
 }
 
+func (store *UniversalRedis2Store) FindVersionedEntry(ctx context.Context, fullpath util.FullPath, version uint32) (entry *filer.Entry, err error) {
+	return store.FindEntry(ctx, fullpath)
+}
+
 func (store *UniversalRedis2Store) DeleteEntry(ctx context.Context, fullpath util.FullPath) (err error) {
 
 	_, err = store.Client.Del(ctx, genDirectoryListKey(string(fullpath))).Result()

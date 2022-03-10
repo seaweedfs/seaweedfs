@@ -105,6 +105,10 @@ func (store *HbaseStore) FindEntry(ctx context.Context, path util.FullPath) (ent
 	return entry, nil
 }
 
+func (store *HbaseStore) FindVersionedEntry(ctx context.Context, fullpath util.FullPath, version uint32) (entry *filer.Entry, err error) {
+	return store.FindEntry(ctx, fullpath)
+}
+
 func (store *HbaseStore) DeleteEntry(ctx context.Context, path util.FullPath) (err error) {
 	return store.doDelete(ctx, store.cfMetaDir, []byte(path))
 }

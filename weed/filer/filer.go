@@ -289,7 +289,6 @@ var (
 )
 
 func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, err error) {
-
 	if string(p) == "/" {
 		return Root, nil
 	}
@@ -301,7 +300,20 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 		}
 	}
 	return
+}
 
+func (f *Filer) FindVersionedEntry(ctx context.Context, p util.FullPath, v uint32) (entry *Entry, err error) {
+	if string(p) == "/" {
+		return Root, nil
+	}
+	entry, err = f.Store.FindVersionedEntry(ctx, p, v)
+	if entry != nil && entry.TtlSec > 0 {
+		if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
+			f.Store.DeleteOneEntry(ctx, entry)
+			return nil, filer_pb.ErrNotFound
+		}
+	}
+	return
 }
 
 func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (expiredCount int64, lastFileName string, err error) {

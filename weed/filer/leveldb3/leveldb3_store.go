@@ -229,6 +229,10 @@ func (store *LevelDB3Store) FindEntry(ctx context.Context, fullpath weed_util.Fu
 	return entry, nil
 }
 
+func (store *LevelDB3Store) FindVersionedEntry(ctx context.Context, fullpath weed_util.FullPath, version uint32) (entry *filer.Entry, err error) {
+	return store.FindEntry(ctx, fullpath)
+}
+
 func (store *LevelDB3Store) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 
 	db, _, shortPath, err := store.findDB(fullpath, false)

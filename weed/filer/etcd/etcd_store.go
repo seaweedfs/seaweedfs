@@ -120,6 +120,10 @@ func (store *EtcdStore) FindEntry(ctx context.Context, fullpath weed_util.FullPa
 	return entry, nil
 }
 
+func (store *EtcdStore) FindVersionedEntry(ctx context.Context, fullpath weed_util.FullPath, version uint32) (entry *filer.Entry, err error) {
+	return store.FindEntry(ctx, fullpath)
+}
+
 func (store *EtcdStore) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	key := genKey(fullpath.DirAndName())
 

@@ -134,6 +134,10 @@ func (store *LevelDB2Store) FindEntry(ctx context.Context, fullpath weed_util.Fu
 	return entry, nil
 }
 
+func (store *LevelDB2Store) FindVersionedEntry(ctx context.Context, fullpath weed_util.FullPath, version uint32) (entry *filer.Entry, err error) {
+	return store.FindEntry(ctx, fullpath)
+}
+
 func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	dir, name := fullpath.DirAndName()
 	key, partitionId := genKey(dir, name, store.dbCount)

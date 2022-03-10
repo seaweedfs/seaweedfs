@@ -239,6 +239,10 @@ func (store *AbstractSqlStore) FindEntry(ctx context.Context, fullpath util.Full
 	return entry, nil
 }
 
+func (store *AbstractSqlStore) FindVersionedEntry(ctx context.Context, fullpath util.FullPath, version uint32) (entry *filer.Entry, err error) {
+	return store.FindEntry(ctx, fullpath)
+}
+
 func (store *AbstractSqlStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) error {
 
 	db, bucket, shortPath, err := store.getTxOrDB(ctx, fullpath, false)

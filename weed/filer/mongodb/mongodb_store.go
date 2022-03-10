@@ -154,6 +154,10 @@ func (store *MongodbStore) FindEntry(ctx context.Context, fullpath util.FullPath
 	return entry, nil
 }
 
+func (store *MongodbStore) FindVersionedEntry(ctx context.Context, fullpath util.FullPath, version uint32) (entry *filer.Entry, err error) {
+	return store.FindEntry(ctx, fullpath)
+}
+
 func (store *MongodbStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) error {
 
 	dir, name := fullpath.DirAndName()

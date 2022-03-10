@@ -173,6 +173,26 @@ func (fsw *FilerStoreWrapper) FindEntry(ctx context.Context, fp util.FullPath) (
 	return
 }
 
+func (fsw *FilerStoreWrapper) FindVersionedEntry(ctx context.Context, fp util.FullPath, v uint32) (entry *Entry, err error) {
+	actualStore := fsw.getActualStore(fp)
+	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "find").Inc()
+	start := time.Now()
+	defer func() {
+		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "find").Observe(time.Since(start).Seconds())
+	}()
+
+	entry, err = actualStore.FindVersionedEntry(ctx, fp, v)
+	// glog.V(4).Infof("FindEntry %s: %v", fp, err)
+	if err != nil {
+		return nil, err
+	}
+
+	fsw.maybeReadHardLink(ctx, entry)
+
+	filer_pb.AfterEntryDeserialization(entry.Chunks)
+	return
+}
+
 func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {
 	actualStore := fsw.getActualStore(fp)
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "delete").Inc()
