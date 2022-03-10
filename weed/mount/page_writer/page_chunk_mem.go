@@ -3,10 +3,13 @@ package page_writer
 import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/mem"
+	"sync/atomic"
 )
 
 var (
 	_ = PageChunk(&MemChunk{})
+
+	memChunkCounter int64
 )
 
 type MemChunk struct {
@@ -17,6 +20,7 @@ type MemChunk struct {
 }
 
 func NewMemChunk(logicChunkIndex LogicChunkIndex, chunkSize int64) *MemChunk {
+	atomic.AddInt64(&memChunkCounter, 1)
 	return &MemChunk{
 		logicChunkIndex: logicChunkIndex,
 		chunkSize:       chunkSize,
@@ -26,6 +30,7 @@ func NewMemChunk(logicChunkIndex LogicChunkIndex, chunkSize int64) *MemChunk {
 }
 
 func (mc *MemChunk) FreeResource() {
+	atomic.AddInt64(&memChunkCounter, -1)
 	mem.Free(mc.buf)
 }
 
