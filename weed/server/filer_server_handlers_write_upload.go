@@ -79,6 +79,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			bufPool.Put(bytesBuffer)
 			atomic.AddInt64(&bytesBufferCounter, -1)
 			bytesBufferLimitCond.Signal()
+			uploadErr = err
 			break
 		}
 		if chunkOffset == 0 && !isAppend {
@@ -126,6 +127,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 	wg.Wait()
 
 	if uploadErr != nil {
+		fs.filer.DeleteChunks(fileChunks)
 		return nil, md5Hash, 0, uploadErr, nil
 	}
 
