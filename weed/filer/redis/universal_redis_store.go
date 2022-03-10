@@ -88,6 +88,10 @@ func (store *UniversalRedisStore) FindEntry(ctx context.Context, fullpath util.F
 	return entry, nil
 }
 
+func (store *UniversalRedisStore) FindVersionedEntry(ctx context.Context, fullpath util.FullPath, v uint64) (entry *filer.Entry, err error) {
+	return store.FindEntry(ctx, fullpath)
+}
+
 func (store *UniversalRedisStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) (err error) {
 
 	_, err = store.Client.Del(ctx, string(fullpath)).Result()
@@ -105,6 +109,10 @@ func (store *UniversalRedisStore) DeleteEntry(ctx context.Context, fullpath util
 	}
 
 	return nil
+}
+
+func (store *UniversalRedisStore) DeleteVersionedEntry(ctx context.Context, fullpath util.FullPath, v uint64) (err error) {
+	return store.DeleteEntry(ctx, fullpath)
 }
 
 func (store *UniversalRedisStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) (err error) {

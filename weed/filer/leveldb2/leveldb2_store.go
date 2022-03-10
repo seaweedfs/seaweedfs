@@ -104,7 +104,6 @@ func (store *LevelDB2Store) InsertEntry(ctx context.Context, entry *filer.Entry)
 }
 
 func (store *LevelDB2Store) UpdateEntry(ctx context.Context, entry *filer.Entry) (err error) {
-
 	return store.InsertEntry(ctx, entry)
 }
 
@@ -134,6 +133,10 @@ func (store *LevelDB2Store) FindEntry(ctx context.Context, fullpath weed_util.Fu
 	return entry, nil
 }
 
+func (store *LevelDB2Store) FindVersionedEntry(ctx context.Context, fullpath weed_util.FullPath, version uint64) (entry *filer.Entry, err error) {
+	return store.FindEntry(ctx, fullpath)
+}
+
 func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	dir, name := fullpath.DirAndName()
 	key, partitionId := genKey(dir, name, store.dbCount)
@@ -144,6 +147,10 @@ func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath weed_util.
 	}
 
 	return nil
+}
+
+func (store *LevelDB2Store) DeleteVersionedEntry(ctx context.Context, fullpath weed_util.FullPath, version uint64) (err error) {
+	return store.DeleteEntry(ctx, fullpath)
 }
 
 func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {

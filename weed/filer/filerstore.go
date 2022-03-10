@@ -25,7 +25,9 @@ type FilerStore interface {
 	UpdateEntry(context.Context, *Entry) (err error)
 	// err == filer_pb.ErrNotFound if not found
 	FindEntry(context.Context, util.FullPath) (entry *Entry, err error)
+	FindVersionedEntry(context.Context, util.FullPath, uint64) (entry *Entry, err error)
 	DeleteEntry(context.Context, util.FullPath) (err error)
+	DeleteVersionedEntry(context.Context, util.FullPath, uint64) (err error)
 	DeleteFolderChildren(context.Context, util.FullPath) (err error)
 	ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error)
 	ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (lastFileName string, err error)

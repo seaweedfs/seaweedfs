@@ -120,6 +120,10 @@ func (store *EtcdStore) FindEntry(ctx context.Context, fullpath weed_util.FullPa
 	return entry, nil
 }
 
+func (store *EtcdStore) FindVersionedEntry(ctx context.Context, fullpath weed_util.FullPath, v uint64) (entry *filer.Entry, err error) {
+	return store.FindEntry(ctx, fullpath)
+}
+
 func (store *EtcdStore) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	key := genKey(fullpath.DirAndName())
 
@@ -128,6 +132,10 @@ func (store *EtcdStore) DeleteEntry(ctx context.Context, fullpath weed_util.Full
 	}
 
 	return nil
+}
+
+func (store *EtcdStore) DeleteVersionedEntry(ctx context.Context, fullpath weed_util.FullPath, v uint64) (err error) {
+	return store.DeleteEntry(ctx, fullpath)
 }
 
 func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
