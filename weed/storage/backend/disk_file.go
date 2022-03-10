@@ -70,7 +70,10 @@ func (df *DiskFile) Close() error {
 }
 
 func (df *DiskFile) GetStat() (datSize int64, modTime time.Time, err error) {
-	return df.fileSize, df.modTime, nil
+	if df.File == nil {
+		err = os.ErrInvalid
+	}
+	return df.fileSize, df.modTime, err
 }
 
 func (df *DiskFile) Name() string {
