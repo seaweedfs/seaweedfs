@@ -90,7 +90,7 @@ func (t *FilerStorePathTranlator) FindEntry(ctx context.Context, fp util.FullPat
 
 func (t *FilerStorePathTranlator) FindVersionedEntry(ctx context.Context, fp util.FullPath, v uint64) (entry *Entry, err error) {
 	if t.storeRoot == "/" {
-		return t.actualStore.FindEntry(ctx, fp)
+		return t.actualStore.FindVersionedEntry(ctx, fp, v)
 	}
 	newFullPath := t.translatePath(fp)
 	entry, err = t.actualStore.FindVersionedEntry(ctx, newFullPath, v)
