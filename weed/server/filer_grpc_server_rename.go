@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
@@ -16,10 +15,13 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 
 	glog.V(1).Infof("AtomicRenameEntry %v", req)
 
-	oldParent := util.FullPath(filepath.ToSlash(req.OldDirectory))
-	newParent := util.FullPath(filepath.ToSlash(req.NewDirectory))
+	oldPath := util.NewFullPath(req.OldDirectory, req.OldName)
+	newPath := util.NewFullPath(req.NewDirectory, req.NewName)
 
-	if err := fs.filer.CanRename(oldParent, newParent); err != nil {
+	oldParent, _ := oldPath.DirAndName()
+	newParent, newName := newPath.DirAndName()
+
+	if err := fs.filer.CanRename(oldPath, newPath); err != nil {
 		return nil, err
 	}
 
@@ -28,13 +30,13 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 		return nil, err
 	}
 
-	oldEntry, err := fs.filer.FindEntry(ctx, oldParent.Child(req.OldName))
+	oldEntry, err := fs.filer.FindEntry(ctx, oldPath)
 	if err != nil {
 		fs.filer.RollbackTransaction(ctx)
 		return nil, fmt.Errorf("%s/%s not found: %v", req.OldDirectory, req.OldName, err)
 	}
 
-	moveErr := fs.moveEntry(ctx, nil, oldParent, oldEntry, newParent, req.NewName, req.Signatures)
+	moveErr := fs.moveEntry(ctx, nil, util.FullPath(oldParent), oldEntry, util.FullPath(newParent), newName, req.Signatures)
 	if moveErr != nil {
 		fs.filer.RollbackTransaction(ctx)
 		return nil, fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, moveErr)
@@ -52,10 +54,13 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 
 	glog.V(1).Infof("StreamRenameEntry %v", req)
 
-	oldParent := util.FullPath(filepath.ToSlash(req.OldDirectory))
-	newParent := util.FullPath(filepath.ToSlash(req.NewDirectory))
+	oldPath := util.NewFullPath(req.OldDirectory, req.OldName)
+	newPath := util.NewFullPath(req.NewDirectory, req.NewName)
 
-	if err := fs.filer.CanRename(oldParent, newParent); err != nil {
+	oldParent, _ := oldPath.DirAndName()
+	newParent, newName := newPath.DirAndName()
+
+	if err := fs.filer.CanRename(oldPath, newPath); err != nil {
 		return err
 	}
 
@@ -66,7 +71,7 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 		return err
 	}
 
-	oldEntry, err := fs.filer.FindEntry(ctx, oldParent.Child(req.OldName))
+	oldEntry, err := fs.filer.FindEntry(ctx, oldPath)
 	if err != nil {
 		fs.filer.RollbackTransaction(ctx)
 		return fmt.Errorf("%s/%s not found: %v", req.OldDirectory, req.OldName, err)
@@ -74,20 +79,19 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 
 	if oldEntry.IsDirectory() {
 		// follow https://pubs.opengroup.org/onlinepubs/000095399/functions/rename.html
-		targetDir := newParent.Child(req.NewName)
-		newEntry, err := fs.filer.FindEntry(ctx, targetDir)
+		newEntry, err := fs.filer.FindEntry(ctx, newPath)
 		if err == nil {
 			if !newEntry.IsDirectory() {
 				fs.filer.RollbackTransaction(ctx)
-				return fmt.Errorf("%s is not directory", targetDir)
+				return fmt.Errorf("%s is not directory", newPath)
 			}
-			if entries, _, _ := fs.filer.ListDirectoryEntries(context.Background(), targetDir, "", false, 1, "", "", ""); len(entries) > 0 {
-				return fmt.Errorf("%s is not empty", targetDir)
+			if entries, _, _ := fs.filer.ListDirectoryEntries(context.Background(), newPath, "", false, 1, "", "", ""); len(entries) > 0 {
+				return fmt.Errorf("%s is not empty", newPath)
 			}
 		}
 	}
 
-	moveErr := fs.moveEntry(ctx, stream, oldParent, oldEntry, newParent, req.NewName, req.Signatures)
+	moveErr := fs.moveEntry(ctx, stream, util.FullPath(oldParent), oldEntry, util.FullPath(newParent), newName, req.Signatures)
 	if moveErr != nil {
 		fs.filer.RollbackTransaction(ctx)
 		return fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, moveErr)

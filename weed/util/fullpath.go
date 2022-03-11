@@ -6,15 +6,19 @@ import (
 	"strings"
 )
 
+// FullPath will keep the literal passed in.
+// file literal: /path/to/file
+// directory literal: /path/
+// change to file literal: fp.Child(".") or NewFullPath(name, ".")
+// change to directory literal: fp.Child("./") or NewFullPath(name, "./")
 type FullPath string
 
-func NewFullPath(dir, name string) FullPath {
-	return FullPath(dir).Child(name)
+func NewFullPath(name ...string) FullPath {
+	return FullPath(Join(name...))
 }
 
 func (fp FullPath) DirAndName() (string, string) {
-	dir, name := filepath.Split(string(fp))
-	name = strings.ToValidUTF8(name, "?")
+	dir, name := filepath.Split(clearName(string(fp)))
 	if dir == "/" {
 		return dir, name
 	}
@@ -24,6 +28,22 @@ func (fp FullPath) DirAndName() (string, string) {
 	return dir[:len(dir)-1], name
 }
 
+func (fp FullPath) ToDir() FullPath {
+	return fp.Child("./")
+}
+
+func (fp FullPath) ToFile() FullPath {
+	return fp.Child(".")
+}
+
+func (fp FullPath) IsFile() bool {
+	return !fp.IsDir()
+}
+
+func (fp FullPath) IsDir() bool {
+	return strings.HasSuffix(string(fp), "/")
+}
+
 func (fp FullPath) Name() string {
 	_, name := filepath.Split(string(fp))
 	name = strings.ToValidUTF8(name, "?")
@@ -31,15 +51,7 @@ func (fp FullPath) Name() string {
 }
 
 func (fp FullPath) Child(name string) FullPath {
-	dir := string(fp)
-	noPrefix := name
-	if strings.HasPrefix(name, "/") {
-		noPrefix = name[1:]
-	}
-	if strings.HasSuffix(dir, "/") {
-		return FullPath(dir + noPrefix)
-	}
-	return FullPath(dir + "/" + noPrefix)
+	return NewFullPath(string(fp), name)
 }
 
 // AsInode an in-memory only inode representation
@@ -78,9 +90,19 @@ func (fp FullPath) Split() []string {
 }
 
 func Join(names ...string) string {
-	return filepath.ToSlash(filepath.Join(names...))
+	newName := clearName(filepath.ToSlash(filepath.Join(names...)))
+	if newName != "/" && strings.HasSuffix(filepath.ToSlash(strings.Join(names, "")), "/") {
+		newName += "/"
+	}
+	return newName
 }
 
-func JoinPath(names ...string) FullPath {
-	return FullPath(Join(names...))
+func clearName(name string) string {
+	name = strings.ToValidUTF8(name, "?")
+	slashed := strings.HasSuffix(name, "/")
+	name = filepath.Clean(name)
+	if name != "/" && slashed {
+		name += "/"
+	}
+	return name
 }

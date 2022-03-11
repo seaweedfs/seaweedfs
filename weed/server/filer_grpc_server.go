@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -20,14 +19,16 @@ import (
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 
-	glog.V(4).Infof("LookupDirectoryEntry %s", filepath.Join(req.Directory, req.Name))
+	fullpath := util.NewFullPath(req.Directory, req.Name)
 
-	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
+	glog.V(4).Infof("LookupDirectoryEntry %s", fullpath)
+
+	entry, err := fs.filer.FindEntry(ctx, fullpath)
 	if err == filer_pb.ErrNotFound {
 		return &filer_pb.LookupDirectoryEntryResponse{}, err
 	}
 	if err != nil {
-		glog.V(3).Infof("LookupDirectoryEntry %s: %+v, ", filepath.Join(req.Directory, req.Name), err)
+		glog.V(3).Infof("LookupDirectoryEntry %s: %+v, ", fullpath, err)
 		return nil, err
 	}
 
@@ -55,7 +56,7 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 	var listErr error
 	for limit > 0 {
 		var hasEntries bool
-		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, int64(paginationLimit), req.Prefix, "", "", func(entry *filer.Entry) bool {
+		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.NewFullPath(req.Directory), lastFileName, includeLastFile, int64(paginationLimit), req.Prefix, "", "", func(entry *filer.Entry) bool {
 			hasEntries = true
 			if err = stream.Send(&filer_pb.ListEntriesResponse{
 				Entry: entry.ToProtoEntry(),
@@ -136,11 +137,12 @@ func (fs *FilerServer) lookupFileId(fileId string) (targetUrls []string, err err
 
 func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (resp *filer_pb.CreateEntryResponse, err error) {
 
-	glog.V(4).Infof("CreateEntry %v/%v", req.Directory, req.Entry.Name)
+	fullpath := util.NewFullPath(req.Directory, req.Entry.Name)
+	glog.V(4).Infof("CreateEntry %v", fullpath)
 
 	resp = &filer_pb.CreateEntryResponse{}
 
-	chunks, garbage, err2 := fs.cleanupChunks(util.Join(req.Directory, req.Entry.Name), nil, req.Entry)
+	chunks, garbage, err2 := fs.cleanupChunks(string(fullpath), nil, req.Entry)
 	if err2 != nil {
 		return &filer_pb.CreateEntryResponse{}, fmt.Errorf("CreateEntry cleanupChunks %s %s: %v", req.Directory, req.Entry.Name, err2)
 	}
@@ -153,7 +155,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	if createErr == nil {
 		fs.filer.DeleteChunks(garbage)
 	} else {
-		glog.V(3).Infof("CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), createErr)
+		glog.V(3).Infof("CreateEntry %s: %v", fullpath, createErr)
 		resp.Error = createErr.Error()
 	}
 
@@ -164,13 +166,13 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 
 	glog.V(4).Infof("UpdateEntry %v", req)
 
-	fullpath := util.Join(req.Directory, req.Entry.Name)
-	entry, err := fs.filer.FindEntry(ctx, util.FullPath(fullpath))
+	fullpath := util.NewFullPath(req.Directory, req.Entry.Name)
+	entry, err := fs.filer.FindEntry(ctx, fullpath)
 	if err != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("not found %s: %v", fullpath, err)
 	}
 
-	chunks, garbage, err2 := fs.cleanupChunks(fullpath, entry, req.Entry)
+	chunks, garbage, err2 := fs.cleanupChunks(string(fullpath), entry, req.Entry)
 	if err2 != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("UpdateEntry cleanupChunks %s: %v", fullpath, err2)
 	}
@@ -188,7 +190,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, req.IsFromOtherCluster, req.Signatures)
 
 	} else {
-		glog.V(3).Infof("UpdateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), err)
+		glog.V(3).Infof("UpdateEntry %s: %v", fullpath, err)
 	}
 
 	return &filer_pb.UpdateEntryResponse{}, err
@@ -280,7 +282,7 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 	glog.V(4).Infof("DeleteEntry %v", req)
 
-	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures)
+	err = fs.filer.DeleteEntryMetaAndData(ctx, util.NewFullPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures)
 	resp = &filer_pb.DeleteEntryResponse{}
 	if err != nil && err != filer_pb.ErrNotFound {
 		resp.Error = err.Error()
@@ -290,7 +292,7 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVolumeRequest) (resp *filer_pb.AssignVolumeResponse, err error) {
 
-	so, err := fs.detectStorageOption(req.Path, req.Collection, req.Replication, req.TtlSec, req.DiskType, req.DataCenter, req.Rack, req.DataNode)
+	so, err := fs.detectStorageOption(string(util.NewFullPath(req.Path)), req.Collection, req.Replication, req.TtlSec, req.DiskType, req.DataCenter, req.Rack, req.DataNode)
 	if err != nil {
 		glog.V(3).Infof("AssignVolume: %v", err)
 		return &filer_pb.AssignVolumeResponse{Error: fmt.Sprintf("assign volume: %v", err)}, nil

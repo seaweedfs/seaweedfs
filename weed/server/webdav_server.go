@@ -131,38 +131,18 @@ func (fs *WebDavFileSystem) AdjustedUrl(location *filer_pb.Location) string {
 	return location.Url
 }
 
-func clearName(name string) (string, error) {
-	slashed := strings.HasSuffix(name, "/")
-	name = path.Clean(name)
-	if !strings.HasSuffix(name, "/") && slashed {
-		name += "/"
-	}
-	if !strings.HasPrefix(name, "/") {
-		return "", os.ErrInvalid
-	}
-	return name, nil
-}
-
 func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm os.FileMode) error {
 
 	glog.V(2).Infof("WebDavFileSystem.Mkdir %v", fullDirPath)
 
-	if !strings.HasSuffix(fullDirPath, "/") {
-		fullDirPath += "/"
-	}
+	fullpath := util.NewFullPath(fullDirPath).ToDir()
 
-	var err error
-	if fullDirPath, err = clearName(fullDirPath); err != nil {
-		return err
-	}
-
-	_, err = fs.stat(ctx, fullDirPath)
-	if err == nil {
+	if _, err := fs.stat(ctx, fullpath); err == nil {
 		return os.ErrExist
 	}
 
 	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		dir, name := util.FullPath(fullDirPath).DirAndName()
+		dir, name := fullpath.ToFile().DirAndName()
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir,
 			Entry: &filer_pb.Entry{
@@ -193,24 +173,23 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 	glog.V(2).Infof("WebDavFileSystem.OpenFile %v %x", fullFilePath, flag)
 
 	var err error
-	if fullFilePath, err = clearName(fullFilePath); err != nil {
-		return nil, err
-	}
+	fullpath := util.NewFullPath(fullFilePath)
+	fullpathStr := string(fullpath)
 
 	if flag&os.O_CREATE != 0 {
 		// file should not have / suffix.
-		if strings.HasSuffix(fullFilePath, "/") {
+		if fullpath.IsDir() {
 			return nil, os.ErrInvalid
 		}
-		_, err = fs.stat(ctx, fullFilePath)
+		_, err = fs.stat(ctx, fullpath)
 		if err == nil {
 			if flag&os.O_EXCL != 0 {
 				return nil, os.ErrExist
 			}
-			fs.removeAll(ctx, fullFilePath)
+			fs.removeAll(ctx, fullpath)
 		}
 
-		dir, name := util.FullPath(fullFilePath).DirAndName()
+		dir, name := fullpath.DirAndName()
 		err = fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			if err := filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
 				Directory: dir,
@@ -230,7 +209,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 				},
 				Signatures: []int32{fs.signature},
 			}); err != nil {
-				return fmt.Errorf("create %s: %v", fullFilePath, err)
+				return fmt.Errorf("create %s: %v", fullpathStr, err)
 			}
 			return nil
 		})
@@ -239,36 +218,31 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		}
 		return &WebDavFile{
 			fs:          fs,
-			name:        fullFilePath,
+			name:        fullpathStr,
 			isDirectory: false,
 			bufWriter:   buffered_writer.NewBufferedWriteCloser(4 * 1024 * 1024),
 		}, nil
 	}
 
-	fi, err := fs.stat(ctx, fullFilePath)
+	fi, err := fs.stat(ctx, fullpath)
 	if err != nil {
 		return nil, os.ErrNotExist
 	}
-	if !strings.HasSuffix(fullFilePath, "/") && fi.IsDir() {
-		fullFilePath += "/"
+	if fullpath.IsFile() && fi.IsDir() {
+		fullpathStr += "/"
 	}
 
 	return &WebDavFile{
 		fs:          fs,
-		name:        fullFilePath,
+		name:        fullpathStr,
 		isDirectory: false,
 		bufWriter:   buffered_writer.NewBufferedWriteCloser(4 * 1024 * 1024),
 	}, nil
 
 }
 
-func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string) error {
-	var err error
-	if fullFilePath, err = clearName(fullFilePath); err != nil {
-		return err
-	}
-
-	dir, name := util.FullPath(fullFilePath).DirAndName()
+func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullpath util.FullPath) error {
+	dir, name := fullpath.DirAndName()
 
 	return filer_pb.Remove(fs, dir, name, true, false, false, false, []int32{fs.signature})
 
@@ -278,7 +252,7 @@ func (fs *WebDavFileSystem) RemoveAll(ctx context.Context, name string) error {
 
 	glog.V(2).Infof("WebDavFileSystem.RemoveAll %v", name)
 
-	return fs.removeAll(ctx, name)
+	return fs.removeAll(ctx, util.NewFullPath(name))
 }
 
 func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string) error {
@@ -286,33 +260,16 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 	glog.V(2).Infof("WebDavFileSystem.Rename %v to %v", oldName, newName)
 
 	var err error
-	if oldName, err = clearName(oldName); err != nil {
-		return err
-	}
-	if newName, err = clearName(newName); err != nil {
-		return err
-	}
+	oldPath := util.NewFullPath(oldName).ToFile()
+	newPath := util.NewFullPath(newName).ToFile()
 
-	of, err := fs.stat(ctx, oldName)
-	if err != nil {
-		return os.ErrExist
-	}
-	if of.IsDir() {
-		if strings.HasSuffix(oldName, "/") {
-			oldName = strings.TrimRight(oldName, "/")
-		}
-		if strings.HasSuffix(newName, "/") {
-			newName = strings.TrimRight(newName, "/")
-		}
-	}
-
-	_, err = fs.stat(ctx, newName)
+	_, err = fs.stat(ctx, newPath)
 	if err == nil {
 		return os.ErrExist
 	}
 
-	oldDir, oldBaseName := util.FullPath(oldName).DirAndName()
-	newDir, newBaseName := util.FullPath(newName).DirAndName()
+	oldDir, oldBaseName := oldPath.DirAndName()
+	newDir, newBaseName := newPath.DirAndName()
 
 	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -333,16 +290,10 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 	})
 }
 
-func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.FileInfo, error) {
-	var err error
-	if fullFilePath, err = clearName(fullFilePath); err != nil {
-		return nil, err
-	}
-
-	fullpath := util.FullPath(fullFilePath)
+func (fs *WebDavFileSystem) stat(ctx context.Context, fullpath util.FullPath) (os.FileInfo, error) {
 
 	var fi FileInfo
-	entry, err := filer_pb.GetEntry(fs, fullpath)
+	entry, err := filer_pb.GetEntry(fs, fullpath.ToFile())
 	if entry == nil {
 		return nil, os.ErrNotExist
 	}
@@ -366,13 +317,16 @@ func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo,
 
 	glog.V(2).Infof("WebDavFileSystem.Stat %v", name)
 
-	return fs.stat(ctx, name)
+	return fs.stat(ctx, util.NewFullPath(name))
 }
 
 func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, collection, replication string, err error) {
 
 	var fileId, host string
 	var auth security.EncodedJwt
+
+	fullpath := util.NewFullPath(name)
+	name = string(fullpath)
 
 	if flushErr := f.fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -413,7 +367,7 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
 	uploadOption := &operation.UploadOption{
 		UploadUrl:         fileUrl,
-		Filename:          f.name,
+		Filename:          name,
 		Cipher:            f.fs.option.Cipher,
 		IsInputCompressed: false,
 		MimeType:          "",
@@ -422,11 +376,11 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 	}
 	uploadResult, flushErr, _ := operation.Upload(reader, uploadOption)
 	if flushErr != nil {
-		glog.V(0).Infof("upload data %v to %s: %v", f.name, fileUrl, flushErr)
+		glog.V(0).Infof("upload data %v to %s: %v", name, fileUrl, flushErr)
 		return nil, f.collection, f.replication, fmt.Errorf("upload data: %v", flushErr)
 	}
 	if uploadResult.Error != "" {
-		glog.V(0).Infof("upload failure %v to %s: %v", f.name, fileUrl, flushErr)
+		glog.V(0).Infof("upload failure %v to %s: %v", name, fileUrl, flushErr)
 		return nil, f.collection, f.replication, fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
 	return uploadResult.ToPbFileChunk(fileId, offset), f.collection, f.replication, nil
@@ -436,12 +390,17 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 	glog.V(2).Infof("WebDavFileSystem.Write %v", f.name)
 
-	dir, _ := util.FullPath(f.name).DirAndName()
+	if f.isDirectory {
+		return 0, os.ErrInvalid
+	}
+
+	fullpath := util.NewFullPath(f.name).ToFile()
+	dir, _ := fullpath.DirAndName()
 
 	var getErr error
 	ctx := context.Background()
 	if f.entry == nil {
-		f.entry, getErr = filer_pb.GetEntry(f.fs, util.FullPath(f.name))
+		f.entry, getErr = filer_pb.GetEntry(f.fs, fullpath)
 	}
 
 	if f.entry == nil {
@@ -455,7 +414,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		f.bufWriter.FlushFunc = func(data []byte, offset int64) (flushErr error) {
 
 			var chunk *filer_pb.FileChunk
-			chunk, f.collection, f.replication, flushErr = f.saveDataAsChunk(bytes.NewReader(data), f.name, offset)
+			chunk, f.collection, f.replication, flushErr = f.saveDataAsChunk(bytes.NewReader(data), string(fullpath), offset)
 
 			if flushErr != nil {
 				return fmt.Errorf("%s upload result: %v", f.name, flushErr)
@@ -526,7 +485,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	glog.V(2).Infof("WebDavFileSystem.Read %v", f.name)
 
 	if f.entry == nil {
-		f.entry, err = filer_pb.GetEntry(f.fs, util.FullPath(f.name))
+		f.entry, err = filer_pb.GetEntry(f.fs, util.NewFullPath(f.name))
 	}
 	if f.entry == nil {
 		return 0, err
@@ -564,9 +523,7 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 
 	glog.V(2).Infof("WebDavFileSystem.Readdir %v count %d", f.name, count)
 
-	dir, _ := util.FullPath(f.name).DirAndName()
-
-	err = filer_pb.ReadDirAllEntries(f.fs, util.FullPath(dir), "", func(entry *filer_pb.Entry, isLast bool) error {
+	err = filer_pb.ReadDirAllEntries(f.fs, util.NewFullPath(f.name).ToFile(), "", func(entry *filer_pb.Entry, isLast bool) error {
 		fi := FileInfo{
 			size:          int64(filer.FileSize(entry)),
 			name:          entry.Name,
@@ -614,7 +571,7 @@ func (f *WebDavFile) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekStart:
 		f.off = 0
 	case io.SeekEnd:
-		if fi, err := f.fs.stat(ctx, f.name); err != nil {
+		if fi, err := f.fs.stat(ctx, util.NewFullPath(f.name)); err != nil {
 			return 0, err
 		} else {
 			f.off = fi.Size()
@@ -630,5 +587,5 @@ func (f *WebDavFile) Stat() (os.FileInfo, error) {
 
 	ctx := context.Background()
 
-	return f.fs.stat(ctx, f.name)
+	return f.fs.stat(ctx, util.NewFullPath(f.name))
 }

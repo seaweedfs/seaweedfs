@@ -95,24 +95,14 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 
 	glog.V(2).Infof("FilerServer.move %v to %v", src, dst)
 
-	var err error
-	if src, err = clearName(src); err != nil {
-		writeJsonError(w, r, http.StatusBadRequest, err)
-		return
-	}
-	if dst, err = clearName(dst); err != nil {
-		writeJsonError(w, r, http.StatusBadRequest, err)
-		return
-	}
-	src = strings.TrimRight(src, "/")
-	if src == "" {
-		err = fmt.Errorf("invalid source '/'")
+	srcPath := util.NewFullPath(src).ToFile()
+	dstPath := util.NewFullPath(dst)
+	if string(srcPath) == "/" {
+		err := fmt.Errorf("invalid source '/'")
 		writeJsonError(w, r, http.StatusBadRequest, err)
 		return
 	}
 
-	srcPath := util.FullPath(src)
-	dstPath := util.FullPath(dst)
 	srcEntry, err := fs.filer.FindEntry(ctx, srcPath)
 	if err != nil {
 		err = fmt.Errorf("failed to get src entry '%s', err: %s", src, err)
@@ -120,11 +110,11 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 		return
 	}
 
-	oldDir, oldName := srcPath.DirAndName()
-	newDir, newName := dstPath.DirAndName()
-	newName = util.Nvl(newName, oldName)
+	if dstPath.IsDir() {
+		dstPath = dstPath.Child(srcPath.Name())
+	}
 
-	dstEntry, err := fs.filer.FindEntry(ctx, util.FullPath(strings.TrimRight(dst, "/")))
+	dstEntry, err := fs.filer.FindEntry(ctx, dstPath)
 	if err != nil && err != filer_pb.ErrNotFound {
 		err = fmt.Errorf("failed to get dst entry '%s', err: %s", dst, err)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
@@ -136,6 +126,8 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 		return
 	}
 
+	oldDir, oldName := srcPath.DirAndName()
+	newDir, newName := dstPath.DirAndName()
 	_, err = fs.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
 		OldDirectory: oldDir,
 		OldName:      oldName,

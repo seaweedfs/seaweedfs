@@ -17,6 +17,8 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
+	r.URL.Path = string(util.NewFullPath(r.URL.Path))
+
 	if r.Method == "OPTIONS" {
 		stats.FilerRequestCounter.WithLabelValues("options").Inc()
 		OptionsHandler(w, r, false)
