@@ -60,7 +60,7 @@ func init() {
 	f.mastersString = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this default collection")
 	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
-	f.bindIp = cmdFiler.Flag.String("ip.bind", "", "ip address to bind to")
+	f.bindIp = cmdFiler.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
 	f.portGrpc = cmdFiler.Flag.Int("port.grpc", 0, "filer server grpc listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
@@ -187,6 +187,9 @@ func (fo *FilerOptions) startFiler() {
 	}
 	if *fo.portGrpc == 0 {
 		*fo.portGrpc = 10000 + *fo.port
+	}
+	if *fo.bindIp == "" {
+		*fo.bindIp = *fo.ip
 	}
 
 	defaultLevelDbDirectory := util.ResolvePath(*fo.defaultLevelDbDirectory + "/filerldb2")

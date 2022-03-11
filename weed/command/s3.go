@@ -40,7 +40,7 @@ type S3Options struct {
 func init() {
 	cmdS3.Run = runS3 // break init cycle
 	s3StandaloneOptions.filer = cmdS3.Flag.String("filer", "localhost:8888", "filer server address")
-	s3StandaloneOptions.bindIp = cmdS3.Flag.String("ip.bind", "", "ip address to bind to")
+	s3StandaloneOptions.bindIp = cmdS3.Flag.String("ip.bind", "", "ip address to bind to. Default to localhost.")
 	s3StandaloneOptions.port = cmdS3.Flag.Int("port", 8333, "s3 server http listen port")
 	s3StandaloneOptions.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
 	s3StandaloneOptions.config = cmdS3.Flag.String("config", "", "path to the config file")
@@ -192,6 +192,10 @@ func (s3opt *S3Options) startS3Server() bool {
 	}
 
 	httpS := &http.Server{Handler: router}
+
+	if *s3opt.bindIp == "" {
+		*s3opt.bindIp = "localhost"
+	}
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.port)
 	s3ApiListener, err := util.NewListener(listenAddress, time.Duration(10)*time.Second)

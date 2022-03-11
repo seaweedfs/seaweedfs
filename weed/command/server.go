@@ -55,7 +55,7 @@ var cmdServer = &Command{
 
 var (
 	serverIp                  = cmdServer.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
-	serverBindIp              = cmdServer.Flag.String("ip.bind", "", "ip address to bind to")
+	serverBindIp              = cmdServer.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
 	serverTimeout             = cmdServer.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	serverDataCenter          = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
 	serverRack                = cmdServer.Flag.String("rack", "", "current volume server's rack name")
@@ -182,6 +182,10 @@ func runServer(cmd *Command, args []string) bool {
 		_, peerList := checkPeers(*serverIp, *masterOptions.port, *masterOptions.portGrpc, *masterOptions.peers)
 		peers := strings.Join(pb.ToAddressStrings(peerList), ",")
 		masterOptions.peers = &peers
+	}
+
+	if *serverBindIp == "" {
+		serverBindIp = serverIp
 	}
 
 	// ip address

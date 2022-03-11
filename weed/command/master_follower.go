@@ -24,7 +24,7 @@ func init() {
 	cmdMasterFollower.Run = runMasterFollower // break init cycle
 	mf.port = cmdMasterFollower.Flag.Int("port", 9334, "http listen port")
 	mf.portGrpc = cmdMasterFollower.Flag.Int("port.grpc", 0, "grpc listen port")
-	mf.ipBind = cmdMasterFollower.Flag.String("ip.bind", "", "ip address to bind to")
+	mf.ipBind = cmdMasterFollower.Flag.String("ip.bind", "", "ip address to bind to. Default to localhost.")
 	mf.peers = cmdMasterFollower.Flag.String("masters", "localhost:9333", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
 
 	mf.ip = aws.String(util.DetectedHostAddress())
@@ -110,6 +110,10 @@ func startMasterFollower(masterOptions MasterOptions) {
 
 	option := masterOptions.toMasterOption(nil)
 	option.IsFollower = true
+
+	if *masterOptions.ipBind == "" {
+		*masterOptions.ipBind = "localhost"
+	}
 
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, option, masters)

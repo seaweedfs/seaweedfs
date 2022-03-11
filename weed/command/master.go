@@ -53,7 +53,7 @@ func init() {
 	m.port = cmdMaster.Flag.Int("port", 9333, "http listen port")
 	m.portGrpc = cmdMaster.Flag.Int("port.grpc", 0, "grpc listen port")
 	m.ip = cmdMaster.Flag.String("ip", util.DetectedHostAddress(), "master <ip>|<server> address, also used as identifier")
-	m.ipBind = cmdMaster.Flag.String("ip.bind", "", "ip address to bind to")
+	m.ipBind = cmdMaster.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
 	m.metaFolder = cmdMaster.Flag.String("mdir", os.TempDir(), "data directory to store meta data")
 	m.peers = cmdMaster.Flag.String("peers", "", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
 	m.volumeSizeLimitMB = cmdMaster.Flag.Uint("volumeSizeLimitMB", 30*1000, "Master stops directing writes to oversized volumes.")
@@ -123,6 +123,9 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	if *masterOption.portGrpc == 0 {
 		*masterOption.portGrpc = 10000 + *masterOption.port
+	}
+	if *masterOption.ipBind == "" {
+		*masterOption.ipBind = "localhost"
 	}
 
 	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.portGrpc, *masterOption.peers)
