@@ -22,7 +22,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 
 	glog.V(4).Infof("LookupDirectoryEntry %s", filepath.Join(req.Directory, req.Name))
 
-	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
+	entry, err := fs.filer.FindEntry(ctx, util.NewFullPath(req.Directory, req.Name))
 	if err == filer_pb.ErrNotFound {
 		return &filer_pb.LookupDirectoryEntryResponse{}, err
 	}
@@ -280,7 +280,7 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 	glog.V(4).Infof("DeleteEntry %v", req)
 
-	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures)
+	err = fs.filer.DeleteEntryMetaAndData(ctx, util.NewFullPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures)
 	resp = &filer_pb.DeleteEntryResponse{}
 	if err != nil && err != filer_pb.ErrNotFound {
 		resp.Error = err.Error()

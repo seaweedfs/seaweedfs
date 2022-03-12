@@ -21,7 +21,7 @@ import (
 func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
 
 	// load all mappings
-	mappingEntry, err := fs.filer.FindEntry(ctx, util.JoinPath(filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE))
+	mappingEntry, err := fs.filer.FindEntry(ctx, util.NewFullPath(filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE))
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +43,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 	}
 
 	// find storage configuration
-	storageConfEntry, err := fs.filer.FindEntry(ctx, util.JoinPath(filer.DirectoryEtcRemote, remoteStorageMountedLocation.Name+filer.REMOTE_STORAGE_CONF_SUFFIX))
+	storageConfEntry, err := fs.filer.FindEntry(ctx, util.NewFullPath(filer.DirectoryEtcRemote, remoteStorageMountedLocation.Name+filer.REMOTE_STORAGE_CONF_SUFFIX))
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +53,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 	}
 
 	// find the entry
-	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
+	entry, err := fs.filer.FindEntry(ctx, util.NewFullPath(req.Directory, req.Name))
 	if err == filer_pb.ErrNotFound {
 		return nil, err
 	}
