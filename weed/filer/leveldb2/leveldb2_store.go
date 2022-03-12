@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -81,7 +82,16 @@ func (store *LevelDB2Store) RollbackTransaction(ctx context.Context) error {
 
 func (store *LevelDB2Store) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 	dir, name := entry.DirAndName()
-	key, partitionId := genKey(dir, name, store.dbCount)
+	var (
+		key         []byte
+		partitionId int
+	)
+
+	if entry.Version == 0 {
+		key, partitionId = genKey(dir, name, store.dbCount)
+	} else {
+		key, partitionId = genVersionedKey(dir, name, entry.Version, store.dbCount)
+	}
 
 	value, err := entry.EncodeAttributesAndChunks()
 	if err != nil {
@@ -134,7 +144,29 @@ func (store *LevelDB2Store) FindEntry(ctx context.Context, fullpath weed_util.Fu
 }
 
 func (store *LevelDB2Store) FindVersionedEntry(ctx context.Context, fullpath weed_util.FullPath, version uint64) (entry *filer.Entry, err error) {
-	return store.FindEntry(ctx, fullpath)
+	dir, name := fullpath.DirAndName()
+	key, partitionId := genVersionedKey(dir, name, version, store.dbCount)
+
+	data, err := store.dbs[partitionId].Get(key, nil)
+
+	if err == leveldb.ErrNotFound {
+		return nil, filer_pb.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get %s : %v", fullpath, err)
+	}
+
+	entry = &filer.Entry{
+		FullPath: fullpath,
+	}
+	err = entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(data))
+	if err != nil {
+		return entry, fmt.Errorf("decode %s : %v", entry.FullPath, err)
+	}
+
+	// println("read", entry.FullPath, "chunks", len(entry.Chunks), "data", len(data), string(data))
+
+	return entry, nil
 }
 
 func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
@@ -150,7 +182,15 @@ func (store *LevelDB2Store) DeleteEntry(ctx context.Context, fullpath weed_util.
 }
 
 func (store *LevelDB2Store) DeleteVersionedEntry(ctx context.Context, fullpath weed_util.FullPath, version uint64) (err error) {
-	return store.DeleteEntry(ctx, fullpath)
+	dir, name := fullpath.DirAndName()
+	key, partitionId := genVersionedKey(dir, name, version, store.dbCount)
+
+	err = store.dbs[partitionId].Delete(key, nil)
+	if err != nil {
+		return fmt.Errorf("delete %s : %v", fullpath, err)
+	}
+
+	return nil
 }
 
 func (store *LevelDB2Store) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
@@ -233,6 +273,17 @@ func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, di
 func genKey(dirPath, fileName string, dbCount int) (key []byte, partitionId int) {
 	key, partitionId = hashToBytes(dirPath, dbCount)
 	key = append(key, []byte(fileName)...)
+	return key, partitionId
+}
+
+func genVersionedKey(dirPath, fileName string, version uint64, dbCount int) (key []byte, partitionId int) {
+	key, partitionId = hashToBytes(dirPath, dbCount)
+	binaryVersion := make([]byte, 8)
+
+	binary.LittleEndian.PutUint64(binaryVersion, version)
+	key = append(key, []byte(fileName)...)
+	key = append(key, binaryVersion...)
+
 	return key, partitionId
 }
 

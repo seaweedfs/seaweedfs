@@ -49,6 +49,19 @@ func bodyAllowedForStatus(status int) bool {
 	return true
 }
 
+func getContentVersion(r *http.Request) (version uint64, versionStr string, err error) {
+	versionStr = r.Header.Get("Content-Version")
+	if versionStr == "" {
+		versionStr = "0"
+	}
+	version, err = strconv.ParseUint(versionStr, 10, 32)
+	if err != nil {
+		glog.Errorf("Invalid version format: %s, use 0 by default", versionStr)
+		version = 0
+	}
+	return
+}
+
 func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) (err error) {
 	if !bodyAllowedForStatus(httpStatus) {
 		return

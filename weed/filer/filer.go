@@ -157,7 +157,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 		return nil
 	}
 
-	oldEntry, _ := f.FindEntry(ctx, entry.FullPath)
+	oldEntry, _ := f.FindEntry(ctx, entry.FullPath, entry.Version)
 
 	/*
 		if !hasWritePermission(lastDirectoryEntry, entry) {
@@ -212,7 +212,7 @@ func (f *Filer) ensureParentDirecotryEntry(ctx context.Context, entry *Entry, di
 
 	// check the store directly
 	glog.V(4).Infof("find uncached directory: %s", dirPath)
-	dirEntry, _ := f.FindEntry(ctx, util.FullPath(dirPath))
+	dirEntry, _ := f.FindEntry(ctx, util.FullPath(dirPath), 0) //TODO Version
 
 	// no such existing directory
 	if dirEntry == nil {
@@ -243,7 +243,7 @@ func (f *Filer) ensureParentDirecotryEntry(ctx context.Context, entry *Entry, di
 		glog.V(2).Infof("create directory: %s %v", dirPath, dirEntry.Mode)
 		mkdirErr := f.Store.InsertEntry(ctx, dirEntry)
 		if mkdirErr != nil {
-			if _, err := f.FindEntry(ctx, util.FullPath(dirPath)); err == filer_pb.ErrNotFound {
+			if _, err := f.FindEntry(ctx, util.FullPath(dirPath), 0); err == filer_pb.ErrNotFound { //TODO Version
 				glog.V(3).Infof("mkdir %s: %v", dirPath, mkdirErr)
 				return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
 			}
@@ -288,12 +288,16 @@ var (
 	}
 )
 
-func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, err error) {
+func (f *Filer) FindEntry(ctx context.Context, p util.FullPath, v uint64) (entry *Entry, err error) {
 
 	if string(p) == "/" {
 		return Root, nil
 	}
-	entry, err = f.Store.FindEntry(ctx, p)
+	if v == 0 {
+		entry, err = f.Store.FindEntry(ctx, p)
+	} else {
+		entry, err = f.Store.FindVersionedEntry(ctx, p, v)
+	}
 	if entry != nil && entry.TtlSec > 0 {
 		if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
 			f.Store.DeleteOneEntry(ctx, entry)

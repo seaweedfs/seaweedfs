@@ -21,7 +21,11 @@ func (fs *FilerServer) PutTaggingHandler(w http.ResponseWriter, r *http.Request)
 		path = path[:len(path)-1]
 	}
 
-	existingEntry, err := fs.filer.FindEntry(ctx, util.FullPath(path))
+	//TODO Version
+	//version, versionStr, err := getContentVersion(r)
+	//w.Header().Set("Content-Version", versionStr)
+
+	existingEntry, err := fs.filer.FindEntry(ctx, util.FullPath(path), 0) //TODO Version
 	if err != nil {
 		writeJsonError(w, r, http.StatusNotFound, err)
 		return
@@ -64,7 +68,11 @@ func (fs *FilerServer) DeleteTaggingHandler(w http.ResponseWriter, r *http.Reque
 		path = path[:len(path)-1]
 	}
 
-	existingEntry, err := fs.filer.FindEntry(ctx, util.FullPath(path))
+	//TODO Version
+	//version, versionStr, err := getContentVersion(r)
+	//w.Header().Set("Content-Version", versionStr)
+
+	existingEntry, err := fs.filer.FindEntry(ctx, util.FullPath(path), 0) //TODO Version
 	if err != nil {
 		writeJsonError(w, r, http.StatusNotFound, err)
 		return

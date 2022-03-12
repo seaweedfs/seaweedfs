@@ -115,6 +115,7 @@ message Entry {
 
     RemoteEntry remote_entry = 10;
     int64 quota = 11; // for bucket only. Positive/Negative means enabled/disabled.
+    uint64 version = 12;
 }
 
 message FullEntry {
@@ -201,6 +202,7 @@ message AppendToEntryRequest {
     string directory = 1;
     string entry_name = 2;
     repeated FileChunk chunks = 3;
+    uint64 version = 4;
 }
 message AppendToEntryResponse {
 }
@@ -214,6 +216,7 @@ message DeleteEntryRequest {
     bool ignore_recursive_error = 6;
     bool is_from_other_cluster = 7;
     repeated int32 signatures = 8;
+    uint64 version = 9;
 }
 
 message DeleteEntryResponse {
@@ -226,6 +229,7 @@ message AtomicRenameEntryRequest {
     string new_directory = 3;
     string new_name = 4;
     repeated int32 signatures = 5;
+    uint64 version = 6;
 }
 
 message AtomicRenameEntryResponse {
@@ -415,6 +419,7 @@ message FilerConf {
 message CacheRemoteObjectToLocalClusterRequest {
     string directory = 1;
     string name = 2;
+    uint64 version = 3;
 }
 message CacheRemoteObjectToLocalClusterResponse {
     Entry entry = 1;

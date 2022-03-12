@@ -258,7 +258,11 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 	}
 
 	// glog.V(4).Infof("DeleteOneEntry %s", existingEntry.FullPath)
-	return actualStore.DeleteEntry(ctx, existingEntry.FullPath)
+	if existingEntry.Version == 0 {
+		return actualStore.DeleteEntry(ctx, existingEntry.FullPath)
+	} else {
+		return actualStore.DeleteVersionedEntry(ctx, existingEntry.FullPath, existingEntry.Version)
+	}
 }
 
 func (fsw *FilerStoreWrapper) DeleteOneEntrySkipHardlink(ctx context.Context, fullpath util.FullPath) (err error) {

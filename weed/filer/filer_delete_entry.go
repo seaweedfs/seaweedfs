@@ -16,12 +16,12 @@ const (
 type OnChunksFunc func([]*filer_pb.FileChunk) error
 type OnHardLinkIdsFunc func([]HardLinkId) error
 
-func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32) (err error) {
+func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, v uint64, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32) (err error) {
 	if p == "/" {
 		return nil
 	}
 
-	entry, findErr := f.FindEntry(ctx, p)
+	entry, findErr := f.FindEntry(ctx, p, v)
 	if findErr != nil {
 		return findErr
 	}

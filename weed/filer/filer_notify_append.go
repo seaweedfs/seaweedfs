@@ -20,7 +20,7 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 
 	// find out existing entry
 	fullpath := util.FullPath(targetFile)
-	entry, err := f.FindEntry(context.Background(), fullpath)
+	entry, err := f.FindEntry(context.Background(), fullpath, 0) //TODO Version
 	var offset int64 = 0
 	if err == filer_pb.ErrNotFound {
 		entry = &Entry{

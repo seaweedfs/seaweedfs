@@ -321,6 +321,7 @@ func (fs *WebDavFileSystem) Rename(ctx context.Context, oldName, newName string)
 			OldName:      oldBaseName,
 			NewDirectory: newDir,
 			NewName:      newBaseName,
+			//TODO Version
 		}
 
 		_, err := client.AtomicRenameEntry(ctx, request)
