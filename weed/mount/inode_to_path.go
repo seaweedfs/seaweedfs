@@ -4,7 +4,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"os"
 	"sync"
 )
 
@@ -31,13 +30,13 @@ func NewInodeToPath(root util.FullPath) *InodeToPath {
 	return t
 }
 
-func (i *InodeToPath) Lookup(path util.FullPath, mode os.FileMode, isHardlink bool, possibleInode uint64, isLookup bool) uint64 {
+func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory bool, isHardlink bool, possibleInode uint64, isLookup bool) uint64 {
 	i.Lock()
 	defer i.Unlock()
 	inode, found := i.path2inode[path]
 	if !found {
 		if possibleInode == 0 {
-			inode = path.AsInode(mode)
+			inode = path.AsInode(unixTime)
 		} else {
 			inode = possibleInode
 		}
@@ -55,22 +54,22 @@ func (i *InodeToPath) Lookup(path util.FullPath, mode os.FileMode, isHardlink bo
 		}
 	} else {
 		if !isLookup {
-			i.inode2path[inode] = &InodeEntry{path, 0, mode&os.ModeDir > 0, false}
+			i.inode2path[inode] = &InodeEntry{path, 0, isDirectory, false}
 		} else {
-			i.inode2path[inode] = &InodeEntry{path, 1, mode&os.ModeDir > 0, false}
+			i.inode2path[inode] = &InodeEntry{path, 1, isDirectory, false}
 		}
 	}
 
 	return inode
 }
 
-func (i *InodeToPath) AllocateInode(path util.FullPath, mode os.FileMode) uint64 {
+func (i *InodeToPath) AllocateInode(path util.FullPath, unixTime int64) uint64 {
 	if path == "/" {
 		return 1
 	}
 	i.Lock()
 	defer i.Unlock()
-	inode := path.AsInode(mode)
+	inode := path.AsInode(unixTime)
 	for _, found := i.inode2path[inode]; found; inode++ {
 		_, found = i.inode2path[inode]
 	}
