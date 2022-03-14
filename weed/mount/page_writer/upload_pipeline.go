@@ -55,7 +55,7 @@ func NewUploadPipeline(writers *util.LimitedConcurrentExecutor, chunkSize int64,
 	}
 }
 
-func (up *UploadPipeline) SaveDataAt(p []byte, off int64) (n int) {
+func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool) (n int) {
 	up.writableChunksLock.Lock()
 	defer up.writableChunksLock.Unlock()
 
@@ -63,13 +63,8 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64) (n int) {
 
 	pageChunk, found := up.writableChunks[logicChunkIndex]
 	if !found {
-		if atomic.LoadInt64(&memChunkCounter) > 4*int64(up.bufferChunkLimit) {
-			// if total number of chunks is over 4 times of per file buffer count limit
-			pageChunk = up.swapFile.NewTempFileChunk(logicChunkIndex)
-		} else if len(up.writableChunks) < up.bufferChunkLimit {
-			// if current file chunks is still under the per file buffer count limit
-			pageChunk = NewMemChunk(logicChunkIndex, up.ChunkSize)
-		} else {
+		if len(up.writableChunks) > up.bufferChunkLimit {
+			// if current file chunks is over the per file buffer count limit
 			fullestChunkIndex, fullness := LogicChunkIndex(-1), int64(0)
 			for lci, mc := range up.writableChunks {
 				chunkFullness := mc.WrittenSize()
@@ -81,7 +76,13 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64) (n int) {
 			up.moveToSealed(up.writableChunks[fullestChunkIndex], fullestChunkIndex)
 			delete(up.writableChunks, fullestChunkIndex)
 			// fmt.Printf("flush chunk %d with %d bytes written\n", logicChunkIndex, fullness)
+		}
+		if isSequential &&
+			len(up.writableChunks) < up.bufferChunkLimit &&
+			atomic.LoadInt64(&memChunkCounter) < 4*int64(up.bufferChunkLimit) {
 			pageChunk = NewMemChunk(logicChunkIndex, up.ChunkSize)
+		} else {
+			pageChunk = up.swapFile.NewTempFileChunk(logicChunkIndex)
 		}
 		up.writableChunks[logicChunkIndex] = pageChunk
 	}

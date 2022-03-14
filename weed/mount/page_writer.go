@@ -6,10 +6,11 @@ import (
 )
 
 type PageWriter struct {
-	fh          *FileHandle
-	collection  string
-	replication string
-	chunkSize   int64
+	fh            *FileHandle
+	collection    string
+	replication   string
+	chunkSize     int64
+	writerPattern *WriterPattern
 
 	randomWriter page_writer.DirtyPages
 }
@@ -20,28 +21,29 @@ var (
 
 func newPageWriter(fh *FileHandle, chunkSize int64) *PageWriter {
 	pw := &PageWriter{
-		fh:           fh,
-		chunkSize:    chunkSize,
-		randomWriter: newMemoryChunkPages(fh, chunkSize),
+		fh:            fh,
+		chunkSize:     chunkSize,
+		writerPattern: NewWriterPattern(chunkSize),
+		randomWriter:  newMemoryChunkPages(fh, chunkSize),
 	}
 	return pw
 }
 
-func (pw *PageWriter) AddPage(offset int64, data []byte) {
+func (pw *PageWriter) AddPage(offset int64, data []byte, isSequentail bool) {
 
 	glog.V(4).Infof("%v AddPage [%d, %d)", pw.fh.fh, offset, offset+int64(len(data)))
 
 	chunkIndex := offset / pw.chunkSize
 	for i := chunkIndex; len(data) > 0; i++ {
 		writeSize := min(int64(len(data)), (i+1)*pw.chunkSize-offset)
-		pw.addToOneChunk(i, offset, data[:writeSize])
+		pw.addToOneChunk(i, offset, data[:writeSize], isSequentail)
 		offset += writeSize
 		data = data[writeSize:]
 	}
 }
 
-func (pw *PageWriter) addToOneChunk(chunkIndex, offset int64, data []byte) {
-	pw.randomWriter.AddPage(offset, data)
+func (pw *PageWriter) addToOneChunk(chunkIndex, offset int64, data []byte, isSequential bool) {
+	pw.randomWriter.AddPage(offset, data, isSequential)
 }
 
 func (pw *PageWriter) FlushData() error {
