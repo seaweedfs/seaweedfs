@@ -83,7 +83,13 @@ key = ""
 #     this does not work with other clients, e.g., "weed filer|mount" etc, yet.
 [https.client]
 enabled = true
+
 [https.volume]
 cert = ""
 key = ""
+ca = ""
 
+[https.master]
+cert = ""
+key = ""
+ca = ""
