@@ -39,8 +39,14 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		stats.ReadRequest()
 		vs.inFlightDownloadDataLimitCond.L.Lock()
 		for vs.concurrentDownloadLimit != 0 && atomic.LoadInt64(&vs.inFlightDownloadDataSize) > vs.concurrentDownloadLimit {
-			glog.V(4).Infof("wait because inflight download data %d > %d", vs.inFlightDownloadDataSize, vs.concurrentDownloadLimit)
-			vs.inFlightDownloadDataLimitCond.Wait()
+			select {
+			case <-r.Context().Done():
+				glog.V(4).Infof("request cancelled from %s: %v", r.RemoteAddr, r.Context().Err())
+				return
+			default:
+				glog.V(4).Infof("wait because inflight download data %d > %d", vs.inFlightDownloadDataSize, vs.concurrentDownloadLimit)
+				vs.inFlightDownloadDataLimitCond.Wait()
+			}
 		}
 		vs.inFlightDownloadDataLimitCond.L.Unlock()
 		vs.GetOrHeadHandler(w, r)
