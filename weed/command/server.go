@@ -195,6 +195,7 @@ func runServer(cmd *Command, args []string) bool {
 	filerOptions.ip = serverIp
 	filerOptions.bindIp = serverBindIp
 	s3Options.bindIp = serverBindIp
+	iamOptions.ip = serverBindIp
 	iamOptions.masters = masterOptions.peers
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp

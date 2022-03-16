@@ -119,14 +119,14 @@ func startMasterFollower(masterOptions MasterOptions) {
 	ms := weed_server.NewMasterServer(r, option, masters)
 	listeningAddress := util.JoinHostPort(*masterOptions.ipBind, *masterOptions.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
-	masterListener, e := util.NewListener(listeningAddress, 0)
+	masterListener, masterLocalListner, e := util.NewIpAndLocalListeners(*masterOptions.ipBind, *masterOptions.port, 0)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
 	}
 
 	// starting grpc server
 	grpcPort := *masterOptions.portGrpc
-	grpcL, err := util.NewListener(util.JoinHostPort(*masterOptions.ipBind, grpcPort), 0)
+	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*masterOptions.ipBind, grpcPort, 0)
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}
@@ -134,12 +134,18 @@ func startMasterFollower(masterOptions MasterOptions) {
 	master_pb.RegisterSeaweedServer(grpcS, ms)
 	reflection.Register(grpcS)
 	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOptions.ip, grpcPort)
+	if grpcLocalL != nil {
+		go grpcS.Serve(grpcLocalL)
+	}
 	go grpcS.Serve(grpcL)
 
 	go ms.MasterClient.KeepConnectedToMaster()
 
 	// start http server
 	httpS := &http.Server{Handler: r}
+	if masterLocalListner != nil {
+		go httpS.Serve(masterLocalListner)
+	}
 	go httpS.Serve(masterListener)
 
 	select {}
