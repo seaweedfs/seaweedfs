@@ -219,7 +219,7 @@ func (fo *FilerOptions) startFiler() {
 	if *fo.publicPort != 0 {
 		publicListeningAddress := util.JoinHostPort(*fo.bindIp, *fo.publicPort)
 		glog.V(0).Infoln("Start Seaweed filer server", util.Version(), "public at", publicListeningAddress)
-		publicListener, e := util.NewListener(publicListeningAddress, 0)
+		publicListener, localPublicListner, e := util.NewIpAndLocalListeners(*fo.bindIp, *fo.publicPort, 0)
 		if e != nil {
 			glog.Fatalf("Filer server public listener error on port %d:%v", *fo.publicPort, e)
 		}
@@ -228,11 +228,18 @@ func (fo *FilerOptions) startFiler() {
 				glog.Fatalf("Volume server fail to serve public: %v", e)
 			}
 		}()
+		if localPublicListner != nil {
+			go func() {
+				if e := http.Serve(localPublicListner, publicVolumeMux); e != nil {
+					glog.Errorf("Volume server fail to serve public: %v", e)
+				}
+			}()
+		}
 	}
 
 	glog.V(0).Infof("Start Seaweed Filer %s at %s:%d", util.Version(), *fo.ip, *fo.port)
-	filerListener, e := util.NewListener(
-		util.JoinHostPort(*fo.bindIp, *fo.port),
+	filerListener, filerLocalListener, e := util.NewIpAndLocalListeners(
+		*fo.bindIp, *fo.port,
 		time.Duration(10)*time.Second,
 	)
 	if e != nil {
@@ -253,19 +260,29 @@ func (fo *FilerOptions) startFiler() {
 
 	// starting grpc server
 	grpcPort := *fo.portGrpc
-	grpcL, err := util.NewListener(util.JoinHostPort(*fo.bindIp, grpcPort), 0)
+	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*fo.bindIp, grpcPort, 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
 	reflection.Register(grpcS)
+	if grpcLocalL != nil {
+		go grpcS.Serve(grpcLocalL)
+	}
 	go grpcS.Serve(grpcL)
 
 	httpS := &http.Server{Handler: defaultMux}
 	go func() {
 		httpS.Serve(filerSocketListener)
 	}()
+	if filerLocalListener != nil {
+		go func() {
+			if err := httpS.Serve(filerLocalListener); err != nil {
+				glog.Errorf("Filer Fail to serve: %v", e)
+			}
+		}()
+	}
 	if err := httpS.Serve(filerListener); err != nil {
 		glog.Fatalf("Filer Fail to serve: %v", e)
 	}

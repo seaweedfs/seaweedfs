@@ -18,6 +18,7 @@ type SwapFile struct {
 	file                    *os.File
 	logicToActualChunkIndex map[LogicChunkIndex]ActualChunkIndex
 	chunkSize               int64
+	freeActualChunkList     []ActualChunkIndex
 }
 
 type SwapFileChunk struct {
@@ -53,7 +54,12 @@ func (sf *SwapFile) NewTempFileChunk(logicChunkIndex LogicChunkIndex) (tc *SwapF
 	}
 	actualChunkIndex, found := sf.logicToActualChunkIndex[logicChunkIndex]
 	if !found {
-		actualChunkIndex = ActualChunkIndex(len(sf.logicToActualChunkIndex))
+		if len(sf.freeActualChunkList) > 0 {
+			actualChunkIndex = sf.freeActualChunkList[0]
+			sf.freeActualChunkList = sf.freeActualChunkList[1:]
+		} else {
+			actualChunkIndex = ActualChunkIndex(len(sf.logicToActualChunkIndex))
+		}
 		sf.logicToActualChunkIndex[logicChunkIndex] = actualChunkIndex
 	}
 
@@ -66,6 +72,8 @@ func (sf *SwapFile) NewTempFileChunk(logicChunkIndex LogicChunkIndex) (tc *SwapF
 }
 
 func (sc *SwapFileChunk) FreeResource() {
+	sc.swapfile.freeActualChunkList = append(sc.swapfile.freeActualChunkList, sc.actualChunkIndex)
+	delete(sc.swapfile.logicToActualChunkIndex, sc.logicChunkIndex)
 }
 
 func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64) (n int) {

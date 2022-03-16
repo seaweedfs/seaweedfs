@@ -95,7 +95,7 @@ func (msgBrokerOpt *MessageBrokerOptions) startQueueServer() bool {
 	}, grpcDialOption)
 
 	// start grpc listener
-	grpcL, err := util.NewListener(util.JoinHostPort("", *msgBrokerOpt.port), 0)
+	grpcL, _, err := util.NewIpAndLocalListeners("", *msgBrokerOpt.port, 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", *msgBrokerOpt.port, err)
 	}

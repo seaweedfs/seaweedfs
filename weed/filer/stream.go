@@ -62,7 +62,7 @@ func NewFileReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry) io.R
 
 func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
 
-	glog.V(9).Infof("start to stream content for chunks: %+v\n", chunks)
+	glog.V(4).Infof("start to stream content for chunks: %+v", chunks)
 	chunkViews := ViewFromChunks(masterClient.GetLookupFileIdFunction(), chunks, offset, size)
 
 	fileId2Url := make(map[string][]string)
@@ -104,10 +104,12 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writ
 		}
 		stats.FilerRequestCounter.WithLabelValues("chunkDownload").Inc()
 	}
-	glog.V(4).Infof("zero [%d,%d)", offset, offset+remaining)
-	err := writeZero(writer, remaining)
-	if err != nil {
-		return fmt.Errorf("write zero [%d,%d)", offset, offset+remaining)
+	if remaining > 0 {
+		glog.V(4).Infof("zero [%d,%d)", offset, offset+remaining)
+		err := writeZero(writer, remaining)
+		if err != nil {
+			return fmt.Errorf("write zero [%d,%d)", offset, offset+remaining)
+		}
 	}
 
 	return nil

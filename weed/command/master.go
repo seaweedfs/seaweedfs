@@ -134,7 +134,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), peers)
 	listeningAddress := util.JoinHostPort(*masterOption.ipBind, *masterOption.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
-	masterListener, e := util.NewListener(listeningAddress, 0)
+	masterListener, masterLocalListner, e := util.NewIpAndLocalListeners(*masterOption.ipBind, *masterOption.port, 0)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
 	}
@@ -157,7 +157,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
 	// starting grpc server
 	grpcPort := *masterOption.portGrpc
-	grpcL, err := util.NewListener(util.JoinHostPort(*masterOption.ipBind, grpcPort), 0)
+	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*masterOption.ipBind, grpcPort, 0)
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}
@@ -166,6 +166,9 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	protobuf.RegisterRaftServer(grpcS, raftServer)
 	reflection.Register(grpcS)
 	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOption.ipBind, grpcPort)
+	if grpcLocalL != nil {
+		go grpcS.Serve(grpcLocalL)
+	}
 	go grpcS.Serve(grpcL)
 
 	go func() {
@@ -181,6 +184,9 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	// start http server
 	httpS := &http.Server{Handler: r}
+	if masterLocalListner != nil {
+		go httpS.Serve(masterLocalListner)
+	}
 	go httpS.Serve(masterListener)
 
 	select {}

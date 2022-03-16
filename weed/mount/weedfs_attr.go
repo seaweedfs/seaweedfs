@@ -79,14 +79,23 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	if mode, ok := input.GetMode(); ok {
 		// glog.V(4).Infof("setAttr mode %o", mode)
 		entry.Attributes.FileMode = chmod(entry.Attributes.FileMode, mode)
+		if input.NodeId == 1 {
+			wfs.option.MountMode = os.FileMode(chmod(uint32(wfs.option.MountMode), mode))
+		}
 	}
 
 	if uid, ok := input.GetUID(); ok {
 		entry.Attributes.Uid = uid
+		if input.NodeId == 1 {
+			wfs.option.MountUid = uid
+		}
 	}
 
 	if gid, ok := input.GetGID(); ok {
 		entry.Attributes.Gid = gid
+		if input.NodeId == 1 {
+			wfs.option.MountGid = gid
+		}
 	}
 
 	if mtime, ok := input.GetMTime(); ok {

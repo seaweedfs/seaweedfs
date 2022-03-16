@@ -31,7 +31,7 @@ func writeRange(uploadPipeline *UploadPipeline, startOff, stopOff int64) {
 	p := make([]byte, 4)
 	for i := startOff / 4; i < stopOff/4; i += 4 {
 		util.Uint32toBytes(p, uint32(i))
-		uploadPipeline.SaveDataAt(p, i)
+		uploadPipeline.SaveDataAt(p, i, false)
 	}
 }
 
