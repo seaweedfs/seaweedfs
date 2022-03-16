@@ -2,7 +2,7 @@ package util
 
 import (
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 )
 
@@ -18,7 +18,7 @@ func NewFullPath(name ...string) FullPath {
 }
 
 func (fp FullPath) DirAndName() (string, string) {
-	dir, name := filepath.Split(clearName(string(fp)))
+	dir, name := path.Split(clearName(string(fp)))
 	if dir == "/" {
 		return dir, name
 	}
@@ -26,26 +26,6 @@ func (fp FullPath) DirAndName() (string, string) {
 		return "/", ""
 	}
 	return dir[:len(dir)-1], name
-}
-
-func (fp FullPath) ToDir() FullPath {
-	return fp.Child("./")
-}
-
-func (fp FullPath) ToFile() FullPath {
-	file := fp.Child(".")
-	if string(file) == "/" {
-		return "."
-	}
-	return file
-}
-
-func (fp FullPath) IsFile() bool {
-	return !fp.IsDir()
-}
-
-func (fp FullPath) IsDir() bool {
-	return strings.HasSuffix(string(fp), "/")
 }
 
 func (fp FullPath) Name() string {
@@ -85,19 +65,18 @@ func (fp FullPath) AsInode(fileMode os.FileMode) uint64 {
 }
 
 func Join(names ...string) string {
-	newName := clearName(filepath.ToSlash(filepath.Join(names...)))
-	if newName != "/" && strings.HasSuffix(filepath.ToSlash(strings.Join(names, "")), "/") {
-		newName += "/"
-	}
-	return newName
+	return clearName(path.Join(names...))
 }
 
 func clearName(name string) string {
 	name = strings.ToValidUTF8(name, "?")
-	slashed := strings.HasSuffix(name, "/")
-	name = filepath.Clean(name)
-	if name != "/" && slashed {
-		name += "/"
+	name = strings.ReplaceAll(name, "\\", "/")
+	name = path.Clean(name)
+	if name == "." {
+		name = "/"
+	}
+	if !strings.HasPrefix(name, "/") {
+		name = "/" + name
 	}
 	return name
 }
