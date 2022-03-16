@@ -11,6 +11,7 @@ import (
 	"io"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/textproto"
 	"path/filepath"
@@ -65,6 +66,10 @@ var (
 
 func init() {
 	HttpClient = &http.Client{Transport: &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 10 * time.Second,
+		}).DialContext,
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
 	}}
@@ -261,6 +266,7 @@ func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize
 	if post_err != nil {
 		if strings.Contains(post_err.Error(), "connection reset by peer") ||
 			strings.Contains(post_err.Error(), "use of closed network connection") {
+			glog.V(1).Infof("repeat error upload request %s: %v", option.UploadUrl, postErr)
 			resp, post_err = HttpClient.Do(req)
 		}
 	}
