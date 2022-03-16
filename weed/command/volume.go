@@ -2,7 +2,6 @@ package command
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"net/http"
 	httppprof "net/http/pprof"
 	"os"
@@ -10,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
@@ -24,7 +25,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/server"
+	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -371,7 +372,14 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 		StopTimeout: 30 * time.Second,
 		CertFile:    certFile,
 		KeyFile:     keyFile}
-	clusterHttpServer := httpDown.Serve(&http.Server{Handler: handler}, listener)
+	httpS := &http.Server{Handler: handler}
+
+	if viper.GetString("https.volume.ca") != "" {
+		clientCertFile := viper.GetString("https.volume.ca")
+		httpS.TLSConfig = security.LoadClientTLSHTTP(clientCertFile)
+	}
+
+	clusterHttpServer := httpDown.Serve(httpS, listener)
 	go func() {
 		if e := clusterHttpServer.Wait(); e != nil {
 			glog.Fatalf("Volume server fail to serve: %v", e)
