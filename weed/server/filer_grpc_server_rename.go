@@ -173,7 +173,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		Remote:          entry.Remote,
 		Quota:           entry.Quota,
 	}
-	if createErr := fs.filer.CreateEntry(ctx, newEntry, false, false, signatures); createErr != nil {
+	if createErr := fs.filer.CreateEntry(ctx, newEntry, false, false, signatures, false); createErr != nil {
 		return createErr
 	}
 	if stream != nil {
