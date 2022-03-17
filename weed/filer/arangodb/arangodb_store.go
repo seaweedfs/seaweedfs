@@ -263,16 +263,18 @@ remove d in files`, map[string]interface{}{"dir": dir})
 	return nil
 }
 
+//TODO: use fulltext index
 func (store *ArangodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	return lastFileName, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
 func (store *ArangodbStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	eq := ""
-	if !includeStartFile {
-		eq = "filter d.name != \"" + startFileName + "\""
+	if includeStartFile {
+		eq = "filter d.name >= \"" + startFileName + "\""
+	} else {
+		eq = "filter d.name > \"" + startFileName + "\""
 	}
-	fmt.Println(dirPath, startFileName, includeStartFile)
 	query := fmt.Sprintf(`
 for d in files
 filter d.directory == "%s"
