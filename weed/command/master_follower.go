@@ -3,17 +3,18 @@ package command
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"time"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
+	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc/reflection"
-	"net/http"
-	"time"
 )
 
 var (
@@ -45,13 +46,13 @@ var cmdMasterFollower = &Command{
 	Short:     "start a master follower",
 	Long: `start a master follower to provide volume=>location mapping service
 
-	The master follower does not participate in master election. 
+	The master follower does not participate in master election.
 	It just follow the existing masters, and listen for any volume location changes.
 
 	In most cases, the master follower is not needed. In big data centers with thousands of volume
 	servers. In theory, the master may have trouble to keep up with the write requests and read requests.
 
-	The master follower can relieve the master from from read requests, which only needs to 
+	The master follower can relieve the master from from read requests, which only needs to
 	lookup a fileId or volumeId.
 
 	The master follower currently can handle fileId lookup requests:
@@ -112,7 +113,7 @@ func startMasterFollower(masterOptions MasterOptions) {
 	option.IsFollower = true
 
 	if *masterOptions.ipBind == "" {
-		*masterOptions.ipBind = "localhost"
+		*masterOptions.ipBind = *masterOptions.ip
 	}
 
 	r := mux.NewRouter()
