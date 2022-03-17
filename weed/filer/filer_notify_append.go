@@ -43,7 +43,7 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 	entry.Chunks = append(entry.Chunks, uploadResult.ToPbFileChunk(assignResult.Fid, offset))
 
 	// update the entry
-	err = f.CreateEntry(context.Background(), entry, false, false, nil)
+	err = f.CreateEntry(context.Background(), entry, false, false, nil, false)
 
 	return err
 }

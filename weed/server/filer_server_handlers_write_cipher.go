@@ -93,7 +93,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 		Size: int64(pu.OriginalDataSize),
 	}
 
-	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil); dbErr != nil {
+	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil, false); dbErr != nil {
 		fs.filer.DeleteChunks(entry.Chunks)
 		err = dbErr
 		filerResult.Error = dbErr.Error()

@@ -181,6 +181,7 @@ message CreateEntryRequest {
     bool o_excl = 3;
     bool is_from_other_cluster = 4;
     repeated int32 signatures = 5;
+    bool skip_check_parent_directory = 6;
 }
 
 message CreateEntryResponse {
