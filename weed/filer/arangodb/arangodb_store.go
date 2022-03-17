@@ -268,22 +268,19 @@ func (store *ArangodbStore) ListDirectoryPrefixedEntries(ctx context.Context, di
 }
 
 func (store *ArangodbStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
-	dir, name := dirPath.DirAndName()
 	eq := ""
-	if includeStartFile {
-		eq = "="
+	if !includeStartFile {
+		eq = "filter d.name != \"" + startFileName + "\""
 	}
-	_ = eq
-	_ = name
-
-	cur, err := store.database.Query(ctx, fmt.Sprintf(`
+	fmt.Println(dirPath, startFileName, includeStartFile)
+	query := fmt.Sprintf(`
 for d in files
-filter d.directory == @dir
+filter d.directory == "%s"
 sort d.name desc
+%s
 limit %d
-return d`, limit), map[string]interface{}{
-		"dir": dir,
-	})
+return d`, string(dirPath), eq, limit)
+	cur, err := store.database.Query(ctx, query, nil)
 	if err != nil {
 		return lastFileName, fmt.Errorf("failed to list directory entries: find error: %w", err)
 	}
