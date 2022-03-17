@@ -106,11 +106,12 @@ func (store *ArangodbStore) connection(uris []string, user string, pass string) 
 		&driver.EnsurePersistentIndexOptions{Name: "IDX_directory"}); err != nil {
 		return err
 	}
-
-	if _, _, err = store.collection.EnsureFullTextIndex(ctx, []string{"directory"},
-		&driver.EnsureFullTextIndexOptions{Name: "IDX_FULLTEXT_directory", MinLength: 1}); err != nil {
-		return err
-	}
+	// fulltext index not required since no prefix search
+	// user should just make one themselves if they intend on using it
+	//	if _, _, err = store.collection.EnsureFullTextIndex(ctx, []string{"directory"},
+	//		&driver.EnsureFullTextIndexOptions{Name: "IDX_FULLTEXT_directory", MinLength: 1}); err != nil {
+	//		return err
+	//	}
 
 	if _, _, err = store.collection.EnsurePersistentIndex(ctx, []string{"name"}, &driver.EnsurePersistentIndexOptions{
 		Name: "IDX_name",
@@ -267,6 +268,8 @@ func (store *ArangodbStore) ListDirectoryPrefixedEntries(ctx context.Context, di
 	return lastFileName, filer.ErrUnsupportedListDirectoryPrefixed
 }
 
+//TODO: i must be misunderstanding what this function is supposed to do
+//so figure it out is the todo, i guess lol - aaaaa
 //func (store *ArangodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 //	eq := ""
 //	if includeStartFile {
@@ -357,6 +360,7 @@ return d`, string(dirPath), eq, limit)
 func (store *ArangodbStore) Shutdown() {
 }
 
+//convert a string into arango-key safe hex bytes hash
 func hashString(dir string) string {
 	h := md5.New()
 	io.WriteString(h, dir)
