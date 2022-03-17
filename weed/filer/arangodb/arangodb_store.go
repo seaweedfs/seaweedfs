@@ -106,8 +106,8 @@ func (store *ArangodbStore) connection(uris []string, user string, pass string) 
 		&driver.EnsurePersistentIndexOptions{Name: "IDX_directory"}); err != nil {
 		return err
 	}
-	// fulltext index not required since no prefix search
-	// user should just make one themselves if they intend on using it
+	//  fulltext index not required since no prefix search
+	//  might change
 	//	if _, _, err = store.collection.EnsureFullTextIndex(ctx, []string{"directory"},
 	//		&driver.EnsureFullTextIndexOptions{Name: "IDX_FULLTEXT_directory", MinLength: 1}); err != nil {
 	//		return err
