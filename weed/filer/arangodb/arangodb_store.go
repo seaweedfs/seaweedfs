@@ -107,7 +107,7 @@ func (store *ArangodbStore) connection(uris []string, user string, pass string) 
 		return err
 	}
 
-	if _, _, err = store.collection.EnsureFullTextIndex(ctx, []string{"directory_fulltext"},
+	if _, _, err = store.collection.EnsureFullTextIndex(ctx, []string{"directory"},
 		&driver.EnsureFullTextIndexOptions{Name: "IDX_FULLTEXT_directory", MinLength: 1}); err != nil {
 		return err
 	}
@@ -263,10 +263,52 @@ remove d in files`, map[string]interface{}{"dir": dir})
 	return nil
 }
 
-//TODO: use fulltext index
 func (store *ArangodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	return lastFileName, filer.ErrUnsupportedListDirectoryPrefixed
 }
+
+//func (store *ArangodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+//	eq := ""
+//	if includeStartFile {
+//		eq = "filter d.name >= \"" + startFileName + "\""
+//	} else {
+//		eq = "filter d.name > \"" + startFileName + "\""
+//	}
+//	query := fmt.Sprintf(`
+//for d in fulltext(files,"directory","prefix:%s")
+//sort d.name desc
+//%s
+//limit %d
+//return d`, string(dirPath), eq, limit)
+//	cur, err := store.database.Query(ctx, query, nil)
+//	if err != nil {
+//		return lastFileName, fmt.Errorf("failed to list directory entries: find error: %w", err)
+//	}
+//	defer cur.Close()
+//	for cur.HasMore() {
+//		var data Model
+//		_, err = cur.ReadDocument(ctx, &data)
+//		if err != nil {
+//			break
+//		}
+//		entry := &filer.Entry{
+//			FullPath: util.NewFullPath(data.Directory, data.Name),
+//		}
+//		lastFileName = data.Name
+//		converted := arrayToBytes(data.Meta)
+//		if decodeErr := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(converted)); decodeErr != nil {
+//			err = decodeErr
+//			glog.V(0).Infof("list %s : %v", entry.FullPath, err)
+//			break
+//		}
+//
+//		if !eachEntryFunc(entry) {
+//			break
+//		}
+//
+//	}
+//	return lastFileName, err
+//}
 
 func (store *ArangodbStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	eq := ""
