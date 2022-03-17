@@ -148,7 +148,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	newEntry := filer.FromPbEntry(req.Directory, req.Entry)
 	newEntry.Chunks = chunks
 
-	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, true)
+	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory)
 
 	if createErr == nil {
 		fs.filer.DeleteChunks(garbage)
@@ -271,7 +271,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 		glog.V(0).Infof("MaybeManifestize: %v", err)
 	}
 
-	err = fs.filer.CreateEntry(context.Background(), entry, false, false, nil, true)
+	err = fs.filer.CreateEntry(context.Background(), entry, false, false, nil, false)
 
 	return &filer_pb.AppendToEntryResponse{}, err
 }

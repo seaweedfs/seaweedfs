@@ -151,7 +151,7 @@ func (f *Filer) RollbackTransaction(ctx context.Context) error {
 	return f.Store.RollbackTransaction(ctx)
 }
 
-func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFromOtherCluster bool, signatures []int32, needEnsureParentDir bool) error {
+func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFromOtherCluster bool, signatures []int32, skipCreateParentDir bool) error {
 
 	if string(entry.FullPath) == "/" {
 		return nil
@@ -169,7 +169,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 
 	if oldEntry == nil {
 
-		if needEnsureParentDir {
+		if !skipCreateParentDir {
 			dirParts := strings.Split(string(entry.FullPath), "/")
 			if err := f.ensureParentDirecotryEntry(ctx, entry, dirParts, len(dirParts)-1, isFromOtherCluster); err != nil {
 				return err
