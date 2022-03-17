@@ -131,7 +131,7 @@ func isAppend(r *http.Request) bool {
 }
 
 func skipCheckParentDirEntry(r *http.Request) bool {
-	return r.URL.Query().Get("skipCheckParentDir") != "true"
+	return r.URL.Query().Get("skipCheckParentDir") == "true"
 }
 
 func skipCheckExpiredEntry(r *http.Request) bool {
