@@ -75,6 +75,8 @@ com_crashlytics_export_strings.xml
 crashlytics.properties
 crashlytics-build.properties
 
+workspace/
+
 test_data
 build
 target

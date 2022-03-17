@@ -42,7 +42,7 @@ require (
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/go-zookeeper/zk v1.0.2 // indirect
 	github.com/gocql/gocql v0.0.0-20210707082121-9a3953d1826d
-	github.com/golang-jwt/jwt v3.2.1+incompatible
+	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.2
 	github.com/golang/snappy v0.0.4 // indirect
@@ -169,6 +169,8 @@ require (
 require (
 	cloud.google.com/go/kms v1.0.0 // indirect
 	github.com/DataDog/zstd v1.3.6-0.20190409195224-796139022798 // indirect
+	github.com/arangodb/go-driver v1.2.1 // indirect
+	github.com/arangodb/go-velocypack v0.0.0-20200318135517-5af53c29c67e // indirect
 	github.com/d4l3k/messagediff v1.2.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect

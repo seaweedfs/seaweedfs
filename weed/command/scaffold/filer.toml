@@ -285,6 +285,12 @@ healthcheck_enabled = false
 index.max_result_window = 10000
 
 
+[arangodb] # in development dont use it
+enabled = false
+arango_host=["http://localhost:8529"]
+arango_user=""
+arango_pass=""
+
 
 ##########################
 ##########################
