@@ -1,0 +1,10 @@
+tasks:
+  - init: go mod tidy
+  - name: redis
+    command: docker run -p 6379:6379 redis:6.2.6
+  - name: arangodb
+    command: docker run -p 8529:8529 -e ARANGO_ROOT_PASSWORD=test arangodb/arangodb:3.9.0
+  - name: postgresql
+    command: docker run -p 5432:5432 -e POSTGRES_PASSWORD=test postgres:14.2
+  - name: cassandra
+    command: docker run -p 7000:7000 cassandra:4.0.3
