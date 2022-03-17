@@ -127,7 +127,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		*masterOption.portGrpc = 10000 + *masterOption.port
 	}
 	if *masterOption.ipBind == "" {
-		*masterOption.ipBind = "localhost"
+		*masterOption.ipBind = *masterOption.ip
 	}
 
 	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.portGrpc, *masterOption.peers)
