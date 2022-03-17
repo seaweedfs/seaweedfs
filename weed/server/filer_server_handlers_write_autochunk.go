@@ -134,8 +134,8 @@ func skipCheckParentDirEntry(r *http.Request) bool {
 	return r.URL.Query().Get("skipCheckParentDir") == "true"
 }
 
-func skipCheckExpiredEntry(r *http.Request) bool {
-	return r.URL.Query().Get("skipCheckExpiredEntry") == "true"
+func skipCheckIsDirEntry(r *http.Request) bool {
+	return r.URL.Query().Get("skipCheckIsDirEntry") == "true"
 }
 
 func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileName string, contentType string, so *operation.StorageOption, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64, content []byte) (filerResult *FilerPostResult, replyerr error) {
@@ -158,7 +158,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			path += fileName
 		}
 	} else {
-		if fileName != "" && !skipCheckExpiredEntry(r) {
+		if fileName != "" && !skipCheckIsDirEntry(r) {
 			if possibleDirEntry, findDirErr := fs.filer.FindEntry(ctx, util.FullPath(path)); findDirErr == nil {
 				if possibleDirEntry.IsDirectory() {
 					path += "/" + fileName
