@@ -23,9 +23,9 @@ jobs:
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
       - name: Go Release Binaries Normal Volume Size
-        uses: wangyoucao577/go-release-action@v1.22
+        uses: wangyoucao577/go-release-action@16624612d4e2b73de613857a362d294700207fff # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
@@ -39,7 +39,7 @@ jobs:
           binary_name: weed
           asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}"
       - name: Go Release Large Disk Binaries
-        uses: wangyoucao577/go-release-action@v1.22
+        uses: wangyoucao577/go-release-action@16624612d4e2b73de613857a362d294700207fff # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
