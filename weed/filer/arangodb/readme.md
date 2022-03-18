@@ -43,6 +43,5 @@ should there be one collection per bucket? would make deleting a bucket instant 
 
 arangodb uses rocksdb in the background, so i am assuming things run in log time
 
-single document retreval might run in constant time
-
 i am not sure how the prefix query scales compared to the recursive calls that some other stores do for folder deletion
+might need to change that

@@ -33,6 +33,7 @@ type Model struct {
 	Directory string `json:"directory,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Bucket    string `json:"bucket,omitempty"`
+	Ttl       string `json:"ttl,omitempty"`
 
 	//arangodb does not support binary blobs
 	//we encode byte slice into uint64 slice
@@ -108,8 +109,13 @@ func (store *ArangodbStore) connection(uris []string, user string, pass string, 
 		}); err != nil {
 		return err
 	}
+
 	if _, _, err = store.collection.EnsurePersistentIndex(ctx, []string{"directory"},
 		&driver.EnsurePersistentIndexOptions{Name: "IDX_directory"}); err != nil {
+		return err
+	}
+	if _, _, err = store.collection.EnsureTTLIndex(ctx, "ttl", 1,
+		&driver.EnsureTTLIndexOptions{Name: "IDX_TTL"}); err != nil {
 		return err
 	}
 
@@ -188,6 +194,11 @@ func (store *ArangodbStore) InsertEntry(ctx context.Context, entry *filer.Entry)
 		Meta:      bytesToArray(meta),
 		Bucket:    bucket,
 	}
+	if entry.TtlSec > 0 {
+		model.Ttl = time.Now().Add(time.Second * time.Duration(entry.TtlSec)).Format(time.RFC3339)
+	} else {
+		model.Ttl = ""
+	}
 	_, err = store.collection.CreateDocument(ctx, model)
 	if driver.IsConflict(err) {
 		return store.UpdateEntry(ctx, entry)
@@ -230,6 +241,11 @@ func (store *ArangodbStore) UpdateEntry(ctx context.Context, entry *filer.Entry)
 		Directory: dir,
 		Name:      name,
 		Meta:      bytesToArray(meta),
+	}
+	if entry.TtlSec > 0 {
+		model.Ttl = time.Now().Add(time.Duration(entry.TtlSec) * time.Second).Format(time.RFC3339)
+	} else {
+		model.Ttl = "none"
 	}
 
 	_, err = store.collection.UpdateDocument(ctx, model.Key, model)
