@@ -287,9 +287,13 @@ index.max_result_window = 10000
 
 [arangodb] # in development dont use it
 enabled = false
-arango_host=["http://localhost:8529"]
-arango_user=""
-arango_pass=""
+db_name = "seaweedfs"
+servers=["http://localhost:8529"] # list of servers to connect to
+# only basic auth supported for now
+user=""
+pass=""
+# skip tls cert validation
+insecure_skip_verify = true
 
 
 ##########################
