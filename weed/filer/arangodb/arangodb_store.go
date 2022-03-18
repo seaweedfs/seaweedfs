@@ -292,7 +292,10 @@ func (store *ArangodbStore) DeleteEntry(ctx context.Context, fullpath util.FullP
 
 func (store *ArangodbStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) error {
 	var query string
-	query = query + fmt.Sprintf(`filter starts_with(d.directory, "%s") remove d._key in files`,
+	query = query + fmt.Sprintf(`
+	for d in files
+	filter starts_with(d.directory, "%s/")  || d.directory == "%s"
+	remove d._key in files`,
 		strings.Join(strings.Split(string(fullpath), "/"), ","),
 		string(fullpath),
 	)
