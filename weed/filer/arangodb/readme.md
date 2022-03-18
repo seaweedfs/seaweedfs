@@ -31,12 +31,12 @@ i test with
 
 ## todo
 
-implement native TTL
+performance test
 
 
 ## thoughts
 
-should there be one collection per bucket? would make deleting a bucket instant as compared to fast
+should there be one collection per bucket? this would make deleting a bucket O(1) instead of O(n)
 
 
 ## comparison
