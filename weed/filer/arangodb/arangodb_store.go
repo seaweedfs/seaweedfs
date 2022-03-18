@@ -109,11 +109,11 @@ func (store *ArangodbStore) connection(uris []string, user string, pass string, 
 		}); err != nil {
 		return err
 	}
-
 	if _, _, err = store.collection.EnsurePersistentIndex(ctx, []string{"directory"},
 		&driver.EnsurePersistentIndexOptions{Name: "IDX_directory"}); err != nil {
 		return err
 	}
+
 	if _, _, err = store.collection.EnsureTTLIndex(ctx, "ttl", 1,
 		&driver.EnsureTTLIndexOptions{Name: "IDX_TTL"}); err != nil {
 		return err
@@ -291,8 +291,8 @@ func (store *ArangodbStore) DeleteEntry(ctx context.Context, fullpath util.FullP
 }
 
 func (store *ArangodbStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) error {
-	query := ""
-	query = fmt.Sprintf(`for d in files filter starts_with(d.directory, "%s") remove d._key in files`,
+	var query string
+	query = query + fmt.Sprintf(`filter starts_with(d.directory, "%s") remove d._key in files`,
 		strings.Join(strings.Split(string(fullpath), "/"), ","),
 		string(fullpath),
 	)

@@ -44,4 +44,9 @@ should there be one collection per bucket? would make deleting a bucket instant 
 arangodb uses rocksdb in the background, so i am assuming things run in log time
 
 i am not sure how the prefix query scales compared to the recursive calls that some other stores do for folder deletion
-might need to change that
+might need to change that.
+
+
+ok, so if https://www.arangodb.com/docs/stable/indexing-index-basics.html#persistent-index is correct
+it should be log time to the number of files in the directory
+and constant time if you have full directory + file
