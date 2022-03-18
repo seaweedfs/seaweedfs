@@ -87,7 +87,7 @@ require (
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/olivere/elastic/v7 v7.0.19
 	github.com/pelletier/go-toml v1.7.0 // indirect
-	github.com/peterh/liner v1.1.0
+	github.com/peterh/liner v1.2.2
 	github.com/pierrec/lz4 v2.2.7+incompatible // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
