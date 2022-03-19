@@ -131,7 +131,7 @@ func isAppend(r *http.Request) bool {
 }
 
 func skipCheckParentDirEntry(r *http.Request) bool {
-	return r.URL.Query().Get("skipCheckParentDir") != "true"
+	return r.URL.Query().Get("skipCheckParentDir") == "true"
 }
 
 func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileName string, contentType string, so *operation.StorageOption, md5bytes []byte, fileChunks []*filer_pb.FileChunk, chunkOffset int64, content []byte) (filerResult *FilerPostResult, replyerr error) {
