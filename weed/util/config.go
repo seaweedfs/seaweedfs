@@ -9,6 +9,20 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
+var (
+	ConfigurationFileDirectory DirectoryValueType
+)
+
+type DirectoryValueType string
+
+func (s *DirectoryValueType) Set(value string) error {
+	*s = DirectoryValueType(value)
+	return nil
+}
+func (s *DirectoryValueType) String() string {
+	return string(*s)
+}
+
 type Configuration interface {
 	GetString(key string) string
 	GetBool(key string) bool
@@ -20,11 +34,12 @@ type Configuration interface {
 func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 
 	// find a filer store
-	viper.SetConfigName(configFileName)              // name of config file (without extension)
-	viper.AddConfigPath(".")                         // optionally look for config in the working directory
-	viper.AddConfigPath("$HOME/.seaweedfs")          // call multiple times to add many search paths
-	viper.AddConfigPath("/usr/local/etc/seaweedfs/") // search path for bsd-style config directory in
-	viper.AddConfigPath("/etc/seaweedfs/")           // path to look for the config file in
+	viper.SetConfigName(configFileName)                                   // name of config file (without extension)
+	viper.AddConfigPath(ResolvePath(ConfigurationFileDirectory.String())) // path to look for the config file in
+	viper.AddConfigPath(".")                                              // optionally look for config in the working directory
+	viper.AddConfigPath("$HOME/.seaweedfs")                               // call multiple times to add many search paths
+	viper.AddConfigPath("/usr/local/etc/seaweedfs/")                      // search path for bsd-style config directory in
+	viper.AddConfigPath("/etc/seaweedfs/")                                // path to look for the config file in
 
 	if err := viper.MergeInConfig(); err != nil { // Handle errors reading the config file
 		if strings.Contains(err.Error(), "Not Found") {
