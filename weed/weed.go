@@ -42,7 +42,7 @@ var static embed.FS
 func init() {
 	weed_server.StaticFS, _ = fs.Sub(static, "static")
 
-	flag.Var(&util.ConfigurationFileDirectory, "conf_dir", "directory with toml configuration files")
+	flag.Var(&util.ConfigurationFileDirectory, "config_dir", "directory with toml configuration files")
 }
 
 func main() {
