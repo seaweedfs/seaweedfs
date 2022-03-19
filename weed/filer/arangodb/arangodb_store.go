@@ -292,7 +292,7 @@ func (store *ArangodbStore) ListDirectoryEntries(ctx context.Context, dirPath ut
 }
 
 func (store *ArangodbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
-	targetCollection, err := store.extractBucketCollection(ctx, dirPath)
+	targetCollection, err := store.extractBucketCollection(ctx, dirPath+"/")
 	if err != nil {
 		return lastFileName, err
 	}

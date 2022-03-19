@@ -48,25 +48,6 @@ func arrayToBytes(xs []uint64) []byte {
 	return out[:first]
 }
 
-// gets the bucket name out of filepath
-func extractBucket(fullpath util.FullPath) (string, string) {
-	if !strings.HasPrefix(string(fullpath), BUCKET_PREFIX+"/") {
-		return "", string(fullpath)
-	}
-	if strings.Count(string(fullpath), "/") < 2 {
-		return "", string(fullpath)
-	}
-	bucketAndObjectKey := string(fullpath)[len("/buckets/"):]
-	t := strings.Index(bucketAndObjectKey, "/")
-	bucket := bucketAndObjectKey
-	shortPath := "/"
-	if t > 0 {
-		bucket = bucketAndObjectKey[:t]
-		shortPath = string(util.FullPath(bucketAndObjectKey[t:]))
-	}
-	return bucket, shortPath
-}
-
 // gets the collection the bucket points to from filepath
 func (store *ArangodbStore) extractBucketCollection(ctx context.Context, fullpath util.FullPath) (c driver.Collection, err error) {
 	bucket, _ := extractBucket(fullpath)
@@ -78,6 +59,25 @@ func (store *ArangodbStore) extractBucketCollection(ctx context.Context, fullpat
 		return nil, err
 	}
 	return c, err
+}
+
+// called by extractBucketCollection
+func extractBucket(fullpath util.FullPath) (string, string) {
+	if !strings.HasPrefix(string(fullpath), BUCKET_PREFIX+"/") {
+		return "", string(fullpath)
+	}
+	if strings.Count(string(fullpath), "/") < 3 {
+		return "", string(fullpath)
+	}
+	bucketAndObjectKey := string(fullpath)[len(BUCKET_PREFIX+"/"):]
+	t := strings.Index(bucketAndObjectKey, "/")
+	bucket := bucketAndObjectKey
+	shortPath := "/"
+	if t > 0 {
+		bucket = bucketAndObjectKey[:t]
+		shortPath = string(util.FullPath(bucketAndObjectKey[t:]))
+	}
+	return bucket, shortPath
 }
 
 // get bucket collection from cache. if not exist, creates the buckets collection and grab it
