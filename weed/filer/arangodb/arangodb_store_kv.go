@@ -16,14 +16,14 @@ func (store *ArangodbStore) KvPut(ctx context.Context, key []byte, value []byte)
 		Meta:      bytesToArray(value),
 	}
 
-	exists, err := store.collection.DocumentExists(ctx, model.Key)
+	exists, err := store.kvCollection.DocumentExists(ctx, model.Key)
 	if err != nil {
 		return fmt.Errorf("kv put: %v", err)
 	}
 	if exists {
-		_, err = store.collection.UpdateDocument(ctx, model.Key, model)
+		_, err = store.kvCollection.UpdateDocument(ctx, model.Key, model)
 	} else {
-		_, err = store.collection.CreateDocument(ctx, model)
+		_, err = store.kvCollection.CreateDocument(ctx, model)
 	}
 	if err != nil {
 		return fmt.Errorf("kv put: %v", err)
@@ -33,7 +33,7 @@ func (store *ArangodbStore) KvPut(ctx context.Context, key []byte, value []byte)
 }
 func (store *ArangodbStore) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
 	var model Model
-	_, err = store.collection.ReadDocument(ctx, hashString(".kvstore."+string(key)), &model)
+	_, err = store.kvCollection.ReadDocument(ctx, hashString(".kvstore."+string(key)), &model)
 	if driver.IsNotFound(err) {
 		return nil, filer.ErrKvNotFound
 	}
@@ -45,7 +45,7 @@ func (store *ArangodbStore) KvGet(ctx context.Context, key []byte) (value []byte
 }
 
 func (store *ArangodbStore) KvDelete(ctx context.Context, key []byte) (err error) {
-	_, err = store.collection.RemoveDocument(ctx, hashString(".kvstore."+string(key)))
+	_, err = store.kvCollection.RemoveDocument(ctx, hashString(".kvstore."+string(key)))
 	if err != nil {
 		glog.Errorf("kv del: %v", err)
 		return filer.ErrKvNotFound

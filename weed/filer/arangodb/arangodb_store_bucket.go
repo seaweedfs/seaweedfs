@@ -2,8 +2,10 @@ package arangodb
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/filer"
 	"time"
+
+	"github.com/arangodb/go-driver"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
@@ -11,19 +13,27 @@ import (
 var _ filer.BucketAware = (*ArangodbStore)(nil)
 
 func (store *ArangodbStore) OnBucketCreation(bucket string) {
-	//nothing needs to be done
+	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// create the collection && add to cache
+	_, err := store.ensureBucket(timeout, bucket)
+	if err != nil {
+		glog.V(0).Infof("bucket create %s : %w", bucket, err)
+	}
 }
 func (store *ArangodbStore) OnBucketDeletion(bucket string) {
 	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cur, err := store.database.Query(timeout, `
-for d in files
-filter d.bucket == @bucket
-remove d in files`, map[string]interface{}{"bucket": bucket})
+	collection, err := store.ensureBucket(timeout, bucket)
 	if err != nil {
-		glog.V(0).Infof("bucket delete %s : %v", bucket, err)
+		glog.V(0).Infof("bucket delete %s : %w", bucket, err)
+		return
 	}
-	defer cur.Close()
+	err = collection.Remove(timeout)
+	if err != nil && !driver.IsNotFound(err) {
+		glog.V(0).Infof("bucket delete %s : %w", bucket, err)
+		return
+	}
 }
 func (store *ArangodbStore) CanDropWholeBucket() bool {
 	return true
