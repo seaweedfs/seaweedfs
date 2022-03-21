@@ -82,16 +82,45 @@ func (c *Conn) Close() error {
 	return err
 }
 
-func NewListener(addr string, timeout time.Duration) (net.Listener, error) {
-	l, err := net.Listen("tcp", addr)
+func NewListener(addr string, timeout time.Duration) (ipListner net.Listener, err error) {
+	listner, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, err
+		return
 	}
 
-	tl := &Listener{
-		Listener:     l,
+	ipListner = &Listener{
+		Listener:     listner,
 		ReadTimeout:  timeout,
 		WriteTimeout: timeout,
 	}
-	return tl, nil
+
+	return
+}
+
+func NewIpAndLocalListeners(host string, port int, timeout time.Duration) (ipListner net.Listener, localListener net.Listener, err error) {
+	listner, err := net.Listen("tcp", JoinHostPort(host, port))
+	if err != nil {
+		return
+	}
+
+	ipListner = &Listener{
+		Listener:     listner,
+		ReadTimeout:  timeout,
+		WriteTimeout: timeout,
+	}
+
+	if host != "localhost" && host != "" && host != "0.0.0.0" && host != "127.0.0.1" {
+		listner, err = net.Listen("tcp", JoinHostPort("localhost", port))
+		if err != nil {
+			return
+		}
+
+		localListener = &Listener{
+			Listener:     listner,
+			ReadTimeout:  timeout,
+			WriteTimeout: timeout,
+		}
+	}
+
+	return
 }

@@ -13,7 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
+	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -60,7 +60,7 @@ func init() {
 	f.mastersString = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this default collection")
 	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
-	f.bindIp = cmdFiler.Flag.String("ip.bind", "", "ip address to bind to")
+	f.bindIp = cmdFiler.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
 	f.portGrpc = cmdFiler.Flag.Int("port.grpc", 0, "filer server grpc listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
@@ -103,6 +103,7 @@ func init() {
 
 	// start iam on filer
 	filerStartIam = cmdFiler.Flag.Bool("iam", false, "whether to start IAM service")
+	filerIamOptions.ip = f.ip
 	filerIamOptions.port = cmdFiler.Flag.Int("iam.port", 8111, "iam server http listen port")
 }
 
@@ -188,6 +189,9 @@ func (fo *FilerOptions) startFiler() {
 	if *fo.portGrpc == 0 {
 		*fo.portGrpc = 10000 + *fo.port
 	}
+	if *fo.bindIp == "" {
+		*fo.bindIp = *fo.ip
+	}
 
 	defaultLevelDbDirectory := util.ResolvePath(*fo.defaultLevelDbDirectory + "/filerldb2")
 
@@ -216,7 +220,7 @@ func (fo *FilerOptions) startFiler() {
 	if *fo.publicPort != 0 {
 		publicListeningAddress := util.JoinHostPort(*fo.bindIp, *fo.publicPort)
 		glog.V(0).Infoln("Start Seaweed filer server", util.Version(), "public at", publicListeningAddress)
-		publicListener, e := util.NewListener(publicListeningAddress, 0)
+		publicListener, localPublicListner, e := util.NewIpAndLocalListeners(*fo.bindIp, *fo.publicPort, 0)
 		if e != nil {
 			glog.Fatalf("Filer server public listener error on port %d:%v", *fo.publicPort, e)
 		}
@@ -225,11 +229,18 @@ func (fo *FilerOptions) startFiler() {
 				glog.Fatalf("Volume server fail to serve public: %v", e)
 			}
 		}()
+		if localPublicListner != nil {
+			go func() {
+				if e := http.Serve(localPublicListner, publicVolumeMux); e != nil {
+					glog.Errorf("Volume server fail to serve public: %v", e)
+				}
+			}()
+		}
 	}
 
 	glog.V(0).Infof("Start Seaweed Filer %s at %s:%d", util.Version(), *fo.ip, *fo.port)
-	filerListener, e := util.NewListener(
-		util.JoinHostPort(*fo.bindIp, *fo.port),
+	filerListener, filerLocalListener, e := util.NewIpAndLocalListeners(
+		*fo.bindIp, *fo.port,
 		time.Duration(10)*time.Second,
 	)
 	if e != nil {
@@ -250,19 +261,29 @@ func (fo *FilerOptions) startFiler() {
 
 	// starting grpc server
 	grpcPort := *fo.portGrpc
-	grpcL, err := util.NewListener(util.JoinHostPort(*fo.bindIp, grpcPort), 0)
+	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*fo.bindIp, grpcPort, 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
 	reflection.Register(grpcS)
+	if grpcLocalL != nil {
+		go grpcS.Serve(grpcLocalL)
+	}
 	go grpcS.Serve(grpcL)
 
 	httpS := &http.Server{Handler: defaultMux}
 	go func() {
 		httpS.Serve(filerSocketListener)
 	}()
+	if filerLocalListener != nil {
+		go func() {
+			if err := httpS.Serve(filerLocalListener); err != nil {
+				glog.Errorf("Filer Fail to serve: %v", e)
+			}
+		}()
+	}
 	if err := httpS.Serve(filerListener); err != nil {
 		glog.Fatalf("Filer Fail to serve: %v", e)
 	}

@@ -56,6 +56,7 @@ type Option struct {
 }
 
 type WFS struct {
+	// https://dl.acm.org/doi/fullHtml/10.1145/3310148
 	// follow https://github.com/hanwen/go-fuse/blob/master/fuse/api.go
 	fuse.RawFileSystem
 	fs.Inode

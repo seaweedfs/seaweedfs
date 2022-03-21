@@ -84,7 +84,7 @@ func TestReaderAt(t *testing.T) {
 
 func testReadAt(t *testing.T, readerAt *ChunkReadAt, offset int64, size int, expected int, expectedErr error) {
 	data := make([]byte, size)
-	n, err := readerAt.ReadAt(data, offset)
+	n, err := readerAt.doReadAt(data, offset)
 
 	for _, d := range data {
 		fmt.Printf("%x", d)

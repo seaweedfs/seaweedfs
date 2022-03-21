@@ -140,9 +140,7 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 }
 
 func (vl *VolumeLayout) String() string {
-	vl.accessLock.RLock()
-	defer vl.accessLock.RUnlock()
-	return fmt.Sprintf("rp:%v, ttl:%v, vid2location:%v, writables:%v, volumeSizeLimit:%v", vl.rp, vl.ttl, vl.vid2location, vl.writables, vl.volumeSizeLimit)
+	return fmt.Sprintf("rp:%v, ttl:%v, writables:%v, volumeSizeLimit:%v", vl.rp, vl.ttl, vl.writables, vl.volumeSizeLimit)
 }
 
 func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
@@ -220,6 +218,13 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 			vl.setVolumeWritable(vid)
 		}
 	} else {
+		if !vl.enoughCopies(vid) {
+			glog.V(0).Infof("volume %d does not have enough copies", vid)
+		}
+		if !vl.isAllWritable(vid) {
+			glog.V(0).Infof("volume %d are not all writable", vid)
+		}
+		glog.V(0).Infof("volume %d remove from writable", vid)
 		vl.removeFromWritable(vid)
 	}
 }
@@ -435,7 +440,7 @@ func (vl *VolumeLayout) SetVolumeCapacityFull(vid needle.VolumeId) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	// glog.V(0).Infoln("Volume", vid, "reaches full capacity.")
+	glog.V(0).Infof("Volume %d reaches full capacity.", vid)
 	return vl.removeFromWritable(vid)
 }
 

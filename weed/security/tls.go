@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"io/ioutil"
 	"os"
 	"strings"
 
@@ -96,6 +97,23 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 		InsecureSkipVerify: true,
 	})
 	return grpc.WithTransportCredentials(ta)
+}
+
+func LoadClientTLSHTTP(clientCertFile string) *tls.Config {
+	clientCerts, err := ioutil.ReadFile(clientCertFile)
+	if err != nil {
+		glog.Fatal(err)
+	}
+	certPool := x509.NewCertPool()
+	ok := certPool.AppendCertsFromPEM(clientCerts)
+	if !ok {
+		glog.Fatalf("Error processing client certificate in %s\n", clientCertFile)
+	}
+
+	return &tls.Config{
+		ClientCAs:  certPool,
+		ClientAuth: tls.RequireAndVerifyClientCert,
+	}
 }
 
 func (a Authenticator) Authenticate(ctx context.Context) (newCtx context.Context, err error) {

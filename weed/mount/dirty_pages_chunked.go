@@ -38,11 +38,11 @@ func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *ChunkedDirtyPages {
 	return dirtyPages
 }
 
-func (pages *ChunkedDirtyPages) AddPage(offset int64, data []byte) {
+func (pages *ChunkedDirtyPages) AddPage(offset int64, data []byte, isSequential bool) {
 	pages.hasWrites = true
 
 	glog.V(4).Infof("%v memory AddPage [%d, %d)", pages.fh.fh, offset, offset+int64(len(data)))
-	pages.uploadPipeline.SaveDataAt(data, offset)
+	pages.uploadPipeline.SaveDataAt(data, offset, isSequential)
 
 	return
 }

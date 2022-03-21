@@ -51,14 +51,15 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 
 	entryFullPath := dirFullPath.Child(name)
 	fileMode := toOsFileMode(in.Mode)
-	inode := wfs.inodeToPath.AllocateInode(entryFullPath, fileMode)
+	now := time.Now().Unix()
+	inode := wfs.inodeToPath.AllocateInode(entryFullPath, now)
 
 	newEntry := &filer_pb.Entry{
 		Name:        name,
 		IsDirectory: false,
 		Attributes: &filer_pb.FuseAttributes{
-			Mtime:       time.Now().Unix(),
-			Crtime:      time.Now().Unix(),
+			Mtime:       now,
+			Crtime:      now,
 			FileMode:    uint32(fileMode),
 			Uid:         in.Uid,
 			Gid:         in.Gid,
@@ -76,9 +77,10 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		defer wfs.mapPbIdFromFilerToLocal(newEntry)
 
 		request := &filer_pb.CreateEntryRequest{
-			Directory:  string(dirFullPath),
-			Entry:      newEntry,
-			Signatures: []int32{wfs.signature},
+			Directory:                string(dirFullPath),
+			Entry:                    newEntry,
+			Signatures:               []int32{wfs.signature},
+			SkipCheckParentDirectory: true,
 		}
 
 		glog.V(1).Infof("mknod: %v", request)
@@ -101,7 +103,7 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 	}
 
 	// this is to increase nlookup counter
-	inode = wfs.inodeToPath.Lookup(entryFullPath, fileMode, false, inode, true)
+	inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, false, inode, true)
 
 	wfs.outputPbEntry(out, inode, newEntry)
 

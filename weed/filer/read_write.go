@@ -62,6 +62,7 @@ func SaveInsideFiler(client filer_pb.SeaweedFilerClient, dir, name string, conte
 				},
 				Content: content,
 			},
+			SkipCheckParentDirectory: true,
 		})
 	} else if err == nil {
 		entry := resp.Entry

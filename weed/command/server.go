@@ -55,7 +55,7 @@ var cmdServer = &Command{
 
 var (
 	serverIp                  = cmdServer.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
-	serverBindIp              = cmdServer.Flag.String("ip.bind", "", "ip address to bind to")
+	serverBindIp              = cmdServer.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
 	serverTimeout             = cmdServer.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	serverDataCenter          = cmdServer.Flag.String("dataCenter", "", "current volume server's data center name")
 	serverRack                = cmdServer.Flag.String("rack", "", "current volume server's rack name")
@@ -184,6 +184,10 @@ func runServer(cmd *Command, args []string) bool {
 		masterOptions.peers = &peers
 	}
 
+	if *serverBindIp == "" {
+		serverBindIp = serverIp
+	}
+
 	// ip address
 	masterOptions.ip = serverIp
 	masterOptions.ipBind = serverBindIp
@@ -191,6 +195,7 @@ func runServer(cmd *Command, args []string) bool {
 	filerOptions.ip = serverIp
 	filerOptions.bindIp = serverBindIp
 	s3Options.bindIp = serverBindIp
+	iamOptions.ip = serverBindIp
 	iamOptions.masters = masterOptions.peers
 	serverOptions.v.ip = serverIp
 	serverOptions.v.bindIp = serverBindIp

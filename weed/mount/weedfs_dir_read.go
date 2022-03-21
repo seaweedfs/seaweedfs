@@ -162,14 +162,14 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 		dirEntry.Name = entry.Name()
 		dirEntry.Mode = toSyscallMode(entry.Mode)
 		if !isPlusMode {
-			inode := wfs.inodeToPath.Lookup(dirPath.Child(dirEntry.Name), entry.Mode, len(entry.HardLinkId) > 0, entry.Inode, false)
+			inode := wfs.inodeToPath.Lookup(dirPath.Child(dirEntry.Name), entry.Crtime.Unix(), entry.IsDirectory(), len(entry.HardLinkId) > 0, entry.Inode, false)
 			dirEntry.Ino = inode
 			if !out.AddDirEntry(dirEntry) {
 				isEarlyTerminated = true
 				return false
 			}
 		} else {
-			inode := wfs.inodeToPath.Lookup(dirPath.Child(dirEntry.Name), entry.Mode, len(entry.HardLinkId) > 0, entry.Inode, true)
+			inode := wfs.inodeToPath.Lookup(dirPath.Child(dirEntry.Name), entry.Crtime.Unix(), entry.IsDirectory(), len(entry.HardLinkId) > 0, entry.Inode, true)
 			dirEntry.Ino = inode
 			entryOut := out.AddDirLookupEntry(dirEntry)
 			if entryOut == nil {

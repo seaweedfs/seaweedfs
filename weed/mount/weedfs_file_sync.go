@@ -140,9 +140,10 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		}
 
 		request := &filer_pb.CreateEntryRequest{
-			Directory:  string(dir),
-			Entry:      entry,
-			Signatures: []int32{wfs.signature},
+			Directory:                string(dir),
+			Entry:                    entry,
+			Signatures:               []int32{wfs.signature},
+			SkipCheckParentDirectory: true,
 		}
 
 		glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.Chunks))
