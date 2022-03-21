@@ -140,9 +140,7 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 }
 
 func (vl *VolumeLayout) String() string {
-	vl.accessLock.RLock()
-	defer vl.accessLock.RUnlock()
-	return fmt.Sprintf("rp:%v, ttl:%v, vid2location:%v, writables:%v, volumeSizeLimit:%v", vl.rp, vl.ttl, vl.vid2location, vl.writables, vl.volumeSizeLimit)
+	return fmt.Sprintf("rp:%v, ttl:%v, writables:%v, volumeSizeLimit:%v", vl.rp, vl.ttl, vl.writables, vl.volumeSizeLimit)
 }
 
 func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
