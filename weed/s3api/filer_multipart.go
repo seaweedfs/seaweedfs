@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -62,9 +63,14 @@ type CompleteMultipartUploadResult struct {
 	s3.CompleteMultipartUploadOutput
 }
 
-func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploadInput) (output *CompleteMultipartUploadResult, code s3err.ErrorCode) {
+func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploadInput, parts *CompleteMultipartUpload) (output *CompleteMultipartUploadResult, code s3err.ErrorCode) {
 
 	glog.V(2).Infof("completeMultipartUpload input %v", input)
+
+	completedParts := parts.Parts
+	sort.Slice(completedParts, func(i, j int) bool {
+		return completedParts[i].PartNumber < completedParts[j].PartNumber
+	})
 
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
 
@@ -80,14 +86,16 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		return nil, s3err.ErrNoSuchUpload
 	}
 
+	mime := pentry.Attributes.Mime
+
 	var finalParts []*filer_pb.FileChunk
 	var offset int64
-	var mime string
 
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name, ".part") && !entry.IsDirectory {
-			if entry.Name == "0001.part" && entry.Attributes.Mime != "" {
-				mime = entry.Attributes.Mime
+			_, found := findByPartNumber(entry.Name, completedParts)
+			if !found {
+				continue
 			}
 			for _, chunk := range entry.Chunks {
 				p := &filer_pb.FileChunk{
@@ -154,6 +162,20 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	}
 
 	return
+}
+
+func findByPartNumber(fileName string, parts []CompletedPart) (etag string, found bool) {
+	partNumber, formatErr := strconv.Atoi(fileName[:4])
+	if formatErr != nil {
+		return
+	}
+	x := sort.Search(len(parts), func(i int) bool {
+		return parts[i].PartNumber >= partNumber
+	})
+	if parts[x].PartNumber != partNumber {
+		return
+	}
+	return parts[x].ETag, true
 }
 
 func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput) (output *s3.AbortMultipartUploadOutput, code s3err.ErrorCode) {
