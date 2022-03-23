@@ -103,7 +103,7 @@ func init() {
 
 	// start iam on filer
 	filerStartIam = cmdFiler.Flag.Bool("iam", false, "whether to start IAM service")
-	filerIamOptions.ip = f.ip
+	filerIamOptions.ip = cmdFiler.Flag.String("iam.ip", *f.ip, "iam server http listen ip address")
 	filerIamOptions.port = cmdFiler.Flag.Int("iam.port", 8111, "iam server http listen port")
 }
 
