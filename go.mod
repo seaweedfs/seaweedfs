@@ -69,7 +69,7 @@ require (
 	github.com/klauspost/cpuid v1.2.1 // indirect
 	github.com/klauspost/reedsolomon v1.9.2
 	github.com/kurin/blazer v0.5.3
-	github.com/lib/pq v1.10.2
+	github.com/lib/pq v1.10.4
 	github.com/linxGnu/grocksdb v1.6.38
 	github.com/magiconair/properties v1.8.1 // indirect
 	github.com/mailru/easyjson v0.7.1 // indirect
