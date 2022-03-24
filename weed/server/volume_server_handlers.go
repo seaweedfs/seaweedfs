@@ -61,7 +61,6 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		atomic.AddInt64(&vs.inFlightUploadDataSize, contentLength)
 		defer func() {
 			atomic.AddInt64(&vs.inFlightUploadDataSize, -contentLength)
-			vs.inFlightUploadDataLimitCond.Signal()
 		}()
 
 		// processs uploads

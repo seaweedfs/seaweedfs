@@ -23,7 +23,6 @@ type VolumeServer struct {
 	inFlightDownloadDataSize      int64
 	concurrentUploadLimit         int64
 	concurrentDownloadLimit       int64
-	inFlightUploadDataLimitCond   *sync.Cond
 	inFlightDownloadDataLimitCond *sync.Cond
 
 	SeedMasterNodes []pb.ServerAddress
