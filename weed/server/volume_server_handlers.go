@@ -52,7 +52,7 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 
 		// wait until in flight data is less than the limit
 		contentLength := getContentLength(r)
-		for vs.concurrentUploadLimit != 0 && atomic.LoadInt64(&vs.inFlightUploadDataSize) > vs.concurrentUploadLimit {
+		if vs.concurrentUploadLimit != 0 && atomic.LoadInt64(&vs.inFlightUploadDataSize) > vs.concurrentUploadLimit {
 			err := fmt.Errorf("reject because inflight upload data %d > %d", vs.inFlightUploadDataSize, vs.concurrentUploadLimit)
 			glog.V(1).Infof("too many requests: %v", err)
 			writeJsonError(w, r, http.StatusTooManyRequests, err)
