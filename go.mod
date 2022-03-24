@@ -17,7 +17,7 @@ require (
 	github.com/cespare/xxhash v1.1.0
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/chrislusf/raft v1.0.7
-	github.com/colinmarc/hdfs/v2 v2.2.0
+	github.com/colinmarc/hdfs/v2 v2.3.0
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
