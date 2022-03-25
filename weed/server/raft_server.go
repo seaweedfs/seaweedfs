@@ -81,10 +81,11 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	transporter := raft.NewGrpcTransporter(option.GrpcDialOption)
 	glog.V(0).Infof("Starting RaftServer with %v", option.ServerAddr)
 
+	// always clear previous log to avoid server is promotable
+	os.RemoveAll(path.Join(s.dataDir, "log"))
 	if !option.RaftResumeState {
 		// always clear previous metadata
 		os.RemoveAll(path.Join(s.dataDir, "conf"))
-		os.RemoveAll(path.Join(s.dataDir, "log"))
 		os.RemoveAll(path.Join(s.dataDir, "snapshot"))
 	}
 	if err := os.MkdirAll(path.Join(s.dataDir, "snapshot"), 0600); err != nil {
