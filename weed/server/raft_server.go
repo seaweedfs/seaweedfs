@@ -81,10 +81,11 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	transporter := raft.NewGrpcTransporter(option.GrpcDialOption)
 	glog.V(0).Infof("Starting RaftServer with %v", option.ServerAddr)
 
+	// always clear previous log to avoid server is promotable
+	os.RemoveAll(path.Join(s.dataDir, "log"))
 	if !option.RaftResumeState {
 		// always clear previous metadata
 		os.RemoveAll(path.Join(s.dataDir, "conf"))
-		os.RemoveAll(path.Join(s.dataDir, "log"))
 		os.RemoveAll(path.Join(s.dataDir, "snapshot"))
 	}
 	if err := os.MkdirAll(path.Join(s.dataDir, "snapshot"), 0600); err != nil {
@@ -118,17 +119,17 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		exists := false
 		var existingPeer pb.ServerAddress
 		for _, peer := range s.peers {
-			if peer.ToGrpcAddress() == existsPeerName {
+			if peer.String() == existsPeerName {
 				exists, existingPeer = true, peer
 				break
 			}
 		}
-		if exists {
+		if !exists {
 			if err := s.raftServer.RemovePeer(existsPeerName); err != nil {
 				glog.V(0).Infoln(err)
 				return nil, err
 			} else {
-				glog.V(0).Infof("removing old peer %s", existingPeer)
+				glog.V(0).Infof("removing old peer: %s", existingPeer)
 			}
 		}
 	}
