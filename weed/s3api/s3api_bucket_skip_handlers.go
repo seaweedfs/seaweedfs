@@ -21,7 +21,7 @@ func (s3a *S3ApiServer) PutBucketCorsHandler(w http.ResponseWriter, r *http.Requ
 // DeleteBucketCorsHandler Delete bucket CORS
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketCors.html
 func (s3a *S3ApiServer) DeleteBucketCorsHandler(w http.ResponseWriter, r *http.Request) {
-	s3err.WriteErrorResponse(w, r, http.StatusNoContent)
+	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 }
 
 // GetBucketPolicyHandler Get bucket Policy
@@ -39,7 +39,7 @@ func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 // DeleteBucketPolicyHandler Delete bucket Policy
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketPolicy.html
 func (s3a *S3ApiServer) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http.Request) {
-	s3err.WriteErrorResponse(w, r, http.StatusNoContent)
+	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 }
 
 // PutBucketAclHandler Put bucket ACL
