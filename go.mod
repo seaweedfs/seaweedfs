@@ -63,7 +63,7 @@ require (
 	github.com/jinzhu/copier v0.2.8
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12
-	github.com/karlseguin/ccache/v2 v2.0.7
+	github.com/karlseguin/ccache/v2 v2.0.8
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/klauspost/compress v1.13.6 // indirect
 	github.com/klauspost/cpuid v1.2.1 // indirect
