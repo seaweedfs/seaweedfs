@@ -119,17 +119,17 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		exists := false
 		var existingPeer pb.ServerAddress
 		for _, peer := range s.peers {
-			if peer.ToGrpcAddress() == existsPeerName {
+			if peer.String() == existsPeerName {
 				exists, existingPeer = true, peer
 				break
 			}
 		}
-		if exists {
+		if !exists {
 			if err := s.raftServer.RemovePeer(existsPeerName); err != nil {
 				glog.V(0).Infoln(err)
 				return nil, err
 			} else {
-				glog.V(0).Infof("removing old peer %s", existingPeer)
+				glog.V(0).Infof("removing old peer: %s", existingPeer)
 			}
 		}
 	}
