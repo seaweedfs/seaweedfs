@@ -6,14 +6,15 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util/mem"
 	"io"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/util/mem"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/pquerna/cachecontrol/cacheobject"
@@ -43,6 +44,12 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	bucket, object := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("PutObjectHandler %s %s", bucket, object)
+
+	errCode := s3a.checkBucket(r, bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
