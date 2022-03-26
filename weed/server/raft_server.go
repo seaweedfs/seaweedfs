@@ -118,15 +118,7 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 
 	// Remove deleted peers
 	for existsPeerName := range s.raftServer.Peers() {
-		exists := false
-		var existingPeer pb.ServerAddress
-		for name, peer := range s.peers {
-			if name == existsPeerName {
-				exists, existingPeer = true, peer
-				break
-			}
-		}
-		if !exists {
+		if existingPeer, found := s.peers[existsPeerName]; !found {
 			if err := s.raftServer.RemovePeer(existsPeerName); err != nil {
 				glog.V(0).Infoln(err)
 				return nil, err
