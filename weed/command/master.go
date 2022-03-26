@@ -141,10 +141,15 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		glog.Fatalf("Master startup error: %v", e)
 	}
 
+	masterPeers := make(map[string]pb.ServerAddress)
+	for _, peer := range peers {
+		masterPeers[peer.String()] = peer
+	}
+
 	// start raftServer
 	raftServerOption := &weed_server.RaftServerOption{
 		GrpcDialOption:    security.LoadClientTLS(util.GetViper(), "grpc.master"),
-		Peers:             peers,
+		Peers:             masterPeers,
 		ServerAddr:        myMasterAddress,
 		DataDir:           util.ResolvePath(*masterOption.metaFolder),
 		Topo:              ms.Topo,

@@ -19,7 +19,7 @@ import (
 
 type RaftServerOption struct {
 	GrpcDialOption    grpc.DialOption
-	Peers             []pb.ServerAddress
+	Peers             map[string]pb.ServerAddress
 	ServerAddr        pb.ServerAddress
 	DataDir           string
 	Topo              *topology.Topology
@@ -62,12 +62,8 @@ func (s StateMachine) Recovery(data []byte) error {
 }
 
 func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
-	peers := make(map[string]pb.ServerAddress)
-	for _, peer := range option.Peers {
-		peers[peer.String()] = peer
-	}
 	s := &RaftServer{
-		peers:      peers,
+		peers:      option.Peers,
 		serverAddr: option.ServerAddr,
 		dataDir:    option.DataDir,
 		topo:       option.Topo,
