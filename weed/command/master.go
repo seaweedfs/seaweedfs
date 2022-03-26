@@ -132,18 +132,18 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.portGrpc, *masterOption.peers)
 
+	masterPeers := make(map[string]pb.ServerAddress)
+	for _, peer := range peers {
+		masterPeers[peer.String()] = peer
+	}
+
 	r := mux.NewRouter()
-	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), peers)
+	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), masterPeers)
 	listeningAddress := util.JoinHostPort(*masterOption.ipBind, *masterOption.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
 	masterListener, masterLocalListner, e := util.NewIpAndLocalListeners(*masterOption.ipBind, *masterOption.port, 0)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
-	}
-
-	masterPeers := make(map[string]pb.ServerAddress)
-	for _, peer := range peers {
-		masterPeers[peer.String()] = peer
 	}
 
 	// start raftServer

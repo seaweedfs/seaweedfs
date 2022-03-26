@@ -75,7 +75,7 @@ type MasterServer struct {
 	Cluster *cluster.Cluster
 }
 
-func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddress) *MasterServer {
+func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.ServerAddress) *MasterServer {
 
 	v := util.GetViper()
 	signingKey := v.GetString("jwt.signing.key")

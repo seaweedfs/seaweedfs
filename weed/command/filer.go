@@ -29,7 +29,7 @@ var (
 )
 
 type FilerOptions struct {
-	masters                 []pb.ServerAddress
+	masters                 map[string]pb.ServerAddress
 	mastersString           *string
 	ip                      *string
 	bindIp                  *string
@@ -171,7 +171,7 @@ func runFiler(cmd *Command, args []string) bool {
 		}()
 	}
 
-	f.masters = pb.ServerAddresses(*f.mastersString).ToAddresses()
+	f.masters = pb.ServerAddresses(*f.mastersString).ToAddressMap()
 
 	f.startFiler()
 

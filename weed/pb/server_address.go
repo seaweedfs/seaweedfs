@@ -86,6 +86,14 @@ func (sa ServerAddresses) ToAddresses() (addresses []ServerAddress) {
 	return
 }
 
+func (sa ServerAddresses) ToAddressMap() (addresses map[string]ServerAddress) {
+	addresses = make(map[string]ServerAddress)
+	for _, address := range sa.ToAddresses() {
+		addresses[address.String()] = address
+	}
+	return
+}
+
 func (sa ServerAddresses) ToAddressStrings() (addresses []string) {
 	parts := strings.Split(string(sa), ",")
 	for _, address := range parts {
@@ -95,6 +103,13 @@ func (sa ServerAddresses) ToAddressStrings() (addresses []string) {
 }
 
 func ToAddressStrings(addresses []ServerAddress) []string {
+	var strings []string
+	for _, addr := range addresses {
+		strings = append(strings, string(addr))
+	}
+	return strings
+}
+func ToAddressStringsFromMap(addresses map[string]ServerAddress) []string {
 	var strings []string
 	for _, addr := range addresses {
 		strings = append(strings, string(addr))
