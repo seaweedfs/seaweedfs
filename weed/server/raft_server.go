@@ -5,8 +5,6 @@ import (
 	"math/rand"
 	"os"
 	"path"
-	"sort"
-	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -31,7 +29,7 @@ type RaftServerOption struct {
 }
 
 type RaftServer struct {
-	peers      []pb.ServerAddress // initial peers to join with
+	peers      map[string]pb.ServerAddress // initial peers to join with
 	raftServer raft.Server
 	dataDir    string
 	serverAddr pb.ServerAddress
@@ -64,8 +62,12 @@ func (s StateMachine) Recovery(data []byte) error {
 }
 
 func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
+	peers := make(map[string]pb.ServerAddress)
+	for _, peer := range option.Peers {
+		peers[peer.String()] = peer
+	}
 	s := &RaftServer{
-		peers:      option.Peers,
+		peers:      peers,
 		serverAddr: option.ServerAddr,
 		dataDir:    option.DataDir,
 		topo:       option.Topo,
@@ -108,8 +110,8 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		return nil, err
 	}
 
-	for _, peer := range s.peers {
-		if err := s.raftServer.AddPeer(string(peer), peer.ToGrpcAddress()); err != nil {
+	for name, peer := range s.peers {
+		if err := s.raftServer.AddPeer(name, peer.ToGrpcAddress()); err != nil {
 			return nil, err
 		}
 	}
@@ -118,8 +120,8 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	for existsPeerName := range s.raftServer.Peers() {
 		exists := false
 		var existingPeer pb.ServerAddress
-		for _, peer := range s.peers {
-			if peer.String() == existsPeerName {
+		for name, peer := range s.peers {
+			if name == existsPeerName {
 				exists, existingPeer = true, peer
 				break
 			}
@@ -136,11 +138,6 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 
 	s.GrpcServer = raft.NewGrpcServer(s.raftServer)
 
-	if s.raftServer.IsLogEmpty() && isTheFirstOne(option.ServerAddr, s.peers) {
-		// Initialize the server by joining itself.
-		// s.DoJoinCommand()
-	}
-
 	glog.V(0).Infof("current cluster leader: %v", s.raftServer.Leader())
 
 	return s, nil
@@ -154,16 +151,6 @@ func (s *RaftServer) Peers() (members []string) {
 	}
 
 	return
-}
-
-func isTheFirstOne(self pb.ServerAddress, peers []pb.ServerAddress) bool {
-	sort.Slice(peers, func(i, j int) bool {
-		return strings.Compare(string(peers[i]), string(peers[j])) < 0
-	})
-	if len(peers) <= 0 {
-		return true
-	}
-	return self == peers[0]
 }
 
 func (s *RaftServer) DoJoinCommand() {
