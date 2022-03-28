@@ -6,7 +6,9 @@ services:
     ports:
       - 9333:9333
       - 19333:19333
-    command: "-v=1 master -volumeSizeLimitMB 100 -resumeState=false -ip=master0 -port=9333 -peers=master0:9333,master1:9334,master2:9335 -mdir=/tmp"
+    command: "-v=4 master -mdir /data -volumeSizeLimitMB 100 -resumeState=true -heartbeatInterval=1000ms -electionTimeout=3s -ip=master0 -port=9333 -peers=master0:9333,master1:9334,master2:9335"
+    volumes:
+      - ./master/0:/data
     environment:
       WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
       WEED_MASTER_VOLUME_GROWTH_COPY_2: 2
@@ -16,7 +18,9 @@ services:
     ports:
       - 9334:9334
       - 19334:19334
-    command: "-v=1 master -volumeSizeLimitMB 100 -resumeState=false -ip=master1 -port=9334 -peers=master0:9333,master1:9334,master2:9335 -mdir=/tmp"
+    command: "-v=4 master -mdir /data -volumeSizeLimitMB 100 -resumeState=true -heartbeatInterval=1000ms -electionTimeout=3s -ip=master1 -port=9334 -peers=master0:9333,master2:9335"
+    volumes:
+      - ./master/1:/data
     environment:
       WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
       WEED_MASTER_VOLUME_GROWTH_COPY_2: 2
@@ -26,7 +30,9 @@ services:
     ports:
       - 9335:9335
       - 19335:19335
-    command: "-v=1 master -volumeSizeLimitMB 100 -resumeState=false -ip=master2 -port=9335 -peers=master0:9333,master1:9334,master2:9335 -mdir=/tmp"
+    command: "-v=4 master -mdir /data -volumeSizeLimitMB 100 -resumeState=true -heartbeatInterval=1000ms -electionTimeout=3s -ip=master2 -port=9335 -peers=master0:9333,master1:9334"
+    volumes:
+      - ./master/2:/data
     environment:
       WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
       WEED_MASTER_VOLUME_GROWTH_COPY_2: 2
@@ -40,7 +46,6 @@ services:
     depends_on:
       - master0
       - master1
-      - master2
   volume2:
     image: chrislusf/seaweedfs:local
     ports:
@@ -50,7 +55,6 @@ services:
     depends_on:
       - master0
       - master1
-      - master2
   volume3:
     image: chrislusf/seaweedfs:local
     ports:
@@ -60,29 +64,16 @@ services:
     depends_on:
       - master0
       - master1
-      - master2
   filer:
     image: chrislusf/seaweedfs:local
     ports:
       - 8888:8888
       - 18888:18888
       - 8111:8111
-    command: 'filer -defaultReplicaPlacement=100 -iam -master="master0:9333,master1:9334,master2:9335"'
-    depends_on:
-      - master0
-      - master1
-      - master2
-      - volume1
-      - volume2
-  s3:
-    image: chrislusf/seaweedfs:local
-    ports:
       - 8333:8333
-    command: '-v=9 s3 -filer="filer:8888"'
+    command: 'filer -defaultReplicaPlacement=100 -iam -master="master0:9333,master1:9334,master3:9335" -s3'
     depends_on:
       - master0
       - master1
-      - master2
       - volume1
       - volume2
-      - filer

@@ -79,10 +79,9 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	transporter := raft.NewGrpcTransporter(option.GrpcDialOption)
 	glog.V(0).Infof("Starting RaftServer with %v", option.ServerAddr)
 
-	// always clear previous log to avoid server is promotable
-	os.RemoveAll(path.Join(s.dataDir, "log"))
 	if !option.RaftResumeState {
 		// always clear previous metadata
+		os.RemoveAll(path.Join(s.dataDir, "log"))
 		os.RemoveAll(path.Join(s.dataDir, "conf"))
 		os.RemoveAll(path.Join(s.dataDir, "snapshot"))
 	}
@@ -123,7 +122,6 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 			}
 		}
 	}
-
 	s.GrpcServer = raft.NewGrpcServer(s.raftServer)
 
 	glog.V(0).Infof("current cluster leader: %v", s.raftServer.Leader())
@@ -152,4 +150,11 @@ func (s *RaftServer) DoJoinCommand() {
 		glog.Errorf("fail to send join command: %v", err)
 	}
 
+}
+
+func (s *RaftServer) Shutdown() {
+	if err := s.raftServer.TakeSnapshot(); err != nil {
+		glog.Warningf("take snapshot failed, %v", err)
+	}
+	s.raftServer.Stop()
 }

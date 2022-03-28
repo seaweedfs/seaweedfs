@@ -1,6 +1,8 @@
 package command
 
 import (
+	"context"
+	"google.golang.org/grpc"
 	"net/http"
 	"os"
 	"sort"
@@ -101,6 +103,7 @@ func runMaster(cmd *Command, args []string) bool {
 	if util.FileExists(string(parent)) && !util.FileExists(*m.metaFolder) {
 		os.MkdirAll(*m.metaFolder, 0755)
 	}
+	glog.Infoln("Meta Folder Writable %s : %s", *m.metaFolder)
 	if err := util.TestFolderWritable(util.ResolvePath(*m.metaFolder)); err != nil {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
 	}
@@ -117,6 +120,20 @@ func runMaster(cmd *Command, args []string) bool {
 	startMaster(m, masterWhiteList)
 
 	return true
+}
+
+func shutdownMaster(httpS *http.Server, grpcS *grpc.Server, raftServer *weed_server.RaftServer) {
+	if nil != httpS {
+		glog.V(0).Infof("stop http server ... ")
+		if err := httpS.Shutdown(context.Background()); err != nil {
+			glog.Warningf("stop the http server failed, %v", err)
+		}
+	}
+	glog.V(0).Infof("stop gRPC server ...")
+	grpcS.Stop()
+
+	glog.V(0).Infof("stop raft Server ...")
+	raftServer.Shutdown()
 }
 
 func startMaster(masterOption MasterOptions, masterWhiteList []string) {
@@ -225,7 +242,16 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		go httpS.Serve(masterListener)
 	}
 
-	select {}
+	stopChan := make(chan bool)
+	grace.OnInterrupt(func() {
+		glog.V(0).Infoln("master server has be killed")
+		shutdownMaster(httpS, grpcS, raftServer)
+		stopChan <- true
+	})
+
+	select {
+	case <-stopChan:
+	}
 }
 
 func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers string) (masterAddress pb.ServerAddress, cleanedPeers []pb.ServerAddress) {
