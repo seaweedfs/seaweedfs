@@ -1,0 +1,6 @@
+make --dry-run --always-make --keep-going --print-directory
+make: Entering directory '/home/coder/repos/seaweedfs'
+make: Leaving directory '/home/coder/repos/seaweedfs'
+ 
+make: *** No targets specified and no makefile found.  Stop.
+ 
