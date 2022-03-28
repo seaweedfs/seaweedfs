@@ -49,7 +49,7 @@ import (
 )
 
 type FilerOption struct {
-	Masters               []pb.ServerAddress
+	Masters               map[string]pb.ServerAddress
 	Collection            string
 	DefaultReplication    string
 	DisableDirListing     bool

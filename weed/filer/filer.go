@@ -49,7 +49,7 @@ type Filer struct {
 	UniqueFileId        uint32
 }
 
-func NewFiler(masters []pb.ServerAddress, grpcDialOption grpc.DialOption,
+func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOption,
 	filerHost pb.ServerAddress, collection string, replication string, dataCenter string, notifyFn func()) *Filer {
 	f := &Filer{
 		MasterClient:        wdclient.NewMasterClient(grpcDialOption, cluster.FilerType, filerHost, dataCenter, masters),

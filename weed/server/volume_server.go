@@ -23,7 +23,6 @@ type VolumeServer struct {
 	inFlightDownloadDataSize      int64
 	concurrentUploadLimit         int64
 	concurrentDownloadLimit       int64
-	inFlightUploadDataLimitCond   *sync.Cond
 	inFlightDownloadDataLimitCond *sync.Cond
 
 	SeedMasterNodes []pb.ServerAddress
@@ -84,7 +83,6 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		fileSizeLimitBytes:            int64(fileSizeLimitMB) * 1024 * 1024,
 		isHeartbeating:                true,
 		stopChan:                      make(chan bool),
-		inFlightUploadDataLimitCond:   sync.NewCond(new(sync.Mutex)),
 		inFlightDownloadDataLimitCond: sync.NewCond(new(sync.Mutex)),
 		concurrentUploadLimit:         concurrentUploadLimit,
 		concurrentDownloadLimit:       concurrentDownloadLimit,

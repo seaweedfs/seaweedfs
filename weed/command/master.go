@@ -127,13 +127,18 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		*masterOption.portGrpc = 10000 + *masterOption.port
 	}
 	if *masterOption.ipBind == "" {
-		*masterOption.ipBind = "localhost"
+		*masterOption.ipBind = *masterOption.ip
 	}
 
 	myMasterAddress, peers := checkPeers(*masterOption.ip, *masterOption.port, *masterOption.portGrpc, *masterOption.peers)
 
+	masterPeers := make(map[string]pb.ServerAddress)
+	for _, peer := range peers {
+		masterPeers[peer.String()] = peer
+	}
+
 	r := mux.NewRouter()
-	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), peers)
+	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), masterPeers)
 	listeningAddress := util.JoinHostPort(*masterOption.ipBind, *masterOption.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
 	masterListener, masterLocalListner, e := util.NewIpAndLocalListeners(*masterOption.ipBind, *masterOption.port, 0)
@@ -144,7 +149,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	// start raftServer
 	raftServerOption := &weed_server.RaftServerOption{
 		GrpcDialOption:    security.LoadClientTLS(util.GetViper(), "grpc.master"),
-		Peers:             peers,
+		Peers:             masterPeers,
 		ServerAddr:        myMasterAddress,
 		DataDir:           util.ResolvePath(*masterOption.metaFolder),
 		Topo:              ms.Topo,

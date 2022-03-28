@@ -77,9 +77,10 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		defer wfs.mapPbIdFromFilerToLocal(newEntry)
 
 		request := &filer_pb.CreateEntryRequest{
-			Directory:  string(dirFullPath),
-			Entry:      newEntry,
-			Signatures: []int32{wfs.signature},
+			Directory:                string(dirFullPath),
+			Entry:                    newEntry,
+			Signatures:               []int32{wfs.signature},
+			SkipCheckParentDirectory: true,
 		}
 
 		glog.V(1).Infof("mknod: %v", request)

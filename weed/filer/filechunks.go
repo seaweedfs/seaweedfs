@@ -23,7 +23,13 @@ func TotalSize(chunks []*filer_pb.FileChunk) (size uint64) {
 }
 
 func FileSize(entry *filer_pb.Entry) (size uint64) {
-	return maxUint64(TotalSize(entry.Chunks), entry.Attributes.FileSize)
+	fileSize := entry.Attributes.FileSize
+	if entry.RemoteEntry != nil {
+		if entry.RemoteEntry.RemoteMtime > entry.Attributes.Mtime {
+			fileSize = maxUint64(fileSize, uint64(entry.RemoteEntry.RemoteSize))
+		}
+	}
+	return maxUint64(TotalSize(entry.Chunks), fileSize)
 }
 
 func ETag(entry *filer_pb.Entry) (etag string) {

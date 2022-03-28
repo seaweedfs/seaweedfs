@@ -13,7 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
+	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -29,7 +29,7 @@ var (
 )
 
 type FilerOptions struct {
-	masters                 []pb.ServerAddress
+	masters                 map[string]pb.ServerAddress
 	mastersString           *string
 	ip                      *string
 	bindIp                  *string
@@ -103,6 +103,7 @@ func init() {
 
 	// start iam on filer
 	filerStartIam = cmdFiler.Flag.Bool("iam", false, "whether to start IAM service")
+	filerIamOptions.ip = cmdFiler.Flag.String("iam.ip", *f.ip, "iam server http listen ip address")
 	filerIamOptions.port = cmdFiler.Flag.Int("iam.port", 8111, "iam server http listen port")
 }
 
@@ -170,7 +171,7 @@ func runFiler(cmd *Command, args []string) bool {
 		}()
 	}
 
-	f.masters = pb.ServerAddresses(*f.mastersString).ToAddresses()
+	f.masters = pb.ServerAddresses(*f.mastersString).ToAddressMap()
 
 	f.startFiler()
 

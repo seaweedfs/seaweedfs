@@ -206,7 +206,7 @@ func WithMasterClient(streamingMode bool, master ServerAddress, grpcDialOption g
 
 }
 
-func WithOneOfGrpcMasterClients(streamingMode bool, masterGrpcAddresses []ServerAddress, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) (err error) {
+func WithOneOfGrpcMasterClients(streamingMode bool, masterGrpcAddresses map[string]ServerAddress, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) (err error) {
 
 	for _, masterGrpcAddress := range masterGrpcAddresses {
 		err = WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {

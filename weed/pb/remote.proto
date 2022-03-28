@@ -62,6 +62,10 @@ message RemoteConf {
   string storj_secret_key = 66;
   string storj_endpoint = 67;
 
+  string contabo_access_key = 68;
+  string contabo_secret_key = 69;
+  string contabo_endpoint = 70;
+  string contabo_region = 71;
 }
 
 message RemoteStorageMapping {

@@ -5,8 +5,6 @@ import (
 	"math/rand"
 	"os"
 	"path"
-	"sort"
-	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -21,7 +19,7 @@ import (
 
 type RaftServerOption struct {
 	GrpcDialOption    grpc.DialOption
-	Peers             []pb.ServerAddress
+	Peers             map[string]pb.ServerAddress
 	ServerAddr        pb.ServerAddress
 	DataDir           string
 	Topo              *topology.Topology
@@ -31,7 +29,7 @@ type RaftServerOption struct {
 }
 
 type RaftServer struct {
-	peers      []pb.ServerAddress // initial peers to join with
+	peers      map[string]pb.ServerAddress // initial peers to join with
 	raftServer raft.Server
 	dataDir    string
 	serverAddr pb.ServerAddress
@@ -81,10 +79,11 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	transporter := raft.NewGrpcTransporter(option.GrpcDialOption)
 	glog.V(0).Infof("Starting RaftServer with %v", option.ServerAddr)
 
+	// always clear previous log to avoid server is promotable
+	os.RemoveAll(path.Join(s.dataDir, "log"))
 	if !option.RaftResumeState {
 		// always clear previous metadata
 		os.RemoveAll(path.Join(s.dataDir, "conf"))
-		os.RemoveAll(path.Join(s.dataDir, "log"))
 		os.RemoveAll(path.Join(s.dataDir, "snapshot"))
 	}
 	if err := os.MkdirAll(path.Join(s.dataDir, "snapshot"), 0600); err != nil {
@@ -107,38 +106,25 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		return nil, err
 	}
 
-	for _, peer := range s.peers {
-		if err := s.raftServer.AddPeer(string(peer), peer.ToGrpcAddress()); err != nil {
+	for name, peer := range s.peers {
+		if err := s.raftServer.AddPeer(name, peer.ToGrpcAddress()); err != nil {
 			return nil, err
 		}
 	}
 
 	// Remove deleted peers
 	for existsPeerName := range s.raftServer.Peers() {
-		exists := false
-		var existingPeer pb.ServerAddress
-		for _, peer := range s.peers {
-			if peer.ToGrpcAddress() == existsPeerName {
-				exists, existingPeer = true, peer
-				break
-			}
-		}
-		if exists {
+		if existingPeer, found := s.peers[existsPeerName]; !found {
 			if err := s.raftServer.RemovePeer(existsPeerName); err != nil {
 				glog.V(0).Infoln(err)
 				return nil, err
 			} else {
-				glog.V(0).Infof("removing old peer %s", existingPeer)
+				glog.V(0).Infof("removing old peer: %s", existingPeer)
 			}
 		}
 	}
 
 	s.GrpcServer = raft.NewGrpcServer(s.raftServer)
-
-	if s.raftServer.IsLogEmpty() && isTheFirstOne(option.ServerAddr, s.peers) {
-		// Initialize the server by joining itself.
-		// s.DoJoinCommand()
-	}
 
 	glog.V(0).Infof("current cluster leader: %v", s.raftServer.Leader())
 
@@ -153,16 +139,6 @@ func (s *RaftServer) Peers() (members []string) {
 	}
 
 	return
-}
-
-func isTheFirstOne(self pb.ServerAddress, peers []pb.ServerAddress) bool {
-	sort.Slice(peers, func(i, j int) bool {
-		return strings.Compare(string(peers[i]), string(peers[j])) < 0
-	})
-	if len(peers) <= 0 {
-		return true
-	}
-	return self == peers[0]
 }
 
 func (s *RaftServer) DoJoinCommand() {

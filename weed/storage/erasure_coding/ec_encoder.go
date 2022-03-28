@@ -220,7 +220,7 @@ func encodeDatFile(remainingSize int64, err error, baseFileName string, bufferSi
 		processedSize += largeBlockSize * DataShardsCount
 	}
 	for remainingSize > 0 {
-		encodeData(file, enc, processedSize, smallBlockSize, buffers, outputs)
+		err = encodeData(file, enc, processedSize, smallBlockSize, buffers, outputs)
 		if err != nil {
 			return fmt.Errorf("failed to encode small chunk data: %v", err)
 		}

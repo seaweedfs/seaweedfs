@@ -33,7 +33,7 @@ type IamS3ApiConfigure struct {
 }
 
 type IamServerOption struct {
-	Masters        []pb.ServerAddress
+	Masters        map[string]pb.ServerAddress
 	Filer          pb.ServerAddress
 	Port           int
 	GrpcDialOption grpc.DialOption
