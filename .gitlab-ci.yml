@@ -18,3 +18,4 @@ build-container-latest:
       --context "${CI_PROJECT_DIR}/docker"
       --dockerfile "${CI_PROJECT_DIR}/docker/Dockerfile.go_build"
       --destination "${CI_REGISTRY_IMAGE}:latest"
+      --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}"
