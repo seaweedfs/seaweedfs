@@ -121,7 +121,7 @@ require (
 	go.mongodb.org/mongo-driver v1.8.4
 	go.opencensus.io v0.23.0 // indirect
 	gocloud.dev v0.24.0
-	gocloud.dev/pubsub/natspubsub v0.20.0
+	gocloud.dev/pubsub/natspubsub v0.24.0
 	gocloud.dev/pubsub/rabbitpubsub v0.24.0
 	golang.org/x/crypto v0.0.0-20211108221036-ceb1ce70b4fa // indirect
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
@@ -182,7 +182,7 @@ require (
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/mattn/go-runewidth v0.0.7 // indirect
 	github.com/mattn/go-sqlite3 v2.0.1+incompatible // indirect
-	github.com/nats-io/nats.go v1.11.0 // indirect
+	github.com/nats-io/nats.go v1.12.0 // indirect
 	github.com/nats-io/nkeys v0.3.0 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/philhofer/fwd v1.1.1 // indirect
