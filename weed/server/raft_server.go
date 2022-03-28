@@ -86,7 +86,7 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		os.RemoveAll(path.Join(s.dataDir, "conf"))
 		os.RemoveAll(path.Join(s.dataDir, "snapshot"))
 	}
-	if err := os.MkdirAll(path.Join(s.dataDir, "snapshot"), 0600); err != nil {
+	if err := os.MkdirAll(path.Join(s.dataDir, "snapshot"), 0700); err != nil {
 		return nil, err
 	}
 
