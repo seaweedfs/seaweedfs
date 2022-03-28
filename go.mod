@@ -8,7 +8,7 @@ require (
 	cloud.google.com/go/storage v1.21.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.14.0
-	github.com/OneOfOne/xxhash v1.2.2
+	github.com/OneOfOne/xxhash v1.2.8
 	github.com/Shopify/sarama v1.23.1
 	github.com/aws/aws-sdk-go v1.43.25
 	github.com/beorn7/perks v1.0.1 // indirect
