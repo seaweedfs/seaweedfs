@@ -3,7 +3,7 @@ build-binary-latest:
   image:
     name: golang:1.18.0-alpine3.15
   script:
-    - apk add git
+    - apk add git build-base
     - go build -o ./weed/weed ./weed
     - cp ./weed/weed docker/weed
   artifacts:
