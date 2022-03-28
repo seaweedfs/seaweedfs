@@ -82,7 +82,9 @@ func (fs *FilerServer) DeleteTaggingHandler(w http.ResponseWriter, r *http.Reque
 	toDelete := strings.Split(r.URL.Query().Get("tagging"), ",")
 	deletions := make(map[string]struct{})
 	for _, deletion := range toDelete {
-		deletions[deletion] = struct{}{}
+		if deletion != "" {
+			deletions[deletion] = struct{}{}
+		}
 	}
 
 	// delete all tags or specific tags

@@ -55,10 +55,11 @@ func (s3a *S3ApiServer) rm(parentDirectoryPath, entryName string, isDeleteData, 
 
 func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath string, entryName string, isDeleteData bool, isRecursive bool) error {
 	request := &filer_pb.DeleteEntryRequest{
-		Directory:    parentDirectoryPath,
-		Name:         entryName,
-		IsDeleteData: isDeleteData,
-		IsRecursive:  isRecursive,
+		Directory:            parentDirectoryPath,
+		Name:                 entryName,
+		IsDeleteData:         isDeleteData,
+		IsRecursive:          isRecursive,
+		IgnoreRecursiveError: true,
 	}
 
 	glog.V(1).Infof("delete entry %v/%v: %v", parentDirectoryPath, entryName, request)

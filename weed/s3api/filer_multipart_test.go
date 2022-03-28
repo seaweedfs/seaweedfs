@@ -4,6 +4,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
 )
@@ -47,4 +48,86 @@ func TestListPartsResult(t *testing.T) {
 		t.Errorf("unexpected output: %s\nexpecting:%s", encoded, expected)
 	}
 
+}
+
+func Test_findByPartNumber(t *testing.T) {
+	type args struct {
+		fileName string
+		parts    []CompletedPart
+	}
+
+	parts := []CompletedPart{
+		CompletedPart{
+			ETag:       "xxx",
+			PartNumber: 1,
+		},
+		CompletedPart{
+			ETag:       "yyy",
+			PartNumber: 3,
+		},
+		CompletedPart{
+			ETag:       "zzz",
+			PartNumber: 5,
+		},
+	}
+
+	tests := []struct {
+		name      string
+		args      args
+		wantEtag  string
+		wantFound bool
+	}{
+		{
+			"first",
+			args{
+				"0001.part",
+				parts,
+			},
+			"xxx",
+			true,
+		},
+		{
+			"second",
+			args{
+				"0002.part",
+				parts,
+			},
+			"",
+			false,
+		},
+		{
+			"third",
+			args{
+				"0003.part",
+				parts,
+			},
+			"yyy",
+			true,
+		},
+		{
+			"fourth",
+			args{
+				"0004.part",
+				parts,
+			},
+			"",
+			false,
+		},
+		{
+			"fifth",
+			args{
+				"0005.part",
+				parts,
+			},
+			"zzz",
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotEtag, gotFound := findByPartNumber(tt.args.fileName, tt.args.parts)
+			assert.Equalf(t, tt.wantEtag, gotEtag, "findByPartNumber(%v, %v)", tt.args.fileName, tt.args.parts)
+			assert.Equalf(t, tt.wantFound, gotFound, "findByPartNumber(%v, %v)", tt.args.fileName, tt.args.parts)
+		})
+	}
 }

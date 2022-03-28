@@ -33,7 +33,7 @@ Your support will be really appreciated by me and other supporters!
 
 
 ### Gold Sponsors
-![shuguang](https://raw.githubusercontent.com/chrislusf/seaweedfs/master/note/shuguang.png)
+- [![nodion](https://www.nodion.com/img/logo.svg)](https://www.nodion.com)
 
 ---
 

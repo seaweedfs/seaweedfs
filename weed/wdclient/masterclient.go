@@ -18,7 +18,7 @@ type MasterClient struct {
 	clientType     string
 	clientHost     pb.ServerAddress
 	currentMaster  pb.ServerAddress
-	masters        []pb.ServerAddress
+	masters        map[string]pb.ServerAddress
 	grpcDialOption grpc.DialOption
 
 	vidMap
@@ -26,7 +26,7 @@ type MasterClient struct {
 	OnPeerUpdate func(update *master_pb.ClusterNodeUpdate)
 }
 
-func NewMasterClient(grpcDialOption grpc.DialOption, clientType string, clientHost pb.ServerAddress, clientDataCenter string, masters []pb.ServerAddress) *MasterClient {
+func NewMasterClient(grpcDialOption grpc.DialOption, clientType string, clientHost pb.ServerAddress, clientDataCenter string, masters map[string]pb.ServerAddress) *MasterClient {
 	return &MasterClient{
 		clientType:     clientType,
 		clientHost:     clientHost,

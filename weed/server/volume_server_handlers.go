@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -39,8 +40,14 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		stats.ReadRequest()
 		vs.inFlightDownloadDataLimitCond.L.Lock()
 		for vs.concurrentDownloadLimit != 0 && atomic.LoadInt64(&vs.inFlightDownloadDataSize) > vs.concurrentDownloadLimit {
-			glog.V(4).Infof("wait because inflight download data %d > %d", vs.inFlightDownloadDataSize, vs.concurrentDownloadLimit)
-			vs.inFlightDownloadDataLimitCond.Wait()
+			select {
+			case <-r.Context().Done():
+				glog.V(4).Infof("request cancelled from %s: %v", r.RemoteAddr, r.Context().Err())
+				return
+			default:
+				glog.V(4).Infof("wait because inflight download data %d > %d", vs.inFlightDownloadDataSize, vs.concurrentDownloadLimit)
+				vs.inFlightDownloadDataLimitCond.Wait()
+			}
 		}
 		vs.inFlightDownloadDataLimitCond.L.Unlock()
 		vs.GetOrHeadHandler(w, r)
@@ -51,16 +58,18 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 
 		// wait until in flight data is less than the limit
 		contentLength := getContentLength(r)
-		vs.inFlightUploadDataLimitCond.L.Lock()
-		for vs.concurrentUploadLimit != 0 && atomic.LoadInt64(&vs.inFlightUploadDataSize) > vs.concurrentUploadLimit {
-			glog.V(4).Infof("wait because inflight upload data %d > %d", vs.inFlightUploadDataSize, vs.concurrentUploadLimit)
-			vs.inFlightUploadDataLimitCond.Wait()
+
+		// exclude the replication from the concurrentUploadLimitMB
+		if vs.concurrentUploadLimit != 0 && r.URL.Query().Get("type") != "replicate" &&
+			atomic.LoadInt64(&vs.inFlightUploadDataSize) > vs.concurrentUploadLimit {
+			err := fmt.Errorf("reject because inflight upload data %d > %d", vs.inFlightUploadDataSize, vs.concurrentUploadLimit)
+			glog.V(1).Infof("too many requests: %v", err)
+			writeJsonError(w, r, http.StatusTooManyRequests, err)
+			return
 		}
-		vs.inFlightUploadDataLimitCond.L.Unlock()
 		atomic.AddInt64(&vs.inFlightUploadDataSize, contentLength)
 		defer func() {
 			atomic.AddInt64(&vs.inFlightUploadDataSize, -contentLength)
-			vs.inFlightUploadDataLimitCond.Signal()
 		}()
 
 		// processs uploads
