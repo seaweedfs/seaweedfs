@@ -3,7 +3,11 @@ build-binary-latest:
   image:
     name: golang:1.18.0-alpine3.15
   script:
-    - go build -o ./weed/weed ./weed 
+    - go build -o ./weed/weed ./weed
+    - cp ./weed/weed docker/weed
+  artifacts:
+    paths: 
+      - ./weed/weed
 
 build-container-latest:
   stage: build
@@ -16,6 +20,6 @@ build-container-latest:
     - >-
       /kaniko/executor
       --context "${CI_PROJECT_DIR}/docker"
-      --dockerfile "${CI_PROJECT_DIR}/docker/Dockerfile.go_build"
+      --dockerfile "${CI_PROJECT_DIR}/docker/Dockerfile.local"
       --destination "${CI_REGISTRY_IMAGE}:latest"
       --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}"
