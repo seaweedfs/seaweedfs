@@ -4,8 +4,6 @@ build-binary-latest:
     name: golang:1.18.0-alpine3.15
   script:
     - go build -o ./weed/weed ./weed 
-  rules:
-    - if: $CI_COMMIT_TAG
 
 build-container-latest:
   stage: build
@@ -19,6 +17,4 @@ build-container-latest:
       /kaniko/executor
       --context "${CI_PROJECT_DIR}/docker"
       --dockerfile "${CI_PROJECT_DIR}/docker/Dockerfile.go_build"
-      --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_TAG}"
-  rules:
-    - if: $CI_COMMIT_TAG
+      --destination "${CI_REGISTRY_IMAGE}:latest"
