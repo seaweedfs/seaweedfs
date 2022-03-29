@@ -161,7 +161,10 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
 
-	fs.filer.AggregateFromPeers(option.Host)
+	// Enable meta aggregator for internal storages only
+	if fs.filer.Store.IsInternal() {
+		fs.filer.AggregateFromPeers(option.Host)
+	}
 
 	fs.filer.LoadBuckets()
 

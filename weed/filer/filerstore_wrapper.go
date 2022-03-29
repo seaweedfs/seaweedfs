@@ -28,6 +28,7 @@ type VirtualFilerStore interface {
 	OnBucketCreation(bucket string)
 	OnBucketDeletion(bucket string)
 	CanDropWholeBucket() bool
+	IsInternal() bool
 }
 
 type FilerStoreWrapper struct {
@@ -105,6 +106,10 @@ func (fsw *FilerStoreWrapper) getDefaultStore() (store FilerStore) {
 
 func (fsw *FilerStoreWrapper) GetName() string {
 	return fsw.getDefaultStore().GetName()
+}
+
+func (fsw *FilerStoreWrapper) IsInternal() bool {
+	return strings.HasPrefix(fsw.GetName(), "leveldb") || fsw.GetName() == "rocksdb"
 }
 
 func (fsw *FilerStoreWrapper) Initialize(configuration util.Configuration, prefix string) error {
