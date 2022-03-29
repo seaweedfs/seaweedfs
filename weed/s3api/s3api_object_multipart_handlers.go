@@ -29,7 +29,7 @@ const (
 func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, object := xhttp.GetBucketAndObject(r)
 
-	errCode := s3a.checkBucket(r, bucket)
+	errCode := s3a.checkBucketInCache(r, bucket)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return

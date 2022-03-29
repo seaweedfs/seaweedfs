@@ -3,9 +3,10 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"net/http"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -35,6 +36,7 @@ type S3Options struct {
 	allowEmptyFolder *bool
 	auditLogConfig   *string
 	localFilerSocket *string
+	bucketsCacheTTL  *uint
 }
 
 func init() {
@@ -49,6 +51,7 @@ func init() {
 	s3StandaloneOptions.tlsCertificate = cmdS3.Flag.String("cert.file", "", "path to the TLS certificate file")
 	s3StandaloneOptions.metricsHttpPort = cmdS3.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	s3StandaloneOptions.allowEmptyFolder = cmdS3.Flag.Bool("allowEmptyFolder", true, "allow empty folders")
+	s3StandaloneOptions.bucketsCacheTTL = cmdS3.Flag.Uint("bucketsCacheTTL", 600, "TTL of buckets cache entries in seconds. default is 600.")
 }
 
 var cmdS3 = &Command{
@@ -186,6 +189,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		GrpcDialOption:   grpcDialOption,
 		AllowEmptyFolder: *s3opt.allowEmptyFolder,
 		LocalFilerSocket: s3opt.localFilerSocket,
+		BucketsCacheTTL:  *s3opt.bucketsCacheTTL,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)

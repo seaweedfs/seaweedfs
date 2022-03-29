@@ -11,6 +11,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/jellydator/ttlcache/v3"
 
 	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
@@ -194,6 +195,20 @@ func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorC
 	if !s3a.hasAccess(r, entry) {
 		return s3err.ErrAccessDenied
 	}
+	return s3err.ErrNone
+}
+
+func (s3a *S3ApiServer) checkBucketInCache(r *http.Request, bucket string) s3err.ErrorCode {
+	value := s3a.bucketsCache.Get(bucket)
+	if value == nil {
+		glog.V(4).Info("Bucket not in the cache, checking existence")
+		if code := s3a.checkBucket(r, bucket); code != s3err.ErrNone {
+			return code
+		}
+		s3a.bucketsCache.Set(bucket, "", ttlcache.DefaultTTL)
+		glog.V(4).Info("Bucket added to the cache")
+	}
+	glog.V(4).Info("Bucket in the cache")
 	return s3err.ErrNone
 }
 
