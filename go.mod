@@ -148,7 +148,7 @@ require (
 )
 
 require (
-	github.com/fluent/fluent-logger-golang v1.8.0
+	github.com/fluent/fluent-logger-golang v1.9.0
 	github.com/hanwen/go-fuse/v2 v2.1.0
 )
 
