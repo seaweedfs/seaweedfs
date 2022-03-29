@@ -283,8 +283,8 @@ github.com/fclairamb/ftpserverlib v0.17.0 h1:Eo8K8p8WiYQEum78n67ldIR6Cgo4H1HJA3I
 github.com/fclairamb/ftpserverlib v0.17.0/go.mod h1:Esiksahi2IQa9QSPl+0WSmysCumi1oyzPC7oUMPmTn4=
 github.com/fclairamb/go-log v0.1.0 h1:fNoqk8w62i4EDEuRzDgHdDVTqMYSyr3DS981R7F2x/Y=
 github.com/fclairamb/go-log v0.1.0/go.mod h1:iqmym8aI6xBbZXnZSPjElrmQrlEwjwEemOmIzKaTBM8=
-github.com/fluent/fluent-logger-golang v1.8.0 h1:K/fUDqUAItNcdf/Rq7aA2d1apwqsNgNzzInlXZTwK28=
-github.com/fluent/fluent-logger-golang v1.8.0/go.mod h1:2/HCT/jTy78yGyeNGQLGQsjF3zzzAuy6Xlk6FCMV5eU=
+github.com/fluent/fluent-logger-golang v1.9.0 h1:zUdY44CHX2oIUc7VTNZc+4m+ORuO/mldQDA7czhWXEg=
+github.com/fluent/fluent-logger-golang v1.9.0/go.mod h1:2/HCT/jTy78yGyeNGQLGQsjF3zzzAuy6Xlk6FCMV5eU=
 github.com/form3tech-oss/jwt-go v3.2.2+incompatible/go.mod h1:pbq4aXjuKjdthFRnoDwaVPLA+WlJuPGy+QneDUgJi2k=
 github.com/fortytw2/leaktest v1.3.0 h1:u8491cBMTQ8ft8aeV+adlcytMZylmA5nnwwkRZjI8vw=
 github.com/fortytw2/leaktest v1.3.0/go.mod h1:jDsjWgpAGjm2CA7WthBh/CdZYEPF31XHquHwclZch5g=
