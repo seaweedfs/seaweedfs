@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
@@ -93,9 +94,14 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name, ".part") && !entry.IsDirectory {
-			_, found := findByPartNumber(entry.Name, completedParts)
+			partETag, found := findByPartNumber(entry.Name, completedParts)
 			if !found {
 				continue
+			}
+			entryETag := hex.EncodeToString(entry.Attributes.GetMd5())
+			if partETag != "" && len(partETag) == 32 && entryETag != "" && entryETag != partETag {
+				glog.Errorf("completeMultipartUpload %s ETag mismatch chunk: %s part: %s", entry.Name, entryETag, partETag)
+				return nil, s3err.ErrInvalidPart
 			}
 			for _, chunk := range entry.Chunks {
 				p := &filer_pb.FileChunk{
@@ -169,13 +175,16 @@ func findByPartNumber(fileName string, parts []CompletedPart) (etag string, foun
 	if formatErr != nil {
 		return
 	}
-	x := sort.Search(len(parts), func(i int) bool {
-		return parts[i].PartNumber >= partNumber
-	})
-	if parts[x].PartNumber != partNumber {
+	foundParts := []int{}
+	for i, part := range parts {
+		if part.PartNumber == partNumber {
+			foundParts = append(foundParts, i)
+		}
+	}
+	if len(foundParts) == 0 {
 		return
 	}
-	return parts[x].ETag, true
+	return parts[foundParts[len(foundParts)-1]].ETag, true
 }
 
 func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput) (output *s3.AbortMultipartUploadOutput, code s3err.ErrorCode) {
