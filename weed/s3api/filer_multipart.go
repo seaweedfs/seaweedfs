@@ -175,16 +175,21 @@ func findByPartNumber(fileName string, parts []CompletedPart) (etag string, foun
 	if formatErr != nil {
 		return
 	}
-	foundParts := []int{}
-	for i, part := range parts {
-		if part.PartNumber == partNumber {
-			foundParts = append(foundParts, i)
-		}
-	}
-	if len(foundParts) == 0 {
+	x := sort.Search(len(parts), func(i int) bool {
+		return parts[i].PartNumber >= partNumber
+	})
+	if parts[x].PartNumber != partNumber {
 		return
 	}
-	return parts[foundParts[len(foundParts)-1]].ETag, true
+	y := 0
+	for i, part := range parts[x:] {
+		if part.PartNumber == partNumber {
+			y = i
+		} else {
+			break
+		}
+	}
+	return parts[x+y].ETag, true
 }
 
 func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput) (output *s3.AbortMultipartUploadOutput, code s3err.ErrorCode) {
