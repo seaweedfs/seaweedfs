@@ -148,12 +148,14 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		isEmpty, err := s3a.isDirectoryAllEmpty(client, s3a.option.BucketsPath, bucket)
-		if err != nil {
-			return fmt.Errorf("check empty bucket %s: %v", bucket, err)
-		}
-		if !isEmpty {
-			return fmt.Errorf("BucketNotEmpty")
+		if !s3a.option.AllowDeleteBucketNotEmpty {
+			entries, _, err := s3a.list(s3a.option.BucketsPath+"/"+bucket, "", "", false, 1)
+			if err != nil {
+				return fmt.Errorf("failed to list bucket %s: %v", bucket, err)
+			}
+			if len(entries) > 0 {
+				return fmt.Errorf("BucketNotEmpty")
+			}
 		}
 
 		// delete collection
@@ -174,7 +176,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		if err.Error() == "BucketNotEmpty" {
 			s3ErrorCode = s3err.ErrBucketNotEmpty
 		}
-		writeErrorResponse(w, s3ErrorCode, r.URL)
+		s3err.WriteErrorResponse(w, r, s3ErrorCode)
 		return
 	}
 

@@ -24,17 +24,18 @@ var (
 )
 
 type S3Options struct {
-	filer            *string
-	bindIp           *string
-	port             *int
-	config           *string
-	domainName       *string
-	tlsPrivateKey    *string
-	tlsCertificate   *string
-	metricsHttpPort  *int
-	allowEmptyFolder *bool
-	auditLogConfig   *string
-	localFilerSocket *string
+	filer                     *string
+	bindIp                    *string
+	port                      *int
+	config                    *string
+	domainName                *string
+	tlsPrivateKey             *string
+	tlsCertificate            *string
+	metricsHttpPort           *int
+	allowEmptyFolder          *bool
+	allowDeleteBucketNotEmpty *bool
+	auditLogConfig            *string
+	localFilerSocket          *string
 }
 
 func init() {
@@ -49,6 +50,7 @@ func init() {
 	s3StandaloneOptions.tlsCertificate = cmdS3.Flag.String("cert.file", "", "path to the TLS certificate file")
 	s3StandaloneOptions.metricsHttpPort = cmdS3.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	s3StandaloneOptions.allowEmptyFolder = cmdS3.Flag.Bool("allowEmptyFolder", true, "allow empty folders")
+	s3StandaloneOptions.allowDeleteBucketNotEmpty = cmdS3.Flag.Bool("allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 }
 
 var cmdS3 = &Command{
@@ -178,14 +180,15 @@ func (s3opt *S3Options) startS3Server() bool {
 	router := mux.NewRouter().SkipClean(true)
 
 	_, s3ApiServer_err := s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
-		Filer:            filerAddress,
-		Port:             *s3opt.port,
-		Config:           *s3opt.config,
-		DomainName:       *s3opt.domainName,
-		BucketsPath:      filerBucketsPath,
-		GrpcDialOption:   grpcDialOption,
-		AllowEmptyFolder: *s3opt.allowEmptyFolder,
-		LocalFilerSocket: s3opt.localFilerSocket,
+		Filer:                     filerAddress,
+		Port:                      *s3opt.port,
+		Config:                    *s3opt.config,
+		DomainName:                *s3opt.domainName,
+		BucketsPath:               filerBucketsPath,
+		GrpcDialOption:            grpcDialOption,
+		AllowEmptyFolder:          *s3opt.allowEmptyFolder,
+		AllowDeleteBucketNotEmpty: *s3opt.allowDeleteBucketNotEmpty,
+		LocalFilerSocket:          s3opt.localFilerSocket,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
