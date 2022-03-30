@@ -160,7 +160,7 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	},
 	ErrInvalidMaxDeleteObjects: {
 		Code:           "InvalidArgument",
-		Description:    "Argument objects must be contains a list of up to 1000 keys",
+		Description:    "Argument objects can contain a list of up to 1000 keys",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidPartNumberMarker: {
