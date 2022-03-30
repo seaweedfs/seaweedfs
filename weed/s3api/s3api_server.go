@@ -28,7 +28,6 @@ type S3ApiServerOption struct {
 	GrpcDialOption   grpc.DialOption
 	AllowEmptyFolder bool
 	LocalFilerSocket *string
-	BucketsCacheTTL  uint
 }
 
 type S3ApiServer struct {

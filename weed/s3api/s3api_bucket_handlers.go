@@ -204,7 +204,7 @@ func (s3a *S3ApiServer) checkBucketInCache(r *http.Request, bucket string) s3err
 		if code := s3a.checkBucket(r, bucket); code != s3err.ErrNone {
 			return code
 		}
-		s3a.bucketsCache.Set(bucket, "", time.Second*time.Duration(s3a.option.BucketsCacheTTL))
+		s3a.bucketsCache.Set(bucket, "", time.Second*600)
 		glog.V(4).Info("Bucket added to the cache")
 	}
 	glog.V(4).Info("Bucket in the cache")
