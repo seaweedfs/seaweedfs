@@ -62,6 +62,10 @@ func Test_findByPartNumber(t *testing.T) {
 			PartNumber: 1,
 		},
 		CompletedPart{
+			ETag:       "lll",
+			PartNumber: 1,
+		},
+		CompletedPart{
 			ETag:       "yyy",
 			PartNumber: 3,
 		},
@@ -83,7 +87,7 @@ func Test_findByPartNumber(t *testing.T) {
 				"0001.part",
 				parts,
 			},
-			"xxx",
+			"lll",
 			true,
 		},
 		{
