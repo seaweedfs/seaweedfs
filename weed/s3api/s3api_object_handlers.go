@@ -27,6 +27,10 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+const (
+	deleteMultipleObjectsLimmit = 1000
+)
+
 func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
 	mimeBuffer := make([]byte, 512)
 	size, _ := dataReader.Read(mimeBuffer)
@@ -214,6 +218,11 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	deleteObjects := &DeleteObjectsRequest{}
 	if err := xml.Unmarshal(deleteXMLBytes, deleteObjects); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+		return
+	}
+
+	if len(deleteObjects.Objects) > deleteMultipleObjectsLimmit {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxDeleteObjects)
 		return
 	}
 
