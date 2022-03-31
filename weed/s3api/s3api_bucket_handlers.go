@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -154,7 +155,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 				return fmt.Errorf("failed to list bucket %s: %v", bucket, err)
 			}
 			if len(entries) > 0 {
-				return fmt.Errorf("BucketNotEmpty")
+				return errors.New(s3err.GetAPIError(s3err.ErrBucketNotEmpty).Code)
 			}
 		}
 
@@ -173,7 +174,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 	if err != nil {
 		s3ErrorCode := s3err.ErrInternalError
-		if err.Error() == "BucketNotEmpty" {
+		if err.Error() == s3err.GetAPIError(s3err.ErrBucketNotEmpty).Code {
 			s3ErrorCode = s3err.ErrBucketNotEmpty
 		}
 		s3err.WriteErrorResponse(w, r, s3ErrorCode)
