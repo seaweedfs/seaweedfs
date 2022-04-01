@@ -165,13 +165,14 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 	files := make(map[uint32]*os.File)
 	for _, volumeIdToServer := range dataNodeVolumeIdToVInfo {
 		for vid := range volumeIdToServer {
+			if _, ok := files[vid]; ok {
+				continue
+			}
 			dst, openErr := os.OpenFile(getFilerFileIdFile(tempFolder, vid), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 			if openErr != nil {
 				return fmt.Errorf("failed to create file %s: %v", getFilerFileIdFile(tempFolder, vid), openErr)
 			}
-			if _, ok := volumeIdToServer[vid]; !ok {
-				files[vid] = dst
-			}
+			files[vid] = dst
 		}
 	}
 	defer func() {
