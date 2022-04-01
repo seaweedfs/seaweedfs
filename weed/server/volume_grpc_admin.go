@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"path/filepath"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -263,6 +264,15 @@ func (vs *VolumeServer) Ping(ctx context.Context, req *volume_server_pb.PingRequ
 			_, err := client.Ping(ctx, &volume_server_pb.PingRequest{})
 			return err
 		})
+	}
+	if req.TargetType == "Master" {
+		pingErr = pb.WithMasterClient(false, pb.ServerAddress(req.Target), vs.grpcDialOption, func(client master_pb.SeaweedClient) error {
+			_, err := client.Ping(ctx, &master_pb.PingRequest{})
+			return err
+		})
+	}
+	if pingErr != nil {
+		pingErr = fmt.Errorf("ping %s %s: %v", req.TargetType, req.Target, pingErr)
 	}
 	return
 }
