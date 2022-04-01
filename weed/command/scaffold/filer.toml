@@ -290,8 +290,8 @@ enabled = false
 db_name = "seaweedfs"
 servers=["http://localhost:8529"] # list of servers to connect to
 # only basic auth supported for now
-user=""
-pass=""
+username=""
+password=""
 # skip tls cert validation
 insecure_skip_verify = true
 

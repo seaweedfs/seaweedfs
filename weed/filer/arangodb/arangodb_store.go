@@ -59,8 +59,8 @@ func (store *ArangodbStore) Initialize(configuration util.Configuration, prefix 
 	store.buckets = make(map[string]driver.Collection, 3)
 	store.databaseName = configuration.GetString(prefix + "db_name")
 	return store.connection(configuration.GetStringSlice(prefix+"servers"),
-		configuration.GetString(prefix+"user"),
-		configuration.GetString(prefix+"pass"),
+		configuration.GetString(prefix+"username"),
+		configuration.GetString(prefix+"password"),
 		configuration.GetBool(prefix+"insecure_skip_verify"),
 	)
 }
