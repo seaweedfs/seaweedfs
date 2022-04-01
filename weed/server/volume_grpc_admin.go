@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/cluster"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -253,19 +254,19 @@ func (vs *VolumeServer) VolumeNeedleStatus(ctx context.Context, req *volume_serv
 
 func (vs *VolumeServer) Ping(ctx context.Context, req *volume_server_pb.PingRequest) (resp *volume_server_pb.PingResponse, pingErr error) {
 	resp = &volume_server_pb.PingResponse{}
-	if req.TargetType == "Filer" {
+	if req.TargetType == cluster.FilerType {
 		pingErr = pb.WithFilerClient(false, pb.ServerAddress(req.Target), vs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			_, err := client.Ping(ctx, &filer_pb.PingRequest{})
 			return err
 		})
 	}
-	if req.TargetType == "VolumeServer" {
+	if req.TargetType == cluster.VolumeServerType {
 		pingErr = pb.WithVolumeServerClient(false, pb.ServerAddress(req.Target), vs.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 			_, err := client.Ping(ctx, &volume_server_pb.PingRequest{})
 			return err
 		})
 	}
-	if req.TargetType == "Master" {
+	if req.TargetType == cluster.MasterType {
 		pingErr = pb.WithMasterClient(false, pb.ServerAddress(req.Target), vs.grpcDialOption, func(client master_pb.SeaweedClient) error {
 			_, err := client.Ping(ctx, &master_pb.PingRequest{})
 			return err
