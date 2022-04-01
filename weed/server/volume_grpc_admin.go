@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"path/filepath"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -246,4 +247,15 @@ func (vs *VolumeServer) VolumeNeedleStatus(ctx context.Context, req *volume_serv
 	}
 	return resp, nil
 
+}
+
+func (vs *VolumeServer) Ping(ctx context.Context, req *volume_server_pb.PingRequest) (resp *volume_server_pb.PingResponse, pingErr error) {
+	resp = &volume_server_pb.PingResponse{}
+	if req.TargetType == "VolumeServer" {
+		pingErr = pb.WithVolumeServerClient(false, pb.ServerAddress(req.Target), vs.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+			_, err := client.Ping(ctx, &volume_server_pb.PingRequest{})
+			return err
+		})
+	}
+	return
 }
