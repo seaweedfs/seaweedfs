@@ -12,9 +12,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/mount/unmount"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/mount_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"google.golang.org/grpc/reflection"
+	"net"
 	"net/http"
 	"os"
 	"os/user"
@@ -97,6 +100,22 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	unmount.Unmount(dir)
+
+	// start on local unix socket
+	if *option.localSocket == "" {
+		mountDirHash := util.HashToInt32([]byte(dir))
+		if mountDirHash < 0 {
+			mountDirHash = -mountDirHash
+		}
+		*option.localSocket = fmt.Sprintf("/tmp/seaweefs-mount-%d.sock", mountDirHash)
+		if err := os.Remove(*option.localSocket); err != nil && !os.IsNotExist(err) {
+			glog.Fatalf("Failed to remove %s, error: %s", *option.localSocket, err.Error())
+		}
+	}
+	montSocketListener, err := net.Listen("unix", *option.localSocket)
+	if err != nil {
+		glog.Fatalf("Failed to listen on %s: %v", *option.localSocket, err)
+	}
 
 	// detect mount folder mode
 	if *option.dirAutoCreate {
@@ -228,6 +247,11 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	grace.OnInterrupt(func() {
 		unmount.Unmount(dir)
 	})
+
+	grpcS := pb.NewGrpcServer()
+	mount_pb.RegisterSeaweedMountServer(grpcS, seaweedFileSystem)
+	reflection.Register(grpcS)
+	go grpcS.Serve(montSocketListener)
 
 	seaweedFileSystem.StartBackgroundTasks()
 
