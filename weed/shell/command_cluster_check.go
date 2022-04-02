@@ -96,6 +96,25 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 		}
 	}
 
+	// check between masters
+	for _, sourceMaster := range masters {
+		for _, targetMaster := range masters {
+			fmt.Fprintf(writer, "checking master %s to %s ... ", string(sourceMaster), string(targetMaster))
+			err := pb.WithMasterClient(false, sourceMaster, commandEnv.option.GrpcDialOption, func(client master_pb.SeaweedClient) error {
+				_, err := client.Ping(context.Background(), &master_pb.PingRequest{
+					Target:     string(targetMaster),
+					TargetType: cluster.MasterType,
+				})
+				return err
+			})
+			if err == nil {
+				fmt.Fprintf(writer, "ok\n")
+			} else {
+				fmt.Fprintf(writer, "%v\n", err)
+			}
+		}
+	}
+
 	// check from volume servers to masters
 	for _, volumeServer := range volumeServers {
 		for _, master := range masters {
@@ -142,6 +161,47 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 				_, err := client.Ping(context.Background(), &filer_pb.PingRequest{
 					Target:     string(volumeServer),
 					TargetType: cluster.VolumeServerType,
+				})
+				return err
+			})
+			if err == nil {
+				fmt.Fprintf(writer, "ok\n")
+			} else {
+				fmt.Fprintf(writer, "%v\n", err)
+			}
+		}
+	}
+
+	// check between volume servers
+	for _, sourceVolumeServer := range volumeServers {
+		for _, targetVolumeServer := range volumeServers {
+			fmt.Fprintf(writer, "checking volume server %s to %s ... ", string(sourceVolumeServer), string(targetVolumeServer))
+			err := pb.WithVolumeServerClient(false, sourceVolumeServer, commandEnv.option.GrpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+				_, err := client.Ping(context.Background(), &volume_server_pb.PingRequest{
+					Target:     string(targetVolumeServer),
+					TargetType: cluster.VolumeServerType,
+				})
+				return err
+			})
+			if err == nil {
+				fmt.Fprintf(writer, "ok\n")
+			} else {
+				fmt.Fprintf(writer, "%v\n", err)
+			}
+		}
+	}
+
+	// check between filers
+	for _, sourceFiler := range filers {
+		for _, targetFiler := range filers {
+			if sourceFiler == targetFiler {
+				continue
+			}
+			fmt.Fprintf(writer, "checking filer %s to %s ... ", string(sourceFiler), string(targetFiler))
+			err := pb.WithFilerClient(false, sourceFiler, commandEnv.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+				_, err := client.Ping(context.Background(), &filer_pb.PingRequest{
+					Target:     string(targetFiler),
+					TargetType: cluster.FilerType,
 				})
 				return err
 			})
