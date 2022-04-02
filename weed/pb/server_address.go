@@ -89,7 +89,7 @@ func (sa ServerAddresses) ToAddresses() (addresses []ServerAddress) {
 func (sa ServerAddresses) ToAddressMap() (addresses map[string]ServerAddress) {
 	addresses = make(map[string]ServerAddress)
 	for _, address := range sa.ToAddresses() {
-		addresses[address.String()] = address
+		addresses[string(address)] = address
 	}
 	return
 }
