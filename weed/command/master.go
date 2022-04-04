@@ -177,7 +177,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	ms.SetRaftServer(raftServer)
 	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
 	if *m.raftHashicorp {
-		//r.HandleFunc("/raft/stats", raftServer.).Methods("GET")
+		r.HandleFunc("/raft/stats", raftServer.StatsRaftHandler).Methods("GET")
 	}
 	// starting grpc server
 	grpcPort := *masterOption.portGrpc

@@ -25,3 +25,11 @@ func (s *RaftServer) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJsonQuiet(w, r, http.StatusOK, ret)
 }
+
+func (s *RaftServer) StatsRaftHandler(w http.ResponseWriter, r *http.Request) {
+	if s.RaftHashicorp == nil {
+		writeJsonQuiet(w, r, http.StatusNotFound, nil)
+		return
+	}
+	writeJsonQuiet(w, r, http.StatusOK, s.RaftHashicorp.Stats())
+}
