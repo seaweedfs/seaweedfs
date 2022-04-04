@@ -23,6 +23,7 @@ func (c *MaxVolumeIdCommand) CommandName() string {
 	return "MaxVolumeId"
 }
 
+// deprecatedCommandApply represents the old interface to apply a command to the server.
 func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 	topo := server.Context().(*Topology)
 	before := topo.GetMaxVolumeId()

@@ -160,19 +160,41 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 }
 
 func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
-	ms.Topo.RaftServer = raftServer.raftServer
-	ms.Topo.RaftServer.AddEventListener(raft.LeaderChangeEventType, func(e raft.Event) {
-		glog.V(0).Infof("leader change event: %+v => %+v", e.PrevValue(), e.Value())
-		stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", e.Value())).Inc()
-		if ms.Topo.RaftServer.Leader() != "" {
-			glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "becomes leader.")
-		}
-	})
+	var raftServerName string
+	if raftServer.raftServer != nil {
+		ms.Topo.RaftServer = raftServer.raftServer
+		ms.Topo.RaftServer.AddEventListener(raft.LeaderChangeEventType, func(e raft.Event) {
+			glog.V(0).Infof("leader change event: %+v => %+v", e.PrevValue(), e.Value())
+			stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", e.Value())).Inc()
+			if ms.Topo.RaftServer.Leader() != "" {
+				glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "becomes leader.")
+			}
+		})
+		raftServerName = ms.Topo.RaftServer.Name()
+	} else if raftServer.RaftHashicorp != nil {
+		ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
+		leaderCh := raftServer.RaftHashicorp.LeaderCh()
+		prevLeader := ms.Topo.HashicorpRaft.Leader()
+		go func() {
+			for {
+				select {
+				case isLeader := <-leaderCh:
+					leader := ms.Topo.HashicorpRaft.Leader()
+					glog.V(0).Infof("is leader %+v change event: %+v => %+v", isLeader, prevLeader, leader)
+					stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", leader)).Inc()
+					prevLeader = leader
+				}
+			}
+		}()
+		raftServerName = ms.Topo.HashicorpRaft.String()
+	}
 	if ms.Topo.IsLeader() {
-		glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", "I am the leader!")
+		glog.V(0).Infoln("[", raftServerName, "]", "I am the leader!")
 	} else {
-		if ms.Topo.RaftServer.Leader() != "" {
+		if ms.Topo.RaftServer != nil && ms.Topo.RaftServer.Leader() != "" {
 			glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "is the leader.")
+		} else if ms.Topo.HashicorpRaft != nil && ms.Topo.HashicorpRaft.Leader() != "" {
+			glog.V(0).Infoln("[", ms.Topo.HashicorpRaft.String(), "]", ms.Topo.HashicorpRaft.Leader(), "is the leader.")
 		}
 	}
 }

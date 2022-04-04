@@ -1,7 +1,6 @@
 package command
 
 import (
-	"context"
 	"net/http"
 	"os"
 	"sort"
@@ -166,13 +165,14 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	var raftServer *weed_server.RaftServer
 	var err error
 	if *m.raftHashicorp {
-		ctx := context.Background()
-		raftServer, err = weed_server.NewHashicorpRaftServer(ctx, raftServerOption)
+		if raftServer, err = weed_server.NewHashicorpRaftServer(raftServerOption); err != nil {
+			glog.Fatalf("NewHashicorpRaftServer: %s", err)
+		}
 	} else {
 		raftServer, err = weed_server.NewRaftServer(raftServerOption)
-	}
-	if raftServer == nil {
-		glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
+		if raftServer == nil {
+			glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
+		}
 	}
 	ms.SetRaftServer(raftServer)
 	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
@@ -199,14 +199,17 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 	go grpcS.Serve(grpcL)
 
-	go func() {
-		time.Sleep(1500 * time.Millisecond)
-		if ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty() && isTheFirstOne(myMasterAddress, peers) {
-			if ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress) == "" {
-				raftServer.DoJoinCommand()
+	timeSleep := 1500 * time.Millisecond
+	if !*m.raftHashicorp {
+		go func() {
+			time.Sleep(timeSleep)
+			if ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty() && isTheFirstOne(myMasterAddress, peers) {
+				if ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress) == "" {
+					raftServer.DoJoinCommand()
+				}
 			}
-		}
-	}()
+		}()
+	}
 
 	go ms.MasterClient.KeepConnectedToMaster()
 

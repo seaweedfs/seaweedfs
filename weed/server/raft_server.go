@@ -36,7 +36,7 @@ type RaftServerOption struct {
 type RaftServer struct {
 	peers            map[string]pb.ServerAddress // initial peers to join with
 	raftServer       raft.Server
-	raftHashicorp    hashicorpRaft.Raft
+	RaftHashicorp    *hashicorpRaft.Raft
 	TransportManager *transport.Manager
 	dataDir          string
 	serverAddr       pb.ServerAddress

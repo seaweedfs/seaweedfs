@@ -4,7 +4,6 @@ package weed_server
 // https://github.com/Jille/raft-grpc-example/blob/cd5bcab0218f008e044fbeee4facdd01b06018ad/application.go#L18
 
 import (
-	"context"
 	"fmt"
 	transport "github.com/Jille/raft-grpc-transport"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -17,7 +16,7 @@ import (
 	"time"
 )
 
-func NewHashicorpRaftServer(ctx context.Context, option *RaftServerOption) (*RaftServer, error) {
+func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	s := &RaftServer{
 		peers:      option.Peers,
 		serverAddr: option.ServerAddr,
@@ -27,18 +26,20 @@ func NewHashicorpRaftServer(ctx context.Context, option *RaftServerOption) (*Raf
 
 	c := raft.DefaultConfig()
 	c.LocalID = raft.ServerID(s.serverAddr) // TODO maybee the IP:port address will change
+	c.NoSnapshotRestoreOnStart = option.RaftResumeState
 	c.HeartbeatTimeout = time.Duration(float64(option.HeartbeatInterval) * (rand.Float64()*0.25 + 1))
 	c.ElectionTimeout = option.ElectionTimeout
+	if c.LeaderLeaseTimeout > c.HeartbeatTimeout {
+		c.LeaderLeaseTimeout = c.HeartbeatTimeout
+	}
 	if glog.V(4) {
-		c.Logger.SetLevel(1)
-	} else if glog.V(3) {
-		c.Logger.SetLevel(2)
+		c.LogLevel = "Debug"
 	} else if glog.V(2) {
-		c.Logger.SetLevel(3)
+		c.LogLevel = "Info"
 	} else if glog.V(1) {
-		c.Logger.SetLevel(4)
+		c.LogLevel = "Warn"
 	} else if glog.V(0) {
-		c.Logger.SetLevel(5)
+		c.LogLevel = "Error"
 	}
 
 	baseDir := s.dataDir
@@ -58,40 +59,54 @@ func NewHashicorpRaftServer(ctx context.Context, option *RaftServerOption) (*Raf
 		return nil, fmt.Errorf(`raft.NewFileSnapshotStore(%q, ...): %v`, baseDir, err)
 	}
 
-	// s.GrpcServer = raft.NewGrpcServer(s.raftServer)
 	s.TransportManager = transport.New(raft.ServerAddress(s.serverAddr), []grpc.DialOption{option.GrpcDialOption})
 
 	stateMachine := StateMachine{topo: option.Topo}
-	r, err := raft.NewRaft(c, &stateMachine, ldb, sdb, fss, s.TransportManager.Transport())
+	s.RaftHashicorp, err = raft.NewRaft(c, &stateMachine, ldb, sdb, fss, s.TransportManager.Transport())
 	if err != nil {
 		return nil, fmt.Errorf("raft.NewRaft: %v", err)
 	}
-
 	if option.RaftBootstrap {
 		cfg := raft.Configuration{
 			Servers: []raft.Server{
 				{
 					Suffrage: raft.Voter,
 					ID:       c.LocalID,
-					Address:  raft.ServerAddress(s.serverAddr),
+					Address:  raft.ServerAddress(s.serverAddr.ToGrpcAddress()),
 				},
 			},
 		}
 		// Add known peers to bootstrap
-		for _, node := range option.Peers {
-			if node == option.ServerAddr {
+		for _, peer := range option.Peers {
+			if peer == option.ServerAddr {
 				continue
 			}
 			cfg.Servers = append(cfg.Servers, raft.Server{
 				Suffrage: raft.Voter,
-				ID:       raft.ServerID(node),
-				Address:  raft.ServerAddress(node),
+				ID:       raft.ServerID(peer),
+				Address:  raft.ServerAddress(peer.ToGrpcAddress()),
 			})
 		}
-		f := r.BootstrapCluster(cfg)
+		f := s.RaftHashicorp.BootstrapCluster(cfg)
 		if err := f.Error(); err != nil {
 			return nil, fmt.Errorf("raft.Raft.BootstrapCluster: %v", err)
 		}
+	}
+	ticker := time.NewTicker(c.HeartbeatTimeout * 10)
+	if glog.V(4) {
+		go func() {
+			for {
+				select {
+				case <-ticker.C:
+					cfuture := s.RaftHashicorp.GetConfiguration()
+					if err = cfuture.Error(); err != nil {
+						glog.Fatalf("error getting config: %s", err)
+					}
+					configuration := cfuture.Configuration()
+					glog.V(4).Infof("Showing peers known by %s:\n%+v", s.RaftHashicorp.String(), configuration.Servers)
+				}
+			}
+		}()
 	}
 
 	return s, nil
