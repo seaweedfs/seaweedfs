@@ -171,12 +171,17 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 }
 
 func (s *RaftServer) Peers() (members []string) {
-	peers := s.raftServer.Peers()
-
-	for _, p := range peers {
-		members = append(members, p.Name)
+	if s.raftServer != nil {
+		peers := s.raftServer.Peers()
+		for _, p := range peers {
+			members = append(members, p.Name)
+		}
+	} else if s.RaftHashicorp != nil {
+		cfg := s.RaftHashicorp.GetConfiguration()
+		for _, p := range cfg.Configuration().Servers {
+			members = append(members, string(p.ID))
+		}
 	}
-
 	return
 }
 

@@ -6,9 +6,9 @@ services:
     ports:
       - 9333:9333
       - 19333:19333
-    command: "-v=3 master -volumeSizeLimitMB 100 -resumeState=false -raftHashicorp=true -raftBootstrap=true -ip=master0 -port=9333 master1:9334,master2:9335 -mdir=/data"
-    #volumes:
-    #  - ./master/0:/data
+    command: "-v=3 master -volumeSizeLimitMB 100 -resumeState=false -raftHashicorp=true -raftBootstrap=false -ip=master0 -port=9333 -peers=master1:9334,master2:9335 -mdir=/data"
+    volumes:
+      - ./master/0:/data
     environment:
       WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
       WEED_MASTER_VOLUME_GROWTH_COPY_2: 2
@@ -18,9 +18,9 @@ services:
     ports:
       - 9334:9334
       - 19334:19334
-    command: "-v=3 master -volumeSizeLimitMB 100 -resumeState=false -raftHashicorp=true -raftBootstrap=true -ip=master1 -port=9334 -peers=master0:9333,master2:9335 -mdir=/data"
-    #volumes:
-    #  - ./master/0:/data
+    command: "-v=3 master -volumeSizeLimitMB 100 -resumeState=false -raftHashicorp=true -raftBootstrap=false -ip=master1 -port=9334 -peers=master0:9333,master2:9335 -mdir=/data"
+    volumes:
+      - ./master/1:/data
     environment:
       WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
       WEED_MASTER_VOLUME_GROWTH_COPY_2: 2
@@ -30,9 +30,9 @@ services:
     ports:
       - 9335:9335
       - 19335:19335
-    command: "-v=3 master -volumeSizeLimitMB 100 -resumeState=false -raftHashicorp=true -raftBootstrap=true -ip=master2 -port=9335 -peers=master0:9333,master1:9334 -mdir=/data"
-    #volumes:
-    #  - ./master/0:/data
+    command: "-v=3 master -volumeSizeLimitMB 100 -resumeState=false -raftHashicorp=true -raftBootstrap=false -ip=master2 -port=9335 -peers=master0:9333,master1:9334 -mdir=/data"
+    volumes:
+      - ./master/2:/data
     environment:
       WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
       WEED_MASTER_VOLUME_GROWTH_COPY_2: 2
@@ -84,7 +84,7 @@ services:
     image: chrislusf/seaweedfs:local
     ports:
       - 8333:8333
-    command: '-v=9 s3 -filer="filer:8888"'
+    command: '-v=9 s3 -ip.bind="s3" -filer="filer:8888"'
     depends_on:
       - master0
       - master1
