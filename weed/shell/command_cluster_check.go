@@ -39,6 +39,19 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 		return nil
 	}
 
+	// collect topology information
+	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv, 0)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(writer, "Topology volumeSizeLimit:%d MB%s\n", volumeSizeLimitMb, diskInfosToString(topologyInfo.DiskInfos))
+
+	emptyDiskTypeDiskInfo, emptyDiskTypeFound := topologyInfo.DiskInfos[""]
+	hddDiskTypeDiskInfo, hddDiskTypeFound := topologyInfo.DiskInfos["hdd"]
+	if !emptyDiskTypeFound && !hddDiskTypeFound || emptyDiskTypeDiskInfo.VolumeCount == 0 && hddDiskTypeDiskInfo.VolumeCount == 0 {
+		return fmt.Errorf("Need to a hdd disk type!")
+	}
+
 	// collect filers
 	var filers []pb.ServerAddress
 	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
