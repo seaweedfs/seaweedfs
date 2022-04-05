@@ -7,14 +7,33 @@ import (
 	"fmt"
 	transport "github.com/Jille/raft-grpc-transport"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/hashicorp/raft"
 	boltdb "github.com/hashicorp/raft-boltdb"
 	"google.golang.org/grpc"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 )
+
+func getPeerIdx(self pb.ServerAddress, mapPeers map[string]pb.ServerAddress) int {
+	peers := make([]pb.ServerAddress, 0, len(mapPeers))
+	for _, peer := range mapPeers {
+		peers = append(peers, peer)
+	}
+	sort.Slice(peers, func(i, j int) bool {
+		return strings.Compare(string(peers[i]), string(peers[j])) < 0
+	})
+	for i, peer := range peers {
+		if string(peer) == string(self) {
+			return i
+		}
+	}
+	return -1
+}
 
 func (s *RaftServer) AddPeersConfiguration() (cfg raft.Configuration) {
 	for _, peer := range s.peers {
@@ -32,7 +51,7 @@ func (s *RaftServer) UpdatePeers() {
 		select {
 		case isLeader := <-s.RaftHashicorp.LeaderCh():
 			if isLeader {
-				peerLeader := s.serverAddr.String()
+				peerLeader := string(s.serverAddr)
 				existsPeerName := make(map[string]bool)
 				for _, server := range s.RaftHashicorp.GetConfiguration().Configuration().Servers {
 					if string(server.ID) == peerLeader {
@@ -116,7 +135,11 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	}
 	if option.RaftBootstrap || len(s.RaftHashicorp.GetConfiguration().Configuration().Servers) == 0 {
 		cfg := s.AddPeersConfiguration()
-		glog.V(0).Infof("Bootstrapping new cluster %+v", cfg)
+		// Need to get lock, in case all servers do this at the same time.
+		peerIdx := getPeerIdx(s.serverAddr, s.peers)
+		timeSpeep := time.Duration(float64(c.LeaderLeaseTimeout) * (rand.Float64()*0.25 + 1) * float64(peerIdx))
+		glog.V(0).Infof("Bootstrapping idx: %d sleep: %v new cluster: %+v", peerIdx, timeSpeep, cfg)
+		time.Sleep(timeSpeep)
 		f := s.RaftHashicorp.BootstrapCluster(cfg)
 		if err := f.Error(); err != nil {
 			return nil, fmt.Errorf("raft.Raft.BootstrapCluster: %v", err)
