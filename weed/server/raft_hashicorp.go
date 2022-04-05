@@ -73,7 +73,7 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	}
 
 	c := raft.DefaultConfig()
-	c.LocalID = raft.ServerID(s.serverAddr.String()) // TODO maybee the IP:port address will change
+	c.LocalID = raft.ServerID(s.serverAddr) // TODO maybee the IP:port address will change
 	c.NoSnapshotRestoreOnStart = option.RaftResumeState
 	c.HeartbeatTimeout = time.Duration(float64(option.HeartbeatInterval) * (rand.Float64()*0.25 + 1))
 	c.ElectionTimeout = option.ElectionTimeout
