@@ -187,6 +187,9 @@ func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex Logic
 
 func (up *UploadPipeline) Shutdown() {
 	up.swapFile.FreeResource()
+
+	up.sealedChunksLock.Lock()
+	defer up.sealedChunksLock.Unlock()
 	for logicChunkIndex, sealedChunk := range up.sealedChunks {
 		sealedChunk.FreeReference(fmt.Sprintf("%s uploadpipeline shutdown chunk %d", up.filepath, logicChunkIndex))
 	}
