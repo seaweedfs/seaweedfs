@@ -23,6 +23,9 @@ func TotalSize(chunks []*filer_pb.FileChunk) (size uint64) {
 }
 
 func FileSize(entry *filer_pb.Entry) (size uint64) {
+	if entry == nil || entry.Attributes == nil {
+		return 0
+	}
 	fileSize := entry.Attributes.FileSize
 	if entry.RemoteEntry != nil {
 		if entry.RemoteEntry.RemoteMtime > entry.Attributes.Mtime {
