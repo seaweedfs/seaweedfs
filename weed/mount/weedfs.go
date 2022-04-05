@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/mount/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/mount_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
@@ -59,6 +60,7 @@ type WFS struct {
 	// https://dl.acm.org/doi/fullHtml/10.1145/3310148
 	// follow https://github.com/hanwen/go-fuse/blob/master/fuse/api.go
 	fuse.RawFileSystem
+	mount_pb.UnimplementedSeaweedMountServer
 	fs.Inode
 	option            *Option
 	metaCache         *meta_cache.MetaCache

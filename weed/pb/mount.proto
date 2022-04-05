@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package messaging_pb;
+
+option go_package = "github.com/chrislusf/seaweedfs/weed/pb/mount_pb";
+option java_package = "seaweedfs.client";
+option java_outer_classname = "MountProto";
+
+//////////////////////////////////////////////////
+
+service SeaweedMount {
+
+    rpc Configure (ConfigureRequest) returns (ConfigureResponse) {
+    }
+
+}
+
+//////////////////////////////////////////////////
+
+message ConfigureRequest {
+    int64 collection_capacity = 1;
+}
+
+message ConfigureResponse {
+}

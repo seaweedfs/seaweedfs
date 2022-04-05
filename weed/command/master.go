@@ -138,7 +138,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	masterPeers := make(map[string]pb.ServerAddress)
 	for _, peer := range peers {
-		masterPeers[peer.String()] = peer
+		masterPeers[string(peer)] = peer
 	}
 
 	r := mux.NewRouter()

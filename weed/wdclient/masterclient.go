@@ -41,6 +41,11 @@ func (mc *MasterClient) GetMaster() pb.ServerAddress {
 	return mc.currentMaster
 }
 
+func (mc *MasterClient) GetMasters() map[string]pb.ServerAddress {
+	mc.WaitUntilConnected()
+	return mc.masters
+}
+
 func (mc *MasterClient) WaitUntilConnected() {
 	for mc.currentMaster == "" {
 		time.Sleep(time.Duration(rand.Int31n(200)) * time.Millisecond)
