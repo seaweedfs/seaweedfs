@@ -148,14 +148,16 @@ require (
 )
 
 require (
+	github.com/Jille/raft-grpc-transport v1.2.0
 	github.com/fluent/fluent-logger-golang v1.9.0
 	github.com/hanwen/go-fuse/v2 v2.1.0
+	github.com/hashicorp/raft v1.3.6
+	github.com/hashicorp/raft-boltdb v0.0.0-20220329195025-15018e9b97e0
 )
 
 require (
 	cloud.google.com/go/compute v1.5.0 // indirect
 	cloud.google.com/go/iam v0.3.0 // indirect
-	github.com/Jille/raft-grpc-transport v1.2.0 // indirect
 	github.com/armon/go-metrics v0.3.10 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.16.2 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.15.3 // indirect
@@ -180,8 +182,6 @@ require (
 	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
 	github.com/hashicorp/go-msgpack v1.1.5 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
-	github.com/hashicorp/raft v1.3.6 // indirect
-	github.com/hashicorp/raft-boltdb v0.0.0-20220329195025-15018e9b97e0 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
