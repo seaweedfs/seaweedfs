@@ -116,7 +116,7 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	}
 	if option.RaftBootstrap || len(s.RaftHashicorp.GetConfiguration().Configuration().Servers) == 0 {
 		cfg := s.AddPeersConfiguration()
-		glog.V(0).Infoln("Bootstrapping new cluster %+v", cfg)
+		glog.V(0).Infof("Bootstrapping new cluster %+v", cfg)
 		f := s.RaftHashicorp.BootstrapCluster(cfg)
 		if err := f.Error(); err != nil {
 			return nil, fmt.Errorf("raft.Raft.BootstrapCluster: %v", err)
