@@ -138,18 +138,20 @@ func (wfs *WFS) setAttrByPbEntry(out *fuse.Attr, inode uint64, entry *filer_pb.E
 	out.Size = filer.FileSize(entry)
 	out.Blocks = (out.Size + blockSize - 1) / blockSize
 	setBlksize(out, blockSize)
-	out.Mtime = uint64(entry.Attributes.Mtime)
-	out.Ctime = uint64(entry.Attributes.Mtime)
-	out.Atime = uint64(entry.Attributes.Mtime)
-	out.Mode = toSyscallMode(os.FileMode(entry.Attributes.FileMode))
+	if entry.Attributes != nil {
+		out.Mtime = uint64(entry.Attributes.Mtime)
+		out.Ctime = uint64(entry.Attributes.Mtime)
+		out.Atime = uint64(entry.Attributes.Mtime)
+		out.Mode = toSyscallMode(os.FileMode(entry.Attributes.FileMode))
+		out.Uid = entry.Attributes.Uid
+		out.Gid = entry.Attributes.Gid
+		out.Rdev = entry.Attributes.Rdev
+	}
 	if entry.HardLinkCounter > 0 {
 		out.Nlink = uint32(entry.HardLinkCounter)
 	} else {
 		out.Nlink = 1
 	}
-	out.Uid = entry.Attributes.Uid
-	out.Gid = entry.Attributes.Gid
-	out.Rdev = entry.Attributes.Rdev
 }
 
 func (wfs *WFS) setAttrByFilerEntry(out *fuse.Attr, inode uint64, entry *filer.Entry) {
