@@ -26,6 +26,7 @@
             border-radius: 2px;
             border: 1px solid #ccc;
             float: right;
+            margin-left: 5px;
         }
 
         .button:hover {
@@ -34,6 +35,13 @@
 
         #fileElem {
             display: none;
+        }
+
+        .danger {
+            color: red;
+            background: #fff;
+            border: 1px solid #fff;
+            border-radius: 2px;
         }
 
     </style>
@@ -54,6 +62,7 @@
             </a>
             {{ end }}
             <label class="button" for="fileElem">Upload</label>
+            <label class="button" onclick="handleCreateDir()">Create Dir</label>
         </div>
     </div>
 
@@ -61,7 +70,7 @@
         <form class="upload-form">
             <input type="file" id="fileElem" multiple onchange="handleFiles(this.files)">
 
-            <table width="90%">
+            <table width="86%">
                 {{$path := .Path }}
                 {{ range $entry_index, $entry := .Entries }}
                 <tr>
@@ -89,8 +98,15 @@
                         {{ $entry.Size | humanizeBytes }}&nbsp;
                         {{end}}
                     </td>
-                    <td nowrap>
+                    <td align="right" nowrap>
                         {{ $entry.Timestamp.Format "2006-01-02 15:04" }}
+                    </td>
+                    <td>
+                        {{if $entry.IsDirectory}}
+                        <label class="button danger" onclick="handleDelete('{{ printpath $path  "/" $entry.Name "/"  }}')">Delete</label>
+                        {{else}}
+                        <label class="button danger" onclick="handleDelete('{{ printpath $path  "/" $entry.Name }}')">Delete</label>
+                        {{end}}
                     </td>
                 </tr>
                 {{ end }}
@@ -114,60 +130,96 @@
 </body>
 <script type="text/javascript">
     // ************************ Drag and drop ***************** //
-    let dropArea = document.getElementById("drop-area")
+    let dropArea = document.getElementById("drop-area");
 
 // Prevent default drag behaviors
     ;['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-        dropArea.addEventListener(eventName, preventDefaults, false)
-        document.body.addEventListener(eventName, preventDefaults, false)
-    })
+        dropArea.addEventListener(eventName, preventDefaults, false);
+        document.body.addEventListener(eventName, preventDefaults, false);
+    });
 
 // Highlight drop area when item is dragged over it
     ;['dragenter', 'dragover'].forEach(eventName => {
-        dropArea.addEventListener(eventName, highlight, false)
-    })
+        dropArea.addEventListener(eventName, highlight, false);
+    });
 
     ;['dragleave', 'drop'].forEach(eventName => {
-        dropArea.addEventListener(eventName, unhighlight, false)
-    })
+        dropArea.addEventListener(eventName, unhighlight, false);
+    });
 
     // Handle dropped files
-    dropArea.addEventListener('drop', handleDrop, false)
+    dropArea.addEventListener('drop', handleDrop, false);
 
     function preventDefaults(e) {
-        e.preventDefault()
-        e.stopPropagation()
+        e.preventDefault();
+        e.stopPropagation();
     }
 
     function highlight(e) {
-        dropArea.classList.add('highlight')
+        dropArea.classList.add('highlight');
     }
 
     function unhighlight(e) {
-        dropArea.classList.remove('highlight')
+        dropArea.classList.remove('highlight');
     }
 
     function handleDrop(e) {
-        var dt = e.dataTransfer
-        var files = dt.files
+        var dt = e.dataTransfer;
+        var files = dt.files;
 
-        handleFiles(files)
+        handleFiles(files);
     }
 
     function handleFiles(files) {
-        files = [...files]
-        files.forEach(uploadFile)
-        window.location.reload()
+        files = [...files];
+        files.forEach(uploadFile);
+        window.location.reload();
     }
 
     function uploadFile(file, i) {
-        var url = window.location.href
-        var xhr = new XMLHttpRequest()
-        var formData = new FormData()
-        xhr.open('POST', url, false)
+        var url = window.location.href;
+        var xhr = new XMLHttpRequest();
+        var formData = new FormData();
+        xhr.open('POST', url, false);
 
-        formData.append('file', file)
-        xhr.send(formData)
+        formData.append('file', file);
+        xhr.send(formData);
+    }
+
+    function handleCreateDir() {
+        var dirName = prompt('Directory Name:', '');
+        dirName = dirName.trim();
+        if (dirName == null && dirName == '') {
+            return;
+        }
+        var baseUrl = window.location.href;
+        if (!baseUrl.endsWith('/')) {
+            baseUrl += '/';
+        }
+        var url = baseUrl + dirName;
+        if (!url.endsWith('/')) {
+            url += '/';
+        }
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', url, false);
+        xhr.setRequestHeader('Content-Type', '');
+        xhr.send();
+        window.location.reload();
+    }
+
+    function handleDelete(path) {
+        if (!confirm('Are you sure to delete ' + path + '?')) {
+            return;
+        }
+        var url = path;
+        if (url.endsWith('/')) {
+            url += '?recursive=true';
+        }
+
+        var xhr = new XMLHttpRequest();
+        xhr.open('DELETE', url, false);
+        xhr.send();
+        window.location.reload();
     }
 </script>
 </html>
