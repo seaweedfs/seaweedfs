@@ -13,10 +13,16 @@ import (
 	"google.golang.org/grpc"
 	"math/rand"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+)
+
+const (
+	ldbFile = "logs.dat"
+	sdbFile = "stable.dat"
 )
 
 func getPeerIdx(self pb.ServerAddress, mapPeers map[string]pb.ServerAddress) int {
@@ -108,14 +114,19 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		c.LogLevel = "Error"
 	}
 
+	if option.RaftBootstrap {
+		os.RemoveAll(path.Join(s.dataDir, ldbFile))
+		os.RemoveAll(path.Join(s.dataDir, sdbFile))
+		os.RemoveAll(path.Join(s.dataDir, "snapshot"))
+	}
 	baseDir := s.dataDir
 
-	ldb, err := boltdb.NewBoltStore(filepath.Join(baseDir, "logs.dat"))
+	ldb, err := boltdb.NewBoltStore(filepath.Join(baseDir, ldbFile))
 	if err != nil {
 		return nil, fmt.Errorf(`boltdb.NewBoltStore(%q): %v`, filepath.Join(baseDir, "logs.dat"), err)
 	}
 
-	sdb, err := boltdb.NewBoltStore(filepath.Join(baseDir, "stable.dat"))
+	sdb, err := boltdb.NewBoltStore(filepath.Join(baseDir, sdbFile))
 	if err != nil {
 		return nil, fmt.Errorf(`boltdb.NewBoltStore(%q): %v`, filepath.Join(baseDir, "stable.dat"), err)
 	}
