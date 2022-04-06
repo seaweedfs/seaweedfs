@@ -35,7 +35,8 @@ service Seaweed {
   }
   rpc ReleaseAdminToken (ReleaseAdminTokenRequest) returns (ReleaseAdminTokenResponse) {
   }
-
+  rpc Ping (PingRequest) returns (PingResponse) {
+  }
 }
 
 //////////////////////////////////////////////////
@@ -140,6 +141,8 @@ message VolumeLocation {
   string leader = 5; // optional when leader is not itself
   string data_center = 6; // optional when DataCenter is in use
   uint32 grpc_port = 7;
+  repeated uint32 new_ec_vids = 8;
+  repeated uint32 deleted_ec_vids = 9;
 }
 
 message ClusterNodeUpdate {
@@ -327,4 +330,11 @@ message ReleaseAdminTokenRequest {
   string lock_name = 3;
 }
 message ReleaseAdminTokenResponse {
+}
+
+message PingRequest {
+  string target = 1; // default to ping itself
+  string target_type = 2;
+}
+message PingResponse {
 }

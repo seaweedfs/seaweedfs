@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	MasterType = "master"
-	FilerType  = "filer"
-	BrokerType = "broker"
+	MasterType       = "master"
+	VolumeServerType = "volumeServer"
+	FilerType        = "filer"
+	BrokerType       = "broker"
 )
 
 type ClusterNode struct {

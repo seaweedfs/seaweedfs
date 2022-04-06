@@ -164,6 +164,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	}
 
 	var entry *filer.Entry
+	var newChunks []*filer_pb.FileChunk
 	var mergedChunks []*filer_pb.FileChunk
 
 	isAppend := isAppend(r)
@@ -186,7 +187,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			}
 			entry.FileSize += uint64(chunkOffset)
 		}
-		mergedChunks = append(entry.Chunks, fileChunks...)
+		newChunks = append(entry.Chunks, fileChunks...)
 
 		// TODO
 		if len(entry.Content) > 0 {
@@ -196,7 +197,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 	} else {
 		glog.V(4).Infoln("saving", path)
-		mergedChunks = fileChunks
+		newChunks = fileChunks
 		entry = &filer.Entry{
 			FullPath: util.FullPath(path),
 			Attr: filer.Attr{
@@ -215,6 +216,13 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			},
 			Content: content,
 		}
+	}
+
+	// maybe concatenate small chunks into one whole chunk
+	mergedChunks, replyerr = fs.maybeMergeChunks(so, newChunks)
+	if replyerr != nil {
+		glog.V(0).Infof("merge chunks %s: %v", r.RequestURI, replyerr)
+		mergedChunks = newChunks
 	}
 
 	// maybe compact entry chunks

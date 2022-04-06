@@ -41,6 +41,11 @@ func (mc *MasterClient) GetMaster() pb.ServerAddress {
 	return mc.currentMaster
 }
 
+func (mc *MasterClient) GetMasters() map[string]pb.ServerAddress {
+	mc.WaitUntilConnected()
+	return mc.masters
+}
+
 func (mc *MasterClient) WaitUntilConnected() {
 	for mc.currentMaster == "" {
 		time.Sleep(time.Duration(rand.Int31n(200)) * time.Millisecond)
@@ -153,6 +158,14 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 				for _, deletedVid := range resp.VolumeLocation.DeletedVids {
 					glog.V(1).Infof("%s: %s masterClient removes volume %d", mc.clientType, loc.Url, deletedVid)
 					mc.deleteLocation(deletedVid, loc)
+				}
+				for _, newEcVid := range resp.VolumeLocation.NewEcVids {
+					glog.V(1).Infof("%s: %s masterClient adds ec volume %d", mc.clientType, loc.Url, newEcVid)
+					mc.addEcLocation(newEcVid, loc)
+				}
+				for _, deletedEcVid := range resp.VolumeLocation.DeletedEcVids {
+					glog.V(1).Infof("%s: %s masterClient removes ec volume %d", mc.clientType, loc.Url, deletedEcVid)
+					mc.deleteEcLocation(deletedEcVid, loc)
 				}
 			}
 

@@ -48,6 +48,9 @@ service SeaweedFiler {
     rpc Statistics (StatisticsRequest) returns (StatisticsResponse) {
     }
 
+    rpc Ping (PingRequest) returns (PingResponse) {
+    }
+
     rpc GetFilerConfiguration (GetFilerConfigurationRequest) returns (GetFilerConfigurationResponse) {
     }
 
@@ -309,6 +312,13 @@ message StatisticsResponse {
     uint64 total_size = 4;
     uint64 used_size = 5;
     uint64 file_count = 6;
+}
+
+message PingRequest {
+    string target = 1; // default to ping itself
+    string target_type = 2;
+}
+message PingResponse {
 }
 
 message GetFilerConfigurationRequest {

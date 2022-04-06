@@ -133,13 +133,13 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			ms.Topo.IncrementalSyncDataNodeEcShards(heartbeat.NewEcShards, heartbeat.DeletedEcShards, dn)
 
 			for _, s := range heartbeat.NewEcShards {
-				message.NewVids = append(message.NewVids, s.Id)
+				message.NewEcVids = append(message.NewEcVids, s.Id)
 			}
 			for _, s := range heartbeat.DeletedEcShards {
-				if dn.HasVolumesById(needle.VolumeId(s.Id)) {
+				if dn.HasEcShards(needle.VolumeId(s.Id)) {
 					continue
 				}
-				message.DeletedVids = append(message.DeletedVids, s.Id)
+				message.DeletedEcVids = append(message.DeletedEcVids, s.Id)
 			}
 
 		}
@@ -151,17 +151,17 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 			// broadcast the ec vid changes to master clients
 			for _, s := range newShards {
-				message.NewVids = append(message.NewVids, uint32(s.VolumeId))
+				message.NewEcVids = append(message.NewEcVids, uint32(s.VolumeId))
 			}
 			for _, s := range deletedShards {
 				if dn.HasVolumesById(s.VolumeId) {
 					continue
 				}
-				message.DeletedVids = append(message.DeletedVids, uint32(s.VolumeId))
+				message.DeletedEcVids = append(message.DeletedEcVids, uint32(s.VolumeId))
 			}
 
 		}
-		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 {
+		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 || len(message.NewEcVids) > 0 || len(message.DeletedEcVids) > 0 {
 			ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: message})
 		}
 
