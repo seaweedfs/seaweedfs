@@ -14,12 +14,10 @@ scripts = """
   volume.deleteEmpty -quietFor=24h -force
   volume.balance -force
   volume.fix.replication
+  s3.clean.uploads -timeAgo=24h
   unlock
 """
 sleep_minutes = 17          # sleep minutes between each script execution
-
-[master.filer]
-default = "localhost:8888"    # used by maintenance scripts if the scripts needs to use fs related commands
 
 
 [master.sequencer]

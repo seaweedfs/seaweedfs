@@ -72,8 +72,8 @@ func (store *LevelDB3Store) loadDB(name string) (*leveldb.DB, error) {
 	}
 	if name != DEFAULT {
 		opts = &opt.Options{
-			BlockCacheCapacity: 4 * 1024 * 1024, // default value is 8MiB
-			WriteBuffer:        2 * 1024 * 1024, // default value is 4MiB
+			BlockCacheCapacity: 16 * 1024 * 1024, // default value is 8MiB
+			WriteBuffer:        8 * 1024 * 1024,  // default value is 4MiB
 			Filter:             bloom,
 		}
 	}

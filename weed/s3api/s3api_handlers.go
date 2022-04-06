@@ -13,24 +13,26 @@ import (
 
 var _ = filer_pb.FilerClient(&S3ApiServer{})
 
-func (s3a *S3ApiServer) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
+func (s3a *S3ApiServer) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
+	return pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
 	}, s3a.option.Filer.ToGrpcAddress(), s3a.option.GrpcDialOption)
 
 }
+
 func (s3a *S3ApiServer) AdjustedUrl(location *filer_pb.Location) string {
 	return location.Url
 }
 
-func writeSuccessResponseXML(w http.ResponseWriter, response interface{}) {
-	s3err.WriteXMLResponse(w, http.StatusOK, response)
+func writeSuccessResponseXML(w http.ResponseWriter, r *http.Request, response interface{}) {
+	s3err.WriteXMLResponse(w, r, http.StatusOK, response)
+	s3err.PostLog(r, http.StatusOK, s3err.ErrNone)
 }
 
-func writeSuccessResponseEmpty(w http.ResponseWriter) {
-	s3err.WriteEmptyResponse(w, http.StatusOK)
+func writeSuccessResponseEmpty(w http.ResponseWriter, r *http.Request) {
+	s3err.WriteEmptyResponse(w, r, http.StatusOK)
 }
 
 func validateContentMd5(h http.Header) ([]byte, error) {

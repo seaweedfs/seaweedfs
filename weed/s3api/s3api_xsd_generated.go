@@ -8,12 +8,12 @@ import (
 )
 
 type AccessControlList struct {
-	Grant []Grant `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Grant,omitempty"`
+	Grant []Grant `xml:"Grant,omitempty"`
 }
 
 type AccessControlPolicy struct {
-	Owner             CanonicalUser     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Owner"`
-	AccessControlList AccessControlList `xml:"http://s3.amazonaws.com/doc/2006-03-01/ AccessControlList"`
+	Owner             CanonicalUser     `xml:"Owner"`
+	AccessControlList AccessControlList `xml:"AccessControlList"`
 }
 
 type AmazonCustomerByEmail struct {
@@ -467,11 +467,17 @@ func (t *GetObjectResult) UnmarshalXML(d *xml.Decoder, start xml.StartElement) e
 }
 
 type Grant struct {
-	Grantee    Grantee    `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Grantee"`
-	Permission Permission `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Permission"`
+	Grantee    Grantee    `xml:"Grantee"`
+	Permission Permission `xml:"Permission"`
 }
 
 type Grantee struct {
+	XMLNS       string `xml:"xmlns:xsi,attr"`
+	XMLXSI      string `xml:"xsi:type,attr"`
+	Type        string `xml:"Type"`
+	ID          string `xml:"ID,omitempty"`
+	DisplayName string `xml:"DisplayName,omitempty"`
+	URI         string `xml:"URI,omitempty"`
 }
 
 type Group struct {
@@ -638,6 +644,10 @@ type ListVersionsResult struct {
 	Version             VersionEntry      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Version"`
 	DeleteMarker        DeleteMarkerEntry `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DeleteMarker"`
 	CommonPrefixes      []PrefixEntry     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ CommonPrefixes,omitempty"`
+}
+
+type LocationConstraint struct {
+	LocationConstraint string `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LocationConstraint"`
 }
 
 type LoggingSettings struct {

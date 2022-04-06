@@ -8,7 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, prefix string, lastTsNs int64) error {
+func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, prefix string, lastTsNs int64) {
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 
@@ -32,8 +32,11 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, prefix string, la
 		return nil
 	}
 
-	return util.Retry("followIamChanges", func() error {
-		return pb.WithFilerClientFollowMetadata(s3a, clientName, prefix, lastTsNs, 0, processEventFn, true)
+	util.RetryForever("followIamChanges", func() error {
+		return pb.WithFilerClientFollowMetadata(s3a, clientName, s3a.randomClientId, prefix, &lastTsNs, 0, processEventFn, true)
+	}, func(err error) bool {
+		glog.V(0).Infof("iam follow metadata changes: %v", err)
+		return true
 	})
 
 }

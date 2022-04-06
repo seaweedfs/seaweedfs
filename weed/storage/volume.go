@@ -175,6 +175,21 @@ func (v *Volume) DiskType() types.DiskType {
 	return v.location.DiskType
 }
 
+func (v *Volume) SetStopping() {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	if v.nm != nil {
+		if err := v.nm.Sync(); err != nil {
+			glog.Warningf("Volume SetStopping fail to sync volume idx %d", v.Id)
+		}
+	}
+	if v.DataBackend != nil {
+		if err := v.DataBackend.Sync(); err != nil {
+			glog.Warningf("Volume SetStopping fail to sync volume %d", v.Id)
+		}
+	}
+}
+
 // Close cleanly shuts down this volume
 func (v *Volume) Close() {
 	v.dataFileAccessLock.Lock()

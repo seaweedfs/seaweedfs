@@ -184,7 +184,7 @@ func (c *commandRemoteConfigure) listExistingRemoteStorages(commandEnv *CommandE
 
 func (c *commandRemoteConfigure) deleteRemoteStorage(commandEnv *CommandEnv, writer io.Writer, storageName string) error {
 
-	return commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.DeleteEntryRequest{
 			Directory:            filer.DirectoryEtcRemote,
@@ -214,7 +214,7 @@ func (c *commandRemoteConfigure) saveRemoteStorage(commandEnv *CommandEnv, write
 		return err
 	}
 
-	if err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	if err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return filer.SaveInsideFiler(client, filer.DirectoryEtcRemote, conf.Name+filer.REMOTE_STORAGE_CONF_SUFFIX, data)
 	}); err != nil && err != filer_pb.ErrNotFound {
 		return err

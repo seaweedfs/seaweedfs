@@ -24,7 +24,7 @@ case "$1" in
   'master')
   	ARGS="-mdir=/data -volumePreallocate -volumeSizeLimitMB=1024"
   	shift
-  	exec /usr/bin/weed master $ARGS $@
+  	exec /usr/bin/weed -logtostderr=true master $ARGS $@
 	;;
 
   'volume')
@@ -33,7 +33,7 @@ case "$1" in
   	  ARGS="-dir=/data"
   	fi
   	shift
-  	exec /usr/bin/weed volume $ARGS $@
+  	exec /usr/bin/weed -logtostderr=true volume $ARGS $@
 	;;
 
   'server')
@@ -42,31 +42,21 @@ case "$1" in
   	  ARGS="-dir=/data -master.volumePreallocate -master.volumeSizeLimitMB=1024"
   	fi
  	shift
-  	exec /usr/bin/weed server $ARGS $@
+  	exec /usr/bin/weed -logtostderr=true server $ARGS $@
   	;;
 
   'filer')
   	ARGS=""
   	shift
-  	exec /usr/bin/weed filer $ARGS $@
+  	exec /usr/bin/weed -logtostderr=true filer $ARGS $@
 	;;
 
   's3')
   	ARGS="-domainName=$S3_DOMAIN_NAME -key.file=$S3_KEY_FILE -cert.file=$S3_CERT_FILE"
   	shift
-  	exec /usr/bin/weed s3 $ARGS $@
+  	exec /usr/bin/weed -logtostderr=true s3 $ARGS $@
 	;;
 
-  'cronjob')
-	MASTER=${WEED_MASTER-localhost:9333}
-	FIX_REPLICATION_CRON_SCHEDULE=${CRON_SCHEDULE-*/7 * * * * *}
-	echo "$FIX_REPLICATION_CRON_SCHEDULE" 'echo "lock; volume.fix.replication; unlock" | weed shell -master='$MASTER > /crontab
-	BALANCING_CRON_SCHEDULE=${CRON_SCHEDULE-25 * * * * *}
-	echo "$BALANCING_CRON_SCHEDULE" 'echo "lock; volume.balance -collection ALL_COLLECTIONS -force; unlock" | weed shell -master='$MASTER >> /crontab
-	echo "Running Crontab:"
-	cat /crontab
-	exec supercronic /crontab
-	;;
   *)
   	exec /usr/bin/weed $@
 	;;

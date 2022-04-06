@@ -159,7 +159,7 @@ func (store *MongodbStore) DeleteEntry(ctx context.Context, fullpath util.FullPa
 	dir, name := fullpath.DirAndName()
 
 	where := bson.M{"directory": dir, "name": name}
-	_, err := store.connect.Database(store.database).Collection(store.collectionName).DeleteOne(ctx, where)
+	_, err := store.connect.Database(store.database).Collection(store.collectionName).DeleteMany(ctx, where)
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
@@ -193,11 +193,15 @@ func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, dirPath uti
 	optLimit := int64(limit)
 	opts := &options.FindOptions{Limit: &optLimit, Sort: bson.M{"name": 1}}
 	cur, err := store.connect.Database(store.database).Collection(store.collectionName).Find(ctx, where, opts)
+	if err != nil {
+		return lastFileName, fmt.Errorf("failed to list directory entries: find error: %w", err)
+	}
+
 	for cur.Next(ctx) {
 		var data Model
-		err := cur.Decode(&data)
-		if err != nil && err != mongo.ErrNoDocuments {
-			return lastFileName, err
+		err = cur.Decode(&data)
+		if err != nil {
+			break
 		}
 
 		entry := &filer.Entry{

@@ -6,6 +6,9 @@ on:
       - '*'
   workflow_dispatch: []
 
+permissions:
+  contents: read
+
 jobs:
 
   build-large-release-container_rocksdb:
@@ -14,11 +17,11 @@ jobs:
     steps:
       -
         name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
       -
         name: Docker meta
         id: docker_meta
-        uses: docker/metadata-action@v3
+        uses: docker/metadata-action@e5622373a38e60fb6d795a4421e56882f2d7a681 # v3
         with:
           images: |
             chrislusf/seaweedfs
@@ -32,20 +35,20 @@ jobs:
             org.opencontainers.image.vendor=Chris Lu
       -
         name: Set up QEMU
-        uses: docker/setup-qemu-action@v1
+        uses: docker/setup-qemu-action@27d0a4f181a40b142cce983c5393082c365d1480 # v1
       -
         name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
+        uses: docker/setup-buildx-action@94ab11c41e45d028884a99163086648e898eed25 # v1
       -
         name: Login to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v1
+        uses: docker/login-action@dd4fa0671be5250ee6f50aedf4cb05514abda2c7 # v1
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       -
         name: Build
-        uses: docker/build-push-action@v2
+        uses: docker/build-push-action@ac9327eae2b366085ac7f6a2d02df8aa8ead720a # v2
         with:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}

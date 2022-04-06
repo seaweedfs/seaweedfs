@@ -1,4 +1,4 @@
-FROM amd64/golang:1.17-alpine as builder
+FROM golang:1.17-alpine as builder
 RUN apk add git g++ fuse
 RUN mkdir -p /go/src/github.com/chrislusf/
 RUN git clone https://github.com/chrislusf/seaweedfs /go/src/github.com/chrislusf/seaweedfs
@@ -36,6 +36,7 @@ EXPOSE 7333
 RUN mkdir -p /data/filerldb2
 
 VOLUME /data
+WORKDIR /data
 
 RUN chmod +x /entrypoint.sh
 

@@ -50,14 +50,14 @@ func (c *commandVolumeTierDownload) Do(args []string, commandEnv *CommandEnv, wr
 		return nil
 	}
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
+	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
 
 	vid := needle.VolumeId(*volumeId)
 
 	// collect topology information
-	topologyInfo, _, err := collectTopologyInfo(commandEnv)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, collection s
 
 func downloadDatFromRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, collection string, targetVolumeServer pb.ServerAddress) error {
 
-	err := operation.WithVolumeServerClient(targetVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClient(true, targetVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		stream, downloadErr := volumeServerClient.VolumeTierMoveDatFromRemote(context.Background(), &volume_server_pb.VolumeTierMoveDatFromRemoteRequest{
 			VolumeId:   uint32(volumeId),
 			Collection: collection,

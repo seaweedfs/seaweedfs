@@ -4,20 +4,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
-	"io/ioutil"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/textproto"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type UploadOption struct {
@@ -67,12 +66,16 @@ var (
 
 func init() {
 	HttpClient = &http.Client{Transport: &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 10 * time.Second,
+		}).DialContext,
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
 	}}
 }
 
-var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", "")
 
 // Upload sends a POST request to a volume server to upload the content with adjustable compression level
 func UploadData(data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
@@ -91,7 +94,7 @@ func doUpload(reader io.Reader, option *UploadOption) (uploadResult *UploadResul
 	if ok {
 		data = bytesReader.Bytes
 	} else {
-		data, err = ioutil.ReadAll(reader)
+		data, err = io.ReadAll(reader)
 		if err != nil {
 			err = fmt.Errorf("read input: %v", err)
 			return
@@ -218,7 +221,8 @@ func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize
 	defer PutBuffer(buf)
 	body_writer := multipart.NewWriter(buf)
 	h := make(textproto.MIMEHeader)
-	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, fileNameEscaper.Replace(option.Filename)))
+	filename := fileNameEscaper.Replace(option.Filename)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
 	h.Set("Idempotency-Key", option.UploadUrl)
 	if option.MimeType == "" {
 		option.MimeType = mime.TypeByExtension(strings.ToLower(filepath.Ext(option.Filename)))
@@ -262,6 +266,7 @@ func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize
 	if post_err != nil {
 		if strings.Contains(post_err.Error(), "connection reset by peer") ||
 			strings.Contains(post_err.Error(), "use of closed network connection") {
+			glog.V(1).Infof("repeat error upload request %s: %v", option.UploadUrl, postErr)
 			resp, post_err = HttpClient.Do(req)
 		}
 	}
@@ -278,7 +283,7 @@ func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize
 		return &ret, nil
 	}
 
-	resp_body, ra_err := ioutil.ReadAll(resp.Body)
+	resp_body, ra_err := io.ReadAll(resp.Body)
 	if ra_err != nil {
 		return nil, fmt.Errorf("read response body %v: %v", option.UploadUrl, ra_err)
 	}

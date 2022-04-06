@@ -29,6 +29,7 @@ type LogBuffer struct {
 	pos           int
 	startTime     time.Time
 	stopTime      time.Time
+	lastFlushTime time.Time
 	sizeBuf       []byte
 	flushInterval time.Duration
 	flushFn       func(startTime, stopTime time.Time, buf []byte)
@@ -57,9 +58,13 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn func(startTi
 
 func (m *LogBuffer) AddToBuffer(partitionKey, data []byte, processingTsNs int64) {
 
+	var toFlush *dataToFlush
 	m.Lock()
 	defer func() {
 		m.Unlock()
+		if toFlush != nil {
+			m.flushChan <- toFlush
+		}
 		if m.notifyFn != nil {
 			m.notifyFn()
 		}
@@ -95,7 +100,7 @@ func (m *LogBuffer) AddToBuffer(partitionKey, data []byte, processingTsNs int64)
 
 	if m.startTime.Add(m.flushInterval).Before(ts) || len(m.buf)-m.pos < size+4 {
 		// glog.V(4).Infof("%s copyToFlush1 start time %v, ts %v, remaining %d bytes", m.name, m.startTime, ts, len(m.buf)-m.pos)
-		m.flushChan <- m.copyToFlush()
+		toFlush = m.copyToFlush()
 		m.startTime = ts
 		if len(m.buf) < size+4 {
 			m.buf = make([]byte, 2*size+4)
@@ -132,6 +137,8 @@ func (m *LogBuffer) loopFlush() {
 			// glog.V(4).Infof("%s flush [%v, %v] size %d", m.name, d.startTime, d.stopTime, len(d.data.Bytes()))
 			m.flushFn(d.startTime, d.stopTime, d.data.Bytes())
 			d.releaseMemory()
+			// local logbuffer is different from aggregate logbuffer here
+			m.lastFlushTime = d.stopTime
 		}
 	}
 }
@@ -145,8 +152,10 @@ func (m *LogBuffer) loopInterval() {
 			return
 		}
 		toFlush := m.copyToFlush()
-		m.flushChan <- toFlush
 		m.Unlock()
+		if toFlush != nil {
+			m.flushChan <- toFlush
+		}
 	}
 }
 
@@ -162,6 +171,9 @@ func (m *LogBuffer) copyToFlush() *dataToFlush {
 				data:      copiedBytes(m.buf[:m.pos]),
 			}
 			// glog.V(4).Infof("%s flushing [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
+		} else {
+			// glog.V(4).Infof("%s removed from memory [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
+			m.lastFlushTime = m.stopTime
 		}
 		m.buf = m.prevBuffers.SealBuffer(m.startTime, m.stopTime, m.buf, m.pos)
 		m.startTime = time.Unix(0, 0)
@@ -203,7 +215,10 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 	if tsMemory.IsZero() { // case 2.2
 		return nil, nil
 	} else if lastReadTime.Before(tsMemory) { // case 2.3
-		return nil, ResumeFromDiskError
+		if !m.lastFlushTime.IsZero() {
+			glog.V(0).Infof("resume with last flush time: %v", m.lastFlushTime)
+			return nil, ResumeFromDiskError
+		}
 	}
 
 	// the following is case 2.1

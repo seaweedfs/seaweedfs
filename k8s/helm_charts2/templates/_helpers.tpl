@@ -113,21 +113,6 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 {{- end -}}
 
-{{/* Return the proper cronjob image */}}
-{{- define "cronjob.image" -}}
-{{- if .Values.cronjob.imageOverride -}}
-{{- $imageOverride := .Values.cronjob.imageOverride -}}
-{{- printf "%s" $imageOverride -}}
-{{- else -}}
-{{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
-{{- $repositoryName := .Values.image.repository | toString -}}
-{{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Chart.AppVersion | toString -}}
-{{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
-{{- end -}}
-{{- end -}}
-
-
 {{/* check if any PVC exists */}}
 {{- define "volume.pvc_exists" -}}
 {{- if or (or (eq .Values.volume.data.type "persistentVolumeClaim") (and (eq .Values.volume.idx.type "persistentVolumeClaim") .Values.volume.dir_idx )) (eq .Values.volume.logs.type "persistentVolumeClaim") -}}

@@ -27,7 +27,7 @@ func (c *commandRemoteUnmount) Help() string {
 	return `unmount remote storage
 
 	# assume a remote storage is configured to name "s3_1"
-	remote.configure -name=s3_1 -type=s3 -access_key=xxx -secret_key=yyy
+	remote.configure -name=s3_1 -type=s3 -s3.access_key=xxx -s3.secret_key=yyy
 	# mount and pull one bucket
 	remote.mount -dir=/xxx -remote=s3_1/bucket
 
@@ -83,7 +83,7 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 func (c *commandRemoteUnmount) purgeMountedData(commandEnv *CommandEnv, dir string) error {
 
 	// find existing directory, and ensure the directory is empty
-	err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		parent, name := util.FullPath(dir).DirAndName()
 		lookupResp, lookupErr := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parent,

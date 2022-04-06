@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -217,9 +218,11 @@ func (n *Needle) ReadBytes(bytes []byte, offset int64, size Size, version Versio
 	if n.Size != size {
 		// cookie is not always passed in for this API. Use size to do preliminary checking.
 		if OffsetSize == 4 && offset < int64(MaxPossibleVolumeSize) {
+			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorSizeMismatchOffsetSize).Inc()
 			glog.Errorf("entry not found1: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
 			return ErrorSizeMismatch
 		}
+		stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorSizeMismatch).Inc()
 		return fmt.Errorf("entry not found: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
 	}
 	switch version {
@@ -235,6 +238,7 @@ func (n *Needle) ReadBytes(bytes []byte, offset int64, size Size, version Versio
 		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+NeedleChecksumSize])
 		newChecksum := NewCRC(n.Data)
 		if checksum != newChecksum.Value() {
+			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorCRC).Inc()
 			return errors.New("CRC error! Data On Disk Corrupted")
 		}
 		n.Checksum = newChecksum
@@ -267,6 +271,7 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 		n.DataSize = util.BytesToUint32(bytes[index : index+4])
 		index = index + 4
 		if int(n.DataSize)+index > lenBytes {
+			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
 			return fmt.Errorf("index out of range %d", 1)
 		}
 		n.Data = bytes[index : index+int(n.DataSize)]
@@ -278,6 +283,7 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 		n.NameSize = uint8(bytes[index])
 		index = index + 1
 		if int(n.NameSize)+index > lenBytes {
+			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
 			return fmt.Errorf("index out of range %d", 2)
 		}
 		n.Name = bytes[index : index+int(n.NameSize)]
@@ -287,6 +293,7 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 		n.MimeSize = uint8(bytes[index])
 		index = index + 1
 		if int(n.MimeSize)+index > lenBytes {
+			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
 			return fmt.Errorf("index out of range %d", 3)
 		}
 		n.Mime = bytes[index : index+int(n.MimeSize)]
@@ -294,6 +301,7 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 	}
 	if index < lenBytes && n.HasLastModifiedDate() {
 		if LastModifiedBytesLength+index > lenBytes {
+			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
 			return fmt.Errorf("index out of range %d", 4)
 		}
 		n.LastModified = util.BytesToUint64(bytes[index : index+LastModifiedBytesLength])
@@ -301,6 +309,7 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 	}
 	if index < lenBytes && n.HasTtl() {
 		if TtlBytesLength+index > lenBytes {
+			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
 			return fmt.Errorf("index out of range %d", 5)
 		}
 		n.Ttl = LoadTTLFromBytes(bytes[index : index+TtlBytesLength])
@@ -308,11 +317,13 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 	}
 	if index < lenBytes && n.HasPairs() {
 		if 2+index > lenBytes {
+			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
 			return fmt.Errorf("index out of range %d", 6)
 		}
 		n.PairsSize = util.BytesToUint16(bytes[index : index+2])
 		index += 2
 		if int(n.PairsSize)+index > lenBytes {
+			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
 			return fmt.Errorf("index out of range %d", 7)
 		}
 		end := index + int(n.PairsSize)

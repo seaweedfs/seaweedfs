@@ -2,6 +2,7 @@ package s3api
 
 import (
 	. "github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
+	"github.com/stretchr/testify/assert"
 	"testing"
 
 	"github.com/golang/protobuf/jsonpb"
@@ -65,5 +66,63 @@ func TestIdentityListFileFormat(t *testing.T) {
 	text, _ := m.MarshalToString(s3ApiConfiguration)
 
 	println(text)
+
+}
+
+func TestCanDo(t *testing.T) {
+	ident1 := &Identity{
+		Name: "anything",
+		Actions: []Action{
+			"Write:bucket1/a/b/c/*",
+			"Write:bucket1/a/b/other",
+		},
+	}
+	// object specific
+	assert.Equal(t, true, ident1.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, false, ident1.canDo(ACTION_WRITE, "bucket1", "/a/b/other/some"), "action without *")
+
+	// bucket specific
+	ident2 := &Identity{
+		Name: "anything",
+		Actions: []Action{
+			"Read:bucket1",
+			"Write:bucket1/*",
+		},
+	}
+	assert.Equal(t, true, ident2.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident2.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, false, ident2.canDo(ACTION_LIST, "bucket1", "/a/b/c/d.txt"))
+
+	// across buckets
+	ident3 := &Identity{
+		Name: "anything",
+		Actions: []Action{
+			"Read",
+			"Write",
+		},
+	}
+	assert.Equal(t, true, ident3.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident3.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, false, ident3.canDo(ACTION_LIST, "bucket1", "/a/b/other/some"))
+
+	// partial buckets
+	ident4 := &Identity{
+		Name: "anything",
+		Actions: []Action{
+			"Read:special_*",
+		},
+	}
+	assert.Equal(t, true, ident4.canDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
+	assert.Equal(t, false, ident4.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
+
+	// admin buckets
+	ident5 := &Identity{
+		Name: "anything",
+		Actions: []Action{
+			"Admin:special_*",
+		},
+	}
+	assert.Equal(t, true, ident5.canDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident5.canDo(ACTION_WRITE, "special_bucket", "/a/b/c/d.txt"))
 
 }

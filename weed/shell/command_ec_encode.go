@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"io"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -33,7 +34,7 @@ func (c *commandEcEncode) Name() string {
 func (c *commandEcEncode) Help() string {
 	return `apply erasure coding to a volume
 
-	ec.encode [-collection=""] [-fullPercent=95] [-quietFor=1h]
+	ec.encode [-collection=""] [-fullPercent=95 -quietFor=1h]
 	ec.encode [-collection=""] [-volumeId=<volume_id>]
 
 	This command will:
@@ -65,7 +66,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		return nil
 	}
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
+	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
 
@@ -94,7 +95,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, parallelCopy bool) (err error) {
 	// find volume location
 	locations, found := commandEnv.MasterClient.GetLocations(uint32(vid))
-	if !found {
+	if !found && len(locations) > 0 {
 		return fmt.Errorf("volume %d not found", vid)
 	}
 
@@ -125,7 +126,7 @@ func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, 
 
 	fmt.Printf("generateEcShards %s %d on %s ...\n", collection, volumeId, sourceVolumeServer)
 
-	err := operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, genErr := volumeServerClient.VolumeEcShardsGenerate(context.Background(), &volume_server_pb.VolumeEcShardsGenerateRequest{
 			VolumeId:   uint32(volumeId),
 			Collection: collection,
@@ -248,7 +249,7 @@ func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServer
 func balancedEcDistribution(servers []*EcNode) (allocated [][]uint32) {
 	allocated = make([][]uint32, len(servers))
 	allocatedShardIdIndex := uint32(0)
-	serverIndex := 0
+	serverIndex := rand.Intn(len(servers))
 	for allocatedShardIdIndex < erasure_coding.TotalShardsCount {
 		if servers[serverIndex].freeEcSlot > 0 {
 			allocated[serverIndex] = append(allocated[serverIndex], allocatedShardIdIndex)
@@ -266,7 +267,7 @@ func balancedEcDistribution(servers []*EcNode) (allocated [][]uint32) {
 func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
 
 	// collect topology information
-	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv)
+	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return
 	}

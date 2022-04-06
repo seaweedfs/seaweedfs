@@ -68,7 +68,7 @@ func (msgBrokerOpt *MessageBrokerOptions) startQueueServer() bool {
 	cipher := false
 
 	for {
-		err := pb.WithGrpcFilerClient(filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithGrpcFilerClient(false, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
@@ -95,7 +95,7 @@ func (msgBrokerOpt *MessageBrokerOptions) startQueueServer() bool {
 	}, grpcDialOption)
 
 	// start grpc listener
-	grpcL, err := util.NewListener(util.JoinHostPort("", *msgBrokerOpt.port), 0)
+	grpcL, _, err := util.NewIpAndLocalListeners("", *msgBrokerOpt.port, 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", *msgBrokerOpt.port, err)
 	}

@@ -1,14 +1,17 @@
 package weed_server
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"io"
 	"io/fs"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -249,8 +252,20 @@ func handleStaticResources2(r *mux.Router) {
 	r.PathPrefix("/seaweedfsstatic/").Handler(http.StripPrefix("/seaweedfsstatic", http.FileServer(http.FS(StaticFS))))
 }
 
+func adjustPassthroughHeaders(w http.ResponseWriter, r *http.Request, filename string) {
+	for header, values := range r.Header {
+		if normalizedHeader, ok := xhttp.PassThroughHeaders[strings.ToLower(header)]; ok {
+			w.Header()[normalizedHeader] = values
+		}
+	}
+	adjustHeaderContentDisposition(w, r, filename)
+}
 func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, filename string) {
+	if contentDisposition := w.Header().Get("Content-Disposition"); contentDisposition != "" {
+		return
+	}
 	if filename != "" {
+		filename = url.QueryEscape(filename)
 		contentDisposition := "inline"
 		if r.FormValue("dl") != "" {
 			if dl, _ := strconv.ParseBool(r.FormValue("dl")); dl {
@@ -263,10 +278,12 @@ func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, file
 
 func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, writeFn func(writer io.Writer, offset int64, size int64) error) {
 	rangeReq := r.Header.Get("Range")
+	bufferedWriter := bufio.NewWriterSize(w, 128*1024)
+	defer bufferedWriter.Flush()
 
 	if rangeReq == "" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
-		if err := writeFn(w, 0, totalSize); err != nil {
+		if err := writeFn(bufferedWriter, 0, totalSize); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -307,7 +324,7 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		w.Header().Set("Content-Range", ra.contentRange(totalSize))
 
 		w.WriteHeader(http.StatusPartialContent)
-		err = writeFn(w, ra.start, ra.length)
+		err = writeFn(bufferedWriter, ra.start, ra.length)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -347,7 +364,7 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		w.Header().Set("Content-Length", strconv.FormatInt(sendSize, 10))
 	}
 	w.WriteHeader(http.StatusPartialContent)
-	if _, err := io.CopyN(w, sendContent, sendSize); err != nil {
+	if _, err := io.CopyN(bufferedWriter, sendContent, sendSize); err != nil {
 		http.Error(w, "Internal Error", http.StatusInternalServerError)
 		return
 	}

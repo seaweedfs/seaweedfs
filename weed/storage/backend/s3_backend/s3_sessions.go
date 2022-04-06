@@ -2,6 +2,8 @@ package s3_backend
 
 import (
 	"fmt"
+	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"sync"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -47,6 +49,9 @@ func createSession(awsAccessKeyId, awsSecretAccessKey, region, endpoint string) 
 	if err != nil {
 		return nil, fmt.Errorf("create aws session in region %s: %v", region, err)
 	}
+	sess.Handlers.Build.PushBack(func(r *request.Request) {
+		r.HTTPRequest.Header.Set("User-Agent", "SeaweedFS/"+util.VERSION_NUMBER)
+	})
 
 	t := s3.New(sess)
 

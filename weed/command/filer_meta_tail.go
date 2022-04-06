@@ -6,7 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/golang/protobuf/jsonpb"
 	jsoniter "github.com/json-iterator/go"
-	"github.com/olivere/elastic/v7"
+	elastic "github.com/olivere/elastic/v7"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,6 +30,8 @@ var cmdFilerMetaTail = &Command{
 	weed filer.meta.tail -timeAgo=30h | jq .
 	weed filer.meta.tail -timeAgo=30h | jq .eventNotification.newEntry.name
 
+	weed filer.meta.tail -timeAgo=30h -es=http://<elasticSearchServerHost>:<port> -es.index=seaweedfs
+
   `,
 }
 
@@ -46,6 +48,7 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	clientId := util.RandomInt32()
 
 	var filterFunc func(dir, fname string) bool
 	if *tailPattern != "" {
@@ -71,7 +74,7 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 	}
 
 	shouldPrint := func(resp *filer_pb.SubscribeMetadataResponse) bool {
-		if resp.EventNotification.OldEntry == nil && resp.EventNotification.NewEntry == nil {
+		if filer_pb.IsEmpty(resp) {
 			return false
 		}
 		if filterFunc == nil {
@@ -103,7 +106,7 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 		}
 	}
 
-	tailErr := pb.FollowMetadata(pb.ServerAddress(*tailFiler), grpcDialOption, "tail",
+	tailErr := pb.FollowMetadata(pb.ServerAddress(*tailFiler), grpcDialOption, "tail", clientId,
 		*tailTarget, nil, time.Now().Add(-*tailStart).UnixNano(), 0,
 		func(resp *filer_pb.SubscribeMetadataResponse) error {
 			if !shouldPrint(resp) {

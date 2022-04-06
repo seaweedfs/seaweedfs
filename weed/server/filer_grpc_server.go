@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -148,7 +147,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	newEntry := filer.FromPbEntry(req.Directory, req.Entry)
 	newEntry.Chunks = chunks
 
-	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures)
+	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory)
 
 	if createErr == nil {
 		fs.filer.DeleteChunks(garbage)
@@ -218,6 +217,7 @@ func (fs *FilerServer) cleanupChunks(fullpath string, existingEntry *filer.Entry
 			newEntry.Attributes.DiskType,
 			"",
 			"",
+			"",
 		) // ignore readonly error for capacity needed to manifestize
 		chunks, err = filer.MaybeManifestize(fs.saveAsChunk(so), chunks)
 		if err != nil {
@@ -259,7 +259,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	}
 
 	entry.Chunks = append(entry.Chunks, req.Chunks...)
-	so, err := fs.detectStorageOption(string(fullpath), entry.Collection, entry.Replication, entry.TtlSec, entry.DiskType, "", "")
+	so, err := fs.detectStorageOption(string(fullpath), entry.Collection, entry.Replication, entry.TtlSec, entry.DiskType, "", "", "")
 	if err != nil {
 		glog.Warningf("detectStorageOption: %v", err)
 		return &filer_pb.AppendToEntryResponse{}, err
@@ -270,7 +270,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 		glog.V(0).Infof("MaybeManifestize: %v", err)
 	}
 
-	err = fs.filer.CreateEntry(context.Background(), entry, false, false, nil)
+	err = fs.filer.CreateEntry(context.Background(), entry, false, false, nil, false)
 
 	return &filer_pb.AppendToEntryResponse{}, err
 }
@@ -289,7 +289,7 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVolumeRequest) (resp *filer_pb.AssignVolumeResponse, err error) {
 
-	so, err := fs.detectStorageOption(req.Path, req.Collection, req.Replication, req.TtlSec, req.DiskType, req.DataCenter, req.Rack)
+	so, err := fs.detectStorageOption(req.Path, req.Collection, req.Replication, req.TtlSec, req.DiskType, req.DataCenter, req.Rack, req.DataNode)
 	if err != nil {
 		glog.V(3).Infof("AssignVolume: %v", err)
 		return &filer_pb.AssignVolumeResponse{Error: fmt.Sprintf("assign volume: %v", err)}, nil
@@ -326,7 +326,7 @@ func (fs *FilerServer) CollectionList(ctx context.Context, req *filer_pb.Collect
 	glog.V(4).Infof("CollectionList %v", req)
 	resp = &filer_pb.CollectionListResponse{}
 
-	err = fs.filer.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+	err = fs.filer.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		masterResp, err := client.CollectionList(context.Background(), &master_pb.CollectionListRequest{
 			IncludeNormalVolumes: req.IncludeNormalVolumes,
 			IncludeEcVolumes:     req.IncludeEcVolumes,
@@ -347,7 +347,7 @@ func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.Delet
 
 	glog.V(4).Infof("DeleteCollection %v", req)
 
-	err = fs.filer.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+	err = fs.filer.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
 			Name: req.GetCollection(),
 		})
@@ -355,129 +355,4 @@ func (fs *FilerServer) DeleteCollection(ctx context.Context, req *filer_pb.Delet
 	})
 
 	return &filer_pb.DeleteCollectionResponse{}, err
-}
-
-func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsRequest) (resp *filer_pb.StatisticsResponse, err error) {
-
-	var output *master_pb.StatisticsResponse
-
-	err = fs.filer.MasterClient.WithClient(func(masterClient master_pb.SeaweedClient) error {
-		grpcResponse, grpcErr := masterClient.Statistics(context.Background(), &master_pb.StatisticsRequest{
-			Replication: req.Replication,
-			Collection:  req.Collection,
-			Ttl:         req.Ttl,
-			DiskType:    req.DiskType,
-		})
-		if grpcErr != nil {
-			return grpcErr
-		}
-
-		output = grpcResponse
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &filer_pb.StatisticsResponse{
-		TotalSize: output.TotalSize,
-		UsedSize:  output.UsedSize,
-		FileCount: output.FileCount,
-	}, nil
-}
-
-func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.GetFilerConfigurationRequest) (resp *filer_pb.GetFilerConfigurationResponse, err error) {
-
-	clusterId, _ := fs.filer.Store.KvGet(context.Background(), []byte("clusterId"))
-
-	t := &filer_pb.GetFilerConfigurationResponse{
-		Masters:            pb.ToAddressStrings(fs.option.Masters),
-		Collection:         fs.option.Collection,
-		Replication:        fs.option.DefaultReplication,
-		MaxMb:              uint32(fs.option.MaxMB),
-		DirBuckets:         fs.filer.DirBucketsPath,
-		Cipher:             fs.filer.Cipher,
-		Signature:          fs.filer.Signature,
-		MetricsAddress:     fs.metricsAddress,
-		MetricsIntervalSec: int32(fs.metricsIntervalSec),
-		Version:            util.Version(),
-		ClusterId:          string(clusterId),
-	}
-
-	glog.V(4).Infof("GetFilerConfiguration: %v", t)
-
-	return t, nil
-}
-
-func (fs *FilerServer) KeepConnected(stream filer_pb.SeaweedFiler_KeepConnectedServer) error {
-
-	req, err := stream.Recv()
-	if err != nil {
-		return err
-	}
-
-	clientName := util.JoinHostPort(req.Name, int(req.GrpcPort))
-	m := make(map[string]bool)
-	for _, tp := range req.Resources {
-		m[tp] = true
-	}
-	fs.brokersLock.Lock()
-	fs.brokers[clientName] = m
-	glog.V(0).Infof("+ broker %v", clientName)
-	fs.brokersLock.Unlock()
-
-	defer func() {
-		fs.brokersLock.Lock()
-		delete(fs.brokers, clientName)
-		glog.V(0).Infof("- broker %v: %v", clientName, err)
-		fs.brokersLock.Unlock()
-	}()
-
-	for {
-		if err := stream.Send(&filer_pb.KeepConnectedResponse{}); err != nil {
-			glog.V(0).Infof("send broker %v: %+v", clientName, err)
-			return err
-		}
-		// println("replied")
-
-		if _, err := stream.Recv(); err != nil {
-			glog.V(0).Infof("recv broker %v: %v", clientName, err)
-			return err
-		}
-		// println("received")
-	}
-
-}
-
-func (fs *FilerServer) LocateBroker(ctx context.Context, req *filer_pb.LocateBrokerRequest) (resp *filer_pb.LocateBrokerResponse, err error) {
-
-	resp = &filer_pb.LocateBrokerResponse{}
-
-	fs.brokersLock.Lock()
-	defer fs.brokersLock.Unlock()
-
-	var localBrokers []*filer_pb.LocateBrokerResponse_Resource
-
-	for b, m := range fs.brokers {
-		if _, found := m[req.Resource]; found {
-			resp.Found = true
-			resp.Resources = []*filer_pb.LocateBrokerResponse_Resource{
-				{
-					GrpcAddresses: b,
-					ResourceCount: int32(len(m)),
-				},
-			}
-			return
-		}
-		localBrokers = append(localBrokers, &filer_pb.LocateBrokerResponse_Resource{
-			GrpcAddresses: b,
-			ResourceCount: int32(len(m)),
-		})
-	}
-
-	resp.Resources = localBrokers
-
-	return resp, nil
-
 }

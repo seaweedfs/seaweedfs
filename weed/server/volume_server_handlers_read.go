@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util/mem"
 	"io"
 	"mime"
 	"net/http"
@@ -28,8 +29,6 @@ import (
 var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
-
-	glog.V(9).Info(r.Method + " " + r.URL.Path + " " + r.Header.Get("Range"))
 
 	stats.VolumeServerRequestCounter.WithLabelValues("get").Inc()
 	start := time.Now()
@@ -103,7 +102,9 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 				}
 			}
 			w.WriteHeader(response.StatusCode)
-			io.Copy(w, response.Body)
+			buf := mem.Allocate(128 * 1024)
+			defer mem.Free(buf)
+			io.CopyBuffer(w, response.Body, buf)
 			return
 		} else {
 			// redirect
@@ -301,7 +302,7 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 	}
 	w.Header().Set("Accept-Ranges", "bytes")
 
-	adjustHeaderContentDisposition(w, r, filename)
+	adjustPassthroughHeaders(w, r, filename)
 
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))

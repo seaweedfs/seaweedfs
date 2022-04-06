@@ -38,7 +38,7 @@ func (option *RemoteGatewayOptions) followBucketUpdatesAndUploadToRemote(filerSo
 
 	lastOffsetTs := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), option.bucketsDir, *option.timeAgo)
 
-	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, "filer.remote.sync",
+	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, "filer.remote.sync", option.clientId,
 		option.bucketsDir, []string{filer.DirectoryEtcRemote}, lastOffsetTs.UnixNano(), 0, processEventFnWithOffset, false)
 }
 
@@ -86,28 +86,32 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				return nil
 			}
 		}
-		if *option.createBucketRandomSuffix {
-			// https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
-			if len(bucketName)+5 > 63 {
-				bucketName = bucketName[:58]
+
+		bucketPath := util.FullPath(option.bucketsDir).Child(entry.Name)
+		remoteLocation, found := option.mappings.Mappings[string(bucketPath)]
+		if !found {
+			if *option.createBucketRandomSuffix {
+				// https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
+				if len(bucketName)+5 > 63 {
+					bucketName = bucketName[:58]
+				}
+				bucketName = fmt.Sprintf("%s-%04d", bucketName, rand.Uint32()%10000)
 			}
-			bucketName = fmt.Sprintf("%s-%4d", bucketName, rand.Uint32()%10000)
+			remoteLocation = &remote_pb.RemoteStorageLocation{
+				Name:   *option.createBucketAt,
+				Bucket: bucketName,
+				Path:   "/",
+			}
+			// need to add new mapping here before getting updates from metadata tailing
+			option.mappings.Mappings[string(bucketPath)] = remoteLocation
+		} else {
+			bucketName = remoteLocation.Bucket
 		}
 
 		glog.V(0).Infof("create bucket %s", bucketName)
 		if err := client.CreateBucket(bucketName); err != nil {
 			return fmt.Errorf("create bucket %s in %s: %v", bucketName, remoteConf.Name, err)
 		}
-
-		bucketPath := util.FullPath(option.bucketsDir).Child(entry.Name)
-		remoteLocation := &remote_pb.RemoteStorageLocation{
-			Name:   *option.createBucketAt,
-			Bucket: bucketName,
-			Path:   "/",
-		}
-
-		// need to add new mapping here before getting upates from metadata tailing
-		option.mappings.Mappings[string(bucketPath)] = remoteLocation
 
 		return filer.InsertMountMapping(option, string(bucketPath), remoteLocation)
 
@@ -170,12 +174,15 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			return handleEtcRemoteChanges(resp)
 		}
 
-		if message.OldEntry == nil && message.NewEntry == nil {
+		if filer_pb.IsEmpty(resp) {
 			return nil
 		}
-		if message.OldEntry == nil && message.NewEntry != nil {
+		if filer_pb.IsCreate(resp) {
 			if message.NewParentPath == option.bucketsDir {
 				return handleCreateBucket(message.NewEntry)
+			}
+			if strings.HasPrefix(message.NewParentPath, option.bucketsDir) && strings.Contains(message.NewParentPath, "/.uploads/") {
+				return nil
 			}
 			if !filer.HasData(message.NewEntry) {
 				return nil
@@ -199,14 +206,13 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				return client.WriteDirectory(dest, message.NewEntry)
 			}
 			glog.V(0).Infof("create %s", remote_storage.FormatLocation(dest))
-			reader := filer.NewFileReader(filerSource, message.NewEntry)
-			remoteEntry, writeErr := client.WriteFile(dest, message.NewEntry, reader)
+			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, dest)
 			if writeErr != nil {
 				return writeErr
 			}
 			return updateLocalEntry(&remoteSyncOptions, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
-		if message.OldEntry != nil && message.NewEntry == nil {
+		if filer_pb.IsDelete(resp) {
 			if resp.Directory == option.bucketsDir {
 				return handleDeleteBucket(message.OldEntry)
 			}
@@ -258,15 +264,13 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 						// update directory property
 						return nil
 					}
-					if filer.IsSameData(message.OldEntry, message.NewEntry) {
+					if message.OldEntry.RemoteEntry != nil && filer.IsSameData(message.OldEntry, message.NewEntry) {
 						glog.V(2).Infof("update meta: %+v", resp)
 						oldDest := toRemoteStorageLocation(oldBucket, util.NewFullPath(resp.Directory, message.OldEntry.Name), oldRemoteStorageMountLocation)
 						return client.UpdateFileMetadata(oldDest, message.OldEntry, message.NewEntry)
 					} else {
 						newDest := toRemoteStorageLocation(newBucket, util.NewFullPath(message.NewParentPath, message.NewEntry.Name), newRemoteStorageMountLocation)
-						reader := filer.NewFileReader(filerSource, message.NewEntry)
-						glog.V(0).Infof("create %s", remote_storage.FormatLocation(newDest))
-						remoteEntry, writeErr := client.WriteFile(newDest, message.NewEntry, reader)
+						remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, newDest)
 						if writeErr != nil {
 							return writeErr
 						}
@@ -303,9 +307,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				if message.NewEntry.IsDirectory {
 					return client.WriteDirectory(newDest, message.NewEntry)
 				}
-				reader := filer.NewFileReader(filerSource, message.NewEntry)
-				glog.V(0).Infof("create %s", remote_storage.FormatLocation(newDest))
-				remoteEntry, writeErr := client.WriteFile(newDest, message.NewEntry, reader)
+				remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, newDest)
 				if writeErr != nil {
 					return writeErr
 				}

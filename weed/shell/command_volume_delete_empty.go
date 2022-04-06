@@ -40,12 +40,12 @@ func (c *commandVolumeDeleteEmpty) Do(args []string, commandEnv *CommandEnv, wri
 		return nil
 	}
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
+	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
 
 	// collect topology information
-	topologyInfo, _, err := collectTopologyInfo(commandEnv)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
 	}

@@ -3,17 +3,17 @@ package azure
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/url"
+	"os"
+	"reflect"
+
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"io"
-	"io/ioutil"
-	"net/url"
-	"os"
-	"reflect"
 )
 
 func init() {
@@ -115,7 +115,7 @@ func (az *azureRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocatio
 	bodyStream := downloadResponse.Body(azblob.RetryReaderOptions{MaxRetryRequests: 20})
 	defer bodyStream.Close()
 
-	data, err = ioutil.ReadAll(bodyStream)
+	data, err = io.ReadAll(bodyStream)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to download file %s%s: %v", loc.Bucket, loc.Path, err)

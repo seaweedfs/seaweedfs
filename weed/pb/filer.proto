@@ -30,6 +30,8 @@ service SeaweedFiler {
 
     rpc AtomicRenameEntry (AtomicRenameEntryRequest) returns (AtomicRenameEntryResponse) {
     }
+    rpc StreamRenameEntry (StreamRenameEntryRequest) returns (stream StreamRenameEntryResponse) {
+    }
 
     rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
     }
@@ -44,6 +46,9 @@ service SeaweedFiler {
     }
 
     rpc Statistics (StatisticsRequest) returns (StatisticsResponse) {
+    }
+
+    rpc Ping (PingRequest) returns (PingResponse) {
     }
 
     rpc GetFilerConfiguration (GetFilerConfigurationRequest) returns (GetFilerConfigurationResponse) {
@@ -67,7 +72,7 @@ service SeaweedFiler {
     rpc KvPut (KvPutRequest) returns (KvPutResponse) {
     }
 
-    rpc DownloadToLocal (DownloadToLocalRequest) returns (DownloadToLocalResponse) {
+    rpc CacheRemoteObjectToLocalCluster (CacheRemoteObjectToLocalClusterRequest) returns (CacheRemoteObjectToLocalClusterResponse) {
     }
 }
 
@@ -112,6 +117,7 @@ message Entry {
     bytes content = 9; // if not empty, the file content
 
     RemoteEntry remote_entry = 10;
+    int64 quota = 11; // for bucket only. Positive/Negative means enabled/disabled.
 }
 
 message FullEntry {
@@ -168,6 +174,8 @@ message FuseAttributes {
     string symlink_target = 13;
     bytes md5 = 14;
     string disk_type = 15;
+    uint32 rdev = 16;
+    uint64 inode = 17;
 }
 
 message CreateEntryRequest {
@@ -176,6 +184,7 @@ message CreateEntryRequest {
     bool o_excl = 3;
     bool is_from_other_cluster = 4;
     repeated int32 signatures = 5;
+    bool skip_check_parent_directory = 6;
 }
 
 message CreateEntryResponse {
@@ -225,6 +234,18 @@ message AtomicRenameEntryRequest {
 message AtomicRenameEntryResponse {
 }
 
+message StreamRenameEntryRequest {
+    string old_directory = 1;
+    string old_name = 2;
+    string new_directory = 3;
+    string new_name = 4;
+    repeated int32 signatures = 5;
+}
+message StreamRenameEntryResponse {
+    string directory = 1;
+    EventNotification event_notification = 2;
+    int64 ts_ns = 3;
+}
 message AssignVolumeRequest {
     int32 count = 1;
     string collection = 2;
@@ -233,6 +254,7 @@ message AssignVolumeRequest {
     string data_center = 5;
     string path = 6;
     string rack = 7;
+    string data_node = 9;
     string disk_type = 8;
 }
 
@@ -292,6 +314,13 @@ message StatisticsResponse {
     uint64 file_count = 6;
 }
 
+message PingRequest {
+    string target = 1; // default to ping itself
+    string target_type = 2;
+}
+message PingResponse {
+}
+
 message GetFilerConfigurationRequest {
 }
 message GetFilerConfigurationResponse {
@@ -314,6 +343,7 @@ message SubscribeMetadataRequest {
     int64 since_ns = 3;
     int32 signature = 4;
     repeated string path_prefixes = 6;
+    int32 client_id = 7;
 }
 message SubscribeMetadataResponse {
     string directory = 1;
@@ -382,6 +412,9 @@ message FilerConf {
         bool fsync = 6;
         uint32 volume_growth_count = 7;
         bool read_only = 8;
+        string data_center = 9;
+        string rack = 10;
+        string data_node = 11;
     }
     repeated PathConf locations = 2;
 }
@@ -389,10 +422,10 @@ message FilerConf {
 /////////////////////////
 // Remote Storage related
 /////////////////////////
-message DownloadToLocalRequest {
+message CacheRemoteObjectToLocalClusterRequest {
     string directory = 1;
     string name = 2;
 }
-message DownloadToLocalResponse {
+message CacheRemoteObjectToLocalClusterResponse {
     Entry entry = 1;
 }

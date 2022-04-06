@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -14,6 +15,13 @@ import (
 
 func (entry *Entry) IsInRemoteOnly() bool {
 	return len(entry.Chunks) == 0 && entry.RemoteEntry != nil && entry.RemoteEntry.RemoteSize > 0
+}
+
+func (entry *Entry) FileMode() (fileMode os.FileMode) {
+	if entry != nil && entry.Attributes != nil {
+		fileMode = os.FileMode(entry.Attributes.FileMode)
+	}
+	return
 }
 
 func ToFileIdObject(fileIdStr string) (*FileId, error) {
@@ -128,13 +136,17 @@ func LookupEntry(client SeaweedFilerClient, request *LookupDirectoryEntryRequest
 
 var ErrNotFound = errors.New("filer: no entry is found in filer store")
 
+func IsEmpty(event *SubscribeMetadataResponse) bool {
+	return event.EventNotification.NewEntry == nil && event.EventNotification.OldEntry == nil
+}
 func IsCreate(event *SubscribeMetadataResponse) bool {
 	return event.EventNotification.NewEntry != nil && event.EventNotification.OldEntry == nil
 }
 func IsUpdate(event *SubscribeMetadataResponse) bool {
 	return event.EventNotification.NewEntry != nil &&
 		event.EventNotification.OldEntry != nil &&
-		event.Directory == event.EventNotification.NewParentPath
+		event.Directory == event.EventNotification.NewParentPath &&
+		event.EventNotification.NewEntry.Name == event.EventNotification.OldEntry.Name
 }
 func IsDelete(event *SubscribeMetadataResponse) bool {
 	return event.EventNotification.NewEntry == nil && event.EventNotification.OldEntry != nil
@@ -142,7 +154,8 @@ func IsDelete(event *SubscribeMetadataResponse) bool {
 func IsRename(event *SubscribeMetadataResponse) bool {
 	return event.EventNotification.NewEntry != nil &&
 		event.EventNotification.OldEntry != nil &&
-		event.Directory != event.EventNotification.NewParentPath
+		(event.Directory != event.EventNotification.NewParentPath ||
+			event.EventNotification.NewEntry.Name != event.EventNotification.OldEntry.Name)
 }
 
 var _ = ptrie.KeyProvider(&FilerConf_PathConf{})

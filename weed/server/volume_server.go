@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"net/http"
 	"sync"
@@ -17,11 +18,11 @@ import (
 )
 
 type VolumeServer struct {
+	volume_server_pb.UnimplementedVolumeServerServer
 	inFlightUploadDataSize        int64
 	inFlightDownloadDataSize      int64
 	concurrentUploadLimit         int64
 	concurrentDownloadLimit       int64
-	inFlightUploadDataLimitCond   *sync.Cond
 	inFlightDownloadDataLimitCond *sync.Cond
 
 	SeedMasterNodes []pb.ServerAddress
@@ -82,7 +83,6 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		fileSizeLimitBytes:            int64(fileSizeLimitMB) * 1024 * 1024,
 		isHeartbeating:                true,
 		stopChan:                      make(chan bool),
-		inFlightUploadDataLimitCond:   sync.NewCond(new(sync.Mutex)),
 		inFlightDownloadDataLimitCond: sync.NewCond(new(sync.Mutex)),
 		concurrentUploadLimit:         concurrentUploadLimit,
 		concurrentDownloadLimit:       concurrentDownloadLimit,
@@ -96,6 +96,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 
 	handleStaticResources(adminMux)
 	adminMux.HandleFunc("/status", vs.statusHandler)
+	adminMux.HandleFunc("/healthz", vs.healthzHandler)
 	if signingKey == "" || enableUiAccess {
 		// only expose the volume server details for safe environments
 		adminMux.HandleFunc("/ui/index.html", vs.uiStatusHandler)

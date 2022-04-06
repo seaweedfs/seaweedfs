@@ -34,6 +34,14 @@ func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer i
 		return nil
 	}
 
+	// collect collection information
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
+	if err != nil {
+		return err
+	}
+	collectionInfos := make(map[string]*CollectionInfo)
+	collectCollectionInfo(topologyInfo, collectionInfos)
+
 	_, parseErr := commandEnv.parseUrl(findInputDirectory(bucketCommand.Args()))
 	if parseErr != nil {
 		return parseErr
@@ -49,11 +57,20 @@ func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer i
 		if !entry.IsDirectory {
 			return nil
 		}
-		if entry.Attributes.Replication == "" || entry.Attributes.Replication == "000" {
-			fmt.Fprintf(writer, "  %s\n", entry.Name)
-		} else {
-			fmt.Fprintf(writer, "  %s\t\t\treplication: %s\n", entry.Name, entry.Attributes.Replication)
+		collection := entry.Name
+		var collectionSize, fileCount float64
+		if collectionInfo, found := collectionInfos[collection]; found {
+			collectionSize = collectionInfo.Size
+			fileCount = collectionInfo.FileCount - collectionInfo.DeleteCount
 		}
+		fmt.Fprintf(writer, "  %s\tsize:%.0f\tfile:%.0f", entry.Name, collectionSize, fileCount)
+		if entry.Quota > 0 {
+			fmt.Fprintf(writer, "\tquota:%d\tusage:%.2f%%", entry.Quota, float64(collectionSize)*100/float64(entry.Quota))
+		}
+		if entry.Attributes.Replication != "" && entry.Attributes.Replication != "000" {
+			fmt.Fprintf(writer, "\treplication:%s", entry.Attributes.Replication)
+		}
+		fmt.Fprintln(writer)
 		return nil
 	}, "", false, math.MaxUint32)
 	if err != nil {
@@ -65,7 +82,7 @@ func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer i
 }
 
 func readFilerBucketsPath(filerClient filer_pb.FilerClient) (filerBucketsPath string, err error) {
-	err = filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {

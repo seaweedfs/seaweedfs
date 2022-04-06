@@ -4,12 +4,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
 	"path/filepath"
 	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -41,12 +42,12 @@ func (c *commandRemoteUncache) Help() string {
 
 func (c *commandRemoteUncache) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	remoteUnmountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	remoteUncacheCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 
-	dir := remoteUnmountCommand.String("dir", "", "a directory in filer")
-	fileFiler := newFileFilter(remoteUnmountCommand)
+	dir := remoteUncacheCommand.String("dir", "", "a directory in filer")
+	fileFiler := newFileFilter(remoteUncacheCommand)
 
-	if err = remoteUnmountCommand.Parse(args); err != nil {
+	if err = remoteUncacheCommand.Parse(args); err != nil {
 		return nil
 	}
 
@@ -104,7 +105,7 @@ func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer
 
 		fmt.Fprintf(writer, "Uncache %+v ... ", dir.Child(entry.Name))
 
-		err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			_, updateErr := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
 				Directory: string(dir),
 				Entry:     entry,

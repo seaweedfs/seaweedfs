@@ -83,6 +83,7 @@ func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation
 	}
 	isLastPage := false
 	for !isLastPage && err == nil {
+		var localErr error
 		listErr := s.conn.ListObjectsV2Pages(listInput, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
 			for _, content := range page.Contents {
 				key := *content.Key
@@ -94,6 +95,7 @@ func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation
 					RemoteETag:  *content.ETag,
 					StorageName: s.conf.Name,
 				}); err != nil {
+					localErr = err
 					return false
 				}
 			}
@@ -103,6 +105,9 @@ func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation
 		})
 		if listErr != nil {
 			err = fmt.Errorf("list %v: %v", remote, listErr)
+		}
+		if localErr != nil {
+			err = fmt.Errorf("process %v: %v", remote, localErr)
 		}
 	}
 	return

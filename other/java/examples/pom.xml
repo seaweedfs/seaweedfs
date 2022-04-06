@@ -11,19 +11,19 @@
         <dependency>
             <groupId>com.github.chrislusf</groupId>
             <artifactId>seaweedfs-client</artifactId>
-            <version>1.6.8</version>
+            <version>2.85</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>com.github.chrislusf</groupId>
             <artifactId>seaweedfs-hadoop2-client</artifactId>
-            <version>1.6.8</version>
+            <version>2.85</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>org.apache.hadoop</groupId>
             <artifactId>hadoop-common</artifactId>
-            <version>2.9.2</version>
+            <version>2.10.1</version>
             <scope>compile</scope>
         </dependency>
     </dependencies>

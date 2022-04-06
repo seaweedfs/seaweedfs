@@ -27,7 +27,8 @@ type FilerMetaBackupOptions struct {
 	restart           *bool
 	backupFilerConfig *string
 
-	store filer.FilerStore
+	store    filer.FilerStore
+	clientId int32
 }
 
 func init() {
@@ -36,6 +37,7 @@ func init() {
 	metaBackup.filerDirectory = cmdFilerMetaBackup.Flag.String("filerDir", "/", "a folder on the filer")
 	metaBackup.restart = cmdFilerMetaBackup.Flag.Bool("restart", false, "copy the full metadata before async incremental backup")
 	metaBackup.backupFilerConfig = cmdFilerMetaBackup.Flag.String("config", "", "path to filer.toml specifying backup filer store")
+	metaBackup.clientId = util.RandomInt32()
 }
 
 var cmdFilerMetaBackup = &Command{
@@ -160,24 +162,21 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 		ctx := context.Background()
 		message := resp.EventNotification
 
-		if message.OldEntry == nil && message.NewEntry == nil {
+		if filer_pb.IsEmpty(resp) {
 			return nil
-		}
-		if message.OldEntry == nil && message.NewEntry != nil {
+		} else if filer_pb.IsCreate(resp) {
 			println("+", util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
 			entry := filer.FromPbEntry(message.NewParentPath, message.NewEntry)
 			return store.InsertEntry(ctx, entry)
-		}
-		if message.OldEntry != nil && message.NewEntry == nil {
+		} else if filer_pb.IsDelete(resp) {
 			println("-", util.FullPath(resp.Directory).Child(message.OldEntry.Name))
 			return store.DeleteEntry(ctx, util.FullPath(resp.Directory).Child(message.OldEntry.Name))
-		}
-		if message.OldEntry != nil && message.NewEntry != nil {
-			if resp.Directory == message.NewParentPath && message.OldEntry.Name == message.NewEntry.Name {
-				println("~", util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
-				entry := filer.FromPbEntry(message.NewParentPath, message.NewEntry)
-				return store.UpdateEntry(ctx, entry)
-			}
+		} else if filer_pb.IsUpdate(resp) {
+			println("~", util.FullPath(message.NewParentPath).Child(message.NewEntry.Name))
+			entry := filer.FromPbEntry(message.NewParentPath, message.NewEntry)
+			return store.UpdateEntry(ctx, entry)
+		} else {
+			// renaming
 			println("-", util.FullPath(resp.Directory).Child(message.OldEntry.Name))
 			if err := store.DeleteEntry(ctx, util.FullPath(resp.Directory).Child(message.OldEntry.Name)); err != nil {
 				return err
@@ -195,7 +194,7 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 		return metaBackup.setOffset(lastTime)
 	})
 
-	return pb.FollowMetadata(pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOption, "meta_backup",
+	return pb.FollowMetadata(pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOption, "meta_backup", metaBackup.clientId,
 		*metaBackup.filerDirectory, nil, startTime.UnixNano(), 0, processEventFnWithOffset, false)
 
 }
@@ -222,9 +221,9 @@ func (metaBackup *FilerMetaBackupOptions) setOffset(lastWriteTime time.Time) err
 
 var _ = filer_pb.FilerClient(&FilerMetaBackupOptions{})
 
-func (metaBackup *FilerMetaBackupOptions) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
+func (metaBackup *FilerMetaBackupOptions) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithFilerClient(pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithFilerClient(streamingMode, pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		return fn(client)
 	})
 

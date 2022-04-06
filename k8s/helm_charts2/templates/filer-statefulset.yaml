@@ -133,11 +133,6 @@ spec:
               -encryptVolumeData \
               {{- end }}
               -ip=${POD_IP} \
-              {{- if .Values.filer.enable_peers }}
-              {{- if gt (.Values.filer.replicas | int) 1 }}
-              -peers=$(echo -n "{{ range $index := until (.Values.filer.replicas | int) }}${SEAWEEDFS_FULLNAME}-filer-{{ $index }}.${SEAWEEDFS_FULLNAME}-filer:{{ $.Values.filer.port }}{{ if lt $index (sub ($.Values.filer.replicas | int) 1) }},{{ end }}{{ end }}" | sed "s/$HOSTNAME.${SEAWEEDFS_FULLNAME}-filer:{{ $.Values.filer.port }}//" | sed 's/,$//; 's/^,//'; s/,,/,/;' )  \
-              {{- end }}
-              {{- end }}
               {{- if .Values.filer.s3.enabled }}
               -s3 \
               -s3.port={{ .Values.filer.s3.port }} \
@@ -153,6 +148,9 @@ spec:
               {{- end }}
               {{- if .Values.filer.s3.enableAuth }}
               -s3.config=/etc/sw/seaweedfs_s3_config \
+              {{- end }}
+              {{- if .Values.filer.s3.auditLogConfig }}
+              -s3.auditLogConfig=/etc/sw/filer_s3_auditLogConfig.json \
               {{- end }}
               {{- end }}
               -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}

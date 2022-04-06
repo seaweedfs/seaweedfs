@@ -2,9 +2,10 @@ package command
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/command/scaffold"
-	"io/ioutil"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"path/filepath"
+
+	"github.com/chrislusf/seaweedfs/weed/command/scaffold"
 )
 
 func init() {
@@ -55,7 +56,7 @@ func runScaffold(cmd *Command, args []string) bool {
 	}
 
 	if *outputPath != "" {
-		ioutil.WriteFile(filepath.Join(*outputPath, *config+".toml"), []byte(content), 0644)
+		util.WriteFile(filepath.Join(*outputPath, *config+".toml"), []byte(content), 0644)
 	} else {
 		fmt.Println(content)
 	}

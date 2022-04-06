@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/util/mem"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
@@ -35,7 +35,7 @@ func Post(url string, values url.Values) ([]byte, error) {
 		return nil, err
 	}
 	defer r.Body.Close()
-	b, err := ioutil.ReadAll(r.Body)
+	b, err := io.ReadAll(r.Body)
 	if r.StatusCode >= 400 {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %d - %s", url, r.StatusCode, string(b))
@@ -71,7 +71,7 @@ func Get(url string) ([]byte, bool, error) {
 		reader = response.Body
 	}
 
-	b, err := ioutil.ReadAll(reader)
+	b, err := io.ReadAll(reader)
 	if response.StatusCode >= 400 {
 		retryable := response.StatusCode >= 500
 		return nil, retryable, fmt.Errorf("%s: %s", url, response.Status)
@@ -107,7 +107,7 @@ func Delete(url string, jwt string) error {
 		return e
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -137,7 +137,7 @@ func DeleteProxied(url string, jwt string) (body []byte, httpStatus int, err err
 		return
 	}
 	defer resp.Body.Close()
-	body, err = ioutil.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
 	if err != nil {
 		return
 	}
@@ -181,7 +181,16 @@ func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) e
 }
 
 func DownloadFile(fileUrl string, jwt string) (filename string, header http.Header, resp *http.Response, e error) {
-	response, err := client.Get(fileUrl)
+	req, err := http.NewRequest("GET", fileUrl, nil)
+	if err != nil {
+		return "", nil, nil, err
+	}
+
+	if len(jwt) > 0 {
+		req.Header.Set("Authorization", "BEARER "+jwt)
+	}
+
+	response, err := client.Do(req)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -271,7 +280,7 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 		}
 	}
 	// drains the response body to avoid memory leak
-	data, _ := ioutil.ReadAll(reader)
+	data, _ := io.ReadAll(reader)
 	if len(data) != 0 {
 		glog.V(1).Infof("%s reader has remaining %d bytes", contentEncoding, len(data))
 	}
@@ -318,7 +327,8 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 	var (
 		m int
 	)
-	buf := make([]byte, 64*1024)
+	buf := mem.Allocate(64 * 1024)
+	defer mem.Free(buf)
 
 	for {
 		m, err = reader.Read(buf)
@@ -327,7 +337,7 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 			return false, nil
 		}
 		if err != nil {
-			return false, err
+			return true, err
 		}
 	}
 
@@ -359,7 +369,7 @@ func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentCompressed bool
 	return false, nil
 }
 
-func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, error) {
+func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (io.ReadCloser, error) {
 
 	req, err := http.NewRequest("GET", fileUrl, nil)
 	if err != nil {
@@ -369,6 +379,10 @@ func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, e
 		req.Header.Add("Range", rangeHeader)
 	} else {
 		req.Header.Add("Accept-Encoding", "gzip")
+	}
+
+	if len(jwt) > 0 {
+		req.Header.Set("Authorization", "BEARER "+jwt)
 	}
 
 	r, err := client.Do(req)
@@ -393,11 +407,30 @@ func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, e
 }
 
 func CloseResponse(resp *http.Response) {
-	io.Copy(ioutil.Discard, resp.Body)
+	reader := &CountingReader{reader: resp.Body}
+	io.Copy(io.Discard, reader)
 	resp.Body.Close()
+	if reader.BytesRead > 0 {
+		glog.V(1).Infof("response leftover %d bytes", reader.BytesRead)
+	}
 }
 
 func CloseRequest(req *http.Request) {
-	io.Copy(ioutil.Discard, req.Body)
+	reader := &CountingReader{reader: req.Body}
+	io.Copy(io.Discard, reader)
 	req.Body.Close()
+	if reader.BytesRead > 0 {
+		glog.V(1).Infof("request leftover %d bytes", reader.BytesRead)
+	}
+}
+
+type CountingReader struct {
+	reader    io.Reader
+	BytesRead int
+}
+
+func (r *CountingReader) Read(p []byte) (n int, err error) {
+	n, err = r.reader.Read(p)
+	r.BytesRead += n
+	return n, err
 }

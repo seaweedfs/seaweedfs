@@ -18,12 +18,13 @@ type RemoteSyncOptions struct {
 	readChunkFromFiler *bool
 	timeAgo            *time.Duration
 	dir                *string
+	clientId           int32
 }
 
 var _ = filer_pb.FilerClient(&RemoteSyncOptions{})
 
-func (option *RemoteSyncOptions) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithFilerClient(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+func (option *RemoteSyncOptions) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return pb.WithFilerClient(streamingMode, pb.ServerAddress(*option.filerAddress), option.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		return fn(client)
 	})
 }
@@ -40,7 +41,8 @@ func init() {
 	remoteSyncOptions.filerAddress = cmdFilerRemoteSynchronize.Flag.String("filer", "localhost:8888", "filer of the SeaweedFS cluster")
 	remoteSyncOptions.dir = cmdFilerRemoteSynchronize.Flag.String("dir", "", "a mounted directory on filer")
 	remoteSyncOptions.readChunkFromFiler = cmdFilerRemoteSynchronize.Flag.Bool("filerProxy", false, "read file chunks from filer instead of volume servers")
-	remoteSyncOptions.timeAgo = cmdFilerRemoteSynchronize.Flag.Duration("timeAgo", 0, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
+	remoteSyncOptions.timeAgo = cmdFilerRemoteSynchronize.Flag.Duration("timeAgo", 0, "start time before now, skipping previous metadata changes. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
+	remoteSyncOptions.clientId = util.RandomInt32()
 }
 
 var cmdFilerRemoteSynchronize = &Command{
@@ -53,6 +55,11 @@ var cmdFilerRemoteSynchronize = &Command{
 	and write to the remote storage.
 
 		weed filer.remote.sync -dir=/mount/s3_on_cloud
+
+	The metadata sync starting time is determined with the following priority order:
+	1. specified by timeAgo
+	2. last sync timestamp for this directory
+	3. directory creation time
 
 `,
 }

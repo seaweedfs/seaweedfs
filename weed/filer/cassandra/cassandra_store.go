@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/gocql/gocql"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -33,6 +34,7 @@ func (store *CassandraStore) Initialize(configuration util.Configuration, prefix
 		configuration.GetString(prefix+"password"),
 		configuration.GetStringSlice(prefix+"superLargeDirectories"),
 		configuration.GetString(prefix+"localDC"),
+		configuration.GetInt(prefix+"connection_timeout_millisecond"),
 	)
 }
 
@@ -41,12 +43,14 @@ func (store *CassandraStore) isSuperLargeDirectory(dir string) (dirHash string, 
 	return
 }
 
-func (store *CassandraStore) initialize(keyspace string, hosts []string, username string, password string, superLargeDirectories []string, localDC string) (err error) {
+func (store *CassandraStore) initialize(keyspace string, hosts []string, username string, password string, superLargeDirectories []string, localDC string, timeout int) (err error) {
 	store.cluster = gocql.NewCluster(hosts...)
 	if username != "" && password != "" {
 		store.cluster.Authenticator = gocql.PasswordAuthenticator{Username: username, Password: password}
 	}
 	store.cluster.Keyspace = keyspace
+	store.cluster.Timeout = time.Duration(timeout) * time.Millisecond
+	glog.V(0).Infof("timeout = %d", timeout)
 	fallback := gocql.RoundRobinHostPolicy()
 	if localDC != "" {
 		fallback = gocql.DCAwareRoundRobinPolicy(localDC)

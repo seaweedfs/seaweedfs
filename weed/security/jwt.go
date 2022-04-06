@@ -13,18 +13,49 @@ import (
 type EncodedJwt string
 type SigningKey []byte
 
+// SeaweedFileIdClaims is created by Master server(s) and consumed by Volume server(s),
+// restricting the access this JWT allows to only a single file.
 type SeaweedFileIdClaims struct {
 	Fid string `json:"fid"`
 	jwt.StandardClaims
 }
 
-func GenJwt(signingKey SigningKey, expiresAfterSec int, fileId string) EncodedJwt {
+// SeaweedFilerClaims is created e.g. by S3 proxy server and consumed by Filer server.
+// Right now, it only contains the standard claims; but this might be extended later
+// for more fine-grained permissions.
+type SeaweedFilerClaims struct {
+	jwt.StandardClaims
+}
+
+func GenJwtForVolumeServer(signingKey SigningKey, expiresAfterSec int, fileId string) EncodedJwt {
 	if len(signingKey) == 0 {
 		return ""
 	}
 
 	claims := SeaweedFileIdClaims{
 		fileId,
+		jwt.StandardClaims{},
+	}
+	if expiresAfterSec > 0 {
+		claims.ExpiresAt = time.Now().Add(time.Second * time.Duration(expiresAfterSec)).Unix()
+	}
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	encoded, e := t.SignedString([]byte(signingKey))
+	if e != nil {
+		glog.V(0).Infof("Failed to sign claims %+v: %v", t.Claims, e)
+		return ""
+	}
+	return EncodedJwt(encoded)
+}
+
+// GenJwtForFilerServer creates a JSON-web-token for using the authenticated Filer API. Used f.e. inside
+// the S3 API
+func GenJwtForFilerServer(signingKey SigningKey, expiresAfterSec int) EncodedJwt {
+	if len(signingKey) == 0 {
+		return ""
+	}
+
+	claims := SeaweedFilerClaims{
 		jwt.StandardClaims{},
 	}
 	if expiresAfterSec > 0 {
@@ -55,9 +86,9 @@ func GetJwt(r *http.Request) EncodedJwt {
 	return EncodedJwt(tokenStr)
 }
 
-func DecodeJwt(signingKey SigningKey, tokenString EncodedJwt) (token *jwt.Token, err error) {
+func DecodeJwt(signingKey SigningKey, tokenString EncodedJwt, claims jwt.Claims) (token *jwt.Token, err error) {
 	// check exp, nbf
-	return jwt.ParseWithClaims(string(tokenString), &SeaweedFileIdClaims{}, func(token *jwt.Token) (interface{}, error) {
+	return jwt.ParseWithClaims(string(tokenString), claims, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unknown token method")
 		}

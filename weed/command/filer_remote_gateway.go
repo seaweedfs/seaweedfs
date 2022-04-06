@@ -28,12 +28,13 @@ type RemoteGatewayOptions struct {
 	mappings    *remote_pb.RemoteStorageMapping
 	remoteConfs map[string]*remote_pb.RemoteConf
 	bucketsDir  string
+	clientId    int32
 }
 
 var _ = filer_pb.FilerClient(&RemoteGatewayOptions{})
 
-func (option *RemoteGatewayOptions) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithFilerClient(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+func (option *RemoteGatewayOptions) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return pb.WithFilerClient(streamingMode, pb.ServerAddress(*option.filerAddress), option.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		return fn(client)
 	})
 }
@@ -54,6 +55,7 @@ func init() {
 	remoteGatewayOptions.timeAgo = cmdFilerRemoteGateway.Flag.Duration("timeAgo", 0, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
 	remoteGatewayOptions.include = cmdFilerRemoteGateway.Flag.String("include", "", "pattens of new bucket names, e.g., s3*")
 	remoteGatewayOptions.exclude = cmdFilerRemoteGateway.Flag.String("exclude", "", "pattens of new bucket names, e.g., local*")
+	remoteGatewayOptions.clientId = util.RandomInt32()
 }
 
 var cmdFilerRemoteGateway = &Command{
@@ -87,7 +89,7 @@ func runFilerRemoteGateway(cmd *Command, args []string) bool {
 
 	remoteGatewayOptions.bucketsDir = "/buckets"
 	// check buckets again
-	remoteGatewayOptions.WithFilerClient(func(filerClient filer_pb.SeaweedFilerClient) error {
+	remoteGatewayOptions.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
 		resp, err := filerClient.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return err

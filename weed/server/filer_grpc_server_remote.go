@@ -3,6 +3,10 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -12,12 +16,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/golang/protobuf/proto"
-	"strings"
-	"sync"
-	"time"
 )
 
-func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.DownloadToLocalRequest) (*filer_pb.DownloadToLocalResponse, error) {
+func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
 
 	// load all mappings
 	mappingEntry, err := fs.filer.FindEntry(ctx, util.JoinPath(filer.DirectoryEtcRemote, filer.REMOTE_STORAGE_MOUNT_FILE))
@@ -57,13 +58,13 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 		return nil, err
 	}
 
-	resp := &filer_pb.DownloadToLocalResponse{}
+	resp := &filer_pb.CacheRemoteObjectToLocalClusterResponse{}
 	if entry.Remote == nil || entry.Remote.RemoteSize == 0 {
 		return resp, nil
 	}
 
 	// detect storage option
-	so, err := fs.detectStorageOption(req.Directory, "", "", 0, "", "", "")
+	so, err := fs.detectStorageOption(req.Directory, "", "", 0, "", "", "", "")
 	if err != nil {
 		return resp, err
 	}
@@ -122,7 +123,7 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 
 			// tell filer to tell volume server to download into needles
 			assignedServerAddress := pb.NewServerAddressWithGrpcPort(assignResult.Url, assignResult.GrpcPort)
-			err = operation.WithVolumeServerClient(assignedServerAddress, fs.grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			err = operation.WithVolumeServerClient(false, assignedServerAddress, fs.grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 				_, fetchAndWriteErr := volumeServerClient.FetchAndWriteNeedle(context.Background(), &volume_server_pb.FetchAndWriteNeedleRequest{
 					VolumeId:   uint32(fileId.VolumeId),
 					NeedleId:   uint64(fileId.Key),
@@ -178,6 +179,7 @@ func (fs *FilerServer) DownloadToLocal(ctx context.Context, req *filer_pb.Downlo
 	// this skips meta data log events
 
 	if err := fs.filer.Store.UpdateEntry(context.Background(), newEntry); err != nil {
+		fs.filer.DeleteChunks(chunks)
 		return nil, err
 	}
 	fs.filer.DeleteChunks(garbage)

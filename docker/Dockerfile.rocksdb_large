@@ -3,13 +3,13 @@ FROM golang:1.17-buster as builder
 RUN apt-get update
 RUN apt-get install -y build-essential libsnappy-dev zlib1g-dev libbz2-dev libgflags-dev liblz4-dev libzstd-dev
 
-ENV ROCKSDB_VERSION v6.22.1
+ENV ROCKSDB_VERSION v7.0.4
 
 # build RocksDB
 RUN cd /tmp && \
     git clone https://github.com/facebook/rocksdb.git /tmp/rocksdb --depth 1 --single-branch --branch $ROCKSDB_VERSION && \
     cd rocksdb && \
-    make static_lib && \
+    PORTABLE=1 make static_lib && \
     make install-static
 
 ENV CGO_CFLAGS "-I/tmp/rocksdb/include"
@@ -29,7 +29,7 @@ FROM alpine AS final
 LABEL author="Chris Lu"
 COPY --from=builder /go/bin/weed /usr/bin/
 RUN mkdir -p /etc/seaweedfs
-COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/filer.toml /etc/seaweedfs/filer.toml
+COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/filer_rocksdb.toml /etc/seaweedfs/filer.toml
 COPY --from=builder /go/src/github.com/chrislusf/seaweedfs/docker/entrypoint.sh /entrypoint.sh
 RUN apk add fuse snappy gflags
 
@@ -50,9 +50,11 @@ EXPOSE 8333
 # webdav server http port
 EXPOSE 7333
 
-RUN mkdir -p /data/filerldb2
+RUN mkdir -p /data/filer_rocksdb
 
 VOLUME /data
+
+WORKDIR /data
 
 RUN chmod +x /entrypoint.sh
 

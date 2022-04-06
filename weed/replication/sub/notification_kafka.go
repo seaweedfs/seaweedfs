@@ -3,7 +3,7 @@ package sub
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"sync"
 	"time"
 
@@ -119,7 +119,7 @@ type KafkaProgress struct {
 
 func loadProgress(offsetFile string) *KafkaProgress {
 	progress := &KafkaProgress{}
-	data, err := ioutil.ReadFile(offsetFile)
+	data, err := os.ReadFile(offsetFile)
 	if err != nil {
 		glog.Warningf("failed to read kafka progress file: %s", offsetFile)
 		return nil
@@ -137,7 +137,7 @@ func (progress *KafkaProgress) saveProgress() error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal progress: %v", err)
 	}
-	err = ioutil.WriteFile(progress.offsetFile, data, 0640)
+	err = util.WriteFile(progress.offsetFile, data, 0640)
 	if err != nil {
 		return fmt.Errorf("failed to save progress to %s: %v", progress.offsetFile, err)
 	}

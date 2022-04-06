@@ -26,7 +26,7 @@ func (c *commandRemoteCache) Help() string {
 	return `cache the file content for mounted directories or files
 
 	# assume a remote storage is configured to name "cloud1"
-	remote.configure -name=cloud1 -type=s3 -access_key=xxx -secret_key=yyy
+	remote.configure -name=cloud1 -type=s3 -s3.access_key=xxx -s3.secret_key=yyy
 	# mount and pull one bucket
 	remote.mount -dir=/xxx -remote=cloud1/bucket
 
@@ -163,10 +163,10 @@ func (c *commandRemoteCache) cacheContentData(commandEnv *CommandEnv, writer io.
 
 			remoteLocation := filer.MapFullPathToRemoteStorageLocation(localMountedDir, remoteMountedLocation, dir.Child(entry.Name))
 
-			if err := filer.DownloadToLocal(commandEnv, remoteConf, remoteLocation, dir, entry); err != nil {
-				fmt.Fprintf(writer, "DownloadToLocal %+v: %v\n", remoteLocation, err)
+			if err := filer.CacheRemoteObjectToLocalCluster(commandEnv, remoteConf, remoteLocation, dir, entry); err != nil {
+				fmt.Fprintf(writer, "CacheRemoteObjectToLocalCluster %+v: %v\n", remoteLocation, err)
 				if executionErr == nil {
-					executionErr = fmt.Errorf("DownloadToLocal %+v: %v\n", remoteLocation, err)
+					executionErr = fmt.Errorf("CacheRemoteObjectToLocalCluster %+v: %v\n", remoteLocation, err)
 				}
 				return
 			}

@@ -14,7 +14,7 @@ service VolumeServer {
 
     rpc VacuumVolumeCheck (VacuumVolumeCheckRequest) returns (VacuumVolumeCheckResponse) {
     }
-    rpc VacuumVolumeCompact (VacuumVolumeCompactRequest) returns (VacuumVolumeCompactResponse) {
+    rpc VacuumVolumeCompact (VacuumVolumeCompactRequest) returns (stream VacuumVolumeCompactResponse) {
     }
     rpc VacuumVolumeCommit (VacuumVolumeCommitRequest) returns (VacuumVolumeCommitResponse) {
     }
@@ -47,7 +47,7 @@ service VolumeServer {
     }
 
     // copy the .idx .dat files, and mount this volume
-    rpc VolumeCopy (VolumeCopyRequest) returns (VolumeCopyResponse) {
+    rpc VolumeCopy (VolumeCopyRequest) returns (stream VolumeCopyResponse) {
     }
     rpc ReadVolumeFileStatus (ReadVolumeFileStatusRequest) returns (ReadVolumeFileStatusResponse) {
     }
@@ -107,6 +107,10 @@ service VolumeServer {
 
     rpc VolumeNeedleStatus (VolumeNeedleStatusRequest) returns (VolumeNeedleStatusResponse) {
     }
+
+    rpc Ping (PingRequest) returns (PingResponse) {
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -142,6 +146,7 @@ message VacuumVolumeCompactRequest {
     int64 preallocate = 2;
 }
 message VacuumVolumeCompactResponse {
+    int64 processed_bytes = 1;
 }
 
 message VacuumVolumeCommitRequest {
@@ -251,6 +256,7 @@ message VolumeCopyRequest {
 }
 message VolumeCopyResponse {
     uint64 last_append_at_ns = 1;
+    int64 processed_bytes = 2;
 }
 
 message CopyFileRequest {
@@ -570,4 +576,11 @@ message VolumeNeedleStatusResponse {
     uint64 last_modified = 4;
     uint32 crc = 5;
     string ttl = 6;
+}
+
+message PingRequest {
+    string target = 1; // default to ping itself
+    string target_type = 2;
+}
+message PingResponse {
 }

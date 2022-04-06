@@ -48,6 +48,8 @@ func EntryAttributeToPb(entry *Entry) *filer_pb.FuseAttributes {
 		SymlinkTarget: entry.Attr.SymlinkTarget,
 		Md5:           entry.Attr.Md5,
 		FileSize:      entry.Attr.FileSize,
+		Rdev:          entry.Attr.Rdev,
+		Inode:         entry.Attr.Inode,
 	}
 }
 
@@ -74,6 +76,8 @@ func PbToEntryAttribute(attr *filer_pb.FuseAttributes) Attr {
 	t.SymlinkTarget = attr.SymlinkTarget
 	t.Md5 = attr.Md5
 	t.FileSize = attr.FileSize
+	t.Rdev = attr.Rdev
+	t.Inode = attr.Inode
 
 	return t
 }
@@ -116,6 +120,9 @@ func EqualEntry(a, b *Entry) bool {
 		return false
 	}
 	if !proto.Equal(a.Remote, b.Remote) {
+		return false
+	}
+	if a.Quota != b.Quota {
 		return false
 	}
 	return true

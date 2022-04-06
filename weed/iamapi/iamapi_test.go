@@ -2,6 +2,10 @@ package iamapi
 
 import (
 	"encoding/xml"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
@@ -9,9 +13,6 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/jinzhu/copier"
 	"github.com/stretchr/testify/assert"
-	"net/http"
-	"net/http/httptest"
-	"testing"
 )
 
 var GetS3ApiConfiguration func(s3cfg *iam_pb.S3ApiConfiguration) (err error)
@@ -161,8 +162,20 @@ func TestGetUserPolicy(t *testing.T) {
 	assert.Equal(t, http.StatusOK, response.Code)
 }
 
-func TestDeleteUser(t *testing.T) {
+func TestUpdateUser(t *testing.T) {
 	userName := aws.String("Test")
+	newUserName := aws.String("Test-New")
+	params := &iam.UpdateUserInput{NewUserName: newUserName, UserName: userName}
+	req, _ := iam.New(session.New()).UpdateUserRequest(params)
+	_ = req.Build()
+	out := UpdateUserResponse{}
+	response, err := executeRequest(req.HTTPRequest, out)
+	assert.Equal(t, nil, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+}
+
+func TestDeleteUser(t *testing.T) {
+	userName := aws.String("Test-New")
 	params := &iam.DeleteUserInput{UserName: userName}
 	req, _ := iam.New(session.New()).DeleteUserRequest(params)
 	_ = req.Build()

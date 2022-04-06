@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/topology"
 	"net/http"
 	"path/filepath"
 
@@ -8,6 +9,24 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
+
+func (vs *VolumeServer) healthzHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
+	volumeInfos := vs.store.VolumeInfos()
+	for _, vinfo := range volumeInfos {
+		if len(vinfo.Collection) == 0 {
+			continue
+		}
+		if vinfo.ReplicaPlacement.GetCopyCount() > 1 {
+			_, err := topology.GetWritableRemoteReplications(vs.store, vs.grpcDialOption, vinfo.Id, vs.GetMaster)
+			if err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+}
 
 func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)

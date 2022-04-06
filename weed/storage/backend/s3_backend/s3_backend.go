@@ -79,13 +79,13 @@ func (s *S3BackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb
 	return f
 }
 
-func (s *S3BackendStorage) CopyFile(f *os.File, attributes map[string]string, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
+func (s *S3BackendStorage) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
 	randomUuid, _ := uuid.NewRandom()
 	key = randomUuid.String()
 
 	glog.V(1).Infof("copying dat file of %s to remote s3.%s as %s", f.Name(), s.id, key)
 
-	size, err = uploadToS3(s.conn, f.Name(), s.bucket, key, attributes, fn)
+	size, err = uploadToS3(s.conn, f.Name(), s.bucket, key, fn)
 
 	return
 }

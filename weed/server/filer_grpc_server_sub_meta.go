@@ -23,9 +23,11 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 	peerAddress := findClientAddress(stream.Context(), 0)
 
-	clientName := fs.addClient(req.ClientName, peerAddress)
-
-	defer fs.deleteClient(clientName)
+	alreadyKnown, clientName := fs.addClient(req.ClientName, peerAddress, req.ClientId)
+	if alreadyKnown {
+		return fmt.Errorf("duplicated subscription detected for client %s id %d", clientName, req.ClientId)
+	}
+	defer fs.deleteClient(clientName, req.ClientId)
 
 	lastReadTime := time.Unix(0, req.SinceNs)
 	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
@@ -81,9 +83,11 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 	peerAddress := findClientAddress(stream.Context(), 0)
 
-	clientName := fs.addClient(req.ClientName, peerAddress)
-
-	defer fs.deleteClient(clientName)
+	alreadyKnown, clientName := fs.addClient(req.ClientName, peerAddress, req.ClientId)
+	if alreadyKnown {
+		return fmt.Errorf("duplicated local subscription detected for client %s id %d", clientName, req.ClientId)
+	}
+	defer fs.deleteClient(clientName, req.ClientId)
 
 	lastReadTime := time.Unix(0, req.SinceNs)
 	glog.V(0).Infof(" %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
@@ -101,6 +105,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 		glog.V(0).Infof("read on disk %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 		processedTsNs, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, eachLogEntryFn)
 		if readPersistedLogErr != nil {
+			glog.V(0).Infof("read on disk %v local subscribe %s from %+v: %v", clientName, req.PathPrefix, lastReadTime, readPersistedLogErr)
 			return fmt.Errorf("reading from persisted logs: %v", readPersistedLogErr)
 		}
 
@@ -122,11 +127,11 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			return true
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
+			time.Sleep(1127 * time.Millisecond)
 			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
 				continue
 			}
 			glog.Errorf("processed to %v: %v", lastReadTime, readInMemoryLogErr)
-			time.Sleep(1127 * time.Millisecond)
 			if readInMemoryLogErr != log_buffer.ResumeError {
 				break
 			}
@@ -236,12 +241,22 @@ func hasPrefixIn(text string, prefixes []string) bool {
 	return false
 }
 
-func (fs *FilerServer) addClient(clientType string, clientAddress string) (clientName string) {
+func (fs *FilerServer) addClient(clientType string, clientAddress string, clientId int32) (alreadyKnown bool, clientName string) {
 	clientName = clientType + "@" + clientAddress
 	glog.V(0).Infof("+ listener %v", clientName)
+	if clientId != 0 {
+		fs.knownListenersLock.Lock()
+		_, alreadyKnown = fs.knownListeners[clientId]
+		fs.knownListenersLock.Unlock()
+	}
 	return
 }
 
-func (fs *FilerServer) deleteClient(clientName string) {
+func (fs *FilerServer) deleteClient(clientName string, clientId int32) {
 	glog.V(0).Infof("- listener %v", clientName)
+	if clientId != 0 {
+		fs.knownListenersLock.Lock()
+		delete(fs.knownListeners, clientId)
+		fs.knownListenersLock.Unlock()
+	}
 }

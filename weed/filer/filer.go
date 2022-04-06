@@ -3,7 +3,9 @@ package filer
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/cluster"
 	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"os"
 	"strings"
 	"time"
@@ -47,10 +49,10 @@ type Filer struct {
 	UniqueFileId        uint32
 }
 
-func NewFiler(masters []pb.ServerAddress, grpcDialOption grpc.DialOption,
+func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOption,
 	filerHost pb.ServerAddress, collection string, replication string, dataCenter string, notifyFn func()) *Filer {
 	f := &Filer{
-		MasterClient:        wdclient.NewMasterClient(grpcDialOption, "filer", filerHost, dataCenter, masters),
+		MasterClient:        wdclient.NewMasterClient(grpcDialOption, cluster.FilerType, filerHost, dataCenter, masters),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 		FilerConf:           NewFilerConf(),
@@ -66,22 +68,38 @@ func NewFiler(masters []pb.ServerAddress, grpcDialOption grpc.DialOption,
 	return f
 }
 
-func (f *Filer) AggregateFromPeers(self pb.ServerAddress, filers []pb.ServerAddress) {
+func (f *Filer) AggregateFromPeers(self pb.ServerAddress) {
 
-	// set peers
-	found := false
-	for _, peer := range filers {
-		if peer == self {
-			found = true
+	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOption)
+	f.MasterClient.OnPeerUpdate = f.MetaAggregator.OnPeerUpdate
+
+	for _, peerUpdate := range f.ListExistingPeerUpdates() {
+		f.MetaAggregator.OnPeerUpdate(peerUpdate)
+	}
+
+}
+
+func (f *Filer) ListExistingPeerUpdates() (existingNodes []*master_pb.ClusterNodeUpdate) {
+
+	if grpcErr := pb.WithMasterClient(false, f.MasterClient.GetMaster(), f.GrpcDialOption, func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.FilerType,
+		})
+
+		glog.V(0).Infof("the cluster has %d filers\n", len(resp.ClusterNodes))
+		for _, node := range resp.ClusterNodes {
+			existingNodes = append(existingNodes, &master_pb.ClusterNodeUpdate{
+				NodeType: cluster.FilerType,
+				Address:  node.Address,
+				IsLeader: node.IsLeader,
+				IsAdd:    true,
+			})
 		}
+		return err
+	}); grpcErr != nil {
+		glog.V(0).Infof("connect to %s: %v", f.MasterClient.GetMaster(), grpcErr)
 	}
-	if !found {
-		filers = append(filers, self)
-	}
-
-	f.MetaAggregator = NewMetaAggregator(filers, f.GrpcDialOption)
-	f.MetaAggregator.StartLoopSubscribe(f, self)
-
+	return
 }
 
 func (f *Filer) SetStore(store FilerStore) {
@@ -117,7 +135,7 @@ func (fs *Filer) GetMaster() pb.ServerAddress {
 	return fs.MasterClient.GetMaster()
 }
 
-func (fs *Filer) KeepConnectedToMaster() {
+func (fs *Filer) KeepMasterClientConnected() {
 	fs.MasterClient.KeepConnectedToMaster()
 }
 
@@ -133,7 +151,7 @@ func (f *Filer) RollbackTransaction(ctx context.Context) error {
 	return f.Store.RollbackTransaction(ctx)
 }
 
-func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFromOtherCluster bool, signatures []int32) error {
+func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFromOtherCluster bool, signatures []int32, skipCreateParentDir bool) error {
 
 	if string(entry.FullPath) == "/" {
 		return nil
@@ -151,9 +169,11 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 
 	if oldEntry == nil {
 
-		dirParts := strings.Split(string(entry.FullPath), "/")
-		if err := f.ensureParentDirecotryEntry(ctx, entry, dirParts, len(dirParts)-1, isFromOtherCluster); err != nil {
-			return err
+		if !skipCreateParentDir {
+			dirParts := strings.Split(string(entry.FullPath), "/")
+			if err := f.ensureParentDirecotryEntry(ctx, entry, dirParts, len(dirParts)-1, isFromOtherCluster); err != nil {
+				return err
+			}
 		}
 
 		glog.V(4).Infof("InsertEntry %s: new entry: %v", entry.FullPath, entry.Name())
@@ -288,14 +308,19 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 
 func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (expiredCount int64, lastFileName string, err error) {
 	lastFileName, err = f.Store.ListDirectoryPrefixedEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) bool {
-		if entry.TtlSec > 0 {
-			if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
-				f.Store.DeleteOneEntry(ctx, entry)
-				expiredCount++
-				return true
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+			if entry.TtlSec > 0 {
+				if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
+					f.Store.DeleteOneEntry(ctx, entry)
+					expiredCount++
+					return true
+				}
 			}
+			return eachEntryFunc(entry)
 		}
-		return eachEntryFunc(entry)
 	})
 	if err != nil {
 		return expiredCount, lastFileName, err

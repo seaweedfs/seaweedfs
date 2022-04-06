@@ -8,7 +8,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
-	"math"
 	"net/url"
 	"os"
 	"strings"
@@ -97,7 +96,7 @@ func runFilerCat(cmd *Command, args []string) bool {
 		writer = f
 	}
 
-	pb.WithFilerClient(filerCat.filerAddress, filerCat.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	pb.WithFilerClient(false, filerCat.filerAddress, filerCat.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Name:      name,
@@ -115,7 +114,7 @@ func runFilerCat(cmd *Command, args []string) bool {
 
 		filerCat.filerClient = client
 
-		return filer.StreamContent(&filerCat, writer, respLookupEntry.Entry.Chunks, 0, math.MaxInt64)
+		return filer.StreamContent(&filerCat, writer, respLookupEntry.Entry.Chunks, 0, int64(filer.FileSize(respLookupEntry.Entry)))
 
 	})
 

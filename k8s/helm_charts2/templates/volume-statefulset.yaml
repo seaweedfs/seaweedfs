@@ -40,7 +40,7 @@ spec:
       imagePullSecrets:
         - name: {{ .Values.global.imagePullSecrets }}
       {{- end }}
-      terminationGracePeriodSeconds: 10
+      terminationGracePeriodSeconds: 150
       {{- if .Values.volume.priorityClassName }}
       priorityClassName: {{ .Values.volume.priorityClassName | quote }}
       {{- end }}

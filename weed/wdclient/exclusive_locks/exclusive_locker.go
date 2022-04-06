@@ -22,6 +22,7 @@ type ExclusiveLocker struct {
 	isLocking    bool
 	masterClient *wdclient.MasterClient
 	lockName     string
+	message      string
 }
 
 func NewExclusiveLocker(masterClient *wdclient.MasterClient, lockName string) *ExclusiveLocker {
@@ -53,7 +54,7 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 
 	// retry to get the lease
 	for {
-		if err := l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
+		if err := l.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 			resp, err := client.LeaseAdminToken(ctx, &master_pb.LeaseAdminTokenRequest{
 				PreviousToken:    atomic.LoadInt64(&l.token),
 				PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
@@ -81,12 +82,13 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 		defer cancel2()
 
 		for l.isLocking {
-			if err := l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
+			if err := l.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 				resp, err := client.LeaseAdminToken(ctx2, &master_pb.LeaseAdminTokenRequest{
 					PreviousToken:    atomic.LoadInt64(&l.token),
 					PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
 					LockName:         l.lockName,
 					ClientName:       clientName,
+					Message:          l.message,
 				})
 				if err == nil {
 					atomic.StoreInt64(&l.token, resp.Token)
@@ -112,7 +114,7 @@ func (l *ExclusiveLocker) ReleaseLock() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
+	l.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		client.ReleaseAdminToken(ctx, &master_pb.ReleaseAdminTokenRequest{
 			PreviousToken:    atomic.LoadInt64(&l.token),
 			PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
@@ -122,4 +124,8 @@ func (l *ExclusiveLocker) ReleaseLock() {
 	})
 	atomic.StoreInt64(&l.token, 0)
 	atomic.StoreInt64(&l.lockTsNs, 0)
+}
+
+func (l *ExclusiveLocker) SetMessage(message string) {
+	l.message = message
 }

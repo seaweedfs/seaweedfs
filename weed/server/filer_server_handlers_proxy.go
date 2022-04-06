@@ -3,6 +3,7 @@ package weed_server
 import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/chrislusf/seaweedfs/weed/util/mem"
 	"io"
 	"math/rand"
 	"net/http"
@@ -62,6 +63,9 @@ func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Reques
 		w.Header()[k] = v
 	}
 	w.WriteHeader(proxyResponse.StatusCode)
-	io.Copy(w, proxyResponse.Body)
+
+	buf := mem.Allocate(128 * 1024)
+	defer mem.Free(buf)
+	io.CopyBuffer(w, proxyResponse.Body, buf)
 
 }

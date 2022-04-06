@@ -4,18 +4,19 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	grpc_auth "github.com/grpc-ecosystem/go-grpc-middleware/auth"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/peer"
-	"google.golang.org/grpc/status"
 	"io/ioutil"
+	"os"
 	"strings"
 
+	grpc_auth "github.com/grpc-ecosystem/go-grpc-middleware/auth"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 type Authenticator struct {
@@ -37,7 +38,7 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 			err)
 		return nil, nil
 	}
-	caCert, err := ioutil.ReadFile(config.GetString("grpc.ca"))
+	caCert, err := os.ReadFile(config.GetString("grpc.ca"))
 	if err != nil {
 		glog.V(1).Infof("read ca cert file %s error: %v", config.GetString("grpc.ca"), err)
 		return nil, nil
@@ -82,7 +83,7 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 		glog.V(1).Infof("load cert/key error: %v", err)
 		return grpc.WithInsecure()
 	}
-	caCert, err := ioutil.ReadFile(caFileName)
+	caCert, err := os.ReadFile(caFileName)
 	if err != nil {
 		glog.V(1).Infof("read ca cert file error: %v", err)
 		return grpc.WithInsecure()
@@ -96,6 +97,23 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 		InsecureSkipVerify: true,
 	})
 	return grpc.WithTransportCredentials(ta)
+}
+
+func LoadClientTLSHTTP(clientCertFile string) *tls.Config {
+	clientCerts, err := ioutil.ReadFile(clientCertFile)
+	if err != nil {
+		glog.Fatal(err)
+	}
+	certPool := x509.NewCertPool()
+	ok := certPool.AppendCertsFromPEM(clientCerts)
+	if !ok {
+		glog.Fatalf("Error processing client certificate in %s\n", clientCertFile)
+	}
+
+	return &tls.Config{
+		ClientCAs:  certPool,
+		ClientAuth: tls.RequireAndVerifyClientCert,
+	}
 }
 
 func (a Authenticator) Authenticate(ctx context.Context) (newCtx context.Context, err error) {

@@ -3,9 +3,13 @@ package shell
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/cluster"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"io"
+	"math/rand"
 	"os"
 	"path"
 	"regexp"
@@ -42,13 +46,36 @@ func RunShell(options ShellOptions) {
 
 	reg, _ := regexp.Compile(`'.*?'|".*?"|\S+`)
 
-	commandEnv := NewCommandEnv(options)
+	commandEnv := NewCommandEnv(&options)
 
 	go commandEnv.MasterClient.KeepConnectedToMaster()
 	commandEnv.MasterClient.WaitUntilConnected()
 
+	if commandEnv.option.FilerAddress == "" {
+		var filers []pb.ServerAddress
+		commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+				ClientType: cluster.FilerType,
+			})
+			if err != nil {
+				return err
+			}
+
+			for _, clusterNode := range resp.ClusterNodes {
+				filers = append(filers, pb.ServerAddress(clusterNode.Address))
+			}
+			return nil
+		})
+		fmt.Printf("master: %s ", *options.Masters)
+		if len(filers) > 0 {
+			fmt.Printf("filers: %v", filers)
+			commandEnv.option.FilerAddress = filers[rand.Intn(len(filers))]
+		}
+		fmt.Println()
+	}
+
 	if commandEnv.option.FilerAddress != "" {
-		commandEnv.WithFilerClient(func(filerClient filer_pb.SeaweedFilerClient) error {
+		commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
 			resp, err := filerClient.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return err

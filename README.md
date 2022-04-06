@@ -33,7 +33,7 @@ Your support will be really appreciated by me and other supporters!
 
 
 ### Gold Sponsors
-![shuguang](https://raw.githubusercontent.com/chrislusf/seaweedfs/master/note/shuguang.png)
+- [![nodion](https://www.nodion.com/img/logo.svg)](https://www.nodion.com)
 
 ---
 
@@ -41,6 +41,7 @@ Your support will be really appreciated by me and other supporters!
 - [Download Binaries for different platforms](https://github.com/chrislusf/seaweedfs/releases/latest)
 - [SeaweedFS on Slack](https://join.slack.com/t/seaweedfs/shared_invite/enQtMzI4MTMwMjU2MzA3LTEyYzZmZWYzOGQ3MDJlZWMzYmI0OTE4OTJiZjJjODBmMzUxNmYwODg0YjY3MTNlMjBmZDQ1NzQ5NDJhZWI2ZmY)
 - [SeaweedFS on Twitter](https://twitter.com/SeaweedFS)
+- [SeaweedFS on Telegram](https://t.me/Seaweedfs) 
 - [SeaweedFS Mailing List](https://groups.google.com/d/forum/seaweedfs)
 - [Wiki Documentation](https://github.com/chrislusf/seaweedfs/wiki)
 - [SeaweedFS White Paper](https://github.com/chrislusf/seaweedfs/wiki/SeaweedFS_Architecture.pdf)
@@ -51,6 +52,8 @@ Table of Contents
 =================
 
 * [Quick Start](#quick-start)
+    * [Quick Start for S3 API on Docker](#quick-start-for-s3-api-on-docker)
+    * [Quick Start with Single Binary](#quick-start-with-single-binary)
 * [Introduction](#introduction)
 * [Features](#features)
     * [Additional Features](#additional-features)
@@ -73,7 +76,7 @@ Table of Contents
 
 `docker run -p 8333:8333 chrislusf/seaweedfs server -s3`
 
-## Quick Start with single binary ##
+## Quick Start with Single Binary ##
 * Download the latest binary from https://github.com/chrislusf/seaweedfs/releases and unzip a single binary file `weed` or `weed.exe`
 * Run `weed server -dir=/some/data/dir -s3` to start one master, one volume server, one filer, and one S3 gateway.
 
@@ -501,7 +504,7 @@ git clone https://github.com/chrislusf/seaweedfs.git
 Step 3: download, compile, and install the project by executing the following command
 
 ```bash
-make install
+cd seaweedfs/weed && make install
 ```
 
 Once this is done, you will find the executable "weed" in your `$GOPATH/bin` directory

@@ -36,11 +36,13 @@ type Conn struct {
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	isClosed     bool
+	bytesRead    int64
+	bytesWritten int64
 }
 
 func (c *Conn) Read(b []byte) (count int, e error) {
 	if c.ReadTimeout != 0 {
-		err := c.Conn.SetReadDeadline(time.Now().Add(c.ReadTimeout))
+		err := c.Conn.SetReadDeadline(time.Now().Add(c.ReadTimeout * time.Duration(c.bytesRead/40000+1)))
 		if err != nil {
 			return 0, err
 		}
@@ -48,6 +50,7 @@ func (c *Conn) Read(b []byte) (count int, e error) {
 	count, e = c.Conn.Read(b)
 	if e == nil {
 		stats.BytesIn(int64(count))
+		c.bytesRead += int64(count)
 	}
 	return
 }
@@ -55,7 +58,7 @@ func (c *Conn) Read(b []byte) (count int, e error) {
 func (c *Conn) Write(b []byte) (count int, e error) {
 	if c.WriteTimeout != 0 {
 		// minimum 4KB/s
-		err := c.Conn.SetWriteDeadline(time.Now().Add(c.WriteTimeout * time.Duration(len(b)/40000+1)))
+		err := c.Conn.SetWriteDeadline(time.Now().Add(c.WriteTimeout * time.Duration(c.bytesWritten/40000+1)))
 		if err != nil {
 			return 0, err
 		}
@@ -63,6 +66,7 @@ func (c *Conn) Write(b []byte) (count int, e error) {
 	count, e = c.Conn.Write(b)
 	if e == nil {
 		stats.BytesOut(int64(count))
+		c.bytesWritten += int64(count)
 	}
 	return
 }
@@ -78,16 +82,45 @@ func (c *Conn) Close() error {
 	return err
 }
 
-func NewListener(addr string, timeout time.Duration) (net.Listener, error) {
-	l, err := net.Listen("tcp", addr)
+func NewListener(addr string, timeout time.Duration) (ipListner net.Listener, err error) {
+	listner, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, err
+		return
 	}
 
-	tl := &Listener{
-		Listener:     l,
+	ipListner = &Listener{
+		Listener:     listner,
 		ReadTimeout:  timeout,
 		WriteTimeout: timeout,
 	}
-	return tl, nil
+
+	return
+}
+
+func NewIpAndLocalListeners(host string, port int, timeout time.Duration) (ipListner net.Listener, localListener net.Listener, err error) {
+	listner, err := net.Listen("tcp", JoinHostPort(host, port))
+	if err != nil {
+		return
+	}
+
+	ipListner = &Listener{
+		Listener:     listner,
+		ReadTimeout:  timeout,
+		WriteTimeout: timeout,
+	}
+
+	if host != "localhost" && host != "" && host != "0.0.0.0" && host != "127.0.0.1" {
+		listner, err = net.Listen("tcp", JoinHostPort("localhost", port))
+		if err != nil {
+			return
+		}
+
+		localListener = &Listener{
+			Listener:     listner,
+			ReadTimeout:  timeout,
+			WriteTimeout: timeout,
+		}
+	}
+
+	return
 }

@@ -55,14 +55,17 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	diskType := fsConfigureCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes")
 	isReadOnly := fsConfigureCommand.Bool("readOnly", false, "disable writes")
+	dataCenter := fsConfigureCommand.String("dataCenter", "", "assign writes to this dataCenter")
+	rack := fsConfigureCommand.String("rack", "", "assign writes to this rack")
+	dataNode := fsConfigureCommand.String("dataNode", "", "assign writes to this dataNode")
 	volumeGrowthCount := fsConfigureCommand.Int("volumeGrowthCount", 0, "the number of physical volumes to add if no writable volumes")
 	isDelete := fsConfigureCommand.Bool("delete", false, "delete the configuration by locationPrefix")
 	apply := fsConfigureCommand.Bool("apply", false, "update and apply filer configuration")
 	if err = fsConfigureCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
-	fc, err := readFilerConf(commandEnv)
+	fc, err := filer.ReadFilerConf(commandEnv.option.FilerAddress, commandEnv.option.GrpcDialOption, commandEnv.MasterClient)
 	if err != nil {
 		return err
 	}
@@ -77,6 +80,9 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			DiskType:          *diskType,
 			VolumeGrowthCount: uint32(*volumeGrowthCount),
 			ReadOnly:          *isReadOnly,
+			DataCenter:        *dataCenter,
+			Rack:              *rack,
+			DataNode:          *dataNode,
 		}
 
 		// check collection
@@ -111,7 +117,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	if *apply {
 
-		if err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		if err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf2.Bytes())
 		}); err != nil && err != filer_pb.ErrNotFound {
 			return err
@@ -121,21 +127,4 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	return nil
 
-}
-
-func readFilerConf(commandEnv *CommandEnv) (*filer.FilerConf, error) {
-	var buf bytes.Buffer
-	if err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		return filer.ReadEntry(commandEnv.MasterClient, client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, &buf)
-	}); err != nil && err != filer_pb.ErrNotFound {
-		return nil, fmt.Errorf("read %s/%s: %v", filer.DirectoryEtcSeaweedFS, filer.FilerConfName, err)
-	}
-
-	fc := filer.NewFilerConf()
-	if buf.Len() > 0 {
-		if err := fc.LoadFromBytes(buf.Bytes()); err != nil {
-			return nil, fmt.Errorf("parse %s/%s: %v", filer.DirectoryEtcSeaweedFS, filer.FilerConfName, err)
-		}
-	}
-	return fc, nil
 }

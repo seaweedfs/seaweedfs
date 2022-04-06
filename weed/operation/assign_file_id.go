@@ -48,7 +48,7 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 			continue
 		}
 
-		lastError = WithMasterServerClient(masterFn(), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+		lastError = WithMasterServerClient(false, masterFn(), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
 			req := &master_pb.AssignRequest{
 				Count:               request.Count,
@@ -105,7 +105,7 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 
 func LookupJwt(master pb.ServerAddress, grpcDialOption grpc.DialOption, fileId string) (token security.EncodedJwt) {
 
-	WithMasterServerClient(master, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+	WithMasterServerClient(false, master, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
 		resp, grpcErr := masterClient.LookupVolume(context.Background(), &master_pb.LookupVolumeRequest{
 			VolumeOrFileIds: []string{fileId},
@@ -133,6 +133,7 @@ type StorageOption struct {
 	Collection        string
 	DataCenter        string
 	Rack              string
+	DataNode          string
 	TtlSeconds        int32
 	Fsync             bool
 	VolumeGrowthCount uint32
@@ -151,9 +152,10 @@ func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, a
 		DiskType:            so.DiskType,
 		DataCenter:          so.DataCenter,
 		Rack:                so.Rack,
+		DataNode:            so.DataNode,
 		WritableVolumeCount: so.VolumeGrowthCount,
 	}
-	if so.DataCenter != "" || so.Rack != "" {
+	if so.DataCenter != "" || so.Rack != "" || so.DataNode != "" {
 		altRequest = &VolumeAssignRequest{
 			Count:               uint64(count),
 			Replication:         so.Replication,
@@ -162,6 +164,7 @@ func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, a
 			DiskType:            so.DiskType,
 			DataCenter:          "",
 			Rack:                "",
+			DataNode:            "",
 			WritableVolumeCount: so.VolumeGrowthCount,
 		}
 	}

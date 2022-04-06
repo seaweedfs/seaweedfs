@@ -2,7 +2,7 @@ package weed_server
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -11,6 +11,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/cluster"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 
 	"github.com/chrislusf/raft"
 	"github.com/gorilla/mux"
@@ -47,6 +50,7 @@ type MasterOption struct {
 }
 
 type MasterServer struct {
+	master_pb.UnimplementedSeaweedServer
 	option *MasterOption
 	guard  *security.Guard
 
@@ -60,16 +64,18 @@ type MasterServer struct {
 
 	// notifying clients
 	clientChansLock sync.RWMutex
-	clientChans     map[string]chan *master_pb.VolumeLocation
+	clientChans     map[string]chan *master_pb.KeepConnectedResponse
 
 	grpcDialOption grpc.DialOption
 
 	MasterClient *wdclient.MasterClient
 
 	adminLocks *AdminLocks
+
+	Cluster *cluster.Cluster
 }
 
-func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddress) *MasterServer {
+func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.ServerAddress) *MasterServer {
 
 	v := util.GetViper()
 	signingKey := v.GetString("jwt.signing.key")
@@ -99,10 +105,11 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddre
 		option:          option,
 		preallocateSize: preallocateSize,
 		vgCh:            make(chan *topology.VolumeGrowRequest, 1<<6),
-		clientChans:     make(map[string]chan *master_pb.VolumeLocation),
+		clientChans:     make(map[string]chan *master_pb.KeepConnectedResponse),
 		grpcDialOption:  grpcDialOption,
-		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "master", option.Master, "", peers),
+		MasterClient:    wdclient.NewMasterClient(grpcDialOption, cluster.MasterType, option.Master, "", peers),
 		adminLocks:      NewAdminLocks(),
+		Cluster:         cluster.NewCluster(),
 	}
 	ms.boundedLeaderChan = make(chan int, 16)
 
@@ -156,6 +163,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	ms.Topo.RaftServer = raftServer.raftServer
 	ms.Topo.RaftServer.AddEventListener(raft.LeaderChangeEventType, func(e raft.Event) {
 		glog.V(0).Infof("leader change event: %+v => %+v", e.PrevValue(), e.Value())
+		stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", e.Value())).Inc()
 		if ms.Topo.RaftServer.Leader() != "" {
 			glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "becomes leader.")
 		}
@@ -202,20 +210,16 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 }
 
 func (ms *MasterServer) startAdminScripts() {
-	var err error
 
 	v := util.GetViper()
 	adminScripts := v.GetString("master.maintenance.scripts")
-	glog.V(0).Infof("adminScripts:\n%v", adminScripts)
 	if adminScripts == "" {
 		return
 	}
+	glog.V(0).Infof("adminScripts: %v", adminScripts)
 
 	v.SetDefault("master.maintenance.sleep_minutes", 17)
 	sleepMinutes := v.GetInt("master.maintenance.sleep_minutes")
-
-	v.SetDefault("master.filer.default", "localhost:8888")
-	filerHostPort := v.GetString("master.filer.default")
 
 	scriptLines := strings.Split(adminScripts, "\n")
 	if !strings.Contains(adminScripts, "lock") {
@@ -229,14 +233,9 @@ func (ms *MasterServer) startAdminScripts() {
 	shellOptions.GrpcDialOption = security.LoadClientTLS(v, "grpc.master")
 	shellOptions.Masters = &masterAddress
 
-	shellOptions.FilerAddress = pb.ServerAddress(filerHostPort)
 	shellOptions.Directory = "/"
-	if err != nil {
-		glog.V(0).Infof("failed to parse master.filer.default = %s : %v\n", filerHostPort, err)
-		return
-	}
 
-	commandEnv := shell.NewCommandEnv(shellOptions)
+	commandEnv := shell.NewCommandEnv(&shellOptions)
 
 	reg, _ := regexp.Compile(`'.*?'|".*?"|\S+`)
 
@@ -245,9 +244,13 @@ func (ms *MasterServer) startAdminScripts() {
 	go func() {
 		commandEnv.MasterClient.WaitUntilConnected()
 
-		c := time.Tick(time.Duration(sleepMinutes) * time.Minute)
-		for range c {
+		for {
+			time.Sleep(time.Duration(sleepMinutes) * time.Minute)
 			if ms.Topo.IsLeader() {
+				shellOptions.FilerAddress = ms.GetOneFiler()
+				if shellOptions.FilerAddress == "" {
+					continue
+				}
 				for _, line := range scriptLines {
 					for _, c := range strings.Split(line, ";") {
 						processEachCmd(reg, c, commandEnv)

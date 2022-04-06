@@ -1,9 +1,12 @@
 package command
 
 import (
+	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"strconv"
+	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
@@ -19,17 +22,15 @@ func init() {
 }
 
 var cmdFix = &Command{
-	UsageLine: "fix -dir=/tmp -volumeId=234",
-	Short:     "run weed tool fix on index file if corrupted",
-	Long: `Fix runs the SeaweedFS fix command to re-create the index .idx file.
-
+	UsageLine: "fix [-volumeId=234] [-collection=bigData] /tmp",
+	Short:     "run weed tool fix on files or whole folders to recreate index file(s) if corrupted",
+	Long: `Fix runs the SeaweedFS fix command on dat files or whole folders to re-create the index .idx file.
   `,
 }
 
 var (
-	fixVolumePath       = cmdFix.Flag.String("dir", ".", "data directory to store files")
-	fixVolumeCollection = cmdFix.Flag.String("collection", "", "the volume collection name")
-	fixVolumeId         = cmdFix.Flag.Int("volumeId", -1, "a volume id. The volume should already exist in the dir. The volume index file should not exist.")
+	fixVolumeCollection = cmdFix.Flag.String("collection", "", "an optional volume collection name, if specified only it will be processed")
+	fixVolumeId         = cmdFix.Flag.Int64("volumeId", 0, "an optional volume id, if not 0 (default) only it will be processed")
 )
 
 type VolumeFileScanner4Fix struct {
@@ -59,26 +60,68 @@ func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64
 }
 
 func runFix(cmd *Command, args []string) bool {
+	for _, arg := range args {
+		basePath, f := path.Split(util.ResolvePath(arg))
 
-	if *fixVolumeId == -1 {
-		return false
-	}
+		files := []fs.DirEntry{}
+		if f == "" {
+			fileInfo, err := os.ReadDir(basePath)
+			if err != nil {
+				fmt.Println(err)
+				return false
+			}
+			files = fileInfo
+		} else {
+			fileInfo, err := os.Stat(basePath + f)
+			if err != nil {
+				fmt.Println(err)
+				return false
+			}
+			files = []fs.DirEntry{fs.FileInfoToDirEntry(fileInfo)}
+		}
 
-	baseFileName := strconv.Itoa(*fixVolumeId)
-	if *fixVolumeCollection != "" {
-		baseFileName = *fixVolumeCollection + "_" + baseFileName
+		for _, file := range files {
+			if !strings.HasSuffix(file.Name(), ".dat") {
+				continue
+			}
+			if *fixVolumeCollection != "" {
+				if !strings.HasPrefix(file.Name(), *fixVolumeCollection+"_") {
+					continue
+				}
+			}
+			baseFileName := file.Name()[:len(file.Name())-4]
+			collection, volumeIdStr := "", baseFileName
+			if sepIndex := strings.LastIndex(baseFileName, "_"); sepIndex > 0 {
+				collection = baseFileName[:sepIndex]
+				volumeIdStr = baseFileName[sepIndex+1:]
+			}
+			volumeId, parseErr := strconv.ParseInt(volumeIdStr, 10, 64)
+			if parseErr != nil {
+				fmt.Printf("Failed to parse volume id from %s: %v\n", baseFileName, parseErr)
+				return false
+			}
+			if *fixVolumeId != 0 && *fixVolumeId != volumeId {
+				continue
+			}
+			doFixOneVolume(basePath, baseFileName, collection, volumeId)
+		}
 	}
-	indexFileName := path.Join(util.ResolvePath(*fixVolumePath), baseFileName+".idx")
+	return true
+}
+
+func doFixOneVolume(basepath string, baseFileName string, collection string, volumeId int64) {
+
+	indexFileName := path.Join(basepath, baseFileName+".idx")
 
 	nm := needle_map.NewMemDb()
 	defer nm.Close()
 
-	vid := needle.VolumeId(*fixVolumeId)
+	vid := needle.VolumeId(volumeId)
 	scanner := &VolumeFileScanner4Fix{
 		nm: nm,
 	}
 
-	if err := storage.ScanVolumeFile(util.ResolvePath(*fixVolumePath), *fixVolumeCollection, vid, storage.NeedleMapInMemory, scanner); err != nil {
+	if err := storage.ScanVolumeFile(basepath, collection, vid, storage.NeedleMapInMemory, scanner); err != nil {
 		glog.Fatalf("scan .dat File: %v", err)
 		os.Remove(indexFileName)
 	}
@@ -87,6 +130,4 @@ func runFix(cmd *Command, args []string) bool {
 		glog.Fatalf("save to .idx File: %v", err)
 		os.Remove(indexFileName)
 	}
-
-	return true
 }

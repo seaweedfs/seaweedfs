@@ -9,6 +9,7 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/filter"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
+	"io"
 	"os"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
@@ -19,6 +20,10 @@ import (
 
 const (
 	DIR_FILE_SEPARATOR = byte(0x00)
+)
+
+var (
+	_ = filer.Debuggable(&LevelDBStore{})
 )
 
 func init() {
@@ -241,4 +246,14 @@ func getNameFromKey(key []byte) string {
 
 func (store *LevelDBStore) Shutdown() {
 	store.db.Close()
+}
+
+func (store *LevelDBStore) Debug(writer io.Writer) {
+	iter := store.db.NewIterator(&leveldb_util.Range{}, nil)
+	for iter.Next() {
+		key := iter.Key()
+		fullName := bytes.Replace(key, []byte{DIR_FILE_SEPARATOR}, []byte{' '}, 1)
+		fmt.Fprintf(writer, "%v\n", string(fullName))
+	}
+	iter.Release()
 }
