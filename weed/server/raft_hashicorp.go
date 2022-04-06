@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	ldbFile = "logs.dat"
-	sdbFile = "stable.dat"
+	ldbFile            = "logs.dat"
+	sdbFile            = "stable.dat"
+	updatePeersTimeout = 15 * time.Minute
 )
 
 func getPeerIdx(self pb.ServerAddress, mapPeers map[string]pb.ServerAddress) int {
@@ -84,7 +85,9 @@ func (s *RaftServer) UpdatePeers() {
 					s.RaftHashicorp.RemoveServer(raft.ServerID(peerLeader), 0, 0)
 				}
 			}
-			break
+			return
+		case <-time.After(updatePeersTimeout):
+			return
 		}
 	}
 }

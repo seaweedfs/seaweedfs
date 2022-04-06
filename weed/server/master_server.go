@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/chrislusf/raft"
 	"github.com/gorilla/mux"
+	hashicorpRaft "github.com/hashicorp/raft"
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -30,8 +32,9 @@ import (
 )
 
 const (
-	SequencerType        = "master.sequencer.type"
-	SequencerSnowflakeId = "master.sequencer.sequencer_snowflake_id"
+	SequencerType         = "master.sequencer.type"
+	SequencerSnowflakeId  = "master.sequencer.sequencer_snowflake_id"
+	RaftServerRemovalTime = 72 * time.Hour
 )
 
 type MasterOption struct {
@@ -61,6 +64,7 @@ type MasterServer struct {
 	vgCh chan *topology.VolumeGrowRequest
 
 	boundedLeaderChan chan int
+	onPeerUpdatDoneCn chan string
 
 	// notifying clients
 	clientChansLock sync.RWMutex
@@ -112,6 +116,8 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		Cluster:         cluster.NewCluster(),
 	}
 	ms.boundedLeaderChan = make(chan int, 16)
+	ms.onPeerUpdatDoneCn = make(chan string)
+	ms.MasterClient.OnPeerUpdate = ms.OnPeerUpdate
 
 	seq := ms.createSequencer(option)
 	if nil == seq {
@@ -322,4 +328,40 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 		seq = sequence.NewMemorySequencer()
 	}
 	return seq
+}
+
+func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate) {
+	glog.V(0).Infof("OnPeerUpdate: %+v", update)
+	if update.NodeType != cluster.MasterType || ms.Topo.HashicorpRaft == nil {
+		return
+	}
+	peerAddress := pb.ServerAddress(update.Address)
+	if update.IsAdd {
+		if ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader {
+			glog.V(0).Infof("adding new raft server: %s", peerAddress.String())
+			ms.Topo.HashicorpRaft.AddVoter(
+				hashicorpRaft.ServerID(peerAddress.String()),
+				hashicorpRaft.ServerAddress(peerAddress.ToGrpcAddress()), 0, 0)
+		}
+		ms.onPeerUpdatDoneCn <- string(peerAddress)
+	} else if ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader {
+		go func(peerName string) {
+			for {
+				select {
+				case peerDone := <-ms.onPeerUpdatDoneCn:
+					if peerName == peerDone {
+						return
+					}
+				case <-time.After(RaftServerRemovalTime):
+					glog.V(0).Infof("removing old raft server: %s", peerName)
+					if _, err := ms.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
+						Id: peerName,
+					}); err != nil {
+						glog.Warningf("failed removing old raft server: %v", err)
+					}
+					return
+				}
+			}
+		}(string(peerAddress))
+	}
 }
