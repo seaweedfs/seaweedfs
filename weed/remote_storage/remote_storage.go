@@ -12,11 +12,11 @@ import (
 	"time"
 )
 
+const slash = "/"
+
 func ParseLocationName(remote string) (locationName string) {
-	if strings.HasSuffix(string(remote), "/") {
-		remote = remote[:len(remote)-1]
-	}
-	parts := strings.SplitN(string(remote), "/", 2)
+	remote = strings.TrimSuffix(remote, slash)
+	parts := strings.SplitN(remote, slash, 2)
 	if len(parts) >= 1 {
 		return parts[0]
 	}
@@ -25,35 +25,31 @@ func ParseLocationName(remote string) (locationName string) {
 
 func parseBucketLocation(remote string) (loc *remote_pb.RemoteStorageLocation) {
 	loc = &remote_pb.RemoteStorageLocation{}
-	if strings.HasSuffix(string(remote), "/") {
-		remote = remote[:len(remote)-1]
-	}
-	parts := strings.SplitN(string(remote), "/", 3)
+	remote = strings.TrimSuffix(remote, slash)
+	parts := strings.SplitN(remote, slash, 3)
 	if len(parts) >= 1 {
 		loc.Name = parts[0]
 	}
 	if len(parts) >= 2 {
 		loc.Bucket = parts[1]
 	}
-	loc.Path = string(remote[len(loc.Name)+1+len(loc.Bucket):])
+	loc.Path = remote[len(loc.Name)+1+len(loc.Bucket):]
 	if loc.Path == "" {
-		loc.Path = "/"
+		loc.Path = slash
 	}
 	return
 }
 
 func parseNoBucketLocation(remote string) (loc *remote_pb.RemoteStorageLocation) {
 	loc = &remote_pb.RemoteStorageLocation{}
-	if strings.HasSuffix(string(remote), "/") {
-		remote = remote[:len(remote)-1]
-	}
-	parts := strings.SplitN(string(remote), "/", 2)
+	remote = strings.TrimSuffix(remote, slash)
+	parts := strings.SplitN(remote, slash, 2)
 	if len(parts) >= 1 {
 		loc.Name = parts[0]
 	}
-	loc.Path = string(remote[len(loc.Name):])
+	loc.Path = remote[len(loc.Name):]
 	if loc.Path == "" {
-		loc.Path = "/"
+		loc.Path = slash
 	}
 	return
 }
