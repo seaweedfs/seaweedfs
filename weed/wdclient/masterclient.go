@@ -159,6 +159,14 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 					glog.V(1).Infof("%s: %s masterClient removes volume %d", mc.clientType, loc.Url, deletedVid)
 					mc.deleteLocation(deletedVid, loc)
 				}
+				for _, newEcVid := range resp.VolumeLocation.NewEcVids {
+					glog.V(1).Infof("%s: %s masterClient adds ec volume %d", mc.clientType, loc.Url, newEcVid)
+					mc.addEcLocation(newEcVid, loc)
+				}
+				for _, deletedEcVid := range resp.VolumeLocation.DeletedEcVids {
+					glog.V(1).Infof("%s: %s masterClient removes ec volume %d", mc.clientType, loc.Url, deletedEcVid)
+					mc.deleteEcLocation(deletedEcVid, loc)
+				}
 			}
 
 			if resp.ClusterNodeUpdate != nil {

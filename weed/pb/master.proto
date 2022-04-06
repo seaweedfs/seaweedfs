@@ -141,6 +141,8 @@ message VolumeLocation {
   string leader = 5; // optional when leader is not itself
   string data_center = 6; // optional when DataCenter is in use
   uint32 grpc_port = 7;
+  repeated uint32 new_ec_vids = 8;
+  repeated uint32 deleted_ec_vids = 9;
 }
 
 message ClusterNodeUpdate {
