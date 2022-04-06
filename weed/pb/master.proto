@@ -37,6 +37,12 @@ service Seaweed {
   }
   rpc Ping (PingRequest) returns (PingResponse) {
   }
+  rpc RaftListClusterServers (RaftListClusterServersRequest) returns (RaftListClusterServersResponse) {
+  }
+  rpc RaftAddServer (RaftAddServerRequest) returns (RaftAddServerResponse) {
+  }
+  rpc RaftRemoveServer (RaftRemoveServerRequest) returns (RaftRemoveServerResponse) {
+  }
 }
 
 //////////////////////////////////////////////////
@@ -335,4 +341,29 @@ message PingRequest {
   string target_type = 2;
 }
 message PingResponse {
+}
+
+message RaftAddServerRequest {
+  string id = 1;
+  string address = 2;
+  bool voter = 3;
+}
+message RaftAddServerResponse {
+}
+
+message RaftRemoveServerRequest {
+  string id = 1;
+}
+message RaftRemoveServerResponse {
+}
+
+message RaftListClusterServersRequest {
+}
+message RaftListClusterServersResponse {
+  message ClusterServers {
+    string id = 1;
+    string address = 2;
+    string suffrage = 3; //
+  }
+  repeated ClusterServers cluster_servers = 1;
 }
