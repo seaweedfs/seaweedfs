@@ -334,10 +334,11 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 }
 
 func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate) {
-	glog.V(2).Infof("OnPeerUpdate: %+v", update)
 	if update.NodeType != cluster.MasterType || ms.Topo.HashicorpRaft == nil {
 		return
 	}
+	glog.V(4).Infof("OnPeerUpdate: %+v", update)
+
 	peerAddress := pb.ServerAddress(update.Address)
 	peerName := string(peerAddress)
 	isLeader := ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader
