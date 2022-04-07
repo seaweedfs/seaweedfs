@@ -26,6 +26,7 @@
             border-radius: 2px;
             border: 1px solid #ccc;
             float: right;
+            margin-left: 5px;
         }
 
         .button:hover {
@@ -36,6 +37,46 @@
             display: none;
         }
 
+        .danger {
+            color: red;
+            background: #fff;
+            border: 1px solid #fff;
+            border-radius: 2px;
+        }
+
+        .info {
+            background: #fff;
+            border: 1px solid #fff;
+            border-radius: 2px;
+        }
+
+        .footer {
+            position: absolute;
+            bottom: 10px;
+            right: 10%;
+            min-width: 30%;
+        }
+
+        .progress-table {
+            width: 100%;
+        }
+
+        .progress-table-file-name {
+            text-align: right;
+        }
+
+        .progress-table-percent {
+            width: 60px;
+            text-align: right;
+        }
+
+        .add-files {
+            font-size: 46px;
+            text-align: center;
+            border: 1px dashed #999;
+            padding-bottom: 9px;
+            margin: 0 2px;
+        }
     </style>
 </head>
 <body>
@@ -54,6 +95,7 @@
             </a>
             {{ end }}
             <label class="button" for="fileElem">Upload</label>
+            <label class="button" onclick="handleCreateDir()">New Folder</label>
         </div>
     </div>
 
@@ -61,7 +103,7 @@
         <form class="upload-form">
             <input type="file" id="fileElem" multiple onchange="handleFiles(this.files)">
 
-            <table width="90%">
+            <table width="86%">
                 {{$path := .Path }}
                 {{ range $entry_index, $entry := .Entries }}
                 <tr>
@@ -89,13 +131,25 @@
                         {{ $entry.Size | humanizeBytes }}&nbsp;
                         {{end}}
                     </td>
-                    <td nowrap>
+                    <td align="right" nowrap>
                         {{ $entry.Timestamp.Format "2006-01-02 15:04" }}
+                    </td>
+                    <td>
+                        {{if $entry.IsDirectory}}
+                        <label class="button danger" onclick="handleDelete('{{ printpath $path  "/" $entry.Name "/"  }}')">Delete</label>
+                        {{else}}
+                        <label class="button danger" onclick="handleDelete('{{ printpath $path  "/" $entry.Name }}')">Delete</label>
+                        {{end}}
+                        <label class="button info" onclick="handleRename('{{ $entry.Name }}', '{{ printpath $path "/" }}')">Rename</label>
                     </td>
                 </tr>
                 {{ end }}
-
             </table>
+            {{if .EmptyFolder}}
+            <div class="row add-files">
+                +
+            </div>
+            {{end}}
         </form>
     </div>
 
@@ -109,65 +163,171 @@
 
     <br/>
     <br/>
-
+    <div id="progress-area" class="footer" style="display: none;">
+    </div>
 </div>
 </body>
 <script type="text/javascript">
     // ************************ Drag and drop ***************** //
-    let dropArea = document.getElementById("drop-area")
+    let dropArea = document.getElementById("drop-area");
+    let progressArea = document.getElementById("progress-area");
 
 // Prevent default drag behaviors
     ;['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-        dropArea.addEventListener(eventName, preventDefaults, false)
-        document.body.addEventListener(eventName, preventDefaults, false)
-    })
+        dropArea.addEventListener(eventName, preventDefaults, false);
+        document.body.addEventListener(eventName, preventDefaults, false);
+    });
 
 // Highlight drop area when item is dragged over it
     ;['dragenter', 'dragover'].forEach(eventName => {
-        dropArea.addEventListener(eventName, highlight, false)
-    })
+        dropArea.addEventListener(eventName, highlight, false);
+    });
 
     ;['dragleave', 'drop'].forEach(eventName => {
-        dropArea.addEventListener(eventName, unhighlight, false)
-    })
+        dropArea.addEventListener(eventName, unhighlight, false);
+    });
 
     // Handle dropped files
-    dropArea.addEventListener('drop', handleDrop, false)
+    dropArea.addEventListener('drop', handleDrop, false);
 
     function preventDefaults(e) {
-        e.preventDefault()
-        e.stopPropagation()
+        e.preventDefault();
+        e.stopPropagation();
     }
 
     function highlight(e) {
-        dropArea.classList.add('highlight')
+        dropArea.classList.add('highlight');
     }
 
     function unhighlight(e) {
-        dropArea.classList.remove('highlight')
+        dropArea.classList.remove('highlight');
     }
 
     function handleDrop(e) {
-        var dt = e.dataTransfer
-        var files = dt.files
+        var dt = e.dataTransfer;
+        var files = dt.files;
 
-        handleFiles(files)
+        handleFiles(files);
     }
 
+    var uploadList = {};
+
     function handleFiles(files) {
-        files = [...files]
-        files.forEach(uploadFile)
-        window.location.reload()
+        files = [...files];
+        files.forEach(startUpload);
+        renderProgress();
+        files.forEach(uploadFile);
+    }
+
+    function startUpload(file, i) {
+        uploadList[file.name] = {'name': file.name, 'percent': 0, 'finish': false};
+    }
+
+    function renderProgress() {
+        var values = Object.values(uploadList);
+        var html = '<table class="progress-table">\n';
+        for (let i of values) {
+            html += '<tr>\n<td class="progress-table-file-name">' + i.name + '<\/td>\n';
+            html += '<td class="progress-table-percent">' + i.percent + '% <\/td>\n<\/tr>\n';
+        }
+        html += '<\/table>\n';
+        progressArea.innerHTML = html;
+        if (values.length > 0) {
+            progressArea.attributes.style.value = '';
+        }
+        console.log('Render Progress', values);
+    }
+
+    function reportProgress(file, percent) {
+        var item = uploadList[file]
+        item.percent = percent;
+        renderProgress();
+    }
+
+    function finishUpload(file) {
+        uploadList[file]['finish'] = true;
+        renderProgress();
+        var allFinish = true;
+        for (let i of Object.values(uploadList)) {
+            if (!i.finish) {
+                allFinish = false;
+                break;
+            }
+        }
+        if (allFinish) {
+            console.log('All Finish');
+            window.location.reload();
+        }
     }
 
     function uploadFile(file, i) {
-        var url = window.location.href
-        var xhr = new XMLHttpRequest()
-        var formData = new FormData()
-        xhr.open('POST', url, false)
+        var url = window.location.href;
+        var xhr = new XMLHttpRequest();
+        var fileName = file.name;
+        xhr.upload.addEventListener('progress', function(e) {
+            if (e.lengthComputable) {
+                var percent = Math.ceil((e.loaded / e.total) * 100);
+                reportProgress(fileName, percent)
+            }
+        });
+        xhr.upload.addEventListener('loadend', function(e) {
+            finishUpload(fileName);
+        });
+        var formData = new FormData();
+        xhr.open('POST', url, true);
+        formData.append('file', file);
+        xhr.send(formData);
+    }
 
-        formData.append('file', file)
-        xhr.send(formData)
+    function handleCreateDir() {
+        var dirName = prompt('Directory Name:', '');
+        dirName = dirName.trim();
+        if (dirName == null || dirName == '') {
+            return;
+        }
+        var baseUrl = window.location.href;
+        if (!baseUrl.endsWith('/')) {
+            baseUrl += '/';
+        }
+        var url = baseUrl + dirName;
+        if (!url.endsWith('/')) {
+            url += '/';
+        }
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', url, false);
+        xhr.setRequestHeader('Content-Type', '');
+        xhr.send();
+        window.location.reload();
+    }
+
+    function handleRename(originName, basePath) {
+        var newName = prompt('New Name:', originName);
+        if (newName == null || newName == '') {
+            return;
+        }
+        var url = basePath + newName;
+        var originPath = basePath + originName;
+        url += '?mv.from=' + originPath;
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', url, false);
+        xhr.setRequestHeader('Content-Type', '');
+        xhr.send();
+        window.location.reload();
+    }
+
+    function handleDelete(path) {
+        if (!confirm('Are you sure to delete ' + path + '?')) {
+            return;
+        }
+        var url = path;
+        if (url.endsWith('/')) {
+            url += '?recursive=true';
+        }
+
+        var xhr = new XMLHttpRequest();
+        xhr.open('DELETE', url, false);
+        xhr.send();
+        window.location.reload();
     }
 </script>
 </html>
