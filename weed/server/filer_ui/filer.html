@@ -131,11 +131,11 @@
                     </td>
                     <td>
                         <div class="btn-group btn-group-xs pull-right" role="group">
-                            <label class="btn btn-default" onclick="handleRename('{{ $entry.Name }}', '{{ printpath $path "/" }}')">Rename</label>
+                            <label class="btn" onclick="handleRename('{{ $entry.Name }}', '{{ printpath $path "/" }}')"><img src="/seaweedfsstatic/images/rename-16.png" width="16" height="16"></label>
                             {{if $entry.IsDirectory}}
-                            <label class="btn btn-danger" onclick="handleDelete('{{ printpath $path  "/" $entry.Name "/"  }}')">Delete</label>
+                            <label class="btn" onclick="handleDelete('{{ printpath $path  "/" $entry.Name "/"  }}')"><img src="/seaweedfsstatic/images/delete-16.png" width="16" height="16"></label>
                             {{else}}
-                            <label class="btn btn-danger" onclick="handleDelete('{{ printpath $path  "/" $entry.Name }}')">Delete</label>
+                            <label class="btn" onclick="handleDelete('{{ printpath $path  "/" $entry.Name }}')"><img src="/seaweedfsstatic/images/delete-16.png" width="16" height="16"></label>
                             {{end}}
                         </div>
                     </td>
