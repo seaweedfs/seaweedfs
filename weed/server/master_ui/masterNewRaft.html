@@ -64,6 +64,17 @@
                 </tr>
                 {{ end }}
             </table>
+            <h2>Raft Stats</h2>
+            <table class="table table-condensed table-striped">
+                <tr>
+                    <th>applied_index</th>
+                    <td>{{ .RaftServer.Stats.applied_index }}</td>
+                </tr>
+                <tr>
+                    <th>last_log_term</th>
+                    <td>{{ .RaftServer.Stats.last_log_term }}</td>
+                </tr>
+            </table>
         </div>
     </div>
 
