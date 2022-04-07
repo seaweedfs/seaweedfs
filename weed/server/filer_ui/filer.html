@@ -26,7 +26,12 @@
             border-radius: 2px;
             border: 1px solid #ccc;
             float: right;
-            margin-left: 5px;
+            margin-left: 2px;
+            margin-bottom: 0;
+        }
+
+        label {
+            font-weight: normal;
         }
 
         .button:hover {
@@ -35,6 +40,10 @@
 
         #fileElem {
             display: none;
+        }
+
+        td, th {
+            vertical-align: bottom;
         }
 
         .danger {
@@ -103,13 +112,13 @@
         <form class="upload-form">
             <input type="file" id="fileElem" multiple onchange="handleFiles(this.files)">
 
-            <table width="86%">
+            <table width="100%">
                 {{$path := .Path }}
                 {{ range $entry_index, $entry := .Entries }}
                 <tr>
                     <td>
                         {{if $entry.IsDirectory}}
-                        <img src="/seaweedfsstatic/images/folder.gif" width="20" height="23">
+                        <img src="/seaweedfsstatic/images/folder.gif" width="20" height="16">
                         <a href="{{ printpath $path  "/" $entry.Name "/"}}" >
                         {{ $entry.Name }}
                         </a>
