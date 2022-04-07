@@ -212,31 +212,38 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if ms.Topo.IsLeader() {
 			f(w, r)
-		} else if ms.Topo.RaftServer != nil && ms.Topo.RaftServer.Leader() != "" {
-			ms.boundedLeaderChan <- 1
-			defer func() { <-ms.boundedLeaderChan }()
-			targetUrl, err := url.Parse("http://" + ms.Topo.RaftServer.Leader())
-			if err != nil {
-				writeJsonError(w, r, http.StatusInternalServerError,
-					fmt.Errorf("Leader URL http://%s Parse Error: %v", ms.Topo.RaftServer.Leader(), err))
-				return
-			}
-			glog.V(4).Infoln("proxying to leader", ms.Topo.RaftServer.Leader())
-			proxy := httputil.NewSingleHostReverseProxy(targetUrl)
-			director := proxy.Director
-			proxy.Director = func(req *http.Request) {
-				actualHost, err := security.GetActualRemoteHost(req)
-				if err == nil {
-					req.Header.Set("HTTP_X_FORWARDED_FOR", actualHost)
-				}
-				director(req)
-			}
-			proxy.Transport = util.Transport
-			proxy.ServeHTTP(w, r)
-		} else {
-			// handle requests locally
-			f(w, r)
+			return
 		}
+		var raftServerLeader string
+		if ms.Topo.RaftServer != nil && ms.Topo.RaftServer.Leader() != "" {
+			raftServerLeader = ms.Topo.RaftServer.Leader()
+		} else if ms.Topo.HashicorpRaft != nil && ms.Topo.HashicorpRaft.Leader() != "" {
+			raftServerLeader = string(ms.Topo.HashicorpRaft.Leader())
+		}
+		if raftServerLeader == "" {
+			f(w, r)
+			return
+		}
+		ms.boundedLeaderChan <- 1
+		defer func() { <-ms.boundedLeaderChan }()
+		targetUrl, err := url.Parse("http://" + raftServerLeader)
+		if err != nil {
+			writeJsonError(w, r, http.StatusInternalServerError,
+				fmt.Errorf("Leader URL http://%s Parse Error: %v", raftServerLeader, err))
+			return
+		}
+		glog.V(4).Infoln("proxying to leader", raftServerLeader)
+		proxy := httputil.NewSingleHostReverseProxy(targetUrl)
+		director := proxy.Director
+		proxy.Director = func(req *http.Request) {
+			actualHost, err := security.GetActualRemoteHost(req)
+			if err == nil {
+				req.Header.Set("HTTP_X_FORWARDED_FOR", actualHost)
+			}
+			director(req)
+		}
+		proxy.Transport = util.Transport
+		proxy.ServeHTTP(w, r)
 	}
 }
 
