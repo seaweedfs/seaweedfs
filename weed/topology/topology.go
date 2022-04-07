@@ -283,3 +283,14 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 
 	return
 }
+
+func (t *Topology) DataNodeRegistration(dcName, rackName string ,dn *DataNode){
+	if dn.Parent() != nil{
+		return
+	}
+	// registration to topo
+	dc := t.GetOrCreateDataCenter(dcName)
+	rack := dc.GetOrCreateRack(rackName)
+	rack.LinkChildNode(dn)
+	glog.Infof("[%s] reLink To topo  ", dn.Id())
+}
