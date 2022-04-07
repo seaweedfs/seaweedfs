@@ -353,6 +353,7 @@ message RaftAddServerResponse {
 
 message RaftRemoveServerRequest {
   string id = 1;
+  bool force = 2;
 }
 message RaftRemoveServerResponse {
 }

@@ -34,7 +34,7 @@ import (
 const (
 	SequencerType         = "master.sequencer.type"
 	SequencerSnowflakeId  = "master.sequencer.sequencer_snowflake_id"
-	RaftServerRemovalTime = 72 * time.Hour
+	RaftServerRemovalTime = 72 * time.Minute
 )
 
 type MasterOption struct {
@@ -64,7 +64,9 @@ type MasterServer struct {
 	vgCh chan *topology.VolumeGrowRequest
 
 	boundedLeaderChan chan int
-	onPeerUpdatDoneCn chan string
+
+	onPeerUpdatDoneCn      chan string
+	onPeerUpdatDoneCnExist bool
 
 	// notifying clients
 	clientChansLock sync.RWMutex
@@ -117,6 +119,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	}
 	ms.boundedLeaderChan = make(chan int, 16)
 	ms.onPeerUpdatDoneCn = make(chan string)
+
 	ms.MasterClient.OnPeerUpdate = ms.OnPeerUpdate
 
 	seq := ms.createSequencer(option)
@@ -336,32 +339,48 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate) {
 		return
 	}
 	peerAddress := pb.ServerAddress(update.Address)
+	peerName := string(peerAddress)
 	if update.IsAdd {
 		if ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader {
-			glog.V(0).Infof("adding new raft server: %s", peerAddress.String())
-			ms.Topo.HashicorpRaft.AddVoter(
-				hashicorpRaft.ServerID(peerAddress.String()),
-				hashicorpRaft.ServerAddress(peerAddress.ToGrpcAddress()), 0, 0)
+			raftServerFound := false
+			for _, server := range ms.Topo.HashicorpRaft.GetConfiguration().Configuration().Servers {
+				if string(server.ID) == peerName {
+					raftServerFound = true
+				}
+			}
+			if !raftServerFound {
+				glog.V(0).Infof("adding new raft server: %s", peerAddress.String())
+				ms.Topo.HashicorpRaft.AddVoter(
+					hashicorpRaft.ServerID(peerName),
+					hashicorpRaft.ServerAddress(peerAddress.ToGrpcAddress()), 0, 0)
+			}
 		}
-		ms.onPeerUpdatDoneCn <- string(peerAddress)
+		if ms.onPeerUpdatDoneCnExist {
+			ms.onPeerUpdatDoneCn <- string(peerAddress)
+		}
 	} else if ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader {
 		go func(peerName string) {
 			for {
 				select {
+				case <-time.After(RaftServerRemovalTime):
+					err := ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+						_, err := client.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
+							Id:    peerName,
+							Force: false,
+						})
+						return err
+					})
+					if err != nil {
+						glog.Warningf("failed removing old raft server: %v", err)
+					}
+					return
 				case peerDone := <-ms.onPeerUpdatDoneCn:
 					if peerName == peerDone {
 						return
 					}
-				case <-time.After(RaftServerRemovalTime):
-					glog.V(0).Infof("removing old raft server: %s", peerName)
-					if _, err := ms.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
-						Id: peerName,
-					}); err != nil {
-						glog.Warningf("failed removing old raft server: %v", err)
-					}
-					return
 				}
 			}
 		}(string(peerAddress))
+		ms.onPeerUpdatDoneCnExist = true
 	}
 }
