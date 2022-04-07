@@ -108,9 +108,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 			mountDirHash = -mountDirHash
 		}
 		*option.localSocket = fmt.Sprintf("/tmp/seaweefs-mount-%d.sock", mountDirHash)
-		if err := os.Remove(*option.localSocket); err != nil && !os.IsNotExist(err) {
-			glog.Fatalf("Failed to remove %s, error: %s", *option.localSocket, err.Error())
-		}
+	}
+	if err := os.Remove(*option.localSocket); err != nil && !os.IsNotExist(err) {
+		glog.Fatalf("Failed to remove %s, error: %s", *option.localSocket, err.Error())
 	}
 	montSocketListener, err := net.Listen("unix", *option.localSocket)
 	if err != nil {
