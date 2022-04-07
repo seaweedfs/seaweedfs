@@ -44,6 +44,12 @@
             border-radius: 2px;
         }
 
+        .info {
+            background: #fff;
+            border: 1px solid #fff;
+            border-radius: 2px;
+        }
+
         .footer {
             position: absolute;
             bottom: 10px;
@@ -62,6 +68,14 @@
         .progress-table-percent {
             width: 60px;
             text-align: right;
+        }
+
+        .add-files {
+            font-size: 46px;
+            text-align: center;
+            border: 1px dashed #999;
+            padding-bottom: 9px;
+            margin: 0 2px;
         }
     </style>
 </head>
@@ -126,11 +140,16 @@
                         {{else}}
                         <label class="button danger" onclick="handleDelete('{{ printpath $path  "/" $entry.Name }}')">Delete</label>
                         {{end}}
+                        <label class="button info" onclick="handleRename('{{ $entry.Name }}', '{{ printpath $path "/" }}')">Rename</label>
                     </td>
                 </tr>
                 {{ end }}
-
             </table>
+            {{if .EmptyFolder}}
+            <div class="row add-files">
+                +
+            </div>
+            {{end}}
         </form>
     </div>
 
@@ -208,10 +227,10 @@
         var values = Object.values(uploadList);
         var html = '<table class="progress-table">\n';
         for (let i of values) {
-                html += '<tr>\n<td class="progress-table-file-name">' + i.name + '</td>\n';
-                html += '<td class="progress-table-percent">' + i.percent + '% </td>\n</tr>\n';
+            html += '<tr>\n<td class="progress-table-file-name">' + i.name + '<\/td>\n';
+            html += '<td class="progress-table-percent">' + i.percent + '% <\/td>\n<\/tr>\n';
         }
-        html += '</table>\n';
+        html += '<\/table>\n';
         progressArea.innerHTML = html;
         if (values.length > 0) {
             progressArea.attributes.style.value = '';
@@ -263,7 +282,7 @@
     function handleCreateDir() {
         var dirName = prompt('Directory Name:', '');
         dirName = dirName.trim();
-        if (dirName == null && dirName == '') {
+        if (dirName == null || dirName == '') {
             return;
         }
         var baseUrl = window.location.href;
@@ -274,6 +293,21 @@
         if (!url.endsWith('/')) {
             url += '/';
         }
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', url, false);
+        xhr.setRequestHeader('Content-Type', '');
+        xhr.send();
+        window.location.reload();
+    }
+
+    function handleRename(originName, basePath) {
+        var newName = prompt('New Name:', originName);
+        if (newName == null || newName == '') {
+            return;
+        }
+        var url = basePath + newName;
+        var originPath = basePath + originName;
+        url += '?mv.from=' + originPath;
         var xhr = new XMLHttpRequest();
         xhr.open('POST', url, false);
         xhr.setRequestHeader('Content-Type', '');
