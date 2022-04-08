@@ -186,10 +186,10 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 
 // PutObjectPartHandler - Put an object part in a multipart upload.
 func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Request) {
-	bucket, _ := xhttp.GetBucketAndObject(r)
+	bucket, object := xhttp.GetBucketAndObject(r)
 
 	uploadID := r.URL.Query().Get("uploadId")
-	exists, err := s3a.exists(s3a.genUploadsFolder(bucket), uploadID, true)
+	exists, err := s3a.exists(s3a.genUploadsFolder(bucket, object), uploadID, true)
 	if !exists {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
 		return
@@ -228,7 +228,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	glog.V(2).Infof("PutObjectPartHandler %s %s %04d", bucket, uploadID, partID)
 
 	uploadUrl := fmt.Sprintf("http://%s%s/%s/%04d.part?collection=%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(bucket), uploadID, partID, bucket)
+		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(bucket, object), uploadID, partID, bucket)
 
 	if partID == 1 && r.Header.Get("Content-Type") == "" {
 		dataReader = mimeDetect(r, dataReader)
@@ -246,8 +246,16 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 }
 
-func (s3a *S3ApiServer) genUploadsFolder(bucket string) string {
-	return fmt.Sprintf("%s/%s/.uploads", s3a.option.BucketsPath, bucket)
+func (s3a *S3ApiServer) genUploadsFolder(bucket string, object string) string {
+	if object == "" {
+		return fmt.Sprintf("%s/%s/.uploads", s3a.option.BucketsPath, bucket)
+	} else {
+		if strings.HasPrefix(object, "/") {
+			return fmt.Sprintf("%s/%s/.uploads%s", s3a.option.BucketsPath, bucket, object)
+		} else {
+			return fmt.Sprintf("%s/%s/.uploads/%s", s3a.option.BucketsPath, bucket, object)
+		}
+	}
 }
 
 // Parse bucket url queries for ?uploads
