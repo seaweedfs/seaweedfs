@@ -47,6 +47,18 @@
             vertical-align: bottom;
         }
 
+        .table-hover > tbody > tr:hover > * > div.operations {
+            display: block;
+        }
+
+        .table > tbody > tr {
+            height: 40px;
+        }
+
+        div.operations {
+            display: none;
+        }
+
         .footer {
             position: absolute;
             bottom: 0px;
@@ -129,13 +141,13 @@
                     <td align="right" nowrap>
                         {{ $entry.Timestamp.Format "2006-01-02 15:04" }}
                     </td>
-                    <td>
-                        <div class="btn-group btn-group-xs pull-right" role="group">
-                            <label class="btn" onclick="handleRename('{{ $entry.Name }}', '{{ printpath $path "/" }}')"><img src="/seaweedfsstatic/images/rename-16.png" width="16" height="16"></label>
+                    <td style="width:150px">
+                        <div class="btn-group btn-group-xs pull-right operations" role="group">
+                            <label class="btn" onclick="handleRename('{{ $entry.Name }}', '{{ printpath $path "/" }}')"><img src="/seaweedfsstatic/images/rename-16.png" width="14" height="14"></label>
                             {{if $entry.IsDirectory}}
-                            <label class="btn" onclick="handleDelete('{{ printpath $path  "/" $entry.Name "/"  }}')"><img src="/seaweedfsstatic/images/delete-16.png" width="16" height="16"></label>
+                            <label class="btn" onclick="handleDelete('{{ printpath $path  "/" $entry.Name "/"  }}')"><img src="/seaweedfsstatic/images/delete-16.png" width="14" height="14"></label>
                             {{else}}
-                            <label class="btn" onclick="handleDelete('{{ printpath $path  "/" $entry.Name }}')"><img src="/seaweedfsstatic/images/delete-16.png" width="16" height="16"></label>
+                            <label class="btn" onclick="handleDelete('{{ printpath $path  "/" $entry.Name }}')"><img src="/seaweedfsstatic/images/delete-16.png" width="14" height="14"></label>
                             {{end}}
                         </div>
                     </td>
