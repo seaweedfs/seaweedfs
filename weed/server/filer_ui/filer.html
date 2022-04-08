@@ -141,7 +141,7 @@
                     <td align="right" nowrap>
                         {{ $entry.Timestamp.Format "2006-01-02 15:04" }}
                     </td>
-                    <td style="width:150px">
+                    <td style="width:75px">
                         <div class="btn-group btn-group-xs pull-right operations" role="group">
                             <label class="btn" onclick="handleRename('{{ $entry.Name }}', '{{ printpath $path "/" }}')"><img src="/seaweedfsstatic/images/rename-16.png" width="14" height="14"></label>
                             {{if $entry.IsDirectory}}
