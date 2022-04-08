@@ -116,7 +116,7 @@ type CopyPartResult struct {
 func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Request) {
 	// https://docs.aws.amazon.com/AmazonS3/latest/dev/CopyingObjctsUsingRESTMPUapi.html
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
-	dstBucket, _ := xhttp.GetBucketAndObject(r)
+	dstBucket, object := xhttp.GetBucketAndObject(r)
 
 	// Copy source path.
 	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
@@ -152,7 +152,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	rangeHeader := r.Header.Get("x-amz-copy-source-range")
 
 	dstUrl := fmt.Sprintf("http://%s%s/%s/%04d.part?collection=%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(dstBucket), uploadID, partID, dstBucket)
+		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(dstBucket, object), uploadID, partID, dstBucket)
 	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, urlPathEscape(srcObject))
 
