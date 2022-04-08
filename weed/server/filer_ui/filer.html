@@ -52,7 +52,7 @@
         }
 
         .table > tbody > tr {
-            height: 40px;
+            height: 39px;
         }
 
         div.operations {
@@ -88,8 +88,12 @@
     <div class="row">
         <div>
             <div class="btn-group btn-group-sm pull-right" role="group" style="margin-top:3px;">
-                <label class="btn btn-default" onclick="handleCreateDir()">New Folder</label>
-                <label class="btn btn-default" for="fileElem">Upload</label>
+                <label class="btn btn-default" onclick="handleCreateDir()">
+                    <span class="glyphicon glyphicon-plus" aria-hidden="true"></span> New Folder
+                </label>
+                <label class="btn btn-default" for="fileElem">
+                    <span class="glyphicon glyphicon-cloud-upload" aria-hidden="true"></span> Upload
+                </label>
             </div>
             <ol class="breadcrumb">
             {{ range $entry := .Breadcrumbs }}
@@ -116,7 +120,7 @@
                 <tr>
                     <td>
                         {{if $entry.IsDirectory}}
-                        <img src="/seaweedfsstatic/images/folder.gif" width="20" height="16">
+                        <span class="glyphicon glyphicon-folder-open" aria-hidden="true"></span>&nbsp;
                         <a href="{{ printpath $path  "/" $entry.Name "/"}}" >
                         {{ $entry.Name }}
                         </a>
@@ -143,11 +147,17 @@
                     </td>
                     <td style="width:75px">
                         <div class="btn-group btn-group-xs pull-right operations" role="group">
-                            <label class="btn" onclick="handleRename('{{ $entry.Name }}', '{{ printpath $path "/" }}')"><img src="/seaweedfsstatic/images/rename-16.png" width="14" height="14"></label>
+                            <label class="btn" onclick="handleRename('{{ $entry.Name }}', '{{ printpath $path "/" }}')">
+                                <span class="glyphicon glyphicon-edit" aria-hidden="true"></span>
+                            </label>
                             {{if $entry.IsDirectory}}
-                            <label class="btn" onclick="handleDelete('{{ printpath $path  "/" $entry.Name "/"  }}')"><img src="/seaweedfsstatic/images/delete-16.png" width="14" height="14"></label>
+                            <label class="btn" onclick="handleDelete('{{ printpath $path  "/" $entry.Name "/"  }}')">
+                                <span class="glyphicon glyphicon-trash" aria-hidden="true"></span>
+                            </label>
                             {{else}}
-                            <label class="btn" onclick="handleDelete('{{ printpath $path  "/" $entry.Name }}')"><img src="/seaweedfsstatic/images/delete-16.png" width="14" height="14"></label>
+                            <label class="btn" onclick="handleDelete('{{ printpath $path  "/" $entry.Name }}')">
+                                <span class="glyphicon glyphicon-trash" aria-hidden="true"></span>
+                            </label>
                             {{end}}
                         </div>
                     </td>
