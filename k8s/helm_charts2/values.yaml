@@ -42,7 +42,7 @@ master:
   ipBind: "0.0.0.0"
   volumePreallocate: false
   #Master stops directing writes to oversized volumes
-  volumeSizeLimitMB: 30000
+  volumeSizeLimitMB: 300
   loggingOverrideLevel: null
   #number of seconds between heartbeats, default 5
   pulseSeconds: null
