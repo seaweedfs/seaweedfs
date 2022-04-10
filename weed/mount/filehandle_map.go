@@ -49,6 +49,7 @@ func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *fil
 	} else {
 		fh.counter++
 	}
+	fh.entry = entry
 	return fh
 }
 
