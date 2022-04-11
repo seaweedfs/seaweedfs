@@ -16,14 +16,14 @@ type commandRaftServerAdd struct {
 }
 
 func (c *commandRaftServerAdd) Name() string {
-	return "raft.server.add"
+	return "cluster.raft.add"
 }
 
 func (c *commandRaftServerAdd) Help() string {
 	return `add a server to the raft cluster
 
 	Example:
-		raft.server.add -id <server_name> -address <server_host:port> -voter
+		cluster.raft.add -id <server_name> -address <server_host:port> -voter
 `
 }
 

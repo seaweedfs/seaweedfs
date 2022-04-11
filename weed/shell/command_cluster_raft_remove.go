@@ -16,14 +16,14 @@ type commandRaftServerRemove struct {
 }
 
 func (c *commandRaftServerRemove) Name() string {
-	return "raft.server.remove"
+	return "cluster.raft.remove"
 }
 
 func (c *commandRaftServerRemove) Help() string {
 	return `remove a server from the raft cluster
 
 	Example:
-		raft.server.remove -id <server_name>
+		cluster.raft.remove -id <server_name>
 `
 }
 

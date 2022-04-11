@@ -16,13 +16,13 @@ type commandRaftClusterPs struct {
 }
 
 func (c *commandRaftClusterPs) Name() string {
-	return "raft.cluster.ps"
+	return "cluster.raft.ps"
 }
 
 func (c *commandRaftClusterPs) Help() string {
 	return `check current raft cluster status
 
-	raft.cluster.ps
+	cluster.raft.ps
 `
 }
 
