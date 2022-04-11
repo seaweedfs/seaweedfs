@@ -70,6 +70,11 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 
 	// Get upload id.
 	uploadID, _, _, _ := getObjectResources(r.URL.Query())
+	err := s3a.chkUploadID(bucket, object, uploadID)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
+		return
+	}
 
 	response, errCode := s3a.completeMultipartUpload(&s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(bucket),
@@ -94,6 +99,11 @@ func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *ht
 
 	// Get upload id.
 	uploadID, _, _, _ := getObjectResources(r.URL.Query())
+	err := s3a.chkUploadID(bucket, object, uploadID)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
+		return
+	}
 
 	response, errCode := s3a.abortMultipartUpload(&s3.AbortMultipartUploadInput{
 		Bucket:   aws.String(bucket),
@@ -165,6 +175,12 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	err := s3a.chkUploadID(bucket, object, uploadID)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
+		return
+	}
+
 	response, errCode := s3a.listObjectParts(&s3.ListPartsInput{
 		Bucket:           aws.String(bucket),
 		Key:              objectKey(aws.String(object)),
@@ -186,11 +202,11 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 
 // PutObjectPartHandler - Put an object part in a multipart upload.
 func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Request) {
-	bucket, _ := xhttp.GetBucketAndObject(r)
+	bucket, object := xhttp.GetBucketAndObject(r)
 
 	uploadID := r.URL.Query().Get("uploadId")
-	exists, err := s3a.exists(s3a.genUploadsFolder(bucket), uploadID, true)
-	if !exists {
+	err := s3a.chkUploadID(bucket, object, uploadID)
+	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
 		return
 	}
@@ -248,6 +264,22 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 func (s3a *S3ApiServer) genUploadsFolder(bucket string) string {
 	return fmt.Sprintf("%s/%s/.uploads", s3a.option.BucketsPath, bucket)
+}
+
+//Check object name and uploadID when processing  multipart uploading
+func (s3a *S3ApiServer) chkUploadID(bucket string, object string, id string) error {
+	entry, err := s3a.getEntry(s3a.genUploadsFolder(bucket), id)
+	if err != nil {
+		glog.Errorf("getEntry %v/%v : %v", s3a.genUploadsFolder(bucket), id, err)
+		return err
+	}
+
+	key := "/" + string(entry.Extended["key"])
+	if key != object {
+		glog.Errorf("object %s and uploadID %s are not matched", object, id)
+		return fmt.Errorf("object %s and uploadID %s are not matched", object, id)
+	}
+	return nil
 }
 
 // Parse bucket url queries for ?uploads
