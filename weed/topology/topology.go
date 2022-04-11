@@ -10,8 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/raft"
-	hashicorpRaft "github.com/hashicorp/raft"
+	"github.com/hashicorp/raft"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -42,8 +41,7 @@ type Topology struct {
 
 	Configuration *Configuration
 
-	RaftServer    raft.Server
-	HashicorpRaft *hashicorpRaft.Raft
+	RaftServer *raft.Raft
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -70,38 +68,32 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 }
 
 func (t *Topology) IsLeader() bool {
-	if t.RaftServer != nil {
-		if t.RaftServer.State() == raft.Leader {
-			return true
-		}
-		if leader, err := t.Leader(); err == nil {
-			if pb.ServerAddress(t.RaftServer.Name()) == leader {
-				return true
-			}
-		}
-	} else if t.HashicorpRaft != nil {
-		if t.HashicorpRaft.State() == hashicorpRaft.Leader {
-			return true
-		}
+	if t.RaftServer != nil && t.RaftServer.State() == raft.Leader {
+		return true
 	}
 	return false
 }
 
 func (t *Topology) Leader() (pb.ServerAddress, error) {
+	if t.RaftServer != nil {
+		return "", errors.New("Raft Server not ready yet!")
+	}
+	leader := t.RaftServer.Leader()
+	if leader == "" {
+		return "", errors.New("Raft Server Leader is empty")
+	}
+	return pb.ServerAddress(leader), nil
+}
+
+func (t *Topology) LeaderRetry(maxCount int, timeout int) (pb.ServerAddress, error) {
+	timeoutSecond := time.Duration(timeout) * time.Second
 	var l pb.ServerAddress
-	for count := 0; count < 3; count++ {
-		if t.RaftServer != nil {
-			l = pb.ServerAddress(t.RaftServer.Leader())
-		} else if t.HashicorpRaft != nil {
-			l = pb.ServerAddress(t.HashicorpRaft.Leader())
-		} else {
-			return "", errors.New("Raft Server not ready yet!")
-		}
-		if l != "" {
+	var err error
+	for count := 0; count < maxCount; count++ {
+		if l, err = t.Leader(); err != nil {
 			break
-		} else {
-			time.Sleep(time.Duration(5+count) * time.Second)
 		}
+		time.Sleep(time.Duration(count)*time.Second + timeoutSecond)
 	}
 	return l, nil
 }
@@ -134,15 +126,11 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	vid := t.GetMaxVolumeId()
 	next := vid.Next()
 	if t.RaftServer != nil {
-		if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next)); err != nil {
-			return 0, err
-		}
-	} else if t.HashicorpRaft != nil {
 		b, err := json.Marshal(NewMaxVolumeIdCommand(next))
 		if err != nil {
 			return 0, fmt.Errorf("failed marshal NewMaxVolumeIdCommand: %+v", err)
 		}
-		if future := t.HashicorpRaft.Apply(b, time.Second); future.Error() != nil {
+		if future := t.RaftServer.Apply(b, time.Second); future.Error() != nil {
 			return 0, future.Error()
 		}
 	}
@@ -303,8 +291,8 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 	return
 }
 
-func (t *Topology) DataNodeRegistration(dcName, rackName string ,dn *DataNode){
-	if dn.Parent() != nil{
+func (t *Topology) DataNodeRegistration(dcName, rackName string, dn *DataNode) {
+	if dn.Parent() != nil {
 		return
 	}
 	// registration to topo

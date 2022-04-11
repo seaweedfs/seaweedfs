@@ -16,9 +16,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/cluster"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 
-	"github.com/chrislusf/raft"
 	"github.com/gorilla/mux"
-	hashicorpRaft "github.com/hashicorp/raft"
+	"github.com/hashicorp/raft"
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -172,38 +171,26 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	var raftServerName string
 	if raftServer.raftServer != nil {
 		ms.Topo.RaftServer = raftServer.raftServer
-		ms.Topo.RaftServer.AddEventListener(raft.LeaderChangeEventType, func(e raft.Event) {
-			glog.V(0).Infof("leader change event: %+v => %+v", e.PrevValue(), e.Value())
-			stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", e.Value())).Inc()
-			if ms.Topo.RaftServer.Leader() != "" {
-				glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "becomes leader.")
-			}
-		})
-		raftServerName = ms.Topo.RaftServer.Name()
-	} else if raftServer.RaftHashicorp != nil {
-		ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
-		leaderCh := raftServer.RaftHashicorp.LeaderCh()
-		prevLeader := ms.Topo.HashicorpRaft.Leader()
+		leaderCh := raftServer.raftServer.LeaderCh()
+		prevLeader := ms.Topo.RaftServer.Leader()
 		go func() {
 			for {
 				select {
 				case isLeader := <-leaderCh:
-					leader := ms.Topo.HashicorpRaft.Leader()
+					leader := ms.Topo.RaftServer.Leader()
 					glog.V(0).Infof("is leader %+v change event: %+v => %+v", isLeader, prevLeader, leader)
 					stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", leader)).Inc()
 					prevLeader = leader
 				}
 			}
 		}()
-		raftServerName = ms.Topo.HashicorpRaft.String()
+		raftServerName = ms.Topo.RaftServer.String()
 	}
 	if ms.Topo.IsLeader() {
 		glog.V(0).Infoln("[", raftServerName, "]", "I am the leader!")
 	} else {
 		if ms.Topo.RaftServer != nil && ms.Topo.RaftServer.Leader() != "" {
-			glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "is the leader.")
-		} else if ms.Topo.HashicorpRaft != nil && ms.Topo.HashicorpRaft.Leader() != "" {
-			glog.V(0).Infoln("[", ms.Topo.HashicorpRaft.String(), "]", ms.Topo.HashicorpRaft.Leader(), "is the leader.")
+			glog.V(0).Infoln("[", ms.Topo.RaftServer.String(), "]", ms.Topo.RaftServer.Leader(), "is the leader.")
 		}
 	}
 }
@@ -216,9 +203,7 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 		}
 		var raftServerLeader string
 		if ms.Topo.RaftServer != nil && ms.Topo.RaftServer.Leader() != "" {
-			raftServerLeader = ms.Topo.RaftServer.Leader()
-		} else if ms.Topo.HashicorpRaft != nil && ms.Topo.HashicorpRaft.Leader() != "" {
-			raftServerLeader = string(ms.Topo.HashicorpRaft.Leader())
+			raftServerLeader = string(ms.Topo.RaftServer.Leader())
 		}
 		if raftServerLeader == "" {
 			f(w, r)
@@ -341,27 +326,27 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 }
 
 func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate) {
-	if update.NodeType != cluster.MasterType || ms.Topo.HashicorpRaft == nil {
+	if update.NodeType != cluster.MasterType || ms.Topo.RaftServer == nil {
 		return
 	}
 	glog.V(4).Infof("OnPeerUpdate: %+v", update)
 
 	peerAddress := pb.ServerAddress(update.Address)
 	peerName := string(peerAddress)
-	isLeader := ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader
+	isLeader := ms.Topo.IsLeader()
 	if update.IsAdd {
 		if isLeader {
 			raftServerFound := false
-			for _, server := range ms.Topo.HashicorpRaft.GetConfiguration().Configuration().Servers {
+			for _, server := range ms.Topo.RaftServer.GetConfiguration().Configuration().Servers {
 				if string(server.ID) == peerName {
 					raftServerFound = true
 				}
 			}
 			if !raftServerFound {
 				glog.V(0).Infof("adding new raft server: %s", peerName)
-				ms.Topo.HashicorpRaft.AddVoter(
-					hashicorpRaft.ServerID(peerName),
-					hashicorpRaft.ServerAddress(peerAddress.ToGrpcAddress()), 0, 0)
+				ms.Topo.RaftServer.AddVoter(
+					raft.ServerID(peerName),
+					raft.ServerAddress(peerAddress.ToGrpcAddress()), 0, 0)
 			}
 		}
 		if ms.onPeerUpdatDoneCnExist {

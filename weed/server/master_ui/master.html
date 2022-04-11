@@ -39,8 +39,8 @@
                     <th>Other Masters</th>
                     <td class="col-sm-5">
                         <ul class="list-unstyled">
-                            {{ range $k, $p := .Peers }}
-                            <li><a href="http://{{ $p.Name }}/ui/index.html">{{ $p.Name }}</a></li>
+                            {{ range $k, $p := .GetConfiguration.Configuration.Servers }}
+                            <li><a href="http://{{ $p.ID }}/ui/index.html">{{ $p.ID }}</a></li>
                             {{ end }}
                         </ul>
                     </td>
@@ -63,6 +63,17 @@
                     <td>{{ $val }}</td>
                 </tr>
                 {{ end }}
+            </table>
+            <h2>Raft Stats</h2>
+            <table class="table table-condensed table-striped">
+                <tr>
+                    <th>applied_index</th>
+                    <td>{{ .RaftServer.Stats.applied_index }}</td>
+                </tr>
+                <tr>
+                    <th>last_log_term</th>
+                    <td>{{ .RaftServer.Stats.last_log_term }}</td>
+                </tr>
             </table>
         </div>
     </div>

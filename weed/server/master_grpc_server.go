@@ -169,7 +169,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		// tell the volume servers about the leader
-		newLeader, err := ms.Topo.Leader()
+		newLeader, err := ms.Topo.LeaderRetry(3, 5)
 		if err != nil {
 			glog.Warningf("SendHeartbeat find leader: %v", err)
 			return err
@@ -262,7 +262,7 @@ func (ms *MasterServer) broadcastToClients(message *master_pb.KeepConnectedRespo
 
 func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedServer) error {
 	leader, err := ms.Topo.Leader()
-	if err != nil {
+	if err == nil {
 		glog.Errorf("topo leader: %v", err)
 		return raft.NotLeaderError
 	}
