@@ -81,6 +81,15 @@ func (cluster *Cluster) AddClusterNode(nodeType string, address pb.ServerAddress
 			},
 		}
 	case MasterType:
+		return []*master_pb.KeepConnectedResponse{
+			{
+				ClusterNodeUpdate: &master_pb.ClusterNodeUpdate{
+					NodeType: nodeType,
+					Address:  string(address),
+					IsAdd:    true,
+				},
+			},
+		}
 	}
 	return nil
 }
@@ -120,6 +129,15 @@ func (cluster *Cluster) RemoveClusterNode(nodeType string, address pb.ServerAddr
 			}
 		}
 	case MasterType:
+		return []*master_pb.KeepConnectedResponse{
+			{
+				ClusterNodeUpdate: &master_pb.ClusterNodeUpdate{
+					NodeType: nodeType,
+					Address:  string(address),
+					IsAdd:    false,
+				},
+			},
+		}
 	}
 	return nil
 }
