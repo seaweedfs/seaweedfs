@@ -55,7 +55,9 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	for _, bucket := range buckets {
-		c.cleanupUploads(commandEnv, writer, filerBucketsPath, bucket, *uploadedTimeAgo)
+		if err := c.cleanupUploads(commandEnv, writer, filerBucketsPath, bucket, *uploadedTimeAgo); err != nil {
+			fmt.Fprintf(writer, fmt.Sprintf("failed cleanup uploads for backet %s: %v", bucket, err))
+		}
 	}
 
 	return err
@@ -82,7 +84,7 @@ func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io
 		fmt.Fprintf(writer, "purge %s\n", deleteUrl)
 
 		err = util.Delete(deleteUrl, "")
-		if err != nil {
+		if err != nil && err.Error() != "" {
 			return fmt.Errorf("purge %s/%s: %v", uploadsDir, staleUpload, err)
 		}
 	}
