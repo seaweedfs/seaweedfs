@@ -2,6 +2,9 @@ package weed_server
 
 import (
 	"encoding/json"
+	transport "github.com/Jille/raft-grpc-transport"
+	"io"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"path"
@@ -12,6 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 
 	"github.com/chrislusf/raft"
+	hashicorpRaft "github.com/hashicorp/raft"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/topology"
@@ -26,14 +30,17 @@ type RaftServerOption struct {
 	RaftResumeState   bool
 	HeartbeatInterval time.Duration
 	ElectionTimeout   time.Duration
+	RaftBootstrap     bool
 }
 
 type RaftServer struct {
-	peers      map[string]pb.ServerAddress // initial peers to join with
-	raftServer raft.Server
-	dataDir    string
-	serverAddr pb.ServerAddress
-	topo       *topology.Topology
+	peers            map[string]pb.ServerAddress // initial peers to join with
+	raftServer       raft.Server
+	RaftHashicorp    *hashicorpRaft.Raft
+	TransportManager *transport.Manager
+	dataDir          string
+	serverAddr       pb.ServerAddress
+	topo             *topology.Topology
 	*raft.GrpcServer
 }
 
@@ -41,6 +48,8 @@ type StateMachine struct {
 	raft.StateMachine
 	topo *topology.Topology
 }
+
+var _ hashicorpRaft.FSM = &StateMachine{}
 
 func (s StateMachine) Save() ([]byte, error) {
 	state := topology.MaxVolumeIdCommand{
@@ -58,6 +67,36 @@ func (s StateMachine) Recovery(data []byte) error {
 	}
 	glog.V(1).Infof("Recovery raft state %+v", state)
 	s.topo.UpAdjustMaxVolumeId(state.MaxVolumeId)
+	return nil
+}
+
+func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
+	before := s.topo.GetMaxVolumeId()
+	state := topology.MaxVolumeIdCommand{}
+	err := json.Unmarshal(l.Data, &state)
+	if err != nil {
+		return err
+	}
+	s.topo.UpAdjustMaxVolumeId(state.MaxVolumeId)
+
+	glog.V(1).Infoln("max volume id", before, "==>", s.topo.GetMaxVolumeId())
+	return nil
+}
+
+func (s *StateMachine) Snapshot() (hashicorpRaft.FSMSnapshot, error) {
+	return &topology.MaxVolumeIdCommand{
+		MaxVolumeId: s.topo.GetMaxVolumeId(),
+	}, nil
+}
+
+func (s *StateMachine) Restore(r io.ReadCloser) error {
+	b, err := ioutil.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	if err := s.Recovery(b); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -132,12 +171,17 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 }
 
 func (s *RaftServer) Peers() (members []string) {
-	peers := s.raftServer.Peers()
-
-	for _, p := range peers {
-		members = append(members, p.Name)
+	if s.raftServer != nil {
+		peers := s.raftServer.Peers()
+		for _, p := range peers {
+			members = append(members, p.Name)
+		}
+	} else if s.RaftHashicorp != nil {
+		cfg := s.RaftHashicorp.GetConfiguration()
+		for _, p := range cfg.Configuration().Servers {
+			members = append(members, string(p.ID))
+		}
 	}
-
 	return
 }
 

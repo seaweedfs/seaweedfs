@@ -113,6 +113,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		if len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes {
+			dcName, rackName := ms.Topo.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
+			ms.Topo.DataNodeRegistration(dcName, rackName, dn)
+
 			// process heartbeat.Volumes
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("Volumes").Inc()
 			newVolumes, deletedVolumes := ms.Topo.SyncDataNodeRegistration(heartbeat.Volumes, dn)

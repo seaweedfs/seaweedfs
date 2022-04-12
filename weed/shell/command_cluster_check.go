@@ -48,7 +48,10 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 
 	emptyDiskTypeDiskInfo, emptyDiskTypeFound := topologyInfo.DiskInfos[""]
 	hddDiskTypeDiskInfo, hddDiskTypeFound := topologyInfo.DiskInfos["hdd"]
-	if !emptyDiskTypeFound && !hddDiskTypeFound || emptyDiskTypeDiskInfo.VolumeCount == 0 && hddDiskTypeDiskInfo.VolumeCount == 0 {
+	if !emptyDiskTypeFound && !hddDiskTypeFound {
+		return fmt.Errorf("Need to a hdd disk type!")
+	}
+	if emptyDiskTypeFound && emptyDiskTypeDiskInfo.VolumeCount == 0 || hddDiskTypeFound && hddDiskTypeDiskInfo.VolumeCount == 0 {
 		return fmt.Errorf("Need to a hdd disk type!")
 	}
 

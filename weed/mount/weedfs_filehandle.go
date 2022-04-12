@@ -10,7 +10,6 @@ func (wfs *WFS) AcquireHandle(inode uint64, uid, gid uint32) (fileHandle *FileHa
 	_, _, entry, status = wfs.maybeReadEntry(inode)
 	if status == fuse.OK {
 		fileHandle = wfs.fhmap.AcquireFileHandle(wfs, inode, entry)
-		fileHandle.entry = entry
 	}
 	return
 }

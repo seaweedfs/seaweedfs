@@ -41,8 +41,7 @@ master:
   grpcPort: 19333
   ipBind: "0.0.0.0"
   volumePreallocate: false
-  #Master stops directing writes to oversized volumes
-  volumeSizeLimitMB: 30000
+  volumeSizeLimitMB: 1000
   loggingOverrideLevel: null
   #number of seconds between heartbeats, default 5
   pulseSeconds: null

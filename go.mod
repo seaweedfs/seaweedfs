@@ -4,13 +4,13 @@ go 1.18
 
 require (
 	cloud.google.com/go v0.100.2 // indirect
-	cloud.google.com/go/pubsub v1.19.0
-	cloud.google.com/go/storage v1.21.0
+	cloud.google.com/go/pubsub v1.20.0
+	cloud.google.com/go/storage v1.22.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.14.0
 	github.com/OneOfOne/xxhash v1.2.8
 	github.com/Shopify/sarama v1.32.0
-	github.com/aws/aws-sdk-go v1.43.33
+	github.com/aws/aws-sdk-go v1.43.37
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/buraksezer/consistent v0.0.0-20191006190839-693edf70fd72
 	github.com/bwmarrin/snowflake v0.3.0
@@ -67,7 +67,7 @@ require (
 	github.com/klauspost/compress v1.15.1 // indirect
 	github.com/klauspost/reedsolomon v1.9.16
 	github.com/kurin/blazer v0.5.3
-	github.com/lib/pq v1.10.4
+	github.com/lib/pq v1.10.5
 	github.com/linxGnu/grocksdb v1.7.0
 	github.com/magiconair/properties v1.8.5 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
@@ -131,7 +131,7 @@ require (
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	google.golang.org/api v0.74.0
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto v0.0.0-20220401170504-314d38edb7de // indirect
+	google.golang.org/genproto v0.0.0-20220405205423-9d709892a2bf // indirect
 	google.golang.org/grpc v1.45.0
 	google.golang.org/protobuf v1.28.0
 	gopkg.in/inf.v0 v0.9.1 // indirect
@@ -148,14 +148,19 @@ require (
 )
 
 require (
+	github.com/Jille/raft-grpc-transport v1.2.0
 	github.com/arangodb/go-driver v1.2.1
 	github.com/fluent/fluent-logger-golang v1.9.0
 	github.com/hanwen/go-fuse/v2 v2.1.0
+	github.com/hashicorp/raft v1.3.6
+	github.com/hashicorp/raft-boltdb v0.0.0-20220329195025-15018e9b97e0
 )
 
 require (
 	cloud.google.com/go/compute v1.5.0 // indirect
 	cloud.google.com/go/iam v0.3.0 // indirect
+	github.com/arangodb/go-velocypack v0.0.0-20200318135517-5af53c29c67e // indirect
+	github.com/armon/go-metrics v0.3.10 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.16.2 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.15.3 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.11.2 // indirect
@@ -169,16 +174,24 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.11.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.16.3 // indirect
 	github.com/aws/smithy-go v1.11.2 // indirect
+	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/d4l3k/messagediff v1.2.1 // indirect
+	github.com/fatih/color v1.13.0 // indirect
 	github.com/fclairamb/go-log v0.1.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/googleapis/go-type-adapters v1.0.0 // indirect
 	github.com/googleapis/google-cloud-go-testing v0.0.0-20200911160855-bcd43fbb19e8 // indirect
+	github.com/hashicorp/go-hclog v1.0.0 // indirect
+	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
+	github.com/hashicorp/go-msgpack v1.1.5 // indirect
+	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.6 // indirect
+	github.com/mattn/go-colorable v0.1.12 // indirect
 	github.com/mattn/go-runewidth v0.0.7 // indirect
 	github.com/mattn/go-sqlite3 v2.0.1+incompatible // indirect
 	github.com/nats-io/nats.go v1.13.1-0.20220121202836-972a071d373d // indirect

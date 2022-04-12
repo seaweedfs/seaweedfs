@@ -11,6 +11,7 @@
 
         #drop-area {
             border: 1px transparent;
+            margin-top: 5px;
         }
 
         #drop-area.highlight {
@@ -46,37 +47,25 @@
             vertical-align: bottom;
         }
 
-        .danger {
-            color: red;
-            background: #fff;
-            border: 1px solid #fff;
-            border-radius: 2px;
+        .table-hover > tbody > tr:hover > * > div.operations {
+            display: block;
         }
 
-        .info {
-            background: #fff;
-            border: 1px solid #fff;
-            border-radius: 2px;
+        .table > tbody > tr {
+            height: 39px;
+        }
+
+        div.operations {
+            display: none;
         }
 
         .footer {
             position: absolute;
-            bottom: 10px;
-            right: 10%;
-            min-width: 30%;
-        }
-
-        .progress-table {
-            width: 100%;
-        }
-
-        .progress-table-file-name {
-            text-align: right;
-        }
-
-        .progress-table-percent {
-            width: 60px;
-            text-align: right;
+            bottom: 0px;
+            right: 5%;
+            min-width: 25%;
+            border-left: 1px solid #ccc;
+            border-right: 1px solid #ccc;
         }
 
         .add-files {
@@ -98,13 +87,21 @@
     </div>
     <div class="row">
         <div>
+            <div class="btn-group btn-group-sm pull-right" role="group" style="margin-top:3px;">
+                <label class="btn btn-default" onclick="handleCreateDir()">
+                    <span class="glyphicon glyphicon-plus" aria-hidden="true"></span> New Folder
+                </label>
+                <label class="btn btn-default" for="fileElem">
+                    <span class="glyphicon glyphicon-cloud-upload" aria-hidden="true"></span> Upload
+                </label>
+            </div>
+            <ol class="breadcrumb">
             {{ range $entry := .Breadcrumbs }}
-            <a href="{{ printpath $entry.Link }}">
+            <li><a href="{{ printpath $entry.Link }}">
                 {{ $entry.Name }}
-            </a>
+            </li></a>
             {{ end }}
-            <label class="button" for="fileElem">Upload</label>
-            <label class="button" onclick="handleCreateDir()">New Folder</label>
+            </ol>
         </div>
     </div>
 
@@ -112,13 +109,18 @@
         <form class="upload-form">
             <input type="file" id="fileElem" multiple onchange="handleFiles(this.files)">
 
-            <table width="100%">
+            {{if .EmptyFolder}}
+            <div class="row add-files">
+                +
+            </div>
+            {{else}}
+            <table width="100%" class="table table-hover">
                 {{$path := .Path }}
                 {{ range $entry_index, $entry := .Entries }}
                 <tr>
                     <td>
                         {{if $entry.IsDirectory}}
-                        <img src="/seaweedfsstatic/images/folder.gif" width="20" height="16">
+                        <span class="glyphicon glyphicon-folder-open" aria-hidden="true"></span>&nbsp;
                         <a href="{{ printpath $path  "/" $entry.Name "/"}}" >
                         {{ $entry.Name }}
                         </a>
@@ -143,21 +145,25 @@
                     <td align="right" nowrap>
                         {{ $entry.Timestamp.Format "2006-01-02 15:04" }}
                     </td>
-                    <td>
-                        {{if $entry.IsDirectory}}
-                        <label class="button danger" onclick="handleDelete('{{ printpath $path  "/" $entry.Name "/"  }}')">Delete</label>
-                        {{else}}
-                        <label class="button danger" onclick="handleDelete('{{ printpath $path  "/" $entry.Name }}')">Delete</label>
-                        {{end}}
-                        <label class="button info" onclick="handleRename('{{ $entry.Name }}', '{{ printpath $path "/" }}')">Rename</label>
+                    <td style="width:75px">
+                        <div class="btn-group btn-group-xs pull-right operations" role="group">
+                            <label class="btn" onclick="handleRename('{{ $entry.Name }}', '{{ printpath $path "/" }}')">
+                                <span class="glyphicon glyphicon-edit" aria-hidden="true"></span>
+                            </label>
+                            {{if $entry.IsDirectory}}
+                            <label class="btn" onclick="handleDelete('{{ printpath $path  "/" $entry.Name "/"  }}')">
+                                <span class="glyphicon glyphicon-trash" aria-hidden="true"></span>
+                            </label>
+                            {{else}}
+                            <label class="btn" onclick="handleDelete('{{ printpath $path  "/" $entry.Name }}')">
+                                <span class="glyphicon glyphicon-trash" aria-hidden="true"></span>
+                            </label>
+                            {{end}}
+                        </div>
                     </td>
                 </tr>
                 {{ end }}
             </table>
-            {{if .EmptyFolder}}
-            <div class="row add-files">
-                +
-            </div>
             {{end}}
         </form>
     </div>
@@ -234,17 +240,23 @@
 
     function renderProgress() {
         var values = Object.values(uploadList);
-        var html = '<table class="progress-table">\n';
+        var html = '<table class="table">\n<tr><th>Uploading</th><\/tr>\n';
         for (let i of values) {
-            html += '<tr>\n<td class="progress-table-file-name">' + i.name + '<\/td>\n';
-            html += '<td class="progress-table-percent">' + i.percent + '% <\/td>\n<\/tr>\n';
+            var progressBarClass = 'progress-bar-striped active';
+            if (i.percent >= 100) {
+                progressBarClass = 'progress-bar-success';
+            }
+            html += '<tr>\n<td>\n';
+            html += '<div class="progress" style="margin-bottom: 2px;">\n';
+            html += '<div class="progress-bar ' + progressBarClass + '" role="progressbar" aria-valuenow="' + '100" aria-valuemin="0" aria-valuemax="100" style="width:' + i.percent + '%;">';
+            html += '<span style="margin-right: 10px;">' + i.name + '</span>' + i.percent + '%<\/div>';
+            html += '<\/div>\n<\/td>\n<\/tr>\n';
         }
         html += '<\/table>\n';
         progressArea.innerHTML = html;
         if (values.length > 0) {
             progressArea.attributes.style.value = '';
         }
-        console.log('Render Progress', values);
     }
 
     function reportProgress(file, percent) {
@@ -289,7 +301,7 @@
     }
 
     function handleCreateDir() {
-        var dirName = prompt('Directory Name:', '');
+        var dirName = prompt('Folder Name:', '');
         dirName = dirName.trim();
         if (dirName == null || dirName == '') {
             return;
