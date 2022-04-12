@@ -71,7 +71,7 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 
 	// Get upload id.
 	uploadID, _, _, _ := getObjectResources(r.URL.Query())
-	err := s3a.chkUploadID(object, uploadID)
+	err := s3a.checkUploadId(object, uploadID)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
 		return
@@ -100,7 +100,7 @@ func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *ht
 
 	// Get upload id.
 	uploadID, _, _, _ := getObjectResources(r.URL.Query())
-	err := s3a.chkUploadID(object, uploadID)
+	err := s3a.checkUploadId(object, uploadID)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
 		return
@@ -176,7 +176,7 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	err := s3a.chkUploadID(object, uploadID)
+	err := s3a.checkUploadId(object, uploadID)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
 		return
@@ -206,13 +206,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	bucket, object := xhttp.GetBucketAndObject(r)
 
 	uploadID := r.URL.Query().Get("uploadId")
-	exists, err := s3a.exists(s3a.genUploadsFolder(bucket), uploadID, true)
-	if !exists {
-		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
-		return
-	}
-
-	err = s3a.chkUploadID(object, uploadID)
+	err := s3a.checkUploadId(object, uploadID)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
 		return
@@ -284,7 +278,7 @@ func (s3a *S3ApiServer) generateUploadID(object string) string {
 }
 
 //Check object name and uploadID when processing  multipart uploading
-func (s3a *S3ApiServer) chkUploadID(object string, id string) error {
+func (s3a *S3ApiServer) checkUploadId(object string, id string) error {
 
 	hash := s3a.generateUploadID(object)
 	if hash != id {
