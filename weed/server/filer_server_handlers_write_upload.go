@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"crypto/md5"
 	"fmt"
+	"golang.org/x/exp/slices"
 	"hash"
 	"io"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -130,11 +130,9 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 		fs.filer.DeleteChunks(fileChunks)
 		return nil, md5Hash, 0, uploadErr, nil
 	}
-
-	sort.Slice(fileChunks, func(i, j int) bool {
-		return fileChunks[i].Offset < fileChunks[j].Offset
+	slices.SortFunc(fileChunks, func(a, b *filer_pb.FileChunk) bool {
+		return a.Offset < b.Offset
 	})
-
 	return fileChunks, md5Hash, chunkOffset, nil, smallContent
 }
 

@@ -1,9 +1,9 @@
 package command
 
 import (
+	"golang.org/x/exp/slices"
 	"net/http"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -251,8 +251,8 @@ func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers strin
 }
 
 func isTheFirstOne(self pb.ServerAddress, peers []pb.ServerAddress) bool {
-	sort.Slice(peers, func(i, j int) bool {
-		return strings.Compare(string(peers[i]), string(peers[j])) < 0
+	slices.SortFunc(peers, func(a, b pb.ServerAddress) bool {
+		return strings.Compare(string(a), string(b)) < 0
 	})
 	if len(peers) <= 0 {
 		return true

@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"golang.org/x/exp/slices"
 	"math"
-	"sort"
 	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -254,19 +254,17 @@ func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunction
 	if true {
 		return visibles2, err
 	}
-
-	sort.Slice(chunks, func(i, j int) bool {
-		if chunks[i].Mtime == chunks[j].Mtime {
-			filer_pb.EnsureFid(chunks[i])
-			filer_pb.EnsureFid(chunks[j])
-			if chunks[i].Fid == nil || chunks[j].Fid == nil {
+	slices.SortFunc(chunks, func(a, b *filer_pb.FileChunk) bool {
+		if a.Mtime == b.Mtime {
+			filer_pb.EnsureFid(a)
+			filer_pb.EnsureFid(b)
+			if a.Fid == nil || b.Fid == nil {
 				return true
 			}
-			return chunks[i].Fid.FileKey < chunks[j].Fid.FileKey
+			return a.Fid.FileKey < b.Fid.FileKey
 		}
-		return chunks[i].Mtime < chunks[j].Mtime // keep this to make tests run
+		return a.Mtime < b.Mtime
 	})
-
 	for _, chunk := range chunks {
 
 		// glog.V(0).Infof("merge [%d,%d)", chunk.Offset, chunk.Offset+int64(chunk.Size))

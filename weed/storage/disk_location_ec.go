@@ -2,10 +2,10 @@ package storage
 
 import (
 	"fmt"
+	"golang.org/x/exp/slices"
 	"os"
 	"path"
 	"regexp"
-	"sort"
 	"strconv"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
@@ -128,11 +128,9 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 		}
 		dirEntries = append(dirEntries, indexDirEntries...)
 	}
-
-	sort.Slice(dirEntries, func(i, j int) bool {
-		return dirEntries[i].Name() < dirEntries[j].Name()
+	slices.SortFunc(dirEntries, func(a, b os.DirEntry) bool {
+		return a.Name() < b.Name()
 	})
-
 	var sameVolumeShards []string
 	var prevVolumeId needle.VolumeId
 	for _, fileInfo := range dirEntries {

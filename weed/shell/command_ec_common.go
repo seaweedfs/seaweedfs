@@ -3,18 +3,17 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"math"
-	"sort"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
+	"math"
 )
 
 func moveMountedShardToEcNode(commandEnv *CommandEnv, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, destinationEcNode *EcNode, applyBalancing bool) (err error) {
@@ -116,14 +115,14 @@ func eachDataNode(topo *master_pb.TopologyInfo, fn func(dc string, rack RackId, 
 }
 
 func sortEcNodesByFreeslotsDecending(ecNodes []*EcNode) {
-	sort.Slice(ecNodes, func(i, j int) bool {
-		return ecNodes[i].freeEcSlot > ecNodes[j].freeEcSlot
+	slices.SortFunc(ecNodes, func(a, b *EcNode) bool {
+		return a.freeEcSlot > b.freeEcSlot
 	})
 }
 
 func sortEcNodesByFreeslotsAscending(ecNodes []*EcNode) {
-	sort.Slice(ecNodes, func(i, j int) bool {
-		return ecNodes[i].freeEcSlot < ecNodes[j].freeEcSlot
+	slices.SortFunc(ecNodes, func(a, b *EcNode) bool {
+		return a.freeEcSlot < b.freeEcSlot
 	})
 }
 
