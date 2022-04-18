@@ -2,7 +2,7 @@ package filer
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"sort"
+	"golang.org/x/exp/slices"
 )
 
 func readResolvedChunks(chunks []*filer_pb.FileChunk) (visibles []VisibleInterval) {
@@ -22,17 +22,14 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk) (visibles []VisibleInterva
 			isStart: false,
 		})
 	}
-	sort.Slice(points, func(i, j int) bool {
-		if points[i].x != points[j].x {
-			return points[i].x < points[j].x
+	slices.SortFunc(points, func(a, b *Point) bool {
+		if a.x != b.x {
+			return a.x < b.x
 		}
-		if points[i].ts != points[j].ts {
-			return points[i].ts < points[j].ts
+		if a.ts != b.ts {
+			return a.ts < b.ts
 		}
-		if !points[i].isStart {
-			return true
-		}
-		return false
+		return !a.isStart
 	})
 
 	var prevX int64

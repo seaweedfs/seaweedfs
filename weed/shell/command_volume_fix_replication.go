@@ -7,9 +7,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"golang.org/x/exp/slices"
 	"io"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"time"
 
@@ -308,8 +308,8 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 
 func keepDataNodesSorted(dataNodes []location, diskType types.DiskType) {
 	fn := capacityByFreeVolumeCount(diskType)
-	sort.Slice(dataNodes, func(i, j int) bool {
-		return fn(dataNodes[i].dataNode) > fn(dataNodes[j].dataNode)
+	slices.SortFunc(dataNodes, func(a, b location) bool {
+		return fn(a.dataNode) > fn(b.dataNode)
 	})
 }
 
@@ -488,9 +488,7 @@ func countReplicas(replicas []*VolumeReplica) (diffDc, diffRack, diffNode map[st
 }
 
 func pickOneReplicaToDelete(replicas []*VolumeReplica, replicaPlacement *super_block.ReplicaPlacement) *VolumeReplica {
-
-	sort.Slice(replicas, func(i, j int) bool {
-		a, b := replicas[i], replicas[j]
+	slices.SortFunc(replicas, func(a, b *VolumeReplica) bool {
 		if a.info.Size != b.info.Size {
 			return a.info.Size < b.info.Size
 		}

@@ -3,7 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
-	"sort"
+	"golang.org/x/exp/slices"
 	"strings"
 	"time"
 
@@ -157,8 +157,8 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, dirP
 	}
 
 	// sort
-	sort.Slice(members, func(i, j int) bool {
-		return strings.Compare(members[i], members[j]) < 0
+	slices.SortFunc(members, func(a, b string) bool {
+		return strings.Compare(a, b) < 0
 	})
 
 	// limit

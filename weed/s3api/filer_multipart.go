@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	"golang.org/x/exp/slices"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -67,8 +68,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	glog.V(2).Infof("completeMultipartUpload input %v", input)
 
 	completedParts := parts.Parts
-	sort.Slice(completedParts, func(i, j int) bool {
-		return completedParts[i].PartNumber < completedParts[j].PartNumber
+	slices.SortFunc(completedParts, func(a, b CompletedPart) bool {
+		return a.PartNumber < b.PartNumber
 	})
 
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
