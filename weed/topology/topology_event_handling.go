@@ -25,7 +25,7 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 		c := time.Tick(15 * time.Minute)
 		for _ = range c {
 			if t.IsLeader() {
-				t.Vacuum(grpcDialOption, garbageThreshold, preallocate)
+				t.Vacuum(grpcDialOption, garbageThreshold, 0, "", preallocate)
 			}
 		}
 	}(garbageThreshold)
