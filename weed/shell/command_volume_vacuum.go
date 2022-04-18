@@ -22,7 +22,7 @@ func (c *commandVacuum) Name() string {
 func (c *commandVacuum) Help() string {
 	return `compact volumes if deleted entries are more than the limit
 
-	volume.vacuum [-garbageThreshold=0.3]
+	volume.vacuum [-garbageThreshold=0.3] [-collection=<collection name>] [-volumeId=<volume id>]
 
 `
 }
@@ -32,7 +32,7 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 	volumeVacuumCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	garbageThreshold := volumeVacuumCommand.Float64("garbageThreshold", 0.3, "vacuum when garbage is more than this limit")
 	collection := volumeVacuumCommand.String("collection", "", "vacuum this collection")
-	volumeId := volumeVacuumCommand.Int("volumeId", 0, "the volume id")
+	volumeId := volumeVacuumCommand.Uint("volumeId", 0, "the volume id")
 	if err = volumeVacuumCommand.Parse(args); err != nil {
 		return
 	}

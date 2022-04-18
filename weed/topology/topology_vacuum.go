@@ -185,20 +185,20 @@ func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float
 		for _, vl := range c.storageType2VolumeLayout.Items() {
 			if vl != nil {
 				volumeLayout := vl.(*VolumeLayout)
-				t.vacuumOneVolumeLayout(grpcDialOption, volumeLayout, c, garbageThreshold, volumeId, preallocate)
+				if volumeId > 0 && volumeLayout.Lookup(needle.VolumeId(volumeId)) == nil {
+					continue
+				}
+				t.vacuumOneVolumeLayout(grpcDialOption, volumeLayout, c, garbageThreshold, preallocate)
 			}
 		}
 	}
 }
 
-func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, volumeId uint32, preallocate int64) {
+func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, preallocate int64) {
 
 	volumeLayout.accessLock.RLock()
 	tmpMap := make(map[needle.VolumeId]*VolumeLocationList)
 	for vid, locationList := range volumeLayout.vid2location {
-		if volumeId > 0 && volumeId != uint32(vid) {
-			continue
-		}
 		tmpMap[vid] = locationList.Copy()
 	}
 	volumeLayout.accessLock.RUnlock()
