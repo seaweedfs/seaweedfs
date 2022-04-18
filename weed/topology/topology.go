@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/chrislusf/raft"
+	hashicorpRaft "github.com/hashicorp/raft"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -40,7 +42,8 @@ type Topology struct {
 
 	Configuration *Configuration
 
-	RaftServer raft.Server
+	RaftServer    raft.Server
+	HashicorpRaft *hashicorpRaft.Raft
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -76,6 +79,10 @@ func (t *Topology) IsLeader() bool {
 				return true
 			}
 		}
+	} else if t.HashicorpRaft != nil {
+		if t.HashicorpRaft.State() == hashicorpRaft.Leader {
+			return true
+		}
 	}
 	return false
 }
@@ -85,6 +92,8 @@ func (t *Topology) Leader() (pb.ServerAddress, error) {
 	for count := 0; count < 3; count++ {
 		if t.RaftServer != nil {
 			l = pb.ServerAddress(t.RaftServer.Leader())
+		} else if t.HashicorpRaft != nil {
+			l = pb.ServerAddress(t.HashicorpRaft.Leader())
 		} else {
 			return "", errors.New("Raft Server not ready yet!")
 		}
@@ -124,8 +133,18 @@ func (t *Topology) Lookup(collection string, vid needle.VolumeId) (dataNodes []*
 func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	vid := t.GetMaxVolumeId()
 	next := vid.Next()
-	if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next)); err != nil {
-		return 0, err
+	if t.RaftServer != nil {
+		if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next)); err != nil {
+			return 0, err
+		}
+	} else if t.HashicorpRaft != nil {
+		b, err := json.Marshal(NewMaxVolumeIdCommand(next))
+		if err != nil {
+			return 0, fmt.Errorf("failed marshal NewMaxVolumeIdCommand: %+v", err)
+		}
+		if future := t.HashicorpRaft.Apply(b, time.Second); future.Error() != nil {
+			return 0, future.Error()
+		}
 	}
 	return next, nil
 }

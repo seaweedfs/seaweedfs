@@ -33,6 +33,9 @@ type SeaweedClient interface {
 	LeaseAdminToken(ctx context.Context, in *LeaseAdminTokenRequest, opts ...grpc.CallOption) (*LeaseAdminTokenResponse, error)
 	ReleaseAdminToken(ctx context.Context, in *ReleaseAdminTokenRequest, opts ...grpc.CallOption) (*ReleaseAdminTokenResponse, error)
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
+	RaftListClusterServers(ctx context.Context, in *RaftListClusterServersRequest, opts ...grpc.CallOption) (*RaftListClusterServersResponse, error)
+	RaftAddServer(ctx context.Context, in *RaftAddServerRequest, opts ...grpc.CallOption) (*RaftAddServerResponse, error)
+	RaftRemoveServer(ctx context.Context, in *RaftRemoveServerRequest, opts ...grpc.CallOption) (*RaftRemoveServerResponse, error)
 }
 
 type seaweedClient struct {
@@ -222,6 +225,33 @@ func (c *seaweedClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.
 	return out, nil
 }
 
+func (c *seaweedClient) RaftListClusterServers(ctx context.Context, in *RaftListClusterServersRequest, opts ...grpc.CallOption) (*RaftListClusterServersResponse, error) {
+	out := new(RaftListClusterServersResponse)
+	err := c.cc.Invoke(ctx, "/master_pb.Seaweed/RaftListClusterServers", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedClient) RaftAddServer(ctx context.Context, in *RaftAddServerRequest, opts ...grpc.CallOption) (*RaftAddServerResponse, error) {
+	out := new(RaftAddServerResponse)
+	err := c.cc.Invoke(ctx, "/master_pb.Seaweed/RaftAddServer", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedClient) RaftRemoveServer(ctx context.Context, in *RaftRemoveServerRequest, opts ...grpc.CallOption) (*RaftRemoveServerResponse, error) {
+	out := new(RaftRemoveServerResponse)
+	err := c.cc.Invoke(ctx, "/master_pb.Seaweed/RaftRemoveServer", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SeaweedServer is the server API for Seaweed service.
 // All implementations must embed UnimplementedSeaweedServer
 // for forward compatibility
@@ -241,6 +271,9 @@ type SeaweedServer interface {
 	LeaseAdminToken(context.Context, *LeaseAdminTokenRequest) (*LeaseAdminTokenResponse, error)
 	ReleaseAdminToken(context.Context, *ReleaseAdminTokenRequest) (*ReleaseAdminTokenResponse, error)
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
+	RaftListClusterServers(context.Context, *RaftListClusterServersRequest) (*RaftListClusterServersResponse, error)
+	RaftAddServer(context.Context, *RaftAddServerRequest) (*RaftAddServerResponse, error)
+	RaftRemoveServer(context.Context, *RaftRemoveServerRequest) (*RaftRemoveServerResponse, error)
 	mustEmbedUnimplementedSeaweedServer()
 }
 
@@ -292,6 +325,15 @@ func (UnimplementedSeaweedServer) ReleaseAdminToken(context.Context, *ReleaseAdm
 }
 func (UnimplementedSeaweedServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
+}
+func (UnimplementedSeaweedServer) RaftListClusterServers(context.Context, *RaftListClusterServersRequest) (*RaftListClusterServersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RaftListClusterServers not implemented")
+}
+func (UnimplementedSeaweedServer) RaftAddServer(context.Context, *RaftAddServerRequest) (*RaftAddServerResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RaftAddServer not implemented")
+}
+func (UnimplementedSeaweedServer) RaftRemoveServer(context.Context, *RaftRemoveServerRequest) (*RaftRemoveServerResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RaftRemoveServer not implemented")
 }
 func (UnimplementedSeaweedServer) mustEmbedUnimplementedSeaweedServer() {}
 
@@ -592,6 +634,60 @@ func _Seaweed_Ping_Handler(srv interface{}, ctx context.Context, dec func(interf
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Seaweed_RaftListClusterServers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RaftListClusterServersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).RaftListClusterServers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/master_pb.Seaweed/RaftListClusterServers",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).RaftListClusterServers(ctx, req.(*RaftListClusterServersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Seaweed_RaftAddServer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RaftAddServerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).RaftAddServer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/master_pb.Seaweed/RaftAddServer",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).RaftAddServer(ctx, req.(*RaftAddServerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Seaweed_RaftRemoveServer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RaftRemoveServerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).RaftRemoveServer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/master_pb.Seaweed/RaftRemoveServer",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).RaftRemoveServer(ctx, req.(*RaftRemoveServerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Seaweed_ServiceDesc is the grpc.ServiceDesc for Seaweed service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -650,6 +746,18 @@ var Seaweed_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Ping",
 			Handler:    _Seaweed_Ping_Handler,
+		},
+		{
+			MethodName: "RaftListClusterServers",
+			Handler:    _Seaweed_RaftListClusterServers_Handler,
+		},
+		{
+			MethodName: "RaftAddServer",
+			Handler:    _Seaweed_RaftAddServer_Handler,
+		},
+		{
+			MethodName: "RaftRemoveServer",
+			Handler:    _Seaweed_RaftRemoveServer_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
