@@ -31,6 +31,8 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 
 	volumeVacuumCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	garbageThreshold := volumeVacuumCommand.Float64("garbageThreshold", 0.3, "vacuum when garbage is more than this limit")
+	collection := volumeVacuumCommand.String("collection", "", "vacuum this collection")
+	volumeId := volumeVacuumCommand.Int("volumeId", 0, "the volume id")
 	if err = volumeVacuumCommand.Parse(args); err != nil {
 		return
 	}
@@ -42,6 +44,8 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		_, err = client.VacuumVolume(context.Background(), &master_pb.VacuumVolumeRequest{
 			GarbageThreshold: float32(*garbageThreshold),
+			VolumeId:         uint32(*volumeId),
+			Collection:       *collection,
 		})
 		return err
 	})
