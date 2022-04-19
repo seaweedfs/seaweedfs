@@ -2,12 +2,11 @@ package chunk_cache
 
 import (
 	"fmt"
-	"path"
-	"sort"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"golang.org/x/exp/slices"
+	"path"
 )
 
 type OnDiskCacheLayer struct {
@@ -33,10 +32,9 @@ func NewOnDiskCacheLayer(dir, namePrefix string, diskSize int64, segmentCount in
 	}
 
 	// keep newest cache to the front
-	sort.Slice(c.diskCaches, func(i, j int) bool {
-		return c.diskCaches[i].lastModTime.After(c.diskCaches[j].lastModTime)
+	slices.SortFunc(c.diskCaches, func(a, b *ChunkCacheVolume) bool {
+		return a.lastModTime.After(b.lastModTime)
 	})
-
 	return c
 }
 

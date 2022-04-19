@@ -46,8 +46,10 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		path = ""
 	}
 
+	emptyFolder := true
 	if len(entries) > 0 {
 		lastFileName = entries[len(entries)-1].Name()
+		emptyFolder = false
 	}
 
 	glog.V(4).Infof("listDirectory %s, last file %s, limit %d: %d items", path, lastFileName, limit, len(entries))
@@ -59,12 +61,14 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 			Limit                 int
 			LastFileName          string
 			ShouldDisplayLoadMore bool
+			EmptyFolder           bool
 		}{
 			path,
 			entries,
 			limit,
 			lastFileName,
 			shouldDisplayLoadMore,
+			emptyFolder,
 		})
 		return
 	}
@@ -76,6 +80,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		Limit                 int
 		LastFileName          string
 		ShouldDisplayLoadMore bool
+		EmptyFolder           bool
 	}{
 		path,
 		ui.ToBreadcrumb(path),
@@ -83,5 +88,6 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		limit,
 		lastFileName,
 		shouldDisplayLoadMore,
+		emptyFolder,
 	})
 }

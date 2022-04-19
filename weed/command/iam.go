@@ -67,7 +67,7 @@ func (iamopt *IamOptions) startIamServer() bool {
 		}
 	}
 
-	masters := pb.ServerAddresses(*iamopt.masters).ToAddresses()
+	masters := pb.ServerAddresses(*iamopt.masters).ToAddressMap()
 	router := mux.NewRouter().SkipClean(true)
 	_, iamApiServer_err := iamapi.NewIamApiServer(router, &iamapi.IamServerOption{
 		Masters:        masters,

@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util/mem"
+	"golang.org/x/exp/slices"
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
@@ -25,6 +25,10 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
+)
+
+const (
+	deleteMultipleObjectsLimmit = 1000
 )
 
 func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
@@ -59,7 +63,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	if r.Header.Get("Expires") != "" {
 		if _, err = time.Parse(http.TimeFormat, r.Header.Get("Expires")); err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidDigest)
+			s3err.WriteErrorResponse(w, r, s3err.ErrMalformedExpires)
 			return
 		}
 	}
@@ -217,6 +221,11 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 		return
 	}
 
+	if len(deleteObjects.Objects) > deleteMultipleObjectsLimmit {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxDeleteObjects)
+		return
+	}
+
 	var deletedObjects []ObjectIdentifier
 	var deleteErrors []DeleteError
 	var auditLog *s3err.AccessLog
@@ -281,8 +290,8 @@ func (s3a *S3ApiServer) doDeleteEmptyDirectories(client filer_pb.SeaweedFilerCli
 	for dir, _ := range directoriesWithDeletion {
 		allDirs = append(allDirs, dir)
 	}
-	sort.Slice(allDirs, func(i, j int) bool {
-		return len(allDirs[i]) > len(allDirs[j])
+	slices.SortFunc(allDirs, func(a, b string) bool {
+		return len(a) > len(b)
 	})
 	newDirectoriesWithDeletion = make(map[string]int)
 	for _, dir := range allDirs {

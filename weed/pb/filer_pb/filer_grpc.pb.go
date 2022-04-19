@@ -11,7 +11,6 @@ import (
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the grpc package it is being compiled against.
-// Requires gRPC-Go v1.32.0 or later.
 const _ = grpc.SupportPackageIsVersion7
 
 // SeaweedFilerClient is the client API for SeaweedFiler service.
@@ -31,6 +30,7 @@ type SeaweedFilerClient interface {
 	CollectionList(ctx context.Context, in *CollectionListRequest, opts ...grpc.CallOption) (*CollectionListResponse, error)
 	DeleteCollection(ctx context.Context, in *DeleteCollectionRequest, opts ...grpc.CallOption) (*DeleteCollectionResponse, error)
 	Statistics(ctx context.Context, in *StatisticsRequest, opts ...grpc.CallOption) (*StatisticsResponse, error)
+	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 	GetFilerConfiguration(ctx context.Context, in *GetFilerConfigurationRequest, opts ...grpc.CallOption) (*GetFilerConfigurationResponse, error)
 	SubscribeMetadata(ctx context.Context, in *SubscribeMetadataRequest, opts ...grpc.CallOption) (SeaweedFiler_SubscribeMetadataClient, error)
 	SubscribeLocalMetadata(ctx context.Context, in *SubscribeMetadataRequest, opts ...grpc.CallOption) (SeaweedFiler_SubscribeLocalMetadataClient, error)
@@ -212,6 +212,15 @@ func (c *seaweedFilerClient) Statistics(ctx context.Context, in *StatisticsReque
 	return out, nil
 }
 
+func (c *seaweedFilerClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
+	out := new(PingResponse)
+	err := c.cc.Invoke(ctx, "/filer_pb.SeaweedFiler/Ping", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *seaweedFilerClient) GetFilerConfiguration(ctx context.Context, in *GetFilerConfigurationRequest, opts ...grpc.CallOption) (*GetFilerConfigurationResponse, error) {
 	out := new(GetFilerConfigurationResponse)
 	err := c.cc.Invoke(ctx, "/filer_pb.SeaweedFiler/GetFilerConfiguration", in, out, opts...)
@@ -369,6 +378,7 @@ type SeaweedFilerServer interface {
 	CollectionList(context.Context, *CollectionListRequest) (*CollectionListResponse, error)
 	DeleteCollection(context.Context, *DeleteCollectionRequest) (*DeleteCollectionResponse, error)
 	Statistics(context.Context, *StatisticsRequest) (*StatisticsResponse, error)
+	Ping(context.Context, *PingRequest) (*PingResponse, error)
 	GetFilerConfiguration(context.Context, *GetFilerConfigurationRequest) (*GetFilerConfigurationResponse, error)
 	SubscribeMetadata(*SubscribeMetadataRequest, SeaweedFiler_SubscribeMetadataServer) error
 	SubscribeLocalMetadata(*SubscribeMetadataRequest, SeaweedFiler_SubscribeLocalMetadataServer) error
@@ -422,6 +432,9 @@ func (UnimplementedSeaweedFilerServer) DeleteCollection(context.Context, *Delete
 }
 func (UnimplementedSeaweedFilerServer) Statistics(context.Context, *StatisticsRequest) (*StatisticsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Statistics not implemented")
+}
+func (UnimplementedSeaweedFilerServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
 }
 func (UnimplementedSeaweedFilerServer) GetFilerConfiguration(context.Context, *GetFilerConfigurationRequest) (*GetFilerConfigurationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetFilerConfiguration not implemented")
@@ -700,6 +713,24 @@ func _SeaweedFiler_Statistics_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeaweedFiler_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedFilerServer).Ping(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/filer_pb.SeaweedFiler/Ping",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedFilerServer).Ping(ctx, req.(*PingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SeaweedFiler_GetFilerConfiguration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetFilerConfigurationRequest)
 	if err := dec(in); err != nil {
@@ -908,6 +939,10 @@ var SeaweedFiler_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Statistics",
 			Handler:    _SeaweedFiler_Statistics_Handler,
+		},
+		{
+			MethodName: "Ping",
+			Handler:    _SeaweedFiler_Ping_Handler,
 		},
 		{
 			MethodName: "GetFilerConfiguration",

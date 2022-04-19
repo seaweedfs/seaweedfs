@@ -4,10 +4,6 @@ import (
 	"crypto/sha1"
 	"encoding/json"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -15,6 +11,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 
 	"github.com/aws/aws-sdk-go/service/iam"
 )
@@ -151,6 +152,22 @@ func (iama *IamApiServer) GetUser(s3cfg *iam_pb.S3ApiConfiguration, userName str
 			resp.GetUserResult.User = iam.User{UserName: &ident.Name}
 			return resp, nil
 		}
+	}
+	return resp, fmt.Errorf(iam.ErrCodeNoSuchEntityException)
+}
+
+func (iama *IamApiServer) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp UpdateUserResponse, err error) {
+	userName := values.Get("UserName")
+	newUserName := values.Get("NewUserName")
+	if newUserName != "" {
+		for _, ident := range s3cfg.Identities {
+			if userName == ident.Name {
+				ident.Name = newUserName
+				return resp, nil
+			}
+		}
+	} else {
+		return resp, nil
 	}
 	return resp, fmt.Errorf(iam.ErrCodeNoSuchEntityException)
 }
@@ -396,6 +413,13 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		changed = false
+	case "UpdateUser":
+		response, err = iama.UpdateUser(s3cfg, values)
+		if err != nil {
+			glog.Errorf("UpdateUser: %+v", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			return
+		}
 	case "DeleteUser":
 		userName := values.Get("UserName")
 		response, err = iama.DeleteUser(s3cfg, userName)

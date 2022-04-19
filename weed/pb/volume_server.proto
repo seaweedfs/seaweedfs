@@ -107,6 +107,10 @@ service VolumeServer {
 
     rpc VolumeNeedleStatus (VolumeNeedleStatusRequest) returns (VolumeNeedleStatusResponse) {
     }
+
+    rpc Ping (PingRequest) returns (PingResponse) {
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -572,4 +576,14 @@ message VolumeNeedleStatusResponse {
     uint64 last_modified = 4;
     uint32 crc = 5;
     string ttl = 6;
+}
+
+message PingRequest {
+    string target = 1; // default to ping itself
+    string target_type = 2;
+}
+message PingResponse {
+    int64 start_time_ns = 1;
+    int64 remote_time_ns = 2;
+    int64 stop_time_ns = 3;
 }

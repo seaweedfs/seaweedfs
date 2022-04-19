@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
@@ -92,8 +93,27 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		return fmt.Errorf("failed to collect all volume locations: %v", err)
 	}
 
+	isBucketsPath := false
+	var fillerBucketsPath string
+	if *findMissingChunksInFiler && *findMissingChunksInFilerPath != "" {
+		fillerBucketsPath, err = readFilerBucketsPath(commandEnv)
+		if err != nil {
+			return fmt.Errorf("read filer buckets path: %v", err)
+		}
+		if strings.HasPrefix(*findMissingChunksInFilerPath, fillerBucketsPath) {
+			isBucketsPath = true
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("read filer buckets path: %v", err)
+	}
+
 	// collect each volume file ids
 	for volumeId, vinfo := range volumeIdToVInfo {
+		if isBucketsPath && !strings.HasPrefix(*findMissingChunksInFilerPath, fillerBucketsPath+"/"+vinfo.collection) {
+			delete(volumeIdToVInfo, volumeId)
+			continue
+		}
 		err = c.collectOneVolumeFileIds(tempFolder, volumeId, vinfo, *verbose, writer)
 		if err != nil {
 			return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, err)

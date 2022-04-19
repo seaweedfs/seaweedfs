@@ -19,14 +19,15 @@ import (
 )
 
 type S3ApiServerOption struct {
-	Filer            pb.ServerAddress
-	Port             int
-	Config           string
-	DomainName       string
-	BucketsPath      string
-	GrpcDialOption   grpc.DialOption
-	AllowEmptyFolder bool
-	LocalFilerSocket *string
+	Filer                     pb.ServerAddress
+	Port                      int
+	Config                    string
+	DomainName                string
+	BucketsPath               string
+	GrpcDialOption            grpc.DialOption
+	AllowEmptyFolder          bool
+	AllowDeleteBucketNotEmpty bool
+	LocalFilerSocket          *string
 }
 
 type S3ApiServer struct {

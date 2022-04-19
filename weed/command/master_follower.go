@@ -83,7 +83,7 @@ func runMasterFollower(cmd *Command, args []string) bool {
 func startMasterFollower(masterOptions MasterOptions) {
 
 	// collect settings from main masters
-	masters := pb.ServerAddresses(*mf.peers).ToAddresses()
+	masters := pb.ServerAddresses(*mf.peers).ToAddressMap()
 
 	var err error
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.master")

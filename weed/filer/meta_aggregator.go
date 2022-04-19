@@ -76,9 +76,6 @@ func (ma *MetaAggregator) setActive(address pb.ServerAddress, isActive bool) (no
 		}
 	} else {
 		if _, found := ma.peerStatues[address]; found {
-			ma.peerStatues[address] -= 1
-		}
-		if ma.peerStatues[address] <= 0 {
 			delete(ma.peerStatues, address)
 		}
 	}

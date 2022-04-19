@@ -8,7 +8,6 @@ import (
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the grpc package it is being compiled against.
-// Requires gRPC-Go v1.32.0 or later.
 const _ = grpc.SupportPackageIsVersion7
 
 // SeaweedIdentityAccessManagementClient is the client API for SeaweedIdentityAccessManagement service.
