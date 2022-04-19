@@ -1,0 +1,89 @@
+version: '2'
+
+services:
+  master0:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9333:9333
+      - 19333:19333
+    command: "-v=4 master -volumeSizeLimitMB 100 -raftHashicorp -ip=master0 -port=9333 -peers=master1:9334,master2:9335 -mdir=/data"
+    volumes:
+      - ./master/0:/data
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
+      WEED_MASTER_VOLUME_GROWTH_COPY_2: 2
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+  master1:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9334:9334
+      - 19334:19334
+    command: "-v=4 master -volumeSizeLimitMB 100 -raftHashicorp -ip=master1 -port=9334 -peers=master0:9333,master2:9335 -mdir=/data"
+    volumes:
+      - ./master/1:/data
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
+      WEED_MASTER_VOLUME_GROWTH_COPY_2: 2
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+  master2:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9335:9335
+      - 19335:19335
+    command: "-v=4 master -volumeSizeLimitMB 100 -raftHashicorp -ip=master2 -port=9335 -peers=master0:9333,master1:9334 -mdir=/data"
+    volumes:
+      - ./master/2:/data
+    environment:
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
+      WEED_MASTER_VOLUME_GROWTH_COPY_2: 2
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+  volume1:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8080:8080
+      - 18080:18080
+    command: 'volume -dataCenter=dc1 -rack=v1 -mserver="master0:9333,master1:9334,master2:9335" -port=8080 -ip=volume1 -publicUrl=localhost:8080 -preStopSeconds=1'
+    depends_on:
+      - master0
+      - master1
+  volume2:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8082:8082
+      - 18082:18082
+    command: 'volume -dataCenter=dc2 -rack=v2 -mserver="master0:9333,master1:9334,master2:9335" -port=8082 -ip=volume2 -publicUrl=localhost:8082 -preStopSeconds=1'
+    depends_on:
+      - master0
+      - master1
+  volume3:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8083:8083
+      - 18083:18083
+    command: 'volume -dataCenter=dc3 -rack=v3 -mserver="master0:9333,master1:9334,master2:9335" -port=8083 -ip=volume3 -publicUrl=localhost:8083 -preStopSeconds=1'
+    depends_on:
+      - master0
+      - master1
+  filer:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8888:8888
+      - 18888:18888
+      - 8111:8111
+    command: 'filer -defaultReplicaPlacement=100 -iam -master="master0:9333,master1:9334,master2:9335"'
+    depends_on:
+      - master0
+      - master1
+      - volume1
+      - volume2
+  s3:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8333:8333
+    command: '-v=9 s3 -ip.bind="s3" -filer="filer:8888"'
+    depends_on:
+      - master0
+      - master1
+      - volume1
+      - volume2
+      - filer

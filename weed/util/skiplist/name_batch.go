@@ -3,7 +3,7 @@ package skiplist
 import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/golang/protobuf/proto"
-	"sort"
+	"golang.org/x/exp/slices"
 	"strings"
 )
 
@@ -41,8 +41,8 @@ func (nb *NameBatch) ListNames(startFrom string, visitNamesFn func(name string) 
 			names = append(names, n)
 		}
 	}
-	sort.Slice(names, func(i, j int) bool {
-		return strings.Compare(names[i], names[j]) < 0
+	slices.SortFunc(names, func(a, b string) bool {
+		return strings.Compare(a, b) < 0
 	})
 	for _, n := range names {
 		if !visitNamesFn(n) {

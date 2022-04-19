@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
+	"golang.org/x/exp/slices"
 
 	"io"
-	"sort"
 )
 
 func init() {
@@ -67,8 +67,8 @@ func diskInfoToString(diskInfo *master_pb.DiskInfo) string {
 
 func writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo, volumeSizeLimitMb uint64, verbosityLevel int) statistics {
 	output(verbosityLevel >= 0, writer, "Topology volumeSizeLimit:%d MB%s\n", volumeSizeLimitMb, diskInfosToString(t.DiskInfos))
-	sort.Slice(t.DataCenterInfos, func(i, j int) bool {
-		return t.DataCenterInfos[i].Id < t.DataCenterInfos[j].Id
+	slices.SortFunc(t.DataCenterInfos, func(a, b *master_pb.DataCenterInfo) bool {
+		return a.Id < b.Id
 	})
 	var s statistics
 	for _, dc := range t.DataCenterInfos {
@@ -80,8 +80,8 @@ func writeTopologyInfo(writer io.Writer, t *master_pb.TopologyInfo, volumeSizeLi
 func writeDataCenterInfo(writer io.Writer, t *master_pb.DataCenterInfo, verbosityLevel int) statistics {
 	output(verbosityLevel >= 1, writer, "  DataCenter %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
 	var s statistics
-	sort.Slice(t.RackInfos, func(i, j int) bool {
-		return t.RackInfos[i].Id < t.RackInfos[j].Id
+	slices.SortFunc(t.RackInfos, func(a, b *master_pb.RackInfo) bool {
+		return a.Id < b.Id
 	})
 	for _, r := range t.RackInfos {
 		s = s.plus(writeRackInfo(writer, r, verbosityLevel))
@@ -92,8 +92,8 @@ func writeDataCenterInfo(writer io.Writer, t *master_pb.DataCenterInfo, verbosit
 func writeRackInfo(writer io.Writer, t *master_pb.RackInfo, verbosityLevel int) statistics {
 	output(verbosityLevel >= 2, writer, "    Rack %s%s\n", t.Id, diskInfosToString(t.DiskInfos))
 	var s statistics
-	sort.Slice(t.DataNodeInfos, func(i, j int) bool {
-		return t.DataNodeInfos[i].Id < t.DataNodeInfos[j].Id
+	slices.SortFunc(t.DataNodeInfos, func(a, b *master_pb.DataNodeInfo) bool {
+		return a.Id < b.Id
 	})
 	for _, dn := range t.DataNodeInfos {
 		s = s.plus(writeDataNodeInfo(writer, dn, verbosityLevel))
@@ -118,8 +118,8 @@ func writeDiskInfo(writer io.Writer, t *master_pb.DiskInfo, verbosityLevel int) 
 		diskType = "hdd"
 	}
 	output(verbosityLevel >= 4, writer, "        Disk %s(%s)\n", diskType, diskInfoToString(t))
-	sort.Slice(t.VolumeInfos, func(i, j int) bool {
-		return t.VolumeInfos[i].Id < t.VolumeInfos[j].Id
+	slices.SortFunc(t.VolumeInfos, func(a, b *master_pb.VolumeInformationMessage) bool {
+		return a.Id < b.Id
 	})
 	for _, vi := range t.VolumeInfos {
 		s = s.plus(writeVolumeInformationMessage(writer, vi, verbosityLevel))

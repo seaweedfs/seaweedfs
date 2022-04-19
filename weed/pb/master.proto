@@ -35,7 +35,14 @@ service Seaweed {
   }
   rpc ReleaseAdminToken (ReleaseAdminTokenRequest) returns (ReleaseAdminTokenResponse) {
   }
-
+  rpc Ping (PingRequest) returns (PingResponse) {
+  }
+  rpc RaftListClusterServers (RaftListClusterServersRequest) returns (RaftListClusterServersResponse) {
+  }
+  rpc RaftAddServer (RaftAddServerRequest) returns (RaftAddServerResponse) {
+  }
+  rpc RaftRemoveServer (RaftRemoveServerRequest) returns (RaftRemoveServerResponse) {
+  }
 }
 
 //////////////////////////////////////////////////
@@ -140,6 +147,8 @@ message VolumeLocation {
   string leader = 5; // optional when leader is not itself
   string data_center = 6; // optional when DataCenter is in use
   uint32 grpc_port = 7;
+  repeated uint32 new_ec_vids = 8;
+  repeated uint32 deleted_ec_vids = 9;
 }
 
 message ClusterNodeUpdate {
@@ -281,6 +290,8 @@ message LookupEcVolumeResponse {
 
 message VacuumVolumeRequest {
   float garbage_threshold = 1;
+  uint32 volume_id = 2;
+  string collection = 3;
 }
 message VacuumVolumeResponse {
 }
@@ -327,4 +338,40 @@ message ReleaseAdminTokenRequest {
   string lock_name = 3;
 }
 message ReleaseAdminTokenResponse {
+}
+
+message PingRequest {
+  string target = 1; // default to ping itself
+  string target_type = 2;
+}
+message PingResponse {
+  int64 start_time_ns = 1;
+  int64 remote_time_ns = 2;
+  int64 stop_time_ns = 3;
+}
+
+message RaftAddServerRequest {
+  string id = 1;
+  string address = 2;
+  bool voter = 3;
+}
+message RaftAddServerResponse {
+}
+
+message RaftRemoveServerRequest {
+  string id = 1;
+  bool force = 2;
+}
+message RaftRemoveServerResponse {
+}
+
+message RaftListClusterServersRequest {
+}
+message RaftListClusterServersResponse {
+  message ClusterServers {
+    string id = 1;
+    string address = 2;
+    string suffrage = 3; //
+  }
+  repeated ClusterServers cluster_servers = 1;
 }

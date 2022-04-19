@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"time"
 
 	"google.golang.org/grpc/reflection"
@@ -29,7 +30,7 @@ var (
 )
 
 type FilerOptions struct {
-	masters                 []pb.ServerAddress
+	masters                 map[string]pb.ServerAddress
 	mastersString           *string
 	ip                      *string
 	bindIp                  *string
@@ -89,6 +90,7 @@ func init() {
 	filerS3Options.config = cmdFiler.Flag.String("s3.config", "", "path to the config file")
 	filerS3Options.auditLogConfig = cmdFiler.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	filerS3Options.allowEmptyFolder = cmdFiler.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
+	filerS3Options.allowDeleteBucketNotEmpty = cmdFiler.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
@@ -171,7 +173,7 @@ func runFiler(cmd *Command, args []string) bool {
 		}()
 	}
 
-	f.masters = pb.ServerAddresses(*f.mastersString).ToAddresses()
+	f.masters = pb.ServerAddresses(*f.mastersString).ToAddressMap()
 
 	f.startFiler()
 
@@ -247,18 +249,6 @@ func (fo *FilerOptions) startFiler() {
 		glog.Fatalf("Filer listener error: %v", e)
 	}
 
-	// start on local unix socket
-	if *fo.localSocket == "" {
-		*fo.localSocket = fmt.Sprintf("/tmp/seaweefs-filer-%d.sock", *fo.port)
-		if err := os.Remove(*fo.localSocket); err != nil && !os.IsNotExist(err) {
-			glog.Fatalf("Failed to remove %s, error: %s", *fo.localSocket, err.Error())
-		}
-	}
-	filerSocketListener, err := net.Listen("unix", *fo.localSocket)
-	if err != nil {
-		glog.Fatalf("Failed to listen on %s: %v", *fo.localSocket, err)
-	}
-
 	// starting grpc server
 	grpcPort := *fo.portGrpc
 	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*fo.bindIp, grpcPort, 0)
@@ -274,9 +264,22 @@ func (fo *FilerOptions) startFiler() {
 	go grpcS.Serve(grpcL)
 
 	httpS := &http.Server{Handler: defaultMux}
-	go func() {
-		httpS.Serve(filerSocketListener)
-	}()
+	if runtime.GOOS != "windows" {
+		if *fo.localSocket == "" {
+			*fo.localSocket = fmt.Sprintf("/tmp/seaweefs-filer-%d.sock", *fo.port)
+			if err := os.Remove(*fo.localSocket); err != nil && !os.IsNotExist(err) {
+				glog.Fatalf("Failed to remove %s, error: %s", *fo.localSocket, err.Error())
+			}
+		}
+		go func() {
+			// start on local unix socket
+			filerSocketListener, err := net.Listen("unix", *fo.localSocket)
+			if err != nil {
+				glog.Fatalf("Failed to listen on %s: %v", *fo.localSocket, err)
+			}
+			httpS.Serve(filerSocketListener)
+		}()
+	}
 	if filerLocalListener != nil {
 		go func() {
 			if err := httpS.Serve(filerLocalListener); err != nil {

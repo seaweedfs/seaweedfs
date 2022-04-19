@@ -11,9 +11,14 @@ on:
   workflow_dispatch:
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
+permissions:
+  contents: read
+
 jobs:
 
   build-release-binaries_windows:
+    permissions:
+      contents: write  # for wangyoucao577/go-release-action to upload release assets
     runs-on: ubuntu-latest
     strategy:
       matrix:

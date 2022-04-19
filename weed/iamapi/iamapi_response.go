@@ -66,6 +66,11 @@ type GetUserResponse struct {
 	} `xml:"GetUserResult"`
 }
 
+type UpdateUserResponse struct {
+	CommonResponse
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ UpdateUserResponse"`
+}
+
 type CreateAccessKeyResponse struct {
 	CommonResponse
 	XMLName               xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ CreateAccessKeyResponse"`

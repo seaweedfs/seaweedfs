@@ -61,6 +61,7 @@ const (
 	ErrInvalidMaxKeys
 	ErrInvalidMaxUploads
 	ErrInvalidMaxParts
+	ErrInvalidMaxDeleteObjects
 	ErrInvalidPartNumberMarker
 	ErrInvalidPart
 	ErrInternalError
@@ -155,6 +156,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidMaxParts: {
 		Code:           "InvalidArgument",
 		Description:    "Argument max-parts must be an integer between 0 and 2147483647",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidMaxDeleteObjects: {
+		Code:           "InvalidArgument",
+		Description:    "Argument objects can contain a list of up to 1000 keys",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidPartNumberMarker: {

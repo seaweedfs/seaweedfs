@@ -18,7 +18,7 @@ type MasterClient struct {
 	clientType     string
 	clientHost     pb.ServerAddress
 	currentMaster  pb.ServerAddress
-	masters        []pb.ServerAddress
+	masters        map[string]pb.ServerAddress
 	grpcDialOption grpc.DialOption
 
 	vidMap
@@ -26,7 +26,7 @@ type MasterClient struct {
 	OnPeerUpdate func(update *master_pb.ClusterNodeUpdate)
 }
 
-func NewMasterClient(grpcDialOption grpc.DialOption, clientType string, clientHost pb.ServerAddress, clientDataCenter string, masters []pb.ServerAddress) *MasterClient {
+func NewMasterClient(grpcDialOption grpc.DialOption, clientType string, clientHost pb.ServerAddress, clientDataCenter string, masters map[string]pb.ServerAddress) *MasterClient {
 	return &MasterClient{
 		clientType:     clientType,
 		clientHost:     clientHost,
@@ -39,6 +39,11 @@ func NewMasterClient(grpcDialOption grpc.DialOption, clientType string, clientHo
 func (mc *MasterClient) GetMaster() pb.ServerAddress {
 	mc.WaitUntilConnected()
 	return mc.currentMaster
+}
+
+func (mc *MasterClient) GetMasters() map[string]pb.ServerAddress {
+	mc.WaitUntilConnected()
+	return mc.masters
 }
 
 func (mc *MasterClient) WaitUntilConnected() {
@@ -153,6 +158,14 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 				for _, deletedVid := range resp.VolumeLocation.DeletedVids {
 					glog.V(1).Infof("%s: %s masterClient removes volume %d", mc.clientType, loc.Url, deletedVid)
 					mc.deleteLocation(deletedVid, loc)
+				}
+				for _, newEcVid := range resp.VolumeLocation.NewEcVids {
+					glog.V(1).Infof("%s: %s masterClient adds ec volume %d", mc.clientType, loc.Url, newEcVid)
+					mc.addEcLocation(newEcVid, loc)
+				}
+				for _, deletedEcVid := range resp.VolumeLocation.DeletedEcVids {
+					glog.V(1).Infof("%s: %s masterClient removes ec volume %d", mc.clientType, loc.Url, deletedEcVid)
+					mc.deleteEcLocation(deletedEcVid, loc)
 				}
 			}
 

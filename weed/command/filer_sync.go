@@ -267,7 +267,10 @@ func genProcessFunction(sourcePath string, targetPath string, dataSink sink.Repl
 				return nil
 			}
 			key := buildKey(dataSink, message, targetPath, sourceOldKey, sourcePath)
-			return dataSink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks, message.Signatures)
+			if !dataSink.IsIncremental() {
+				return dataSink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks, message.Signatures)
+			}
+			return nil
 		}
 
 		// handle new entries
