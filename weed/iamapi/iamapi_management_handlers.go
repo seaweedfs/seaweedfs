@@ -455,6 +455,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	case "DeleteUserPolicy":
 		if response, err = iama.DeleteUserPolicy(s3cfg, values); err != nil {
 			writeIamErrorResponse(w, r, err, "user", values.Get("UserName"), nil)
+			return
 		}
 	default:
 		errNotImplemented := s3err.GetAPIError(s3err.ErrNotImplemented)
