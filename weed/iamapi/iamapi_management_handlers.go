@@ -382,7 +382,7 @@ func (iama *IamApiServer) DeleteAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 // "If you do not specify a user name, IAM determines the user name implicitly based on the Amazon Web
 // Services access key ID signing the request."
 func handleImplicitUsername(r *http.Request, values url.Values) {
-	if values.Get("UserName") == "" {
+	if values.Get("UserName") == "" && len(r.Header["Authorization"]) > 0 {
 		// get username who signs the request
 		userName := strings.Split(r.Header["Authorization"][0], "/")[2]
 		values.Set("UserName", userName)
