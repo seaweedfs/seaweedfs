@@ -21,6 +21,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/arangodb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/cassandra"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/elastic/v7"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/etcd"
