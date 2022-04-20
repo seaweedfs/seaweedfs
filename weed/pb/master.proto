@@ -290,6 +290,8 @@ message LookupEcVolumeResponse {
 
 message VacuumVolumeRequest {
   float garbage_threshold = 1;
+  uint32 volume_id = 2;
+  string collection = 3;
 }
 message VacuumVolumeResponse {
 }
@@ -343,6 +345,9 @@ message PingRequest {
   string target_type = 2;
 }
 message PingResponse {
+  int64 start_time_ns = 1;
+  int64 remote_time_ns = 2;
+  int64 stop_time_ns = 3;
 }
 
 message RaftAddServerRequest {

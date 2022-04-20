@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
+	"golang.org/x/exp/slices"
 	"math"
 	"os"
-	"sort"
 	"sync"
 	"time"
 
@@ -82,9 +82,8 @@ func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
 		}
 	}
 	ev.Shards = append(ev.Shards, ecVolumeShard)
-	sort.Slice(ev.Shards, func(i, j int) bool {
-		return ev.Shards[i].VolumeId < ev.Shards[j].VolumeId ||
-			ev.Shards[i].VolumeId == ev.Shards[j].VolumeId && ev.Shards[i].ShardId < ev.Shards[j].ShardId
+	slices.SortFunc(ev.Shards, func(a, b *EcVolumeShard) bool {
+		return a.VolumeId < b.VolumeId || a.VolumeId == b.VolumeId && a.ShardId < b.ShardId
 	})
 	return true
 }

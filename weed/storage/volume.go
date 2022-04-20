@@ -260,7 +260,7 @@ func (v *Volume) collectStatus() (maxFileKey types.NeedleId, datFileSize int64, 
 	defer v.dataFileAccessLock.RUnlock()
 	glog.V(3).Infof("collectStatus volume %d", v.Id)
 
-	if v.nm == nil {
+	if v.nm == nil || v.DataBackend == nil {
 		return
 	}
 

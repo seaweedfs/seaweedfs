@@ -440,8 +440,11 @@ func (vl *VolumeLayout) SetVolumeCapacityFull(vid needle.VolumeId) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	glog.V(0).Infof("Volume %d reaches full capacity.", vid)
-	return vl.removeFromWritable(vid)
+	wasWritable := vl.removeFromWritable(vid)
+	if wasWritable {
+		glog.V(0).Infof("Volume %d reaches full capacity.", vid)
+	}
+	return wasWritable
 }
 
 func (vl *VolumeLayout) removeFromCrowded(vid needle.VolumeId) {

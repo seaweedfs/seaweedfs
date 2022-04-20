@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util/mem"
+	"golang.org/x/exp/slices"
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
@@ -290,8 +290,8 @@ func (s3a *S3ApiServer) doDeleteEmptyDirectories(client filer_pb.SeaweedFilerCli
 	for dir, _ := range directoriesWithDeletion {
 		allDirs = append(allDirs, dir)
 	}
-	sort.Slice(allDirs, func(i, j int) bool {
-		return len(allDirs[i]) > len(allDirs[j])
+	slices.SortFunc(allDirs, func(a, b string) bool {
+		return len(a) > len(b)
 	})
 	newDirectoriesWithDeletion = make(map[string]int)
 	for _, dir := range allDirs {
