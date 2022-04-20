@@ -377,6 +377,18 @@ func (iama *IamApiServer) DeleteAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 	return resp
 }
 
+// handleImplicitUsername adds username who signs the request to values if 'username' is not specified
+// According to https://awscli.amazonaws.com/v2/documentation/api/latest/reference/iam/create-access-key.html/
+// "If you do not specify a user name, IAM determines the user name implicitly based on the Amazon Web
+// Services access key ID signing the request."
+func handleImplicitUsername(r *http.Request, values url.Values) {
+	if values.Get("UserName") == "" {
+		// get username who signs the request
+		userName := strings.Split(r.Header["Authorization"][0], "/")[2]
+		values.Set("UserName", userName)
+	}
+}
+
 func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
@@ -401,6 +413,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		response = iama.ListUsers(s3cfg, values)
 		changed = false
 	case "ListAccessKeys":
+		handleImplicitUsername(r, values)
 		response = iama.ListAccessKeys(s3cfg, values)
 		changed = false
 	case "CreateUser":
@@ -428,8 +441,10 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "CreateAccessKey":
+		handleImplicitUsername(r, values)
 		response = iama.CreateAccessKey(s3cfg, values)
 	case "DeleteAccessKey":
+		handleImplicitUsername(r, values)
 		response = iama.DeleteAccessKey(s3cfg, values)
 	case "CreatePolicy":
 		response, err = iama.CreatePolicy(s3cfg, values)
