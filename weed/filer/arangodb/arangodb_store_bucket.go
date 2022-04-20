@@ -2,9 +2,9 @@ package arangodb
 
 import (
 	"context"
+	"github.com/arangodb/go-driver"
 	"time"
 
-	"github.com/arangodb/go-driver"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -18,7 +18,7 @@ func (store *ArangodbStore) OnBucketCreation(bucket string) {
 	// create the collection && add to cache
 	_, err := store.ensureBucket(timeout, bucket)
 	if err != nil {
-		glog.V(0).Infof("bucket create %s : %w", bucket, err)
+		glog.Errorf("bucket create %s: %v", bucket, err)
 	}
 }
 func (store *ArangodbStore) OnBucketDeletion(bucket string) {
@@ -26,12 +26,12 @@ func (store *ArangodbStore) OnBucketDeletion(bucket string) {
 	defer cancel()
 	collection, err := store.ensureBucket(timeout, bucket)
 	if err != nil {
-		glog.V(0).Infof("bucket delete %s : %w", bucket, err)
+		glog.Errorf("bucket delete %s: %v", bucket, err)
 		return
 	}
 	err = collection.Remove(timeout)
 	if err != nil && !driver.IsNotFound(err) {
-		glog.V(0).Infof("bucket delete %s : %w", bucket, err)
+		glog.Errorf("bucket delete %s: %v", bucket, err)
 		return
 	}
 }
