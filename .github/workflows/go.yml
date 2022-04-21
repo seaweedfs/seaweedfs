@@ -32,13 +32,9 @@ jobs:
     - name: Get dependencies
       run: |
         cd weed; go get -v -t -d ./...
-        if [ -f Gopkg.toml ]; then
-            curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
-            dep ensure
-        fi
 
     - name: Build
-      run: cd weed; go build -v .
+      run: cd weed; go build -tags "elastic gocdk sqlite hdfs" -v .
 
     - name: Test
-      run: cd weed; go test -v ./...
+      run: cd weed; go test -tags "elastic gocdk sqlite hdfs" -v ./...
