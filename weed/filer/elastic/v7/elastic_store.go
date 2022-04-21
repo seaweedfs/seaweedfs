@@ -1,3 +1,6 @@
+//go:build elastic
+// +build elastic
+
 package elastic
 
 import (

@@ -1,3 +1,6 @@
+//go:build gocdk
+// +build gocdk
+
 package sub
 
 import (
