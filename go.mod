@@ -150,7 +150,7 @@ require (
 
 require (
 	github.com/Jille/raft-grpc-transport v1.2.0
-	github.com/arangodb/go-driver v1.2.1
+	github.com/arangodb/go-driver v1.3.1
 	github.com/fluent/fluent-logger-golang v1.9.0
 	github.com/hanwen/go-fuse/v2 v2.1.0
 	github.com/hashicorp/raft v1.3.7
