@@ -382,11 +382,31 @@ func (iama *IamApiServer) DeleteAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 // "If you do not specify a user name, IAM determines the user name implicitly based on the Amazon Web
 // Services access key ID signing the request."
 func handleImplicitUsername(r *http.Request, values url.Values) {
-	if values.Get("UserName") == "" {
-		// get username who signs the request
-		userName := strings.Split(r.Header["Authorization"][0], "/")[2]
-		values.Set("UserName", userName)
+	if len(r.Header["Authorization"]) == 0 || values.Get("UserName") != "" {
+		return
 	}
+	// get username who signs the request
+	// for a typical Authorization:
+	// "AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request, SignedHeaders=content-type;
+	// host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"
+	// the "test1" will be extracted as the username
+	s := strings.Split(r.Header["Authorization"][0], "Credential=")
+	if len(s) < 2 {
+		return
+	}
+	glog.V(6).Infof("s: %v\n", s)
+	s = strings.Split(s[1], ",")
+	if len(s) < 2 {
+		return
+	}
+	glog.V(6).Infof("s: %v\n", s)
+	s = strings.Split(s[0], "/")
+	if len(s) < 5 {
+		return
+	}
+	glog.V(6).Infof("s: %v\n", s)
+	userName := s[2]
+	values.Set("UserName", userName)
 }
 
 func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
