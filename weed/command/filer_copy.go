@@ -71,7 +71,7 @@ var cmdFilerCopy = &Command{
   It can copy one or a list of files or folders.
 
   If copying a whole folder recursively:
-  All files under the folder and subfolders will be copyed.
+  All files under the folder and sub folders will be copied.
   Optional parameter "-include" allows you to specify the file name patterns.
 
   If "maxMB" is set to a positive number, files larger than it would be split into chunks.

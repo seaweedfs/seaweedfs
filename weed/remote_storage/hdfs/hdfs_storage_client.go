@@ -1,3 +1,6 @@
+//go:build hdfs
+// +build hdfs
+
 package hdfs
 
 import (
@@ -7,7 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
 	"github.com/chrislusf/seaweedfs/weed/remote_storage"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/colinmarc/hdfs/v2"
+	hdfs "github.com/colinmarc/hdfs/v2"
 	"io"
 	"os"
 	"path"

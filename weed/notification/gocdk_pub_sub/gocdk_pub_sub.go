@@ -1,3 +1,6 @@
+//go:build gocdk
+// +build gocdk
+
 // Package gocdk_pub_sub supports the Go CDK (Cloud Development Kit) PubSub API,
 // which in turn supports many providers, including Amazon SNS/SQS, Azure Service Bus,
 // Google Cloud PubSub, and RabbitMQ.

@@ -385,27 +385,28 @@ func handleImplicitUsername(r *http.Request, values url.Values) {
 	if len(r.Header["Authorization"]) == 0 || values.Get("UserName") != "" {
 		return
 	}
-	// get username who signs the request
-	// for a typical Authorization:
+	// get username who signs the request. For a typical Authorization:
 	// "AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request, SignedHeaders=content-type;
-	// host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8"
+	// host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8",
 	// the "test1" will be extracted as the username
+	glog.V(4).Infof("Authorization field: %v", r.Header["Authorization"][0])
 	s := strings.Split(r.Header["Authorization"][0], "Credential=")
 	if len(s) < 2 {
 		return
 	}
-	glog.V(6).Infof("s: %v\n", s)
+	glog.V(4).Infof("First strip: %v", s)
 	s = strings.Split(s[1], ",")
 	if len(s) < 2 {
 		return
 	}
-	glog.V(6).Infof("s: %v\n", s)
+	glog.V(4).Infof("Second strip: %v", s)
 	s = strings.Split(s[0], "/")
 	if len(s) < 5 {
 		return
 	}
-	glog.V(6).Infof("s: %v\n", s)
+	glog.V(4).Infof("Third strip: %v", s)
 	userName := s[2]
+	glog.V(4).Infof("UserName: %v", userName)
 	values.Set("UserName", userName)
 }
 

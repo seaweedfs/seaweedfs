@@ -10,7 +10,7 @@ require (
 	github.com/Azure/azure-storage-blob-go v0.14.0
 	github.com/OneOfOne/xxhash v1.2.8
 	github.com/Shopify/sarama v1.32.0
-	github.com/aws/aws-sdk-go v1.43.41
+	github.com/aws/aws-sdk-go v1.43.43
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/buraksezer/consistent v0.0.0-20191006190839-693edf70fd72
 	github.com/bwmarrin/snowflake v0.3.0
@@ -102,7 +102,7 @@ require (
 	github.com/stretchr/testify v1.7.1
 	github.com/stvp/tempredis v0.0.0-20181119212430-b82af8480203
 	github.com/syndtr/goleveldb v1.0.1-0.20190318030020-c3a204f8e965
-	github.com/tidwall/gjson v1.14.0
+	github.com/tidwall/gjson v1.14.1
 	github.com/tidwall/match v1.1.1
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/tsuna/gohbase v0.0.0-20201125011725-348991136365
@@ -130,9 +130,9 @@ require (
 	golang.org/x/text v0.3.7 // indirect
 	golang.org/x/tools v0.1.8-0.20211029000441-d6a9af8af023
 	golang.org/x/xerrors v0.0.0-20220411194840-2f41105eb62f // indirect
-	google.golang.org/api v0.74.0
+	google.golang.org/api v0.75.0
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto v0.0.0-20220407144326-9054f6ed7bac // indirect
+	google.golang.org/genproto v0.0.0-20220414192740-2d67ff6cf2b4 // indirect
 	google.golang.org/grpc v1.45.0
 	google.golang.org/protobuf v1.28.0
 	gopkg.in/inf.v0 v0.9.1 // indirect
@@ -150,6 +150,7 @@ require (
 
 require (
 	github.com/Jille/raft-grpc-transport v1.2.0
+	github.com/arangodb/go-driver v1.3.1
 	github.com/fluent/fluent-logger-golang v1.9.0
 	github.com/hanwen/go-fuse/v2 v2.1.0
 	github.com/hashicorp/raft v1.3.7
@@ -157,8 +158,9 @@ require (
 )
 
 require (
-	cloud.google.com/go/compute v1.5.0 // indirect
+	cloud.google.com/go/compute v1.6.0 // indirect
 	cloud.google.com/go/iam v0.3.0 // indirect
+	github.com/arangodb/go-velocypack v0.0.0-20200318135517-5af53c29c67e // indirect
 	github.com/armon/go-metrics v0.3.10 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.16.2 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.15.3 // indirect
