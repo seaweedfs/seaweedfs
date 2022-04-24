@@ -394,19 +394,15 @@ func handleImplicitUsername(r *http.Request, values url.Values) {
 	if len(s) < 2 {
 		return
 	}
-	glog.V(4).Infof("First strip: %v", s)
 	s = strings.Split(s[1], ",")
 	if len(s) < 2 {
 		return
 	}
-	glog.V(4).Infof("Second strip: %v", s)
 	s = strings.Split(s[0], "/")
 	if len(s) < 5 {
 		return
 	}
-	glog.V(4).Infof("Third strip: %v", s)
 	userName := s[2]
-	glog.V(4).Infof("UserName: %v", userName)
 	values.Set("UserName", userName)
 }
 
