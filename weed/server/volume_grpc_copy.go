@@ -279,6 +279,7 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 		if uint32(v.CompactionRevision) != req.CompactionRevision && req.CompactionRevision != math.MaxUint32 {
 			return fmt.Errorf("volume %d is compacted", req.VolumeId)
 		}
+		v.SyncToDisk()
 		fileName = v.FileName(req.Ext)
 	} else {
 		baseFileName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId)) + req.Ext
