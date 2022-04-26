@@ -195,6 +195,10 @@ func (v *Volume) Close() {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 	if v.nm != nil {
+		for v.isCompacting {
+			glog.Warningf("Volume being closed during compression idx %d", v.Id)
+			time.Sleep(time.Second)
+		}
 		if err := v.nm.Sync(); err != nil {
 			glog.Warningf("Volume Close fail to sync volume idx %d", v.Id)
 		}
