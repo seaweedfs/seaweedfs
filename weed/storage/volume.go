@@ -42,7 +42,8 @@ type Volume struct {
 	lastCompactIndexOffset uint64
 	lastCompactRevision    uint16
 
-	isCompacting bool
+	isCompacting       bool
+	isCommitCompacting bool
 
 	volumeInfo *volume_server_pb.VolumeInfo
 	location   *DiskLocation

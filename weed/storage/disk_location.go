@@ -283,7 +283,7 @@ func (l *DiskLocation) UnloadVolume(vid needle.VolumeId) error {
 func (l *DiskLocation) unmountVolumeByCollection(collectionName string) map[needle.VolumeId]*Volume {
 	deltaVols := make(map[needle.VolumeId]*Volume, 0)
 	for k, v := range l.volumes {
-		if v.Collection == collectionName && !v.isCompacting {
+		if v.Collection == collectionName && !v.isCompacting && !v.isCommitCompacting {
 			deltaVols[k] = v
 		}
 	}

@@ -94,9 +94,9 @@ func (v *Volume) CommitCompact() error {
 	}
 	glog.V(0).Infof("Committing volume %d vacuuming...", v.Id)
 
-	v.isCompacting = true
+	v.isCommitCompacting = true
 	defer func() {
-		v.isCompacting = false
+		v.isCommitCompacting = false
 	}()
 
 	v.dataFileAccessLock.Lock()
