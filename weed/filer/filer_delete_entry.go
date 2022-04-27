@@ -25,9 +25,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	if findErr != nil {
 		return findErr
 	}
-
 	isDeleteCollection := f.isBucket(entry)
-
 	if entry.IsDirectory() {
 		// delete the folder children, not including the folder itself
 		err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !isDeleteCollection, isDeleteCollection, isFromOtherCluster, signatures, func(chunks []*filer_pb.FileChunk) error {

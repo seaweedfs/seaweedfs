@@ -94,9 +94,9 @@ func (v *Volume) CommitCompact() error {
 	}
 	glog.V(0).Infof("Committing volume %d vacuuming...", v.Id)
 
-	v.isCompacting = true
+	v.isCommitCompacting = true
 	defer func() {
-		v.isCompacting = false
+		v.isCommitCompacting = false
 	}()
 
 	v.dataFileAccessLock.Lock()
@@ -438,8 +438,7 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 		}
 
 		n := new(needle.Needle)
-		err := n.ReadData(srcDatBackend, offset.ToActualOffset(), size, version)
-		if err != nil {
+		if err := n.ReadData(srcDatBackend, offset.ToActualOffset(), size, version); err != nil {
 			return fmt.Errorf("cannot hydrate needle from file: %s", err)
 		}
 

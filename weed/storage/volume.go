@@ -42,7 +42,8 @@ type Volume struct {
 	lastCompactIndexOffset uint64
 	lastCompactRevision    uint16
 
-	isCompacting bool
+	isCompacting       bool
+	isCommitCompacting bool
 
 	volumeInfo *volume_server_pb.VolumeInfo
 	location   *DiskLocation
@@ -190,10 +191,31 @@ func (v *Volume) SetStopping() {
 	}
 }
 
+func (v *Volume) SyncToDisk() {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+	if v.nm != nil {
+		if err := v.nm.Sync(); err != nil {
+			glog.Warningf("Volume Close fail to sync volume idx %d", v.Id)
+		}
+	}
+	if v.DataBackend != nil {
+		if err := v.DataBackend.Sync(); err != nil {
+			glog.Warningf("Volume Close fail to sync volume %d", v.Id)
+		}
+	}
+}
+
 // Close cleanly shuts down this volume
 func (v *Volume) Close() {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+
+	for v.isCommitCompacting {
+		time.Sleep(521 * time.Millisecond)
+		glog.Warningf("Volume Close wait for compaction %d", v.Id)
+	}
+
 	if v.nm != nil {
 		if err := v.nm.Sync(); err != nil {
 			glog.Warningf("Volume Close fail to sync volume idx %d", v.Id)
@@ -260,7 +282,7 @@ func (v *Volume) collectStatus() (maxFileKey types.NeedleId, datFileSize int64, 
 	defer v.dataFileAccessLock.RUnlock()
 	glog.V(3).Infof("collectStatus volume %d", v.Id)
 
-	if v.nm == nil {
+	if v.nm == nil || v.DataBackend == nil {
 		return
 	}
 

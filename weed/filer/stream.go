@@ -3,6 +3,7 @@ package filer
 import (
 	"bytes"
 	"fmt"
+	"golang.org/x/exp/slices"
 	"io"
 	"math"
 	"sort"
@@ -39,11 +40,11 @@ func isSameChunks(a, b []*filer_pb.FileChunk) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	sort.Slice(a, func(i, j int) bool {
-		return strings.Compare(a[i].ETag, a[j].ETag) < 0
+	slices.SortFunc(a, func(i, j *filer_pb.FileChunk) bool {
+		return strings.Compare(i.ETag, j.ETag) < 0
 	})
-	sort.Slice(b, func(i, j int) bool {
-		return strings.Compare(b[i].ETag, b[j].ETag) < 0
+	slices.SortFunc(b, func(i, j *filer_pb.FileChunk) bool {
+		return strings.Compare(i.ETag, j.ETag) < 0
 	})
 	for i := 0; i < len(a); i++ {
 		if a[i].ETag != b[i].ETag {
@@ -179,8 +180,8 @@ var _ = io.ReaderAt(&ChunkStreamReader{})
 func doNewChunkStreamReader(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
 	chunkViews := ViewFromChunks(lookupFileIdFn, chunks, 0, math.MaxInt64)
-	sort.Slice(chunkViews, func(i, j int) bool {
-		return chunkViews[i].LogicOffset < chunkViews[j].LogicOffset
+	slices.SortFunc(chunkViews, func(a, b *ChunkView) bool {
+		return a.LogicOffset < b.LogicOffset
 	})
 
 	var totalSize int64

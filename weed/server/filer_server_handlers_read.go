@@ -205,7 +205,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			err := filer.ReadAll(data, fs.filer.MasterClient, entry.Chunks)
 			if err != nil {
 				glog.Errorf("failed to read %s: %v", path, err)
-				w.WriteHeader(http.StatusNotModified)
+				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
 			rs, _, _ := images.Resized(ext, bytes.NewReader(data), width, height, mode)

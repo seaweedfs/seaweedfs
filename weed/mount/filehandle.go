@@ -5,8 +5,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"golang.org/x/exp/slices"
 	"io"
-	"sort"
 	"sync"
 )
 
@@ -76,8 +76,8 @@ func (fh *FileHandle) addChunks(chunks []*filer_pb.FileChunk) {
 	}
 
 	// sort incoming chunks
-	sort.Slice(chunks, func(i, j int) bool {
-		return lessThan(chunks[i], chunks[j])
+	slices.SortFunc(chunks, func(a, b *filer_pb.FileChunk) bool {
+		return lessThan(a, b)
 	})
 
 	glog.V(4).Infof("%s existing %d chunks adds %d more", fh.FullPath(), len(fh.entry.Chunks), len(chunks))

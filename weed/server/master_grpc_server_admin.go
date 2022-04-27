@@ -148,27 +148,39 @@ func (ms *MasterServer) ReleaseAdminToken(ctx context.Context, req *master_pb.Re
 }
 
 func (ms *MasterServer) Ping(ctx context.Context, req *master_pb.PingRequest) (resp *master_pb.PingResponse, pingErr error) {
-	resp = &master_pb.PingResponse{}
+	resp = &master_pb.PingResponse{
+		StartTimeNs: time.Now().UnixNano(),
+	}
 	if req.TargetType == cluster.FilerType {
 		pingErr = pb.WithFilerClient(false, pb.ServerAddress(req.Target), ms.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			_, err := client.Ping(ctx, &filer_pb.PingRequest{})
+			pingResp, err := client.Ping(ctx, &filer_pb.PingRequest{})
+			if pingResp != nil {
+				resp.RemoteTimeNs = pingResp.StartTimeNs
+			}
 			return err
 		})
 	}
 	if req.TargetType == cluster.VolumeServerType {
 		pingErr = pb.WithVolumeServerClient(false, pb.ServerAddress(req.Target), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
-			_, err := client.Ping(ctx, &volume_server_pb.PingRequest{})
+			pingResp, err := client.Ping(ctx, &volume_server_pb.PingRequest{})
+			if pingResp != nil {
+				resp.RemoteTimeNs = pingResp.StartTimeNs
+			}
 			return err
 		})
 	}
 	if req.TargetType == cluster.MasterType {
 		pingErr = pb.WithMasterClient(false, pb.ServerAddress(req.Target), ms.grpcDialOption, func(client master_pb.SeaweedClient) error {
-			_, err := client.Ping(ctx, &master_pb.PingRequest{})
+			pingResp, err := client.Ping(ctx, &master_pb.PingRequest{})
+			if pingResp != nil {
+				resp.RemoteTimeNs = pingResp.StartTimeNs
+			}
 			return err
 		})
 	}
 	if pingErr != nil {
 		pingErr = fmt.Errorf("ping %s %s: %v", req.TargetType, req.Target, pingErr)
 	}
+	resp.StopTimeNs = time.Now().UnixNano()
 	return
 }

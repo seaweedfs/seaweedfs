@@ -54,7 +54,7 @@ func (v *Volume) isFileUnchanged(n *needle.Needle) bool {
 
 // Destroy removes everything related to this volume
 func (v *Volume) Destroy() (err error) {
-	if v.isCompacting {
+	if v.isCompacting || v.isCommitCompacting {
 		err = fmt.Errorf("volume %d is compacting", v.Id)
 		return
 	}

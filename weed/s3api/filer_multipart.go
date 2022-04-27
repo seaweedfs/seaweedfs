@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	"golang.org/x/exp/slices"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/google/uuid"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -29,8 +29,7 @@ func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInp
 
 	glog.V(2).Infof("createMultipartUpload input %v", input)
 
-	uploadId, _ := uuid.NewRandom()
-	uploadIdString := uploadId.String()
+	uploadIdString := s3a.generateUploadID(*input.Key)
 
 	if err := s3a.mkdir(s3a.genUploadsFolder(*input.Bucket), uploadIdString, func(entry *filer_pb.Entry) {
 		if entry.Extended == nil {
@@ -69,8 +68,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	glog.V(2).Infof("completeMultipartUpload input %v", input)
 
 	completedParts := parts.Parts
-	sort.Slice(completedParts, func(i, j int) bool {
-		return completedParts[i].PartNumber < completedParts[j].PartNumber
+	slices.SortFunc(completedParts, func(a, b CompletedPart) bool {
+		return a.PartNumber < b.PartNumber
 	})
 
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
