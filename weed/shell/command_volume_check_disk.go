@@ -45,6 +45,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	fsckCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	slowMode := fsckCommand.Bool("slow", false, "slow mode checks all replicas even file counts are the same")
 	verbose := fsckCommand.Bool("v", false, "verbose mode")
+	volumeId := fsckCommand.Uint("volumeId", 0, "the volume id")
 	applyChanges := fsckCommand.Bool("force", false, "apply the fix")
 	nonRepairThreshold := fsckCommand.Float64("nonRepairThreshold", 0.3, "repair when missing keys is not more than this limit")
 	if err = fsckCommand.Parse(args); err != nil {
@@ -70,6 +71,9 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	}
 
 	for _, replicas := range volumeReplicas {
+		if *volumeId > 0 && replicas[0].info.Id != uint32(*volumeId) {
+			continue
+		}
 		slices.SortFunc(replicas, func(a, b *VolumeReplica) bool {
 			return fileCount(a) > fileCount(b)
 		})
