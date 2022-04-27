@@ -210,11 +210,13 @@ func (v *Volume) SyncToDisk() {
 func (v *Volume) Close() {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+
+	for v.isCommitCompacting {
+		time.Sleep(521 * time.Millisecond)
+		glog.Warningf("Volume Close wait for compaction %d", v.Id)
+	}
+
 	if v.nm != nil {
-		for v.isCompacting {
-			glog.Warningf("Volume being closed during compression idx %d", v.Id)
-			time.Sleep(time.Second)
-		}
 		if err := v.nm.Sync(); err != nil {
 			glog.Warningf("Volume Close fail to sync volume idx %d", v.Id)
 		}
