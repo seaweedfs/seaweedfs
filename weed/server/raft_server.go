@@ -202,7 +202,7 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		c.LogLevel = "Error"
 	}
 
-	if option.RaftBootstrap {
+	if option.RaftBootstrap || !option.RaftResumeState {
 		os.RemoveAll(path.Join(s.dataDir, ldbFile))
 		os.RemoveAll(path.Join(s.dataDir, sdbFile))
 		os.RemoveAll(path.Join(s.dataDir, "snapshots"))

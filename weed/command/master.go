@@ -1,7 +1,6 @@
 package command
 
 import (
-	"golang.org/x/exp/slices"
 	"net/http"
 	"os"
 	"strings"
@@ -68,7 +67,7 @@ func init() {
 	m.metricsAddress = cmdMaster.Flag.String("metrics.address", "", "Prometheus gateway address <host>:<port>")
 	m.metricsIntervalSec = cmdMaster.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
 	m.metricsHttpPort = cmdMaster.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
-	m.raftResumeState = cmdMaster.Flag.Bool("resumeState", false, "resume previous state on start master server")
+	m.raftResumeState = cmdMaster.Flag.Bool("resumeState", true, "resume previous state on start master server")
 	m.heartbeatInterval = cmdMaster.Flag.Duration("heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
 	m.electionTimeout = cmdMaster.Flag.Duration("electionTimeout", 10*time.Second, "election timeout of master servers")
 	m.raftBootstrap = cmdMaster.Flag.Bool("raftBootstrap", false, "Whether to bootstrap the Raft cluster")
