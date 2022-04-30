@@ -50,6 +50,9 @@ func newS3BackendStorage(configuration backend.StringProperties, configPrefix st
 	s.bucket = configuration.GetString(configPrefix + "bucket")
 	s.endpoint = configuration.GetString(configPrefix + "endpoint")
 	s.storageClass = configuration.GetString(configPrefix + "storageClass")
+	if s.storageClass == "" {
+		s.storageClass = "STANDARD_IA"
+	}
 
 	s.conn, err = createSession(s.aws_access_key_id, s.aws_secret_access_key, s.region, s.endpoint)
 
