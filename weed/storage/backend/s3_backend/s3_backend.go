@@ -38,6 +38,7 @@ type S3BackendStorage struct {
 	bucket                string
 	endpoint              string
 	conn                  s3iface.S3API
+	storageClass          string
 }
 
 func newS3BackendStorage(configuration backend.StringProperties, configPrefix string, id string) (s *S3BackendStorage, err error) {
@@ -48,6 +49,7 @@ func newS3BackendStorage(configuration backend.StringProperties, configPrefix st
 	s.region = configuration.GetString(configPrefix + "region")
 	s.bucket = configuration.GetString(configPrefix + "bucket")
 	s.endpoint = configuration.GetString(configPrefix + "endpoint")
+	s.storageClass = configuration.GetString(configPrefix + "storageClass")
 
 	s.conn, err = createSession(s.aws_access_key_id, s.aws_secret_access_key, s.region, s.endpoint)
 
@@ -85,7 +87,7 @@ func (s *S3BackendStorage) CopyFile(f *os.File, fn func(progressed int64, percen
 
 	glog.V(1).Infof("copying dat file of %s to remote s3.%s as %s", f.Name(), s.id, key)
 
-	size, err = uploadToS3(s.conn, f.Name(), s.bucket, key, fn)
+	size, err = uploadToS3(s.conn, f.Name(), s.bucket, key, fn, s.storageClass)
 
 	return
 }
