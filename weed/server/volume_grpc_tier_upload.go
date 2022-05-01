@@ -27,7 +27,7 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 	// locate the disk file
 	diskFile, ok := v.DataBackend.(*backend.DiskFile)
 	if !ok {
-		return fmt.Errorf("volume %d is not on local disk", req.VolumeId)
+		return nil // already copied to remove. fmt.Errorf("volume %d is not on local disk", req.VolumeId)
 	}
 
 	// check valid storage backend type
