@@ -75,7 +75,7 @@ func (store *HbaseStore) InsertEntry(ctx context.Context, entry *filer.Entry) er
 	if err != nil {
 		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
 	}
-	if len(entry.Chunks) > 50 {
+	if len(entry.Chunks) > filer.CountEntryChunksForGzip {
 		value = util.MaybeGzipData(value)
 	}
 

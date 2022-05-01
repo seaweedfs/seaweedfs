@@ -8,14 +8,9 @@ options:
 ```
 [ydb]
 enabled=true
-db_name="seaweedfs"
-servers=["http://localhost:8529"]
-#basic auth
-user="root"
-pass="test"
-
-# tls settings
-insecure_skip_verify=true
+prefix="seaweedfs"
+useBucketPrefix=true
+coonectionUrl=grpcs://ydb-ru.yandex.net:2135/?database=/ru/home/username/db
 ```
 
 get ydb types

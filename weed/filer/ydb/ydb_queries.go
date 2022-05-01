@@ -67,6 +67,6 @@ const (
 		
 		SELECT name, meta
 		FROM file_meta
-		WHERE dir_hash == $dir_hash AND directory == $directory and name %v $start_name and name LIKE '$prefix%'
+		WHERE dir_hash == $dir_hash AND directory == $directory and name %s $start_name and name LIKE '$prefix%%'
 		ORDER BY name ASC LIMIT $limit;`
 )

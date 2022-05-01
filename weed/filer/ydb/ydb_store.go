@@ -15,6 +15,10 @@ import (
 	"time"
 )
 
+const (
+	defaultConnectionTimeOut = 10
+)
+
 var (
 	roTX = table.TxControl(
 		table.BeginTx(table.WithOnlineReadOnly()),
@@ -29,8 +33,6 @@ var (
 type YdbStore struct {
 	SupportBucketTable bool
 	DB                 *connect.Connection
-	connParams         connect.ConnectParams
-	connCtx            context.Context
 	dirBuckets         string
 	tablePathPrefix    string
 }
@@ -44,16 +46,27 @@ func (store *YdbStore) GetName() string {
 }
 
 func (store *YdbStore) Initialize(configuration util.Configuration, prefix string) (err error) {
-	return store.initialize(configuration.GetString(prefix + "coonectionUrl"))
+	return store.initialize(
+		configuration.GetString("filer.options.buckets_folder"),
+		configuration.GetString(prefix+"coonectionUrl"),
+		configuration.GetString(prefix+"tablePathPrefix"),
+		configuration.GetBool(prefix+"useBucketPrefix"),
+		configuration.GetInt(prefix+"connectionTimeOut"),
+	)
 }
 
-func (store *YdbStore) initialize(sqlUrl string) (err error) {
-	store.SupportBucketTable = false
+func (store *YdbStore) initialize(dirBuckets string, sqlUrl string, tablePathPrefix string, useBucketPrefix bool, connectionTimeOut int) (err error) {
+	store.dirBuckets = dirBuckets
+	store.tablePathPrefix = tablePathPrefix
+	store.SupportBucketTable = useBucketPrefix
+	if connectionTimeOut == 0 {
+		connectionTimeOut = defaultConnectionTimeOut
+	}
 	var cancel context.CancelFunc
-	store.connCtx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	connCtx, cancel := context.WithTimeout(context.Background(), time.Duration(connectionTimeOut)*time.Second)
 	defer cancel()
-	store.connParams = connect.MustConnectionString(sqlUrl)
-	store.DB, err = connect.New(store.connCtx, store.connParams)
+	connParams := connect.MustConnectionString(sqlUrl)
+	store.DB, err = connect.New(connCtx, connParams)
 	if err != nil {
 		store.DB.Close()
 		store.DB = nil
@@ -61,7 +74,7 @@ func (store *YdbStore) initialize(sqlUrl string) (err error) {
 	}
 	defer store.DB.Close()
 
-	if err = store.DB.EnsurePathExists(store.connCtx, store.connParams.Database()); err != nil {
+	if err = store.DB.EnsurePathExists(connCtx, connParams.Database()); err != nil {
 		return fmt.Errorf("connect to %s error:%v", sqlUrl, err)
 	}
 	return nil
@@ -73,6 +86,11 @@ func (store *YdbStore) insertOrUpdateEntry(ctx context.Context, entry *filer.Ent
 	if err != nil {
 		return fmt.Errorf("encode %s: %s", entry.FullPath, err)
 	}
+
+	if len(entry.Chunks) > filer.CountEntryChunksForGzip {
+		meta = util.MaybeGzipData(meta)
+	}
+
 	fileMeta := FileMeta{util.HashStringToLong(dir), name, dir, meta}
 	return table.Retry(ctx, store.DB.Table().Pool(),
 		table.OperationFunc(func(ctx context.Context, s *table.Session) (err error) {
@@ -114,7 +132,7 @@ func (store *YdbStore) FindEntry(ctx context.Context, fullpath util.FullPath) (e
 	}
 	defer res.Close()
 
-	for res.NextSet() {
+	for res.NextResultSet(ctx) {
 		for res.NextRow() {
 			res.SeekItem("meta")
 			entry.FullPath = fullpath
@@ -251,17 +269,21 @@ func (store *YdbStore) Shutdown() {
 }
 
 func (store *YdbStore) getPrefix(dir string) string {
+	if !store.SupportBucketTable {
+		return store.tablePathPrefix
+	}
+
 	prefixBuckets := store.dirBuckets + "/"
 	if strings.HasPrefix(dir, prefixBuckets) {
 		// detect bucket
 		bucketAndDir := dir[len(prefixBuckets):]
 		if t := strings.Index(bucketAndDir, "/"); t > 0 {
-			return bucketAndDir[:t]
+			return path.Join(bucketAndDir[:t], store.tablePathPrefix)
 		}
 	}
-	return ""
+	return store.tablePathPrefix
 }
 
 func (store *YdbStore) withPragma(prefix, query string) string {
-	return `PRAGMA TablePathPrefix("` + path.Join(store.tablePathPrefix, prefix) + `");` + query
+	return `PRAGMA TablePathPrefix("` + prefix + `");` + query
 }

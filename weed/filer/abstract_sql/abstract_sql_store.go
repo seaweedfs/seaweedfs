@@ -156,7 +156,7 @@ func (store *AbstractSqlStore) InsertEntry(ctx context.Context, entry *filer.Ent
 		return fmt.Errorf("encode %s: %s", entry.FullPath, err)
 	}
 
-	if len(entry.Chunks) > 50 {
+	if len(entry.Chunks) > filer.CountEntryChunksForGzip {
 		meta = util.MaybeGzipData(meta)
 	}
 
