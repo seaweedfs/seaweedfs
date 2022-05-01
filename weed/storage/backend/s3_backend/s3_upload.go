@@ -12,7 +12,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
-func uploadToS3(sess s3iface.S3API, filename string, destBucket string, destKey string, fn func(progressed int64, percentage float32) error) (fileSize int64, err error) {
+func uploadToS3(sess s3iface.S3API, filename string, destBucket string, destKey string, storageClass string, fn func(progressed int64, percentage float32) error) (fileSize int64, err error) {
 
 	//open the file
 	f, err := os.Open(filename)
@@ -52,7 +52,7 @@ func uploadToS3(sess s3iface.S3API, filename string, destBucket string, destKey 
 		Bucket:       aws.String(destBucket),
 		Key:          aws.String(destKey),
 		Body:         fileReader,
-		StorageClass: aws.String("STANDARD_IA"),
+		StorageClass: aws.String(storageClass),
 	})
 
 	//in case it fails to upload
