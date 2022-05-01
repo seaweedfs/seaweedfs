@@ -246,21 +246,6 @@ func (store *YdbStore) RollbackTransaction(ctx context.Context) error {
 	return nil
 }
 
-func (store *YdbStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (store *YdbStore) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (store *YdbStore) KvDelete(ctx context.Context, key []byte) (err error) {
-	//TODO implement me
-	panic("implement me")
-}
-
 func (store *YdbStore) Shutdown() {
 	store.DB.Close()
 }
