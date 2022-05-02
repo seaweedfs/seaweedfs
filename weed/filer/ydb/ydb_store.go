@@ -8,7 +8,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/ydb-platform/ydb-go-sdk-auth-environ"
+	environ "github.com/ydb-platform/ydb-go-sdk-auth-environ"
 	"github.com/ydb-platform/ydb-go-sdk/v3"
 	"github.com/ydb-platform/ydb-go-sdk/v3/sugar"
 	"github.com/ydb-platform/ydb-go-sdk/v3/table"
@@ -73,8 +73,8 @@ func (store *YdbStore) initialize(dirBuckets string, dsn string, tablePathPrefix
 		connectionTimeOut = defaultConnectionTimeOut
 	}
 	opts := []ydb.Option{
-		environ.WithEnvironCredentials(ctx),
 		ydb.WithDialTimeout(time.Duration(connectionTimeOut) * time.Second),
+		environ.WithEnvironCredentials(ctx),
 	}
 	if poolSizeLimit > 0 {
 		opts = append(opts, ydb.WithSessionPoolSizeLimit(poolSizeLimit))
@@ -84,11 +84,12 @@ func (store *YdbStore) initialize(dirBuckets string, dsn string, tablePathPrefix
 	}
 	store.DB, err = ydb.Open(ctx, dsn, opts...)
 	if err != nil {
-		_ = store.DB.Close(ctx)
-		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", dsn, err)
+		if store.DB != nil {
+			_ = store.DB.Close(ctx)
+			store.DB = nil
+		}
+		return fmt.Errorf("can not connect to %s error: %v", dsn, err)
 	}
-	defer func() { _ = store.DB.Close(ctx) }()
 
 	store.tablePathPrefix = path.Join(store.DB.Name(), tablePathPrefix)
 	if err = sugar.RemoveRecursive(ctx, store.DB, store.tablePathPrefix); err != nil {
@@ -98,18 +99,11 @@ func (store *YdbStore) initialize(dirBuckets string, dsn string, tablePathPrefix
 		return fmt.Errorf("MakeRecursive %s : %v", store.tablePathPrefix, err)
 	}
 
-	whoAmI, err := store.DB.Discovery().WhoAmI(ctx)
-	if err != nil {
-		return fmt.Errorf("connect to %s error:%v", dsn, err)
-	}
-	glog.V(0).Infof("connected to ydb: %s", whoAmI.String())
-
 	tablePath := path.Join(store.tablePathPrefix, abstract_sql.DEFAULT_TABLE)
-	if err := store.createTable(ctx, tablePath); err != nil {
+	if err = store.createTable(ctx, tablePath); err != nil {
 		glog.Errorf("createTable %s: %v", tablePath, err)
 	}
-
-	return nil
+	return err
 }
 
 func (store *YdbStore) doTxOrDB(ctx context.Context, query *string, params *table.QueryParameters, tc *table.TransactionControl, processResultFunc func(res result.Result) error) (err error) {
@@ -309,7 +303,8 @@ func (store *YdbStore) OnBucketCreation(bucket string) {
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
 
-	if err := store.createTable(context.Background(), bucket); err != nil {
+	if err := store.createTable(context.Background(),
+		path.Join(store.tablePathPrefix, bucket, abstract_sql.DEFAULT_TABLE)); err != nil {
 		glog.Errorf("createTable %s: %v", bucket, err)
 	}
 
@@ -323,7 +318,8 @@ func (store *YdbStore) OnBucketDeletion(bucket string) {
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
 
-	if err := store.deleteTable(context.Background(), bucket); err != nil {
+	if err := store.deleteTable(context.Background(),
+		path.Join(store.tablePathPrefix, bucket, abstract_sql.DEFAULT_TABLE)); err != nil {
 		glog.Errorf("deleteTable %s: %v", bucket, err)
 	}
 
@@ -334,13 +330,6 @@ func (store *YdbStore) OnBucketDeletion(bucket string) {
 }
 
 func (store *YdbStore) createTable(ctx context.Context, prefix string) error {
-	e, err := store.DB.Scheme().DescribePath(ctx, prefix)
-	if err != nil {
-		return fmt.Errorf("describe path %s error:%v", prefix, err)
-	}
-	if e.IsTable() {
-		return nil
-	}
 	return store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
 		return s.CreateTable(ctx, prefix, createTableOptions()...)
 	})
@@ -351,7 +340,7 @@ func (store *YdbStore) deleteTable(ctx context.Context, prefix string) error {
 		return nil
 	}
 	return store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
-		return s.DropTable(ctx, path.Join(prefix, abstract_sql.DEFAULT_TABLE))
+		return s.DropTable(ctx, prefix)
 	})
 }
 

@@ -7,10 +7,8 @@ services:
       - 2135:2135
       - 8765:8765
       - 2136:2136
-    volumes:
-      - ./seaweedfs.sql:/docker-entrypoint-initdb.d/seaweedfs.sql
     environment:
-      - YDB_DEFAULT_LOG_LEVEL=NOTICE
+      - YDB_DEFAULT_LOG_LEVEL=DEBUG
       - GRPC_TLS_PORT=2135
       - GRPC_PORT=2136
       - MON_PORT=8765
@@ -26,5 +24,10 @@ services:
     command: "server -ip=server -filer -volume.max=0 -master.volumeSizeLimitMB=1024 -volume.preStopSeconds=1"
     volumes:
       - ./master-cloud.toml:/etc/seaweedfs/master.toml
+    environment:
+      - WEED_LEVELDB2_ENABLED=false
+      - WEED_YDB_ENABLED=true
+      - WEED_YDB_DSN=grpc://ydb:2136/?database=local
+      - YDB_ANONYMOUS_CREDENTIALS=1
     depends_on:
       - ydb

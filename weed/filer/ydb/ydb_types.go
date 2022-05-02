@@ -29,10 +29,10 @@ func (fm *FileMeta) queryParameters() *table.QueryParameters {
 
 func createTableOptions() []options.CreateTableOption {
 	return []options.CreateTableOption{
-		options.WithColumn("dir_hash", types.TypeUint64),
-		options.WithColumn("name", types.TypeUTF8),
-		options.WithColumn("directory", types.TypeUTF8),
-		options.WithColumn("meta", types.TypeString),
+		options.WithColumn("dir_hash", types.Optional(types.TypeUint64)),
+		options.WithColumn("name", types.Optional(types.TypeUTF8)),
+		options.WithColumn("directory", types.Optional(types.TypeUTF8)),
+		options.WithColumn("meta", types.Optional(types.TypeString)),
 		options.WithPrimaryKeyColumn("dir_hash", "name"),
 	}
 }
