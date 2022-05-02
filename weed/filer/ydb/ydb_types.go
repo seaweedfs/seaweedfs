@@ -36,6 +36,6 @@ func createTableOptions() []options.CreateTableOption {
 		options.WithPrimaryKeyColumn("dir_hash", "name"),
 	}
 }
-func withPragma(prefix, query string) string {
+func withPragma(prefix string, query string) string {
 	return `PRAGMA TablePathPrefix("` + prefix + `");` + query
 }
