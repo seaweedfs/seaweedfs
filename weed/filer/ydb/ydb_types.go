@@ -13,7 +13,7 @@ type FileMeta struct {
 	DirHash   int64  `ydb:"type:int64"`
 	Name      string `ydb:"type:utf8"`
 	Directory string `ydb:"type:utf8"`
-	Meta      []byte `ydb:"-"`
+	Meta      []byte `ydb:"type:string"`
 }
 
 //ydb:gen scan,value
@@ -29,7 +29,7 @@ func (fm *FileMeta) queryParameters() *table.QueryParameters {
 
 func createTableOptions() []options.CreateTableOption {
 	return []options.CreateTableOption{
-		options.WithColumn("dir_hash", types.Optional(types.TypeUint64)),
+		options.WithColumn("dir_hash", types.Optional(types.TypeInt64)),
 		options.WithColumn("name", types.Optional(types.TypeUTF8)),
 		options.WithColumn("directory", types.Optional(types.TypeUTF8)),
 		options.WithColumn("meta", types.Optional(types.TypeString)),

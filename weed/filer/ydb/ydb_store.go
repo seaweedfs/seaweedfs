@@ -228,8 +228,8 @@ func (store *YdbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath
 		table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(dir))),
 		table.ValueParam("$directory", types.UTF8Value(dir)),
 		table.ValueParam("$start_name", types.UTF8Value(startFileName)),
-		table.ValueParam("$prefix", types.UTF8Value(prefix)),
-		table.ValueParam("$limit", types.Int64Value(limit)),
+		table.ValueParam("$prefix", types.UTF8Value(prefix+"%")),
+		table.ValueParam("$limit", types.Uint64Value(uint64(limit))),
 	)
 	err = store.doTxOrDB(ctx, &queryWithPragma, queryParams, roTX, func(res result.Result) error {
 		defer func() {
