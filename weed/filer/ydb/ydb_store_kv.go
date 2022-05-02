@@ -15,11 +15,11 @@ func (store *YdbStore) KvPut(ctx context.Context, key []byte, value []byte) (err
 	dirStr, dirHash, name := abstract_sql.GenDirAndName(key)
 	fileMeta := FileMeta{dirHash, name, dirStr, value}
 	return store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) (err error) {
-		stmt, err := s.Prepare(ctx, store.withPragma(store.getPrefix(dirStr), insertQuery))
+		stmt, err := s.Prepare(ctx, withPragma(store.getPrefix(ctx, dirStr), insertQuery))
 		if err != nil {
 			return fmt.Errorf("Prepare %s: %v", util.NewFullPath(dirStr, name), err)
 		}
-		_, _, err = stmt.Execute(ctx, rwTX, fileMeta.QueryParameters())
+		_, _, err = stmt.Execute(ctx, rwTX, fileMeta.queryParameters())
 		if err != nil {
 			return fmt.Errorf("kv put %s: %v", util.NewFullPath(dirStr, name), err)
 		}
@@ -31,7 +31,7 @@ func (store *YdbStore) KvGet(ctx context.Context, key []byte) (value []byte, err
 	dirStr, dirHash, name := abstract_sql.GenDirAndName(key)
 	valueFound := false
 	err = store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
-		stmt, err := s.Prepare(ctx, store.withPragma(store.getPrefix(dirStr), findQuery))
+		stmt, err := s.Prepare(ctx, withPragma(store.getPrefix(ctx, dirStr), findQuery))
 		if err != nil {
 			return fmt.Errorf("Prepare %s: %v", util.NewFullPath(dirStr, name), err)
 		}
@@ -62,7 +62,7 @@ func (store *YdbStore) KvGet(ctx context.Context, key []byte) (value []byte, err
 func (store *YdbStore) KvDelete(ctx context.Context, key []byte) (err error) {
 	dirStr, dirHash, name := abstract_sql.GenDirAndName(key)
 	return store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) (err error) {
-		stmt, err := s.Prepare(ctx, store.withPragma(store.getPrefix(dirStr), insertQuery))
+		stmt, err := s.Prepare(ctx, withPragma(store.getPrefix(ctx, dirStr), insertQuery))
 		if err != nil {
 			return fmt.Errorf("Prepare %s: %v", util.NewFullPath(dirStr, name), err)
 		}
