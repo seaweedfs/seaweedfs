@@ -54,6 +54,7 @@ func RunShell(options ShellOptions) {
 		commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 				ClientType: cluster.FilerType,
+				FilerGroup: *options.FilerGroup,
 			})
 			if err != nil {
 				return err

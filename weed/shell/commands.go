@@ -22,6 +22,7 @@ type ShellOptions struct {
 	// shell transient context
 	FilerHost    string
 	FilerPort    int64
+	FilerGroup   *string
 	FilerAddress pb.ServerAddress
 	Directory    string
 }
@@ -46,7 +47,7 @@ var (
 func NewCommandEnv(options *ShellOptions) *CommandEnv {
 	ce := &CommandEnv{
 		env:          make(map[string]string),
-		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, pb.AdminShellClient, "", "", pb.ServerAddresses(*options.Masters).ToAddressMap()),
+		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, *options.FilerGroup, pb.AdminShellClient, "", "", pb.ServerAddresses(*options.Masters).ToAddressMap()),
 		option:       options,
 	}
 	ce.locker = exclusive_locks.NewExclusiveLocker(ce.MasterClient, "admin")
