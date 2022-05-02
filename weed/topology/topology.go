@@ -303,8 +303,8 @@ func (t *Topology) IncrementalSyncDataNodeRegistration(newVolumes, deletedVolume
 	return
 }
 
-func (t *Topology) DataNodeRegistration(dcName, rackName string ,dn *DataNode){
-	if dn.Parent() != nil{
+func (t *Topology) DataNodeRegistration(dcName, rackName string, dn *DataNode) {
+	if dn.Parent() != nil {
 		return
 	}
 	// registration to topo
