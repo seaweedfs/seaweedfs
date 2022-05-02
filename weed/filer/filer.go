@@ -49,10 +49,10 @@ type Filer struct {
 	UniqueFileId        uint32
 }
 
-func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOption,
-	filerHost pb.ServerAddress, collection string, replication string, dataCenter string, notifyFn func()) *Filer {
+func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress,
+	filerGroup string, collection string, replication string, dataCenter string, notifyFn func()) *Filer {
 	f := &Filer{
-		MasterClient:        wdclient.NewMasterClient(grpcDialOption, cluster.FilerType, filerHost, dataCenter, masters),
+		MasterClient:        wdclient.NewMasterClient(grpcDialOption, filerGroup, cluster.FilerType, filerHost, dataCenter, masters),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 		FilerConf:           NewFilerConf(),
@@ -84,6 +84,7 @@ func (f *Filer) ListExistingPeerUpdates() (existingNodes []*master_pb.ClusterNod
 	if grpcErr := pb.WithMasterClient(false, f.MasterClient.GetMaster(), f.GrpcDialOption, func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.FilerType,
+			FilerGroup: f.MasterClient.FilerGroup,
 		})
 
 		glog.V(0).Infof("the cluster has %d filers\n", len(resp.ClusterNodes))

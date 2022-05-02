@@ -1,8 +1,8 @@
 package s3api
 
 import (
-	"encoding/xml"
 	"crypto/sha1"
+	"encoding/xml"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"

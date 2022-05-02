@@ -36,6 +36,7 @@ aws_secret_access_key = ""     # if empty, loads from the shared credentials fil
 region = "us-east-2"
 bucket = "your_bucket_name"    # an existing bucket
 endpoint = ""
+storage_class = "STANDARD_IA"
 
 # create this number of logical volumes if no more writable volumes
 # count_x means how many copies of data.

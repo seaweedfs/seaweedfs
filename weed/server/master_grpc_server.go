@@ -201,13 +201,13 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	// buffer by 1 so we don't end up getting stuck writing to stopChan forever
 	stopChan := make(chan bool, 1)
 
-	clientName, messageChan := ms.addClient(req.ClientType, peerAddress)
-	for _, update := range ms.Cluster.AddClusterNode(req.ClientType, peerAddress, req.Version) {
+	clientName, messageChan := ms.addClient(req.FilerGroup, req.ClientType, peerAddress)
+	for _, update := range ms.Cluster.AddClusterNode(req.FilerGroup, req.ClientType, peerAddress, req.Version) {
 		ms.broadcastToClients(update)
 	}
 
 	defer func() {
-		for _, update := range ms.Cluster.RemoveClusterNode(req.ClientType, peerAddress) {
+		for _, update := range ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, peerAddress) {
 			ms.broadcastToClients(update)
 		}
 		ms.deleteClient(clientName)
@@ -276,8 +276,8 @@ func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedSe
 	return nil
 }
 
-func (ms *MasterServer) addClient(clientType string, clientAddress pb.ServerAddress) (clientName string, messageChan chan *master_pb.KeepConnectedResponse) {
-	clientName = clientType + "@" + string(clientAddress)
+func (ms *MasterServer) addClient(filerGroup, clientType string, clientAddress pb.ServerAddress) (clientName string, messageChan chan *master_pb.KeepConnectedResponse) {
+	clientName = filerGroup + "." + clientType + "@" + string(clientAddress)
 	glog.V(0).Infof("+ client %v", clientName)
 
 	// we buffer this because otherwise we end up in a potential deadlock where

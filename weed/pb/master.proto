@@ -137,6 +137,7 @@ message KeepConnectedRequest {
   string client_type = 1;
   string client_address = 3;
   string version = 4;
+  string filer_group = 5;
 }
 
 message VolumeLocation {
@@ -156,6 +157,7 @@ message ClusterNodeUpdate {
   string address = 2;
   bool is_leader = 3;
   bool is_add = 4;
+  string filer_group = 5;
 }
 
 message KeepConnectedResponse {
@@ -310,6 +312,7 @@ message GetMasterConfigurationResponse {
 
 message ListClusterNodesRequest {
   string client_type = 1;
+  string filer_group = 2;
 }
 message ListClusterNodesResponse {
   message ClusterNode {

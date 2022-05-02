@@ -39,6 +39,7 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.FilerType,
+			FilerGroup: *commandEnv.option.FilerGroup,
 		})
 
 		fmt.Fprintf(writer, "the cluster has %d filers\n", len(resp.ClusterNodes))

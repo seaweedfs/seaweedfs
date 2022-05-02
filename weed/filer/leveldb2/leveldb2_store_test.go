@@ -9,7 +9,7 @@ import (
 )
 
 func TestCreateAndFind(t *testing.T) {
-	testFiler := filer.NewFiler(nil, nil, "", "", "", "", nil)
+	testFiler := filer.NewFiler(nil, nil, "", "", "", "", "", nil)
 	dir := t.TempDir()
 	store := &LevelDB2Store{}
 	store.initialize(dir, 2)
@@ -62,7 +62,7 @@ func TestCreateAndFind(t *testing.T) {
 }
 
 func TestEmptyRoot(t *testing.T) {
-	testFiler := filer.NewFiler(nil, nil, "", "", "", "", nil)
+	testFiler := filer.NewFiler(nil, nil, "", "", "", "", "", nil)
 	dir := t.TempDir()
 	store := &LevelDB2Store{}
 	store.initialize(dir, 2)

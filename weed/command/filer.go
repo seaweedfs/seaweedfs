@@ -37,6 +37,7 @@ type FilerOptions struct {
 	port                    *int
 	portGrpc                *int
 	publicPort              *int
+	filerGroup              *string
 	collection              *string
 	defaultReplicaPlacement *string
 	disableDirListing       *bool
@@ -59,6 +60,7 @@ type FilerOptions struct {
 func init() {
 	cmdFiler.Run = runFiler // break init cycle
 	f.mastersString = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
+	f.filerGroup = cmdFiler.Flag.String("filerGroup", "", "share metadata with other filers in the same filerGroup")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this default collection")
 	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
 	f.bindIp = cmdFiler.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
@@ -201,6 +203,7 @@ func (fo *FilerOptions) startFiler() {
 
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
 		Masters:               fo.masters,
+		FilerGroup:            *fo.filerGroup,
 		Collection:            *fo.collection,
 		DefaultReplication:    *fo.defaultReplicaPlacement,
 		DisableDirListing:     *fo.disableDirListing,
