@@ -153,7 +153,7 @@ require (
 	github.com/arangodb/go-driver v1.3.1
 	github.com/fluent/fluent-logger-golang v1.9.0
 	github.com/hanwen/go-fuse/v2 v2.1.0
-	github.com/hashicorp/raft v1.3.8
+	github.com/hashicorp/raft v1.3.9
 	github.com/hashicorp/raft-boltdb v0.0.0-20220329195025-15018e9b97e0
 )
 
