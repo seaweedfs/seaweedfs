@@ -49,7 +49,7 @@ func newS3BackendStorage(configuration backend.StringProperties, configPrefix st
 	s.region = configuration.GetString(configPrefix + "region")
 	s.bucket = configuration.GetString(configPrefix + "bucket")
 	s.endpoint = configuration.GetString(configPrefix + "endpoint")
-	s.storageClass = configuration.GetString(configPrefix + "storageClass")
+	s.storageClass = configuration.GetString(configPrefix + "storage_class")
 	if s.storageClass == "" {
 		s.storageClass = "STANDARD_IA"
 	}
