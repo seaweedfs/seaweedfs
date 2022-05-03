@@ -13,6 +13,7 @@ dsn=grpcs://ydb-ru.yandex.net:2135/?database=/ru/home/username/db
 prefix="seaweedfs"
 useBucketPrefix=true
 poolSizeLimit=50
+dialTimeOut = 10
 ```
 
 Authenticate produced with one of next environment variables:

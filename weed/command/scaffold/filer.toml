@@ -295,12 +295,14 @@ password=""
 # skip tls cert validation
 insecure_skip_verify = true
 
-[ydb]
+[ydb] # https://ydb.tech/
 enabled = false
-useBucketPrefix=true
-dsn="grpc://localhost:2136?database=/local"
-prefix="en"
-poolSizeLimit=50
+dsn = "grpc://localhost:2136?database=/local"
+prefix = "seaweedfs"
+useBucketPrefix = true # Fast Bucket Deletion
+poolSizeLimit = 50
+dialTimeOut = 10
+
 # Authenticate produced with one of next environment variables:
 # YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS=<path/to/sa_key_file> — used service account key file by path
 # YDB_ANONYMOUS_CREDENTIALS="1" — used for authenticate with anonymous access. Anonymous access needs for connect to testing YDB installation

@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	defaultConnectionTimeOut = 10
+	defaultDialTimeOut = 10
 )
 
 var (
@@ -58,12 +58,12 @@ func (store *YdbStore) Initialize(configuration util.Configuration, prefix strin
 		configuration.GetString(prefix+"dsn"),
 		configuration.GetString(prefix+"prefix"),
 		configuration.GetBool(prefix+"useBucketPrefix"),
-		configuration.GetInt(prefix+"connectionTimeOut"),
+		configuration.GetInt(prefix+"dialTimeOut"),
 		configuration.GetInt(prefix+"poolSizeLimit"),
 	)
 }
 
-func (store *YdbStore) initialize(dirBuckets string, dsn string, tablePathPrefix string, useBucketPrefix bool, connectionTimeOut int, poolSizeLimit int) (err error) {
+func (store *YdbStore) initialize(dirBuckets string, dsn string, tablePathPrefix string, useBucketPrefix bool, dialTimeOut int, poolSizeLimit int) (err error) {
 	store.dirBuckets = dirBuckets
 	store.SupportBucketTable = useBucketPrefix
 	if store.SupportBucketTable {
@@ -72,11 +72,11 @@ func (store *YdbStore) initialize(dirBuckets string, dsn string, tablePathPrefix
 	store.dbs = make(map[string]bool)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if connectionTimeOut == 0 {
-		connectionTimeOut = defaultConnectionTimeOut
+	if dialTimeOut == 0 {
+		dialTimeOut = defaultDialTimeOut
 	}
 	opts := []ydb.Option{
-		ydb.WithDialTimeout(time.Duration(connectionTimeOut) * time.Second),
+		ydb.WithDialTimeout(time.Duration(dialTimeOut) * time.Second),
 		environ.WithEnvironCredentials(ctx),
 	}
 	if poolSizeLimit > 0 {
