@@ -272,6 +272,7 @@ func (ms *MasterServer) startAdminScripts() {
 	shellOptions.Masters = &masterAddress
 
 	shellOptions.Directory = "/"
+	*shellOptions.FilerGroup = ""
 
 	commandEnv := shell.NewCommandEnv(&shellOptions)
 
