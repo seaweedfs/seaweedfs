@@ -3,6 +3,7 @@ package ydb
 import (
 	"context"
 	"fmt"
+	"github.com/ydb-platform/ydb-go-sdk/v3/table/options"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
@@ -16,11 +17,9 @@ func (store *YdbStore) KvPut(ctx context.Context, key []byte, value []byte) (err
 	dirStr, dirHash, name := abstract_sql.GenDirAndName(key)
 	fileMeta := FileMeta{dirHash, name, dirStr, value}
 	return store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) (err error) {
-		stmt, err := s.Prepare(ctx, withPragma(store.getPrefix(ctx, dirStr), insertQuery))
-		if err != nil {
-			return fmt.Errorf("kv put prepare %s: %v", util.NewFullPath(dirStr, name).Name(), err)
-		}
-		_, _, err = stmt.Execute(ctx, rwTX, fileMeta.queryParameters())
+		_, _, err = s.Execute(ctx, rwTX, withPragma(store.getPrefix(ctx, dirStr), insertQuery),
+			fileMeta.queryParameters(),
+			options.WithQueryCachePolicy(options.WithQueryCachePolicyKeepInCache()))
 		if err != nil {
 			return fmt.Errorf("kv put execute %s: %v", util.NewFullPath(dirStr, name).Name(), err)
 		}
@@ -32,13 +31,11 @@ func (store *YdbStore) KvGet(ctx context.Context, key []byte) (value []byte, err
 	dirStr, dirHash, name := abstract_sql.GenDirAndName(key)
 	valueFound := false
 	err = store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
-		stmt, err := s.Prepare(ctx, withPragma(store.getPrefix(ctx, dirStr), findQuery))
-		if err != nil {
-			return fmt.Errorf("kv get prepare %s: %v", util.NewFullPath(dirStr, name), err)
-		}
-		_, res, err := stmt.Execute(ctx, roTX, table.NewQueryParameters(
-			table.ValueParam("$dir_hash", types.Int64Value(dirHash)),
-			table.ValueParam("$name", types.UTF8Value(name))))
+		_, res, err := s.Execute(ctx, roTX, withPragma(store.getPrefix(ctx, dirStr), findQuery),
+			table.NewQueryParameters(
+				table.ValueParam("$dir_hash", types.Int64Value(dirHash)),
+				table.ValueParam("$name", types.UTF8Value(name))),
+			options.WithQueryCachePolicy(options.WithQueryCachePolicyKeepInCache()))
 		if err != nil {
 			return fmt.Errorf("kv get execute %s: %v", util.NewFullPath(dirStr, name).Name(), err)
 		}
@@ -65,13 +62,11 @@ func (store *YdbStore) KvGet(ctx context.Context, key []byte) (value []byte, err
 func (store *YdbStore) KvDelete(ctx context.Context, key []byte) (err error) {
 	dirStr, dirHash, name := abstract_sql.GenDirAndName(key)
 	return store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) (err error) {
-		stmt, err := s.Prepare(ctx, withPragma(store.getPrefix(ctx, dirStr), insertQuery))
-		if err != nil {
-			return fmt.Errorf("Prepare %s: %v", util.NewFullPath(dirStr, name).Name(), err)
-		}
-		_, _, err = stmt.Execute(ctx, rwTX, table.NewQueryParameters(
-			table.ValueParam("$dir_hash", types.Int64Value(dirHash)),
-			table.ValueParam("$name", types.UTF8Value(name))))
+		_, _, err = s.Execute(ctx, rwTX, withPragma(store.getPrefix(ctx, dirStr), insertQuery),
+			table.NewQueryParameters(
+				table.ValueParam("$dir_hash", types.Int64Value(dirHash)),
+				table.ValueParam("$name", types.UTF8Value(name))),
+			options.WithQueryCachePolicy(options.WithQueryCachePolicyKeepInCache()))
 		if err != nil {
 			return fmt.Errorf("kv delete %s: %v", util.NewFullPath(dirStr, name).Name(), err)
 		}

@@ -12,6 +12,7 @@ import (
 	"github.com/ydb-platform/ydb-go-sdk/v3"
 	"github.com/ydb-platform/ydb-go-sdk/v3/sugar"
 	"github.com/ydb-platform/ydb-go-sdk/v3/table"
+	"github.com/ydb-platform/ydb-go-sdk/v3/table/options"
 	"github.com/ydb-platform/ydb-go-sdk/v3/table/result"
 	"github.com/ydb-platform/ydb-go-sdk/v3/table/result/named"
 	"github.com/ydb-platform/ydb-go-sdk/v3/table/types"
@@ -104,17 +105,14 @@ func (store *YdbStore) initialize(dirBuckets string, dsn string, tablePathPrefix
 func (store *YdbStore) doTxOrDB(ctx context.Context, query *string, params *table.QueryParameters, tc *table.TransactionControl, processResultFunc func(res result.Result) error) (err error) {
 	var res result.Result
 	if tx, ok := ctx.Value("tx").(table.Transaction); ok {
-		res, err = tx.Execute(ctx, *query, params)
+		res, err = tx.Execute(ctx, *query, params, options.WithQueryCachePolicy(options.WithQueryCachePolicyKeepInCache()))
 		if err != nil {
 			return fmt.Errorf("execute transaction: %v", err)
 		}
 	} else {
 		err = store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) (err error) {
-			stmt, err := s.Prepare(ctx, *query)
-			if err != nil {
-				return fmt.Errorf("prepare: %v", err)
-			}
-			_, res, err = stmt.Execute(ctx, tc, params)
+			_, res, err = s.Execute(ctx, tc, *query,
+				params, options.WithQueryCachePolicy(options.WithQueryCachePolicyKeepInCache()))
 			if err != nil {
 				return fmt.Errorf("execute statement: %v", err)
 			}

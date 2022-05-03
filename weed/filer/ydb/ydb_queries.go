@@ -23,16 +23,14 @@ const (
 		REPLACE INTO ` + asql.DEFAULT_TABLE + `
 			(dir_hash, name, directory, meta)
 		VALUES
-			($dir_hash, $name, $directory, $meta)
-		COMMIT;`
+			($dir_hash, $name, $directory, $meta);`
 
 	deleteQuery = `
 		DECLARE $dir_hash AS int64;
 		DECLARE $name AS Utf8;
 
 		DELETE FROM ` + asql.DEFAULT_TABLE + ` 
-		WHERE dir_hash = $dir_hash AND name = $name;
-		COMMIT;`
+		WHERE dir_hash = $dir_hash AND name = $name;`
 
 	findQuery = `
 		DECLARE $dir_hash AS int64;
@@ -47,8 +45,7 @@ const (
 		DECLARE $directory AS Utf8;
 
 		DELETE FROM ` + asql.DEFAULT_TABLE + ` 
-		WHERE dir_hash = $dir_hash AND directory = $directory;
-		COMMIT;`
+		WHERE dir_hash = $dir_hash AND directory = $directory;`
 
 	listDirectoryQuery = `
 		DECLARE $dir_hash AS int64;
