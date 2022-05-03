@@ -22,16 +22,16 @@ type FileMetas []FileMeta
 func (fm *FileMeta) queryParameters() *table.QueryParameters {
 	return table.NewQueryParameters(
 		table.ValueParam("$dir_hash", types.Int64Value(fm.DirHash)),
-		table.ValueParam("$name", types.UTF8Value(fm.Name)),
 		table.ValueParam("$directory", types.UTF8Value(fm.Directory)),
+		table.ValueParam("$name", types.UTF8Value(fm.Name)),
 		table.ValueParam("$meta", types.StringValue(fm.Meta)))
 }
 
 func createTableOptions() []options.CreateTableOption {
 	return []options.CreateTableOption{
 		options.WithColumn("dir_hash", types.Optional(types.TypeInt64)),
-		options.WithColumn("name", types.Optional(types.TypeUTF8)),
 		options.WithColumn("directory", types.Optional(types.TypeUTF8)),
+		options.WithColumn("name", types.Optional(types.TypeUTF8)),
 		options.WithColumn("meta", types.Optional(types.TypeString)),
 		options.WithPrimaryKeyColumn("dir_hash", "name"),
 	}
