@@ -145,7 +145,7 @@ func (store *YdbStore) insertOrUpdateEntry(ctx context.Context, entry *filer.Ent
 	}
 	queryWithPragma := withPragma(store.getPrefix(ctx, dir), query)
 	fileMeta := FileMeta{util.HashStringToLong(dir), name, dir, meta}
-	return store.doTxOrDB(ctx, &queryWithPragma, fileMeta.queryParameters(), rwTX, nil)
+	return store.doTxOrDB(ctx, &queryWithPragma, fileMeta.queryParameters(entry.TtlSec), rwTX, nil)
 }
 
 func (store *YdbStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {

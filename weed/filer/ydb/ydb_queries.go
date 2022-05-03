@@ -8,22 +8,24 @@ const (
 		DECLARE $directory AS Utf8;
 		DECLARE $name AS Utf8;
 		DECLARE $meta AS String;
+		DECLARE $expire_at AS Optional<uint32>;
 
 		UPSERT INTO ` + asql.DEFAULT_TABLE + `
-			(dir_hash, name, directory, meta)
+			(dir_hash, name, directory, meta, expire_at)
 		VALUES
-			($dir_hash, $name, $directory, $meta);`
+			($dir_hash, $name, $directory, $meta, $expire_at);`
 
 	updateQuery = `
 		DECLARE $dir_hash AS int64;
 		DECLARE $directory AS Utf8;
 		DECLARE $name AS Utf8;
 		DECLARE $meta AS String;
+		DECLARE $expire_at AS Optional<uint32>;
 
 		REPLACE INTO ` + asql.DEFAULT_TABLE + `
-			(dir_hash, name, directory, meta)
+			(dir_hash, name, directory, meta, expire_at)
 		VALUES
-			($dir_hash, $name, $directory, $meta);`
+			($dir_hash, $name, $directory, $meta, $expire_at);`
 
 	deleteQuery = `
 		DECLARE $dir_hash AS int64;

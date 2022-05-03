@@ -18,7 +18,7 @@ func (store *YdbStore) KvPut(ctx context.Context, key []byte, value []byte) (err
 	fileMeta := FileMeta{dirHash, name, dirStr, value}
 	return store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) (err error) {
 		_, _, err = s.Execute(ctx, rwTX, withPragma(store.getPrefix(ctx, dirStr), insertQuery),
-			fileMeta.queryParameters(),
+			fileMeta.queryParameters(0),
 			options.WithQueryCachePolicy(options.WithQueryCachePolicyKeepInCache()))
 		if err != nil {
 			return fmt.Errorf("kv put execute %s: %v", util.NewFullPath(dirStr, name).Name(), err)
