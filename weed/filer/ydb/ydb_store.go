@@ -66,6 +66,9 @@ func (store *YdbStore) Initialize(configuration util.Configuration, prefix strin
 func (store *YdbStore) initialize(dirBuckets string, dsn string, tablePathPrefix string, useBucketPrefix bool, connectionTimeOut int, poolSizeLimit int) (err error) {
 	store.dirBuckets = dirBuckets
 	store.SupportBucketTable = useBucketPrefix
+	if store.SupportBucketTable {
+		glog.V(0).Infof("enabled BucketPrefix")
+	}
 	store.dbs = make(map[string]bool)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -133,7 +136,7 @@ func (store *YdbStore) doTxOrDB(ctx context.Context, query *string, params *tabl
 	return err
 }
 
-func (store *YdbStore) insertOrUpdateEntry(ctx context.Context, entry *filer.Entry, query string) (err error) {
+func (store *YdbStore) insertOrUpdateEntry(ctx context.Context, entry *filer.Entry, isUpdate bool) (err error) {
 	dir, name := entry.FullPath.DirAndName()
 	meta, err := entry.EncodeAttributesAndChunks()
 	if err != nil {
@@ -143,29 +146,36 @@ func (store *YdbStore) insertOrUpdateEntry(ctx context.Context, entry *filer.Ent
 	if len(entry.Chunks) > filer.CountEntryChunksForGzip {
 		meta = util.MaybeGzipData(meta)
 	}
-	queryWithPragma := withPragma(store.getPrefix(ctx, dir), query)
-	fileMeta := FileMeta{util.HashStringToLong(dir), name, dir, meta}
-	return store.doTxOrDB(ctx, &queryWithPragma, fileMeta.queryParameters(entry.TtlSec), rwTX, nil)
+	tablePathPrefix, shortDir := store.getPrefix(ctx, &dir)
+	fileMeta := FileMeta{util.HashStringToLong(dir), name, *shortDir, meta}
+	var query *string
+	if isUpdate {
+		query = withPragma(tablePathPrefix, updateQuery)
+	} else {
+		query = withPragma(tablePathPrefix, insertQuery)
+	}
+	return store.doTxOrDB(ctx, query, fileMeta.queryParameters(entry.TtlSec), rwTX, nil)
 }
 
 func (store *YdbStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
-	return store.insertOrUpdateEntry(ctx, entry, insertQuery)
+	return store.insertOrUpdateEntry(ctx, entry, false)
 }
 
 func (store *YdbStore) UpdateEntry(ctx context.Context, entry *filer.Entry) (err error) {
-	return store.insertOrUpdateEntry(ctx, entry, updateQuery)
+	return store.insertOrUpdateEntry(ctx, entry, true)
 }
 
 func (store *YdbStore) FindEntry(ctx context.Context, fullpath util.FullPath) (entry *filer.Entry, err error) {
 	dir, name := fullpath.DirAndName()
 	var data []byte
 	entryFound := false
-	queryWithPragma := withPragma(store.getPrefix(ctx, dir), findQuery)
+	tablePathPrefix, shortDir := store.getPrefix(ctx, &dir)
+	query := withPragma(tablePathPrefix, findQuery)
 	queryParams := table.NewQueryParameters(
-		table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(dir))),
+		table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(*shortDir))),
 		table.ValueParam("$name", types.UTF8Value(name)))
 
-	err = store.doTxOrDB(ctx, &queryWithPragma, queryParams, roTX, func(res result.Result) error {
+	err = store.doTxOrDB(ctx, query, queryParams, roTX, func(res result.Result) error {
 		for res.NextResultSet(ctx) {
 			for res.NextRow() {
 				if err = res.ScanNamed(named.OptionalWithDefault("meta", &data)); err != nil {
@@ -196,22 +206,24 @@ func (store *YdbStore) FindEntry(ctx context.Context, fullpath util.FullPath) (e
 
 func (store *YdbStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) (err error) {
 	dir, name := fullpath.DirAndName()
-	queryWithPragma := withPragma(store.getPrefix(ctx, dir), deleteQuery)
+	tablePathPrefix, shortDir := store.getPrefix(ctx, &dir)
+	query := withPragma(tablePathPrefix, deleteQuery)
 	queryParams := table.NewQueryParameters(
-		table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(dir))),
+		table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(*shortDir))),
 		table.ValueParam("$name", types.UTF8Value(name)))
 
-	return store.doTxOrDB(ctx, &queryWithPragma, queryParams, rwTX, nil)
+	return store.doTxOrDB(ctx, query, queryParams, rwTX, nil)
 }
 
 func (store *YdbStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) (err error) {
 	dir, _ := fullpath.DirAndName()
-	queryWithPragma := withPragma(store.getPrefix(ctx, dir), deleteFolderChildrenQuery)
+	tablePathPrefix, shortDir := store.getPrefix(ctx, &dir)
+	query := withPragma(tablePathPrefix, deleteFolderChildrenQuery)
 	queryParams := table.NewQueryParameters(
-		table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(dir))),
-		table.ValueParam("$directory", types.UTF8Value(dir)))
+		table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(*shortDir))),
+		table.ValueParam("$directory", types.UTF8Value(*shortDir)))
 
-	return store.doTxOrDB(ctx, &queryWithPragma, queryParams, rwTX, nil)
+	return store.doTxOrDB(ctx, query, queryParams, rwTX, nil)
 }
 
 func (store *YdbStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
@@ -220,19 +232,21 @@ func (store *YdbStore) ListDirectoryEntries(ctx context.Context, dirPath util.Fu
 
 func (store *YdbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	dir := string(dirPath)
-	startFileCompOp := ">"
+	tablePathPrefix, shortDir := store.getPrefix(ctx, &dir)
+	var query *string
 	if includeStartFile {
-		startFileCompOp = ">="
+		query = withPragma(tablePathPrefix, listInclusiveDirectoryQuery)
+	} else {
+		query = withPragma(tablePathPrefix, listDirectoryQuery)
 	}
-	queryWithPragma := withPragma(store.getPrefix(ctx, dir), fmt.Sprintf(listDirectoryQuery, startFileCompOp))
 	queryParams := table.NewQueryParameters(
-		table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(dir))),
-		table.ValueParam("$directory", types.UTF8Value(dir)),
+		table.ValueParam("$dir_hash", types.Int64Value(util.HashStringToLong(*shortDir))),
+		table.ValueParam("$directory", types.UTF8Value(*shortDir)),
 		table.ValueParam("$start_name", types.UTF8Value(startFileName)),
 		table.ValueParam("$prefix", types.UTF8Value(prefix+"%")),
 		table.ValueParam("$limit", types.Uint64Value(uint64(limit))),
 	)
-	err = store.doTxOrDB(ctx, &queryWithPragma, queryParams, roTX, func(res result.Result) error {
+	err = store.doTxOrDB(ctx, query, queryParams, roTX, func(res result.Result) error {
 		var name string
 		var data []byte
 		for res.NextResultSet(ctx) {
@@ -337,41 +351,50 @@ func (store *YdbStore) deleteTable(ctx context.Context, prefix string) error {
 	if !store.SupportBucketTable {
 		return nil
 	}
-	return store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
+	if err := store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
 		return s.DropTable(ctx, path.Join(prefix, abstract_sql.DEFAULT_TABLE))
-	})
+	}); err != nil {
+		return err
+	}
+	glog.V(4).Infof("deleted table %s", prefix)
+
+	return nil
 }
 
-func (store *YdbStore) getPrefix(ctx context.Context, dir string) (tablePathPrefix string) {
-	tablePathPrefix = store.tablePathPrefix
+func (store *YdbStore) getPrefix(ctx context.Context, dir *string) (tablePathPrefix *string, shortDir *string) {
+	tablePathPrefix = &store.tablePathPrefix
+	shortDir = dir
 	if !store.SupportBucketTable {
 		return
 	}
 
 	prefixBuckets := store.dirBuckets + "/"
-	if strings.HasPrefix(dir, prefixBuckets) {
+	if strings.HasPrefix(*dir, prefixBuckets) {
 		// detect bucket
-		bucketAndDir := dir[len(prefixBuckets):]
-		t := strings.Index(bucketAndDir, "/")
-		if t < 0 {
+		bucketAndDir := (*dir)[len(prefixBuckets):]
+		var bucket string
+		if t := strings.Index(bucketAndDir, "/"); t > 0 {
+			bucket = bucketAndDir[:t]
+		} else if t < 0 {
+			bucket = bucketAndDir
+		}
+		if bucket == "" {
 			return
 		}
-		bucket := bucketAndDir[:t]
 
-		if bucket != "" {
-			return
-		}
 		store.dbsLock.Lock()
 		defer store.dbsLock.Unlock()
 
-		tablePathPrefix = path.Join(store.tablePathPrefix, bucket)
+		tablePathPrefixWithBucket := path.Join(store.tablePathPrefix, bucket)
 		if _, found := store.dbs[bucket]; !found {
-			if err := store.createTable(ctx, tablePathPrefix); err == nil {
+			if err := store.createTable(ctx, tablePathPrefixWithBucket); err == nil {
 				store.dbs[bucket] = true
+				glog.V(4).Infof("created table %s", tablePathPrefixWithBucket)
 			} else {
-				glog.Errorf("createTable %s: %v", tablePathPrefix, err)
+				glog.Errorf("createTable %s: %v", tablePathPrefixWithBucket, err)
 			}
 		}
+		tablePathPrefix = &tablePathPrefixWithBucket
 	}
 	return
 }

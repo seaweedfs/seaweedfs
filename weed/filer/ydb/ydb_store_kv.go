@@ -17,7 +17,7 @@ func (store *YdbStore) KvPut(ctx context.Context, key []byte, value []byte) (err
 	dirStr, dirHash, name := abstract_sql.GenDirAndName(key)
 	fileMeta := FileMeta{dirHash, name, dirStr, value}
 	return store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) (err error) {
-		_, _, err = s.Execute(ctx, rwTX, withPragma(store.getPrefix(ctx, dirStr), insertQuery),
+		_, _, err = s.Execute(ctx, rwTX, *withPragma(&store.tablePathPrefix, insertQuery),
 			fileMeta.queryParameters(0),
 			options.WithQueryCachePolicy(options.WithQueryCachePolicyKeepInCache()))
 		if err != nil {
@@ -31,7 +31,7 @@ func (store *YdbStore) KvGet(ctx context.Context, key []byte) (value []byte, err
 	dirStr, dirHash, name := abstract_sql.GenDirAndName(key)
 	valueFound := false
 	err = store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) error {
-		_, res, err := s.Execute(ctx, roTX, withPragma(store.getPrefix(ctx, dirStr), findQuery),
+		_, res, err := s.Execute(ctx, roTX, *withPragma(&store.tablePathPrefix, findQuery),
 			table.NewQueryParameters(
 				table.ValueParam("$dir_hash", types.Int64Value(dirHash)),
 				table.ValueParam("$name", types.UTF8Value(name))),
@@ -62,7 +62,7 @@ func (store *YdbStore) KvGet(ctx context.Context, key []byte) (value []byte, err
 func (store *YdbStore) KvDelete(ctx context.Context, key []byte) (err error) {
 	dirStr, dirHash, name := abstract_sql.GenDirAndName(key)
 	return store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) (err error) {
-		_, _, err = s.Execute(ctx, rwTX, withPragma(store.getPrefix(ctx, dirStr), insertQuery),
+		_, _, err = s.Execute(ctx, rwTX, *withPragma(&store.tablePathPrefix, insertQuery),
 			table.NewQueryParameters(
 				table.ValueParam("$dir_hash", types.Int64Value(dirHash)),
 				table.ValueParam("$name", types.UTF8Value(name))),

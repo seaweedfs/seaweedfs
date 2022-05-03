@@ -1,6 +1,7 @@
 package ydb
 
 import (
+	"fmt"
 	"github.com/ydb-platform/ydb-go-sdk/v3/table"
 	"github.com/ydb-platform/ydb-go-sdk/v3/table/options"
 	"github.com/ydb-platform/ydb-go-sdk/v3/table/types"
@@ -50,6 +51,7 @@ func createTableOptions() []options.CreateTableOption {
 		),
 	}
 }
-func withPragma(prefix string, query string) string {
-	return `PRAGMA TablePathPrefix("` + prefix + `");` + query
+func withPragma(prefix *string, query string) *string {
+	queryWithPragma := fmt.Sprintf(query, *prefix)
+	return &queryWithPragma
 }
