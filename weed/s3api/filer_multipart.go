@@ -178,6 +178,9 @@ func findByPartNumber(fileName string, parts []CompletedPart) (etag string, foun
 	x := sort.Search(len(parts), func(i int) bool {
 		return parts[i].PartNumber >= partNumber
 	})
+	if x >= len(parts) {
+		return
+	}
 	if parts[x].PartNumber != partNumber {
 		return
 	}
