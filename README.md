@@ -110,7 +110,7 @@ Also, SeaweedFS implements erasure coding with ideas from
 
 On top of the object store, optional [Filer] can support directories and POSIX attributes. 
 Filer is a separate linearly-scalable stateless server with customizable metadata stores, 
-e.g., MySql, Postgres, Redis, Cassandra, HBase, Mongodb, Elastic Search, LevelDB, RocksDB, Sqlite, MemSql, TiDB, Etcd, CockroachDB, etc.
+e.g., MySql, Postgres, Redis, Cassandra, HBase, Mongodb, Elastic Search, LevelDB, RocksDB, Sqlite, MemSql, TiDB, Etcd, CockroachDB, YDB, etc.
 
 For any distributed key value stores, the large values can be offloaded to SeaweedFS. 
 With the fast access speed and linearly scalable capacity, 
@@ -412,7 +412,7 @@ The architectures are mostly the same. SeaweedFS aims to store and read files fa
 
 * SeaweedFS optimizes for small files, ensuring O(1) disk seek operation, and can also handle large files.
 * SeaweedFS statically assigns a volume id for a file. Locating file content becomes just a lookup of the volume id, which can be easily cached.
-* SeaweedFS Filer metadata store can be any well-known and proven data stores, e.g., Redis, Cassandra, HBase, Mongodb, Elastic Search, MySql, Postgres, Sqlite, MemSql, TiDB, CockroachDB, Etcd etc, and is easy to customized.
+* SeaweedFS Filer metadata store can be any well-known and proven data stores, e.g., Redis, Cassandra, HBase, Mongodb, Elastic Search, MySql, Postgres, Sqlite, MemSql, TiDB, CockroachDB, Etcd, YDB etc, and is easy to customized.
 * SeaweedFS Volume server also communicates directly with clients via HTTP, supporting range queries, direct uploads, etc.
 
 | System         | File Metadata                   | File Content Read| POSIX  | REST API | Optimized for large number of small files |
@@ -454,7 +454,7 @@ Ceph uses CRUSH hashing to automatically manage the data placement, which is eff
 
 SeaweedFS is optimized for small files. Small files are stored as one continuous block of content, with at most 8 unused bytes between files. Small file access is O(1) disk read.
 
-SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Sqlite, Mongodb, Redis, Elastic Search, Cassandra, HBase, MemSql, TiDB, CockroachCB, Etcd, to manage file directories. These stores are proven, scalable, and easier to manage.
+SeaweedFS Filer uses off-the-shelf stores, such as MySql, Postgres, Sqlite, Mongodb, Redis, Elastic Search, Cassandra, HBase, MemSql, TiDB, CockroachCB, Etcd, YDB, to manage file directories. These stores are proven, scalable, and easier to manage.
 
 | SeaweedFS         | comparable to Ceph | advantage |
 | -------------  | ------------- | ---------------- |

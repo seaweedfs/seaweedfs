@@ -49,6 +49,9 @@ dev_replicate: build
 dev_auditlog: build
 	docker-compose -f compose/local-auditlog-compose.yml -p seaweedfs up
 
+dev_ydb: build
+	docker-compose -f compose/local-ydb-compose.yml -p seaweedfs up
+
 cluster: build
 	docker-compose -f compose/local-cluster-compose.yml -p seaweedfs up
 

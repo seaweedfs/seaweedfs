@@ -32,4 +32,5 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis3"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/sqlite"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/ydb"
 )
