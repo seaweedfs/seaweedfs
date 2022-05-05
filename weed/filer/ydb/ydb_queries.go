@@ -1,3 +1,6 @@
+//go:build ydb
+// +build ydb
+
 package ydb
 
 import asql "github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
