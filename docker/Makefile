@@ -58,6 +58,9 @@ cluster: build
 2clusters: build
 	docker-compose -f compose/local-clusters-compose.yml -p seaweedfs up
 
+2mount: build
+	docker-compose -f compose/local-sync-mount-compose.yml -p seaweedfs up
+
 hashicorp_raft: build
 	docker-compose -f compose/local-hashicorp-raft-compose.yml -p seaweedfs up
 
