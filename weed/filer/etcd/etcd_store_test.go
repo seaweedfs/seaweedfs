@@ -6,7 +6,9 @@ import (
 )
 
 func TestStore(t *testing.T) {
-	if false { // turn on the testing when local env is set up
+	// run "make test_etcd" under docker folder.
+	// to set up local env
+	if false {
 		store := &EtcdStore{}
 		store.initialize("localhost:2379", "3s")
 		store_test.TestFilerStore(t, store)
