@@ -152,7 +152,7 @@ func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, dirPath weed_u
 	}
 
 	resp, err := store.client.Get(ctx, string(lastFileStart),
-		clientv3.WithFromKey())
+		clientv3.WithFromKey(), clientv3.WithLimit(limit+1))
 	if err != nil {
 		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
 	}
