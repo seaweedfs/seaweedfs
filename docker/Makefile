@@ -64,6 +64,9 @@ s3tests: build s3tests_build
 filer_etcd: build
 	docker stack deploy -c compose/swarm-etcd.yml fs
 
+test_etcd: build
+	docker-compose -f compose/test-etcd-filer.yml -p seaweedfs up
+
 clean:
 	rm ./weed
 
