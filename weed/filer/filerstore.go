@@ -7,6 +7,8 @@ import (
 	"io"
 )
 
+const CountEntryChunksForGzip = 50
+
 var (
 	ErrUnsupportedListDirectoryPrefixed      = errors.New("unsupported directory prefix listing")
 	ErrUnsupportedSuperLargeDirectoryListing = errors.New("unsupported super large directory listing")
