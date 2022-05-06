@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
@@ -16,11 +17,9 @@ func TestFilerStore(t *testing.T, store filer.FilerStore) {
 	store.InsertEntry(ctx, makeEntry(util.FullPath("/a"), true))
 	store.InsertEntry(ctx, makeEntry(util.FullPath("/a/b"), true))
 	store.InsertEntry(ctx, makeEntry(util.FullPath("/a/b/c"), true))
-	store.InsertEntry(ctx, makeEntry(util.FullPath("/a/b/c/f1"), false))
-	store.InsertEntry(ctx, makeEntry(util.FullPath("/a/b/c/f2"), false))
-	store.InsertEntry(ctx, makeEntry(util.FullPath("/a/b/c/f3"), false))
-	store.InsertEntry(ctx, makeEntry(util.FullPath("/a/b/c/f4"), false))
-	store.InsertEntry(ctx, makeEntry(util.FullPath("/a/b/c/f5"), false))
+	for i := 0; i < 2000; i++ {
+		store.InsertEntry(ctx, makeEntry(util.FullPath(fmt.Sprintf("/a/b/c/f%05d", i)), false))
+	}
 
 	{
 		var counter int
@@ -28,28 +27,16 @@ func TestFilerStore(t *testing.T, store filer.FilerStore) {
 			counter++
 			return true
 		})
-		if err != nil {
-			t.Errorf("list directory: %v", err)
-		}
-		if counter != 3 {
-			assert.Equal(t, 3, counter, "directory list counter")
-		}
-		if lastFileName != "f3" {
-			assert.Equal(t, "f3", lastFileName, "directory list last file")
-		}
-		lastFileName, err = store.ListDirectoryEntries(ctx, util.FullPath("/a/b/c"), lastFileName, false, 3, func(entry *filer.Entry) bool {
+		assert.Nil(t, err, "list directory")
+		assert.Equal(t, 3, counter, "directory list counter")
+		assert.Equal(t, "f00003", lastFileName, "directory list last file")
+		lastFileName, err = store.ListDirectoryEntries(ctx, util.FullPath("/a/b/c"), lastFileName, false, 1024, func(entry *filer.Entry) bool {
 			counter++
 			return true
 		})
-		if err != nil {
-			t.Errorf("list directory: %v", err)
-		}
-		if counter != 5 {
-			assert.Equal(t, 5, counter, "directory list counter")
-		}
-		if lastFileName != "f5" {
-			assert.Equal(t, "f5", lastFileName, "directory list last file")
-		}
+		assert.Nil(t, err, "list directory")
+		assert.Equal(t, 1027, counter, "directory list counter")
+		assert.Equal(t, "f01027", lastFileName, "directory list last file")
 	}
 
 }
