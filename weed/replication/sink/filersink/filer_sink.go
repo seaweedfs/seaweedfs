@@ -208,6 +208,12 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 			return true, fmt.Errorf("replicte %s chunks error: %v", key, err)
 		}
 		existingEntry.Chunks = append(existingEntry.Chunks, replicatedChunks...)
+		existingEntry.Attributes = newEntry.Attributes
+		existingEntry.Extended = newEntry.Extended
+		existingEntry.HardLinkId = newEntry.HardLinkId
+		existingEntry.HardLinkCounter = newEntry.HardLinkCounter
+		existingEntry.Content = newEntry.Content
+		existingEntry.RemoteEntry = newEntry.RemoteEntry
 	}
 
 	// save updated meta data
