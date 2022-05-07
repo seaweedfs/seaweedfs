@@ -16,7 +16,7 @@ func FollowMetadata(filerAddress ServerAddress, grpcDialOption grpc.DialOption, 
 	pathPrefix string, additionalPathPrefixes []string, lastTsNs int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, fatalOnError bool) error {
 
-	err := WithFilerClient(true, filerAddress, grpcDialOption, makeFunc(clientName, clientId,
+	err := WithFilerClient(true, filerAddress, grpcDialOption, makeSubscribeMetadataFunc(clientName, clientId,
 		pathPrefix, additionalPathPrefixes, &lastTsNs, selfSignature, processEventFn, fatalOnError))
 	if err != nil {
 		return fmt.Errorf("subscribing filer meta change: %v", err)
@@ -28,7 +28,7 @@ func WithFilerClientFollowMetadata(filerClient filer_pb.FilerClient,
 	clientName string, clientId int32, pathPrefix string, lastTsNs *int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, fatalOnError bool) error {
 
-	err := filerClient.WithFilerClient(true, makeFunc(clientName, clientId,
+	err := filerClient.WithFilerClient(true, makeSubscribeMetadataFunc(clientName, clientId,
 		pathPrefix, nil, lastTsNs, selfSignature, processEventFn, fatalOnError))
 	if err != nil {
 		return fmt.Errorf("subscribing filer meta change: %v", err)
@@ -37,7 +37,7 @@ func WithFilerClientFollowMetadata(filerClient filer_pb.FilerClient,
 	return nil
 }
 
-func makeFunc(clientName string, clientId int32, pathPrefix string, additionalPathPrefixes []string, lastTsNs *int64, selfSignature int32,
+func makeSubscribeMetadataFunc(clientName string, clientId int32, pathPrefix string, additionalPathPrefixes []string, lastTsNs *int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, fatalOnError bool) func(client filer_pb.SeaweedFilerClient) error {
 	return func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
