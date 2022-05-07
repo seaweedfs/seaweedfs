@@ -61,8 +61,6 @@ master:
   extraVolumes: ""
   extraVolumeMounts: ""
 
-  # enablePVC will create a pvc for filer for data persistence.
-  enablePVC: false
   # storage and storageClass are the settings for configuring stateful
   # storage for the master pods. storage should be set to the disk size of
   # the attached volume. storageClass is the class of storage which defaults
@@ -276,6 +274,9 @@ filer:
 
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
+
+  # enablePVC will create a pvc for filer for data persistence.
+  enablePVC: false
 
   # storage and storageClass are the settings for configuring stateful
   # storage for the master pods. storage should be set to the disk size of
