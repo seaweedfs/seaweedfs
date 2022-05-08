@@ -76,7 +76,7 @@ Table of Contents
 
 ## Quick Start for S3 API on Docker ##
 
-`docker run -p 8333:8333 chrislusf/seaweedfs server -s3`
+`docker run -p 8888:8888 chrislusf/seaweedfs server -s3`
 
 ## Quick Start with Single Binary ##
 * Download the latest binary from https://github.com/chrislusf/seaweedfs/releases and unzip a single binary file `weed` or `weed.exe`
