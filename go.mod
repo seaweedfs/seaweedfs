@@ -7,7 +7,7 @@ require (
 	cloud.google.com/go/pubsub v1.21.0
 	cloud.google.com/go/storage v1.22.0
 	github.com/Azure/azure-pipeline-go v0.2.3
-	github.com/Azure/azure-storage-blob-go v0.14.0
+	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/OneOfOne/xxhash v1.2.8
 	github.com/Shopify/sarama v1.32.0
 	github.com/aws/aws-sdk-go v1.44.9
