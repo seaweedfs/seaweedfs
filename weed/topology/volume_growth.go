@@ -181,7 +181,7 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		return nil, rackErr
 	}
 
-	//find main rack and other racks
+	//find main server and other servers
 	mainServer, otherServers, serverErr := mainRack.(*Rack).PickNodesByWeight(rp.SameRackCount+1, option, func(node Node) error {
 		if option.DataNode != "" && node.IsDataNode() && node.Id() != NodeId(option.DataNode) {
 			return fmt.Errorf("Not matching preferred data node:%s", option.DataNode)
