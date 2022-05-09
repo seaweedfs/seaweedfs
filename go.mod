@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	cloud.google.com/go v0.100.2 // indirect
-	cloud.google.com/go/pubsub v1.21.0
+	cloud.google.com/go/pubsub v1.21.1
 	cloud.google.com/go/storage v1.22.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.14.0
@@ -155,6 +155,8 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.1.0
 	github.com/hashicorp/raft v1.3.9
 	github.com/hashicorp/raft-boltdb v0.0.0-20220329195025-15018e9b97e0
+	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.0
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.24.2
 )
 
 require (
@@ -205,8 +207,6 @@ require (
 	github.com/tinylib/msgp v1.1.6 // indirect
 	github.com/yandex-cloud/go-genproto v0.0.0-20211115083454-9ca41db5ed9e // indirect
 	github.com/ydb-platform/ydb-go-genproto v0.0.0-20220203104745-929cf9c248bc // indirect
-	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.0 // indirect
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.24.2 // indirect
 	github.com/ydb-platform/ydb-go-yc v0.6.1 // indirect
 	github.com/ydb-platform/ydb-go-yc-metadata v0.0.9 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.4 // indirect
