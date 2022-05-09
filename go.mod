@@ -156,7 +156,7 @@ require (
 	github.com/hashicorp/raft v1.3.9
 	github.com/hashicorp/raft-boltdb v0.0.0-20220329195025-15018e9b97e0
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.0
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.24.2
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.25.0
 )
 
 require (

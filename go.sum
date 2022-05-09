@@ -868,8 +868,8 @@ github.com/ydb-platform/ydb-go-genproto v0.0.0-20220203104745-929cf9c248bc/go.mo
 github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.0 h1:74zGbvLn5kwLkkVoicJWzmvWhaIGdIWLUr1tfaMul08=
 github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.0/go.mod h1:9E5eeVy08G/cu5azQVYGHduqxa6hz/dyZzJDjDTE010=
 github.com/ydb-platform/ydb-go-sdk/v3 v3.9.0/go.mod h1:/KCidORSzHOsn+j46Iqb8Tf6UXNhPWRMcrMieh+i9Xw=
-github.com/ydb-platform/ydb-go-sdk/v3 v3.24.2 h1:hFwtj5icsW5s3+sDXkmEa+rZN6ez9f4FeIOv2AYBrMk=
-github.com/ydb-platform/ydb-go-sdk/v3 v3.24.2/go.mod h1:/KCidORSzHOsn+j46Iqb8Tf6UXNhPWRMcrMieh+i9Xw=
+github.com/ydb-platform/ydb-go-sdk/v3 v3.25.0 h1:3uh36kf09NJHRex+LEDnuajNdzKwPPJIvePjtIUra1U=
+github.com/ydb-platform/ydb-go-sdk/v3 v3.25.0/go.mod h1:PFizF/vJsdAgEwjK3DVSBD52kdmRkWfSIS2q2pA+e88=
 github.com/ydb-platform/ydb-go-yc v0.6.1 h1:DBw32JwTOsfFGnMlwri2f7C2joYvFnLNYEQAopID/Qg=
 github.com/ydb-platform/ydb-go-yc v0.6.1/go.mod h1:iMalotfQEHibqPDNkwn0oT2UC5ieS5j6teIuGgPzaSE=
 github.com/ydb-platform/ydb-go-yc-metadata v0.0.9 h1:jymJK3FVUphDa5q6oyjLODXLc34AR+aFTMiybacMLy0=
