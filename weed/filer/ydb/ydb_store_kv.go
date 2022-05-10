@@ -21,8 +21,7 @@ func (store *YdbStore) KvPut(ctx context.Context, key []byte, value []byte) (err
 	fileMeta := FileMeta{dirHash, name, dirStr, value}
 	return store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) (err error) {
 		_, _, err = s.Execute(ctx, rwTX, *withPragma(&store.tablePathPrefix, insertQuery),
-			fileMeta.queryParameters(0),
-			options.WithQueryCachePolicy(options.WithQueryCachePolicyKeepInCache()))
+			fileMeta.queryParameters(0))
 		if err != nil {
 			return fmt.Errorf("kv put execute %s: %v", util.NewFullPath(dirStr, name).Name(), err)
 		}
@@ -68,8 +67,7 @@ func (store *YdbStore) KvDelete(ctx context.Context, key []byte) (err error) {
 		_, _, err = s.Execute(ctx, rwTX, *withPragma(&store.tablePathPrefix, insertQuery),
 			table.NewQueryParameters(
 				table.ValueParam("$dir_hash", types.Int64Value(dirHash)),
-				table.ValueParam("$name", types.UTF8Value(name))),
-			options.WithQueryCachePolicy(options.WithQueryCachePolicyKeepInCache()))
+				table.ValueParam("$name", types.UTF8Value(name))))
 		if err != nil {
 			return fmt.Errorf("kv delete %s: %v", util.NewFullPath(dirStr, name).Name(), err)
 		}
