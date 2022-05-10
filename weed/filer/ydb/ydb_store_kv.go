@@ -6,8 +6,6 @@ package ydb
 import (
 	"context"
 	"fmt"
-	"github.com/ydb-platform/ydb-go-sdk/v3/table/options"
-
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -36,8 +34,7 @@ func (store *YdbStore) KvGet(ctx context.Context, key []byte) (value []byte, err
 		_, res, err := s.Execute(ctx, roTX, *withPragma(&store.tablePathPrefix, findQuery),
 			table.NewQueryParameters(
 				table.ValueParam("$dir_hash", types.Int64Value(dirHash)),
-				table.ValueParam("$name", types.UTF8Value(name))),
-			options.WithQueryCachePolicy(options.WithQueryCachePolicyKeepInCache()))
+				table.ValueParam("$name", types.UTF8Value(name))))
 		if err != nil {
 			return fmt.Errorf("kv get execute %s: %v", util.NewFullPath(dirStr, name).Name(), err)
 		}
