@@ -10,9 +10,6 @@ import (
 	"github.com/ydb-platform/ydb-go-sdk/v3/table/types"
 )
 
-//go:generate ydbgen
-
-//ydb:gen
 type FileMeta struct {
 	DirHash   int64  `ydb:"type:int64"`
 	Name      string `ydb:"type:utf8"`
@@ -20,7 +17,6 @@ type FileMeta struct {
 	Meta      []byte `ydb:"type:string"`
 }
 
-//ydb:gen scan,value
 type FileMetas []FileMeta
 
 func (fm *FileMeta) queryParameters(ttlSec int32) *table.QueryParameters {

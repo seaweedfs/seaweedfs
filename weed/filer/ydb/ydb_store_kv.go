@@ -18,7 +18,7 @@ func (store *YdbStore) KvPut(ctx context.Context, key []byte, value []byte) (err
 	dirStr, dirHash, name := abstract_sql.GenDirAndName(key)
 	fileMeta := FileMeta{dirHash, name, dirStr, value}
 	return store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) (err error) {
-		_, _, err = s.Execute(ctx, rwTX, *withPragma(&store.tablePathPrefix, insertQuery),
+		_, _, err = s.Execute(ctx, rwTX, *withPragma(&store.tablePathPrefix, upsertQuery),
 			fileMeta.queryParameters(0))
 		if err != nil {
 			return fmt.Errorf("kv put execute %s: %v", util.NewFullPath(dirStr, name).Name(), err)
@@ -39,14 +39,15 @@ func (store *YdbStore) KvGet(ctx context.Context, key []byte) (value []byte, err
 			return fmt.Errorf("kv get execute %s: %v", util.NewFullPath(dirStr, name).Name(), err)
 		}
 		defer func() { _ = res.Close() }()
-		for res.NextResultSet(ctx) {
-			for res.NextRow() {
-				if err := res.ScanNamed(named.OptionalWithDefault("meta", &value)); err != nil {
-					return fmt.Errorf("scanNamed %s : %v", util.NewFullPath(dirStr, name).Name(), err)
-				}
-				valueFound = true
-				return nil
+		if !res.NextResultSet(ctx) || !res.HasNextRow() {
+			return nil
+		}
+		for res.NextRow() {
+			if err := res.ScanNamed(named.OptionalWithDefault("meta", &value)); err != nil {
+				return fmt.Errorf("scanNamed %s : %v", util.NewFullPath(dirStr, name).Name(), err)
 			}
+			valueFound = true
+			return nil
 		}
 		return res.Err()
 	})
@@ -61,7 +62,7 @@ func (store *YdbStore) KvGet(ctx context.Context, key []byte) (value []byte, err
 func (store *YdbStore) KvDelete(ctx context.Context, key []byte) (err error) {
 	dirStr, dirHash, name := abstract_sql.GenDirAndName(key)
 	return store.DB.Table().Do(ctx, func(ctx context.Context, s table.Session) (err error) {
-		_, _, err = s.Execute(ctx, rwTX, *withPragma(&store.tablePathPrefix, insertQuery),
+		_, _, err = s.Execute(ctx, rwTX, *withPragma(&store.tablePathPrefix, deleteQuery),
 			table.NewQueryParameters(
 				table.ValueParam("$dir_hash", types.Int64Value(dirHash)),
 				table.ValueParam("$name", types.UTF8Value(name))))
