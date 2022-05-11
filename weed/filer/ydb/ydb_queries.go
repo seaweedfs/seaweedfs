@@ -6,7 +6,7 @@ package ydb
 import asql "github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
 
 const (
-	insertQuery = `
+	upsertQuery = `
 		PRAGMA TablePathPrefix("%v");
 		DECLARE $dir_hash AS int64;
 		DECLARE $directory AS Utf8;
@@ -15,19 +15,6 @@ const (
 		DECLARE $expire_at AS Optional<uint32>;
 
 		UPSERT INTO ` + asql.DEFAULT_TABLE + `
-			(dir_hash, name, directory, meta, expire_at)
-		VALUES
-			($dir_hash, $name, $directory, $meta, $expire_at);`
-
-	updateQuery = `
-		PRAGMA TablePathPrefix("%v");
-		DECLARE $dir_hash AS int64;
-		DECLARE $directory AS Utf8;
-		DECLARE $name AS Utf8;
-		DECLARE $meta AS String;
-		DECLARE $expire_at AS Optional<uint32>;
-
-		REPLACE INTO ` + asql.DEFAULT_TABLE + `
 			(dir_hash, name, directory, meta, expire_at)
 		VALUES
 			($dir_hash, $name, $directory, $meta, $expire_at);`
