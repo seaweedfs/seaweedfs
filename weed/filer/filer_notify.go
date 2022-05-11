@@ -100,7 +100,7 @@ func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 
 	for {
 		if err := f.appendToFile(targetFile, buf); err != nil {
-			glog.V(1).Infof("log write failed %s: %v", targetFile, err)
+			glog.V(0).Infof("metadata log write failed %s: %v", targetFile, err)
 			time.Sleep(737 * time.Millisecond)
 		} else {
 			break
