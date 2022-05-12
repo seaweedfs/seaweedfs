@@ -17,8 +17,6 @@ services:
     ports:
       - 9333:9333
       - 19333:19333
-      - 8084:8080
-      - 18084:18080
       - 8888:8888
       - 8000:8000
       - 18888:18888
@@ -33,3 +31,5 @@ services:
       YDB_ANONYMOUS_CREDENTIALS: 1
       WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
       WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+    depends_on:
+      - ydb
