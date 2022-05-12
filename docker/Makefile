@@ -7,7 +7,7 @@ gen: dev
 binary:
 	export SWCOMMIT=$(shell git rev-parse --short HEAD)
 	export SWLDFLAGS="-X github.com/chrislusf/seaweedfs/weed/util.COMMIT=$(SWCOMMIT)"
-	cd ../weed; CGO_ENABLED=0 GOOS=linux go build -ldflags "-extldflags -static $(SWLDFLAGS)"; mv weed ../docker/
+	cd ../weed; CGO_ENABLED=0 GOOS=linux go build --tags "$(tags)" -ldflags "-extldflags -static $(SWLDFLAGS)"; mv weed ../docker/
 
 build: binary
 	docker build --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.local .
@@ -49,9 +49,6 @@ dev_replicate: build
 dev_auditlog: build
 	docker-compose -f compose/local-auditlog-compose.yml -p seaweedfs up
 
-dev_ydb: build
-	docker-compose -f compose/local-ydb-compose.yml -p seaweedfs up
-
 cluster: build
 	docker-compose -f compose/local-cluster-compose.yml -p seaweedfs up
 
@@ -72,6 +69,11 @@ filer_etcd: build
 
 test_etcd: build
 	docker-compose -f compose/test-etcd-filer.yml -p seaweedfs up
+
+test_ydb: tags = ydb
+test_ydb: build
+	export
+	docker-compose -f compose/test-ydb-filer.yml -p seaweedfs up
 
 clean:
 	rm ./weed
