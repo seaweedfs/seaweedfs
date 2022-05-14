@@ -19,9 +19,6 @@ go_build: # make go_build tags=elastic,ydb,gocdk,hdfs,rocksdb,5BytesOffset
 go_build_large_disk:
 	docker build --build-arg TAGS=large_disk --no-cache -t chrislusf/seaweedfs:large_disk -f Dockerfile.go_build .
 
-build_gorocksdb:
-	docker build --no-cache -t chrislusf/gorocksdb -f Dockerfile.go_rocksdb .
-
 build_rocksdb:
 	docker build --no-cache -t chrislusf/seaweedfs:rocksdb -f Dockerfile.rocksdb_large .
 
