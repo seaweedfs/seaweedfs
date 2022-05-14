@@ -16,6 +16,11 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+const (
+	DirectiveCopy    = "COPY"
+	DirectiveReplace = "REPLACE"
+)
+
 func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	dstBucket, dstObject := xhttp.GetBucketAndObject(r)
@@ -31,7 +36,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	glog.V(3).Infof("CopyObjectHandler %s %s => %s %s", srcBucket, srcObject, dstBucket, dstObject)
 
-	replaceMeta, replaceTagging := replaceDirective(r)
+	replaceMeta, replaceTagging := replaceDirective(r.Header)
 
 	if (srcBucket == dstBucket && srcObject == dstObject || cpSrcPath == "") && (replaceMeta || replaceTagging) {
 		fullPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
@@ -190,8 +195,8 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 }
 
-func replaceDirective(r *http.Request) (replaceMeta, replaceTagging bool) {
-	return r.Header.Get(headers.AmzUserMetaDirective) == "REPLACE", r.Header.Get(headers.AmzObjectTaggingDirective) == "REPLACE"
+func replaceDirective(reqHeader http.Header) (replaceMeta, replaceTagging bool) {
+	return reqHeader.Get(headers.AmzUserMetaDirective) == DirectiveReplace, reqHeader.Get(headers.AmzObjectTaggingDirective) == DirectiveReplace
 }
 
 func processMetadata(reqHeader, existing http.Header, replaceMeta, replaceTagging bool, getTags func(parentDirectoryPath string, entryName string) (tags map[string]string, err error), dir, name string) (err error) {
@@ -214,19 +219,7 @@ func processMetadata(reqHeader, existing http.Header, replaceMeta, replaceTaggin
 		}
 	}
 
-	if replaceTagging {
-		if tags := reqHeader.Get(xhttp.AmzObjectTagging); tags != "" {
-			for _, v := range strings.Split(tags, "&") {
-				tag := strings.Split(v, "=")
-				if len(tag) == 2 {
-					reqHeader[xhttp.AmzObjectTagging+"-"+tag[0]] = []string{tag[1]}
-				} else if len(tag) == 1 {
-					reqHeader[xhttp.AmzObjectTagging+"-"+tag[0]] = []string{}
-				}
-			}
-		}
-		delete(reqHeader, xhttp.AmzObjectTagging)
-	} else {
+	if !replaceTagging {
 		for header, _ := range reqHeader {
 			if strings.HasPrefix(header, xhttp.AmzObjectTagging) {
 				delete(reqHeader, header)
@@ -269,17 +262,17 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 	}
 
 	if replaceMeta {
-		for k, v := range existing {
-			if strings.HasPrefix(k, xhttp.AmzUserMetaPrefix) {
-				metadata[k] = v
-			}
-		}
-	} else {
 		for header, values := range reqHeader {
 			if strings.HasPrefix(header, xhttp.AmzUserMetaPrefix) {
 				for _, value := range values {
 					metadata[header] = []byte(value)
 				}
+			}
+		}
+	} else {
+		for k, v := range existing {
+			if strings.HasPrefix(k, xhttp.AmzUserMetaPrefix) {
+				metadata[k] = v
 			}
 		}
 	}
