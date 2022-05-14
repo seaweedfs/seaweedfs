@@ -1,4 +1,4 @@
-name: "docker: build release containers for large volume"
+name: "docker: build release containers for all tags"
 
 on:
   push:
@@ -10,8 +10,7 @@ permissions:
   contents: read
 
 jobs:
-
-  build-large-release-container:
+  build-default-release-container:
     runs-on: [ubuntu-latest]
 
     steps:
@@ -26,7 +25,7 @@ jobs:
           images: |
             chrislusf/seaweedfs
           tags: |
-            type=ref,event=tag,suffix=_large_disk
+            type=ref,event=tag,suffix=_full
           flavor: |
             latest=false
           labels: |
@@ -53,7 +52,7 @@ jobs:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile.go_build
-          build-args: TAGS=5BytesOffset
-          platforms: linux/amd64, linux/arm, linux/arm64, linux/386
+          build-args: TAGS=elastic,ydb,gocdk,hdfs
+          platforms: linux/amd64
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
