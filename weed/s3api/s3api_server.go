@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb/s3_pb"
 	"net"
 	"net/http"
 	"strings"
@@ -31,6 +32,7 @@ type S3ApiServerOption struct {
 }
 
 type S3ApiServer struct {
+	s3_pb.UnimplementedSeaweedS3Server
 	option         *S3ApiServerOption
 	iam            *IdentityAccessManagement
 	randomClientId int32

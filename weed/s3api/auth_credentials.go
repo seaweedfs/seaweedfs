@@ -91,7 +91,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3A
 	if err != nil {
 		return fmt.Errorf("read S3 config: %v", err)
 	}
-	return iam.loadS3ApiConfigurationFromBytes(content)
+	return iam.LoadS3ApiConfigurationFromBytes(content)
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName string) error {
@@ -100,10 +100,10 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)
 	}
-	return iam.loadS3ApiConfigurationFromBytes(content)
+	return iam.LoadS3ApiConfigurationFromBytes(content)
 }
 
-func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromBytes(content []byte) error {
+func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content []byte) error {
 	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
 	if err := filer.ParseS3ConfigurationFromBytes(content, s3ApiConfiguration); err != nil {
 		glog.Warningf("unmarshal error: %v", err)

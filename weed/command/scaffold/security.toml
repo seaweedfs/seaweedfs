@@ -67,6 +67,11 @@ cert = ""
 key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
+[grpc.s3]
+cert = ""
+key = ""
+allowed_commonNames = ""    # comma-separated SSL certificate common names
+
 [grpc.msg_broker]
 cert = ""
 key = ""
