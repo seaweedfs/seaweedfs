@@ -7,14 +7,17 @@ gen: dev
 binary:
 	export SWCOMMIT=$(shell git rev-parse --short HEAD)
 	export SWLDFLAGS="-X github.com/chrislusf/seaweedfs/weed/util.COMMIT=$(SWCOMMIT)"
-	cd ../weed; CGO_ENABLED=0 GOOS=linux go build --tags "$(tags)" -ldflags "-extldflags -static $(SWLDFLAGS)"; mv weed ../docker/
+	cd ../weed; CGO_ENABLED=0 GOOS=linux go build -tags "$(tags)" -ldflags "-extldflags -static $(SWLDFLAGS)"; mv weed ../docker/
 
 build: binary
 	docker build --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.local .
 	rm ./weed
 
-build_gorocksdb:
-	docker build --no-cache -t chrislusf/gorocksdb -f Dockerfile.go_rocksdb .
+go_build: # make go_build tags=elastic,ydb,gocdk,hdfs,rocksdb,5BytesOffset
+	docker build --build-arg TAGS=$(tags) --no-cache -t chrislusf/seaweedfs:go_build -f Dockerfile.go_build .
+
+go_build_large_disk:
+	docker build --build-arg TAGS=large_disk --no-cache -t chrislusf/seaweedfs:large_disk -f Dockerfile.go_build .
 
 build_rocksdb:
 	docker build --no-cache -t chrislusf/seaweedfs:rocksdb -f Dockerfile.rocksdb_large .
