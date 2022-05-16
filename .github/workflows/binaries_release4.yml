@@ -14,6 +14,13 @@ on:
 permissions:
   contents: read
 
+env:
+  ROCKSDB_VERSION: v7.2.2
+  CGO_CFLAGS: "-I/tmp/rocksdb/include"
+  CGO_LDFLAGS: "-L/tmp/rocksdb -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd"
+  CGO_ENABLED: 1
+  GODEBUG: "http2client=0"
+
 jobs:
 
   build-release-binaries_linux:
@@ -36,9 +43,8 @@ jobs:
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
           overwrite: true
+          pre_command: apt-get update && apt-get install -y build-essential libsnappy-dev zlib1g-dev libbz2-dev libgflags-dev liblz4-dev libzstd-dev git && git clone https://github.com/facebook/rocksdb.git /tmp/rocksdb --depth 1 --single-branch --branch $ROCKSDB_VERSION
           build_flags: -tags elastic,ydb,gocdk,hdfs,rocksdb
-          pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
-          # build_flags: -tags 5BytesOffset # optional, default is
           ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
           project_path: weed
@@ -51,7 +57,7 @@ jobs:
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
           overwrite: true
-          pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
+          pre_command: apt-get update && apt-get install -y build-essential libsnappy-dev zlib1g-dev libbz2-dev libgflags-dev liblz4-dev libzstd-dev git && git clone https://github.com/facebook/rocksdb.git /tmp/rocksdb --depth 1 --single-branch --branch $ROCKSDB_VERSION
           build_flags: -tags 5BytesOffset,elastic,ydb,gocdk,hdfs,rocksdb
           ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
