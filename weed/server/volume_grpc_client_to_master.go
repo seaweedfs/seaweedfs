@@ -2,8 +2,11 @@ package weed_server
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/operation"
+	"os"
+	"syscall"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/operation"
 
 	"google.golang.org/grpc"
 
@@ -115,6 +118,12 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 			if err != nil {
 				doneChan <- err
 				return
+			}
+			if in.HasDuplicatedDirectory {
+				glog.Error("Shut Down Volume Server due to duplicated volume directory")
+				glog.V(0).Infof("send SIGINT to Volume Server")
+				p, _ := os.FindProcess(vs.pid)
+				p.Signal(syscall.SIGINT)
 			}
 			if in.GetVolumeSizeLimit() != 0 && vs.store.GetVolumeSizeLimit() != in.GetVolumeSizeLimit() {
 				vs.store.SetVolumeSizeLimit(in.GetVolumeSizeLimit())

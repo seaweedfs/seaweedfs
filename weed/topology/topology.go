@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 
 	"github.com/chrislusf/raft"
 	hashicorpRaft "github.com/hashicorp/raft"
@@ -42,8 +43,10 @@ type Topology struct {
 
 	Configuration *Configuration
 
-	RaftServer    raft.Server
-	HashicorpRaft *hashicorpRaft.Raft
+	RaftServer     raft.Server
+	HashicorpRaft  *hashicorpRaft.Raft
+	UUIDAccessLock sync.RWMutex
+	UUIDMap        map[string][]string
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {

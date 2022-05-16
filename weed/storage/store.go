@@ -2,12 +2,13 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
+	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
 
@@ -40,6 +41,7 @@ type Store struct {
 	GrpcPort            int
 	PublicUrl           string
 	Locations           []*DiskLocation
+	LocationUUIDs       []string
 	dataCenter          string // optional informaton, overwriting master setting if exists
 	rack                string // optional information, overwriting master setting if exists
 	connected           bool
@@ -64,6 +66,8 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i], minFreeSpaces[i], idxFolder, diskTypes[i])
 		location.loadExistingVolumes(needleMapKind)
 		s.Locations = append(s.Locations, location)
+		dirUUID, _ := GenerateDirUUID(dirnames[i])
+		s.LocationUUIDs = append(s.LocationUUIDs, dirUUID)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
 	}
 	s.NewVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
@@ -300,6 +304,11 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 	}
 
+	var UUIDList []string
+	for _, locationUUID := range s.LocationUUIDs {
+		UUIDList = append(UUIDList, locationUUID)
+	}
+
 	for col, size := range collectionVolumeSize {
 		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal").Set(float64(size))
 	}
@@ -321,6 +330,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		Rack:            s.rack,
 		Volumes:         volumeMessages,
 		HasNoVolumes:    len(volumeMessages) == 0,
+		LocationUUIDs:   UUIDList,
 	}
 
 }

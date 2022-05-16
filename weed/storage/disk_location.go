@@ -14,6 +14,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/google/uuid"
 )
 
 type DiskLocation struct {
@@ -31,6 +32,29 @@ type DiskLocation struct {
 	ecVolumesLock sync.RWMutex
 
 	isDiskSpaceLow bool
+}
+
+func GenerateDirUUID(dir string) (dirUUIDString string, err error) {
+	glog.V(1).Infof("Getting UUID of volume directory:%s", dir)
+	dirUUIDString = ""
+	fileName := dir + "/volume.uuid"
+	if !util.FileExists(fileName) {
+		dirUUID, _ := uuid.NewRandom()
+		dirUUIDString = dirUUID.String()
+		writeErr := util.WriteFile(fileName, []byte(dirUUIDString), 0644)
+		if writeErr != nil {
+			glog.Warningf("failed to write UUID to %s : %v", fileName, writeErr)
+			return "", fmt.Errorf("failed to write UUID to %s : %v", fileName, writeErr)
+		}
+	} else {
+		uuidData, readErr := os.ReadFile(fileName)
+		if readErr != nil {
+			glog.Warningf("failed to read UUID from %s : %v", fileName, readErr)
+			return "", fmt.Errorf("failed to read UUID from %s : %v", fileName, readErr)
+		}
+		dirUUIDString = string(uuidData)
+	}
+	return dirUUIDString, nil
 }
 
 func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType) *DiskLocation {

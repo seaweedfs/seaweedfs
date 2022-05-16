@@ -1,11 +1,13 @@
 package weed_server
 
 import (
+	"net/http"
+	"os"
+	"sync"
+
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"net/http"
-	"sync"
 
 	"google.golang.org/grpc"
 
@@ -43,6 +45,7 @@ type VolumeServer struct {
 	fileSizeLimitBytes      int64
 	isHeartbeating          bool
 	stopChan                chan bool
+	pid                     int
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
@@ -86,6 +89,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		inFlightDownloadDataLimitCond: sync.NewCond(new(sync.Mutex)),
 		concurrentUploadLimit:         concurrentUploadLimit,
 		concurrentDownloadLimit:       concurrentDownloadLimit,
+		pid:                           os.Getpid(),
 	}
 	vs.SeedMasterNodes = masterNodes
 
