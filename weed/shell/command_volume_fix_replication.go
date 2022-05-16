@@ -200,6 +200,13 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 			}
 		}
 
+		for _, volumeReplica := range replicas {
+			if volumeReplica.info.Collection != replica.info.Collection {
+				fmt.Fprintf(writer, "skip delete volume %d as collection %s is mismatch: %s\n", replica.info.Id, replica.info.Collection, volumeReplica.info.Collection)
+				continue
+			}
+		}
+
 		fmt.Fprintf(writer, "deleting volume %d from %s ...\n", replica.info.Id, replica.location.dataNode.Id)
 
 		if !takeAction {
