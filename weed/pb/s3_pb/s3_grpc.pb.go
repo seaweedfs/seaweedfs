@@ -18,7 +18,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type SeaweedS3Client interface {
-	Configure(ctx context.Context, in *ConfigureRequest, opts ...grpc.CallOption) (*ConfigureResponse, error)
+	Configure(ctx context.Context, in *S3ConfigureRequest, opts ...grpc.CallOption) (*S3ConfigureResponse, error)
 }
 
 type seaweedS3Client struct {
@@ -29,8 +29,8 @@ func NewSeaweedS3Client(cc grpc.ClientConnInterface) SeaweedS3Client {
 	return &seaweedS3Client{cc}
 }
 
-func (c *seaweedS3Client) Configure(ctx context.Context, in *ConfigureRequest, opts ...grpc.CallOption) (*ConfigureResponse, error) {
-	out := new(ConfigureResponse)
+func (c *seaweedS3Client) Configure(ctx context.Context, in *S3ConfigureRequest, opts ...grpc.CallOption) (*S3ConfigureResponse, error) {
+	out := new(S3ConfigureResponse)
 	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedS3/Configure", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -42,7 +42,7 @@ func (c *seaweedS3Client) Configure(ctx context.Context, in *ConfigureRequest, o
 // All implementations must embed UnimplementedSeaweedS3Server
 // for forward compatibility
 type SeaweedS3Server interface {
-	Configure(context.Context, *ConfigureRequest) (*ConfigureResponse, error)
+	Configure(context.Context, *S3ConfigureRequest) (*S3ConfigureResponse, error)
 	mustEmbedUnimplementedSeaweedS3Server()
 }
 
@@ -50,7 +50,7 @@ type SeaweedS3Server interface {
 type UnimplementedSeaweedS3Server struct {
 }
 
-func (UnimplementedSeaweedS3Server) Configure(context.Context, *ConfigureRequest) (*ConfigureResponse, error) {
+func (UnimplementedSeaweedS3Server) Configure(context.Context, *S3ConfigureRequest) (*S3ConfigureResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Configure not implemented")
 }
 func (UnimplementedSeaweedS3Server) mustEmbedUnimplementedSeaweedS3Server() {}
@@ -67,7 +67,7 @@ func RegisterSeaweedS3Server(s grpc.ServiceRegistrar, srv SeaweedS3Server) {
 }
 
 func _SeaweedS3_Configure_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ConfigureRequest)
+	in := new(S3ConfigureRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func _SeaweedS3_Configure_Handler(srv interface{}, ctx context.Context, dec func
 		FullMethod: "/messaging_pb.SeaweedS3/Configure",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedS3Server).Configure(ctx, req.(*ConfigureRequest))
+		return srv.(SeaweedS3Server).Configure(ctx, req.(*S3ConfigureRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
