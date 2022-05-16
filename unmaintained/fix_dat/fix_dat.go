@@ -24,7 +24,7 @@ var (
 
 /*
 This is to resolve an one-time issue that caused inconsistency with .dat and .idx files.
-In this case, the .dat file contains all data, but some of deletion caused incorrect offset.
+In this case, the .dat file contains all data, but some deletion caused incorrect offset.
 The .idx has all correct offsets.
 
 1. fix the .dat file, a new .dat_fixed file will be generated.
