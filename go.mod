@@ -10,7 +10,7 @@ require (
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/OneOfOne/xxhash v1.2.8
 	github.com/Shopify/sarama v1.33.0
-	github.com/aws/aws-sdk-go v1.44.9
+	github.com/aws/aws-sdk-go v1.44.14
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/buraksezer/consistent v0.0.0-20191006190839-693edf70fd72
 	github.com/bwmarrin/snowflake v0.3.0
@@ -85,7 +85,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/posener/complete v1.2.3
 	github.com/pquerna/cachecontrol v0.1.0
-	github.com/prometheus/client_golang v1.12.1
+	github.com/prometheus/client_golang v1.12.2
 	github.com/prometheus/client_model v0.2.0 // indirect
 	github.com/prometheus/common v0.32.1 // indirect
 	github.com/prometheus/procfs v0.7.3 // indirect
@@ -126,13 +126,13 @@ require (
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
 	golang.org/x/net v0.0.0-20220425223048-2871e0cb64e4
 	golang.org/x/oauth2 v0.0.0-20220411215720-9780585627b5 // indirect
-	golang.org/x/sys v0.0.0-20220502124256-b6088ccd6cba
+	golang.org/x/sys v0.0.0-20220503163025-988cb79eb6c6
 	golang.org/x/text v0.3.7 // indirect
 	golang.org/x/tools v0.1.8-0.20211029000441-d6a9af8af023
 	golang.org/x/xerrors v0.0.0-20220411194840-2f41105eb62f // indirect
-	google.golang.org/api v0.78.0
+	google.golang.org/api v0.79.0
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto v0.0.0-20220502173005-c8bf987b8c21 // indirect
+	google.golang.org/genproto v0.0.0-20220505152158-f39f71e6c8f3 // indirect
 	google.golang.org/grpc v1.46.0
 	google.golang.org/protobuf v1.28.0
 	gopkg.in/inf.v0 v0.9.1 // indirect
@@ -155,8 +155,8 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.1.0
 	github.com/hashicorp/raft v1.3.9
 	github.com/hashicorp/raft-boltdb v0.0.0-20220329195025-15018e9b97e0
-	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.0
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.25.0
+	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.25.3
 )
 
 require (
@@ -207,8 +207,8 @@ require (
 	github.com/tinylib/msgp v1.1.6 // indirect
 	github.com/yandex-cloud/go-genproto v0.0.0-20211115083454-9ca41db5ed9e // indirect
 	github.com/ydb-platform/ydb-go-genproto v0.0.0-20220203104745-929cf9c248bc // indirect
-	github.com/ydb-platform/ydb-go-yc v0.6.1 // indirect
-	github.com/ydb-platform/ydb-go-yc-metadata v0.0.9 // indirect
+	github.com/ydb-platform/ydb-go-yc v0.8.3 // indirect
+	github.com/ydb-platform/ydb-go-yc-metadata v0.5.2 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.4 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.5.4 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
