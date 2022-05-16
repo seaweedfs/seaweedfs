@@ -13,7 +13,7 @@ build: binary
 	docker build --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.local .
 	rm ./weed
 
-go_build: # make go_build tags=elastic,ydb,gocdk,hdfs,rocksdb,5BytesOffset
+go_build: # make go_build tags=elastic,ydb,gocdk,hdfs,5BytesOffset
 	docker build --build-arg TAGS=$(tags) --no-cache -t chrislusf/seaweedfs:go_build -f Dockerfile.go_build .
 
 go_build_large_disk:
