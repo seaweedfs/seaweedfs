@@ -45,8 +45,8 @@ type Topology struct {
 
 	RaftServer     raft.Server
 	HashicorpRaft  *hashicorpRaft.Raft
-	UUIDAccessLock sync.RWMutex
-	UUIDMap        map[string][]string
+	UuidAccessLock sync.RWMutex
+	UuidMap        map[string][]string
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {

@@ -70,7 +70,7 @@ message Heartbeat {
 
   map<string, uint32> max_volume_counts = 4;
   uint32 grpc_port = 20;
-  repeated string LocationUUIDs = 21;
+  repeated string location_uuids = 21;
 }
 
 message HeartbeatResponse {
@@ -79,7 +79,7 @@ message HeartbeatResponse {
   string metrics_address = 3;
   uint32 metrics_interval_seconds = 4;
   repeated StorageBackend storage_backends = 5;
-  bool has_duplicated_directory = 6;
+  repeated string duplicated_uuids = 6;
 }
 
 message VolumeInformationMessage {

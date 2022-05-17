@@ -301,9 +301,9 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 	}
 
-	var UUIDList []string
+	var uuidList []string
 	for _, loc := range s.Locations {
-		UUIDList = append(UUIDList, loc.DirectoryUUID)
+		uuidList = append(uuidList, loc.DirectoryUuid)
 	}
 
 	for col, size := range collectionVolumeSize {
@@ -327,7 +327,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		Rack:            s.rack,
 		Volumes:         volumeMessages,
 		HasNoVolumes:    len(volumeMessages) == 0,
-		LocationUUIDs:   UUIDList,
+		LocationUuids:   uuidList,
 	}
 
 }

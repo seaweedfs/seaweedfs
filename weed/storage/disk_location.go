@@ -19,7 +19,7 @@ import (
 
 type DiskLocation struct {
 	Directory              string
-	DirectoryUUID          string
+	DirectoryUuid          string
 	IdxDirectory           string
 	DiskType               types.DiskType
 	MaxVolumeCount         int
@@ -35,27 +35,27 @@ type DiskLocation struct {
 	isDiskSpaceLow bool
 }
 
-func GenerateDirUUID(dir string) (dirUUIDString string, err error) {
-	glog.V(1).Infof("Getting UUID of volume directory:%s", dir)
-	dirUUIDString = ""
+func GenerateDirUuid(dir string) (dirUuidString string, err error) {
+	glog.V(1).Infof("Getting uuid of volume directory:%s", dir)
+	dirUuidString = ""
 	fileName := dir + "/vol_dir.uuid"
 	if !util.FileExists(fileName) {
-		dirUUID, _ := uuid.NewRandom()
-		dirUUIDString = dirUUID.String()
-		writeErr := util.WriteFile(fileName, []byte(dirUUIDString), 0644)
+		dirUuid, _ := uuid.NewRandom()
+		dirUuidString = dirUuid.String()
+		writeErr := util.WriteFile(fileName, []byte(dirUuidString), 0644)
 		if writeErr != nil {
-			glog.Warningf("failed to write UUID to %s : %v", fileName, writeErr)
-			return "", fmt.Errorf("failed to write UUID to %s : %v", fileName, writeErr)
+			glog.Warningf("failed to write uuid to %s : %v", fileName, writeErr)
+			return "", fmt.Errorf("failed to write uuid to %s : %v", fileName, writeErr)
 		}
 	} else {
 		uuidData, readErr := os.ReadFile(fileName)
 		if readErr != nil {
-			glog.Warningf("failed to read UUID from %s : %v", fileName, readErr)
-			return "", fmt.Errorf("failed to read UUID from %s : %v", fileName, readErr)
+			glog.Warningf("failed to read uuid from %s : %v", fileName, readErr)
+			return "", fmt.Errorf("failed to read uuid from %s : %v", fileName, readErr)
 		}
-		dirUUIDString = string(uuidData)
+		dirUuidString = string(uuidData)
 	}
-	return dirUUIDString, nil
+	return dirUuidString, nil
 }
 
 func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType) *DiskLocation {
@@ -65,10 +65,10 @@ func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpace util.MinFreeSp
 	} else {
 		idxDir = util.ResolvePath(idxDir)
 	}
-	dirUUID, _ := GenerateDirUUID(dir)
+	dirUuid, _ := GenerateDirUuid(dir)
 	location := &DiskLocation{
 		Directory:              dir,
-		DirectoryUUID:          dirUUID,
+		DirectoryUuid:          dirUuid,
 		IdxDirectory:           idxDir,
 		DiskType:               diskType,
 		MaxVolumeCount:         maxVolumeCount,

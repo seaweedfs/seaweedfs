@@ -22,35 +22,39 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/topology"
 )
 
-func (ms *MasterServer) RegisterUUIDs(heartbeat *master_pb.Heartbeat) error {
-	ms.Topo.UUIDAccessLock.Lock()
-	defer ms.Topo.UUIDAccessLock.Unlock()
+func (ms *MasterServer) RegisterUuids(heartbeat *master_pb.Heartbeat) (duplicated_uuids []string, err error) {
+	ms.Topo.UuidAccessLock.Lock()
+	defer ms.Topo.UuidAccessLock.Unlock()
 	key := fmt.Sprintf("%s:%d", heartbeat.Ip, heartbeat.Port)
-	if ms.Topo.UUIDMap == nil {
-		ms.Topo.UUIDMap = make(map[string][]string)
+	if ms.Topo.UuidMap == nil {
+		ms.Topo.UuidMap = make(map[string][]string)
 	}
-	// find whether new UUID exists
-	for k, v := range ms.Topo.UUIDMap {
-		for _, id := range heartbeat.LocationUUIDs {
-			sort.Strings(v)
+	// find whether new uuid exists
+	for k, v := range ms.Topo.UuidMap {
+		sort.Strings(v)
+		for _, id := range heartbeat.LocationUuids {
 			index := sort.SearchStrings(v, id)
 			if index < len(v) && v[index] == id {
-				glog.Error("directory of ", id, " on ", k, " has been loaded")
-				return errors.New("volume: Duplicated volume directories were loaded")
+				duplicated_uuids = append(duplicated_uuids, id)
+				glog.Errorf("directory of %s on %s has been loaded", id, k)
 			}
 		}
 	}
-	ms.Topo.UUIDMap[key] = heartbeat.LocationUUIDs
-	glog.V(0).Infof("found new UUID:%v %v , %v", key, heartbeat.LocationUUIDs, ms.Topo.UUIDMap)
-	return nil
+	if len(duplicated_uuids) > 0 {
+		return duplicated_uuids, errors.New("volume: Duplicated volume directories were loaded")
+	}
+
+	ms.Topo.UuidMap[key] = heartbeat.LocationUuids
+	glog.V(0).Infof("found new uuid:%v %v , %v", key, heartbeat.LocationUuids, ms.Topo.UuidMap)
+	return nil, nil
 }
 
-func (ms *MasterServer) UnRegisterUUIDs(ip string, port int) {
-	ms.Topo.UUIDAccessLock.Lock()
-	defer ms.Topo.UUIDAccessLock.Unlock()
+func (ms *MasterServer) UnRegisterUuids(ip string, port int) {
+	ms.Topo.UuidAccessLock.Lock()
+	defer ms.Topo.UuidAccessLock.Unlock()
 	key := fmt.Sprintf("%s:%d", ip, port)
-	delete(ms.Topo.UUIDMap, key)
-	glog.V(0).Infof("remove volume server %v, online volume server: %v", key, ms.Topo.UUIDMap)
+	delete(ms.Topo.UuidMap, key)
+	glog.V(0).Infof("remove volume server %v, online volume server: %v", key, ms.Topo.UuidMap)
 }
 
 func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
@@ -67,7 +71,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			//  the unregister and register can race with each other
 			ms.Topo.UnRegisterDataNode(dn)
 			glog.V(0).Infof("unregister disconnected volume server %s:%d", dn.Ip, dn.Port)
-			ms.UnRegisterUUIDs(dn.Ip, dn.Port)
+			ms.UnRegisterUuids(dn.Ip, dn.Port)
 
 			message := &master_pb.VolumeLocation{
 				Url:       dn.Url(),
@@ -105,11 +109,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			dc := ms.Topo.GetOrCreateDataCenter(dcName)
 			rack := dc.GetOrCreateRack(rackName)
 			dn = rack.GetOrCreateDataNode(heartbeat.Ip, int(heartbeat.Port), int(heartbeat.GrpcPort), heartbeat.PublicUrl, heartbeat.MaxVolumeCounts)
-			glog.V(0).Infof("added volume server %d: %v:%d %v", dn.Counter, heartbeat.GetIp(), heartbeat.GetPort(), heartbeat.LocationUUIDs)
-			err := ms.RegisterUUIDs(heartbeat)
+			glog.V(0).Infof("added volume server %d: %v:%d %v", dn.Counter, heartbeat.GetIp(), heartbeat.GetPort(), heartbeat.LocationUuids)
+			uuidlist, err := ms.RegisterUuids(heartbeat)
 			if err != nil {
 				if stream_err := stream.Send(&master_pb.HeartbeatResponse{
-					HasDuplicatedDirectory: true,
+					DuplicatedUuids:    uuidlist,
 				}); stream_err != nil {
 					glog.Warningf("SendHeartbeat.Send DuplicatedDirectory response to %s:%d %v", dn.Ip, dn.Port, stream_err)
 					return stream_err
