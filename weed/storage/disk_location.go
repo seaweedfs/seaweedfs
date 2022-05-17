@@ -19,6 +19,7 @@ import (
 
 type DiskLocation struct {
 	Directory              string
+	DirectoryUUID          string
 	IdxDirectory           string
 	DiskType               types.DiskType
 	MaxVolumeCount         int
@@ -37,7 +38,7 @@ type DiskLocation struct {
 func GenerateDirUUID(dir string) (dirUUIDString string, err error) {
 	glog.V(1).Infof("Getting UUID of volume directory:%s", dir)
 	dirUUIDString = ""
-	fileName := dir + "/volume.uuid"
+	fileName := dir + "/vol_dir.uuid"
 	if !util.FileExists(fileName) {
 		dirUUID, _ := uuid.NewRandom()
 		dirUUIDString = dirUUID.String()
@@ -64,8 +65,10 @@ func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpace util.MinFreeSp
 	} else {
 		idxDir = util.ResolvePath(idxDir)
 	}
+	dirUUID, _ := GenerateDirUUID(dir)
 	location := &DiskLocation{
 		Directory:              dir,
+		DirectoryUUID:          dirUUID,
 		IdxDirectory:           idxDir,
 		DiskType:               diskType,
 		MaxVolumeCount:         maxVolumeCount,

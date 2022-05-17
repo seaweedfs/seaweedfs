@@ -36,7 +36,7 @@ func (ms *MasterServer) RegisterUUIDs(heartbeat *master_pb.Heartbeat) error {
 			index := sort.SearchStrings(v, id)
 			if index < len(v) && v[index] == id {
 				glog.Error("directory of ", id, " on ", k, " has been loaded")
-				return errors.New("volume: Duplicated volume directory was been loaded")
+				return errors.New("volume: Duplicated volume directories were loaded")
 			}
 		}
 	}
