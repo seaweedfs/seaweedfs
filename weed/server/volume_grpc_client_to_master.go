@@ -3,7 +3,6 @@ package weed_server
 import (
 	"fmt"
 	"os"
-	"syscall"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -121,9 +120,7 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 			}
 			if in.HasDuplicatedDirectory {
 				glog.Error("Shut Down Volume Server due to duplicated volume directory")
-				glog.V(0).Infof("send SIGINT to Volume Server")
-				p, _ := os.FindProcess(vs.pid)
-				p.Signal(syscall.SIGINT)
+				os.Exit(1)
 			}
 			if in.GetVolumeSizeLimit() != 0 && vs.store.GetVolumeSizeLimit() != in.GetVolumeSizeLimit() {
 				vs.store.SetVolumeSizeLimit(in.GetVolumeSizeLimit())
