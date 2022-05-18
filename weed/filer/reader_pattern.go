@@ -16,15 +16,17 @@ func NewReaderPattern() *ReaderPattern {
 }
 
 func (rp *ReaderPattern) MonitorReadAt(offset int64, size int) {
+	isStreaming := true
 	if rp.lastReadOffset > offset {
-		rp.isStreaming = false
+		isStreaming = false
 	}
 	if rp.lastReadOffset == -1 {
 		if offset != 0 {
-			rp.isStreaming = false
+			isStreaming = false
 		}
 	}
 	rp.lastReadOffset = offset
+	rp.isStreaming = isStreaming
 }
 
 func (rp *ReaderPattern) IsStreamingMode() bool {
