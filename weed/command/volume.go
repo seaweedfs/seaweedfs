@@ -267,7 +267,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	stopChan := make(chan bool)
 	grace.OnInterrupt(func() {
-		fmt.Println("volume server has be killed")
+		fmt.Println("volume server has been killed")
 
 		// Stop heartbeats
 		if !volumeServer.StopHeartbeat() {

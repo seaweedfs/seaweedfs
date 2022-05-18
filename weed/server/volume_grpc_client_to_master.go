@@ -2,8 +2,10 @@ package weed_server
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/operation"
+	"os"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/operation"
 
 	"google.golang.org/grpc"
 
@@ -115,6 +117,18 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 			if err != nil {
 				doneChan <- err
 				return
+			}
+			if len(in.DuplicatedUuids) > 0 {
+				var duplictedDir []string
+				for _, loc := range vs.store.Locations {
+					for _, uuid := range in.DuplicatedUuids {
+						if uuid == loc.DirectoryUuid {
+							duplictedDir = append(duplictedDir, loc.Directory)
+						}
+					}
+				}
+				glog.Errorf("Shut down Volume Server due to duplicated volume directories: %v", duplictedDir)
+				os.Exit(1)
 			}
 			if in.GetVolumeSizeLimit() != 0 && vs.store.GetVolumeSizeLimit() != in.GetVolumeSizeLimit() {
 				vs.store.SetVolumeSizeLimit(in.GetVolumeSizeLimit())

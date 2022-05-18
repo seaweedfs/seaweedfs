@@ -2,12 +2,13 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
+	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
 
@@ -300,6 +301,11 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 	}
 
+	var uuidList []string
+	for _, loc := range s.Locations {
+		uuidList = append(uuidList, loc.DirectoryUuid)
+	}
+
 	for col, size := range collectionVolumeSize {
 		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal").Set(float64(size))
 	}
@@ -321,6 +327,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		Rack:            s.rack,
 		Volumes:         volumeMessages,
 		HasNoVolumes:    len(volumeMessages) == 0,
+		LocationUuids:   uuidList,
 	}
 
 }

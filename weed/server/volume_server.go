@@ -1,11 +1,12 @@
 package weed_server
 
 import (
+	"net/http"
+	"sync"
+
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"net/http"
-	"sync"
 
 	"google.golang.org/grpc"
 
