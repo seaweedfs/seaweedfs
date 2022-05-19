@@ -230,7 +230,11 @@ func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplicatio
 
 	so, err := fs.detectStorageOption(requestURI, qCollection, qReplication, int32(ttl.Minutes())*60, diskType, dataCenter, rack, dataNode)
 	if so != nil {
-		so.Fsync = fsync == "true"
+		if fsync == "false" {
+			so.Fsync = false
+		} else if fsync == "true" {
+			so.Fsync = true
+		}
 	}
 
 	return so, err
