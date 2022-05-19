@@ -10,7 +10,6 @@ metadata:
     heritage: {{ .Release.Service }}
     release: {{ .Release.Name }}
 spec:
-  serviceName: {{ template "seaweedfs.name" . }}-s3
   replicas: {{ .Values.s3.replicas }}
   selector:
     matchLabels:
