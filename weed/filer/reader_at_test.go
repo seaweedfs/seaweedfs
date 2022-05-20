@@ -163,3 +163,86 @@ func TestReaderAt1(t *testing.T) {
 	testReadAt(t, readerAt, 1, 10, 10, nil)
 
 }
+
+func testReadAtWithMonitorReadAt(t *testing.T, readerAt *ChunkReadAt, offset int64, size int, expected int, expectedErr error) {
+	data := make([]byte, size)
+	n, err := readerAt.ReadAt(data, offset)
+
+	for _, d := range data {
+		fmt.Printf("%x", d)
+	}
+	fmt.Println()
+
+	if expected != n {
+		t.Errorf("unexpected read size: %d, expect: %d", n, expected)
+	}
+	if err != expectedErr {
+		t.Errorf("unexpected read error: %v, expect: %v", err, expectedErr)
+	}
+
+}
+
+func TestReaderAtRandomWithMonitorReadAt(t *testing.T) {
+
+	visibles := []VisibleInterval{
+		{
+			start:     0,
+			stop:      2,
+			fileId:    "1",
+			chunkSize: 2,
+		},
+		{
+			start:     2,
+			stop:      4,
+			fileId:    "3",
+			chunkSize: 2,
+		},
+		{
+			start:     4,
+			stop:      6,
+			fileId:    "5",
+			chunkSize: 2,
+		},
+		{
+			start:     6,
+			stop:      8,
+			fileId:    "7",
+			chunkSize: 2,
+		},
+		{
+			start:     8,
+			stop:      10,
+			fileId:    "9",
+			chunkSize: 2,
+		},
+	}
+
+	readerAt := &ChunkReadAt{
+		chunkViews:    ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
+		readerLock:    sync.Mutex{},
+		fileSize:      10,
+		readerCache:   newReaderCache(3, &mockChunkCache{}, nil),
+		readerPattern: NewReaderPattern(),
+	}
+
+	testReadAt(t, readerAt, 0, 10, 10, io.EOF)
+	testReadAt(t, readerAt, 1, 45, 9, io.EOF)
+	testReadAt(t, readerAt, 42, 8, 0, io.EOF)
+	testReadAt(t, readerAt, 3, 6, 6, nil)
+
+	// we don't implement rand read api in test, if c.readerPattern.IsRandomMode() == true, test should get this error
+	readerAt.readerPattern = NewReaderPattern()
+	testReadAtWithMonitorReadAt(t, readerAt, 2, 8, 0, ErrNilFuncNotPermitted)
+	testReadAtWithMonitorReadAt(t, readerAt, 8, 5, 2, io.EOF)
+	testReadAtWithMonitorReadAt(t, readerAt, 4, 6, 0, ErrNilFuncNotPermitted)
+
+	testReadAtWithMonitorReadAt(t, readerAt, 2, 6, 0, ErrNilFuncNotPermitted)
+	testReadAtWithMonitorReadAt(t, readerAt, 3, 5, 5, nil)
+	testReadAtWithMonitorReadAt(t, readerAt, 0, 10, 0, ErrNilFuncNotPermitted)
+
+	readerAt.readerPattern = NewReaderPattern()
+	testReadAtWithMonitorReadAt(t, readerAt, 0, 10, 10, io.EOF)
+	testReadAtWithMonitorReadAt(t, readerAt, 2, 6, 6, nil)
+	testReadAtWithMonitorReadAt(t, readerAt, 2, 7, 7, nil)
+	testReadAtWithMonitorReadAt(t, readerAt, 1, 6, 0, ErrNilFuncNotPermitted)
+}

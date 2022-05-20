@@ -2,6 +2,7 @@ package filer
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"io"
@@ -115,7 +116,12 @@ func fetchWholeChunk(bytesBuffer *bytes.Buffer, lookupFileIdFn wdclient.LookupFi
 	return nil
 }
 
+var ErrNilFuncNotPermitted = errors.New("nil func is not permitted")
+
 func fetchChunkRange(buffer []byte, lookupFileIdFn wdclient.LookupFileIdFunctionType, fileId string, cipherKey []byte, isGzipped bool, offset int64) (int, error) {
+	if lookupFileIdFn == nil {
+		return 0, ErrNilFuncNotPermitted
+	}
 	urlStrings, err := lookupFileIdFn(fileId)
 	if err != nil {
 		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
