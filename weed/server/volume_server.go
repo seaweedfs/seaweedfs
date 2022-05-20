@@ -3,6 +3,7 @@ package weed_server
 import (
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
@@ -26,6 +27,7 @@ type VolumeServer struct {
 	concurrentDownloadLimit       int64
 	inFlightUploadDataLimitCond   *sync.Cond
 	inFlightDownloadDataLimitCond *sync.Cond
+	inflightUploadDataTimeout     time.Duration
 
 	SeedMasterNodes []pb.ServerAddress
 	currentMaster   pb.ServerAddress
@@ -61,6 +63,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	fileSizeLimitMB int,
 	concurrentUploadLimit int64,
 	concurrentDownloadLimit int64,
+	inflightUploadDataTimeout time.Duration,
 ) *VolumeServer {
 
 	v := util.GetViper()
@@ -89,6 +92,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		inFlightDownloadDataLimitCond: sync.NewCond(new(sync.Mutex)),
 		concurrentUploadLimit:         concurrentUploadLimit,
 		concurrentDownloadLimit:       concurrentDownloadLimit,
+		inflightUploadDataTimeout:     inflightUploadDataTimeout,
 	}
 	vs.SeedMasterNodes = masterNodes
 
