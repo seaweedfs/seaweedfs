@@ -15,15 +15,6 @@ services:
     command: "volume -mserver=master:9333 -port=8080 -ip=volume"
     depends_on:
       - master
-  mysql:
-    image: percona/percona-server:5.7
-    ports:
-      - 3306:3306
-    environment:
-      - MYSQL_ROOT_PASSWORD=secret
-      - MYSQL_DATABASE=nextcloud
-      - MYSQL_PASSWORD=secret
-      - MYSQL_USER=nextcloud
   s3:
     image: chrislusf/seaweedfs:local
     ports:
@@ -44,12 +35,10 @@ services:
       - OBJECTSTORE_S3_PORT=8333
       - OBJECTSTORE_S3_SSL=false
       - OBJECTSTORE_S3_USEPATH_STYLE=true
-      - MYSQL_PASSWORD=secret
-      - MYSQL_DATABASE=nextcloud
-      - MYSQL_USER=nextcloud
-      - MYSQL_HOST=mysql
+      - SQLITE_DATABASE=nextcloud
+      - NEXTCLOUD_ADMIN_USER=admin
+      - NEXTCLOUD_ADMIN_PASSWORD=admin
     ports:
       - 80:80
     depends_on:
       - s3
-      - mysql
