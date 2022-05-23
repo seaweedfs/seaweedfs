@@ -5,7 +5,7 @@ go 1.18
 require (
 	cloud.google.com/go v0.100.2 // indirect
 	cloud.google.com/go/pubsub v1.21.1
-	cloud.google.com/go/storage v1.22.0
+	cloud.google.com/go/storage v1.22.1
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/OneOfOne/xxhash v1.2.8
@@ -67,7 +67,7 @@ require (
 	github.com/klauspost/compress v1.15.1 // indirect
 	github.com/klauspost/reedsolomon v1.9.16
 	github.com/kurin/blazer v0.5.3
-	github.com/lib/pq v1.10.5
+	github.com/lib/pq v1.10.6
 	github.com/linxGnu/grocksdb v1.7.1
 	github.com/magiconair/properties v1.8.6 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
@@ -130,7 +130,7 @@ require (
 	golang.org/x/text v0.3.7 // indirect
 	golang.org/x/tools v0.1.8-0.20211029000441-d6a9af8af023
 	golang.org/x/xerrors v0.0.0-20220411194840-2f41105eb62f // indirect
-	google.golang.org/api v0.79.0
+	google.golang.org/api v0.80.0
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20220505152158-f39f71e6c8f3 // indirect
 	google.golang.org/grpc v1.46.2
@@ -150,7 +150,7 @@ require (
 
 require (
 	github.com/Jille/raft-grpc-transport v1.2.0
-	github.com/arangodb/go-driver v1.3.1
+	github.com/arangodb/go-driver v1.3.2
 	github.com/fluent/fluent-logger-golang v1.9.0
 	github.com/hanwen/go-fuse/v2 v2.1.0
 	github.com/hashicorp/raft v1.3.9
