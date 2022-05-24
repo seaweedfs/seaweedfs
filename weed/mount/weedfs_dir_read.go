@@ -141,7 +141,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 	dh := wfs.GetDirectoryHandle(DirectoryHandleId(input.Fh))
 	if input.Offset == 0 {
 		dh.reset()
-	} else if dh.isFinished && input.Offset >= directoryStreamBaseOffset {
+	} else if dh.isFinished && input.Offset >= dh.entryStreamOffset {
 		entryCurrentIndex := input.Offset - dh.entryStreamOffset
 		if uint64(len(dh.entryStream)) <= entryCurrentIndex {
 			return fuse.OK
@@ -196,8 +196,8 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 	}
 
 	var lastEntryName string
-	if input.Offset >= directoryStreamBaseOffset {
-		if input.Offset > directoryStreamBaseOffset {
+	if input.Offset >= dh.entryStreamOffset {
+		if input.Offset > dh.entryStreamOffset {
 			entryPreviousIndex := (input.Offset - dh.entryStreamOffset) - 1
 			if uint64(len(dh.entryStream)) > entryPreviousIndex {
 				lastEntryName = dh.entryStream[entryPreviousIndex].Name()
