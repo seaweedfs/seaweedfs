@@ -221,6 +221,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 	var err error
 	if err = meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath, nil); err != nil {
 		glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
+		return fuse.EIO
 	}
 	listErr := wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, lastEntryName, false, int64(math.MaxInt32), func(entry *filer.Entry) bool {
 		dh.entryStream = append(dh.entryStream, entry)
