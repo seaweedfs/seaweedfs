@@ -68,8 +68,9 @@ func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullP
 
 	if err != nil {
 		err = fmt.Errorf("list %s: %v", path, err)
+	} else {
+		mc.markCachedFn(path)
 	}
-	mc.markCachedFn(path)
 	return err
 }
 
