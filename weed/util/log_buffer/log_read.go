@@ -34,6 +34,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startTreadTime
 		}
 		bytesBuf, err = logBuffer.ReadFromBuffer(lastReadTime)
 		if err == ResumeFromDiskError {
+			time.Sleep(1127 * time.Millisecond)
 			return lastReadTime, ResumeFromDiskError
 		}
 		// glog.V(4).Infof("%s ReadFromBuffer by %v", readerName, lastReadTime)

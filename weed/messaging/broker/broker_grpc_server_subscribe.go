@@ -128,7 +128,6 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 				continue
 			}
 			glog.Errorf("processed to %v: %v", lastReadTime, err)
-			time.Sleep(3127 * time.Millisecond)
 			if err != log_buffer.ResumeError {
 				break
 			}
