@@ -28,7 +28,7 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 		return nil, err
 	}
 
-	oldEntry, err := fs.filer.FindEntry(ctx, oldParent.Child(req.OldName))
+	oldEntry, err := fs.filer.FindEntry(ctx, oldParent.Child(req.OldName), 0) //TODO Version
 	if err != nil {
 		fs.filer.RollbackTransaction(ctx)
 		return nil, fmt.Errorf("%s/%s not found: %v", req.OldDirectory, req.OldName, err)
@@ -66,7 +66,7 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 		return err
 	}
 
-	oldEntry, err := fs.filer.FindEntry(ctx, oldParent.Child(req.OldName))
+	oldEntry, err := fs.filer.FindEntry(ctx, oldParent.Child(req.OldName), 0) //TODO Version
 	if err != nil {
 		fs.filer.RollbackTransaction(ctx)
 		return fmt.Errorf("%s/%s not found: %v", req.OldDirectory, req.OldName, err)
@@ -75,7 +75,7 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 	if oldEntry.IsDirectory() {
 		// follow https://pubs.opengroup.org/onlinepubs/000095399/functions/rename.html
 		targetDir := newParent.Child(req.NewName)
-		newEntry, err := fs.filer.FindEntry(ctx, targetDir)
+		newEntry, err := fs.filer.FindEntry(ctx, targetDir, 0) // TODO Version
 		if err == nil {
 			if !newEntry.IsDirectory() {
 				fs.filer.RollbackTransaction(ctx)
@@ -202,7 +202,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	}
 
 	// delete old entry
-	deleteErr := fs.filer.DeleteEntryMetaAndData(ctx, oldPath, false, false, false, false, signatures)
+	deleteErr := fs.filer.DeleteEntryMetaAndData(ctx, oldPath, 0, false, false, false, false, signatures) //TODO Version
 	if deleteErr != nil {
 		return deleteErr
 	}

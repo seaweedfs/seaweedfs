@@ -94,6 +94,7 @@ func (fh *FileHandle) downloadRemoteEntry(entry *filer_pb.Entry) (*filer_pb.Entr
 		request := &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 			Directory: string(dir),
 			Name:      entry.Name,
+			//TODO Version
 		}
 
 		glog.V(4).Infof("download entry: %v", request)

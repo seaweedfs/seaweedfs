@@ -147,6 +147,8 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		mode = 0660
 	}
 
+	version, _, err := getContentVersion(r)
+
 	// fix the path
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") {
@@ -155,7 +157,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		}
 	} else {
 		if fileName != "" {
-			if possibleDirEntry, findDirErr := fs.filer.FindEntry(ctx, util.FullPath(path)); findDirErr == nil {
+			if possibleDirEntry, findDirErr := fs.filer.FindEntry(ctx, util.FullPath(path), 0); findDirErr == nil {
 				if possibleDirEntry.IsDirectory() {
 					path += "/" + fileName
 				}
@@ -171,7 +173,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	isOffsetWrite := len(fileChunks) > 0 && fileChunks[0].Offset > 0
 	// when it is an append
 	if isAppend || isOffsetWrite {
-		existingEntry, findErr := fs.filer.FindEntry(ctx, util.FullPath(path))
+		existingEntry, findErr := fs.filer.FindEntry(ctx, util.FullPath(path), version)
 		if findErr != nil && findErr != filer_pb.ErrNotFound {
 			glog.V(0).Infof("failing to find %s: %v", path, findErr)
 		}
@@ -213,6 +215,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 				Mime:        contentType,
 				Md5:         md5bytes,
 				FileSize:    uint64(chunkOffset),
+				Version:     version,
 			},
 			Content: content,
 		}
@@ -310,7 +313,7 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 		path = path[:len(path)-1]
 	}
 
-	existingEntry, err := fs.filer.FindEntry(ctx, util.FullPath(path))
+	existingEntry, err := fs.filer.FindEntry(ctx, util.FullPath(path), 0)
 	if err == nil && existingEntry != nil {
 		replyerr = fmt.Errorf("dir %s already exists", path)
 		return

@@ -342,6 +342,7 @@ type Entry struct {
 	Content         []byte            `protobuf:"bytes,9,opt,name=content,proto3" json:"content,omitempty"`                                           // if not empty, the file content
 	RemoteEntry     *RemoteEntry      `protobuf:"bytes,10,opt,name=remote_entry,json=remoteEntry,proto3" json:"remote_entry,omitempty"`
 	Quota           int64             `protobuf:"varint,11,opt,name=quota,proto3" json:"quota,omitempty"` // for bucket only. Positive/Negative means enabled/disabled.
+	Version         uint64            `protobuf:"varint,12,opt,name=version,proto3" json:"version,omitempty"`
 }
 
 func (x *Entry) Reset() {
@@ -442,6 +443,13 @@ func (x *Entry) GetRemoteEntry() *RemoteEntry {
 func (x *Entry) GetQuota() int64 {
 	if x != nil {
 		return x.Quota
+	}
+	return 0
+}
+
+func (x *Entry) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
 	}
 	return 0
 }
@@ -847,6 +855,7 @@ type FuseAttributes struct {
 	DiskType      string   `protobuf:"bytes,15,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
 	Rdev          uint32   `protobuf:"varint,16,opt,name=rdev,proto3" json:"rdev,omitempty"`
 	Inode         uint64   `protobuf:"varint,17,opt,name=inode,proto3" json:"inode,omitempty"`
+	Version       uint64   `protobuf:"varint,18,opt,name=version,proto3" json:"version,omitempty"`
 }
 
 func (x *FuseAttributes) Reset() {
@@ -1251,6 +1260,7 @@ type AppendToEntryRequest struct {
 	Directory string       `protobuf:"bytes,1,opt,name=directory,proto3" json:"directory,omitempty"`
 	EntryName string       `protobuf:"bytes,2,opt,name=entry_name,json=entryName,proto3" json:"entry_name,omitempty"`
 	Chunks    []*FileChunk `protobuf:"bytes,3,rep,name=chunks,proto3" json:"chunks,omitempty"`
+	Version   uint64       `protobuf:"bytes,4,opt,name=version,proto3" json:"version,omitempty"`
 }
 
 func (x *AppendToEntryRequest) Reset() {
@@ -1306,6 +1316,13 @@ func (x *AppendToEntryRequest) GetChunks() []*FileChunk {
 	return nil
 }
 
+func (x *AppendToEntryRequest) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
 type AppendToEntryResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -1357,6 +1374,7 @@ type DeleteEntryRequest struct {
 	IgnoreRecursiveError bool    `protobuf:"varint,6,opt,name=ignore_recursive_error,json=ignoreRecursiveError,proto3" json:"ignore_recursive_error,omitempty"`
 	IsFromOtherCluster   bool    `protobuf:"varint,7,opt,name=is_from_other_cluster,json=isFromOtherCluster,proto3" json:"is_from_other_cluster,omitempty"`
 	Signatures           []int32 `protobuf:"varint,8,rep,packed,name=signatures,proto3" json:"signatures,omitempty"`
+	Version              uint64  `protobuf:"varint,9,opt,name=version,proto3" json:"version,omitempty"`
 }
 
 func (x *DeleteEntryRequest) Reset() {
@@ -1440,6 +1458,13 @@ func (x *DeleteEntryRequest) GetSignatures() []int32 {
 	return nil
 }
 
+func (x *DeleteEntryRequest) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
 type DeleteEntryResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -1497,6 +1522,7 @@ type AtomicRenameEntryRequest struct {
 	NewDirectory string  `protobuf:"bytes,3,opt,name=new_directory,json=newDirectory,proto3" json:"new_directory,omitempty"`
 	NewName      string  `protobuf:"bytes,4,opt,name=new_name,json=newName,proto3" json:"new_name,omitempty"`
 	Signatures   []int32 `protobuf:"varint,5,rep,packed,name=signatures,proto3" json:"signatures,omitempty"`
+	Version      uint64  `protobuf:"varint,6,opt,name=version,proto3" json:"version,omitempty"`
 }
 
 func (x *AtomicRenameEntryRequest) Reset() {
@@ -1564,6 +1590,13 @@ func (x *AtomicRenameEntryRequest) GetSignatures() []int32 {
 		return x.Signatures
 	}
 	return nil
+}
+
+func (x *AtomicRenameEntryRequest) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
 }
 
 type AtomicRenameEntryResponse struct {
@@ -3498,6 +3531,7 @@ type CacheRemoteObjectToLocalClusterRequest struct {
 
 	Directory string `protobuf:"bytes,1,opt,name=directory,proto3" json:"directory,omitempty"`
 	Name      string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Version   uint64 `protobuf:"varint,3,opt,name=version,proto3" json:"version,omitempty"`
 }
 
 func (x *CacheRemoteObjectToLocalClusterRequest) Reset() {
@@ -3544,6 +3578,13 @@ func (x *CacheRemoteObjectToLocalClusterRequest) GetName() string {
 		return x.Name
 	}
 	return ""
+}
+
+func (x *CacheRemoteObjectToLocalClusterRequest) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
 }
 
 type CacheRemoteObjectToLocalClusterResponse struct {
@@ -3779,6 +3820,7 @@ func (x *FilerConf_PathConf) GetDataNode() string {
 
 var File_filer_proto protoreflect.FileDescriptor
 
+//TODO Version added version field to Entry, recompilation is it?
 var file_filer_proto_rawDesc = []byte{
 	0x0a, 0x0b, 0x66, 0x69, 0x6c, 0x65, 0x72, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x08, 0x66,
 	0x69, 0x6c, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x22, 0x4f, 0x0a, 0x1b, 0x4c, 0x6f, 0x6f, 0x6b, 0x75,

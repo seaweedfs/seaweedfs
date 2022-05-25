@@ -229,6 +229,10 @@ func (store *LevelDB3Store) FindEntry(ctx context.Context, fullpath weed_util.Fu
 	return entry, nil
 }
 
+func (store *LevelDB3Store) FindVersionedEntry(ctx context.Context, fullpath weed_util.FullPath, v uint64) (entry *filer.Entry, err error) {
+	return store.FindEntry(ctx, fullpath)
+}
+
 func (store *LevelDB3Store) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 
 	db, _, shortPath, err := store.findDB(fullpath, false)
@@ -245,6 +249,10 @@ func (store *LevelDB3Store) DeleteEntry(ctx context.Context, fullpath weed_util.
 	}
 
 	return nil
+}
+
+func (store *LevelDB3Store) DeleteVersionedEntry(ctx context.Context, fullpath weed_util.FullPath, v uint64) (err error) {
+	return store.DeleteEntry(ctx, fullpath)
 }
 
 func (store *LevelDB3Store) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {

@@ -62,7 +62,7 @@ func NewFilerConf() (fc *FilerConf) {
 
 func (fc *FilerConf) loadFromFiler(filer *Filer) (err error) {
 	filerConfPath := util.NewFullPath(DirectoryEtcSeaweedFS, FilerConfName)
-	entry, err := filer.FindEntry(context.Background(), filerConfPath)
+	entry, err := filer.FindEntry(context.Background(), filerConfPath, 0) //TODO Version
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			return nil

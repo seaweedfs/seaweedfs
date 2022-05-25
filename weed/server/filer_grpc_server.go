@@ -21,7 +21,7 @@ func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.L
 
 	glog.V(4).Infof("LookupDirectoryEntry %s", filepath.Join(req.Directory, req.Name))
 
-	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name))
+	entry, err := fs.filer.FindEntry(ctx, util.JoinPath(req.Directory, req.Name), 0) //TODO Version
 	if err == filer_pb.ErrNotFound {
 		return &filer_pb.LookupDirectoryEntryResponse{}, err
 	}
@@ -164,7 +164,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	glog.V(4).Infof("UpdateEntry %v", req)
 
 	fullpath := util.Join(req.Directory, req.Entry.Name)
-	entry, err := fs.filer.FindEntry(ctx, util.FullPath(fullpath))
+	entry, err := fs.filer.FindEntry(ctx, util.FullPath(fullpath), 0) //TODO Version
 	if err != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("not found %s: %v", fullpath, err)
 	}
@@ -237,7 +237,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 
 	fullpath := util.NewFullPath(req.Directory, req.EntryName)
 	var offset int64 = 0
-	entry, err := fs.filer.FindEntry(ctx, fullpath)
+	entry, err := fs.filer.FindEntry(ctx, fullpath, 0) //TODO Version
 	if err == filer_pb.ErrNotFound {
 		entry = &filer.Entry{
 			FullPath: fullpath,
@@ -279,7 +279,7 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 	glog.V(4).Infof("DeleteEntry %v", req)
 
-	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures)
+	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), 0, req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures) //TODO Version
 	resp = &filer_pb.DeleteEntryResponse{}
 	if err != nil && err != filer_pb.ErrNotFound {
 		resp.Error = err.Error()

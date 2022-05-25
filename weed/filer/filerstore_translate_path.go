@@ -88,9 +88,26 @@ func (t *FilerStorePathTranlator) FindEntry(ctx context.Context, fp util.FullPat
 	return
 }
 
+func (t *FilerStorePathTranlator) FindVersionedEntry(ctx context.Context, fp util.FullPath, v uint64) (entry *Entry, err error) {
+	if t.storeRoot == "/" {
+		return t.actualStore.FindVersionedEntry(ctx, fp, v)
+	}
+	newFullPath := t.translatePath(fp)
+	entry, err = t.actualStore.FindVersionedEntry(ctx, newFullPath, v)
+	if err == nil {
+		entry.FullPath = fp[:len(t.storeRoot)-1] + entry.FullPath
+	}
+	return
+}
+
 func (t *FilerStorePathTranlator) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {
 	newFullPath := t.translatePath(fp)
 	return t.actualStore.DeleteEntry(ctx, newFullPath)
+}
+
+func (t *FilerStorePathTranlator) DeleteVersionedEntry(ctx context.Context, fp util.FullPath, v uint64) (err error) {
+	newFullPath := t.translatePath(fp)
+	return t.actualStore.DeleteVersionedEntry(ctx, newFullPath, v)
 }
 
 func (t *FilerStorePathTranlator) DeleteOneEntry(ctx context.Context, existingEntry *Entry) (err error) {

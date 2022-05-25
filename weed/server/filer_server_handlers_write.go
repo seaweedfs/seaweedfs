@@ -92,6 +92,9 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) {
 	src := r.URL.Query().Get("mv.from")
 	dst := r.URL.Path
+	//TODO Version
+	//version, versionStr, err := getContentVersion(r)
+	//w.Header().Set("Content-Version", versionStr)
 
 	glog.V(2).Infof("FilerServer.move %v to %v", src, dst)
 
@@ -113,7 +116,7 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 
 	srcPath := util.FullPath(src)
 	dstPath := util.FullPath(dst)
-	srcEntry, err := fs.filer.FindEntry(ctx, srcPath)
+	srcEntry, err := fs.filer.FindEntry(ctx, srcPath, 0) //TODO Version
 	if err != nil {
 		err = fmt.Errorf("failed to get src entry '%s', err: %s", src, err)
 		writeJsonError(w, r, http.StatusBadRequest, err)
@@ -124,7 +127,7 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 	newDir, newName := dstPath.DirAndName()
 	newName = util.Nvl(newName, oldName)
 
-	dstEntry, err := fs.filer.FindEntry(ctx, util.FullPath(strings.TrimRight(dst, "/")))
+	dstEntry, err := fs.filer.FindEntry(ctx, util.FullPath(strings.TrimRight(dst, "/")), 0) //TODO Version
 	if err != nil && err != filer_pb.ErrNotFound {
 		err = fmt.Errorf("failed to get dst entry '%s', err: %s", dst, err)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
@@ -141,6 +144,7 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 		OldName:      oldName,
 		NewDirectory: newDir,
 		NewName:      newName,
+		//TODO Version
 	})
 	if err != nil {
 		err = fmt.Errorf("failed to move entry from '%s' to '%s', err: %s", src, dst, err)
@@ -171,7 +175,7 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		objectPath = objectPath[0 : len(objectPath)-1]
 	}
 
-	err := fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil)
+	err := fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), 0, isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil) //TODO Version
 	if err != nil {
 		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
 		httpStatus := http.StatusInternalServerError

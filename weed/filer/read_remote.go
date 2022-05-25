@@ -30,6 +30,7 @@ func CacheRemoteObjectToLocalCluster(filerClient filer_pb.FilerClient, remoteCon
 		_, err := client.CacheRemoteObjectToLocalCluster(context.Background(), &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 			Directory: string(parent),
 			Name:      entry.Name,
+			//TODO Version
 		})
 		return err
 	})

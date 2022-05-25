@@ -81,14 +81,16 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 }
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
-
 	path := r.URL.Path
+	version, versionStr, err := getContentVersion(r)
+	w.Header().Set("Content-Version", versionStr)
+
 	isForDirectory := strings.HasSuffix(path, "/")
 	if isForDirectory && len(path) > 1 {
 		path = path[:len(path)-1]
 	}
 
-	entry, err := fs.filer.FindEntry(context.Background(), util.FullPath(path))
+	entry, err := fs.filer.FindEntry(context.Background(), util.FullPath(path), version)
 	if err != nil {
 		if path == "/" {
 			fs.listDirectoryHandler(w, r)
@@ -229,6 +231,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			if resp, err := fs.CacheRemoteObjectToLocalCluster(context.Background(), &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 				Directory: dir,
 				Name:      name,
+				//TODO Version
 			}); err != nil {
 				stats.FilerRequestCounter.WithLabelValues(stats.ErrorReadCache).Inc()
 				glog.Errorf("CacheRemoteObjectToLocalCluster %s: %v", entry.FullPath, err)

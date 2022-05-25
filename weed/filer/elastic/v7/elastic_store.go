@@ -156,6 +156,10 @@ func (store *ElasticStore) FindEntry(ctx context.Context, fullpath weed_util.Ful
 	return nil, filer_pb.ErrNotFound
 }
 
+func (store *ElasticStore) FindVersionedEntry(ctx context.Context, fullpath weed_util.FullPath, v uint64) (entry *filer.Entry, err error) {
+	return store.FindEntry(ctx, fullpath)
+}
+
 func (store *ElasticStore) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	index := getIndex(fullpath, false)
 	id := weed_util.Md5String([]byte(fullpath))
@@ -163,6 +167,10 @@ func (store *ElasticStore) DeleteEntry(ctx context.Context, fullpath weed_util.F
 		return store.deleteIndex(ctx, index)
 	}
 	return store.deleteEntry(ctx, index, id)
+}
+
+func (store *ElasticStore) DeleteVersionedEntry(ctx context.Context, fullpath weed_util.FullPath, v uint64) (err error) {
+	return store.DeleteEntry(ctx, fullpath)
 }
 
 func (store *ElasticStore) deleteIndex(ctx context.Context, index string) (err error) {

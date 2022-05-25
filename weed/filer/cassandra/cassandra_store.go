@@ -149,6 +149,10 @@ func (store *CassandraStore) FindEntry(ctx context.Context, fullpath util.FullPa
 	return entry, nil
 }
 
+func (store *CassandraStore) FindVersionedEntry(ctx context.Context, fullpath util.FullPath, v uint64) (entry *filer.Entry, err error) {
+	return store.FindEntry(ctx, fullpath)
+}
+
 func (store *CassandraStore) DeleteEntry(ctx context.Context, fullpath util.FullPath) error {
 
 	dir, name := fullpath.DirAndName()
@@ -163,6 +167,10 @@ func (store *CassandraStore) DeleteEntry(ctx context.Context, fullpath util.Full
 	}
 
 	return nil
+}
+
+func (store *CassandraStore) DeleteVersionedEntry(ctx context.Context, fullpath util.FullPath, v uint64) error {
+	return store.DeleteEntry(ctx, fullpath)
 }
 
 func (store *CassandraStore) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) error {

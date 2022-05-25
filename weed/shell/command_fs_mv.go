@@ -81,6 +81,7 @@ func (c *commandFsMv) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 			OldName:      sourceName,
 			NewDirectory: targetDir,
 			NewName:      targetName,
+			//TODO Version
 		}
 
 		_, err = client.AtomicRenameEntry(context.Background(), request)
