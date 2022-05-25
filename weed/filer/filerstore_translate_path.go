@@ -8,16 +8,16 @@ import (
 )
 
 var (
-	_ = FilerStore(&FilerStorePathTranlator{})
+	_ = FilerStore(&FilerStorePathTranslator{})
 )
 
-type FilerStorePathTranlator struct {
+type FilerStorePathTranslator struct {
 	actualStore FilerStore
 	storeRoot   string
 }
 
-func NewFilerStorePathTranlator(storeRoot string, store FilerStore) *FilerStorePathTranlator {
-	if innerStore, ok := store.(*FilerStorePathTranlator); ok {
+func NewFilerStorePathTranslator(storeRoot string, store FilerStore) *FilerStorePathTranslator {
+	if innerStore, ok := store.(*FilerStorePathTranslator); ok {
 		return innerStore
 	}
 
@@ -25,13 +25,13 @@ func NewFilerStorePathTranlator(storeRoot string, store FilerStore) *FilerStoreP
 		storeRoot += "/"
 	}
 
-	return &FilerStorePathTranlator{
+	return &FilerStorePathTranslator{
 		actualStore: store,
 		storeRoot:   storeRoot,
 	}
 }
 
-func (t *FilerStorePathTranlator) translatePath(fp util.FullPath) (newPath util.FullPath) {
+func (t *FilerStorePathTranslator) translatePath(fp util.FullPath) (newPath util.FullPath) {
 	newPath = fp
 	if t.storeRoot == "/" {
 		return
@@ -42,7 +42,7 @@ func (t *FilerStorePathTranlator) translatePath(fp util.FullPath) (newPath util.
 	}
 	return
 }
-func (t *FilerStorePathTranlator) changeEntryPath(entry *Entry) (previousPath util.FullPath) {
+func (t *FilerStorePathTranslator) changeEntryPath(entry *Entry) (previousPath util.FullPath) {
 	previousPath = entry.FullPath
 	if t.storeRoot == "/" {
 		return
@@ -50,33 +50,33 @@ func (t *FilerStorePathTranlator) changeEntryPath(entry *Entry) (previousPath ut
 	entry.FullPath = t.translatePath(previousPath)
 	return
 }
-func (t *FilerStorePathTranlator) recoverEntryPath(entry *Entry, previousPath util.FullPath) {
+func (t *FilerStorePathTranslator) recoverEntryPath(entry *Entry, previousPath util.FullPath) {
 	entry.FullPath = previousPath
 }
 
-func (t *FilerStorePathTranlator) GetName() string {
+func (t *FilerStorePathTranslator) GetName() string {
 	return t.actualStore.GetName()
 }
 
-func (t *FilerStorePathTranlator) Initialize(configuration util.Configuration, prefix string) error {
+func (t *FilerStorePathTranslator) Initialize(configuration util.Configuration, prefix string) error {
 	return t.actualStore.Initialize(configuration, prefix)
 }
 
-func (t *FilerStorePathTranlator) InsertEntry(ctx context.Context, entry *Entry) error {
+func (t *FilerStorePathTranslator) InsertEntry(ctx context.Context, entry *Entry) error {
 	previousPath := t.changeEntryPath(entry)
 	defer t.recoverEntryPath(entry, previousPath)
 
 	return t.actualStore.InsertEntry(ctx, entry)
 }
 
-func (t *FilerStorePathTranlator) UpdateEntry(ctx context.Context, entry *Entry) error {
+func (t *FilerStorePathTranslator) UpdateEntry(ctx context.Context, entry *Entry) error {
 	previousPath := t.changeEntryPath(entry)
 	defer t.recoverEntryPath(entry, previousPath)
 
 	return t.actualStore.UpdateEntry(ctx, entry)
 }
 
-func (t *FilerStorePathTranlator) FindEntry(ctx context.Context, fp util.FullPath) (entry *Entry, err error) {
+func (t *FilerStorePathTranslator) FindEntry(ctx context.Context, fp util.FullPath) (entry *Entry, err error) {
 	if t.storeRoot == "/" {
 		return t.actualStore.FindEntry(ctx, fp)
 	}
@@ -88,12 +88,12 @@ func (t *FilerStorePathTranlator) FindEntry(ctx context.Context, fp util.FullPat
 	return
 }
 
-func (t *FilerStorePathTranlator) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {
+func (t *FilerStorePathTranslator) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {
 	newFullPath := t.translatePath(fp)
 	return t.actualStore.DeleteEntry(ctx, newFullPath)
 }
 
-func (t *FilerStorePathTranlator) DeleteOneEntry(ctx context.Context, existingEntry *Entry) (err error) {
+func (t *FilerStorePathTranslator) DeleteOneEntry(ctx context.Context, existingEntry *Entry) (err error) {
 
 	previousPath := t.changeEntryPath(existingEntry)
 	defer t.recoverEntryPath(existingEntry, previousPath)
@@ -101,13 +101,13 @@ func (t *FilerStorePathTranlator) DeleteOneEntry(ctx context.Context, existingEn
 	return t.actualStore.DeleteEntry(ctx, existingEntry.FullPath)
 }
 
-func (t *FilerStorePathTranlator) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {
+func (t *FilerStorePathTranslator) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {
 	newFullPath := t.translatePath(fp)
 
 	return t.actualStore.DeleteFolderChildren(ctx, newFullPath)
 }
 
-func (t *FilerStorePathTranlator) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (string, error) {
+func (t *FilerStorePathTranslator) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (string, error) {
 
 	newFullPath := t.translatePath(dirPath)
 
@@ -117,7 +117,7 @@ func (t *FilerStorePathTranlator) ListDirectoryEntries(ctx context.Context, dirP
 	})
 }
 
-func (t *FilerStorePathTranlator) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (string, error) {
+func (t *FilerStorePathTranslator) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (string, error) {
 
 	newFullPath := t.translatePath(dirPath)
 
@@ -131,28 +131,28 @@ func (t *FilerStorePathTranlator) ListDirectoryPrefixedEntries(ctx context.Conte
 	})
 }
 
-func (t *FilerStorePathTranlator) BeginTransaction(ctx context.Context) (context.Context, error) {
+func (t *FilerStorePathTranslator) BeginTransaction(ctx context.Context) (context.Context, error) {
 	return t.actualStore.BeginTransaction(ctx)
 }
 
-func (t *FilerStorePathTranlator) CommitTransaction(ctx context.Context) error {
+func (t *FilerStorePathTranslator) CommitTransaction(ctx context.Context) error {
 	return t.actualStore.CommitTransaction(ctx)
 }
 
-func (t *FilerStorePathTranlator) RollbackTransaction(ctx context.Context) error {
+func (t *FilerStorePathTranslator) RollbackTransaction(ctx context.Context) error {
 	return t.actualStore.RollbackTransaction(ctx)
 }
 
-func (t *FilerStorePathTranlator) Shutdown() {
+func (t *FilerStorePathTranslator) Shutdown() {
 	t.actualStore.Shutdown()
 }
 
-func (t *FilerStorePathTranlator) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
+func (t *FilerStorePathTranslator) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
 	return t.actualStore.KvPut(ctx, key, value)
 }
-func (t *FilerStorePathTranlator) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
+func (t *FilerStorePathTranslator) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
 	return t.actualStore.KvGet(ctx, key)
 }
-func (t *FilerStorePathTranlator) KvDelete(ctx context.Context, key []byte) (err error) {
+func (t *FilerStorePathTranslator) KvDelete(ctx context.Context, key []byte) (err error) {
 	return t.actualStore.KvDelete(ctx, key)
 }
