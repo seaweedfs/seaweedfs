@@ -219,7 +219,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 	}
 
 	var err error
-	if err = meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath, nil); err != nil {
+	if err = meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath); err != nil {
 		glog.Errorf("dir ReadDirAll %s: %v", dirPath, err)
 		return fuse.EIO
 	}
