@@ -97,6 +97,7 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 		MetricsIntervalSec: int32(fs.metricsIntervalSec),
 		Version:            util.Version(),
 		ClusterId:          string(clusterId),
+		FilerGroup:         fs.option.FilerGroup,
 	}
 
 	glog.V(4).Infof("GetFilerConfiguration: %v", t)
