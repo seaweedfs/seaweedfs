@@ -79,6 +79,9 @@ func (v *Volume) Compact2(preallocate int64, compactionBytePerSecond int64, prog
 	v.lastCompactIndexOffset = v.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
 	glog.V(3).Infof("creating copies for volume %d ...", v.Id)
+	if v.DataBackend == nil {
+		return fmt.Errorf("volume %d backend is empty remote:%v", v.Id, v.HasRemoteFile())
+	}
 	if err := v.DataBackend.Sync(); err != nil {
 		glog.V(0).Infof("compact2 fail to sync volume dat %d: %v", v.Id, err)
 	}
