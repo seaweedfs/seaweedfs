@@ -90,10 +90,11 @@ func (f *Filer) ListExistingPeerUpdates() (existingNodes []*master_pb.ClusterNod
 		glog.V(0).Infof("the cluster has %d filers\n", len(resp.ClusterNodes))
 		for _, node := range resp.ClusterNodes {
 			existingNodes = append(existingNodes, &master_pb.ClusterNodeUpdate{
-				NodeType: cluster.FilerType,
-				Address:  node.Address,
-				IsLeader: node.IsLeader,
-				IsAdd:    true,
+				NodeType:    cluster.FilerType,
+				Address:     node.Address,
+				IsLeader:    node.IsLeader,
+				IsAdd:       true,
+				CreatedAtNs: node.CreatedAtNs,
 			})
 		}
 		return err
