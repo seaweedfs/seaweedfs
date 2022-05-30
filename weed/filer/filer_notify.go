@@ -108,7 +108,7 @@ func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 	}
 }
 
-func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, stopTsNs int64, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (lastTsNs int64, err error) {
+func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, stopTsNs int64, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (lastTsNs int64, isDone bool, err error) {
 
 	startTime = startTime.UTC()
 	startDate := fmt.Sprintf("%04d-%02d-%02d", startTime.Year(), startTime.Month(), startTime.Day())
@@ -125,7 +125,7 @@ func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, stopTsNs int64, each
 
 	dayEntries, _, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, math.MaxInt32, "", "", "")
 	if listDayErr != nil {
-		return lastTsNs, fmt.Errorf("fail to list log by day: %v", listDayErr)
+		return lastTsNs, isDone, fmt.Errorf("fail to list log by day: %v", listDayErr)
 	}
 	for _, dayEntry := range dayEntries {
 		if stopDate != "" {
@@ -136,7 +136,7 @@ func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, stopTsNs int64, each
 		// println("checking day", dayEntry.FullPath)
 		hourMinuteEntries, _, listHourMinuteErr := f.ListDirectoryEntries(context.Background(), util.NewFullPath(SystemLogDir, dayEntry.Name()), "", false, math.MaxInt32, "", "", "")
 		if listHourMinuteErr != nil {
-			return lastTsNs, fmt.Errorf("fail to list log %s by day: %v", dayEntry.Name(), listHourMinuteErr)
+			return lastTsNs, isDone, fmt.Errorf("fail to list log %s by day: %v", dayEntry.Name(), listHourMinuteErr)
 		}
 		for _, hourMinuteEntry := range hourMinuteEntries {
 			// println("checking hh-mm", hourMinuteEntry.FullPath)
@@ -159,13 +159,13 @@ func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, stopTsNs int64, each
 				if err == io.EOF {
 					continue
 				}
-				return lastTsNs, fmt.Errorf("reading %s: %v", hourMinuteEntry.FullPath, err)
+				return lastTsNs, isDone, fmt.Errorf("reading %s: %v", hourMinuteEntry.FullPath, err)
 			}
 			chunkedFileReader.Close()
 		}
 	}
 
-	return lastTsNs, nil
+	return lastTsNs, isDone, nil
 }
 
 func ReadEachLogEntry(r io.Reader, sizeBuf []byte, startTsNs, stopTsNs int64, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (lastTsNs int64, err error) {
