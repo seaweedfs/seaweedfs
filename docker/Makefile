@@ -52,6 +52,9 @@ dev_replicate: build
 dev_auditlog: build
 	docker-compose -f compose/local-auditlog-compose.yml -p seaweedfs up
 
+dev_nextcloud: build
+	docker-compose -f compose/local-nextcloud-compose.yml -p seaweedfs up
+
 cluster: build
 	docker-compose -f compose/local-cluster-compose.yml -p seaweedfs up
 
