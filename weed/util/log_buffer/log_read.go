@@ -40,6 +40,10 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startReadTime 
 		}
 		// glog.V(4).Infof("%s ReadFromBuffer by %v", readerName, lastReadTime)
 		if bytesBuf == nil {
+			if stopTsNs != 0 {
+				isDone = true
+				return
+			}
 			if waitForDataFn() {
 				continue
 			} else {
