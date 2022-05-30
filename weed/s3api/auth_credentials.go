@@ -26,8 +26,9 @@ type Iam interface {
 type IdentityAccessManagement struct {
 	m sync.RWMutex
 
-	identities []*Identity
-	domain     string
+	identities    []*Identity
+	isAuthEnabled bool
+	domain        string
 }
 
 type Identity struct {
@@ -137,14 +138,15 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	iam.m.Lock()
 	// atomically switch
 	iam.identities = identities
+	if !iam.isAuthEnabled { // one-directional, no toggling
+		iam.isAuthEnabled = len(identities) > 0
+	}
 	iam.m.Unlock()
 	return nil
 }
 
 func (iam *IdentityAccessManagement) isEnabled() bool {
-	iam.m.RLock()
-	defer iam.m.RUnlock()
-	return len(iam.identities) > 0
+	return iam.isAuthEnabled
 }
 
 func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
