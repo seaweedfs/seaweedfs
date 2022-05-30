@@ -45,7 +45,7 @@ func (s3a *S3ApiServer) setTags(parentDirectoryPath string, entryName string, ta
 			return err
 		}
 
-		for k, _ := range resp.Entry.Extended {
+		for k := range resp.Entry.Extended {
 			if strings.HasPrefix(k, S3TAG_PREFIX) {
 				delete(resp.Entry.Extended, k)
 			}
@@ -82,7 +82,7 @@ func (s3a *S3ApiServer) rmTags(parentDirectoryPath string, entryName string) (er
 		}
 
 		hasDeletion := false
-		for k, _ := range resp.Entry.Extended {
+		for k := range resp.Entry.Extended {
 			if strings.HasPrefix(k, S3TAG_PREFIX) {
 				delete(resp.Entry.Extended, k)
 				hasDeletion = true
