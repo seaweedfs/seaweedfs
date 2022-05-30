@@ -117,7 +117,7 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 			lastReadTime = time.Unix(0, processedTsNs)
 		}
 
-		lastReadTime, err = lock.logBuffer.LoopProcessLogData("broker", lastReadTime, func() bool {
+		lastReadTime, _, err = lock.logBuffer.LoopProcessLogData("broker", lastReadTime, 0, func() bool {
 			lock.Mutex.Lock()
 			lock.cond.Wait()
 			lock.Mutex.Unlock()
