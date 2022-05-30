@@ -164,7 +164,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
 
-	fs.filer.AggregateFromPeers(option.Host)
+	existingNodes := fs.filer.ListExistingPeerUpdates()
+
+	fs.filer.AggregateFromPeers(option.Host, existingNodes)
 
 	fs.filer.LoadBuckets()
 

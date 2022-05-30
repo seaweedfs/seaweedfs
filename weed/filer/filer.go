@@ -68,12 +68,12 @@ func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOptio
 	return f
 }
 
-func (f *Filer) AggregateFromPeers(self pb.ServerAddress) {
+func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*master_pb.ClusterNodeUpdate) {
 
 	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOption)
 	f.MasterClient.OnPeerUpdate = f.MetaAggregator.OnPeerUpdate
 
-	for _, peerUpdate := range f.ListExistingPeerUpdates() {
+	for _, peerUpdate := range existingNodes {
 		f.MetaAggregator.OnPeerUpdate(peerUpdate)
 	}
 
