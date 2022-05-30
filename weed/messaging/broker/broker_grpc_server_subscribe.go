@@ -164,7 +164,7 @@ func (broker *MessageBroker) readPersistedLogBuffer(tp *TopicPartition, startTim
 			// println("partition", tp.Partition, "processing", dayDir, "/", hourMinuteEntry.Name)
 			chunkedFileReader := filer.NewChunkStreamReader(broker, hourMinuteEntry.Chunks)
 			defer chunkedFileReader.Close()
-			if _, err := filer.ReadEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, eachLogEntryFn); err != nil {
+			if _, err := filer.ReadEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, 0, eachLogEntryFn); err != nil {
 				chunkedFileReader.Close()
 				if err == io.EOF {
 					return err
