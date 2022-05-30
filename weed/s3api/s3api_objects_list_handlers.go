@@ -134,9 +134,6 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	}
 	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
 	reqDir = fmt.Sprintf("%s%s", bucketPrefix, reqDir)
-	if prefix == "" && strings.HasSuffix(reqDir, "/") {
-		reqDir, prefix = filepath.Split(reqDir[:len(reqDir)-1])
-	}
 	if strings.HasSuffix(reqDir, "/") {
 		// remove trailing "/"
 		reqDir = reqDir[:len(reqDir)-1]
@@ -152,10 +149,12 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		_, isTruncated, nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, maxKeys, marker, delimiter, func(dir string, entry *filer_pb.Entry) {
-			if entry.IsDirectory && delimiter == "/" {
-				commonPrefixes = append(commonPrefixes, PrefixEntry{
-					Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
-				})
+			if entry.IsDirectory && entry.Attributes.Mime == "" {
+				if delimiter == "/" {
+					commonPrefixes = append(commonPrefixes, PrefixEntry{
+						Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
+					})
+				}
 			} else {
 				storageClass := "STANDARD"
 				if v, ok := entry.Extended[xhttp.AmzStorageClass]; ok {
@@ -294,8 +293,10 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 							glog.Errorf("check empty folder %s: %v", dir, err)
 						}
 					}
-					eachEntryFn(dir, entry)
-					counter++
+					if !isEmpty || entry.Attributes.Mime != "" {
+						eachEntryFn(dir, entry)
+						counter++
+					}
 				}
 			}
 		} else {

@@ -93,7 +93,10 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	defer dataReader.Close()
 
 	if strings.HasSuffix(object, "/") {
-		if err := s3a.mkdir(s3a.option.BucketsPath, bucket+object, nil); err != nil {
+		if err := s3a.mkdir(s3a.option.BucketsPath, bucket+strings.TrimSuffix(object, "/"), func(entry *filer_pb.Entry) {
+			glog.V(0).Infof("make file %s", bucket+object)
+			entry.Attributes.Mime = r.Header.Get("Content-Type")
+		}); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
