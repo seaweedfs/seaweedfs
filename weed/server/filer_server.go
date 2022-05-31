@@ -168,7 +168,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	startFromTime := time.Now().Add(-filer.LogFlushInterval)
 	if isFresh {
 		glog.V(0).Infof("%s bootstrap from peers %+v", option.Host, existingNodes)
-		if err := fs.filer.MaybeBootstrapFromPeers(option.Host, existingNodes, startFromTime); err == nil {
+		if err := fs.filer.MaybeBootstrapFromPeers(option.Host, existingNodes, startFromTime); err != nil {
 			glog.Fatalf("%s bootstrap from %+v", option.Host, existingNodes)
 		}
 	}
