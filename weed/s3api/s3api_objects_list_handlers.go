@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 )
 
@@ -39,7 +39,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/v2-RESTBucketGET.html
 
 	// collect parameters
-	bucket, _ := xhttp.GetBucketAndObject(r)
+	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("ListObjectsV2Handler %s", bucket)
 
 	originalPrefix, continuationToken, startAfter, delimiter, _, maxKeys := getListObjectsV2Args(r.URL.Query())
@@ -95,7 +95,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTBucketGET.html
 
 	// collect parameters
-	bucket, _ := xhttp.GetBucketAndObject(r)
+	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("ListObjectsV1Handler %s", bucket)
 
 	originalPrefix, marker, delimiter, maxKeys := getListObjectsV1Args(r.URL.Query())
@@ -157,7 +157,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 				return
 			}
 			storageClass := "STANDARD"
-			if v, ok := entry.Extended[xhttp.AmzStorageClass]; ok {
+			if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
 				storageClass = string(v)
 			}
 			contents = append(contents, ListEntry{
@@ -188,7 +188,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			_, _, _, doErr = s3a.doListFilerEntries(client, reqDir, prefix, 1, prefix, delimiter, true, func(dir string, entry *filer_pb.Entry) {
 				if entry.IsDirectory && entry.Attributes.Mime != "" && entry.Name == prefix {
 					storageClass := "STANDARD"
-					if v, ok := entry.Extended[xhttp.AmzStorageClass]; ok {
+					if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
 						storageClass = string(v)
 					}
 					contents = append(contents, ListEntry{

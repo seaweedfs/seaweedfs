@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/fluent/fluent-logger-golang/fluent"
 	"net/http"
 	"os"
@@ -134,7 +134,7 @@ func GetAccessHttpLog(r *http.Request, statusCode int, s3errCode ErrorCode) Acce
 }
 
 func GetAccessLog(r *http.Request, HTTPStatusCode int, s3errCode ErrorCode) *AccessLog {
-	bucket, key := xhttp.GetBucketAndObject(r)
+	bucket, key := s3_constants.GetBucketAndObject(r)
 	var errorCode string
 	if s3errCode != ErrNone {
 		errorCode = GetAPIError(s3errCode).Code
@@ -151,8 +151,8 @@ func GetAccessLog(r *http.Request, HTTPStatusCode int, s3errCode ErrorCode) *Acc
 		HostHeader:       hostHeader,
 		RequestID:        r.Header.Get("X-Request-ID"),
 		RemoteIP:         remoteIP,
-		Requester:        r.Header.Get(xhttp.AmzIdentityId),
-		SignatureVersion: r.Header.Get(xhttp.AmzAuthType),
+		Requester:        r.Header.Get(s3_constants.AmzIdentityId),
+		SignatureVersion: r.Header.Get(s3_constants.AmzAuthType),
 		UserAgent:        r.Header.Get("user-agent"),
 		HostId:           hostname,
 		Bucket:           bucket,

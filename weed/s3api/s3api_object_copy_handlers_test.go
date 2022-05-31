@@ -2,7 +2,7 @@ package s3api
 
 import (
 	"fmt"
-	headers "github.com/chrislusf/seaweedfs/weed/s3api/http"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"net/http"
 	"reflect"
 	"sort"
@@ -55,10 +55,10 @@ var processMetadataTestCases = []struct {
 	{
 		202,
 		H{
-			"User-Agent":                 "firefox",
-			"X-Amz-Meta-My-Meta":         "request",
-			"X-Amz-Tagging":              "A=B&a=b&type=request",
-			headers.AmzUserMetaDirective: DirectiveReplace,
+			"User-Agent":                      "firefox",
+			"X-Amz-Meta-My-Meta":              "request",
+			"X-Amz-Tagging":                   "A=B&a=b&type=request",
+			s3_constants.AmzUserMetaDirective: DirectiveReplace,
 		},
 		H{
 			"X-Amz-Meta-My-Meta": "existing",
@@ -71,20 +71,20 @@ var processMetadataTestCases = []struct {
 			"type": "existing",
 		},
 		H{
-			"User-Agent":                 "firefox",
-			"X-Amz-Meta-My-Meta":         "request",
-			"X-Amz-Tagging":              "A=B&a=b&type=existing",
-			headers.AmzUserMetaDirective: DirectiveReplace,
+			"User-Agent":                      "firefox",
+			"X-Amz-Meta-My-Meta":              "request",
+			"X-Amz-Tagging":                   "A=B&a=b&type=existing",
+			s3_constants.AmzUserMetaDirective: DirectiveReplace,
 		},
 	},
 
 	{
 		203,
 		H{
-			"User-Agent":                      "firefox",
-			"X-Amz-Meta-My-Meta":              "request",
-			"X-Amz-Tagging":                   "A=B&a=b&type=request",
-			headers.AmzObjectTaggingDirective: DirectiveReplace,
+			"User-Agent":                           "firefox",
+			"X-Amz-Meta-My-Meta":                   "request",
+			"X-Amz-Tagging":                        "A=B&a=b&type=request",
+			s3_constants.AmzObjectTaggingDirective: DirectiveReplace,
 		},
 		H{
 			"X-Amz-Meta-My-Meta": "existing",
@@ -97,21 +97,21 @@ var processMetadataTestCases = []struct {
 			"type": "existing",
 		},
 		H{
-			"User-Agent":                      "firefox",
-			"X-Amz-Meta-My-Meta":              "existing",
-			"X-Amz-Tagging":                   "A=B&a=b&type=request",
-			headers.AmzObjectTaggingDirective: DirectiveReplace,
+			"User-Agent":                           "firefox",
+			"X-Amz-Meta-My-Meta":                   "existing",
+			"X-Amz-Tagging":                        "A=B&a=b&type=request",
+			s3_constants.AmzObjectTaggingDirective: DirectiveReplace,
 		},
 	},
 
 	{
 		204,
 		H{
-			"User-Agent":                      "firefox",
-			"X-Amz-Meta-My-Meta":              "request",
-			"X-Amz-Tagging":                   "A=B&a=b&type=request",
-			headers.AmzUserMetaDirective:      DirectiveReplace,
-			headers.AmzObjectTaggingDirective: DirectiveReplace,
+			"User-Agent":                           "firefox",
+			"X-Amz-Meta-My-Meta":                   "request",
+			"X-Amz-Tagging":                        "A=B&a=b&type=request",
+			s3_constants.AmzUserMetaDirective:      DirectiveReplace,
+			s3_constants.AmzObjectTaggingDirective: DirectiveReplace,
 		},
 		H{
 			"X-Amz-Meta-My-Meta": "existing",
@@ -125,40 +125,40 @@ var processMetadataTestCases = []struct {
 			"type": "existing",
 		},
 		H{
-			"User-Agent":                      "firefox",
-			"X-Amz-Meta-My-Meta":              "request",
-			"X-Amz-Tagging":                   "A=B&a=b&type=request",
-			headers.AmzUserMetaDirective:      DirectiveReplace,
-			headers.AmzObjectTaggingDirective: DirectiveReplace,
+			"User-Agent":                           "firefox",
+			"X-Amz-Meta-My-Meta":                   "request",
+			"X-Amz-Tagging":                        "A=B&a=b&type=request",
+			s3_constants.AmzUserMetaDirective:      DirectiveReplace,
+			s3_constants.AmzObjectTaggingDirective: DirectiveReplace,
 		},
 	},
 
 	{
 		205,
 		H{
-			"User-Agent":                      "firefox",
-			"X-Amz-Meta-My-Meta":              "request",
-			"X-Amz-Tagging":                   "A=B&a=b&type=request",
-			headers.AmzUserMetaDirective:      DirectiveReplace,
-			headers.AmzObjectTaggingDirective: DirectiveReplace,
+			"User-Agent":                           "firefox",
+			"X-Amz-Meta-My-Meta":                   "request",
+			"X-Amz-Tagging":                        "A=B&a=b&type=request",
+			s3_constants.AmzUserMetaDirective:      DirectiveReplace,
+			s3_constants.AmzObjectTaggingDirective: DirectiveReplace,
 		},
 		H{},
 		H{},
 		H{
-			"User-Agent":                      "firefox",
-			"X-Amz-Meta-My-Meta":              "request",
-			"X-Amz-Tagging":                   "A=B&a=b&type=request",
-			headers.AmzUserMetaDirective:      DirectiveReplace,
-			headers.AmzObjectTaggingDirective: DirectiveReplace,
+			"User-Agent":                           "firefox",
+			"X-Amz-Meta-My-Meta":                   "request",
+			"X-Amz-Tagging":                        "A=B&a=b&type=request",
+			s3_constants.AmzUserMetaDirective:      DirectiveReplace,
+			s3_constants.AmzObjectTaggingDirective: DirectiveReplace,
 		},
 	},
 
 	{
 		206,
 		H{
-			"User-Agent":                      "firefox",
-			headers.AmzUserMetaDirective:      DirectiveReplace,
-			headers.AmzObjectTaggingDirective: DirectiveReplace,
+			"User-Agent":                           "firefox",
+			s3_constants.AmzUserMetaDirective:      DirectiveReplace,
+			s3_constants.AmzObjectTaggingDirective: DirectiveReplace,
 		},
 		H{
 			"X-Amz-Meta-My-Meta": "existing",
@@ -172,19 +172,19 @@ var processMetadataTestCases = []struct {
 			"type": "existing",
 		},
 		H{
-			"User-Agent":                      "firefox",
-			headers.AmzUserMetaDirective:      DirectiveReplace,
-			headers.AmzObjectTaggingDirective: DirectiveReplace,
+			"User-Agent":                           "firefox",
+			s3_constants.AmzUserMetaDirective:      DirectiveReplace,
+			s3_constants.AmzObjectTaggingDirective: DirectiveReplace,
 		},
 	},
 
 	{
 		207,
 		H{
-			"User-Agent":                      "firefox",
-			"X-Amz-Meta-My-Meta":              "request",
-			headers.AmzUserMetaDirective:      DirectiveReplace,
-			headers.AmzObjectTaggingDirective: DirectiveReplace,
+			"User-Agent":                           "firefox",
+			"X-Amz-Meta-My-Meta":                   "request",
+			s3_constants.AmzUserMetaDirective:      DirectiveReplace,
+			s3_constants.AmzObjectTaggingDirective: DirectiveReplace,
 		},
 		H{
 			"X-Amz-Meta-My-Meta": "existing",
@@ -198,10 +198,10 @@ var processMetadataTestCases = []struct {
 			"type": "existing",
 		},
 		H{
-			"User-Agent":                      "firefox",
-			"X-Amz-Meta-My-Meta":              "request",
-			headers.AmzUserMetaDirective:      DirectiveReplace,
-			headers.AmzObjectTaggingDirective: DirectiveReplace,
+			"User-Agent":                           "firefox",
+			"X-Amz-Meta-My-Meta":                   "request",
+			s3_constants.AmzUserMetaDirective:      DirectiveReplace,
+			s3_constants.AmzObjectTaggingDirective: DirectiveReplace,
 		},
 	},
 }
@@ -235,10 +235,10 @@ var processMetadataBytesTestCases = []struct {
 	{
 		102,
 		H{
-			"User-Agent":                 "firefox",
-			"X-Amz-Meta-My-Meta":         "request",
-			"X-Amz-Tagging":              "A=B&a=b&type=request",
-			headers.AmzUserMetaDirective: DirectiveReplace,
+			"User-Agent":                      "firefox",
+			"X-Amz-Meta-My-Meta":              "request",
+			"X-Amz-Tagging":                   "A=B&a=b&type=request",
+			s3_constants.AmzUserMetaDirective: DirectiveReplace,
 		},
 		H{
 			"X-Amz-Meta-My-Meta": "existing",
@@ -257,10 +257,10 @@ var processMetadataBytesTestCases = []struct {
 	{
 		103,
 		H{
-			"User-Agent":                      "firefox",
-			"X-Amz-Meta-My-Meta":              "request",
-			"X-Amz-Tagging":                   "A=B&a=b&type=request",
-			headers.AmzObjectTaggingDirective: DirectiveReplace,
+			"User-Agent":                           "firefox",
+			"X-Amz-Meta-My-Meta":                   "request",
+			"X-Amz-Tagging":                        "A=B&a=b&type=request",
+			s3_constants.AmzObjectTaggingDirective: DirectiveReplace,
 		},
 		H{
 			"X-Amz-Meta-My-Meta": "existing",
@@ -279,11 +279,11 @@ var processMetadataBytesTestCases = []struct {
 	{
 		104,
 		H{
-			"User-Agent":                      "firefox",
-			"X-Amz-Meta-My-Meta":              "request",
-			"X-Amz-Tagging":                   "A=B&a=b&type=request",
-			headers.AmzUserMetaDirective:      DirectiveReplace,
-			headers.AmzObjectTaggingDirective: DirectiveReplace,
+			"User-Agent":                           "firefox",
+			"X-Amz-Meta-My-Meta":                   "request",
+			"X-Amz-Tagging":                        "A=B&a=b&type=request",
+			s3_constants.AmzUserMetaDirective:      DirectiveReplace,
+			s3_constants.AmzObjectTaggingDirective: DirectiveReplace,
 		},
 		H{
 			"X-Amz-Meta-My-Meta": "existing",
@@ -302,9 +302,9 @@ var processMetadataBytesTestCases = []struct {
 	{
 		105,
 		H{
-			"User-Agent":                      "firefox",
-			headers.AmzUserMetaDirective:      DirectiveReplace,
-			headers.AmzObjectTaggingDirective: DirectiveReplace,
+			"User-Agent":                           "firefox",
+			s3_constants.AmzUserMetaDirective:      DirectiveReplace,
+			s3_constants.AmzObjectTaggingDirective: DirectiveReplace,
 		},
 		H{
 			"X-Amz-Meta-My-Meta": "existing",
@@ -318,11 +318,11 @@ var processMetadataBytesTestCases = []struct {
 	{
 		107,
 		H{
-			"User-Agent":                      "firefox",
-			"X-Amz-Meta-My-Meta":              "request",
-			"X-Amz-Tagging":                   "A=B&a=b&type=request",
-			headers.AmzUserMetaDirective:      DirectiveReplace,
-			headers.AmzObjectTaggingDirective: DirectiveReplace,
+			"User-Agent":                           "firefox",
+			"X-Amz-Meta-My-Meta":                   "request",
+			"X-Amz-Tagging":                        "A=B&a=b&type=request",
+			s3_constants.AmzUserMetaDirective:      DirectiveReplace,
+			s3_constants.AmzObjectTaggingDirective: DirectiveReplace,
 		},
 		H{},
 		H{
@@ -385,10 +385,10 @@ func TestProcessMetadataBytes(t *testing.T) {
 
 func fmtTagging(maps ...map[string]string) {
 	for _, m := range maps {
-		if tagging := m[headers.AmzObjectTagging]; len(tagging) > 0 {
+		if tagging := m[s3_constants.AmzObjectTagging]; len(tagging) > 0 {
 			split := strings.Split(tagging, "&")
 			sort.Strings(split)
-			m[headers.AmzObjectTagging] = strings.Join(split, "&")
+			m[s3_constants.AmzObjectTagging] = strings.Join(split, "&")
 		}
 	}
 }

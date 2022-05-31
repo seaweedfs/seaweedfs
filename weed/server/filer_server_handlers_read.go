@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/util/mem"
 	"io"
 	"math"
@@ -18,7 +19,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -173,12 +173,12 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	//set tag count
 	tagCount := 0
 	for k := range entry.Extended {
-		if strings.HasPrefix(k, xhttp.AmzObjectTagging+"-") {
+		if strings.HasPrefix(k, s3_constants.AmzObjectTagging+"-") {
 			tagCount++
 		}
 	}
 	if tagCount > 0 {
-		w.Header().Set(xhttp.AmzTagCount, strconv.Itoa(tagCount))
+		w.Header().Set(s3_constants.AmzTagCount, strconv.Itoa(tagCount))
 	}
 
 	setEtag(w, etag)
