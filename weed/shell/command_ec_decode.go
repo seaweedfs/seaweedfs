@@ -46,6 +46,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	if err = encodeCommand.Parse(args); err != nil {
 		return nil
 	}
+	infoAboutSimulationMode(writer, *forceChanges, "-force")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return

@@ -36,6 +36,7 @@ func (c *commandS3BucketQuotaEnforce) Do(args []string, commandEnv *CommandEnv, 
 	if err = bucketCommand.Parse(args); err != nil {
 		return nil
 	}
+	infoAboutSimulationMode(writer, *applyQuotaLimit, "-apply")
 
 	// collect collection information
 	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
