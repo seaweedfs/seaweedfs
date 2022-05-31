@@ -50,7 +50,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 	if !emptyDiskTypeFound && !hddDiskTypeFound {
 		return fmt.Errorf("Need to a hdd disk type!")
 	}
-	if emptyDiskTypeFound && emptyDiskTypeDiskInfo.VolumeCount == 0 || hddDiskTypeFound && hddDiskTypeDiskInfo.VolumeCount == 0 {
+	if emptyDiskTypeFound && emptyDiskTypeDiskInfo.MaxVolumeCount == 0 || hddDiskTypeFound && hddDiskTypeDiskInfo.MaxVolumeCount == 0 {
 		return fmt.Errorf("Need to a hdd disk type!")
 	}
 
