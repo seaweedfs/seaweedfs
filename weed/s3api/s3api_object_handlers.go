@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util/mem"
 	"golang.org/x/exp/slices"
@@ -105,7 +106,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			dataReader = mimeDetect(r, dataReader)
 		}
 
-		etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
+		etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, "")
 
 		if errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
@@ -379,7 +380,7 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (s
 	return statusCode
 }
 
-func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader) (etag string, code s3err.ErrorCode) {
+func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, destination string) (etag string, code s3err.ErrorCode) {
 
 	hash := md5.New()
 	var body = io.TeeReader(dataReader, hash)
@@ -392,6 +393,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	}
 
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
+	if destination != "" {
+		proxyReq.Header.Set(s3_constants.SeaweedStorageDestinationHeader, destination)
+	}
 
 	for header, values := range r.Header {
 		for _, value := range values {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"net/http"
 	"os"
 	"strings"
@@ -58,8 +59,13 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 
 	ctx := context.Background()
 
+	destination := r.RequestURI
+	if finalDestination := r.Header.Get(s3_constants.SeaweedStorageDestinationHeader); finalDestination != "" {
+		destination = finalDestination
+	}
+
 	query := r.URL.Query()
-	so, err := fs.detectStorageOption0(r.RequestURI,
+	so, err := fs.detectStorageOption0(destination,
 		query.Get("collection"),
 		query.Get("replication"),
 		query.Get("ttl"),

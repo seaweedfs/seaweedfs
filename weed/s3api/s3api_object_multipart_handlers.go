@@ -250,8 +250,9 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	if partID == 1 && r.Header.Get("Content-Type") == "" {
 		dataReader = mimeDetect(r, dataReader)
 	}
+	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 
-	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
+	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, destination)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return

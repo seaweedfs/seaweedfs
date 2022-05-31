@@ -94,7 +94,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
-	etag, errCode := s3a.putToFiler(r, dstUrl, resp.Body)
+	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject)
+	etag, errCode := s3a.putToFiler(r, dstUrl, resp.Body, destination)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -129,7 +130,7 @@ type CopyPartResult struct {
 func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Request) {
 	// https://docs.aws.amazon.com/AmazonS3/latest/dev/CopyingObjctsUsingRESTMPUapi.html
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
-	dstBucket, _ := xhttp.GetBucketAndObject(r)
+	dstBucket, dstObject := xhttp.GetBucketAndObject(r)
 
 	// Copy source path.
 	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
@@ -177,7 +178,8 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	defer dataReader.Close()
 
 	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
-	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader)
+	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject)
+	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader, destination)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
