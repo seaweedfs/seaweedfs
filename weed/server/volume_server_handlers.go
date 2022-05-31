@@ -58,31 +58,27 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 	case "PUT", "POST":
 
 		contentLength := getContentLength(r)
-		startTime := time.Now()
-		vs.inFlightUploadDataLimitCond.L.Lock()
 		// exclude the replication from the concurrentUploadLimitMB
 		if r.URL.Query().Get("type") != "replicate" {
+			startTime := time.Now()
+			vs.inFlightUploadDataLimitCond.L.Lock()
 			for vs.concurrentUploadLimit != 0 && vs.inFlightUploadDataSize > vs.concurrentUploadLimit {
-				//wait timeout
+				//wait timeout check
 				if startTime.Add(vs.inflightUploadDataTimeout).Before(time.Now()) {
-					err := fmt.Errorf("reject because inflight upload data %d > %d, and wait timeout", vs.inFlightUploadDataSize, vs.concurrentUploadLimit)
 					vs.inFlightUploadDataLimitCond.L.Unlock()
+					err := fmt.Errorf("reject because inflight upload data %d > %d, and wait timeout", vs.inFlightUploadDataSize, vs.concurrentUploadLimit)
 					glog.V(1).Infof("too many requests: %v", err)
 					writeJsonError(w, r, http.StatusTooManyRequests, err)
 					return
 				}
-
 				glog.V(4).Infof("wait because inflight upload data %d > %d", vs.inFlightUploadDataSize, vs.concurrentUploadLimit)
 				vs.inFlightUploadDataLimitCond.Wait()
 			}
-		}
-		vs.inFlightUploadDataSize += contentLength
-		vs.inFlightUploadDataLimitCond.L.Unlock()
-
-		defer func() {
-			vs.inFlightUploadDataLimitCond.L.Lock()
-			vs.inFlightUploadDataSize -= contentLength
 			vs.inFlightUploadDataLimitCond.L.Unlock()
+		}
+		atomic.AddInt64(&vs.inFlightUploadDataSize, contentLength)
+		defer func() {
+			atomic.AddInt64(&vs.inFlightUploadDataSize, -contentLength)
 			vs.inFlightUploadDataLimitCond.Signal()
 		}()
 
