@@ -117,7 +117,7 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 			lastReadTime = time.Unix(0, processedTsNs)
 		}
 
-		lastReadTime, err = lock.logBuffer.LoopProcessLogData("broker", lastReadTime, func() bool {
+		lastReadTime, _, err = lock.logBuffer.LoopProcessLogData("broker", lastReadTime, 0, func() bool {
 			lock.Mutex.Lock()
 			lock.cond.Wait()
 			lock.Mutex.Unlock()
@@ -164,7 +164,7 @@ func (broker *MessageBroker) readPersistedLogBuffer(tp *TopicPartition, startTim
 			// println("partition", tp.Partition, "processing", dayDir, "/", hourMinuteEntry.Name)
 			chunkedFileReader := filer.NewChunkStreamReader(broker, hourMinuteEntry.Chunks)
 			defer chunkedFileReader.Close()
-			if _, err := filer.ReadEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, eachLogEntryFn); err != nil {
+			if _, err := filer.ReadEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, 0, eachLogEntryFn); err != nil {
 				chunkedFileReader.Close()
 				if err == io.EOF {
 					return err

@@ -27,7 +27,7 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 	}
 
 	receivedmessageCount := 0
-	lb.LoopProcessLogData("test", startTime, func() bool {
+	lb.LoopProcessLogData("test", startTime, 0, func() bool {
 		// stop if no more messages
 		return false
 	}, func(logEntry *filer_pb.LogEntry) error {

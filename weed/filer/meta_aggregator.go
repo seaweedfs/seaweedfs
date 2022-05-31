@@ -48,7 +48,7 @@ func NewMetaAggregator(filer *Filer, self pb.ServerAddress, grpcDialOption grpc.
 	return t
 }
 
-func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate) {
+func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
 	if update.NodeType != cluster.FilerType {
 		return
 	}
@@ -57,7 +57,7 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate) {
 	if update.IsAdd {
 		// every filer should subscribe to a new filer
 		if ma.setActive(address, true) {
-			go ma.loopSubscribeToOnefiler(ma.filer, ma.self, address)
+			go ma.loopSubscribeToOnefiler(ma.filer, ma.self, address, startFrom)
 		}
 	} else {
 		ma.setActive(address, false)
@@ -89,21 +89,25 @@ func (ma *MetaAggregator) isActive(address pb.ServerAddress) (isActive bool) {
 	return count > 0 && isActive
 }
 
-func (ma *MetaAggregator) loopSubscribeToOnefiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress) {
+func (ma *MetaAggregator) loopSubscribeToOnefiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress, startFrom time.Time) {
+	lastTsNs := startFrom.UnixNano()
 	for {
-		err := ma.doSubscribeToOneFiler(f, self, peer)
+		glog.V(0).Infof("loopSubscribeToOnefiler read %s start from %v %d", peer, time.Unix(0, lastTsNs), lastTsNs)
+		nextLastTsNs, err := ma.doSubscribeToOneFiler(f, self, peer, lastTsNs)
 		if !ma.isActive(peer) {
 			glog.V(0).Infof("stop subscribing remote %s meta change", peer)
 			return
 		}
 		if err != nil {
 			glog.V(0).Infof("subscribing remote %s meta change: %v", peer, err)
+		} else if lastTsNs < nextLastTsNs {
+			lastTsNs = nextLastTsNs
 		}
 		time.Sleep(1733 * time.Millisecond)
 	}
 }
 
-func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress) error {
+func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress, startFrom int64) (int64, error) {
 
 	/*
 		Each filer reads the "filer.store.id", which is the store's signature when filer starts.
@@ -117,18 +121,15 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 
 	var maybeReplicateMetadataChange func(*filer_pb.SubscribeMetadataResponse)
 	lastPersistTime := time.Now()
-	lastTsNs := time.Now().Add(-LogFlushInterval).UnixNano()
+	lastTsNs := startFrom
 
 	peerSignature, err := ma.readFilerStoreSignature(peer)
-	for err != nil {
-		glog.V(0).Infof("connecting to peer filer %s: %v", peer, err)
-		time.Sleep(1357 * time.Millisecond)
-		peerSignature, err = ma.readFilerStoreSignature(peer)
+	if err != nil {
+		return lastTsNs, fmt.Errorf("connecting to peer filer %s: %v", peer, err)
 	}
 
 	// when filer store is not shared by multiple filers
 	if peerSignature != f.Signature {
-		lastTsNs = 0
 		if prevTsNs, err := ma.readOffset(f, peer, peerSignature); err == nil {
 			lastTsNs = prevTsNs
 			defer func(prevTsNs int64) {
@@ -215,7 +216,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 
 		}
 	})
-	return err
+	return lastTsNs, err
 }
 
 func (ma *MetaAggregator) readFilerStoreSignature(peer pb.ServerAddress) (sig int32, err error) {
@@ -240,11 +241,6 @@ func (ma *MetaAggregator) readOffset(f *Filer, peer pb.ServerAddress, peerSignat
 	util.Uint32toBytes(key[len(MetaOffsetPrefix):], uint32(peerSignature))
 
 	value, err := f.Store.KvGet(context.Background(), key)
-
-	if err == ErrKvNotFound {
-		glog.Warningf("readOffset %s not found", peer)
-		return 0, nil
-	}
 
 	if err != nil {
 		return 0, fmt.Errorf("readOffset %s : %v", peer, err)

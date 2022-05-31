@@ -159,6 +159,7 @@ message ClusterNodeUpdate {
   bool is_leader = 3;
   bool is_add = 4;
   string filer_group = 5;
+  int64 created_at_ns = 6;
 }
 
 message KeepConnectedResponse {
@@ -320,6 +321,7 @@ message ListClusterNodesResponse {
     string address = 1;
     string version = 2;
     bool is_leader = 3;
+    int64 created_at_ns = 4;
   }
   repeated ClusterNode cluster_nodes = 1;
 }
