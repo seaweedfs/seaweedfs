@@ -145,6 +145,10 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	mimeType := entry.Attr.Mime
 	if mimeType == "" {
 		if ext := filepath.Ext(entry.Name()); ext != "" {
+			switch ext {
+			case ".json",".orc",".parquet",".avro",".part":
+				mimeType = "application/octet-stream"
+			}
 			mimeType = mime.TypeByExtension(ext)
 		}
 	}
