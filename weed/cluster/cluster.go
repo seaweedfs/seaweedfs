@@ -28,7 +28,7 @@ type ClusterNode struct {
 	Address   pb.ServerAddress
 	Version   string
 	counter   int
-	createdTs time.Time
+	CreatedTs time.Time
 }
 
 type Cluster struct {
@@ -72,7 +72,7 @@ func (cluster *Cluster) AddClusterNode(ns, nodeType string, address pb.ServerAdd
 			Address:   address,
 			Version:   version,
 			counter:   1,
-			createdTs: time.Now(),
+			CreatedTs: time.Now(),
 		}
 		return cluster.ensureFilerLeaders(filers, true, filerGroup, nodeType, address)
 	case BrokerType:
@@ -86,7 +86,7 @@ func (cluster *Cluster) AddClusterNode(ns, nodeType string, address pb.ServerAdd
 			Address:   address,
 			Version:   version,
 			counter:   1,
-			createdTs: time.Now(),
+			CreatedTs: time.Now(),
 		}
 		return []*master_pb.KeepConnectedResponse{
 			{
@@ -238,7 +238,7 @@ func (cluster *Cluster) ensureFilerLeaders(filers *Filers, isAdd bool, filerGrou
 				if filers.leaders.isOneLeader(node.Address) {
 					continue
 				}
-				duration := now.Sub(node.createdTs).Nanoseconds()
+				duration := now.Sub(node.CreatedTs).Nanoseconds()
 				if duration < shortestDuration {
 					shortestDuration = duration
 					candidateAddress = node.Address
