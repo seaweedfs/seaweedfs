@@ -25,6 +25,7 @@ var cmdFilerMetaTail = &Command{
 
 	weed filer.meta.tail -timeAgo=30h | grep truncate
 	weed filer.meta.tail -timeAgo=30h | jq .
+	weed filer.meta.tail -timeAgo=30h -untilTimeAgo=20h | jq .
 	weed filer.meta.tail -timeAgo=30h | jq .eventNotification.newEntry.name
 
 	weed filer.meta.tail -timeAgo=30h -es=http://<elasticSearchServerHost>:<port> -es.index=seaweedfs
