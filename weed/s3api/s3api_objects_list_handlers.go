@@ -154,7 +154,9 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
 					})
 				}
-				return
+				if entry.Attributes.Mime == "" || !strings.HasSuffix(entry.Name, "/") {
+					return
+				}
 			}
 			storageClass := "STANDARD"
 			if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
@@ -180,7 +182,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			nextMarker = ""
 		}
 
-		if len(contents) == 0 && maxKeys > 0 {
+		if len(contents) == 0 && len(commonPrefixes) == 0 && maxKeys > 0 {
 			if strings.HasSuffix(originalPrefix, "/") && prefix == "" {
 				reqDir, prefix = filepath.Split(strings.TrimSuffix(reqDir, "/"))
 				reqDir = strings.TrimSuffix(reqDir, "/")
@@ -192,9 +194,9 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						storageClass = string(v)
 					}
 					contents = append(contents, ListEntry{
-						Key:          fmt.Sprintf("%s/%s", dir, entry.Name+"/")[len(bucketPrefix):],
+						Key:          fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
 						LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
-						ETag:         "\"" + filer.ETag(entry) + "\"",
+						ETag:         "\"" + fmt.Sprintf("%x", entry.Attributes.Md5) + "\"",
 						Size:         int64(filer.FileSize(entry)),
 						Owner: CanonicalUser{
 							ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
@@ -204,6 +206,9 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 					})
 				}
 			})
+			if doErr != nil {
+				return doErr
+			}
 		}
 
 		response = ListBucketResult{
@@ -303,6 +308,11 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 					return
 				}
 				// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "maxKeys", maxKeys-counter, "subCounter", subCounter, "subNextMarker", subNextMarker, "subIsTruncated", subIsTruncated)
+				if subCounter == 0 && entry.Attributes.Mime != "" {
+					entry.Name += "/"
+					eachEntryFn(dir, entry)
+					counter++
+				}
 				counter += subCounter
 				nextMarker = entry.Name + "/" + subNextMarker
 				if subIsTruncated {
@@ -311,7 +321,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				}
 			} else {
 				var isEmpty bool
-				if !s3a.option.AllowEmptyFolder {
+				if !s3a.option.AllowEmptyFolder && entry.Attributes.Mime == "" {
 					if isEmpty, err = s3a.isDirectoryAllEmpty(client, dir, entry.Name); err != nil {
 						glog.Errorf("check empty folder %s: %v", dir, err)
 					}
