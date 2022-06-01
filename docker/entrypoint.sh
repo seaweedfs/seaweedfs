@@ -57,6 +57,12 @@ case "$1" in
   	exec /usr/bin/weed -logtostderr=true s3 $ARGS $@
 	;;
 
+  'shell')
+  	ARGS="-cluster=$SHELL_CLUSTER -filer=$SHELL_FILER -filerGroup=$SHELL_FILER_GROUP -master=$SHELL_MASTER -options=$SHELL_OPTIONS"
+  	shift
+  	exec echo "$@" | /usr/bin/weed -logtostderr=true shell $ARGS
+  ;;
+
   *)
   	exec /usr/bin/weed $@
 	;;
