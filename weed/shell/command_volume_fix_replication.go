@@ -151,7 +151,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 						return err
 					}
 					volumeIdLocationCount = len(volumeLocIds[0].Locations)
-					if *retryCount > i {
+					if *retryCount <= i {
 						return fmt.Errorf("replicas volume %s mismatch in topology", volumeId)
 					}
 					i += 1
