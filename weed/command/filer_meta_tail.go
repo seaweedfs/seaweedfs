@@ -119,7 +119,7 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 				return err
 			}
 			return nil
-		}, false)
+		}, pb.TrivialOnError)
 
 	if tailErr != nil {
 		fmt.Printf("tail %s: %v\n", *tailFiler, tailErr)
