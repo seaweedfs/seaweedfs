@@ -10,26 +10,28 @@ import (
 )
 
 // ReadNeedleDataInto uses a needle without n.Data to read the content into an io.Writer
-func (n *Needle) ReadNeedleDataInto(r backend.BackendStorageFile, offset int64, buf []byte, writer io.Writer, expectedChecksumValue uint32) (err error) {
+func (n *Needle) ReadNeedleDataInto(r backend.BackendStorageFile, volumeOffset int64, buf []byte, writer io.Writer, needleOffset int64, size int64, expectedChecksumValue uint32) (err error) {
 	crc := CRC(0)
-	for x := 0; ; x += len(buf) {
-		count, err := n.ReadNeedleData(r, offset, buf, int64(x))
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return fmt.Errorf("ReadNeedleData: %v", err)
-		}
+	for x := needleOffset; x < needleOffset+size; x += int64(len(buf)) {
+		count, err := n.ReadNeedleData(r, volumeOffset, buf, x)
 		if count > 0 {
 			crc = crc.Update(buf[0:count])
 			if _, err = writer.Write(buf[0:count]); err != nil {
 				return fmt.Errorf("ReadNeedleData write: %v", err)
 			}
-		} else {
+		}
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+				break
+			}
+			return fmt.Errorf("ReadNeedleData: %v", err)
+		}
+		if count <= 0 {
 			break
 		}
 	}
-	if expectedChecksumValue != crc.Value() {
+	if needleOffset == 0 && size == int64(n.DataSize) && expectedChecksumValue != crc.Value() {
 		return fmt.Errorf("ReadNeedleData checksum %v expected %v", crc.Value(), expectedChecksumValue)
 	}
 	return nil
@@ -65,14 +67,18 @@ func (n *Needle) ReadNeedleMeta(r backend.BackendStorageFile, offset int64, size
 		return 0, err
 	}
 	n.ParseNeedleHeader(bytes)
+	if n.Size != size {
+		if OffsetSize == 4 && offset < int64(MaxPossibleVolumeSize) {
+			return 0, ErrorSizeMismatch
+		}
+	}
+
 	n.DataSize = util.BytesToUint32(bytes[NeedleHeaderSize : NeedleHeaderSize+DataSizeSize])
 
 	startOffset := offset + NeedleHeaderSize + DataSizeSize + int64(n.DataSize)
 	dataSize := GetActualSize(size, version)
 	stopOffset := offset + dataSize
 	metaSize := stopOffset - startOffset
-	fmt.Printf("offset %d dataSize %d\n", offset, dataSize)
-	fmt.Printf("read needle meta [%d,%d) size %d\n", startOffset, stopOffset, metaSize)
 	metaSlice := make([]byte, int(metaSize))
 
 	count, err = r.ReadAt(metaSlice, startOffset)

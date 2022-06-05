@@ -74,7 +74,7 @@ func TestPageRead(t *testing.T) {
 		fmt.Printf("Checksum value %d\n", checksumValue)
 
 		buf := make([]byte, 1024)
-		if err = n.ReadNeedleDataInto(datBackend, offset, buf, io.Discard, checksumValue); err != nil {
+		if err = n.ReadNeedleDataInto(datBackend, offset, buf, io.Discard, 0, int64(n.DataSize), checksumValue); err != nil {
 			t.Fatalf("ReadNeedleDataInto: %v", err)
 		}
 

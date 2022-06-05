@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -26,7 +27,13 @@ const (
 )
 
 type ReadOption struct {
-	ReadDeleted bool
+	ReadDeleted     bool
+	AttemptMetaOnly bool
+	MustMetaOnly    bool
+	IsMetaOnly      bool   // read status
+	ChecksumValue   uint32 // read status
+	VolumeRevision  uint16
+	IsOutOfRange    bool // whether need to read over MaxPossibleVolumeSize
 }
 
 /*
@@ -374,6 +381,12 @@ func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle, readOption
 		return v.readNeedle(n, readOption, onReadSizeFn)
 	}
 	return 0, fmt.Errorf("volume %d not found", i)
+}
+func (s *Store) ReadVolumeNeedleDataInto(i needle.VolumeId, n *needle.Needle, readOption *ReadOption, writer io.Writer, offset int64, size int64) error {
+	if v := s.findVolume(i); v != nil {
+		return v.readNeedleDataInto(n, readOption, writer, offset, size)
+	}
+	return fmt.Errorf("volume %d not found", i)
 }
 func (s *Store) GetVolume(i needle.VolumeId) *Volume {
 	return s.findVolume(i)
