@@ -27,13 +27,14 @@ const (
 )
 
 type ReadOption struct {
+	// request
 	ReadDeleted     bool
 	AttemptMetaOnly bool
 	MustMetaOnly    bool
-	IsMetaOnly      bool   // read status
-	ChecksumValue   uint32 // read status
-	VolumeRevision  uint16
-	IsOutOfRange    bool // whether need to read over MaxPossibleVolumeSize
+	// response
+	IsMetaOnly     bool // read status
+	VolumeRevision uint16
+	IsOutOfRange   bool // whether read over MaxPossibleVolumeSize
 }
 
 /*

@@ -41,10 +41,10 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 	}
 	if readOption != nil && readOption.AttemptMetaOnly && readSize > PagedReadLimit {
 		readOption.VolumeRevision = v.SuperBlock.CompactionRevision
-		readOption.ChecksumValue, err = n.ReadNeedleMeta(v.DataBackend, nv.Offset.ToActualOffset(), readSize, v.Version())
+		err = n.ReadNeedleMeta(v.DataBackend, nv.Offset.ToActualOffset(), readSize, v.Version())
 		if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
 			readOption.IsOutOfRange = true
-			readOption.ChecksumValue, err = n.ReadNeedleMeta(v.DataBackend, nv.Offset.ToActualOffset()+int64(MaxPossibleVolumeSize), readSize, v.Version())
+			err = n.ReadNeedleMeta(v.DataBackend, nv.Offset.ToActualOffset()+int64(MaxPossibleVolumeSize), readSize, v.Version())
 		}
 		if err != nil {
 			return 0, err
@@ -105,7 +105,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 	if readOption.VolumeRevision != v.SuperBlock.CompactionRevision {
 		// the volume is compacted
 		readOption.IsOutOfRange = false
-		readOption.ChecksumValue, err = n.ReadNeedleMeta(v.DataBackend, nv.Offset.ToActualOffset(), readSize, v.Version())
+		err = n.ReadNeedleMeta(v.DataBackend, nv.Offset.ToActualOffset(), readSize, v.Version())
 	}
 	buf := mem.Allocate(1024 * 1024)
 	defer mem.Free(buf)
@@ -114,7 +114,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		actualOffset += int64(MaxPossibleVolumeSize)
 	}
 
-	return n.ReadNeedleDataInto(v.DataBackend, actualOffset, buf, writer, offset, size, readOption.ChecksumValue)
+	return n.ReadNeedleDataInto(v.DataBackend, actualOffset, buf, writer, offset, size)
 }
 
 // read fills in Needle content by looking up n.Id from NeedleMapper

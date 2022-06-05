@@ -31,7 +31,7 @@ func (n *Needle) prepareWriteBuffer(version Version, writeBytes *bytes.Buffer) (
 		writeBytes.Write(header)
 		writeBytes.Write(n.Data)
 		padding := PaddingLength(n.Size, version)
-		util.Uint32toBytes(header[0:NeedleChecksumSize], n.Checksum.Value())
+		util.Uint32toBytes(header[0:NeedleChecksumSize], uint32(n.Checksum))
 		writeBytes.Write(header[0 : NeedleChecksumSize+padding])
 		return size, actualSize, nil
 	case Version2, Version3:
@@ -97,7 +97,7 @@ func (n *Needle) prepareWriteBuffer(version Version, writeBytes *bytes.Buffer) (
 			}
 		}
 		padding := PaddingLength(n.Size, version)
-		util.Uint32toBytes(header[0:NeedleChecksumSize], n.Checksum.Value())
+		util.Uint32toBytes(header[0:NeedleChecksumSize], uint32(n.Checksum))
 		if version == Version2 {
 			writeBytes.Write(header[0 : NeedleChecksumSize+padding])
 		} else {

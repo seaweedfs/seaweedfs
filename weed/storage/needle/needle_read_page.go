@@ -10,7 +10,7 @@ import (
 )
 
 // ReadNeedleDataInto uses a needle without n.Data to read the content into an io.Writer
-func (n *Needle) ReadNeedleDataInto(r backend.BackendStorageFile, volumeOffset int64, buf []byte, writer io.Writer, needleOffset int64, size int64, expectedChecksumValue uint32) (err error) {
+func (n *Needle) ReadNeedleDataInto(r backend.BackendStorageFile, volumeOffset int64, buf []byte, writer io.Writer, needleOffset int64, size int64) (err error) {
 	crc := CRC(0)
 	for x := needleOffset; x < needleOffset+size; x += int64(len(buf)) {
 		count, err := n.ReadNeedleData(r, volumeOffset, buf, x)
@@ -31,8 +31,9 @@ func (n *Needle) ReadNeedleDataInto(r backend.BackendStorageFile, volumeOffset i
 			break
 		}
 	}
-	if needleOffset == 0 && size == int64(n.DataSize) && expectedChecksumValue != crc.Value() {
-		return fmt.Errorf("ReadNeedleData checksum %v expected %v", crc.Value(), expectedChecksumValue)
+	if needleOffset == 0 && size == int64(n.DataSize) && (n.Checksum != crc && uint32(n.Checksum) != crc.Value()) {
+		// the crc.Value() function is to be deprecated. this double checking is for backward compatible.
+		return fmt.Errorf("ReadNeedleData checksum %v expected %v", crc, n.Checksum)
 	}
 	return nil
 }
@@ -58,18 +59,18 @@ func (n *Needle) ReadNeedleData(r backend.BackendStorageFile, volumeOffset int64
 }
 
 // ReadNeedleMeta fills all metadata except the n.Data
-func (n *Needle) ReadNeedleMeta(r backend.BackendStorageFile, offset int64, size Size, version Version) (checksumValue uint32, err error) {
+func (n *Needle) ReadNeedleMeta(r backend.BackendStorageFile, offset int64, size Size, version Version) (err error) {
 
 	bytes := make([]byte, NeedleHeaderSize+DataSizeSize)
 
 	count, err := r.ReadAt(bytes, offset)
 	if count != NeedleHeaderSize+DataSizeSize || err != nil {
-		return 0, err
+		return err
 	}
 	n.ParseNeedleHeader(bytes)
 	if n.Size != size {
 		if OffsetSize == 4 && offset < int64(MaxPossibleVolumeSize) {
-			return 0, ErrorSizeMismatch
+			return ErrorSizeMismatch
 		}
 	}
 
@@ -86,18 +87,18 @@ func (n *Needle) ReadNeedleMeta(r backend.BackendStorageFile, offset int64, size
 		err = nil
 	}
 	if err != nil {
-		return 0, err
+		return err
 	}
 
 	var index int
 	index, err = n.readNeedleDataVersion2NonData(metaSlice)
 
-	checksumValue = util.BytesToUint32(metaSlice[index : index+NeedleChecksumSize])
+	n.Checksum = CRC(util.BytesToUint32(metaSlice[index : index+NeedleChecksumSize]))
 	if version == Version3 {
 		n.AppendAtNs = util.BytesToUint64(metaSlice[index+NeedleChecksumSize : index+NeedleChecksumSize+TimestampSize])
 	}
 
-	return checksumValue, err
+	return err
 
 }
 

@@ -72,7 +72,8 @@ func (n *Needle) ReadBytes(bytes []byte, offset int64, size Size, version Versio
 	if size > 0 {
 		checksum := util.BytesToUint32(bytes[NeedleHeaderSize+size : NeedleHeaderSize+size+NeedleChecksumSize])
 		newChecksum := NewCRC(n.Data)
-		if checksum != newChecksum.Value() {
+		if checksum != newChecksum.Value() && checksum != uint32(newChecksum) {
+			// the crc.Value() function is to be deprecated. this double checking is for backward compatible.
 			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorCRC).Inc()
 			return errors.New("CRC error! Data On Disk Corrupted")
 		}

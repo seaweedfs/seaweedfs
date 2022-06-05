@@ -57,7 +57,7 @@ func TestPageRead(t *testing.T) {
 
 	{
 		n := new(Needle)
-		checksumValue, err := n.ReadNeedleMeta(datBackend, offset, size, Version3)
+		err := n.ReadNeedleMeta(datBackend, offset, size, Version3)
 		if err != nil {
 			t.Fatalf("ReadNeedleHeader: %v", err)
 		}
