@@ -3,7 +3,6 @@ package needle
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-	"github.com/stretchr/testify/assert"
 	"io"
 	"os"
 	"testing"
@@ -75,24 +74,9 @@ func TestPageRead(t *testing.T) {
 		fmt.Printf("Checksum value %d\n", checksumValue)
 
 		buf := make([]byte, 1024)
-		crc := CRC(0)
-		for x := int64(0); ; x += 1024 {
-			count, err := n.ReadNeedleData(datBackend, offset, buf, x)
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				t.Fatalf("ReadNeedleData: %v", err)
-			}
-			if count > 0 {
-				crc = crc.Update(buf[0:count])
-			} else {
-				break
-			}
+		if err = n.ReadNeedleDataInto(datBackend, offset, buf, io.Discard, checksumValue); err != nil {
+			t.Fatalf("ReadNeedleDataInto: %v", err)
 		}
-		fmt.Printf("read checksum value %d\n", crc.Value())
-
-		assert.Equal(t, checksumValue, crc.Value(), "validate checksum value")
 
 	}
 

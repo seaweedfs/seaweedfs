@@ -9,6 +9,32 @@ import (
 	"io"
 )
 
+// ReadNeedleDataInto uses a needle without n.Data to read the content into an io.Writer
+func (n *Needle) ReadNeedleDataInto(r backend.BackendStorageFile, offset int64, buf []byte, writer io.Writer, expectedChecksumValue uint32) (err error) {
+	crc := CRC(0)
+	for x := 0; ; x += len(buf) {
+		count, err := n.ReadNeedleData(r, offset, buf, int64(x))
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("ReadNeedleData: %v", err)
+		}
+		if count > 0 {
+			crc = crc.Update(buf[0:count])
+			if _, err = writer.Write(buf[0:count]); err != nil {
+				return fmt.Errorf("ReadNeedleData write: %v", err)
+			}
+		} else {
+			break
+		}
+	}
+	if expectedChecksumValue != crc.Value() {
+		return fmt.Errorf("ReadNeedleData checksum %v expected %v", crc.Value(), expectedChecksumValue)
+	}
+	return nil
+}
+
 // ReadNeedleData uses a needle without n.Data to read the content
 // volumeOffset: the offset within the volume
 // needleOffset: the offset within the needle Data
