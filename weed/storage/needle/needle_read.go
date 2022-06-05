@@ -111,6 +111,13 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 		}
 		n.Data = bytes[index : index+int(n.DataSize)]
 		index = index + int(n.DataSize)
+	}
+	_, err = n.readNeedleDataVersion2NonData(bytes[index:])
+	return
+}
+func (n *Needle) readNeedleDataVersion2NonData(bytes []byte) (index int, err error) {
+	lenBytes := len(bytes)
+	if index < lenBytes {
 		n.Flags = bytes[index]
 		index = index + 1
 	}
@@ -119,7 +126,7 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 		index = index + 1
 		if int(n.NameSize)+index > lenBytes {
 			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
-			return fmt.Errorf("index out of range %d", 2)
+			return index, fmt.Errorf("index out of range %d", 2)
 		}
 		n.Name = bytes[index : index+int(n.NameSize)]
 		index = index + int(n.NameSize)
@@ -129,7 +136,7 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 		index = index + 1
 		if int(n.MimeSize)+index > lenBytes {
 			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
-			return fmt.Errorf("index out of range %d", 3)
+			return index, fmt.Errorf("index out of range %d", 3)
 		}
 		n.Mime = bytes[index : index+int(n.MimeSize)]
 		index = index + int(n.MimeSize)
@@ -137,7 +144,7 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 	if index < lenBytes && n.HasLastModifiedDate() {
 		if LastModifiedBytesLength+index > lenBytes {
 			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
-			return fmt.Errorf("index out of range %d", 4)
+			return index, fmt.Errorf("index out of range %d", 4)
 		}
 		n.LastModified = util.BytesToUint64(bytes[index : index+LastModifiedBytesLength])
 		index = index + LastModifiedBytesLength
@@ -145,7 +152,7 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 	if index < lenBytes && n.HasTtl() {
 		if TtlBytesLength+index > lenBytes {
 			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
-			return fmt.Errorf("index out of range %d", 5)
+			return index, fmt.Errorf("index out of range %d", 5)
 		}
 		n.Ttl = LoadTTLFromBytes(bytes[index : index+TtlBytesLength])
 		index = index + TtlBytesLength
@@ -153,19 +160,19 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 	if index < lenBytes && n.HasPairs() {
 		if 2+index > lenBytes {
 			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
-			return fmt.Errorf("index out of range %d", 6)
+			return index, fmt.Errorf("index out of range %d", 6)
 		}
 		n.PairsSize = util.BytesToUint16(bytes[index : index+2])
 		index += 2
 		if int(n.PairsSize)+index > lenBytes {
 			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
-			return fmt.Errorf("index out of range %d", 7)
+			return index, fmt.Errorf("index out of range %d", 7)
 		}
 		end := index + int(n.PairsSize)
 		n.Pairs = bytes[index:end]
 		index = end
 	}
-	return nil
+	return index, nil
 }
 
 func ReadNeedleHeader(r backend.BackendStorageFile, version Version, offset int64) (n *Needle, bytes []byte, bodyLength int64, err error) {
