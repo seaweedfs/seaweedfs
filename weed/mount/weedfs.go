@@ -40,6 +40,7 @@ type Option struct {
 	DataCenter         string
 	Umask              os.FileMode
 	Quota              int64
+	DisableXAttr       bool
 
 	MountUid         uint32
 	MountGid         uint32
