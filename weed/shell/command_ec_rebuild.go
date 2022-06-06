@@ -63,6 +63,7 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 	if err = fixCommand.Parse(args); err != nil {
 		return nil
 	}
+	infoAboutSimulationMode(writer, *applyChanges, "-force")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return

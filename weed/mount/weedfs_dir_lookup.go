@@ -27,7 +27,7 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 	fullFilePath := dirPath.Child(name)
 
-	visitErr := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath, nil)
+	visitErr := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath)
 	if visitErr != nil {
 		glog.Errorf("dir Lookup %s: %v", dirPath, visitErr)
 		return fuse.EIO

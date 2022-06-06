@@ -42,7 +42,6 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	secretKey := s3ConfigureCommand.String("secret_key", "", "specify the secret key")
 	isDelete := s3ConfigureCommand.Bool("delete", false, "delete users, actions or access keys")
 	apply := s3ConfigureCommand.Bool("apply", false, "update and apply s3 configuration")
-
 	if err = s3ConfigureCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -83,6 +82,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		}
 	}
 	if changed {
+		infoAboutSimulationMode(writer, *apply, "-apply")
 		if *isDelete {
 			var exists []int
 			for _, cmdAction := range cmdActions {
@@ -151,6 +151,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 			}
 		}
 	} else if *user != "" && *actions != "" {
+		infoAboutSimulationMode(writer, *apply, "-apply")
 		identity := iam_pb.Identity{
 			Name:        *user,
 			Actions:     cmdActions,

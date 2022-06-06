@@ -35,6 +35,7 @@ func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writ
 	if err = colDeleteCommand.Parse(args); err != nil {
 		return nil
 	}
+	infoAboutSimulationMode(writer, *applyBalancing, "-force")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return

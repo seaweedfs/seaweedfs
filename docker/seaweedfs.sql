@@ -1,6 +1,6 @@
 CREATE DATABASE IF NOT EXISTS seaweedfs;
 CREATE USER IF NOT EXISTS 'seaweedfs'@'%' IDENTIFIED BY 'secret';
-GRANT ALL PRIVILEGES ON seaweedfs_fast.* TO 'seaweedfs'@'%';
+GRANT ALL PRIVILEGES ON seaweedfs.* TO 'seaweedfs'@'%';
 FLUSH PRIVILEGES;
 USE seaweedfs;
 CREATE TABLE IF NOT EXISTS filemeta (

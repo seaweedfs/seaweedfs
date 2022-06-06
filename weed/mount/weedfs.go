@@ -40,6 +40,7 @@ type Option struct {
 	DataCenter         string
 	Umask              os.FileMode
 	Quota              int64
+	DisableXAttr       bool
 
 	MountUid         uint32
 	MountGid         uint32
@@ -131,10 +132,11 @@ func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle
 	}
 	var found bool
 	if fh, found = wfs.fhmap.FindFileHandle(inode); found {
-		if fh.entry.Attributes == nil {
-			fh.entry.Attributes = &filer_pb.FuseAttributes{}
+		entry = fh.GetEntry()
+		if entry != nil && fh.entry.Attributes == nil {
+			entry.Attributes = &filer_pb.FuseAttributes{}
 		}
-		return path, fh, fh.entry, fuse.OK
+		return path, fh, entry, fuse.OK
 	}
 	entry, status = wfs.maybeLoadEntry(path)
 	return
@@ -161,7 +163,7 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.St
 	}
 
 	// read from async meta cache
-	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir), nil)
+	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir))
 	cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
 	if cacheErr == filer_pb.ErrNotFound {
 		return nil, fuse.ENOENT

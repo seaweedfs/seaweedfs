@@ -10,7 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath, entryChan chan *filer.Entry) error {
+func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath) error {
 
 	currentPath := dirPath
 
@@ -22,14 +22,8 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 			return nil
 		}
 
-		if entryChan != nil && dirPath == currentPath {
-			if err := doEnsureVisited(mc, client, currentPath, entryChan); err != nil {
-				return err
-			}
-		} else {
-			if err := doEnsureVisited(mc, client, currentPath, nil); err != nil {
-				return err
-			}
+		if err := doEnsureVisited(mc, client, currentPath); err != nil {
+			return err
 		}
 
 		// continue to parent directory
@@ -45,7 +39,7 @@ func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.Full
 
 }
 
-func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullPath, entryChan chan *filer.Entry) error {
+func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullPath) error {
 
 	glog.V(4).Infof("ReadDirAllEntries %s ...", path)
 
@@ -59,17 +53,15 @@ func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullP
 				glog.V(0).Infof("read %s: %v", entry.FullPath, err)
 				return err
 			}
-			if entryChan != nil {
-				entryChan <- entry
-			}
 			return nil
 		})
 	})
 
 	if err != nil {
 		err = fmt.Errorf("list %s: %v", path, err)
+	} else {
+		mc.markCachedFn(path)
 	}
-	mc.markCachedFn(path)
 	return err
 }
 

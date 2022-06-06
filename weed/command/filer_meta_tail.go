@@ -25,6 +25,7 @@ var cmdFilerMetaTail = &Command{
 
 	weed filer.meta.tail -timeAgo=30h | grep truncate
 	weed filer.meta.tail -timeAgo=30h | jq .
+	weed filer.meta.tail -timeAgo=30h -untilTimeAgo=20h | jq .
 	weed filer.meta.tail -timeAgo=30h | jq .eventNotification.newEntry.name
 
 	weed filer.meta.tail -timeAgo=30h -es=http://<elasticSearchServerHost>:<port> -es.index=seaweedfs
@@ -36,6 +37,7 @@ var (
 	tailFiler   = cmdFilerMetaTail.Flag.String("filer", "localhost:8888", "filer hostname:port")
 	tailTarget  = cmdFilerMetaTail.Flag.String("pathPrefix", "/", "path to a folder or common prefix for the folders or files on filer")
 	tailStart   = cmdFilerMetaTail.Flag.Duration("timeAgo", 0, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
+	tailStop    = cmdFilerMetaTail.Flag.Duration("untilTimeAgo", 0, "read until this time ago. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
 	tailPattern = cmdFilerMetaTail.Flag.String("pattern", "", "full path or just filename pattern, ex: \"/home/?opher\", \"*.pdf\", see https://golang.org/pkg/path/filepath/#Match ")
 	esServers   = cmdFilerMetaTail.Flag.String("es", "", "comma-separated elastic servers http://<host:port>")
 	esIndex     = cmdFilerMetaTail.Flag.String("es.index", "seaweedfs", "ES index name")
@@ -103,9 +105,13 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 		}
 	}
 
-	tailErr := pb.FollowMetadata(pb.ServerAddress(*tailFiler), grpcDialOption, "tail", clientId,
-		*tailTarget, nil, time.Now().Add(-*tailStart).UnixNano(), 0,
-		func(resp *filer_pb.SubscribeMetadataResponse) error {
+	var untilTsNs int64
+	if *tailStop != 0 {
+		untilTsNs = time.Now().Add(-*tailStop).UnixNano()
+	}
+
+	tailErr := pb.FollowMetadata(pb.ServerAddress(*tailFiler), grpcDialOption, "tail", clientId, *tailTarget, nil,
+		time.Now().Add(-*tailStart).UnixNano(), untilTsNs, 0, func(resp *filer_pb.SubscribeMetadataResponse) error {
 			if !shouldPrint(resp) {
 				return nil
 			}
@@ -113,7 +119,7 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 				return err
 			}
 			return nil
-		}, false)
+		}, pb.TrivialOnError)
 
 	if tailErr != nil {
 		fmt.Printf("tail %s: %v\n", *tailFiler, tailErr)

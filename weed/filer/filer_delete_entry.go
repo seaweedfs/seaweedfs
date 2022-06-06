@@ -60,7 +60,6 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	if isDeleteCollection {
 		collectionName := entry.Name()
 		f.doDeleteCollection(collectionName)
-		f.deleteBucket(collectionName)
 	}
 
 	return nil

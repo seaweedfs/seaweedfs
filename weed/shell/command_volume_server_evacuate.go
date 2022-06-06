@@ -52,6 +52,7 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 	if err = vsEvacuateCommand.Parse(args); err != nil {
 		return nil
 	}
+	infoAboutSimulationMode(writer, *applyChange, "-force")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return

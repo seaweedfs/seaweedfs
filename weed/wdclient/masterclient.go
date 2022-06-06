@@ -24,7 +24,7 @@ type MasterClient struct {
 
 	vidMap
 
-	OnPeerUpdate func(update *master_pb.ClusterNodeUpdate)
+	OnPeerUpdate func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
 }
 
 func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, masters map[string]pb.ServerAddress) *MasterClient {
@@ -182,7 +182,7 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 							glog.V(0).Infof("- %s.%s %s leader:%v\n", update.FilerGroup, update.NodeType, update.Address, update.IsLeader)
 						}
 						stats.MasterClientConnectCounter.WithLabelValues(stats.OnPeerUpdate).Inc()
-						mc.OnPeerUpdate(update)
+						mc.OnPeerUpdate(update, time.Now())
 					}
 				}
 			}

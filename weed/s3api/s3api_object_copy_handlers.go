@@ -3,8 +3,7 @@ package s3api
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	headers "github.com/chrislusf/seaweedfs/weed/s3api/http"
-	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"modernc.org/strutil"
 	"net/http"
@@ -23,7 +22,7 @@ const (
 
 func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request) {
 
-	dstBucket, dstObject := xhttp.GetBucketAndObject(r)
+	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
 
 	// Copy source path.
 	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
@@ -94,7 +93,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
-	etag, errCode := s3a.putToFiler(r, dstUrl, resp.Body)
+	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject)
+	etag, errCode := s3a.putToFiler(r, dstUrl, resp.Body, destination)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -129,7 +129,7 @@ type CopyPartResult struct {
 func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Request) {
 	// https://docs.aws.amazon.com/AmazonS3/latest/dev/CopyingObjctsUsingRESTMPUapi.html
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
-	dstBucket, _ := xhttp.GetBucketAndObject(r)
+	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
 
 	// Copy source path.
 	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
@@ -177,7 +177,8 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	defer dataReader.Close()
 
 	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
-	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader)
+	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject)
+	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader, destination)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -196,24 +197,24 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 }
 
 func replaceDirective(reqHeader http.Header) (replaceMeta, replaceTagging bool) {
-	return reqHeader.Get(headers.AmzUserMetaDirective) == DirectiveReplace, reqHeader.Get(headers.AmzObjectTaggingDirective) == DirectiveReplace
+	return reqHeader.Get(s3_constants.AmzUserMetaDirective) == DirectiveReplace, reqHeader.Get(s3_constants.AmzObjectTaggingDirective) == DirectiveReplace
 }
 
 func processMetadata(reqHeader, existing http.Header, replaceMeta, replaceTagging bool, getTags func(parentDirectoryPath string, entryName string) (tags map[string]string, err error), dir, name string) (err error) {
-	if sc := reqHeader.Get(xhttp.AmzStorageClass); len(sc) == 0 {
-		if sc := existing[xhttp.AmzStorageClass]; len(sc) > 0 {
-			reqHeader[xhttp.AmzStorageClass] = sc
+	if sc := reqHeader.Get(s3_constants.AmzStorageClass); len(sc) == 0 {
+		if sc := existing[s3_constants.AmzStorageClass]; len(sc) > 0 {
+			reqHeader[s3_constants.AmzStorageClass] = sc
 		}
 	}
 
 	if !replaceMeta {
 		for header, _ := range reqHeader {
-			if strings.HasPrefix(header, xhttp.AmzUserMetaPrefix) {
+			if strings.HasPrefix(header, s3_constants.AmzUserMetaPrefix) {
 				delete(reqHeader, header)
 			}
 		}
 		for k, v := range existing {
-			if strings.HasPrefix(k, xhttp.AmzUserMetaPrefix) {
+			if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
 				reqHeader[k] = v
 			}
 		}
@@ -221,14 +222,14 @@ func processMetadata(reqHeader, existing http.Header, replaceMeta, replaceTaggin
 
 	if !replaceTagging {
 		for header, _ := range reqHeader {
-			if strings.HasPrefix(header, xhttp.AmzObjectTagging) {
+			if strings.HasPrefix(header, s3_constants.AmzObjectTagging) {
 				delete(reqHeader, header)
 			}
 		}
 
 		found := false
 		for k, _ := range existing {
-			if strings.HasPrefix(k, xhttp.AmzObjectTaggingPrefix) {
+			if strings.HasPrefix(k, s3_constants.AmzObjectTaggingPrefix) {
 				found = true
 				break
 			}
@@ -245,7 +246,7 @@ func processMetadata(reqHeader, existing http.Header, replaceMeta, replaceTaggin
 				tagArr = append(tagArr, fmt.Sprintf("%s=%s", k, v))
 			}
 			tagStr := strutil.JoinFields(tagArr, "&")
-			reqHeader.Set(xhttp.AmzObjectTagging, tagStr)
+			reqHeader.Set(s3_constants.AmzObjectTagging, tagStr)
 		}
 	}
 	return
@@ -254,16 +255,16 @@ func processMetadata(reqHeader, existing http.Header, replaceMeta, replaceTaggin
 func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, replaceMeta, replaceTagging bool) (metadata map[string][]byte) {
 	metadata = make(map[string][]byte)
 
-	if sc := existing[xhttp.AmzStorageClass]; len(sc) > 0 {
-		metadata[xhttp.AmzStorageClass] = sc
+	if sc := existing[s3_constants.AmzStorageClass]; len(sc) > 0 {
+		metadata[s3_constants.AmzStorageClass] = sc
 	}
-	if sc := reqHeader.Get(xhttp.AmzStorageClass); len(sc) > 0 {
-		metadata[xhttp.AmzStorageClass] = []byte(sc)
+	if sc := reqHeader.Get(s3_constants.AmzStorageClass); len(sc) > 0 {
+		metadata[s3_constants.AmzStorageClass] = []byte(sc)
 	}
 
 	if replaceMeta {
 		for header, values := range reqHeader {
-			if strings.HasPrefix(header, xhttp.AmzUserMetaPrefix) {
+			if strings.HasPrefix(header, s3_constants.AmzUserMetaPrefix) {
 				for _, value := range values {
 					metadata[header] = []byte(value)
 				}
@@ -271,30 +272,30 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 		}
 	} else {
 		for k, v := range existing {
-			if strings.HasPrefix(k, xhttp.AmzUserMetaPrefix) {
+			if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
 				metadata[k] = v
 			}
 		}
 	}
 
 	if replaceTagging {
-		if tags := reqHeader.Get(xhttp.AmzObjectTagging); tags != "" {
+		if tags := reqHeader.Get(s3_constants.AmzObjectTagging); tags != "" {
 			for _, v := range strings.Split(tags, "&") {
 				tag := strings.Split(v, "=")
 				if len(tag) == 2 {
-					metadata[xhttp.AmzObjectTagging+"-"+tag[0]] = []byte(tag[1])
+					metadata[s3_constants.AmzObjectTagging+"-"+tag[0]] = []byte(tag[1])
 				} else if len(tag) == 1 {
-					metadata[xhttp.AmzObjectTagging+"-"+tag[0]] = nil
+					metadata[s3_constants.AmzObjectTagging+"-"+tag[0]] = nil
 				}
 			}
 		}
 	} else {
 		for k, v := range existing {
-			if strings.HasPrefix(k, xhttp.AmzObjectTagging) {
+			if strings.HasPrefix(k, s3_constants.AmzObjectTagging) {
 				metadata[k] = v
 			}
 		}
-		delete(metadata, xhttp.AmzTagCount)
+		delete(metadata, s3_constants.AmzTagCount)
 	}
 
 	return

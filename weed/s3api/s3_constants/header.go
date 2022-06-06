@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package http
+package s3_constants
 
 import (
 	"github.com/gorilla/mux"

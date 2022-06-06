@@ -218,14 +218,12 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 					Name:        name,
 					IsDirectory: perm&os.ModeDir > 0,
 					Attributes: &filer_pb.FuseAttributes{
-						Mtime:       time.Now().Unix(),
-						Crtime:      time.Now().Unix(),
-						FileMode:    uint32(perm),
-						Uid:         fs.option.Uid,
-						Gid:         fs.option.Gid,
-						Collection:  fs.option.Collection,
-						Replication: fs.option.Replication,
-						TtlSec:      0,
+						Mtime:    time.Now().Unix(),
+						Crtime:   time.Now().Unix(),
+						FileMode: uint32(perm),
+						Uid:      fs.option.Uid,
+						Gid:      fs.option.Gid,
+						TtlSec:   0,
 					},
 				},
 				Signatures: []int32{fs.signature},
@@ -478,8 +476,6 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 			flushErr := f.fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 				f.entry.Attributes.Mtime = time.Now().Unix()
-				f.entry.Attributes.Collection = f.collection
-				f.entry.Attributes.Replication = f.replication
 
 				request := &filer_pb.UpdateEntryRequest{
 					Directory:  dir,

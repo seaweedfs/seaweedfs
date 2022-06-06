@@ -71,6 +71,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	if *locationPrefix != "" {
+		infoAboutSimulationMode(writer, *apply, "-apply")
 		locConf := &filer_pb.FilerConf_PathConf{
 			LocationPrefix:    *locationPrefix,
 			Collection:        *collection,
@@ -127,4 +128,11 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	return nil
 
+}
+
+func infoAboutSimulationMode(writer io.Writer, forceMode bool, forceModeOption string) {
+	if forceMode {
+		return
+	}
+	fmt.Fprintf(writer, "Running in simulation mode. Use \"%s\" option to apply the changes.\n", forceModeOption)
 }
