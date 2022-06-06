@@ -84,7 +84,7 @@ func (pages *ChunkedDirtyPages) saveChunkedFileIntevalToStorage(reader io.Reader
 	}
 	chunk.Mtime = mtime
 	pages.collection, pages.replication = collection, replication
-	pages.fh.addChunks([]*filer_pb.FileChunk{chunk})
+	pages.fh.AddChunks([]*filer_pb.FileChunk{chunk})
 	pages.fh.entryViewCache = nil
 	glog.V(3).Infof("%v saveToStorage %s [%d,%d)", fileFullPath, chunk.FileId, offset, offset+size)
 
