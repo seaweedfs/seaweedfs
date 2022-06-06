@@ -71,10 +71,9 @@ func TestPageRead(t *testing.T) {
 		fmt.Printf("LastModified %d\n", n.LastModified)
 		fmt.Printf("AppendAtNs %d\n", n.AppendAtNs)
 		fmt.Printf("Checksum %d\n", n.Checksum)
-		fmt.Printf("Checksum value %d\n", checksumValue)
 
 		buf := make([]byte, 1024)
-		if err = n.ReadNeedleDataInto(datBackend, offset, buf, io.Discard, 0, int64(n.DataSize), checksumValue); err != nil {
+		if err = n.ReadNeedleDataInto(datBackend, offset, buf, io.Discard, 0, int64(n.DataSize)); err != nil {
 			t.Fatalf("ReadNeedleDataInto: %v", err)
 		}
 
