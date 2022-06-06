@@ -175,7 +175,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		FsName:                   serverFriendlyName + ":" + filerMountRootPath,
 		Name:                     "seaweedfs",
 		SingleThreaded:           false,
-		DisableXAttrs:            false,
+		DisableXAttrs:            *option.disableXAttr,
 		Debug:                    *option.debug,
 		EnableLocks:              false,
 		ExplicitDataCacheControl: false,
@@ -238,6 +238,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		VolumeServerAccess: *mountOptions.volumeServerAccess,
 		Cipher:             cipher,
 		UidGidMapper:       uidGidMapper,
+		DisableXAttr:       *option.disableXAttr,
 	})
 
 	server, err := fuse.NewServer(seaweedFileSystem, dir, fuseMountOptions)
