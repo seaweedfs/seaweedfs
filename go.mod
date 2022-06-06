@@ -45,7 +45,7 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.2
 	github.com/golang/snappy v0.0.4 // indirect
-	github.com/google/btree v1.0.1
+	github.com/google/btree v1.1.1
 	github.com/google/go-cmp v0.5.8 // indirect
 	github.com/google/uuid v1.3.0
 	github.com/google/wire v0.5.0 // indirect
@@ -68,7 +68,7 @@ require (
 	github.com/klauspost/reedsolomon v1.9.16
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.6
-	github.com/linxGnu/grocksdb v1.7.1
+	github.com/linxGnu/grocksdb v1.7.2
 	github.com/magiconair/properties v1.8.6 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-ieproxy v0.0.3 // indirect
@@ -132,7 +132,7 @@ require (
 	google.golang.org/api v0.82.0
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20220527130721-00d5c0f3be58 // indirect
-	google.golang.org/grpc v1.46.2
+	google.golang.org/grpc v1.47.0
 	google.golang.org/protobuf v1.28.0
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	modernc.org/b v1.0.0 // indirect
