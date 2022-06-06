@@ -200,10 +200,9 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	}
 
 	// required by buckets folder
-	bucketDefaultCollection, bucketDefaultReplication, fsync := "", "", false
+	bucketDefaultCollection := ""
 	if strings.HasPrefix(requestURI, fs.filer.DirBucketsPath+"/") {
 		bucketDefaultCollection = fs.filer.DetectBucket(util.FullPath(requestURI))
-		bucketDefaultReplication, fsync = fs.filer.ReadBucketOption(bucketDefaultCollection)
 	}
 
 	if ttlSeconds == 0 {
@@ -215,14 +214,14 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	}
 
 	return &operation.StorageOption{
-		Replication:       util.Nvl(qReplication, rule.Replication, bucketDefaultReplication, fs.option.DefaultReplication),
+		Replication:       util.Nvl(qReplication, rule.Replication, fs.option.DefaultReplication),
 		Collection:        util.Nvl(qCollection, rule.Collection, bucketDefaultCollection, fs.option.Collection),
 		DataCenter:        util.Nvl(dataCenter, rule.DataCenter, fs.option.DataCenter),
 		Rack:              util.Nvl(rack, rule.Rack, fs.option.Rack),
 		DataNode:          util.Nvl(dataNode, rule.DataNode, fs.option.DataNode),
 		TtlSeconds:        ttlSeconds,
 		DiskType:          util.Nvl(diskType, rule.DiskType),
-		Fsync:             fsync || rule.Fsync,
+		Fsync:             rule.Fsync,
 		VolumeGrowthCount: rule.VolumeGrowthCount,
 	}, nil
 }

@@ -37,8 +37,6 @@ type Filer struct {
 	fileIdDeletionQueue *util.UnboundedQueue
 	GrpcDialOption      grpc.DialOption
 	DirBucketsPath      string
-	FsyncBuckets        []string
-	buckets             *FilerBuckets
 	Cipher              bool
 	LocalMetaLogBuffer  *log_buffer.LogBuffer
 	metaLogCollection   string
@@ -217,7 +215,6 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 		}
 	}
 
-	f.maybeAddBucket(entry)
 	f.NotifyUpdateEvent(ctx, oldEntry, entry, true, isFromOtherCluster, signatures)
 
 	f.deleteChunksIfNotNew(oldEntry, entry)
@@ -254,15 +251,13 @@ func (f *Filer) ensureParentDirecotryEntry(ctx context.Context, entry *Entry, di
 		dirEntry = &Entry{
 			FullPath: util.FullPath(dirPath),
 			Attr: Attr{
-				Mtime:       now,
-				Crtime:      now,
-				Mode:        os.ModeDir | entry.Mode | 0111,
-				Uid:         entry.Uid,
-				Gid:         entry.Gid,
-				Collection:  entry.Collection,
-				Replication: entry.Replication,
-				UserName:    entry.UserName,
-				GroupNames:  entry.GroupNames,
+				Mtime:      now,
+				Crtime:     now,
+				Mode:       os.ModeDir | entry.Mode | 0111,
+				Uid:        entry.Uid,
+				Gid:        entry.Gid,
+				UserName:   entry.UserName,
+				GroupNames: entry.GroupNames,
 			},
 		}
 
@@ -274,7 +269,6 @@ func (f *Filer) ensureParentDirecotryEntry(ctx context.Context, entry *Entry, di
 				return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
 			}
 		} else {
-			f.maybeAddBucket(dirEntry)
 			f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
 		}
 

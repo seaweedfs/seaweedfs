@@ -39,10 +39,7 @@ func EntryAttributeToPb(entry *Entry) *filer_pb.FuseAttributes {
 		Uid:           entry.Uid,
 		Gid:           entry.Gid,
 		Mime:          entry.Mime,
-		Collection:    entry.Attr.Collection,
-		Replication:   entry.Attr.Replication,
 		TtlSec:        entry.Attr.TtlSec,
-		DiskType:      entry.Attr.DiskType,
 		UserName:      entry.Attr.UserName,
 		GroupName:     entry.Attr.GroupNames,
 		SymlinkTarget: entry.Attr.SymlinkTarget,
@@ -67,10 +64,7 @@ func PbToEntryAttribute(attr *filer_pb.FuseAttributes) Attr {
 	t.Uid = attr.Uid
 	t.Gid = attr.Gid
 	t.Mime = attr.Mime
-	t.Collection = attr.Collection
-	t.Replication = attr.Replication
 	t.TtlSec = attr.TtlSec
-	t.DiskType = attr.DiskType
 	t.UserName = attr.UserName
 	t.GroupNames = attr.GroupName
 	t.SymlinkTarget = attr.SymlinkTarget

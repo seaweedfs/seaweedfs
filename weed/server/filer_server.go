@@ -174,8 +174,6 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	}
 	fs.filer.AggregateFromPeers(option.Host, existingNodes, startFromTime)
 
-	fs.filer.LoadBuckets()
-
 	fs.filer.LoadFilerConf()
 
 	fs.filer.LoadRemoteStorageConfAndMapping()

@@ -151,8 +151,6 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	newEntry := filer.FromPbEntry(req.Directory, req.Entry)
 	newEntry.Chunks = chunks
 	newEntry.TtlSec = so.TtlSeconds
-	newEntry.Collection = so.Collection
-	newEntry.DiskType = so.DiskType
 
 	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory)
 
@@ -218,10 +216,10 @@ func (fs *FilerServer) cleanupChunks(fullpath string, existingEntry *filer.Entry
 
 	if newEntry.Attributes != nil {
 		so, _ := fs.detectStorageOption(fullpath,
-			newEntry.Attributes.Collection,
-			newEntry.Attributes.Replication,
+			"",
+			"",
 			newEntry.Attributes.TtlSec,
-			newEntry.Attributes.DiskType,
+			"",
 			"",
 			"",
 			"",
@@ -266,7 +264,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	}
 
 	entry.Chunks = append(entry.Chunks, req.Chunks...)
-	so, err := fs.detectStorageOption(string(fullpath), entry.Collection, entry.Replication, entry.TtlSec, entry.DiskType, "", "", "")
+	so, err := fs.detectStorageOption(string(fullpath), "", "", entry.TtlSec, "", "", "", "")
 	if err != nil {
 		glog.Warningf("detectStorageOption: %v", err)
 		return &filer_pb.AppendToEntryResponse{}, err

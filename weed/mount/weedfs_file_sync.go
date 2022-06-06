@@ -139,7 +139,6 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 				entry.Attributes.Crtime = time.Now().Unix()
 			}
 			entry.Attributes.Mtime = time.Now().Unix()
-			entry.Attributes.Collection, entry.Attributes.Replication = fh.dirtyPages.GetStorageOptions()
 		}
 
 		request := &filer_pb.CreateEntryRequest{
