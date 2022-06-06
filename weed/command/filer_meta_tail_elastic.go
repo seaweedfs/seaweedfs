@@ -20,7 +20,6 @@ type EsDocument struct {
 	Uid         uint32 `json:"uid,omitempty"`
 	Gid         uint32 `json:"gid,omitempty"`
 	UserName    string `json:"userName,omitempty"`
-	Collection  string `json:"collection,omitempty"`
 	Crtime      int64  `json:"crtime,omitempty"`
 	Mtime       int64  `json:"mtime,omitempty"`
 	Mime        string `json:"mime,omitempty"`
@@ -38,7 +37,6 @@ func toEsEntry(event *filer_pb.EventNotification) (*EsDocument, string) {
 		Uid:         entry.Attributes.Uid,
 		Gid:         entry.Attributes.Gid,
 		UserName:    entry.Attributes.UserName,
-		Collection:  entry.Attributes.Collection,
 		Crtime:      entry.Attributes.Crtime,
 		Mtime:       entry.Attributes.Mtime,
 		Mime:        entry.Attributes.Mime,
