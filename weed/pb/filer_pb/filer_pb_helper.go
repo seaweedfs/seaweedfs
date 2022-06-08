@@ -17,6 +17,10 @@ func (entry *Entry) IsInRemoteOnly() bool {
 	return len(entry.Chunks) == 0 && entry.RemoteEntry != nil && entry.RemoteEntry.RemoteSize > 0
 }
 
+func (entry *Entry) IsDirectoryKeyObject() bool {
+	return entry.IsDirectory && entry.Attributes != nil && entry.Attributes.Mime != ""
+}
+
 func (entry *Entry) FileMode() (fileMode os.FileMode) {
 	if entry != nil && entry.Attributes != nil {
 		fileMode = os.FileMode(entry.Attributes.FileMode)
