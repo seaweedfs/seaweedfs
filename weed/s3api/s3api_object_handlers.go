@@ -353,6 +353,11 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		return
 	}
 
+	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
+		return
+	}
+
 	if (resp.ContentLength == -1 || resp.StatusCode == 404) && resp.StatusCode != 304 {
 		if r.Method != "DELETE" {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)

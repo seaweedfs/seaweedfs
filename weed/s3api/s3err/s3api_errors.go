@@ -64,6 +64,7 @@ const (
 	ErrInvalidMaxDeleteObjects
 	ErrInvalidPartNumberMarker
 	ErrInvalidPart
+	ErrInvalidRange
 	ErrInternalError
 	ErrInvalidCopyDest
 	ErrInvalidCopySource
@@ -369,6 +370,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "InvalidRequest",
 		Description:    "Invalid Request",
 		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidRange: {
+		Code:           "InvalidRange",
+		Description:    "The requested range is not satisfiable",
+		HTTPStatusCode: http.StatusRequestedRangeNotSatisfiable,
 	},
 	ErrAuthNotSetup: {
 		Code:           "InvalidRequest",
