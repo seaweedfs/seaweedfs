@@ -21,6 +21,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/arangodb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/cassandra"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/elastic/v7"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/etcd"
@@ -37,6 +38,7 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis3"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/sqlite"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/ydb"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/notification"
 	_ "github.com/chrislusf/seaweedfs/weed/notification/aws_sqs"
@@ -48,7 +50,8 @@ import (
 )
 
 type FilerOption struct {
-	Masters               []pb.ServerAddress
+	Masters               map[string]pb.ServerAddress
+	FilerGroup            string
 	Collection            string
 	DefaultReplication    string
 	DisableDirListing     bool
@@ -117,7 +120,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.Collection, option.DefaultReplication, option.DataCenter, func() {
+	fs.filer = filer.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, func() {
 		fs.listenersCond.Broadcast()
 	})
 	fs.filer.Cipher = option.Cipher
@@ -148,7 +151,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	// TODO deprecated, will be be removed after 2020-12-31
 	// replaced by https://github.com/chrislusf/seaweedfs/wiki/Path-Specific-Configuration
 	// fs.filer.FsyncBuckets = v.GetStringSlice("filer.options.buckets_fsync")
-	fs.filer.LoadConfiguration(v)
+	isFresh := fs.filer.LoadConfiguration(v)
 
 	notification.LoadConfiguration(v, "notification.")
 
@@ -161,9 +164,15 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		readonlyMux.HandleFunc("/", fs.readonlyFilerHandler)
 	}
 
-	fs.filer.AggregateFromPeers(option.Host)
-
-	fs.filer.LoadBuckets()
+	existingNodes := fs.filer.ListExistingPeerUpdates()
+	startFromTime := time.Now().Add(-filer.LogFlushInterval)
+	if isFresh {
+		glog.V(0).Infof("%s bootstrap from peers %+v", option.Host, existingNodes)
+		if err := fs.filer.MaybeBootstrapFromPeers(option.Host, existingNodes, startFromTime); err != nil {
+			glog.Fatalf("%s bootstrap from %+v", option.Host, existingNodes)
+		}
+	}
+	fs.filer.AggregateFromPeers(option.Host, existingNodes, startFromTime)
 
 	fs.filer.LoadFilerConf()
 

@@ -3,12 +3,13 @@ package weed_server
 import (
 	"bufio"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
 	"net"
 	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func (vs *VolumeServer) HandleTcpConnection(c net.Conn) {

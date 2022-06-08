@@ -5,20 +5,20 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"golang.org/x/exp/slices"
 	"io"
-	"sort"
 	"sync"
 )
 
 type FileHandleId uint64
 
 type FileHandle struct {
-	fh           FileHandleId
-	counter      int64
-	entry        *filer_pb.Entry
-	chunkAddLock sync.Mutex
-	inode        uint64
-	wfs          *WFS
+	fh        FileHandleId
+	counter   int64
+	entry     *filer_pb.Entry
+	entryLock sync.Mutex
+	inode     uint64
+	wfs       *WFS
 
 	// cache file has been written to
 	dirtyMetadata  bool
@@ -53,7 +53,20 @@ func (fh *FileHandle) FullPath() util.FullPath {
 	return fp
 }
 
-func (fh *FileHandle) addChunks(chunks []*filer_pb.FileChunk) {
+func (fh *FileHandle) GetEntry() *filer_pb.Entry {
+	fh.entryLock.Lock()
+	defer fh.entryLock.Unlock()
+	return fh.entry
+}
+func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
+	fh.entryLock.Lock()
+	defer fh.entryLock.Unlock()
+	fh.entry = entry
+}
+
+func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
+	fh.entryLock.Lock()
+	defer fh.entryLock.Unlock()
 
 	// find the earliest incoming chunk
 	newChunks := chunks
@@ -76,16 +89,14 @@ func (fh *FileHandle) addChunks(chunks []*filer_pb.FileChunk) {
 	}
 
 	// sort incoming chunks
-	sort.Slice(chunks, func(i, j int) bool {
-		return lessThan(chunks[i], chunks[j])
+	slices.SortFunc(chunks, func(a, b *filer_pb.FileChunk) bool {
+		return lessThan(a, b)
 	})
 
 	glog.V(4).Infof("%s existing %d chunks adds %d more", fh.FullPath(), len(fh.entry.Chunks), len(chunks))
 
-	fh.chunkAddLock.Lock()
 	fh.entry.Chunks = append(fh.entry.Chunks, newChunks...)
 	fh.entryViewCache = nil
-	fh.chunkAddLock.Unlock()
 }
 
 func (fh *FileHandle) Release() {

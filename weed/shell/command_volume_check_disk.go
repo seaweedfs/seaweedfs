@@ -9,9 +9,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
+	"golang.org/x/exp/slices"
 	"io"
 	"math"
-	"sort"
 )
 
 func init() {
@@ -45,11 +45,13 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	fsckCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	slowMode := fsckCommand.Bool("slow", false, "slow mode checks all replicas even file counts are the same")
 	verbose := fsckCommand.Bool("v", false, "verbose mode")
+	volumeId := fsckCommand.Uint("volumeId", 0, "the volume id")
 	applyChanges := fsckCommand.Bool("force", false, "apply the fix")
 	nonRepairThreshold := fsckCommand.Float64("nonRepairThreshold", 0.3, "repair when missing keys is not more than this limit")
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
 	}
+	infoAboutSimulationMode(writer, *applyChanges, "-force")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
@@ -70,8 +72,11 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	}
 
 	for _, replicas := range volumeReplicas {
-		sort.Slice(replicas, func(i, j int) bool {
-			return fileCount(replicas[i]) > fileCount(replicas[j])
+		if *volumeId > 0 && replicas[0].info.Id != uint32(*volumeId) {
+			continue
+		}
+		slices.SortFunc(replicas, func(a, b *VolumeReplica) bool {
+			return fileCount(a) > fileCount(b)
 		})
 		for len(replicas) >= 2 {
 			a, b := replicas[0], replicas[1]

@@ -43,6 +43,10 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	if status != fuse.OK {
 		return status
 	}
+	if fh != nil {
+		fh.entryLock.Lock()
+		defer fh.entryLock.Unlock()
+	}
 
 	if size, ok := input.GetSize(); ok {
 		glog.V(4).Infof("%v setattr set size=%v chunks=%d", path, size, len(entry.Chunks))
@@ -98,15 +102,14 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		}
 	}
 
-	if mtime, ok := input.GetMTime(); ok {
-		entry.Attributes.Mtime = mtime.Unix()
-	}
-
 	if atime, ok := input.GetATime(); ok {
 		entry.Attributes.Mtime = atime.Unix()
 	}
 
-	entry.Attributes.Mtime = time.Now().Unix()
+	if mtime, ok := input.GetMTime(); ok {
+		entry.Attributes.Mtime = mtime.Unix()
+	}
+
 	out.AttrValid = 1
 	wfs.setAttrByPbEntry(&out.Attr, input.NodeId, entry)
 

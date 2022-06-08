@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb"
+	"golang.org/x/exp/slices"
 	"io"
 	"os"
-	"sort"
 	"sync"
 	"time"
 
@@ -389,8 +389,8 @@ func (s *Store) EcVolumes() (ecVolumes []*erasure_coding.EcVolume) {
 		}
 		location.ecVolumesLock.RUnlock()
 	}
-	sort.Slice(ecVolumes, func(i, j int) bool {
-		return ecVolumes[i].VolumeId > ecVolumes[j].VolumeId
+	slices.SortFunc(ecVolumes, func(a, b *erasure_coding.EcVolume) bool {
+		return a.VolumeId > b.VolumeId
 	})
 	return ecVolumes
 }

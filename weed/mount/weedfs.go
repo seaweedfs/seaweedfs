@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/mount/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/mount_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
@@ -39,6 +40,7 @@ type Option struct {
 	DataCenter         string
 	Umask              os.FileMode
 	Quota              int64
+	DisableXAttr       bool
 
 	MountUid         uint32
 	MountGid         uint32
@@ -59,6 +61,7 @@ type WFS struct {
 	// https://dl.acm.org/doi/fullHtml/10.1145/3310148
 	// follow https://github.com/hanwen/go-fuse/blob/master/fuse/api.go
 	fuse.RawFileSystem
+	mount_pb.UnimplementedSeaweedMountServer
 	fs.Inode
 	option            *Option
 	metaCache         *meta_cache.MetaCache
@@ -129,7 +132,11 @@ func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle
 	}
 	var found bool
 	if fh, found = wfs.fhmap.FindFileHandle(inode); found {
-		return path, fh, fh.entry, fuse.OK
+		entry = fh.GetEntry()
+		if entry != nil && fh.entry.Attributes == nil {
+			entry.Attributes = &filer_pb.FuseAttributes{}
+		}
+		return path, fh, entry, fuse.OK
 	}
 	entry, status = wfs.maybeLoadEntry(path)
 	return
@@ -156,7 +163,7 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.St
 	}
 
 	// read from async meta cache
-	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir), nil)
+	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir))
 	cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
 	if cacheErr == filer_pb.ErrNotFound {
 		return nil, fuse.ENOENT

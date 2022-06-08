@@ -6,14 +6,14 @@ services:
     ports:
       - 9333:9333
       - 19333:19333
-    command: "master -ip=master"
+    command: "master -ip=master -ip.bind=0.0.0.0"
   volume:
     image: chrislusf/seaweedfs # use a remote image
     ports:
       - 8080:8080
       - 18080:18080
       - 9325:9325
-    command: 'volume -mserver="master:9333" -port=8080  -metricsPort=9325'
+    command: 'volume -mserver="master:9333" -ip.bind=0.0.0.0 -port=8080  -metricsPort=9325'
     depends_on:
       - master
   filer:
@@ -22,7 +22,7 @@ services:
       - 8888:8888
       - 18888:18888
       - 9326:9326
-    command: 'filer -master="master:9333"  -metricsPort=9326'
+    command: 'filer -master="master:9333" -ip.bind=0.0.0.0 -metricsPort=9326'
     tty: true
     stdin_open: true
     depends_on:
@@ -33,7 +33,7 @@ services:
     ports:
       - 8333:8333
       - 9327:9327
-    command: 's3 -filer="filer:8888" -metricsPort=9327'
+    command: 's3 -filer="filer:8888" -ip.bind=0.0.0.0 -metricsPort=9327'
     depends_on:
       - master
       - volume

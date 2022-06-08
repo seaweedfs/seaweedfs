@@ -3,7 +3,11 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/cluster"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"math/rand"
 	"sync"
 	"time"
@@ -141,4 +145,42 @@ func (ms *MasterServer) ReleaseAdminToken(ctx context.Context, req *master_pb.Re
 		ms.adminLocks.deleteLock(req.LockName)
 	}
 	return resp, nil
+}
+
+func (ms *MasterServer) Ping(ctx context.Context, req *master_pb.PingRequest) (resp *master_pb.PingResponse, pingErr error) {
+	resp = &master_pb.PingResponse{
+		StartTimeNs: time.Now().UnixNano(),
+	}
+	if req.TargetType == cluster.FilerType {
+		pingErr = pb.WithFilerClient(false, pb.ServerAddress(req.Target), ms.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			pingResp, err := client.Ping(ctx, &filer_pb.PingRequest{})
+			if pingResp != nil {
+				resp.RemoteTimeNs = pingResp.StartTimeNs
+			}
+			return err
+		})
+	}
+	if req.TargetType == cluster.VolumeServerType {
+		pingErr = pb.WithVolumeServerClient(false, pb.ServerAddress(req.Target), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+			pingResp, err := client.Ping(ctx, &volume_server_pb.PingRequest{})
+			if pingResp != nil {
+				resp.RemoteTimeNs = pingResp.StartTimeNs
+			}
+			return err
+		})
+	}
+	if req.TargetType == cluster.MasterType {
+		pingErr = pb.WithMasterClient(false, pb.ServerAddress(req.Target), ms.grpcDialOption, func(client master_pb.SeaweedClient) error {
+			pingResp, err := client.Ping(ctx, &master_pb.PingRequest{})
+			if pingResp != nil {
+				resp.RemoteTimeNs = pingResp.StartTimeNs
+			}
+			return err
+		})
+	}
+	if pingErr != nil {
+		pingErr = fmt.Errorf("ping %s %s: %v", req.TargetType, req.Target, pingErr)
+	}
+	resp.StopTimeNs = time.Now().UnixNano()
+	return
 }

@@ -1,12 +1,13 @@
-FROM golang:1.17-alpine as builder
+FROM golang:1.18-alpine as builder
 RUN apk add git g++ fuse
 RUN mkdir -p /go/src/github.com/chrislusf/
 RUN git clone https://github.com/chrislusf/seaweedfs /go/src/github.com/chrislusf/seaweedfs
 ARG BRANCH=${BRANCH:-master}
+ARG TAGS
 RUN cd /go/src/github.com/chrislusf/seaweedfs && git checkout $BRANCH
 RUN cd /go/src/github.com/chrislusf/seaweedfs/weed \
   && export LDFLAGS="-X github.com/chrislusf/seaweedfs/weed/util.COMMIT=$(git rev-parse --short HEAD)" \
-  && CGO_ENABLED=0 go install -ldflags "-extldflags -static ${LDFLAGS}"
+  && CGO_ENABLED=0 go install -tags "$TAGS" -ldflags "-extldflags -static ${LDFLAGS}"
 
 FROM alpine AS final
 LABEL author="Chris Lu"

@@ -100,7 +100,7 @@ func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 
 	for {
 		if err := f.appendToFile(targetFile, buf); err != nil {
-			glog.V(1).Infof("log write failed %s: %v", targetFile, err)
+			glog.V(0).Infof("metadata log write failed %s: %v", targetFile, err)
 			time.Sleep(737 * time.Millisecond)
 		} else {
 			break
@@ -108,24 +108,35 @@ func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 	}
 }
 
-func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (lastTsNs int64, err error) {
+func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, stopTsNs int64, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (lastTsNs int64, isDone bool, err error) {
 
 	startTime = startTime.UTC()
 	startDate := fmt.Sprintf("%04d-%02d-%02d", startTime.Year(), startTime.Month(), startTime.Day())
 	startHourMinute := fmt.Sprintf("%02d-%02d", startTime.Hour(), startTime.Minute())
+	var stopDate, stopHourMinute string
+	if stopTsNs != 0 {
+		stopTime := time.Unix(0, stopTsNs+24*60*60*int64(time.Nanosecond)).UTC()
+		stopDate = fmt.Sprintf("%04d-%02d-%02d", stopTime.Year(), stopTime.Month(), stopTime.Day())
+		stopHourMinute = fmt.Sprintf("%02d-%02d", stopTime.Hour(), stopTime.Minute())
+	}
 
 	sizeBuf := make([]byte, 4)
 	startTsNs := startTime.UnixNano()
 
-	dayEntries, _, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, 366, "", "", "")
+	dayEntries, _, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, math.MaxInt32, "", "", "")
 	if listDayErr != nil {
-		return lastTsNs, fmt.Errorf("fail to list log by day: %v", listDayErr)
+		return lastTsNs, isDone, fmt.Errorf("fail to list log by day: %v", listDayErr)
 	}
 	for _, dayEntry := range dayEntries {
+		if stopDate != "" {
+			if strings.Compare(dayEntry.Name(), stopDate) > 0 {
+				break
+			}
+		}
 		// println("checking day", dayEntry.FullPath)
 		hourMinuteEntries, _, listHourMinuteErr := f.ListDirectoryEntries(context.Background(), util.NewFullPath(SystemLogDir, dayEntry.Name()), "", false, math.MaxInt32, "", "", "")
 		if listHourMinuteErr != nil {
-			return lastTsNs, fmt.Errorf("fail to list log %s by day: %v", dayEntry.Name(), listHourMinuteErr)
+			return lastTsNs, isDone, fmt.Errorf("fail to list log %s by day: %v", dayEntry.Name(), listHourMinuteErr)
 		}
 		for _, hourMinuteEntry := range hourMinuteEntries {
 			// println("checking hh-mm", hourMinuteEntry.FullPath)
@@ -135,23 +146,29 @@ func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, eachLogEntryFn func(
 					continue
 				}
 			}
+			if dayEntry.Name() == stopDate {
+				hourMinute := util.FileNameBase(hourMinuteEntry.Name())
+				if strings.Compare(hourMinute, stopHourMinute) > 0 {
+					break
+				}
+			}
 			// println("processing", hourMinuteEntry.FullPath)
 			chunkedFileReader := NewChunkStreamReaderFromFiler(f.MasterClient, hourMinuteEntry.Chunks)
-			if lastTsNs, err = ReadEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, eachLogEntryFn); err != nil {
+			if lastTsNs, err = ReadEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, stopTsNs, eachLogEntryFn); err != nil {
 				chunkedFileReader.Close()
 				if err == io.EOF {
 					continue
 				}
-				return lastTsNs, fmt.Errorf("reading %s: %v", hourMinuteEntry.FullPath, err)
+				return lastTsNs, isDone, fmt.Errorf("reading %s: %v", hourMinuteEntry.FullPath, err)
 			}
 			chunkedFileReader.Close()
 		}
 	}
 
-	return lastTsNs, nil
+	return lastTsNs, isDone, nil
 }
 
-func ReadEachLogEntry(r io.Reader, sizeBuf []byte, ns int64, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (lastTsNs int64, err error) {
+func ReadEachLogEntry(r io.Reader, sizeBuf []byte, startTsNs, stopTsNs int64, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (lastTsNs int64, err error) {
 	for {
 		n, err := r.Read(sizeBuf)
 		if err != nil {
@@ -174,8 +191,11 @@ func ReadEachLogEntry(r io.Reader, sizeBuf []byte, ns int64, eachLogEntryFn func
 		if err = proto.Unmarshal(entryData, logEntry); err != nil {
 			return lastTsNs, err
 		}
-		if logEntry.TsNs <= ns {
+		if logEntry.TsNs <= startTsNs {
 			continue
+		}
+		if stopTsNs != 0 && logEntry.TsNs > stopTsNs {
+			return lastTsNs, err
 		}
 		// println("each log: ", logEntry.TsNs)
 		if err := eachLogEntryFn(logEntry); err != nil {

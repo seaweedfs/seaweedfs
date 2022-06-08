@@ -6,9 +6,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"golang.org/x/exp/slices"
 	"io"
 	"os"
-	"sort"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -70,6 +70,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
 	}
+	infoAboutSimulationMode(writer, *applyBalancing, "-force")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
@@ -224,14 +225,14 @@ func (n *Node) selectVolumes(fn func(v *master_pb.VolumeInformationMessage) bool
 }
 
 func sortWritableVolumes(volumes []*master_pb.VolumeInformationMessage) {
-	sort.Slice(volumes, func(i, j int) bool {
-		return volumes[i].Size < volumes[j].Size
+	slices.SortFunc(volumes, func(a, b *master_pb.VolumeInformationMessage) bool {
+		return a.Size < b.Size
 	})
 }
 
 func sortReadOnlyVolumes(volumes []*master_pb.VolumeInformationMessage) {
-	sort.Slice(volumes, func(i, j int) bool {
-		return volumes[i].Id < volumes[j].Id
+	slices.SortFunc(volumes, func(a, b *master_pb.VolumeInformationMessage) bool {
+		return a.Id < b.Id
 	})
 }
 
@@ -255,10 +256,9 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 
 	for hasMoved {
 		hasMoved = false
-		sort.Slice(nodesWithCapacity, func(i, j int) bool {
-			return nodesWithCapacity[i].localVolumeRatio(capacityFunc) < nodesWithCapacity[j].localVolumeRatio(capacityFunc)
+		slices.SortFunc(nodesWithCapacity, func(a, b *Node) bool {
+			return a.localVolumeRatio(capacityFunc) < b.localVolumeRatio(capacityFunc)
 		})
-
 		fullNode := nodesWithCapacity[len(nodesWithCapacity)-1]
 		var candidateVolumes []*master_pb.VolumeInformationMessage
 		for _, v := range fullNode.selectedVolumes {

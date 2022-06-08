@@ -4,12 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"io"
-	"sort"
-
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"golang.org/x/exp/slices"
+	"io"
 )
 
 func init() {
@@ -107,6 +106,7 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 	if err = balanceCommand.Parse(args); err != nil {
 		return nil
 	}
+	infoAboutSimulationMode(writer, *applyBalancing, "-force")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
@@ -411,8 +411,8 @@ func doBalanceEcRack(commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool
 	hasMove := true
 	for hasMove {
 		hasMove = false
-		sort.Slice(rackEcNodes, func(i, j int) bool {
-			return rackEcNodes[i].freeEcSlot > rackEcNodes[j].freeEcSlot
+		slices.SortFunc(rackEcNodes, func(a, b *EcNode) bool {
+			return a.freeEcSlot > b.freeEcSlot
 		})
 		emptyNode, fullNode := rackEcNodes[0], rackEcNodes[len(rackEcNodes)-1]
 		emptyNodeShardCount, fullNodeShardCount := ecNodeIdToShardCount[emptyNode.info.Id], ecNodeIdToShardCount[fullNode.info.Id]
@@ -492,8 +492,8 @@ func pickNEcShardsToMoveFrom(ecNodes []*EcNode, vid needle.VolumeId, n int) map[
 			})
 		}
 	}
-	sort.Slice(candidateEcNodes, func(i, j int) bool {
-		return candidateEcNodes[i].shardCount > candidateEcNodes[j].shardCount
+	slices.SortFunc(candidateEcNodes, func(a, b *CandidateEcNode) bool {
+		return a.shardCount > b.shardCount
 	})
 	for i := 0; i < n; i++ {
 		selectedEcNodeIndex := -1

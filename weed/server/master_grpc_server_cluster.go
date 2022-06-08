@@ -10,26 +10,27 @@ import (
 
 func (ms *MasterServer) ListClusterNodes(ctx context.Context, req *master_pb.ListClusterNodesRequest) (*master_pb.ListClusterNodesResponse, error) {
 	resp := &master_pb.ListClusterNodesResponse{}
-
-	clusterNodes := ms.Cluster.ListClusterNode(req.ClientType)
+	filerGroup := cluster.FilerGroup(req.FilerGroup)
+	clusterNodes := ms.Cluster.ListClusterNode(filerGroup, req.ClientType)
 
 	for _, node := range clusterNodes {
 		resp.ClusterNodes = append(resp.ClusterNodes, &master_pb.ListClusterNodesResponse_ClusterNode{
-			Address:  string(node.Address),
-			Version:  node.Version,
-			IsLeader: ms.Cluster.IsOneLeader(node.Address),
+			Address:     string(node.Address),
+			Version:     node.Version,
+			IsLeader:    ms.Cluster.IsOneLeader(filerGroup, node.Address),
+			CreatedAtNs: node.CreatedTs.UnixNano(),
 		})
 	}
 	return resp, nil
 }
 
-func (ms *MasterServer) GetOneFiler() pb.ServerAddress {
+func (ms *MasterServer) GetOneFiler(filerGroup cluster.FilerGroup) pb.ServerAddress {
 
-	clusterNodes := ms.Cluster.ListClusterNode(cluster.FilerType)
+	clusterNodes := ms.Cluster.ListClusterNode(filerGroup, cluster.FilerType)
 
 	var filers []pb.ServerAddress
 	for _, node := range clusterNodes {
-		if ms.Cluster.IsOneLeader(node.Address) {
+		if ms.Cluster.IsOneLeader(filerGroup, node.Address) {
 			filers = append(filers, node.Address)
 		}
 	}

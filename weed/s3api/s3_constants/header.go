@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package http
+package s3_constants
 
 import (
 	"github.com/gorilla/mux"
@@ -28,11 +28,14 @@ const (
 	AmzStorageClass = "x-amz-storage-class"
 
 	// S3 user-defined metadata
-	AmzUserMetaPrefix = "X-Amz-Meta-"
+	AmzUserMetaPrefix    = "X-Amz-Meta-"
+	AmzUserMetaDirective = "X-Amz-Metadata-Directive"
 
 	// S3 object tagging
-	AmzObjectTagging = "X-Amz-Tagging"
-	AmzTagCount      = "x-amz-tagging-count"
+	AmzObjectTagging          = "X-Amz-Tagging"
+	AmzObjectTaggingPrefix    = "X-Amz-Tagging-"
+	AmzObjectTaggingDirective = "X-Amz-Tagging-Directive"
+	AmzTagCount               = "x-amz-tagging-count"
 )
 
 // Non-Standard S3 HTTP request constants

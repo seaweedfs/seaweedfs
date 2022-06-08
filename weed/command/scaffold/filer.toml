@@ -285,6 +285,29 @@ healthcheck_enabled = false
 index.max_result_window = 10000
 
 
+[arangodb] # in development dont use it
+enabled = false
+db_name = "seaweedfs"
+servers=["http://localhost:8529"] # list of servers to connect to
+# only basic auth supported for now
+username=""
+password=""
+# skip tls cert validation
+insecure_skip_verify = true
+
+[ydb] # https://ydb.tech/
+enabled = false
+dsn = "grpc://localhost:2136?database=/local"
+prefix = "seaweedfs"
+useBucketPrefix = true # Fast Bucket Deletion
+poolSizeLimit = 50
+dialTimeOut = 10
+
+# Authenticate produced with one of next environment variables:
+# YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS=<path/to/sa_key_file> — used service account key file by path
+# YDB_ANONYMOUS_CREDENTIALS="1" — used for authenticate with anonymous access. Anonymous access needs for connect to testing YDB installation
+# YDB_METADATA_CREDENTIALS="1" — used metadata service for authenticate to YDB from yandex cloud virtual machine or from yandex function
+# YDB_ACCESS_TOKEN_CREDENTIALS=<access_token> — used for authenticate to YDB with short-life access token. For example, access token may be IAM token
 
 ##########################
 ##########################

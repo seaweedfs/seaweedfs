@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"io/fs"
 	"mime/multipart"
@@ -254,7 +254,7 @@ func handleStaticResources2(r *mux.Router) {
 
 func adjustPassthroughHeaders(w http.ResponseWriter, r *http.Request, filename string) {
 	for header, values := range r.Header {
-		if normalizedHeader, ok := xhttp.PassThroughHeaders[strings.ToLower(header)]; ok {
+		if normalizedHeader, ok := s3_constants.PassThroughHeaders[strings.ToLower(header)]; ok {
 			w.Header()[normalizedHeader] = values
 		}
 	}

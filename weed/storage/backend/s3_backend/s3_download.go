@@ -58,10 +58,10 @@ func downloadFromS3(sess s3iface.S3API, destFileName string, sourceBucket string
 // adapted from https://github.com/aws/aws-sdk-go/pull/1868
 // and https://petersouter.xyz/s3-download-progress-bar-in-golang/
 type s3DownloadProgressedWriter struct {
-	fp      *os.File
 	size    int64
 	written int64
 	fn      func(progressed int64, percentage float32) error
+	fp      *os.File
 }
 
 func (w *s3DownloadProgressedWriter) WriteAt(p []byte, off int64) (int, error) {

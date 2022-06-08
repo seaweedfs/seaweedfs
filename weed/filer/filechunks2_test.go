@@ -1,7 +1,7 @@
 package filer
 
 import (
-	"sort"
+	"golang.org/x/exp/slices"
 	"testing"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -34,11 +34,11 @@ func TestCompactFileChunksRealCase(t *testing.T) {
 }
 
 func printChunks(name string, chunks []*filer_pb.FileChunk) {
-	sort.Slice(chunks, func(i, j int) bool {
-		if chunks[i].Offset == chunks[j].Offset {
-			return chunks[i].Mtime < chunks[j].Mtime
+	slices.SortFunc(chunks, func(a, b *filer_pb.FileChunk) bool {
+		if a.Offset == b.Offset {
+			return a.Mtime < b.Mtime
 		}
-		return chunks[i].Offset < chunks[j].Offset
+		return a.Offset < b.Offset
 	})
 	for _, chunk := range chunks {
 		glog.V(0).Infof("%s chunk %s [%10d,%10d)", name, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))

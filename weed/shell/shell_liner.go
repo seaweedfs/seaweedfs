@@ -8,12 +8,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
+	"golang.org/x/exp/slices"
 	"io"
 	"math/rand"
 	"os"
 	"path"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/peterh/liner"
@@ -25,11 +25,9 @@ var (
 )
 
 func RunShell(options ShellOptions) {
-
-	sort.Slice(Commands, func(i, j int) bool {
-		return strings.Compare(Commands[i].Name(), Commands[j].Name()) < 0
+	slices.SortFunc(Commands, func(a, b command) bool {
+		return strings.Compare(a.Name(), b.Name()) < 0
 	})
-
 	line = liner.NewLiner()
 	defer line.Close()
 	grace.OnInterrupt(func() {
@@ -56,6 +54,7 @@ func RunShell(options ShellOptions) {
 		commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 				ClientType: cluster.FilerType,
+				FilerGroup: *options.FilerGroup,
 			})
 			if err != nil {
 				return err

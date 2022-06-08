@@ -2,12 +2,14 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"io"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
+	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
 
@@ -25,7 +27,14 @@ const (
 )
 
 type ReadOption struct {
-	ReadDeleted bool
+	// request
+	ReadDeleted     bool
+	AttemptMetaOnly bool
+	MustMetaOnly    bool
+	// response
+	IsMetaOnly     bool // read status
+	VolumeRevision uint16
+	IsOutOfRange   bool // whether read over MaxPossibleVolumeSize
 }
 
 /*
@@ -300,6 +309,11 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 	}
 
+	var uuidList []string
+	for _, loc := range s.Locations {
+		uuidList = append(uuidList, loc.DirectoryUuid)
+	}
+
 	for col, size := range collectionVolumeSize {
 		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal").Set(float64(size))
 	}
@@ -321,6 +335,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		Rack:            s.rack,
 		Volumes:         volumeMessages,
 		HasNoVolumes:    len(volumeMessages) == 0,
+		LocationUuids:   uuidList,
 	}
 
 }
@@ -367,6 +382,12 @@ func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle, readOption
 		return v.readNeedle(n, readOption, onReadSizeFn)
 	}
 	return 0, fmt.Errorf("volume %d not found", i)
+}
+func (s *Store) ReadVolumeNeedleDataInto(i needle.VolumeId, n *needle.Needle, readOption *ReadOption, writer io.Writer, offset int64, size int64) error {
+	if v := s.findVolume(i); v != nil {
+		return v.readNeedleDataInto(n, readOption, writer, offset, size)
+	}
+	return fmt.Errorf("volume %d not found", i)
 }
 func (s *Store) GetVolume(i needle.VolumeId) *Volume {
 	return s.findVolume(i)
@@ -434,10 +455,13 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 	}
 
 	for _, location := range s.Locations {
-		if err := location.UnloadVolume(i); err == nil || err == ErrVolumeNotFound {
+		err := location.UnloadVolume(i)
+		if err == nil {
 			glog.V(0).Infof("UnmountVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
+		} else if err == ErrVolumeNotFound {
+			continue
 		}
 	}
 
@@ -458,10 +482,13 @@ func (s *Store) DeleteVolume(i needle.VolumeId) error {
 		DiskType:         string(v.location.DiskType),
 	}
 	for _, location := range s.Locations {
-		if err := location.DeleteVolume(i); err == nil || err == ErrVolumeNotFound {
+		err := location.DeleteVolume(i)
+		if err == nil {
 			glog.V(0).Infof("DeleteVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
+		} else if err == ErrVolumeNotFound {
+			continue
 		} else {
 			glog.Errorf("DeleteVolume %d: %v", i, err)
 		}

@@ -76,7 +76,7 @@ func (fsw *FilerStoreWrapper) OnBucketDeletion(bucket string) {
 }
 
 func (fsw *FilerStoreWrapper) AddPathSpecificStore(path string, storeId string, store FilerStore) {
-	fsw.storeIdToStore[storeId] = NewFilerStorePathTranlator(path, store)
+	fsw.storeIdToStore[storeId] = NewFilerStorePathTranslator(path, store)
 	err := fsw.pathToStore.Put([]byte(path), storeId)
 	if err != nil {
 		glog.Fatalf("put path specific store: %v", err)

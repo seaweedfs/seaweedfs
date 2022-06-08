@@ -14,10 +14,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/google/uuid"
 )
 
 type DiskLocation struct {
 	Directory              string
+	DirectoryUuid          string
 	IdxDirectory           string
 	DiskType               types.DiskType
 	MaxVolumeCount         int
@@ -33,6 +35,29 @@ type DiskLocation struct {
 	isDiskSpaceLow bool
 }
 
+func GenerateDirUuid(dir string) (dirUuidString string, err error) {
+	glog.V(1).Infof("Getting uuid of volume directory:%s", dir)
+	dirUuidString = ""
+	fileName := dir + "/vol_dir.uuid"
+	if !util.FileExists(fileName) {
+		dirUuid, _ := uuid.NewRandom()
+		dirUuidString = dirUuid.String()
+		writeErr := util.WriteFile(fileName, []byte(dirUuidString), 0644)
+		if writeErr != nil {
+			glog.Warningf("failed to write uuid to %s : %v", fileName, writeErr)
+			return "", fmt.Errorf("failed to write uuid to %s : %v", fileName, writeErr)
+		}
+	} else {
+		uuidData, readErr := os.ReadFile(fileName)
+		if readErr != nil {
+			glog.Warningf("failed to read uuid from %s : %v", fileName, readErr)
+			return "", fmt.Errorf("failed to read uuid from %s : %v", fileName, readErr)
+		}
+		dirUuidString = string(uuidData)
+	}
+	return dirUuidString, nil
+}
+
 func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType) *DiskLocation {
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
@@ -40,8 +65,10 @@ func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpace util.MinFreeSp
 	} else {
 		idxDir = util.ResolvePath(idxDir)
 	}
+	dirUuid, _ := GenerateDirUuid(dir)
 	location := &DiskLocation{
 		Directory:              dir,
+		DirectoryUuid:          dirUuid,
 		IdxDirectory:           idxDir,
 		DiskType:               diskType,
 		MaxVolumeCount:         maxVolumeCount,
@@ -283,7 +310,7 @@ func (l *DiskLocation) UnloadVolume(vid needle.VolumeId) error {
 func (l *DiskLocation) unmountVolumeByCollection(collectionName string) map[needle.VolumeId]*Volume {
 	deltaVols := make(map[needle.VolumeId]*Volume, 0)
 	for k, v := range l.volumes {
-		if v.Collection == collectionName && !v.isCompacting {
+		if v.Collection == collectionName && !v.isCompacting && !v.isCommitCompacting {
 			deltaVols[k] = v
 		}
 	}

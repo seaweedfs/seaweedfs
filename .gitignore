@@ -55,6 +55,8 @@ Temporary Items
 # Mongo Explorer plugin:
 # .idea/mongoSettings.xml
 
+## vscode
+.vscode
 ## File-based project format:
 *.ipr
 *.iws
@@ -74,6 +76,8 @@ atlassian-ide-plugin.xml
 com_crashlytics_export_strings.xml
 crashlytics.properties
 crashlytics-build.properties
+
+workspace/
 
 test_data
 build

@@ -3,7 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
-	"sort"
+	"golang.org/x/exp/slices"
 	"strings"
 	"time"
 
@@ -40,7 +40,7 @@ func (store *UniversalRedisStore) InsertEntry(ctx context.Context, entry *filer.
 		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
 	}
 
-	if len(entry.Chunks) > 50 {
+	if len(entry.Chunks) > filer.CountEntryChunksForGzip {
 		value = util.MaybeGzipData(value)
 	}
 
@@ -157,8 +157,8 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, dirP
 	}
 
 	// sort
-	sort.Slice(members, func(i, j int) bool {
-		return strings.Compare(members[i], members[j]) < 0
+	slices.SortFunc(members, func(a, b string) bool {
+		return strings.Compare(a, b) < 0
 	})
 
 	// limit

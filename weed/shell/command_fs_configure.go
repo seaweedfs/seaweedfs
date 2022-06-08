@@ -62,7 +62,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	isDelete := fsConfigureCommand.Bool("delete", false, "delete the configuration by locationPrefix")
 	apply := fsConfigureCommand.Bool("apply", false, "update and apply filer configuration")
 	if err = fsConfigureCommand.Parse(args); err != nil {
-		return err
+		return nil
 	}
 
 	fc, err := filer.ReadFilerConf(commandEnv.option.FilerAddress, commandEnv.option.GrpcDialOption, commandEnv.MasterClient)
@@ -71,6 +71,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	if *locationPrefix != "" {
+		infoAboutSimulationMode(writer, *apply, "-apply")
 		locConf := &filer_pb.FilerConf_PathConf{
 			LocationPrefix:    *locationPrefix,
 			Collection:        *collection,
@@ -127,4 +128,11 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	return nil
 
+}
+
+func infoAboutSimulationMode(writer io.Writer, forceMode bool, forceModeOption string) {
+	if forceMode {
+		return
+	}
+	fmt.Fprintf(writer, "Running in simulation mode. Use \"%s\" option to apply the changes.\n", forceModeOption)
 }

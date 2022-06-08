@@ -120,7 +120,7 @@ func runBackup(cmd *Command, args []string) bool {
 	}
 
 	if v.SuperBlock.CompactionRevision < uint16(stats.CompactRevision) {
-		if err = v.Compact2(30*1024*1024*1024, 0, nil); err != nil {
+		if err = v.Compact2(0, 0, nil); err != nil {
 			fmt.Printf("Compact Volume before synchronizing %v\n", err)
 			return true
 		}

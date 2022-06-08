@@ -23,7 +23,7 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, prefix string, la
 			dir = message.NewParentPath
 		}
 		if dir == filer.IamConfigDirecotry && message.NewEntry.Name == filer.IamIdentityFile {
-			if err := s3a.iam.loadS3ApiConfigurationFromBytes(message.NewEntry.Content); err != nil {
+			if err := s3a.iam.LoadS3ApiConfigurationFromBytes(message.NewEntry.Content); err != nil {
 				return err
 			}
 			glog.V(0).Infof("updated %s/%s", filer.IamConfigDirecotry, filer.IamIdentityFile)
@@ -33,7 +33,7 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, prefix string, la
 	}
 
 	util.RetryForever("followIamChanges", func() error {
-		return pb.WithFilerClientFollowMetadata(s3a, clientName, s3a.randomClientId, prefix, &lastTsNs, 0, processEventFn, true)
+		return pb.WithFilerClientFollowMetadata(s3a, clientName, s3a.randomClientId, prefix, &lastTsNs, 0, 0, processEventFn, pb.FatalOnError)
 	}, func(err error) bool {
 		glog.V(0).Infof("iam follow metadata changes: %v", err)
 		return true

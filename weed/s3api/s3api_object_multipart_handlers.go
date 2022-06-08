@@ -1,8 +1,10 @@
 package s3api
 
 import (
+	"crypto/sha1"
 	"encoding/xml"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"net/http"
 	"net/url"
@@ -10,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 
@@ -27,7 +28,7 @@ const (
 
 // NewMultipartUploadHandler - New multipart upload.
 func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
-	bucket, object := xhttp.GetBucketAndObject(r)
+	bucket, object := s3_constants.GetBucketAndObject(r)
 
 	errCode := s3a.checkBucketInCache(r, bucket)
 	if errCode != s3err.ErrNone {
@@ -67,7 +68,7 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html
 
-	bucket, object := xhttp.GetBucketAndObject(r)
+	bucket, object := s3_constants.GetBucketAndObject(r)
 
 	parts := &CompleteMultipartUpload{}
 	if err := xmlDecoder(r.Body, parts, r.ContentLength); err != nil {
@@ -77,6 +78,11 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 
 	// Get upload id.
 	uploadID, _, _, _ := getObjectResources(r.URL.Query())
+	err := s3a.checkUploadId(object, uploadID)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
+		return
+	}
 
 	response, errCode := s3a.completeMultipartUpload(&s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(bucket),
@@ -97,10 +103,15 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 
 // AbortMultipartUploadHandler - Aborts multipart upload.
 func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
-	bucket, object := xhttp.GetBucketAndObject(r)
+	bucket, object := s3_constants.GetBucketAndObject(r)
 
 	// Get upload id.
 	uploadID, _, _, _ := getObjectResources(r.URL.Query())
+	err := s3a.checkUploadId(object, uploadID)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
+		return
+	}
 
 	response, errCode := s3a.abortMultipartUpload(&s3.AbortMultipartUploadInput{
 		Bucket:   aws.String(bucket),
@@ -121,7 +132,7 @@ func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *ht
 
 // ListMultipartUploadsHandler - Lists multipart uploads.
 func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *http.Request) {
-	bucket, _ := xhttp.GetBucketAndObject(r)
+	bucket, _ := s3_constants.GetBucketAndObject(r)
 
 	prefix, keyMarker, uploadIDMarker, delimiter, maxUploads, encodingType := getBucketMultipartResources(r.URL.Query())
 	if maxUploads < 0 {
@@ -160,7 +171,7 @@ func (s3a *S3ApiServer) ListMultipartUploadsHandler(w http.ResponseWriter, r *ht
 
 // ListObjectPartsHandler - Lists object parts in a multipart upload.
 func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Request) {
-	bucket, object := xhttp.GetBucketAndObject(r)
+	bucket, object := s3_constants.GetBucketAndObject(r)
 
 	uploadID, partNumberMarker, maxParts, _ := getObjectResources(r.URL.Query())
 	if partNumberMarker < 0 {
@@ -169,6 +180,12 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 	}
 	if maxParts < 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxParts)
+		return
+	}
+
+	err := s3a.checkUploadId(object, uploadID)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
 		return
 	}
 
@@ -193,11 +210,11 @@ func (s3a *S3ApiServer) ListObjectPartsHandler(w http.ResponseWriter, r *http.Re
 
 // PutObjectPartHandler - Put an object part in a multipart upload.
 func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Request) {
-	bucket, _ := xhttp.GetBucketAndObject(r)
+	bucket, object := s3_constants.GetBucketAndObject(r)
 
 	uploadID := r.URL.Query().Get("uploadId")
-	exists, err := s3a.exists(s3a.genUploadsFolder(bucket), uploadID, true)
-	if !exists {
+	err := s3a.checkUploadId(object, uploadID)
+	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
 		return
 	}
@@ -240,8 +257,9 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	if partID == 1 && r.Header.Get("Content-Type") == "" {
 		dataReader = mimeDetect(r, dataReader)
 	}
+	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 
-	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader)
+	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, destination)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
@@ -255,6 +273,27 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 
 func (s3a *S3ApiServer) genUploadsFolder(bucket string) string {
 	return fmt.Sprintf("%s/%s/.uploads", s3a.option.BucketsPath, bucket)
+}
+
+// Generate uploadID hash string from object
+func (s3a *S3ApiServer) generateUploadID(object string) string {
+	if strings.HasPrefix(object, "/") {
+		object = object[1:]
+	}
+	h := sha1.New()
+	h.Write([]byte(object))
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+//Check object name and uploadID when processing  multipart uploading
+func (s3a *S3ApiServer) checkUploadId(object string, id string) error {
+
+	hash := s3a.generateUploadID(object)
+	if hash != id {
+		glog.Errorf("object %s and uploadID %s are not matched", object, id)
+		return fmt.Errorf("object %s and uploadID %s are not matched", object, id)
+	}
+	return nil
 }
 
 // Parse bucket url queries for ?uploads

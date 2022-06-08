@@ -7,14 +7,17 @@ gen: dev
 binary:
 	export SWCOMMIT=$(shell git rev-parse --short HEAD)
 	export SWLDFLAGS="-X github.com/chrislusf/seaweedfs/weed/util.COMMIT=$(SWCOMMIT)"
-	cd ../weed; CGO_ENABLED=0 GOOS=linux go build -ldflags "-extldflags -static $(SWLDFLAGS)"; mv weed ../docker/
+	cd ../weed; CGO_ENABLED=0 GOOS=linux go build -tags "$(tags)" -ldflags "-extldflags -static $(SWLDFLAGS)"; mv weed ../docker/
 
 build: binary
 	docker build --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.local .
 	rm ./weed
 
-build_gorocksdb:
-	docker build --no-cache -t chrislusf/gorocksdb -f Dockerfile.go_rocksdb .
+go_build: # make go_build tags=elastic,ydb,gocdk,hdfs,5BytesOffset
+	docker build --build-arg TAGS=$(tags) --no-cache -t chrislusf/seaweedfs:go_build -f Dockerfile.go_build .
+
+go_build_large_disk:
+	docker build --build-arg TAGS=large_disk --no-cache -t chrislusf/seaweedfs:large_disk -f Dockerfile.go_build .
 
 build_rocksdb:
 	docker build --no-cache -t chrislusf/seaweedfs:rocksdb -f Dockerfile.rocksdb_large .
@@ -49,17 +52,34 @@ dev_replicate: build
 dev_auditlog: build
 	docker-compose -f compose/local-auditlog-compose.yml -p seaweedfs up
 
+dev_nextcloud: build
+	docker-compose -f compose/local-nextcloud-compose.yml -p seaweedfs up
+
 cluster: build
 	docker-compose -f compose/local-cluster-compose.yml -p seaweedfs up
 
 2clusters: build
 	docker-compose -f compose/local-clusters-compose.yml -p seaweedfs up
 
+2mount: build
+	docker-compose -f compose/local-sync-mount-compose.yml -p seaweedfs up
+
+hashicorp_raft: build
+	docker-compose -f compose/local-hashicorp-raft-compose.yml -p seaweedfs up
+
 s3tests: build s3tests_build
 	docker-compose -f compose/local-s3tests-compose.yml -p seaweedfs up
 
 filer_etcd: build
 	docker stack deploy -c compose/swarm-etcd.yml fs
+
+test_etcd: build
+	docker-compose -f compose/test-etcd-filer.yml -p seaweedfs up
+
+test_ydb: tags = ydb
+test_ydb: build
+	export
+	docker-compose -f compose/test-ydb-filer.yml -p seaweedfs up
 
 clean:
 	rm ./weed

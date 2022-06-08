@@ -71,7 +71,7 @@ var cmdFilerCopy = &Command{
   It can copy one or a list of files or folders.
 
   If copying a whole folder recursively:
-  All files under the folder and subfolders will be copyed.
+  All files under the folder and sub folders will be copied.
   Optional parameter "-include" allows you to specify the file name patterns.
 
   If "maxMB" is set to a positive number, files larger than it would be split into chunks.
@@ -410,16 +410,14 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 			Entry: &filer_pb.Entry{
 				Name: fileName,
 				Attributes: &filer_pb.FuseAttributes{
-					Crtime:      time.Now().Unix(),
-					Mtime:       time.Now().Unix(),
-					Gid:         task.gid,
-					Uid:         task.uid,
-					FileSize:    uint64(task.fileSize),
-					FileMode:    uint32(task.fileMode),
-					Mime:        mimeType,
-					Replication: *worker.options.replication,
-					Collection:  *worker.options.collection,
-					TtlSec:      worker.options.ttlSec,
+					Crtime:   time.Now().Unix(),
+					Mtime:    time.Now().Unix(),
+					Gid:      task.gid,
+					Uid:      task.uid,
+					FileSize: uint64(task.fileSize),
+					FileMode: uint32(task.fileMode),
+					Mime:     mimeType,
+					TtlSec:   worker.options.ttlSec,
 				},
 				Chunks: chunks,
 			},
@@ -547,16 +545,14 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 			Entry: &filer_pb.Entry{
 				Name: fileName,
 				Attributes: &filer_pb.FuseAttributes{
-					Crtime:      time.Now().Unix(),
-					Mtime:       time.Now().Unix(),
-					Gid:         task.gid,
-					Uid:         task.uid,
-					FileSize:    uint64(task.fileSize),
-					FileMode:    uint32(task.fileMode),
-					Mime:        mimeType,
-					Replication: replication,
-					Collection:  collection,
-					TtlSec:      worker.options.ttlSec,
+					Crtime:   time.Now().Unix(),
+					Mtime:    time.Now().Unix(),
+					Gid:      task.gid,
+					Uid:      task.uid,
+					FileSize: uint64(task.fileSize),
+					FileMode: uint32(task.fileMode),
+					Mime:     mimeType,
+					TtlSec:   worker.options.ttlSec,
 				},
 				Chunks: manifestedChunks,
 			},

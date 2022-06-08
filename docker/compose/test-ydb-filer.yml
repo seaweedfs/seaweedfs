@@ -1,0 +1,35 @@
+version: '2'
+
+services:
+  ydb:
+    image: cr.yandex/yc/yandex-docker-local-ydb
+    ports:
+      - 2135:2135
+      - 8765:8765
+      - 2136:2136
+    environment:
+      - YDB_DEFAULT_LOG_LEVEL=DEBUG
+      - GRPC_TLS_PORT=2135
+      - GRPC_PORT=2136
+      - MON_PORT=8765
+  s3:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9333:9333
+      - 19333:19333
+      - 8888:8888
+      - 8000:8000
+      - 18888:18888
+    command: "server -ip=s3 -filer -master.volumeSizeLimitMB=16 -volume.max=0 -volume -volume.preStopSeconds=1 -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8000 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=false"
+    volumes:
+      - ./s3.json:/etc/seaweedfs/s3.json
+    environment:
+      WEED_LEVELDB2_ENABLED: "false"
+      WEED_YDB_ENABLED: "true"
+      WEED_YDB_DSN: "grpc://ydb:2136/?database=local"
+      WEED_YDB_PREFIX: "seaweedfs"
+      YDB_ANONYMOUS_CREDENTIALS: 1
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: 1
+      WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+    depends_on:
+      - ydb

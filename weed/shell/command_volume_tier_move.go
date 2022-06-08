@@ -61,6 +61,7 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
 	}
+	infoAboutSimulationMode(writer, *applyChange, "-force")
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return

@@ -1,14 +1,14 @@
 package s3api
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"strings"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 )
 
 const (
-	S3TAG_PREFIX = xhttp.AmzObjectTagging + "-"
+	S3TAG_PREFIX = s3_constants.AmzObjectTagging + "-"
 )
 
 func (s3a *S3ApiServer) getTags(parentDirectoryPath string, entryName string) (tags map[string]string, err error) {

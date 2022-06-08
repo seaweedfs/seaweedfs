@@ -1,3 +1,6 @@
+//go:build hdfs
+// +build hdfs
+
 package hdfs
 
 import (

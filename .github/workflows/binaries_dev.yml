@@ -4,9 +4,14 @@ on:
   push:
     branches: [ master ]
 
+permissions:
+  contents: read
+
 jobs:
 
   cleanup:
+    permissions:
+      contents: write  # for mknejp/delete-release-assets to delete release assets
     runs-on: ubuntu-latest
 
     steps:
@@ -21,6 +26,8 @@ jobs:
             weed-*
 
   build_dev_linux_windows:
+    permissions:
+      contents: write  # for wangyoucao577/go-release-action to upload release assets
     needs: cleanup
     runs-on: ubuntu-latest
     strategy:
@@ -68,6 +75,8 @@ jobs:
           asset_name: "weed-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
 
   build_dev_darwin:
+    permissions:
+      contents: write  # for wangyoucao577/go-release-action to upload release assets
     needs: build_dev_linux_windows
     runs-on: ubuntu-latest
     strategy:

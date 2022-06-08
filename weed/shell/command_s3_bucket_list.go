@@ -67,9 +67,6 @@ func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer i
 		if entry.Quota > 0 {
 			fmt.Fprintf(writer, "\tquota:%d\tusage:%.2f%%", entry.Quota, float64(collectionSize)*100/float64(entry.Quota))
 		}
-		if entry.Attributes.Replication != "" && entry.Attributes.Replication != "000" {
-			fmt.Fprintf(writer, "\treplication:%s", entry.Attributes.Replication)
-		}
 		fmt.Fprintln(writer)
 		return nil
 	}, "", false, math.MaxUint32)

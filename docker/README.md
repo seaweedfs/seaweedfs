@@ -37,3 +37,8 @@ docker buildx build --pull --push --platform linux/386,linux/amd64,linux/arm64,l
 docker buildx stop $BUILDER
 ```
 
+## Minio debuging
+```
+mc config host add local http://127.0.0.1:9000 some_access_key1 some_secret_key1
+mc admin trace --all --verbose local
+```

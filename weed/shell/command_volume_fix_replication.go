@@ -7,9 +7,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"golang.org/x/exp/slices"
 	"io"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"time"
 
@@ -151,7 +151,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 						return err
 					}
 					volumeIdLocationCount = len(volumeLocIds[0].Locations)
-					if *retryCount > i {
+					if *retryCount <= i {
 						return fmt.Errorf("replicas volume %s mismatch in topology", volumeId)
 					}
 					i += 1
@@ -198,6 +198,17 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 			if !matched {
 				break
 			}
+		}
+
+		collectionIsMismatch := false
+		for _, volumeReplica := range replicas {
+			if volumeReplica.info.Collection != replica.info.Collection {
+				fmt.Fprintf(writer, "skip delete volume %d as collection %s is mismatch: %s\n", replica.info.Id, replica.info.Collection, volumeReplica.info.Collection)
+				collectionIsMismatch = true
+			}
+		}
+		if collectionIsMismatch {
+			continue
 		}
 
 		fmt.Fprintf(writer, "deleting volume %d from %s ...\n", replica.info.Id, replica.location.dataNode.Id)
@@ -308,8 +319,8 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 
 func keepDataNodesSorted(dataNodes []location, diskType types.DiskType) {
 	fn := capacityByFreeVolumeCount(diskType)
-	sort.Slice(dataNodes, func(i, j int) bool {
-		return fn(dataNodes[i].dataNode) > fn(dataNodes[j].dataNode)
+	slices.SortFunc(dataNodes, func(a, b location) bool {
+		return fn(a.dataNode) > fn(b.dataNode)
 	})
 }
 
@@ -488,9 +499,7 @@ func countReplicas(replicas []*VolumeReplica) (diffDc, diffRack, diffNode map[st
 }
 
 func pickOneReplicaToDelete(replicas []*VolumeReplica, replicaPlacement *super_block.ReplicaPlacement) *VolumeReplica {
-
-	sort.Slice(replicas, func(i, j int) bool {
-		a, b := replicas[i], replicas[j]
+	slices.SortFunc(replicas, func(a, b *VolumeReplica) bool {
 		if a.info.Size != b.info.Size {
 			return a.info.Size < b.info.Size
 		}

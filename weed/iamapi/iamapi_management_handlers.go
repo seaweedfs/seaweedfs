@@ -4,10 +4,6 @@ import (
 	"crypto/sha1"
 	"encoding/json"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -15,6 +11,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 
 	"github.com/aws/aws-sdk-go/service/iam"
 )
@@ -151,6 +152,22 @@ func (iama *IamApiServer) GetUser(s3cfg *iam_pb.S3ApiConfiguration, userName str
 			resp.GetUserResult.User = iam.User{UserName: &ident.Name}
 			return resp, nil
 		}
+	}
+	return resp, fmt.Errorf(iam.ErrCodeNoSuchEntityException)
+}
+
+func (iama *IamApiServer) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp UpdateUserResponse, err error) {
+	userName := values.Get("UserName")
+	newUserName := values.Get("NewUserName")
+	if newUserName != "" {
+		for _, ident := range s3cfg.Identities {
+			if userName == ident.Name {
+				ident.Name = newUserName
+				return resp, nil
+			}
+		}
+	} else {
+		return resp, nil
 	}
 	return resp, fmt.Errorf(iam.ErrCodeNoSuchEntityException)
 }
@@ -360,6 +377,35 @@ func (iama *IamApiServer) DeleteAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 	return resp
 }
 
+// handleImplicitUsername adds username who signs the request to values if 'username' is not specified
+// According to https://awscli.amazonaws.com/v2/documentation/api/latest/reference/iam/create-access-key.html/
+// "If you do not specify a user name, IAM determines the user name implicitly based on the Amazon Web
+// Services access key ID signing the request."
+func handleImplicitUsername(r *http.Request, values url.Values) {
+	if len(r.Header["Authorization"]) == 0 || values.Get("UserName") != "" {
+		return
+	}
+	// get username who signs the request. For a typical Authorization:
+	// "AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request, SignedHeaders=content-type;
+	// host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8",
+	// the "test1" will be extracted as the username
+	glog.V(4).Infof("Authorization field: %v", r.Header["Authorization"][0])
+	s := strings.Split(r.Header["Authorization"][0], "Credential=")
+	if len(s) < 2 {
+		return
+	}
+	s = strings.Split(s[1], ",")
+	if len(s) < 2 {
+		return
+	}
+	s = strings.Split(s[0], "/")
+	if len(s) < 5 {
+		return
+	}
+	userName := s[2]
+	values.Set("UserName", userName)
+}
+
 func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
@@ -384,6 +430,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		response = iama.ListUsers(s3cfg, values)
 		changed = false
 	case "ListAccessKeys":
+		handleImplicitUsername(r, values)
 		response = iama.ListAccessKeys(s3cfg, values)
 		changed = false
 	case "CreateUser":
@@ -396,6 +443,13 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		changed = false
+	case "UpdateUser":
+		response, err = iama.UpdateUser(s3cfg, values)
+		if err != nil {
+			glog.Errorf("UpdateUser: %+v", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			return
+		}
 	case "DeleteUser":
 		userName := values.Get("UserName")
 		response, err = iama.DeleteUser(s3cfg, userName)
@@ -404,8 +458,10 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "CreateAccessKey":
+		handleImplicitUsername(r, values)
 		response = iama.CreateAccessKey(s3cfg, values)
 	case "DeleteAccessKey":
+		handleImplicitUsername(r, values)
 		response = iama.DeleteAccessKey(s3cfg, values)
 	case "CreatePolicy":
 		response, err = iama.CreatePolicy(s3cfg, values)
@@ -431,6 +487,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	case "DeleteUserPolicy":
 		if response, err = iama.DeleteUserPolicy(s3cfg, values); err != nil {
 			writeIamErrorResponse(w, r, err, "user", values.Get("UserName"), nil)
+			return
 		}
 	default:
 		errNotImplemented := s3err.GetAPIError(s3err.ErrNotImplemented)
