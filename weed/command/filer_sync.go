@@ -36,8 +36,8 @@ type SyncOptions struct {
 	bDiskType       *string
 	aDebug          *bool
 	bDebug          *bool
-	aFromTsMs       *int
-	bFromTsMs       *int
+	aFromTsMs       *int64
+	bFromTsMs       *int64
 	aProxyByFiler   *bool
 	bProxyByFiler   *bool
 	clientId        int32
@@ -68,8 +68,8 @@ func init() {
 	syncOptions.bProxyByFiler = cmdFilerSynchronize.Flag.Bool("b.filerProxy", false, "read and write file chunks by filer B instead of volume servers")
 	syncOptions.aDebug = cmdFilerSynchronize.Flag.Bool("a.debug", false, "debug mode to print out filer A received files")
 	syncOptions.bDebug = cmdFilerSynchronize.Flag.Bool("b.debug", false, "debug mode to print out filer B received files")
-	syncOptions.aFromTsMs = cmdFilerSynchronize.Flag.Int("a.fromTsMs", 0, "synchronization from timestamp on filer A. The unit is millisecond")
-	syncOptions.bFromTsMs = cmdFilerSynchronize.Flag.Int("b.fromTsMs", 0, "synchronization from timestamp on filer B. The unit is millisecond")
+	syncOptions.aFromTsMs = cmdFilerSynchronize.Flag.Int64("a.fromTsMs", 0, "synchronization from timestamp on filer A. The unit is millisecond")
+	syncOptions.bFromTsMs = cmdFilerSynchronize.Flag.Int64("b.fromTsMs", 0, "synchronization from timestamp on filer B. The unit is millisecond")
 	syncCpuProfile = cmdFilerSynchronize.Flag.String("cpuprofile", "", "cpu profile output file")
 	syncMemProfile = cmdFilerSynchronize.Flag.String("memprofile", "", "memory profile output file")
 	syncOptions.clientId = util.RandomInt32()
@@ -146,7 +146,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	return true
 }
 
-func initOffsetFromTsMs(grpcDialOption grpc.DialOption, sourceFiler pb.ServerAddress, targetFiler pb.ServerAddress, fromTsMs int) error {
+func initOffsetFromTsMs(grpcDialOption grpc.DialOption, sourceFiler pb.ServerAddress, targetFiler pb.ServerAddress, fromTsMs int64) error {
 	if fromTsMs <= 0 {
 		return nil
 	}
