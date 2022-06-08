@@ -15,6 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
 	"google.golang.org/grpc"
+	"os"
 	"strings"
 	"time"
 )
@@ -102,10 +103,17 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	filerA := pb.ServerAddress(*syncOptions.filerA)
 	filerB := pb.ServerAddress(*syncOptions.filerB)
 	go func() {
+		// set synchronization start timestamp to offset
+		err := initOffsetFromTsMs(grpcDialOption, filerA, filerB, *syncOptions.bFromTsMs)
+		if err != nil {
+			glog.Errorf("The program exit. initOffsetFromTsMs %d error from %s to %s: %v", *syncOptions.bFromTsMs, *syncOptions.filerA, *syncOptions.filerB, err)
+			os.Exit(2)
+		}
+
 		for {
 			err := doSubscribeFilerMetaChanges(syncOptions.clientId, grpcDialOption, filerA, *syncOptions.aPath, *syncOptions.aProxyByFiler, filerB,
 				*syncOptions.bPath, *syncOptions.bReplication, *syncOptions.bCollection, *syncOptions.bTtlSec, *syncOptions.bProxyByFiler, *syncOptions.bDiskType,
-				*syncOptions.bDebug, syncOptions.bFromTsMs)
+				*syncOptions.bDebug)
 			if err != nil {
 				glog.Errorf("sync from %s to %s: %v", *syncOptions.filerA, *syncOptions.filerB, err)
 				time.Sleep(1747 * time.Millisecond)
@@ -115,10 +123,16 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 
 	if !*syncOptions.isActivePassive {
 		go func() {
+			// set synchronization start timestamp to offset
+			err := initOffsetFromTsMs(grpcDialOption, filerB, filerA, *syncOptions.aFromTsMs)
+			if err != nil {
+				glog.Errorf("The program exit. initOffsetFromTsMs %d error from %s to %s: %v", *syncOptions.aFromTsMs, *syncOptions.filerB, *syncOptions.filerA, err)
+				os.Exit(2)
+			}
 			for {
 				err := doSubscribeFilerMetaChanges(syncOptions.clientId, grpcDialOption, filerB, *syncOptions.bPath, *syncOptions.bProxyByFiler, filerA,
 					*syncOptions.aPath, *syncOptions.aReplication, *syncOptions.aCollection, *syncOptions.aTtlSec, *syncOptions.aProxyByFiler, *syncOptions.aDiskType,
-					*syncOptions.aDebug, syncOptions.aFromTsMs)
+					*syncOptions.aDebug)
 				if err != nil {
 					glog.Errorf("sync from %s to %s: %v", *syncOptions.filerB, *syncOptions.filerA, err)
 					time.Sleep(2147 * time.Millisecond)
@@ -132,8 +146,28 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	return true
 }
 
+func initOffsetFromTsMs(grpcDialOption grpc.DialOption, sourceFiler pb.ServerAddress, targetFiler pb.ServerAddress, fromTsMs int) error {
+	if fromTsMs <= 0 {
+		return nil
+	}
+	// convert to nanosecond
+	fromTsNs := int64(fromTsMs * 1000_000)
+	// read source filer signature
+	sourceFilerSignature, sourceErr := replication.ReadFilerSignature(grpcDialOption, sourceFiler)
+	if sourceErr != nil {
+		return sourceErr
+	}
+	// If not successful, exit the program.
+	setOffsetErr := setOffset(grpcDialOption, targetFiler, SyncKeyPrefix, sourceFilerSignature, fromTsNs)
+	if setOffsetErr != nil {
+		return setOffsetErr
+	}
+	glog.Infof("setOffset from timestamp ms success! start offset: %d from %s to %s", fromTsNs, *syncOptions.filerA, *syncOptions.filerB)
+	return nil
+}
+
 func doSubscribeFilerMetaChanges(clientId int32, grpcDialOption grpc.DialOption, sourceFiler pb.ServerAddress, sourcePath string, sourceReadChunkFromFiler bool, targetFiler pb.ServerAddress, targetPath string,
-	replicationStr, collection string, ttlSec int, sinkWriteChunkByFiler bool, diskType string, debug bool, fromTsMs *int) error {
+	replicationStr, collection string, ttlSec int, sinkWriteChunkByFiler bool, diskType string, debug bool) error {
 
 	// read source filer signature
 	sourceFilerSignature, sourceErr := replication.ReadFilerSignature(grpcDialOption, sourceFiler)
@@ -151,13 +185,6 @@ func doSubscribeFilerMetaChanges(clientId int32, grpcDialOption grpc.DialOption,
 	sourceFilerOffsetTsNs, err := getOffset(grpcDialOption, targetFiler, SyncKeyPrefix, sourceFilerSignature)
 	if err != nil {
 		return err
-	}
-
-	if *fromTsMs > 0 {
-		// convert to nanosecond
-		sourceFilerOffsetTsNs = int64(*fromTsMs * 1000_000)
-		// use it only once
-		*fromTsMs = 0
 	}
 
 	glog.V(0).Infof("start sync %s(%d) => %s(%d) from %v(%d)", sourceFiler, sourceFilerSignature, targetFiler, targetFilerSignature, time.Unix(0, sourceFilerOffsetTsNs), sourceFilerOffsetTsNs)
