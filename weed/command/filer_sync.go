@@ -35,8 +35,8 @@ type SyncOptions struct {
 	bDiskType       *string
 	aDebug          *bool
 	bDebug          *bool
-	aSyncFromTs     *int
-	bSyncFromTs     *int
+	aFromTsMs       *int
+	bFromTsMs       *int
 	aProxyByFiler   *bool
 	bProxyByFiler   *bool
 	clientId        int32
@@ -67,8 +67,8 @@ func init() {
 	syncOptions.bProxyByFiler = cmdFilerSynchronize.Flag.Bool("b.filerProxy", false, "read and write file chunks by filer B instead of volume servers")
 	syncOptions.aDebug = cmdFilerSynchronize.Flag.Bool("a.debug", false, "debug mode to print out filer A received files")
 	syncOptions.bDebug = cmdFilerSynchronize.Flag.Bool("b.debug", false, "debug mode to print out filer B received files")
-	syncOptions.aSyncFromTs = cmdFilerSynchronize.Flag.Int("a.syncFromTs", 0, "synchronization from timestamp on filer A. The unit is millisecond")
-	syncOptions.bSyncFromTs = cmdFilerSynchronize.Flag.Int("b.syncFromTs", 0, "synchronization from timestamp on filer B. The unit is millisecond")
+	syncOptions.aFromTsMs = cmdFilerSynchronize.Flag.Int("a.fromTsMs", 0, "synchronization from timestamp on filer A. The unit is millisecond")
+	syncOptions.bFromTsMs = cmdFilerSynchronize.Flag.Int("b.fromTsMs", 0, "synchronization from timestamp on filer B. The unit is millisecond")
 	syncCpuProfile = cmdFilerSynchronize.Flag.String("cpuprofile", "", "cpu profile output file")
 	syncMemProfile = cmdFilerSynchronize.Flag.String("memprofile", "", "memory profile output file")
 	syncOptions.clientId = util.RandomInt32()
@@ -105,7 +105,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 		for {
 			err := doSubscribeFilerMetaChanges(syncOptions.clientId, grpcDialOption, filerA, *syncOptions.aPath, *syncOptions.aProxyByFiler, filerB,
 				*syncOptions.bPath, *syncOptions.bReplication, *syncOptions.bCollection, *syncOptions.bTtlSec, *syncOptions.bProxyByFiler, *syncOptions.bDiskType,
-				*syncOptions.bDebug, syncOptions.bSyncFromTs)
+				*syncOptions.bDebug, syncOptions.bFromTsMs)
 			if err != nil {
 				glog.Errorf("sync from %s to %s: %v", *syncOptions.filerA, *syncOptions.filerB, err)
 				time.Sleep(1747 * time.Millisecond)
@@ -118,7 +118,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 			for {
 				err := doSubscribeFilerMetaChanges(syncOptions.clientId, grpcDialOption, filerB, *syncOptions.bPath, *syncOptions.bProxyByFiler, filerA,
 					*syncOptions.aPath, *syncOptions.aReplication, *syncOptions.aCollection, *syncOptions.aTtlSec, *syncOptions.aProxyByFiler, *syncOptions.aDiskType,
-					*syncOptions.aDebug, syncOptions.aSyncFromTs)
+					*syncOptions.aDebug, syncOptions.aFromTsMs)
 				if err != nil {
 					glog.Errorf("sync from %s to %s: %v", *syncOptions.filerB, *syncOptions.filerA, err)
 					time.Sleep(2147 * time.Millisecond)
@@ -133,7 +133,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 }
 
 func doSubscribeFilerMetaChanges(clientId int32, grpcDialOption grpc.DialOption, sourceFiler pb.ServerAddress, sourcePath string, sourceReadChunkFromFiler bool, targetFiler pb.ServerAddress, targetPath string,
-	replicationStr, collection string, ttlSec int, sinkWriteChunkByFiler bool, diskType string, debug bool, syncFromTs *int) error {
+	replicationStr, collection string, ttlSec int, sinkWriteChunkByFiler bool, diskType string, debug bool, fromTsMs *int) error {
 
 	// read source filer signature
 	sourceFilerSignature, sourceErr := replication.ReadFilerSignature(grpcDialOption, sourceFiler)
@@ -153,11 +153,11 @@ func doSubscribeFilerMetaChanges(clientId int32, grpcDialOption grpc.DialOption,
 		return err
 	}
 
-	if *syncFromTs > 0 {
+	if *fromTsMs > 0 {
 		// convert to nanosecond
-		sourceFilerOffsetTsNs = int64(*syncFromTs * 1000_000)
+		sourceFilerOffsetTsNs = int64(*fromTsMs * 1000_000)
 		// use it only once
-		*syncFromTs = 0
+		*fromTsMs = 0
 	}
 
 	glog.V(0).Infof("start sync %s(%d) => %s(%d) from %v(%d)", sourceFiler, sourceFilerSignature, targetFiler, targetFilerSignature, time.Unix(0, sourceFilerOffsetTsNs), sourceFilerOffsetTsNs)
