@@ -154,8 +154,6 @@ func runFiler(cmd *Command, args []string) bool {
 			filerS3Options.startS3Server()
 		}()
 		startDelay++
-	} else {
-		*f.localSocket = ""
 	}
 
 	if *filerStartWebDav {
