@@ -151,13 +151,13 @@ func initOffsetFromTsMs(grpcDialOption grpc.DialOption, sourceFiler pb.ServerAdd
 		return nil
 	}
 	// convert to nanosecond
-	fromTsNs := int64(fromTsMs * 1000_000)
+	fromTsNs := fromTsMs * 1000_000
 	// read source filer signature
 	sourceFilerSignature, sourceErr := replication.ReadFilerSignature(grpcDialOption, sourceFiler)
 	if sourceErr != nil {
 		return sourceErr
 	}
-	// If not successful, exit the program.
+	// If not successful, return error and exit the program.
 	setOffsetErr := setOffset(grpcDialOption, targetFiler, SyncKeyPrefix, sourceFilerSignature, fromTsNs)
 	if setOffsetErr != nil {
 		return setOffsetErr
