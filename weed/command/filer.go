@@ -154,8 +154,6 @@ func runFiler(cmd *Command, args []string) bool {
 			filerS3Options.startS3Server()
 		}()
 		startDelay++
-	} else {
-		*f.localSocket = ""
 	}
 
 	if *filerStartWebDav {
@@ -271,9 +269,9 @@ func (fo *FilerOptions) startFiler() {
 	if runtime.GOOS != "windows" {
 		if *fo.localSocket == "" {
 			*fo.localSocket = fmt.Sprintf("/tmp/seaweefs-filer-%d.sock", *fo.port)
-			if err := os.Remove(*fo.localSocket); err != nil && !os.IsNotExist(err) {
-				glog.Fatalf("Failed to remove %s, error: %s", *fo.localSocket, err.Error())
-			}
+		}
+		if err := os.Remove(*fo.localSocket); err != nil && !os.IsNotExist(err) {
+			glog.Fatalf("Failed to remove %s, error: %s", *fo.localSocket, err.Error())
 		}
 		go func() {
 			// start on local unix socket

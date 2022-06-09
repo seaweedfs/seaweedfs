@@ -92,16 +92,20 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 	defer dataReader.Close()
 
+	objectContentType := r.Header.Get("Content-Type")
 	if strings.HasSuffix(object, "/") {
 		if err := s3a.mkdir(s3a.option.BucketsPath, bucket+strings.TrimSuffix(object, "/"), func(entry *filer_pb.Entry) {
-			entry.Attributes.Mime = r.Header.Get("Content-Type")
+			if objectContentType == "" {
+				objectContentType = "httpd/unix-directory"
+			}
+			entry.Attributes.Mime = objectContentType
 		}); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
 	} else {
 		uploadUrl := s3a.toFilerUrl(bucket, object)
-		if r.Header.Get("Content-Type") == "" {
+		if objectContentType == "" {
 			dataReader = mimeDetect(r, dataReader)
 		}
 
@@ -346,6 +350,11 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 
 	if resp.StatusCode == http.StatusPreconditionFailed {
 		s3err.WriteErrorResponse(w, r, s3err.ErrPreconditionFailed)
+		return
+	}
+
+	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
 		return
 	}
 
