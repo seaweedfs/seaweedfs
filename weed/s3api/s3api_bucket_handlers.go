@@ -84,26 +84,6 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 
 	// avoid duplicated buckets
 	errCode := s3err.ErrNone
-	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if resp, err := client.CollectionList(context.Background(), &filer_pb.CollectionListRequest{
-			IncludeEcVolumes:     true,
-			IncludeNormalVolumes: true,
-		}); err != nil {
-			glog.Errorf("list collection: %v", err)
-			return fmt.Errorf("list collections: %v", err)
-		} else {
-			for _, c := range resp.Collections {
-				if bucket == c.Name {
-					errCode = s3err.ErrBucketAlreadyExists
-					break
-				}
-			}
-		}
-		return nil
-	}); err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
-	}
 	if exist, err := s3a.exists(s3a.option.BucketsPath, bucket, true); err == nil && exist {
 		errCode = s3err.ErrBucketAlreadyExists
 	}

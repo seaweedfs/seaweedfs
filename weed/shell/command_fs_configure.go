@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"io"
-	"strings"
-
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"io"
 )
 
 func init() {
@@ -86,19 +84,11 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			DataNode:          *dataNode,
 		}
 
-		// check collection
-		if *collection != "" && strings.HasPrefix(*locationPrefix, "/buckets/") {
-			return fmt.Errorf("one s3 bucket goes to one collection and not customizable")
-		}
-
 		// check replication
 		if *replication != "" {
-			rp, err := super_block.NewReplicaPlacementFromString(*replication)
+			_, err := super_block.NewReplicaPlacementFromString(*replication)
 			if err != nil {
 				return fmt.Errorf("parse replication %s: %v", *replication, err)
-			}
-			if *volumeGrowthCount%rp.GetCopyCount() != 0 {
-				return fmt.Errorf("volumeGrowthCount %d should be devided by replication copy count %d", *volumeGrowthCount, rp.GetCopyCount())
 			}
 		}
 
