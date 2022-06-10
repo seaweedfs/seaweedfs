@@ -26,7 +26,7 @@ func (c *commandS3BucketCreate) Help() string {
 	return `create a bucket with a given name
 
 	Example:
-		s3.bucket.create -name <bucket_name> -replication 001
+		s3.bucket.create -name <bucket_name>
 `
 }
 
