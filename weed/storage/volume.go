@@ -293,6 +293,7 @@ func (v *Volume) collectStatus() (maxFileKey types.NeedleId, datFileSize int64, 
 	fileCount = uint64(v.nm.FileCount())
 	deletedCount = uint64(v.nm.DeletedCount())
 	deletedSize = v.nm.DeletedSize()
+	fileCount = uint64(v.nm.FileCount())
 
 	return
 }
