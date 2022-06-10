@@ -225,6 +225,10 @@
         handleFiles(files);
     }
 
+    function reloadPage() {
+        window.location.reload(true);
+    }
+
     var uploadList = {};
 
     function handleFiles(files) {
@@ -277,7 +281,7 @@
         }
         if (allFinish) {
             console.log('All Finish');
-            window.location.reload();
+            reloadPage();
         }
     }
 
@@ -318,7 +322,7 @@
         xhr.open('POST', url, false);
         xhr.setRequestHeader('Content-Type', '');
         xhr.send();
-        window.location.reload();
+        reloadPage();
     }
 
     function handleRename(originName, basePath) {
@@ -333,7 +337,7 @@
         xhr.open('POST', url, false);
         xhr.setRequestHeader('Content-Type', '');
         xhr.send();
-        window.location.reload();
+        reloadPage();
     }
 
     function handleDelete(path) {
@@ -348,7 +352,7 @@
         var xhr = new XMLHttpRequest();
         xhr.open('DELETE', url, false);
         xhr.send();
-        window.location.reload();
+        reloadPage();
     }
 </script>
 </html>
