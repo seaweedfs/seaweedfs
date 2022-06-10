@@ -44,6 +44,14 @@ var (
 			Help:      "Counter of master received heartbeat.",
 		}, []string{"type"})
 
+	MasterReplicaPlacementMismatch = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "master",
+			Name:      "replica_placement_mismatch",
+			Help:      "replica placement mismatch",
+		}, []string{"collection", "id"})
+
 	MasterLeaderChangeCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "SeaweedFS",
@@ -165,6 +173,7 @@ func init() {
 	Gather.MustRegister(MasterRaftIsleader)
 	Gather.MustRegister(MasterReceivedHeartbeatCounter)
 	Gather.MustRegister(MasterLeaderChangeCounter)
+	Gather.MustRegister(MasterReplicaPlacementMismatch)
 
 	Gather.MustRegister(FilerRequestCounter)
 	Gather.MustRegister(FilerRequestHistogram)
