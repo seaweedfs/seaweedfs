@@ -119,15 +119,15 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 				return
 			}
 			if len(in.DuplicatedUuids) > 0 {
-				var duplictedDir []string
+				var duplicateDir []string
 				for _, loc := range vs.store.Locations {
 					for _, uuid := range in.DuplicatedUuids {
 						if uuid == loc.DirectoryUuid {
-							duplictedDir = append(duplictedDir, loc.Directory)
+							duplicateDir = append(duplicateDir, loc.Directory)
 						}
 					}
 				}
-				glog.Errorf("Shut down Volume Server due to duplicated volume directories: %v", duplictedDir)
+				glog.Errorf("Shut down Volume Server due to duplicate volume directories: %v", duplicateDir)
 				os.Exit(1)
 			}
 			if in.GetVolumeSizeLimit() != 0 && vs.store.GetVolumeSizeLimit() != in.GetVolumeSizeLimit() {
