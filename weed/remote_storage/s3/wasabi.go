@@ -24,7 +24,8 @@ func (s WasabiRemoteStorageMaker) HasBucket() bool {
 
 func (s WasabiRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
-		conf: conf,
+		supportTagging: true,
+		conf:           conf,
 	}
 	accessKey := util.Nvl(conf.WasabiAccessKey)
 	secretKey := util.Nvl(conf.WasabiSecretKey)

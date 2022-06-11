@@ -25,7 +25,8 @@ func (s ContaboRemoteStorageMaker) HasBucket() bool {
 
 func (s ContaboRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
-		conf: conf,
+		supportTagging: true,
+		conf:           conf,
 	}
 	accessKey := util.Nvl(conf.ContaboAccessKey, os.Getenv("ACCESS_KEY"))
 	secretKey := util.Nvl(conf.ContaboSecretKey, os.Getenv("SECRET_KEY"))

@@ -31,7 +31,8 @@ func (s s3RemoteStorageMaker) HasBucket() bool {
 
 func (s s3RemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
-		conf: conf,
+		supportTagging: true,
+		conf:           conf,
 	}
 	config := &aws.Config{
 		Region:                        aws.String(conf.S3Region),
@@ -59,11 +60,12 @@ func (s s3RemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.R
 }
 
 type s3RemoteStorageClient struct {
-	conf *remote_pb.RemoteConf
-	conn s3iface.S3API
+	conf           *remote_pb.RemoteConf
+	conn           s3iface.S3API
+	supportTagging bool
 }
 
-var _ = remote_storage.RemoteStorageClient(&s3RemoteStorageClient{})
+var _ = remote_storage.RemoteStorageClient(&s3RemoteStorageClient{supportTagging: true})
 
 func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
@@ -158,11 +160,13 @@ func (s *s3RemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, 
 
 	// process tagging
 	tags := ""
-	for k, v := range entry.Extended {
-		if len(tags) > 0 {
-			tags = tags + "&"
+	if s.supportTagging {
+		for k, v := range entry.Extended {
+			if len(tags) > 0 {
+				tags = tags + "&"
+			}
+			tags = tags + k + "=" + string(v)
 		}
-		tags = tags + k + "=" + string(v)
 	}
 
 	// Upload the file to S3.
