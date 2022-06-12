@@ -7,6 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/cluster"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -56,7 +57,7 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return
 	}
 
-	fmt.Fprintf(writer, "the cluster has %d filers\n", len(filerNodes))
+	fmt.Fprintf(writer, "* filers %d\n", len(filerNodes))
 	for _, node := range filerNodes {
 		fmt.Fprintf(writer, "  * %s (%v)\n", node.Address, node.Version)
 		pb.WithFilerClient(false, pb.ServerAddress(node.Address), commandEnv.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -71,6 +72,37 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 			}
 			return err
 		})
+	}
+
+	// collect volume servers
+	var volumeServers []pb.ServerAddress
+	t, _, err := collectTopologyInfo(commandEnv, 0)
+	if err != nil {
+		return err
+	}
+	for _, dc := range t.DataCenterInfos {
+		for _, r := range dc.RackInfos {
+			for _, dn := range r.DataNodeInfos {
+				volumeServers = append(volumeServers, pb.NewServerAddressFromDataNode(dn))
+			}
+		}
+	}
+
+	fmt.Fprintf(writer, "* volume servers %d\n", len(volumeServers))
+	for _, dc := range t.DataCenterInfos {
+		fmt.Fprintf(writer, "  * data center: %s\n", dc.Id)
+		for _, r := range dc.RackInfos {
+			fmt.Fprintf(writer, "    * rack: %s\n", r.Id)
+			for _, dn := range r.DataNodeInfos {
+				pb.WithVolumeServerClient(false, pb.NewServerAddressFromDataNode(dn), commandEnv.option.GrpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+					resp, err := client.VolumeServerStatus(context.Background(), &volume_server_pb.VolumeServerStatusRequest{})
+					if err == nil {
+						fmt.Fprintf(writer, "      * %s (%v)\n", dn.Id, resp.Version)
+					}
+					return err
+				})
+			}
+		}
 	}
 
 	return nil

@@ -7,6 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"path/filepath"
 	"time"
 
@@ -188,15 +189,18 @@ func (vs *VolumeServer) VolumeStatus(ctx context.Context, req *volume_server_pb.
 
 func (vs *VolumeServer) VolumeServerStatus(ctx context.Context, req *volume_server_pb.VolumeServerStatusRequest) (*volume_server_pb.VolumeServerStatusResponse, error) {
 
-	resp := &volume_server_pb.VolumeServerStatusResponse{}
+	resp := &volume_server_pb.VolumeServerStatusResponse{
+		MemoryStatus: stats.MemStat(),
+		Version:      util.Version(),
+		DataCenter:   vs.dataCenter,
+		Rack:         vs.rack,
+	}
 
 	for _, loc := range vs.store.Locations {
 		if dir, e := filepath.Abs(loc.Directory); e == nil {
 			resp.DiskStatuses = append(resp.DiskStatuses, stats.NewDiskStatus(dir))
 		}
 	}
-
-	resp.MemoryStatus = stats.MemStat()
 
 	return resp, nil
 

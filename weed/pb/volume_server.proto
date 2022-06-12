@@ -479,6 +479,9 @@ message VolumeServerStatusRequest {
 message VolumeServerStatusResponse {
     repeated DiskStatus disk_statuses = 1;
     MemStatus memory_status = 2;
+    string version = 3;
+    string data_center = 4;
+    string rack = 5;
 }
 
 message VolumeServerLeaveRequest {
