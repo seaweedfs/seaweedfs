@@ -137,9 +137,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	iam.m.Lock()
 	// atomically switch
 	iam.identities = identities
-	if !iam.isAuthEnabled { // one-directional, no toggling
-		iam.isAuthEnabled = len(identities) > 0
-	}
+	iam.isAuthEnabled = len(identities) > 0
 	iam.m.Unlock()
 	return nil
 }
