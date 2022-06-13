@@ -176,12 +176,12 @@ func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, foun
 }
 
 func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
-
-	if !iam.isEnabled() {
-		return f
-	}
-
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !iam.isEnabled() {
+			f(w, r)
+			return
+		}
+
 		identity, errCode := iam.authRequest(r, action)
 		if errCode == s3err.ErrNone {
 			if identity != nil && identity.Name != "" {
