@@ -25,6 +25,8 @@ import (
 	"golang.org/x/net/context/ctxhttp"
 )
 
+//copied from https://github.com/restic/restic/tree/master/internal/selfupdate
+
 // Release collects data about a single release on GitHub.
 type Release struct {
 	Name        string    `json:"name"`
@@ -59,8 +61,8 @@ func init() {
 
 var cmdUpdate = &Command{
 	UsageLine: "update [-output=weed]",
-	Short:     "get latest stable version from https://github.com/chrislusf/seaweedfs",
-	Long:      `get latest stable version from https://github.com/chrislusf/seaweedfs`,
+	Short:     "get latest version from https://github.com/chrislusf/seaweedfs",
+	Long:      `get latest version from https://github.com/chrislusf/seaweedfs`,
 }
 
 func runUpdate(cmd *Command, args []string) bool {
