@@ -52,6 +52,9 @@ type githubError struct {
 	Message string
 }
 
+//default version is not full version
+var isFullVersion = false
+
 var (
 	updateOpt UpdateOptions
 )
@@ -91,16 +94,11 @@ func runUpdate(cmd *Command, args []string) bool {
 		}
 	}
 
-	glog.V(0).Infof("writing weed to %v\n", *updateOpt.Output)
-
 	v, err := downloadLatestStableRelease(context.Background(), *updateOpt.Output)
 	if err != nil {
-		glog.Fatalf("unable to update weed: %v", err)
+		glog.Fatalf("unable to update weed to version %s: %v", err, v)
 		return false
 	}
-
-	glog.V(0).Infof("successfully updated weed to version %v\n", v)
-
 	return true
 }
 
@@ -123,12 +121,17 @@ func downloadLatestStableRelease(ctx context.Context, target string) (version st
 		largeDiskSuffix = "_large_disk"
 	}
 
+	fullSuffix := ""
+	if isFullVersion {
+		fullSuffix = "_full"
+	}
+
 	ext := "tar.gz"
 	if runtime.GOOS == "windows" {
 		ext = "zip"
 	}
 
-	suffix := fmt.Sprintf("%s_%s%s.%s", runtime.GOOS, runtime.GOARCH, largeDiskSuffix, ext)
+	suffix := fmt.Sprintf("%s_%s%s%s.%s", runtime.GOOS, runtime.GOARCH, fullSuffix, largeDiskSuffix, ext)
 	md5Filename := fmt.Sprintf("%s.md5", suffix)
 	_, md5Val, err := getGithubDataFile(ctx, rel.Assets, md5Filename)
 	if err != nil {
@@ -152,16 +155,11 @@ func downloadLatestStableRelease(ctx context.Context, target string) (version st
 	err = extractToFile(buf, downloadFilename, target)
 	if err != nil {
 		return "", err
+	} else {
+		glog.V(0).Infof("successfully updated weed to version %v\n", rel.Version)
 	}
 
 	return rel.Version, nil
-}
-
-func (r Release) String() string {
-	return fmt.Sprintf("%v %v, %d assets",
-		r.TagName,
-		r.PublishedAt.Local().Format("2006-01-02 15:04:05"),
-		len(r.Assets))
 }
 
 // GitHubLatestRelease uses the GitHub API to get information about the latest
