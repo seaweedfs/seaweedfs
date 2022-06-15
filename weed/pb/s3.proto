@@ -23,3 +23,13 @@ message S3ConfigureRequest {
 
 message S3ConfigureResponse {
 }
+
+message S3CircuitBreakerConfig {
+    CbOptions global=1;
+    map<string, CbOptions> buckets= 2;
+}
+
+message CbOptions {
+    bool enabled=1;
+    map<string, int64> actions = 2;
+}
