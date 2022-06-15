@@ -14,9 +14,10 @@ func (n *Needle) ReadNeedleDataInto(r backend.BackendStorageFile, volumeOffset i
 	crc := CRC(0)
 	for x := needleOffset; x < needleOffset+size; x += int64(len(buf)) {
 		count, err := n.ReadNeedleData(r, volumeOffset, buf, x)
-		if count > 0 {
-			crc = crc.Update(buf[0:count])
-			if _, err = writer.Write(buf[0:count]); err != nil {
+		toWrite := min(int64(count), needleOffset+size-x)
+		if toWrite > 0 {
+			crc = crc.Update(buf[0:toWrite])
+			if _, err = writer.Write(buf[0:toWrite]); err != nil {
 				return fmt.Errorf("ReadNeedleData write: %v", err)
 			}
 		}
