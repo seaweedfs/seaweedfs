@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"strings"
 	"time"
 
@@ -228,6 +229,9 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 				}
 			}
 		}
+
+		// collect timestamps for path
+		stats.FilerServerLastSendTsOfSubscribeGauge.WithLabelValues(fs.option.Host.String(), req.ClientName, req.PathPrefix).Set(float64(tsNs))
 
 		message := &filer_pb.SubscribeMetadataResponse{
 			Directory:         dirPath,
