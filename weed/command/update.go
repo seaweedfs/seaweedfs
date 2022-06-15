@@ -9,7 +9,6 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -46,6 +45,13 @@ type Asset struct {
 	URL  string `json:"url"`
 }
 
+const githubAPITimeout = 30 * time.Second
+
+// githubError is returned by the GitHub API, e.g. for rate-limiting.
+type githubError struct {
+	Message string
+}
+
 var (
 	updateOpt UpdateOptions
 )
@@ -66,17 +72,6 @@ var cmdUpdate = &Command{
 }
 
 func runUpdate(cmd *Command, args []string) bool {
-	weedPath := *updateOpt.Output
-	if weedPath == "" {
-		file, err := os.Executable()
-		if err != nil {
-			glog.Fatalf("unable to find executable:%s", err)
-			return false
-		}
-
-		*updateOpt.Output = file
-	}
-
 	fi, err := os.Lstat(*updateOpt.Output)
 	if err != nil {
 		dirname := filepath.Dir(*updateOpt.Output)
@@ -91,7 +86,7 @@ func runUpdate(cmd *Command, args []string) bool {
 		}
 	} else {
 		if !fi.Mode().IsRegular() {
-			glog.Fatalf("output path %v is not a normal file, use --output to specify a different file path", updateOpt.Output)
+			glog.Fatalf("output path %v is not a normal file, use --output to specify a different file path", *updateOpt.Output)
 			return false
 		}
 	}
@@ -111,11 +106,6 @@ func runUpdate(cmd *Command, args []string) bool {
 
 func downloadLatestStableRelease(ctx context.Context, target string) (version string, err error) {
 	currentVersion := util.VERSION_NUMBER
-	largeDiskSuffix := ""
-	if util.VolumeSizeLimitGB == 8000 {
-		largeDiskSuffix = "_large_disk"
-	}
-
 	rel, err := GitHubLatestRelease(ctx, "chrislusf", "seaweedfs")
 	if err != nil {
 		return "", err
@@ -127,6 +117,11 @@ func downloadLatestStableRelease(ctx context.Context, target string) (version st
 	}
 
 	glog.V(0).Infof("latest version is %v\n", rel.Version)
+
+	largeDiskSuffix := ""
+	if util.VolumeSizeLimitGB == 8000 {
+		largeDiskSuffix = "_large_disk"
+	}
 
 	ext := "tar.gz"
 	if runtime.GOOS == "windows" {
@@ -150,7 +145,7 @@ func downloadLatestStableRelease(ctx context.Context, target string) (version st
 	binaryMd5 := md5Ctx.Sum(nil)
 	if hex.EncodeToString(binaryMd5) != string(md5Val[0:32]) {
 		glog.Errorf("md5:'%s' '%s'", hex.EncodeToString(binaryMd5), string(md5Val[0:32]))
-		err = errors.New("binary md5sum doesn't match")
+		err = fmt.Errorf("binary md5sum doesn't match")
 		return "", err
 	}
 
@@ -167,13 +162,6 @@ func (r Release) String() string {
 		r.TagName,
 		r.PublishedAt.Local().Format("2006-01-02 15:04:05"),
 		len(r.Assets))
-}
-
-const githubAPITimeout = 30 * time.Second
-
-// githubError is returned by the GitHub API, e.g. for rate-limiting.
-type githubError struct {
-	Message string
 }
 
 // GitHubLatestRelease uses the GitHub API to get information about the latest
@@ -229,7 +217,7 @@ func GitHubLatestRelease(ctx context.Context, owner, repo string) (Release, erro
 	}
 
 	if release.TagName == "" {
-		return Release{}, errors.New("tag name for latest release is empty")
+		return Release{}, fmt.Errorf("tag name for latest release is empty")
 	}
 
 	release.Version = release.TagName
@@ -316,7 +304,7 @@ func extractToFile(buf []byte, filename, target string) error {
 		}
 
 		if len(zrd.File) != 1 {
-			return errors.New("ZIP archive contains more than one file")
+			return fmt.Errorf("ZIP archive contains more than one file")
 		}
 
 		file, err := zrd.File[0].Open()
