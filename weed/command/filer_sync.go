@@ -216,7 +216,7 @@ func doSubscribeFilerMetaChanges(clientId int32, grpcDialOption grpc.DialOption,
 	}
 
 	var lastLogTsNs = time.Now().Nanosecond()
-	var clientName = fmt.Sprintf("syncTo_%s_From_%s", string(targetFiler), string(sourceFiler))
+	var clientName = fmt.Sprintf("syncFrom_%s_To_%s", string(sourceFiler), string(targetFiler))
 	processEventFnWithOffset := pb.AddOffsetFunc(processEventFn, 3*time.Second, func(counter int64, lastTsNs int64) error {
 		now := time.Now().Nanosecond()
 		glog.V(0).Infof("sync %s to %s progressed to %v %0.2f/sec", sourceFiler, targetFiler, time.Unix(0, lastTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
