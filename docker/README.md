@@ -28,6 +28,13 @@ cd $GOPATH/src/github.com/chrislusf/seaweedfs/docker
 make
 ```
 
+### S3 cmd
+
+list
+```
+s3cmd --no-ssl --host=127.0.0.1:8333 ls s3://
+```
+
 ## Build and push a multiarch build
 
 Make sure that `docker buildx` is supported (might be an experimental docker feature)
