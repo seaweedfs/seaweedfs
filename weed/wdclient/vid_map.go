@@ -133,7 +133,7 @@ func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 		return
 	}
 	locations, found = vc.ecVid2Locations[vid]
-	return
+	return locations, found && len(locations) > 0
 }
 
 func (vc *vidMap) addLocation(vid uint32, location Location) {
