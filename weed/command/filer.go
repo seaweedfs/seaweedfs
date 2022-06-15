@@ -83,7 +83,7 @@ func init() {
 	f.debug = cmdFiler.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:<debug.port>/debug/pprof/goroutine?debug=2")
 	f.debugPort = cmdFiler.Flag.Int("debug.port", 6060, "http port for debugging")
 	f.localSocket = cmdFiler.Flag.String("localSocket", "", "default to /tmp/seaweedfs-filer-<port>.sock")
-	f.showUIDirectoryDelete = cmdFiler.Flag.Bool("ui.deleteDir", false, "enable filer UI show delete directory button")
+	f.showUIDirectoryDelete = cmdFiler.Flag.Bool("ui.deleteDir", true, "enable filer UI show delete directory button")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
