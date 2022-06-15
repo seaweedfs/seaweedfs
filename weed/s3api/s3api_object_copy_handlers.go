@@ -23,6 +23,11 @@ const (
 func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
+	errCode := s3a.checkBucketInCache(r, dstBucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopyDest)
+		return
+	}
 
 	// Copy source path.
 	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))

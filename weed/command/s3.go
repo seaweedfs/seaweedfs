@@ -3,10 +3,11 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"google.golang.org/grpc/reflection"
 	"net/http"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"

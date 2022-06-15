@@ -216,6 +216,20 @@ func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorC
 	return s3err.ErrNone
 }
 
+func (s3a *S3ApiServer) checkBucketInCache(r *http.Request, bucket string) s3err.ErrorCode {
+	value := s3a.bucketsCache.Get(bucket)
+	if value == nil || value.Expired() {
+		glog.V(4).Info("Bucket not in the cache, checking existence")
+		if code := s3a.checkBucket(r, bucket); code != s3err.ErrNone {
+			return code
+		}
+		s3a.bucketsCache.Set(bucket, "", time.Second*600)
+		glog.V(4).Info("Bucket added to the cache")
+	}
+	glog.V(4).Info("Bucket in the cache")
+	return s3err.ErrNone
+}
+
 func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 	isAdmin := r.Header.Get(s3_constants.AmzIsAdmin) != ""
 	if isAdmin {

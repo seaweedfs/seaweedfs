@@ -16,6 +16,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
+	"github.com/karlseguin/ccache/v2"
 	"google.golang.org/grpc"
 )
 
@@ -38,6 +39,7 @@ type S3ApiServer struct {
 	randomClientId int32
 	filerGuard     *security.Guard
 	client         *http.Client
+	bucketsCache   *ccache.Cache
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -72,6 +74,8 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 	}
 
 	s3ApiServer.registerRouter(router)
+
+	s3ApiServer.bucketsCache = ccache.New(ccache.Configure())
 
 	go s3ApiServer.subscribeMetaEvents("s3", filer.IamConfigDirecotry+"/"+filer.IamIdentityFile, time.Now().UnixNano())
 	return s3ApiServer, nil

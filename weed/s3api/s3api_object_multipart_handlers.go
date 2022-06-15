@@ -4,15 +4,16 @@ import (
 	"crypto/sha1"
 	"encoding/xml"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
-	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -28,6 +29,12 @@ const (
 // NewMultipartUploadHandler - New multipart upload.
 func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, object := s3_constants.GetBucketAndObject(r)
+
+	errCode := s3a.checkBucketInCache(r, bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	createMultipartUploadInput := &s3.CreateMultipartUploadInput{
 		Bucket:   aws.String(bucket),
