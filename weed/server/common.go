@@ -284,6 +284,7 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	if rangeReq == "" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		if err := writeFn(bufferedWriter, 0, totalSize); err != nil {
+			glog.Errorf("processRangeRequest headers: %+v err: %v", w.Header(), err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -294,6 +295,7 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	//mostly copy from src/pkg/net/http/fs.go
 	ranges, err := parseRange(rangeReq, totalSize)
 	if err != nil {
+		glog.Errorf("processRangeRequest headers: %+v err: %v", w.Header(), err)
 		http.Error(w, err.Error(), http.StatusRequestedRangeNotSatisfiable)
 		return
 	}
@@ -326,6 +328,7 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		w.WriteHeader(http.StatusPartialContent)
 		err = writeFn(bufferedWriter, ra.start, ra.length)
 		if err != nil {
+			glog.Errorf("processRangeRequest headers: %+v err: %v", w.Header(), err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -365,6 +368,7 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	}
 	w.WriteHeader(http.StatusPartialContent)
 	if _, err := io.CopyN(bufferedWriter, sendContent, sendSize); err != nil {
+		glog.Errorf("processRangeRequest err: %v", err)
 		http.Error(w, "Internal Error", http.StatusInternalServerError)
 		return
 	}
