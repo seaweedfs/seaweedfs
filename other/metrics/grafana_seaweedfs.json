@@ -646,7 +646,7 @@
           "step": 60
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_s3_request_seconds_bucket[1m])) by (le, type,bucket))",
+          "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_s3_request_seconds_bucket[1m])) by (le, type, bucket))",
           "format": "time_series",
           "hide": false,
           "interval": "",
