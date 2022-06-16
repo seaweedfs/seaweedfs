@@ -60,18 +60,20 @@ var (
 )
 
 type UpdateOptions struct {
-	Output *string
+	Output  *string
+	Version *string
 }
 
 func init() {
-	updateOpt.Output = cmdUpdate.Flag.String("output", "weed", "Save the latest weed as `filename`")
+	updateOpt.Output = cmdUpdate.Flag.String("output", "weed", "Save the weed as `filename` or /path/to/dir/filename.")
+	updateOpt.Version = cmdUpdate.Flag.String("version", "0", "The version of weed you want to download. If not specified, get the latest version.")
 	cmdUpdate.Run = runUpdate
 }
 
 var cmdUpdate = &Command{
 	UsageLine: "update [-output=weed]",
-	Short:     "get latest version from https://github.com/chrislusf/seaweedfs",
-	Long:      `get latest version from https://github.com/chrislusf/seaweedfs`,
+	Short:     "get latest or specific version from https://github.com/chrislusf/seaweedfs",
+	Long:      `get latest or specific version from https://github.com/chrislusf/seaweedfs`,
 }
 
 func runUpdate(cmd *Command, args []string) bool {
@@ -80,41 +82,45 @@ func runUpdate(cmd *Command, args []string) bool {
 		dirname := filepath.Dir(*updateOpt.Output)
 		di, err := os.Lstat(dirname)
 		if err != nil {
-			glog.Fatalf("unable to find directory:%s", dirname)
+			glog.Errorf("unable to find directory:%s", dirname)
 			return false
 		}
 		if !di.Mode().IsDir() {
-			glog.Fatalf("output parent path %v is not a directory, use --output to specify a different file path", dirname)
+			glog.Errorf("output parent path %v is not a directory, use --output to specify a different file path", dirname)
 			return false
 		}
 	} else {
 		if !fi.Mode().IsRegular() {
-			glog.Fatalf("output path %v is not a normal file, use --output to specify a different file path", *updateOpt.Output)
+			glog.Errorf("output path %v is not a normal file, use --output to specify a different file path", *updateOpt.Output)
 			return false
 		}
 	}
 
-	v, err := downloadLatestStableRelease(context.Background(), *updateOpt.Output)
+	_, err = downloadRelease(context.Background(), *updateOpt.Output, *updateOpt.Version)
 	if err != nil {
-		glog.Fatalf("unable to update weed to version %s: %v", err, v)
+		glog.Errorf("unable to download weed: %v", err)
 		return false
 	}
 	return true
 }
 
-func downloadLatestStableRelease(ctx context.Context, target string) (version string, err error) {
+func downloadRelease(ctx context.Context, target string, ver string) (version string, err error) {
 	currentVersion := util.VERSION_NUMBER
-	rel, err := GitHubLatestRelease(ctx, "chrislusf", "seaweedfs")
+	rel, err := GitHubLatestRelease(ctx, ver, "chrislusf", "seaweedfs")
 	if err != nil {
 		return "", err
 	}
 
 	if rel.Version == currentVersion {
-		glog.V(0).Infof("weed is up to date\n")
+		if ver == "0" {
+			glog.V(0).Infof("weed is up to date")
+		} else {
+			glog.V(0).Infof("no need to download the same version of weed ")
+		}
 		return currentVersion, nil
 	}
 
-	glog.V(0).Infof("latest version is %v\n", rel.Version)
+	glog.V(0).Infof("download version: %s", rel.Version)
 
 	largeDiskSuffix := ""
 	if util.VolumeSizeLimitGB == 8000 {
@@ -162,13 +168,13 @@ func downloadLatestStableRelease(ctx context.Context, target string) (version st
 	return rel.Version, nil
 }
 
-// GitHubLatestRelease uses the GitHub API to get information about the latest
+// GitHubLatestRelease uses the GitHub API to get information about the specific
 // release of a repository.
-func GitHubLatestRelease(ctx context.Context, owner, repo string) (Release, error) {
+func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (Release, error) {
 	ctx, cancel := context.WithTimeout(ctx, githubAPITimeout)
 	defer cancel()
 
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases", owner, repo)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return Release{}, err
@@ -209,17 +215,28 @@ func GitHubLatestRelease(ctx context.Context, owner, repo string) (Release, erro
 	}
 
 	var release Release
-	err = json.Unmarshal(buf, &release)
+	var releaseList []Release
+	err = json.Unmarshal(buf, &releaseList)
 	if err != nil {
 		return Release{}, err
 	}
+	if ver == "0" {
+		release = releaseList[0]
+		glog.V(0).Infof("latest version is %v\n", release.TagName)
+	} else {
+		for _, r := range releaseList {
+			if r.TagName == ver {
+				release = r
+				break
+			}
+		}
+	}
 
 	if release.TagName == "" {
-		return Release{}, fmt.Errorf("tag name for latest release is empty")
+		return Release{}, fmt.Errorf("can not find the specific version")
 	}
 
 	release.Version = release.TagName
-
 	return release, nil
 }
 
