@@ -173,7 +173,8 @@ var (
 			Subsystem: "s3",
 			Name:      "request_total",
 			Help:      "Counter of s3 requests.",
-		}, []string{"type", "code"})
+		}, []string{"type", "code", "bucket"})
+
 	S3RequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "SeaweedFS",
@@ -181,7 +182,7 @@ var (
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of s3 request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
-		}, []string{"type"})
+		}, []string{"type", "bucket"})
 )
 
 func init() {
