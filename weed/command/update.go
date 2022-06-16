@@ -60,13 +60,17 @@ var (
 )
 
 type UpdateOptions struct {
-	Output  *string
+	dir     *string
+	name    *string
 	Version *string
 }
 
 func init() {
-	updateOpt.Output = cmdUpdate.Flag.String("output", "weed", "Save the weed as `filename` or /path/to/dir/filename.")
-	updateOpt.Version = cmdUpdate.Flag.String("version", "0", "The version of weed you want to download. If not specified, get the latest version.")
+	path, _ := os.Executable()
+	_, name := filepath.Split(path)
+	updateOpt.dir = cmdUpdate.Flag.String("dir", filepath.Dir(path), "directory to save new weed.")
+	updateOpt.name = cmdUpdate.Flag.String("name", name, "name of new weed.On windows, name shouldn't be same to the orignial name.")
+	updateOpt.Version = cmdUpdate.Flag.String("version", "0", "specific version of weed you want to download. If not specified, get the latest version.")
 	cmdUpdate.Run = runUpdate
 }
 
@@ -77,26 +81,33 @@ var cmdUpdate = &Command{
 }
 
 func runUpdate(cmd *Command, args []string) bool {
-	fi, err := os.Lstat(*updateOpt.Output)
-	if err != nil {
-		dirname := filepath.Dir(*updateOpt.Output)
-		di, err := os.Lstat(dirname)
-		if err != nil {
-			glog.Errorf("unable to find directory:%s", dirname)
-			return false
-		}
-		if !di.Mode().IsDir() {
-			glog.Errorf("output parent path %v is not a directory, use --output to specify a different file path", dirname)
+	path, _ := os.Executable()
+	_, name := filepath.Split(path)
+
+	if *updateOpt.dir != "" {
+		if err := util.TestFolderWritable(util.ResolvePath(*updateOpt.dir)); err != nil {
+			glog.Fatalf("Check Folder(-dir) Writable %s : %s", *updateOpt.dir, err)
 			return false
 		}
 	} else {
-		if !fi.Mode().IsRegular() {
-			glog.Errorf("output path %v is not a normal file, use --output to specify a different file path", *updateOpt.Output)
+		*updateOpt.dir = filepath.Dir(path)
+	}
+
+	if *updateOpt.name == "" {
+		*updateOpt.name = name
+	}
+
+	if runtime.GOOS == "windows" {
+		if *updateOpt.name == name || *updateOpt.name == "" {
+			glog.Fatalf("On windows, name of the new weed shouldn't be same to the orignial name.")
 			return false
 		}
 	}
 
-	_, err = downloadRelease(context.Background(), *updateOpt.Output, *updateOpt.Version)
+	target := *updateOpt.dir + "/" + *updateOpt.name
+	glog.V(0).Infof("new weed will be saved to %s", target)
+
+	_, err := downloadRelease(context.Background(), target, *updateOpt.Version)
 	if err != nil {
 		glog.Errorf("unable to download weed: %v", err)
 		return false
@@ -360,11 +371,6 @@ func extractToFile(buf []byte, filename, target string) error {
 		mode = fi.Mode()
 	}
 
-	// Remove the original binary.
-	if err := removeWeedBinary(dir, target); err != nil {
-		return err
-	}
-
 	// Rename the temp file to the final location atomically.
 	if err := os.Rename(new.Name(), target); err != nil {
 		return err
@@ -372,20 +378,4 @@ func extractToFile(buf []byte, filename, target string) error {
 
 	glog.V(0).Infof("saved %d bytes in %v\n", n, target)
 	return os.Chmod(target, mode)
-}
-
-// Rename (rather than remove) the running version. The running binary will be locked
-// on Windows and cannot be removed while still executing.
-func removeWeedBinary(dir, target string) error {
-	if runtime.GOOS == "linux" {
-		return nil
-	}
-	backup := filepath.Join(dir, filepath.Base(target)+".bak")
-	if _, err := os.Stat(backup); err == nil {
-		_ = os.Remove(backup)
-	}
-	if err := os.Rename(target, backup); err != nil {
-		return fmt.Errorf("unable to rename target file: %v", err)
-	}
-	return nil
 }
