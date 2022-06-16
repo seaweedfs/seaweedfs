@@ -69,13 +69,13 @@ func init() {
 	path, _ := os.Executable()
 	_, name := filepath.Split(path)
 	updateOpt.dir = cmdUpdate.Flag.String("dir", filepath.Dir(path), "directory to save new weed.")
-	updateOpt.name = cmdUpdate.Flag.String("name", name, "name of new weed.On windows, name shouldn't be same to the orignial name.")
+	updateOpt.name = cmdUpdate.Flag.String("name", name, "name of new weed. On windows, name shouldn't be same to the orignial name.")
 	updateOpt.Version = cmdUpdate.Flag.String("version", "0", "specific version of weed you want to download. If not specified, get the latest version.")
 	cmdUpdate.Run = runUpdate
 }
 
 var cmdUpdate = &Command{
-	UsageLine: "update [-output=weed]",
+	UsageLine: "weed update -dir=/path/to/dir -name=name -version=x.xx",
 	Short:     "get latest or specific version from https://github.com/chrislusf/seaweedfs",
 	Long:      `get latest or specific version from https://github.com/chrislusf/seaweedfs`,
 }
@@ -97,14 +97,15 @@ func runUpdate(cmd *Command, args []string) bool {
 		*updateOpt.name = name
 	}
 
+	target := filepath.Join(*updateOpt.dir, *updateOpt.name)
+
 	if runtime.GOOS == "windows" {
-		if *updateOpt.name == name || *updateOpt.name == "" {
+		if target == path {
 			glog.Fatalf("On windows, name of the new weed shouldn't be same to the orignial name.")
 			return false
 		}
 	}
 
-	target := *updateOpt.dir + "/" + *updateOpt.name
 	glog.V(0).Infof("new weed will be saved to %s", target)
 
 	_, err := downloadRelease(context.Background(), target, *updateOpt.Version)
