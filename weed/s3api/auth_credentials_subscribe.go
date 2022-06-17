@@ -1,11 +1,11 @@
 package s3api
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/config"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_config"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -27,7 +27,7 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, prefix string, la
 		content := message.NewEntry.Content
 
 		_ = s3a.onIamConfigUpdate(dir, fileName, content)
-		_ = s3a.onCbConfigUpdate(dir, fileName, content)
+		_ = s3a.onCircuitBreakerConfigUpdate(dir, fileName, content)
 
 		return nil
 	}
@@ -52,8 +52,8 @@ func (s3a *S3ApiServer) onIamConfigUpdate(dir, filename string, content []byte) 
 }
 
 //reload circuit breaker config
-func (s3a *S3ApiServer) onCbConfigUpdate(dir, filename string, content []byte) error {
-	if dir == config.CircuitBreakerConfigDir && filename == config.CircuitBreakerConfigFile {
+func (s3a *S3ApiServer) onCircuitBreakerConfigUpdate(dir, filename string, content []byte) error {
+	if dir == s3_config.CircuitBreakerConfigDir && filename == s3_config.CircuitBreakerConfigFile {
 		if err := s3a.cb.LoadS3ApiConfigurationFromBytes(content); err != nil {
 			return err
 		}
