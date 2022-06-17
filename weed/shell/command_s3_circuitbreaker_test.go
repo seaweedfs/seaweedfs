@@ -2,6 +2,8 @@ package shell
 
 import (
 	"bytes"
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -15,33 +17,137 @@ var (
 	TestCases = []*Case{
 		//add circuit breaker config for global
 		{
-			args:   strings.Split("-global -type count -actions Read,Write -values 500,200", " "),
-			result: "{\n  \"global\": {\n    \"enabled\": true,\n    \"actions\": {\n      \"Read:count\": \"500\",\n      \"Write:count\": \"200\"\n    }\n  }\n}\n",
+			args: strings.Split("-global -type count -actions Read,Write -values 500,200", " "),
+			result: `{
+				"global": {
+					"enabled": true,
+					"actions": {
+						"Read:count": "500",
+						"Write:count": "200"
+					}
+				}
+			}`,
 		},
+
 		//disable global config
 		{
-			args:   strings.Split("-global -disable", " "),
-			result: "{\n  \"global\": {\n    \"actions\": {\n      \"Read:count\": \"500\",\n      \"Write:count\": \"200\"\n    }\n  }\n}\n",
+			args: strings.Split("-global -disable", " "),
+			result: `{
+				"global": {
+					"actions": {
+						"Read:count": "500",
+						"Write:count": "200"
+					}
+				}
+			}`,
 		},
+
 		//add circuit breaker config for buckets x,y,z
 		{
-			args:   strings.Split("-buckets x,y,z -type count -actions Read,Write -values 200,100", " "),
-			result: "{\n  \"global\": {\n    \"actions\": {\n      \"Read:count\": \"500\",\n      \"Write:count\": \"200\"\n    }\n  },\n  \"buckets\": {\n    \"x\": {\n      \"enabled\": true,\n      \"actions\": {\n        \"Read:count\": \"200\",\n        \"Write:count\": \"100\"\n      }\n    },\n    \"y\": {\n      \"enabled\": true,\n      \"actions\": {\n        \"Read:count\": \"200\",\n        \"Write:count\": \"100\"\n      }\n    },\n    \"z\": {\n      \"enabled\": true,\n      \"actions\": {\n        \"Read:count\": \"200\",\n        \"Write:count\": \"100\"\n      }\n    }\n  }\n}\n",
+			args: strings.Split("-buckets x,y,z -type count -actions Read,Write -values 200,100", " "),
+			result: `{
+				"global": {
+					"actions": {
+						"Read:count": "500",
+						"Write:count": "200"
+					}
+				},
+				"buckets": {
+					"x": {
+						"enabled": true,
+						"actions": {
+							"Read:count": "200",
+							"Write:count": "100"
+						}
+					},
+					"y": {
+						"enabled": true,
+						"actions": {
+							"Read:count": "200",
+							"Write:count": "100"
+						}
+					},
+					"z": {
+						"enabled": true,
+						"actions": {
+							"Read:count": "200",
+							"Write:count": "100"
+						}
+					}
+				}
+			}`,
 		},
+
 		//disable circuit breaker config of x
 		{
-			args:   strings.Split("-buckets x -disable", " "),
-			result: "{\n  \"global\": {\n    \"actions\": {\n      \"Read:count\": \"500\",\n      \"Write:count\": \"200\"\n    }\n  },\n  \"buckets\": {\n    \"x\": {\n      \"actions\": {\n        \"Read:count\": \"200\",\n        \"Write:count\": \"100\"\n      }\n    },\n    \"y\": {\n      \"enabled\": true,\n      \"actions\": {\n        \"Read:count\": \"200\",\n        \"Write:count\": \"100\"\n      }\n    },\n    \"z\": {\n      \"enabled\": true,\n      \"actions\": {\n        \"Read:count\": \"200\",\n        \"Write:count\": \"100\"\n      }\n    }\n  }\n}\n",
+			args: strings.Split("-buckets x -disable", " "),
+			result: `{
+			  "global": {
+				"actions": {
+				  "Read:count": "500",
+				  "Write:count": "200"
+				}
+			  },
+			  "buckets": {
+				"x": {
+				  "actions": {
+					"Read:count": "200",
+					"Write:count": "100"
+				  }
+				},
+				"y": {
+				  "enabled": true,
+				  "actions": {
+					"Read:count": "200",
+					"Write:count": "100"
+				  }
+				},
+				"z": {
+				  "enabled": true,
+				  "actions": {
+					"Read:count": "200",
+					"Write:count": "100"
+				  }
+				}
+			  }
+			}`,
 		},
+
 		//delete circuit breaker config of x
 		{
-			args:   strings.Split("-buckets x -delete", " "),
-			result: "{\n  \"global\": {\n    \"actions\": {\n      \"Read:count\": \"500\",\n      \"Write:count\": \"200\"\n    }\n  },\n  \"buckets\": {\n    \"y\": {\n      \"enabled\": true,\n      \"actions\": {\n        \"Read:count\": \"200\",\n        \"Write:count\": \"100\"\n      }\n    },\n    \"z\": {\n      \"enabled\": true,\n      \"actions\": {\n        \"Read:count\": \"200\",\n        \"Write:count\": \"100\"\n      }\n    }\n  }\n}\n",
+			args: strings.Split("-buckets x -delete", " "),
+			result: `{
+			  "global": {
+				"actions": {
+				  "Read:count": "500",
+				  "Write:count": "200"
+				}
+			  },
+			  "buckets": {
+				"y": {
+				  "enabled": true,
+				  "actions": {
+					"Read:count": "200",
+					"Write:count": "100"
+				  }
+				},
+				"z": {
+				  "enabled": true,
+				  "actions": {
+					"Read:count": "200",
+					"Write:count": "100"
+				  }
+				}
+			  }
+			}`,
 		},
+
 		//clear all circuit breaker config
 		{
-			args:   strings.Split("-delete", " "),
-			result: "{\n\n}\n",
+			args: strings.Split("-delete", " "),
+			result: `{
+			
+			}`,
 		},
 	}
 )
@@ -65,10 +171,21 @@ func TestCircuitBreakerShell(t *testing.T) {
 		}
 		if i != 0 {
 			result := writeBuf.String()
-			if result != tc.result {
-				t.Fatal("result of s3 circuit breaker shell command is unexpect!")
+
+			actual := make(map[string]interface{})
+			err := json.Unmarshal([]byte(result), &actual)
+			if err != nil {
+				t.Error(err)
 			}
 
+			expect := make(map[string]interface{})
+			err = json.Unmarshal([]byte(result), &expect)
+			if err != nil {
+				t.Error(err)
+			}
+			if !reflect.DeepEqual(actual, expect) {
+				t.Fatal("result of s3 circuit breaker shell command is unexpect!")
+			}
 		}
 	}
 }

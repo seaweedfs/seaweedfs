@@ -7,7 +7,7 @@ import (
 	"github.com/alecthomas/units"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/s3_pb"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3_config"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"strconv"
 	"strings"
@@ -32,21 +32,29 @@ func (c *commandS3CircuitBreaker) Help() string {
 	return `configure and apply s3 circuit breaker options for each bucket
 
 	# examples
-	# add
-	s3.circuitBreaker -actions Read,Write -values 500,200 -global -enable -apply -type count
-	s3.circuitBreaker -actions Write -values 200MiB -global -enable -apply -type bytes
-	s3.circuitBreaker -actions Write -values 200MiB -bucket x,y,z -enable -apply -type bytes
+	# add circuit breaker config for global
+	s3.circuitBreaker -global -type count -actions Read,Write -values 500,200 -apply
 
-	#delete
-	s3.circuitBreaker -actions Write -bucket x,y,z -delete -apply -type bytes
-	s3.circuitBreaker -actions Write -bucket x,y,z -delete -apply
-	s3.circuitBreaker -actions Write -delete -apply
+	# disable global config
+	s3.circuitBreaker -global -disable -apply
+
+	# add circuit breaker config for buckets x,y,z
+	s3.circuitBreaker -buckets x,y,z -type count -actions Read,Write -values 200,100 -apply
+
+	# disable circuit breaker config of x
+	s3.circuitBreaker -buckets x -disable -apply
+
+	# delete circuit breaker config of x
+	s3.circuitBreaker -buckets x -delete -apply
+
+	# clear all circuit breaker config
+	s3.circuitBreaker -delete -apply
 	`
 }
 
 func (c *commandS3CircuitBreaker) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
-	dir := s3_config.CircuitBreakerConfigDir
-	file := s3_config.CircuitBreakerConfigFile
+	dir := s3_constants.CircuitBreakerConfigDir
+	file := s3_constants.CircuitBreakerConfigFile
 
 	s3CircuitBreakerCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	buckets := s3CircuitBreakerCommand.String("buckets", "", "the bucket name(s) to configure, eg: -buckets x,y,z")
@@ -73,7 +81,7 @@ func (c *commandS3CircuitBreaker) Do(args []string, commandEnv *CommandEnv, writ
 	}
 
 	cbCfg := &s3_pb.S3CircuitBreakerConfig{
-		Buckets: make(map[string]*s3_pb.CbOptions),
+		Buckets: make(map[string]*s3_pb.S3CircuitBreakerOptions),
 	}
 	if buf.Len() > 0 {
 		if err = filer.ParseS3ConfigurationFromBytes(buf.Bytes(), cbCfg); err != nil {
@@ -121,10 +129,10 @@ func (c *commandS3CircuitBreaker) Do(args []string, commandEnv *CommandEnv, writ
 
 		if len(*buckets) > 0 {
 			for _, bucket := range cmdBuckets {
-				var cbOptions *s3_pb.CbOptions
+				var cbOptions *s3_pb.S3CircuitBreakerOptions
 				var exists bool
 				if cbOptions, exists = cbCfg.Buckets[bucket]; !exists {
-					cbOptions = &s3_pb.CbOptions{}
+					cbOptions = &s3_pb.S3CircuitBreakerOptions{}
 					cbCfg.Buckets[bucket] = cbOptions
 				}
 				cbOptions.Enabled = !*disabled
@@ -145,7 +153,7 @@ func (c *commandS3CircuitBreaker) Do(args []string, commandEnv *CommandEnv, writ
 		if *global {
 			globalOptions := cbCfg.Global
 			if globalOptions == nil {
-				globalOptions = &s3_pb.CbOptions{Actions: make(map[string]int64, len(cmdActions))}
+				globalOptions = &s3_pb.S3CircuitBreakerOptions{Actions: make(map[string]int64, len(cmdActions))}
 				cbCfg.Global = globalOptions
 			}
 			globalOptions.Enabled = !*disabled
@@ -192,7 +200,7 @@ func loadConfig(commandEnv *CommandEnv, dir string, file string, buf *bytes.Buff
 	return nil
 }
 
-func insertOrUpdateValues(cbOptions *s3_pb.CbOptions, cmdActions []string, cmdValues []int64, limitType *string) error {
+func insertOrUpdateValues(cbOptions *s3_pb.S3CircuitBreakerOptions, cmdActions []string, cmdValues []int64, limitType *string) error {
 	if len(*limitType) == 0 {
 		return fmt.Errorf("type not valid, only 'count' and 'bytes' are allowed")
 	}
@@ -203,7 +211,7 @@ func insertOrUpdateValues(cbOptions *s3_pb.CbOptions, cmdActions []string, cmdVa
 
 	if len(cmdValues) > 0 {
 		for i, action := range cmdActions {
-			cbOptions.Actions[s3_config.Concat(action, *limitType)] = cmdValues[i]
+			cbOptions.Actions[s3_constants.Concat(action, *limitType)] = cmdValues[i]
 		}
 	}
 	return nil
@@ -223,7 +231,7 @@ func deleteBucketsActions(cmdBuckets []string, cbCfg *s3_pb.S3CircuitBreakerConf
 			if cbOption, ok := cbCfg.Buckets[bucket]; ok {
 				if len(cmdActions) > 0 && cbOption.Actions != nil {
 					for _, action := range cmdActions {
-						delete(cbOption.Actions, s3_config.Concat(action, *limitType))
+						delete(cbOption.Actions, s3_constants.Concat(action, *limitType))
 					}
 				}
 
@@ -250,7 +258,7 @@ func deleteGlobalActions(cbCfg *s3_pb.S3CircuitBreakerConfig, cmdActions []strin
 		return
 	} else {
 		for _, action := range cmdActions {
-			delete(globalOptions.Actions, s3_config.Concat(action, *limitType))
+			delete(globalOptions.Actions, s3_constants.Concat(action, *limitType))
 		}
 	}
 
@@ -270,27 +278,27 @@ func (c *commandS3CircuitBreaker) initActionsAndValues(buckets, actions, limitTy
 		//check action valid
 		for _, action := range cmdActions {
 			var found bool
-			for _, allowedAction := range s3_config.AllowedActions {
+			for _, allowedAction := range s3_constants.AllowedActions {
 				if allowedAction == action {
 					found = true
 				}
 			}
 			if !found {
-				return nil, nil, nil, fmt.Errorf("value(%s) of flag[-action] not valid, allowed actions: %v", *actions, s3_config.AllowedActions)
+				return nil, nil, nil, fmt.Errorf("value(%s) of flag[-action] not valid, allowed actions: %v", *actions, s3_constants.AllowedActions)
 			}
 		}
 	}
 
 	if !parseValues {
 		if len(cmdActions) < 0 {
-			for _, action := range s3_config.AllowedActions {
+			for _, action := range s3_constants.AllowedActions {
 				cmdActions = append(cmdActions, action)
 			}
 		}
 
 		if len(*limitType) > 0 {
 			switch *limitType {
-			case s3_config.LimitTypeCount:
+			case s3_constants.LimitTypeCount:
 				elements := strings.Split(*values, ",")
 				if len(cmdActions) != len(elements) {
 					if len(elements) != 1 || len(elements) == 0 {
@@ -312,7 +320,7 @@ func (c *commandS3CircuitBreaker) initActionsAndValues(buckets, actions, limitTy
 						cmdValues = append(cmdValues, int64(v))
 					}
 				}
-			case s3_config.LimitTypeBytes:
+			case s3_constants.LimitTypeBytes:
 				elements := strings.Split(*values, ",")
 				if len(cmdActions) != len(elements) {
 					if len(elements) != 1 || len(elements) == 0 {

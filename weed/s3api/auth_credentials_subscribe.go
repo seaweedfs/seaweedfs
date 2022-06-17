@@ -5,7 +5,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3_config"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -53,7 +53,7 @@ func (s3a *S3ApiServer) onIamConfigUpdate(dir, filename string, content []byte) 
 
 //reload circuit breaker config
 func (s3a *S3ApiServer) onCircuitBreakerConfigUpdate(dir, filename string, content []byte) error {
-	if dir == s3_config.CircuitBreakerConfigDir && filename == s3_config.CircuitBreakerConfigFile {
+	if dir == s3_constants.CircuitBreakerConfigDir && filename == s3_constants.CircuitBreakerConfigFile {
 		if err := s3a.cb.LoadS3ApiConfigurationFromBytes(content); err != nil {
 			return err
 		}

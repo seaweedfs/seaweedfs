@@ -7,7 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/s3_pb"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3_config"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"github.com/gorilla/mux"
 	"go.uber.org/atomic"
@@ -29,7 +29,7 @@ func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
 	}
 
 	err := pb.WithFilerClient(false, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		content, err := filer.ReadInsideFiler(client, s3_config.CircuitBreakerConfigDir, s3_config.CircuitBreakerConfigFile)
+		content, err := filer.ReadInsideFiler(client, s3_constants.CircuitBreakerConfigDir, s3_constants.CircuitBreakerConfigFile)
 		if err != nil {
 			return fmt.Errorf("read S3 circuit breaker config: %v", err)
 		}
@@ -73,7 +73,7 @@ func (cb *CircuitBreaker) loadCircuitBreakerConfig(cfg *s3_pb.S3CircuitBreakerCo
 	for bucket, cbOptions := range cfg.Buckets {
 		if cbOptions.Enabled {
 			for action, limit := range cbOptions.Actions {
-				limitations[s3_config.Concat(bucket, action)] = limit
+				limitations[s3_constants.Concat(bucket, action)] = limit
 			}
 		}
 	}
@@ -110,7 +110,7 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 func (cb *CircuitBreaker) limit(r *http.Request, bucket string, action string) (rollback []func(), errCode s3err.ErrorCode) {
 
 	//bucket simultaneous request count
-	bucketCountRollBack, errCode := cb.loadCounterAndCompare(bucket, action, s3_config.LimitTypeCount, 1, s3err.ErrTooManyRequest)
+	bucketCountRollBack, errCode := cb.loadCounterAndCompare(bucket, action, s3_constants.LimitTypeCount, 1, s3err.ErrTooManyRequest)
 	if bucketCountRollBack != nil {
 		rollback = append(rollback, bucketCountRollBack)
 	}
@@ -119,7 +119,7 @@ func (cb *CircuitBreaker) limit(r *http.Request, bucket string, action string) (
 	}
 
 	//bucket simultaneous request content bytes
-	bucketContentLengthRollBack, errCode := cb.loadCounterAndCompare(bucket, action, s3_config.LimitTypeBytes, r.ContentLength, s3err.ErrRequestBytesExceed)
+	bucketContentLengthRollBack, errCode := cb.loadCounterAndCompare(bucket, action, s3_constants.LimitTypeBytes, r.ContentLength, s3err.ErrRequestBytesExceed)
 	if bucketContentLengthRollBack != nil {
 		rollback = append(rollback, bucketContentLengthRollBack)
 	}
@@ -128,7 +128,7 @@ func (cb *CircuitBreaker) limit(r *http.Request, bucket string, action string) (
 	}
 
 	//global simultaneous request count
-	globalCountRollBack, errCode := cb.loadCounterAndCompare("", action, s3_config.LimitTypeCount, 1, s3err.ErrTooManyRequest)
+	globalCountRollBack, errCode := cb.loadCounterAndCompare("", action, s3_constants.LimitTypeCount, 1, s3err.ErrTooManyRequest)
 	if globalCountRollBack != nil {
 		rollback = append(rollback, globalCountRollBack)
 	}
@@ -137,7 +137,7 @@ func (cb *CircuitBreaker) limit(r *http.Request, bucket string, action string) (
 	}
 
 	//global simultaneous request content bytes
-	globalContentLengthRollBack, errCode := cb.loadCounterAndCompare("", action, s3_config.LimitTypeBytes, r.ContentLength, s3err.ErrRequestBytesExceed)
+	globalContentLengthRollBack, errCode := cb.loadCounterAndCompare("", action, s3_constants.LimitTypeBytes, r.ContentLength, s3err.ErrRequestBytesExceed)
 	if globalContentLengthRollBack != nil {
 		rollback = append(rollback, globalContentLengthRollBack)
 	}
@@ -148,7 +148,7 @@ func (cb *CircuitBreaker) limit(r *http.Request, bucket string, action string) (
 }
 
 func (cb *CircuitBreaker) loadCounterAndCompare(bucket, action, limitType string, inc int64, errCode s3err.ErrorCode) (f func(), e s3err.ErrorCode) {
-	key := s3_config.Concat(bucket, action, limitType)
+	key := s3_constants.Concat(bucket, action, limitType)
 	e = s3err.ErrNone
 	if max, ok := cb.limitations[key]; ok {
 		counter, exists := cb.counters[key]

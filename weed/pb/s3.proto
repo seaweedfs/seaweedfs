@@ -25,11 +25,11 @@ message S3ConfigureResponse {
 }
 
 message S3CircuitBreakerConfig {
-    CbOptions global=1;
-    map<string, CbOptions> buckets= 2;
+    S3CircuitBreakerOptions global=1;
+    map<string, S3CircuitBreakerOptions> buckets= 2;
 }
 
-message CbOptions {
+message S3CircuitBreakerOptions {
     bool enabled=1;
     map<string, int64> actions = 2;
 }
