@@ -75,7 +75,7 @@ func init() {
 }
 
 var cmdUpdate = &Command{
-	UsageLine: "weed update -dir=/path/to/dir -name=name -version=x.xx",
+	UsageLine: "update [-dir=/path/to/dir] [-name=name] [-version=x.xx]",
 	Short:     "get latest or specific version from https://github.com/chrislusf/seaweedfs",
 	Long:      `get latest or specific version from https://github.com/chrislusf/seaweedfs`,
 }
