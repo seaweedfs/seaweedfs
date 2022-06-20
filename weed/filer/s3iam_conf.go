@@ -2,13 +2,12 @@ package filer
 
 import (
 	"bytes"
-	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
 	"io"
 )
 
-func ParseS3ConfigurationFromBytes(content []byte, config *iam_pb.S3ApiConfiguration) error {
+func ParseS3ConfigurationFromBytes[T proto.Message](content []byte, config T) error {
 	if err := jsonpb.Unmarshal(bytes.NewBuffer(content), config); err != nil {
 		return err
 	}
