@@ -108,16 +108,6 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 	remoteConfigureCommand.StringVar(&conf.StorjSecretKey, "storj.secret_key", "", "Storj secret key")
 	remoteConfigureCommand.StringVar(&conf.StorjEndpoint, "storj.endpoint", "", "Storj endpoint")
 
-	var namenodes arrayFlags
-	remoteConfigureCommand.Var(&namenodes, "hdfs.namenodes", "hdfs name node and port, example: namenode1:8020,namenode2:8020")
-	remoteConfigureCommand.StringVar(&conf.HdfsUsername, "hdfs.username", "", "hdfs user name")
-	remoteConfigureCommand.StringVar(&conf.HdfsServicePrincipalName, "hdfs.servicePrincipalName", "", `Kerberos service principal name for the namenode
-
-Example: hdfs/namenode.hadoop.docker
-Namenode running as service 'hdfs' with FQDN 'namenode.hadoop.docker'.
-`)
-	remoteConfigureCommand.StringVar(&conf.HdfsDataTransferProtection, "hdfs.dataTransferProtection", "", "[authentication|integrity|privacy] Kerberos data transfer protection")
-
 	if err = remoteConfigureCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -222,15 +212,4 @@ func (c *commandRemoteConfigure) saveRemoteStorage(commandEnv *CommandEnv, write
 
 	return nil
 
-}
-
-type arrayFlags []string
-
-func (i *arrayFlags) String() string {
-	return "my string representation"
-}
-
-func (i *arrayFlags) Set(value string) error {
-	*i = append(*i, value)
-	return nil
 }

@@ -8,4 +8,4 @@ install:
 	cd weed; go install
 
 full_install:
-	cd weed; go install -tags "elastic gocdk sqlite hdfs ydb"
+	cd weed; go install -tags "elastic gocdk sqlite ydb"

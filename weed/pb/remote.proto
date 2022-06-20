@@ -49,11 +49,6 @@ message RemoteConf {
   string wasabi_endpoint = 42;
   string wasabi_region = 43;
 
-  repeated string hdfs_namenodes = 50;
-  string hdfs_username = 51;
-  string hdfs_service_principal_name = 52;
-  string hdfs_data_transfer_protection = 53;
-
   string filebase_access_key = 60;
   string filebase_secret_key = 61;
   string filebase_endpoint = 62;
