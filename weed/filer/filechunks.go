@@ -3,10 +3,11 @@ package filer
 import (
 	"bytes"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"golang.org/x/exp/slices"
 	"math"
 	"sync"
+
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"golang.org/x/exp/slices"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -248,6 +249,9 @@ func MergeIntoVisibles(visibles []VisibleInterval, chunk *filer_pb.FileChunk) (n
 func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles []VisibleInterval, err error) {
 
 	chunks, _, err = ResolveChunkManifest(lookupFileIdFn, chunks, startOffset, stopOffset)
+	if err != nil {
+		return
+	}
 
 	visibles2 := readResolvedChunks(chunks)
 
