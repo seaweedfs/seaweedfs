@@ -11,28 +11,38 @@ import (
 )
 
 type TestLimitCase struct {
-	actionName       string
+	actionName string
+
 	limitType        string
 	bucketLimitValue int64
 	globalLimitValue int64
 
 	routineCount int
-	reqBytes     int64
-
 	successCount int64
 }
 
 var (
 	bucket         = "/test"
-	action         = s3_constants.ACTION_READ
+	action         = s3_constants.ACTION_WRITE
+	fileSize int64 = 200
+
 	TestLimitCases = []*TestLimitCase{
-		{action, s3_constants.LimitTypeCount, 5, 5, 6, 1024, 5},
-		{action, s3_constants.LimitTypeCount, 6, 6, 6, 1024, 6},
-		{action, s3_constants.LimitTypeCount, 5, 6, 6, 1024, 5},
-		{action, s3_constants.LimitTypeBytes, 1024, 1024, 6, 200, 5},
-		{action, s3_constants.LimitTypeBytes, 1200, 1200, 6, 200, 6},
-		{action, s3_constants.LimitTypeBytes, 11990, 11990, 60, 200, 59},
-		{action, s3_constants.LimitTypeBytes, 11790, 11990, 70, 200, 58},
+
+		//bucket-LimitTypeCount
+		{action, s3_constants.LimitTypeCount, 5, 6, 60, 5},
+		{action, s3_constants.LimitTypeCount, 0, 6, 6, 0},
+
+		//global-LimitTypeCount
+		{action, s3_constants.LimitTypeCount, 6, 5, 6, 5},
+		{action, s3_constants.LimitTypeCount, 6, 0, 6, 0},
+
+		//bucket-LimitTypeBytes
+		{action, s3_constants.LimitTypeBytes, 1000, 1020, 6, 5},
+		{action, s3_constants.LimitTypeBytes, 0, 1020, 6, 0},
+
+		//global-LimitTypeBytes
+		{action, s3_constants.LimitTypeBytes, 1020, 1000, 6, 5},
+		{action, s3_constants.LimitTypeBytes, 1020, 0, 6, 0},
 	}
 )
 
@@ -64,14 +74,14 @@ func TestLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		successCount := doLimit(circuitBreaker, tc.routineCount, &http.Request{ContentLength: tc.reqBytes})
+		successCount := doLimit(circuitBreaker, tc.routineCount, &http.Request{ContentLength: fileSize}, tc.actionName)
 		if successCount != tc.successCount {
-			t.Errorf("successCount not equal, expect=%d, actual=%d", tc.successCount, successCount)
+			t.Errorf("successCount not equal, expect=%d, actual=%d, case: %v", tc.successCount, successCount, tc)
 		}
 	}
 }
 
-func doLimit(circuitBreaker *CircuitBreaker, routineCount int, r *http.Request) int64 {
+func doLimit(circuitBreaker *CircuitBreaker, routineCount int, r *http.Request, action string) int64 {
 	var successCounter int64
 	resultCh := make(chan []func(), routineCount)
 	var wg sync.WaitGroup
