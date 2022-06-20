@@ -367,7 +367,7 @@ func TestProcessMetadataBytes(t *testing.T) {
 		reqHeader := transferHToHeader(tc.request)
 		existing := transferHToBytesArr(tc.existing)
 		replaceMeta, replaceTagging := replaceDirective(reqHeader)
-		extends := processMetadataBytes(reqHeader, existing, replaceMeta, replaceTagging)
+		extends, _ := processMetadataBytes(reqHeader, existing, replaceMeta, replaceTagging)
 
 		result := transferBytesArrToH(extends)
 		fmtTagging(result, tc.want)
