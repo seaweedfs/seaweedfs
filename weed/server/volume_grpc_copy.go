@@ -3,6 +3,8 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"io"
 	"math"
 	"os"
@@ -77,6 +79,28 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 				os.Remove(dataBaseFileName + ".note")
 			}
 		}()
+
+		var preallocateSize int64
+		if grpcErr := pb.WithMasterClient(false, vs.GetMaster(), vs.grpcDialOption, func(client master_pb.SeaweedClient) error {
+			resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+			if err != nil {
+				return fmt.Errorf("get master %s configuration: %v", vs.GetMaster(), err)
+			}
+			if resp.VolumePreallocate {
+				preallocateSize = int64(resp.VolumeSizeLimitMB) * (1 << 20)
+			}
+			return nil
+		}); grpcErr != nil {
+			glog.V(0).Infof("connect to %s: %v", vs.GetMaster(), grpcErr)
+		}
+
+		if preallocateSize > 0 {
+			volumeFile := dataBaseFileName + ".dat"
+			_, err := backend.CreateVolumeFile(volumeFile, preallocateSize, 0)
+			if err != nil {
+				return fmt.Errorf("create volume file %s: %v", volumeFile, err)
+			}
+		}
 
 		// println("source:", volFileInfoResp.String())
 		copyResponse := &volume_server_pb.VolumeCopyResponse{}
