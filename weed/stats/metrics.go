@@ -77,6 +77,14 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"type"})
 
+	FilerServerLastSendTsOfSubscribeGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "filer",
+			Name:      "last_send_timestamp_of_subscribe",
+			Help:      "The last send timestamp of the filer subscription.",
+		}, []string{"sourceFiler", "clientName", "path"})
+
 	FilerStoreCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "SeaweedFS",
@@ -93,6 +101,14 @@ var (
 			Help:      "Bucketed histogram of filer store request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"store", "type"})
+
+	FilerSyncOffsetGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "filerSync",
+			Name:      "sync_offset",
+			Help:      "The offset of the filer synchronization service.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
 
 	VolumeServerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -157,7 +173,8 @@ var (
 			Subsystem: "s3",
 			Name:      "request_total",
 			Help:      "Counter of s3 requests.",
-		}, []string{"type", "code"})
+		}, []string{"type", "code", "bucket"})
+
 	S3RequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "SeaweedFS",
@@ -165,7 +182,7 @@ var (
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of s3 request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
-		}, []string{"type"})
+		}, []string{"type", "bucket"})
 )
 
 func init() {
@@ -179,6 +196,8 @@ func init() {
 	Gather.MustRegister(FilerRequestHistogram)
 	Gather.MustRegister(FilerStoreCounter)
 	Gather.MustRegister(FilerStoreHistogram)
+	Gather.MustRegister(FilerSyncOffsetGauge)
+	Gather.MustRegister(FilerServerLastSendTsOfSubscribeGauge)
 	Gather.MustRegister(collectors.NewGoCollector())
 	Gather.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 

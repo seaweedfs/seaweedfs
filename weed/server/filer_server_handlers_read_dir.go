@@ -73,7 +73,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	ui.StatusTpl.Execute(w, struct {
+	err = ui.StatusTpl.Execute(w, struct {
 		Path                  string
 		Breadcrumbs           []ui.Breadcrumb
 		Entries               interface{}
@@ -81,6 +81,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		LastFileName          string
 		ShouldDisplayLoadMore bool
 		EmptyFolder           bool
+		ShowDirectoryDelete   bool
 	}{
 		path,
 		ui.ToBreadcrumb(path),
@@ -89,5 +90,9 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		lastFileName,
 		shouldDisplayLoadMore,
 		emptyFolder,
+		fs.option.ShowUIDirectoryDelete,
 	})
+	if err != nil {
+		glog.V(0).Infof("Template Execute Error: %v", err)
+	}
 }

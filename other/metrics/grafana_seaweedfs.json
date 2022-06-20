@@ -539,11 +539,12 @@
           "step": 60
         },
         {
-          "expr": "histogram_quantile(0.90, sum(rate(SeaweedFS_s3_request_seconds_bucket[1m])) by (le, type))",
+          "expr": "histogram_quantile(0.90, sum(rate(SeaweedFS_s3_request_seconds_bucket[1m])) by (le, type, bucket))",
           "format": "time_series",
           "hide": false,
+          "interval": "",
           "intervalFactor": 2,
-          "legendFormat": "{{type}}",
+          "legendFormat": "{{bucket}} {{type}}",
           "refId": "B",
           "step": 60
         }
@@ -645,11 +646,12 @@
           "step": 60
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_s3_request_seconds_bucket[1m])) by (le, type))",
+          "expr": "histogram_quantile(0.95, sum(rate(SeaweedFS_s3_request_seconds_bucket[1m])) by (le, type, bucket))",
           "format": "time_series",
           "hide": false,
+          "interval": "",
           "intervalFactor": 2,
-          "legendFormat": "{{type}}",
+          "legendFormat": "{{bucket}} {{type}}",
           "refId": "B",
           "step": 60
         }
@@ -751,11 +753,11 @@
           "step": 60
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_s3_request_seconds_bucket[1m])) by (le, type))",
+          "expr": "histogram_quantile(0.99, sum(rate(SeaweedFS_s3_request_seconds_bucket[1m])) by (le, type, bucket))",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
-          "legendFormat": "{{type}}",
+          "legendFormat": "{{bucket}} {{type}}",
           "refId": "B",
           "step": 60
         }
@@ -864,7 +866,7 @@
           "expr": "rate(SeaweedFS_s3_request_total[1m])",
           "format": "time_series",
           "intervalFactor": 2,
-          "legendFormat": "{{type}}",
+          "legendFormat": "{{bucket}} {{type}}",
           "refId": "A",
           "step": 30
         }

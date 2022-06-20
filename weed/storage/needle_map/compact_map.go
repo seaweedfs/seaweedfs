@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	batch = 100000
+	batch = 10000
 )
 
 type SectionalNeedleId uint32
