@@ -151,7 +151,6 @@ require (
 	github.com/Jille/raft-grpc-transport v1.2.0
 	github.com/arangodb/go-driver v1.3.2
 	github.com/fluent/fluent-logger-golang v1.9.0
-	github.com/hanwen/go-fuse/v2 v2.1.0
 	github.com/hashicorp/raft v1.3.9
 	github.com/hashicorp/raft-boltdb v0.0.0-20220329195025-15018e9b97e0
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
@@ -182,6 +181,7 @@ require (
 	github.com/fclairamb/go-log v0.3.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/googleapis/go-type-adapters v1.0.0 // indirect
+	github.com/hanwen/go-fuse/v2 v2.1.1-0.20220531082602-17a864ed5940 // indirect
 	github.com/hashicorp/go-hclog v1.2.0 // indirect
 	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
 	github.com/hashicorp/go-msgpack v1.1.5 // indirect
