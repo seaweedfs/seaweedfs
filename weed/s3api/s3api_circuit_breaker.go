@@ -10,21 +10,21 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"github.com/gorilla/mux"
-	"go.uber.org/atomic"
 	"net/http"
 	"sync"
+	"sync/atomic"
 )
 
 type CircuitBreaker struct {
 	sync.Mutex
 	Enabled     bool
-	counters    map[string]*atomic.Int64
+	counters    map[string]*int64
 	limitations map[string]int64
 }
 
 func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
 	cb := &CircuitBreaker{
-		counters:    make(map[string]*atomic.Int64),
+		counters:    make(map[string]*int64),
 		limitations: make(map[string]int64),
 	}
 
@@ -156,21 +156,22 @@ func (cb *CircuitBreaker) loadCounterAndCompare(bucket, action, limitType string
 			cb.Lock()
 			counter, exists = cb.counters[key]
 			if !exists {
-				counter = atomic.NewInt64(0)
+				var newCounter int64
+				counter = &newCounter
 				cb.counters[key] = counter
 			}
 			cb.Unlock()
 		}
-		current := counter.Load()
+		current := atomic.LoadInt64(counter)
 		if current+inc > max {
 			e = errCode
 			return
 		} else {
-			counter.Add(inc)
+			current := atomic.AddInt64(counter, inc)
 			f = func() {
-				counter.Sub(inc)
+				atomic.AddInt64(counter, -inc)
 			}
-			current = counter.Load()
+			current = atomic.LoadInt64(counter)
 			if current > max {
 				e = errCode
 				return

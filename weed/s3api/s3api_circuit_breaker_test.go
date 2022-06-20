@@ -4,9 +4,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/s3_pb"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
-	"go.uber.org/atomic"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -32,7 +32,7 @@ var (
 		{action, s3_constants.LimitTypeBytes, 1024, 1024, 6, 200, 5},
 		{action, s3_constants.LimitTypeBytes, 1200, 1200, 6, 200, 6},
 		{action, s3_constants.LimitTypeBytes, 11990, 11990, 60, 200, 59},
-		{action, s3_constants.LimitTypeBytes, 11790, 11990, 60, 200, 58},
+		{action, s3_constants.LimitTypeBytes, 11790, 11990, 70, 200, 58},
 	}
 )
 
@@ -56,7 +56,7 @@ func TestLimit(t *testing.T) {
 			},
 		}
 		circuitBreaker := &CircuitBreaker{
-			counters:    make(map[string]*atomic.Int64),
+			counters:    make(map[string]*int64),
 			limitations: make(map[string]int64),
 		}
 		err := circuitBreaker.loadCircuitBreakerConfig(circuitBreakerConfig)
@@ -72,7 +72,7 @@ func TestLimit(t *testing.T) {
 }
 
 func doLimit(circuitBreaker *CircuitBreaker, routineCount int, r *http.Request) int64 {
-	var successCounter atomic.Int64
+	var successCounter int64
 	resultCh := make(chan []func(), routineCount)
 	var wg sync.WaitGroup
 	for i := 0; i < routineCount; i++ {
@@ -81,7 +81,7 @@ func doLimit(circuitBreaker *CircuitBreaker, routineCount int, r *http.Request) 
 			defer wg.Done()
 			rollbackFn, errCode := circuitBreaker.limit(r, bucket, action)
 			if errCode == s3err.ErrNone {
-				successCounter.Inc()
+				atomic.AddInt64(&successCounter, 1)
 			}
 			resultCh <- rollbackFn
 		}()
@@ -93,5 +93,5 @@ func doLimit(circuitBreaker *CircuitBreaker, routineCount int, r *http.Request) 
 			fn()
 		}
 	}
-	return successCounter.Load()
+	return successCounter
 }

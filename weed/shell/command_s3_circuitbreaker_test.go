@@ -17,13 +17,13 @@ var (
 	TestCases = []*Case{
 		//add circuit breaker config for global
 		{
-			args: strings.Split("-global -type count -actions Read,Write -values 500,200", " "),
+			args: strings.Split("-global -type Count -actions Read,Write -values 500,200", " "),
 			result: `{
 				"global": {
 					"enabled": true,
 					"actions": {
-						"Read:count": "500",
-						"Write:count": "200"
+						"Read:Count": "500",
+						"Write:Count": "200"
 					}
 				}
 			}`,
@@ -35,8 +35,8 @@ var (
 			result: `{
 				"global": {
 					"actions": {
-						"Read:count": "500",
-						"Write:count": "200"
+						"Read:Count": "500",
+						"Write:Count": "200"
 					}
 				}
 			}`,
@@ -44,34 +44,34 @@ var (
 
 		//add circuit breaker config for buckets x,y,z
 		{
-			args: strings.Split("-buckets x,y,z -type count -actions Read,Write -values 200,100", " "),
+			args: strings.Split("-buckets x,y,z -type Count -actions Read,Write -values 200,100", " "),
 			result: `{
 				"global": {
 					"actions": {
-						"Read:count": "500",
-						"Write:count": "200"
+						"Read:Count": "500",
+						"Write:Count": "200"
 					}
 				},
 				"buckets": {
 					"x": {
 						"enabled": true,
 						"actions": {
-							"Read:count": "200",
-							"Write:count": "100"
+							"Read:Count": "200",
+							"Write:Count": "100"
 						}
 					},
 					"y": {
 						"enabled": true,
 						"actions": {
-							"Read:count": "200",
-							"Write:count": "100"
+							"Read:Count": "200",
+							"Write:Count": "100"
 						}
 					},
 					"z": {
 						"enabled": true,
 						"actions": {
-							"Read:count": "200",
-							"Write:count": "100"
+							"Read:Count": "200",
+							"Write:Count": "100"
 						}
 					}
 				}
@@ -84,29 +84,29 @@ var (
 			result: `{
 			  "global": {
 				"actions": {
-				  "Read:count": "500",
-				  "Write:count": "200"
+				  "Read:Count": "500",
+				  "Write:Count": "200"
 				}
 			  },
 			  "buckets": {
 				"x": {
 				  "actions": {
-					"Read:count": "200",
-					"Write:count": "100"
+					"Read:Count": "200",
+					"Write:Count": "100"
 				  }
 				},
 				"y": {
 				  "enabled": true,
 				  "actions": {
-					"Read:count": "200",
-					"Write:count": "100"
+					"Read:Count": "200",
+					"Write:Count": "100"
 				  }
 				},
 				"z": {
 				  "enabled": true,
 				  "actions": {
-					"Read:count": "200",
-					"Write:count": "100"
+					"Read:Count": "200",
+					"Write:Count": "100"
 				  }
 				}
 			  }
@@ -119,23 +119,124 @@ var (
 			result: `{
 			  "global": {
 				"actions": {
-				  "Read:count": "500",
-				  "Write:count": "200"
+				  "Read:Count": "500",
+				  "Write:Count": "200"
 				}
 			  },
 			  "buckets": {
 				"y": {
 				  "enabled": true,
 				  "actions": {
-					"Read:count": "200",
-					"Write:count": "100"
+					"Read:Count": "200",
+					"Write:Count": "100"
 				  }
 				},
 				"z": {
 				  "enabled": true,
 				  "actions": {
-					"Read:count": "200",
-					"Write:count": "100"
+					"Read:Count": "200",
+					"Write:Count": "100"
+				  }
+				}
+			  }
+			}`,
+		},
+
+		//configure the circuit breaker for the size of the uploaded file for bucket x,y
+		{
+			args: strings.Split("-buckets x,y -type MB -actions Write -values 1024", " "),
+			result: `{
+			  "global": {
+				"actions": {
+				  "Read:Count": "500",
+				  "Write:Count": "200"
+				}
+			  },
+			  "buckets": {
+				"x": {
+				  "enabled": true,
+				  "actions": {
+					"Write:MB": "1073741824"
+				  }
+				},
+				"y": {
+				  "enabled": true,
+				  "actions": {
+					"Read:Count": "200",
+					"Write:Count": "100",
+					"Write:MB": "1073741824"
+				  }
+				},
+				"z": {
+				  "enabled": true,
+				  "actions": {
+					"Read:Count": "200",
+					"Write:Count": "100"
+				  }
+				}
+			  }
+			}`,
+		},
+
+		//delete the circuit breaker configuration for the size of the uploaded file of bucket x,y
+		{
+			args: strings.Split("-buckets x,y -type MB -actions Write -delete", " "),
+			result: `{
+			  "global": {
+				"actions": {
+				  "Read:Count": "500",
+				  "Write:Count": "200"
+				}
+			  },
+			  "buckets": {
+				"x": {
+				  "enabled": true
+				},
+				"y": {
+				  "enabled": true,
+				  "actions": {
+					"Read:Count": "200",
+					"Write:Count": "100"
+				  }
+				},
+				"z": {
+				  "enabled": true,
+				  "actions": {
+					"Read:Count": "200",
+					"Write:Count": "100"
+				  }
+				}
+			  }
+			}`,
+		},
+
+		//enable global circuit breaker config (without -disable flag)
+		{
+			args: strings.Split("-global", " "),
+			result: `{
+			  "global": {
+				"enabled": true,
+				"actions": {
+				  "Read:Count": "500",
+				  "Write:Count": "200"
+				}
+			  },
+			  "buckets": {
+				"x": {
+				  "enabled": true
+				},
+				"y": {
+				  "enabled": true,
+				  "actions": {
+					"Read:Count": "200",
+					"Write:Count": "100"
+				  }
+				},
+				"z": {
+				  "enabled": true,
+				  "actions": {
+					"Read:Count": "200",
+					"Write:Count": "100"
 				  }
 				}
 			  }

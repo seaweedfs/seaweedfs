@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"github.com/alecthomas/units"
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/s3_pb"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
@@ -61,8 +60,8 @@ func (c *commandS3CircuitBreaker) Do(args []string, commandEnv *CommandEnv, writ
 	global := s3CircuitBreakerCommand.Bool("global", false, "configure global circuit breaker")
 
 	actions := s3CircuitBreakerCommand.String("actions", "", "comma separated actions names: Read,Write,List,Tagging,Admin")
-	limitType := s3CircuitBreakerCommand.String("type", "", "count|bytes simultaneous requests count")
-	values := s3CircuitBreakerCommand.String("values", "", "comma separated max values,Maximum number of simultaneous requests content length, support byte unit: eg: 1k, 10m, 1g")
+	limitType := s3CircuitBreakerCommand.String("type", "", "'Count' or 'MB'; Count represents the number of simultaneous requests, and MB represents the content size of all simultaneous requests")
+	values := s3CircuitBreakerCommand.String("values", "", "comma separated values")
 
 	disabled := s3CircuitBreakerCommand.Bool("disable", false, "disable global or buckets circuit breaker")
 	deleted := s3CircuitBreakerCommand.Bool("delete", false, "delete circuit breaker config")
@@ -326,7 +325,7 @@ func (c *commandS3CircuitBreaker) initActionsAndValues(buckets, actions, limitTy
 					if len(elements) != 1 || len(elements) == 0 {
 						return nil, nil, nil, fmt.Errorf("values count of -actions and -values not equal")
 					}
-					v, err := units.ParseStrictBytes(elements[0])
+					v, err := parseMBToBytes(elements[0])
 					if err != nil {
 						return nil, nil, nil, fmt.Errorf("value of -max must be a legal number(s)")
 					}
@@ -335,7 +334,7 @@ func (c *commandS3CircuitBreaker) initActionsAndValues(buckets, actions, limitTy
 					}
 				} else {
 					for _, value := range elements {
-						v, err := units.ParseStrictBytes(value)
+						v, err := parseMBToBytes(value)
 						if err != nil {
 							return nil, nil, nil, fmt.Errorf("value of -max must be a legal number(s)")
 						}
@@ -350,4 +349,10 @@ func (c *commandS3CircuitBreaker) initActionsAndValues(buckets, actions, limitTy
 		}
 	}
 	return cmdBuckets, cmdActions, cmdValues, nil
+}
+
+func parseMBToBytes(valStr string) (int64, error) {
+	v, err := strconv.Atoi(valStr)
+	v *= 1024 * 1024
+	return int64(v), err
 }
