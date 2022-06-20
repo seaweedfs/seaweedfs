@@ -144,6 +144,12 @@ func WithGrpcClient(streamingMode bool, fn func(*grpc.ClientConn) error, address
 		defer grpcConnection.Close()
 		executionErr := fn(grpcConnection)
 		if executionErr != nil {
+			// Try force close closed client connection https://github.com/chrislusf/seaweedfs/issues/2802
+			if strings.Contains(executionErr.Error(), "connection closed") {
+				if err := grpcConnection.Close(); err != nil {
+					glog.Warningf("grpc client close error: %v", err)
+				}
+			}
 			return executionErr
 		}
 		return nil
