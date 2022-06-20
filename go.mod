@@ -3,8 +3,8 @@ module github.com/chrislusf/seaweedfs
 go 1.18
 
 require (
-	cloud.google.com/go v0.100.2 // indirect
-	cloud.google.com/go/pubsub v1.21.1
+	cloud.google.com/go v0.102.0 // indirect
+	cloud.google.com/go/pubsub v1.22.2
 	cloud.google.com/go/storage v1.22.1
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
