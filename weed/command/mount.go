@@ -86,7 +86,7 @@ var cmdMount = &Command{
   This uses github.com/seaweedfs/fuse, which enables writing FUSE file systems on
   Linux, and OS X.
 
-  On OS X, it requires OSXFUSE (http://osxfuse.github.com/).
+  On OS X, it requires OSXFUSE (https://osxfuse.github.io/).
 
   `,
 }
