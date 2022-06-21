@@ -1,9 +1,11 @@
 package command
 
 import (
+	"fmt"
 	"golang.org/x/exp/slices"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -151,11 +153,12 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 
 	// start raftServer
+	metaDir := path.Join(*masterOption.metaFolder, fmt.Sprintf("m%d", *masterOption.port))
 	raftServerOption := &weed_server.RaftServerOption{
 		GrpcDialOption:    security.LoadClientTLS(util.GetViper(), "grpc.master"),
 		Peers:             masterPeers,
 		ServerAddr:        myMasterAddress,
-		DataDir:           util.ResolvePath(*masterOption.metaFolder),
+		DataDir:           util.ResolvePath(metaDir),
 		Topo:              ms.Topo,
 		RaftResumeState:   *masterOption.raftResumeState,
 		HeartbeatInterval: *masterOption.heartbeatInterval,
