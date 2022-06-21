@@ -121,7 +121,10 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	if option.RaftBootstrap {
 		os.RemoveAll(path.Join(s.dataDir, ldbFile))
 		os.RemoveAll(path.Join(s.dataDir, sdbFile))
-		os.RemoveAll(path.Join(s.dataDir, "snapshot"))
+		os.RemoveAll(path.Join(s.dataDir, "snapshots"))
+	}
+	if err := os.MkdirAll(path.Join(s.dataDir, "snapshots"), os.ModePerm); err != nil {
+		return nil, err
 	}
 	baseDir := s.dataDir
 
