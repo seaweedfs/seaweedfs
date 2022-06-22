@@ -183,6 +183,14 @@ var (
 			Help:      "Bucketed histogram of s3 request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"type", "bucket"})
+
+	S3RequestLimitCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "s3",
+			Name:      "request_limits",
+			Help:      "Counter of s3 circuit breaker request limits.",
+		}, []string{"action"})
 )
 
 func init() {
@@ -211,6 +219,7 @@ func init() {
 
 	Gather.MustRegister(S3RequestCounter)
 	Gather.MustRegister(S3RequestHistogram)
+	Gather.MustRegister(S3RequestLimitCounter)
 }
 
 func LoopPushingMetric(name, instance, addr string, intervalSeconds int) {

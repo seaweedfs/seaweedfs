@@ -32,13 +32,13 @@ func (c *commandS3CircuitBreaker) Help() string {
 
 	# examples
 	# add circuit breaker config for global
-	s3.circuitBreaker -global -type count -actions Read,Write -values 500,200 -apply
+	s3.circuitBreaker -global -type Count -actions Read,Write -values 500,200 -apply
 
 	# disable global config
 	s3.circuitBreaker -global -disable -apply
 
 	# add circuit breaker config for buckets x,y,z
-	s3.circuitBreaker -buckets x,y,z -type count -actions Read,Write -values 200,100 -apply
+	s3.circuitBreaker -buckets x,y,z -type Count -actions Read,Write -values 200,100 -apply
 
 	# disable circuit breaker config of x
 	s3.circuitBreaker -buckets x -disable -apply
@@ -89,41 +89,29 @@ func (c *commandS3CircuitBreaker) Do(args []string, commandEnv *CommandEnv, writ
 	}
 
 	if *deleted {
-		cmdBuckets, cmdActions, _, err := c.initActionsAndValues(buckets, actions, limitType, values, true)
+		cmdBuckets, cmdActions, _, err := c.initActionsAndValues(buckets, actions, limitType, values, false)
 		if err != nil {
 			return err
 		}
 
-		if len(cmdBuckets) <= 0 && !*global {
-			if len(cmdActions) > 0 {
-				deleteGlobalActions(cbCfg, cmdActions, limitType)
-				if cbCfg.Buckets != nil {
-					var allBuckets []string
-					for bucket := range cbCfg.Buckets {
-						allBuckets = append(allBuckets, bucket)
-					}
-					deleteBucketsActions(allBuckets, cbCfg, cmdActions, limitType)
-				}
-			} else {
-				cbCfg.Global = nil
-				cbCfg.Buckets = nil
+		if len(cmdBuckets) == 0 && !*global {
+			deleteGlobalActions(cbCfg, cmdActions, limitType)
+			for bucket := range cbCfg.Buckets {
+				cmdBuckets = append(cmdBuckets, bucket)
 			}
+			deleteBucketsActions(cmdBuckets, cbCfg, cmdActions, limitType)
 		} else {
 			if len(cmdBuckets) > 0 {
 				deleteBucketsActions(cmdBuckets, cbCfg, cmdActions, limitType)
 			}
 			if *global {
-				deleteGlobalActions(cbCfg, cmdActions, nil)
+				deleteGlobalActions(cbCfg, cmdActions, limitType)
 			}
 		}
 	} else {
-		cmdBuckets, cmdActions, cmdValues, err := c.initActionsAndValues(buckets, actions, limitType, values, *disabled)
+		cmdBuckets, cmdActions, cmdValues, err := c.initActionsAndValues(buckets, actions, limitType, values, !*disabled)
 		if err != nil {
 			return err
-		}
-
-		if len(cmdActions) > 0 && len(*buckets) <= 0 && !*global {
-			return fmt.Errorf("one of -global and -buckets must be specified")
 		}
 
 		if len(*buckets) > 0 {
@@ -152,12 +140,12 @@ func (c *commandS3CircuitBreaker) Do(args []string, commandEnv *CommandEnv, writ
 		if *global {
 			globalOptions := cbCfg.Global
 			if globalOptions == nil {
-				globalOptions = &s3_pb.S3CircuitBreakerOptions{Actions: make(map[string]int64, len(cmdActions))}
+				globalOptions = &s3_pb.S3CircuitBreakerOptions{Actions: make(map[string]string, len(cmdActions))}
 				cbCfg.Global = globalOptions
 			}
 			globalOptions.Enabled = !*disabled
 
-			if len(cmdActions) > 0 {
+			if *limitType != "" {
 				err = insertOrUpdateValues(globalOptions, cmdActions, cmdValues, limitType)
 				if err != nil {
 					return err
@@ -199,13 +187,9 @@ func loadConfig(commandEnv *CommandEnv, dir string, file string, buf *bytes.Buff
 	return nil
 }
 
-func insertOrUpdateValues(cbOptions *s3_pb.S3CircuitBreakerOptions, cmdActions []string, cmdValues []int64, limitType *string) error {
-	if len(*limitType) == 0 {
-		return fmt.Errorf("type not valid, only 'count' and 'bytes' are allowed")
-	}
-
+func insertOrUpdateValues(cbOptions *s3_pb.S3CircuitBreakerOptions, cmdActions []string, cmdValues []string, limitType *string) error {
 	if cbOptions.Actions == nil {
-		cbOptions.Actions = make(map[string]int64, len(cmdActions))
+		cbOptions.Actions = make(map[string]string, len(cmdActions))
 	}
 
 	if len(cmdValues) > 0 {
@@ -217,26 +201,30 @@ func insertOrUpdateValues(cbOptions *s3_pb.S3CircuitBreakerOptions, cmdActions [
 }
 
 func deleteBucketsActions(cmdBuckets []string, cbCfg *s3_pb.S3CircuitBreakerConfig, cmdActions []string, limitType *string) {
-	if cbCfg.Buckets == nil {
+	if len(cbCfg.Buckets) == 0 {
 		return
 	}
 
+	deletedActions := cmdActions
 	if len(cmdActions) == 0 {
-		for _, bucket := range cmdBuckets {
-			delete(cbCfg.Buckets, bucket)
-		}
-	} else {
-		for _, bucket := range cmdBuckets {
-			if cbOption, ok := cbCfg.Buckets[bucket]; ok {
-				if len(cmdActions) > 0 && cbOption.Actions != nil {
-					for _, action := range cmdActions {
-						delete(cbOption.Actions, s3_constants.Concat(action, *limitType))
-					}
-				}
+		deletedActions = s3_constants.AllowedActions
+	}
 
-				if len(cbOption.Actions) == 0 && !cbOption.Enabled {
-					delete(cbCfg.Buckets, bucket)
+	for _, bucket := range cmdBuckets {
+		if bucketOptions, ok := cbCfg.Buckets[bucket]; ok {
+			if len(cmdActions) == 0 && *limitType == "" {
+				delete(cbCfg.Buckets, bucket)
+				continue
+			}
+
+			if len(deletedActions) > 0 && len(bucketOptions.Actions) > 0 {
+				for _, action := range deletedActions {
+					deleteAction(bucketOptions.Actions, action, limitType)
 				}
+			}
+
+			if len(bucketOptions.Actions) == 0 && !bucketOptions.Enabled {
+				delete(cbCfg.Buckets, bucket)
 			}
 		}
 	}
@@ -252,12 +240,19 @@ func deleteGlobalActions(cbCfg *s3_pb.S3CircuitBreakerConfig, cmdActions []strin
 		return
 	}
 
-	if len(cmdActions) == 0 && globalOptions.Actions != nil {
-		globalOptions.Actions = nil
+	if len(cmdActions) == 0 && *limitType == "" {
+		cbCfg.Global = nil
 		return
-	} else {
-		for _, action := range cmdActions {
-			delete(globalOptions.Actions, s3_constants.Concat(action, *limitType))
+	}
+
+	deletedActions := cmdActions
+	if len(cmdActions) == 0 {
+		deletedActions = s3_constants.AllowedActions
+	}
+
+	if len(globalOptions.Actions) > 0 {
+		for _, action := range deletedActions {
+			deleteAction(globalOptions.Actions, action, limitType)
 		}
 	}
 
@@ -266,7 +261,16 @@ func deleteGlobalActions(cbCfg *s3_pb.S3CircuitBreakerConfig, cmdActions []strin
 	}
 }
 
-func (c *commandS3CircuitBreaker) initActionsAndValues(buckets, actions, limitType, values *string, parseValues bool) (cmdBuckets, cmdActions []string, cmdValues []int64, err error) {
+func deleteAction(actions map[string]string, action string, limitType *string) {
+	if *limitType != "" {
+		delete(actions, s3_constants.Concat(action, *limitType))
+	} else {
+		delete(actions, s3_constants.Concat(action, s3_constants.LimitTypeCount))
+		delete(actions, s3_constants.Concat(action, s3_constants.LimitTypeMB))
+	}
+}
+
+func (c *commandS3CircuitBreaker) initActionsAndValues(buckets, actions, limitType, values *string, parseValues bool) (cmdBuckets, cmdActions []string, cmdValues []string, err error) {
 	if len(*buckets) > 0 {
 		cmdBuckets = strings.Split(*buckets, ",")
 	}
@@ -288,8 +292,12 @@ func (c *commandS3CircuitBreaker) initActionsAndValues(buckets, actions, limitTy
 		}
 	}
 
-	if !parseValues {
-		if len(cmdActions) < 0 {
+	if *limitType != "" && !(*limitType == s3_constants.LimitTypeMB || *limitType == s3_constants.LimitTypeCount) {
+		return nil, nil, nil, fmt.Errorf("type not valid, only 'count' and 'MB' are allowed")
+	}
+
+	if parseValues {
+		if len(cmdActions) == 0 {
 			for _, action := range s3_constants.AllowedActions {
 				cmdActions = append(cmdActions, action)
 			}
@@ -301,58 +309,50 @@ func (c *commandS3CircuitBreaker) initActionsAndValues(buckets, actions, limitTy
 				elements := strings.Split(*values, ",")
 				if len(cmdActions) != len(elements) {
 					if len(elements) != 1 || len(elements) == 0 {
-						return nil, nil, nil, fmt.Errorf("count of flag[-actions] and flag[-counts] not equal")
+						return nil, nil, nil, fmt.Errorf("values count of -actions and --values not equal")
 					}
-					v, err := strconv.Atoi(elements[0])
+					//validate values
+					_, err := strconv.Atoi(elements[0])
 					if err != nil {
-						return nil, nil, nil, fmt.Errorf("value of -values must be a legal number(s)")
+						return nil, nil, nil, fmt.Errorf("value of -values must be a legal int number(s)")
 					}
 					for range cmdActions {
-						cmdValues = append(cmdValues, int64(v))
+						cmdValues = append(cmdValues, elements[0])
 					}
 				} else {
 					for _, value := range elements {
-						v, err := strconv.Atoi(value)
+						_, err := strconv.Atoi(value)
 						if err != nil {
-							return nil, nil, nil, fmt.Errorf("value of -values must be a legal number(s)")
+							return nil, nil, nil, fmt.Errorf("value of -values must be a legal int number(s)")
 						}
-						cmdValues = append(cmdValues, int64(v))
+						cmdValues = append(cmdValues, value)
 					}
 				}
-			case s3_constants.LimitTypeBytes:
+			case s3_constants.LimitTypeMB:
 				elements := strings.Split(*values, ",")
 				if len(cmdActions) != len(elements) {
 					if len(elements) != 1 || len(elements) == 0 {
 						return nil, nil, nil, fmt.Errorf("values count of -actions and -values not equal")
 					}
-					v, err := parseMBToBytes(elements[0])
+					//validate values
+					_, err := strconv.ParseFloat(elements[0], 64)
 					if err != nil {
-						return nil, nil, nil, fmt.Errorf("value of -max must be a legal number(s)")
+						return nil, nil, nil, fmt.Errorf("value must be a legal number(s)")
 					}
 					for range cmdActions {
-						cmdValues = append(cmdValues, v)
+						cmdValues = append(cmdValues, elements[0])
 					}
 				} else {
 					for _, value := range elements {
-						v, err := parseMBToBytes(value)
+						_, err := strconv.ParseFloat(value, 64)
 						if err != nil {
-							return nil, nil, nil, fmt.Errorf("value of -max must be a legal number(s)")
+							return nil, nil, nil, fmt.Errorf("value must be a legal number(s)")
 						}
-						cmdValues = append(cmdValues, v)
+						cmdValues = append(cmdValues, value)
 					}
 				}
-			default:
-				return nil, nil, nil, fmt.Errorf("type not valid, only 'count' and 'bytes' are allowed")
 			}
-		} else {
-			*limitType = ""
 		}
 	}
 	return cmdBuckets, cmdActions, cmdValues, nil
-}
-
-func parseMBToBytes(valStr string) (int64, error) {
-	v, err := strconv.Atoi(valStr)
-	v *= 1024 * 1024
-	return int64(v), err
 }

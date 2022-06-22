@@ -1,8 +1,6 @@
 package s3api
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/pb/s3_pb"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"net/http"
 	"sync"
@@ -11,85 +9,206 @@ import (
 )
 
 type TestLimitCase struct {
-	actionName string
-
-	limitType        string
-	bucketLimitValue int64
-	globalLimitValue int64
-
 	routineCount int
 	successCount int64
+	reqBucket    string
+	reqAction    string
+	config       string
 }
 
 var (
-	bucket         = "/test"
-	action         = s3_constants.ACTION_WRITE
-	fileSize int64 = 200
+	fileSize int64 = 200_000
 
 	TestLimitCases = []*TestLimitCase{
+		//global enabled
+		{10, 5, "x", "Write",
+			`{
+				"global": {
+					"enabled": true,
+					"actions": {
+						"Read:Count": "5",
+						"Write:Count": "5"
+					}
+				}
+			}`,
+		},
 
-		//bucket-LimitTypeCount
-		{action, s3_constants.LimitTypeCount, 5, 6, 60, 5},
-		{action, s3_constants.LimitTypeCount, 0, 6, 6, 0},
+		//global disabled
+		{10, 10, "x", "Write",
+			`{
+				"global": {
+					"actions": {
+						"Read:Count": "5",
+						"Write:Count": "5"
+					}
+				}
+			}`,
+		},
 
-		//global-LimitTypeCount
-		{action, s3_constants.LimitTypeCount, 6, 5, 6, 5},
-		{action, s3_constants.LimitTypeCount, 6, 0, 6, 0},
+		//buckets limit disabled due to global disabled though buckets config enabled
+		{10, 2, "x", "Write",
+			`{
+				"global": {
+					"enabled": true,
+					"actions": {
+						"Read:Count": "5",
+						"Write:Count": "5"
+					}
+				},
+				"buckets": {
+					"x": {
+						"enabled": true,
+						"actions": {
+							"Read:Count": "2",
+							"Write:Count": "2"
+						}
+					}
+				}
+			}`,
+		},
 
-		//bucket-LimitTypeBytes
-		{action, s3_constants.LimitTypeBytes, 1000, 1020, 6, 5},
-		{action, s3_constants.LimitTypeBytes, 0, 1020, 6, 0},
+		{10, 5, "x", "Write",
+			`{
+				"global": {
+					"enabled": true,
+					"actions": {
+						"Read:Count": "5",
+						"Write:Count": "5"
+					}
+				}
+			}`,
+		},
 
-		//global-LimitTypeBytes
-		{action, s3_constants.LimitTypeBytes, 1020, 1000, 6, 5},
-		{action, s3_constants.LimitTypeBytes, 1020, 0, 6, 0},
+		{10, 2, "x", "Write",
+			`{
+				"global": {
+					"enabled": true,
+					"actions": {
+						"Read:Count": "5",
+						"Write:Count": "5"
+					}
+				},
+				"buckets": {
+					"x": {
+						"enabled": true,
+						"actions": {
+							"Read:Count": "2",
+							"Write:Count": "2"
+						}
+					}
+				}
+			}`,
+		},
+
+		{10, 5, "y", "Write",
+			`{
+				"global": {
+					"enabled": true,
+					"actions": {
+						"Read:Count": "5",
+						"Write:Count": "5"
+					}
+				},
+				"buckets": {
+					"x": {
+						"enabled": true,
+						"actions": {
+							"Read:Count": "2",
+							"Write:Count": "2"
+						}
+					}
+				}
+			}`,
+		},
+
+		{10, 6, "y", "Read",
+			`{
+			  "global": {
+				"enabled": true,
+				"actions": {
+				  "Read:MB": "1.2",
+				  "Write:Count": "50"
+				}
+			  },
+			  "buckets": {
+				"y": {
+				  "enabled": true
+				},
+				"z": {
+				  "enabled": true,
+				  "actions": {
+					"Read:MB": "0.6",
+					"Write:MB": "0.6"
+				  }
+				}
+			  }
+			}`,
+		},
+
+		{10, 3, "z", "Write",
+			`{
+			  "global": {
+				"enabled": true,
+				"actions": {
+				  "Read:MB": "1.2",
+				  "Write:Count": "50"
+				}
+			  },
+			  "buckets": {
+				"y": {
+				  "enabled": true
+				},
+				"z": {
+				  "enabled": true,
+				  "actions": {
+					"Read:MB": "0.6",
+					"Write:MB": "0.6"
+				  }
+				}
+			  }
+			}`,
+		},
+
+		{10, 10, "y", "Write",
+			`{
+
+			}`,
+		},
 	}
 )
 
 func TestLimit(t *testing.T) {
+	circuitBreaker := &CircuitBreaker{
+		counters:    make(map[string]*int64),
+		limitations: make(map[string]int64),
+	}
+
 	for _, tc := range TestLimitCases {
-		circuitBreakerConfig := &s3_pb.S3CircuitBreakerConfig{
-			Global: &s3_pb.S3CircuitBreakerOptions{
-				Enabled: true,
-				Actions: map[string]int64{
-					s3_constants.Concat(tc.actionName, tc.limitType): tc.globalLimitValue,
-					s3_constants.Concat(tc.actionName, tc.limitType): tc.globalLimitValue,
-				},
-			},
-			Buckets: map[string]*s3_pb.S3CircuitBreakerOptions{
-				bucket: {
-					Enabled: true,
-					Actions: map[string]int64{
-						s3_constants.Concat(tc.actionName, tc.limitType): tc.bucketLimitValue,
-					},
-				},
-			},
-		}
-		circuitBreaker := &CircuitBreaker{
-			counters:    make(map[string]*int64),
-			limitations: make(map[string]int64),
-		}
-		err := circuitBreaker.loadCircuitBreakerConfig(circuitBreakerConfig)
+		err := circuitBreaker.LoadS3ApiConfigurationFromBytes([]byte(tc.config))
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		successCount := doLimit(circuitBreaker, tc.routineCount, &http.Request{ContentLength: fileSize}, tc.actionName)
+		successCount := doLimit(circuitBreaker, tc)
 		if successCount != tc.successCount {
-			t.Errorf("successCount not equal, expect=%d, actual=%d, case: %v", tc.successCount, successCount, tc)
+			t.Errorf("successCount not equal, expect=%d, actual=%d, case: %v, circuitBreaker.limitations: %v", tc.successCount, successCount, tc, circuitBreaker.limitations)
 		}
 	}
 }
 
-func doLimit(circuitBreaker *CircuitBreaker, routineCount int, r *http.Request, action string) int64 {
+func doLimit(circuitBreaker *CircuitBreaker, tc *TestLimitCase) int64 {
 	var successCounter int64
-	resultCh := make(chan []func(), routineCount)
+	resultCh := make(chan []func(), tc.routineCount)
 	var wg sync.WaitGroup
-	for i := 0; i < routineCount; i++ {
+	for i := 0; i < tc.routineCount; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			rollbackFn, errCode := circuitBreaker.limit(r, bucket, action)
+			var rollbackFn []func()
+			errCode := s3err.ErrNone
+			if circuitBreaker.Enabled {
+				_, rollbackFn, errCode = circuitBreaker.limit(&http.Request{ContentLength: fileSize}, tc.reqBucket, tc.reqAction)
+			}
 			if errCode == s3err.ErrNone {
 				atomic.AddInt64(&successCounter, 1)
 			}

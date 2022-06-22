@@ -31,5 +31,5 @@ message S3CircuitBreakerConfig {
 
 message S3CircuitBreakerOptions {
     bool enabled=1;
-    map<string, int64> actions = 2;
+    map<string, string> actions = 2;
 }
