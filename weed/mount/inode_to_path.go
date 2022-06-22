@@ -176,7 +176,7 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (replacedIn
 			entry.nlookup++
 		}
 	} else {
-		glog.Errorf("MovePath %s to %s: sourceInode %s not found", sourcePath, targetPath, sourceInode)
+		glog.Errorf("MovePath %s to %s: sourceInode %d not found", sourcePath, targetPath, sourceInode)
 	}
 	return targetInode
 }
