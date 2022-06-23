@@ -38,7 +38,6 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		glog.Warningf("pemfile.NewProvider(%v) failed: %v", serverOptions, err)
 		return nil, nil
 	}
-	//defer serverIdentityProvider.Close()
 
 	serverRootOptions := pemfile.Options{
 		RootFile:        config.GetString("grpc.ca"),
@@ -49,7 +48,7 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		glog.Warningf("pemfile.NewProvider(%v) failed: %v", serverRootOptions, err)
 		return nil, nil
 	}
-	// defer serverIdentityProvider.Close()
+
 	// Start a server and create a client using advancedtls API with Provider.
 	options := &advancedtls.ServerOptions{
 		IdentityOptions: advancedtls.IdentityCertificateOptions{
