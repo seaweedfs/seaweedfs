@@ -1,24 +1,18 @@
 package security
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/security/advancedtls"
 	"io/ioutil"
 	"strings"
 	"time"
 
-	grpc_auth "github.com/grpc-ecosystem/go-grpc-middleware/auth"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/peer"
-	"google.golang.org/grpc/status"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"google.golang.org/grpc"
 )
 
 const credRefreshingInterval = time.Duration(5) * time.Hour
@@ -44,7 +38,7 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		glog.Warningf("pemfile.NewProvider(%v) failed: %v", serverOptions, err)
 		return nil, nil
 	}
-	defer serverIdentityProvider.Close()
+	//defer serverIdentityProvider.Close()
 
 	serverRootOptions := pemfile.Options{
 		RootFile:        config.GetString("grpc.ca"),
@@ -55,7 +49,7 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		glog.Warningf("pemfile.NewProvider(%v) failed: %v", serverRootOptions, err)
 		return nil, nil
 	}
-	defer serverIdentityProvider.Close()
+	// defer serverIdentityProvider.Close()
 	// Start a server and create a client using advancedtls API with Provider.
 	options := &advancedtls.ServerOptions{
 		IdentityOptions: advancedtls.IdentityCertificateOptions{
@@ -65,16 +59,7 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 			RootProvider: serverRootProvider,
 		},
 		RequireClientCert: true,
-		VerifyPeer: func(params *advancedtls.VerificationFuncParams) (*advancedtls.VerificationResults, error) {
-			glog.V(0).Infof("Client common name: %s.\n", params.Leaf.Subject.CommonName)
-			return &advancedtls.VerificationResults{}, nil
-		},
-		VType: advancedtls.CertVerification,
-	}
-	ta, err := advancedtls.NewServerCreds(options)
-	if err != nil {
-		glog.Warningf("advancedtls.NewServerCreds(%v) failed: %v", options, err)
-		return nil, nil
+		VType:             advancedtls.CertVerification,
 	}
 	allowedCommonNames := config.GetString(component + ".allowed_commonNames")
 	allowedWildcardDomain := config.GetString("grpc.allowed_wildcard_domain")
@@ -87,7 +72,16 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 			AllowedCommonNames:    allowedCommonNamesMap,
 			AllowedWildcardDomain: allowedWildcardDomain,
 		}
-		return grpc.Creds(ta), grpc.UnaryInterceptor(grpc_auth.UnaryServerInterceptor(auther.Authenticate))
+		options.VerifyPeer = auther.Authenticate
+	} else {
+		options.VerifyPeer = func(params *advancedtls.VerificationFuncParams) (*advancedtls.VerificationResults, error) {
+			return &advancedtls.VerificationResults{}, nil
+		}
+	}
+	ta, err := advancedtls.NewServerCreds(options)
+	if err != nil {
+		glog.Warningf("advancedtls.NewServerCreds(%v) failed: %v", options, err)
+		return nil, nil
 	}
 	return grpc.Creds(ta), nil
 }
@@ -102,7 +96,6 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 		return grpc.WithInsecure()
 	}
 
-	// Initialize credential struct using reloading API.
 	clientOptions := pemfile.Options{
 		CertFile:        certFileName,
 		KeyFile:         keyFileName,
@@ -113,7 +106,6 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 		glog.Warningf("pemfile.NewProvider(%v) failed %v", clientOptions, err)
 		return grpc.WithInsecure()
 	}
-	defer clientProvider.Close()
 	clientRootOptions := pemfile.Options{
 		RootFile:        config.GetString("grpc.ca"),
 		RefreshDuration: credRefreshingInterval,
@@ -123,7 +115,6 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 		glog.Warningf("pemfile.NewProvider(%v) failed: %v", clientRootOptions, err)
 		return grpc.WithInsecure()
 	}
-	defer clientRootProvider.Close()
 	options := &advancedtls.ClientOptions{
 		IdentityOptions: advancedtls.IdentityCertificateOptions{
 			IdentityProvider: clientProvider,
@@ -161,27 +152,14 @@ func LoadClientTLSHTTP(clientCertFile string) *tls.Config {
 	}
 }
 
-func (a Authenticator) Authenticate(ctx context.Context) (newCtx context.Context, err error) {
-	p, ok := peer.FromContext(ctx)
-	if !ok {
-		return ctx, status.Error(codes.Unauthenticated, "no peer found")
+func (a Authenticator) Authenticate(params *advancedtls.VerificationFuncParams) (*advancedtls.VerificationResults, error) {
+	if a.AllowedWildcardDomain != "" && strings.HasSuffix(params.Leaf.Subject.CommonName, a.AllowedWildcardDomain) {
+		return &advancedtls.VerificationResults{}, nil
 	}
-
-	tlsAuth, ok := p.AuthInfo.(credentials.TLSInfo)
-	if !ok {
-		return ctx, status.Error(codes.Unauthenticated, "unexpected peer transport credentials")
+	if _, ok := a.AllowedCommonNames[params.Leaf.Subject.CommonName]; ok {
+		return &advancedtls.VerificationResults{}, nil
 	}
-	if len(tlsAuth.State.VerifiedChains) == 0 || len(tlsAuth.State.VerifiedChains[0]) == 0 {
-		return ctx, status.Error(codes.Unauthenticated, "could not verify peer certificate")
-	}
-
-	commonName := tlsAuth.State.VerifiedChains[0][0].Subject.CommonName
-	if a.AllowedWildcardDomain != "" && strings.HasSuffix(commonName, a.AllowedWildcardDomain) {
-		return ctx, nil
-	}
-	if _, ok := a.AllowedCommonNames[commonName]; ok {
-		return ctx, nil
-	}
-
-	return ctx, status.Errorf(codes.Unauthenticated, "invalid subject common name: %s", commonName)
+	err := fmt.Errorf("Authenticate: invalid subject client common name: %s", params.Leaf.Subject.CommonName)
+	glog.Error(err)
+	return nil, err
 }
