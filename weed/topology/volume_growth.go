@@ -3,6 +3,7 @@ package topology
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"math/rand"
 	"sync"
 
@@ -77,42 +78,50 @@ func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count int) {
 	return
 }
 
-func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOption grpc.DialOption, topo *Topology, targetCount int) (count int, err error) {
+func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOption grpc.DialOption, topo *Topology, targetCount int) (result []*master_pb.VolumeLocation, err error) {
 	if targetCount == 0 {
 		targetCount = vg.findVolumeCount(option.ReplicaPlacement.GetCopyCount())
 	}
-	count, err = vg.GrowByCountAndType(grpcDialOption, targetCount, option, topo)
-	if count > 0 && count%option.ReplicaPlacement.GetCopyCount() == 0 {
-		return count, nil
+	result, err = vg.GrowByCountAndType(grpcDialOption, targetCount, option, topo)
+	if len(result) > 0 && len(result)%option.ReplicaPlacement.GetCopyCount() == 0 {
+		return result, nil
 	}
-	return count, err
+	return result, err
 }
-func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targetCount int, option *VolumeGrowOption, topo *Topology) (counter int, err error) {
+func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targetCount int, option *VolumeGrowOption, topo *Topology) (result []*master_pb.VolumeLocation, err error) {
 	vg.accessLock.Lock()
 	defer vg.accessLock.Unlock()
 
 	for i := 0; i < targetCount; i++ {
-		if c, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
-			counter += c
+		if res, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
+			result = append(result, res...)
 		} else {
-			glog.V(0).Infof("create %d volume, created %d: %v", targetCount, counter, e)
-			return counter, e
+			glog.V(0).Infof("create %d volume, created %d: %v", targetCount, len(result), e)
+			return result, e
 		}
 	}
 	return
 }
 
-func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topology, option *VolumeGrowOption) (int, error) {
+func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topology, option *VolumeGrowOption) (result []*master_pb.VolumeLocation, err error) {
 	servers, e := vg.findEmptySlotsForOneVolume(topo, option)
 	if e != nil {
-		return 0, e
+		return nil, e
 	}
 	vid, raftErr := topo.NextVolumeId()
 	if raftErr != nil {
-		return 0, raftErr
+		return nil, raftErr
 	}
-	err := vg.grow(grpcDialOption, topo, vid, option, servers...)
-	return len(servers), err
+	if err = vg.grow(grpcDialOption, topo, vid, option, servers...); err == nil {
+		for _, server := range servers {
+			result = append(result, &master_pb.VolumeLocation{
+				Url:       server.Url(),
+				PublicUrl: server.PublicUrl,
+				NewVids:   []uint32{uint32(vid)},
+			})
+		}
+	}
+	return
 }
 
 // 1. find the main data node

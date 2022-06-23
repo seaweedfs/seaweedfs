@@ -52,8 +52,13 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				go func() {
 					glog.V(1).Infoln("starting automatic volume grow")
 					start := time.Now()
-					_, err := ms.vg.AutomaticGrowByType(req.Option, ms.grpcDialOption, ms.Topo, req.Count)
+					newVidLocations, err := ms.vg.AutomaticGrowByType(req.Option, ms.grpcDialOption, ms.Topo, req.Count)
 					glog.V(1).Infoln("finished automatic volume grow, cost ", time.Now().Sub(start))
+					if err == nil {
+						for _, newVidLocation := range newVidLocations {
+							ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: newVidLocation})
+						}
+					}
 					vl.DoneGrowRequest()
 
 					if req.ErrCh != nil {
