@@ -21,7 +21,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-const credRefreshingInterval = 5 * time.Minute
+const credRefreshingInterval = time.Duration(5) * time.Hour
 
 type Authenticator struct {
 	AllowedWildcardDomain string
@@ -64,12 +64,12 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		RootOptions: advancedtls.RootCertificateOptions{
 			RootProvider: serverRootProvider,
 		},
-		RequireClientCert: true,
+		RequireClientCert: false,
 		VerifyPeer: func(params *advancedtls.VerificationFuncParams) (*advancedtls.VerificationResults, error) {
 			glog.V(0).Infof("Client common name: %s.\n", params.Leaf.Subject.CommonName)
 			return &advancedtls.VerificationResults{}, nil
 		},
-		VType: advancedtls.CertVerification,
+		VType: advancedtls.SkipVerification,
 	}
 	ta, err := advancedtls.NewServerCreds(options)
 	if err != nil {
@@ -106,7 +106,6 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 	clientOptions := pemfile.Options{
 		CertFile:        certFileName,
 		KeyFile:         keyFileName,
-		RootFile:        caFileName,
 		RefreshDuration: credRefreshingInterval,
 	}
 	clientProvider, err := pemfile.NewProvider(clientOptions)
@@ -115,14 +114,27 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 		return grpc.WithInsecure()
 	}
 	defer clientProvider.Close()
+	clientRootOptions := pemfile.Options{
+		RootFile:        config.GetString("grpc.ca"),
+		RefreshDuration: credRefreshingInterval,
+	}
+	clientRootProvider, err := pemfile.NewProvider(clientRootOptions)
+	if err != nil {
+		glog.Warningf("pemfile.NewProvider(%v) failed: %v", clientRootOptions, err)
+		return grpc.WithInsecure()
+	}
+	defer clientRootProvider.Close()
 	options := &advancedtls.ClientOptions{
+		IdentityOptions: advancedtls.IdentityCertificateOptions{
+			IdentityProvider: clientProvider,
+		},
 		VerifyPeer: func(params *advancedtls.VerificationFuncParams) (*advancedtls.VerificationResults, error) {
 			return &advancedtls.VerificationResults{}, nil
 		},
 		RootOptions: advancedtls.RootCertificateOptions{
-			RootProvider: clientProvider,
+			RootProvider: clientRootProvider,
 		},
-		VType: advancedtls.CertVerification,
+		VType: advancedtls.SkipVerification,
 	}
 	ta, err := advancedtls.NewClientCreds(options)
 	if err != nil {
