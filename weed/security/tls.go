@@ -64,12 +64,12 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		RootOptions: advancedtls.RootCertificateOptions{
 			RootProvider: serverRootProvider,
 		},
-		RequireClientCert: false,
+		RequireClientCert: true,
 		VerifyPeer: func(params *advancedtls.VerificationFuncParams) (*advancedtls.VerificationResults, error) {
 			glog.V(0).Infof("Client common name: %s.\n", params.Leaf.Subject.CommonName)
 			return &advancedtls.VerificationResults{}, nil
 		},
-		VType: advancedtls.SkipVerification,
+		VType: advancedtls.CertVerification,
 	}
 	ta, err := advancedtls.NewServerCreds(options)
 	if err != nil {
@@ -134,7 +134,7 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 		RootOptions: advancedtls.RootCertificateOptions{
 			RootProvider: clientRootProvider,
 		},
-		VType: advancedtls.SkipVerification,
+		VType: advancedtls.CertVerification,
 	}
 	ta, err := advancedtls.NewClientCreds(options)
 	if err != nil {
