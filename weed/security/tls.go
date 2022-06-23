@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
+	"google.golang.org/grpc/security/advancedtls"
 	"io/ioutil"
-	"os"
 	"strings"
+	"time"
 
 	grpc_auth "github.com/grpc-ecosystem/go-grpc-middleware/auth"
 	"google.golang.org/grpc"
@@ -19,6 +21,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+const credRefreshingInterval = 5 * time.Minute
+
 type Authenticator struct {
 	AllowedWildcardDomain string
 	AllowedCommonNames    map[string]bool
@@ -29,28 +33,49 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		return nil, nil
 	}
 
-	// load cert/key, ca cert
-	cert, err := tls.LoadX509KeyPair(config.GetString(component+".cert"), config.GetString(component+".key"))
-	if err != nil {
-		glog.V(1).Infof("load cert: %s / key: %s error: %v",
-			config.GetString(component+".cert"),
-			config.GetString(component+".key"),
-			err)
-		return nil, nil
+	serverOptions := pemfile.Options{
+		CertFile:        config.GetString(component + ".cert"),
+		KeyFile:         config.GetString(component + ".key"),
+		RefreshDuration: credRefreshingInterval,
 	}
-	caCert, err := os.ReadFile(config.GetString("grpc.ca"))
-	if err != nil {
-		glog.V(1).Infof("read ca cert file %s error: %v", config.GetString("grpc.ca"), err)
-		return nil, nil
-	}
-	caCertPool := x509.NewCertPool()
-	caCertPool.AppendCertsFromPEM(caCert)
-	ta := credentials.NewTLS(&tls.Config{
-		Certificates: []tls.Certificate{cert},
-		ClientCAs:    caCertPool,
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-	})
 
+	serverIdentityProvider, err := pemfile.NewProvider(serverOptions)
+	if err != nil {
+		glog.Warningf("pemfile.NewProvider(%v) failed: %v", serverOptions, err)
+		return nil, nil
+	}
+	defer serverIdentityProvider.Close()
+
+	serverRootOptions := pemfile.Options{
+		RootFile:        config.GetString("grpc.ca"),
+		RefreshDuration: credRefreshingInterval,
+	}
+	serverRootProvider, err := pemfile.NewProvider(serverRootOptions)
+	if err != nil {
+		glog.Warningf("pemfile.NewProvider(%v) failed: %v", serverRootOptions, err)
+		return nil, nil
+	}
+	defer serverIdentityProvider.Close()
+	// Start a server and create a client using advancedtls API with Provider.
+	options := &advancedtls.ServerOptions{
+		IdentityOptions: advancedtls.IdentityCertificateOptions{
+			IdentityProvider: serverIdentityProvider,
+		},
+		RootOptions: advancedtls.RootCertificateOptions{
+			RootProvider: serverRootProvider,
+		},
+		RequireClientCert: true,
+		VerifyPeer: func(params *advancedtls.VerificationFuncParams) (*advancedtls.VerificationResults, error) {
+			glog.V(0).Infof("Client common name: %s.\n", params.Leaf.Subject.CommonName)
+			return &advancedtls.VerificationResults{}, nil
+		},
+		VType: advancedtls.CertVerification,
+	}
+	ta, err := advancedtls.NewServerCreds(options)
+	if err != nil {
+		glog.Warningf("advancedtls.NewServerCreds(%v) failed: %v", options, err)
+		return nil, nil
+	}
 	allowedCommonNames := config.GetString(component + ".allowed_commonNames")
 	allowedWildcardDomain := config.GetString("grpc.allowed_wildcard_domain")
 	if allowedCommonNames != "" || allowedWildcardDomain != "" {
@@ -77,25 +102,33 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 		return grpc.WithInsecure()
 	}
 
-	// load cert/key, cacert
-	cert, err := tls.LoadX509KeyPair(certFileName, keyFileName)
+	// Initialize credential struct using reloading API.
+	clientOptions := pemfile.Options{
+		CertFile:        certFileName,
+		KeyFile:         keyFileName,
+		RootFile:        caFileName,
+		RefreshDuration: credRefreshingInterval,
+	}
+	clientProvider, err := pemfile.NewProvider(clientOptions)
 	if err != nil {
-		glog.V(1).Infof("load cert/key error: %v", err)
+		glog.Warningf("pemfile.NewProvider(%v) failed %v", clientOptions, err)
 		return grpc.WithInsecure()
 	}
-	caCert, err := os.ReadFile(caFileName)
+	defer clientProvider.Close()
+	options := &advancedtls.ClientOptions{
+		VerifyPeer: func(params *advancedtls.VerificationFuncParams) (*advancedtls.VerificationResults, error) {
+			return &advancedtls.VerificationResults{}, nil
+		},
+		RootOptions: advancedtls.RootCertificateOptions{
+			RootProvider: clientProvider,
+		},
+		VType: advancedtls.CertVerification,
+	}
+	ta, err := advancedtls.NewClientCreds(options)
 	if err != nil {
-		glog.V(1).Infof("read ca cert file error: %v", err)
+		glog.Warningf("advancedtls.NewClientCreds(%v) failed: %v", options, err)
 		return grpc.WithInsecure()
 	}
-	caCertPool := x509.NewCertPool()
-	caCertPool.AppendCertsFromPEM(caCert)
-
-	ta := credentials.NewTLS(&tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            caCertPool,
-		InsecureSkipVerify: true,
-	})
 	return grpc.WithTransportCredentials(ta)
 }
 
