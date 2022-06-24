@@ -2,9 +2,24 @@ package needle_map
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/sequence"
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 	"testing"
 )
+
+func TestSnowflakeSequencer(t *testing.T) {
+	m := NewCompactMap()
+	seq, _ := sequence.NewSnowflakeSequencer("for_test", 1)
+
+	for i := 0; i < 200000; i++ {
+		id := seq.NextFileId(1)
+		oldOffset, oldSize := m.Set(NeedleId(id), ToOffset(8), 3000073)
+		if oldSize != 0 {
+			t.Errorf("id %d oldOffset %v oldSize %d", id, oldOffset, oldSize)
+		}
+	}
+
+}
 
 func TestOverflow2(t *testing.T) {
 	m := NewCompactMap()
