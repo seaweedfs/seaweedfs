@@ -90,10 +90,6 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 	return
 }
 
-func (vc *vidMap) GetLookupFileIdFunction() LookupFileIdFunctionType {
-	return vc.LookupFileId
-}
-
 func (vc *vidMap) LookupFileId(fileId string) (fullUrls []string, err error) {
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
