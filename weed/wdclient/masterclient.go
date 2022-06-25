@@ -131,7 +131,6 @@ func (mc *MasterClient) tryAllMasters() {
 		}
 
 		mc.currentMaster = ""
-		mc.vidMap = newVidMap("")
 	}
 }
 
@@ -159,9 +158,25 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 			stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToSend).Inc()
 			return err
 		}
-
 		glog.V(1).Infof("%s.%s masterClient Connected to %v", mc.FilerGroup, mc.clientType, master)
+
+		resp, err := stream.Recv()
+		if err != nil {
+			glog.V(0).Infof("%s.%s masterClient failed to receive from %s: %v", mc.FilerGroup, mc.clientType, master, err)
+			stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToReceive).Inc()
+			return err
+		}
+
+		// check if it is the leader to determine whether to reset the vidMap
+		if resp.VolumeLocation != nil && resp.VolumeLocation.Leader != "" {
+			glog.V(0).Infof("redirected to leader %v", resp.VolumeLocation.Leader)
+			nextHintedLeader = pb.ServerAddress(resp.VolumeLocation.Leader)
+			stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToleader).Inc()
+			return nil
+		}
+
 		mc.currentMaster = master
+		mc.vidMap = newVidMap("")
 
 		for {
 			resp, err := stream.Recv()
