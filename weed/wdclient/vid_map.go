@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
@@ -90,17 +91,26 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 	return
 }
 
+func (vc *vidMap) GetLookupFileIdFunction() LookupFileIdFunctionType {
+	return vc.LookupFileId
+}
+
 func (vc *vidMap) LookupFileId(fileId string) (fullUrls []string, err error) {
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
 		return nil, errors.New("Invalid fileId " + fileId)
 	}
-	serverUrls, lookupError := vc.LookupVolumeServerUrl(parts[0])
-	if lookupError != nil {
-		return nil, lookupError
-	}
-	for _, serverUrl := range serverUrls {
-		fullUrls = append(fullUrls, "http://"+serverUrl+"/"+fileId)
+	var serverUrls []string
+	for i := 0; i < 5; i++ {
+		serverUrls, err = vc.LookupVolumeServerUrl(parts[0])
+		if err != nil {
+			time.Sleep(time.Duration(i+1) * 251 * time.Millisecond)
+			continue
+		}
+		for _, serverUrl := range serverUrls {
+			fullUrls = append(fullUrls, "http://"+serverUrl+"/"+fileId)
+			return fullUrls, nil
+		}
 	}
 	return
 }
