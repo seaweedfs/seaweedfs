@@ -90,6 +90,10 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 	return
 }
 
+func (vc *vidMap) BuildFullUrl(serverUrl, fileId string) string {
+	return "http://" + serverUrl + "/" + fileId
+}
+
 func (vc *vidMap) LookupFileId(fileId string) (fullUrls []string, err error) {
 	parts := strings.Split(fileId, ",")
 	if len(parts) != 2 {
@@ -100,7 +104,7 @@ func (vc *vidMap) LookupFileId(fileId string) (fullUrls []string, err error) {
 		return nil, lookupError
 	}
 	for _, serverUrl := range serverUrls {
-		fullUrls = append(fullUrls, "http://"+serverUrl+"/"+fileId)
+		fullUrls = append(fullUrls, vc.BuildFullUrl(serverUrl, fileId))
 	}
 	return
 }
