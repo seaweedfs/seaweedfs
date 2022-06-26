@@ -209,8 +209,9 @@ func (ms *MasterServer) Statistics(ctx context.Context, req *master_pb.Statistic
 
 	volumeLayout := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, ttl, types.ToDiskType(req.DiskType))
 	stats := volumeLayout.Stats()
+	totalSize := ms.Topo.GetDiskUsages().GetMaxVolumeCount() * int64(ms.option.VolumeSizeLimitMB)
 	resp := &master_pb.StatisticsResponse{
-		TotalSize: stats.TotalSize,
+		TotalSize: uint64(totalSize),
 		UsedSize:  stats.UsedSize,
 		FileCount: stats.FileCount,
 	}
