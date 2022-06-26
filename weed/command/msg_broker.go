@@ -3,7 +3,6 @@ package command
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
 	"google.golang.org/grpc/reflection"
@@ -63,35 +62,31 @@ func (msgBrokerOpt *MessageBrokerOptions) startQueueServer() bool {
 
 	grace.SetupProfiling(*messageBrokerStandaloneOptions.cpuprofile, *messageBrokerStandaloneOptions.memprofile)
 
-	filerGrpcAddress, err := pb.ParseServerToGrpcAddress(*msgBrokerOpt.filer)
-	if err != nil {
-		glog.Fatal(err)
-		return false
-	}
+	filerAddress := pb.ServerAddress(*msgBrokerOpt.filer)
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.msg_broker")
 	cipher := false
 
 	for {
-		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithGrpcFilerClient(false, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
-				return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
+				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
 			}
 			cipher = resp.Cipher
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *msgBrokerOpt.filer, filerGrpcAddress)
+			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *msgBrokerOpt.filer, filerAddress.ToGrpcAddress())
 			time.Sleep(time.Second)
 		} else {
-			glog.V(0).Infof("connected to filer %s grpc address %s", *msgBrokerOpt.filer, filerGrpcAddress)
+			glog.V(0).Infof("connected to filer %s grpc address %s", *msgBrokerOpt.filer, filerAddress.ToGrpcAddress())
 			break
 		}
 	}
 
 	qs, err := broker.NewMessageBroker(&broker.MessageBrokerOption{
-		Filers:             []string{*msgBrokerOpt.filer},
+		Filers:             []pb.ServerAddress{filerAddress},
 		DefaultReplication: "",
 		MaxMB:              0,
 		Ip:                 *msgBrokerOpt.ip,
@@ -100,7 +95,7 @@ func (msgBrokerOpt *MessageBrokerOptions) startQueueServer() bool {
 	}, grpcDialOption)
 
 	// start grpc listener
-	grpcL, err := util.NewListener(":"+strconv.Itoa(*msgBrokerOpt.port), 0)
+	grpcL, _, err := util.NewIpAndLocalListeners("", *msgBrokerOpt.port, 0)
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", *msgBrokerOpt.port, err)
 	}

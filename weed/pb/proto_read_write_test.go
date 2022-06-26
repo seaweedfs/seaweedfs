@@ -30,7 +30,7 @@ func TestJsonpMarshalUnmarshal(t *testing.T) {
 	rawJson := `{
 		"backendType":"aws",
 		"backendId":"temp",
-		"FileSize":12
+		"fileSize":12
 	}`
 
 	tv1 := &volume_server_pb.RemoteFile{}

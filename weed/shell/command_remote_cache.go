@@ -26,7 +26,7 @@ func (c *commandRemoteCache) Help() string {
 	return `cache the file content for mounted directories or files
 
 	# assume a remote storage is configured to name "cloud1"
-	remote.configure -name=cloud1 -type=s3 -access_key=xxx -secret_key=yyy
+	remote.configure -name=cloud1 -type=s3 -s3.access_key=xxx -s3.secret_key=yyy
 	# mount and pull one bucket
 	remote.mount -dir=/xxx -remote=cloud1/bucket
 
@@ -50,7 +50,7 @@ func (c *commandRemoteCache) Do(args []string, commandEnv *CommandEnv, writer io
 
 	remoteMountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 
-	dir := remoteMountCommand.String("dir", "", "a directory in filer")
+	dir := remoteMountCommand.String("dir", "", "a mounted directory or one of its sub folders in filer")
 	concurrency := remoteMountCommand.Int("concurrent", 32, "concurrent file downloading")
 	fileFiler := newFileFilter(remoteMountCommand)
 
@@ -58,15 +58,37 @@ func (c *commandRemoteCache) Do(args []string, commandEnv *CommandEnv, writer io
 		return nil
 	}
 
-	mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, detectErr := detectMountInfo(commandEnv, writer, *dir)
-	if detectErr != nil{
+	if *dir != "" {
+		if err := c.doCacheOneDirectory(commandEnv, writer, *dir, fileFiler, *concurrency); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	mappings, err := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.option.FilerAddress)
+	if err != nil {
+		return err
+	}
+
+	for key, _ := range mappings.Mappings {
+		if err := c.doCacheOneDirectory(commandEnv, writer, key, fileFiler, *concurrency); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (c *commandRemoteCache) doCacheOneDirectory(commandEnv *CommandEnv, writer io.Writer, dir string, fileFiler *FileFilter, concurrency int) error {
+	mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, detectErr := detectMountInfo(commandEnv, writer, dir)
+	if detectErr != nil {
 		jsonPrintln(writer, mappings)
 		return detectErr
 	}
 
 	// pull content from remote
-	if err = c.cacheContentData(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(*dir), fileFiler, remoteStorageConf, *concurrency); err != nil {
-		return fmt.Errorf("cache content data: %v", err)
+	if err := c.cacheContentData(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(dir), fileFiler, remoteStorageConf, concurrency); err != nil {
+		return fmt.Errorf("cache content data on %s: %v", localMountedDir, err)
 	}
 
 	return nil
@@ -130,7 +152,7 @@ func (c *commandRemoteCache) cacheContentData(commandEnv *CommandEnv, writer io.
 			return true // true means recursive traversal should continue
 		}
 
-		if fileFilter.matches(entry) {
+		if !fileFilter.matches(entry) {
 			return true
 		}
 
@@ -141,10 +163,10 @@ func (c *commandRemoteCache) cacheContentData(commandEnv *CommandEnv, writer io.
 
 			remoteLocation := filer.MapFullPathToRemoteStorageLocation(localMountedDir, remoteMountedLocation, dir.Child(entry.Name))
 
-			if err := filer.DownloadToLocal(commandEnv, remoteConf, remoteLocation, dir, entry); err != nil {
-				fmt.Fprintf(writer, "DownloadToLocal %+v: %v\n", remoteLocation, err)
+			if err := filer.CacheRemoteObjectToLocalCluster(commandEnv, remoteConf, remoteLocation, dir, entry); err != nil {
+				fmt.Fprintf(writer, "CacheRemoteObjectToLocalCluster %+v: %v\n", remoteLocation, err)
 				if executionErr == nil {
-					executionErr = fmt.Errorf("DownloadToLocal %+v: %v\n", remoteLocation, err)
+					executionErr = fmt.Errorf("CacheRemoteObjectToLocalCluster %+v: %v\n", remoteLocation, err)
 				}
 				return
 			}

@@ -3,19 +3,18 @@ package command
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"time"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/server"
+	weed_server "github.com/chrislusf/seaweedfs/weed/server"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc/reflection"
-	"net/http"
-	"strconv"
-	"strings"
-	"time"
 )
 
 var (
@@ -25,7 +24,8 @@ var (
 func init() {
 	cmdMasterFollower.Run = runMasterFollower // break init cycle
 	mf.port = cmdMasterFollower.Flag.Int("port", 9334, "http listen port")
-	mf.ipBind = cmdMasterFollower.Flag.String("ip.bind", "", "ip address to bind to")
+	mf.portGrpc = cmdMasterFollower.Flag.Int("port.grpc", 0, "grpc listen port")
+	mf.ipBind = cmdMasterFollower.Flag.String("ip.bind", "", "ip address to bind to. Default to localhost.")
 	mf.peers = cmdMasterFollower.Flag.String("masters", "localhost:9333", "all master nodes in comma separated ip:port list, example: 127.0.0.1:9093,127.0.0.1:9094,127.0.0.1:9095")
 
 	mf.ip = aws.String(util.DetectedHostAddress())
@@ -46,13 +46,13 @@ var cmdMasterFollower = &Command{
 	Short:     "start a master follower",
 	Long: `start a master follower to provide volume=>location mapping service
 
-	The master follower does not participate in master election. 
+	The master follower does not participate in master election.
 	It just follow the existing masters, and listen for any volume location changes.
 
 	In most cases, the master follower is not needed. In big data centers with thousands of volume
 	servers. In theory, the master may have trouble to keep up with the write requests and read requests.
 
-	The master follower can relieve the master from from read requests, which only needs to 
+	The master follower can relieve the master from from read requests, which only needs to
 	lookup a fileId or volumeId.
 
 	The master follower currently can handle fileId lookup requests:
@@ -71,6 +71,10 @@ func runMasterFollower(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 	util.LoadConfiguration("master", false)
 
+	if *mf.portGrpc == 0 {
+		*mf.portGrpc = 10000 + *mf.port
+	}
+
 	startMasterFollower(mf)
 
 	return true
@@ -79,19 +83,15 @@ func runMasterFollower(cmd *Command, args []string) bool {
 func startMasterFollower(masterOptions MasterOptions) {
 
 	// collect settings from main masters
-	masters := strings.Split(*mf.peers, ",")
-	masterGrpcAddresses, err := pb.ParseServersToGrpcAddresses(masters)
-	if err != nil {
-		glog.V(0).Infof("ParseFilerGrpcAddress: %v", err)
-		return
-	}
+	masters := pb.ServerAddresses(*mf.peers).ToAddressMap()
 
+	var err error
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.master")
 	for i := 0; i < 10; i++ {
-		err = pb.WithOneOfGrpcMasterClients(masterGrpcAddresses, grpcDialOption, func(client master_pb.SeaweedClient) error {
+		err = pb.WithOneOfGrpcMasterClients(false, masters, grpcDialOption, func(client master_pb.SeaweedClient) error {
 			resp, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 			if err != nil {
-				return fmt.Errorf("get master grpc address %v configuration: %v", masterGrpcAddresses, err)
+				return fmt.Errorf("get master grpc address %v configuration: %v", masters, err)
 			}
 			masterOptions.defaultReplication = &resp.DefaultReplication
 			masterOptions.volumeSizeLimitMB = aws.Uint(uint(resp.VolumeSizeLimitMB))
@@ -99,31 +99,35 @@ func startMasterFollower(masterOptions MasterOptions) {
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("failed to talk to filer %v: %v", masterGrpcAddresses, err)
+			glog.V(0).Infof("failed to talk to filer %v: %v", masters, err)
 			glog.V(0).Infof("wait for %d seconds ...", i+1)
 			time.Sleep(time.Duration(i+1) * time.Second)
 		}
 	}
 	if err != nil {
-		glog.Errorf("failed to talk to filer %v: %v", masterGrpcAddresses, err)
+		glog.Errorf("failed to talk to filer %v: %v", masters, err)
 		return
 	}
 
 	option := masterOptions.toMasterOption(nil)
 	option.IsFollower = true
 
+	if *masterOptions.ipBind == "" {
+		*masterOptions.ipBind = *masterOptions.ip
+	}
+
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, option, masters)
-	listeningAddress := *masterOptions.ipBind + ":" + strconv.Itoa(*masterOptions.port)
+	listeningAddress := util.JoinHostPort(*masterOptions.ipBind, *masterOptions.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
-	masterListener, e := util.NewListener(listeningAddress, 0)
+	masterListener, masterLocalListner, e := util.NewIpAndLocalListeners(*masterOptions.ipBind, *masterOptions.port, 0)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
 	}
 
 	// starting grpc server
-	grpcPort := *masterOptions.port + 10000
-	grpcL, err := util.NewListener(*masterOptions.ipBind+":"+strconv.Itoa(grpcPort), 0)
+	grpcPort := *masterOptions.portGrpc
+	grpcL, grpcLocalL, err := util.NewIpAndLocalListeners(*masterOptions.ipBind, grpcPort, 0)
 	if err != nil {
 		glog.Fatalf("master failed to listen on grpc port %d: %v", grpcPort, err)
 	}
@@ -131,12 +135,18 @@ func startMasterFollower(masterOptions MasterOptions) {
 	master_pb.RegisterSeaweedServer(grpcS, ms)
 	reflection.Register(grpcS)
 	glog.V(0).Infof("Start Seaweed Master %s grpc server at %s:%d", util.Version(), *masterOptions.ip, grpcPort)
+	if grpcLocalL != nil {
+		go grpcS.Serve(grpcLocalL)
+	}
 	go grpcS.Serve(grpcL)
 
 	go ms.MasterClient.KeepConnectedToMaster()
 
 	// start http server
 	httpS := &http.Server{Handler: r}
+	if masterLocalListner != nil {
+		go httpS.Serve(masterLocalListner)
+	}
 	go httpS.Serve(masterListener)
 
 	select {}

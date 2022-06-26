@@ -70,7 +70,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 	var host string
 	var auth security.EncodedJwt
 
-	if err := fs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	if err := fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return util.Retry("assignVolume", func() error {
 			request := &filer_pb.AssignVolumeRequest{
 				Count:       1,
@@ -91,7 +91,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 				return fmt.Errorf("assign volume failure %v: %v", request, resp.Error)
 			}
 
-			fileId, host, auth = resp.FileId, resp.Url, security.EncodedJwt(resp.Auth)
+			fileId, host, auth = resp.FileId, resp.Location.Url, security.EncodedJwt(resp.Auth)
 
 			return nil
 		})
@@ -107,7 +107,16 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 	glog.V(4).Infof("replicating %s to %s header:%+v", filename, fileUrl, header)
 
 	// fetch data as is, regardless whether it is encrypted or not
-	uploadResult, err, _ := operation.Upload(fileUrl, filename, false, resp.Body, "gzip" == header.Get("Content-Encoding"), header.Get("Content-Type"), nil, auth)
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         fileUrl,
+		Filename:          filename,
+		Cipher:            false,
+		IsInputCompressed: "gzip" == header.Get("Content-Encoding"),
+		MimeType:          header.Get("Content-Type"),
+		PairMap:           nil,
+		Jwt:               auth,
+	}
+	uploadResult, err, _ := operation.Upload(resp.Body, uploadOption)
 	if err != nil {
 		glog.V(0).Infof("upload source data %v to %s: %v", sourceChunk.GetFileIdString(), fileUrl, err)
 		return "", fmt.Errorf("upload data: %v", err)
@@ -122,9 +131,9 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 
 var _ = filer_pb.FilerClient(&FilerSink{})
 
-func (fs *FilerSink) WithFilerClient(fn func(filer_pb.SeaweedFilerClient) error) error {
+func (fs *FilerSink) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
+	return pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
 	}, fs.grpcAddress, fs.grpcDialOption)

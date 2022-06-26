@@ -44,7 +44,7 @@ dbFile = "./filer.db"                # sqlite db file
 # CREATE TABLE IF NOT EXISTS filemeta (
 #   dirhash     BIGINT               COMMENT 'first 64 bits of MD5 hash value of directory field',
 #   name        VARCHAR(1000) BINARY COMMENT 'directory or file name',
-#   directory   TEXT                 COMMENT 'full path to parent directory',
+#   directory   TEXT BINARY          COMMENT 'full path to parent directory',
 #   meta        LONGBLOB,
 #   PRIMARY KEY (dirhash, name)
 # ) DEFAULT CHARSET=utf8;
@@ -61,15 +61,15 @@ connection_max_lifetime_seconds = 0
 interpolateParams = false
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
 enableUpsert = true
-upsertQuery = """INSERT INTO ` + "`%s`" + ` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
+upsertQuery = """INSERT INTO `%s` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
 
 [mysql2]  # or memsql, tidb
 enabled = false
 createTable = """
-  CREATE TABLE IF NOT EXISTS ` + "`%s`" + ` (
+  CREATE TABLE IF NOT EXISTS `%s` (
     dirhash BIGINT,
     name VARCHAR(1000) BINARY,
-    directory TEXT,
+    directory TEXT BINARY,
     meta LONGBLOB,
     PRIMARY KEY (dirhash, name)
   ) DEFAULT CHARSET=utf8;
@@ -85,7 +85,7 @@ connection_max_lifetime_seconds = 0
 interpolateParams = false
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
 enableUpsert = true
-upsertQuery = """INSERT INTO ` + "`%s`" + ` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
+upsertQuery = """INSERT INTO `%s` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
 
 [postgres] # or cockroachdb, YugabyteDB
 # CREATE TABLE IF NOT EXISTS filemeta (
@@ -153,6 +153,8 @@ password = ""
 superLargeDirectories = []
 # Name of the datacenter local to this filer, used as host selection fallback.
 localDC = ""
+# Gocql connection timeout, default: 600ms
+connection_timeout_millisecond = 600
 
 [hbase]
 enabled = false
@@ -166,6 +168,14 @@ password = ""
 database = 0
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
+
+[redis2_sentinel]
+enabled = false
+addresses = ["172.22.12.7:26379","172.22.12.8:26379","172.22.12.9:26379"]
+masterName = "master"
+username = ""
+password = ""
+database = 0
 
 [redis_cluster2]
 enabled = false
@@ -184,6 +194,70 @@ readOnly = false
 routeByLatency = false
 # This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
 superLargeDirectories = []
+
+[redis_lua]
+enabled = false
+address = "localhost:6379"
+password = ""
+database = 0
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
+
+[redis_lua_sentinel]
+enabled = false
+addresses = ["172.22.12.7:26379","172.22.12.8:26379","172.22.12.9:26379"]
+masterName = "master"
+username = ""
+password = ""
+database = 0
+
+[redis_lua_cluster]
+enabled = false
+addresses = [
+    "localhost:30001",
+    "localhost:30002",
+    "localhost:30003",
+    "localhost:30004",
+    "localhost:30005",
+    "localhost:30006",
+]
+password = ""
+# allows reads from slave servers or the master, but all writes still go to the master
+readOnly = false
+# automatically use the closest Redis server for reads
+routeByLatency = false
+# This changes the data layout. Only add new directories. Removing/Updating will cause data loss.
+superLargeDirectories = []
+
+[redis3] # beta
+enabled = false
+address = "localhost:6379"
+password = ""
+database = 0
+
+[redis3_sentinel]
+enabled = false
+addresses = ["172.22.12.7:26379","172.22.12.8:26379","172.22.12.9:26379"]
+masterName = "master"
+username = ""
+password = ""
+database = 0
+
+[redis_cluster3] # beta
+enabled = false
+addresses = [
+    "localhost:30001",
+    "localhost:30002",
+    "localhost:30003",
+    "localhost:30004",
+    "localhost:30005",
+    "localhost:30006",
+]
+password = ""
+# allows reads from slave servers or the master, but all writes still go to the master
+readOnly = false
+# automatically use the closest Redis server for reads
+routeByLatency = false
 
 [etcd]
 enabled = false
@@ -211,6 +285,29 @@ healthcheck_enabled = false
 index.max_result_window = 10000
 
 
+[arangodb] # in development dont use it
+enabled = false
+db_name = "seaweedfs"
+servers=["http://localhost:8529"] # list of servers to connect to
+# only basic auth supported for now
+username=""
+password=""
+# skip tls cert validation
+insecure_skip_verify = true
+
+[ydb] # https://ydb.tech/
+enabled = false
+dsn = "grpc://localhost:2136?database=/local"
+prefix = "seaweedfs"
+useBucketPrefix = true # Fast Bucket Deletion
+poolSizeLimit = 50
+dialTimeOut = 10
+
+# Authenticate produced with one of next environment variables:
+# YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS=<path/to/sa_key_file> — used service account key file by path
+# YDB_ANONYMOUS_CREDENTIALS="1" — used for authenticate with anonymous access. Anonymous access needs for connect to testing YDB installation
+# YDB_METADATA_CREDENTIALS="1" — used metadata service for authenticate to YDB from yandex cloud virtual machine or from yandex function
+# YDB_ACCESS_TOKEN_CREDENTIALS=<access_token> — used for authenticate to YDB with short-life access token. For example, access token may be IAM token
 
 ##########################
 ##########################
@@ -238,3 +335,5 @@ enabled = false
 pdaddrs = "localhost:2379"
 # Concurrency for TiKV delete range
 deleterange_concurrency = 1
+# Enable 1PC
+enable_1pc = false

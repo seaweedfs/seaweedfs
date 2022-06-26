@@ -13,6 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
@@ -28,7 +29,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 	var remoteLocations []operation.Location
 	if r.FormValue("type") != "replicate" {
 		// this is the initial request
-		remoteLocations, err = getWritableRemoteReplications(s, grpcDialOption, volumeId, masterFn)
+		remoteLocations, err = GetWritableRemoteReplications(s, grpcDialOption, volumeId, masterFn)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return
@@ -44,6 +45,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 	if s.GetVolume(volumeId) != nil {
 		isUnchanged, err = s.WriteVolumeNeedle(volumeId, n, true, fsync)
 		if err != nil {
+			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorWriteToLocalDisk).Inc()
 			err = fmt.Errorf("failed to write to local disk: %v", err)
 			glog.V(0).Infoln(err)
 			return
@@ -74,6 +76,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 				tmpMap := make(map[string]string)
 				err := json.Unmarshal(n.Pairs, &tmpMap)
 				if err != nil {
+					stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorUnmarshalPairs).Inc()
 					glog.V(0).Infoln("Unmarshal pairs error:", err)
 				}
 				for k, v := range tmpMap {
@@ -83,11 +86,22 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 
 			// volume server do not know about encryption
 			// TODO optimize here to compress data only once
-			_, err := operation.UploadData(u.String(), string(n.Name), false, n.Data, n.IsCompressed(), string(n.Mime), pairMap, jwt)
+			uploadOption := &operation.UploadOption{
+				UploadUrl:         u.String(),
+				Filename:          string(n.Name),
+				Cipher:            false,
+				IsInputCompressed: n.IsCompressed(),
+				MimeType:          string(n.Mime),
+				PairMap:           pairMap,
+				Jwt:               jwt,
+			}
+			_, err := operation.UploadData(n.Data, uploadOption)
 			return err
 		}); err != nil {
+			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorWriteToReplicas).Inc()
 			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
 			glog.V(0).Infoln(err)
+			return false, err
 		}
 	}
 	return
@@ -100,7 +114,7 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 
 	var remoteLocations []operation.Location
 	if r.FormValue("type") != "replicate" {
-		remoteLocations, err = getWritableRemoteReplications(store, grpcDialOption, volumeId, masterFn)
+		remoteLocations, err = GetWritableRemoteReplications(store, grpcDialOption, volumeId, masterFn)
 		if err != nil {
 			glog.V(0).Infoln(err)
 			return
@@ -160,7 +174,7 @@ func DistributedOperation(locations []operation.Location, op func(location opera
 	return ret.Error()
 }
 
-func getWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, masterFn operation.GetMasterFn) (remoteLocations []operation.Location, err error) {
+func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOption, volumeId needle.VolumeId, masterFn operation.GetMasterFn) (remoteLocations []operation.Location, err error) {
 
 	v := s.GetVolume(volumeId)
 	if v != nil && v.ReplicaPlacement.GetCopyCount() == 1 {
@@ -170,7 +184,7 @@ func getWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 	// not on local store, or has replications
 	lookupResult, lookupErr := operation.LookupVolumeId(masterFn, grpcDialOption, volumeId.String())
 	if lookupErr == nil {
-		selfUrl := s.Ip + ":" + strconv.Itoa(s.Port)
+		selfUrl := util.JoinHostPort(s.Ip, s.Port)
 		for _, location := range lookupResult.Locations {
 			if location.Url != selfUrl {
 				remoteLocations = append(remoteLocations, location)

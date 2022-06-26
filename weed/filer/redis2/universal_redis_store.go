@@ -52,7 +52,7 @@ func (store *UniversalRedis2Store) InsertEntry(ctx context.Context, entry *filer
 		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
 	}
 
-	if len(entry.Chunks) > 50 {
+	if len(entry.Chunks) > filer.CountEntryChunksForGzip {
 		value = util.MaybeGzipData(value)
 	}
 
@@ -133,7 +133,10 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 		return nil
 	}
 
-	members, err := store.Client.ZRange(ctx, genDirectoryListKey(string(fullpath)), 0, -1).Result()
+	members, err := store.Client.ZRangeByLex(ctx, genDirectoryListKey(string(fullpath)), &redis.ZRangeBy{
+		Min: "-",
+		Max: "+",
+	}).Result()
 	if err != nil {
 		return fmt.Errorf("DeleteFolderChildren %s : %v", fullpath, err)
 	}
@@ -144,6 +147,8 @@ func (store *UniversalRedis2Store) DeleteFolderChildren(ctx context.Context, ful
 		if err != nil {
 			return fmt.Errorf("DeleteFolderChildren %s in parent dir: %v", fullpath, err)
 		}
+		// not efficient, but need to remove if it is a directory
+		store.Client.Del(ctx, genDirectoryListKey(string(path)))
 	}
 
 	return nil
@@ -156,14 +161,22 @@ func (store *UniversalRedis2Store) ListDirectoryPrefixedEntries(ctx context.Cont
 func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 
 	dirListKey := genDirectoryListKey(string(dirPath))
-	start := int64(0)
+
+	min := "-"
 	if startFileName != "" {
-		start, _ = store.Client.ZRank(ctx, dirListKey, startFileName).Result()
-		if !includeStartFile {
-			start++
+		if includeStartFile {
+			min = "[" + startFileName
+		} else {
+			min = "(" + startFileName
 		}
 	}
-	members, err := store.Client.ZRange(ctx, dirListKey, start, start+int64(limit)-1).Result()
+
+	members, err := store.Client.ZRangeByLex(ctx, dirListKey, &redis.ZRangeBy{
+		Min:    min,
+		Max:    "+",
+		Offset: 0,
+		Count:  limit,
+	}).Result()
 	if err != nil {
 		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
 	}

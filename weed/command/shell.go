@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/shell"
@@ -17,6 +18,7 @@ var (
 func init() {
 	cmdShell.Run = runShell // break init cycle
 	shellOptions.Masters = cmdShell.Flag.String("master", "", "comma-separated master servers, e.g. localhost:9333")
+	shellOptions.FilerGroup = cmdShell.Flag.String("filerGroup", "", "filerGroup for the filers")
 	shellInitialFiler = cmdShell.Flag.String("filer", "", "filer host and port, e.g. localhost:8888")
 	shellCluster = cmdShell.Flag.String("cluster", "", "cluster defined in shell.toml")
 }
@@ -36,7 +38,7 @@ func runShell(command *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 	shellOptions.GrpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
-	if *shellOptions.Masters == "" && *shellInitialFiler == "" {
+	if *shellOptions.Masters == "" {
 		util.LoadConfiguration("shell", false)
 		v := util.GetViper()
 		cluster := v.GetString("cluster.default")
@@ -44,22 +46,15 @@ func runShell(command *Command, args []string) bool {
 			cluster = *shellCluster
 		}
 		if cluster == "" {
-			*shellOptions.Masters, *shellInitialFiler = "localhost:9333", "localhost:8888"
+			*shellOptions.Masters = "localhost:9333"
 		} else {
 			*shellOptions.Masters = v.GetString("cluster." + cluster + ".master")
 			*shellInitialFiler = v.GetString("cluster." + cluster + ".filer")
+			fmt.Printf("master: %s filer: %s\n", *shellOptions.Masters, *shellInitialFiler)
 		}
 	}
 
-	fmt.Printf("master: %s filer: %s\n", *shellOptions.Masters, *shellInitialFiler)
-
-	var err error
-	shellOptions.FilerHost, shellOptions.FilerPort, err = util.ParseHostPort(*shellInitialFiler)
-	shellOptions.FilerAddress = *shellInitialFiler
-	if err != nil {
-		fmt.Printf("failed to parse filer %s: %v\n", *shellInitialFiler, err)
-		return false
-	}
+	shellOptions.FilerAddress = pb.ServerAddress(*shellInitialFiler)
 	shellOptions.Directory = "/"
 
 	shell.RunShell(shellOptions)

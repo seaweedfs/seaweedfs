@@ -2,11 +2,16 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"net"
-	"strings"
+	"sort"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
+	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"github.com/chrislusf/raft"
 	"google.golang.org/grpc/peer"
@@ -17,16 +22,56 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/topology"
 )
 
+func (ms *MasterServer) RegisterUuids(heartbeat *master_pb.Heartbeat) (duplicated_uuids []string, err error) {
+	ms.Topo.UuidAccessLock.Lock()
+	defer ms.Topo.UuidAccessLock.Unlock()
+	key := fmt.Sprintf("%s:%d", heartbeat.Ip, heartbeat.Port)
+	if ms.Topo.UuidMap == nil {
+		ms.Topo.UuidMap = make(map[string][]string)
+	}
+	// find whether new uuid exists
+	for k, v := range ms.Topo.UuidMap {
+		sort.Strings(v)
+		for _, id := range heartbeat.LocationUuids {
+			index := sort.SearchStrings(v, id)
+			if index < len(v) && v[index] == id {
+				duplicated_uuids = append(duplicated_uuids, id)
+				glog.Errorf("directory of %s on %s has been loaded", id, k)
+			}
+		}
+	}
+	if len(duplicated_uuids) > 0 {
+		return duplicated_uuids, errors.New("volume: Duplicated volume directories were loaded")
+	}
+
+	ms.Topo.UuidMap[key] = heartbeat.LocationUuids
+	glog.V(0).Infof("found new uuid:%v %v , %v", key, heartbeat.LocationUuids, ms.Topo.UuidMap)
+	return nil, nil
+}
+
+func (ms *MasterServer) UnRegisterUuids(ip string, port int) {
+	ms.Topo.UuidAccessLock.Lock()
+	defer ms.Topo.UuidAccessLock.Unlock()
+	key := fmt.Sprintf("%s:%d", ip, port)
+	delete(ms.Topo.UuidMap, key)
+	glog.V(0).Infof("remove volume server %v, online volume server: %v", key, ms.Topo.UuidMap)
+}
+
 func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
 	var dn *topology.DataNode
 
 	defer func() {
 		if dn != nil {
-
+			dn.Counter--
+			if dn.Counter > 0 {
+				glog.V(0).Infof("disconnect phantom volume server %s:%d remaining %d", dn.Ip, dn.Port, dn.Counter)
+				return
+			}
 			// if the volume server disconnects and reconnects quickly
 			//  the unregister and register can race with each other
 			ms.Topo.UnRegisterDataNode(dn)
 			glog.V(0).Infof("unregister disconnected volume server %s:%d", dn.Ip, dn.Port)
+			ms.UnRegisterUuids(dn.Ip, dn.Port)
 
 			message := &master_pb.VolumeLocation{
 				Url:       dn.Url(),
@@ -40,13 +85,8 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 
 			if len(message.DeletedVids) > 0 {
-				ms.clientChansLock.RLock()
-				for _, ch := range ms.clientChans {
-					ch <- message
-				}
-				ms.clientChansLock.RUnlock()
+				ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: message})
 			}
-
 		}
 	}()
 
@@ -58,6 +98,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			} else {
 				glog.Warningf("SendHeartbeat.Recv: %v", err)
 			}
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("error").Inc()
 			return err
 		}
 
@@ -67,19 +108,34 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			dcName, rackName := ms.Topo.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
 			dc := ms.Topo.GetOrCreateDataCenter(dcName)
 			rack := dc.GetOrCreateRack(rackName)
-			dn = rack.GetOrCreateDataNode(heartbeat.Ip, int(heartbeat.Port), heartbeat.PublicUrl, heartbeat.MaxVolumeCounts)
-			glog.V(0).Infof("added volume server %v:%d", heartbeat.GetIp(), heartbeat.GetPort())
+			dn = rack.GetOrCreateDataNode(heartbeat.Ip, int(heartbeat.Port), int(heartbeat.GrpcPort), heartbeat.PublicUrl, heartbeat.MaxVolumeCounts)
+			glog.V(0).Infof("added volume server %d: %v:%d %v", dn.Counter, heartbeat.GetIp(), heartbeat.GetPort(), heartbeat.LocationUuids)
+			uuidlist, err := ms.RegisterUuids(heartbeat)
+			if err != nil {
+				if stream_err := stream.Send(&master_pb.HeartbeatResponse{
+					DuplicatedUuids: uuidlist,
+				}); stream_err != nil {
+					glog.Warningf("SendHeartbeat.Send DuplicatedDirectory response to %s:%d %v", dn.Ip, dn.Port, stream_err)
+					return stream_err
+				}
+				return err
+			}
+
 			if err := stream.Send(&master_pb.HeartbeatResponse{
 				VolumeSizeLimit: uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
 			}); err != nil {
 				glog.Warningf("SendHeartbeat.Send volume size to %s:%d %v", dn.Ip, dn.Port, err)
 				return err
 			}
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("dataNode").Inc()
+			dn.Counter++
 		}
 
 		dn.AdjustMaxVolumeCounts(heartbeat.MaxVolumeCounts)
 
 		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
+		stats.MasterReceivedHeartbeatCounter.WithLabelValues("total").Inc()
+
 		var dataCenter string
 		if dc := dn.GetDataCenter(); dc != nil {
 			dataCenter = string(dc.Id())
@@ -88,6 +144,12 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			Url:        dn.Url(),
 			PublicUrl:  dn.PublicUrl,
 			DataCenter: dataCenter,
+		}
+		if len(heartbeat.NewVolumes) > 0 {
+			stats.FilerRequestCounter.WithLabelValues("newVolumes").Inc()
+		}
+		if len(heartbeat.DeletedVolumes) > 0 {
+			stats.FilerRequestCounter.WithLabelValues("deletedVolumes").Inc()
 		}
 		if len(heartbeat.NewVolumes) > 0 || len(heartbeat.DeletedVolumes) > 0 {
 			// process delta volume ids if exists for fast volume id updates
@@ -102,7 +164,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		if len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes {
+			dcName, rackName := ms.Topo.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
+			ms.Topo.DataNodeRegistration(dcName, rackName, dn)
+
 			// process heartbeat.Volumes
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("Volumes").Inc()
 			newVolumes, deletedVolumes := ms.Topo.SyncDataNodeRegistration(heartbeat.Volumes, dn)
 
 			for _, v := range newVolumes {
@@ -116,45 +182,41 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		if len(heartbeat.NewEcShards) > 0 || len(heartbeat.DeletedEcShards) > 0 {
-
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("newEcShards").Inc()
 			// update master internal volume layouts
 			ms.Topo.IncrementalSyncDataNodeEcShards(heartbeat.NewEcShards, heartbeat.DeletedEcShards, dn)
 
 			for _, s := range heartbeat.NewEcShards {
-				message.NewVids = append(message.NewVids, s.Id)
+				message.NewEcVids = append(message.NewEcVids, s.Id)
 			}
 			for _, s := range heartbeat.DeletedEcShards {
-				if dn.HasVolumesById(needle.VolumeId(s.Id)) {
+				if dn.HasEcShards(needle.VolumeId(s.Id)) {
 					continue
 				}
-				message.DeletedVids = append(message.DeletedVids, s.Id)
+				message.DeletedEcVids = append(message.DeletedEcVids, s.Id)
 			}
 
 		}
 
 		if len(heartbeat.EcShards) > 0 || heartbeat.HasNoEcShards {
-			glog.V(1).Infof("master received ec shards from %s: %+v", dn.Url(), heartbeat.EcShards)
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("ecShards").Inc()
+			glog.V(4).Infof("master received ec shards from %s: %+v", dn.Url(), heartbeat.EcShards)
 			newShards, deletedShards := ms.Topo.SyncDataNodeEcShards(heartbeat.EcShards, dn)
 
 			// broadcast the ec vid changes to master clients
 			for _, s := range newShards {
-				message.NewVids = append(message.NewVids, uint32(s.VolumeId))
+				message.NewEcVids = append(message.NewEcVids, uint32(s.VolumeId))
 			}
 			for _, s := range deletedShards {
 				if dn.HasVolumesById(s.VolumeId) {
 					continue
 				}
-				message.DeletedVids = append(message.DeletedVids, uint32(s.VolumeId))
+				message.DeletedEcVids = append(message.DeletedEcVids, uint32(s.VolumeId))
 			}
 
 		}
-		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 {
-			ms.clientChansLock.RLock()
-			for host, ch := range ms.clientChans {
-				glog.V(0).Infof("master send to %s: %s", host, message.String())
-				ch <- message
-			}
-			ms.clientChansLock.RUnlock()
+		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 || len(message.NewEcVids) > 0 || len(message.DeletedEcVids) > 0 {
+			ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: message})
 		}
 
 		// tell the volume servers about the leader
@@ -164,7 +226,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			return err
 		}
 		if err := stream.Send(&master_pb.HeartbeatResponse{
-			Leader: newLeader,
+			Leader: string(newLeader),
 		}); err != nil {
 			glog.Warningf("SendHeartbeat.Send response to to %s:%d %v", dn.Ip, dn.Port, err)
 			return err
@@ -185,17 +247,25 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		return ms.informNewLeader(stream)
 	}
 
-	peerAddress := findClientAddress(stream.Context(), req.GrpcPort)
+	peerAddress := pb.ServerAddress(req.ClientAddress)
 
 	// buffer by 1 so we don't end up getting stuck writing to stopChan forever
 	stopChan := make(chan bool, 1)
 
-	clientName, messageChan := ms.addClient(req.Name, peerAddress)
+	clientName, messageChan := ms.addClient(req.FilerGroup, req.ClientType, peerAddress)
+	for _, update := range ms.Cluster.AddClusterNode(req.FilerGroup, req.ClientType, peerAddress, req.Version) {
+		ms.broadcastToClients(update)
+	}
 
-	defer ms.deleteClient(clientName)
+	defer func() {
+		for _, update := range ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, peerAddress) {
+			ms.broadcastToClients(update)
+		}
+		ms.deleteClient(clientName)
+	}()
 
 	for _, message := range ms.Topo.ToVolumeLocations() {
-		if sendErr := stream.Send(message); sendErr != nil {
+		if sendErr := stream.Send(&master_pb.KeepConnectedResponse{VolumeLocation: message}); sendErr != nil {
 			return sendErr
 		}
 	}
@@ -221,7 +291,10 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 			}
 		case <-ticker.C:
 			if !ms.Topo.IsLeader() {
+				stats.MasterRaftIsleader.Set(0)
 				return ms.informNewLeader(stream)
+			} else {
+				stats.MasterRaftIsleader.Set(1)
 			}
 		case <-stopChan:
 			return nil
@@ -230,22 +303,32 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 
 }
 
+func (ms *MasterServer) broadcastToClients(message *master_pb.KeepConnectedResponse) {
+	ms.clientChansLock.RLock()
+	for _, ch := range ms.clientChans {
+		ch <- message
+	}
+	ms.clientChansLock.RUnlock()
+}
+
 func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedServer) error {
 	leader, err := ms.Topo.Leader()
 	if err != nil {
 		glog.Errorf("topo leader: %v", err)
 		return raft.NotLeaderError
 	}
-	if err := stream.Send(&master_pb.VolumeLocation{
-		Leader: leader,
+	if err := stream.Send(&master_pb.KeepConnectedResponse{
+		VolumeLocation: &master_pb.VolumeLocation{
+			Leader: string(leader),
+		},
 	}); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (ms *MasterServer) addClient(clientType string, clientAddress string) (clientName string, messageChan chan *master_pb.VolumeLocation) {
-	clientName = clientType + "@" + clientAddress
+func (ms *MasterServer) addClient(filerGroup, clientType string, clientAddress pb.ServerAddress) (clientName string, messageChan chan *master_pb.KeepConnectedResponse) {
+	clientName = filerGroup + "." + clientType + "@" + string(clientAddress)
 	glog.V(0).Infof("+ client %v", clientName)
 
 	// we buffer this because otherwise we end up in a potential deadlock where
@@ -253,7 +336,7 @@ func (ms *MasterServer) addClient(clientType string, clientAddress string) (clie
 	// trying to send to it in SendHeartbeat and so we can't lock the
 	// clientChansLock to remove the channel and we're stuck writing to it
 	// 100 is probably overkill
-	messageChan = make(chan *master_pb.VolumeLocation, 100)
+	messageChan = make(chan *master_pb.KeepConnectedResponse, 100)
 
 	ms.clientChansLock.Lock()
 	ms.clientChans[clientName] = messageChan
@@ -284,23 +367,10 @@ func findClientAddress(ctx context.Context, grpcPort uint32) string {
 	}
 	if tcpAddr, ok := pr.Addr.(*net.TCPAddr); ok {
 		externalIP := tcpAddr.IP
-		return fmt.Sprintf("%s:%d", externalIP, grpcPort)
+		return util.JoinHostPort(externalIP.String(), int(grpcPort))
 	}
 	return pr.Addr.String()
 
-}
-
-func (ms *MasterServer) ListMasterClients(ctx context.Context, req *master_pb.ListMasterClientsRequest) (*master_pb.ListMasterClientsResponse, error) {
-	resp := &master_pb.ListMasterClientsResponse{}
-	ms.clientChansLock.RLock()
-	defer ms.clientChansLock.RUnlock()
-
-	for k := range ms.clientChans {
-		if strings.HasPrefix(k, req.ClientType+"@") {
-			resp.GrpcAddresses = append(resp.GrpcAddresses, k[len(req.ClientType)+1:])
-		}
-	}
-	return resp, nil
 }
 
 func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_pb.GetMasterConfigurationRequest) (*master_pb.GetMasterConfigurationResponse, error) {
@@ -315,7 +385,7 @@ func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_
 		DefaultReplication:     ms.option.DefaultReplicaPlacement,
 		VolumeSizeLimitMB:      uint32(ms.option.VolumeSizeLimitMB),
 		VolumePreallocate:      ms.option.VolumePreallocate,
-		Leader:                 leader,
+		Leader:                 string(leader),
 	}
 
 	return resp, nil

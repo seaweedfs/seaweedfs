@@ -2,11 +2,14 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"io"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
+	"github.com/chrislusf/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
 
@@ -24,18 +27,26 @@ const (
 )
 
 type ReadOption struct {
-	ReadDeleted bool
+	// request
+	ReadDeleted     bool
+	AttemptMetaOnly bool
+	MustMetaOnly    bool
+	// response
+	IsMetaOnly     bool // read status
+	VolumeRevision uint16
+	IsOutOfRange   bool // whether read over MaxPossibleVolumeSize
 }
 
 /*
  * A VolumeServer contains one Store
  */
 type Store struct {
-	MasterAddress       string
+	MasterAddress       pb.ServerAddress
 	grpcDialOption      grpc.DialOption
 	volumeSizeLimit     uint64 // read from the master
 	Ip                  string
 	Port                int
+	GrpcPort            int
 	PublicUrl           string
 	Locations           []*DiskLocation
 	dataCenter          string // optional informaton, overwriting master setting if exists
@@ -50,13 +61,13 @@ type Store struct {
 }
 
 func (s *Store) String() (str string) {
-	str = fmt.Sprintf("Ip:%s, Port:%d, PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d", s.Ip, s.Port, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.GetVolumeSizeLimit())
+	str = fmt.Sprintf("Ip:%s, Port:%d, GrpcPort:%d PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d", s.Ip, s.Port, s.GrpcPort, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.GetVolumeSizeLimit())
 	return
 }
 
-func NewStore(grpcDialOption grpc.DialOption, port int, ip, publicUrl string, dirnames []string, maxVolumeCounts []int,
+func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int, publicUrl string, dirnames []string, maxVolumeCounts []int,
 	minFreeSpaces []util.MinFreeSpace, idxFolder string, needleMapKind NeedleMapKind, diskTypes []DiskType) (s *Store) {
-	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, PublicUrl: publicUrl, NeedleMapKind: needleMapKind}
+	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, GrpcPort: grpcPort, PublicUrl: publicUrl, NeedleMapKind: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
 		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i], minFreeSpaces[i], idxFolder, diskTypes[i])
@@ -298,6 +309,11 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		}
 	}
 
+	var uuidList []string
+	for _, loc := range s.Locations {
+		uuidList = append(uuidList, loc.DirectoryUuid)
+	}
+
 	for col, size := range collectionVolumeSize {
 		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal").Set(float64(size))
 	}
@@ -311,6 +327,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	return &master_pb.Heartbeat{
 		Ip:              s.Ip,
 		Port:            uint32(s.Port),
+		GrpcPort:        uint32(s.GrpcPort),
 		PublicUrl:       s.PublicUrl,
 		MaxVolumeCounts: maxVolumeCounts,
 		MaxFileKey:      NeedleIdToUint64(maxFileKey),
@@ -318,12 +335,16 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		Rack:            s.rack,
 		Volumes:         volumeMessages,
 		HasNoVolumes:    len(volumeMessages) == 0,
+		LocationUuids:   uuidList,
 	}
 
 }
 
 func (s *Store) SetStopping() {
 	s.isStopping = true
+	for _, location := range s.Locations {
+		location.SetStopping()
+	}
 }
 
 func (s *Store) Close() {
@@ -361,6 +382,12 @@ func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle, readOption
 		return v.readNeedle(n, readOption, onReadSizeFn)
 	}
 	return 0, fmt.Errorf("volume %d not found", i)
+}
+func (s *Store) ReadVolumeNeedleDataInto(i needle.VolumeId, n *needle.Needle, readOption *ReadOption, writer io.Writer, offset int64, size int64) error {
+	if v := s.findVolume(i); v != nil {
+		return v.readNeedleDataInto(n, readOption, writer, offset, size)
+	}
+	return fmt.Errorf("volume %d not found", i)
 }
 func (s *Store) GetVolume(i needle.VolumeId) *Volume {
 	return s.findVolume(i)
@@ -428,10 +455,13 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 	}
 
 	for _, location := range s.Locations {
-		if err := location.UnloadVolume(i); err == nil {
+		err := location.UnloadVolume(i)
+		if err == nil {
 			glog.V(0).Infof("UnmountVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
+		} else if err == ErrVolumeNotFound {
+			continue
 		}
 	}
 
@@ -452,10 +482,13 @@ func (s *Store) DeleteVolume(i needle.VolumeId) error {
 		DiskType:         string(v.location.DiskType),
 	}
 	for _, location := range s.Locations {
-		if err := location.DeleteVolume(i); err == nil {
+		err := location.DeleteVolume(i)
+		if err == nil {
 			glog.V(0).Infof("DeleteVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
+		} else if err == ErrVolumeNotFound {
+			continue
 		} else {
 			glog.Errorf("DeleteVolume %d: %v", i, err)
 		}

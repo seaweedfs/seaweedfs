@@ -1,0 +1,59 @@
+# This is a basic workflow to help you get started with Actions
+
+name: "go: build versioned binaries for freebsd"
+
+on:
+  push:
+    tags:
+      - '*'
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+permissions:
+  contents: read
+
+jobs:
+
+  build-release-binaries_freebsd:
+    permissions:
+      contents: write  # for wangyoucao577/go-release-action to upload release assets
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [freebsd]
+        goarch: [amd64, arm, arm64]
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
+      - name: Go Release Binaries Normal Volume Size
+        uses: wangyoucao577/go-release-action@16624612d4e2b73de613857a362d294700207fff # v1.22
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          overwrite: true
+          pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
+          # build_flags: -tags 5BytesOffset # optional, default is
+          ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          # Where to run `go build .`
+          project_path: weed
+          binary_name: weed
+          asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}"
+      - name: Go Release Large Disk Binaries
+        uses: wangyoucao577/go-release-action@16624612d4e2b73de613857a362d294700207fff # v1.22
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          overwrite: true
+          pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
+          build_flags: -tags 5BytesOffset # optional, default is
+          ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          # Where to run `go build .`
+          project_path: weed
+          binary_name: weed
+          asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}_large_disk"

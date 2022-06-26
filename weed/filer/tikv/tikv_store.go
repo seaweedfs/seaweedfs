@@ -1,5 +1,3 @@
-// +build tikv
-
 package tikv
 
 import (
@@ -14,7 +12,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv"
 )
 
@@ -27,8 +24,9 @@ func init() {
 }
 
 type TikvStore struct {
-	client                 *tikv.KVStore
+	client                 *txnkv.Client
 	deleteRangeConcurrency int
+	onePC                  bool
 }
 
 // Basic APIs
@@ -46,12 +44,13 @@ func (store *TikvStore) Initialize(config util.Configuration, prefix string) err
 	if drc <= 0 {
 		drc = 1
 	}
+	store.onePC = config.GetBool(prefix + "enable_1pc")
 	store.deleteRangeConcurrency = drc
 	return store.initialize(pdAddrs)
 }
 
 func (store *TikvStore) initialize(pdAddrs []string) error {
-	client, err := tikv.NewTxnClient(pdAddrs)
+	client, err := txnkv.NewClient(pdAddrs)
 	store.client = client
 	return err
 }
@@ -298,6 +297,9 @@ func (store *TikvStore) BeginTransaction(ctx context.Context) (context.Context, 
 	if err != nil {
 		return ctx, err
 	}
+	if store.onePC {
+		tx.SetEnable1PC(store.onePC)
+	}
 	return context.WithValue(ctx, "tx", tx), nil
 }
 
@@ -343,6 +345,9 @@ func (store *TikvStore) getTxn(ctx context.Context) (*TxnWrapper, error) {
 	txn, err := store.client.Begin()
 	if err != nil {
 		return nil, err
+	}
+	if store.onePC {
+		txn.SetEnable1PC(store.onePC)
 	}
 	return &TxnWrapper{txn, false}, nil
 }

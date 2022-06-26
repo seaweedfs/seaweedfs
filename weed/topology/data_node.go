@@ -2,22 +2,23 @@ package topology
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
-	"strconv"
-
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
 )
 
 type DataNode struct {
 	NodeImpl
 	Ip        string
 	Port      int
+	GrpcPort  int
 	PublicUrl string
 	LastSeen  int64 // unix time in seconds
+	Counter   int   // in race condition, the previous dataNode was not dead
 }
 
 func NewDataNode(id string) *DataNode {
@@ -109,6 +110,9 @@ func (dn *DataNode) DeltaUpdateVolumes(newVolumes, deletedVolumes []storage.Volu
 
 	for _, v := range deletedVolumes {
 		disk := dn.getOrCreateDisk(v.DiskType)
+		if _, found := disk.volumes[v.Id]; !found {
+			continue
+		}
 		delete(disk.volumes, v.Id)
 
 		deltaDiskUsages := newDiskUsages()
@@ -206,7 +210,11 @@ func (dn *DataNode) MatchLocation(ip string, port int) bool {
 }
 
 func (dn *DataNode) Url() string {
-	return dn.Ip + ":" + strconv.Itoa(dn.Port)
+	return util.JoinHostPort(dn.Ip, dn.Port)
+}
+
+func (dn *DataNode) ServerAddress() pb.ServerAddress {
+	return pb.NewServerAddress(dn.Ip, dn.Port, dn.GrpcPort)
 }
 
 func (dn *DataNode) ToMap() interface{} {
@@ -240,6 +248,7 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 	m := &master_pb.DataNodeInfo{
 		Id:        string(dn.Id()),
 		DiskInfos: make(map[string]*master_pb.DiskInfo),
+		GrpcPort:  uint32(dn.GrpcPort),
 	}
 	for _, c := range dn.Children() {
 		disk := c.(*Disk)

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"google.golang.org/grpc"
 	"io"
@@ -36,26 +37,26 @@ func (c *commandVolumeServerLeave) Help() string {
 
 func (c *commandVolumeServerLeave) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	vsLeaveCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeServer := vsLeaveCommand.String("node", "", "<host>:<port> of the volume server")
 	if err = vsLeaveCommand.Parse(args); err != nil {
 		return nil
 	}
 
+	if err = commandEnv.confirmIsLocked(args); err != nil {
+		return
+	}
+
 	if *volumeServer == "" {
 		return fmt.Errorf("need to specify volume server by -node=<host>:<port>")
 	}
 
-	return volumeServerLeave(commandEnv.option.GrpcDialOption, *volumeServer, writer)
+	return volumeServerLeave(commandEnv.option.GrpcDialOption, pb.ServerAddress(*volumeServer), writer)
 
 }
 
-func volumeServerLeave(grpcDialOption grpc.DialOption, volumeServer string, writer io.Writer) (err error) {
-	return operation.WithVolumeServerClient(volumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+func volumeServerLeave(grpcDialOption grpc.DialOption, volumeServer pb.ServerAddress, writer io.Writer) (err error) {
+	return operation.WithVolumeServerClient(false, volumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, leaveErr := volumeServerClient.VolumeServerLeave(context.Background(), &volume_server_pb.VolumeServerLeaveRequest{})
 		if leaveErr != nil {
 			fmt.Fprintf(writer, "ask volume server %s to leave: %v\n", volumeServer, leaveErr)

@@ -3,6 +3,7 @@ package operation
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc"
 
@@ -26,9 +27,11 @@ type AssignResult struct {
 	Fid       string              `json:"fid,omitempty"`
 	Url       string              `json:"url,omitempty"`
 	PublicUrl string              `json:"publicUrl,omitempty"`
+	GrpcPort  int                 `json:"grpcPort,omitempty"`
 	Count     uint64              `json:"count,omitempty"`
 	Error     string              `json:"error,omitempty"`
 	Auth      security.EncodedJwt `json:"auth,omitempty"`
+	Replicas  []Location          `json:"replicas,omitempty"`
 }
 
 func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (*AssignResult, error) {
@@ -45,7 +48,7 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 			continue
 		}
 
-		lastError = WithMasterServerClient(masterFn(), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+		lastError = WithMasterServerClient(false, masterFn(), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
 			req := &master_pb.AssignRequest{
 				Count:               request.Count,
@@ -63,15 +66,22 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 				return grpcErr
 			}
 
-			ret.Count = resp.Count
-			ret.Fid = resp.Fid
-			ret.Url = resp.Url
-			ret.PublicUrl = resp.PublicUrl
-			ret.Error = resp.Error
-			ret.Auth = security.EncodedJwt(resp.Auth)
-
 			if resp.Error != "" {
 				return fmt.Errorf("assignRequest: %v", resp.Error)
+			}
+
+			ret.Count = resp.Count
+			ret.Fid = resp.Fid
+			ret.Url = resp.Location.Url
+			ret.PublicUrl = resp.Location.PublicUrl
+			ret.GrpcPort = int(resp.Location.GrpcPort)
+			ret.Error = resp.Error
+			ret.Auth = security.EncodedJwt(resp.Auth)
+			for _, r := range resp.Replicas {
+				ret.Replicas = append(ret.Replicas, Location{
+					Url:       r.Url,
+					PublicUrl: r.PublicUrl,
+				})
 			}
 
 			return nil
@@ -93,9 +103,9 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 	return ret, lastError
 }
 
-func LookupJwt(master string, grpcDialOption grpc.DialOption, fileId string) (token security.EncodedJwt) {
+func LookupJwt(master pb.ServerAddress, grpcDialOption grpc.DialOption, fileId string) (token security.EncodedJwt) {
 
-	WithMasterServerClient(master, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+	WithMasterServerClient(false, master, grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
 		resp, grpcErr := masterClient.LookupVolume(context.Background(), &master_pb.LookupVolumeRequest{
 			VolumeOrFileIds: []string{fileId},
@@ -123,6 +133,7 @@ type StorageOption struct {
 	Collection        string
 	DataCenter        string
 	Rack              string
+	DataNode          string
 	TtlSeconds        int32
 	Fsync             bool
 	VolumeGrowthCount uint32
@@ -141,9 +152,10 @@ func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, a
 		DiskType:            so.DiskType,
 		DataCenter:          so.DataCenter,
 		Rack:                so.Rack,
+		DataNode:            so.DataNode,
 		WritableVolumeCount: so.VolumeGrowthCount,
 	}
-	if so.DataCenter != "" || so.Rack != "" {
+	if so.DataCenter != "" || so.Rack != "" || so.DataNode != "" {
 		altRequest = &VolumeAssignRequest{
 			Count:               uint64(count),
 			Replication:         so.Replication,
@@ -152,6 +164,7 @@ func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, a
 			DiskType:            so.DiskType,
 			DataCenter:          "",
 			Rack:                "",
+			DataNode:            "",
 			WritableVolumeCount: so.VolumeGrowthCount,
 		}
 	}

@@ -3,6 +3,7 @@ package shell
 import (
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
 	"math"
@@ -39,6 +40,8 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 		return nil
 	}
 
+	signingKey := util.GetViper().GetString("jwt.signing.key")
+
 	var filerBucketsPath string
 	filerBucketsPath, err = readFilerBucketsPath(commandEnv)
 	if err != nil {
@@ -55,14 +58,16 @@ func (c *commandS3CleanUploads) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	for _, bucket := range buckets {
-		c.cleanupUploads(commandEnv, writer, filerBucketsPath, bucket, *uploadedTimeAgo)
+		if err := c.cleanupUploads(commandEnv, writer, filerBucketsPath, bucket, *uploadedTimeAgo, signingKey); err != nil {
+			fmt.Fprintf(writer, fmt.Sprintf("failed cleanup uploads for backet %s: %v", bucket, err))
+		}
 	}
 
 	return err
 
 }
 
-func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io.Writer, filerBucketsPath string, bucket string, timeAgo time.Duration) error {
+func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io.Writer, filerBucketsPath string, bucket string, timeAgo time.Duration, signingKey string) error {
 	uploadsDir := filerBucketsPath + "/" + bucket + "/.uploads"
 	var staleUploads []string
 	now := time.Now()
@@ -77,12 +82,17 @@ func (c *commandS3CleanUploads) cleanupUploads(commandEnv *CommandEnv, writer io
 		return fmt.Errorf("list uploads under %v: %v", uploadsDir, err)
 	}
 
+	var encodedJwt security.EncodedJwt
+	if signingKey != "" {
+		encodedJwt = security.GenJwtForFilerServer(security.SigningKey(signingKey), 15*60)
+	}
+
 	for _, staleUpload := range staleUploads {
-		deleteUrl := fmt.Sprintf("http://%s:%d%s/%s?recursive=true&ignoreRecursiveError=true", commandEnv.option.FilerHost, commandEnv.option.FilerPort, uploadsDir, staleUpload)
+		deleteUrl := fmt.Sprintf("http://%s%s/%s?recursive=true&ignoreRecursiveError=true", commandEnv.option.FilerAddress.ToHttpAddress(), uploadsDir, staleUpload)
 		fmt.Fprintf(writer, "purge %s\n", deleteUrl)
 
-		err = util.Delete(deleteUrl, "")
-		if err != nil {
+		err = util.Delete(deleteUrl, string(encodedJwt))
+		if err != nil && err.Error() != "" {
 			return fmt.Errorf("purge %s/%s: %v", uploadsDir, staleUpload, err)
 		}
 	}

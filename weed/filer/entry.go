@@ -15,15 +15,14 @@ type Attr struct {
 	Uid           uint32      // owner uid
 	Gid           uint32      // group gid
 	Mime          string      // mime type
-	Replication   string      // replication
-	Collection    string      // collection name
 	TtlSec        int32       // ttl in seconds
-	DiskType      string
 	UserName      string
 	GroupNames    []string
 	SymlinkTarget string
 	Md5           []byte
 	FileSize      uint64
+	Rdev          uint32
+	Inode         uint64
 }
 
 func (attr Attr) IsDirectory() bool {
@@ -43,6 +42,7 @@ type Entry struct {
 	HardLinkCounter int32
 	Content         []byte
 	Remote          *filer_pb.RemoteEntry
+	Quota           int64
 }
 
 func (entry *Entry) Size() uint64 {
@@ -70,6 +70,7 @@ func (entry *Entry) ShallowClone() *Entry {
 	newEntry.HardLinkCounter = entry.HardLinkCounter
 	newEntry.Content = entry.Content
 	newEntry.Remote = entry.Remote
+	newEntry.Quota = entry.Quota
 
 	return newEntry
 }
@@ -96,6 +97,7 @@ func (entry *Entry) ToExistingProtoEntry(message *filer_pb.Entry) {
 	message.HardLinkCounter = entry.HardLinkCounter
 	message.Content = entry.Content
 	message.RemoteEntry = entry.Remote
+	message.Quota = entry.Quota
 }
 
 func FromPbEntryToExistingEntry(message *filer_pb.Entry, fsEntry *Entry) {
@@ -106,6 +108,7 @@ func FromPbEntryToExistingEntry(message *filer_pb.Entry, fsEntry *Entry) {
 	fsEntry.HardLinkCounter = message.HardLinkCounter
 	fsEntry.Content = message.Content
 	fsEntry.Remote = message.RemoteEntry
+	fsEntry.Quota = message.Quota
 }
 
 func (entry *Entry) ToProtoFullEntry() *filer_pb.FullEntry {

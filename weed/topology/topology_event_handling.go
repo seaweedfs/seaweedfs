@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc"
 	"math/rand"
@@ -24,7 +25,7 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 		c := time.Tick(15 * time.Minute)
 		for _ = range c {
 			if t.IsLeader() {
-				t.Vacuum(grpcDialOption, garbageThreshold, preallocate)
+				t.Vacuum(grpcDialOption, garbageThreshold, 0, "", preallocate)
 			}
 		}
 	}(garbageThreshold)
@@ -84,7 +85,8 @@ func (t *Topology) UnRegisterDataNode(dn *DataNode) {
 
 	negativeUsages := dn.GetDiskUsages().negative()
 	dn.UpAdjustDiskUsageDelta(negativeUsages)
-
+	dn.DeltaUpdateVolumes([]storage.VolumeInfo{}, dn.GetVolumes())
+	dn.DeltaUpdateEcShards([]*erasure_coding.EcVolumeInfo{}, dn.GetEcShards())
 	if dn.Parent() != nil {
 		dn.Parent().UnlinkChildNode(dn.Id())
 	}

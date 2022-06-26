@@ -29,11 +29,31 @@ public class SeaweedWrite {
                                  final byte[] bytes,
                                  final long bytesOffset, final long bytesLength,
                                  final String path) throws IOException {
-        FilerProto.FileChunk.Builder chunkBuilder = writeChunk(
-                replication, filerClient, offset, bytes, bytesOffset, bytesLength, path);
-        synchronized (entry) {
-            entry.addChunks(chunkBuilder);
+
+        IOException lastException = null;
+        for (long waitTime = 1000L; waitTime < 10 * 1000; waitTime += waitTime / 2) {
+            try {
+                FilerProto.FileChunk.Builder chunkBuilder = writeChunk(
+                        replication, filerClient, offset, bytes, bytesOffset, bytesLength, path);
+                lastException = null;
+                synchronized (entry) {
+                    entry.addChunks(chunkBuilder);
+                }
+                break;
+            } catch (IOException ioe) {
+                LOG.debug("writeData:{}", ioe);
+                lastException = ioe;
+            }
+            try {
+                Thread.sleep(waitTime);
+            } catch (InterruptedException e) {
+            }
         }
+
+        if (lastException != null) {
+            throw lastException;
+        }
+
     }
 
     public static FilerProto.FileChunk.Builder writeChunk(final String replication,
@@ -59,7 +79,7 @@ public class SeaweedWrite {
         String fileId = response.getFileId();
         String auth = response.getAuth();
 
-        String targetUrl = filerClient.getChunkUrl(fileId, response.getUrl(), response.getPublicUrl());
+        String targetUrl = filerClient.getChunkUrl(fileId, response.getLocation().getUrl(), response.getLocation().getPublicUrl());
 
         ByteString cipherKeyString = com.google.protobuf.ByteString.EMPTY;
         byte[] cipherKey = null;

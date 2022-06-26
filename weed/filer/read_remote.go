@@ -21,13 +21,13 @@ func MapFullPathToRemoteStorageLocation(localMountedDir util.FullPath, remoteMou
 	return remoteLocation
 }
 
-func MapRemoteStorageLocationPathToFullPath(localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, remoteLocationPath string)(fp util.FullPath)  {
+func MapRemoteStorageLocationPathToFullPath(localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, remoteLocationPath string) (fp util.FullPath) {
 	return localMountedDir.Child(remoteLocationPath[len(remoteMountedLocation.Path):])
 }
 
-func DownloadToLocal(filerClient filer_pb.FilerClient, remoteConf *remote_pb.RemoteConf, remoteLocation *remote_pb.RemoteStorageLocation, parent util.FullPath, entry *filer_pb.Entry) error {
-	return filerClient.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.DownloadToLocal(context.Background(), &filer_pb.DownloadToLocalRequest{
+func CacheRemoteObjectToLocalCluster(filerClient filer_pb.FilerClient, remoteConf *remote_pb.RemoteConf, remoteLocation *remote_pb.RemoteStorageLocation, parent util.FullPath, entry *filer_pb.Entry) error {
+	return filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		_, err := client.CacheRemoteObjectToLocalCluster(context.Background(), &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 			Directory: string(parent),
 			Name:      entry.Name,
 		})

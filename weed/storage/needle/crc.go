@@ -21,6 +21,7 @@ func (c CRC) Update(b []byte) CRC {
 	return CRC(crc32.Update(uint32(c), table, b))
 }
 
+// Value Deprecated. Just use the raw uint32 value to compare.
 func (c CRC) Value() uint32 {
 	return uint32(c>>15|c<<17) + 0xa282ead8
 }
@@ -51,4 +52,4 @@ func (c *CRCwriter) Write(p []byte) (n int, err error) {
 	return
 }
 
-func (c *CRCwriter) Sum() uint32 { return c.crc.Value() } // final hash
+func (c *CRCwriter) Sum() uint32 { return uint32(c.crc) } // final hash

@@ -45,7 +45,7 @@ func TraverseBfs(listDirFn ListDirectoryFunc, parentPath util.FullPath, visitFn 
 
 }
 
-func processOneDirectory(listDirFn ListDirectoryFunc, parentPath util.FullPath, visitFn VisitFunc, dirQueue *util.Queue, dirQueueWg *sync.WaitGroup) (error) {
+func processOneDirectory(listDirFn ListDirectoryFunc, parentPath util.FullPath, visitFn VisitFunc, dirQueue *util.Queue, dirQueueWg *sync.WaitGroup) error {
 
 	return listDirFn(parentPath, func(dir string, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
 		if err := visitFn(dir, name, isDirectory, remoteEntry); err != nil {

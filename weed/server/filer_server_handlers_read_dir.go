@@ -2,9 +2,6 @@ package weed_server
 
 import (
 	"context"
-	"encoding/base64"
-	"fmt"
-	"github.com/skip2/go-qrcode"
 	"net/http"
 	"strconv"
 	"strings"
@@ -49,8 +46,10 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		path = ""
 	}
 
+	emptyFolder := true
 	if len(entries) > 0 {
 		lastFileName = entries[len(entries)-1].Name()
+		emptyFolder = false
 	}
 
 	glog.V(4).Infof("listDirectory %s, last file %s, limit %d: %d items", path, lastFileName, limit, len(entries))
@@ -62,30 +61,27 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 			Limit                 int
 			LastFileName          string
 			ShouldDisplayLoadMore bool
+			EmptyFolder           bool
 		}{
 			path,
 			entries,
 			limit,
 			lastFileName,
 			shouldDisplayLoadMore,
+			emptyFolder,
 		})
 		return
 	}
 
-	var qrImageString string
-	img, err := qrcode.Encode(fmt.Sprintf("http://%s:%d%s", fs.option.Host, fs.option.Port, r.URL.Path), qrcode.Medium, 128)
-	if err == nil {
-		qrImageString = base64.StdEncoding.EncodeToString(img)
-	}
-
-	ui.StatusTpl.Execute(w, struct {
+	err = ui.StatusTpl.Execute(w, struct {
 		Path                  string
 		Breadcrumbs           []ui.Breadcrumb
 		Entries               interface{}
 		Limit                 int
 		LastFileName          string
 		ShouldDisplayLoadMore bool
-		QrImage               string
+		EmptyFolder           bool
+		ShowDirectoryDelete   bool
 	}{
 		path,
 		ui.ToBreadcrumb(path),
@@ -93,6 +89,10 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		limit,
 		lastFileName,
 		shouldDisplayLoadMore,
-		qrImageString,
+		emptyFolder,
+		fs.option.ShowUIDirectoryDelete,
 	})
+	if err != nil {
+		glog.V(0).Infof("Template Execute Error: %v", err)
+	}
 }

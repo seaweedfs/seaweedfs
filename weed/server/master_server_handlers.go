@@ -113,13 +113,16 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if ms.shouldVolumeGrow(option) {
+	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
+
+	if !vl.HasGrowRequest() && vl.ShouldGrowVolumes(option) {
 		glog.V(0).Infof("dirAssign volume growth %v from %v", option.String(), r.RemoteAddr)
 		if ms.Topo.AvailableSpaceFor(option) <= 0 {
 			writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left for " + option.String()})
 			return
 		}
 		errCh := make(chan error, 1)
+		vl.AddGrowRequest()
 		ms.vgCh <- &topology.VolumeGrowRequest{
 			Option: option,
 			Count:  writableVolumeCount,
@@ -130,9 +133,10 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	fid, count, dn, err := ms.Topo.PickForWrite(requestedCount, option)
+	fid, count, dnList, err := ms.Topo.PickForWrite(requestedCount, option)
 	if err == nil {
 		ms.maybeAddJwtAuthorization(w, fid, true)
+		dn := dnList.Head()
 		writeJsonQuiet(w, r, http.StatusOK, operation.AssignResult{Fid: fid, Url: dn.Url(), PublicUrl: dn.PublicUrl, Count: count})
 	} else {
 		writeJsonQuiet(w, r, http.StatusNotAcceptable, operation.AssignResult{Error: err.Error()})
@@ -145,9 +149,9 @@ func (ms *MasterServer) maybeAddJwtAuthorization(w http.ResponseWriter, fileId s
 	}
 	var encodedJwt security.EncodedJwt
 	if isWrite {
-		encodedJwt = security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fileId)
+		encodedJwt = security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fileId)
 	} else {
-		encodedJwt = security.GenJwt(ms.guard.ReadSigningKey, ms.guard.ReadExpiresAfterSec, fileId)
+		encodedJwt = security.GenJwtForVolumeServer(ms.guard.ReadSigningKey, ms.guard.ReadExpiresAfterSec, fileId)
 	}
 	if encodedJwt == "" {
 		return

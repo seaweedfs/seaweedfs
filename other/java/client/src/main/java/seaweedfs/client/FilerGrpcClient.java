@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import javax.net.ssl.SSLException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 public class FilerGrpcClient {
@@ -30,6 +31,7 @@ public class FilerGrpcClient {
     public final int VOLUME_SERVER_ACCESS_PUBLIC_URL = 1;
     public final int VOLUME_SERVER_ACCESS_FILER_PROXY = 2;
     public final Map<String, FilerProto.Locations> vidLocations = new HashMap<>();
+    protected int randomClientId;
     private final ManagedChannel channel;
     private final SeaweedFilerGrpc.SeaweedFilerBlockingStub blockingStub;
     private final SeaweedFilerGrpc.SeaweedFilerStub asyncStub;
@@ -40,11 +42,11 @@ public class FilerGrpcClient {
     private int volumeServerAccess = VOLUME_SERVER_ACCESS_DIRECT;
     private String filerAddress;
 
-    public FilerGrpcClient(String host, int grpcPort) {
-        this(host, grpcPort, sslContext);
+    public FilerGrpcClient(String host, int port, int grpcPort) {
+        this(host, port, grpcPort, sslContext);
     }
 
-    public FilerGrpcClient(String host, int grpcPort, SslContext sslContext) {
+    public FilerGrpcClient(String host, int port, int grpcPort, SslContext sslContext) {
 
         this(sslContext == null ?
                 ManagedChannelBuilder.forAddress(host, grpcPort).usePlaintext()
@@ -54,7 +56,7 @@ public class FilerGrpcClient {
                         .negotiationType(NegotiationType.TLS)
                         .sslContext(sslContext));
 
-        filerAddress = String.format("%s:%d", host, grpcPort - 10000);
+        filerAddress = SeaweedUtil.joinHostPort(host, port);
 
         FilerProto.GetFilerConfigurationResponse filerConfigurationResponse =
                 this.getBlockingStub().getFilerConfiguration(
@@ -62,6 +64,7 @@ public class FilerGrpcClient {
         cipher = filerConfigurationResponse.getCipher();
         collection = filerConfigurationResponse.getCollection();
         replication = filerConfigurationResponse.getReplication();
+        randomClientId = new Random().nextInt();
 
     }
 

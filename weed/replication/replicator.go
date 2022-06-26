@@ -82,8 +82,8 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 	return r.sink.CreateEntry(key, message.NewEntry, message.Signatures)
 }
 
-func ReadFilerSignature(grpcDialOption grpc.DialOption, filer string) (filerSignature int32, readErr error) {
-	if readErr = pb.WithFilerClient(filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+func ReadFilerSignature(grpcDialOption grpc.DialOption, filer pb.ServerAddress) (filerSignature int32, readErr error) {
+	if readErr = pb.WithFilerClient(false, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		if resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{}); err != nil {
 			return fmt.Errorf("GetFilerConfiguration %s: %v", filer, err)
 		} else {

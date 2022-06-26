@@ -5,7 +5,7 @@ package rocksdb
 import (
 	"time"
 
-	"github.com/tecbot/gorocksdb"
+	gorocksdb "github.com/linxGnu/grocksdb"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 )
@@ -37,4 +37,9 @@ func (t *TTLFilter) Filter(level int, key, val []byte) (remove bool, newVal []by
 
 func (t *TTLFilter) Name() string {
 	return "TTLFilter"
+}
+func (t *TTLFilter) SetIgnoreSnapshots(value bool) {
+}
+
+func (t *TTLFilter) Destroy() {
 }

@@ -3,6 +3,8 @@ package broker
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/cluster"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -32,7 +34,7 @@ func (broker *MessageBroker) FindBroker(c context.Context, request *messaging_pb
 	targetTopicPartition := fmt.Sprintf(TopicPartitionFmt, request.Namespace, request.Topic, request.Parition)
 
 	for _, filer := range broker.option.Filers {
-		err := broker.withFilerClient(filer, func(client filer_pb.SeaweedFilerClient) error {
+		err := broker.withFilerClient(false, filer, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.LocateBroker(context.Background(), &filer_pb.LocateBrokerRequest{
 				Resource: targetTopicPartition,
 			})
@@ -62,16 +64,18 @@ func (broker *MessageBroker) FindBroker(c context.Context, request *messaging_pb
 func (broker *MessageBroker) checkFilers() {
 
 	// contact a filer about masters
-	var masters []string
+	var masters []pb.ServerAddress
 	found := false
 	for !found {
 		for _, filer := range broker.option.Filers {
-			err := broker.withFilerClient(filer, func(client filer_pb.SeaweedFilerClient) error {
+			err := broker.withFilerClient(false, filer, func(client filer_pb.SeaweedFilerClient) error {
 				resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 				if err != nil {
 					return err
 				}
-				masters = append(masters, resp.Masters...)
+				for _, m := range resp.Masters {
+					masters = append(masters, pb.ServerAddress(m))
+				}
 				return nil
 			})
 			if err == nil {
@@ -85,19 +89,21 @@ func (broker *MessageBroker) checkFilers() {
 	glog.V(0).Infof("received master list: %s", masters)
 
 	// contact each masters for filers
-	var filers []string
+	var filers []pb.ServerAddress
 	found = false
 	for !found {
 		for _, master := range masters {
-			err := broker.withMasterClient(master, func(client master_pb.SeaweedClient) error {
-				resp, err := client.ListMasterClients(context.Background(), &master_pb.ListMasterClientsRequest{
-					ClientType: "filer",
+			err := broker.withMasterClient(false, master, func(client master_pb.SeaweedClient) error {
+				resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+					ClientType: cluster.FilerType,
 				})
 				if err != nil {
 					return err
 				}
 
-				filers = append(filers, resp.GrpcAddresses...)
+				for _, clusterNode := range resp.ClusterNodes {
+					filers = append(filers, pb.ServerAddress(clusterNode.Address))
+				}
 
 				return nil
 			})

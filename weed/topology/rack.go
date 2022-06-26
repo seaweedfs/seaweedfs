@@ -3,7 +3,7 @@ package topology
 import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"strconv"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"time"
 )
 
@@ -30,7 +30,7 @@ func (r *Rack) FindDataNode(ip string, port int) *DataNode {
 	}
 	return nil
 }
-func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVolumeCounts map[string]uint32) *DataNode {
+func (r *Rack) GetOrCreateDataNode(ip string, port int, grpcPort int, publicUrl string, maxVolumeCounts map[string]uint32) *DataNode {
 	for _, c := range r.Children() {
 		dn := c.(*DataNode)
 		if dn.MatchLocation(ip, port) {
@@ -38,9 +38,10 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, publicUrl string, maxVol
 			return dn
 		}
 	}
-	dn := NewDataNode(ip + ":" + strconv.Itoa(port))
+	dn := NewDataNode(util.JoinHostPort(ip, port))
 	dn.Ip = ip
 	dn.Port = port
+	dn.GrpcPort = grpcPort
 	dn.PublicUrl = publicUrl
 	dn.LastSeen = time.Now().Unix()
 	r.LinkChildNode(dn)

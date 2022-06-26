@@ -44,7 +44,16 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 		// println("detect2 mimetype to", pu.MimeType)
 	}
 
-	uploadResult, uploadError := operation.UploadData(urlLocation, pu.FileName, true, uncompressedData, false, pu.MimeType, pu.PairMap, auth)
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         urlLocation,
+		Filename:          pu.FileName,
+		Cipher:            true,
+		IsInputCompressed: false,
+		MimeType:          pu.MimeType,
+		PairMap:           pu.PairMap,
+		Jwt:               auth,
+	}
+	uploadResult, uploadError := operation.UploadData(uncompressedData, uploadOption)
 	if uploadError != nil {
 		return nil, fmt.Errorf("upload to volume server: %v", uploadError)
 	}
@@ -64,17 +73,14 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 	entry := &filer.Entry{
 		FullPath: util.FullPath(path),
 		Attr: filer.Attr{
-			Mtime:       time.Now(),
-			Crtime:      time.Now(),
-			Mode:        0660,
-			Uid:         OS_UID,
-			Gid:         OS_GID,
-			Replication: so.Replication,
-			Collection:  so.Collection,
-			TtlSec:      so.TtlSeconds,
-			DiskType:    so.DiskType,
-			Mime:        pu.MimeType,
-			Md5:         util.Base64Md5ToBytes(pu.ContentMd5),
+			Mtime:  time.Now(),
+			Crtime: time.Now(),
+			Mode:   0660,
+			Uid:    OS_UID,
+			Gid:    OS_GID,
+			TtlSec: so.TtlSeconds,
+			Mime:   pu.MimeType,
+			Md5:    util.Base64Md5ToBytes(pu.ContentMd5),
 		},
 		Chunks: fileChunks,
 	}
@@ -84,7 +90,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 		Size: int64(pu.OriginalDataSize),
 	}
 
-	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil); dbErr != nil {
+	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil, false); dbErr != nil {
 		fs.filer.DeleteChunks(entry.Chunks)
 		err = dbErr
 		filerResult.Error = dbErr.Error()

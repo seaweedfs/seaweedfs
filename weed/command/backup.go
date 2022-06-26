@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -72,12 +73,12 @@ func runBackup(cmd *Command, args []string) bool {
 	vid := needle.VolumeId(*s.volumeId)
 
 	// find volume location, replication, ttl info
-	lookup, err := operation.LookupVolumeId(func() string { return *s.master }, grpcDialOption, vid.String())
+	lookup, err := operation.LookupVolumeId(func() pb.ServerAddress { return pb.ServerAddress(*s.master) }, grpcDialOption, vid.String())
 	if err != nil {
 		fmt.Printf("Error looking up volume %d: %v\n", vid, err)
 		return true
 	}
-	volumeServer := lookup.Locations[0].Url
+	volumeServer := lookup.Locations[0].ServerAddress()
 
 	stats, err := operation.GetVolumeSyncStatus(volumeServer, grpcDialOption, uint32(vid))
 	if err != nil {
@@ -119,7 +120,7 @@ func runBackup(cmd *Command, args []string) bool {
 	}
 
 	if v.SuperBlock.CompactionRevision < uint16(stats.CompactRevision) {
-		if err = v.Compact2(30*1024*1024*1024, 0); err != nil {
+		if err = v.Compact2(0, 0, nil); err != nil {
 			fmt.Printf("Compact Volume before synchronizing %v\n", err)
 			return true
 		}

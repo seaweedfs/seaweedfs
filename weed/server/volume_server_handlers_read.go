@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/chrislusf/seaweedfs/weed/util/mem"
 	"io"
 	"mime"
 	"net/http"
@@ -28,8 +29,6 @@ import (
 var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
-
-	glog.V(9).Info(r.Method + " " + r.URL.Path + " " + r.Header.Get("Range"))
 
 	stats.VolumeServerRequestCounter.WithLabelValues("get").Inc()
 	start := time.Now()
@@ -103,7 +102,9 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 				}
 			}
 			w.WriteHeader(response.StatusCode)
-			io.Copy(w, response.Body)
+			buf := mem.Allocate(128 * 1024)
+			defer mem.Free(buf)
+			io.CopyBuffer(w, response.Body, buf)
 			return
 		} else {
 			// redirect
@@ -126,6 +127,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 
 	var count int
 	var needleSize types.Size
+	readOption.AttemptMetaOnly, readOption.MustMetaOnly = shouldAttemptStreamWrite(hasVolume, ext, r)
 	onReadSizeFn := func(size types.Size) {
 		needleSize = size
 		atomic.AddInt64(&vs.inFlightDownloadDataSize, int64(needleSize))
@@ -140,7 +142,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		vs.inFlightDownloadDataLimitCond.Signal()
 	}()
 
-	if err != nil && err != storage.ErrorDeleted && r.FormValue("type") != "replicate" && hasVolume {
+	if err != nil && err != storage.ErrorDeleted && hasVolume {
 		glog.V(4).Infof("read needle: %v", err)
 		// start to fix it from other replicas, if not deleted and hasVolume and is not a replicated request
 	}
@@ -217,11 +219,31 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	rs := conditionallyResizeImages(bytes.NewReader(n.Data), ext, r)
-
-	if e := writeResponseContent(filename, mtype, rs, w, r); e != nil {
-		glog.V(2).Infoln("response write error:", e)
+	if !readOption.IsMetaOnly {
+		rs := conditionallyResizeImages(bytes.NewReader(n.Data), ext, r)
+		if e := writeResponseContent(filename, mtype, rs, w, r); e != nil {
+			glog.V(2).Infoln("response write error:", e)
+		}
+	} else {
+		vs.streamWriteResponseContent(filename, mtype, volumeId, n, w, r, readOption)
 	}
+}
+
+func shouldAttemptStreamWrite(hasLocalVolume bool, ext string, r *http.Request) (shouldAttempt bool, mustMetaOnly bool) {
+	if !hasLocalVolume {
+		return false, false
+	}
+	if len(ext) > 0 {
+		ext = strings.ToLower(ext)
+	}
+	if r.Method == "HEAD" {
+		return true, true
+	}
+	_, _, _, shouldResize := shouldResizeImages(ext, r)
+	if shouldResize {
+		return false, false
+	}
+	return true, false
 }
 
 func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, ext string, w http.ResponseWriter, r *http.Request) (processed bool) {
@@ -301,7 +323,7 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 	}
 	w.Header().Set("Accept-Ranges", "bytes")
 
-	adjustHeaderContentDisposition(w, r, filename)
+	adjustPassthroughHeaders(w, r, filename)
 
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
@@ -316,4 +338,28 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 		return e
 	})
 	return nil
+}
+
+func (vs *VolumeServer) streamWriteResponseContent(filename string, mimeType string, volumeId needle.VolumeId, n *needle.Needle, w http.ResponseWriter, r *http.Request, readOption *storage.ReadOption) {
+	totalSize := int64(n.DataSize)
+	if mimeType == "" {
+		if ext := filepath.Ext(filename); ext != "" {
+			mimeType = mime.TypeByExtension(ext)
+		}
+	}
+	if mimeType != "" {
+		w.Header().Set("Content-Type", mimeType)
+	}
+	w.Header().Set("Accept-Ranges", "bytes")
+	adjustPassthroughHeaders(w, r, filename)
+
+	if r.Method == "HEAD" {
+		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
+		return
+	}
+
+	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
+		return vs.store.ReadVolumeNeedleDataInto(volumeId, n, readOption, writer, offset, size)
+	})
+
 }

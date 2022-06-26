@@ -2,17 +2,18 @@ package s3api
 
 import (
 	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
-	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
-	"io/ioutil"
-	"net/http"
-	"strings"
 )
 
 type Action string
@@ -22,8 +23,11 @@ type Iam interface {
 }
 
 type IdentityAccessManagement struct {
-	identities []*Identity
-	domain     string
+	m sync.RWMutex
+
+	identities    []*Identity
+	isAuthEnabled bool
+	domain        string
 }
 
 type Identity struct {
@@ -35,6 +39,31 @@ type Identity struct {
 type Credential struct {
 	AccessKey string
 	SecretKey string
+}
+
+func (action Action) isAdmin() bool {
+	return strings.HasPrefix(string(action), s3_constants.ACTION_ADMIN)
+}
+
+func (action Action) isOwner(bucket string) bool {
+	return string(action) == s3_constants.ACTION_ADMIN+":"+bucket
+}
+
+func (action Action) overBucket(bucket string) bool {
+	return strings.HasSuffix(string(action), ":"+bucket) || strings.HasSuffix(string(action), ":*")
+}
+
+func (action Action) getPermission() Permission {
+	switch act := strings.Split(string(action), ":")[0]; act {
+	case s3_constants.ACTION_ADMIN:
+		return Permission("FULL_CONTROL")
+	case s3_constants.ACTION_WRITE:
+		return Permission("WRITE")
+	case s3_constants.ACTION_READ:
+		return Permission("READ")
+	default:
+		return Permission("")
+	}
 }
 
 func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManagement {
@@ -55,26 +84,26 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) (err error) {
 	var content []byte
-	err = pb.WithFilerClient(option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithFilerClient(false, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		content, err = filer.ReadInsideFiler(client, filer.IamConfigDirecotry, filer.IamIdentityFile)
 		return err
 	})
 	if err != nil {
 		return fmt.Errorf("read S3 config: %v", err)
 	}
-	return iam.loadS3ApiConfigurationFromBytes(content)
+	return iam.LoadS3ApiConfigurationFromBytes(content)
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName string) error {
-	content, readErr := ioutil.ReadFile(fileName)
+	content, readErr := os.ReadFile(fileName)
 	if readErr != nil {
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)
 	}
-	return iam.loadS3ApiConfigurationFromBytes(content)
+	return iam.LoadS3ApiConfigurationFromBytes(content)
 }
 
-func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromBytes(content []byte) error {
+func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content []byte) error {
 	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
 	if err := filer.ParseS3ConfigurationFromBytes(content, s3ApiConfiguration); err != nil {
 		glog.Warningf("unmarshal error: %v", err)
@@ -105,31 +134,39 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 		}
 		identities = append(identities, t)
 	}
-
+	iam.m.Lock()
 	// atomically switch
 	iam.identities = identities
+	if !iam.isAuthEnabled { // one-directional, no toggling
+		iam.isAuthEnabled = len(identities) > 0
+	}
+	iam.m.Unlock()
 	return nil
 }
 
 func (iam *IdentityAccessManagement) isEnabled() bool {
-
-	return len(iam.identities) > 0
+	return iam.isAuthEnabled
 }
 
 func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
 
+	iam.m.RLock()
+	defer iam.m.RUnlock()
 	for _, ident := range iam.identities {
 		for _, cred := range ident.Credentials {
+			// println("checking", ident.Name, cred.AccessKey)
 			if cred.AccessKey == accessKey {
 				return ident, cred, true
 			}
 		}
 	}
+	glog.V(1).Infof("could not find accessKey %s", accessKey)
 	return nil, nil, false
 }
 
 func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, found bool) {
-
+	iam.m.RLock()
+	defer iam.m.RUnlock()
 	for _, ident := range iam.identities {
 		if ident.Name == "anonymous" {
 			return ident, true
@@ -139,24 +176,26 @@ func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, foun
 }
 
 func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
-
-	if !iam.isEnabled() {
-		return f
-	}
-
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !iam.isEnabled() {
+			f(w, r)
+			return
+		}
+
 		identity, errCode := iam.authRequest(r, action)
 		if errCode == s3err.ErrNone {
 			if identity != nil && identity.Name != "" {
-				r.Header.Set(xhttp.AmzIdentityId, identity.Name)
+				r.Header.Set(s3_constants.AmzIdentityId, identity.Name)
 				if identity.isAdmin() {
-					r.Header.Set(xhttp.AmzIsAdmin, "true")
+					r.Header.Set(s3_constants.AmzIsAdmin, "true")
+				} else if _, ok := r.Header[s3_constants.AmzIsAdmin]; ok {
+					r.Header.Del(s3_constants.AmzIsAdmin)
 				}
 			}
 			f(w, r)
 			return
 		}
-		s3err.WriteErrorResponse(w, errCode, r)
+		s3err.WriteErrorResponse(w, r, errCode)
 	}
 }
 
@@ -165,42 +204,53 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	var found bool
+	var authType string
 	switch getRequestAuthType(r) {
 	case authTypeStreamingSigned:
 		return identity, s3err.ErrNone
 	case authTypeUnknown:
 		glog.V(3).Infof("unknown auth type")
+		r.Header.Set(s3_constants.AmzAuthType, "Unknown")
 		return identity, s3err.ErrAccessDenied
 	case authTypePresignedV2, authTypeSignedV2:
 		glog.V(3).Infof("v2 auth type")
 		identity, s3Err = iam.isReqAuthenticatedV2(r)
+		authType = "SigV2"
 	case authTypeSigned, authTypePresigned:
 		glog.V(3).Infof("v4 auth type")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
+		authType = "SigV4"
 	case authTypePostPolicy:
 		glog.V(3).Infof("post policy auth type")
+		r.Header.Set(s3_constants.AmzAuthType, "PostPolicy")
 		return identity, s3err.ErrNone
 	case authTypeJWT:
 		glog.V(3).Infof("jwt auth type")
+		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
 		return identity, s3err.ErrNotImplemented
 	case authTypeAnonymous:
+		authType = "Anonymous"
 		identity, found = iam.lookupAnonymous()
 		if !found {
+			r.Header.Set(s3_constants.AmzAuthType, authType)
 			return identity, s3err.ErrAccessDenied
 		}
 	default:
 		return identity, s3err.ErrNotImplemented
 	}
 
+	if len(authType) > 0 {
+		r.Header.Set(s3_constants.AmzAuthType, authType)
+	}
 	if s3Err != s3err.ErrNone {
 		return identity, s3Err
 	}
 
 	glog.V(3).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
 
-	bucket, _ := getBucketAndObject(r)
+	bucket, object := s3_constants.GetBucketAndObject(r)
 
-	if !identity.canDo(action, bucket) {
+	if !identity.canDo(action, bucket, object) {
 		return identity, s3err.ErrAccessDenied
 	}
 
@@ -212,31 +262,43 @@ func (iam *IdentityAccessManagement) authUser(r *http.Request) (*Identity, s3err
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	var found bool
+	var authType string
 	switch getRequestAuthType(r) {
 	case authTypeStreamingSigned:
 		return identity, s3err.ErrNone
 	case authTypeUnknown:
 		glog.V(3).Infof("unknown auth type")
+		r.Header.Set(s3_constants.AmzAuthType, "Unknown")
 		return identity, s3err.ErrAccessDenied
 	case authTypePresignedV2, authTypeSignedV2:
 		glog.V(3).Infof("v2 auth type")
 		identity, s3Err = iam.isReqAuthenticatedV2(r)
+		authType = "SigV2"
 	case authTypeSigned, authTypePresigned:
 		glog.V(3).Infof("v4 auth type")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
+		authType = "SigV4"
 	case authTypePostPolicy:
 		glog.V(3).Infof("post policy auth type")
+		r.Header.Set(s3_constants.AmzAuthType, "PostPolicy")
 		return identity, s3err.ErrNone
 	case authTypeJWT:
 		glog.V(3).Infof("jwt auth type")
+		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
 		return identity, s3err.ErrNotImplemented
 	case authTypeAnonymous:
+		authType = "Anonymous"
 		identity, found = iam.lookupAnonymous()
 		if !found {
+			r.Header.Set(s3_constants.AmzAuthType, authType)
 			return identity, s3err.ErrAccessDenied
 		}
 	default:
 		return identity, s3err.ErrNotImplemented
+	}
+
+	if len(authType) > 0 {
+		r.Header.Set(s3_constants.AmzAuthType, authType)
 	}
 
 	glog.V(3).Infof("auth error: %v", s3Err)
@@ -246,7 +308,7 @@ func (iam *IdentityAccessManagement) authUser(r *http.Request) (*Identity, s3err
 	return identity, s3err.ErrNone
 }
 
-func (identity *Identity) canDo(action Action, bucket string) bool {
+func (identity *Identity) canDo(action Action, bucket string, objectKey string) bool {
 	if identity.isAdmin() {
 		return true
 	}
@@ -258,15 +320,17 @@ func (identity *Identity) canDo(action Action, bucket string) bool {
 	if bucket == "" {
 		return false
 	}
+	target := string(action) + ":" + bucket + objectKey
+	adminTarget := s3_constants.ACTION_ADMIN + ":" + bucket + objectKey
 	limitedByBucket := string(action) + ":" + bucket
 	adminLimitedByBucket := s3_constants.ACTION_ADMIN + ":" + bucket
 	for _, a := range identity.Actions {
 		act := string(a)
 		if strings.HasSuffix(act, "*") {
-			if strings.HasPrefix(limitedByBucket, act[:len(act)-1]) {
+			if strings.HasPrefix(target, act[:len(act)-1]) {
 				return true
 			}
-			if strings.HasPrefix(adminLimitedByBucket, act[:len(act)-1]) {
+			if strings.HasPrefix(adminTarget, act[:len(act)-1]) {
 				return true
 			}
 		} else {

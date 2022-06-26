@@ -4,6 +4,8 @@ import (
 	"context"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/viant/ptrie"
+	"io"
+	"math"
 	"strings"
 	"time"
 
@@ -14,12 +16,14 @@ import (
 
 var (
 	_ = VirtualFilerStore(&FilerStoreWrapper{})
+	_ = Debuggable(&FilerStoreWrapper{})
 )
 
 type VirtualFilerStore interface {
 	FilerStore
 	DeleteHardLink(ctx context.Context, hardLinkId HardLinkId) error
 	DeleteOneEntry(ctx context.Context, entry *Entry) error
+	DeleteOneEntrySkipHardlink(ctx context.Context, fullpath util.FullPath) error
 	AddPathSpecificStore(path string, storeId string, store FilerStore)
 	OnBucketCreation(bucket string)
 	OnBucketDeletion(bucket string)
@@ -72,7 +76,7 @@ func (fsw *FilerStoreWrapper) OnBucketDeletion(bucket string) {
 }
 
 func (fsw *FilerStoreWrapper) AddPathSpecificStore(path string, storeId string, store FilerStore) {
-	fsw.storeIdToStore[storeId] = NewFilerStorePathTranlator(path, store)
+	fsw.storeIdToStore[storeId] = NewFilerStorePathTranslator(path, store)
 	err := fsw.pathToStore.Put([]byte(path), storeId)
 	if err != nil {
 		glog.Fatalf("put path specific store: %v", err)
@@ -124,7 +128,7 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 		return err
 	}
 
-	glog.V(4).Infof("InsertEntry %s", entry.FullPath)
+	// glog.V(4).Infof("InsertEntry %s", entry.FullPath)
 	return actualStore.InsertEntry(ctx, entry)
 }
 
@@ -145,7 +149,7 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 		return err
 	}
 
-	glog.V(4).Infof("UpdateEntry %s", entry.FullPath)
+	// glog.V(4).Infof("UpdateEntry %s", entry.FullPath)
 	return actualStore.UpdateEntry(ctx, entry)
 }
 
@@ -189,7 +193,7 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 		}
 	}
 
-	glog.V(4).Infof("DeleteEntry %s", fp)
+	// glog.V(4).Infof("DeleteEntry %s", fp)
 	return actualStore.DeleteEntry(ctx, fp)
 }
 
@@ -209,8 +213,20 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 		}
 	}
 
-	glog.V(4).Infof("DeleteOneEntry %s", existingEntry.FullPath)
+	// glog.V(4).Infof("DeleteOneEntry %s", existingEntry.FullPath)
 	return actualStore.DeleteEntry(ctx, existingEntry.FullPath)
+}
+
+func (fsw *FilerStoreWrapper) DeleteOneEntrySkipHardlink(ctx context.Context, fullpath util.FullPath) (err error) {
+	actualStore := fsw.getActualStore(fullpath)
+	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "delete").Inc()
+	start := time.Now()
+	defer func() {
+		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "delete").Observe(time.Since(start).Seconds())
+	}()
+
+	glog.V(4).Infof("DeleteOneEntrySkipHardlink %s", fullpath)
+	return actualStore.DeleteEntry(ctx, fullpath)
 }
 
 func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {
@@ -221,7 +237,7 @@ func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.
 		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "deleteFolderChildren").Observe(time.Since(start).Seconds())
 	}()
 
-	glog.V(4).Infof("DeleteFolderChildren %s", fp)
+	// glog.V(4).Infof("DeleteFolderChildren %s", fp)
 	return actualStore.DeleteFolderChildren(ctx, fp)
 }
 
@@ -233,7 +249,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath 
 		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "list").Observe(time.Since(start).Seconds())
 	}()
 
-	glog.V(4).Infof("ListDirectoryEntries %s from %s limit %d", dirPath, startFileName, limit)
+	// glog.V(4).Infof("ListDirectoryEntries %s from %s limit %d", dirPath, startFileName, limit)
 	return actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *Entry) bool {
 		fsw.maybeReadHardLink(ctx, entry)
 		filer_pb.AfterEntryDeserialization(entry.Chunks)
@@ -248,14 +264,18 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 	defer func() {
 		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "prefixList").Observe(time.Since(start).Seconds())
 	}()
-	glog.V(4).Infof("ListDirectoryPrefixedEntries %s from %s prefix %s limit %d", dirPath, startFileName, prefix, limit)
-	lastFileName, err = actualStore.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix, eachEntryFunc)
+	if limit > math.MaxInt32-1 {
+		limit = math.MaxInt32 - 1
+	}
+	// glog.V(4).Infof("ListDirectoryPrefixedEntries %s from %s prefix %s limit %d", dirPath, startFileName, prefix, limit)
+	adjustedEntryFunc := func(entry *Entry) bool {
+		fsw.maybeReadHardLink(ctx, entry)
+		filer_pb.AfterEntryDeserialization(entry.Chunks)
+		return eachEntryFunc(entry)
+	}
+	lastFileName, err = actualStore.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix, adjustedEntryFunc)
 	if err == ErrUnsupportedListDirectoryPrefixed {
-		lastFileName, err = fsw.prefixFilterEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix, func(entry *Entry) bool {
-			fsw.maybeReadHardLink(ctx, entry)
-			filer_pb.AfterEntryDeserialization(entry.Chunks)
-			return eachEntryFunc(entry)
-		})
+		lastFileName, err = fsw.prefixFilterEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix, adjustedEntryFunc)
 	}
 	return lastFileName, err
 }
@@ -278,8 +298,10 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 
 	count := int64(0)
 	for count < limit && len(notPrefixed) > 0 {
+		var isLastItemHasPrefix bool
 		for _, entry := range notPrefixed {
 			if strings.HasPrefix(entry.Name(), prefix) {
+				isLastItemHasPrefix = true
 				count++
 				if !eachEntryFunc(entry) {
 					return
@@ -287,17 +309,21 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 				if count >= limit {
 					break
 				}
+			} else {
+				isLastItemHasPrefix = false
 			}
 		}
-		if count < limit {
+		if count < limit && isLastItemHasPrefix && len(notPrefixed) == int(limit) {
 			notPrefixed = notPrefixed[:0]
-			_, err = actualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit, func(entry *Entry) bool {
+			lastFileName, err = actualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit, func(entry *Entry) bool {
 				notPrefixed = append(notPrefixed, entry)
 				return true
 			})
 			if err != nil {
 				return
 			}
+		} else {
+			break
 		}
 	}
 	return
@@ -327,4 +353,10 @@ func (fsw *FilerStoreWrapper) KvGet(ctx context.Context, key []byte) (value []by
 }
 func (fsw *FilerStoreWrapper) KvDelete(ctx context.Context, key []byte) (err error) {
 	return fsw.getDefaultStore().KvDelete(ctx, key)
+}
+
+func (fsw *FilerStoreWrapper) Debug(writer io.Writer) {
+	if debuggable, ok := fsw.getDefaultStore().(Debuggable); ok {
+		debuggable.Debug(writer)
+	}
 }

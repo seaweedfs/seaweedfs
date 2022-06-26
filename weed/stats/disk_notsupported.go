@@ -1,3 +1,4 @@
+//go:build openbsd || netbsd || plan9 || solaris
 // +build openbsd netbsd plan9 solaris
 
 package stats

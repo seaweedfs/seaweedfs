@@ -3,8 +3,10 @@ package stats
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +19,46 @@ import (
 
 var (
 	Gather = prometheus.NewRegistry()
+
+	MasterClientConnectCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "wdclient",
+			Name:      "connect_updates",
+			Help:      "Counter of master client leader updates.",
+		}, []string{"type"})
+
+	MasterRaftIsleader = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "master",
+			Name:      "is_leader",
+			Help:      "is leader",
+		})
+
+	MasterReceivedHeartbeatCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "master",
+			Name:      "received_heartbeats",
+			Help:      "Counter of master received heartbeat.",
+		}, []string{"type"})
+
+	MasterReplicaPlacementMismatch = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "master",
+			Name:      "replica_placement_mismatch",
+			Help:      "replica placement mismatch",
+		}, []string{"collection", "id"})
+
+	MasterLeaderChangeCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "master",
+			Name:      "leader_changes",
+			Help:      "Counter of master leader changes.",
+		}, []string{"type"})
 
 	FilerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -35,6 +77,14 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"type"})
 
+	FilerServerLastSendTsOfSubscribeGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "filer",
+			Name:      "last_send_timestamp_of_subscribe",
+			Help:      "The last send timestamp of the filer subscription.",
+		}, []string{"sourceFiler", "clientName", "path"})
+
 	FilerStoreCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "SeaweedFS",
@@ -51,6 +101,14 @@ var (
 			Help:      "Bucketed histogram of filer store request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"store", "type"})
+
+	FilerSyncOffsetGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "SeaweedFS",
+			Subsystem: "filerSync",
+			Name:      "sync_offset",
+			Help:      "The offset of the filer synchronization service.",
+		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
 
 	VolumeServerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -115,7 +173,8 @@ var (
 			Subsystem: "s3",
 			Name:      "request_total",
 			Help:      "Counter of s3 requests.",
-		}, []string{"type", "code"})
+		}, []string{"type", "code", "bucket"})
+
 	S3RequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "SeaweedFS",
@@ -123,14 +182,22 @@ var (
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of s3 request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
-		}, []string{"type"})
+		}, []string{"type", "bucket"})
 )
 
 func init() {
+	Gather.MustRegister(MasterClientConnectCounter)
+	Gather.MustRegister(MasterRaftIsleader)
+	Gather.MustRegister(MasterReceivedHeartbeatCounter)
+	Gather.MustRegister(MasterLeaderChangeCounter)
+	Gather.MustRegister(MasterReplicaPlacementMismatch)
+
 	Gather.MustRegister(FilerRequestCounter)
 	Gather.MustRegister(FilerRequestHistogram)
 	Gather.MustRegister(FilerStoreCounter)
 	Gather.MustRegister(FilerStoreHistogram)
+	Gather.MustRegister(FilerSyncOffsetGauge)
+	Gather.MustRegister(FilerServerLastSendTsOfSubscribeGauge)
 	Gather.MustRegister(collectors.NewGoCollector())
 	Gather.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
@@ -180,5 +247,5 @@ func SourceName(port uint32) string {
 	if err != nil {
 		return "unknown"
 	}
-	return fmt.Sprintf("%s:%d", hostname, port)
+	return net.JoinHostPort(hostname, strconv.Itoa(int(port)))
 }

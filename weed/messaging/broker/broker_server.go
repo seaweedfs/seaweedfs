@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
 	"time"
 
 	"google.golang.org/grpc"
@@ -13,7 +14,7 @@ import (
 )
 
 type MessageBrokerOption struct {
-	Filers             []string
+	Filers             []pb.ServerAddress
 	DefaultReplication string
 	MaxMB              int
 	Ip                 string
@@ -22,6 +23,7 @@ type MessageBrokerOption struct {
 }
 
 type MessageBroker struct {
+	messaging_pb.UnimplementedSeaweedMessagingServer
 	option         *MessageBrokerOption
 	grpcDialOption grpc.DialOption
 	topicManager   *TopicManager
@@ -47,7 +49,7 @@ func (broker *MessageBroker) keepConnectedToOneFiler() {
 
 	for {
 		for _, filer := range broker.option.Filers {
-			broker.withFilerClient(filer, func(client filer_pb.SeaweedFilerClient) error {
+			broker.withFilerClient(false, filer, func(client filer_pb.SeaweedFilerClient) error {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				stream, err := client.KeepConnected(ctx)
@@ -99,15 +101,15 @@ func (broker *MessageBroker) keepConnectedToOneFiler() {
 
 }
 
-func (broker *MessageBroker) withFilerClient(filer string, fn func(filer_pb.SeaweedFilerClient) error) error {
+func (broker *MessageBroker) withFilerClient(streamingMode bool, filer pb.ServerAddress, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithFilerClient(filer, broker.grpcDialOption, fn)
+	return pb.WithFilerClient(streamingMode, filer, broker.grpcDialOption, fn)
 
 }
 
-func (broker *MessageBroker) withMasterClient(master string, fn func(client master_pb.SeaweedClient) error) error {
+func (broker *MessageBroker) withMasterClient(streamingMode bool, master pb.ServerAddress, fn func(client master_pb.SeaweedClient) error) error {
 
-	return pb.WithMasterClient(master, broker.grpcDialOption, func(client master_pb.SeaweedClient) error {
+	return pb.WithMasterClient(streamingMode, master, broker.grpcDialOption, func(client master_pb.SeaweedClient) error {
 		return fn(client)
 	})
 

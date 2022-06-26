@@ -2,11 +2,10 @@ package storage
 
 import (
 	"fmt"
-	"io/ioutil"
+	"golang.org/x/exp/slices"
 	"os"
 	"path"
 	"regexp"
-	"sort"
 	"strconv"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
@@ -118,25 +117,23 @@ func (l *DiskLocation) loadEcShards(shards []string, collection string, vid need
 
 func (l *DiskLocation) loadAllEcShards() (err error) {
 
-	fileInfos, err := ioutil.ReadDir(l.Directory)
+	dirEntries, err := os.ReadDir(l.Directory)
 	if err != nil {
 		return fmt.Errorf("load all ec shards in dir %s: %v", l.Directory, err)
 	}
 	if l.IdxDirectory != l.Directory {
-		indexFileInfos, err := ioutil.ReadDir(l.IdxDirectory)
+		indexDirEntries, err := os.ReadDir(l.IdxDirectory)
 		if err != nil {
 			return fmt.Errorf("load all ec shards in dir %s: %v", l.IdxDirectory, err)
 		}
-		fileInfos = append(fileInfos, indexFileInfos...)
+		dirEntries = append(dirEntries, indexDirEntries...)
 	}
-
-	sort.Slice(fileInfos, func(i, j int) bool {
-		return fileInfos[i].Name() < fileInfos[j].Name()
+	slices.SortFunc(dirEntries, func(a, b os.DirEntry) bool {
+		return a.Name() < b.Name()
 	})
-
 	var sameVolumeShards []string
 	var prevVolumeId needle.VolumeId
-	for _, fileInfo := range fileInfos {
+	for _, fileInfo := range dirEntries {
 		if fileInfo.IsDir() {
 			continue
 		}

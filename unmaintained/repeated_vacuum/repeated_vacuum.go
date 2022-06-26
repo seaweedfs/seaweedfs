@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"log"
 	"math/rand"
 	"time"
@@ -32,7 +33,7 @@ func main() {
 	go func() {
 		for {
 			println("vacuum threshold", *garbageThreshold)
-			_, _, err := util.Get(fmt.Sprintf("http://%s/vol/vacuum?garbageThreshold=%f", *master, *garbageThreshold))
+			_, _, err := util.Get(fmt.Sprintf("http://%s/vol/vacuum?garbageThreshold=%f", pb.ServerAddress(*master).ToHttpAddress(), *garbageThreshold))
 			if err != nil {
 				log.Fatalf("vacuum: %v", err)
 			}
@@ -52,7 +53,7 @@ func main() {
 }
 
 func genFile(grpcDialOption grpc.DialOption, i int) (*operation.AssignResult, string) {
-	assignResult, err := operation.Assign(func() string { return *master }, grpcDialOption, &operation.VolumeAssignRequest{
+	assignResult, err := operation.Assign(func() pb.ServerAddress { return pb.ServerAddress(*master) }, grpcDialOption, &operation.VolumeAssignRequest{
 		Count:       1,
 		Replication: *replication,
 	})
@@ -65,7 +66,16 @@ func genFile(grpcDialOption grpc.DialOption, i int) (*operation.AssignResult, st
 
 	targetUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
 
-	_, err = operation.UploadData(targetUrl, fmt.Sprintf("test%d", i), false, data, false, "bench/test", nil, assignResult.Auth)
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         targetUrl,
+		Filename:          fmt.Sprintf("test%d", i),
+		Cipher:            false,
+		IsInputCompressed: true,
+		MimeType:          "bench/test",
+		PairMap:           nil,
+		Jwt:               assignResult.Auth,
+	}
+	_, err = operation.UploadData(data, uploadOption)
 	if err != nil {
 		log.Fatalf("upload: %v", err)
 	}

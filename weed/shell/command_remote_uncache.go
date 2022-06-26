@@ -4,12 +4,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
 	"path/filepath"
 	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
 func init() {
@@ -41,12 +42,12 @@ func (c *commandRemoteUncache) Help() string {
 
 func (c *commandRemoteUncache) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	remoteUnmountCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	remoteUncacheCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 
-	dir := remoteUnmountCommand.String("dir", "", "a directory in filer")
-	fileFiler := newFileFilter(remoteUnmountCommand)
+	dir := remoteUncacheCommand.String("dir", "", "a directory in filer")
+	fileFiler := newFileFilter(remoteUncacheCommand)
 
-	if err = remoteUnmountCommand.Parse(args); err != nil {
+	if err = remoteUncacheCommand.Parse(args); err != nil {
 		return nil
 	}
 
@@ -54,27 +55,30 @@ func (c *commandRemoteUncache) Do(args []string, commandEnv *CommandEnv, writer 
 	if listErr != nil {
 		return listErr
 	}
-	if *dir == "" {
-		jsonPrintln(writer, mappings)
-		fmt.Fprintln(writer, "need to specify '-dir' option")
-		return nil
-	}
-
-	var localMountedDir string
-	for k := range mappings.Mappings {
-		if strings.HasPrefix(*dir, k) {
-			localMountedDir = k
+	if *dir != "" {
+		var localMountedDir string
+		for k := range mappings.Mappings {
+			if strings.HasPrefix(*dir, k) {
+				localMountedDir = k
+			}
 		}
-	}
-	if localMountedDir == "" {
-		jsonPrintln(writer, mappings)
-		fmt.Fprintf(writer, "%s is not mounted\n", *dir)
+		if localMountedDir == "" {
+			jsonPrintln(writer, mappings)
+			fmt.Fprintf(writer, "%s is not mounted\n", *dir)
+			return nil
+		}
+
+		// pull content from remote
+		if err = c.uncacheContentData(commandEnv, writer, util.FullPath(*dir), fileFiler); err != nil {
+			return fmt.Errorf("uncache content data: %v", err)
+		}
 		return nil
 	}
 
-	// pull content from remote
-	if err = c.uncacheContentData(commandEnv, writer, util.FullPath(*dir), fileFiler); err != nil {
-		return fmt.Errorf("cache content data: %v", err)
+	for key, _ := range mappings.Mappings {
+		if err := c.uncacheContentData(commandEnv, writer, util.FullPath(key), fileFiler); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -88,7 +92,7 @@ func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer
 			return true // true means recursive traversal should continue
 		}
 
-		if fileFilter.matches(entry) {
+		if !fileFilter.matches(entry) {
 			return true
 		}
 
@@ -101,7 +105,7 @@ func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer
 
 		fmt.Fprintf(writer, "Uncache %+v ... ", dir.Child(entry.Name))
 
-		err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			_, updateErr := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
 				Directory: string(dir),
 				Entry:     entry,
@@ -141,12 +145,12 @@ func newFileFilter(remoteMountCommand *flag.FlagSet) (ff *FileFilter) {
 func (ff *FileFilter) matches(entry *filer_pb.Entry) bool {
 	if *ff.include != "" {
 		if ok, _ := filepath.Match(*ff.include, entry.Name); !ok {
-			return true
+			return false
 		}
 	}
 	if *ff.exclude != "" {
 		if ok, _ := filepath.Match(*ff.exclude, entry.Name); ok {
-			return true
+			return false
 		}
 	}
 	if *ff.minSize != -1 {
@@ -169,5 +173,5 @@ func (ff *FileFilter) matches(entry *filer_pb.Entry) bool {
 			return false
 		}
 	}
-	return false
+	return true
 }

@@ -87,3 +87,28 @@ func ResolvePath(path string) string {
 
 	return path
 }
+
+func FileNameBase(filename string) string {
+	lastDotIndex := strings.LastIndex(filename, ".")
+	if lastDotIndex < 0 {
+		return filename
+	}
+	return filename[:lastDotIndex]
+}
+
+// Copied from os.WriteFile(), adding file sync.
+// see https://github.com/golang/go/issues/20599
+func WriteFile(name string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err1 := f.Sync(); err1 != nil && err == nil {
+		err = err1
+	}
+	if err1 := f.Close(); err1 != nil && err == nil {
+		err = err1
+	}
+	return err
+}

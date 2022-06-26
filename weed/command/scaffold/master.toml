@@ -14,19 +14,14 @@ scripts = """
   volume.deleteEmpty -quietFor=24h -force
   volume.balance -force
   volume.fix.replication
+  s3.clean.uploads -timeAgo=24h
   unlock
 """
 sleep_minutes = 17          # sleep minutes between each script execution
 
-[master.filer]
-default = "localhost:8888"    # used by maintenance scripts if the scripts needs to use fs related commands
-
 
 [master.sequencer]
-type = "raft"     # Choose [raft|etcd|snowflake] type for storing the file id sequence
-# when sequencer.type = etcd, set listen client urls of etcd cluster that store file id sequence
-# example : http://127.0.0.1:2379,http://127.0.0.1:2389
-sequencer_etcd_urls = "http://127.0.0.1:2379"
+type = "raft"     # Choose [raft|snowflake] type for storing the file id sequence
 # when sequencer.type = snowflake, the snowflake id must be different from other masters
 sequencer_snowflake_id = 0     # any number between 1~1023
 
@@ -41,6 +36,7 @@ aws_secret_access_key = ""     # if empty, loads from the shared credentials fil
 region = "us-east-2"
 bucket = "your_bucket_name"    # an existing bucket
 endpoint = ""
+storage_class = "STANDARD_IA"
 
 # create this number of logical volumes if no more writable volumes
 # count_x means how many copies of data.

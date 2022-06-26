@@ -261,6 +261,29 @@ func TestSatisfyReplicaPlacement00x(t *testing.T) {
 
 }
 
+func TestSatisfyReplicaPlacement100(t *testing.T) {
+
+	var tests = []testcase{
+		{
+			name:        "test 100",
+			replication: "100",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+				},
+				{
+					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+				},
+			},
+			possibleLocation: location{"dc2", "r3", &master_pb.DataNodeInfo{Id: "dn3"}},
+			expected:         true,
+		},
+	}
+
+	runTests(tests, t)
+
+}
+
 func runTests(tests []testcase, t *testing.T) {
 	for _, tt := range tests {
 		replicaPlacement, _ := super_block.NewReplicaPlacementFromString(tt.replication)
@@ -270,4 +293,142 @@ func runTests(tests []testcase, t *testing.T) {
 				tt.name, tt.expected, tt.possibleLocation, tt.replication, tt.replicas)
 		}
 	}
+}
+
+func TestMisplacedChecking(t *testing.T) {
+
+	var tests = []testcase{
+		{
+			name:        "test 001",
+			replication: "001",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+				},
+				{
+					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+				},
+			},
+			expected: true,
+		},
+		{
+			name:        "test 010",
+			replication: "010",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+				},
+				{
+					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+				},
+			},
+			expected: false,
+		},
+		{
+			name:        "test 011",
+			replication: "011",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+				},
+				{
+					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+				},
+			},
+			expected: false,
+		},
+		{
+			name:        "test 110",
+			replication: "110",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+				},
+				{
+					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+				},
+			},
+			expected: false,
+		},
+		{
+			name:        "test 100",
+			replication: "100",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+				},
+				{
+					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+				},
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		replicaPlacement, _ := super_block.NewReplicaPlacementFromString(tt.replication)
+		println("replication:", tt.replication, "expected", tt.expected, "name:", tt.name)
+		if isMisplaced(tt.replicas, replicaPlacement) != tt.expected {
+			t.Errorf("%s: expect %v %v %+v",
+				tt.name, tt.expected, tt.replication, tt.replicas)
+		}
+	}
+
+}
+
+func TestPickingMisplacedVolumeToDelete(t *testing.T) {
+
+	var tests = []testcase{
+		{
+			name:        "test 001",
+			replication: "001",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+					info: &master_pb.VolumeInformationMessage{
+						Size: 100,
+					},
+				},
+				{
+					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+					info: &master_pb.VolumeInformationMessage{
+						Size: 99,
+					},
+				},
+			},
+			possibleLocation: location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+		},
+		{
+			name:        "test 100",
+			replication: "100",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+					info: &master_pb.VolumeInformationMessage{
+						Size: 100,
+					},
+				},
+				{
+					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+					info: &master_pb.VolumeInformationMessage{
+						Size: 99,
+					},
+				},
+			},
+			possibleLocation: location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+		},
+	}
+
+	for _, tt := range tests {
+		replicaPlacement, _ := super_block.NewReplicaPlacementFromString(tt.replication)
+		println("replication:", tt.replication, "name:", tt.name)
+		if x := pickOneMisplacedVolume(tt.replicas, replicaPlacement); x.location.dataNode.Id != tt.possibleLocation.dataNode.Id {
+			t.Errorf("%s: picked %+v for replication %v",
+				tt.name, x.location.dataNode.Id, tt.replication)
+		} else {
+			t.Logf("%s: picked %+v %v",
+				tt.name, x.location.dataNode.Id, tt.replication)
+		}
+	}
+
 }

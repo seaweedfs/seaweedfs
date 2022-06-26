@@ -1,4 +1,4 @@
-name: "go: test building binary"
+name: "go: build binary"
 
 on:
   push:
@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.head_ref }}/go
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
 
   build:
@@ -18,24 +21,20 @@ jobs:
     steps:
 
     - name: Set up Go 1.x
-      uses: actions/setup-go@v2
+      uses: actions/setup-go@b22fbbc2921299758641fab08929b4ac52b32923 # v2
       with:
         go-version: ^1.13
       id: go
 
     - name: Check out code into the Go module directory
-      uses: actions/checkout@v2
+      uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
 
     - name: Get dependencies
       run: |
         cd weed; go get -v -t -d ./...
-        if [ -f Gopkg.toml ]; then
-            curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
-            dep ensure
-        fi
 
     - name: Build
-      run: cd weed; go build -v .
+      run: cd weed; go build -tags "elastic gocdk sqlite ydb" -v .
 
     - name: Test
-      run: cd weed; go test -v ./...
+      run: cd weed; go test -tags "elastic gocdk sqlite ydb" -v ./...

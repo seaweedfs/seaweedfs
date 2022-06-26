@@ -4,14 +4,43 @@
 #    /etc/seaweedfs/security.toml
 # this file is read by master, volume server, and filer
 
-# the jwt signing key is read by master and volume server.
-# a jwt defaults to expire after 10 seconds.
+# this jwt signing key is read by master and volume server, and it is used for write operations:
+# - the Master server generates the JWT, which can be used to write a certain file on a volume server
+# - the Volume server validates the JWT on writing
+# the jwt defaults to expire after 10 seconds.
 [jwt.signing]
 key = ""
 expires_after_seconds = 10           # seconds
 
-# jwt for read is only supported with master+volume setup. Filer does not support this mode.
+# by default, if the signing key above is set, the Volume UI over HTTP is disabled.
+# by setting ui.access to true, you can re-enable the Volume UI. Despite
+# some information leakage (as the UI is not authenticated), this should not
+# pose a security risk.
+[access]
+ui = false
+
+# this jwt signing key is read by master and volume server, and it is used for read operations:
+# - the Master server generates the JWT, which can be used to read a certain file on a volume server
+# - the Volume server validates the JWT on reading
+# NOTE: jwt for read is only supported with master+volume setup. Filer does not support this mode.
 [jwt.signing.read]
+key = ""
+expires_after_seconds = 10           # seconds
+
+
+# If this JWT key is configured, Filer only accepts writes over HTTP if they are signed with this JWT:
+# - f.e. the S3 API Shim generates the JWT
+# - the Filer server validates the JWT on writing
+# the jwt defaults to expire after 10 seconds.
+[jwt.filer_signing]
+key = ""
+expires_after_seconds = 10           # seconds
+
+# If this JWT key is configured, Filer only accepts reads over HTTP if they are signed with this JWT:
+# - f.e. the S3 API Shim generates the JWT
+# - the Filer server validates the JWT on writing
+# the jwt defaults to expire after 10 seconds.
+[jwt.filer_signing.read]
 key = ""
 expires_after_seconds = 10           # seconds
 
@@ -38,6 +67,11 @@ cert = ""
 key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
+[grpc.s3]
+cert = ""
+key = ""
+allowed_commonNames = ""    # comma-separated SSL certificate common names
+
 [grpc.msg_broker]
 cert = ""
 key = ""
@@ -54,7 +88,13 @@ key = ""
 #     this does not work with other clients, e.g., "weed filer|mount" etc, yet.
 [https.client]
 enabled = true
+
 [https.volume]
 cert = ""
 key = ""
+ca = ""
 
+[https.master]
+cert = ""
+key = ""
+ca = ""

@@ -42,13 +42,12 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	secretKey := s3ConfigureCommand.String("secret_key", "", "specify the secret key")
 	isDelete := s3ConfigureCommand.Bool("delete", false, "delete users, actions or access keys")
 	apply := s3ConfigureCommand.Bool("apply", false, "update and apply s3 configuration")
-
 	if err = s3ConfigureCommand.Parse(args); err != nil {
 		return nil
 	}
 
 	var buf bytes.Buffer
-	if err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	if err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return filer.ReadEntry(commandEnv.MasterClient, client, filer.IamConfigDirecotry, filer.IamIdentityFile, &buf)
 	}); err != nil && err != filer_pb.ErrNotFound {
 		return err
@@ -83,6 +82,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		}
 	}
 	if changed {
+		infoAboutSimulationMode(writer, *apply, "-apply")
 		if *isDelete {
 			var exists []int
 			for _, cmdAction := range cmdActions {
@@ -151,6 +151,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 			}
 		}
 	} else if *user != "" && *actions != "" {
+		infoAboutSimulationMode(writer, *apply, "-apply")
 		identity := iam_pb.Identity{
 			Name:        *user,
 			Actions:     cmdActions,
@@ -171,7 +172,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	if *apply {
 
-		if err := commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		if err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			return filer.SaveInsideFiler(client, filer.IamConfigDirecotry, filer.IamIdentityFile, buf.Bytes())
 		}); err != nil {
 			return err

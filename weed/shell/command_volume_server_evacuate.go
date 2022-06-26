@@ -8,9 +8,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"golang.org/x/exp/slices"
 	"io"
 	"os"
-	"sort"
 )
 
 func init() {
@@ -44,10 +44,6 @@ func (c *commandVolumeServerEvacuate) Help() string {
 
 func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	vsEvacuateCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeServer := vsEvacuateCommand.String("node", "", "<host>:<port> of the volume server")
 	skipNonMoveable := vsEvacuateCommand.Bool("skipNonMoveable", false, "skip volumes that can not be moved")
@@ -55,6 +51,11 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 	retryCount := vsEvacuateCommand.Int("retry", 0, "how many times to retry")
 	if err = vsEvacuateCommand.Parse(args); err != nil {
 		return nil
+	}
+	infoAboutSimulationMode(writer, *applyChange, "-force")
+
+	if err = commandEnv.confirmIsLocked(args); err != nil {
+		return
 	}
 
 	if *volumeServer == "" {
@@ -78,7 +79,7 @@ func volumeServerEvacuate(commandEnv *CommandEnv, volumeServer string, skipNonMo
 
 	// list all the volumes
 	// collect topology information
-	topologyInfo, _, err := collectTopologyInfo(commandEnv)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
 	}
@@ -153,11 +154,9 @@ func evacuateEcVolumes(commandEnv *CommandEnv, topologyInfo *master_pb.TopologyI
 func moveAwayOneEcVolume(commandEnv *CommandEnv, ecShardInfo *master_pb.VolumeEcShardInformationMessage, thisNode *EcNode, otherNodes []*EcNode, applyChange bool) (hasMoved bool, err error) {
 
 	for _, shardId := range erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds() {
-
-		sort.Slice(otherNodes, func(i, j int) bool {
-			return otherNodes[i].localShardIdCount(ecShardInfo.Id) < otherNodes[j].localShardIdCount(ecShardInfo.Id)
+		slices.SortFunc(otherNodes, func(a, b *EcNode) bool {
+			return a.localShardIdCount(ecShardInfo.Id) < b.localShardIdCount(ecShardInfo.Id)
 		})
-
 		for i := 0; i < len(otherNodes); i++ {
 			emptyNode := otherNodes[i]
 			collectionPrefix := ""
@@ -188,10 +187,9 @@ func moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][
 			return v.DiskType == vol.DiskType
 		})
 	}
-	sort.Slice(otherNodes, func(i, j int) bool {
-		return otherNodes[i].localVolumeRatio(fn) > otherNodes[j].localVolumeRatio(fn)
+	slices.SortFunc(otherNodes, func(a, b *Node) bool {
+		return a.localVolumeRatio(fn) > b.localVolumeRatio(fn)
 	})
-
 	for i := 0; i < len(otherNodes); i++ {
 		emptyNode := otherNodes[i]
 		hasMoved, err = maybeMoveOneVolume(commandEnv, volumeReplicas, thisNode, vol, emptyNode, applyChange)

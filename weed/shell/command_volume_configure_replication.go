@@ -5,7 +5,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"io"
+	"path/filepath"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
@@ -33,17 +35,18 @@ func (c *commandVolumeConfigureReplication) Help() string {
 `
 }
 
-func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
-
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
+func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *CommandEnv, _ io.Writer) (err error) {
 
 	configureReplicationCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeIdInt := configureReplicationCommand.Int("volumeId", 0, "the volume id")
 	replicationString := configureReplicationCommand.String("replication", "", "the intended replication value")
+	collectionPattern := configureReplicationCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
 	if err = configureReplicationCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(args); err != nil {
+		return
 	}
 
 	if *replicationString == "" {
@@ -54,15 +57,15 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	if err != nil {
 		return fmt.Errorf("replication format: %v", err)
 	}
-	replicaPlacementInt32 := uint32(replicaPlacement.Byte())
 
 	// collect topology information
-	topologyInfo, _, err := collectTopologyInfo(commandEnv)
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
 	}
 
 	vid := needle.VolumeId(*volumeIdInt)
+	volumeFilter := getVolumeFilter(replicaPlacement, uint32(vid), *collectionPattern)
 
 	// find all data nodes with volumes that needs replication change
 	var allLocations []location
@@ -70,7 +73,7 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 		loc := newLocation(dc, string(rack), dn)
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
-				if v.Id == uint32(vid) && v.ReplicaPlacement != replicaPlacementInt32 {
+				if volumeFilter(v) {
 					allLocations = append(allLocations, loc)
 					continue
 				}
@@ -83,7 +86,7 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	}
 
 	for _, dst := range allLocations {
-		err := operation.WithVolumeServerClient(dst.dataNode.Id, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		err := operation.WithVolumeServerClient(false, pb.NewServerAddressFromDataNode(dst.dataNode), commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 			resp, configureErr := volumeServerClient.VolumeConfigure(context.Background(), &volume_server_pb.VolumeConfigureRequest{
 				VolumeId:    uint32(vid),
 				Replication: replicaPlacement.String(),
@@ -104,4 +107,20 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	}
 
 	return nil
+}
+
+func getVolumeFilter(replicaPlacement *super_block.ReplicaPlacement, volumeId uint32, collectionPattern string) func(message *master_pb.VolumeInformationMessage) bool {
+	replicaPlacementInt32 := uint32(replicaPlacement.Byte())
+	if volumeId > 0 {
+		return func(v *master_pb.VolumeInformationMessage) bool {
+			return v.Id == volumeId && v.ReplicaPlacement != replicaPlacementInt32
+		}
+	}
+	return func(v *master_pb.VolumeInformationMessage) bool {
+		matched, err := filepath.Match(collectionPattern, v.Collection)
+		if err != nil {
+			return false
+		}
+		return matched
+	}
 }

@@ -43,7 +43,7 @@ func (fs *FilerServer) PutTaggingHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	if dbErr := fs.filer.CreateEntry(ctx, existingEntry, false, false, nil); dbErr != nil {
+	if dbErr := fs.filer.CreateEntry(ctx, existingEntry, false, false, nil, false); dbErr != nil {
 		glog.V(0).Infof("failing to update %s tagging : %v", path, dbErr)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
@@ -82,7 +82,9 @@ func (fs *FilerServer) DeleteTaggingHandler(w http.ResponseWriter, r *http.Reque
 	toDelete := strings.Split(r.URL.Query().Get("tagging"), ",")
 	deletions := make(map[string]struct{})
 	for _, deletion := range toDelete {
-		deletions[deletion] = struct{}{}
+		if deletion != "" {
+			deletions[deletion] = struct{}{}
+		}
 	}
 
 	// delete all tags or specific tags
@@ -107,7 +109,7 @@ func (fs *FilerServer) DeleteTaggingHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if dbErr := fs.filer.CreateEntry(ctx, existingEntry, false, false, nil); dbErr != nil {
+	if dbErr := fs.filer.CreateEntry(ctx, existingEntry, false, false, nil, false); dbErr != nil {
 		glog.V(0).Infof("failing to delete %s tagging : %v", path, dbErr)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return

@@ -2,16 +2,17 @@ package command
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"google.golang.org/grpc"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path"
 	"strings"
 
+	"google.golang.org/grpc"
+
 	"github.com/chrislusf/seaweedfs/weed/operation"
+	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -49,7 +50,7 @@ func runDownload(cmd *Command, args []string) bool {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	for _, fid := range args {
-		if e := downloadToFile(func() string { return *d.server }, grpcDialOption, fid, util.ResolvePath(*d.dir)); e != nil {
+		if e := downloadToFile(func() pb.ServerAddress { return pb.ServerAddress(*d.server) }, grpcDialOption, fid, util.ResolvePath(*d.dir)); e != nil {
 			fmt.Println("Download Error: ", fid, e)
 		}
 	}
@@ -81,7 +82,7 @@ func downloadToFile(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpti
 	}
 	defer f.Close()
 	if isFileList {
-		content, err := ioutil.ReadAll(rc.Body)
+		content, err := io.ReadAll(rc.Body)
 		if err != nil {
 			return err
 		}
@@ -118,7 +119,7 @@ func fetchContent(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption
 		return "", nil, e
 	}
 	defer util.CloseResponse(rc)
-	content, e = ioutil.ReadAll(rc.Body)
+	content, e = io.ReadAll(rc.Body)
 	return
 }
 

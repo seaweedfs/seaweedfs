@@ -19,10 +19,10 @@ import (
 const (
 	maxPartSize        = int64(5 * 1024 * 1024)
 	maxRetries         = 3
-	awsAccessKeyID     = "Your access key"
-	awsSecretAccessKey = "Your secret key"
-	awsBucketRegion    = "S3 bucket region"
-	awsBucketName      = "newBucket"
+	awsAccessKeyID     = "any"
+	awsSecretAccessKey = "any"
+	awsBucketRegion    = "us‑west‑1"
+	awsBucketName      = "bucket1"
 )
 
 var (
@@ -37,7 +37,7 @@ func main() {
 	if err != nil {
 		fmt.Printf("bad credentials: %s", err)
 	}
-	cfg := aws.NewConfig().WithRegion(awsBucketRegion).WithCredentials(creds).WithDisableSSL(true).WithEndpoint("localhost:8333")
+	cfg := aws.NewConfig().WithRegion(awsBucketRegion).WithCredentials(creds).WithDisableSSL(true).WithEndpoint("localhost:8333").WithS3ForcePathStyle(true)
 	svc := s3.New(session.New(), cfg)
 
 	file, err := os.Open(*filename)

@@ -3,13 +3,17 @@ package shell
 import (
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/cluster"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
+	"golang.org/x/exp/slices"
 	"io"
+	"math/rand"
 	"os"
 	"path"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/peterh/liner"
@@ -21,11 +25,9 @@ var (
 )
 
 func RunShell(options ShellOptions) {
-
-	sort.Slice(Commands, func(i, j int) bool {
-		return strings.Compare(Commands[i].Name(), Commands[j].Name()) < 0
+	slices.SortFunc(Commands, func(a, b command) bool {
+		return strings.Compare(a.Name(), b.Name()) < 0
 	})
-
 	line = liner.NewLiner()
 	defer line.Close()
 	grace.OnInterrupt(func() {
@@ -42,13 +44,37 @@ func RunShell(options ShellOptions) {
 
 	reg, _ := regexp.Compile(`'.*?'|".*?"|\S+`)
 
-	commandEnv := NewCommandEnv(options)
+	commandEnv := NewCommandEnv(&options)
 
 	go commandEnv.MasterClient.KeepConnectedToMaster()
 	commandEnv.MasterClient.WaitUntilConnected()
 
+	if commandEnv.option.FilerAddress == "" {
+		var filers []pb.ServerAddress
+		commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+				ClientType: cluster.FilerType,
+				FilerGroup: *options.FilerGroup,
+			})
+			if err != nil {
+				return err
+			}
+
+			for _, clusterNode := range resp.ClusterNodes {
+				filers = append(filers, pb.ServerAddress(clusterNode.Address))
+			}
+			return nil
+		})
+		fmt.Printf("master: %s ", *options.Masters)
+		if len(filers) > 0 {
+			fmt.Printf("filers: %v", filers)
+			commandEnv.option.FilerAddress = filers[rand.Intn(len(filers))]
+		}
+		fmt.Println()
+	}
+
 	if commandEnv.option.FilerAddress != "" {
-		commandEnv.WithFilerClient(func(filerClient filer_pb.SeaweedFilerClient) error {
+		commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
 			resp, err := filerClient.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return err
@@ -84,10 +110,12 @@ https://cloud.seaweedfs.com/ui/%s
 
 func processEachCmd(reg *regexp.Regexp, cmd string, commandEnv *CommandEnv) bool {
 	cmds := reg.FindAllString(cmd, -1)
+
+	line.AppendHistory(cmd)
+
 	if len(cmds) == 0 {
 		return false
 	} else {
-		line.AppendHistory(cmd)
 
 		args := make([]string, len(cmds[1:]))
 

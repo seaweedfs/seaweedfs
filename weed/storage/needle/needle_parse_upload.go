@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"mime"
 	"net/http"
 	"path"
@@ -75,16 +74,14 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 		if mimeType == "application/octet-stream" {
 			mimeType = ""
 		}
-		if false {
-			if shouldBeCompressed, iAmSure := util.IsCompressableFileType(ext, mimeType); mimeType == "" && !iAmSure || shouldBeCompressed && iAmSure {
-				// println("ext", ext, "iAmSure", iAmSure, "shouldBeCompressed", shouldBeCompressed, "mimeType", pu.MimeType)
-				if compressedData, err := util.GzipData(pu.Data); err == nil {
-					if len(compressedData)*10 < len(pu.Data)*9 {
-						pu.Data = compressedData
-						pu.IsGzipped = true
-					}
-					// println("gzipped data size", len(compressedData))
+		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(ext, mimeType); shouldBeCompressed && iAmSure {
+			// println("ext", ext, "iAmSure", iAmSure, "shouldBeCompressed", shouldBeCompressed, "mimeType", pu.MimeType)
+			if compressedData, err := util.GzipData(pu.Data); err == nil {
+				if len(compressedData)*10 < len(pu.Data)*9 {
+					pu.Data = compressedData
+					pu.IsGzipped = true
 				}
+				// println("gzipped data size", len(compressedData))
 			}
 		}
 	}
@@ -110,7 +107,7 @@ func parsePut(r *http.Request, sizeLimit int64, pu *ParsedUpload) error {
 	pu.FileName = ""
 	dataSize, err := pu.bytesBuffer.ReadFrom(io.LimitReader(r.Body, sizeLimit+1))
 	if err == io.EOF || dataSize == sizeLimit+1 {
-		io.Copy(ioutil.Discard, r.Body)
+		io.Copy(io.Discard, r.Body)
 	}
 	pu.Data = pu.bytesBuffer.Bytes()
 	r.Body.Close()
@@ -120,7 +117,7 @@ func parsePut(r *http.Request, sizeLimit int64, pu *ParsedUpload) error {
 func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 	defer func() {
 		if e != nil && r.Body != nil {
-			io.Copy(ioutil.Discard, r.Body)
+			io.Copy(io.Discard, r.Body)
 			r.Body.Close()
 		}
 	}()

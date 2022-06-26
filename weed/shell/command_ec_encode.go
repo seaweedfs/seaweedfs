@@ -4,7 +4,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"io"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -32,7 +34,7 @@ func (c *commandEcEncode) Name() string {
 func (c *commandEcEncode) Help() string {
 	return `apply erasure coding to a volume
 
-	ec.encode [-collection=""] [-fullPercent=95] [-quietFor=1h]
+	ec.encode [-collection=""] [-fullPercent=95 -quietFor=1h]
 	ec.encode [-collection=""] [-volumeId=<volume_id>]
 
 	This command will:
@@ -54,10 +56,6 @@ func (c *commandEcEncode) Help() string {
 
 func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	encodeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeId := encodeCommand.Int("volumeId", 0, "the volume id")
 	collection := encodeCommand.String("collection", "", "the collection name")
@@ -66,6 +64,10 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	parallelCopy := encodeCommand.Bool("parallelCopy", true, "copy shards in parallel")
 	if err = encodeCommand.Parse(args); err != nil {
 		return nil
+	}
+
+	if err = commandEnv.confirmIsLocked(args); err != nil {
+		return
 	}
 
 	vid := needle.VolumeId(*volumeId)
@@ -93,7 +95,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, parallelCopy bool) (err error) {
 	// find volume location
 	locations, found := commandEnv.MasterClient.GetLocations(uint32(vid))
-	if !found {
+	if !found && len(locations) > 0 {
 		return fmt.Errorf("volume %d not found", vid)
 	}
 
@@ -106,7 +108,7 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	}
 
 	// generate ec shards
-	err = generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, locations[0].Url)
+	err = generateEcShards(commandEnv.option.GrpcDialOption, vid, collection, locations[0].ServerAddress())
 	if err != nil {
 		return fmt.Errorf("generate ec shards for volume %d on %s: %v", vid, locations[0].Url, err)
 	}
@@ -120,11 +122,11 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	return nil
 }
 
-func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, collection string, sourceVolumeServer string) error {
+func generateEcShards(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress) error {
 
 	fmt.Printf("generateEcShards %s %d on %s ...\n", collection, volumeId, sourceVolumeServer)
 
-	err := operation.WithVolumeServerClient(sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	err := operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, genErr := volumeServerClient.VolumeEcShardsGenerate(context.Background(), &volume_server_pb.VolumeEcShardsGenerateRequest{
 			VolumeId:   uint32(volumeId),
 			Collection: collection,
@@ -161,13 +163,13 @@ func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection
 	}
 
 	// unmount the to be deleted shards
-	err = unmountEcShards(commandEnv.option.GrpcDialOption, volumeId, existingLocations[0].Url, copiedShardIds)
+	err = unmountEcShards(commandEnv.option.GrpcDialOption, volumeId, existingLocations[0].ServerAddress(), copiedShardIds)
 	if err != nil {
 		return err
 	}
 
 	// ask the source volume server to clean up copied ec shards
-	err = sourceServerDeleteEcShards(commandEnv.option.GrpcDialOption, collection, volumeId, existingLocations[0].Url, copiedShardIds)
+	err = sourceServerDeleteEcShards(commandEnv.option.GrpcDialOption, collection, volumeId, existingLocations[0].ServerAddress(), copiedShardIds)
 	if err != nil {
 		return fmt.Errorf("source delete copied ecShards %s %d.%v: %v", existingLocations[0].Url, volumeId, copiedShardIds, err)
 	}
@@ -175,7 +177,7 @@ func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection
 	// ask the source volume server to delete the original volume
 	for _, location := range existingLocations {
 		fmt.Printf("delete volume %d from %s\n", volumeId, location.Url)
-		err = deleteVolume(commandEnv.option.GrpcDialOption, volumeId, location.Url)
+		err = deleteVolume(commandEnv.option.GrpcDialOption, volumeId, location.ServerAddress())
 		if err != nil {
 			return fmt.Errorf("deleteVolume %s volume %d: %v", location.Url, volumeId, err)
 		}
@@ -194,12 +196,20 @@ func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServer
 	copyFunc := func(server *EcNode, allocatedEcShardIds []uint32) {
 		defer wg.Done()
 		copiedShardIds, copyErr := oneServerCopyAndMountEcShardsFromSource(grpcDialOption, server,
-			allocatedEcShardIds, volumeId, collection, existingLocation.Url)
+			allocatedEcShardIds, volumeId, collection, existingLocation.ServerAddress())
 		if copyErr != nil {
 			err = copyErr
 		} else {
 			shardIdChan <- copiedShardIds
 			server.addEcVolumeShards(volumeId, collection, copiedShardIds)
+		}
+	}
+	cleanupFunc := func(server *EcNode, allocatedEcShardIds []uint32) {
+		if err := unmountEcShards(grpcDialOption, volumeId, pb.NewServerAddressFromDataNode(server.info), allocatedEcShardIds); err != nil {
+			fmt.Printf("unmount aborted shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, server.info.Id, err)
+		}
+		if err := sourceServerDeleteEcShards(grpcDialOption, collection, volumeId, pb.NewServerAddressFromDataNode(server.info), allocatedEcShardIds); err != nil {
+			fmt.Printf("remove aborted shards %d.%v on %s: %v\n", volumeId, allocatedEcShardIds, server.info.Id, err)
 		}
 	}
 
@@ -220,6 +230,12 @@ func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServer
 	close(shardIdChan)
 
 	if err != nil {
+		for i, server := range targetServers {
+			if len(allocatedEcIds[i]) <= 0 {
+				continue
+			}
+			cleanupFunc(server, allocatedEcIds[i])
+		}
 		return nil, err
 	}
 
@@ -233,7 +249,7 @@ func parallelCopyEcShardsFromSource(grpcDialOption grpc.DialOption, targetServer
 func balancedEcDistribution(servers []*EcNode) (allocated [][]uint32) {
 	allocated = make([][]uint32, len(servers))
 	allocatedShardIdIndex := uint32(0)
-	serverIndex := 0
+	serverIndex := rand.Intn(len(servers))
 	for allocatedShardIdIndex < erasure_coding.TotalShardsCount {
 		if servers[serverIndex].freeEcSlot > 0 {
 			allocated[serverIndex] = append(allocated[serverIndex], allocatedShardIdIndex)
@@ -251,7 +267,7 @@ func balancedEcDistribution(servers []*EcNode) (allocated [][]uint32) {
 func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
 
 	// collect topology information
-	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv)
+	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return
 	}

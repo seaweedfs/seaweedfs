@@ -51,6 +51,9 @@ const (
 	ErrBucketAlreadyExists
 	ErrBucketAlreadyOwnedByYou
 	ErrNoSuchBucket
+	ErrNoSuchBucketPolicy
+	ErrNoSuchCORSConfiguration
+	ErrNoSuchLifecycleConfiguration
 	ErrNoSuchKey
 	ErrNoSuchUpload
 	ErrInvalidBucketName
@@ -58,8 +61,10 @@ const (
 	ErrInvalidMaxKeys
 	ErrInvalidMaxUploads
 	ErrInvalidMaxParts
+	ErrInvalidMaxDeleteObjects
 	ErrInvalidPartNumberMarker
 	ErrInvalidPart
+	ErrInvalidRange
 	ErrInternalError
 	ErrInvalidCopyDest
 	ErrInvalidCopySource
@@ -98,6 +103,10 @@ const (
 	ErrPreconditionFailed
 
 	ErrExistingObjectIsDirectory
+	ErrExistingObjectIsFile
+
+	ErrTooManyRequest
+	ErrRequestBytesExceed
 )
 
 // error code to APIError structure, these fields carry respective
@@ -153,6 +162,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "Argument max-parts must be an integer between 0 and 2147483647",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
+	ErrInvalidMaxDeleteObjects: {
+		Code:           "InvalidArgument",
+		Description:    "Argument objects can contain a list of up to 1000 keys",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
 	ErrInvalidPartNumberMarker: {
 		Code:           "InvalidArgument",
 		Description:    "Argument partNumberMarker must be an integer.",
@@ -161,6 +175,21 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrNoSuchBucket: {
 		Code:           "NoSuchBucket",
 		Description:    "The specified bucket does not exist",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrNoSuchBucketPolicy: {
+		Code:           "NoSuchBucketPolicy",
+		Description:    "The bucket policy does not exist",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrNoSuchCORSConfiguration: {
+		Code:           "NoSuchCORSConfiguration",
+		Description:    "The CORS configuration does not exist",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrNoSuchLifecycleConfiguration: {
+		Code:           "NoSuchLifecycleConfiguration",
+		Description:    "The lifecycle configuration does not exist",
 		HTTPStatusCode: http.StatusNotFound,
 	},
 	ErrNoSuchKey: {
@@ -196,7 +225,7 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidTag: {
-		Code:           "InvalidArgument",
+		Code:           "InvalidTag",
 		Description:    "The Tag value you have provided is invalid",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
@@ -345,6 +374,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "Invalid Request",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
+	ErrInvalidRange: {
+		Code:           "InvalidRange",
+		Description:    "The requested range is not satisfiable",
+		HTTPStatusCode: http.StatusRequestedRangeNotSatisfiable,
+	},
 	ErrAuthNotSetup: {
 		Code:           "InvalidRequest",
 		Description:    "Signed request requires setting up SeaweedFS S3 authentication",
@@ -364,6 +398,21 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "ExistingObjectIsDirectory",
 		Description:    "Existing Object is a directory.",
 		HTTPStatusCode: http.StatusConflict,
+	},
+	ErrExistingObjectIsFile: {
+		Code:           "ExistingObjectIsFile",
+		Description:    "Existing Object is a file.",
+		HTTPStatusCode: http.StatusConflict,
+	},
+	ErrTooManyRequest: {
+		Code:           "ErrTooManyRequest",
+		Description:    "Too many simultaneous request count",
+		HTTPStatusCode: http.StatusTooManyRequests,
+	},
+	ErrRequestBytesExceed: {
+		Code:           "ErrRequestBytesExceed",
+		Description:    "Simultaneous request bytes exceed limitations",
+		HTTPStatusCode: http.StatusTooManyRequests,
 	},
 }
 

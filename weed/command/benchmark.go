@@ -3,6 +3,7 @@ package command
 import (
 	"bufio"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"io"
 	"math"
 	"math/rand"
@@ -10,7 +11,6 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -74,14 +74,14 @@ func init() {
 
 var cmdBenchmark = &Command{
 	UsageLine: "benchmark -master=localhost:9333 -c=10 -n=100000",
-	Short:     "benchmark on writing millions of files and read out",
+	Short:     "benchmark by writing millions of files and reading them out",
 	Long: `benchmark on an empty SeaweedFS file system.
 
   Two tests during benchmark:
   1) write lots of small files to the system
   2) read the files out
 
-  The file content is mostly zero, but no compression is done.
+  The file content is mostly zeros, but no compression is done.
 
   You can choose to only benchmark read or write.
   During write, the list of uploaded file ids is stored in "-list" specified file.
@@ -129,7 +129,7 @@ func runBenchmark(cmd *Command, args []string) bool {
 		defer pprof.StopCPUProfile()
 	}
 
-	b.masterClient = wdclient.NewMasterClient(b.grpcDialOption, "client", "", 0, "", strings.Split(*b.masters, ","))
+	b.masterClient = wdclient.NewMasterClient(b.grpcDialOption, "", "client", "", "", pb.ServerAddresses(*b.masters).ToAddressMap())
 	go b.masterClient.KeepConnectedToMaster()
 	b.masterClient.WaitUntilConnected()
 
@@ -468,7 +468,7 @@ func (s *stats) printStats() {
 	timeTaken := float64(int64(s.end.Sub(s.start))) / 1000000000
 	fmt.Printf("\nConcurrency Level:      %d\n", *b.concurrency)
 	fmt.Printf("Time taken for tests:   %.3f seconds\n", timeTaken)
-	fmt.Printf("Complete requests:      %d\n", completed)
+	fmt.Printf("Completed requests:      %d\n", completed)
 	fmt.Printf("Failed requests:        %d\n", failed)
 	fmt.Printf("Total transferred:      %d bytes\n", transferred)
 	fmt.Printf("Requests per second:    %.2f [#/sec]\n", float64(completed)/timeTaken)

@@ -3,6 +3,7 @@ package shell
 import (
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/filer"
 	"io"
 	"os"
 	"path/filepath"
@@ -62,8 +63,8 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	fileName := *outputFileName
 	if fileName == "" {
 		t := time.Now()
-		fileName = fmt.Sprintf("%s-%d-%4d%02d%02d-%02d%02d%02d.meta",
-			commandEnv.option.FilerHost, commandEnv.option.FilerPort, t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+		fileName = fmt.Sprintf("%s-%4d%02d%02d-%02d%02d%02d.meta",
+			commandEnv.option.FilerAddress.ToHttpAddress(), t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 	}
 
 	dst, openErr := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
@@ -77,15 +78,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 		cipherKey = util.GenCipherKey()
 	}
 
-	err = doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(outputChan chan interface{}) {
-		sizeBuf := make([]byte, 4)
-		for item := range outputChan {
-			b := item.([]byte)
-			util.Uint32toBytes(sizeBuf, uint32(len(b)))
-			dst.Write(sizeBuf)
-			dst.Write(b)
-		}
-	}, func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
+	err = doTraverseBfsAndSaving(commandEnv, writer, path, *verbose, func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 		if !entry.Entry.IsDirectory {
 			ext := filepath.Ext(entry.Entry.Name)
 			if encrypted, encErr := util.Encrypt([]byte(entry.Entry.Name), cipherKey); encErr == nil {
@@ -101,17 +94,25 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 
 		outputChan <- bytes
 		return nil
+	}, func(outputChan chan interface{}) {
+		sizeBuf := make([]byte, 4)
+		for item := range outputChan {
+			b := item.([]byte)
+			util.Uint32toBytes(sizeBuf, uint32(len(b)))
+			dst.Write(sizeBuf)
+			dst.Write(b)
+		}
 	})
 
 	if err == nil {
-		fmt.Fprintf(writer, "meta data for http://%s:%d%s is saved to %s\n", commandEnv.option.FilerHost, commandEnv.option.FilerPort, path, fileName)
+		fmt.Fprintf(writer, "meta data for http://%s%s is saved to %s\n", commandEnv.option.FilerAddress.ToHttpAddress(), path, fileName)
 	}
 
 	return err
 
 }
 
-func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, path string, verbose bool, saveFn func(outputChan chan interface{}), genFn func(entry *filer_pb.FullEntry, outputChan chan interface{}) error) error {
+func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, path string, verbose bool, genFn func(entry *filer_pb.FullEntry, outputChan chan interface{}) error, saveFn func(outputChan chan interface{})) error {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -124,6 +125,10 @@ func doTraverseBfsAndSaving(filerClient filer_pb.FilerClient, writer io.Writer, 
 	var dirCount, fileCount uint64
 
 	err := filer_pb.TraverseBfs(filerClient, util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) {
+
+		if strings.HasPrefix(string(parentPath), filer.SystemLogDir) {
+			return
+		}
 
 		protoMessage := &filer_pb.FullEntry{
 			Dir:   string(parentPath),

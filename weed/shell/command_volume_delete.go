@@ -2,6 +2,7 @@ package shell
 
 import (
 	"flag"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -30,10 +31,6 @@ func (c *commandVolumeDelete) Help() string {
 
 func (c *commandVolumeDelete) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	volDeleteCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeIdInt := volDeleteCommand.Int("volumeId", 0, "the volume id")
 	nodeStr := volDeleteCommand.String("node", "", "the volume server <host>:<port>")
@@ -41,7 +38,11 @@ func (c *commandVolumeDelete) Do(args []string, commandEnv *CommandEnv, writer i
 		return nil
 	}
 
-	sourceVolumeServer := *nodeStr
+	if err = commandEnv.confirmIsLocked(args); err != nil {
+		return
+	}
+
+	sourceVolumeServer := pb.ServerAddress(*nodeStr)
 
 	volumeId := needle.VolumeId(*volumeIdInt)
 

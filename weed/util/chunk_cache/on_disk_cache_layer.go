@@ -2,12 +2,11 @@ package chunk_cache
 
 import (
 	"fmt"
-	"path"
-	"sort"
-
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"golang.org/x/exp/slices"
+	"path"
 )
 
 type OnDiskCacheLayer struct {
@@ -33,10 +32,9 @@ func NewOnDiskCacheLayer(dir, namePrefix string, diskSize int64, segmentCount in
 	}
 
 	// keep newest cache to the front
-	sort.Slice(c.diskCaches, func(i, j int) bool {
-		return c.diskCaches[i].lastModTime.After(c.diskCaches[j].lastModTime)
+	slices.SortFunc(c.diskCaches, func(a, b *ChunkCacheVolume) bool {
+		return a.lastModTime.After(b.lastModTime)
 	})
-
 	return c
 }
 
@@ -96,7 +94,7 @@ func (c *OnDiskCacheLayer) getChunkSlice(needleId types.NeedleId, offset, length
 			continue
 		}
 		if err != nil {
-			glog.Errorf("failed to read cache file %s id %d", diskCache.fileName, needleId)
+			glog.Warningf("failed to read cache file %s id %d: %v", diskCache.fileName, needleId, err)
 			continue
 		}
 		if len(data) != 0 {
@@ -105,6 +103,26 @@ func (c *OnDiskCacheLayer) getChunkSlice(needleId types.NeedleId, offset, length
 	}
 
 	return nil
+
+}
+
+func (c *OnDiskCacheLayer) readChunkAt(buffer []byte, needleId types.NeedleId, offset uint64) (n int, err error) {
+
+	for _, diskCache := range c.diskCaches {
+		n, err = diskCache.readNeedleSliceAt(buffer, needleId, offset)
+		if err == storage.ErrorNotFound {
+			continue
+		}
+		if err != nil {
+			glog.Warningf("failed to read cache file %s id %d: %v", diskCache.fileName, needleId, err)
+			continue
+		}
+		if n > 0 {
+			return
+		}
+	}
+
+	return
 
 }
 

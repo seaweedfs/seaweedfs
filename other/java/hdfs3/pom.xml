@@ -5,8 +5,8 @@
     <modelVersion>4.0.0</modelVersion>
 
     <properties>
-        <seaweedfs.client.version>1.6.7</seaweedfs.client.version>
-        <hadoop.version>3.1.1</hadoop.version>
+        <seaweedfs.client.version>2.85</seaweedfs.client.version>
+        <hadoop.version>3.2.3</hadoop.version>
     </properties>
 
     <groupId>com.github.chrislusf</groupId>
@@ -105,7 +105,7 @@
             <plugin>
                 <groupId>org.sonatype.plugins</groupId>
                 <artifactId>nexus-staging-maven-plugin</artifactId>
-                <version>1.6.7</version>
+                <version>1.6.8</version>
                 <extensions>true</extensions>
                 <configuration>
                     <serverId>ossrh</serverId>

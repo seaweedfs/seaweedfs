@@ -24,15 +24,16 @@ func (s AliyunRemoteStorageMaker) HasBucket() bool {
 
 func (s AliyunRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
-		conf: conf,
+		supportTagging: true,
+		conf:           conf,
 	}
 	accessKey := util.Nvl(conf.AliyunAccessKey, os.Getenv("ALICLOUD_ACCESS_KEY_ID"))
 	secretKey := util.Nvl(conf.AliyunSecretKey, os.Getenv("ALICLOUD_ACCESS_KEY_SECRET"))
 
 	config := &aws.Config{
-		Endpoint:         aws.String(conf.AliyunEndpoint),
-		Region:           aws.String(conf.AliyunRegion),
-		S3ForcePathStyle: aws.Bool(false),
+		Endpoint:                      aws.String(conf.AliyunEndpoint),
+		Region:                        aws.String(conf.AliyunRegion),
+		S3ForcePathStyle:              aws.Bool(false),
 		S3DisableContentMD5Validation: aws.Bool(true),
 	}
 	if accessKey != "" && secretKey != "" {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
@@ -82,7 +83,7 @@ func (store *MysqlStore2) initialize(createTable, upsertQuery string, enableUpse
 		return fmt.Errorf("connect to %s error:%v", sqlUrl, err)
 	}
 
-	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil {
+	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil && !strings.Contains(err.Error(), "table already exist") {
 		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
 	}
 

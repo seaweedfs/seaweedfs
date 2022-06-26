@@ -29,15 +29,16 @@ func (c *commandCollectionDelete) Help() string {
 
 func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	colDeleteCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collectionName := colDeleteCommand.String("collection", "", "collection to delete. Use '_default_' for the empty-named collection.")
 	applyBalancing := colDeleteCommand.Bool("force", false, "apply the collection")
 	if err = colDeleteCommand.Parse(args); err != nil {
 		return nil
+	}
+	infoAboutSimulationMode(writer, *applyBalancing, "-force")
+
+	if err = commandEnv.confirmIsLocked(args); err != nil {
+		return
 	}
 
 	if *collectionName == "" {
@@ -53,7 +54,7 @@ func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writ
 		return nil
 	}
 
-	err = commandEnv.MasterClient.WithClient(func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		_, err = client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
 			Name: *collectionName,
 		})

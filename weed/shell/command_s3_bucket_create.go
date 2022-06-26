@@ -26,7 +26,7 @@ func (c *commandS3BucketCreate) Help() string {
 	return `create a bucket with a given name
 
 	Example:
-		s3.bucket.create -name <bucket_name> -replication 001
+		s3.bucket.create -name <bucket_name>
 `
 }
 
@@ -34,9 +34,6 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	bucketName := bucketCommand.String("name", "", "bucket name")
-	replication := bucketCommand.String("replication", "", "replication setting for the bucket, if not set "+
-		"it will honor the value defined by the filer if it exists, "+
-		"else it will honor the value defined on the master")
 	if err = bucketCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -45,7 +42,7 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 		return fmt.Errorf("empty bucket name")
 	}
 
-	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
@@ -59,11 +56,9 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 			Name:        *bucketName,
 			IsDirectory: true,
 			Attributes: &filer_pb.FuseAttributes{
-				Mtime:       time.Now().Unix(),
-				Crtime:      time.Now().Unix(),
-				FileMode:    uint32(0777 | os.ModeDir),
-				Collection:  *bucketName,
-				Replication: *replication,
+				Mtime:    time.Now().Unix(),
+				Crtime:   time.Now().Unix(),
+				FileMode: uint32(0777 | os.ModeDir),
 			},
 		}
 

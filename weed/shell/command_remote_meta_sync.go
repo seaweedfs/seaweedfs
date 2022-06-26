@@ -27,7 +27,7 @@ func (c *commandRemoteMetaSync) Help() string {
 	return `synchronize the local file meta data with the remote file metadata
 
 	# assume a remote storage is configured to name "cloud1"
-	remote.configure -name=cloud1 -type=s3 -access_key=xxx -secret_key=yyy
+	remote.configure -name=cloud1 -type=s3 -s3.access_key=xxx -s3.secret_key=yyy
 	# mount and pull one bucket
 	remote.mount -dir=/xxx -remote=cloud1/bucket
 
@@ -62,7 +62,7 @@ func (c *commandRemoteMetaSync) Do(args []string, commandEnv *CommandEnv, writer
 
 	// pull metadata from remote
 	if err = pullMetadata(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(*dir), remoteStorageConf); err != nil {
-		return fmt.Errorf("cache content data: %v", err)
+		return fmt.Errorf("cache meta data: %v", err)
 	}
 
 	return nil
@@ -76,7 +76,7 @@ func detectMountInfo(commandEnv *CommandEnv, writer io.Writer, dir string) (*rem
   This function update entry.RemoteEntry if the remote has any changes.
 
   To pull remote updates, or created for the first time, the criteria is:
-    entry == nil or (entry.RemoteEntry != nil and entry.RemoteEntry.RemoteTag != remote.RemoteTag)
+    entry == nil or (entry.RemoteEntry != nil and (entry.RemoteEntry.RemoteTag != remote.RemoteTag or entry.RemoteEntry.RemoteMTime < remote.RemoteMTime ))
   After the meta pull, the entry.RemoteEntry will have:
     remoteEntry.LastLocalSyncTsNs == 0
     Attributes.FileSize = uint64(remoteEntry.RemoteSize)
@@ -117,7 +117,7 @@ func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util
 
 	remote := filer.MapFullPathToRemoteStorageLocation(localMountedDir, remoteMountedLocation, dirToCache)
 
-	err = commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		ctx := context.Background()
 		err = remoteStorage.Traverse(remote, func(remoteDir, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
 			localDir := filer.MapRemoteStorageLocationPathToFullPath(localMountedDir, remoteMountedLocation, remoteDir)

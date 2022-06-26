@@ -3,6 +3,7 @@ package shell
 import (
 	"flag"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -32,10 +33,6 @@ func (c *commandVolumeCopy) Help() string {
 
 func (c *commandVolumeCopy) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
-		return
-	}
-
 	volCopyCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeIdInt := volCopyCommand.Int("volumeId", 0, "the volume id")
 	sourceNodeStr := volCopyCommand.String("source", "", "the source volume server <host>:<port>")
@@ -44,7 +41,11 @@ func (c *commandVolumeCopy) Do(args []string, commandEnv *CommandEnv, writer io.
 		return nil
 	}
 
-	sourceVolumeServer, targetVolumeServer := *sourceNodeStr, *targetNodeStr
+	if err = commandEnv.confirmIsLocked(args); err != nil {
+		return
+	}
+
+	sourceVolumeServer, targetVolumeServer := pb.ServerAddress(*sourceNodeStr), pb.ServerAddress(*targetNodeStr)
 
 	volumeId := needle.VolumeId(*volumeIdInt)
 
@@ -52,6 +53,6 @@ func (c *commandVolumeCopy) Do(args []string, commandEnv *CommandEnv, writer io.
 		return fmt.Errorf("source and target volume servers are the same!")
 	}
 
-	_, err = copyVolume(commandEnv.option.GrpcDialOption, volumeId, sourceVolumeServer, targetVolumeServer, "")
+	_, err = copyVolume(commandEnv.option.GrpcDialOption, writer, volumeId, sourceVolumeServer, targetVolumeServer, "")
 	return
 }

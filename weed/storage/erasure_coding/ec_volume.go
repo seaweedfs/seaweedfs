@@ -3,10 +3,11 @@ package erasure_coding
 import (
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
+	"golang.org/x/exp/slices"
 	"math"
 	"os"
-	"sort"
 	"sync"
 	"time"
 
@@ -30,7 +31,7 @@ type EcVolume struct {
 	ecxFileSize               int64
 	ecxCreatedAt              time.Time
 	Shards                    []*EcVolumeShard
-	ShardLocations            map[ShardId][]string
+	ShardLocations            map[ShardId][]pb.ServerAddress
 	ShardLocationsRefreshTime time.Time
 	ShardLocationsLock        sync.RWMutex
 	Version                   needle.Version
@@ -69,7 +70,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		volume_info.SaveVolumeInfo(dataBaseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(ev.Version)})
 	}
 
-	ev.ShardLocations = make(map[ShardId][]string)
+	ev.ShardLocations = make(map[ShardId][]pb.ServerAddress)
 
 	return
 }
@@ -81,9 +82,8 @@ func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
 		}
 	}
 	ev.Shards = append(ev.Shards, ecVolumeShard)
-	sort.Slice(ev.Shards, func(i, j int) bool {
-		return ev.Shards[i].VolumeId < ev.Shards[j].VolumeId ||
-			ev.Shards[i].VolumeId == ev.Shards[j].VolumeId && ev.Shards[i].ShardId < ev.Shards[j].ShardId
+	slices.SortFunc(ev.Shards, func(a, b *EcVolumeShard) bool {
+		return a.VolumeId < b.VolumeId || a.VolumeId == b.VolumeId && a.ShardId < b.ShardId
 	})
 	return true
 }

@@ -24,19 +24,35 @@ func (vs *VolumeServer) VacuumVolumeCheck(ctx context.Context, req *volume_serve
 
 }
 
-func (vs *VolumeServer) VacuumVolumeCompact(ctx context.Context, req *volume_server_pb.VacuumVolumeCompactRequest) (*volume_server_pb.VacuumVolumeCompactResponse, error) {
+func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCompactRequest, stream volume_server_pb.VolumeServer_VacuumVolumeCompactServer) error {
 
 	resp := &volume_server_pb.VacuumVolumeCompactResponse{}
+	reportInterval := int64(1024 * 1024 * 128)
+	nextReportTarget := reportInterval
 
-	err := vs.store.CompactVolume(needle.VolumeId(req.VolumeId), req.Preallocate, vs.compactionBytePerSecond)
+	var sendErr error
+	err := vs.store.CompactVolume(needle.VolumeId(req.VolumeId), req.Preallocate, vs.compactionBytePerSecond, func(processed int64) bool {
+		if processed > nextReportTarget {
+			resp.ProcessedBytes = processed
+			if sendErr = stream.Send(resp); sendErr != nil {
+				return false
+			}
+			nextReportTarget = processed + reportInterval
+		}
+		return true
+	})
 
 	if err != nil {
 		glog.Errorf("compact volume %d: %v", req.VolumeId, err)
-	} else {
-		glog.V(1).Infof("compact volume %d", req.VolumeId)
+		return err
+	}
+	if sendErr != nil {
+		glog.Errorf("compact volume %d report progress: %v", req.VolumeId, sendErr)
+		return sendErr
 	}
 
-	return resp, err
+	glog.V(1).Infof("compact volume %d", req.VolumeId)
+	return nil
 
 }
 

@@ -1,6 +1,5 @@
-// +build !linux
-// +build !darwin
-// +build !freebsd
+//go:build !linux && !darwin
+// +build !linux,!darwin
 
 package command
 

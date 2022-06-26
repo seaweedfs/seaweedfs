@@ -14,7 +14,6 @@ const (
 	RenewInteval     = 4 * time.Second
 	SafeRenewInteval = 3 * time.Second
 	InitLockInteval  = 1 * time.Second
-	AdminLockName    = "admin"
 )
 
 type ExclusiveLocker struct {
@@ -22,13 +21,17 @@ type ExclusiveLocker struct {
 	lockTsNs     int64
 	isLocking    bool
 	masterClient *wdclient.MasterClient
+	lockName     string
+	message      string
 }
 
-func NewExclusiveLocker(masterClient *wdclient.MasterClient) *ExclusiveLocker {
+func NewExclusiveLocker(masterClient *wdclient.MasterClient, lockName string) *ExclusiveLocker {
 	return &ExclusiveLocker{
 		masterClient: masterClient,
+		lockName:     lockName,
 	}
 }
+
 func (l *ExclusiveLocker) IsLocking() bool {
 	return l.isLocking
 }
@@ -51,11 +54,11 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 
 	// retry to get the lease
 	for {
-		if err := l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
+		if err := l.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 			resp, err := client.LeaseAdminToken(ctx, &master_pb.LeaseAdminTokenRequest{
 				PreviousToken:    atomic.LoadInt64(&l.token),
 				PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
-				LockName:         AdminLockName,
+				LockName:         l.lockName,
 				ClientName:       clientName,
 			})
 			if err == nil {
@@ -79,12 +82,13 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 		defer cancel2()
 
 		for l.isLocking {
-			if err := l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
+			if err := l.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 				resp, err := client.LeaseAdminToken(ctx2, &master_pb.LeaseAdminTokenRequest{
 					PreviousToken:    atomic.LoadInt64(&l.token),
 					PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
-					LockName:         AdminLockName,
+					LockName:         l.lockName,
 					ClientName:       clientName,
+					Message:          l.message,
 				})
 				if err == nil {
 					atomic.StoreInt64(&l.token, resp.Token)
@@ -110,14 +114,18 @@ func (l *ExclusiveLocker) ReleaseLock() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	l.masterClient.WithClient(func(client master_pb.SeaweedClient) error {
+	l.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		client.ReleaseAdminToken(ctx, &master_pb.ReleaseAdminTokenRequest{
 			PreviousToken:    atomic.LoadInt64(&l.token),
 			PreviousLockTime: atomic.LoadInt64(&l.lockTsNs),
-			LockName:         AdminLockName,
+			LockName:         l.lockName,
 		})
 		return nil
 	})
 	atomic.StoreInt64(&l.token, 0)
 	atomic.StoreInt64(&l.lockTsNs, 0)
+}
+
+func (l *ExclusiveLocker) SetMessage(message string) {
+	l.message = message
 }

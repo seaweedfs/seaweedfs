@@ -3,10 +3,11 @@ package filer
 import (
 	"bytes"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"math"
-	"sort"
 	"sync"
+
+	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"golang.org/x/exp/slices"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -23,7 +24,16 @@ func TotalSize(chunks []*filer_pb.FileChunk) (size uint64) {
 }
 
 func FileSize(entry *filer_pb.Entry) (size uint64) {
-	return maxUint64(TotalSize(entry.Chunks), entry.Attributes.FileSize)
+	if entry == nil || entry.Attributes == nil {
+		return 0
+	}
+	fileSize := entry.Attributes.FileSize
+	if entry.RemoteEntry != nil {
+		if entry.RemoteEntry.RemoteMtime > entry.Attributes.Mtime {
+			fileSize = maxUint64(fileSize, uint64(entry.RemoteEntry.RemoteSize))
+		}
+	}
+	return maxUint64(TotalSize(entry.Chunks), fileSize)
 }
 
 func ETag(entry *filer_pb.Entry) (etag string) {
@@ -94,6 +104,21 @@ func DoMinusChunks(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {
 	}
 	for _, chunk := range as {
 		if _, found := fileIds[chunk.GetFileIdString()]; !found {
+			delta = append(delta, chunk)
+		}
+	}
+
+	return
+}
+
+func DoMinusChunksBySourceFileId(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {
+
+	fileIds := make(map[string]bool)
+	for _, interval := range bs {
+		fileIds[interval.GetFileIdString()] = true
+	}
+	for _, chunk := range as {
+		if _, found := fileIds[chunk.GetSourceFileId()]; !found {
 			delta = append(delta, chunk)
 		}
 	}
@@ -224,19 +249,26 @@ func MergeIntoVisibles(visibles []VisibleInterval, chunk *filer_pb.FileChunk) (n
 func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles []VisibleInterval, err error) {
 
 	chunks, _, err = ResolveChunkManifest(lookupFileIdFn, chunks, startOffset, stopOffset)
+	if err != nil {
+		return
+	}
 
-	sort.Slice(chunks, func(i, j int) bool {
-		if chunks[i].Mtime == chunks[j].Mtime {
-			filer_pb.EnsureFid(chunks[i])
-			filer_pb.EnsureFid(chunks[j])
-			if chunks[i].Fid == nil || chunks[j].Fid == nil {
+	visibles2 := readResolvedChunks(chunks)
+
+	if true {
+		return visibles2, err
+	}
+	slices.SortFunc(chunks, func(a, b *filer_pb.FileChunk) bool {
+		if a.Mtime == b.Mtime {
+			filer_pb.EnsureFid(a)
+			filer_pb.EnsureFid(b)
+			if a.Fid == nil || b.Fid == nil {
 				return true
 			}
-			return chunks[i].Fid.FileKey < chunks[j].Fid.FileKey
+			return a.Fid.FileKey < b.Fid.FileKey
 		}
-		return chunks[i].Mtime < chunks[j].Mtime // keep this to make tests run
+		return a.Mtime < b.Mtime
 	})
-
 	for _, chunk := range chunks {
 
 		// glog.V(0).Infof("merge [%d,%d)", chunk.Offset, chunk.Offset+int64(chunk.Size))
@@ -246,7 +278,24 @@ func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunction
 
 	}
 
+	if len(visibles) != len(visibles2) {
+		fmt.Printf("different visibles size %d : %d\n", len(visibles), len(visibles2))
+	} else {
+		for i := 0; i < len(visibles); i++ {
+			checkDifference(visibles[i], visibles2[i])
+		}
+	}
+
 	return
+}
+
+func checkDifference(x, y VisibleInterval) {
+	if x.start != y.start ||
+		x.stop != y.stop ||
+		x.fileId != y.fileId ||
+		x.modifiedTime != y.modifiedTime {
+		fmt.Printf("different visible %+v : %+v\n", x, y)
+	}
 }
 
 // find non-overlapping visible intervals

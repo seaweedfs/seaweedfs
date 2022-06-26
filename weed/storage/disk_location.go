@@ -2,8 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,11 +12,14 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/google/uuid"
 )
 
 type DiskLocation struct {
 	Directory              string
+	DirectoryUuid          string
 	IdxDirectory           string
 	DiskType               types.DiskType
 	MaxVolumeCount         int
@@ -34,6 +35,29 @@ type DiskLocation struct {
 	isDiskSpaceLow bool
 }
 
+func GenerateDirUuid(dir string) (dirUuidString string, err error) {
+	glog.V(1).Infof("Getting uuid of volume directory:%s", dir)
+	dirUuidString = ""
+	fileName := dir + "/vol_dir.uuid"
+	if !util.FileExists(fileName) {
+		dirUuid, _ := uuid.NewRandom()
+		dirUuidString = dirUuid.String()
+		writeErr := util.WriteFile(fileName, []byte(dirUuidString), 0644)
+		if writeErr != nil {
+			glog.Warningf("failed to write uuid to %s : %v", fileName, writeErr)
+			return "", fmt.Errorf("failed to write uuid to %s : %v", fileName, writeErr)
+		}
+	} else {
+		uuidData, readErr := os.ReadFile(fileName)
+		if readErr != nil {
+			glog.Warningf("failed to read uuid from %s : %v", fileName, readErr)
+			return "", fmt.Errorf("failed to read uuid from %s : %v", fileName, readErr)
+		}
+		dirUuidString = string(uuidData)
+	}
+	return dirUuidString, nil
+}
+
 func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType) *DiskLocation {
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
@@ -41,8 +65,10 @@ func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpace util.MinFreeSp
 	} else {
 		idxDir = util.ResolvePath(idxDir)
 	}
+	dirUuid, _ := GenerateDirUuid(dir)
 	location := &DiskLocation{
 		Directory:              dir,
+		DirectoryUuid:          dirUuid,
 		IdxDirectory:           idxDir,
 		DiskType:               diskType,
 		MaxVolumeCount:         maxVolumeCount,
@@ -85,9 +111,9 @@ func getValidVolumeName(basename string) string {
 	return ""
 }
 
-func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind NeedleMapKind) bool {
-	basename := fileInfo.Name()
-	if fileInfo.IsDir() {
+func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind NeedleMapKind, skipIfEcVolumesExists bool) bool {
+	basename := dirEntry.Name()
+	if dirEntry.IsDir() {
 		return false
 	}
 	volumeName := getValidVolumeName(basename)
@@ -95,10 +121,17 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 		return false
 	}
 
+	// skip if ec volumes exists
+	if skipIfEcVolumesExists {
+		if util.FileExists(l.Directory + "/" + volumeName + ".ecx") {
+			return false
+		}
+	}
+
 	// check for incomplete volume
 	noteFile := l.Directory + "/" + volumeName + ".note"
 	if util.FileExists(noteFile) {
-		note, _ := ioutil.ReadFile(noteFile)
+		note, _ := os.ReadFile(noteFile)
 		glog.Warningf("volume %s was not completed: %s", volumeName, string(note))
 		removeVolumeFiles(l.Directory + "/" + volumeName)
 		removeVolumeFiles(l.IdxDirectory + "/" + volumeName)
@@ -138,18 +171,18 @@ func (l *DiskLocation) loadExistingVolume(fileInfo os.FileInfo, needleMapKind Ne
 
 func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, concurrency int) {
 
-	task_queue := make(chan os.FileInfo, 10*concurrency)
+	task_queue := make(chan os.DirEntry, 10*concurrency)
 	go func() {
 		foundVolumeNames := make(map[string]bool)
-		if fileInfos, err := ioutil.ReadDir(l.Directory); err == nil {
-			for _, fi := range fileInfos {
-				volumeName := getValidVolumeName(fi.Name())
+		if dirEntries, err := os.ReadDir(l.Directory); err == nil {
+			for _, entry := range dirEntries {
+				volumeName := getValidVolumeName(entry.Name())
 				if volumeName == "" {
 					continue
 				}
 				if _, found := foundVolumeNames[volumeName]; !found {
 					foundVolumeNames[volumeName] = true
-					task_queue <- fi
+					task_queue <- entry
 				}
 			}
 		}
@@ -162,7 +195,7 @@ func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, con
 		go func() {
 			defer wg.Done()
 			for fi := range task_queue {
-				_ = l.loadExistingVolume(fi, needleMapKind)
+				_ = l.loadExistingVolume(fi, needleMapKind, true)
 			}
 		}()
 	}
@@ -242,10 +275,12 @@ func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId) (found bool, e erro
 
 func (l *DiskLocation) LoadVolume(vid needle.VolumeId, needleMapKind NeedleMapKind) bool {
 	if fileInfo, found := l.LocateVolume(vid); found {
-		return l.loadExistingVolume(fileInfo, needleMapKind)
+		return l.loadExistingVolume(fileInfo, needleMapKind, false)
 	}
 	return false
 }
+
+var ErrVolumeNotFound = fmt.Errorf("volume not found")
 
 func (l *DiskLocation) DeleteVolume(vid needle.VolumeId) error {
 	l.volumesLock.Lock()
@@ -253,7 +288,7 @@ func (l *DiskLocation) DeleteVolume(vid needle.VolumeId) error {
 
 	_, ok := l.volumes[vid]
 	if !ok {
-		return fmt.Errorf("Volume not found, VolumeId: %d", vid)
+		return ErrVolumeNotFound
 	}
 	_, err := l.deleteVolumeById(vid)
 	return err
@@ -265,7 +300,7 @@ func (l *DiskLocation) UnloadVolume(vid needle.VolumeId) error {
 
 	v, ok := l.volumes[vid]
 	if !ok {
-		return fmt.Errorf("Volume not loaded, VolumeId: %d", vid)
+		return ErrVolumeNotFound
 	}
 	v.Close()
 	delete(l.volumes, vid)
@@ -275,7 +310,7 @@ func (l *DiskLocation) UnloadVolume(vid needle.VolumeId) error {
 func (l *DiskLocation) unmountVolumeByCollection(collectionName string) map[needle.VolumeId]*Volume {
 	deltaVols := make(map[needle.VolumeId]*Volume, 0)
 	for k, v := range l.volumes {
-		if v.Collection == collectionName && !v.isCompacting {
+		if v.Collection == collectionName && !v.isCompacting && !v.isCommitCompacting {
 			deltaVols[k] = v
 		}
 	}
@@ -309,6 +344,16 @@ func (l *DiskLocation) VolumesLen() int {
 	return len(l.volumes)
 }
 
+func (l *DiskLocation) SetStopping() {
+	l.volumesLock.Lock()
+	for _, v := range l.volumes {
+		v.SetStopping()
+	}
+	l.volumesLock.Unlock()
+
+	return
+}
+
 func (l *DiskLocation) Close() {
 	l.volumesLock.Lock()
 	for _, v := range l.volumes {
@@ -325,12 +370,15 @@ func (l *DiskLocation) Close() {
 	return
 }
 
-func (l *DiskLocation) LocateVolume(vid needle.VolumeId) (os.FileInfo, bool) {
-	if fileInfos, err := ioutil.ReadDir(l.Directory); err == nil {
-		for _, fileInfo := range fileInfos {
-			volId, _, err := volumeIdFromFileName(fileInfo.Name())
+func (l *DiskLocation) LocateVolume(vid needle.VolumeId) (os.DirEntry, bool) {
+	// println("LocateVolume", vid, "on", l.Directory)
+	if dirEntries, err := os.ReadDir(l.Directory); err == nil {
+		for _, entry := range dirEntries {
+			// println("checking", entry.Name(), "...")
+			volId, _, err := volumeIdFromFileName(entry.Name())
+			// println("volId", volId, "err", err)
 			if vid == volId && err == nil {
-				return fileInfo, true
+				return entry, true
 			}
 		}
 	}

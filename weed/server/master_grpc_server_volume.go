@@ -42,15 +42,24 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				return !found
 			})
 
+			option := req.Option
+			vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
+
 			// not atomic but it's okay
-			if !found && ms.shouldVolumeGrow(req.Option) {
+			if !found && vl.ShouldGrowVolumes(option) {
 				filter.Store(req, nil)
 				// we have lock called inside vg
 				go func() {
 					glog.V(1).Infoln("starting automatic volume grow")
 					start := time.Now()
-					_, err := ms.vg.AutomaticGrowByType(req.Option, ms.grpcDialOption, ms.Topo, req.Count)
+					newVidLocations, err := ms.vg.AutomaticGrowByType(req.Option, ms.grpcDialOption, ms.Topo, req.Count)
 					glog.V(1).Infoln("finished automatic volume grow, cost ", time.Now().Sub(start))
+					if err == nil {
+						for _, newVidLocation := range newVidLocations {
+							ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: newVidLocation})
+						}
+					}
+					vl.DoneGrowRequest()
 
 					if req.ErrCh != nil {
 						req.ErrCh <- err
@@ -82,7 +91,7 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 		}
 		var auth string
 		if strings.Contains(result.VolumeOrFileId, ",") { // this is a file id
-			auth = string(security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, result.VolumeOrFileId))
+			auth = string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, result.VolumeOrFileId))
 		}
 		resp.VolumeIdLocations = append(resp.VolumeIdLocations, &master_pb.LookupVolumeResponse_VolumeIdLocation{
 			VolumeOrFileId: result.VolumeOrFileId,
@@ -130,10 +139,13 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		MemoryMapMaxSizeMb: req.MemoryMapMaxSizeMb,
 	}
 
-	if ms.shouldVolumeGrow(option) {
+	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
+
+	if !vl.HasGrowRequest() && vl.ShouldGrowVolumes(option) {
 		if ms.Topo.AvailableSpaceFor(option) <= 0 {
 			return nil, fmt.Errorf("no free volumes left for " + option.String())
 		}
+		vl.AddGrowRequest()
 		ms.vgCh <- &topology.VolumeGrowRequest{
 			Option: option,
 			Count:  int(req.WritableVolumeCount),
@@ -147,14 +159,27 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	)
 
 	for time.Now().Sub(startTime) < maxTimeout {
-		fid, count, dn, err := ms.Topo.PickForWrite(req.Count, option)
+		fid, count, dnList, err := ms.Topo.PickForWrite(req.Count, option)
 		if err == nil {
+			dn := dnList.Head()
+			var replicas []*master_pb.Location
+			for _, r := range dnList.Rest() {
+				replicas = append(replicas, &master_pb.Location{
+					Url:       r.Url(),
+					PublicUrl: r.PublicUrl,
+					GrpcPort:  uint32(r.GrpcPort),
+				})
+			}
 			return &master_pb.AssignResponse{
-				Fid:       fid,
-				Url:       dn.Url(),
-				PublicUrl: dn.PublicUrl,
-				Count:     count,
-				Auth:      string(security.GenJwt(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
+				Fid: fid,
+				Location: &master_pb.Location{
+					Url:       dn.Url(),
+					PublicUrl: dn.PublicUrl,
+					GrpcPort:  uint32(dn.GrpcPort),
+				},
+				Count:    count,
+				Auth:     string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
+				Replicas: replicas,
 			}, nil
 		}
 		//glog.V(4).Infoln("waiting for volume growing...")
@@ -248,7 +273,7 @@ func (ms *MasterServer) VacuumVolume(ctx context.Context, req *master_pb.VacuumV
 
 	resp := &master_pb.VacuumVolumeResponse{}
 
-	ms.Topo.Vacuum(ms.grpcDialOption, float64(req.GarbageThreshold), ms.preallocateSize)
+	ms.Topo.Vacuum(ms.grpcDialOption, float64(req.GarbageThreshold), req.VolumeId, req.Collection, ms.preallocateSize)
 
 	return resp, nil
 }

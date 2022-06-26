@@ -37,6 +37,7 @@ type S3BackendStorage struct {
 	region                string
 	bucket                string
 	endpoint              string
+	storageClass          string
 	conn                  s3iface.S3API
 }
 
@@ -48,6 +49,10 @@ func newS3BackendStorage(configuration backend.StringProperties, configPrefix st
 	s.region = configuration.GetString(configPrefix + "region")
 	s.bucket = configuration.GetString(configPrefix + "bucket")
 	s.endpoint = configuration.GetString(configPrefix + "endpoint")
+	s.storageClass = configuration.GetString(configPrefix + "storage_class")
+	if s.storageClass == "" {
+		s.storageClass = "STANDARD_IA"
+	}
 
 	s.conn, err = createSession(s.aws_access_key_id, s.aws_secret_access_key, s.region, s.endpoint)
 
@@ -62,6 +67,7 @@ func (s *S3BackendStorage) ToProperties() map[string]string {
 	m["region"] = s.region
 	m["bucket"] = s.bucket
 	m["endpoint"] = s.endpoint
+	m["storage_class"] = s.storageClass
 	return m
 }
 
@@ -79,13 +85,13 @@ func (s *S3BackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb
 	return f
 }
 
-func (s *S3BackendStorage) CopyFile(f *os.File, attributes map[string]string, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
+func (s *S3BackendStorage) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
 	randomUuid, _ := uuid.NewRandom()
 	key = randomUuid.String()
 
 	glog.V(1).Infof("copying dat file of %s to remote s3.%s as %s", f.Name(), s.id, key)
 
-	size, err = uploadToS3(s.conn, f.Name(), s.bucket, key, attributes, fn)
+	size, err = uploadToS3(s.conn, f.Name(), s.bucket, key, s.storageClass, fn)
 
 	return
 }

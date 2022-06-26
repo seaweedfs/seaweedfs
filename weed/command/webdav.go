@@ -43,7 +43,7 @@ func init() {
 	webDavStandaloneOptions.tlsPrivateKey = cmdWebDav.Flag.String("key.file", "", "path to the TLS private key file")
 	webDavStandaloneOptions.tlsCertificate = cmdWebDav.Flag.String("cert.file", "", "path to the TLS certificate file")
 	webDavStandaloneOptions.cacheDir = cmdWebDav.Flag.String("cacheDir", os.TempDir(), "local cache directory for file chunks")
-	webDavStandaloneOptions.cacheSizeMB = cmdWebDav.Flag.Int64("cacheCapacityMB", 1000, "local cache capacity in MB")
+	webDavStandaloneOptions.cacheSizeMB = cmdWebDav.Flag.Int64("cacheCapacityMB", 0, "local cache capacity in MB")
 }
 
 var cmdWebDav = &Command{
@@ -78,46 +78,41 @@ func (wo *WebDavOption) startWebDav() bool {
 	}
 
 	// parse filer grpc address
-	filerGrpcAddress, err := pb.ParseServerToGrpcAddress(*wo.filer)
-	if err != nil {
-		glog.Fatal(err)
-		return false
-	}
+	filerAddress := pb.ServerAddress(*wo.filer)
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	var cipher bool
 	// connect to filer
 	for {
-		err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithGrpcFilerClient(false, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
-				return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
+				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
 			}
 			cipher = resp.Cipher
 			return nil
 		})
 		if err != nil {
-			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *wo.filer, filerGrpcAddress)
+			glog.V(0).Infof("wait to connect to filer %s grpc address %s", *wo.filer, filerAddress.ToGrpcAddress())
 			time.Sleep(time.Second)
 		} else {
-			glog.V(0).Infof("connected to filer %s grpc address %s", *wo.filer, filerGrpcAddress)
+			glog.V(0).Infof("connected to filer %s grpc address %s", *wo.filer, filerAddress.ToGrpcAddress())
 			break
 		}
 	}
 
 	ws, webdavServer_err := weed_server.NewWebDavServer(&weed_server.WebDavOption{
-		Filer:            *wo.filer,
-		FilerGrpcAddress: filerGrpcAddress,
-		GrpcDialOption:   grpcDialOption,
-		Collection:       *wo.collection,
-		Replication:      *wo.replication,
-		DiskType:         *wo.disk,
-		Uid:              uid,
-		Gid:              gid,
-		Cipher:           cipher,
-		CacheDir:         util.ResolvePath(*wo.cacheDir),
-		CacheSizeMB:      *wo.cacheSizeMB,
+		Filer:          filerAddress,
+		GrpcDialOption: grpcDialOption,
+		Collection:     *wo.collection,
+		Replication:    *wo.replication,
+		DiskType:       *wo.disk,
+		Uid:            uid,
+		Gid:            gid,
+		Cipher:         cipher,
+		CacheDir:       util.ResolvePath(*wo.cacheDir),
+		CacheSizeMB:    *wo.cacheSizeMB,
 	})
 	if webdavServer_err != nil {
 		glog.Fatalf("WebDav Server startup error: %v", webdavServer_err)

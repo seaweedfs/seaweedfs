@@ -17,6 +17,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+type ProgressFunc func(processed int64) bool
+
 func (v *Volume) garbageLevel() float64 {
 	if v.ContentSize() == 0 {
 		return 0
@@ -62,7 +64,7 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 }
 
 // compact a volume based on deletions in .idx files
-func (v *Volume) Compact2(preallocate int64, compactionBytePerSecond int64) error {
+func (v *Volume) Compact2(preallocate int64, compactionBytePerSecond int64, progressFn ProgressFunc) error {
 
 	if v.MemoryMapMaxSizeMb != 0 { //it makes no sense to compact in memory
 		return nil
@@ -77,13 +79,16 @@ func (v *Volume) Compact2(preallocate int64, compactionBytePerSecond int64) erro
 	v.lastCompactIndexOffset = v.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
 	glog.V(3).Infof("creating copies for volume %d ...", v.Id)
+	if v.DataBackend == nil {
+		return fmt.Errorf("volume %d backend is empty remote:%v", v.Id, v.HasRemoteFile())
+	}
 	if err := v.DataBackend.Sync(); err != nil {
 		glog.V(0).Infof("compact2 fail to sync volume dat %d: %v", v.Id, err)
 	}
 	if err := v.nm.Sync(); err != nil {
 		glog.V(0).Infof("compact2 fail to sync volume idx %d: %v", v.Id, err)
 	}
-	return copyDataBasedOnIndexFile(v.FileName(".dat"), v.FileName(".idx"), v.FileName(".cpd"), v.FileName(".cpx"), v.SuperBlock, v.Version(), preallocate, compactionBytePerSecond)
+	return copyDataBasedOnIndexFile(v.FileName(".dat"), v.FileName(".idx"), v.FileName(".cpd"), v.FileName(".cpx"), v.SuperBlock, v.Version(), preallocate, compactionBytePerSecond, progressFn)
 }
 
 func (v *Volume) CommitCompact() error {
@@ -92,9 +97,9 @@ func (v *Volume) CommitCompact() error {
 	}
 	glog.V(0).Infof("Committing volume %d vacuuming...", v.Id)
 
-	v.isCompacting = true
+	v.isCommitCompacting = true
 	defer func() {
-		v.isCompacting = false
+		v.isCommitCompacting = false
 	}()
 
 	v.dataFileAccessLock.Lock()
@@ -287,6 +292,9 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 				return fmt.Errorf("ReadNeedleBlob %s key %d offset %d size %d failed: %v", oldDatFile.Name(), key, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size, err)
 			}
 			dstDatBackend.Write(needleBytes)
+			if err := dstDatBackend.Sync(); err != nil {
+				return fmt.Errorf("cannot sync needle %s: %v", dstDatBackend.File.Name(), err)
+			}
 			util.Uint32toBytes(idxEntryBytes[8:12], uint32(offset/NeedlePaddingSize))
 		} else { //deleted needle
 			//fakeDelNeedle 's default Data field is nil
@@ -306,6 +314,12 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 				newIdxFileName, err)
 		}
 		_, err = idx.Write(idxEntryBytes)
+		if err != nil {
+			return fmt.Errorf("cannot write indexfile %s: %v", newIdxFileName, err)
+		}
+		if err := idx.Sync(); err != nil {
+			return fmt.Errorf("cannot sync indexfile %s: %v", newIdxFileName, err)
+		}
 	}
 
 	return nil
@@ -359,7 +373,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 		dst backend.BackendStorageFile
 	)
 	if dst, err = backend.CreateVolumeFile(dstName, preallocate, 0); err != nil {
-		return
+		return err
 	}
 	defer dst.Close()
 
@@ -375,20 +389,19 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 	}
 	err = ScanVolumeFile(v.dir, v.Collection, v.Id, v.needleMapKind, scanner)
 	if err != nil {
-		return nil
+		return err
 	}
 
-	err = nm.SaveToIdx(idxName)
-	return
+	return nm.SaveToIdx(idxName)
 }
 
-func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName string, sb super_block.SuperBlock, version needle.Version, preallocate int64, compactionBytePerSecond int64) (err error) {
+func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName string, sb super_block.SuperBlock, version needle.Version, preallocate, compactionBytePerSecond int64, progressFn ProgressFunc) (err error) {
 	var (
 		srcDatBackend, dstDatBackend backend.BackendStorageFile
 		dataFile                     *os.File
 	)
 	if dstDatBackend, err = backend.CreateVolumeFile(dstDatName, preallocate, 0); err != nil {
-		return
+		return err
 	}
 	defer dstDatBackend.Close()
 
@@ -397,7 +410,7 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 	newNm := needle_map.NewMemDb()
 	defer newNm.Close()
 	if err = oldNm.LoadFromIdx(srcIdxName); err != nil {
-		return
+		return err
 	}
 	if dataFile, err = os.Open(srcDatName); err != nil {
 		return err
@@ -413,7 +426,7 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 
 	writeThrottler := util.NewWriteThrottler(compactionBytePerSecond)
 
-	oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
+	err = oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
 
 		offset, size := value.Offset, value.Size
 
@@ -421,10 +434,15 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 			return nil
 		}
 
+		if progressFn != nil {
+			if !progressFn(offset.ToActualOffset()) {
+				return fmt.Errorf("interrupted")
+			}
+		}
+
 		n := new(needle.Needle)
-		err := n.ReadData(srcDatBackend, offset.ToActualOffset(), size, version)
-		if err != nil {
-			return nil
+		if err := n.ReadData(srcDatBackend, offset.ToActualOffset(), size, version); err != nil {
+			return fmt.Errorf("cannot hydrate needle from file: %s", err)
 		}
 
 		if n.HasTtl() && now >= n.LastModified+uint64(sb.Ttl.Minutes()*60) {
@@ -444,8 +462,10 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
 
-	newNm.SaveToIdx(datIdxName)
+	return newNm.SaveToIdx(datIdxName)
 
-	return
 }

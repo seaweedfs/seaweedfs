@@ -33,6 +33,8 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 				Gid:    OS_GID,
 			},
 		}
+	} else if err != nil {
+		return fmt.Errorf("find %s: %v", fullpath, err)
 	} else {
 		offset = int64(TotalSize(entry.Chunks))
 	}
@@ -41,7 +43,7 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 	entry.Chunks = append(entry.Chunks, uploadResult.ToPbFileChunk(assignResult.Fid, offset))
 
 	// update the entry
-	err = f.CreateEntry(context.Background(), entry, false, false, nil)
+	err = f.CreateEntry(context.Background(), entry, false, false, nil, false)
 
 	return err
 }
@@ -66,7 +68,16 @@ func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.Assi
 
 	// upload data
 	targetUrl := "http://" + assignResult.Url + "/" + assignResult.Fid
-	uploadResult, err := operation.UploadData(targetUrl, "", f.Cipher, data, false, "", nil, assignResult.Auth)
+	uploadOption := &operation.UploadOption{
+		UploadUrl:         targetUrl,
+		Filename:          "",
+		Cipher:            f.Cipher,
+		IsInputCompressed: false,
+		MimeType:          "",
+		PairMap:           nil,
+		Jwt:               assignResult.Auth,
+	}
+	uploadResult, err := operation.UploadData(data, uploadOption)
 	if err != nil {
 		return nil, nil, fmt.Errorf("upload data %s: %v", targetUrl, err)
 	}

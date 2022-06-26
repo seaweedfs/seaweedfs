@@ -5,7 +5,6 @@ import (
 
 	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/azure"
 	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/gcs"
-	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/hdfs"
 	_ "github.com/chrislusf/seaweedfs/weed/remote_storage/s3"
 
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/azuresink"
@@ -15,6 +14,7 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/localsink"
 	_ "github.com/chrislusf/seaweedfs/weed/replication/sink/s3sink"
 
+	_ "github.com/chrislusf/seaweedfs/weed/filer/arangodb"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/cassandra"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/elastic/v7"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/etcd"
@@ -29,6 +29,8 @@ import (
 	_ "github.com/chrislusf/seaweedfs/weed/filer/postgres2"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/redis2"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/redis3"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/sqlite"
 	_ "github.com/chrislusf/seaweedfs/weed/filer/tikv"
+	_ "github.com/chrislusf/seaweedfs/weed/filer/ydb"
 )

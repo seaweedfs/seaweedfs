@@ -18,8 +18,10 @@ message RemoteConf {
   string s3_endpoint = 7;
   string s3_storage_class = 8;
   bool s3_force_path_style = 9;
+  bool s3_v4_signature = 11;
 
   string gcs_google_application_credentials = 10;
+  string gcs_project_id = 12;
 
   string azure_account_name = 15;
   string azure_account_key = 16;
@@ -47,15 +49,23 @@ message RemoteConf {
   string wasabi_endpoint = 42;
   string wasabi_region = 43;
 
-  repeated string hdfs_namenodes = 50;
-  string hdfs_username = 51;
-  string hdfs_service_principal_name = 52;
-  string hdfs_data_transfer_protection = 53;
+  string filebase_access_key = 60;
+  string filebase_secret_key = 61;
+  string filebase_endpoint = 62;
 
+  string storj_access_key = 65;
+  string storj_secret_key = 66;
+  string storj_endpoint = 67;
+
+  string contabo_access_key = 68;
+  string contabo_secret_key = 69;
+  string contabo_endpoint = 70;
+  string contabo_region = 71;
 }
 
 message RemoteStorageMapping {
   map<string,RemoteStorageLocation> mappings = 1;
+  string primary_bucket_storage_name = 2;
 }
 message RemoteStorageLocation {
   string name = 1;

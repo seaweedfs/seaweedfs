@@ -8,9 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"sort"
@@ -19,6 +17,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 )
 
 // TestIsRequestPresignedSignatureV4 - Test validates the logic for presign signature verision v4 detection.
@@ -86,7 +86,7 @@ func TestIsReqAuthenticated(t *testing.T) {
 	// Validates all testcases.
 	for i, testCase := range testCases {
 		if _, s3Error := iam.reqSignatureV4Verify(testCase.req); s3Error != testCase.s3Error {
-			ioutil.ReadAll(testCase.req.Body)
+			io.ReadAll(testCase.req.Body)
 			t.Fatalf("Test %d: Unexpected S3 error: want %d - got %d", i, testCase.s3Error, s3Error)
 		}
 	}
@@ -167,7 +167,7 @@ func newTestRequest(method, urlStr string, contentLength int64, body io.ReadSeek
 	case body == nil:
 		hashedPayload = getSHA256Hash([]byte{})
 	default:
-		payloadBytes, err := ioutil.ReadAll(body)
+		payloadBytes, err := io.ReadAll(body)
 		if err != nil {
 			return nil, err
 		}

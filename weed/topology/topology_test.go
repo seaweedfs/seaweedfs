@@ -31,7 +31,7 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 	maxVolumeCounts := make(map[string]uint32)
 	maxVolumeCounts[""] = 25
 	maxVolumeCounts["ssd"] = 12
-	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, "127.0.0.1", maxVolumeCounts)
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", maxVolumeCounts)
 
 	{
 		volumeCount := 7
@@ -177,7 +177,7 @@ func TestAddRemoveVolume(t *testing.T) {
 	maxVolumeCounts := make(map[string]uint32)
 	maxVolumeCounts[""] = 25
 	maxVolumeCounts["ssd"] = 12
-	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, "127.0.0.1", maxVolumeCounts)
+	dn := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", maxVolumeCounts)
 
 	v := storage.VolumeInfo{
 		Id:               needle.VolumeId(1),

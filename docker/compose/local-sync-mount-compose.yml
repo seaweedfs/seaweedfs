@@ -1,0 +1,21 @@
+version: '3.9'
+services:
+  node1:
+    image: chrislusf/seaweedfs:local
+    command: "server -master -volume -filer"
+  mount1:
+    image: chrislusf/seaweedfs:local
+    privileged: true
+    command: "mount -filer=node1:8888 -dir=/mnt -dirAutoCreate"
+  node2:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 7888:8888
+    command: "server -master -volume -filer"
+  mount2:
+    image: chrislusf/seaweedfs:local
+    privileged: true
+    command: "mount -filer=node2:8888 -dir=/mnt -dirAutoCreate"
+  sync:
+    image: chrislusf/seaweedfs:local
+    command: "-v=4 filer.sync -a=node1:8888 -b=node2:8888 -a.debug -b.debug"

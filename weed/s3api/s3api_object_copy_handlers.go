@@ -3,8 +3,9 @@ package s3api
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
-	weed_server "github.com/chrislusf/seaweedfs/weed/server"
+	"modernc.org/strutil"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -14,9 +15,14 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+const (
+	DirectiveCopy    = "COPY"
+	DirectiveReplace = "REPLACE"
+)
+
 func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request) {
 
-	dstBucket, dstObject := getBucketAndObject(r)
+	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
 
 	// Copy source path.
 	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
@@ -27,19 +33,25 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	srcBucket, srcObject := pathToBucketAndObject(cpSrcPath)
 
-	if (srcBucket == dstBucket && srcObject == dstObject || cpSrcPath == "") && isReplace(r) {
+	glog.V(3).Infof("CopyObjectHandler %s %s => %s %s", srcBucket, srcObject, dstBucket, dstObject)
+
+	replaceMeta, replaceTagging := replaceDirective(r.Header)
+
+	if (srcBucket == dstBucket && srcObject == dstObject || cpSrcPath == "") && (replaceMeta || replaceTagging) {
 		fullPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
 		dir, name := fullPath.DirAndName()
 		entry, err := s3a.getEntry(dir, name)
-		if err != nil {
-			s3err.WriteErrorResponse(w, s3err.ErrInvalidCopySource, r)
+		if err != nil || entry.IsDirectory {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+			return
 		}
-		entry.Extended = weed_server.SaveAmzMetaData(r, entry.Extended, isReplace(r))
+		entry.Extended = processMetadataBytes(r.Header, entry.Extended, replaceMeta, replaceTagging)
 		err = s3a.touch(dir, name, entry)
 		if err != nil {
-			s3err.WriteErrorResponse(w, s3err.ErrInvalidCopySource, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+			return
 		}
-		writeSuccessResponseXML(w, CopyObjectResult{
+		writeSuccessResponseXML(w, r, CopyObjectResult{
 			ETag:         fmt.Sprintf("%x", entry.Attributes.Md5),
 			LastModified: time.Now().UTC(),
 		})
@@ -48,32 +60,44 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	// If source object is empty or bucket is empty, reply back invalid copy source.
 	if srcObject == "" || srcBucket == "" {
-		s3err.WriteErrorResponse(w, s3err.ErrInvalidCopySource, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+		return
+	}
+	srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
+	dir, name := srcPath.DirAndName()
+	if entry, err := s3a.getEntry(dir, name); err != nil || entry.IsDirectory {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
 
 	if srcBucket == dstBucket && srcObject == dstObject {
-		s3err.WriteErrorResponse(w, s3err.ErrInvalidCopyDest, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopyDest)
 		return
 	}
 
 	dstUrl := fmt.Sprintf("http://%s%s/%s%s?collection=%s",
-		s3a.option.Filer, s3a.option.BucketsPath, dstBucket, dstObject, dstBucket)
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, dstBucket, urlPathEscape(dstObject), dstBucket)
 	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer, s3a.option.BucketsPath, srcBucket, srcObject)
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, urlPathEscape(srcObject))
 
-	_, _, resp, err := util.DownloadFile(srcUrl, "")
+	_, _, resp, err := util.DownloadFile(srcUrl, s3a.maybeGetFilerJwtAuthorizationToken(false))
 	if err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrInvalidCopySource, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
 	defer util.CloseResponse(resp)
 
+	tagErr := processMetadata(r.Header, resp.Header, replaceMeta, replaceTagging, s3a.getTags, dir, name)
+	if tagErr != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
+		return
+	}
 	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
-	etag, errCode := s3a.putToFiler(r, dstUrl, resp.Body)
+	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject)
+	etag, errCode := s3a.putToFiler(r, dstUrl, resp.Body, destination)
 
 	if errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, errCode, r)
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
@@ -84,7 +108,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		LastModified: time.Now().UTC(),
 	}
 
-	writeSuccessResponseXML(w, response)
+	writeSuccessResponseXML(w, r, response)
 
 }
 
@@ -105,7 +129,7 @@ type CopyPartResult struct {
 func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Request) {
 	// https://docs.aws.amazon.com/AmazonS3/latest/dev/CopyingObjctsUsingRESTMPUapi.html
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
-	dstBucket, _ := getBucketAndObject(r)
+	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
 
 	// Copy source path.
 	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
@@ -117,7 +141,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	srcBucket, srcObject := pathToBucketAndObject(cpSrcPath)
 	// If source object is empty or bucket is empty, reply back invalid copy source.
 	if srcObject == "" || srcBucket == "" {
-		s3err.WriteErrorResponse(w, s3err.ErrInvalidCopySource, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
 
@@ -126,35 +150,38 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	partID, err := strconv.Atoi(partIDString)
 	if err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrInvalidPart, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
 		return
 	}
 
+	glog.V(3).Infof("CopyObjectPartHandler %s %s => %s part %d", srcBucket, srcObject, dstBucket, partID)
+
 	// check partID with maximum part ID for multipart objects
 	if partID > globalMaxPartID {
-		s3err.WriteErrorResponse(w, s3err.ErrInvalidMaxParts, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxParts)
 		return
 	}
 
 	rangeHeader := r.Header.Get("x-amz-copy-source-range")
 
 	dstUrl := fmt.Sprintf("http://%s%s/%s/%04d.part?collection=%s",
-		s3a.option.Filer, s3a.genUploadsFolder(dstBucket), uploadID, partID, dstBucket)
+		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(dstBucket), uploadID, partID, dstBucket)
 	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer, s3a.option.BucketsPath, srcBucket, srcObject)
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, urlPathEscape(srcObject))
 
-	dataReader, err := util.ReadUrlAsReaderCloser(srcUrl, rangeHeader)
+	dataReader, err := util.ReadUrlAsReaderCloser(srcUrl, s3a.maybeGetFilerJwtAuthorizationToken(false), rangeHeader)
 	if err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrInvalidCopySource, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
 	defer dataReader.Close()
 
 	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
-	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader)
+	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject)
+	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader, destination)
 
 	if errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, errCode, r)
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
@@ -165,10 +192,111 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		LastModified: time.Now().UTC(),
 	}
 
-	writeSuccessResponseXML(w, response)
+	writeSuccessResponseXML(w, r, response)
 
 }
 
-func isReplace(r *http.Request) bool {
-	return r.Header.Get("X-Amz-Metadata-Directive") == "REPLACE"
+func replaceDirective(reqHeader http.Header) (replaceMeta, replaceTagging bool) {
+	return reqHeader.Get(s3_constants.AmzUserMetaDirective) == DirectiveReplace, reqHeader.Get(s3_constants.AmzObjectTaggingDirective) == DirectiveReplace
+}
+
+func processMetadata(reqHeader, existing http.Header, replaceMeta, replaceTagging bool, getTags func(parentDirectoryPath string, entryName string) (tags map[string]string, err error), dir, name string) (err error) {
+	if sc := reqHeader.Get(s3_constants.AmzStorageClass); len(sc) == 0 {
+		if sc := existing[s3_constants.AmzStorageClass]; len(sc) > 0 {
+			reqHeader[s3_constants.AmzStorageClass] = sc
+		}
+	}
+
+	if !replaceMeta {
+		for header, _ := range reqHeader {
+			if strings.HasPrefix(header, s3_constants.AmzUserMetaPrefix) {
+				delete(reqHeader, header)
+			}
+		}
+		for k, v := range existing {
+			if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
+				reqHeader[k] = v
+			}
+		}
+	}
+
+	if !replaceTagging {
+		for header, _ := range reqHeader {
+			if strings.HasPrefix(header, s3_constants.AmzObjectTagging) {
+				delete(reqHeader, header)
+			}
+		}
+
+		found := false
+		for k, _ := range existing {
+			if strings.HasPrefix(k, s3_constants.AmzObjectTaggingPrefix) {
+				found = true
+				break
+			}
+		}
+
+		if found {
+			tags, err := getTags(dir, name)
+			if err != nil {
+				return err
+			}
+
+			var tagArr []string
+			for k, v := range tags {
+				tagArr = append(tagArr, fmt.Sprintf("%s=%s", k, v))
+			}
+			tagStr := strutil.JoinFields(tagArr, "&")
+			reqHeader.Set(s3_constants.AmzObjectTagging, tagStr)
+		}
+	}
+	return
+}
+
+func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, replaceMeta, replaceTagging bool) (metadata map[string][]byte) {
+	metadata = make(map[string][]byte)
+
+	if sc := existing[s3_constants.AmzStorageClass]; len(sc) > 0 {
+		metadata[s3_constants.AmzStorageClass] = sc
+	}
+	if sc := reqHeader.Get(s3_constants.AmzStorageClass); len(sc) > 0 {
+		metadata[s3_constants.AmzStorageClass] = []byte(sc)
+	}
+
+	if replaceMeta {
+		for header, values := range reqHeader {
+			if strings.HasPrefix(header, s3_constants.AmzUserMetaPrefix) {
+				for _, value := range values {
+					metadata[header] = []byte(value)
+				}
+			}
+		}
+	} else {
+		for k, v := range existing {
+			if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
+				metadata[k] = v
+			}
+		}
+	}
+
+	if replaceTagging {
+		if tags := reqHeader.Get(s3_constants.AmzObjectTagging); tags != "" {
+			for _, v := range strings.Split(tags, "&") {
+				tag := strings.Split(v, "=")
+				if len(tag) == 2 {
+					metadata[s3_constants.AmzObjectTagging+"-"+tag[0]] = []byte(tag[1])
+				} else if len(tag) == 1 {
+					metadata[s3_constants.AmzObjectTagging+"-"+tag[0]] = nil
+				}
+			}
+		}
+	} else {
+		for k, v := range existing {
+			if strings.HasPrefix(k, s3_constants.AmzObjectTagging) {
+				metadata[k] = v
+			}
+		}
+		delete(metadata, s3_constants.AmzTagCount)
+	}
+
+	return
 }

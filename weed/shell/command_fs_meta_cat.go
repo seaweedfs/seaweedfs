@@ -2,11 +2,10 @@ package shell
 
 import (
 	"fmt"
-	"github.com/golang/protobuf/proto"
-	"io"
-	"sort"
-
 	"github.com/golang/protobuf/jsonpb"
+	"github.com/golang/protobuf/proto"
+	"golang.org/x/exp/slices"
+	"io"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -40,7 +39,7 @@ func (c *commandFsMetaCat) Do(args []string, commandEnv *CommandEnv, writer io.W
 
 	dir, name := util.FullPath(path).DirAndName()
 
-	return commandEnv.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Name:      name,
@@ -55,14 +54,12 @@ func (c *commandFsMetaCat) Do(args []string, commandEnv *CommandEnv, writer io.W
 			EmitDefaults: true,
 			Indent:       "  ",
 		}
-
-		sort.Slice(respLookupEntry.Entry.Chunks, func(i, j int) bool {
-			if respLookupEntry.Entry.Chunks[i].Offset == respLookupEntry.Entry.Chunks[j].Offset {
-				return respLookupEntry.Entry.Chunks[i].Mtime < respLookupEntry.Entry.Chunks[j].Mtime
+		slices.SortFunc(respLookupEntry.Entry.Chunks, func(a, b *filer_pb.FileChunk) bool {
+			if a.Offset == b.Offset {
+				return a.Mtime < b.Mtime
 			}
-			return respLookupEntry.Entry.Chunks[i].Offset < respLookupEntry.Entry.Chunks[j].Offset
+			return a.Offset < b.Offset
 		})
-
 		text, marshalErr := m.MarshalToString(respLookupEntry.Entry)
 		if marshalErr != nil {
 			return fmt.Errorf("marshal meta: %v", marshalErr)

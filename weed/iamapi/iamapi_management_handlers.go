@@ -4,10 +4,6 @@ import (
 	"crypto/sha1"
 	"encoding/json"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -15,6 +11,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
 
 	"github.com/aws/aws-sdk-go/service/iam"
 )
@@ -151,6 +152,22 @@ func (iama *IamApiServer) GetUser(s3cfg *iam_pb.S3ApiConfiguration, userName str
 			resp.GetUserResult.User = iam.User{UserName: &ident.Name}
 			return resp, nil
 		}
+	}
+	return resp, fmt.Errorf(iam.ErrCodeNoSuchEntityException)
+}
+
+func (iama *IamApiServer) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp UpdateUserResponse, err error) {
+	userName := values.Get("UserName")
+	newUserName := values.Get("NewUserName")
+	if newUserName != "" {
+		for _, ident := range s3cfg.Identities {
+			if userName == ident.Name {
+				ident.Name = newUserName
+				return resp, nil
+			}
+		}
+	} else {
+		return resp, nil
 	}
 	return resp, fmt.Errorf(iam.ErrCodeNoSuchEntityException)
 }
@@ -360,9 +377,38 @@ func (iama *IamApiServer) DeleteAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 	return resp
 }
 
+// handleImplicitUsername adds username who signs the request to values if 'username' is not specified
+// According to https://awscli.amazonaws.com/v2/documentation/api/latest/reference/iam/create-access-key.html/
+// "If you do not specify a user name, IAM determines the user name implicitly based on the Amazon Web
+// Services access key ID signing the request."
+func handleImplicitUsername(r *http.Request, values url.Values) {
+	if len(r.Header["Authorization"]) == 0 || values.Get("UserName") != "" {
+		return
+	}
+	// get username who signs the request. For a typical Authorization:
+	// "AWS4-HMAC-SHA256 Credential=197FSAQ7HHTA48X64O3A/20220420/test1/iam/aws4_request, SignedHeaders=content-type;
+	// host;x-amz-date, Signature=6757dc6b3d7534d67e17842760310e99ee695408497f6edc4fdb84770c252dc8",
+	// the "test1" will be extracted as the username
+	glog.V(4).Infof("Authorization field: %v", r.Header["Authorization"][0])
+	s := strings.Split(r.Header["Authorization"][0], "Credential=")
+	if len(s) < 2 {
+		return
+	}
+	s = strings.Split(s[1], ",")
+	if len(s) < 2 {
+		return
+	}
+	s = strings.Split(s[0], "/")
+	if len(s) < 5 {
+		return
+	}
+	userName := s[2]
+	values.Set("UserName", userName)
+}
+
 func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrInvalidRequest, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
 	}
 	values := r.PostForm
@@ -370,7 +416,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	s3cfgLock.RLock()
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 	if err := iama.s3ApiConfig.GetS3ApiConfiguration(s3cfg); err != nil {
-		s3err.WriteErrorResponse(w, s3err.ErrInternalError, r)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 	s3cfgLock.RUnlock()
@@ -384,6 +430,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		response = iama.ListUsers(s3cfg, values)
 		changed = false
 	case "ListAccessKeys":
+		handleImplicitUsername(r, values)
 		response = iama.ListAccessKeys(s3cfg, values)
 		changed = false
 	case "CreateUser":
@@ -392,52 +439,62 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		userName := values.Get("UserName")
 		response, err = iama.GetUser(s3cfg, userName)
 		if err != nil {
-			writeIamErrorResponse(w, err, "user", userName, nil)
+			writeIamErrorResponse(w, r, err, "user", userName, nil)
 			return
 		}
 		changed = false
+	case "UpdateUser":
+		response, err = iama.UpdateUser(s3cfg, values)
+		if err != nil {
+			glog.Errorf("UpdateUser: %+v", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			return
+		}
 	case "DeleteUser":
 		userName := values.Get("UserName")
 		response, err = iama.DeleteUser(s3cfg, userName)
 		if err != nil {
-			writeIamErrorResponse(w, err, "user", userName, nil)
+			writeIamErrorResponse(w, r, err, "user", userName, nil)
 			return
 		}
 	case "CreateAccessKey":
+		handleImplicitUsername(r, values)
 		response = iama.CreateAccessKey(s3cfg, values)
 	case "DeleteAccessKey":
+		handleImplicitUsername(r, values)
 		response = iama.DeleteAccessKey(s3cfg, values)
 	case "CreatePolicy":
 		response, err = iama.CreatePolicy(s3cfg, values)
 		if err != nil {
 			glog.Errorf("CreatePolicy:  %+v", err)
-			s3err.WriteErrorResponse(w, s3err.ErrInvalidRequest, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 			return
 		}
 	case "PutUserPolicy":
 		response, err = iama.PutUserPolicy(s3cfg, values)
 		if err != nil {
 			glog.Errorf("PutUserPolicy:  %+v", err)
-			s3err.WriteErrorResponse(w, s3err.ErrInvalidRequest, r)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 			return
 		}
 	case "GetUserPolicy":
 		response, err = iama.GetUserPolicy(s3cfg, values)
 		if err != nil {
-			writeIamErrorResponse(w, err, "user", values.Get("UserName"), nil)
+			writeIamErrorResponse(w, r, err, "user", values.Get("UserName"), nil)
 			return
 		}
 		changed = false
 	case "DeleteUserPolicy":
 		if response, err = iama.DeleteUserPolicy(s3cfg, values); err != nil {
-			writeIamErrorResponse(w, err, "user", values.Get("UserName"), nil)
+			writeIamErrorResponse(w, r, err, "user", values.Get("UserName"), nil)
+			return
 		}
 	default:
 		errNotImplemented := s3err.GetAPIError(s3err.ErrNotImplemented)
 		errorResponse := ErrorResponse{}
 		errorResponse.Error.Code = &errNotImplemented.Code
 		errorResponse.Error.Message = &errNotImplemented.Description
-		s3err.WriteXMLResponse(w, errNotImplemented.HTTPStatusCode, errorResponse)
+		s3err.WriteXMLResponse(w, r, errNotImplemented.HTTPStatusCode, errorResponse)
 		return
 	}
 	if changed {
@@ -445,9 +502,9 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		err := iama.s3ApiConfig.PutS3ApiConfiguration(s3cfg)
 		s3cfgLock.Unlock()
 		if err != nil {
-			writeIamErrorResponse(w, fmt.Errorf(iam.ErrCodeServiceFailureException), "", "", err)
+			writeIamErrorResponse(w, r, fmt.Errorf(iam.ErrCodeServiceFailureException), "", "", err)
 			return
 		}
 	}
-	s3err.WriteXMLResponse(w, http.StatusOK, response)
+	s3err.WriteXMLResponse(w, r, http.StatusOK, response)
 }

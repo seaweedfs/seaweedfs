@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"google.golang.org/grpc"
 	"math/rand"
 	"strings"
@@ -15,7 +16,13 @@ import (
 type Location struct {
 	Url       string `json:"url,omitempty"`
 	PublicUrl string `json:"publicUrl,omitempty"`
+	GrpcPort  int    `json:"grpcPort,omitempty"`
 }
+
+func (l *Location) ServerAddress() pb.ServerAddress {
+	return pb.NewServerAddressWithGrpcPort(l.Url, l.GrpcPort)
+}
+
 type LookupResult struct {
 	VolumeOrFileId string     `json:"volumeOrFileId,omitempty"`
 	Locations      []Location `json:"locations,omitempty"`
@@ -72,7 +79,7 @@ func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids 
 
 	//only query unknown_vids
 
-	err := WithMasterServerClient(masterFn(), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+	err := WithMasterServerClient(false, masterFn(), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 
 		req := &master_pb.LookupVolumeRequest{
 			VolumeOrFileIds: unknown_vids,
@@ -89,6 +96,7 @@ func LookupVolumeIds(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vids 
 				locations = append(locations, Location{
 					Url:       loc.Url,
 					PublicUrl: loc.PublicUrl,
+					GrpcPort:  int(loc.GrpcPort),
 				})
 			}
 			if vidLocations.Error != "" {

@@ -21,8 +21,12 @@ func (m *mockChunkCache) GetChunk(fileId string, minSize uint64) (data []byte) {
 	return data
 }
 
-func (m *mockChunkCache) GetChunkSlice(fileId string, offset, length uint64) []byte {
-	return nil
+func (m *mockChunkCache) ReadChunkAt(data []byte, fileId string, offset uint64) (n int, err error) {
+	x, _ := strconv.Atoi(fileId)
+	for i := 0; i < len(data); i++ {
+		data[i] = byte(x)
+	}
+	return len(data), nil
 }
 
 func (m *mockChunkCache) SetChunk(fileId string, data []byte) {
@@ -64,11 +68,11 @@ func TestReaderAt(t *testing.T) {
 	}
 
 	readerAt := &ChunkReadAt{
-		chunkViews:   ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
-		lookupFileId: nil,
-		readerLock:   sync.Mutex{},
-		fileSize:     10,
-		chunkCache:   &mockChunkCache{},
+		chunkViews:    ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
+		readerLock:    sync.Mutex{},
+		fileSize:      10,
+		readerCache:   newReaderCache(3, &mockChunkCache{}, nil),
+		readerPattern: NewReaderPattern(),
 	}
 
 	testReadAt(t, readerAt, 0, 10, 10, io.EOF)
@@ -80,7 +84,7 @@ func TestReaderAt(t *testing.T) {
 
 func testReadAt(t *testing.T, readerAt *ChunkReadAt, offset int64, size int, expected int, expectedErr error) {
 	data := make([]byte, size)
-	n, err := readerAt.ReadAt(data, offset)
+	n, err := readerAt.doReadAt(data, offset)
 
 	for _, d := range data {
 		fmt.Printf("%x", d)
@@ -114,11 +118,11 @@ func TestReaderAt0(t *testing.T) {
 	}
 
 	readerAt := &ChunkReadAt{
-		chunkViews:   ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
-		lookupFileId: nil,
-		readerLock:   sync.Mutex{},
-		fileSize:     10,
-		chunkCache:   &mockChunkCache{},
+		chunkViews:    ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
+		readerLock:    sync.Mutex{},
+		fileSize:      10,
+		readerCache:   newReaderCache(3, &mockChunkCache{}, nil),
+		readerPattern: NewReaderPattern(),
 	}
 
 	testReadAt(t, readerAt, 0, 10, 10, io.EOF)
@@ -142,11 +146,11 @@ func TestReaderAt1(t *testing.T) {
 	}
 
 	readerAt := &ChunkReadAt{
-		chunkViews:   ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
-		lookupFileId: nil,
-		readerLock:   sync.Mutex{},
-		fileSize:     20,
-		chunkCache:   &mockChunkCache{},
+		chunkViews:    ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
+		readerLock:    sync.Mutex{},
+		fileSize:      20,
+		readerCache:   newReaderCache(3, &mockChunkCache{}, nil),
+		readerPattern: NewReaderPattern(),
 	}
 
 	testReadAt(t, readerAt, 0, 20, 20, io.EOF)

@@ -23,6 +23,7 @@ public class SeaweedFileSystem extends FileSystem {
 
     public static final String FS_SEAWEED_FILER_HOST = "fs.seaweed.filer.host";
     public static final String FS_SEAWEED_FILER_PORT = "fs.seaweed.filer.port";
+    public static final String FS_SEAWEED_FILER_PORT_GRPC = "fs.seaweed.filer.port.grpc";
     public static final int FS_SEAWEED_DEFAULT_PORT = 8888;
     public static final String FS_SEAWEED_BUFFER_SIZE = "fs.seaweed.buffer.size";
     public static final String FS_SEAWEED_REPLICATION = "fs.seaweed.replication";
@@ -50,9 +51,6 @@ public class SeaweedFileSystem extends FileSystem {
         // get host information from uri (overrides info in conf)
         String host = uri.getHost();
         host = (host == null) ? conf.get(FS_SEAWEED_FILER_HOST, "localhost") : host;
-        if (host == null) {
-            throw new IOException("Invalid host specified");
-        }
         conf.set(FS_SEAWEED_FILER_HOST, host);
 
         // get port information from uri, (overrides info in conf)
@@ -60,10 +58,12 @@ public class SeaweedFileSystem extends FileSystem {
         port = (port == -1) ? FS_SEAWEED_DEFAULT_PORT : port;
         conf.setInt(FS_SEAWEED_FILER_PORT, port);
 
+        int grpcPort = conf.getInt(FS_SEAWEED_FILER_PORT_GRPC, port+10000);
+
         setConf(conf);
         this.uri = uri;
 
-        seaweedFileSystemStore = new SeaweedFileSystemStore(host, port, conf);
+        seaweedFileSystemStore = new SeaweedFileSystemStore(host, port, grpcPort, conf);
 
     }
 
