@@ -44,6 +44,9 @@ func (mc *MasterClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 
 func (mc *MasterClient) LookupFileIdWithFallback(fileId string) (fullUrls []string, err error) {
 	fullUrls, err = mc.vidMap.LookupFileId(fileId)
+	if err == nil {
+		return
+	}
 	err = pb.WithMasterClient(false, mc.currentMaster, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
 		resp, err := client.LookupVolume(context.Background(), &master_pb.LookupVolumeRequest{
 			VolumeOrFileIds: []string{fileId},
@@ -59,7 +62,7 @@ func (mc *MasterClient) LookupFileIdWithFallback(fileId string) (fullUrls []stri
 					GrpcPort:  int(vidLoc.GrpcPort),
 				}
 				mc.vidMap.addLocation(uint32(vid), loc)
-				fullUrls = append(fullUrls, loc.Url)
+				fullUrls = append(fullUrls, "http://"+loc.Url+"/"+fileId)
 			}
 		}
 
