@@ -42,7 +42,7 @@ func FromTags(tags map[string]string) (t *Tagging) {
 }
 
 func parseTagsHeader(tags string) (map[string]string, error) {
-	var parsedTags map[string]string
+	parsedTags := make(map[string]string)
 	for _, v := range strings.Split(tags, "&") {
 		tag := strings.Split(v, "=")
 		if len(tag) == 2 {
@@ -51,7 +51,7 @@ func parseTagsHeader(tags string) (map[string]string, error) {
 			parsedTags[tag[0]] = ""
 		}
 	}
-	return nil, nil
+	return parsedTags, nil
 }
 
 func validateTags(tags map[string]string) error {
