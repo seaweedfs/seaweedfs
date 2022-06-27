@@ -21,6 +21,8 @@ const (
 
 type ProcessMetadataFunc func(resp *filer_pb.SubscribeMetadataResponse) error
 
+type ProcessMetadataParallelFunc func(resp *filer_pb.SubscribeMetadataResponse) (error, int64)
+
 func FollowMetadata(filerAddress ServerAddress, grpcDialOption grpc.DialOption, clientName string, clientId int32,
 	pathPrefix string, additionalPathPrefixes []string, lastTsNs int64, untilTsNs int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, eventErrorType EventErrorType) error {
@@ -72,7 +74,6 @@ func makeSubscribeMetadataFunc(clientName string, clientId int32, pathPrefix str
 			if listenErr != nil {
 				return listenErr
 			}
-
 			if err := processEventFn(resp); err != nil {
 				switch eventErrorType {
 				case TrivialOnError:
@@ -106,6 +107,31 @@ func AddOffsetFunc(processEventFn ProcessMetadataFunc, offsetInterval time.Durat
 		if lastWriteTime.Add(offsetInterval).Before(time.Now()) {
 			lastWriteTime = time.Now()
 			if err := offsetFunc(counter, resp.TsNs); err != nil {
+				return err
+			}
+			counter = 0
+		}
+		return nil
+	}
+
+}
+
+// AddOffsetParallelSyncFunc the method of parallel send
+func AddOffsetParallelSyncFunc(processEventFn ProcessMetadataParallelFunc, offsetInterval time.Duration, setOffsetFunc func(counter int64, offset int64) error) ProcessMetadataFunc {
+	var lastWriteTime time.Time
+	return func(resp *filer_pb.SubscribeMetadataResponse) error {
+		err, counter := processEventFn(resp)
+		if err != nil {
+			return err
+		}
+		if counter == 0 {
+			// "counter" did not meet the sending condition.
+			// The data is saved in cache and will not be sent until counter > 0.
+			return nil
+		}
+		if lastWriteTime.Add(offsetInterval).Before(time.Now()) {
+			lastWriteTime = time.Now()
+			if err := setOffsetFunc(counter, resp.TsNs); err != nil {
 				return err
 			}
 			counter = 0
