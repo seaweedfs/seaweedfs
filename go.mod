@@ -3,9 +3,9 @@ module github.com/chrislusf/seaweedfs
 go 1.18
 
 require (
-	cloud.google.com/go v0.102.0 // indirect
+	cloud.google.com/go v0.102.1 // indirect
 	cloud.google.com/go/pubsub v1.22.2
-	cloud.google.com/go/storage v1.22.1
+	cloud.google.com/go/storage v1.23.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/OneOfOne/xxhash v1.2.8
@@ -35,7 +35,7 @@ require (
 	github.com/fsnotify/fsnotify v1.5.4 // indirect
 	github.com/go-errors/errors v1.1.1 // indirect
 	github.com/go-redis/redis/v8 v8.11.5
-	github.com/go-redsync/redsync/v4 v4.5.0
+	github.com/go-redsync/redsync/v4 v4.5.1
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/go-zookeeper/zk v1.0.2 // indirect
@@ -63,7 +63,7 @@ require (
 	github.com/karlseguin/ccache/v2 v2.0.8
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/klauspost/compress v1.15.6 // indirect
-	github.com/klauspost/reedsolomon v1.9.16
+	github.com/klauspost/reedsolomon v1.10.0
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.6
 	github.com/linxGnu/grocksdb v1.7.3
@@ -96,7 +96,7 @@ require (
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/viper v1.12.0
 	github.com/streadway/amqp v1.0.0
-	github.com/stretchr/testify v1.7.3
+	github.com/stretchr/testify v1.7.5
 	github.com/stvp/tempredis v0.0.0-20181119212430-b82af8480203
 	github.com/syndtr/goleveldb v1.0.1-0.20190318030020-c3a204f8e965
 	github.com/tidwall/gjson v1.14.1
@@ -121,15 +121,15 @@ require (
 	golang.org/x/crypto v0.0.0-20220411220226-7b82a4e95df4 // indirect
 	golang.org/x/exp v0.0.0-20220414153411-bcd21879b8fd
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
-	golang.org/x/net v0.0.0-20220607020251-c690dde0001d
-	golang.org/x/oauth2 v0.0.0-20220524215830-622c5d57e401 // indirect
-	golang.org/x/sys v0.0.0-20220520151302-bc2c85ada10a
+	golang.org/x/net v0.0.0-20220617184016-355a448f1bc9
+	golang.org/x/oauth2 v0.0.0-20220608161450-d0670ef3b1eb // indirect
+	golang.org/x/sys v0.0.0-20220615213510-4f61da869c0c
 	golang.org/x/text v0.3.7 // indirect
 	golang.org/x/tools v0.1.8-0.20211029000441-d6a9af8af023
-	golang.org/x/xerrors v0.0.0-20220517211312-f3a8303e98df // indirect
-	google.golang.org/api v0.83.0
+	golang.org/x/xerrors v0.0.0-20220609144429-65e65417b02f // indirect
+	google.golang.org/api v0.85.0
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto v0.0.0-20220602131408-e326c6e8e9c8 // indirect
+	google.golang.org/genproto v0.0.0-20220617124728-180714bec0ad // indirect
 	google.golang.org/grpc v1.47.0
 	google.golang.org/protobuf v1.28.0
 	gopkg.in/inf.v0 v0.9.1 // indirect
@@ -159,7 +159,7 @@ require (
 )
 
 require (
-	cloud.google.com/go/compute v1.6.1 // indirect
+	cloud.google.com/go/compute v1.7.0 // indirect
 	cloud.google.com/go/iam v0.3.0 // indirect
 	github.com/arangodb/go-velocypack v0.0.0-20200318135517-5af53c29c67e // indirect
 	github.com/armon/go-metrics v0.3.10 // indirect
@@ -184,6 +184,7 @@ require (
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/fclairamb/go-log v0.3.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/googleapis/enterprise-certificate-proxy v0.1.0 // indirect
 	github.com/googleapis/go-type-adapters v1.0.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0 // indirect
 	github.com/hashicorp/go-hclog v1.2.0 // indirect
@@ -195,7 +196,7 @@ require (
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/jonboulle/clockwork v0.2.2 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
-	github.com/klauspost/cpuid/v2 v2.0.6 // indirect
+	github.com/klauspost/cpuid/v2 v2.0.14 // indirect
 	github.com/mattn/go-colorable v0.1.12 // indirect
 	github.com/mattn/go-runewidth v0.0.7 // indirect
 	github.com/mattn/go-sqlite3 v2.0.1+incompatible // indirect

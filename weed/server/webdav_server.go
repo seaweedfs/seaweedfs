@@ -48,6 +48,13 @@ type WebDavServer struct {
 	Handler        *webdav.Handler
 }
 
+func max(x, y int64) int64 {
+	if x <= y {
+		return y
+	}
+	return x
+}
+
 func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 
 	fs, _ := NewWebDavFileSystem(option)
@@ -496,6 +503,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 	written, err := f.bufWriter.Write(buf)
 
 	if err == nil {
+		f.entry.Attributes.FileSize = uint64(max(f.off+int64(written), int64(f.entry.Attributes.FileSize)))
 		glog.V(3).Infof("WebDavFileSystem.Write %v: written [%d,%d)", f.name, f.off, f.off+int64(len(buf)))
 		f.off += int64(written)
 	}

@@ -168,8 +168,8 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 		}
 
 		// check if it is the leader to determine whether to reset the vidMap
-		if resp.VolumeLocation != nil && resp.VolumeLocation.Leader != "" {
-			glog.V(0).Infof("redirected to leader %v", resp.VolumeLocation.Leader)
+		if resp.VolumeLocation != nil && resp.VolumeLocation.Leader != "" && string(master) != resp.VolumeLocation.Leader {
+			glog.V(0).Infof("master %v redirected to leader %v", master, resp.VolumeLocation.Leader)
 			nextHintedLeader = pb.ServerAddress(resp.VolumeLocation.Leader)
 			stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToleader).Inc()
 			return nil
@@ -188,8 +188,8 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 
 			if resp.VolumeLocation != nil {
 				// maybe the leader is changed
-				if resp.VolumeLocation.Leader != "" {
-					glog.V(0).Infof("redirected to leader %v", resp.VolumeLocation.Leader)
+				if resp.VolumeLocation.Leader != "" && string(mc.currentMaster) != resp.VolumeLocation.Leader {
+					glog.V(0).Infof("currentMaster %v redirected to leader %v", mc.currentMaster, resp.VolumeLocation.Leader)
 					nextHintedLeader = pb.ServerAddress(resp.VolumeLocation.Leader)
 					stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToleader).Inc()
 					return nil
