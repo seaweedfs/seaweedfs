@@ -104,6 +104,9 @@ const (
 
 	ErrExistingObjectIsDirectory
 	ErrExistingObjectIsFile
+
+	ErrTooManyRequest
+	ErrRequestBytesExceed
 )
 
 // error code to APIError structure, these fields carry respective
@@ -400,6 +403,16 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "ExistingObjectIsFile",
 		Description:    "Existing Object is a file.",
 		HTTPStatusCode: http.StatusConflict,
+	},
+	ErrTooManyRequest: {
+		Code:           "ErrTooManyRequest",
+		Description:    "Too many simultaneous request count",
+		HTTPStatusCode: http.StatusTooManyRequests,
+	},
+	ErrRequestBytesExceed: {
+		Code:           "ErrRequestBytesExceed",
+		Description:    "Simultaneous request bytes exceed limitations",
+		HTTPStatusCode: http.StatusTooManyRequests,
 	},
 }
 
