@@ -1,3 +1,6 @@
+//go:build tikv
+// +build tikv
+
 package tikv
 
 import (
