@@ -327,3 +327,13 @@ location = "/tmp/"
 address = "localhost:6379"
 password = ""
 database = 1
+
+[tikv]
+enabled = false
+# If you have many pd address, use ',' split then:
+#   pdaddrs = "pdhost1:2379, pdhost2:2379, pdhost3:2379"
+pdaddrs = "localhost:2379"
+# Concurrency for TiKV delete range
+deleterange_concurrency = 1
+# Enable 1PC
+enable_1pc = false
