@@ -44,13 +44,11 @@ func GenerateDirUuid(dir string) (dirUuidString string, err error) {
 		dirUuidString = dirUuid.String()
 		writeErr := util.WriteFile(fileName, []byte(dirUuidString), 0644)
 		if writeErr != nil {
-			glog.Warningf("failed to write uuid to %s : %v", fileName, writeErr)
 			return "", fmt.Errorf("failed to write uuid to %s : %v", fileName, writeErr)
 		}
 	} else {
 		uuidData, readErr := os.ReadFile(fileName)
 		if readErr != nil {
-			glog.Warningf("failed to read uuid from %s : %v", fileName, readErr)
 			return "", fmt.Errorf("failed to read uuid from %s : %v", fileName, readErr)
 		}
 		dirUuidString = string(uuidData)
@@ -65,7 +63,10 @@ func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpace util.MinFreeSp
 	} else {
 		idxDir = util.ResolvePath(idxDir)
 	}
-	dirUuid, _ := GenerateDirUuid(dir)
+	dirUuid, err := GenerateDirUuid(dir)
+	if err != nil {
+		glog.Fatalf("cannot generate uuid of dir %s: %v", dir, err)
+	}
 	location := &DiskLocation{
 		Directory:              dir,
 		DirectoryUuid:          dirUuid,
