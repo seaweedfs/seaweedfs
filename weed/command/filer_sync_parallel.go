@@ -1,7 +1,6 @@
 package command
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -138,15 +137,6 @@ func splitMetadataResponseByPath(parallelNum int, list []*filer_pb.SubscribeMeta
 		if sourceOldKey == "" {
 			affectedPath = sourceNewKey
 		}
-
-		if sourceOldKey != "" && sourceNewKey == "" {
-			fmt.Printf("DELETE: %s   %d\n", sourceOldKey, i)
-		} else if sourceOldKey == "" && sourceNewKey != "" {
-			fmt.Printf("CREATE: %s   %d\n", sourceNewKey, i)
-		} else {
-			fmt.Printf("UPDATE: %s -> %s   %d\n", sourceOldKey, sourceNewKey, i)
-		}
-
 		rootTree.addNode(i, affectedPath.Split())
 	}
 
@@ -157,9 +147,6 @@ func splitMetadataResponseByPath(parallelNum int, list []*filer_pb.SubscribeMeta
 func getParallelSyncWorkerArray(rootTree ParallelSyncNode, parallelNum int, list []*filer_pb.SubscribeMetadataResponse) [][]*filer_pb.SubscribeMetadataResponse {
 	var workerGroupResultArray [][]int
 	getParallelSyncIndexByNode(rootTree, &workerGroupResultArray)
-
-	tmp, _ := json.Marshal(workerGroupResultArray)
-	fmt.Printf("SORT:%s\n", string(tmp))
 
 	result := make([][]*filer_pb.SubscribeMetadataResponse, parallelNum)
 	if workerGroupResultArray == nil {
@@ -174,12 +161,7 @@ func getParallelSyncWorkerArray(rootTree ParallelSyncNode, parallelNum int, list
 		mIdx := getMinLenIdxFromWorkerGroup(result)
 		result[mIdx] = append(result[mIdx], itemGroup...)
 	}
-	for i := 0; i < len(result); i++ {
-		fmt.Printf(" %d ", len(result[i]))
-		if i == len(result)-1 {
-			fmt.Println()
-		}
-	}
+
 	return result
 }
 

@@ -21,12 +21,11 @@ import (
 // test add files
 // ADD ACTION: add 100 folder and Each folder contains 100 1kb files
 //  sync cost: 190s
-// async cost: 26s [parallel number: 10, batch: 100, period:10s]
-// async cost: 21s [parallel number: 20, batch: 200, period:10s]
-// async cost: 22s [parallel number: 20, batch: 500, period:10s]
-// async cost: 23s [parallel number: 20, batch: 1000, period:10s]
+// async cost: 165s [parallel number: 10, batch: 500, period:15s]
+// async cost: 140s [parallel number: 10, batch: 1000, period:10s]
+// async cost: 140s [parallel number: 20, batch: 1000, period:20s]
 func TestParallelSyncBatchAddFiles(t *testing.T) {
-	fileFolderNumber := 10
+	fileFolderNumber := 100
 	fileNumber := 100
 
 	aFilerUrl := "http://localhost:8888/test1"
@@ -81,13 +80,12 @@ func TestParallelSyncBatchAddFiles(t *testing.T) {
 // test delete files
 // DELETE ACTION: Recursive delete 100 folder and Each folder contains 100 1kb files
 //  sync cost: 88s
-// async cost: 24s [parallel number: 10, batch: 100, period:10s]
-// async cost: 13s [parallel number: 20, batch: 200, period:10s]
-// async cost: 7s [parallel number: 20, batch: 500, period:10s]
-// async cost: 6s [parallel number: 20, batch: 1000, period:10s]
+// async cost: 75s [parallel number: 10, batch: 500, period:15s]
+// async cost: 65s [parallel number: 10, batch: 1000, period:20s]
+// async cost: 61s [parallel number: 20, batch: 1000, period:20s]
 func TestParallelSyncBatchDeleteFiles(t *testing.T) {
 	// Can be tested in linkage with TestParallelSyncBatchAddFiles
-	fileFolderNumber := 10
+	fileFolderNumber := 100
 	fileNumber := 100
 
 	aFilerUrl := "http://localhost:8888/test1"
