@@ -124,7 +124,7 @@
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-client</artifactId>
-      <version>3.1.1</version>
+      <version>3.2.3</version>
       <scope>provided</scope>
       <exclusions>
         <exclusion>
@@ -156,7 +156,7 @@
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-common</artifactId>
-      <version>3.1.1</version>
+      <version>3.2.3</version>
       <scope>provided</scope>
       <exclusions>
         <exclusion>
@@ -182,6 +182,10 @@
         <exclusion>
           <artifactId>javax.servlet-api</artifactId>
           <groupId>javax.servlet</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>javax.activation-api</artifactId>
+          <groupId>javax.activation</groupId>
         </exclusion>
         <exclusion>
           <artifactId>jetty-server</artifactId>
@@ -224,10 +228,6 @@
           <groupId>log4j</groupId>
         </exclusion>
         <exclusion>
-          <artifactId>commons-lang</artifactId>
-          <groupId>commons-lang</groupId>
-        </exclusion>
-        <exclusion>
           <artifactId>commons-beanutils</artifactId>
           <groupId>commons-beanutils</groupId>
         </exclusion>
@@ -237,6 +237,10 @@
         </exclusion>
         <exclusion>
           <artifactId>commons-lang3</artifactId>
+          <groupId>org.apache.commons</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>commons-text</artifactId>
           <groupId>org.apache.commons</groupId>
         </exclusion>
         <exclusion>
@@ -296,6 +300,10 @@
           <groupId>com.fasterxml.woodstox</groupId>
         </exclusion>
         <exclusion>
+          <artifactId>dnsjava</artifactId>
+          <groupId>dnsjava</groupId>
+        </exclusion>
+        <exclusion>
           <artifactId>hadoop-annotations</artifactId>
           <groupId>org.apache.hadoop</groupId>
         </exclusion>
@@ -309,7 +317,7 @@
     </snapshotRepository>
   </distributionManagement>
   <properties>
-    <seaweedfs.client.version>2.85</seaweedfs.client.version>
-    <hadoop.version>3.1.1</hadoop.version>
+    <seaweedfs.client.version>3.13</seaweedfs.client.version>
+    <hadoop.version>3.2.3</hadoop.version>
   </properties>
 </project>
