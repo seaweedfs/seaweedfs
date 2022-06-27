@@ -35,7 +35,7 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 
 	serverIdentityProvider, err := pemfile.NewProvider(serverOptions)
 	if err != nil {
-		glog.Warningf("pemfile.NewProvider(%v) failed: %v", serverOptions, err)
+		glog.Warningf("pemfile.NewProvider(%v) %v failed: %v", serverOptions, component, err)
 		return nil, nil
 	}
 
