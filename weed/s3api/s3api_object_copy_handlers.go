@@ -49,6 +49,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
+			return
 		}
 		err = s3a.touch(dir, name, entry)
 		if err != nil {
