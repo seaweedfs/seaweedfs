@@ -66,6 +66,7 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 	if err != nil {
 		glog.Errorf("PutObjectTaggingHandler ValidateTags error %s: %v", r.URL, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
+		return
 	}
 
 	if err = s3a.setTags(dir, name, tagging.ToTags()); err != nil {
