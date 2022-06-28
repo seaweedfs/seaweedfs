@@ -287,7 +287,7 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 			if err != nil {
 				return nil, err
 			}
-			err = validateTags(parsedTags)
+			err = ValidateTags(parsedTags)
 			if err != nil {
 				return nil, err
 			}
