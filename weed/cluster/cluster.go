@@ -46,8 +46,6 @@ func NewCluster() *Cluster {
 }
 
 func (cluster *Cluster) getFilers(filerGroup FilerGroup, createIfNotFound bool) *Filers {
-	cluster.filersLock.Lock()
-	defer cluster.filersLock.Unlock()
 	filers, found := cluster.filerGroup2filers[filerGroup]
 	if !found && createIfNotFound {
 		filers = &Filers{
@@ -63,6 +61,8 @@ func (cluster *Cluster) AddClusterNode(ns, nodeType string, address pb.ServerAdd
 	filerGroup := FilerGroup(ns)
 	switch nodeType {
 	case FilerType:
+		cluster.filersLock.Lock()
+		defer cluster.filersLock.Unlock()
 		filers := cluster.getFilers(filerGroup, true)
 		if existingNode, found := filers.filers[address]; found {
 			existingNode.counter++
@@ -115,6 +115,8 @@ func (cluster *Cluster) RemoveClusterNode(ns string, nodeType string, address pb
 	filerGroup := FilerGroup(ns)
 	switch nodeType {
 	case FilerType:
+		cluster.filersLock.Lock()
+		defer cluster.filersLock.Unlock()
 		filers := cluster.getFilers(filerGroup, false)
 		if filers == nil {
 			return nil
@@ -165,12 +167,12 @@ func (cluster *Cluster) RemoveClusterNode(ns string, nodeType string, address pb
 func (cluster *Cluster) ListClusterNode(filerGroup FilerGroup, nodeType string) (nodes []*ClusterNode) {
 	switch nodeType {
 	case FilerType:
+		cluster.filersLock.RLock()
+		defer cluster.filersLock.RUnlock()
 		filers := cluster.getFilers(filerGroup, false)
 		if filers == nil {
 			return
 		}
-		cluster.filersLock.RLock()
-		defer cluster.filersLock.RUnlock()
 		for _, node := range filers.filers {
 			nodes = append(nodes, node)
 		}
