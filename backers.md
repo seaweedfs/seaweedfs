@@ -6,8 +6,9 @@
 <h2 align="center">Generous Backers ($50+)</h2>
 
 - [Evercam Camera Management Software](https://evercam.io/)
+- [Spherical Elephant GmbH](https://www.sphericalelephant.com)
 
-<h2 align="center">Backers</h2>
+- <h2 align="center">Backers</h2>
 
 - [ColorfulClouds Tech Co. Ltd.](https://caiyunai.com/)
 - [Haravan - Ecommerce Platform](https://www.haravan.com)
