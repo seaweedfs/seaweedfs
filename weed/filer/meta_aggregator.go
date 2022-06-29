@@ -211,10 +211,9 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			if err := processEventFn(resp); err != nil {
 				return fmt.Errorf("process %v: %v", resp, err)
 			}
-			lastTsNs = resp.TsNs
 
 			f.onMetadataChangeEvent(resp)
-
+			lastTsNs = resp.TsNs
 		}
 	})
 	return lastTsNs, err
