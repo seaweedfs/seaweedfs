@@ -45,7 +45,12 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 			return
 		}
-		entry.Extended = processMetadataBytes(r.Header, entry.Extended, replaceMeta, replaceTagging)
+		entry.Extended, err = processMetadataBytes(r.Header, entry.Extended, replaceMeta, replaceTagging)
+		if err != nil {
+			glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
+			return
+		}
 		err = s3a.touch(dir, name, entry)
 		if err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
@@ -252,7 +257,7 @@ func processMetadata(reqHeader, existing http.Header, replaceMeta, replaceTaggin
 	return
 }
 
-func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, replaceMeta, replaceTagging bool) (metadata map[string][]byte) {
+func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, replaceMeta, replaceTagging bool) (metadata map[string][]byte, err error) {
 	metadata = make(map[string][]byte)
 
 	if sc := existing[s3_constants.AmzStorageClass]; len(sc) > 0 {
@@ -277,16 +282,18 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 			}
 		}
 	}
-
 	if replaceTagging {
 		if tags := reqHeader.Get(s3_constants.AmzObjectTagging); tags != "" {
-			for _, v := range strings.Split(tags, "&") {
-				tag := strings.Split(v, "=")
-				if len(tag) == 2 {
-					metadata[s3_constants.AmzObjectTagging+"-"+tag[0]] = []byte(tag[1])
-				} else if len(tag) == 1 {
-					metadata[s3_constants.AmzObjectTagging+"-"+tag[0]] = nil
-				}
+			parsedTags, err := parseTagsHeader(tags)
+			if err != nil {
+				return nil, err
+			}
+			err = ValidateTags(parsedTags)
+			if err != nil {
+				return nil, err
+			}
+			for k, v := range parsedTags {
+				metadata[s3_constants.AmzObjectTagging+"-"+k] = []byte(v)
 			}
 		}
 	} else {

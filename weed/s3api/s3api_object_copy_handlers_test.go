@@ -332,6 +332,19 @@ var processMetadataBytesTestCases = []struct {
 			"X-Amz-Tagging-type": "request",
 		},
 	},
+
+	{
+		108,
+		H{
+			"User-Agent":                           "firefox",
+			"X-Amz-Meta-My-Meta":                   "request",
+			"X-Amz-Tagging":                        "A=B&a=b&type=request*",
+			s3_constants.AmzUserMetaDirective:      DirectiveReplace,
+			s3_constants.AmzObjectTaggingDirective: DirectiveReplace,
+		},
+		H{},
+		H{},
+	},
 }
 
 func TestProcessMetadata(t *testing.T) {
@@ -339,7 +352,6 @@ func TestProcessMetadata(t *testing.T) {
 		reqHeader := transferHToHeader(tc.request)
 		existing := transferHToHeader(tc.existing)
 		replaceMeta, replaceTagging := replaceDirective(reqHeader)
-
 		err := processMetadata(reqHeader, existing, replaceMeta, replaceTagging, func(_ string, _ string) (tags map[string]string, err error) {
 			return tc.getTags, nil
 		}, "", "")
@@ -367,7 +379,7 @@ func TestProcessMetadataBytes(t *testing.T) {
 		reqHeader := transferHToHeader(tc.request)
 		existing := transferHToBytesArr(tc.existing)
 		replaceMeta, replaceTagging := replaceDirective(reqHeader)
-		extends := processMetadataBytes(reqHeader, existing, replaceMeta, replaceTagging)
+		extends, _ := processMetadataBytes(reqHeader, existing, replaceMeta, replaceTagging)
 
 		result := transferBytesArrToH(extends)
 		fmtTagging(result, tc.want)
