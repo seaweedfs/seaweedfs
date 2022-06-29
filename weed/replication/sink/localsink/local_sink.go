@@ -7,6 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/replication/repl_util"
 	"github.com/chrislusf/seaweedfs/weed/replication/sink"
 	"github.com/chrislusf/seaweedfs/weed/replication/source"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"os"
 	"path/filepath"
@@ -32,7 +33,7 @@ func (localsink *LocalSink) GetName() string {
 }
 
 func (localsink *LocalSink) isMultiPartEntry(key string) bool {
-	return strings.HasSuffix(key, ".part") && strings.Contains(key, "/.uploads/")
+	return strings.HasSuffix(key, ".part") && strings.Contains(key, "/"+s3_constants.MultipartUploadsFolder+"/")
 }
 
 func (localsink *LocalSink) initialize(dir string, isIncremental bool) error {

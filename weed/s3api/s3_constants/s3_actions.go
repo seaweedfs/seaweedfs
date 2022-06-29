@@ -8,4 +8,5 @@ const (
 	ACTION_LIST    = "List"
 
 	SeaweedStorageDestinationHeader = "x-seaweedfs-destination"
+	MultipartUploadsFolder          = ".uploads"
 )

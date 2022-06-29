@@ -150,12 +150,14 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		if !s3a.option.AllowDeleteBucketNotEmpty {
-			entries, _, err := s3a.list(s3a.option.BucketsPath+"/"+bucket, "", "", false, 1)
+			entries, _, err := s3a.list(s3a.option.BucketsPath+"/"+bucket, "", "", false, 2)
 			if err != nil {
 				return fmt.Errorf("failed to list bucket %s: %v", bucket, err)
 			}
-			if len(entries) > 0 {
-				return errors.New(s3err.GetAPIError(s3err.ErrBucketNotEmpty).Code)
+			for _, entry := range entries {
+				if entry.Name != s3_constants.MultipartUploadsFolder {
+					return errors.New(s3err.GetAPIError(s3err.ErrBucketNotEmpty).Code)
+				}
 			}
 		}
 
