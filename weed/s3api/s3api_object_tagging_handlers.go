@@ -62,22 +62,11 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	tags := tagging.ToTags()
-	if len(tags) > 10 {
-		glog.Errorf("PutObjectTaggingHandler tags %s: %d tags more than 10", r.URL, len(tags))
+	err = ValidateTags(tags)
+	if err != nil {
+		glog.Errorf("PutObjectTaggingHandler ValidateTags error %s: %v", r.URL, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
 		return
-	}
-	for k, v := range tags {
-		if len(k) > 128 {
-			glog.Errorf("PutObjectTaggingHandler tags %s: tag key %s longer than 128", r.URL, k)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
-			return
-		}
-		if len(v) > 256 {
-			glog.Errorf("PutObjectTaggingHandler tags %s: tag value %s longer than 256", r.URL, v)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
-			return
-		}
 	}
 
 	if err = s3a.setTags(dir, name, tagging.ToTags()); err != nil {
