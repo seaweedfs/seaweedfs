@@ -352,7 +352,6 @@ func TestProcessMetadata(t *testing.T) {
 		reqHeader := transferHToHeader(tc.request)
 		existing := transferHToHeader(tc.existing)
 		replaceMeta, replaceTagging := replaceDirective(reqHeader)
-		fmt.Println("test")
 		err := processMetadata(reqHeader, existing, replaceMeta, replaceTagging, func(_ string, _ string) (tags map[string]string, err error) {
 			return tc.getTags, nil
 		}, "", "")
