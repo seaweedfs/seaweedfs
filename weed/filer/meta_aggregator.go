@@ -100,7 +100,8 @@ func (ma *MetaAggregator) loopSubscribeToOnefiler(f *Filer, self pb.ServerAddres
 		}
 		if err != nil {
 			glog.V(0).Infof("subscribing remote %s meta change: %v", peer, err)
-		} else if lastTsNs < nextLastTsNs {
+		}
+		if lastTsNs < nextLastTsNs {
 			lastTsNs = nextLastTsNs
 		}
 		time.Sleep(1733 * time.Millisecond)
@@ -210,10 +211,9 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			if err := processEventFn(resp); err != nil {
 				return fmt.Errorf("process %v: %v", resp, err)
 			}
-			lastTsNs = resp.TsNs
 
 			f.onMetadataChangeEvent(resp)
-
+			lastTsNs = resp.TsNs
 		}
 	})
 	return lastTsNs, err
