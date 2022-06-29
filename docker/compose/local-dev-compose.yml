@@ -29,7 +29,7 @@ services:
       - 8111:8111
       - 8888:8888
       - 18888:18888
-    command: '-v=1 filer -master="master:9333" -iam'
+    command: '-v=1 filer -ip.bind=0.0.0.0 -master="master:9333" -iam -iam.ip=filer'
     depends_on:
       - master
       - volume
@@ -41,7 +41,7 @@ services:
     image: chrislusf/seaweedfs:local
     ports:
       - 8333:8333
-    command: '-v=1 s3 -filer="filer:8888"'
+    command: '-v=1 s3 -filer="filer:8888" -ip.bind=s3'
     depends_on:
       - master
       - volume
