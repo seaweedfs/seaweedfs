@@ -81,5 +81,6 @@ func (df *DiskFile) Name() string {
 }
 
 func (df *DiskFile) Sync() error {
-	return df.File.Sync()
+	return nil
+	// return df.File.Sync()
 }
