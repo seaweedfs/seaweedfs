@@ -317,9 +317,6 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		if err != nil {
 			return fmt.Errorf("cannot write indexfile %s: %v", newIdxFileName, err)
 		}
-		if err := idx.Sync(); err != nil {
-			return fmt.Errorf("cannot sync indexfile %s: %v", newIdxFileName, err)
-		}
 	}
 
 	return nil
