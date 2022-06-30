@@ -19,59 +19,26 @@ import (
 )
 
 // test add files
-// ADD ACTION: add 100 folder and Each folder contains 100 1kb files
+// ADD ACTION: add 100 folders and Each folder contains 100 1kb files
 //  sync cost: 190s
 // async cost: 165s [parallel number: 10, batch: 500, period:15s]
 // async cost: 140s [parallel number: 10, batch: 1000, period:10s]
 // async cost: 140s [parallel number: 20, batch: 1000, period:20s]
 func TestParallelSyncBatchAddFiles(t *testing.T) {
-	fileFolderNumber := 100
+	fileFolderNumber := 10
 	fileNumber := 100
-
-	aFilerUrl := "http://localhost:8888/test1"
+	buffers, _ := getFile1KBBytes()
+	filerUrl := "http://localhost:8888/test"
 	client := &http.Client{Transport: &http.Transport{
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
 	}}
 	startTime := time.Now()
-	filename := "./filer_sync_test.go"
-	file, err := os.Open(filename)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
-	// test 1kb
-	buffer := make([]byte, 1024)
-
-	for {
-		_, err := file.Read(buffer)
-		if err != nil {
-			if err != io.EOF {
-				fmt.Println(err)
-			}
-			break
-		}
-	}
 
 	for i := 0; i < fileFolderNumber; i++ {
-		// create filerNumber files
 		for j := 0; j < fileNumber; j++ {
-			address := aFilerUrl + "/" + strconv.Itoa(i) + "/" + strconv.Itoa(j)
-			body := &bytes.Buffer{}
-			writer := multipart.NewWriter(body)
-			part, err := writer.CreateFormFile("file", file.Name())
-			part.Write(buffer)
-			// _, err = io.Copy(part, b)
-			err = writer.Close()
-			request, err := http.NewRequest("POST", address, body)
-			// "multipart/form-data; boundary=----WebKitFormBoundaryPQf3xOuxHYxoJhLe"
-			request.Header.Set("Content-Type", writer.FormDataContentType())
-			resp, err := client.Do(request)
-			if err != err {
-				fmt.Printf("post %s error.", address)
-			}
-			resp.Body.Close()
+			address := filerUrl + "/" + strconv.Itoa(i) + "/" + strconv.Itoa(j)
+			createFile1KB(client, address, buffers)
 		}
 	}
 	fmt.Printf("cost: %0.2fs\n", time.Since(startTime).Seconds())
@@ -85,10 +52,10 @@ func TestParallelSyncBatchAddFiles(t *testing.T) {
 // async cost: 61s [parallel number: 20, batch: 1000, period:20s]
 func TestParallelSyncBatchDeleteFiles(t *testing.T) {
 	// Can be tested in linkage with TestParallelSyncBatchAddFiles
-	fileFolderNumber := 100
+	fileFolderNumber := 10
 	fileNumber := 100
+	filerUrl := "http://localhost:8888/test"
 
-	aFilerUrl := "http://localhost:8888/test1"
 	client := &http.Client{Transport: &http.Transport{
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
@@ -96,33 +63,22 @@ func TestParallelSyncBatchDeleteFiles(t *testing.T) {
 	startTime := time.Now()
 	// delete all files
 	for i := 0; i < fileFolderNumber; i++ {
-		folderAddress := aFilerUrl + "/" + strconv.Itoa(i)
+		folderAddress := filerUrl + "/" + strconv.Itoa(i)
 		for j := 0; j < fileNumber; j++ {
 			address := folderAddress + "/" + strconv.Itoa(j)
-			request, err := http.NewRequest("DELETE", address, nil)
-			resp, err := client.Do(request)
-			if err != nil {
-				fmt.Printf("delete %s error.", address)
-			}
-			resp.Body.Close()
+			deleteFilesOrFolders(client, address)
 		}
 		// delete all folders
-		requestFolder, err := http.NewRequest("DELETE", folderAddress, nil)
-		resp, err := client.Do(requestFolder)
-		if err != err {
-			fmt.Printf("delete %s error.", folderAddress)
-		}
-		resp.Body.Close()
+		deleteFilesOrFolders(client, folderAddress)
 	}
 	fmt.Printf("cost: %0.2fs\n", time.Since(startTime).Seconds())
 }
 
-// Multi-level add and delete modifications to ensure priority
 func TestParallelSyncHybrid(t *testing.T) {
-	deleteFolder := true
-	rootPath := "/test1"
+	deleteFolder := false
+	rootPath := "/test"
 	aFilerUrl := "http://localhost:8888" + rootPath
-
+	buffers, _ := getFile1KBBytes()
 	var renameList []string
 
 	client := &http.Client{Transport: &http.Transport{
@@ -130,78 +86,26 @@ func TestParallelSyncHybrid(t *testing.T) {
 		MaxIdleConnsPerHost: 1024,
 	}}
 	startTime := time.Now()
-	filename := "./filer_sync_test.go"
-	file, err := os.Open(filename)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
-	// test 1kb
-	buffer := make([]byte, 1024)
-
-	for {
-		_, err := file.Read(buffer)
-		if err != nil {
-			if err != io.EOF {
-				fmt.Println(err)
-			}
-			break
-		}
-	}
 
 	data := [][]map[string]string{
 		0: {
-			{
-				"action": "addChild",
-				"value":  "1,2,3,4,5",
-			},
-			{
-				"action": "deleteChild",
-				"value":  "1,2",
-			},
+			{"action": "addChild", "value": "1,2,3,4,5"},
+			{"action": "deleteChild", "value": "1,2"},
 		},
 		1: {
-			{
-				"action": "addChild",
-				"value":  "6,7,8,9,10",
-			},
-			{
-				"action": "move",
-				"value":  "6,7,8,9,10:/2",
-			},
-			{
-				"action": "delete",
-				"value":  "",
-			},
+			{"action": "addChild", "value": "6,7,8,9,10"},
+			{"action": "move", "value": "6,7,8,9,10:/2"},
+			{"action": "delete", "value": ""},
 		},
 		2: {
-			{
-				"action": "addChild",
-				"value":  "1,2,3",
-			},
-			{
-				"action": "rename",
-				"value":  "2-modified",
-			},
-			{
-				"action": "addChild",
-				"value":  "4,5",
-			},
+			{"action": "addChild", "value": "1,2,3"},
+			{"action": "rename", "value": "2-modified"},
+			{"action": "addChild", "value": "4,5"},
 		},
 		3: {
-			{
-				"action": "addChild",
-				"value":  "11,12",
-			},
-			{
-				"action": "rename",
-				"value":  "3-modified",
-			},
-			{
-				"action": "move",
-				"value":  "11:/0",
-			},
+			{"action": "addChild", "value": "11,12"},
+			{"action": "rename", "value": "3-modified"},
+			{"action": "move", "value": "11:/0"},
 		},
 	}
 
@@ -215,46 +119,20 @@ func TestParallelSyncHybrid(t *testing.T) {
 				childNames := strings.Split(value, ",")
 				for _, childName := range childNames {
 					address := aFilerUrl + "/" + name + "/" + childName
-					body := &bytes.Buffer{}
-					writer := multipart.NewWriter(body)
-					part, err := writer.CreateFormFile("file", file.Name())
-					part.Write(buffer)
-					err = writer.Close()
-					request, err := http.NewRequest("POST", address, body)
-					request.Header.Set("Content-Type", writer.FormDataContentType())
-					resp, err := client.Do(request)
-					if err != err {
-						fmt.Printf("post %s error.", address)
-					}
-					resp.Body.Close()
+					createFile1KB(client, address, buffers)
 				}
 			} else if action["action"] == "deleteChild" {
 				childNames := strings.Split(value, ",")
 				for _, childName := range childNames {
 					address := aFilerUrl + "/" + name + "/" + childName
-					request, err := http.NewRequest("DELETE", address, nil)
-					resp, err := client.Do(request)
-					if err != err {
-						fmt.Printf("post %s error.", address)
-					}
-					resp.Body.Close()
+					deleteFilesOrFolders(client, address)
 				}
 			} else if action["action"] == "delete" {
 				address := aFilerUrl + "/" + name + "?recursive=true&ignoreRecursiveError=true"
-				request, err := http.NewRequest("DELETE", address, nil)
-				resp, err := client.Do(request)
-				if err != err {
-					fmt.Printf("post %s error.", address)
-				}
-				resp.Body.Close()
+				deleteFilesOrFolders(client, address)
 			} else if action["action"] == "rename" {
 				moveAddress := aFilerUrl + "/" + value + "?mv.from=" + rootPath + "/" + name
-				request, err := http.NewRequest("POST", moveAddress, nil)
-				resp, err := client.Do(request)
-				if err != err {
-					fmt.Printf("post %s error.", moveAddress)
-				}
-				resp.Body.Close()
+				mvFilesOrFolders(client, moveAddress)
 				name = value
 				renameList = append(renameList, name)
 			} else if action["action"] == "move" {
@@ -263,122 +141,61 @@ func TestParallelSyncHybrid(t *testing.T) {
 				targetFolder := operatorArray[1]
 				for _, childName := range childNames {
 					moveAddress := aFilerUrl + targetFolder + "/" + childName + "?mv.from=" + rootPath + "/" + name + "/" + childName
-					request, err := http.NewRequest("POST", moveAddress, nil)
-					resp, err := client.Do(request)
-					if err != err {
-						fmt.Printf("post %s error.", moveAddress)
-					}
-					resp.Body.Close()
+					mvFilesOrFolders(client, moveAddress)
 				}
 			}
 		}
 	}
 
-	// you can delete all affected files
+	// delete all affected files
 	if deleteFolder {
 		fmt.Println("DELETE Folder")
 		for i := 0; i < len(renameList); i++ {
-			fmt.Printf("%s\n", renameList[i])
 			address := aFilerUrl + "/" + renameList[i] + "?recursive=true&ignoreRecursiveError=true"
-			request, err := http.NewRequest("DELETE", address, nil)
-			resp, err := client.Do(request)
-			if err != err {
-				fmt.Printf("post %s error.", address)
-			}
-			resp.Body.Close()
+			deleteFilesOrFolders(client, address)
 		}
 	}
 
 	fmt.Printf("cost: %0.2fs\n", time.Since(startTime).Seconds())
 }
 
-// folder 0~9 to 10
+// move 0~9 to 10
 func TestParallelSyncMove(t *testing.T) {
 	fileFolderNumber := 10
 	fileNumber := 1
 	deleteFolder := true
-
-	rootPath := "/test1"
+	rootPath := "/test"
 	aFilerUrl := "http://localhost:8888" + rootPath
+	buffers, _ := getFile1KBBytes()
 	client := &http.Client{Transport: &http.Transport{
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
 	}}
 	startTime := time.Now()
-	filename := "./filer_sync_test.go"
-	file, err := os.Open(filename)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
-	// test 1kb
-	buffer := make([]byte, 1024)
-
-	for {
-		_, err := file.Read(buffer)
-		if err != nil {
-			if err != io.EOF {
-				fmt.Println(err)
-			}
-			break
-		}
-	}
-
 	for i := 0; i < fileFolderNumber+1; i++ {
 		if i == fileFolderNumber {
 			address := aFilerUrl + "/" + strconv.Itoa(i) + "/"
-			request, err := http.NewRequest("POST", address, nil)
-			resp, err := client.Do(request)
-			if err != err {
-				fmt.Printf("post %s error.", address)
-			}
-			resp.Body.Close()
+			createFolder(client, address)
 			break
 		}
 		// create filerNumber files
 		for j := 0; j < fileNumber; j++ {
 			address := aFilerUrl + "/" + strconv.Itoa(i) + "/" + strconv.Itoa(j)
-			body := &bytes.Buffer{}
-			writer := multipart.NewWriter(body)
-			part, err := writer.CreateFormFile("file", file.Name())
-			part.Write(buffer)
-			err = writer.Close()
-			request, err := http.NewRequest("POST", address, body)
-			request.Header.Set("Content-Type", writer.FormDataContentType())
-			resp, err := client.Do(request)
-			if err != err {
-				fmt.Printf("post %s error.", address)
-			}
-			resp.Body.Close()
+			createFile1KB(client, address, buffers)
 		}
 	}
-	// move
 	for i := 0; i < fileFolderNumber; i++ {
 		// move filerNumber files to "10"
 		for j := 0; j < fileNumber; j++ {
-			address := aFilerUrl + "/" + strconv.Itoa(i) + "/" + strconv.Itoa(j)
 			moveAddress := aFilerUrl + "/" + strconv.Itoa(fileFolderNumber) + "/" + strconv.Itoa(i) + "?mv.from=" + rootPath + "/" + strconv.Itoa(i) + "/0"
-			fmt.Printf("%s\n", moveAddress)
-			request, err := http.NewRequest("POST", moveAddress, nil)
-			resp, err := client.Do(request)
-			if err != err {
-				fmt.Printf("post %s error.", address)
-			}
-			resp.Body.Close()
+			mvFilesOrFolders(client, moveAddress)
 		}
 	}
 	// delete all files
 	if deleteFolder {
 		for i := 0; i < fileFolderNumber; i++ {
 			address := aFilerUrl + "/" + strconv.Itoa(i) + "/"
-			request, err := http.NewRequest("DELETE",
-				address, nil)
-			resp, err := client.Do(request)
-			if err != err {
-				fmt.Printf("post %s error.", address)
-			}
-			resp.Body.Close()
+			deleteFilesOrFolders(client, address)
 		}
 		fmt.Printf("cost: %0.2fs\n", time.Since(startTime).Seconds())
 	}
@@ -388,7 +205,7 @@ func TestParallelSyncMove(t *testing.T) {
 func TestParallelSyncSplitNodes(t *testing.T) {
 	// a total of 13 numbers
 	// The asterisk indicates that this node has been operated.
-	rootTree := ParallelSyncNode{path: "/", fullPath: []string{}, key: ""}
+	rootTree := ParallelSyncNode{fullPathName: "/", fullPath: []string{}, curPathName: ""}
 	//              /
 	//    1         5        10
 	//   2*       6 7* 8      11*
@@ -408,6 +225,7 @@ func TestParallelSyncSplitNodes(t *testing.T) {
 		2: {"5", "7"},
 		3: {"5", "6", "9"},
 		4: {"10", "11"},
+		5: {"10", "11", "12"},
 	}
 	for _, v := range basePoint {
 		rootTree.addNode(-1, v)
@@ -427,12 +245,12 @@ func TestParallelSyncSplitNodes(t *testing.T) {
 	}
 
 	var workerGroupResultArray [][]int
-	getParallelSyncIndexByNode(rootTree, &workerGroupResultArray)
+	getEventIndexesByNode(rootTree, &workerGroupResultArray)
 
 	assert.EqualValues(t, workerGroupResultArray[0], []int{2, 3})
 	assert.EqualValues(t, workerGroupResultArray[1], []int{7})
 	assert.EqualValues(t, workerGroupResultArray[2], []int{9})
-	assert.EqualValues(t, workerGroupResultArray[3], []int{11})
+	assert.EqualValues(t, workerGroupResultArray[3], []int{11, 12})
 }
 
 func TestGetMinLenIdxFromWorkerGroup(t *testing.T) {
@@ -467,7 +285,7 @@ func TestGetMinLenIdxFromWorkerGroup(t *testing.T) {
 		workerGroup[4] = append(workerGroup[4], tmp)
 	}
 
-	result := getMinLenIdxFromWorkerGroup(workerGroup)
+	result := getWorkerGroupMinLengthIndex(workerGroup)
 	assert.Equal(t, 4, result)
 
 	data2 := []int{
@@ -499,6 +317,69 @@ func TestGetMinLenIdxFromWorkerGroup(t *testing.T) {
 		workerGroup[4] = append(workerGroup[4], tmp)
 	}
 
-	result = getMinLenIdxFromWorkerGroup(workerGroup)
+	result = getWorkerGroupMinLengthIndex(workerGroup)
 	assert.Equal(t, 2, result)
+}
+
+func createFolder(client *http.Client, address string) {
+	request, err := http.NewRequest("POST", address, nil)
+	resp, err := client.Do(request)
+	if err != err {
+		fmt.Printf("post %s error.", address)
+	}
+	resp.Body.Close()
+}
+
+func getFile1KBBytes() ([]byte, error) {
+	filename := "./filer_sync_test.go"
+	// create a 1kb file
+	buffer := make([]byte, 1024)
+	file, err := os.Open(filename)
+	if err != nil {
+		return buffer, err
+	}
+	defer file.Close()
+	for {
+		_, err := file.Read(buffer)
+		if err != nil {
+			if err != io.EOF {
+				fmt.Println(err)
+			}
+			break
+		}
+	}
+	return buffer, err
+}
+
+func createFile1KB(client *http.Client, address string, buffer []byte) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", "filer_sync_test.go")
+	part.Write(buffer)
+	err = writer.Close()
+	request, err := http.NewRequest("POST", address, body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	resp, err := client.Do(request)
+	resp.Body.Close()
+	if err != err {
+		fmt.Printf("post %s error.", address)
+	}
+}
+
+func deleteFilesOrFolders(client *http.Client, address string) {
+	request, err := http.NewRequest("DELETE", address, nil)
+	resp, err := client.Do(request)
+	if err != nil {
+		fmt.Printf("delete %s error.", address)
+	}
+	resp.Body.Close()
+}
+
+func mvFilesOrFolders(client *http.Client, address string) {
+	request, err := http.NewRequest("POST", address, nil)
+	resp, err := client.Do(request)
+	if err != nil {
+		fmt.Printf("delete %s error.", address)
+	}
+	resp.Body.Close()
 }

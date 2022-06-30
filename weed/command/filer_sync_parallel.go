@@ -13,118 +13,109 @@ import (
 )
 
 type ParallelSyncMetadataCache struct {
-	lock              sync.RWMutex
-	l                 []*filer_pb.SubscribeMetadataResponse
-	ParallelNum       int
-	ParallelBatchSize int64
-	lastTime          int64
-	TsNs              int64
-	sourceFiler       string
-	targetFiler       string
+	events            []*filer_pb.SubscribeMetadataResponse
+	eventsChan        chan *filer_pb.SubscribeMetadataResponse
+	parallelNum       int
+	parallelBatchSize int
+	parallelWaitTime  time.Duration
+	lastSyncTsNs      int64
+	lastTsNs          int64
+	sourceFiler       pb.ServerAddress
+	targetFiler       pb.ServerAddress
 	persistEventFns   []func(resp *filer_pb.SubscribeMetadataResponse) error
+	cancelChan        chan struct{}
 }
 
 type ParallelSyncNode struct {
-	key      string
-	value    []int
-	path     string
-	fullPath []string
-	child    []*ParallelSyncNode
+	curPathName   string
+	eventsIndexes []int
+	fullPathName  string
+	fullPath      []string
+	child         []*ParallelSyncNode
 }
 
-func getProcessEventFnWithOffsetFunc(c *ParallelSyncMetadataCache, sourceFiler pb.ServerAddress, targetFiler pb.ServerAddress, targetFilerSignature int32,
-	setOffsetFunc func(counter int64, lastTsNs int64) error) pb.ProcessMetadataFunc {
-	return pb.AddOffsetParallelSyncFunc(func(resp *filer_pb.SubscribeMetadataResponse) (error, int64) {
+func processEventWithOffsetFunc(cache *ParallelSyncMetadataCache, targetFilerSignature int32) pb.ProcessMetadataFunc {
+	return pb.AddOffsetParallelSyncFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
 		for _, sig := range message.Signatures {
 			if sig == targetFilerSignature && targetFilerSignature != 0 {
-				fmt.Printf("%s skipping %s change to %v\n", targetFiler, sourceFiler, message)
-				return nil, 1
+				fmt.Printf("%s skipping %s change to %v\n", cache.targetFiler, cache.sourceFiler, message)
+				return nil
 			}
 		}
-		return persistEventParallelSyncFunc(c, resp)
-	}, 3*time.Second, setOffsetFunc)
+		cache.eventsChan <- resp
+		return nil
+	})
 }
 
-var runParallelSyncScheduledTask = func(cache *ParallelSyncMetadataCache, stop chan struct{}, d time.Duration, setOffsetFunc func(counter int64, lastTsNs int64) error) {
-	go func(c *ParallelSyncMetadataCache) {
-		for range time.Tick(d) {
-			select {
-			case <-stop:
-				close(stop)
-				return
-			default:
-				if len(c.l) > 0 && time.Since(time.UnixMilli(c.lastTime)) >= d {
-					counter := doPersistEventParallel(c)
-					// it's not necessary to set offset successfully. Just wait until next time.
-					_ = setOffsetFunc(counter, c.TsNs)
-				}
+func startEventsConsumer(cache *ParallelSyncMetadataCache, setOffsetFunc func(counter int64, lastTsNs int64) error) {
+	glog.Infof("start event synchronization consumer. from %s to %s", cache.sourceFiler, cache.targetFiler)
+	for {
+		select {
+		case <-cache.cancelChan:
+			close(cache.cancelChan)
+			return
+		case event := <-cache.eventsChan:
+			cache.events = append(cache.events, event)
+			cache.lastTsNs = event.TsNs
+			eventsSize := len(cache.events)
+			if eventsSize >= cache.parallelBatchSize || time.Since(time.Unix(0, cache.lastSyncTsNs)) >= cache.parallelWaitTime {
+				persistEvents(cache, setOffsetFunc)
+			}
+		case <-time.After(cache.parallelWaitTime):
+			eventsSize := len(cache.events)
+			if eventsSize > 0 && cache.lastTsNs > 0 {
+				persistEvents(cache, setOffsetFunc)
 			}
 		}
-	}(cache)
-}
-
-func persistEventParallelSyncFunc(c *ParallelSyncMetadataCache, resp *filer_pb.SubscribeMetadataResponse) (error, int64) {
-	// Scheduled tasks may trigger empty operation, which needs to be locked
-	c.lock.Lock()
-	c.l = append(c.l, resp)
-	c.TsNs = resp.TsNs
-	sendSize := int64(len(c.l))
-	c.lock.Unlock()
-	if sendSize < c.ParallelBatchSize {
-		return nil, 0
 	}
-	doPersistEventParallel(c)
-	return nil, sendSize
 }
 
-// doPersistEventParallel For parallel persistence of metadata
-func doPersistEventParallel(c *ParallelSyncMetadataCache) int64 {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	c.lastTime = time.Now().UnixMilli()
-	var finishTime = time.Now()
-	syncLength := len(c.l)
+func persistEvents(cache *ParallelSyncMetadataCache, setOffsetFn func(counter int64, lastTsNs int64) error) {
+	cache.lastSyncTsNs = time.Now().UnixNano()
+	syncLength := len(cache.events)
 	if syncLength == 0 {
-		return 0
+		return
 	}
 
-	// need to wait for all the split results to be processed
+	// need to wait for all tasks to be processed
 	wg := sync.WaitGroup{}
-	wg.Add(c.ParallelNum)
-	// assign tasks to each worker thread
-	sendGroup := splitMetadataResponseByPath(c.ParallelNum, c.l)
-	for i := 0; i < c.ParallelNum; i++ {
-		go func(data []*filer_pb.SubscribeMetadataResponse, idx int, c *ParallelSyncMetadataCache) {
+	wg.Add(cache.parallelNum)
+	// assign events to each worker thread
+	eventGroup := buildWorkerGroup(cache.parallelNum, cache.events)
+	for i := 0; i < cache.parallelNum; i++ {
+		go func(events []*filer_pb.SubscribeMetadataResponse, idx int, cache *ParallelSyncMetadataCache) {
 			defer wg.Done()
-			for _, eventMsg := range data {
-				err := c.persistEventFns[idx](eventMsg)
+			for _, eventMsg := range events {
+				err := cache.persistEventFns[idx](eventMsg)
 				if err != nil {
-					util.RetryForever("parallelSyncMeta", func() error {
-						return c.persistEventFns[idx](eventMsg)
+					util.RetryForever("syncEvent", func() error {
+						return cache.persistEventFns[idx](eventMsg)
 					}, func(err error) bool {
-						glog.Errorf("parallel sync process %v: %v", eventMsg, err)
+						glog.Errorf("sync event msg %v: %v", eventMsg, err)
 						return true
 					})
 				}
 			}
-		}(sendGroup[i], i, c)
+		}(eventGroup[i], i, cache)
 	}
 	wg.Wait()
-	c.l = c.l[:0]
+	cache.events = cache.events[:0]
 
-	glog.Infof("parallel sync %s to %s, cost: %dms, worker:%d send size:%d", c.sourceFiler, c.targetFiler, time.Since(finishTime).Milliseconds(), c.ParallelNum, syncLength)
-
-	return int64(syncLength)
+	util.RetryForever("syncEventOffset", func() error {
+		return setOffsetFn(int64(syncLength), cache.lastTsNs)
+	}, func(err error) bool {
+		glog.Errorf("sync offset %v: %v", cache.lastTsNs, err)
+		return true
+	})
 }
 
-// splitMetadataResponseByPath Split MetadataResponse to array. The result is not affect the processing order.
-func splitMetadataResponseByPath(parallelNum int, list []*filer_pb.SubscribeMetadataResponse) [][]*filer_pb.SubscribeMetadataResponse {
-	// build a tree. the value is the affected index of list.
-	rootTree := ParallelSyncNode{path: "/", fullPath: []string{}, key: ""}
+func buildWorkerGroup(parallelNum int, events []*filer_pb.SubscribeMetadataResponse) [][]*filer_pb.SubscribeMetadataResponse {
+	// build a tree. record event index
+	rootTree := ParallelSyncNode{fullPathName: "/", fullPath: []string{}, curPathName: ""}
 
-	for i := 0; i < len(list); i++ {
-		resp := list[i]
+	for i := 0; i < len(events); i++ {
+		resp := events[i]
 		var sourceOldKey, sourceNewKey util.FullPath
 		if resp.EventNotification.OldEntry != nil {
 			sourceOldKey = util.FullPath(resp.Directory).Child(resp.EventNotification.OldEntry.Name)
@@ -140,119 +131,113 @@ func splitMetadataResponseByPath(parallelNum int, list []*filer_pb.SubscribeMeta
 		rootTree.addNode(i, affectedPath.Split())
 	}
 
-	return getParallelSyncWorkerArray(rootTree, parallelNum, list)
+	return getEventGroupByNode(rootTree, parallelNum, events)
 }
 
-// Assign tasks to each worker's array
-func getParallelSyncWorkerArray(rootTree ParallelSyncNode, parallelNum int, list []*filer_pb.SubscribeMetadataResponse) [][]*filer_pb.SubscribeMetadataResponse {
-	var workerGroupResultArray [][]int
-	getParallelSyncIndexByNode(rootTree, &workerGroupResultArray)
+func getEventGroupByNode(rootTree ParallelSyncNode, parallelNum int, events []*filer_pb.SubscribeMetadataResponse) [][]*filer_pb.SubscribeMetadataResponse {
+	var eventIndexesGroup [][]int
+	getEventIndexesByNode(rootTree, &eventIndexesGroup)
 
 	result := make([][]*filer_pb.SubscribeMetadataResponse, parallelNum)
-	if workerGroupResultArray == nil {
+	if eventIndexesGroup == nil {
 		return result
 	}
-	for _, d := range workerGroupResultArray {
-		var itemGroup []*filer_pb.SubscribeMetadataResponse
-		for _, i := range d {
-			itemGroup = append(itemGroup, list[i])
+	for _, eventIndexes := range eventIndexesGroup {
+		var eventGroup []*filer_pb.SubscribeMetadataResponse
+		for _, index := range eventIndexes {
+			eventGroup = append(eventGroup, events[index])
 		}
-		// distribute tasks as evenly as possible
-		mIdx := getMinLenIdxFromWorkerGroup(result)
-		result[mIdx] = append(result[mIdx], itemGroup...)
+		// distribute events evenly
+		minLengthWorkerIndex := getWorkerGroupMinLengthIndex(result)
+		result[minLengthWorkerIndex] = append(result[minLengthWorkerIndex], eventGroup...)
 	}
 
 	return result
 }
 
-func getMinLenIdxFromWorkerGroup(workerGroup [][]*filer_pb.SubscribeMetadataResponse) int {
-	mIdx := 0
-	m := len(workerGroup[0])
+func getWorkerGroupMinLengthIndex(workerGroup [][]*filer_pb.SubscribeMetadataResponse) int {
+	minIndex := 0
+	curWorkerGroupLength := len(workerGroup[0])
 	for i := 0; i < len(workerGroup); i++ {
-		l := len(workerGroup[i])
-		if l < m {
-			mIdx = i
-			m = l
+		length := len(workerGroup[i])
+		if length < curWorkerGroupLength {
+			minIndex = i
+			curWorkerGroupLength = length
 		}
 	}
-	return mIdx
+	return minIndex
 }
 
-func getParallelSyncIndexByNode(node ParallelSyncNode, splitResult *[][]int) {
-	if len(node.value) > 0 {
-		// a litter of value
-		var aLitterOfValue []int
-		node.getAllValue(&aLitterOfValue)
-		if len(aLitterOfValue) > 0 {
-			sort.Ints(aLitterOfValue)
-			*splitResult = append(*splitResult, aLitterOfValue)
+func getEventIndexesByNode(node ParallelSyncNode, eventIndexes *[][]int) {
+	if len(node.eventsIndexes) > 0 {
+		var nodeEventIndexes []int
+		node.getEventIndexes(&nodeEventIndexes)
+		if len(nodeEventIndexes) > 0 {
+			sort.Ints(nodeEventIndexes)
+			*eventIndexes = append(*eventIndexes, nodeEventIndexes)
 		}
 	} else {
 		if node.hasChild() {
 			for _, child := range node.child {
-				getParallelSyncIndexByNode(*child, splitResult)
+				getEventIndexesByNode(*child, eventIndexes)
 			}
 		}
 	}
 }
 
-// get all child value of node
-func (p *ParallelSyncNode) getAllValue(values *[]int) {
-	for _, d := range p.value {
-		if d > -1 {
-			*values = append(*values, d)
+func (p *ParallelSyncNode) getEventIndexes(indexes *[]int) {
+	for _, eventIndex := range p.eventsIndexes {
+		if eventIndex >= 0 {
+			*indexes = append(*indexes, eventIndex)
 		}
 	}
 	if p.hasChild() {
 		for _, child := range p.child {
-			child.getAllValue(values)
+			child.getEventIndexes(indexes)
 		}
 	}
 }
 
 func (p *ParallelSyncNode) addNode(curIdx int, curNodePathArray []string) (bool, *ParallelSyncNode) {
 	if len(curNodePathArray) > 0 {
-		curPath := curNodePathArray[0]
-		curFullPathName := "/" + curPath
-		if p.path != "/" {
-			curFullPathName = p.path + "/" + curPath
+		curPathName := curNodePathArray[0]
+		curFullPathName := "/" + curPathName
+		if p.fullPathName != "/" {
+			curFullPathName = p.fullPathName + "/" + curPathName
 		}
-
+		// check if child nodes have the same path
 		for _, child := range p.child {
-			if child.key == curPath {
+			if child.curPathName == curPathName {
 				if len(curNodePathArray) > 1 {
 					return child.addNode(curIdx, curNodePathArray[1:])
 				} else {
-					child.value = append(child.value, curIdx)
+					child.eventsIndexes = append(child.eventsIndexes, curIdx)
 					return true, child
 				}
 			}
 		}
-		// add new node to p.child
-		fP := strings.Split(curFullPathName, "/")[1:]
+
+		fullPath := strings.Split(curFullPathName, "/")[1:]
 		idx := -1
 		if len(curNodePathArray) == 1 {
 			idx = curIdx
 		}
 
 		newNode := ParallelSyncNode{
-			key:      curPath,
-			value:    []int{},
-			path:     curFullPathName,
-			fullPath: fP,
-			child:    []*ParallelSyncNode{},
+			curPathName:   curPathName,
+			eventsIndexes: []int{},
+			fullPathName:  curFullPathName,
+			fullPath:      fullPath,
+			child:         []*ParallelSyncNode{},
 		}
-		p.child = append(p.child, &newNode)
-		// it's not over. need to continue to add children to newNode
+		p.addChild(&newNode)
 		if len(curNodePathArray) > 1 {
 			return newNode.addNode(curIdx, curNodePathArray[1:])
-		} else {
-			newNode.value = append(newNode.value, idx)
-			return false, &newNode
 		}
-	} else {
-		return false, nil
+		newNode.eventsIndexes = append(newNode.eventsIndexes, idx)
+		return false, &newNode
 	}
+	return false, nil
 }
 
 func (p *ParallelSyncNode) hasChild() bool {
