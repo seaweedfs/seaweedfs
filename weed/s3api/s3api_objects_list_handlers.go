@@ -254,20 +254,23 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		sepIndex := strings.Index(marker, "/")
 		if sepIndex != -1 {
 			subPrefix, subMarker := marker[0:sepIndex], marker[sepIndex+1:]
-			subDir := fmt.Sprintf("%s/%s", dir[0:bucketPrefixLen-1], subPrefix)
-			if strings.HasPrefix(subDir, dir) {
-				subCounter, subIsTruncated, subNextMarker, subErr := s3a.doListFilerEntries(client, subDir, "", maxKeys, subMarker, delimiter, false, false, bucketPrefixLen, eachEntryFn)
-				if subErr != nil {
-					err = subErr
-					return
-				}
-				counter += subCounter
-				isTruncated = isTruncated || subIsTruncated
-				maxKeys -= subCounter
-				nextMarker = subNextMarker
-				// finished processing this sub directory
-				marker = subPrefix
+			var subDir string
+			if len(dir) > bucketPrefixLen && dir[bucketPrefixLen:] == subPrefix {
+				subDir = dir
+			} else {
+				subDir = fmt.Sprintf("%s/%s", dir, subPrefix)
 			}
+			subCounter, subIsTruncated, subNextMarker, subErr := s3a.doListFilerEntries(client, subDir, "", maxKeys, subMarker, delimiter, false, false, bucketPrefixLen, eachEntryFn)
+			if subErr != nil {
+				err = subErr
+				return
+			}
+			counter += subCounter
+			isTruncated = isTruncated || subIsTruncated
+			maxKeys -= subCounter
+			nextMarker = subNextMarker
+			// finished processing this sub directory
+			marker = subPrefix
 		}
 	}
 	if maxKeys <= 0 {
