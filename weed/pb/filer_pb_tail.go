@@ -114,3 +114,13 @@ func AddOffsetFunc(processEventFn ProcessMetadataFunc, offsetInterval time.Durat
 	}
 
 }
+
+func AddOffsetParallelSyncFunc(processEventFn ProcessMetadataFunc) ProcessMetadataFunc {
+	return func(resp *filer_pb.SubscribeMetadataResponse) error {
+		err := processEventFn(resp)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+}

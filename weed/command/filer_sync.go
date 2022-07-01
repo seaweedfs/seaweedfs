@@ -22,27 +22,31 @@ import (
 )
 
 type SyncOptions struct {
-	isActivePassive *bool
-	filerA          *string
-	filerB          *string
-	aPath           *string
-	bPath           *string
-	aReplication    *string
-	bReplication    *string
-	aCollection     *string
-	bCollection     *string
-	aTtlSec         *int
-	bTtlSec         *int
-	aDiskType       *string
-	bDiskType       *string
-	aDebug          *bool
-	bDebug          *bool
-	aFromTsMs       *int64
-	bFromTsMs       *int64
-	aProxyByFiler   *bool
-	bProxyByFiler   *bool
-	metricsHttpPort *int
-	clientId        int32
+	isActivePassive   *bool
+	filerA            *string
+	filerB            *string
+	aPath             *string
+	bPath             *string
+	aReplication      *string
+	bReplication      *string
+	aCollection       *string
+	bCollection       *string
+	aTtlSec           *int
+	bTtlSec           *int
+	aDiskType         *string
+	bDiskType         *string
+	aDebug            *bool
+	bDebug            *bool
+	aFromTsMs         *int64
+	bFromTsMs         *int64
+	aParallelNum      *int
+	bParallelNum      *int
+	parallelBatchSize *int
+	parallelWaitTime  *string
+	aProxyByFiler     *bool
+	bProxyByFiler     *bool
+	metricsHttpPort   *int
+	clientId          int32
 }
 
 var (
@@ -72,6 +76,10 @@ func init() {
 	syncOptions.bDebug = cmdFilerSynchronize.Flag.Bool("b.debug", false, "debug mode to print out filer B received files")
 	syncOptions.aFromTsMs = cmdFilerSynchronize.Flag.Int64("a.fromTsMs", 0, "synchronization from timestamp on filer A. The unit is millisecond")
 	syncOptions.bFromTsMs = cmdFilerSynchronize.Flag.Int64("b.fromTsMs", 0, "synchronization from timestamp on filer B. The unit is millisecond")
+	syncOptions.aParallelNum = cmdFilerSynchronize.Flag.Int("a.parallelNum", 1, "the number of worker synchronized in parallel, from filer A to filer B")
+	syncOptions.bParallelNum = cmdFilerSynchronize.Flag.Int("b.parallelNum", 1, "the number of worker synchronized in parallel, from filer B to filer A")
+	syncOptions.parallelBatchSize = cmdFilerSynchronize.Flag.Int("parallelBatchSize", 500, "the send batch size of worker synchronized in parallel")
+	syncOptions.parallelWaitTime = cmdFilerSynchronize.Flag.String("parallelWaitTime", "3s", "the maximum waiting time of parallel synchronized")
 	syncCpuProfile = cmdFilerSynchronize.Flag.String("cpuprofile", "", "cpu profile output file")
 	syncMemProfile = cmdFilerSynchronize.Flag.String("memprofile", "", "memory profile output file")
 	syncOptions.metricsHttpPort = cmdFilerSynchronize.Flag.Int("metricsPort", 0, "metrics listen port")
@@ -121,11 +129,16 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 		glog.Errorf("get filer 'b' signature %d error from %s to %s: %v", bFilerSignature, *syncOptions.filerA, *syncOptions.filerB, bFilerErr)
 		return true
 	}
+	parallelWaitTime, parseWaitTimeErr := time.ParseDuration(*syncOptions.parallelWaitTime)
+	if parseWaitTimeErr != nil {
+		glog.Errorf("the parallelWaitTime format is error. %v", parseWaitTimeErr)
+		return true
+	}
 
 	go func() {
 		// a->b
 		// set synchronization start timestamp to offset
-		initOffsetError := initOffsetFromTsMs(grpcDialOption, filerB, aFilerSignature, *syncOptions.bFromTsMs)
+		initOffsetError := initOffsetFromTsMs(grpcDialOption, filerB, aFilerSignature, *syncOptions.bFromTsMs, getSignaturePrefixByPath(*syncOptions.aPath))
 		if initOffsetError != nil {
 			glog.Errorf("init offset from timestamp %d error from %s to %s: %v", *syncOptions.bFromTsMs, *syncOptions.filerA, *syncOptions.filerB, initOffsetError)
 			os.Exit(2)
@@ -133,7 +146,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 		for {
 			err := doSubscribeFilerMetaChanges(syncOptions.clientId, grpcDialOption, filerA, *syncOptions.aPath, *syncOptions.aProxyByFiler, filerB,
 				*syncOptions.bPath, *syncOptions.bReplication, *syncOptions.bCollection, *syncOptions.bTtlSec, *syncOptions.bProxyByFiler, *syncOptions.bDiskType,
-				*syncOptions.bDebug, aFilerSignature, bFilerSignature)
+				*syncOptions.bDebug, aFilerSignature, bFilerSignature, *syncOptions.aParallelNum, *syncOptions.parallelBatchSize, parallelWaitTime)
 			if err != nil {
 				glog.Errorf("sync from %s to %s: %v", *syncOptions.filerA, *syncOptions.filerB, err)
 				time.Sleep(1747 * time.Millisecond)
@@ -144,7 +157,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	if !*syncOptions.isActivePassive {
 		// b->a
 		// set synchronization start timestamp to offset
-		initOffsetError := initOffsetFromTsMs(grpcDialOption, filerA, bFilerSignature, *syncOptions.aFromTsMs)
+		initOffsetError := initOffsetFromTsMs(grpcDialOption, filerA, bFilerSignature, *syncOptions.aFromTsMs, getSignaturePrefixByPath(*syncOptions.bPath))
 		if initOffsetError != nil {
 			glog.Errorf("init offset from timestamp %d error from %s to %s: %v", *syncOptions.aFromTsMs, *syncOptions.filerB, *syncOptions.filerA, initOffsetError)
 			os.Exit(2)
@@ -153,7 +166,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 			for {
 				err := doSubscribeFilerMetaChanges(syncOptions.clientId, grpcDialOption, filerB, *syncOptions.bPath, *syncOptions.bProxyByFiler, filerA,
 					*syncOptions.aPath, *syncOptions.aReplication, *syncOptions.aCollection, *syncOptions.aTtlSec, *syncOptions.aProxyByFiler, *syncOptions.aDiskType,
-					*syncOptions.aDebug, bFilerSignature, aFilerSignature)
+					*syncOptions.aDebug, bFilerSignature, aFilerSignature, *syncOptions.bParallelNum, *syncOptions.parallelBatchSize, parallelWaitTime)
 				if err != nil {
 					glog.Errorf("sync from %s to %s: %v", *syncOptions.filerB, *syncOptions.filerA, err)
 					time.Sleep(2147 * time.Millisecond)
@@ -168,14 +181,14 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 }
 
 // initOffsetFromTsMs Initialize offset
-func initOffsetFromTsMs(grpcDialOption grpc.DialOption, targetFiler pb.ServerAddress, sourceFilerSignature int32, fromTsMs int64) error {
+func initOffsetFromTsMs(grpcDialOption grpc.DialOption, targetFiler pb.ServerAddress, sourceFilerSignature int32, fromTsMs int64, signaturePrefix string) error {
 	if fromTsMs <= 0 {
 		return nil
 	}
 	// convert to nanosecond
 	fromTsNs := fromTsMs * 1000_000
 	// If not successful, exit the program.
-	setOffsetErr := setOffset(grpcDialOption, targetFiler, SyncKeyPrefix, sourceFilerSignature, fromTsNs)
+	setOffsetErr := setOffset(grpcDialOption, targetFiler, signaturePrefix, sourceFilerSignature, fromTsNs)
 	if setOffsetErr != nil {
 		return setOffsetErr
 	}
@@ -184,7 +197,7 @@ func initOffsetFromTsMs(grpcDialOption grpc.DialOption, targetFiler pb.ServerAdd
 }
 
 func doSubscribeFilerMetaChanges(clientId int32, grpcDialOption grpc.DialOption, sourceFiler pb.ServerAddress, sourcePath string, sourceReadChunkFromFiler bool, targetFiler pb.ServerAddress, targetPath string,
-	replicationStr, collection string, ttlSec int, sinkWriteChunkByFiler bool, diskType string, debug bool, sourceFilerSignature int32, targetFilerSignature int32) error {
+	replicationStr, collection string, ttlSec int, sinkWriteChunkByFiler bool, diskType string, debug bool, sourceFilerSignature int32, targetFilerSignature int32, parallelNum int, parallelBatchSize int, parallelWaitTime time.Duration) error {
 
 	// if first time, start from now
 	// if has previously synced, resume from that point of time
@@ -198,36 +211,46 @@ func doSubscribeFilerMetaChanges(clientId int32, grpcDialOption grpc.DialOption,
 	// create filer sink
 	filerSource := &source.FilerSource{}
 	filerSource.DoInitialize(sourceFiler.ToHttpAddress(), sourceFiler.ToGrpcAddress(), sourcePath, sourceReadChunkFromFiler)
-	filerSink := &filersink.FilerSink{}
-	filerSink.DoInitialize(targetFiler.ToHttpAddress(), targetFiler.ToGrpcAddress(), targetPath, replicationStr, collection, ttlSec, diskType, grpcDialOption, sinkWriteChunkByFiler)
-	filerSink.SetSourceFiler(filerSource)
-
-	persistEventFn := genProcessFunction(sourcePath, targetPath, filerSink, debug)
-
-	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
-		message := resp.EventNotification
-		for _, sig := range message.Signatures {
-			if sig == targetFilerSignature && targetFilerSignature != 0 {
-				fmt.Printf("%s skipping %s change to %v\n", targetFiler, sourceFiler, message)
-				return nil
-			}
-		}
-		return persistEventFn(resp)
-	}
 
 	var lastLogTsNs = time.Now().UnixNano()
 	var clientName = fmt.Sprintf("syncFrom_%s_To_%s", string(sourceFiler), string(targetFiler))
-	processEventFnWithOffset := pb.AddOffsetFunc(processEventFn, 3*time.Second, func(counter int64, lastTsNs int64) error {
+
+	setOffsetFn := func(counter int64, lastTsNs int64) error {
 		now := time.Now().UnixNano()
-		glog.V(0).Infof("sync %s to %s progressed to %v %0.2f/sec", sourceFiler, targetFiler, time.Unix(0, lastTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
+		glog.V(0).Infof("sync %s to %s progressed to %v %0.2f/sec.", sourceFiler, targetFiler, time.Unix(0, lastTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
 		lastLogTsNs = now
 		// collect synchronous offset
 		statsCollect.FilerSyncOffsetGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath).Set(float64(lastTsNs))
 		return setOffset(grpcDialOption, targetFiler, getSignaturePrefixByPath(sourcePath), sourceFilerSignature, lastTsNs)
-	})
+	}
+
+	stopEventsConsumerChan := make(chan struct{})
+	eventsChan := make(chan *filer_pb.SubscribeMetadataResponse, parallelBatchSize)
+	defer func() {
+		stopEventsConsumerChan <- struct{}{}
+		glog.Infof("stop event synchronization consumer. from %s to %s", sourceFiler.String(), targetFiler.String())
+	}()
+
+	var persistEventFns []func(resp *filer_pb.SubscribeMetadataResponse) error
+	for i := 0; i < parallelNum; i++ {
+		filerSinkItem := &filersink.FilerSink{}
+		filerSinkItem.DoInitialize(targetFiler.ToHttpAddress(), targetFiler.ToGrpcAddress(), targetPath, replicationStr, collection, ttlSec, diskType, grpcDialOption, sinkWriteChunkByFiler)
+		filerSinkItem.SetSourceFiler(filerSource)
+		persistEventFn := genProcessFunction(sourcePath, targetPath, filerSinkItem, debug)
+		persistEventFns = append(persistEventFns, persistEventFn)
+	}
+
+	cache := &ParallelSyncMetadataCache{persistEventFns: persistEventFns,
+		events: []*filer_pb.SubscribeMetadataResponse{}, eventsChan: eventsChan, cancelChan: stopEventsConsumerChan,
+		parallelNum: parallelNum, parallelBatchSize: parallelBatchSize, parallelWaitTime: parallelWaitTime,
+		sourceFiler: sourceFiler, targetFiler: targetFiler}
+
+	processEventWithOffsetFn := processEventWithOffsetFunc(cache, targetFilerSignature)
+
+	go startEventsConsumer(cache, setOffsetFn)
 
 	return pb.FollowMetadata(sourceFiler, grpcDialOption, clientName, clientId,
-		sourcePath, nil, sourceFilerOffsetTsNs, 0, targetFilerSignature, processEventFnWithOffset, pb.RetryForeverOnError)
+		sourcePath, nil, sourceFilerOffsetTsNs, 0, targetFilerSignature, processEventWithOffsetFn, pb.RetryForeverOnError)
 
 }
 
