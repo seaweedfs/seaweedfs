@@ -259,6 +259,10 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 		slices.SortFunc(nodesWithCapacity, func(a, b *Node) bool {
 			return a.localVolumeRatio(capacityFunc) < b.localVolumeRatio(capacityFunc)
 		})
+		if len(nodesWithCapacity) == 0 {
+			fmt.Printf("no volume server found with capacity for %s", diskType.ReadableString())
+			return nil
+		}
 		fullNode := nodesWithCapacity[len(nodesWithCapacity)-1]
 		var candidateVolumes []*master_pb.VolumeInformationMessage
 		for _, v := range fullNode.selectedVolumes {
