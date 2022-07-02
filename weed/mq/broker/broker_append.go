@@ -14,7 +14,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-func (broker *MessageBroker) appendToFile(targetFile string, topicConfig *mq_pb.TopicConfiguration, data []byte) error {
+func (broker *MessageQueueBroker) appendToFile(targetFile string, topicConfig *mq_pb.TopicConfiguration, data []byte) error {
 
 	assignResult, uploadResult, err2 := broker.assignAndUpload(topicConfig, data)
 	if err2 != nil {
@@ -46,7 +46,7 @@ func (broker *MessageBroker) appendToFile(targetFile string, topicConfig *mq_pb.
 	return nil
 }
 
-func (broker *MessageBroker) assignAndUpload(topicConfig *mq_pb.TopicConfiguration, data []byte) (*operation.AssignResult, *operation.UploadResult, error) {
+func (broker *MessageQueueBroker) assignAndUpload(topicConfig *mq_pb.TopicConfiguration, data []byte) (*operation.AssignResult, *operation.UploadResult, error) {
 
 	var assignResult = &operation.AssignResult{}
 
@@ -106,9 +106,9 @@ func (broker *MessageBroker) assignAndUpload(topicConfig *mq_pb.TopicConfigurati
 	return assignResult, uploadResult, nil
 }
 
-var _ = filer_pb.FilerClient(&MessageBroker{})
+var _ = filer_pb.FilerClient(&MessageQueueBroker{})
 
-func (broker *MessageBroker) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) (err error) {
+func (broker *MessageQueueBroker) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) (err error) {
 
 	for _, filer := range broker.option.Filers {
 		if err = pb.WithFilerClient(streamingMode, filer, broker.grpcDialOption, fn); err != nil {
@@ -125,6 +125,6 @@ func (broker *MessageBroker) WithFilerClient(streamingMode bool, fn func(filer_p
 
 }
 
-func (broker *MessageBroker) AdjustedUrl(location *filer_pb.Location) string {
+func (broker *MessageQueueBroker) AdjustedUrl(location *filer_pb.Location) string {
 	return location.Url
 }

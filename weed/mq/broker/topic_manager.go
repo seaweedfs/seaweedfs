@@ -36,10 +36,10 @@ type TopicControl struct {
 type TopicManager struct {
 	sync.Mutex
 	topicControls map[TopicPartition]*TopicControl
-	broker        *MessageBroker
+	broker        *MessageQueueBroker
 }
 
-func NewTopicManager(messageBroker *MessageBroker) *TopicManager {
+func NewTopicManager(messageBroker *MessageQueueBroker) *TopicManager {
 	return &TopicManager{
 		topicControls: make(map[TopicPartition]*TopicControl),
 		broker:        messageBroker,
