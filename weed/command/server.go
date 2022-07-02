@@ -225,6 +225,7 @@ func runServer(cmd *Command, args []string) bool {
 	iamOptions.filer = &filerAddress
 	webdavOptions.filer = &filerAddress
 	mqBrokerOptions.filer = &filerAddress
+	mqBrokerOptions.filerGroup = filerOptions.filerGroup
 
 	go stats_collect.StartMetricsServer(*serverMetricsHttpPort)
 

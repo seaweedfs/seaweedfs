@@ -26,7 +26,7 @@ If one of the pub or sub connects very late, and the system topo changed quite a
 
 */
 
-func (broker *MessageBroker) FindBroker(c context.Context, request *mq_pb.FindBrokerRequest) (*mq_pb.FindBrokerResponse, error) {
+func (broker *MessageQueueBroker) FindBroker(c context.Context, request *mq_pb.FindBrokerRequest) (*mq_pb.FindBrokerResponse, error) {
 
 	t := &mq_pb.FindBrokerResponse{}
 	var peers []string
@@ -61,7 +61,7 @@ func (broker *MessageBroker) FindBroker(c context.Context, request *mq_pb.FindBr
 
 }
 
-func (broker *MessageBroker) checkFilers() {
+func (broker *MessageQueueBroker) checkFilers() {
 
 	// contact a filer about masters
 	var masters []pb.ServerAddress
