@@ -16,7 +16,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/mq_pb"
 )
 
-func (broker *MessageBroker) Subscribe(stream mq_pb.SeaweedMessaging_SubscribeServer) error {
+func (broker *MessageQueueBroker) Subscribe(stream mq_pb.SeaweedMessaging_SubscribeServer) error {
 
 	// process initial request
 	in, err := stream.Recv()
@@ -138,7 +138,7 @@ func (broker *MessageBroker) Subscribe(stream mq_pb.SeaweedMessaging_SubscribeSe
 
 }
 
-func (broker *MessageBroker) readPersistedLogBuffer(tp *TopicPartition, startTime time.Time, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (err error) {
+func (broker *MessageQueueBroker) readPersistedLogBuffer(tp *TopicPartition, startTime time.Time, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (err error) {
 	startTime = startTime.UTC()
 	startDate := fmt.Sprintf("%04d-%02d-%02d", startTime.Year(), startTime.Month(), startTime.Day())
 	startHourMinute := fmt.Sprintf("%02d-%02d", startTime.Hour(), startTime.Minute())
