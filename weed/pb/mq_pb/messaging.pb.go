@@ -2,9 +2,9 @@
 // versions:
 // 	protoc-gen-go v1.26.0
 // 	protoc        v3.17.3
-// source: messaging.proto
+// source: mq.proto
 
-package messaging_pb
+package mq_pb
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -840,7 +840,7 @@ type TopicConfiguration struct {
 	Collection     string                          `protobuf:"bytes,2,opt,name=collection,proto3" json:"collection,omitempty"`
 	Replication    string                          `protobuf:"bytes,3,opt,name=replication,proto3" json:"replication,omitempty"`
 	IsTransient    bool                            `protobuf:"varint,4,opt,name=is_transient,json=isTransient,proto3" json:"is_transient,omitempty"`
-	Partitoning    TopicConfiguration_Partitioning `protobuf:"varint,5,opt,name=partitoning,proto3,enum=messaging_pb.TopicConfiguration_Partitioning" json:"partitoning,omitempty"`
+	Partitoning    TopicConfiguration_Partitioning `protobuf:"varint,5,opt,name=partitoning,proto3,enum=mq_pb.TopicConfiguration_Partitioning" json:"partitoning,omitempty"`
 }
 
 func (x *TopicConfiguration) Reset() {
@@ -918,7 +918,7 @@ type SubscriberMessage_InitMessage struct {
 	Namespace     string                                      `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	Topic         string                                      `protobuf:"bytes,2,opt,name=topic,proto3" json:"topic,omitempty"`
 	Partition     int32                                       `protobuf:"varint,3,opt,name=partition,proto3" json:"partition,omitempty"`
-	StartPosition SubscriberMessage_InitMessage_StartPosition `protobuf:"varint,4,opt,name=startPosition,proto3,enum=messaging_pb.SubscriberMessage_InitMessage_StartPosition" json:"startPosition,omitempty"` // Where to begin consuming from
+	StartPosition SubscriberMessage_InitMessage_StartPosition `protobuf:"varint,4,opt,name=startPosition,proto3,enum=mq_pb.SubscriberMessage_InitMessage_StartPosition" json:"startPosition,omitempty"` // Where to begin consuming from
 	TimestampNs   int64                                       `protobuf:"varint,5,opt,name=timestampNs,proto3" json:"timestampNs,omitempty"`                                                                   // timestamp in nano seconds
 	SubscriberId  string                                      `protobuf:"bytes,6,opt,name=subscriber_id,json=subscriberId,proto3" json:"subscriber_id,omitempty"`                                              // uniquely identify a subscriber to track consumption
 }
@@ -1407,54 +1407,54 @@ func file_messaging_proto_rawDescGZIP() []byte {
 var file_messaging_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_messaging_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_messaging_proto_goTypes = []interface{}{
-	(SubscriberMessage_InitMessage_StartPosition)(0), // 0: messaging_pb.SubscriberMessage.InitMessage.StartPosition
-	(TopicConfiguration_Partitioning)(0),             // 1: messaging_pb.TopicConfiguration.Partitioning
-	(*SubscriberMessage)(nil),                        // 2: messaging_pb.SubscriberMessage
-	(*Message)(nil),                                  // 3: messaging_pb.Message
-	(*BrokerMessage)(nil),                            // 4: messaging_pb.BrokerMessage
-	(*PublishRequest)(nil),                           // 5: messaging_pb.PublishRequest
-	(*PublishResponse)(nil),                          // 6: messaging_pb.PublishResponse
-	(*DeleteTopicRequest)(nil),                       // 7: messaging_pb.DeleteTopicRequest
-	(*DeleteTopicResponse)(nil),                      // 8: messaging_pb.DeleteTopicResponse
-	(*ConfigureTopicRequest)(nil),                    // 9: messaging_pb.ConfigureTopicRequest
-	(*ConfigureTopicResponse)(nil),                   // 10: messaging_pb.ConfigureTopicResponse
-	(*GetTopicConfigurationRequest)(nil),             // 11: messaging_pb.GetTopicConfigurationRequest
-	(*GetTopicConfigurationResponse)(nil),            // 12: messaging_pb.GetTopicConfigurationResponse
-	(*FindBrokerRequest)(nil),                        // 13: messaging_pb.FindBrokerRequest
-	(*FindBrokerResponse)(nil),                       // 14: messaging_pb.FindBrokerResponse
-	(*TopicConfiguration)(nil),                       // 15: messaging_pb.TopicConfiguration
-	(*SubscriberMessage_InitMessage)(nil),            // 16: messaging_pb.SubscriberMessage.InitMessage
-	(*SubscriberMessage_AckMessage)(nil),             // 17: messaging_pb.SubscriberMessage.AckMessage
-	nil,                                              // 18: messaging_pb.Message.HeadersEntry
-	(*PublishRequest_InitMessage)(nil),               // 19: messaging_pb.PublishRequest.InitMessage
-	(*PublishResponse_ConfigMessage)(nil),            // 20: messaging_pb.PublishResponse.ConfigMessage
-	(*PublishResponse_RedirectMessage)(nil),          // 21: messaging_pb.PublishResponse.RedirectMessage
+	(SubscriberMessage_InitMessage_StartPosition)(0), // 0: mq_pb.SubscriberMessage.InitMessage.StartPosition
+	(TopicConfiguration_Partitioning)(0),             // 1: mq_pb.TopicConfiguration.Partitioning
+	(*SubscriberMessage)(nil),                        // 2: mq_pb.SubscriberMessage
+	(*Message)(nil),                                  // 3: mq_pb.Message
+	(*BrokerMessage)(nil),                            // 4: mq_pb.BrokerMessage
+	(*PublishRequest)(nil),                           // 5: mq_pb.PublishRequest
+	(*PublishResponse)(nil),                          // 6: mq_pb.PublishResponse
+	(*DeleteTopicRequest)(nil),                       // 7: mq_pb.DeleteTopicRequest
+	(*DeleteTopicResponse)(nil),                      // 8: mq_pb.DeleteTopicResponse
+	(*ConfigureTopicRequest)(nil),                    // 9: mq_pb.ConfigureTopicRequest
+	(*ConfigureTopicResponse)(nil),                   // 10: mq_pb.ConfigureTopicResponse
+	(*GetTopicConfigurationRequest)(nil),             // 11: mq_pb.GetTopicConfigurationRequest
+	(*GetTopicConfigurationResponse)(nil),            // 12: mq_pb.GetTopicConfigurationResponse
+	(*FindBrokerRequest)(nil),                        // 13: mq_pb.FindBrokerRequest
+	(*FindBrokerResponse)(nil),                       // 14: mq_pb.FindBrokerResponse
+	(*TopicConfiguration)(nil),                       // 15: mq_pb.TopicConfiguration
+	(*SubscriberMessage_InitMessage)(nil),            // 16: mq_pb.SubscriberMessage.InitMessage
+	(*SubscriberMessage_AckMessage)(nil),             // 17: mq_pb.SubscriberMessage.AckMessage
+	nil,                                              // 18: mq_pb.Message.HeadersEntry
+	(*PublishRequest_InitMessage)(nil),               // 19: mq_pb.PublishRequest.InitMessage
+	(*PublishResponse_ConfigMessage)(nil),            // 20: mq_pb.PublishResponse.ConfigMessage
+	(*PublishResponse_RedirectMessage)(nil),          // 21: mq_pb.PublishResponse.RedirectMessage
 }
 var file_messaging_proto_depIdxs = []int32{
-	16, // 0: messaging_pb.SubscriberMessage.init:type_name -> messaging_pb.SubscriberMessage.InitMessage
-	17, // 1: messaging_pb.SubscriberMessage.ack:type_name -> messaging_pb.SubscriberMessage.AckMessage
-	18, // 2: messaging_pb.Message.headers:type_name -> messaging_pb.Message.HeadersEntry
-	3,  // 3: messaging_pb.BrokerMessage.data:type_name -> messaging_pb.Message
-	19, // 4: messaging_pb.PublishRequest.init:type_name -> messaging_pb.PublishRequest.InitMessage
-	3,  // 5: messaging_pb.PublishRequest.data:type_name -> messaging_pb.Message
-	20, // 6: messaging_pb.PublishResponse.config:type_name -> messaging_pb.PublishResponse.ConfigMessage
-	21, // 7: messaging_pb.PublishResponse.redirect:type_name -> messaging_pb.PublishResponse.RedirectMessage
-	15, // 8: messaging_pb.ConfigureTopicRequest.configuration:type_name -> messaging_pb.TopicConfiguration
-	15, // 9: messaging_pb.GetTopicConfigurationResponse.configuration:type_name -> messaging_pb.TopicConfiguration
-	1,  // 10: messaging_pb.TopicConfiguration.partitoning:type_name -> messaging_pb.TopicConfiguration.Partitioning
-	0,  // 11: messaging_pb.SubscriberMessage.InitMessage.startPosition:type_name -> messaging_pb.SubscriberMessage.InitMessage.StartPosition
-	2,  // 12: messaging_pb.SeaweedMessaging.Subscribe:input_type -> messaging_pb.SubscriberMessage
-	5,  // 13: messaging_pb.SeaweedMessaging.Publish:input_type -> messaging_pb.PublishRequest
-	7,  // 14: messaging_pb.SeaweedMessaging.DeleteTopic:input_type -> messaging_pb.DeleteTopicRequest
-	9,  // 15: messaging_pb.SeaweedMessaging.ConfigureTopic:input_type -> messaging_pb.ConfigureTopicRequest
-	11, // 16: messaging_pb.SeaweedMessaging.GetTopicConfiguration:input_type -> messaging_pb.GetTopicConfigurationRequest
-	13, // 17: messaging_pb.SeaweedMessaging.FindBroker:input_type -> messaging_pb.FindBrokerRequest
-	4,  // 18: messaging_pb.SeaweedMessaging.Subscribe:output_type -> messaging_pb.BrokerMessage
-	6,  // 19: messaging_pb.SeaweedMessaging.Publish:output_type -> messaging_pb.PublishResponse
-	8,  // 20: messaging_pb.SeaweedMessaging.DeleteTopic:output_type -> messaging_pb.DeleteTopicResponse
-	10, // 21: messaging_pb.SeaweedMessaging.ConfigureTopic:output_type -> messaging_pb.ConfigureTopicResponse
-	12, // 22: messaging_pb.SeaweedMessaging.GetTopicConfiguration:output_type -> messaging_pb.GetTopicConfigurationResponse
-	14, // 23: messaging_pb.SeaweedMessaging.FindBroker:output_type -> messaging_pb.FindBrokerResponse
+	16, // 0: mq_pb.SubscriberMessage.init:type_name -> mq_pb.SubscriberMessage.InitMessage
+	17, // 1: mq_pb.SubscriberMessage.ack:type_name -> mq_pb.SubscriberMessage.AckMessage
+	18, // 2: mq_pb.Message.headers:type_name -> mq_pb.Message.HeadersEntry
+	3,  // 3: mq_pb.BrokerMessage.data:type_name -> mq_pb.Message
+	19, // 4: mq_pb.PublishRequest.init:type_name -> mq_pb.PublishRequest.InitMessage
+	3,  // 5: mq_pb.PublishRequest.data:type_name -> mq_pb.Message
+	20, // 6: mq_pb.PublishResponse.config:type_name -> mq_pb.PublishResponse.ConfigMessage
+	21, // 7: mq_pb.PublishResponse.redirect:type_name -> mq_pb.PublishResponse.RedirectMessage
+	15, // 8: mq_pb.ConfigureTopicRequest.configuration:type_name -> mq_pb.TopicConfiguration
+	15, // 9: mq_pb.GetTopicConfigurationResponse.configuration:type_name -> mq_pb.TopicConfiguration
+	1,  // 10: mq_pb.TopicConfiguration.partitoning:type_name -> mq_pb.TopicConfiguration.Partitioning
+	0,  // 11: mq_pb.SubscriberMessage.InitMessage.startPosition:type_name -> mq_pb.SubscriberMessage.InitMessage.StartPosition
+	2,  // 12: mq_pb.SeaweedMessaging.Subscribe:input_type -> mq_pb.SubscriberMessage
+	5,  // 13: mq_pb.SeaweedMessaging.Publish:input_type -> mq_pb.PublishRequest
+	7,  // 14: mq_pb.SeaweedMessaging.DeleteTopic:input_type -> mq_pb.DeleteTopicRequest
+	9,  // 15: mq_pb.SeaweedMessaging.ConfigureTopic:input_type -> mq_pb.ConfigureTopicRequest
+	11, // 16: mq_pb.SeaweedMessaging.GetTopicConfiguration:input_type -> mq_pb.GetTopicConfigurationRequest
+	13, // 17: mq_pb.SeaweedMessaging.FindBroker:input_type -> mq_pb.FindBrokerRequest
+	4,  // 18: mq_pb.SeaweedMessaging.Subscribe:output_type -> mq_pb.BrokerMessage
+	6,  // 19: mq_pb.SeaweedMessaging.Publish:output_type -> mq_pb.PublishResponse
+	8,  // 20: mq_pb.SeaweedMessaging.DeleteTopic:output_type -> mq_pb.DeleteTopicResponse
+	10, // 21: mq_pb.SeaweedMessaging.ConfigureTopic:output_type -> mq_pb.ConfigureTopicResponse
+	12, // 22: mq_pb.SeaweedMessaging.GetTopicConfiguration:output_type -> mq_pb.GetTopicConfigurationResponse
+	14, // 23: mq_pb.SeaweedMessaging.FindBroker:output_type -> mq_pb.FindBrokerResponse
 	18, // [18:24] is the sub-list for method output_type
 	12, // [12:18] is the sub-list for method input_type
 	12, // [12:12] is the sub-list for extension type_name

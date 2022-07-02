@@ -10,10 +10,10 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/mq_pb"
 )
 
-func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_PublishServer) error {
+func (broker *MessageBroker) Publish(stream mq_pb.SeaweedMessaging_PublishServer) error {
 
 	// process initial request
 	in, err := stream.Recv()
@@ -25,12 +25,12 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 	}
 
 	// TODO look it up
-	topicConfig := &messaging_pb.TopicConfiguration{
+	topicConfig := &mq_pb.TopicConfiguration{
 		// IsTransient: true,
 	}
 
 	// send init response
-	initResponse := &messaging_pb.PublishResponse{
+	initResponse := &mq_pb.PublishResponse{
 		Config:   nil,
 		Redirect: nil,
 	}
@@ -104,7 +104,7 @@ func (broker *MessageBroker) Publish(stream messaging_pb.SeaweedMessaging_Publis
 
 	// send the close ack
 	// println("server send ack closing")
-	if err := stream.Send(&messaging_pb.PublishResponse{IsClosed: true}); err != nil {
+	if err := stream.Send(&mq_pb.PublishResponse{IsClosed: true}); err != nil {
 		glog.V(0).Infof("err sending close response: %v", err)
 	}
 	return nil

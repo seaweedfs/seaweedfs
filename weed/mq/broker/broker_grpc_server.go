@@ -6,15 +6,15 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/mq_pb"
 )
 
-func (broker *MessageBroker) ConfigureTopic(c context.Context, request *messaging_pb.ConfigureTopicRequest) (*messaging_pb.ConfigureTopicResponse, error) {
+func (broker *MessageBroker) ConfigureTopic(c context.Context, request *mq_pb.ConfigureTopicRequest) (*mq_pb.ConfigureTopicResponse, error) {
 	panic("implement me")
 }
 
-func (broker *MessageBroker) DeleteTopic(c context.Context, request *messaging_pb.DeleteTopicRequest) (*messaging_pb.DeleteTopicResponse, error) {
-	resp := &messaging_pb.DeleteTopicResponse{}
+func (broker *MessageBroker) DeleteTopic(c context.Context, request *mq_pb.DeleteTopicRequest) (*mq_pb.DeleteTopicResponse, error) {
+	resp := &mq_pb.DeleteTopicResponse{}
 	dir, entry := genTopicDirEntry(request.Namespace, request.Topic)
 	if exists, err := filer_pb.Exists(broker, dir, entry, true); err != nil {
 		return nil, err
@@ -24,7 +24,7 @@ func (broker *MessageBroker) DeleteTopic(c context.Context, request *messaging_p
 	return resp, nil
 }
 
-func (broker *MessageBroker) GetTopicConfiguration(c context.Context, request *messaging_pb.GetTopicConfigurationRequest) (*messaging_pb.GetTopicConfigurationResponse, error) {
+func (broker *MessageBroker) GetTopicConfiguration(c context.Context, request *mq_pb.GetTopicConfigurationRequest) (*mq_pb.GetTopicConfigurationResponse, error) {
 	panic("implement me")
 }
 

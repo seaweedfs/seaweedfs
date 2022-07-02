@@ -13,10 +13,10 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/mq_pb"
 )
 
-func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_SubscribeServer) error {
+func (broker *MessageBroker) Subscribe(stream mq_pb.SeaweedMessaging_SubscribeServer) error {
 
 	// process initial request
 	in, err := stream.Recv()
@@ -32,7 +32,7 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 	subscriberId := in.Init.SubscriberId
 
 	// TODO look it up
-	topicConfig := &messaging_pb.TopicConfiguration{
+	topicConfig := &mq_pb.TopicConfiguration{
 		// IsTransient: true,
 	}
 
@@ -63,17 +63,17 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 
 	lastReadTime := time.Now()
 	switch in.Init.StartPosition {
-	case messaging_pb.SubscriberMessage_InitMessage_TIMESTAMP:
+	case mq_pb.SubscriberMessage_InitMessage_TIMESTAMP:
 		lastReadTime = time.Unix(0, in.Init.TimestampNs)
-	case messaging_pb.SubscriberMessage_InitMessage_LATEST:
-	case messaging_pb.SubscriberMessage_InitMessage_EARLIEST:
+	case mq_pb.SubscriberMessage_InitMessage_LATEST:
+	case mq_pb.SubscriberMessage_InitMessage_EARLIEST:
 		lastReadTime = time.Unix(0, 0)
 	}
 
 	// how to process each message
 	// an error returned will end the subscription
-	eachMessageFn := func(m *messaging_pb.Message) error {
-		err := stream.Send(&messaging_pb.BrokerMessage{
+	eachMessageFn := func(m *mq_pb.Message) error {
+		err := stream.Send(&mq_pb.BrokerMessage{
 			Data: m,
 		})
 		if err != nil {
@@ -83,9 +83,9 @@ func (broker *MessageBroker) Subscribe(stream messaging_pb.SeaweedMessaging_Subs
 	}
 
 	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) error {
-		m := &messaging_pb.Message{}
+		m := &mq_pb.Message{}
 		if err = proto.Unmarshal(logEntry.Data, m); err != nil {
-			glog.Errorf("unexpected unmarshal messaging_pb.Message: %v", err)
+			glog.Errorf("unexpected unmarshal mq_pb.Message: %v", err)
 			return err
 		}
 		// fmt.Printf("sending : %d bytes ts %d\n", len(m.Value), logEntry.TsNs)

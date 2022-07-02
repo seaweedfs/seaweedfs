@@ -6,23 +6,23 @@ import (
 	"github.com/OneOfOne/xxhash"
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/messaging/broker"
-	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
+	"github.com/chrislusf/seaweedfs/weed/mq/broker"
+	"github.com/chrislusf/seaweedfs/weed/pb/mq_pb"
 )
 
 type Publisher struct {
-	publishClients     []messaging_pb.SeaweedMessaging_PublishClient
-	topicConfiguration *messaging_pb.TopicConfiguration
+	publishClients     []mq_pb.SeaweedMessaging_PublishClient
+	topicConfiguration *mq_pb.TopicConfiguration
 	messageCount       uint64
 	publisherId        string
 }
 
 func (mc *MessagingClient) NewPublisher(publisherId, namespace, topic string) (*Publisher, error) {
 	// read topic configuration
-	topicConfiguration := &messaging_pb.TopicConfiguration{
+	topicConfiguration := &mq_pb.TopicConfiguration{
 		PartitionCount: 4,
 	}
-	publishClients := make([]messaging_pb.SeaweedMessaging_PublishClient, topicConfiguration.PartitionCount)
+	publishClients := make([]mq_pb.SeaweedMessaging_PublishClient, topicConfiguration.PartitionCount)
 	for i := 0; i < int(topicConfiguration.PartitionCount); i++ {
 		tp := broker.TopicPartition{
 			Namespace: namespace,
@@ -45,16 +45,16 @@ func (mc *MessagingClient) NewPublisher(publisherId, namespace, topic string) (*
 	}, nil
 }
 
-func setupPublisherClient(grpcConnection *grpc.ClientConn, tp broker.TopicPartition) (messaging_pb.SeaweedMessaging_PublishClient, error) {
+func setupPublisherClient(grpcConnection *grpc.ClientConn, tp broker.TopicPartition) (mq_pb.SeaweedMessaging_PublishClient, error) {
 
-	stream, err := messaging_pb.NewSeaweedMessagingClient(grpcConnection).Publish(context.Background())
+	stream, err := mq_pb.NewSeaweedMessagingClient(grpcConnection).Publish(context.Background())
 	if err != nil {
 		return nil, err
 	}
 
 	// send init message
-	err = stream.Send(&messaging_pb.PublishRequest{
-		Init: &messaging_pb.PublishRequest_InitMessage{
+	err = stream.Send(&mq_pb.PublishRequest{
+		Init: &mq_pb.PublishRequest_InitMessage{
 			Namespace: tp.Namespace,
 			Topic:     tp.Topic,
 			Partition: tp.Partition,
@@ -95,14 +95,14 @@ func setupPublisherClient(grpcConnection *grpc.ClientConn, tp broker.TopicPartit
 
 }
 
-func (p *Publisher) Publish(m *messaging_pb.Message) error {
+func (p *Publisher) Publish(m *mq_pb.Message) error {
 	hashValue := p.messageCount
 	p.messageCount++
-	if p.topicConfiguration.Partitoning == messaging_pb.TopicConfiguration_NonNullKeyHash {
+	if p.topicConfiguration.Partitoning == mq_pb.TopicConfiguration_NonNullKeyHash {
 		if m.Key != nil {
 			hashValue = xxhash.Checksum64(m.Key)
 		}
-	} else if p.topicConfiguration.Partitoning == messaging_pb.TopicConfiguration_KeyHash {
+	} else if p.topicConfiguration.Partitoning == mq_pb.TopicConfiguration_KeyHash {
 		hashValue = xxhash.Checksum64(m.Key)
 	} else {
 		// round robin
@@ -112,7 +112,7 @@ func (p *Publisher) Publish(m *messaging_pb.Message) error {
 	if idx < 0 {
 		idx += len(p.publishClients)
 	}
-	return p.publishClients[idx].Send(&messaging_pb.PublishRequest{
+	return p.publishClients[idx].Send(&mq_pb.PublishRequest{
 		Data: m,
 	})
 }

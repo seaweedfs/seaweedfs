@@ -283,20 +283,20 @@ func file_s3_proto_rawDescGZIP() []byte {
 
 var file_s3_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_s3_proto_goTypes = []interface{}{
-	(*S3ConfigureRequest)(nil),      // 0: messaging_pb.S3ConfigureRequest
-	(*S3ConfigureResponse)(nil),     // 1: messaging_pb.S3ConfigureResponse
-	(*S3CircuitBreakerConfig)(nil),  // 2: messaging_pb.S3CircuitBreakerConfig
-	(*S3CircuitBreakerOptions)(nil), // 3: messaging_pb.S3CircuitBreakerOptions
-	nil,                             // 4: messaging_pb.S3CircuitBreakerConfig.BucketsEntry
-	nil,                             // 5: messaging_pb.S3CircuitBreakerOptions.ActionsEntry
+	(*S3ConfigureRequest)(nil),      // 0: mq_pb.S3ConfigureRequest
+	(*S3ConfigureResponse)(nil),     // 1: mq_pb.S3ConfigureResponse
+	(*S3CircuitBreakerConfig)(nil),  // 2: mq_pb.S3CircuitBreakerConfig
+	(*S3CircuitBreakerOptions)(nil), // 3: mq_pb.S3CircuitBreakerOptions
+	nil,                             // 4: mq_pb.S3CircuitBreakerConfig.BucketsEntry
+	nil,                             // 5: mq_pb.S3CircuitBreakerOptions.ActionsEntry
 }
 var file_s3_proto_depIdxs = []int32{
-	3, // 0: messaging_pb.S3CircuitBreakerConfig.global:type_name -> messaging_pb.S3CircuitBreakerOptions
-	4, // 1: messaging_pb.S3CircuitBreakerConfig.buckets:type_name -> messaging_pb.S3CircuitBreakerConfig.BucketsEntry
-	5, // 2: messaging_pb.S3CircuitBreakerOptions.actions:type_name -> messaging_pb.S3CircuitBreakerOptions.ActionsEntry
-	3, // 3: messaging_pb.S3CircuitBreakerConfig.BucketsEntry.value:type_name -> messaging_pb.S3CircuitBreakerOptions
-	0, // 4: messaging_pb.SeaweedS3.Configure:input_type -> messaging_pb.S3ConfigureRequest
-	1, // 5: messaging_pb.SeaweedS3.Configure:output_type -> messaging_pb.S3ConfigureResponse
+	3, // 0: mq_pb.S3CircuitBreakerConfig.global:type_name -> mq_pb.S3CircuitBreakerOptions
+	4, // 1: mq_pb.S3CircuitBreakerConfig.buckets:type_name -> mq_pb.S3CircuitBreakerConfig.BucketsEntry
+	5, // 2: mq_pb.S3CircuitBreakerOptions.actions:type_name -> mq_pb.S3CircuitBreakerOptions.ActionsEntry
+	3, // 3: mq_pb.S3CircuitBreakerConfig.BucketsEntry.value:type_name -> mq_pb.S3CircuitBreakerOptions
+	0, // 4: mq_pb.SeaweedS3.Configure:input_type -> mq_pb.S3ConfigureRequest
+	1, // 5: mq_pb.SeaweedS3.Configure:output_type -> mq_pb.S3ConfigureResponse
 	5, // [5:6] is the sub-list for method output_type
 	4, // [4:5] is the sub-list for method input_type
 	4, // [4:4] is the sub-list for extension type_name

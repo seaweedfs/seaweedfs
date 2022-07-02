@@ -7,7 +7,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/mq_pb"
 	"github.com/chrislusf/seaweedfs/weed/util/log_buffer"
 )
 
@@ -46,7 +46,7 @@ func NewTopicManager(messageBroker *MessageBroker) *TopicManager {
 	}
 }
 
-func (tm *TopicManager) buildLogBuffer(tl *TopicControl, tp TopicPartition, topicConfig *messaging_pb.TopicConfiguration) *log_buffer.LogBuffer {
+func (tm *TopicManager) buildLogBuffer(tl *TopicControl, tp TopicPartition, topicConfig *mq_pb.TopicConfiguration) *log_buffer.LogBuffer {
 
 	flushFn := func(startTime, stopTime time.Time, buf []byte) {
 
@@ -75,7 +75,7 @@ func (tm *TopicManager) buildLogBuffer(tl *TopicControl, tp TopicPartition, topi
 	return logBuffer
 }
 
-func (tm *TopicManager) RequestLock(partition TopicPartition, topicConfig *messaging_pb.TopicConfiguration, isPublisher bool) *TopicControl {
+func (tm *TopicManager) RequestLock(partition TopicPartition, topicConfig *mq_pb.TopicConfiguration, isPublisher bool) *TopicControl {
 	tm.Lock()
 	defer tm.Unlock()
 
