@@ -2,7 +2,7 @@ package broker
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/mq_pb"
 	"time"
 
 	"google.golang.org/grpc"
@@ -23,7 +23,7 @@ type MessageBrokerOption struct {
 }
 
 type MessageBroker struct {
-	messaging_pb.UnimplementedSeaweedMessagingServer
+	mq_pb.UnimplementedSeaweedMessagingServer
 	option         *MessageBrokerOption
 	grpcDialOption grpc.DialOption
 	topicManager   *TopicManager

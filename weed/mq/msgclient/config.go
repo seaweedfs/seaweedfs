@@ -4,19 +4,19 @@ import (
 	"context"
 	"log"
 
-	"github.com/chrislusf/seaweedfs/weed/messaging/broker"
+	"github.com/chrislusf/seaweedfs/weed/mq/broker"
 	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/mq_pb"
 )
 
 func (mc *MessagingClient) configureTopic(tp broker.TopicPartition) error {
 
-	return mc.withAnyBroker(func(client messaging_pb.SeaweedMessagingClient) error {
+	return mc.withAnyBroker(func(client mq_pb.SeaweedMessagingClient) error {
 		_, err := client.ConfigureTopic(context.Background(),
-			&messaging_pb.ConfigureTopicRequest{
+			&mq_pb.ConfigureTopicRequest{
 				Namespace: tp.Namespace,
 				Topic:     tp.Topic,
-				Configuration: &messaging_pb.TopicConfiguration{
+				Configuration: &mq_pb.TopicConfiguration{
 					PartitionCount: 0,
 					Collection:     "",
 					Replication:    "",
@@ -31,9 +31,9 @@ func (mc *MessagingClient) configureTopic(tp broker.TopicPartition) error {
 
 func (mc *MessagingClient) DeleteTopic(namespace, topic string) error {
 
-	return mc.withAnyBroker(func(client messaging_pb.SeaweedMessagingClient) error {
+	return mc.withAnyBroker(func(client mq_pb.SeaweedMessagingClient) error {
 		_, err := client.DeleteTopic(context.Background(),
-			&messaging_pb.DeleteTopicRequest{
+			&mq_pb.DeleteTopicRequest{
 				Namespace: namespace,
 				Topic:     topic,
 			})
@@ -41,7 +41,7 @@ func (mc *MessagingClient) DeleteTopic(namespace, topic string) error {
 	})
 }
 
-func (mc *MessagingClient) withAnyBroker(fn func(client messaging_pb.SeaweedMessagingClient) error) error {
+func (mc *MessagingClient) withAnyBroker(fn func(client mq_pb.SeaweedMessagingClient) error) error {
 
 	var lastErr error
 	for _, broker := range mc.bootstrapBrokers {
@@ -52,7 +52,7 @@ func (mc *MessagingClient) withAnyBroker(fn func(client messaging_pb.SeaweedMess
 		}
 		defer grpcConnection.Close()
 
-		err = fn(messaging_pb.NewSeaweedMessagingClient(grpcConnection))
+		err = fn(mq_pb.NewSeaweedMessagingClient(grpcConnection))
 		if err == nil {
 			return nil
 		}

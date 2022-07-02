@@ -10,10 +10,10 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util/grace"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/messaging/broker"
+	"github.com/chrislusf/seaweedfs/weed/mq/broker"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/mq_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -100,7 +100,7 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 		glog.Fatalf("failed to listen on grpc port %d: %v", *mqBrokerOpt.port, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.msg_broker"))
-	messaging_pb.RegisterSeaweedMessagingServer(grpcS, qs)
+	mq_pb.RegisterSeaweedMessagingServer(grpcS, qs)
 	reflection.Register(grpcS)
 	grpcS.Serve(grpcL)
 

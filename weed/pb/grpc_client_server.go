@@ -18,7 +18,7 @@ import (
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/mq_pb"
 )
 
 const (
@@ -231,10 +231,10 @@ func WithOneOfGrpcMasterClients(streamingMode bool, masterGrpcAddresses map[stri
 	return err
 }
 
-func WithBrokerGrpcClient(streamingMode bool, brokerGrpcAddress string, grpcDialOption grpc.DialOption, fn func(client messaging_pb.SeaweedMessagingClient) error) error {
+func WithBrokerGrpcClient(streamingMode bool, brokerGrpcAddress string, grpcDialOption grpc.DialOption, fn func(client mq_pb.SeaweedMessagingClient) error) error {
 
 	return WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
-		client := messaging_pb.NewSeaweedMessagingClient(grpcConnection)
+		client := mq_pb.NewSeaweedMessagingClient(grpcConnection)
 		return fn(client)
 	}, brokerGrpcAddress, grpcDialOption)
 

@@ -7,9 +7,9 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/messaging/broker"
+	"github.com/chrislusf/seaweedfs/weed/mq/broker"
 	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/mq_pb"
 	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
@@ -38,8 +38,8 @@ func (mc *MessagingClient) findBroker(tp broker.TopicPartition) (*grpc.ClientCon
 		}
 		defer grpcConnection.Close()
 
-		resp, err := messaging_pb.NewSeaweedMessagingClient(grpcConnection).FindBroker(context.Background(),
-			&messaging_pb.FindBrokerRequest{
+		resp, err := mq_pb.NewSeaweedMessagingClient(grpcConnection).FindBroker(context.Background(),
+			&mq_pb.FindBrokerRequest{
 				Namespace: tp.Namespace,
 				Topic:     tp.Topic,
 				Parition:  tp.Partition,

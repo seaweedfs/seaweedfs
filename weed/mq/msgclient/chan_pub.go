@@ -8,12 +8,12 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/messaging/broker"
-	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
+	"github.com/chrislusf/seaweedfs/weed/mq/broker"
+	"github.com/chrislusf/seaweedfs/weed/pb/mq_pb"
 )
 
 type PubChannel struct {
-	client         messaging_pb.SeaweedMessaging_PublishClient
+	client         mq_pb.SeaweedMessaging_PublishClient
 	grpcConnection *grpc.ClientConn
 	md5hash        hash.Hash
 }
@@ -40,8 +40,8 @@ func (mc *MessagingClient) NewPubChannel(chanName string) (*PubChannel, error) {
 }
 
 func (pc *PubChannel) Publish(m []byte) error {
-	err := pc.client.Send(&messaging_pb.PublishRequest{
-		Data: &messaging_pb.Message{
+	err := pc.client.Send(&mq_pb.PublishRequest{
+		Data: &mq_pb.Message{
 			Value: m,
 		},
 	})
@@ -53,8 +53,8 @@ func (pc *PubChannel) Publish(m []byte) error {
 func (pc *PubChannel) Close() error {
 
 	// println("send closing")
-	if err := pc.client.Send(&messaging_pb.PublishRequest{
-		Data: &messaging_pb.Message{
+	if err := pc.client.Send(&mq_pb.PublishRequest{
+		Data: &mq_pb.Message{
 			IsClose: true,
 		},
 	}); err != nil {

@@ -8,13 +8,13 @@ import (
 	"log"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/messaging/broker"
-	"github.com/chrislusf/seaweedfs/weed/pb/messaging_pb"
+	"github.com/chrislusf/seaweedfs/weed/mq/broker"
+	"github.com/chrislusf/seaweedfs/weed/pb/mq_pb"
 )
 
 type SubChannel struct {
 	ch      chan []byte
-	stream  messaging_pb.SeaweedMessaging_SubscribeClient
+	stream  mq_pb.SeaweedMessaging_SubscribeClient
 	md5hash hash.Hash
 	cancel  context.CancelFunc
 }
@@ -57,7 +57,7 @@ func (mc *MessagingClient) NewSubChannel(subscriberId, chanName string) (*SubCha
 				continue
 			}
 			if resp.Data.IsClose {
-				t.stream.Send(&messaging_pb.SubscriberMessage{
+				t.stream.Send(&mq_pb.SubscriberMessage{
 					IsClose: true,
 				})
 				close(t.ch)
