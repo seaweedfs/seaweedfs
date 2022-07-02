@@ -33,7 +33,7 @@ var Commands = []*Command{
 	cmdMount,
 	cmdS3,
 	cmdIam,
-	cmdMsgBroker,
+	cmdMqBroker,
 	cmdScaffold,
 	cmdServer,
 	cmdShell,
