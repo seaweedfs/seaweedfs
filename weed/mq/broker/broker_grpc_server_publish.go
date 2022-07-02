@@ -13,7 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/mq_pb"
 )
 
-func (broker *MessageBroker) Publish(stream mq_pb.SeaweedMessaging_PublishServer) error {
+func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishServer) error {
 
 	// process initial request
 	in, err := stream.Recv()

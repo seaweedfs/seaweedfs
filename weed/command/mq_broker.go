@@ -23,6 +23,8 @@ var (
 )
 
 type MessageQueueBrokerOptions struct {
+	masters    *string
+	filerGroup *string
 	filer      *string
 	ip         *string
 	port       *int
@@ -32,7 +34,9 @@ type MessageQueueBrokerOptions struct {
 
 func init() {
 	cmdMqBroker.Run = runMqBroker // break init cycle
+	mqBrokerStandaloneOptions.masters = cmdMqBroker.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	mqBrokerStandaloneOptions.filer = cmdMqBroker.Flag.String("filer", "localhost:8888", "filer server address")
+	mqBrokerStandaloneOptions.filerGroup = cmdMqBroker.Flag.String("filerGroup", "", "share metadata with other filers in the same filerGroup")
 	mqBrokerStandaloneOptions.ip = cmdMqBroker.Flag.String("ip", util.DetectedHostAddress(), "broker host address")
 	mqBrokerStandaloneOptions.port = cmdMqBroker.Flag.Int("port", 17777, "broker gRPC listen port")
 	mqBrokerStandaloneOptions.cpuprofile = cmdMqBroker.Flag.String("cpuprofile", "", "cpu profile output file")
@@ -85,7 +89,9 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 		}
 	}
 
-	qs, err := broker.NewMessageBroker(&broker.MessageBrokerOption{
+	qs, err := broker.NewMessageBroker(&broker.MessageQueueBrokerOption{
+		Masters:            pb.ServerAddresses(*mqBrokerOpt.masters).ToAddressMap(),
+		FilerGroup:         *mqBrokerOpt.filerGroup,
 		Filers:             []pb.ServerAddress{filerAddress},
 		DefaultReplication: "",
 		MaxMB:              0,
