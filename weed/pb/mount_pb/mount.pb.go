@@ -143,12 +143,12 @@ func file_mount_proto_rawDescGZIP() []byte {
 
 var file_mount_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_mount_proto_goTypes = []interface{}{
-	(*ConfigureRequest)(nil),  // 0: mq_pb.ConfigureRequest
-	(*ConfigureResponse)(nil), // 1: mq_pb.ConfigureResponse
+	(*ConfigureRequest)(nil),  // 0: messaging_pb.ConfigureRequest
+	(*ConfigureResponse)(nil), // 1: messaging_pb.ConfigureResponse
 }
 var file_mount_proto_depIdxs = []int32{
-	0, // 0: mq_pb.SeaweedMount.Configure:input_type -> mq_pb.ConfigureRequest
-	1, // 1: mq_pb.SeaweedMount.Configure:output_type -> mq_pb.ConfigureResponse
+	0, // 0: messaging_pb.SeaweedMount.Configure:input_type -> messaging_pb.ConfigureRequest
+	1, // 1: messaging_pb.SeaweedMount.Configure:output_type -> messaging_pb.ConfigureResponse
 	1, // [1:2] is the sub-list for method output_type
 	0, // [0:1] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name

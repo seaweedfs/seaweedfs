@@ -18,6 +18,7 @@ type MasterClient struct {
 	FilerGroup     string
 	clientType     string
 	clientHost     pb.ServerAddress
+	rack           string
 	currentMaster  pb.ServerAddress
 	masters        map[string]pb.ServerAddress
 	grpcDialOption grpc.DialOption
@@ -27,11 +28,12 @@ type MasterClient struct {
 	OnPeerUpdate func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
 }
 
-func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, masters map[string]pb.ServerAddress) *MasterClient {
+func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters map[string]pb.ServerAddress) *MasterClient {
 	return &MasterClient{
 		FilerGroup:     filerGroup,
 		clientType:     clientType,
 		clientHost:     clientHost,
+		rack:           rack,
 		masters:        masters,
 		grpcDialOption: grpcDialOption,
 		vidMap:         newVidMap(clientDataCenter),
@@ -150,6 +152,8 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 
 		if err = stream.Send(&master_pb.KeepConnectedRequest{
 			FilerGroup:    mc.FilerGroup,
+			DataCenter:    mc.DataCenter,
+			Rack:          mc.rack,
 			ClientType:    mc.clientType,
 			ClientAddress: string(mc.clientHost),
 			Version:       util.Version(),

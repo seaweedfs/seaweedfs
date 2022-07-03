@@ -31,7 +31,7 @@ func NewSeaweedS3Client(cc grpc.ClientConnInterface) SeaweedS3Client {
 
 func (c *seaweedS3Client) Configure(ctx context.Context, in *S3ConfigureRequest, opts ...grpc.CallOption) (*S3ConfigureResponse, error) {
 	out := new(S3ConfigureResponse)
-	err := c.cc.Invoke(ctx, "/mq_pb.SeaweedS3/Configure", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedS3/Configure", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +76,7 @@ func _SeaweedS3_Configure_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/mq_pb.SeaweedS3/Configure",
+		FullMethod: "/messaging_pb.SeaweedS3/Configure",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SeaweedS3Server).Configure(ctx, req.(*S3ConfigureRequest))
@@ -88,7 +88,7 @@ func _SeaweedS3_Configure_Handler(srv interface{}, ctx context.Context, dec func
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var SeaweedS3_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "mq_pb.SeaweedS3",
+	ServiceName: "messaging_pb.SeaweedS3",
 	HandlerType: (*SeaweedS3Server)(nil),
 	Methods: []grpc.MethodDesc{
 		{

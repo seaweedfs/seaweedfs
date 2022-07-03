@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/cluster"
 	"net"
 	"sort"
 	"time"
@@ -253,12 +254,12 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	stopChan := make(chan bool, 1)
 
 	clientName, messageChan := ms.addClient(req.FilerGroup, req.ClientType, peerAddress)
-	for _, update := range ms.Cluster.AddClusterNode(req.FilerGroup, req.ClientType, peerAddress, req.Version) {
+	for _, update := range ms.Cluster.AddClusterNode(req.FilerGroup, req.ClientType, cluster.DataCenter(req.DataCenter), cluster.Rack(req.Rack), peerAddress, req.Version) {
 		ms.broadcastToClients(update)
 	}
 
 	defer func() {
-		for _, update := range ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, peerAddress) {
+		for _, update := range ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, cluster.DataCenter(req.DataCenter), cluster.Rack(req.Rack), peerAddress) {
 			ms.broadcastToClients(update)
 		}
 		ms.deleteClient(clientName)
