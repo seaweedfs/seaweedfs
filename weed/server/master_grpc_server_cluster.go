@@ -19,6 +19,8 @@ func (ms *MasterServer) ListClusterNodes(ctx context.Context, req *master_pb.Lis
 			Version:     node.Version,
 			IsLeader:    ms.Cluster.IsOneLeader(filerGroup, node.Address),
 			CreatedAtNs: node.CreatedTs.UnixNano(),
+			DataCenter:  string(node.DataCenter),
+			Rack:        string(node.Rack),
 		})
 	}
 	return resp, nil

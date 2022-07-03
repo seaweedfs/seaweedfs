@@ -34,10 +34,12 @@ type RackBrokers struct {
 }
 
 type ClusterNode struct {
-	Address   pb.ServerAddress
-	Version   string
-	counter   int
-	CreatedTs time.Time
+	Address    pb.ServerAddress
+	Version    string
+	counter    int
+	CreatedTs  time.Time
+	DataCenter DataCenter
+	Rack       Rack
 }
 
 type Cluster struct {
@@ -78,10 +80,12 @@ func (cluster *Cluster) AddClusterNode(ns, nodeType string, dataCenter DataCente
 			return nil
 		}
 		filers.filers[address] = &ClusterNode{
-			Address:   address,
-			Version:   version,
-			counter:   1,
-			CreatedTs: time.Now(),
+			Address:    address,
+			Version:    version,
+			counter:    1,
+			CreatedTs:  time.Now(),
+			DataCenter: dataCenter,
+			Rack:       rack,
 		}
 		return cluster.ensureFilerLeaders(filers, true, filerGroup, nodeType, address)
 	case BrokerType:
@@ -92,12 +96,14 @@ func (cluster *Cluster) AddClusterNode(ns, nodeType string, dataCenter DataCente
 			existingDataCenterBrokers = &DataCenterBrokers{
 				brokers: make(map[Rack]*RackBrokers),
 			}
+			cluster.brokers[dataCenter] = existingDataCenterBrokers
 		}
 		existingRackBrokers, foundRack := existingDataCenterBrokers.brokers[rack]
 		if !foundRack {
 			existingRackBrokers = &RackBrokers{
 				brokers: make(map[pb.ServerAddress]*ClusterNode),
 			}
+			existingDataCenterBrokers.brokers[rack] = existingRackBrokers
 		}
 
 		if existingBroker, found := existingRackBrokers.brokers[address]; found {
@@ -105,10 +111,12 @@ func (cluster *Cluster) AddClusterNode(ns, nodeType string, dataCenter DataCente
 			return nil
 		}
 		existingRackBrokers.brokers[address] = &ClusterNode{
-			Address:   address,
-			Version:   version,
-			counter:   1,
-			CreatedTs: time.Now(),
+			Address:    address,
+			Version:    version,
+			counter:    1,
+			CreatedTs:  time.Now(),
+			DataCenter: dataCenter,
+			Rack:       rack,
 		}
 		return []*master_pb.KeepConnectedResponse{
 			{
