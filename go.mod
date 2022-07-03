@@ -149,7 +149,7 @@ require (
 	github.com/Jille/raft-grpc-transport v1.2.0
 	github.com/arangodb/go-driver v1.3.2
 	github.com/fluent/fluent-logger-golang v1.9.0
-	github.com/hanwen/go-fuse/v2 v2.1.1-0.20220531082602-17a864ed5940
+	github.com/hanwen/go-fuse/v2 v2.1.1-0.20220627082937-d01fda7edf17
 	github.com/hashicorp/raft v1.3.9
 	github.com/hashicorp/raft-boltdb v0.0.0-20220329195025-15018e9b97e0
 	github.com/tikv/client-go/v2 v2.0.1
