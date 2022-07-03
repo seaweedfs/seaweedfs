@@ -80,12 +80,24 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 		fmt.Fprintf(writer, "* message queue brokers %d\n", len(mqBrokerNodes))
 		for _, node := range mqBrokerNodes {
 			fmt.Fprintf(writer, "  * %s (%v)\n", node.Address, node.Version)
+			if node.DataCenter != "" {
+				fmt.Fprintf(writer, "    DataCenter: %v\n", node.DataCenter)
+			}
+			if node.Rack != "" {
+				fmt.Fprintf(writer, "    Rack: %v\n", node.Rack)
+			}
 		}
 	}
 
 	fmt.Fprintf(writer, "* filers %d\n", len(filerNodes))
 	for _, node := range filerNodes {
 		fmt.Fprintf(writer, "  * %s (%v)\n", node.Address, node.Version)
+		if node.DataCenter != "" {
+			fmt.Fprintf(writer, "    DataCenter: %v\n", node.DataCenter)
+		}
+		if node.Rack != "" {
+			fmt.Fprintf(writer, "    Rack: %v\n", node.Rack)
+		}
 		pb.WithFilerClient(false, pb.ServerAddress(node.Address), commandEnv.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err == nil {
