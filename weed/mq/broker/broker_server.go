@@ -18,6 +18,8 @@ import (
 type MessageQueueBrokerOption struct {
 	Masters            map[string]pb.ServerAddress
 	FilerGroup         string
+	DataCenter         string
+	Rack               string
 	Filers             []pb.ServerAddress
 	DefaultReplication string
 	MaxMB              int
@@ -39,7 +41,7 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 	mqBroker = &MessageQueueBroker{
 		option:         option,
 		grpcDialOption: grpcDialOption,
-		MasterClient:   wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, pb.NewServerAddress(option.Ip, option.Port, 0), "", option.Masters),
+		MasterClient:   wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, pb.NewServerAddress(option.Ip, option.Port, 0), option.DataCenter, "", option.Masters),
 	}
 
 	mqBroker.topicManager = NewTopicManager(mqBroker)

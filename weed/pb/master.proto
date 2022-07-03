@@ -139,6 +139,8 @@ message KeepConnectedRequest {
   string client_address = 3;
   string version = 4;
   string filer_group = 5;
+  string data_center = 6;
+  string rack = 7;
 }
 
 message VolumeLocation {

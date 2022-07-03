@@ -35,7 +35,7 @@ func NewSeaweedMessagingClient(cc grpc.ClientConnInterface) SeaweedMessagingClie
 }
 
 func (c *seaweedMessagingClient) Subscribe(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_SubscribeClient, error) {
-	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[0], "/mq_pb.SeaweedMessaging/Subscribe", opts...)
+	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[0], "/messaging_pb.SeaweedMessaging/Subscribe", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func (x *seaweedMessagingSubscribeClient) Recv() (*BrokerMessage, error) {
 }
 
 func (c *seaweedMessagingClient) Publish(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublishClient, error) {
-	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[1], "/mq_pb.SeaweedMessaging/Publish", opts...)
+	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[1], "/messaging_pb.SeaweedMessaging/Publish", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +98,7 @@ func (x *seaweedMessagingPublishClient) Recv() (*PublishResponse, error) {
 
 func (c *seaweedMessagingClient) DeleteTopic(ctx context.Context, in *DeleteTopicRequest, opts ...grpc.CallOption) (*DeleteTopicResponse, error) {
 	out := new(DeleteTopicResponse)
-	err := c.cc.Invoke(ctx, "/mq_pb.SeaweedMessaging/DeleteTopic", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/DeleteTopic", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +107,7 @@ func (c *seaweedMessagingClient) DeleteTopic(ctx context.Context, in *DeleteTopi
 
 func (c *seaweedMessagingClient) ConfigureTopic(ctx context.Context, in *ConfigureTopicRequest, opts ...grpc.CallOption) (*ConfigureTopicResponse, error) {
 	out := new(ConfigureTopicResponse)
-	err := c.cc.Invoke(ctx, "/mq_pb.SeaweedMessaging/ConfigureTopic", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/ConfigureTopic", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +116,7 @@ func (c *seaweedMessagingClient) ConfigureTopic(ctx context.Context, in *Configu
 
 func (c *seaweedMessagingClient) GetTopicConfiguration(ctx context.Context, in *GetTopicConfigurationRequest, opts ...grpc.CallOption) (*GetTopicConfigurationResponse, error) {
 	out := new(GetTopicConfigurationResponse)
-	err := c.cc.Invoke(ctx, "/mq_pb.SeaweedMessaging/GetTopicConfiguration", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/GetTopicConfiguration", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +125,7 @@ func (c *seaweedMessagingClient) GetTopicConfiguration(ctx context.Context, in *
 
 func (c *seaweedMessagingClient) FindBroker(ctx context.Context, in *FindBrokerRequest, opts ...grpc.CallOption) (*FindBrokerResponse, error) {
 	out := new(FindBrokerResponse)
-	err := c.cc.Invoke(ctx, "/mq_pb.SeaweedMessaging/FindBroker", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/FindBroker", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +242,7 @@ func _SeaweedMessaging_DeleteTopic_Handler(srv interface{}, ctx context.Context,
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/mq_pb.SeaweedMessaging/DeleteTopic",
+		FullMethod: "/messaging_pb.SeaweedMessaging/DeleteTopic",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SeaweedMessagingServer).DeleteTopic(ctx, req.(*DeleteTopicRequest))
@@ -260,7 +260,7 @@ func _SeaweedMessaging_ConfigureTopic_Handler(srv interface{}, ctx context.Conte
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/mq_pb.SeaweedMessaging/ConfigureTopic",
+		FullMethod: "/messaging_pb.SeaweedMessaging/ConfigureTopic",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SeaweedMessagingServer).ConfigureTopic(ctx, req.(*ConfigureTopicRequest))
@@ -278,7 +278,7 @@ func _SeaweedMessaging_GetTopicConfiguration_Handler(srv interface{}, ctx contex
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/mq_pb.SeaweedMessaging/GetTopicConfiguration",
+		FullMethod: "/messaging_pb.SeaweedMessaging/GetTopicConfiguration",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SeaweedMessagingServer).GetTopicConfiguration(ctx, req.(*GetTopicConfigurationRequest))
@@ -296,7 +296,7 @@ func _SeaweedMessaging_FindBroker_Handler(srv interface{}, ctx context.Context, 
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/mq_pb.SeaweedMessaging/FindBroker",
+		FullMethod: "/messaging_pb.SeaweedMessaging/FindBroker",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SeaweedMessagingServer).FindBroker(ctx, req.(*FindBrokerRequest))
@@ -308,7 +308,7 @@ func _SeaweedMessaging_FindBroker_Handler(srv interface{}, ctx context.Context, 
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "mq_pb.SeaweedMessaging",
+	ServiceName: "messaging_pb.SeaweedMessaging",
 	HandlerType: (*SeaweedMessagingServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{

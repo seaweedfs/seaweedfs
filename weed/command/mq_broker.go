@@ -96,6 +96,8 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 	qs, err := broker.NewMessageBroker(&broker.MessageQueueBrokerOption{
 		Masters:            pb.ServerAddresses(*mqBrokerOpt.masters).ToAddressMap(),
 		FilerGroup:         *mqBrokerOpt.filerGroup,
+		DataCenter:         *mqBrokerOpt.dataCenter,
+		Rack:               *mqBrokerOpt.rack,
 		Filers:             []pb.ServerAddress{filerAddress},
 		DefaultReplication: "",
 		MaxMB:              0,
