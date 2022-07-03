@@ -501,6 +501,8 @@ github.com/hanwen/go-fuse v1.0.0/go.mod h1:unqXarDXqzAk0rt98O2tVndEPIpUgLD9+rwFi
 github.com/hanwen/go-fuse/v2 v2.1.0/go.mod h1:oRyA5eK+pvJyv5otpO/DgccS8y/RvYMaO00GgRLGryc=
 github.com/hanwen/go-fuse/v2 v2.1.1-0.20220531082602-17a864ed5940 h1:fZ4Oe3ArCbIe5Fzxr5yrDtAipC619dKuGYnrVlv5Hck=
 github.com/hanwen/go-fuse/v2 v2.1.1-0.20220531082602-17a864ed5940/go.mod h1:B1nGE/6RBFyBRC1RRnf23UpwCdyJ31eukw34oAKukAc=
+github.com/hanwen/go-fuse/v2 v2.1.1-0.20220627082937-d01fda7edf17 h1:fOTuYWxywhaliwMobGTP/6NUCgGdal6pCpuch4MHCnU=
+github.com/hanwen/go-fuse/v2 v2.1.1-0.20220627082937-d01fda7edf17/go.mod h1:B1nGE/6RBFyBRC1RRnf23UpwCdyJ31eukw34oAKukAc=
 github.com/hashicorp/errwrap v1.0.0 h1:hLrqtEDnRye3+sgx6z4qVLNuviH3MR5aQ0ykNJa/UYA=
 github.com/hashicorp/errwrap v1.0.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=
 github.com/hashicorp/go-cleanhttp v0.5.0/go.mod h1:JpRdi6/HCYpAwUzNwuwqhbovhLtngrth3wmdIIUrZ80=
