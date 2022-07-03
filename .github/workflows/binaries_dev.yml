@@ -24,6 +24,7 @@ jobs:
           fail-if-no-assets: false
           assets: |
             weed-*
+          fail-if-no-release: false
 
   build_dev_linux_windows:
     permissions:
