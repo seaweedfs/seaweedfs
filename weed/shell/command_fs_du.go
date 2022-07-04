@@ -76,7 +76,7 @@ func duTraverseDirectory(writer io.Writer, filerClient filer_pb.FilerClient, dir
 		}
 
 		if name != "" && !entry.IsDirectory {
-			fmt.Fprintf(writer, "block:%4d\tbyte:%10d\t%s/%s\n", fileBlockCount, fileByteCount, dir, entry.Name)
+			fmt.Fprintf(writer, "block:%4d\tlogical size:%10d\t%s/%s\n", fileBlockCount, fileByteCount, dir, entry.Name)
 		}
 		return nil
 	})
