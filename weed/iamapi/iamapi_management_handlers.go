@@ -36,6 +36,7 @@ var (
 		rand.NewSource(time.Now().UnixNano()))
 	policyDocuments = map[string]*PolicyDocument{}
 	policyLock      = sync.RWMutex{}
+	s3cfgLock       sync.RWMutex
 )
 
 func MapToStatementAction(action string) string {
@@ -412,11 +413,11 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	values := r.PostForm
-	var s3cfgLock sync.RWMutex
 	s3cfgLock.RLock()
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 	if err := iama.s3ApiConfig.GetS3ApiConfiguration(s3cfg); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		s3cfgLock.RUnlock()
 		return
 	}
 	s3cfgLock.RUnlock()
