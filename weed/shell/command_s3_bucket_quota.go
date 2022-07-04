@@ -4,8 +4,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"io"
+
+	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 )
 
 func init() {
@@ -23,7 +24,7 @@ func (c *commandS3BucketQuota) Help() string {
 	return `set/remove/enable/disable quota for a bucket
 
 	Example:
-		s3.bucket.quota -name=<bucket_name> -operation=set -sizeMB=1024
+		s3.bucket.quota -name=<bucket_name> -op=set -sizeMB=1024
 `
 }
 
