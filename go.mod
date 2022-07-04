@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	cloud.google.com/go v0.102.1 // indirect
-	cloud.google.com/go/pubsub v1.22.2
+	cloud.google.com/go/pubsub v1.23.1
 	cloud.google.com/go/storage v1.23.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
