@@ -32,7 +32,7 @@ func (c *commandS3BucketQuota) Do(args []string, commandEnv *CommandEnv, writer 
 
 	bucketCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	bucketName := bucketCommand.String("name", "", "bucket name")
-	operationName := bucketCommand.String("op", "set", "operation name [set|remove|enable|disable]")
+	operationName := bucketCommand.String("op", "set", "operation name [set|get|remove|enable|disable]")
 	sizeMB := bucketCommand.Int64("sizeMB", 0, "bucket quota size in MiB")
 	if err = bucketCommand.Parse(args); err != nil {
 		return nil
@@ -64,6 +64,9 @@ func (c *commandS3BucketQuota) Do(args []string, commandEnv *CommandEnv, writer 
 		switch *operationName {
 		case "set":
 			bucketEntry.Quota = *sizeMB * 1024 * 1024
+		case "get":
+			fmt.Fprintf(writer, "bucket quota: %dMiB \n", bucketEntry.Quota/1024/1024)
+			return nil
 		case "remove":
 			bucketEntry.Quota = 0
 		case "enable":
