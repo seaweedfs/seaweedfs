@@ -45,7 +45,7 @@ func (c *commandFsDu) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 	blockCount, byteCount, err = duTraverseDirectory(writer, commandEnv, dir, name)
 
 	if name == "" && err == nil {
-		fmt.Fprintf(writer, "block:%4d\tbyte:%10d\t%s\n", blockCount, byteCount, dir)
+		fmt.Fprintf(writer, "block:%4d\tlogical size:%10d\t%s\n", blockCount, byteCount, dir)
 	}
 
 	return
