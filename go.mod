@@ -140,7 +140,7 @@ require (
 	modernc.org/mathutil v1.4.1 // indirect
 	modernc.org/memory v1.1.1 // indirect
 	modernc.org/opt v0.1.1 // indirect
-	modernc.org/sqlite v1.17.2
+	modernc.org/sqlite v1.17.3
 	modernc.org/strutil v1.1.2
 	modernc.org/token v1.0.0 // indirect
 )
