@@ -50,6 +50,7 @@ func processEventWithOffsetFunc(cache *ParallelSyncMetadataCache, targetFilerSig
 
 func startEventsConsumer(cache *ParallelSyncMetadataCache, setOffsetFunc func(counter int64, lastTsNs int64) error) {
 	glog.Infof("start event synchronization consumer. from %s to %s", cache.sourceFiler, cache.targetFiler)
+
 	for {
 		select {
 		case <-cache.cancelChan:
@@ -59,7 +60,7 @@ func startEventsConsumer(cache *ParallelSyncMetadataCache, setOffsetFunc func(co
 			cache.events = append(cache.events, event)
 			cache.lastTsNs = event.TsNs
 			eventsSize := len(cache.events)
-			if eventsSize >= cache.parallelBatchSize || time.Since(time.Unix(0, cache.lastSyncTsNs)) >= cache.parallelWaitTime {
+			if eventsSize >= cache.parallelBatchSize || cache.lastSyncTsNs > 0 && time.Since(time.Unix(0, cache.lastSyncTsNs)) >= cache.parallelWaitTime {
 				persistEvents(cache, setOffsetFunc)
 			}
 		case <-time.After(cache.parallelWaitTime):
@@ -128,7 +129,11 @@ func buildWorkerGroup(parallelNum int, events []*filer_pb.SubscribeMetadataRespo
 		if sourceOldKey == "" {
 			affectedPath = sourceNewKey
 		}
-		rootTree.addNode(i, affectedPath.Split())
+		pathSplit := affectedPath.Split()
+		if len(pathSplit) > 1 && pathSplit[len(pathSplit)-1] == "" {
+			pathSplit = pathSplit[:len(pathSplit)-1]
+		}
+		rootTree.addNode(i, pathSplit)
 	}
 
 	return getEventGroupByNode(rootTree, parallelNum, events)

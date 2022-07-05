@@ -12,8 +12,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"reflect"
+	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -25,7 +28,8 @@ import (
 // async cost: 140s [parallelNum: 10, parallelBatchSize: 1000, parallelWaitTime:10s]
 // async cost: 140s [parallelNum: 20, parallelBatchSize: 1000, parallelWaitTime:20s]
 func TestParallelSyncBatchAddFiles(t *testing.T) {
-	fileFolderNumber := 10
+	t.SkipNow()
+	fileFolderNumber := 100
 	fileNumber := 100
 	buffers, _ := getFile1KBBytes()
 	filerUrl := "http://localhost:8888/test"
@@ -41,7 +45,7 @@ func TestParallelSyncBatchAddFiles(t *testing.T) {
 			createFile1KB(client, address, buffers)
 		}
 	}
-	fmt.Printf("cost: %0.2fs\n", time.Since(startTime).Seconds())
+	printCostTime(startTime)
 }
 
 // test delete files
@@ -51,8 +55,9 @@ func TestParallelSyncBatchAddFiles(t *testing.T) {
 // async cost: 65s [parallelNum: 10, parallelBatchSize: 1000, parallelWaitTime:20s]
 // async cost: 61s [parallelNum: 20, parallelBatchSize: 1000, parallelWaitTime:20s]
 func TestParallelSyncBatchDeleteFiles(t *testing.T) {
+	t.SkipNow()
 	// Can be tested in linkage with TestParallelSyncBatchAddFiles
-	fileFolderNumber := 10
+	fileFolderNumber := 100
 	fileNumber := 100
 	filerUrl := "http://localhost:8888/test"
 
@@ -71,10 +76,11 @@ func TestParallelSyncBatchDeleteFiles(t *testing.T) {
 		// delete all folders
 		deleteFilesOrFolders(client, folderAddress)
 	}
-	fmt.Printf("cost: %0.2fs\n", time.Since(startTime).Seconds())
+	printCostTime(startTime)
 }
 
 func TestParallelSyncHybrid(t *testing.T) {
+	t.SkipNow()
 	deleteFolder := false
 	rootPath := "/test"
 	aFilerUrl := "http://localhost:8888" + rootPath
@@ -156,11 +162,12 @@ func TestParallelSyncHybrid(t *testing.T) {
 		}
 	}
 
-	fmt.Printf("cost: %0.2fs\n", time.Since(startTime).Seconds())
+	printCostTime(startTime)
 }
 
 // move 0~9 to 10
 func TestParallelSyncMove(t *testing.T) {
+	t.SkipNow()
 	fileFolderNumber := 10
 	fileNumber := 1
 	deleteFolder := true
@@ -197,9 +204,162 @@ func TestParallelSyncMove(t *testing.T) {
 			address := aFilerUrl + "/" + strconv.Itoa(i) + "/"
 			deleteFilesOrFolders(client, address)
 		}
-		fmt.Printf("cost: %0.2fs\n", time.Since(startTime).Seconds())
+	}
+	printCostTime(startTime)
+
+}
+
+func TestParallelSyncEvents(t *testing.T) {
+	var parallelNum = 10
+	var parallelBatch = 100
+	var persistEventFns = make([]func(resp *filer_pb.SubscribeMetadataResponse) error, 0, parallelNum)
+	var folderCount = 10
+	var fileCount = 10
+	var deleteFilerCount = folderCount*fileCount + folderCount
+	var totalCount = folderCount*folderCount + folderCount + deleteFilerCount
+	var sendCount = 0
+	var goroutinePids []string
+	var sortEvents []*filer_pb.SubscribeMetadataResponse
+	var startTime = time.Now()
+	recordMap := make(map[string][]string)
+
+	lock := sync.RWMutex{}
+
+	for i := 0; i < parallelNum; i++ {
+		persistEventFns = append(persistEventFns, func(resp *filer_pb.SubscribeMetadataResponse) error {
+			lock.Lock()
+			pid := string(bytes.Fields(debug.Stack())[1])
+			exist := false
+			for _, e := range goroutinePids {
+				if e == pid {
+					exist = true
+				}
+			}
+			if !exist {
+				goroutinePids = append(goroutinePids, pid)
+			}
+			recordMap[pid] = append(recordMap[pid], resp.String())
+			sortEvents = append(sortEvents, resp)
+			lock.Unlock()
+			return nil
+		})
 	}
 
+	stopEventsConsumerChan := make(chan struct{})
+
+	setOffsetFn := func(counter int64, lastTsNs int64) error {
+		sendCount = sendCount + int(counter)
+		return nil
+	}
+
+	eventsChan := make(chan *filer_pb.SubscribeMetadataResponse, 100)
+
+	cache := &ParallelSyncMetadataCache{persistEventFns: persistEventFns,
+		events: []*filer_pb.SubscribeMetadataResponse{}, eventsChan: eventsChan, cancelChan: stopEventsConsumerChan,
+		parallelNum: parallelNum, parallelBatchSize: parallelBatch, parallelWaitTime: 2 * time.Second,
+		sourceFiler: "sourceFiler", targetFiler: "targetFiler"}
+
+	go startEventsConsumer(cache, setOffsetFn)
+
+	// put event into channel
+	for i := 0; i < folderCount; i++ {
+		curTimeNs := time.Now().UnixNano()
+		newEntry := filer_pb.Entry{Name: "/" + strconv.Itoa(i)}
+		eventNotification := filer_pb.EventNotification{NewEntry: &newEntry, OldEntry: nil}
+		event := filer_pb.SubscribeMetadataResponse{TsNs: curTimeNs, EventNotification: &eventNotification}
+		eventsChan <- &event
+		for j := 0; j < fileCount; j++ {
+			newEntry := filer_pb.Entry{Name: "/" + strconv.Itoa(i) + "/" + strconv.Itoa(j)}
+			eventNotification := filer_pb.EventNotification{NewEntry: &newEntry, OldEntry: nil}
+			event := filer_pb.SubscribeMetadataResponse{TsNs: curTimeNs, EventNotification: &eventNotification}
+			eventsChan <- &event
+		}
+	}
+
+	for i := 0; i < folderCount; i++ {
+		curTimeNs := time.Now().UnixNano()
+		for j := 0; j < fileCount; j++ {
+			// delete files
+			oldEntry := filer_pb.Entry{Name: "/" + strconv.Itoa(i) + "/" + strconv.Itoa(j)}
+			eventNotification := filer_pb.EventNotification{NewEntry: nil, OldEntry: &oldEntry}
+			event := filer_pb.SubscribeMetadataResponse{TsNs: curTimeNs, EventNotification: &eventNotification}
+			eventsChan <- &event
+		}
+		oldEntry := filer_pb.Entry{Name: "/" + strconv.Itoa(i)}
+		eventNotification := filer_pb.EventNotification{NewEntry: nil, OldEntry: &oldEntry}
+		event := filer_pb.SubscribeMetadataResponse{TsNs: curTimeNs, EventNotification: &eventNotification}
+		eventsChan <- &event
+	}
+
+	// check event size
+	// Exit automatically for more than 50 times
+	maxWaitTimes := 50
+	for {
+		if maxWaitTimes == 0 {
+			stopEventsConsumerChan <- struct{}{}
+			fmt.Printf("automatically stop event synchronization consumer. from %s to %s\n", "sourceFiler", "targetFiler")
+			break
+		}
+
+		if totalCount == sendCount {
+			stopEventsConsumerChan <- struct{}{}
+			fmt.Printf("stop event synchronization consumer. from %s to %s\n", "sourceFiler", "targetFiler")
+			break
+		}
+		maxWaitTimes = maxWaitTimes - 1
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// add action
+	for i := 0; i < folderCount; i++ {
+		assert.True(t, ifBeforeAllEventsByTsNs(i, false, sortEvents))
+	}
+
+	// delete action
+	reverseSlice(sortEvents)
+	for i := 0; i < folderCount; i++ {
+		assert.True(t, ifBeforeAllEventsByTsNs(i, true, sortEvents))
+	}
+
+	printCostTime(startTime)
+}
+
+func reverseSlice(s interface{}) {
+	size := reflect.ValueOf(s).Len()
+	swap := reflect.Swapper(s)
+	for i, j := 0, size-1; i < j; i, j = i+1, j-1 {
+		swap(i, j)
+	}
+}
+
+func ifBeforeAllEventsByTsNs(idx int, ifDelete bool, events []*filer_pb.SubscribeMetadataResponse) bool {
+	// find the same timestamp to judge whether it is the first one.
+	for _, item := range events {
+		if !ifDelete {
+			if item.EventNotification.NewEntry != nil {
+				if strings.HasPrefix(item.EventNotification.NewEntry.Name, "/"+strconv.Itoa(idx)) {
+					// add action
+					if item.EventNotification.NewEntry.Name == "/"+strconv.Itoa(idx) {
+						return true
+					} else {
+						return false
+					}
+				}
+			}
+		} else {
+			// delete action
+			if item.EventNotification.OldEntry != nil {
+				if strings.HasPrefix(item.EventNotification.OldEntry.Name, "/"+strconv.Itoa(idx)) {
+					if item.EventNotification.OldEntry.Name == "/"+strconv.Itoa(idx) {
+						return true
+					} else {
+						return false
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 func TestParallelSyncSplitNodes(t *testing.T) {
@@ -382,4 +542,8 @@ func mvFilesOrFolders(client *http.Client, address string) {
 		fmt.Printf("delete %s error.", address)
 	}
 	resp.Body.Close()
+}
+
+func printCostTime(startTime time.Time) {
+	fmt.Printf("cost: %0.2fs\n", time.Since(startTime).Seconds())
 }
