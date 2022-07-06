@@ -281,7 +281,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	request := &filer_pb.ListEntriesRequest{
 		Directory:          dir,
 		Prefix:             prefix,
-		Limit:              uint32(maxKeys + 1),
+		Limit:              uint32(maxKeys + 2), // bucket root directory needs to skip additional s3_constants.MultipartUploadsFolder folder
 		StartFromFileName:  marker,
 		InclusiveStartFrom: inclusiveStartFrom,
 	}
