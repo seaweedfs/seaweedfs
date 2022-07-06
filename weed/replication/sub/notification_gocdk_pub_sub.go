@@ -46,17 +46,17 @@ func QueueDeclareAndBind(conn *amqp.Connection, exchangeUrl string, queueUrl str
 	}
 	defer ch.Close()
 	if err := ch.ExchangeDeclare(
-		exchangeNameDLX, "fanout", false, false, false, false, nil); err != nil {
+		exchangeNameDLX, "fanout", true, false, false, false, nil); err != nil {
 		glog.Error(err)
 		return err
 	}
 	if err := ch.ExchangeDeclare(
-		exchangeName, "fanout", false, false, false, false, nil); err != nil {
+		exchangeName, "fanout", true, false, false, false, nil); err != nil {
 		glog.Error(err)
 		return err
 	}
 	if _, err := ch.QueueDeclare(
-		queueName, false, false, false, false,
+		queueName, true, false, false, false,
 		amqp.Table{"x-dead-letter-exchange": exchangeNameDLX}); err != nil {
 		glog.Error(err)
 		return err
@@ -66,7 +66,7 @@ func QueueDeclareAndBind(conn *amqp.Connection, exchangeUrl string, queueUrl str
 		return err
 	}
 	if _, err := ch.QueueDeclare(
-		queueNameDLX, false, false, false, false,
+		queueNameDLX, true, false, false, false,
 		amqp.Table{"x-dead-letter-exchange": exchangeName, "x-message-ttl": 600000}); err != nil {
 		glog.Error(err)
 		return err
