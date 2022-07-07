@@ -270,6 +270,11 @@
         }
     }
 
+    function hideProgress() {
+        progressArea.innerHTML = '';
+        progressArea.attributes.style.value = 'display: none;';
+    }
+
     function reportProgress(file, percent) {
         var item = uploadList[file]
         item.percent = percent;
@@ -378,20 +383,18 @@
             baseUrl += '/';
         }
         var url = baseUrl + fname + '?source_url=' + srcUrl;
-        console.log(url);
         var xhr = new XMLHttpRequest();
         xhr.open('POST', url);
         xhr.setRequestHeader('Content-Type', '');
         xhr.onreadystatechange = function () {
-            // In local files, status is 0 upon success in Mozilla Firefox
-            console.log(xhr.readyState);
-            console.log(xhr.status);
             if(xhr.readyState === XMLHttpRequest.DONE) {
                 var status = xhr.status;
                 if (status > 200 && status < 400) {
                     reloadPage();
                 } else {
                     alert('Upload from ' + srcUrl + ' got error');
+                    uploadList = {};
+                    hideProgress();
                 }
             }
         };
