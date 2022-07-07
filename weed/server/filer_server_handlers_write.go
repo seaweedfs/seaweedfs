@@ -110,8 +110,15 @@ func (fs *FilerServer) uploadFromSourceURL(ctx context.Context, w http.ResponseW
 		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("Invalid protocol: %s", srcUrl.Scheme))
 		return
 	}
-
-	resp, err := http.Get(srcUrl.String())
+	req, err := http.NewRequest("GET", srcUrl.String(), nil)
+	if err != nil {
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	req.Header.Set("User-Agent", "curl/7.68.0")
+	req.Header.Set("Accept", "*/*")
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
 		writeJsonError(w, r, http.StatusBadRequest, err)
 		return
