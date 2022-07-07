@@ -106,7 +106,7 @@ func (fs *FilerServer) uploadFromSourceURL(ctx context.Context, w http.ResponseW
 		writeJsonError(w, r, http.StatusBadRequest, err)
 		return
 	}
-	if srcUrl.Scheme != "http" || srcUrl.Scheme != "https" {
+	if srcUrl.Scheme != "http" && srcUrl.Scheme != "https" {
 		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("Invalid protocol: %s", srcUrl.Scheme))
 		return
 	}
