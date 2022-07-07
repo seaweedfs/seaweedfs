@@ -125,7 +125,7 @@ func (fs *FilerServer) uploadFromSourceURL(ctx context.Context, w http.ResponseW
 
 	contentLength := resp.ContentLength
 	contentType := resp.Header.Get("Content-Type")
-	fs.autoChunkWithOtherStream(ctx, w, r, resp.Body, contentLength, contentType, so)
+	fs.autoChunkWithStream(ctx, w, r, resp.Body, contentLength, contentType, so)
 
 	util.CloseRequest(r)
 }

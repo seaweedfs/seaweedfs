@@ -70,7 +70,7 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 	}
 }
 
-func (fs *FilerServer) autoChunkWithOtherStream(ctx context.Context, w http.ResponseWriter, r *http.Request, stream io.Reader, contentLength int64, contentType string, so *operation.StorageOption) {
+func (fs *FilerServer) autoChunkWithStream(ctx context.Context, w http.ResponseWriter, r *http.Request, stream io.Reader, contentLength int64, contentType string, so *operation.StorageOption) {
 	maxMB := int32(fs.option.MaxMB)
 
 	chunkSize := 1024 * 1024 * maxMB
@@ -81,7 +81,7 @@ func (fs *FilerServer) autoChunkWithOtherStream(ctx context.Context, w http.Resp
 		stats.FilerRequestHistogram.WithLabelValues("chunk").Observe(time.Since(start).Seconds())
 	}()
 
-	reply, md5bytes, err := fs.doAutoChunkWithOtherStream(ctx, w, r, stream, chunkSize, contentLength, contentType, so)
+	reply, md5bytes, err := fs.doAutoChunkWithStream(ctx, w, r, stream, chunkSize, contentLength, contentType, so)
 	if err != nil {
 		if strings.HasPrefix(err.Error(), "read input:") {
 			writeJsonError(w, r, 499, err)
@@ -99,7 +99,7 @@ func (fs *FilerServer) autoChunkWithOtherStream(ctx context.Context, w http.Resp
 	}
 }
 
-func (fs *FilerServer) doAutoChunkWithOtherStream(ctx context.Context, w http.ResponseWriter, r *http.Request, stream io.Reader, chunkSize int32, contentLength int64, contentType string, so *operation.StorageOption) (filerResult *FilerPostResult, md5bytes []byte, replyerr error) {
+func (fs *FilerServer) doAutoChunkWithStream(ctx context.Context, w http.ResponseWriter, r *http.Request, stream io.Reader, chunkSize int32, contentLength int64, contentType string, so *operation.StorageOption) (filerResult *FilerPostResult, md5bytes []byte, replyerr error) {
 
 	fileName := path.Base(r.URL.Path)
 	if contentType == "application/octet-stream" {
