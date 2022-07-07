@@ -6,7 +6,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"golang.org/x/exp/slices"
-	"io"
 	"sync"
 )
 
@@ -24,7 +23,7 @@ type FileHandle struct {
 	dirtyMetadata  bool
 	dirtyPages     *PageWriter
 	entryViewCache []filer.VisibleInterval
-	reader         io.ReaderAt
+	reader         *filer.ChunkReadAt
 	contentType    string
 	handle         uint64
 	sync.Mutex
@@ -99,8 +98,16 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 	fh.entryViewCache = nil
 }
 
+func (fh *FileHandle) SetReader(reader *filer.ChunkReadAt) {
+	if fh.reader != nil {
+		fh.reader.Close()
+	}
+	fh.reader = reader
+}
+
 func (fh *FileHandle) Release() {
 	fh.dirtyPages.Destroy()
+	fh.SetReader(nil)
 }
 
 func lessThan(a, b *filer_pb.FileChunk) bool {

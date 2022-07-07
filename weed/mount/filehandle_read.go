@@ -62,7 +62,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		if chunkResolveErr != nil {
 			return 0, fmt.Errorf("fail to resolve chunk manifest: %v", chunkResolveErr)
 		}
-		fh.reader = nil
+		fh.SetReader(nil)
 	}
 
 	reader := fh.reader
@@ -74,7 +74,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		}
 		reader = filer.NewChunkReaderAtFromClient(fh.wfs.LookupFn(), chunkViews, fh.wfs.chunkCache, fileSize)
 	}
-	fh.reader = reader
+	fh.SetReader(reader)
 
 	totalRead, err := reader.ReadAt(buff, offset)
 
