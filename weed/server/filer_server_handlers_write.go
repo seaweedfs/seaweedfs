@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -100,7 +101,17 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 
 func (fs *FilerServer) uploadFromSourceURL(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) {
 	sourceUrl := r.URL.Query().Get("source_url")
-	resp, err := http.Get(sourceUrl)
+	srcUrl, err := url.ParseRequestURI(sourceUrl)
+	if err != nil {
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	if srcUrl.Scheme != "http" || srcUrl.Scheme != "https" {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("Invalid protocol: %s", srcUrl.Scheme))
+		return
+	}
+
+	resp, err := http.Get(srcUrl.String())
 	if err != nil {
 		writeJsonError(w, r, http.StatusBadRequest, err)
 		return
