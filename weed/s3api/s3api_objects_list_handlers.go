@@ -148,7 +148,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	// check filer
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		_, isTruncated, nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, maxKeys, marker, delimiter, false, false, bucketPrefixLen, func(dir string, entry *filer_pb.Entry) {
+		_, isTruncated, nextMarker, doErr = s3a.doListFilerEntries(client, originalPrefix, reqDir, prefix, maxKeys, marker, delimiter, false, false, bucketPrefixLen, func(dir string, entry *filer_pb.Entry) {
 			if entry.IsDirectory {
 				if delimiter == "/" {
 					commonPrefixes = append(commonPrefixes, PrefixEntry{
@@ -189,7 +189,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 				reqDir, prefix = filepath.Split(strings.TrimSuffix(reqDir, "/"))
 				reqDir = strings.TrimSuffix(reqDir, "/")
 			}
-			_, _, _, doErr = s3a.doListFilerEntries(client, reqDir, prefix, 1, prefix, delimiter, true, false, bucketPrefixLen, func(dir string, entry *filer_pb.Entry) {
+			_, _, _, doErr = s3a.doListFilerEntries(client, originalPrefix, reqDir, prefix, 1, prefix, delimiter, true, false, bucketPrefixLen, func(dir string, entry *filer_pb.Entry) {
 				if entry.IsDirectoryKeyObject() && entry.Name == prefix {
 					storageClass := "STANDARD"
 					if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
@@ -235,7 +235,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	return
 }
 
-func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, maxKeys int, marker, delimiter string, inclusiveStartFrom bool, subEntries bool, bucketPrefixLen int, eachEntryFn func(dir string, entry *filer_pb.Entry)) (counter int, isTruncated bool, nextMarker string, err error) {
+func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, originalPrefix, dir, prefix string, maxKeys int, marker, delimiter string, inclusiveStartFrom bool, subEntries bool, bucketPrefixLen int, eachEntryFn func(dir string, entry *filer_pb.Entry)) (counter int, isTruncated bool, nextMarker string, err error) {
 	// invariants
 	//   prefix and marker should be under dir, marker may contain "/"
 	//   maxKeys should be updated for each recursion
@@ -253,14 +253,17 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		}
 		sepIndex := strings.Index(marker, "/")
 		if sepIndex != -1 {
-			subPrefix, subMarker := marker[0:sepIndex], marker[sepIndex+1:]
-			var subDir string
-			if len(dir) > bucketPrefixLen && dir[bucketPrefixLen:] == subPrefix {
-				subDir = dir
+			var subPrefix, subMarker string
+			if len(originalPrefix) > 1 && strings.Contains(originalPrefix, "/") {
+				marker = marker[len(dir[bucketPrefixLen:]):]
+				sepIndex = strings.Index(marker, "/")
+				subPrefix, subMarker = marker[0:sepIndex], marker[sepIndex+1:]
 			} else {
-				subDir = fmt.Sprintf("%s/%s", dir, subPrefix)
+				subPrefix, subMarker = marker[0:sepIndex], marker[sepIndex+1:]
 			}
-			subCounter, subIsTruncated, subNextMarker, subErr := s3a.doListFilerEntries(client, subDir, "", maxKeys, subMarker, delimiter, false, false, bucketPrefixLen, eachEntryFn)
+			subDir := fmt.Sprintf("%s/%s", dir, subPrefix)
+			glog.V(4).Infof("with marker doListFilerEntries originalPrefix: %v, dir: %v, prefix: %v, marker: %v, subPrefix: %v, subMarker: %v, subDir: %v, maxKeys: %v", originalPrefix, dir, prefix, marker, subPrefix, subMarker, subDir, maxKeys)
+			subCounter, subIsTruncated, subNextMarker, subErr := s3a.doListFilerEntries(client, originalPrefix, subDir, "", maxKeys, subMarker, delimiter, false, false, bucketPrefixLen, eachEntryFn)
 			if subErr != nil {
 				err = subErr
 				return
@@ -318,7 +321,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			if delimiter == "" {
 				eachEntryFn(dir, entry)
 				// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "maxKeys", maxKeys-counter)
-				subCounter, subIsTruncated, subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", maxKeys-counter, "", delimiter, false, true, bucketPrefixLen, eachEntryFn)
+				subCounter, subIsTruncated, subNextMarker, subErr := s3a.doListFilerEntries(client, originalPrefix, dir+"/"+entry.Name, "", maxKeys-counter, "", delimiter, false, true, bucketPrefixLen, eachEntryFn)
 				if subErr != nil {
 					err = fmt.Errorf("doListFilerEntries2: %v", subErr)
 					return
