@@ -115,7 +115,11 @@ func (fs *FilerServer) uploadFromSourceURL(ctx context.Context, w http.ResponseW
 		writeJsonError(w, r, http.StatusBadRequest, err)
 		return
 	}
-	req.Header.Set("User-Agent", "curl/7.68.0")
+	ua := r.Header.Get("User-Agent")
+	if ua == "" {
+		ua = "curl/7.68.0"
+	}
+	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Accept", "*/*")
 	client := &http.Client{}
 	resp, err := client.Do(req)
