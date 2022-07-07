@@ -382,7 +382,7 @@
         if (!baseUrl.endsWith('/')) {
             baseUrl += '/';
         }
-        var url = baseUrl + fname + '?source_url=' + srcUrl;
+        var url = baseUrl + fname + '?from.url=' + srcUrl;
         var xhr = new XMLHttpRequest();
         xhr.open('POST', url);
         xhr.setRequestHeader('Content-Type', '');

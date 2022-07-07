@@ -21,6 +21,11 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
+const (
+	QS_MOVE_FROM = "mv.from"
+	QS_FROM_URL  = "from.url"
+)
+
 var (
 	OS_UID = uint32(os.Getuid())
 	OS_GID = uint32(os.Getgid())
@@ -87,9 +92,9 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		return
 	}
 
-	if query.Has("mv.from") {
+	if query.Has(QS_MOVE_FROM) {
 		fs.move(ctx, w, r, so)
-	} else if query.Has("source_url") {
+	} else if query.Has(QS_FROM_URL) {
 		fs.uploadFromSourceURL(ctx, w, r, so)
 	} else {
 		fs.autoChunk(ctx, w, r, contentLength, so)
@@ -100,7 +105,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 }
 
 func (fs *FilerServer) uploadFromSourceURL(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) {
-	sourceUrl := r.URL.Query().Get("source_url")
+	sourceUrl := r.URL.Query().Get(QS_FROM_URL)
 	srcUrl, err := url.ParseRequestURI(sourceUrl)
 	if err != nil {
 		writeJsonError(w, r, http.StatusBadRequest, err)
@@ -142,7 +147,7 @@ func (fs *FilerServer) uploadFromSourceURL(ctx context.Context, w http.ResponseW
 }
 
 func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) {
-	src := r.URL.Query().Get("mv.from")
+	src := r.URL.Query().Get(QS_MOVE_FROM)
 	dst := r.URL.Path
 
 	glog.V(2).Infof("FilerServer.move %v to %v", src, dst)
