@@ -94,9 +94,11 @@
                 <label class="btn btn-default" for="fileElem">
                     <span class="glyphicon glyphicon-cloud-upload" aria-hidden="true"></span> Upload
                 </label>
+                {{ if .EnableUploadFromUrl  }}
                 <label class="btn btn-default" onclick="handleUploadFromUrl()">
                     <span class="glyphicon glyphicon-cloud-upload" aria-hidden="true"></span> Upload From URL
                 </label>
+                {{ end }}
             </div>
             <ol class="breadcrumb">
             {{ range $entry := .Breadcrumbs }}

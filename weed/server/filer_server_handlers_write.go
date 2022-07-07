@@ -94,7 +94,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 
 	if query.Has(QS_MOVE_FROM) {
 		fs.move(ctx, w, r, so)
-	} else if query.Has(QS_FROM_URL) {
+	} else if fs.option.EnableUploadFromUrl && query.Has(QS_FROM_URL) {
 		fs.uploadFromSourceURL(ctx, w, r, so)
 	} else {
 		fs.autoChunk(ctx, w, r, contentLength, so)
