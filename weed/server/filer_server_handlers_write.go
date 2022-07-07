@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
@@ -87,12 +88,35 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 
 	if query.Has("mv.from") {
 		fs.move(ctx, w, r, so)
+	} else if query.Has("source_url") {
+		fs.uploadFromSourceURL(ctx, w, r, so)
 	} else {
 		fs.autoChunk(ctx, w, r, contentLength, so)
 	}
 
 	util.CloseRequest(r)
 
+}
+
+func (fs *FilerServer) uploadFromSourceURL(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) {
+	sourceUrl := r.URL.Query().Get("source_url")
+	resp, err := http.Get(sourceUrl)
+	if err != nil {
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	defer resp.Body.Close()
+	// Only HTTP 200 OK is valid response
+	if resp.StatusCode != 200 {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("Bad source URL status code: %d", resp.StatusCode))
+		return
+	}
+
+	contentLength := resp.ContentLength
+	contentType := resp.Header.Get("Content-Type")
+	fs.autoChunkWithOtherStream(ctx, w, r, resp.Body, contentLength, contentType, so)
+
+	util.CloseRequest(r)
 }
 
 func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) {
