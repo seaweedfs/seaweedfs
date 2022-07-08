@@ -179,8 +179,8 @@ var (
 
 func TestLimit(t *testing.T) {
 	circuitBreaker := &CircuitBreaker{
-		counters:    make(map[string]*int64),
-		limitations: make(map[string]int64),
+		globalTrafficLimits: TrafficLimits{},
+		bucketTrafficLimits: map[string]TrafficLimits{},
 	}
 
 	for _, tc := range TestLimitCases {
@@ -189,9 +189,11 @@ func TestLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		successCount := doLimit(circuitBreaker, tc)
-		if successCount != tc.successCount {
-			t.Errorf("successCount not equal, expect=%d, actual=%d, case: %v, circuitBreaker.limitations: %v", tc.successCount, successCount, tc, circuitBreaker.limitations)
+		for i := 0; i < 2; i++ {
+			successCount := doLimit(circuitBreaker, tc)
+			if successCount != tc.successCount {
+				t.Fatalf("successCount not equal, expect=%d, actual=%d, case: %v", tc.successCount, successCount, tc)
+			}
 		}
 	}
 }
@@ -207,7 +209,7 @@ func doLimit(circuitBreaker *CircuitBreaker, tc *TestLimitCase) int64 {
 			var rollbackFn []func()
 			errCode := s3err.ErrNone
 			if circuitBreaker.Enabled {
-				_, rollbackFn, errCode = circuitBreaker.limit(&http.Request{ContentLength: fileSize}, tc.reqBucket, tc.reqAction)
+				rollbackFn, errCode = circuitBreaker.limit(&http.Request{ContentLength: fileSize}, tc.reqBucket, tc.reqAction)
 			}
 			if errCode == s3err.ErrNone {
 				atomic.AddInt64(&successCounter, 1)

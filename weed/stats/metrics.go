@@ -190,7 +190,7 @@ var (
 			Subsystem: "s3",
 			Name:      "request_limits",
 			Help:      "Counter of s3 circuit breaker request limits.",
-		}, []string{"action"})
+		}, []string{"bucket", "action", "type"})
 )
 
 func init() {

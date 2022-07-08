@@ -15,21 +15,73 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 )
 
+type TrafficLimits map[string]*BucketTrafficLimit
+
+func (tl TrafficLimits) doLimit(r *http.Request, action string, rollbackFns []func()) (bool, []func()) {
+	//Count
+	countLimitAction := s3_constants.Concat(action, s3_constants.LimitTypeCount)
+	if countTraffic, exists := tl[countLimitAction]; exists {
+		reject, rollbackFn := countTraffic.loadAndCompare(1)
+		if rollbackFn != nil {
+			rollbackFns = append(rollbackFns, rollbackFn)
+		}
+		if reject {
+			stats.S3RequestLimitCounter.WithLabelValues(countTraffic.name, countLimitAction, s3_constants.LimitTypeCount)
+			return true, rollbackFns
+		}
+	}
+
+	//Bytes
+	bytesLimitAction := s3_constants.Concat(action, s3_constants.LimitTypeMB)
+	if bytesTraffic, exists := tl[bytesLimitAction]; exists {
+		reject, rollbackFn := bytesTraffic.loadAndCompare(r.ContentLength)
+		if rollbackFn != nil {
+			rollbackFns = append(rollbackFns, rollbackFn)
+		}
+		if reject {
+			stats.S3RequestLimitCounter.WithLabelValues(bytesTraffic.name, action, s3_constants.LimitTypeMB)
+			return true, rollbackFns
+		}
+	}
+
+	return false, rollbackFns
+}
+
+type BucketTrafficLimit struct {
+	name  string
+	max   int64
+	count int64
+}
+
+func (btl *BucketTrafficLimit) loadAndCompare(delta int64) (bool, func()) {
+	if atomic.LoadInt64(&btl.count)+delta > btl.max {
+		return true, nil
+	}
+
+	current := atomic.AddInt64(&btl.count, delta)
+	rollbackFn := func() {
+		atomic.AddInt64(&btl.count, -delta)
+	}
+	if current > btl.max {
+		return true, rollbackFn
+	}
+
+	return false, rollbackFn
+}
+
 type CircuitBreaker struct {
-	sync.RWMutex
-	Enabled     bool
-	counters    map[string]*int64
-	limitations map[string]int64
+	Enabled             bool
+	globalTrafficLimits TrafficLimits
+	bucketTrafficLimits map[string]TrafficLimits
 }
 
 func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
 	cb := &CircuitBreaker{
-		counters:    make(map[string]*int64),
-		limitations: make(map[string]int64),
+		globalTrafficLimits: TrafficLimits{},
+		bucketTrafficLimits: map[string]TrafficLimits{},
 	}
 
 	err := pb.WithFilerClient(false, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -63,7 +115,10 @@ func (cb *CircuitBreaker) LoadS3ApiConfigurationFromBytes(content []byte) error 
 func (cb *CircuitBreaker) loadCircuitBreakerConfig(cfg *s3_pb.S3CircuitBreakerConfig) error {
 	globalEnabled := false
 	globalOptions := cfg.Global
-	limitations := make(map[string]int64)
+
+	globalTrafficLimits := TrafficLimits{}
+	bucketTrafficLimits := make(map[string]TrafficLimits)
+
 	if globalOptions != nil && globalOptions.Enabled {
 		globalEnabled = true
 
@@ -73,24 +128,28 @@ func (cb *CircuitBreaker) loadCircuitBreakerConfig(cfg *s3_pb.S3CircuitBreakerCo
 			if err != nil || value < 0 {
 				glog.Warningf("invalid limit config: %v", err)
 			}
-			limitations[action] = value
+			globalTrafficLimits[action] = &BucketTrafficLimit{name: "", max: value}
 		}
 
 		//buckets
 		for bucket, cbOptions := range cfg.Buckets {
 			if cbOptions != nil && cbOptions.Enabled {
+				trafficLimits := TrafficLimits{}
 				for action, limit := range cbOptions.Actions {
 					value, err := parseLimitValueByType(action, limit)
 					if err != nil || value < 0 {
 						glog.Warningf("invalid limit config: %v", err)
 					}
-					limitations[s3_constants.Concat(bucket, action)] = value
+					trafficLimits[action] = &BucketTrafficLimit{name: bucket, max: value}
 				}
+				bucketTrafficLimits[bucket] = trafficLimits
 			}
 		}
 	}
+
 	cb.Enabled = globalEnabled
-	cb.limitations = limitations
+	cb.globalTrafficLimits = globalTrafficLimits
+	cb.bucketTrafficLimits = bucketTrafficLimits
 	return nil
 }
 
@@ -104,7 +163,7 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 		vars := mux.Vars(r)
 		bucket := vars["bucket"]
 
-		action, rollback, errCode := cb.limit(r, bucket, action)
+		rollback, errCode := cb.limit(r, bucket, action)
 		defer func() {
 			for _, rf := range rollback {
 				rf()
@@ -117,87 +176,28 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 		}
 
 		s3err.WriteErrorResponse(w, r, errCode)
-		stats.S3RequestLimitCounter.WithLabelValues(action).Inc()
 	}, Action(action)
 }
 
-func (cb *CircuitBreaker) limit(r *http.Request, bucket string, action string) (limitAction string, rollback []func(), errCode s3err.ErrorCode) {
+func (cb *CircuitBreaker) limit(r *http.Request, bucket string, action string) ([]func(), s3err.ErrorCode) {
+	var rollbackFns []func()
+	var reject bool
 
-	//bucket simultaneous request count
-	limitAction = s3_constants.Concat(bucket, action, s3_constants.LimitTypeCount)
-	bucketCountRollBack, errCode := cb.loadCounterAndCompare(limitAction, 1, s3err.ErrTooManyRequest)
-	if bucketCountRollBack != nil {
-		rollback = append(rollback, bucketCountRollBack)
-	}
-	if errCode != s3err.ErrNone {
-		return
-	}
-
-	//bucket simultaneous request content bytes
-	limitAction = s3_constants.Concat(bucket, action, s3_constants.LimitTypeMB)
-	bucketContentLengthRollBack, errCode := cb.loadCounterAndCompare(limitAction, r.ContentLength, s3err.ErrRequestBytesExceed)
-	if bucketContentLengthRollBack != nil {
-		rollback = append(rollback, bucketContentLengthRollBack)
-	}
-	if errCode != s3err.ErrNone {
-		return
-	}
-
-	//global simultaneous request count
-	limitAction = s3_constants.Concat(action, s3_constants.LimitTypeCount)
-	globalCountRollBack, errCode := cb.loadCounterAndCompare(limitAction, 1, s3err.ErrTooManyRequest)
-	if globalCountRollBack != nil {
-		rollback = append(rollback, globalCountRollBack)
-	}
-	if errCode != s3err.ErrNone {
-		return
-	}
-
-	//global simultaneous request content bytes
-	limitAction = s3_constants.Concat(action, s3_constants.LimitTypeMB)
-	globalContentLengthRollBack, errCode := cb.loadCounterAndCompare(limitAction, r.ContentLength, s3err.ErrRequestBytesExceed)
-	if globalContentLengthRollBack != nil {
-		rollback = append(rollback, globalContentLengthRollBack)
-	}
-	if errCode != s3err.ErrNone {
-		return
-	}
-	return
-}
-
-func (cb *CircuitBreaker) loadCounterAndCompare(key string, inc int64, errCode s3err.ErrorCode) (f func(), e s3err.ErrorCode) {
-	e = s3err.ErrNone
-	if max, ok := cb.limitations[key]; ok {
-		cb.RLock()
-		counter, exists := cb.counters[key]
-		cb.RUnlock()
-
-		if !exists {
-			cb.Lock()
-			counter, exists = cb.counters[key]
-			if !exists {
-				var newCounter int64
-				counter = &newCounter
-				cb.counters[key] = counter
-			}
-			cb.Unlock()
-		}
-		current := atomic.LoadInt64(counter)
-		if current+inc > max {
-			e = errCode
-			return
-		} else {
-			current := atomic.AddInt64(counter, inc)
-			f = func() {
-				atomic.AddInt64(counter, -inc)
-			}
-			if current > max {
-				e = errCode
-				return
-			}
+	//bucket
+	if trafficLimits, exists := cb.bucketTrafficLimits[bucket]; exists {
+		if reject, rollbackFns = trafficLimits.doLimit(r, action, rollbackFns); reject {
+			return rollbackFns, s3err.ErrTooManyRequest
 		}
 	}
-	return
+
+	//global
+	if cb.globalTrafficLimits != nil {
+		if reject, rollbackFns = cb.globalTrafficLimits.doLimit(r, action, rollbackFns); reject {
+			return rollbackFns, s3err.ErrTooManyRequest
+		}
+	}
+
+	return rollbackFns, s3err.ErrNone
 }
 
 func parseLimitValueByType(action string, valueStr string) (int64, error) {

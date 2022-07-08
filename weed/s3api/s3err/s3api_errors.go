@@ -106,7 +106,6 @@ const (
 	ErrExistingObjectIsFile
 
 	ErrTooManyRequest
-	ErrRequestBytesExceed
 )
 
 // error code to APIError structure, these fields carry respective
@@ -407,11 +406,6 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrTooManyRequest: {
 		Code:           "ErrTooManyRequest",
 		Description:    "Too many simultaneous request count",
-		HTTPStatusCode: http.StatusTooManyRequests,
-	},
-	ErrRequestBytesExceed: {
-		Code:           "ErrRequestBytesExceed",
-		Description:    "Simultaneous request bytes exceed limitations",
 		HTTPStatusCode: http.StatusTooManyRequests,
 	},
 }
