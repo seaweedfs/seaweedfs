@@ -46,7 +46,7 @@ spec:
       imagePullSecrets:
         - name: {{ .Values.global.imagePullSecrets }}
       {{- end }}
-      serviceAccountName: seaweefds-rw-sa #hack for delete pod master after migration
+      serviceAccountName: seaweedfs-rw-sa #hack for delete pod master after migration
       terminationGracePeriodSeconds: 60
       {{- if .Values.filer.priorityClassName }}
       priorityClassName: {{ .Values.filer.priorityClassName | quote }}
