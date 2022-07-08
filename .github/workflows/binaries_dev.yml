@@ -17,14 +17,13 @@ jobs:
     steps:
 
       - name: Delete old release assets
-        uses: mknejp/delete-release-assets@a8aaab13272b1eaac16cc46dddd3f725b97ee05a # v1
+        uses: mknejp/delete-release-assets@v1
         with:
           token: ${{ github.token }}
           tag: dev
           fail-if-no-assets: false
           assets: |
             weed-*
-          fail-if-no-release: false
 
   build_dev_linux_windows:
     permissions:
