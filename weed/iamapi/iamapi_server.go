@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
+
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -17,7 +19,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc"
-	"net/http"
 )
 
 type IamS3ApiConfig interface {
@@ -117,10 +118,10 @@ func (iam IamS3ApiConfigure) GetPolicies(policies *Policies) (err error) {
 		}
 		return nil
 	})
-	if err != nil {
+	if err != nil && err != filer_pb.ErrNotFound {
 		return err
 	}
-	if buf.Len() == 0 {
+	if err == filer_pb.ErrNotFound || buf.Len() == 0 {
 		policies.Policies = make(map[string]PolicyDocument)
 		return nil
 	}
