@@ -98,16 +98,15 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 	fh.entryViewCache = nil
 }
 
-func (fh *FileHandle) SetReader(reader *filer.ChunkReadAt) {
+func (fh *FileHandle) CloseReader() {
 	if fh.reader != nil {
 		fh.reader.Close()
 	}
-	fh.reader = reader
 }
 
 func (fh *FileHandle) Release() {
 	fh.dirtyPages.Destroy()
-	fh.SetReader(nil)
+	fh.CloseReader()
 }
 
 func lessThan(a, b *filer_pb.FileChunk) bool {
