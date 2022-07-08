@@ -337,3 +337,11 @@ pdaddrs = "localhost:2379"
 deleterange_concurrency = 1
 # Enable 1PC
 enable_1pc = false
+# Set the CA certificate path
+ca_path=""
+# Set the certificate path
+cert_path=""
+# Set the private key path
+key_path=""
+# The name list used to verify the cn name
+verify_cn=""
