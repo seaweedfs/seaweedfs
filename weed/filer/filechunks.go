@@ -3,11 +3,9 @@ package filer
 import (
 	"bytes"
 	"fmt"
-	"math"
-	"sync"
-
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"golang.org/x/exp/slices"
+	"math"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
@@ -187,12 +185,6 @@ func logPrintf(name string, visibles []VisibleInterval) {
 			glog.V(0).Infof("%s:  [%d,%d) %s %d", name, v.start, v.stop, v.fileId, v.chunkOffset)
 		}
 	*/
-}
-
-var bufPool = sync.Pool{
-	New: func() interface{} {
-		return new(VisibleInterval)
-	},
 }
 
 func MergeIntoVisibles(visibles []VisibleInterval, chunk *filer_pb.FileChunk) (newVisibles []VisibleInterval) {
