@@ -164,6 +164,10 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, nextChunkViews []*ChunkView, offset uint64) (n int, err error) {
 
 	if c.readerPattern.IsRandomMode() {
+		n, err := c.readerCache.chunkCache.ReadChunkAt(buffer, chunkView.FileId, offset)
+		if n > 0 {
+			return n, err
+		}
 		return fetchChunkRange(buffer, c.readerCache.lookupFileIdFn, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset))
 	}
 

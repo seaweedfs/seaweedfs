@@ -15,6 +15,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/txnkv"
 )
 
@@ -38,21 +39,25 @@ func (store *TikvStore) GetName() string {
 }
 
 func (store *TikvStore) Initialize(config util.Configuration, prefix string) error {
-	pdAddrs := []string{}
-	pdAddrsStr := config.GetString(prefix + "pdaddrs")
-	for _, item := range strings.Split(pdAddrsStr, ",") {
-		pdAddrs = append(pdAddrs, strings.TrimSpace(item))
-	}
+	ca := config.GetString(prefix + "ca_path")
+	cert := config.GetString(prefix + "cert_path")
+	key := config.GetString(prefix + "key_path")
+	verify_cn := strings.Split(config.GetString(prefix+"verify_cn"), ",")
+	pdAddrs := strings.Split(config.GetString(prefix+"pdaddrs"), ",")
+
 	drc := config.GetInt(prefix + "deleterange_concurrency")
 	if drc <= 0 {
 		drc = 1
 	}
 	store.onePC = config.GetBool(prefix + "enable_1pc")
 	store.deleteRangeConcurrency = drc
-	return store.initialize(pdAddrs)
+	return store.initialize(ca, cert, key, verify_cn, pdAddrs)
 }
 
-func (store *TikvStore) initialize(pdAddrs []string) error {
+func (store *TikvStore) initialize(ca, cert, key string, verify_cn, pdAddrs []string) error {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security = config.NewSecurity(ca, cert, key, verify_cn)
+	})
 	client, err := txnkv.NewClient(pdAddrs)
 	store.client = client
 	return err

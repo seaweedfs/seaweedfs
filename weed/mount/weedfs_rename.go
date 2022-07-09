@@ -233,10 +233,17 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 		oldPath := oldParent.Child(oldName)
 		newPath := newParent.Child(newName)
 
-		replacedInode := wfs.inodeToPath.MovePath(oldPath, newPath)
-		// invalidate attr and data
-		if replacedInode > 0 {
-			wfs.fuseServer.InodeNotify(replacedInode, 0, -1)
+		sourceInode, targetInode := wfs.inodeToPath.MovePath(oldPath, newPath)
+		if sourceInode != 0 {
+			if fh, foundFh := wfs.fhmap.inode2fh[sourceInode]; foundFh && fh.entry != nil {
+				fh.entry.Name = newName
+			}
+			// invalidate attr and data
+			wfs.fuseServer.InodeNotify(sourceInode, 0, -1)
+		}
+		if targetInode != 0 {
+			// invalidate attr and data
+			wfs.fuseServer.InodeNotify(targetInode, 0, -1)
 		}
 
 	} else if resp.EventNotification.OldEntry != nil {

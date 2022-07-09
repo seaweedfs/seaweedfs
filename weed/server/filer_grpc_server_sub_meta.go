@@ -263,6 +263,9 @@ func (fs *FilerServer) addClient(clientType string, clientAddress string, client
 	if clientId != 0 {
 		fs.knownListenersLock.Lock()
 		_, alreadyKnown = fs.knownListeners[clientId]
+		if !alreadyKnown {
+			fs.knownListeners[clientId] = struct{}{}
+		}
 		fs.knownListenersLock.Unlock()
 	}
 	return

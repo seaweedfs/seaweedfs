@@ -62,21 +62,19 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		if chunkResolveErr != nil {
 			return 0, fmt.Errorf("fail to resolve chunk manifest: %v", chunkResolveErr)
 		}
-		fh.reader = nil
+		fh.CloseReader()
 	}
 
-	reader := fh.reader
-	if reader == nil {
+	if fh.reader == nil {
 		chunkViews := filer.ViewFromVisibleIntervals(fh.entryViewCache, 0, fileSize)
 		glog.V(4).Infof("file handle read %s [%d,%d) from %d views", fileFullPath, offset, offset+int64(len(buff)), len(chunkViews))
 		for _, chunkView := range chunkViews {
 			glog.V(4).Infof("  read %s [%d,%d) from chunk %+v", fileFullPath, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size), chunkView.FileId)
 		}
-		reader = filer.NewChunkReaderAtFromClient(fh.wfs.LookupFn(), chunkViews, fh.wfs.chunkCache, fileSize)
+		fh.reader = filer.NewChunkReaderAtFromClient(fh.wfs.LookupFn(), chunkViews, fh.wfs.chunkCache, fileSize)
 	}
-	fh.reader = reader
 
-	totalRead, err := reader.ReadAt(buff, offset)
+	totalRead, err := fh.reader.ReadAt(buff, offset)
 
 	if err != nil && err != io.EOF {
 		glog.Errorf("file handle read %s: %v", fileFullPath, err)

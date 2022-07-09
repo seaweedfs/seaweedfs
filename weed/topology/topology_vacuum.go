@@ -185,10 +185,13 @@ func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float
 		for _, vl := range c.storageType2VolumeLayout.Items() {
 			if vl != nil {
 				volumeLayout := vl.(*VolumeLayout)
-				if volumeId > 0 && volumeLayout.Lookup(needle.VolumeId(volumeId)) == nil {
-					continue
+				if volumeId > 0 {
+					if volumeLayout.Lookup(needle.VolumeId(volumeId)) != nil {
+						t.vacuumOneVolumeLayout(grpcDialOption, volumeLayout, c, garbageThreshold, preallocate)
+					}
+				} else {
+					t.vacuumOneVolumeLayout(grpcDialOption, volumeLayout, c, garbageThreshold, preallocate)
 				}
-				t.vacuumOneVolumeLayout(grpcDialOption, volumeLayout, c, garbageThreshold, preallocate)
 			}
 		}
 	}
