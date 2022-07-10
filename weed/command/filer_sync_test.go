@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"reflect"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -213,33 +212,29 @@ func TestParallelSyncEvents(t *testing.T) {
 	var parallelNum = 10
 	var parallelBatch = 100
 	var persistEventFns = make([]func(resp *filer_pb.SubscribeMetadataResponse) error, 0, parallelNum)
-	var folderCount = 10
+	var folderCount = 50
 	var fileCount = 10
 	var deleteFilerCount = folderCount*fileCount + folderCount
 	var totalCount = folderCount*folderCount + folderCount + deleteFilerCount
 	var sendCount = 0
-	var goroutinePids []string
 	var sortEvents []*filer_pb.SubscribeMetadataResponse
+	var cachePath = make(map[string]struct{}, 0)
+	var fileMap = make(map[string]int, 0)
 	var startTime = time.Now()
-	recordMap := make(map[string][]string)
 
 	lock := sync.RWMutex{}
 
 	for i := 0; i < parallelNum; i++ {
 		persistEventFns = append(persistEventFns, func(resp *filer_pb.SubscribeMetadataResponse) error {
 			lock.Lock()
-			pid := string(bytes.Fields(debug.Stack())[1])
-			exist := false
-			for _, e := range goroutinePids {
-				if e == pid {
-					exist = true
-				}
-			}
-			if !exist {
-				goroutinePids = append(goroutinePids, pid)
-			}
-			recordMap[pid] = append(recordMap[pid], resp.String())
 			sortEvents = append(sortEvents, resp)
+			var path string
+			if resp.EventNotification.OldEntry != nil {
+				path = resp.EventNotification.OldEntry.Name
+			} else {
+				path = resp.EventNotification.NewEntry.Name
+			}
+			fileMap[path] = 0
 			lock.Unlock()
 			return nil
 		})
@@ -276,9 +271,9 @@ func TestParallelSyncEvents(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < folderCount; i++ {
+	for i := folderCount - 1; i >= 0; i-- {
 		curTimeNs := time.Now().UnixNano()
-		for j := 0; j < fileCount; j++ {
+		for j := fileCount - 1; j >= 0; j-- {
 			// delete files
 			oldEntry := filer_pb.Entry{Name: "/" + strconv.Itoa(i) + "/" + strconv.Itoa(j)}
 			eventNotification := filer_pb.EventNotification{NewEntry: nil, OldEntry: &oldEntry}
@@ -310,15 +305,138 @@ func TestParallelSyncEvents(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 
-	// add action
-	for i := 0; i < folderCount; i++ {
-		assert.True(t, ifBeforeAllEventsByTsNs(i, false, sortEvents))
+	success := true
+
+	// When deleting or adding files, it must have a parent directory
+	for _, resp := range sortEvents {
+		var path string
+		var isDelete = true
+		if resp.EventNotification.OldEntry != nil {
+			path = resp.EventNotification.OldEntry.Name
+		} else {
+			path = resp.EventNotification.NewEntry.Name
+			isDelete = false
+		}
+
+		idx := strings.LastIndex(path, "/")
+		parentDir := ""
+		if idx != 0 {
+			parentDir = path[:strings.LastIndex(path, "/")]
+		}
+
+		if idx != 0 {
+			// determine whether the directory exists
+			if _, ok := cachePath[parentDir]; !ok {
+				success = false
+				break
+			}
+		}
+
+		// Prerequisite for deleting a file: a directory must exist
+		if isDelete {
+			if _, ok := cachePath[path]; ok {
+				fmt.Println("delete path: " + path)
+				cachePath[path] = struct{}{}
+			} else {
+				success = false
+				break
+			}
+		} else {
+			// Prerequisite for adding files: a directory must exist
+			if _, ok := cachePath[path]; ok {
+				success = false
+				break
+			} else {
+				cachePath[path] = struct{}{}
+				fmt.Println("add path: " + path)
+			}
+		}
 	}
 
-	// delete action
-	reverseSlice(sortEvents)
-	for i := 0; i < folderCount; i++ {
-		assert.True(t, ifBeforeAllEventsByTsNs(i, true, sortEvents))
+	assert.Equal(t, success, true)
+	printCostTime(startTime)
+}
+
+// add and delete same file
+func TestParallelSyncSameFile(t *testing.T) {
+	var parallelNum = 10
+	var parallelBatch = 100
+	var persistEventFns = make([]func(resp *filer_pb.SubscribeMetadataResponse) error, 0, parallelNum)
+	var totalCount = 10000
+	var sendCount = 0
+	var sortEvents []*filer_pb.SubscribeMetadataResponse
+	var startTime = time.Now()
+
+	lock := sync.RWMutex{}
+
+	for i := 0; i < parallelNum; i++ {
+		persistEventFns = append(persistEventFns, func(resp *filer_pb.SubscribeMetadataResponse) error {
+			lock.Lock()
+			sortEvents = append(sortEvents, resp)
+			lock.Unlock()
+			return nil
+		})
+	}
+
+	stopEventsConsumerChan := make(chan struct{})
+
+	setOffsetFn := func(counter int64, lastTsNs int64) error {
+		sendCount = sendCount + int(counter)
+		return nil
+	}
+
+	eventsChan := make(chan *filer_pb.SubscribeMetadataResponse, 100)
+
+	cache := &ParallelSyncMetadataCache{persistEventFns: persistEventFns,
+		events: []*filer_pb.SubscribeMetadataResponse{}, eventsChan: eventsChan, cancelChan: stopEventsConsumerChan,
+		parallelNum: parallelNum, parallelBatchSize: parallelBatch, parallelWaitTime: 2 * time.Second,
+		sourceFiler: "sourceFiler", targetFiler: "targetFiler"}
+
+	go startEventsConsumer(cache, setOffsetFn)
+
+	// put event into channel
+	for i := 0; i < totalCount; i++ {
+		curTimeNs := time.Now().UnixNano()
+		entry := filer_pb.Entry{Name: "/test.txt"}
+		var eventNotification filer_pb.EventNotification
+		if i%2 == 0 {
+			// add file
+			eventNotification = filer_pb.EventNotification{NewEntry: &entry, OldEntry: nil}
+		} else {
+			// delete file
+			eventNotification = filer_pb.EventNotification{NewEntry: nil, OldEntry: &entry}
+		}
+		event := filer_pb.SubscribeMetadataResponse{TsNs: curTimeNs, EventNotification: &eventNotification}
+		eventsChan <- &event
+	}
+
+	// check event size
+	// Exit automatically for more than 50 times
+	maxWaitTimes := 50
+	for {
+		if maxWaitTimes == 0 {
+			stopEventsConsumerChan <- struct{}{}
+			fmt.Printf("automatically stop event synchronization consumer. from %s to %s\n", "sourceFiler", "targetFiler")
+			break
+		}
+
+		if totalCount == sendCount {
+			stopEventsConsumerChan <- struct{}{}
+			fmt.Printf("stop event synchronization consumer. from %s to %s\n", "sourceFiler", "targetFiler")
+			break
+		}
+		maxWaitTimes = maxWaitTimes - 1
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	for i, e := range sortEvents {
+		if i%2 == 0 {
+			assert.Nil(t, e.EventNotification.OldEntry)
+			assert.NotNil(t, e.EventNotification.NewEntry)
+		} else {
+			assert.NotNil(t, e.EventNotification.OldEntry)
+			assert.Nil(t, e.EventNotification.NewEntry)
+		}
 	}
 
 	printCostTime(startTime)
@@ -332,44 +450,14 @@ func reverseSlice(s interface{}) {
 	}
 }
 
-func ifBeforeAllEventsByTsNs(idx int, ifDelete bool, events []*filer_pb.SubscribeMetadataResponse) bool {
-	// find the same timestamp to judge whether it is the first one.
-	for _, item := range events {
-		if !ifDelete {
-			if item.EventNotification.NewEntry != nil {
-				if strings.HasPrefix(item.EventNotification.NewEntry.Name, "/"+strconv.Itoa(idx)) {
-					// add action
-					if item.EventNotification.NewEntry.Name == "/"+strconv.Itoa(idx) {
-						return true
-					} else {
-						return false
-					}
-				}
-			}
-		} else {
-			// delete action
-			if item.EventNotification.OldEntry != nil {
-				if strings.HasPrefix(item.EventNotification.OldEntry.Name, "/"+strconv.Itoa(idx)) {
-					if item.EventNotification.OldEntry.Name == "/"+strconv.Itoa(idx) {
-						return true
-					} else {
-						return false
-					}
-				}
-			}
-		}
-	}
-	return false
-}
-
 func TestParallelSyncSplitNodes(t *testing.T) {
 	// a total of 13 numbers
 	// The asterisk indicates that this node has been operated.
-	rootTree := ParallelSyncNode{fullPathName: "/", fullPath: []string{}, curPathName: ""}
+	rootTree := ParallelSyncNode{name: "", fullPath: []string{}}
 	//              /
 	//    1         5        10
 	//   2*       6 7* 8      11*
-	//  3* 4     9*            12
+	//  3* 4     9*            12*
 	basePoint := [][]string{
 		0: {"1", "2", "3"},
 		1: {"1", "2", "4"},
@@ -404,9 +492,7 @@ func TestParallelSyncSplitNodes(t *testing.T) {
 		list = append(list, &item)
 	}
 
-	var workerGroupResultArray [][]int
-	getEventIndexesByNode(rootTree, &workerGroupResultArray)
-
+	workerGroupResultArray := buildEventIndexesGroup(rootTree)
 	assert.EqualValues(t, workerGroupResultArray[0], []int{2, 3})
 	assert.EqualValues(t, workerGroupResultArray[1], []int{7})
 	assert.EqualValues(t, workerGroupResultArray[2], []int{9})
@@ -414,71 +500,147 @@ func TestParallelSyncSplitNodes(t *testing.T) {
 }
 
 func TestGetMinLenIdxFromWorkerGroup(t *testing.T) {
-	var workerGroup = make([][]*filer_pb.SubscribeMetadataResponse, 5)
+	var workerGroup = make(WorkerEventsGroup, 5)
 
 	data1 := []int{
 		5, 4, 3, 2, 1,
 	}
 
-	for i := 0; i < data1[0]; i++ {
-		var tmp *filer_pb.SubscribeMetadataResponse
-		workerGroup[0] = append(workerGroup[0], tmp)
+	for idx, item := range data1 {
+		for i := 0; i < item; i++ {
+			var tmp *filer_pb.SubscribeMetadataResponse
+			workerGroup[idx] = append(workerGroup[idx], tmp)
+		}
 	}
 
-	for i := 0; i < data1[1]; i++ {
-		var tmp *filer_pb.SubscribeMetadataResponse
-		workerGroup[1] = append(workerGroup[1], tmp)
-	}
-
-	for i := 0; i < data1[2]; i++ {
-		var tmp *filer_pb.SubscribeMetadataResponse
-		workerGroup[2] = append(workerGroup[2], tmp)
-	}
-
-	for i := 0; i < data1[3]; i++ {
-		var tmp *filer_pb.SubscribeMetadataResponse
-		workerGroup[3] = append(workerGroup[3], tmp)
-	}
-
-	for i := 0; i < data1[4]; i++ {
-		var tmp *filer_pb.SubscribeMetadataResponse
-		workerGroup[4] = append(workerGroup[4], tmp)
-	}
-
-	result := getWorkerGroupMinLengthIndex(workerGroup)
+	result := getWorkerEventsGroupMinLengthIndex(workerGroup)
 	assert.Equal(t, 4, result)
 
 	data2 := []int{
 		3, 4, 1, 2, 5,
 	}
 
-	for i := 0; i < data2[0]; i++ {
-		var tmp *filer_pb.SubscribeMetadataResponse
-		workerGroup[0] = append(workerGroup[0], tmp)
+	for idx, item := range data2 {
+		for i := 0; i < item; i++ {
+			var tmp *filer_pb.SubscribeMetadataResponse
+			workerGroup[idx] = append(workerGroup[idx], tmp)
+		}
 	}
 
-	for i := 0; i < data2[1]; i++ {
-		var tmp *filer_pb.SubscribeMetadataResponse
-		workerGroup[1] = append(workerGroup[1], tmp)
-	}
-
-	for i := 0; i < data2[2]; i++ {
-		var tmp *filer_pb.SubscribeMetadataResponse
-		workerGroup[2] = append(workerGroup[2], tmp)
-	}
-
-	for i := 0; i < data2[3]; i++ {
-		var tmp *filer_pb.SubscribeMetadataResponse
-		workerGroup[3] = append(workerGroup[3], tmp)
-	}
-
-	for i := 0; i < data2[4]; i++ {
-		var tmp *filer_pb.SubscribeMetadataResponse
-		workerGroup[4] = append(workerGroup[4], tmp)
-	}
-
-	result = getWorkerGroupMinLengthIndex(workerGroup)
+	result = getWorkerEventsGroupMinLengthIndex(workerGroup)
 	assert.Equal(t, 2, result)
+}
+
+func TestPutEventIntoMinLengthWorker(t *testing.T) {
+	result := make(WorkerEventsGroup, 3)
+
+	var data = []int{18, 15, 12}
+	// init worker group: [3] [2] [1]
+	for i := 3; i > 0; i-- {
+		var eventGroup []*filer_pb.SubscribeMetadataResponse
+		for j := 0; j < i; j++ {
+			tmp := filer_pb.SubscribeMetadataResponse{}
+			eventGroup = append(eventGroup, &tmp)
+		}
+		putEventsIntoMinLengthWorkerEvents(result, eventGroup)
+	}
+
+	for i := 4; i < 10; i++ {
+		var eventGroup []*filer_pb.SubscribeMetadataResponse
+		// 4, 5, 6, 7, 8, 9 into worker
+		// result prediction: [3,6,9]  [2,5,8]  [1,4,7]
+		for j := 0; j < i; j++ {
+			tmp := filer_pb.SubscribeMetadataResponse{}
+			eventGroup = append(eventGroup, &tmp)
+		}
+		putEventsIntoMinLengthWorkerEvents(result, eventGroup)
+	}
+
+	for idx, item := range result {
+		assert.Equal(t, len(item), data[idx])
+	}
+
+	// Make the length consistent in all workers
+	// put 6 events into workerGroup
+	var eventGroup6Len []*filer_pb.SubscribeMetadataResponse
+	for i := 0; i < 6; i++ {
+		tmp := filer_pb.SubscribeMetadataResponse{}
+		eventGroup6Len = append(eventGroup6Len, &tmp)
+	}
+	putEventsIntoMinLengthWorkerEvents(result, eventGroup6Len)
+
+	// put 3 events into workerGroup
+	var eventGroup3Len []*filer_pb.SubscribeMetadataResponse
+	for i := 0; i < 3; i++ {
+		tmp := filer_pb.SubscribeMetadataResponse{}
+		eventGroup3Len = append(eventGroup3Len, &tmp)
+	}
+	putEventsIntoMinLengthWorkerEvents(result, eventGroup3Len)
+
+	for _, item := range result {
+		assert.Equal(t, len(item), 18)
+	}
+
+}
+
+func TestCreateNode(t *testing.T) {
+	rootTree := ParallelSyncNode{name: "", fullPath: []string{}}
+	rootTreeTmp := createNode([]string{"/"})
+	assert.Equal(t, rootTree.fullPath, rootTreeTmp.fullPath)
+	assert.Equal(t, rootTree.name, rootTreeTmp.name)
+
+	a := createNode([]string{"a"})
+	assert.Equal(t, a.fullPath, []string{"a"})
+	assert.Equal(t, a.name, "a")
+
+	ab := createNode([]string{"a", "b"})
+	assert.Equal(t, ab.fullPath, []string{"a", "b"})
+	assert.Equal(t, ab.name, "b")
+
+	abc := createNode([]string{"a", "b", "c"})
+	assert.Equal(t, abc.fullPath, []string{"a", "b", "c"})
+	assert.Equal(t, abc.name, "c")
+}
+
+func TestGetEventIndexes(t *testing.T) {
+	data := []int{0, 3, 1, 2, 4, 6, 5, 9, 7, 8}
+	a := createNode([]string{"a"})
+	b := createNode([]string{"a", "b"})
+	c := createNode([]string{"a", "b", "c"})
+	a.addChild(&b)
+	b.addChild(&c)
+	b.eventsIndexes = []int{4, -1, 6, 5}
+	c.eventsIndexes = []int{9, 7, -1, 8}
+	a.eventsIndexes = []int{0, 3, 1, 2}
+	result := a.getEventIndexes()
+	for idx, item := range result {
+		assert.Equal(t, item, data[idx])
+	}
+}
+
+func TestGetEventIndexesGroup(t *testing.T) {
+	data := []EventIndexes{{
+		1, 2, 3, 4, 5, 6,
+	}, {
+		7, 8,
+	}}
+	a := createNode([]string{"a"})
+	b := createNode([]string{"a", "b"})
+	c := createNode([]string{"a", "b", "c"})
+	d := createNode([]string{"a", "d"})
+
+	a.addChild(&b)
+	a.addChild(&d)
+
+	b.addChild(&c)
+
+	b.eventsIndexes = EventIndexes{1, 2, 3}
+	c.eventsIndexes = EventIndexes{4, 5, 6}
+	d.eventsIndexes = EventIndexes{7, 8}
+	result := buildEventIndexesGroup(a)
+	for idx, item := range result {
+		assert.Equal(t, item, data[idx])
+	}
 }
 
 func createFolder(client *http.Client, address string) {

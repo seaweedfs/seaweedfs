@@ -12,6 +12,10 @@ import (
 	"time"
 )
 
+type WorkerEvents []*filer_pb.SubscribeMetadataResponse
+type WorkerEventsGroup []WorkerEvents
+type EventIndexes []int
+
 type ParallelSyncMetadataCache struct {
 	events            []*filer_pb.SubscribeMetadataResponse
 	eventsChan        chan *filer_pb.SubscribeMetadataResponse
@@ -27,9 +31,8 @@ type ParallelSyncMetadataCache struct {
 }
 
 type ParallelSyncNode struct {
-	curPathName   string
-	eventsIndexes []int
-	fullPathName  string
+	name          string
+	eventsIndexes EventIndexes
 	fullPath      []string
 	child         []*ParallelSyncNode
 }
@@ -50,7 +53,6 @@ func processEventWithOffsetFunc(cache *ParallelSyncMetadataCache, targetFilerSig
 
 func startEventsConsumer(cache *ParallelSyncMetadataCache, setOffsetFunc func(counter int64, lastTsNs int64) error) {
 	glog.Infof("start event synchronization consumer. from %s to %s", cache.sourceFiler, cache.targetFiler)
-
 	for {
 		select {
 		case <-cache.cancelChan:
@@ -82,8 +84,9 @@ func persistEvents(cache *ParallelSyncMetadataCache, setOffsetFn func(counter in
 	// need to wait for all tasks to be processed
 	wg := sync.WaitGroup{}
 	wg.Add(cache.parallelNum)
-	// assign events to each worker thread
-	eventGroup := buildWorkerGroup(cache.parallelNum, cache.events)
+	rootNode := buildEventTree(cache.events)
+	eventIndexesGroup := buildEventIndexesGroup(rootNode)
+	eventGroup := buildWorkerEventsGroup(cache.parallelNum, eventIndexesGroup, cache.events)
 	for i := 0; i < cache.parallelNum; i++ {
 		go func(events []*filer_pb.SubscribeMetadataResponse, idx int, cache *ParallelSyncMetadataCache) {
 			defer wg.Done()
@@ -111,134 +114,163 @@ func persistEvents(cache *ParallelSyncMetadataCache, setOffsetFn func(counter in
 	})
 }
 
-func buildWorkerGroup(parallelNum int, events []*filer_pb.SubscribeMetadataResponse) [][]*filer_pb.SubscribeMetadataResponse {
+func buildEventTree(originalEvents []*filer_pb.SubscribeMetadataResponse) ParallelSyncNode {
 	// build a tree. record event index
-	rootTree := ParallelSyncNode{fullPathName: "/", fullPath: []string{}, curPathName: ""}
-
-	for i := 0; i < len(events); i++ {
-		resp := events[i]
-		var sourceOldKey, sourceNewKey util.FullPath
-		if resp.EventNotification.OldEntry != nil {
-			sourceOldKey = util.FullPath(resp.Directory).Child(resp.EventNotification.OldEntry.Name)
-		}
-		if resp.EventNotification.NewEntry != nil {
-			sourceNewKey = util.FullPath(resp.EventNotification.NewParentPath).Child(resp.EventNotification.NewEntry.Name)
-		}
-
-		affectedPath := sourceOldKey
-		if sourceOldKey == "" {
-			affectedPath = sourceNewKey
-		}
-		pathSplit := affectedPath.Split()
-		if len(pathSplit) > 1 && pathSplit[len(pathSplit)-1] == "" {
-			pathSplit = pathSplit[:len(pathSplit)-1]
-		}
-		rootTree.addNode(i, pathSplit)
+	rootNode := createNode([]string{"/"})
+	for i, event := range originalEvents {
+		rootNode.addNode(i, getEventAffectedFullPath(event))
 	}
-
-	return getEventGroupByNode(rootTree, parallelNum, events)
+	return rootNode
 }
 
-func getEventGroupByNode(rootTree ParallelSyncNode, parallelNum int, events []*filer_pb.SubscribeMetadataResponse) [][]*filer_pb.SubscribeMetadataResponse {
-	var eventIndexesGroup [][]int
-	getEventIndexesByNode(rootTree, &eventIndexesGroup)
+func getEventAffectedFullPath(event *filer_pb.SubscribeMetadataResponse) []string {
+	var sourceOldKey, sourceNewKey util.FullPath
+	if event.EventNotification.OldEntry != nil {
+		sourceOldKey = util.FullPath(event.Directory).Child(event.EventNotification.OldEntry.Name)
+	}
+	if event.EventNotification.NewEntry != nil {
+		sourceNewKey = util.FullPath(event.EventNotification.NewParentPath).Child(event.EventNotification.NewEntry.Name)
+	}
+	affectedPath := sourceOldKey
+	if sourceOldKey == "" {
+		affectedPath = sourceNewKey
+	}
+	if strings.HasSuffix(string(affectedPath), "/") {
+		affectedPath = affectedPath[:len(affectedPath)-1]
+	}
+	pathSplit := affectedPath.Split()
+	return pathSplit
+}
 
-	result := make([][]*filer_pb.SubscribeMetadataResponse, parallelNum)
+func buildWorkerEventsGroup(parallelNum int, eventIndexesGroup []EventIndexes, originalEvents []*filer_pb.SubscribeMetadataResponse) WorkerEventsGroup {
+	workerEventsGroup := make(WorkerEventsGroup, parallelNum)
 	if eventIndexesGroup == nil {
-		return result
+		return workerEventsGroup
 	}
 	for _, eventIndexes := range eventIndexesGroup {
-		var eventGroup []*filer_pb.SubscribeMetadataResponse
-		for _, index := range eventIndexes {
-			eventGroup = append(eventGroup, events[index])
-		}
+		events := getEventsByIndexes(eventIndexes, originalEvents)
 		// distribute events evenly
-		minLengthWorkerIndex := getWorkerGroupMinLengthIndex(result)
-		result[minLengthWorkerIndex] = append(result[minLengthWorkerIndex], eventGroup...)
+		putEventsIntoMinLengthWorkerEvents(workerEventsGroup, events)
 	}
-
-	return result
+	return workerEventsGroup
 }
 
-func getWorkerGroupMinLengthIndex(workerGroup [][]*filer_pb.SubscribeMetadataResponse) int {
-	minIndex := 0
-	curWorkerGroupLength := len(workerGroup[0])
-	for i := 0; i < len(workerGroup); i++ {
-		length := len(workerGroup[i])
-		if length < curWorkerGroupLength {
-			minIndex = i
-			curWorkerGroupLength = length
+func getEventsByIndexes(eventIndexes EventIndexes, originalEvents []*filer_pb.SubscribeMetadataResponse) []*filer_pb.SubscribeMetadataResponse {
+	var workerEvents WorkerEvents
+	for _, index := range eventIndexes {
+		workerEvents = append(workerEvents, originalEvents[index])
+	}
+	return workerEvents
+}
+
+func putEventsIntoMinLengthWorkerEvents(workerEventsGroup WorkerEventsGroup, eventGroup []*filer_pb.SubscribeMetadataResponse) {
+	minLengthWorkerIndex := getWorkerEventsGroupMinLengthIndex(workerEventsGroup)
+	workerEventsGroup[minLengthWorkerIndex] = append(workerEventsGroup[minLengthWorkerIndex], eventGroup...)
+}
+
+func getWorkerEventsGroupMinLengthIndex(workerEventsGroup WorkerEventsGroup) int {
+	minLengthIndex := 0
+	minLength := len(workerEventsGroup[0])
+	for i := 0; i < len(workerEventsGroup); i++ {
+		length := len(workerEventsGroup[i])
+		if length < minLength {
+			minLengthIndex = i
+			minLength = length
 		}
 	}
-	return minIndex
+	return minLengthIndex
 }
 
-func getEventIndexesByNode(node ParallelSyncNode, eventIndexes *[][]int) {
+func buildEventIndexesGroup(node ParallelSyncNode) []EventIndexes {
+	var eventIndexesGroup []EventIndexes
+	generateEventIndexesGroupByNode(node, &eventIndexesGroup)
+	return eventIndexesGroup
+}
+
+func generateEventIndexesGroupByNode(node ParallelSyncNode, eventIndexesGroup *[]EventIndexes) {
 	if len(node.eventsIndexes) > 0 {
-		var nodeEventIndexes []int
-		node.getEventIndexes(&nodeEventIndexes)
+		nodeEventIndexes := node.getEventIndexes()
 		if len(nodeEventIndexes) > 0 {
 			sort.Ints(nodeEventIndexes)
-			*eventIndexes = append(*eventIndexes, nodeEventIndexes)
+			*eventIndexesGroup = append(*eventIndexesGroup, nodeEventIndexes)
 		}
 	} else {
 		if node.hasChild() {
 			for _, child := range node.child {
-				getEventIndexesByNode(*child, eventIndexes)
+				generateEventIndexesGroupByNode(*child, eventIndexesGroup)
 			}
 		}
 	}
 }
 
-func (p *ParallelSyncNode) getEventIndexes(indexes *[]int) {
-	for _, eventIndex := range p.eventsIndexes {
+func createNode(path []string) ParallelSyncNode {
+	var currentPathName string
+	if path[0] == "/" {
+		return ParallelSyncNode{
+			name:     "",
+			fullPath: []string{},
+		}
+	}
+	// Remove the tail slash
+	if len(path) > 1 && path[len(path)-1] == "" {
+		path = path[:len(path)-1]
+	}
+	if len(path) > 0 {
+		currentPathName = path[len(path)-1]
+	}
+	node := ParallelSyncNode{
+		name:     currentPathName,
+		fullPath: path,
+	}
+	return node
+}
+
+func generateEventIndexes(node ParallelSyncNode, indexes *EventIndexes) {
+	for _, eventIndex := range node.eventsIndexes {
 		if eventIndex >= 0 {
 			*indexes = append(*indexes, eventIndex)
 		}
 	}
-	if p.hasChild() {
-		for _, child := range p.child {
-			child.getEventIndexes(indexes)
+	if node.hasChild() {
+		for _, child := range node.child {
+			generateEventIndexes(*child, indexes)
 		}
 	}
 }
 
-func (p *ParallelSyncNode) addNode(curIdx int, curNodePathArray []string) (bool, *ParallelSyncNode) {
-	if len(curNodePathArray) > 0 {
-		curPathName := curNodePathArray[0]
-		curFullPathName := "/" + curPathName
-		if p.fullPathName != "/" {
-			curFullPathName = p.fullPathName + "/" + curPathName
-		}
+func (p *ParallelSyncNode) getEventIndexes() EventIndexes {
+	var indexes EventIndexes
+	generateEventIndexes(*p, &indexes)
+	return indexes
+}
+
+func (p *ParallelSyncNode) addNode(currentIdx int, curDealPathArray []string) (bool, *ParallelSyncNode) {
+	if len(curDealPathArray) > 0 {
+		curDealPathName := curDealPathArray[0]
 		// check if child nodes have the same path
 		for _, child := range p.child {
-			if child.curPathName == curPathName {
-				if len(curNodePathArray) > 1 {
-					return child.addNode(curIdx, curNodePathArray[1:])
+			if child.name == curDealPathName {
+				if len(curDealPathArray) > 1 {
+					return child.addNode(currentIdx, curDealPathArray[1:])
 				} else {
-					child.eventsIndexes = append(child.eventsIndexes, curIdx)
+					child.eventsIndexes = append(child.eventsIndexes, currentIdx)
 					return true, child
 				}
 			}
 		}
 
-		fullPath := strings.Split(curFullPathName, "/")[1:]
 		idx := -1
-		if len(curNodePathArray) == 1 {
-			idx = curIdx
+		if len(curDealPathArray) == 1 {
+			idx = currentIdx
 		}
 
-		newNode := ParallelSyncNode{
-			curPathName:   curPathName,
-			eventsIndexes: []int{},
-			fullPathName:  curFullPathName,
-			fullPath:      fullPath,
-			child:         []*ParallelSyncNode{},
-		}
+		createNodeFullPath := append(p.fullPath, curDealPathName)
+		newNode := createNode(createNodeFullPath)
 		p.addChild(&newNode)
-		if len(curNodePathArray) > 1 {
-			return newNode.addNode(curIdx, curNodePathArray[1:])
+		if len(curDealPathArray) > 1 {
+			return newNode.addNode(currentIdx, curDealPathArray[1:])
 		}
+		// record event subscript
 		newNode.eventsIndexes = append(newNode.eventsIndexes, idx)
 		return false, &newNode
 	}
