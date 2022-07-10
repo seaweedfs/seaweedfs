@@ -60,12 +60,6 @@ service SeaweedFiler {
     rpc SubscribeLocalMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
     }
 
-    rpc KeepConnected (stream KeepConnectedRequest) returns (stream KeepConnectedResponse) {
-    }
-
-    rpc LocateBroker (LocateBrokerRequest) returns (LocateBrokerResponse) {
-    }
-
     rpc KvGet (KvGetRequest) returns (KvGetResponse) {
     }
 

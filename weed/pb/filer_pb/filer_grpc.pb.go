@@ -35,8 +35,6 @@ type SeaweedFilerClient interface {
 	GetFilerConfiguration(ctx context.Context, in *GetFilerConfigurationRequest, opts ...grpc.CallOption) (*GetFilerConfigurationResponse, error)
 	SubscribeMetadata(ctx context.Context, in *SubscribeMetadataRequest, opts ...grpc.CallOption) (SeaweedFiler_SubscribeMetadataClient, error)
 	SubscribeLocalMetadata(ctx context.Context, in *SubscribeMetadataRequest, opts ...grpc.CallOption) (SeaweedFiler_SubscribeLocalMetadataClient, error)
-	KeepConnected(ctx context.Context, opts ...grpc.CallOption) (SeaweedFiler_KeepConnectedClient, error)
-	LocateBroker(ctx context.Context, in *LocateBrokerRequest, opts ...grpc.CallOption) (*LocateBrokerResponse, error)
 	KvGet(ctx context.Context, in *KvGetRequest, opts ...grpc.CallOption) (*KvGetResponse, error)
 	KvPut(ctx context.Context, in *KvPutRequest, opts ...grpc.CallOption) (*KvPutResponse, error)
 	CacheRemoteObjectToLocalCluster(ctx context.Context, in *CacheRemoteObjectToLocalClusterRequest, opts ...grpc.CallOption) (*CacheRemoteObjectToLocalClusterResponse, error)
@@ -295,46 +293,6 @@ func (x *seaweedFilerSubscribeLocalMetadataClient) Recv() (*SubscribeMetadataRes
 	return m, nil
 }
 
-func (c *seaweedFilerClient) KeepConnected(ctx context.Context, opts ...grpc.CallOption) (SeaweedFiler_KeepConnectedClient, error) {
-	stream, err := c.cc.NewStream(ctx, &SeaweedFiler_ServiceDesc.Streams[4], "/filer_pb.SeaweedFiler/KeepConnected", opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &seaweedFilerKeepConnectedClient{stream}
-	return x, nil
-}
-
-type SeaweedFiler_KeepConnectedClient interface {
-	Send(*KeepConnectedRequest) error
-	Recv() (*KeepConnectedResponse, error)
-	grpc.ClientStream
-}
-
-type seaweedFilerKeepConnectedClient struct {
-	grpc.ClientStream
-}
-
-func (x *seaweedFilerKeepConnectedClient) Send(m *KeepConnectedRequest) error {
-	return x.ClientStream.SendMsg(m)
-}
-
-func (x *seaweedFilerKeepConnectedClient) Recv() (*KeepConnectedResponse, error) {
-	m := new(KeepConnectedResponse)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func (c *seaweedFilerClient) LocateBroker(ctx context.Context, in *LocateBrokerRequest, opts ...grpc.CallOption) (*LocateBrokerResponse, error) {
-	out := new(LocateBrokerResponse)
-	err := c.cc.Invoke(ctx, "/filer_pb.SeaweedFiler/LocateBroker", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *seaweedFilerClient) KvGet(ctx context.Context, in *KvGetRequest, opts ...grpc.CallOption) (*KvGetResponse, error) {
 	out := new(KvGetResponse)
 	err := c.cc.Invoke(ctx, "/filer_pb.SeaweedFiler/KvGet", in, out, opts...)
@@ -383,8 +341,6 @@ type SeaweedFilerServer interface {
 	GetFilerConfiguration(context.Context, *GetFilerConfigurationRequest) (*GetFilerConfigurationResponse, error)
 	SubscribeMetadata(*SubscribeMetadataRequest, SeaweedFiler_SubscribeMetadataServer) error
 	SubscribeLocalMetadata(*SubscribeMetadataRequest, SeaweedFiler_SubscribeLocalMetadataServer) error
-	KeepConnected(SeaweedFiler_KeepConnectedServer) error
-	LocateBroker(context.Context, *LocateBrokerRequest) (*LocateBrokerResponse, error)
 	KvGet(context.Context, *KvGetRequest) (*KvGetResponse, error)
 	KvPut(context.Context, *KvPutRequest) (*KvPutResponse, error)
 	CacheRemoteObjectToLocalCluster(context.Context, *CacheRemoteObjectToLocalClusterRequest) (*CacheRemoteObjectToLocalClusterResponse, error)
@@ -445,12 +401,6 @@ func (UnimplementedSeaweedFilerServer) SubscribeMetadata(*SubscribeMetadataReque
 }
 func (UnimplementedSeaweedFilerServer) SubscribeLocalMetadata(*SubscribeMetadataRequest, SeaweedFiler_SubscribeLocalMetadataServer) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeLocalMetadata not implemented")
-}
-func (UnimplementedSeaweedFilerServer) KeepConnected(SeaweedFiler_KeepConnectedServer) error {
-	return status.Errorf(codes.Unimplemented, "method KeepConnected not implemented")
-}
-func (UnimplementedSeaweedFilerServer) LocateBroker(context.Context, *LocateBrokerRequest) (*LocateBrokerResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method LocateBroker not implemented")
 }
 func (UnimplementedSeaweedFilerServer) KvGet(context.Context, *KvGetRequest) (*KvGetResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method KvGet not implemented")
@@ -792,50 +742,6 @@ func (x *seaweedFilerSubscribeLocalMetadataServer) Send(m *SubscribeMetadataResp
 	return x.ServerStream.SendMsg(m)
 }
 
-func _SeaweedFiler_KeepConnected_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(SeaweedFilerServer).KeepConnected(&seaweedFilerKeepConnectedServer{stream})
-}
-
-type SeaweedFiler_KeepConnectedServer interface {
-	Send(*KeepConnectedResponse) error
-	Recv() (*KeepConnectedRequest, error)
-	grpc.ServerStream
-}
-
-type seaweedFilerKeepConnectedServer struct {
-	grpc.ServerStream
-}
-
-func (x *seaweedFilerKeepConnectedServer) Send(m *KeepConnectedResponse) error {
-	return x.ServerStream.SendMsg(m)
-}
-
-func (x *seaweedFilerKeepConnectedServer) Recv() (*KeepConnectedRequest, error) {
-	m := new(KeepConnectedRequest)
-	if err := x.ServerStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func _SeaweedFiler_LocateBroker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(LocateBrokerRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SeaweedFilerServer).LocateBroker(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/filer_pb.SeaweedFiler/LocateBroker",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedFilerServer).LocateBroker(ctx, req.(*LocateBrokerRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _SeaweedFiler_KvGet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(KvGetRequest)
 	if err := dec(in); err != nil {
@@ -950,10 +856,6 @@ var SeaweedFiler_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _SeaweedFiler_GetFilerConfiguration_Handler,
 		},
 		{
-			MethodName: "LocateBroker",
-			Handler:    _SeaweedFiler_LocateBroker_Handler,
-		},
-		{
 			MethodName: "KvGet",
 			Handler:    _SeaweedFiler_KvGet_Handler,
 		},
@@ -986,12 +888,6 @@ var SeaweedFiler_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "SubscribeLocalMetadata",
 			Handler:       _SeaweedFiler_SubscribeLocalMetadata_Handler,
 			ServerStreams: true,
-		},
-		{
-			StreamName:    "KeepConnected",
-			Handler:       _SeaweedFiler_KeepConnected_Handler,
-			ServerStreams: true,
-			ClientStreams: true,
 		},
 	},
 	Metadata: "filer.proto",

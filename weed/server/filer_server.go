@@ -90,9 +90,6 @@ type FilerServer struct {
 	knownListenersLock sync.Mutex
 	knownListeners     map[int32]int32
 
-	brokers     map[string]map[string]bool
-	brokersLock sync.Mutex
-
 	inFlightDataSize      int64
 	inFlightDataLimitCond *sync.Cond
 }
@@ -112,7 +109,6 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		option:                option,
 		grpcDialOption:        security.LoadClientTLS(util.GetViper(), "grpc.filer"),
 		knownListeners:        make(map[int32]int32),
-		brokers:               make(map[string]map[string]bool),
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
 	}
 	fs.listenersCond = sync.NewCond(&fs.listenersLock)
