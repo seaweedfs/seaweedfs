@@ -259,7 +259,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	}
 
 	defer func() {
-		for _, update := range ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, cluster.DataCenter(req.DataCenter), cluster.Rack(req.Rack), peerAddress) {
+		for _, update := range ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, peerAddress) {
 			ms.broadcastToClients(update)
 		}
 		ms.deleteClient(clientName)

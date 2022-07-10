@@ -10,14 +10,14 @@ import (
 
 func (ms *MasterServer) ListClusterNodes(ctx context.Context, req *master_pb.ListClusterNodesRequest) (*master_pb.ListClusterNodesResponse, error) {
 	resp := &master_pb.ListClusterNodesResponse{}
-	filerGroup := cluster.FilerGroup(req.FilerGroup)
+	filerGroup := cluster.FilerGroupName(req.FilerGroup)
 	clusterNodes := ms.Cluster.ListClusterNode(filerGroup, req.ClientType)
 
 	for _, node := range clusterNodes {
 		resp.ClusterNodes = append(resp.ClusterNodes, &master_pb.ListClusterNodesResponse_ClusterNode{
 			Address:     string(node.Address),
 			Version:     node.Version,
-			IsLeader:    ms.Cluster.IsOneLeader(filerGroup, node.Address),
+			IsLeader:    ms.Cluster.IsOneLeader(filerGroup, req.ClientType, node.Address),
 			CreatedAtNs: node.CreatedTs.UnixNano(),
 			DataCenter:  string(node.DataCenter),
 			Rack:        string(node.Rack),
@@ -26,13 +26,13 @@ func (ms *MasterServer) ListClusterNodes(ctx context.Context, req *master_pb.Lis
 	return resp, nil
 }
 
-func (ms *MasterServer) GetOneFiler(filerGroup cluster.FilerGroup) pb.ServerAddress {
+func (ms *MasterServer) GetOneFiler(filerGroup cluster.FilerGroupName) pb.ServerAddress {
 
 	clusterNodes := ms.Cluster.ListClusterNode(filerGroup, cluster.FilerType)
 
 	var filers []pb.ServerAddress
 	for _, node := range clusterNodes {
-		if ms.Cluster.IsOneLeader(filerGroup, node.Address) {
+		if ms.Cluster.IsOneLeader(filerGroup, cluster.FilerType, node.Address) {
 			filers = append(filers, node.Address)
 		}
 	}
