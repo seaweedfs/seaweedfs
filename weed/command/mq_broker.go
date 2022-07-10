@@ -23,20 +23,21 @@ var (
 )
 
 type MessageQueueBrokerOptions struct {
-	masters    *string
-	filerGroup *string
-	filer      *string
-	ip         *string
-	port       *int
-	dataCenter *string
-	rack       *string
-	cpuprofile *string
-	memprofile *string
+	masters       map[string]pb.ServerAddress
+	mastersString *string
+	filerGroup    *string
+	filer         *string
+	ip            *string
+	port          *int
+	dataCenter    *string
+	rack          *string
+	cpuprofile    *string
+	memprofile    *string
 }
 
 func init() {
 	cmdMqBroker.Run = runMqBroker // break init cycle
-	mqBrokerStandaloneOptions.masters = cmdMqBroker.Flag.String("master", "localhost:9333", "comma-separated master servers")
+	mqBrokerStandaloneOptions.mastersString = cmdMqBroker.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	mqBrokerStandaloneOptions.filer = cmdMqBroker.Flag.String("filer", "localhost:8888", "filer server address")
 	mqBrokerStandaloneOptions.filerGroup = cmdMqBroker.Flag.String("filerGroup", "", "share metadata with other filers in the same filerGroup")
 	mqBrokerStandaloneOptions.ip = cmdMqBroker.Flag.String("ip", util.DetectedHostAddress(), "broker host address")
@@ -48,7 +49,7 @@ func init() {
 }
 
 var cmdMqBroker = &Command{
-	UsageLine: "mq.broker [-port=17777] [-filer=<ip:port>]",
+	UsageLine: "mq.broker [-port=17777] [-master=<ip:port>]",
 	Short:     "start a message queue broker",
 	Long: `start a message queue broker
 
@@ -61,6 +62,8 @@ var cmdMqBroker = &Command{
 func runMqBroker(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
+
+	mqBrokerStandaloneOptions.masters = pb.ServerAddresses(*mqBrokerStandaloneOptions.mastersString).ToAddressMap()
 
 	return mqBrokerStandaloneOptions.startQueueServer()
 
@@ -94,7 +97,7 @@ func (mqBrokerOpt *MessageQueueBrokerOptions) startQueueServer() bool {
 	}
 
 	qs, err := broker.NewMessageBroker(&broker.MessageQueueBrokerOption{
-		Masters:            pb.ServerAddresses(*mqBrokerOpt.masters).ToAddressMap(),
+		Masters:            mqBrokerOpt.masters,
 		FilerGroup:         *mqBrokerOpt.filerGroup,
 		DataCenter:         *mqBrokerOpt.dataCenter,
 		Rack:               *mqBrokerOpt.rack,

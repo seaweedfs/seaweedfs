@@ -209,6 +209,8 @@ func runServer(cmd *Command, args []string) bool {
 	serverOptions.v.dataCenter = serverDataCenter
 	serverOptions.v.rack = serverRack
 	mqBrokerOptions.ip = serverIp
+	mqBrokerOptions.masters = filerOptions.masters
+	mqBrokerOptions.filerGroup = filerOptions.filerGroup
 
 	// serverOptions.v.pulseSeconds = pulseSeconds
 	// masterOptions.pulseSeconds = pulseSeconds

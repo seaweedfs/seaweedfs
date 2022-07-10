@@ -18,7 +18,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type SeaweedMessagingClient interface {
-	FindBroker(ctx context.Context, in *FindBrokerRequest, opts ...grpc.CallOption) (*FindBrokerResponse, error)
+	FindBrokerLeader(ctx context.Context, in *FindBrokerLeaderRequest, opts ...grpc.CallOption) (*FindBrokerLeaderResponse, error)
 }
 
 type seaweedMessagingClient struct {
@@ -29,9 +29,9 @@ func NewSeaweedMessagingClient(cc grpc.ClientConnInterface) SeaweedMessagingClie
 	return &seaweedMessagingClient{cc}
 }
 
-func (c *seaweedMessagingClient) FindBroker(ctx context.Context, in *FindBrokerRequest, opts ...grpc.CallOption) (*FindBrokerResponse, error) {
-	out := new(FindBrokerResponse)
-	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/FindBroker", in, out, opts...)
+func (c *seaweedMessagingClient) FindBrokerLeader(ctx context.Context, in *FindBrokerLeaderRequest, opts ...grpc.CallOption) (*FindBrokerLeaderResponse, error) {
+	out := new(FindBrokerLeaderResponse)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/FindBrokerLeader", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +42,7 @@ func (c *seaweedMessagingClient) FindBroker(ctx context.Context, in *FindBrokerR
 // All implementations must embed UnimplementedSeaweedMessagingServer
 // for forward compatibility
 type SeaweedMessagingServer interface {
-	FindBroker(context.Context, *FindBrokerRequest) (*FindBrokerResponse, error)
+	FindBrokerLeader(context.Context, *FindBrokerLeaderRequest) (*FindBrokerLeaderResponse, error)
 	mustEmbedUnimplementedSeaweedMessagingServer()
 }
 
@@ -50,8 +50,8 @@ type SeaweedMessagingServer interface {
 type UnimplementedSeaweedMessagingServer struct {
 }
 
-func (UnimplementedSeaweedMessagingServer) FindBroker(context.Context, *FindBrokerRequest) (*FindBrokerResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method FindBroker not implemented")
+func (UnimplementedSeaweedMessagingServer) FindBrokerLeader(context.Context, *FindBrokerLeaderRequest) (*FindBrokerLeaderResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method FindBrokerLeader not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) mustEmbedUnimplementedSeaweedMessagingServer() {}
 
@@ -66,20 +66,20 @@ func RegisterSeaweedMessagingServer(s grpc.ServiceRegistrar, srv SeaweedMessagin
 	s.RegisterService(&SeaweedMessaging_ServiceDesc, srv)
 }
 
-func _SeaweedMessaging_FindBroker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(FindBrokerRequest)
+func _SeaweedMessaging_FindBrokerLeader_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FindBrokerLeaderRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SeaweedMessagingServer).FindBroker(ctx, in)
+		return srv.(SeaweedMessagingServer).FindBrokerLeader(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/messaging_pb.SeaweedMessaging/FindBroker",
+		FullMethod: "/messaging_pb.SeaweedMessaging/FindBrokerLeader",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedMessagingServer).FindBroker(ctx, req.(*FindBrokerRequest))
+		return srv.(SeaweedMessagingServer).FindBrokerLeader(ctx, req.(*FindBrokerLeaderRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -92,8 +92,8 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*SeaweedMessagingServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "FindBroker",
-			Handler:    _SeaweedMessaging_FindBroker_Handler,
+			MethodName: "FindBrokerLeader",
+			Handler:    _SeaweedMessaging_FindBrokerLeader_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -10,19 +10,16 @@ option java_outer_classname = "MessagQueueProto";
 
 service SeaweedMessaging {
 
-    rpc FindBroker (FindBrokerRequest) returns (FindBrokerResponse) {
+    rpc FindBrokerLeader (FindBrokerLeader) returns (FindBrokerLeaderResponse) {
     }
 
 }
 
 //////////////////////////////////////////////////
 
-message FindBrokerRequest {
-    string namespace = 1;
-    string topic = 2;
-    int32 parition = 3;
+message FindBrokerLeaderRequest {
 }
 
-message FindBrokerResponse {
+message FindBrokerLeaderResponse {
     string broker = 1;
 }
