@@ -47,7 +47,7 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 
 	vsEvacuateCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeServer := vsEvacuateCommand.String("node", "", "<host>:<port> of the volume server")
-	c.targetServer = *vsEvacuateCommand.String("target", "", "<host>:<port> of target volume")
+	targetServer := vsEvacuateCommand.String("target", "", "<host>:<port> of target volume")
 	skipNonMoveable := vsEvacuateCommand.Bool("skipNonMoveable", false, "skip volumes that can not be moved")
 	applyChange := vsEvacuateCommand.Bool("force", false, "actually apply the changes")
 	retryCount := vsEvacuateCommand.Int("retry", 0, "how many times to retry")
@@ -62,6 +62,9 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 
 	if *volumeServer == "" {
 		return fmt.Errorf("need to specify volume server by -node=<host>:<port>")
+	}
+	if *targetServer != "" {
+		c.targetServer = *targetServer
 	}
 	for i := 0; i < *retryCount+1; i++ {
 		if err = c.volumeServerEvacuate(commandEnv, *volumeServer, *skipNonMoveable, *applyChange, writer); err == nil {
@@ -103,14 +106,27 @@ func (c *commandVolumeServerEvacuate) evacuateNormalVolumes(commandEnv *CommandE
 	if thisNode == nil {
 		return fmt.Errorf("%s is not found in this cluster", volumeServer)
 	}
+	if c.targetServer != "" {
+		targetServerFound := false
+		for _, otherNode := range otherNodes {
+			if otherNode.info.Id == c.targetServer {
+				otherNodes = []*Node{otherNode}
+				targetServerFound = true
+				break
+			}
+		}
+		if !targetServerFound {
+			return fmt.Errorf("target %s is not found in this cluster", c.targetServer)
+		}
+	}
 
 	// move away normal volumes
 	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 	for _, diskInfo := range thisNode.info.DiskInfos {
 		for _, vol := range diskInfo.VolumeInfos {
-			hasMoved, err := moveAwayOneNormalVolume(commandEnv, volumeReplicas, vol, thisNode, otherNodes, applyChange)
+			hasMoved, err := c.moveAwayOneNormalVolume(commandEnv, volumeReplicas, vol, thisNode, otherNodes, applyChange)
 			if err != nil {
-				return fmt.Errorf("move away volume %d from %s: %v", vol.Id, volumeServer, err)
+				fmt.Fprintf(writer, "move away volume %d from %s: %v", vol.Id, volumeServer, err)
 			}
 			if !hasMoved {
 				if skipNonMoveable {
@@ -138,7 +154,7 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 		for _, ecShardInfo := range diskInfo.EcShardInfos {
 			hasMoved, err := c.moveAwayOneEcVolume(commandEnv, ecShardInfo, thisNode, otherNodes, applyChange)
 			if err != nil {
-				return fmt.Errorf("move away volume %d from %s: %v", ecShardInfo.Id, volumeServer, err)
+				fmt.Fprintf(writer, "move away volume %d from %s: %v", ecShardInfo.Id, volumeServer, err)
 			}
 			if !hasMoved {
 				if skipNonMoveable {
@@ -160,9 +176,6 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 		})
 		for i := 0; i < len(otherNodes); i++ {
 			emptyNode := otherNodes[i]
-			if c.targetServer != "" && c.targetServer != emptyNode.info.Id {
-				continue
-			}
 			collectionPrefix := ""
 			if ecShardInfo.Collection != "" {
 				collectionPrefix = ecShardInfo.Collection + "_"
@@ -184,7 +197,7 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 	return
 }
 
-func moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, vol *master_pb.VolumeInformationMessage, thisNode *Node, otherNodes []*Node, applyChange bool) (hasMoved bool, err error) {
+func (c *commandVolumeServerEvacuate) moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, vol *master_pb.VolumeInformationMessage, thisNode *Node, otherNodes []*Node, applyChange bool) (hasMoved bool, err error) {
 	fn := capacityByFreeVolumeCount(types.ToDiskType(vol.DiskType))
 	for _, n := range otherNodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
