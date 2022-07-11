@@ -59,3 +59,11 @@ func (broker *MessageQueueBroker) withMasterClient(streamingMode bool, master pb
 	})
 
 }
+
+func (broker *MessageQueueBroker) withBrokerClient(streamingMode bool, server pb.ServerAddress, fn func(client mq_pb.SeaweedMessagingClient) error) error {
+
+	return pb.WithBrokerClient(streamingMode, server, broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+		return fn(client)
+	})
+
+}

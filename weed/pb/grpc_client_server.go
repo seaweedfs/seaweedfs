@@ -216,6 +216,14 @@ func WithVolumeServerClient(streamingMode bool, volumeServer ServerAddress, grpc
 
 }
 
+func WithBrokerClient(streamingMode bool, broker ServerAddress, grpcDialOption grpc.DialOption, fn func(client mq_pb.SeaweedMessagingClient) error) error {
+	return WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
+		client := mq_pb.NewSeaweedMessagingClient(grpcConnection)
+		return fn(client)
+	}, broker.ToGrpcAddress(), grpcDialOption)
+
+}
+
 func WithOneOfGrpcMasterClients(streamingMode bool, masterGrpcAddresses map[string]ServerAddress, grpcDialOption grpc.DialOption, fn func(client master_pb.SeaweedClient) error) (err error) {
 
 	for _, masterGrpcAddress := range masterGrpcAddresses {

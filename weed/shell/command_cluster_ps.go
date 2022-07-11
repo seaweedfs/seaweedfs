@@ -86,6 +86,9 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 			if node.Rack != "" {
 				fmt.Fprintf(writer, "    Rack: %v\n", node.Rack)
 			}
+			if node.IsLeader {
+				fmt.Fprintf(writer, "    IsLeader: %v\n", true)
+			}
 		}
 	}
 
