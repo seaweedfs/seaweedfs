@@ -412,14 +412,11 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	values := r.PostForm
-	var s3cfgLock sync.RWMutex
-	s3cfgLock.RLock()
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 	if err := iama.s3ApiConfig.GetS3ApiConfiguration(s3cfg); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-	s3cfgLock.RUnlock()
 
 	glog.V(4).Infof("DoActions: %+v", values)
 	var response interface{}
