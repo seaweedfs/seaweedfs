@@ -10,7 +10,13 @@ option java_outer_classname = "MessagQueueProto";
 
 service SeaweedMessaging {
 
-    rpc FindBrokerLeader (FindBrokerLeader) returns (FindBrokerLeaderResponse) {
+    rpc FindBrokerLeader (FindBrokerLeaderRequest) returns (FindBrokerLeaderResponse) {
+    }
+    rpc AssignSegmentBrokers (AssignSegmentBrokersRequest) returns (AssignSegmentBrokersResponse) {
+    }
+    rpc CheckSegmentStatus (CheckSegmentStatusRequest) returns (CheckSegmentStatusResponse) {
+    }
+    rpc CheckBrokerLoad (CheckBrokerLoadRequest) returns (CheckBrokerLoadResponse) {
     }
 
 }
@@ -18,8 +24,47 @@ service SeaweedMessaging {
 //////////////////////////////////////////////////
 
 message FindBrokerLeaderRequest {
+    string filer_group = 1;
 }
 
 message FindBrokerLeaderResponse {
     string broker = 1;
+}
+
+message Partition {
+    int32 ring_size = 1;
+    int32 range_start = 2;
+    int32 range_stop = 3;
+}
+
+message Segment {
+    string namespace = 1;
+    string topic = 2;
+    int32 id = 3;
+    Partition partition = 4;
+}
+
+message AssignSegmentBrokersRequest {
+    Segment segment = 1;
+}
+
+message AssignSegmentBrokersResponse {
+    repeated string brokers = 1;
+}
+
+message CheckSegmentStatusRequest {
+    Segment segment = 1;
+}
+
+message CheckSegmentStatusResponse {
+    bool is_active = 1;
+}
+
+message CheckBrokerLoadRequest {
+}
+
+message CheckBrokerLoadResponse {
+    int64 message_count = 1;
+    int64 bytes_count = 2;
+
 }

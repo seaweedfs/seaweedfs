@@ -317,6 +317,8 @@ message GetMasterConfigurationResponse {
 message ListClusterNodesRequest {
   string client_type = 1;
   string filer_group = 2;
+  bool is_leader_only = 3;
+  int32 limit = 4;
 }
 message ListClusterNodesResponse {
   message ClusterNode {

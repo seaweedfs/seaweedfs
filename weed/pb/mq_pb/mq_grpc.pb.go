@@ -19,6 +19,9 @@ const _ = grpc.SupportPackageIsVersion7
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type SeaweedMessagingClient interface {
 	FindBrokerLeader(ctx context.Context, in *FindBrokerLeaderRequest, opts ...grpc.CallOption) (*FindBrokerLeaderResponse, error)
+	AssignSegmentBrokers(ctx context.Context, in *AssignSegmentBrokersRequest, opts ...grpc.CallOption) (*AssignSegmentBrokersResponse, error)
+	CheckSegmentStatus(ctx context.Context, in *CheckSegmentStatusRequest, opts ...grpc.CallOption) (*CheckSegmentStatusResponse, error)
+	CheckBrokerLoad(ctx context.Context, in *CheckBrokerLoadRequest, opts ...grpc.CallOption) (*CheckBrokerLoadResponse, error)
 }
 
 type seaweedMessagingClient struct {
@@ -38,11 +41,41 @@ func (c *seaweedMessagingClient) FindBrokerLeader(ctx context.Context, in *FindB
 	return out, nil
 }
 
+func (c *seaweedMessagingClient) AssignSegmentBrokers(ctx context.Context, in *AssignSegmentBrokersRequest, opts ...grpc.CallOption) (*AssignSegmentBrokersResponse, error) {
+	out := new(AssignSegmentBrokersResponse)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/AssignSegmentBrokers", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedMessagingClient) CheckSegmentStatus(ctx context.Context, in *CheckSegmentStatusRequest, opts ...grpc.CallOption) (*CheckSegmentStatusResponse, error) {
+	out := new(CheckSegmentStatusResponse)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/CheckSegmentStatus", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedMessagingClient) CheckBrokerLoad(ctx context.Context, in *CheckBrokerLoadRequest, opts ...grpc.CallOption) (*CheckBrokerLoadResponse, error) {
+	out := new(CheckBrokerLoadResponse)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/CheckBrokerLoad", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SeaweedMessagingServer is the server API for SeaweedMessaging service.
 // All implementations must embed UnimplementedSeaweedMessagingServer
 // for forward compatibility
 type SeaweedMessagingServer interface {
 	FindBrokerLeader(context.Context, *FindBrokerLeaderRequest) (*FindBrokerLeaderResponse, error)
+	AssignSegmentBrokers(context.Context, *AssignSegmentBrokersRequest) (*AssignSegmentBrokersResponse, error)
+	CheckSegmentStatus(context.Context, *CheckSegmentStatusRequest) (*CheckSegmentStatusResponse, error)
+	CheckBrokerLoad(context.Context, *CheckBrokerLoadRequest) (*CheckBrokerLoadResponse, error)
 	mustEmbedUnimplementedSeaweedMessagingServer()
 }
 
@@ -52,6 +85,15 @@ type UnimplementedSeaweedMessagingServer struct {
 
 func (UnimplementedSeaweedMessagingServer) FindBrokerLeader(context.Context, *FindBrokerLeaderRequest) (*FindBrokerLeaderResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FindBrokerLeader not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) AssignSegmentBrokers(context.Context, *AssignSegmentBrokersRequest) (*AssignSegmentBrokersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AssignSegmentBrokers not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) CheckSegmentStatus(context.Context, *CheckSegmentStatusRequest) (*CheckSegmentStatusResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CheckSegmentStatus not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) CheckBrokerLoad(context.Context, *CheckBrokerLoadRequest) (*CheckBrokerLoadResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CheckBrokerLoad not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) mustEmbedUnimplementedSeaweedMessagingServer() {}
 
@@ -84,6 +126,60 @@ func _SeaweedMessaging_FindBrokerLeader_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeaweedMessaging_AssignSegmentBrokers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AssignSegmentBrokersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).AssignSegmentBrokers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/messaging_pb.SeaweedMessaging/AssignSegmentBrokers",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).AssignSegmentBrokers(ctx, req.(*AssignSegmentBrokersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedMessaging_CheckSegmentStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckSegmentStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).CheckSegmentStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/messaging_pb.SeaweedMessaging/CheckSegmentStatus",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).CheckSegmentStatus(ctx, req.(*CheckSegmentStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedMessaging_CheckBrokerLoad_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckBrokerLoadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).CheckBrokerLoad(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/messaging_pb.SeaweedMessaging/CheckBrokerLoad",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).CheckBrokerLoad(ctx, req.(*CheckBrokerLoadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SeaweedMessaging_ServiceDesc is the grpc.ServiceDesc for SeaweedMessaging service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -94,6 +190,18 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FindBrokerLeader",
 			Handler:    _SeaweedMessaging_FindBrokerLeader_Handler,
+		},
+		{
+			MethodName: "AssignSegmentBrokers",
+			Handler:    _SeaweedMessaging_AssignSegmentBrokers_Handler,
+		},
+		{
+			MethodName: "CheckSegmentStatus",
+			Handler:    _SeaweedMessaging_CheckSegmentStatus_Handler,
+		},
+		{
+			MethodName: "CheckBrokerLoad",
+			Handler:    _SeaweedMessaging_CheckBrokerLoad_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
