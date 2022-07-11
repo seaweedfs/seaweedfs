@@ -495,9 +495,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if changed {
-		s3cfgLock.Lock()
 		err := iama.s3ApiConfig.PutS3ApiConfiguration(s3cfg)
-		s3cfgLock.Unlock()
 		if err != nil {
 			writeIamErrorResponse(w, r, fmt.Errorf(iam.ErrCodeServiceFailureException), "", "", err)
 			return
