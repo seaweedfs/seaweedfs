@@ -1,5 +1,5 @@
 apiVersion: v1
 description: SeaweedFS
 name: seaweedfs
-appVersion: "3.14"
-version: "3.14"
+appVersion: "3.15"
+version: "3.15"
