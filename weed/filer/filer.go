@@ -105,28 +105,7 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 }
 
 func (f *Filer) ListExistingPeerUpdates() (existingNodes []*master_pb.ClusterNodeUpdate) {
-
-	if grpcErr := pb.WithMasterClient(false, f.MasterClient.GetMaster(), f.GrpcDialOption, func(client master_pb.SeaweedClient) error {
-		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType: cluster.FilerType,
-			FilerGroup: f.MasterClient.FilerGroup,
-		})
-
-		glog.V(0).Infof("the cluster has %d filers\n", len(resp.ClusterNodes))
-		for _, node := range resp.ClusterNodes {
-			existingNodes = append(existingNodes, &master_pb.ClusterNodeUpdate{
-				NodeType:    cluster.FilerType,
-				Address:     node.Address,
-				IsLeader:    node.IsLeader,
-				IsAdd:       true,
-				CreatedAtNs: node.CreatedAtNs,
-			})
-		}
-		return err
-	}); grpcErr != nil {
-		glog.V(0).Infof("connect to %s: %v", f.MasterClient.GetMaster(), grpcErr)
-	}
-	return
+	return cluster.ListExistingPeerUpdates(f.GetMaster(), f.GrpcDialOption, f.MasterClient.FilerGroup, cluster.FilerType)
 }
 
 func (f *Filer) SetStore(store FilerStore) (isFresh bool) {
