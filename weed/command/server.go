@@ -228,7 +228,6 @@ func runServer(cmd *Command, args []string) bool {
 	s3Options.filer = &filerAddress
 	iamOptions.filer = &filerAddress
 	webdavOptions.filer = &filerAddress
-	mqBrokerOptions.filer = &filerAddress
 	mqBrokerOptions.filerGroup = filerOptions.filerGroup
 
 	go stats_collect.StartMetricsServer(*serverMetricsHttpPort)

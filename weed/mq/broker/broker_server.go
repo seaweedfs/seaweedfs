@@ -5,6 +5,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/mq_pb"
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
+	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
@@ -16,7 +17,6 @@ type MessageQueueBrokerOption struct {
 	FilerGroup         string
 	DataCenter         string
 	Rack               string
-	Filers             []pb.ServerAddress
 	DefaultReplication string
 	MaxMB              int
 	Ip                 string
@@ -29,6 +29,8 @@ type MessageQueueBroker struct {
 	option         *MessageQueueBrokerOption
 	grpcDialOption grpc.DialOption
 	MasterClient   *wdclient.MasterClient
+	filers         map[pb.ServerAddress]struct{}
+	currentFiler   pb.ServerAddress
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
@@ -37,13 +39,45 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		option:         option,
 		grpcDialOption: grpcDialOption,
 		MasterClient:   wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, pb.NewServerAddress(option.Ip, option.Port, 0), option.DataCenter, option.Rack, option.Masters),
+		filers:         make(map[pb.ServerAddress]struct{}),
 	}
-
-	mqBroker.checkFilers()
+	mqBroker.MasterClient.OnPeerUpdate = mqBroker.OnBrokerUpdate
 
 	go mqBroker.MasterClient.KeepConnectedToMaster()
 
+	existingNodes := cluster.ListExistingPeerUpdates(mqBroker.MasterClient.GetMaster(), grpcDialOption, option.FilerGroup, cluster.FilerType)
+	for _, newNode := range existingNodes {
+		mqBroker.OnBrokerUpdate(newNode, time.Now())
+	}
+
 	return mqBroker, nil
+}
+
+func (broker *MessageQueueBroker) OnBrokerUpdate(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
+	if update.NodeType != cluster.FilerType {
+		return
+	}
+
+	address := pb.ServerAddress(update.Address)
+	if update.IsAdd {
+		broker.filers[address] = struct{}{}
+		if broker.currentFiler == "" {
+			broker.currentFiler = address
+		}
+	} else {
+		delete(broker.filers, address)
+		if broker.currentFiler == address {
+			for filer, _ := range broker.filers {
+				broker.currentFiler = filer
+				break
+			}
+		}
+	}
+
+}
+
+func (broker *MessageQueueBroker) GetFiler() pb.ServerAddress {
+	return broker.currentFiler
 }
 
 func (broker *MessageQueueBroker) withFilerClient(streamingMode bool, filer pb.ServerAddress, fn func(filer_pb.SeaweedFilerClient) error) error {
