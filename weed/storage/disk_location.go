@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -206,7 +207,11 @@ func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, con
 
 func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapKind) {
 
-	l.concurrentLoadingVolumes(needleMapKind, 10)
+	workerNum := runtime.NumCPU()
+	if workerNum <= 10 {
+		workerNum = 10
+	}
+	l.concurrentLoadingVolumes(needleMapKind, workerNum)
 	glog.V(0).Infof("Store started on dir: %s with %d volumes max %d", l.Directory, len(l.volumes), l.MaxVolumeCount)
 
 	l.loadAllEcShards()
