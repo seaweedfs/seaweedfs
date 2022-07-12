@@ -213,23 +213,18 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 	if err != nil {
 		return PutUserPolicyResponse{}, err
 	}
-	isFound := false
 	policyDocuments[policyName] = &policyDocument
 	actions := GetActions(&policyDocument)
 	for _, ident := range s3cfg.Identities {
 		if userName != ident.Name {
 			continue
 		}
-		isFound = true
 		for _, action := range actions {
 			ident.Actions = append(ident.Actions, action)
 		}
-		break
+		return resp, nil
 	}
-	if !isFound {
-		return resp, fmt.Errorf("%s: the user with name %s cannot be found", iam.ErrCodeNoSuchEntityException, userName)
-	}
-	return resp, nil
+	return resp, fmt.Errorf("%s: the user with name %s cannot be found", iam.ErrCodeNoSuchEntityException, userName)
 }
 
 func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp GetUserPolicyResponse, err error) {
