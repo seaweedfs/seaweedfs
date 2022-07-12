@@ -48,7 +48,7 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 
 	vsEvacuateCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeServer := vsEvacuateCommand.String("node", "", "<host>:<port> of the volume server")
-	volumeRack := vsEvacuateCommand.String("rack", "", "rack for then volume servers")
+	volumeRack := vsEvacuateCommand.String("rack", "", "source rack for the volume servers")
 	targetServer := vsEvacuateCommand.String("target", "", "<host>:<port> of target volume")
 	skipNonMoveable := vsEvacuateCommand.Bool("skipNonMoveable", false, "skip volumes that can not be moved")
 	applyChange := vsEvacuateCommand.Bool("force", false, "actually apply the changes")
