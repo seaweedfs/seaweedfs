@@ -57,7 +57,7 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 	if update.IsAdd {
 		// every filer should subscribe to a new filer
 		if ma.setActive(address, true) {
-			go ma.loopSubscribeToOnefiler(ma.filer, ma.self, address, startFrom)
+			go ma.loopSubscribeToOneFiler(ma.filer, ma.self, address, startFrom)
 		}
 	} else {
 		ma.setActive(address, false)
@@ -89,10 +89,10 @@ func (ma *MetaAggregator) isActive(address pb.ServerAddress) (isActive bool) {
 	return count > 0 && isActive
 }
 
-func (ma *MetaAggregator) loopSubscribeToOnefiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress, startFrom time.Time) {
+func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress, startFrom time.Time) {
 	lastTsNs := startFrom.UnixNano()
 	for {
-		glog.V(0).Infof("loopSubscribeToOnefiler read %s start from %v %d", peer, time.Unix(0, lastTsNs), lastTsNs)
+		glog.V(0).Infof("loopSubscribeToOneFiler read %s start from %v %d", peer, time.Unix(0, lastTsNs), lastTsNs)
 		nextLastTsNs, err := ma.doSubscribeToOneFiler(f, self, peer, lastTsNs)
 		if !ma.isActive(peer) {
 			glog.V(0).Infof("stop subscribing remote %s meta change", peer)
