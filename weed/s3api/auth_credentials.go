@@ -109,6 +109,11 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content []b
 		glog.Warningf("unmarshal error: %v", err)
 		return fmt.Errorf("unmarshal error: %v", err)
 	}
+
+	if err := filer.CheckDuplicateAccessKey(s3ApiConfiguration); err != nil {
+		return err
+	}
+
 	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
 		return err
 	}

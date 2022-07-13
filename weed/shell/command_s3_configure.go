@@ -2,13 +2,13 @@ package shell
 
 import (
 	"bytes"
-	"errors"
 	"flag"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
 	"io"
 	"sort"
 	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/filer"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
@@ -165,15 +165,8 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 		s3cfg.Identities = append(s3cfg.Identities, &identity)
 	}
 
-	accessKeySet := make(map[string]string)
-	for _, ident := range s3cfg.Identities {
-		for _, cred := range ident.Credentials {
-			if userName, found := accessKeySet[cred.AccessKey]; !found {
-				accessKeySet[cred.AccessKey] = ident.Name
-			} else {
-				return errors.New(fmt.Sprintf("duplicate accessKey[%s], already configured in user[%s]", cred.AccessKey, userName))
-			}
-		}
+	if err = filer.CheckDuplicateAccessKey(s3cfg); err != nil {
+		return err
 	}
 
 	buf.Reset()
