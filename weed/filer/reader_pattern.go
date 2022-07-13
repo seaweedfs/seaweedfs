@@ -1,8 +1,8 @@
 package filer
 
 type ReaderPattern struct {
-	isStreaming    bool
-	lastReadOffset int64
+	isSequentialCounter int64
+	lastReadStopOffset  int64
 }
 
 // For streaming read: only cache the first chunk
@@ -10,29 +10,20 @@ type ReaderPattern struct {
 
 func NewReaderPattern() *ReaderPattern {
 	return &ReaderPattern{
-		isStreaming:    true,
-		lastReadOffset: -1,
+		isSequentialCounter: 0,
+		lastReadStopOffset:  0,
 	}
 }
 
 func (rp *ReaderPattern) MonitorReadAt(offset int64, size int) {
-	isStreaming := true
-	if rp.lastReadOffset > offset {
-		isStreaming = false
+	if rp.lastReadStopOffset == offset {
+		rp.isSequentialCounter++
+	} else {
+		rp.isSequentialCounter--
 	}
-	if rp.lastReadOffset == -1 {
-		if offset != 0 {
-			isStreaming = false
-		}
-	}
-	rp.lastReadOffset = offset
-	rp.isStreaming = isStreaming
-}
-
-func (rp *ReaderPattern) IsStreamingMode() bool {
-	return rp.isStreaming
+	rp.lastReadStopOffset = offset + int64(size)
 }
 
 func (rp *ReaderPattern) IsRandomMode() bool {
-	return !rp.isStreaming
+	return rp.isSequentialCounter >= 0
 }
