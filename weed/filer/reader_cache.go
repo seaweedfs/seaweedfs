@@ -18,7 +18,7 @@ type ReaderCache struct {
 }
 
 type SingleChunkCacher struct {
-	sync.RWMutex
+	sync.Mutex
 	cond          *sync.Cond
 	parent        *ReaderCache
 	chunkFileId   string
@@ -183,8 +183,8 @@ func (s *SingleChunkCacher) destroy() {
 }
 
 func (s *SingleChunkCacher) readChunkAt(buf []byte, offset int64) (int, error) {
-	s.RLock()
-	defer s.RUnlock()
+	s.Lock()
+	defer s.Unlock()
 
 	for s.completedTime.IsZero() {
 		s.cond.Wait()
