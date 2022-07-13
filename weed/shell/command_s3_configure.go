@@ -171,7 +171,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 			if userName, found := accessKeySet[cred.AccessKey]; !found {
 				accessKeySet[cred.AccessKey] = ident.Name
 			} else {
-				return errors.New(fmt.Sprintf("duplicate accessKey: %s, already configured in user[%s]", cred.AccessKey, userName))
+				return errors.New(fmt.Sprintf("duplicate accessKey[%s], already configured in user[%s]", cred.AccessKey, userName))
 			}
 		}
 	}
