@@ -2,7 +2,6 @@ package filer
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 
@@ -36,7 +35,7 @@ func CheckDuplicateAccessKey(s3cfg *iam_pb.S3ApiConfiguration) error {
 			if userName, found := accessKeySet[cred.AccessKey]; !found {
 				accessKeySet[cred.AccessKey] = ident.Name
 			} else {
-				return errors.New(fmt.Sprintf("duplicate accessKey[%s], already configured in user[%s]", cred.AccessKey, userName))
+				return fmt.Errorf("duplicate accessKey[%s], already configured in user[%s]", cred.AccessKey, userName)
 			}
 		}
 	}
