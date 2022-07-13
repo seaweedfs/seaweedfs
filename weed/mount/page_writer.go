@@ -29,14 +29,14 @@ func newPageWriter(fh *FileHandle, chunkSize int64) *PageWriter {
 	return pw
 }
 
-func (pw *PageWriter) AddPage(offset int64, data []byte, isSequentail bool) {
+func (pw *PageWriter) AddPage(offset int64, data []byte, isSequential bool) {
 
 	glog.V(4).Infof("%v AddPage [%d, %d)", pw.fh.fh, offset, offset+int64(len(data)))
 
 	chunkIndex := offset / pw.chunkSize
 	for i := chunkIndex; len(data) > 0; i++ {
 		writeSize := min(int64(len(data)), (i+1)*pw.chunkSize-offset)
-		pw.addToOneChunk(i, offset, data[:writeSize], isSequentail)
+		pw.addToOneChunk(i, offset, data[:writeSize], isSequential)
 		offset += writeSize
 		data = data[writeSize:]
 	}
