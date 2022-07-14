@@ -445,9 +445,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 func setEtag(w http.ResponseWriter, etag string) {
 	if etag != "" {
 		if strings.HasPrefix(etag, "\"") {
-			w.Header().Set("ETag", etag)
+			w.Header()["ETag"] = []string{etag}
 		} else {
-			w.Header().Set("ETag", "\""+etag+"\"")
+			w.Header()["ETag"] = []string{"\"" + etag + "\""}
 		}
 	}
 }
