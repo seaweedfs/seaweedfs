@@ -90,6 +90,9 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 	peerAddress := findClientAddress(stream.Context(), 0)
 
+	// use negative client id to differentiate from addClient()/deleteClient() used in SubscribeMetadata()
+	req.ClientId = -req.ClientId
+
 	alreadyKnown, clientName := fs.addClient(req.ClientName, peerAddress, req.ClientId)
 	if alreadyKnown {
 		return fmt.Errorf("duplicated local subscription detected for client %s id %d", clientName, req.ClientId)
