@@ -217,6 +217,10 @@ func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapKind) {
 			glog.Warningf("failed to set worker number from GOMAXPROCS , set to default:10")
 		}
 		workerNum = num
+	} else {
+		if workerNum <= 10 {
+			workerNum = 10
+		}
 	}
 	l.concurrentLoadingVolumes(needleMapKind, workerNum)
 	glog.V(0).Infof("Store started on dir: %s with %d volumes max %d", l.Directory, len(l.volumes), l.MaxVolumeCount)
