@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -208,8 +209,18 @@ func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, con
 func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapKind) {
 
 	workerNum := runtime.NumCPU()
-	if workerNum <= 10 {
-		workerNum = 10
+	val, ok := os.LookupEnv("GOMAXPROCS")
+	if ok {
+		num, err := strconv.Atoi(val)
+		if err != nil || num < 1 {
+			num = 10
+			glog.Warningf("failed to set worker number from GOMAXPROCS , set to default:10")
+		}
+		workerNum = num
+	} else {
+		if workerNum <= 10 {
+			workerNum = 10
+		}
 	}
 	l.concurrentLoadingVolumes(needleMapKind, workerNum)
 	glog.V(0).Infof("Store started on dir: %s with %d volumes max %d", l.Directory, len(l.volumes), l.MaxVolumeCount)
