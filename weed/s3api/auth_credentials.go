@@ -71,7 +71,7 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 		domain: option.DomainName,
 	}
 	if option.Config != "" {
-		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
+		if err := iam.loadS3ApiConfigurationFromFile(option); err != nil {
 			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
 		}
 	} else {
@@ -94,11 +94,19 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3A
 	return iam.LoadS3ApiConfigurationFromBytes(content)
 }
 
-func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName string) error {
+func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(option *S3ApiServerOption) error {
+	fileName := option.Config
 	content, readErr := os.ReadFile(fileName)
 	if readErr != nil {
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)
+	}
+	// update /etc/iam/identity.json
+	err := pb.WithFilerClient(false, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		return filer.SaveInsideFiler(client, filer.IamConfigDirecotry, filer.IamIdentityFile, content)
+	})
+	if err != nil {
+		return err
 	}
 	return iam.LoadS3ApiConfigurationFromBytes(content)
 }
