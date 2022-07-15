@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -71,7 +72,7 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 		domain: option.DomainName,
 	}
 	if option.Config != "" {
-		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
+		if err := iam.loadS3ApiConfigurationFromFile(option); err != nil {
 			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
 		}
 	} else {
@@ -84,6 +85,28 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) (err error) {
 	var content []byte
+
+	// delete s3 server static configuration in filer
+	err = pb.WithFilerClient(false, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		request := &filer_pb.DeleteEntryRequest{
+			Directory:            filer.IamConfigDirecotry,
+			Name:                 filer.IamStaticConfigFile,
+			IgnoreRecursiveError: false,
+			IsDeleteData:         true,
+			IsRecursive:          false,
+			IsFromOtherCluster:   false,
+			Signatures:           nil,
+		}
+		if _, err := client.DeleteEntry(context.Background(), request); err != nil && err != filer_pb.ErrNotFound {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("delete s3 static configuration file %s/%s failed: %v", filer.IamConfigDirecotry, filer.IamStaticConfigFile, err)
+	}
+
+	// read s3 server dynamic configuration
 	err = pb.WithFilerClient(false, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		content, err = filer.ReadInsideFiler(client, filer.IamConfigDirecotry, filer.IamIdentityFile)
 		return err
@@ -94,11 +117,19 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3A
 	return iam.LoadS3ApiConfigurationFromBytes(content)
 }
 
-func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName string) error {
+func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(option *S3ApiServerOption) error {
+	fileName := option.Config
 	content, readErr := os.ReadFile(fileName)
 	if readErr != nil {
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)
+	}
+	// write to s3 static configuration file /etc/iam/static.conf
+	err := pb.WithFilerClient(false, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		return filer.SaveInsideFiler(client, filer.IamConfigDirecotry, filer.IamStaticConfigFile, content)
+	})
+	if err != nil {
+		return err
 	}
 	return iam.LoadS3ApiConfigurationFromBytes(content)
 }

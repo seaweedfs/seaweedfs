@@ -48,6 +48,15 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	var buf bytes.Buffer
+
+	// check whether s3 server is using a static configuration
+	if err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer.ReadEntry(commandEnv.MasterClient, client, filer.IamConfigDirecotry, filer.IamStaticConfigFile, &buf)
+	}); err != filer_pb.ErrNotFound {
+		return fmt.Errorf("s3 server is using a static configuration, so dynamic configuration is not allowed")
+	}
+
+	// read s3 server dynamic configuration
 	if err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return filer.ReadEntry(commandEnv.MasterClient, client, filer.IamConfigDirecotry, filer.IamIdentityFile, &buf)
 	}); err != nil && err != filer_pb.ErrNotFound {
