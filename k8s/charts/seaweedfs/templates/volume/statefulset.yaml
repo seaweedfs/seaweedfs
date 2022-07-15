@@ -36,6 +36,18 @@ spec:
       tolerations:
         {{ tpl .Values.volume.tolerations . | nindent 8 | trim }}
       {{- end }}
+      {{- if .Values.volume.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        - maxSkew: {{ default 1 .Values.volume.topologySpreadConstraints.maxSkew }}
+          topologyKey: {{ .Values.volume.topologySpreadConstraints.topologyKey }}
+          whenUnsatisfiable: {{ default "DoNotSchedule" .Values.volume.topologySpreadConstraints.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              app: {{ template "seaweedfs.name" . }}
+              chart: {{ template "seaweedfs.chart" . }}
+              release: {{ .Release.Name }}
+              component: volume
+      {{- end }}
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
         - name: {{ .Values.global.imagePullSecrets }}
