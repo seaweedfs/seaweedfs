@@ -204,6 +204,9 @@ volume:
   # Directories to store index files. dir[,dir]... (default is the same as "dir")
   dir_idx: null
 
+  # Directories to store log files. dir[,dir]... (default is the same as "dir")
+  dir_logs: null
+
   # Maximum numbers of volumes, count[,count]...
   # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
   maxVolumes: "0"

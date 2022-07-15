@@ -148,8 +148,10 @@ spec:
             - name: idx
               mountPath: "{{ .Values.volume.dir_idx }}/"
             {{- end }}
+            {{- if .Values.volume.dir_logs }}
             - name: logs
-              mountPath: "/logs/"
+              mountPath: "{{ .Values.volume.dir_logs }}/"
+            {{- end }}
             {{- if .Values.global.enableSecurity }}
             - name: security-config
               readOnly: true
