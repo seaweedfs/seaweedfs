@@ -1,0 +1,16 @@
+{{- if .Values.topologyConfig }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "seaweedfs.name" . }}-topology-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "seaweedfs.name" . }}
+    chart: {{ template "seaweedfs.chart" . }}
+    heritage: {{ .Release.Service }}
+    release: {{ .Release.Name }}
+data:
+  {{- range $nodeName, $rack := .Values.topologyConfig }}
+  {{ $nodeName }}: {{ $rack | toString }}
+  {{- end }}
+{{- end }}

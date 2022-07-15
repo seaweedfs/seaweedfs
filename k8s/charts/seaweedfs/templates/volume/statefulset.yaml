@@ -89,6 +89,15 @@ spec:
               value: {{ $value | quote }}
             {{- end }}
             {{- end }}
+          {{- if .Values.topologyConfig }}
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          envFrom:
+            - configMapRef:
+                name: {{ template "seaweedfs.name" . }}-topology-config
+          {{- end }}
           command:
             - "/bin/sh"
             - "-ec"
@@ -116,6 +125,8 @@ spec:
                 -max={{ .Values.volume.maxVolumes }} \
                 {{- if .Values.volume.rack }}
                 -rack={{ .Values.volume.rack }} \
+                {{- else if .Values.topologyConfig }}
+                -rack=$(eval "echo \$$NODE_NAME") \
                 {{- end }}
                 {{- if .Values.volume.dataCenter }}
                 -dataCenter={{ .Values.volume.dataCenter }} \

@@ -110,6 +110,15 @@ spec:
               valueFrom: {{ toYaml $value | nindent 16 }}
             {{- end }}
             {{- end }}             
+          {{- if .Values.topologyConfig }}
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          envFrom:
+            - configMapRef:
+                name: {{ template "seaweedfs.name" . }}-topology-config
+          {{- end }}
           command:
             - "/bin/sh"
             - "-ec"
@@ -132,6 +141,9 @@ spec:
               {{- end }}
               {{- if .Values.filer.redirectOnRead }}
               -redirectOnRead \
+              {{- end }}
+              {{- if .Values.topologyConfig }}
+              -rack=$(eval "echo \$$NODE_NAME") \
               {{- end }}
               {{- if .Values.filer.disableHttp }}
               -disableHttp \

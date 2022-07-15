@@ -267,6 +267,17 @@ volume:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+# Manual mapping nodes to racks via topology configMap
+# There is no way to pass directly node label to pod spec.
+# So we can manually map node names to racks and get mount these values
+# to pod spec from configMap values using spec.nodeName from k8s downward API
+# topologyConfig:
+#   node1: rack1
+#   node2: rack1
+#   node3: rack2
+#   node4: rack2
+#   node5: rack3
+#   node6: rack3
 
 filer:
   enabled: true
