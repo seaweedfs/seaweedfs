@@ -1,0 +1,30 @@
+include:
+  - project: common/gitlab-ci-snippets
+    file: common.gitlab-ci.yml
+
+variables:
+  HELM_CHART_DIR: k8s/charts/seaweedfs
+
+stages:
+  - lint
+  - release
+
+commit-lint:
+  extends: .commit-lint
+
+helm-lint:
+  extends: .helm-lint
+  script:
+    - helm lint $HELM_CHART_DIR
+    - helm kubeval --force-color --strict --skip-kinds ServiceMonitor $HELM_CHART_DIR
+  # Kubeval linter depends on third-party services which might be unreachable
+  rules:
+    - if: $CI_COMMIT_BRANCH
+      changes:
+        - k8s/**
+
+helm-push:
+  extends: .helm-push
+  script: | 
+    [[ -z $CI_COMMIT_TAG ]] && set_helm_chart_version $(get_app_version)
+    helm cm-push $HELM_ADDITIONAL_ARGS $HELM_CHART_DIR/ "$HELM_REPO_URL"
