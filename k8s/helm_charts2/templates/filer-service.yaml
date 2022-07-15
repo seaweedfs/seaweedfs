@@ -20,6 +20,12 @@ spec:
     port: {{ .Values.filer.grpcPort }}
     targetPort: {{ .Values.filer.grpcPort }}
     protocol: TCP
+  {{- if .Values.filer.metricsPort }}
+  - name: "metrics"
+    port: {{ .Values.filer.metricsPort }}
+    targetPort: {{ .Values.filer.metricsPort }}
+    protocol: TCP
+  {{- end }}
   selector:
     app: {{ template "seaweedfs.name" . }}
     component: filer

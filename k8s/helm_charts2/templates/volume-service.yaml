@@ -18,7 +18,7 @@ spec:
     targetPort: {{ .Values.volume.grpcPort }}
     protocol: TCP
 {{- if .Values.volume.metricsPort }}
-  - name: "swfs-volume-metrics"
+  - name: "metrics"
     port: {{ .Values.volume.metricsPort }}
     targetPort: {{ .Values.volume.metricsPort }}
     protocol: TCP
