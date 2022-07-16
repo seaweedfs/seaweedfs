@@ -22,6 +22,16 @@ service SeaweedMessaging {
 }
 
 //////////////////////////////////////////////////
+message SegmentInfo {
+    Segment segment = 1;
+    int64 start_ts_ns = 2;
+    repeated string brokers = 3;
+    int64 stop_ts_ns = 4;
+    repeated int32 previous_segments = 5;
+    repeated int32 next_segments = 6;
+}
+
+//////////////////////////////////////////////////
 
 message FindBrokerLeaderRequest {
     string filer_group = 1;
