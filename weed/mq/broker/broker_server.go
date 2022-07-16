@@ -80,9 +80,15 @@ func (broker *MessageQueueBroker) GetFiler() pb.ServerAddress {
 	return broker.currentFiler
 }
 
-func (broker *MessageQueueBroker) withFilerClient(streamingMode bool, filer pb.ServerAddress, fn func(filer_pb.SeaweedFilerClient) error) error {
+func (broker *MessageQueueBroker) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithFilerClient(streamingMode, filer, broker.grpcDialOption, fn)
+	return pb.WithFilerClient(streamingMode, broker.GetFiler(), broker.grpcDialOption, fn)
+
+}
+
+func (broker *MessageQueueBroker) AdjustedUrl(location *filer_pb.Location) string {
+
+	return location.Url
 
 }
 
