@@ -103,9 +103,9 @@ func (c *commandVolumeServerEvacuate) volumeServerEvacuate(commandEnv *CommandEn
 			select {
 			default:
 				if topologyInfo, _, err := collectTopologyInfo(commandEnv, topologyInfoUpdateInterval); err != nil {
-					c.topologyInfo = topologyInfo
-				} else {
 					fmt.Fprintf(writer, "update topologyInfo %v", err)
+				} else {
+					c.topologyInfo = topologyInfo
 				}
 			case <-stopchan:
 				return
