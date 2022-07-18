@@ -118,6 +118,7 @@ func (c *commandVolumeServerEvacuate) evacuateNormalVolumes(commandEnv *CommandE
 
 	// move away normal volumes
 	ticker := time.NewTicker(topologyInfoUpdateInterval)
+	defer ticker.Stop()
 	for _, thisNode := range thisNodes {
 		for _, diskInfo := range thisNode.info.DiskInfos {
 			if applyChange {
