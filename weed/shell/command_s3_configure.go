@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
 	"io"
 	"sort"
 	"strings"
+
+	"github.com/chrislusf/seaweedfs/weed/filer"
 
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
@@ -37,7 +38,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	s3ConfigureCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	actions := s3ConfigureCommand.String("actions", "", "comma separated actions names: Read,Write,List,Tagging,Admin")
 	user := s3ConfigureCommand.String("user", "", "user name")
-	buckets := s3ConfigureCommand.String("buckets", "", "bucket name")
+	resourcePaths := s3ConfigureCommand.String("resource_paths", "", "comma separated resource paths: bucket-1,bucket-2/*,bucket-3/dir/*,my-bucket-*")
 	accessKey := s3ConfigureCommand.String("access_key", "", "specify the access key")
 	secretKey := s3ConfigureCommand.String("secret_key", "", "specify the secret key")
 	isDelete := s3ConfigureCommand.Bool("delete", false, "delete users, actions or access keys")
@@ -73,10 +74,10 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 	var cmdActions []string
 	for _, action := range strings.Split(*actions, ",") {
-		if *buckets == "" {
+		if *resourcePaths == "" {
 			cmdActions = append(cmdActions, action)
 		} else {
-			for _, bucket := range strings.Split(*buckets, ",") {
+			for _, bucket := range strings.Split(*resourcePaths, ",") {
 				cmdActions = append(cmdActions, fmt.Sprintf("%s:%s", action, bucket))
 			}
 		}
@@ -115,7 +116,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 				}
 
 			}
-			if *actions == "" && *accessKey == "" && *buckets == "" {
+			if *actions == "" && *accessKey == "" && *resourcePaths == "" {
 				s3cfg.Identities = append(s3cfg.Identities[:idx], s3cfg.Identities[idx+1:]...)
 			}
 		} else {

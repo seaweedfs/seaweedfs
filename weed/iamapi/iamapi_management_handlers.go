@@ -227,6 +227,7 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 	return resp, fmt.Errorf("%s: the user with name %s cannot be found", iam.ErrCodeNoSuchEntityException, userName)
 }
 
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetUserPolicy.html
 func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp GetUserPolicyResponse, err error) {
 	userName := values.Get("UserName")
 	policyName := values.Get("PolicyName")
@@ -244,12 +245,12 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 		policyDocument := PolicyDocument{Version: policyDocumentVersion}
 		statements := make(map[string][]string)
 		for _, action := range ident.Actions {
-			// parse "Read:EXAMPLE-BUCKET"
+			// parse "Read:my-bucket/shared/*"
 			act := strings.Split(action, ":")
 
 			resource := "*"
 			if len(act) == 2 {
-				resource = fmt.Sprintf("arn:aws:s3:::%s/*", act[1])
+				resource = fmt.Sprintf("arn:aws:s3:::%s", act[1])
 			}
 			statements[resource] = append(statements[resource],
 				fmt.Sprintf("s3:%s", MapToIdentitiesAction(act[0])),
@@ -317,12 +318,7 @@ func GetActions(policy *PolicyDocument) (actions []string) {
 					continue
 				}
 				// Parse my-bucket/shared/*
-				path := strings.Split(res[5], "/")
-				if len(path) != 2 || path[1] != "*" {
-					glog.Infof("not match bucket: %s", path)
-					continue
-				}
-				actions = append(actions, fmt.Sprintf("%s:%s", statementAction, path[0]))
+				actions = append(actions, fmt.Sprintf("%s:%s", statementAction, res[5]))
 			}
 		}
 	}
