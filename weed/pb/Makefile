@@ -13,3 +13,6 @@ gen:
 	protoc mq.proto --go_out=./mq_pb --go-grpc_out=./mq_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	# protoc filer.proto --java_out=../../other/java/client/src/main/java
 	cp filer.proto ../../other/java/client/src/main/proto
+
+fbs:
+	flatc --go -o . --go-namespace message_fbs message.fbs
