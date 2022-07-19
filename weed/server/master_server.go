@@ -372,8 +372,26 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 	} else if isLeader {
 		go func(peerName string) {
 			raftServerRemovalTimeAfter := time.After(RaftServerRemovalTime)
+			raftServerPingTicker := time.NewTicker(5 * time.Minute)
+			defer func() {
+				ms.onPeerUpdateDoneCnExist = false
+			}()
 			for {
 				select {
+				case <-raftServerPingTicker.C:
+					err := ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+						_, err := client.Ping(context.Background(), &master_pb.PingRequest{
+							Target:     peerName,
+							TargetType: cluster.MasterType,
+						})
+						return err
+					})
+					if err != nil {
+						glog.Warningf("raft server %s ping failed %+v", peerName, err)
+					} else {
+						glog.V(0).Infof("raft server %s remove canceled on ping success", peerName)
+						return
+					}
 				case <-raftServerRemovalTimeAfter:
 					err := ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 						_, err := client.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
@@ -384,12 +402,13 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 					})
 					if err != nil {
 						glog.Warningf("failed to removing old raft server %s: %v", peerName, err)
+						return
 					}
 					glog.V(0).Infof("old raft server %s removed", peerName)
 					return
 				case peerDone := <-ms.onPeerUpdateDoneCn:
 					if peerName == peerDone {
-						glog.V(0).Infof("raft server %s remove canceled", peerName)
+						glog.V(0).Infof("raft server %s remove canceled on onPeerUpdate", peerName)
 						return
 					}
 				}
