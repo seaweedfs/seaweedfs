@@ -42,6 +42,39 @@ func WalkIndexFile(r io.ReaderAt, fn func(key types.NeedleId, offset types.Offse
 	return e
 }
 
+func WalkIndexFileIncrent(r io.ReaderAt, milestone uint64, fn func(key types.NeedleId, offset types.Offset, size types.Size) error) error {
+	var readerOffset = int64(milestone * types.NeedleMapEntrySize)
+	bytes := make([]byte, types.NeedleMapEntrySize*RowsToRead)
+	count, e := r.ReadAt(bytes, readerOffset)
+	if count == 0 && e == io.EOF {
+		return nil
+	}
+	glog.V(3).Infof("readerOffset %d count %d err: %v", readerOffset, count, e)
+	readerOffset += int64(count)
+	var (
+		key    types.NeedleId
+		offset types.Offset
+		size   types.Size
+		i      int
+	)
+
+	for count > 0 && e == nil || e == io.EOF {
+		for i = 0; i+types.NeedleMapEntrySize <= count; i += types.NeedleMapEntrySize {
+			key, offset, size = IdxFileEntry(bytes[i : i+types.NeedleMapEntrySize])
+			if e = fn(key, offset, size); e != nil {
+				return e
+			}
+		}
+		if e == io.EOF {
+			return nil
+		}
+		count, e = r.ReadAt(bytes, readerOffset)
+		glog.V(3).Infof("readerOffset %d count %d err: %v", readerOffset, count, e)
+		readerOffset += int64(count)
+	}
+	return e
+}
+
 func IdxFileEntry(bytes []byte) (key types.NeedleId, offset types.Offset, size types.Size) {
 	key = types.BytesToNeedleId(bytes[:types.NeedleIdSize])
 	offset = types.BytesToOffset(bytes[types.NeedleIdSize : types.NeedleIdSize+types.OffsetSize])
