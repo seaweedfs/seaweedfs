@@ -11,10 +11,7 @@ import (
 	"golang.org/x/exp/slices"
 	"io"
 	"os"
-	"time"
 )
-
-const topologyInfoUpdateInterval = 5 * time.Minute
 
 func init() {
 	Commands = append(Commands, &commandVolumeServerEvacuate{})
@@ -117,23 +114,18 @@ func (c *commandVolumeServerEvacuate) evacuateNormalVolumes(commandEnv *CommandE
 	}
 
 	// move away normal volumes
-	ticker := time.NewTicker(topologyInfoUpdateInterval)
-	defer ticker.Stop()
 	for _, thisNode := range thisNodes {
 		for _, diskInfo := range thisNode.info.DiskInfos {
 			if applyChange {
-				select {
-				case <-ticker.C:
-					if topologyInfo, _, err := collectTopologyInfo(commandEnv, 0); err != nil {
-						fmt.Fprintf(writer, "update topologyInfo %v", err)
-					} else {
-						_, otherNodesNew := c.nodesOtherThan(
-							collectVolumeServersByDc(topologyInfo, ""), volumeServer)
-						if len(otherNodesNew) > 0 {
-							otherNodes = otherNodesNew
-							c.topologyInfo = topologyInfo
-							fmt.Fprintf(writer, "topologyInfo updated %v\n", len(otherNodes))
-						}
+				if topologyInfo, _, err := collectTopologyInfo(commandEnv, 0); err != nil {
+					fmt.Fprintf(writer, "update topologyInfo %v", err)
+				} else {
+					_, otherNodesNew := c.nodesOtherThan(
+						collectVolumeServersByDc(topologyInfo, ""), volumeServer)
+					if len(otherNodesNew) > 0 {
+						otherNodes = otherNodesNew
+						c.topologyInfo = topologyInfo
+						fmt.Fprintf(writer, "topologyInfo updated %v\n", len(otherNodes))
 					}
 				}
 			}
