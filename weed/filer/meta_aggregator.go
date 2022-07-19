@@ -7,6 +7,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -99,7 +100,11 @@ func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddres
 			return
 		}
 		if err != nil {
-			glog.V(0).Infof("subscribing remote %s meta change: %v", peer, err)
+			errLvl := glog.Level(0)
+			if strings.Contains(err.Error(), "duplicated local subscription detected") {
+				errLvl = glog.Level(1)
+			}
+			glog.V(errLvl).Infof("subscribing remote %s meta change: %v", peer, err)
 		}
 		if lastTsNs < nextLastTsNs {
 			lastTsNs = nextLastTsNs
