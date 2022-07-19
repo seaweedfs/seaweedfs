@@ -123,7 +123,7 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	if volumeName == "" {
 		return false
 	}
-	glog.V(0).Infof("data file %s", l.Directory+"/"+volumeName)
+
 	// skip if ec volumes exists
 	if skipIfEcVolumesExists {
 		if util.FileExists(l.Directory + "/" + volumeName + ".ecx") {
@@ -147,7 +147,7 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 		glog.Warningf("get volume id failed, %s, err : %s", volumeName, err)
 		return false
 	}
-	glog.V(0).Infof("data file %s", l.Directory+"/"+volumeName)
+
 	// avoid loading one volume more than once
 	l.volumesLock.RLock()
 	_, found := l.volumes[vid]
@@ -156,7 +156,6 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 		glog.V(1).Infof("loaded volume, %v", vid)
 		return true
 	}
-	glog.V(0).Infof("data file %s", l.Directory+"/"+volumeName)
 
 	// load the volume
 	v, e := NewVolume(l.Directory, l.IdxDirectory, collection, vid, needleMapKind, nil, nil, 0, 0)
@@ -223,8 +222,6 @@ func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapKind) {
 			workerNum = 10
 		}
 	}
-	workerNum = 10
-
 	l.concurrentLoadingVolumes(needleMapKind, workerNum)
 	glog.V(0).Infof("Store started on dir: %s with %d volumes max %d", l.Directory, len(l.volumes), l.MaxVolumeCount)
 

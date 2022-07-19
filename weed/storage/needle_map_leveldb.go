@@ -20,8 +20,8 @@ import (
 	. "github.com/chrislusf/seaweedfs/weed/storage/types"
 )
 
-//use "2 >> 16" to reduce cpu cost
-const milestoneCnt = 40
+//mark it every milestoneCnt operations
+const milestoneCnt = 10000
 const milestoneKey = 0xffffffffffffffff - 1
 
 type LevelDbNeedleMap struct {
@@ -32,24 +32,19 @@ type LevelDbNeedleMap struct {
 }
 
 func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Options) (m *LevelDbNeedleMap, err error) {
-	glog.V(0).Infof("NewLevelDbNeedleMap pocessing %s...", indexFile.Name())
-	db, errd := leveldb.OpenFile(dbFileName, opts)
-	glog.V(0).Infof("begain %v  %s %d", errd, dbFileName, getMileStone(db))
-	db.Close()
-
 	m = &LevelDbNeedleMap{dbFileName: dbFileName}
 	m.indexFile = indexFile
 	if !isLevelDbFresh(dbFileName, indexFile) {
-		glog.V(0).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
+		glog.V(1).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
 		generateLevelDbFile(dbFileName, indexFile)
-		glog.V(0).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
+		glog.V(1).Infof("Finished Generating %s from %s", dbFileName, indexFile.Name())
 	}
 	if stat, err := indexFile.Stat(); err != nil {
 		glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
 	} else {
 		m.indexFileOffset = stat.Size()
 	}
-	glog.V(0).Infof("Opening %s...", dbFileName)
+	glog.V(1).Infof("Opening %s...", dbFileName)
 
 	if m.db, err = leveldb.OpenFile(dbFileName, opts); err != nil {
 		if errors.IsCorrupted(err) {
@@ -59,19 +54,18 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 			return
 		}
 	}
-	glog.V(0).Infof("getMileStone %s : %d", dbFileName, getMileStone(m.db))
+	glog.V(1).Infof("Loading %s... , milestone: %d", dbFileName, getMileStone(m.db))
 	m.recordNum = uint64(m.indexFileOffset / types.NeedleMapEntrySize)
 	milestone := (m.recordNum / milestoneCnt) * milestoneCnt
 	err = setMileStone(m.db, milestone)
 	if err != nil {
+		glog.Fatalf("set milestone for %s error: %s\n", dbFileName, err)
 		return
 	}
-	glog.V(0).Infof("Loading %s... %d %d", indexFile.Name(), milestone, getMileStone(m.db))
 	mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)
 	if indexLoadError != nil {
 		return nil, indexLoadError
 	}
-	glog.V(0).Infof("finish Loading %s...", indexFile.Name())
 	m.mapMetric = *mm
 	return
 }
@@ -106,14 +100,13 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 		return err
 	} else {
 		if milestone*types.NeedleMapEntrySize > uint64(stat.Size()) {
-			glog.Warningf("wrong milestone %d for filesize %d, set milestone to 0", milestone, stat.Size())
-			milestone = 0
+			glog.Warningf("wrong milestone %d for filesize %d", milestone, stat.Size())
 		}
 		glog.V(0).Infof("generateLevelDbFile %s, milestone %d, num of entries:%d", dbFileName, milestone, (uint64(stat.Size())-milestone*types.NeedleMapEntrySize)/types.NeedleMapEntrySize)
 	}
-	return idx.WalkIndexFileIncrent(indexFile, milestone, func(key NeedleId, offset Offset, size Size) error {
+	return idx.WalkIndexFileIncrement(indexFile, milestone, func(key NeedleId, offset Offset, size Size) error {
 		if !offset.IsZero() && size.IsValid() {
-			levelDbWrite(db, key, offset, size, 0)
+			levelDbWrite(db, key, offset, size, false, 0)
 		} else {
 			levelDbDelete(db, key)
 		}
@@ -144,16 +137,14 @@ func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 	if err := m.appendToIndexFile(key, offset, size); err != nil {
 		return fmt.Errorf("cannot write to indexfile %s: %v", m.indexFile.Name(), err)
 	}
-	//atomic.AddUint64(&m.recordNum, 1)
-	//milestone = atomic.LoadUint64(&m.recordNum)
 	m.recordNum++
 	if m.recordNum%milestoneCnt != 0 {
 		milestone = 0
 	} else {
 		milestone = (m.recordNum / milestoneCnt) * milestoneCnt
-		glog.V(0).Infof("put cnt:%d milestone:%s %d", m.recordNum, m.dbFileName, milestone)
+		glog.V(1).Infof("put cnt:%d for %s,milestone: %d", m.recordNum, m.dbFileName, milestone)
 	}
-	return levelDbWrite(m.db, key, offset, size, milestone)
+	return levelDbWrite(m.db, key, offset, size, milestone == 0, milestone)
 }
 
 func getMileStone(db *leveldb.DB) uint64 {
@@ -175,7 +166,7 @@ func getMileStone(db *leveldb.DB) uint64 {
 }
 
 func setMileStone(db *leveldb.DB, milestone uint64) error {
-	glog.V(0).Infof("set milestone %d", milestone)
+	glog.V(1).Infof("set milestone %d", milestone)
 	var mskBytes = make([]byte, 8)
 	util.Uint64toBytes(mskBytes, milestoneKey)
 	var msBytes = make([]byte, 8)
@@ -183,11 +174,10 @@ func setMileStone(db *leveldb.DB, milestone uint64) error {
 	if err := db.Put(mskBytes, msBytes, nil); err != nil {
 		return fmt.Errorf("failed to setMileStone: %v", err)
 	}
-	glog.V(0).Infof("ssset milestone %d, %d", milestone, getMileStone(db))
 	return nil
 }
 
-func levelDbWrite(db *leveldb.DB, key NeedleId, offset Offset, size Size, milestone uint64) error {
+func levelDbWrite(db *leveldb.DB, key NeedleId, offset Offset, size Size, upateMilstone bool, milestone uint64) error {
 
 	bytes := needle_map.ToBytes(key, offset, size)
 
@@ -195,8 +185,7 @@ func levelDbWrite(db *leveldb.DB, key NeedleId, offset Offset, size Size, milest
 		return fmt.Errorf("failed to write leveldb: %v", err)
 	}
 	// set milestone
-	if milestone != 0 {
-		glog.V(0).Infof("actually set milestone %d", milestone)
+	if upateMilstone {
 		return setMileStone(db, milestone)
 	}
 	return nil
@@ -219,16 +208,13 @@ func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
 	if err := m.appendToIndexFile(key, offset, TombstoneFileSize); err != nil {
 		return err
 	}
-	//atomic.AddUint64(&m.recordNum, 1)
-	//milestone = atomic.LoadUint64(&m.recordNum)
 	m.recordNum++
 	if m.recordNum%milestoneCnt != 0 {
 		milestone = 0
 	} else {
 		milestone = (m.recordNum / milestoneCnt) * milestoneCnt
 	}
-	glog.V(0).Infof("delete cnt:%d milestone:%s %d", m.recordNum, m.dbFileName, milestone)
-	return levelDbWrite(m.db, key, oldNeedle.Offset, -oldNeedle.Size, milestone)
+	return levelDbWrite(m.db, key, oldNeedle.Offset, -oldNeedle.Size, milestone == 0, milestone)
 }
 
 func (m *LevelDbNeedleMap) Close() {

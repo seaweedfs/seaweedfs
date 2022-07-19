@@ -42,7 +42,8 @@ func WalkIndexFile(r io.ReaderAt, fn func(key types.NeedleId, offset types.Offse
 	return e
 }
 
-func WalkIndexFileIncrent(r io.ReaderAt, milestone uint64, fn func(key types.NeedleId, offset types.Offset, size types.Size) error) error {
+//copied from WalkIndexFile, just init readerOffset from milestone
+func WalkIndexFileIncrement(r io.ReaderAt, milestone uint64, fn func(key types.NeedleId, offset types.Offset, size types.Size) error) error {
 	var readerOffset = int64(milestone * types.NeedleMapEntrySize)
 	bytes := make([]byte, types.NeedleMapEntrySize*RowsToRead)
 	count, e := r.ReadAt(bytes, readerOffset)
