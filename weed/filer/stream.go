@@ -18,6 +18,12 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/wdclient"
 )
 
+var getLookupFileIdBackoffSchedule = []time.Duration{
+	150 * time.Millisecond,
+	600 * time.Millisecond,
+	1800 * time.Millisecond,
+}
+
 func HasData(entry *filer_pb.Entry) bool {
 
 	if len(entry.Content) > 0 {
@@ -69,14 +75,22 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writ
 	fileId2Url := make(map[string][]string)
 
 	for _, chunkView := range chunkViews {
-
-		urlStrings, err := masterClient.GetLookupFileIdFunction()(chunkView.FileId)
+		var urlStrings []string
+		var err error
+		for _, backoff := range getLookupFileIdBackoffSchedule {
+			urlStrings, err = masterClient.GetLookupFileIdFunction()(chunkView.FileId)
+			if err == nil && len(urlStrings) > 0 {
+				time.Sleep(backoff)
+				break
+			}
+		}
 		if err != nil {
 			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 			return err
 		} else if len(urlStrings) == 0 {
-			glog.Errorf("operation LookupFileId %s failed, err: urls not found", chunkView.FileId)
-			return fmt.Errorf("operation LookupFileId %s failed, err: urls not found", chunkView.FileId)
+			errUrlNotFound := fmt.Errorf("operation LookupFileId %s failed, err: urls not found", chunkView.FileId)
+			glog.Error(errUrlNotFound)
+			return errUrlNotFound
 		}
 		fileId2Url[chunkView.FileId] = urlStrings
 	}
