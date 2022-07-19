@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
@@ -153,13 +152,14 @@ func getMileStone(db *leveldb.DB) uint64 {
 	data, err := db.Get(mskBytes, nil)
 	if err != nil || len(data) != 8 {
 		glog.Warningf("get milestone from db error: %v, %d", err, len(data))
-		if !strings.Contains(strings.ToLower(err.Error()), "not found") {
-			err = setMileStone(db, 0)
-			if err != nil {
-				glog.Errorf("failed to set milestone: %v", err)
+		/*
+			if !strings.Contains(strings.ToLower(err.Error()), "not found") {
+				err = setMileStone(db, 0)
+				if err != nil {
+					glog.Errorf("failed to set milestone: %v", err)
+				}
 			}
-		}
-
+		*/
 		return 0
 	}
 	return util.BytesToUint64(data)
