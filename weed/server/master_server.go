@@ -414,6 +414,7 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 				}
 			}
 		}(peerName)
+		glog.V(0).Infof("wait %v for raft server %s activity, otherwise delete", RaftServerRemovalTime, peerName)
 		ms.onPeerUpdateDoneCnExist = true
 	}
 }
