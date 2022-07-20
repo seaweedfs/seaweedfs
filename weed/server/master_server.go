@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/chrislusf/seaweedfs/weed/cluster"
@@ -65,8 +66,8 @@ type MasterServer struct {
 
 	boundedLeaderChan chan int
 
-	onPeerUpdateDoneCn      chan string
-	onPeerUpdateDoneCnExist bool
+	onPeerUpdateDoneCn         chan string
+	onPeerUpdateGoroutineCount uint32
 
 	// notifying clients
 	clientChansLock sync.RWMutex
@@ -366,15 +367,16 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 					hashicorpRaft.ServerAddress(peerAddress.ToGrpcAddress()), 0, 0)
 			}
 		}
-		if ms.onPeerUpdateDoneCnExist {
+		if atomic.LoadUint32(&ms.onPeerUpdateGoroutineCount) > 0 {
 			ms.onPeerUpdateDoneCn <- peerName
 		}
 	} else if isLeader {
 		go func(peerName string) {
 			raftServerRemovalTimeAfter := time.After(RaftServerRemovalTime)
 			raftServerPingTicker := time.NewTicker(5 * time.Minute)
+			atomic.AddUint32(&ms.onPeerUpdateGoroutineCount, 1)
 			defer func() {
-				ms.onPeerUpdateDoneCnExist = false
+				atomic.AddUint32(&ms.onPeerUpdateGoroutineCount, -1)
 			}()
 			for {
 				select {
@@ -415,6 +417,5 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 			}
 		}(peerName)
 		glog.V(0).Infof("wait %v for raft server %s activity, otherwise delete", RaftServerRemovalTime, peerName)
-		ms.onPeerUpdateDoneCnExist = true
 	}
 }
