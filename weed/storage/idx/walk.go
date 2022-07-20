@@ -9,8 +9,8 @@ import (
 
 // walks through the index file, calls fn function with each key, offset, size
 // stops with the error returned by the fn function
-func WalkIndexFile(r io.ReaderAt, fn func(key types.NeedleId, offset types.Offset, size types.Size) error) error {
-	var readerOffset int64
+func WalkIndexFile(r io.ReaderAt, startFrom uint64, fn func(key types.NeedleId, offset types.Offset, size types.Size) error) error {
+	readerOffset := int64(startFrom * types.NeedleMapEntrySize)
 	bytes := make([]byte, types.NeedleMapEntrySize*RowsToRead)
 	count, e := r.ReadAt(bytes, readerOffset)
 	if count == 0 && e == io.EOF {
