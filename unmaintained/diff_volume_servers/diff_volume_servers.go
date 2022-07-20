@@ -6,6 +6,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"math"
+	"os"
+
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb"
@@ -16,9 +20,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/grpc"
-	"io"
-	"math"
-	"os"
 )
 
 var (
@@ -155,7 +156,7 @@ func getVolumeFiles(v uint32, addr pb.ServerAddress) (map[types.NeedleId]needleS
 
 	var maxOffset int64
 	files := map[types.NeedleId]needleState{}
-	err = idx.WalkIndexFile(idxFile, func(key types.NeedleId, offset types.Offset, size types.Size) error {
+	err = idx.WalkIndexFile(idxFile, 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
 		if offset.IsZero() || size.IsDeleted() {
 			files[key] = needleState{
 				state: stateDeleted,
