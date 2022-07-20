@@ -219,8 +219,16 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 		if userName != ident.Name {
 			continue
 		}
+
+		existedActions := make(map[string]bool, len(ident.Actions))
+		for _, action := range ident.Actions {
+			existedActions[action] = true
+		}
+
 		for _, action := range actions {
-			ident.Actions = append(ident.Actions, action)
+			if !existedActions[action] {
+				ident.Actions = append(ident.Actions, action)
+			}
 		}
 		return resp, nil
 	}
@@ -349,7 +357,8 @@ func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 	}
 	if !changed {
 		s3cfg.Identities = append(s3cfg.Identities,
-			&iam_pb.Identity{Name: userName,
+			&iam_pb.Identity{
+				Name: userName,
 				Credentials: []*iam_pb.Credential{
 					{
 						AccessKey: accessKeyId,
