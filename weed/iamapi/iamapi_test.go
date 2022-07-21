@@ -138,7 +138,10 @@ func TestPutUserPolicy(t *testing.T) {
 					  ],
 					  "Resource": [
 						"arn:aws:s3:::EXAMPLE-BUCKET",
-						"arn:aws:s3:::EXAMPLE-BUCKET/*"
+						"arn:aws:s3:::EXAMPLE-BUCKET/*",
+						"arn:aws:s3:::my-bucket/shared/*",
+						"arn:aws:s3:::my-bucket/*",
+						"arn:aws:s3:::my-bucket-prefix-*"
 					  ]
 					}
 				  ]
