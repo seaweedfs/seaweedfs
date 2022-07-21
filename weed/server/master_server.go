@@ -368,8 +368,16 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 			}
 		}
 		ms.onPeerUpdateLock.RLock()
-		if len(ms.onPeerUpdateDoneCns) > 0 {
-			for _, onPeerUpdateDoneCn := range ms.onPeerUpdateDoneCns {
+		isGtZero := len(ms.onPeerUpdateDoneCns) > 0
+		ms.onPeerUpdateLock.RUnlock()
+		if isGtZero {
+			var chanPtrs []*chan string
+			ms.onPeerUpdateLock.RLock()
+			for _, cn := range ms.onPeerUpdateDoneCns {
+				chanPtrs = append(chanPtrs, cn)
+			}
+			ms.onPeerUpdateLock.RUnlock()
+			for _, onPeerUpdateDoneCn := range chanPtrs {
 				*onPeerUpdateDoneCn <- peerName
 			}
 		}
