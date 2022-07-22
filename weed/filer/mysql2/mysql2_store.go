@@ -18,6 +18,8 @@ const (
 	CONNECTION_URL_PATTERN = "%s:%s@tcp(%s:%d)/%s?charset=utf8"
 )
 
+var _ filer.BucketAware = (*MysqlStore2)(nil)
+
 func init() {
 	filer.Stores = append(filer.Stores, &MysqlStore2{})
 }

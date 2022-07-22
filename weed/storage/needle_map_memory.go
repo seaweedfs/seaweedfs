@@ -33,7 +33,7 @@ func LoadCompactNeedleMap(file *os.File) (*NeedleMap, error) {
 }
 
 func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
-	e := idx.WalkIndexFile(file, func(key NeedleId, offset Offset, size Size) error {
+	e := idx.WalkIndexFile(file, 0, func(key NeedleId, offset Offset, size Size) error {
 		nm.MaybeSetMaxFileKey(key)
 		if !offset.IsZero() && size.IsValid() {
 			nm.FileCounter++

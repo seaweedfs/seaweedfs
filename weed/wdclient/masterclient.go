@@ -2,6 +2,7 @@ package wdclient
 
 import (
 	"context"
+	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"math/rand"
 	"time"
@@ -46,7 +47,7 @@ func (mc *MasterClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 
 func (mc *MasterClient) LookupFileIdWithFallback(fileId string) (fullUrls []string, err error) {
 	fullUrls, err = mc.vidMap.LookupFileId(fileId)
-	if err == nil {
+	if err == nil && len(fullUrls) > 0 {
 		return
 	}
 	err = pb.WithMasterClient(false, mc.currentMaster, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
@@ -54,7 +55,7 @@ func (mc *MasterClient) LookupFileIdWithFallback(fileId string) (fullUrls []stri
 			VolumeOrFileIds: []string{fileId},
 		})
 		if err != nil {
-			return err
+			return fmt.Errorf("LookupVolume failed: %v", err)
 		}
 		for vid, vidLocation := range resp.VolumeIdLocations {
 			for _, vidLoc := range vidLocation.Locations {
@@ -67,7 +68,6 @@ func (mc *MasterClient) LookupFileIdWithFallback(fileId string) (fullUrls []stri
 				fullUrls = append(fullUrls, "http://"+loc.Url+"/"+fileId)
 			}
 		}
-
 		return nil
 	})
 	return

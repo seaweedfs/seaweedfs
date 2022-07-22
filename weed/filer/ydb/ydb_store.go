@@ -320,6 +320,8 @@ func (store *YdbStore) Shutdown() {
 	_ = store.DB.Close(context.Background())
 }
 
+var _ filer.BucketAware = (*YdbStore)(nil)
+
 func (store *YdbStore) CanDropWholeBucket() bool {
 	return store.SupportBucketTable
 }

@@ -111,7 +111,7 @@ func (cm *MemDb) LoadFromIdx(idxName string) (ret error) {
 
 func (cm *MemDb) LoadFromReaderAt(readerAt io.ReaderAt) (ret error) {
 
-	return idx.WalkIndexFile(readerAt, func(key NeedleId, offset Offset, size Size) error {
+	return idx.WalkIndexFile(readerAt, 0, func(key NeedleId, offset Offset, size Size) error {
 		if offset.IsZero() || size.IsDeleted() {
 			return cm.Delete(key)
 		}

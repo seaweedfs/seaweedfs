@@ -121,23 +121,31 @@ func (store *LevelDB3Store) findDB(fullpath weed_util.FullPath, isForChildren bo
 	}
 
 	store.dbsLock.RUnlock()
-	// upgrade to write lock
+
+	db, err := store.createDB(bucket)
+
+	return db, bucket, shortPath, err
+}
+
+func (store *LevelDB3Store) createDB(bucket string) (*leveldb.DB, error) {
+
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
 
 	// double check after getting the write lock
 	if db, found := store.dbs[bucket]; found {
-		return db, bucket, shortPath, nil
+		return db, nil
 	}
 
 	// create db
 	db, err := store.loadDB(bucket)
 	if err != nil {
-		return nil, bucket, shortPath, err
+		return nil, err
 	}
+
 	store.dbs[bucket] = db
 
-	return db, bucket, shortPath, nil
+	return db, nil
 }
 
 func (store *LevelDB3Store) closeDB(bucket string) {
