@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"google.golang.org/grpc"
 	"strconv"
+	"sync"
 	"testing"
 )
 
@@ -112,18 +113,23 @@ func TestLookupFileId(t *testing.T) {
 	}
 
 	//lock: concurrent test
-	go func() {
-		for i := 0; i < 100; i++ {
-			mc.addLocation(uint32(i), Location{})
-		}
-	}()
-	for i := 0; i < 10; i++ {
-		for i := 0; i < 100; i++ {
-			for i := 0; i < 20; i++ {
-				_, _ = mc.GetLocations(uint32(i))
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				for i := 0; i < 20; i++ {
+					_, _ = mc.GetLocations(uint32(i))
+				}
 			}
-		}
+		}()
 	}
+
+	for i := 0; i < 100; i++ {
+		mc.addLocation(uint32(i), Location{})
+	}
+	wg.Wait()
 }
 
 func BenchmarkLocationIndex(b *testing.B) {
