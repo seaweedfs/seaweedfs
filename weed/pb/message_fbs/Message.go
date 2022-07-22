@@ -33,7 +33,7 @@ func (rcv *Message) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *Message) ProducerId() int32 {
+func (rcv *Message) SeqDelta() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.GetInt32(o + rcv._tab.Pos)
@@ -41,11 +41,11 @@ func (rcv *Message) ProducerId() int32 {
 	return 0
 }
 
-func (rcv *Message) MutateProducerId(n int32) bool {
+func (rcv *Message) MutateSeqDelta(n int32) bool {
 	return rcv._tab.MutateInt32Slot(4, n)
 }
 
-func (rcv *Message) SegmentId() int32 {
+func (rcv *Message) TsMsDelta() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetInt32(o + rcv._tab.Pos)
@@ -53,60 +53,12 @@ func (rcv *Message) SegmentId() int32 {
 	return 0
 }
 
-func (rcv *Message) MutateSegmentId(n int32) bool {
+func (rcv *Message) MutateTsMsDelta(n int32) bool {
 	return rcv._tab.MutateInt32Slot(6, n)
 }
 
-func (rcv *Message) ProducerSeq() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
-	if o != 0 {
-		return rcv._tab.GetInt64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *Message) MutateProducerSeq(n int64) bool {
-	return rcv._tab.MutateInt64Slot(8, n)
-}
-
-func (rcv *Message) SegmentSeq() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
-	if o != 0 {
-		return rcv._tab.GetInt64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *Message) MutateSegmentSeq(n int64) bool {
-	return rcv._tab.MutateInt64Slot(10, n)
-}
-
-func (rcv *Message) EventTsNs() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
-	if o != 0 {
-		return rcv._tab.GetInt64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *Message) MutateEventTsNs(n int64) bool {
-	return rcv._tab.MutateInt64Slot(12, n)
-}
-
-func (rcv *Message) RecvTsNs() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
-	if o != 0 {
-		return rcv._tab.GetInt64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *Message) MutateRecvTsNs(n int64) bool {
-	return rcv._tab.MutateInt64Slot(14, n)
-}
-
 func (rcv *Message) Properties(obj *NameValue, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -118,7 +70,7 @@ func (rcv *Message) Properties(obj *NameValue, j int) bool {
 }
 
 func (rcv *Message) PropertiesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -126,7 +78,7 @@ func (rcv *Message) PropertiesLength() int {
 }
 
 func (rcv *Message) Key() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -134,7 +86,7 @@ func (rcv *Message) Key() []byte {
 }
 
 func (rcv *Message) Data() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -142,37 +94,25 @@ func (rcv *Message) Data() []byte {
 }
 
 func MessageStart(builder *flatbuffers.Builder) {
-	builder.StartObject(9)
+	builder.StartObject(5)
 }
-func MessageAddProducerId(builder *flatbuffers.Builder, producerId int32) {
-	builder.PrependInt32Slot(0, producerId, 0)
+func MessageAddSeqDelta(builder *flatbuffers.Builder, seqDelta int32) {
+	builder.PrependInt32Slot(0, seqDelta, 0)
 }
-func MessageAddSegmentId(builder *flatbuffers.Builder, segmentId int32) {
-	builder.PrependInt32Slot(1, segmentId, 0)
-}
-func MessageAddProducerSeq(builder *flatbuffers.Builder, producerSeq int64) {
-	builder.PrependInt64Slot(2, producerSeq, 0)
-}
-func MessageAddSegmentSeq(builder *flatbuffers.Builder, segmentSeq int64) {
-	builder.PrependInt64Slot(3, segmentSeq, 0)
-}
-func MessageAddEventTsNs(builder *flatbuffers.Builder, eventTsNs int64) {
-	builder.PrependInt64Slot(4, eventTsNs, 0)
-}
-func MessageAddRecvTsNs(builder *flatbuffers.Builder, recvTsNs int64) {
-	builder.PrependInt64Slot(5, recvTsNs, 0)
+func MessageAddTsMsDelta(builder *flatbuffers.Builder, tsMsDelta int32) {
+	builder.PrependInt32Slot(1, tsMsDelta, 0)
 }
 func MessageAddProperties(builder *flatbuffers.Builder, properties flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(properties), 0)
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(properties), 0)
 }
 func MessageStartPropertiesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func MessageAddKey(builder *flatbuffers.Builder, key flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(key), 0)
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(key), 0)
 }
 func MessageAddData(builder *flatbuffers.Builder, data flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(data), 0)
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(data), 0)
 }
 func MessageEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
