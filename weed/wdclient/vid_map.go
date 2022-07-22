@@ -40,6 +40,7 @@ type vidMap struct {
 	ecVid2Locations map[uint32][]Location
 	DataCenter      string
 	cursor          int32
+	cache           *vidMap
 }
 
 func newVidMap(dataCenter string) vidMap {
@@ -119,17 +120,29 @@ func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) 
 }
 
 func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
+	glog.V(4).Infof("~ lookup volume id %d: %+v ec:%+v", vid, vc.vid2Locations, vc.ecVid2Locations)
+	locations, found = vc.getLocations(vid)
+	if found && len(locations) > 0 {
+		return locations, found
+	}
+
+	if vc.cache != nil {
+		return vc.cache.GetLocations(vid)
+	}
+
+	return nil, false
+}
+
+func (vc *vidMap) getLocations(vid uint32) (locations []Location, found bool) {
 	vc.RLock()
 	defer vc.RUnlock()
-
-	glog.V(4).Infof("~ lookup volume id %d: %+v ec:%+v", vid, vc.vid2Locations, vc.ecVid2Locations)
 
 	locations, found = vc.vid2Locations[vid]
 	if found && len(locations) > 0 {
 		return
 	}
 	locations, found = vc.ecVid2Locations[vid]
-	return locations, found && len(locations) > 0
+	return
 }
 
 func (vc *vidMap) addLocation(vid uint32, location Location) {
@@ -177,6 +190,10 @@ func (vc *vidMap) addEcLocation(vid uint32, location Location) {
 }
 
 func (vc *vidMap) deleteLocation(vid uint32, location Location) {
+	if vc.cache != nil {
+		vc.cache.deleteLocation(vid, location)
+	}
+
 	vc.Lock()
 	defer vc.Unlock()
 
@@ -193,10 +210,13 @@ func (vc *vidMap) deleteLocation(vid uint32, location Location) {
 			break
 		}
 	}
-
 }
 
 func (vc *vidMap) deleteEcLocation(vid uint32, location Location) {
+	if vc.cache != nil {
+		vc.cache.deleteLocation(vid, location)
+	}
+
 	vc.Lock()
 	defer vc.Unlock()
 
@@ -213,5 +233,4 @@ func (vc *vidMap) deleteEcLocation(vid uint32, location Location) {
 			break
 		}
 	}
-
 }
