@@ -24,18 +24,20 @@ type MasterClient struct {
 	grpcDialOption grpc.DialOption
 
 	vidMap
+	vidMapCacheSize int
 
 	OnPeerUpdate func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
 }
 
 func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, masters map[string]pb.ServerAddress) *MasterClient {
 	return &MasterClient{
-		FilerGroup:     filerGroup,
-		clientType:     clientType,
-		clientHost:     clientHost,
-		masters:        masters,
-		grpcDialOption: grpcDialOption,
-		vidMap:         newVidMap(clientDataCenter),
+		FilerGroup:      filerGroup,
+		clientType:      clientType,
+		clientHost:      clientHost,
+		masters:         masters,
+		grpcDialOption:  grpcDialOption,
+		vidMap:          newVidMap(clientDataCenter),
+		vidMapCacheSize: 5,
 	}
 }
 
@@ -175,10 +177,12 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 				stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToleader).Inc()
 				return nil
 			}
-			mc.vidMap = newVidMap("")
+			//mc.vidMap = newVidMap("")
+			mc.resetVidMap()
 			mc.updateVidMap(resp)
 		} else {
-			mc.vidMap = newVidMap("")
+			mc.resetVidMap()
+			//mc.vidMap = newVidMap("")
 		}
 		mc.currentMaster = master
 
@@ -262,4 +266,18 @@ func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.
 			return fn(client)
 		})
 	})
+}
+
+func (mc *MasterClient) resetVidMap() {
+	tail := &vidMap{vid2Locations: mc.vid2Locations, ecVid2Locations: mc.ecVid2Locations, cache: mc.cache}
+	mc.vidMap = newVidMap("")
+	mc.vidMap.cache = tail
+
+	for i := 0; i < mc.vidMapCacheSize && tail.cache != nil; i++ {
+		if i == mc.vidMapCacheSize-1 {
+			tail.cache = nil
+		} else {
+			tail = tail.cache
+		}
+	}
 }
