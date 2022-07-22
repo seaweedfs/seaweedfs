@@ -54,26 +54,25 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, grpcPort int, publicUrl 
 	return dn
 }
 
-type RackMap struct {
-	Id        NodeId        `json:"Id"`
-	DataNodes []DataNodeMap `json:"DataNodes"`
+type RackInfo struct {
+	Id        NodeId         `json:"Id"`
+	DataNodes []DataNodeInfo `json:"DataNodes"`
 }
 
-func (r *Rack) ToMap() RackMap {
-	m := RackMap{}
-	m.Id = r.Id()
-	var dns []DataNodeMap
+func (r *Rack) ToInfo() (info RackInfo) {
+	info.Id = r.Id()
+	var dns []DataNodeInfo
 	for _, c := range r.Children() {
 		dn := c.(*DataNode)
-		dns = append(dns, dn.ToMap())
+		dns = append(dns, dn.ToInfo())
 	}
 
-	slices.SortFunc(dns, func(a, b DataNodeMap) bool {
+	slices.SortFunc(dns, func(a, b DataNodeInfo) bool {
 		return a.Url < b.Url
 	})
 
-	m.DataNodes = dns
-	return m
+	info.DataNodes = dns
+	return
 }
 
 func (r *Rack) ToRackInfo() *master_pb.RackInfo {

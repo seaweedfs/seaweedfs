@@ -31,25 +31,24 @@ func (dc *DataCenter) GetOrCreateRack(rackName string) *Rack {
 	return rack
 }
 
-type DataCenterMap struct {
-	Id    NodeId    `json:"Id"`
-	Racks []RackMap `json:"Racks"`
+type DataCenterInfo struct {
+	Id    NodeId     `json:"Id"`
+	Racks []RackInfo `json:"Racks"`
 }
 
-func (dc *DataCenter) ToMap() DataCenterMap {
-	m := DataCenterMap{}
-	m.Id = dc.Id()
-	var racks []RackMap
+func (dc *DataCenter) ToInfo() (info DataCenterInfo) {
+	info.Id = dc.Id()
+	var racks []RackInfo
 	for _, c := range dc.Children() {
 		rack := c.(*Rack)
-		racks = append(racks, rack.ToMap())
+		racks = append(racks, rack.ToInfo())
 	}
 
-	slices.SortFunc(racks, func(a, b RackMap) bool {
+	slices.SortFunc(racks, func(a, b RackInfo) bool {
 		return a.Id < b.Id
 	})
-	m.Racks = racks
-	return m
+	info.Racks = racks
+	return
 }
 
 func (dc *DataCenter) ToDataCenterInfo() *master_pb.DataCenterInfo {
