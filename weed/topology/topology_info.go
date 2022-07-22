@@ -1,30 +1,44 @@
 package topology
 
-import "github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+import (
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"golang.org/x/exp/slices"
+)
 
-func (t *Topology) ToMap() interface{} {
-	m := make(map[string]interface{})
-	m["Max"] = t.diskUsages.GetMaxVolumeCount()
-	m["Free"] = t.diskUsages.FreeSpace()
-	var dcs []interface{}
+type TopologyInfo struct {
+	Max         int64              `json:"Max"`
+	Free        int64              `json:"Free"`
+	DataCenters []DataCenterInfo   `json:"DataCenters"`
+	Layouts     []VolumeLayoutInfo `json:"Layouts"`
+}
+
+func (t *Topology) ToInfo() (info TopologyInfo) {
+	info.Max = t.diskUsages.GetMaxVolumeCount()
+	info.Free = t.diskUsages.FreeSpace()
+	var dcs []DataCenterInfo
 	for _, c := range t.Children() {
 		dc := c.(*DataCenter)
-		dcs = append(dcs, dc.ToMap())
+		dcs = append(dcs, dc.ToInfo())
 	}
-	m["DataCenters"] = dcs
-	var layouts []interface{}
+
+	slices.SortFunc(dcs, func(a, b DataCenterInfo) bool {
+		return a.Id < b.Id
+	})
+
+	info.DataCenters = dcs
+	var layouts []VolumeLayoutInfo
 	for _, col := range t.collectionMap.Items() {
 		c := col.(*Collection)
 		for _, layout := range c.storageType2VolumeLayout.Items() {
 			if layout != nil {
-				tmp := layout.(*VolumeLayout).ToMap()
-				tmp["collection"] = c.Name
+				tmp := layout.(*VolumeLayout).ToInfo()
+				tmp.Collection = c.Name
 				layouts = append(layouts, tmp)
 			}
 		}
 	}
-	m["Layouts"] = layouts
-	return m
+	info.Layouts = layouts
+	return
 }
 
 func (t *Topology) ToVolumeMap() interface{} {

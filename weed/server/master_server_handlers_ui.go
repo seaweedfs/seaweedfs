@@ -26,7 +26,7 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 			VolumeSizeLimitMB uint32
 		}{
 			util.Version(),
-			ms.Topo.ToMap(),
+			ms.Topo.ToInfo(),
 			ms.Topo.RaftServer,
 			infos,
 			serverStats,
@@ -43,7 +43,7 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 			VolumeSizeLimitMB uint32
 		}{
 			util.Version(),
-			ms.Topo.ToMap(),
+			ms.Topo.ToInfo(),
 			ms.Topo.HashicorpRaft,
 			infos,
 			serverStats,

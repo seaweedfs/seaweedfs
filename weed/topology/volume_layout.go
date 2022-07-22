@@ -473,13 +473,19 @@ func (vl *VolumeLayout) SetVolumeCrowded(vid needle.VolumeId) {
 	}
 }
 
-func (vl *VolumeLayout) ToMap() map[string]interface{} {
-	m := make(map[string]interface{})
-	m["replication"] = vl.rp.String()
-	m["ttl"] = vl.ttl.String()
-	m["writables"] = vl.writables
+type VolumeLayoutInfo struct {
+	Replication string            `json:"replication"`
+	TTL         string            `json:"ttl"`
+	Writables   []needle.VolumeId `json:"writables"`
+	Collection  string            `json:"collection"`
+}
+
+func (vl *VolumeLayout) ToInfo() (info VolumeLayoutInfo) {
+	info.Replication = vl.rp.String()
+	info.TTL = vl.ttl.String()
+	info.Writables = vl.writables
 	//m["locations"] = vl.vid2location
-	return m
+	return
 }
 
 func (vl *VolumeLayout) Stats() *VolumeLayoutStats {

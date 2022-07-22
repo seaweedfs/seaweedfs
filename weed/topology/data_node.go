@@ -217,10 +217,18 @@ func (dn *DataNode) ServerAddress() pb.ServerAddress {
 	return pb.NewServerAddress(dn.Ip, dn.Port, dn.GrpcPort)
 }
 
-func (dn *DataNode) ToMap() interface{} {
-	ret := make(map[string]interface{})
-	ret["Url"] = dn.Url()
-	ret["PublicUrl"] = dn.PublicUrl
+type DataNodeInfo struct {
+	Url       string `json:"Url"`
+	PublicUrl string `json:"PublicUrl"`
+	Volumes   int64  `json:"Volumes"`
+	EcShards  int64  `json:"EcShards"`
+	Max       int64  `json:"Max"`
+	VolumeIds string `json:"VolumeIds"`
+}
+
+func (dn *DataNode) ToInfo() (info DataNodeInfo) {
+	info.Url = dn.Url()
+	info.PublicUrl = dn.PublicUrl
 
 	// aggregated volume info
 	var volumeCount, ecShardCount, maxVolumeCount int64
@@ -236,12 +244,12 @@ func (dn *DataNode) ToMap() interface{} {
 		volumeIds += " " + d.GetVolumeIds()
 	}
 
-	ret["Volumes"] = volumeCount
-	ret["EcShards"] = ecShardCount
-	ret["Max"] = maxVolumeCount
-	ret["VolumeIds"] = volumeIds
+	info.Volumes = volumeCount
+	info.EcShards = ecShardCount
+	info.Max = maxVolumeCount
+	info.VolumeIds = volumeIds
 
-	return ret
+	return
 }
 
 func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
