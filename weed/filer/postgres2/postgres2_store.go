@@ -17,6 +17,8 @@ const (
 	CONNECTION_URL_PATTERN = "host=%s port=%d sslmode=%s connect_timeout=30"
 )
 
+var _ filer.BucketAware = (*PostgresStore2)(nil)
+
 func init() {
 	filer.Stores = append(filer.Stores, &PostgresStore2{})
 }

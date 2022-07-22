@@ -32,6 +32,8 @@ type AbstractSqlStore struct {
 	dbsLock            sync.Mutex
 }
 
+var _ filer.BucketAware = (*AbstractSqlStore)(nil)
+
 func (store *AbstractSqlStore) CanDropWholeBucket() bool {
 	return store.SupportBucketTable
 }
