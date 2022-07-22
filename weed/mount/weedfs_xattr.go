@@ -106,6 +106,9 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 	if status != fuse.OK {
 		return status
 	}
+	if entry == nil {
+		return fuse.ENOENT
+	}
 	if fh != nil {
 		fh.entryLock.Lock()
 		defer fh.entryLock.Unlock()
@@ -180,6 +183,9 @@ func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr 
 	path, fh, entry, status := wfs.maybeReadEntry(header.NodeId)
 	if status != fuse.OK {
 		return status
+	}
+	if entry == nil {
+		return fuse.OK
 	}
 	if fh != nil {
 		fh.entryLock.Lock()

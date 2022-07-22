@@ -48,7 +48,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		defer fh.entryLock.Unlock()
 	}
 
-	if size, ok := input.GetSize(); ok {
+	if size, ok := input.GetSize(); ok && entry != nil {
 		glog.V(4).Infof("%v setattr set size=%v chunks=%d", path, size, len(entry.Chunks))
 		if size < filer.FileSize(entry) {
 			// fmt.Printf("truncate %v \n", fullPath)
@@ -141,6 +141,9 @@ func (wfs *WFS) setAttrByPbEntry(out *fuse.Attr, inode uint64, entry *filer_pb.E
 	out.Size = filer.FileSize(entry)
 	out.Blocks = (out.Size + blockSize - 1) / blockSize
 	setBlksize(out, blockSize)
+	if entry == nil {
+		return
+	}
 	out.Mtime = uint64(entry.Attributes.Mtime)
 	out.Ctime = uint64(entry.Attributes.Mtime)
 	out.Atime = uint64(entry.Attributes.Mtime)
