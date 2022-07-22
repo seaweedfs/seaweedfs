@@ -10,27 +10,36 @@ import (
 func TestMessageSerde(t *testing.T) {
 	b := flatbuffers.NewBuilder(1024)
 
-	prop := make(map[string]string)
-	prop["n1"] = "v1"
-	prop["n2"] = "v2"
+	prop := make(map[string][]byte)
+	prop["n1"] = []byte("v1")
+	prop["n2"] = []byte("v2")
 
-	CreateMessage(b, 1, 2, 3, 4, 5, 6, prop,
-		[]byte("the primary key"), []byte("body is here"))
+	bb := NewMessageBatchBuilder(b, 1, 2, 3, 4)
 
-	buf := b.FinishedBytes()
+	bb.AddMessage(5, 6, prop, []byte("the primary key"), []byte("body is here"))
+
+	bb.BuildMessageBatch()
+
+	buf := bb.GetBytes()
 
 	println("serialized size", len(buf))
 
-	m := message_fbs.GetRootAsMessage(buf, 0)
+	mb := message_fbs.GetRootAsMessageBatch(buf, 0)
 
-	assert.Equal(t, int32(1), m.ProducerId())
-	assert.Equal(t, int64(2), m.ProducerSeq())
-	assert.Equal(t, int32(3), m.SegmentId())
-	assert.Equal(t, int64(4), m.SegmentSeq())
-	assert.Equal(t, int64(5), m.EventTsNs())
-	assert.Equal(t, int64(6), m.RecvTsNs())
+	assert.Equal(t, int32(1), mb.ProducerId())
+	assert.Equal(t, int32(2), mb.ProducerEpoch())
+	assert.Equal(t, int32(3), mb.SegmentId())
+	assert.Equal(t, int32(4), mb.Flags())
+	assert.Equal(t, int64(5), mb.SegmentSeqBase())
+	assert.Equal(t, int32(0), mb.SegmentSeqMaxDelta())
+	assert.Equal(t, int64(6), mb.TsMsBase())
+	assert.Equal(t, int32(0), mb.TsMsMaxDelta())
 
-	assert.Equal(t, 2, m.PropertiesLength())
+	assert.Equal(t, 1, mb.MessagesLength())
+
+	m := &message_fbs.Message{}
+	mb.Messages(m, 0)
+
 	nv := &message_fbs.NameValue{}
 	m.Properties(nv, 0)
 	assert.Equal(t, "n1", string(nv.Name()))
@@ -41,7 +50,7 @@ func TestMessageSerde(t *testing.T) {
 	assert.Equal(t, []byte("the primary key"), m.Key())
 	assert.Equal(t, []byte("body is here"), m.Data())
 
-	m.MutateSegmentSeq(123)
-	assert.Equal(t, int64(123), m.SegmentSeq())
+	assert.Equal(t, int32(0), m.SeqDelta())
+	assert.Equal(t, int32(0), m.TsMsDelta())
 
 }
