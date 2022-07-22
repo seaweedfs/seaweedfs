@@ -2,6 +2,7 @@ package topology
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"golang.org/x/exp/slices"
 )
 
 type DataCenter struct {
@@ -30,15 +31,24 @@ func (dc *DataCenter) GetOrCreateRack(rackName string) *Rack {
 	return rack
 }
 
-func (dc *DataCenter) ToMap() interface{} {
-	m := make(map[string]interface{})
-	m["Id"] = dc.Id()
-	var racks []interface{}
+type DataCenterMap struct {
+	Id    NodeId    `json:"Id"`
+	Racks []RackMap `json:"Racks"`
+}
+
+func (dc *DataCenter) ToMap() DataCenterMap {
+	m := DataCenterMap{}
+	m.Id = dc.Id()
+	var racks []RackMap
 	for _, c := range dc.Children() {
 		rack := c.(*Rack)
 		racks = append(racks, rack.ToMap())
 	}
-	m["Racks"] = racks
+
+	slices.SortFunc(racks, func(a, b RackMap) bool {
+		return a.Id < b.Id
+	})
+	m.Racks = racks
 	return m
 }
 

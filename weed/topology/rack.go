@@ -4,6 +4,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
+	"golang.org/x/exp/slices"
 	"time"
 )
 
@@ -53,15 +54,25 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, grpcPort int, publicUrl 
 	return dn
 }
 
-func (r *Rack) ToMap() interface{} {
-	m := make(map[string]interface{})
-	m["Id"] = r.Id()
-	var dns []interface{}
+type RackMap struct {
+	Id        NodeId        `json:"Id"`
+	DataNodes []DataNodeMap `json:"DataNodes"`
+}
+
+func (r *Rack) ToMap() RackMap {
+	m := RackMap{}
+	m.Id = r.Id()
+	var dns []DataNodeMap
 	for _, c := range r.Children() {
 		dn := c.(*DataNode)
 		dns = append(dns, dn.ToMap())
 	}
-	m["DataNodes"] = dns
+
+	slices.SortFunc(dns, func(a, b DataNodeMap) bool {
+		return a.Url < b.Url
+	})
+
+	m.DataNodes = dns
 	return m
 }
 

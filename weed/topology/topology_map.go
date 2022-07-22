@@ -1,17 +1,32 @@
 package topology
 
-import "github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+import (
+	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"golang.org/x/exp/slices"
+)
+
+type TopologyMap struct {
+	Max         int64           `json:"Max"`
+	Free        int64           `json:"Free"`
+	DataCenters []DataCenterMap `json:"DataCenters"`
+	Layouts     []interface{}   `json:"Layouts"`
+}
 
 func (t *Topology) ToMap() interface{} {
-	m := make(map[string]interface{})
-	m["Max"] = t.diskUsages.GetMaxVolumeCount()
-	m["Free"] = t.diskUsages.FreeSpace()
-	var dcs []interface{}
+	m := TopologyMap{}
+	m.Max = t.diskUsages.GetMaxVolumeCount()
+	m.Free = t.diskUsages.FreeSpace()
+	var dcs []DataCenterMap
 	for _, c := range t.Children() {
 		dc := c.(*DataCenter)
 		dcs = append(dcs, dc.ToMap())
 	}
-	m["DataCenters"] = dcs
+
+	slices.SortFunc(dcs, func(a, b DataCenterMap) bool {
+		return a.Id < b.Id
+	})
+
+	m.DataCenters = dcs
 	var layouts []interface{}
 	for _, col := range t.collectionMap.Items() {
 		c := col.(*Collection)
@@ -23,7 +38,7 @@ func (t *Topology) ToMap() interface{} {
 			}
 		}
 	}
-	m["Layouts"] = layouts
+	m.Layouts = layouts
 	return m
 }
 
