@@ -239,11 +239,11 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 				fh.entry.Name = newName
 			}
 			// invalidate attr and data
-			wfs.fuseServer.InodeNotify(sourceInode, 0, -1)
+			// wfs.fuseServer.InodeNotify(sourceInode, 0, -1)
 		}
 		if targetInode != 0 {
 			// invalidate attr and data
-			wfs.fuseServer.InodeNotify(targetInode, 0, -1)
+			// wfs.fuseServer.InodeNotify(targetInode, 0, -1)
 		}
 
 	} else if resp.EventNotification.OldEntry != nil {
