@@ -94,7 +94,7 @@ func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 	startTime, stopTime = startTime.UTC(), stopTime.UTC()
 
 	targetFile := fmt.Sprintf("%s/%04d-%02d-%02d/%02d-%02d.%08x", SystemLogDir,
-		startTime.Year(), startTime.Month(), startTime.Day(), startTime.Hour(), startTime.Minute(), f.UniqueFileId,
+		startTime.Year(), startTime.Month(), startTime.Day(), startTime.Hour(), startTime.Minute(), f.UniqueFilerId,
 		// startTime.Second(), startTime.Nanosecond(),
 	)
 

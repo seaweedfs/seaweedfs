@@ -346,6 +346,7 @@ message SubscribeMetadataRequest {
     repeated string path_prefixes = 6;
     int32 client_id = 7;
     int64 until_ns = 8;
+    int32 client_epoch = 9;
 }
 message SubscribeMetadataResponse {
     string directory = 1;

@@ -29,6 +29,7 @@ type RemoteGatewayOptions struct {
 	remoteConfs map[string]*remote_pb.RemoteConf
 	bucketsDir  string
 	clientId    int32
+	clientEpoch int32
 }
 
 var _ = filer_pb.FilerClient(&RemoteGatewayOptions{})

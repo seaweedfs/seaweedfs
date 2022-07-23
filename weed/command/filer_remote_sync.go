@@ -19,6 +19,7 @@ type RemoteSyncOptions struct {
 	timeAgo            *time.Duration
 	dir                *string
 	clientId           int32
+	clientEpoch        int32
 }
 
 var _ = filer_pb.FilerClient(&RemoteSyncOptions{})

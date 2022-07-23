@@ -45,7 +45,8 @@ type Filer struct {
 	Signature           int32
 	FilerConf           *FilerConf
 	RemoteStorage       *FilerRemoteStorage
-	UniqueFileId        uint32
+	UniqueFilerId       int32
+	UniqueFilerEpoch    int32
 }
 
 func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress,
@@ -56,8 +57,12 @@ func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOptio
 		GrpcDialOption:      grpcDialOption,
 		FilerConf:           NewFilerConf(),
 		RemoteStorage:       NewFilerRemoteStorage(),
-		UniqueFileId:        uint32(util.RandomInt32()),
+		UniqueFilerId:       util.RandomInt32(),
 	}
+	if f.UniqueFilerId < 0 {
+		f.UniqueFilerId = -f.UniqueFilerId
+	}
+
 	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, notifyFn)
 	f.metaLogCollection = collection
 	f.metaLogReplication = replication
@@ -79,8 +84,9 @@ func (f *Filer) MaybeBootstrapFromPeers(self pb.ServerAddress, existingNodes []*
 		return
 	}
 
-	glog.V(0).Infof("bootstrap from %v clientId:%d", earliestNode.Address, f.UniqueFileId)
-	err = pb.FollowMetadata(pb.ServerAddress(earliestNode.Address), f.GrpcDialOption, "bootstrap", int32(f.UniqueFileId), "/", nil,
+	glog.V(0).Infof("bootstrap from %v clientId:%d", earliestNode.Address, f.UniqueFilerId)
+	f.UniqueFilerEpoch++
+	err = pb.FollowMetadata(pb.ServerAddress(earliestNode.Address), f.GrpcDialOption, "bootstrap", f.UniqueFilerId, f.UniqueFilerEpoch, "/", nil,
 		0, snapshotTime.UnixNano(), f.Signature, func(resp *filer_pb.SubscribeMetadataResponse) error {
 			return Replay(f.Store, resp)
 		}, pb.FatalOnError)

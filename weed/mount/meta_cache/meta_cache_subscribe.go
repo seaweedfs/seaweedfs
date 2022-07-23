@@ -57,8 +57,10 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 
 	}
 
+	var clientEpoch int32
 	util.RetryForever("followMetaUpdates", func() error {
-		return pb.WithFilerClientFollowMetadata(client, "mount", selfSignature, dir, &lastTsNs, 0, selfSignature, processEventFn, pb.FatalOnError)
+		clientEpoch++
+		return pb.WithFilerClientFollowMetadata(client, "mount", selfSignature, clientEpoch, dir, &lastTsNs, 0, selfSignature, processEventFn, pb.FatalOnError)
 	}, func(err error) bool {
 		glog.Errorf("follow metadata updates: %v", err)
 		return true
