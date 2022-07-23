@@ -174,10 +174,15 @@ func (i *InodeToPath) RemovePath(path util.FullPath) {
 }
 
 func (i *InodeToPath) removePathFromInode2Path(inode uint64, path util.FullPath) {
-	if ie, found := i.inode2path[inode]; found {
-		if ie.removeOnePath(path) && len(ie.paths) == 0 {
-			delete(i.inode2path, inode)
-		}
+	ie, found := i.inode2path[inode]
+	if !found {
+		return
+	}
+	if !ie.removeOnePath(path) {
+		return
+	}
+	if len(ie.paths) == 0 {
+		delete(i.inode2path, inode)
 	}
 }
 
