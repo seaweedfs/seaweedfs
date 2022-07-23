@@ -163,6 +163,24 @@ func (i *InodeToPath) HasInode(inode uint64) bool {
 	return found
 }
 
+func (i *InodeToPath) AddPath(inode uint64, path util.FullPath) {
+	i.Lock()
+	defer i.Unlock()
+	i.path2inode[path] = inode
+
+	ie, found := i.inode2path[inode]
+	if found {
+		ie.paths = append(ie.paths, path)
+	} else {
+		i.inode2path[inode] = &InodeEntry{
+			paths:            []util.FullPath{path},
+			nlookup:          1,
+			isDirectory:      false,
+			isChildrenCached: false,
+		}
+	}
+}
+
 func (i *InodeToPath) RemovePath(path util.FullPath) {
 	i.Lock()
 	defer i.Unlock()
