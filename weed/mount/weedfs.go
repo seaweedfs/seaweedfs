@@ -139,6 +139,10 @@ func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle
 		return path, fh, entry, fuse.OK
 	}
 	entry, status = wfs.maybeLoadEntry(path)
+	if status == fuse.OK && entry.FileMode()&os.ModeSymlink != 0 {
+		target := filepath.Join(string(path), "../"+entry.Attributes.SymlinkTarget)
+		entry, status = wfs.maybeLoadEntry(util.FullPath(target))
+	}
 	return
 }
 
