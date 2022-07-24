@@ -38,6 +38,7 @@ func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
 		ie.paths[x] = ie.paths[x+1]
 	}
 	ie.paths = ie.paths[0 : len(ie.paths)-1]
+	ie.nlookup--
 	return true
 }
 
@@ -171,6 +172,7 @@ func (i *InodeToPath) AddPath(inode uint64, path util.FullPath) {
 	ie, found := i.inode2path[inode]
 	if found {
 		ie.paths = append(ie.paths, path)
+		ie.nlookup++
 	} else {
 		i.inode2path[inode] = &InodeEntry{
 			paths:            []util.FullPath{path},
