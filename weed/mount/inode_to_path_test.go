@@ -14,6 +14,15 @@ func TestInodeEntry_removeOnePath(t *testing.T) {
 		count int
 	}{
 		{
+			name: "actual case",
+			entry: InodeEntry{
+				paths: []util.FullPath{"/pjd/nx", "/pjd/n0"},
+			},
+			p:     "/pjd/nx",
+			want:  true,
+			count: 1,
+		},
+		{
 			name:  "empty",
 			entry: InodeEntry{},
 			p:     "x",
@@ -73,6 +82,11 @@ func TestInodeEntry_removeOnePath(t *testing.T) {
 			}
 			if tt.count != len(tt.entry.paths) {
 				t.Errorf("removeOnePath path count = %v, want %v", len(tt.entry.paths), tt.count)
+			}
+			for i, p := range tt.entry.paths {
+				if p == tt.p {
+					t.Errorf("removeOnePath found path still exists at %v, %v", i, p)
+				}
 			}
 		})
 	}

@@ -34,8 +34,8 @@ func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
 	if idx < 0 {
 		return false
 	}
-	for x := len(ie.paths) - 2; x > idx; x-- {
-		ie.paths[x-1] = ie.paths[x]
+	for x := idx; x < len(ie.paths)-1; x++ {
+		ie.paths[x] = ie.paths[x+1]
 	}
 	ie.paths = ie.paths[0 : len(ie.paths)-1]
 	return true
