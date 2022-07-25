@@ -16,15 +16,16 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 		return fuse.OK
 	}
 
-	_, _, entry, status := wfs.maybeReadEntry(input.NodeId)
+	inode := input.NodeId
+	_, _, entry, inode, status := wfs.maybeReadEntry(inode, true)
 	if status == fuse.OK {
 		out.AttrValid = 1
-		wfs.setAttrByPbEntry(&out.Attr, input.NodeId, entry)
+		wfs.setAttrByPbEntry(&out.Attr, inode, entry)
 		return status
 	} else {
-		if fh, found := wfs.fhmap.FindFileHandle(input.NodeId); found {
+		if fh, found := wfs.fhmap.FindFileHandle(inode); found {
 			out.AttrValid = 1
-			wfs.setAttrByPbEntry(&out.Attr, input.NodeId, fh.entry)
+			wfs.setAttrByPbEntry(&out.Attr, inode, fh.entry)
 			out.Nlink = 0
 			return fuse.OK
 		}
@@ -39,7 +40,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		return fuse.Status(syscall.ENOSPC)
 	}
 
-	path, fh, entry, status := wfs.maybeReadEntry(input.NodeId)
+	path, fh, entry, inode, status := wfs.maybeReadEntry(input.NodeId, false)
 	if status != fuse.OK {
 		return status
 	}
@@ -111,7 +112,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	}
 
 	out.AttrValid = 1
-	wfs.setAttrByPbEntry(&out.Attr, input.NodeId, entry)
+	wfs.setAttrByPbEntry(&out.Attr, inode, entry)
 
 	if fh != nil {
 		fh.dirtyMetadata = true
@@ -138,6 +139,9 @@ func (wfs *WFS) setRootAttr(out *fuse.AttrOut) {
 
 func (wfs *WFS) setAttrByPbEntry(out *fuse.Attr, inode uint64, entry *filer_pb.Entry) {
 	out.Ino = inode
+	if entry.Attributes != nil && entry.Attributes.Inode != 0 {
+		out.Ino = entry.Attributes.Inode
+	}
 	out.Size = filer.FileSize(entry)
 	out.Blocks = (out.Size + blockSize - 1) / blockSize
 	setBlksize(out, blockSize)
