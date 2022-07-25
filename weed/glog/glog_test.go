@@ -125,9 +125,9 @@ func TestInfoDepth(t *testing.T) {
 
 		// pull out the line number (between : and ])
 		msg := m[strings.LastIndex(m, ":")+1:]
-		x := strings.Index(msg, "]")
+		x := strings.Index(msg, " ")
 		if x < 0 {
-			t.Errorf("InfoDepth[%d]: missing ']': %q", i, m)
+			t.Errorf("InfoDepth[%d]: missing ' ': %q", i, m)
 			continue
 		}
 		line, err := strconv.Atoi(msg[:x])
@@ -180,7 +180,7 @@ func TestHeader(t *testing.T) {
 	pid = 1234
 	Info("test")
 	var line int
-	format := "I0102 15:04:05  1234 glog_test.go:%d] test\n"
+	format := "I0102 15:04:05.067890 glog_test.go:%d test\n"
 	n, err := fmt.Sscanf(contents(infoLog), format, &line)
 	if n != 1 || err != nil {
 		t.Errorf("log format error: %d elements, error %s:\n%s", n, err, contents(infoLog))
