@@ -297,7 +297,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 			}
 			util.Uint32toBytes(idxEntryBytes[8:12], uint32(offset/NeedlePaddingSize))
 		} else { //deleted needle
-			//fakeDelNeedle 's default Data field is nil
+			//fakeDelNeedle's default Data field is nil
 			fakeDelNeedle := new(needle.Needle)
 			fakeDelNeedle.Id = key
 			fakeDelNeedle.Cookie = 0x12345678
