@@ -17,7 +17,7 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 	}
 
 	inode := input.NodeId
-	_, _, entry, inode, status := wfs.maybeReadEntry(inode, true)
+	_, _, entry, inode, status := wfs.maybeReadEntry(inode, false)
 	if status == fuse.OK {
 		out.AttrValid = 1
 		wfs.setAttrByPbEntry(&out.Attr, inode, entry)
