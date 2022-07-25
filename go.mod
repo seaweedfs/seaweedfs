@@ -5,7 +5,7 @@ go 1.18
 require (
 	cloud.google.com/go v0.102.1 // indirect
 	cloud.google.com/go/pubsub v1.23.1
-	cloud.google.com/go/storage v1.23.0
+	cloud.google.com/go/storage v1.24.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/OneOfOne/xxhash v1.2.8
@@ -184,7 +184,6 @@ require (
 	github.com/fclairamb/go-log v0.3.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.1.0 // indirect
-	github.com/googleapis/go-type-adapters v1.0.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0 // indirect
 	github.com/hashicorp/go-hclog v1.2.0 // indirect
 	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
