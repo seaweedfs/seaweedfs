@@ -79,11 +79,10 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writ
 		var err error
 		for _, backoff := range getLookupFileIdBackoffSchedule {
 			urlStrings, err = masterClient.GetLookupFileIdFunction()(chunkView.FileId)
-			if err != nil || len(urlStrings) == 0 {
-				time.Sleep(backoff)
-			} else {
+			if err == nil && len(urlStrings) > 0 {
 				break
 			}
+			time.Sleep(backoff)
 		}
 		if err != nil {
 			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
