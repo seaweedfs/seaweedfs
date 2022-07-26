@@ -381,7 +381,6 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 				*onPeerUpdateDoneCn <- peerName
 			}
 		}
-		ms.onPeerUpdateLock.RUnlock()
 	} else if isLeader {
 		if onPeerUpdateDoneCnPrev, ok := ms.onPeerUpdateDoneCns[peerName]; ok {
 			*onPeerUpdateDoneCnPrev <- ResetRaftServerRemovalTimeMsg
