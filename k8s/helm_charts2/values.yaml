@@ -76,13 +76,6 @@ master:
   extraVolumes: ""
   extraVolumeMounts: ""
 
-  # storage and storageClass are the settings for configuring stateful
-  # storage for the master pods. storage should be set to the disk size of
-  # the attached volume. storageClass is the class of storage which defaults
-  # to null (the Kube cluster will pick the default).
-  storage: 25Gi
-  storageClass: null
-
   # Resource requests, limits, etc. for the master cluster placement. This
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
