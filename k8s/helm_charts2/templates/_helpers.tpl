@@ -113,7 +113,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 {{- end -}}
 
-{{/* check if any PVC exists */}}
+{{/* check if any Volume PVC exists */}}
 {{- define "volume.pvc_exists" -}}
 {{- if or (or (eq .Values.volume.data.type "persistentVolumeClaim") (and (eq .Values.volume.idx.type "persistentVolumeClaim") .Values.volume.dir_idx )) (eq .Values.volume.logs.type "persistentVolumeClaim") -}}
 {{- printf "true" -}}
@@ -122,7 +122,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 {{- end -}}
 
-{{/* check if any HostPath exists */}}
+{{/* check if any Volume HostPath exists */}}
 {{- define "volume.hostpath_exists" -}}
 {{- if or (or (eq .Values.volume.data.type "hostPath") (and (eq .Values.volume.idx.type "hostPath") .Values.volume.dir_idx )) (eq .Values.volume.logs.type "hostPath") -}}
 {{- printf "true" -}}
@@ -132,5 +132,23 @@ Inject extra environment vars in the format key:value, if populated
 {{- else -}}
 {{- printf "false" -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* check if any Filer PVC exists */}}
+{{- define "filer.pvc_exists" -}}
+{{- if or (eq .Values.filer.data.type "persistentVolumeClaim") (eq .Values.filer.logs.type "persistentVolumeClaim") -}}
+{{- printf "true" -}}
+{{- else -}}
+{{- printf "false" -}}
+{{- end -}}
+{{- end -}}
+
+{{/* check if any Filer HostPath exists */}}
+{{- define "filer.hostpath_exists" -}}
+{{- if or (eq .Values.filer.data.type "hostPath") (eq .Values.filer.logs.type "hostPath") -}}
+{{- printf "true" -}}
+{{- else -}}
+{{- printf "false" -}}
 {{- end -}}
 {{- end -}}
