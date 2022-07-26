@@ -152,3 +152,25 @@ Inject extra environment vars in the format key:value, if populated
 {{- printf "false" -}}
 {{- end -}}
 {{- end -}}
+
+{{/* check if any Master PVC exists */}}
+{{- define "master.pvc_exists" -}}
+{{- if or (eq .Values.master.data.type "persistentVolumeClaim") (eq .Values.master.logs.type "persistentVolumeClaim") -}}
+{{- printf "true" -}}
+{{- else -}}
+{{- printf "false" -}}
+{{- end -}}
+{{- end -}}
+
+{{/* check if any Master HostPath exists */}}
+{{- define "master.hostpath_exists" -}}
+{{- if or (eq .Values.master.data.type "hostPath") (eq .Values.master.logs.type "hostPath") -}}
+{{- printf "true" -}}
+{{- else -}}
+{{- if or .Values.global.enableSecurity .Values.volume.extraVolumes -}}
+{{- printf "true" -}}
+{{- else -}}
+{{- printf "false" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

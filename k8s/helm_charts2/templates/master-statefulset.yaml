@@ -178,15 +178,21 @@ spec:
           resources:
             {{ tpl .Values.master.resources . | nindent 12 | trim }}
           {{- end }}
+      {{- $hostpath_exists := include "master.hostpath_exists" . -}}
+      {{- if $hostpath_exists }}
       volumes:
+        {{- if eq .Values.master.logs.type "hostPath" }}
         - name: seaweedfs-master-log-volume
           hostPath:
             path: /storage/logs/seaweedfs/master
             type: DirectoryOrCreate
+        {{- end }}
+        {{- if eq .Values.master.data.type "hostPath" }}
         - name: data-{{ .Release.Namespace }}
           hostPath:
             path: /ssd/seaweed-master/
             type: DirectoryOrCreate
+        {{- end }}
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:
@@ -208,20 +214,33 @@ spec:
             secretName: {{ template "seaweedfs.name" . }}-client-cert
         {{- end }}
         {{ tpl .Values.master.extraVolumes . | indent 8 | trim }}
+      {{- end }}
       {{- if .Values.master.nodeSelector }}
       nodeSelector:
         {{ tpl .Values.master.nodeSelector . | indent 8 | trim }}
       {{- end }}
-{{/*  volumeClaimTemplates:*/}}
-{{/*    - metadata:*/}}
-{{/*        name: data-{{ .Release.Namespace }}*/}}
-{{/*      spec:*/}}
-{{/*        accessModes:*/}}
-{{/*          - ReadWriteOnce*/}}
-{{/*        resources:*/}}
-{{/*          requests:*/}}
-{{/*            storage: {{ .Values.master.storage }}*/}}
-{{/*        {{- if .Values.master.storageClass }}*/}}
-{{/*        storageClassName: {{ .Values.master.storageClass }}*/}}
-{{/*        {{- end }}*/}}
+  {{- $pvc_exists := include "volume.pvc_exists" . -}}
+  {{- if $pvc_exists }}
+  volumeClaimTemplates:
+    {{- if eq .Values.master.data.type "persistentVolumeClaim"}}
+    - metadata:
+        name: data-{{ .Release.Namespace }}
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: {{ .Values.master.data.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.master.data.size }}
+    {{- end }}
+    {{- if eq .Values.master.logs.type "persistentVolumeClaim"}}
+    - metadata:
+        name: seaweedfs-master-log-volume
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: {{ .Values.master.logs.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.master.logs.size }}
+    {{- end }}
+  {{- end }}
 {{- end }}

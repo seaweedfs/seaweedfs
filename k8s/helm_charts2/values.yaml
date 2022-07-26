@@ -58,6 +58,21 @@ master:
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
 
+  # can use ANY storage-class , example with local-path-provisioner
+  #  data:
+  #    type: "persistentVolumeClaim"
+  #    size: "24Ti"
+  #    storageClass: "local-path-provisioner"
+  data:
+    type: "hostPath"
+    size: ""
+    storageClass: ""
+
+  logs:
+    type: "hostPath"
+    size: ""
+    storageClass: ""
+
   extraVolumes: ""
   extraVolumeMounts: ""
 
