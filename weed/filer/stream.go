@@ -79,7 +79,7 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writ
 		var err error
 		for _, backoff := range getLookupFileIdBackoffSchedule {
 			urlStrings, err = masterClient.GetLookupFileIdFunction()(chunkView.FileId)
-			if err == nil && len(urlStrings) > 0 {
+			if err != nil || len(urlStrings) == 0 {
 				time.Sleep(backoff)
 				break
 			}
