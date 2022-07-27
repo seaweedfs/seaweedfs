@@ -10,5 +10,5 @@ install:
 full_install:
 	cd weed; go install -tags "elastic gocdk sqlite ydb tikv"
 
-test:
+tests:
 	cd weed; go test -tags "elastic gocdk sqlite ydb tikv" -v ./...

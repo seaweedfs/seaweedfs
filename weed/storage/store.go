@@ -101,6 +101,7 @@ func (s *Store) DeleteCollection(collection string) (e error) {
 		if e != nil {
 			return
 		}
+		stats.DeleteCollectionMetrics(collection)
 		// let the heartbeat send the list of volumes, instead of sending the deleted volume ids to DeletedVolumesChan
 	}
 	return
@@ -240,19 +241,19 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			if maxFileKey < curMaxFileKey {
 				maxFileKey = curMaxFileKey
 			}
-			deleteVolume := false
+			shouldDeleteVolume := false
 			if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
 				volumeMessages = append(volumeMessages, volumeMessage)
 			} else {
 				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
 					deleteVids = append(deleteVids, v.Id)
-					deleteVolume = true
+					shouldDeleteVolume = true
 				} else {
 					glog.V(0).Infof("volume %d is expired", v.Id)
 				}
 				if v.lastIoError != nil {
 					deleteVids = append(deleteVids, v.Id)
-					deleteVolume = true
+					shouldDeleteVolume = true
 					glog.Warningf("volume %d has IO error: %v", v.Id, v.lastIoError)
 				}
 			}
@@ -260,33 +261,33 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			if _, exist := collectionVolumeSize[v.Collection]; !exist {
 				collectionVolumeSize[v.Collection] = 0
 			}
-			if !deleteVolume {
+			if !shouldDeleteVolume {
 				collectionVolumeSize[v.Collection] += volumeMessage.Size
 			} else {
 				collectionVolumeSize[v.Collection] -= volumeMessage.Size
-				if collectionVolumeSize[v.Collection] <= 0 {
-					delete(collectionVolumeSize, v.Collection)
+				if collectionVolumeSize[v.Collection] < 0 {
+					collectionVolumeSize[v.Collection] = 0
 				}
 			}
 
 			if _, exist := collectionVolumeReadOnlyCount[v.Collection]; !exist {
 				collectionVolumeReadOnlyCount[v.Collection] = map[string]uint8{
-					"IsReadOnly":       0,
-					"noWriteOrDelete":  0,
-					"noWriteCanDelete": 0,
-					"isDiskSpaceLow":   0,
+					stats.IsReadOnly:       0,
+					stats.NoWriteOrDelete:  0,
+					stats.NoWriteCanDelete: 0,
+					stats.IsDiskSpaceLow:   0,
 				}
 			}
-			if !deleteVolume && v.IsReadOnly() {
-				collectionVolumeReadOnlyCount[v.Collection]["IsReadOnly"] += 1
+			if !shouldDeleteVolume && v.IsReadOnly() {
+				collectionVolumeReadOnlyCount[v.Collection][stats.IsReadOnly] += 1
 				if v.noWriteOrDelete {
-					collectionVolumeReadOnlyCount[v.Collection]["noWriteOrDelete"] += 1
+					collectionVolumeReadOnlyCount[v.Collection][stats.NoWriteOrDelete] += 1
 				}
 				if v.noWriteCanDelete {
-					collectionVolumeReadOnlyCount[v.Collection]["noWriteCanDelete"] += 1
+					collectionVolumeReadOnlyCount[v.Collection][stats.NoWriteCanDelete] += 1
 				}
 				if v.location.isDiskSpaceLow {
-					collectionVolumeReadOnlyCount[v.Collection]["isDiskSpaceLow"] += 1
+					collectionVolumeReadOnlyCount[v.Collection][stats.IsDiskSpaceLow] += 1
 				}
 			}
 		}
@@ -458,6 +459,7 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 		err := location.UnloadVolume(i)
 		if err == nil {
 			glog.V(0).Infof("UnmountVolume %d", i)
+			stats.DeleteCollectionMetrics(v.Collection)
 			s.DeletedVolumesChan <- message
 			return nil
 		} else if err == ErrVolumeNotFound {
