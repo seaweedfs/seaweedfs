@@ -13,6 +13,8 @@ grpcAddress = "localhost:18888"
 # this is not a directory on your hard drive, but on your filer.
 # i.e., all files with this "prefix" are sent to notification message queue.
 directory = "/buckets"
+# files from the directory separated by space are excluded from sending notifications
+excludeDirectories = "/buckets/tmp"
 
 [sink.local]
 enabled = false
