@@ -260,6 +260,7 @@ func SourceName(port uint32) string {
 	return net.JoinHostPort(hostname, strconv.Itoa(int(port)))
 }
 
+// todo - can be changed to DeletePartialMatch when https://github.com/prometheus/client_golang/pull/1013 gets released
 func DeleteCollectionMetrics(collection string) {
 	VolumeServerDiskSizeGauge.DeleteLabelValues(collection, "normal")
 	for _, volume_type := range readOnlyVolumeTypes {
