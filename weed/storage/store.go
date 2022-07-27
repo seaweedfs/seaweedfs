@@ -101,6 +101,7 @@ func (s *Store) DeleteCollection(collection string) (e error) {
 		if e != nil {
 			return
 		}
+		stats.VolumeServerDiskSizeGauge.DeleteLabelValues(collection, "normal")
 		// let the heartbeat send the list of volumes, instead of sending the deleted volume ids to DeletedVolumesChan
 	}
 	return
@@ -240,19 +241,19 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			if maxFileKey < curMaxFileKey {
 				maxFileKey = curMaxFileKey
 			}
-			deleteVolume := false
+			shouldDeleteVolume := false
 			if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
 				volumeMessages = append(volumeMessages, volumeMessage)
 			} else {
 				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
 					deleteVids = append(deleteVids, v.Id)
-					deleteVolume = true
+					shouldDeleteVolume = true
 				} else {
 					glog.V(0).Infof("volume %d is expired", v.Id)
 				}
 				if v.lastIoError != nil {
 					deleteVids = append(deleteVids, v.Id)
-					deleteVolume = true
+					shouldDeleteVolume = true
 					glog.Warningf("volume %d has IO error: %v", v.Id, v.lastIoError)
 				}
 			}
@@ -260,12 +261,12 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			if _, exist := collectionVolumeSize[v.Collection]; !exist {
 				collectionVolumeSize[v.Collection] = 0
 			}
-			if !deleteVolume {
+			if !shouldDeleteVolume {
 				collectionVolumeSize[v.Collection] += volumeMessage.Size
 			} else {
 				collectionVolumeSize[v.Collection] -= volumeMessage.Size
-				if collectionVolumeSize[v.Collection] <= 0 {
-					delete(collectionVolumeSize, v.Collection)
+				if collectionVolumeSize[v.Collection] < 0 {
+					collectionVolumeSize[v.Collection] = 0
 				}
 			}
 
@@ -277,7 +278,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 					"isDiskSpaceLow":   0,
 				}
 			}
-			if !deleteVolume && v.IsReadOnly() {
+			if !shouldDeleteVolume && v.IsReadOnly() {
 				collectionVolumeReadOnlyCount[v.Collection]["IsReadOnly"] += 1
 				if v.noWriteOrDelete {
 					collectionVolumeReadOnlyCount[v.Collection]["noWriteOrDelete"] += 1
