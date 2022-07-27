@@ -3,7 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/raft"
+	"github.com/seaweedfs/raft"
 	"reflect"
 	"strings"
 	"sync"

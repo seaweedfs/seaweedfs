@@ -3,10 +3,10 @@ package topology
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/chrislusf/raft"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
 	hashicorpRaft "github.com/hashicorp/raft"
+	"github.com/seaweedfs/raft"
 )
 
 type MaxVolumeIdCommand struct {

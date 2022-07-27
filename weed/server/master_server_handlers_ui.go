@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/chrislusf/raft"
 	hashicorpRaft "github.com/hashicorp/raft"
+	"github.com/seaweedfs/raft"
 
 	ui "github.com/chrislusf/seaweedfs/weed/server/master_ui"
 	"github.com/chrislusf/seaweedfs/weed/stats"

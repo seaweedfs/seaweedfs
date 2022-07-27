@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/raft/protobuf"
 	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/raft/protobuf"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc/reflection"
 

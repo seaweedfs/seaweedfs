@@ -16,9 +16,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/cluster"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 
-	"github.com/chrislusf/raft"
 	"github.com/gorilla/mux"
 	hashicorpRaft "github.com/hashicorp/raft"
+	"github.com/seaweedfs/raft"
 	"google.golang.org/grpc"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"

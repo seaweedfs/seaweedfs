@@ -3,7 +3,7 @@ package weed_server
 import (
 	"context"
 
-	"github.com/chrislusf/raft"
+	"github.com/seaweedfs/raft"
 
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"

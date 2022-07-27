@@ -11,8 +11,8 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 
-	"github.com/chrislusf/raft"
 	hashicorpRaft "github.com/hashicorp/raft"
+	"github.com/seaweedfs/raft"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"

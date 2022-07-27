@@ -13,7 +13,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/util"
 
-	"github.com/chrislusf/raft"
+	"github.com/seaweedfs/raft"
 	"google.golang.org/grpc/peer"
 
 	"github.com/chrislusf/seaweedfs/weed/glog"

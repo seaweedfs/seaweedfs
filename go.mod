@@ -16,7 +16,7 @@ require (
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/cespare/xxhash v1.1.0
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
-	github.com/chrislusf/raft v1.0.9
+	github.com/seaweedfs/raft v1.1.0
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -234,4 +234,4 @@ require (
 	lukechampine.com/uint128 v1.1.1 // indirect
 )
 
-// replace github.com/chrislusf/raft => /Users/chrislu/go/src/github.com/chrislusf/raft
+// replace github.com/seaweedfs/raft => /Users/chrislu/go/src/github.com/seaweedfs/raft
