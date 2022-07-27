@@ -143,6 +143,9 @@ func (wfs *WFS) setAttrByPbEntry(out *fuse.Attr, inode uint64, entry *filer_pb.E
 		out.Ino = entry.Attributes.Inode
 	}
 	out.Size = filer.FileSize(entry)
+	if entry.FileMode()&os.ModeSymlink != 0 {
+		out.Size = uint64(len(entry.Attributes.SymlinkTarget))
+	}
 	out.Blocks = (out.Size + blockSize - 1) / blockSize
 	setBlksize(out, blockSize)
 	if entry == nil {
@@ -165,6 +168,9 @@ func (wfs *WFS) setAttrByPbEntry(out *fuse.Attr, inode uint64, entry *filer_pb.E
 func (wfs *WFS) setAttrByFilerEntry(out *fuse.Attr, inode uint64, entry *filer.Entry) {
 	out.Ino = inode
 	out.Size = entry.FileSize
+	if entry.Mode&os.ModeSymlink != 0 {
+		out.Size = uint64(len(entry.SymlinkTarget))
+	}
 	out.Blocks = (out.Size + blockSize - 1) / blockSize
 	setBlksize(out, blockSize)
 	out.Atime = uint64(entry.Attr.Mtime.Unix())
