@@ -114,6 +114,11 @@ func (v *Volume) CommitCompact() error {
 	}
 	v.DataBackend = nil
 	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Dec()
+	fi, err := os.Stat(v.FileName(".idx"))
+	if err != nil {
+		return fmt.Errorf("get stat %s failed: %v", v.FileName(".idx"), err)
+	}
+	offset := fi.Size()
 
 	var e error
 	if e = v.makeupDiff(v.FileName(".cpd"), v.FileName(".cpx"), v.FileName(".dat"), v.FileName(".idx")); e != nil {
@@ -150,9 +155,8 @@ func (v *Volume) CommitCompact() error {
 	//time.Sleep(20 * time.Second)
 
 	os.RemoveAll(v.FileName(".ldb"))
-
-	glog.V(3).Infof("Loading volume %d commit file...", v.Id)
-	if e = v.load(true, false, v.needleMapKind, 0); e != nil {
+	glog.V(0).Infof("Loading volume %d from offset:%d commit file...", v.Id, offset)
+	if e = v.load(true, false, v.needleMapKind, 0, uint64(offset)); e != nil {
 		return e
 	}
 	return nil

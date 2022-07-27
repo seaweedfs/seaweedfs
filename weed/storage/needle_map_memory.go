@@ -14,9 +14,14 @@ type NeedleMap struct {
 	m needle_map.NeedleValueMap
 }
 
-func NewCompactNeedleMap(file *os.File) *NeedleMap {
-	nm := &NeedleMap{
-		m: needle_map.NewCompactMap(),
+func NewCompactNeedleMap(file *os.File, oldNm *NeedleMap) *NeedleMap {
+	var nm *NeedleMap
+	if oldNm == nil {
+		nm = &NeedleMap{
+			m: needle_map.NewCompactMap(),
+		}
+	} else {
+		nm = oldNm
 	}
 	nm.indexFile = file
 	stat, err := file.Stat()
@@ -27,13 +32,13 @@ func NewCompactNeedleMap(file *os.File) *NeedleMap {
 	return nm
 }
 
-func LoadCompactNeedleMap(file *os.File) (*NeedleMap, error) {
-	nm := NewCompactNeedleMap(file)
-	return doLoading(file, nm)
+func LoadCompactNeedleMap(file *os.File, oldNm *NeedleMap, idxOffset uint64) (*NeedleMap, error) {
+	nm := NewCompactNeedleMap(file, oldNm)
+	return doLoading(file, nm, idxOffset)
 }
 
-func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
-	e := idx.WalkIndexFile(file, 0, func(key NeedleId, offset Offset, size Size) error {
+func doLoading(file *os.File, nm *NeedleMap, idxOffset uint64) (*NeedleMap, error) {
+	e := idx.WalkIndexFile(file, idxOffset, func(key NeedleId, offset Offset, size Size) error {
 		nm.MaybeSetMaxFileKey(key)
 		if !offset.IsZero() && size.IsValid() {
 			nm.FileCounter++

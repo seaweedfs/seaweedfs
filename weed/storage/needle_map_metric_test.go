@@ -12,7 +12,7 @@ import (
 func TestFastLoadingNeedleMapMetrics(t *testing.T) {
 
 	idxFile, _ := os.CreateTemp("", "tmp.idx")
-	nm := NewCompactNeedleMap(idxFile)
+	nm := NewCompactNeedleMap(idxFile, nil)
 
 	for i := 0; i < 10000; i++ {
 		nm.Put(Uint64ToNeedleId(uint64(i+1)), Uint32ToOffset(uint32(0)), Size(1))

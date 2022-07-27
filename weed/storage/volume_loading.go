@@ -18,11 +18,11 @@ func loadVolumeWithoutIndex(dirname string, collection string, id needle.VolumeI
 	v = &Volume{dir: dirname, Collection: collection, Id: id}
 	v.SuperBlock = super_block.SuperBlock{}
 	v.needleMapKind = needleMapKind
-	err = v.load(false, false, needleMapKind, 0)
+	err = v.load(false, false, needleMapKind, 0, 0)
 	return
 }
 
-func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind NeedleMapKind, preallocate int64) (err error) {
+func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind NeedleMapKind, preallocate int64, idxOffset uint64) (err error) {
 	alreadyHasSuperBlock := false
 
 	hasLoadedVolume := false
@@ -133,8 +133,12 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		} else {
 			switch needleMapKind {
 			case NeedleMapInMemory:
-				glog.V(0).Infoln("loading index", v.FileName(".idx"), "to memory")
-				if v.nm, err = LoadCompactNeedleMap(indexFile); err != nil {
+				glog.V(0).Infof("loading index %s from offset:%d to memory", v.FileName(".idx"), idxOffset)
+				oldNm, _ := v.nm.(*NeedleMap)
+				if idxOffset == 0 {
+					oldNm = nil
+				}
+				if v.nm, err = LoadCompactNeedleMap(indexFile, oldNm, idxOffset); err != nil {
 					glog.V(0).Infof("loading index %s to memory error: %v", v.FileName(".idx"), err)
 				}
 			case NeedleMapLevelDb:

@@ -57,7 +57,7 @@ func NewVolume(dirname string, dirIdx string, collection string, id needle.Volum
 		asyncRequestsChan: make(chan *needle.AsyncRequest, 128)}
 	v.SuperBlock = super_block.SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
 	v.needleMapKind = needleMapKind
-	e = v.load(true, true, needleMapKind, preallocate)
+	e = v.load(true, true, needleMapKind, preallocate, 0)
 	v.startWorker()
 	return
 }
