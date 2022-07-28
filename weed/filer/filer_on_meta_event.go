@@ -16,11 +16,7 @@ func (f *Filer) onMetadataChangeEvent(event *filer_pb.SubscribeMetadataResponse)
 
 func (f *Filer) onBucketEvents(event *filer_pb.SubscribeMetadataResponse) {
 	message := event.EventNotification
-	for _, sig := range message.Signatures {
-		if sig == f.Signature {
-			return
-		}
-	}
+
 	if f.DirBucketsPath == event.Directory {
 		if filer_pb.IsCreate(event) {
 			if message.NewEntry.IsDirectory {
