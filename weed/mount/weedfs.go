@@ -144,8 +144,10 @@ func (wfs *WFS) maybeReadEntry(inode uint64, followSymLink bool) (path util.Full
 		if entry != nil && entry.Attributes != nil && entry.Attributes.Inode != 0 {
 			targetInode = entry.Attributes.Inode
 		}
-		target := filepath.Join(string(path), "../"+entry.Attributes.SymlinkTarget)
-		entry, status = wfs.maybeLoadEntry(util.FullPath(target))
+		target := util.FullPath(filepath.Join(string(path), "../"+entry.Attributes.SymlinkTarget))
+		targetParent, _ := target.DirAndName()
+		wfs.inodeToPath.EnsurePath(util.FullPath(targetParent), true)
+		entry, status = wfs.maybeLoadEntry(target)
 	}
 	return
 }

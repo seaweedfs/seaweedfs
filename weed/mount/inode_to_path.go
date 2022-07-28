@@ -5,6 +5,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"sync"
+	"time"
 )
 
 type InodeToPath struct {
@@ -50,6 +51,20 @@ func NewInodeToPath(root util.FullPath) *InodeToPath {
 	t.inode2path[1] = &InodeEntry{[]util.FullPath{root}, 1, true, false}
 	t.path2inode[root] = 1
 	return t
+}
+
+// EnsurePath make sure the full path is tracked, used by symlink.
+func (i *InodeToPath) EnsurePath(path util.FullPath, isDirectory bool) bool {
+	for {
+		dir, _ := path.DirAndName()
+		if dir == "/" {
+			return true
+		}
+		if i.EnsurePath(util.FullPath(dir), true) {
+			i.Lookup(path, time.Now().Unix(), isDirectory, false, 0, false)
+		}
+	}
+	return false
 }
 
 func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory bool, isHardlink bool, possibleInode uint64, isLookup bool) uint64 {
