@@ -70,7 +70,7 @@ func GrpcDial(ctx context.Context, address string, opts ...grpc.DialOption) (*gr
 	// opts = append(opts, grpc.WithTimeout(time.Duration(5*time.Second)))
 	var options []grpc.DialOption
 	options = append(options,
-		// grpc.WithInsecure(),
+		// grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallSendMsgSize(Max_Message_Size),
 			grpc.MaxCallRecvMsgSize(Max_Message_Size),
