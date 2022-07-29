@@ -62,6 +62,7 @@ func (i *InodeToPath) EnsurePath(path util.FullPath, isDirectory bool) bool {
 		}
 		if i.EnsurePath(util.FullPath(dir), true) {
 			i.Lookup(path, time.Now().Unix(), isDirectory, false, 0, false)
+			return true
 		}
 	}
 	return false
