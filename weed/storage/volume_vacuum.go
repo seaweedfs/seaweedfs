@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
+	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	idx2 "github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
@@ -88,7 +89,7 @@ func (v *Volume) Compact2(preallocate int64, compactionBytePerSecond int64, prog
 	if err := v.nm.Sync(); err != nil {
 		glog.V(0).Infof("compact2 fail to sync volume idx %d: %v", v.Id, err)
 	}
-	return copyDataBasedOnIndexFile(v.FileName(".dat"), v.FileName(".idx"), v.FileName(".cpd"), v.FileName(".cpx"), v.SuperBlock, v.Version(), preallocate, compactionBytePerSecond, progressFn)
+	return copyDataBasedOnIndexFile(v, v.FileName(".dat"), v.FileName(".idx"), v.FileName(".cpd"), v.FileName(".cpx"), v.SuperBlock, v.Version(), preallocate, compactionBytePerSecond, progressFn)
 }
 
 func (v *Volume) CommitCompact() error {
@@ -317,6 +318,11 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		if err != nil {
 			return fmt.Errorf("cannot write indexfile %s: %v", newIdxFileName, err)
 		}
+
+		if err = v.nm.Put(key, increIdxEntry.offset, increIdxEntry.size); err != nil {
+			return fmt.Errorf("failed to save in needle map %d: %v", key, err)
+		}
+
 	}
 
 	return nil
@@ -392,7 +398,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 	return nm.SaveToIdx(idxName)
 }
 
-func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName string, sb super_block.SuperBlock, version needle.Version, preallocate, compactionBytePerSecond int64, progressFn ProgressFunc) (err error) {
+func copyDataBasedOnIndexFile(v *Volume, srcDatName, srcIdxName, dstDatName, datIdxName string, sb super_block.SuperBlock, version needle.Version, preallocate, compactionBytePerSecond int64, progressFn ProgressFunc) (err error) {
 	var (
 		srcDatBackend, dstDatBackend backend.BackendStorageFile
 		dataFile                     *os.File
@@ -422,6 +428,9 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 	newOffset := int64(sb.BlockSize())
 
 	writeThrottler := util.NewWriteThrottler(compactionBytePerSecond)
+	nm := &NeedleMap{
+		m: needle_map.NewCompactMap(),
+	}
 
 	err = oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
 
@@ -459,10 +468,45 @@ func copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, datIdxName str
 
 		return nil
 	})
+	err = newNm.SaveToIdx(datIdxName)
 	if err != nil {
 		return err
 	}
 
-	return newNm.SaveToIdx(datIdxName)
+	indexFile, err := os.OpenFile(datIdxName, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		glog.Errorf("cannot open Volume Index %s: %v", datIdxName, err)
+		return nil
+	}
+	nm.indexFile = indexFile
+	stat, err := indexFile.Stat()
+	if err != nil {
+		glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
+	}
+	nm.indexFileOffset = stat.Size()
+	v.nm = nm
+	if err != nil {
+		return err
+	}
+
+	//can be optimized, filling nm in  oldNm.AscendingVisit
+	e := idx.WalkIndexFile(indexFile, 0, func(key NeedleId, offset Offset, size Size) error {
+		nm.MaybeSetMaxFileKey(key)
+		if !offset.IsZero() && size.IsValid() {
+			nm.FileCounter++
+			nm.FileByteCounter = nm.FileByteCounter + uint64(size)
+			oldOffset, oldSize := nm.m.Set(NeedleId(key), offset, size)
+			if !oldOffset.IsZero() && oldSize.IsValid() {
+				nm.DeletionCounter++
+				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
+			}
+		} else {
+			oldSize := nm.m.Delete(NeedleId(key))
+			nm.DeletionCounter++
+			nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
+		}
+		return nil
+	})
+	return e
 
 }

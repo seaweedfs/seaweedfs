@@ -133,9 +133,14 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		} else {
 			switch needleMapKind {
 			case NeedleMapInMemory:
-				glog.V(0).Infoln("loading index", v.FileName(".idx"), "to memory")
-				if v.nm, err = LoadCompactNeedleMap(indexFile); err != nil {
-					glog.V(0).Infof("loading index %s to memory error: %v", v.FileName(".idx"), err)
+				if v.nm != nil {
+					glog.V(0).Infof("loading compact index %s ", v.FileName(".idx"))
+					indexFile.Close()
+				} else {
+					glog.V(0).Infoln("loading index", v.FileName(".idx"), "to memory")
+					if v.nm, err = LoadCompactNeedleMap(indexFile); err != nil {
+						glog.V(0).Infof("loading index %s to memory error: %v", v.FileName(".idx"), err)
+					}
 				}
 			case NeedleMapLevelDb:
 				glog.V(0).Infoln("loading leveldb", v.FileName(".ldb"))
