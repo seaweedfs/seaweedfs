@@ -35,6 +35,7 @@ func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientTy
 		FilerGroup:      filerGroup,
 		clientType:      clientType,
 		clientHost:      clientHost,
+		rack:            rack,
 		masters:         masters,
 		grpcDialOption:  grpcDialOption,
 		vidMap:          newVidMap(clientDataCenter),
