@@ -2,10 +2,10 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 func (s *Store) CheckCompactVolume(volumeId needle.VolumeId) (float64, error) {

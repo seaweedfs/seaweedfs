@@ -3,7 +3,7 @@
 
 package ydb
 
-import asql "github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
+import asql "github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
 
 const (
 	upsertQuery = `

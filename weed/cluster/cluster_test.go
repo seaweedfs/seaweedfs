@@ -1,7 +1,7 @@
 package cluster
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/stretchr/testify/assert"
 	"strconv"
 	"sync"

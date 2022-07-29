@@ -2,9 +2,9 @@ package filer
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
-	"github.com/chrislusf/seaweedfs/weed/util/mem"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"sync"
 	"time"
 )

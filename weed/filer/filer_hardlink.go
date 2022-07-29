@@ -1,7 +1,7 @@
 package filer
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const (

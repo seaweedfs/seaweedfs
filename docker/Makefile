@@ -6,7 +6,7 @@ gen: dev
 
 binary:
 	export SWCOMMIT=$(shell git rev-parse --short HEAD)
-	export SWLDFLAGS="-X github.com/chrislusf/seaweedfs/weed/util.COMMIT=$(SWCOMMIT)"
+	export SWLDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=$(SWCOMMIT)"
 	cd ../weed; CGO_ENABLED=0 GOOS=linux go build -tags "$(tags)" -ldflags "-extldflags -static $(SWLDFLAGS)"; mv weed ../docker/
 
 build: binary

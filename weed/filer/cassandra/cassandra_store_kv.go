@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/gocql/gocql"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 )
 
 func (store *CassandraStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {

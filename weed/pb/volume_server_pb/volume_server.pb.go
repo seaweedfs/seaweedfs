@@ -7,7 +7,7 @@
 package volume_server_pb
 
 import (
-	remote_pb "github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
+	remote_pb "github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"

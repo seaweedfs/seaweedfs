@@ -5,7 +5,7 @@ import (
 	"hash/fnv"
 
 	"github.com/bwmarrin/snowflake"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 // a simple snowflake Sequencer

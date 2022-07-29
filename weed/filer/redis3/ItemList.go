@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/util/skiplist"
 	"github.com/go-redis/redis/v8"
+	"github.com/seaweedfs/seaweedfs/weed/util/skiplist"
 )
 
 type ItemList struct {

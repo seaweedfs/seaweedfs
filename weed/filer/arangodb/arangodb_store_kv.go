@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/arangodb/go-driver"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 func (store *ArangodbStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {

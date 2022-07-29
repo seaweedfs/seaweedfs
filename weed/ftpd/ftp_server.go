@@ -3,7 +3,7 @@ package ftpd
 import (
 	"crypto/tls"
 	"errors"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"net"
 
 	ftpserver "github.com/fclairamb/ftpserverlib"

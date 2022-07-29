@@ -2,7 +2,7 @@ package mount
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // Forget is called when the kernel discards entries from its

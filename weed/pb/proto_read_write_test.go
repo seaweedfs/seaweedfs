@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/golang/protobuf/jsonpb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
 
 func TestJsonpMarshalUnmarshal(t *testing.T) {

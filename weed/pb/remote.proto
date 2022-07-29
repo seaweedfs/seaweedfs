@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package remote_pb;
 
-option go_package = "github.com/chrislusf/seaweedfs/weed/pb/remote_pb";
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/remote_pb";
 option java_package = "seaweedfs.client";
 option java_outer_classname = "FilerProto";
 

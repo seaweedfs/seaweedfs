@@ -2,16 +2,16 @@ package command
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/golang/protobuf/jsonpb"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func init() {

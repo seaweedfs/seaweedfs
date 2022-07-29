@@ -2,9 +2,9 @@ package command
 
 import (
 	"fmt"
-	flag "github.com/chrislusf/seaweedfs/weed/util/fla9"
 	"github.com/posener/complete"
 	completeinstall "github.com/posener/complete/cmd/install"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"runtime"
 )
 

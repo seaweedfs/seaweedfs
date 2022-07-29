@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/go-redis/redis/v8"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 )
 
 func (store *UniversalRedisStore) KvPut(ctx context.Context, key []byte, value []byte) (err error) {

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"errors"
-	"github.com/chrislusf/seaweedfs/weed/wdclient/resource_pool"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient/resource_pool"
 )
 
 // Dial's arguments.

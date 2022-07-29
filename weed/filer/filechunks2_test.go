@@ -4,8 +4,8 @@ import (
 	"golang.org/x/exp/slices"
 	"testing"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 func TestCompactFileChunksRealCase(t *testing.T) {

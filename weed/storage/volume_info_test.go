@@ -3,7 +3,7 @@ package storage
 import (
 	"testing"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 func TestSortVolumeInfos(t *testing.T) {

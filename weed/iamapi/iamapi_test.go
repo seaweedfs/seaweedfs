@@ -10,9 +10,9 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
-	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
 	"github.com/gorilla/mux"
 	"github.com/jinzhu/copier"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/stretchr/testify/assert"
 )
 

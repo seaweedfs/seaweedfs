@@ -9,21 +9,21 @@ import (
 	"strings"
 	"time"
 
-	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/raft/protobuf"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc/reflection"
 
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	weed_server "github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var (
@@ -174,7 +174,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	} else {
 		raftServer, err = weed_server.NewRaftServer(raftServerOption)
 		if raftServer == nil {
-			glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
+			glog.Fatalf("please verify %s is writable, see https://github.com/seaweedfs/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
 		}
 	}
 	ms.SetRaftServer(raftServer)

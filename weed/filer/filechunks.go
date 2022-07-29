@@ -3,12 +3,12 @@ package filer
 import (
 	"bytes"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"golang.org/x/exp/slices"
 	"math"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func TotalSize(chunks []*filer_pb.FileChunk) (size uint64) {

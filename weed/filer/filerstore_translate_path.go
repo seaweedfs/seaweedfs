@@ -2,7 +2,7 @@ package filer
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"strings"
 )

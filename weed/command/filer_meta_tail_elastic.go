@@ -5,10 +5,10 @@ package command
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	jsoniter "github.com/json-iterator/go"
 	elastic "github.com/olivere/elastic/v7"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"strings"
 )
 

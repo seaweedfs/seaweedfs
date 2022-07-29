@@ -24,7 +24,7 @@ docker-compose -f seaweedfs-dev-compose.yml -p seaweedfs up
 ## Local Development
 
 ```bash
-cd $GOPATH/src/github.com/chrislusf/seaweedfs/docker
+cd $GOPATH/src/github.com/seaweedfs/seaweedfs/docker
 make
 ```
 

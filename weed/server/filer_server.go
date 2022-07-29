@@ -8,45 +8,45 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/arangodb"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/cassandra"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/elastic/v7"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/etcd"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/hbase"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/leveldb"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/leveldb2"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/leveldb3"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/mongodb"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/mysql"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/mysql2"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/postgres"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/postgres2"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/redis"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/redis2"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/redis3"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/sqlite"
-	_ "github.com/chrislusf/seaweedfs/weed/filer/ydb"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/notification"
-	_ "github.com/chrislusf/seaweedfs/weed/notification/aws_sqs"
-	_ "github.com/chrislusf/seaweedfs/weed/notification/gocdk_pub_sub"
-	_ "github.com/chrislusf/seaweedfs/weed/notification/google_pub_sub"
-	_ "github.com/chrislusf/seaweedfs/weed/notification/kafka"
-	_ "github.com/chrislusf/seaweedfs/weed/notification/log"
-	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/arangodb"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/cassandra"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/elastic/v7"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/etcd"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/hbase"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/leveldb"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/leveldb2"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/leveldb3"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/mongodb"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/mysql"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/mysql2"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/postgres"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/postgres2"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/redis"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/redis2"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/redis3"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/sqlite"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/ydb"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/notification"
+	_ "github.com/seaweedfs/seaweedfs/weed/notification/aws_sqs"
+	_ "github.com/seaweedfs/seaweedfs/weed/notification/gocdk_pub_sub"
+	_ "github.com/seaweedfs/seaweedfs/weed/notification/google_pub_sub"
+	_ "github.com/seaweedfs/seaweedfs/weed/notification/kafka"
+	_ "github.com/seaweedfs/seaweedfs/weed/notification/log"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
 type FilerOption struct {
@@ -146,7 +146,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	v.SetDefault("filer.options.buckets_folder", "/buckets")
 	fs.filer.DirBucketsPath = v.GetString("filer.options.buckets_folder")
 	// TODO deprecated, will be be removed after 2020-12-31
-	// replaced by https://github.com/chrislusf/seaweedfs/wiki/Path-Specific-Configuration
+	// replaced by https://github.com/seaweedfs/seaweedfs/wiki/Path-Specific-Configuration
 	// fs.filer.FsyncBuckets = v.GetStringSlice("filer.options.buckets_fsync")
 	isFresh := fs.filer.LoadConfiguration(v)
 

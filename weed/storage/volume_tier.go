@@ -1,12 +1,12 @@
 package storage
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-	_ "github.com/chrislusf/seaweedfs/weed/storage/backend/s3_backend"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	volume_info "github.com/chrislusf/seaweedfs/weed/storage/volume_info"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
+	_ "github.com/seaweedfs/seaweedfs/weed/storage/backend/s3_backend"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	volume_info "github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 )
 
 func (v *Volume) GetVolumeInfo() *volume_server_pb.VolumeInfo {

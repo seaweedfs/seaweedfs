@@ -3,7 +3,7 @@ package super_block
 import (
 	"testing"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 func TestSuperBlockReadWrite(t *testing.T) {
