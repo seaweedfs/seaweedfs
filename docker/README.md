@@ -5,7 +5,7 @@
 
 ```bash
 
-wget https://raw.githubusercontent.com/chrislusf/seaweedfs/master/docker/seaweedfs-compose.yml
+wget https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/docker/seaweedfs-compose.yml
 
 docker-compose -f seaweedfs-compose.yml -p seaweedfs up
 
@@ -15,7 +15,7 @@ docker-compose -f seaweedfs-compose.yml -p seaweedfs up
 
 ```bash
 
-wget https://raw.githubusercontent.com/chrislusf/seaweedfs/master/docker/seaweedfs-dev-compose.yml
+wget https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/docker/seaweedfs-dev-compose.yml
 
 docker-compose -f seaweedfs-dev-compose.yml -p seaweedfs up
 
