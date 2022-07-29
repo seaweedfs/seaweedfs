@@ -89,7 +89,8 @@ func (t *Topology) batchVacuumVolumeCompact(grpcDialOption grpc.DialOption, vl *
 							return recvErr
 						}
 					}
-					glog.V(0).Infof("%d vacuum %d on %s processed %d bytes", index, vid, url, resp.ProcessedBytes)
+					glog.V(0).Infof("%d vacuum %d on %s processed %d bytes, percentage loadAvg %v",
+						index, vid, url, resp.ProcessedBytes, resp.PercentLoadAvg_1M)
 				}
 				return nil
 			})
@@ -138,6 +139,8 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 		} else {
 			glog.V(0).Infof("Complete Committing vacuum %d on %s", vid, dn.Url())
 		}
+		// https://github.com/chrislusf/seaweedfs/issues/3369
+		time.Sleep(3 * time.Second)
 	}
 	if isCommitSuccess {
 		for _, dn := range locationlist.list {
@@ -217,7 +220,8 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 		}
 
 		glog.V(2).Infof("check vacuum on collection:%s volume:%d", c.Name, vid)
-		if vacuumLocationList, needVacuum := t.batchVacuumVolumeCheck(grpcDialOption, vid, locationList, garbageThreshold); needVacuum {
+		if vacuumLocationList, needVacuum := t.batchVacuumVolumeCheck(
+			grpcDialOption, vid, locationList, garbageThreshold); needVacuum {
 			if t.batchVacuumVolumeCompact(grpcDialOption, volumeLayout, vid, vacuumLocationList, preallocate) {
 				t.batchVacuumVolumeCommit(grpcDialOption, volumeLayout, vid, vacuumLocationList)
 			} else {
