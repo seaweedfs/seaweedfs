@@ -219,17 +219,7 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 		if userName != ident.Name {
 			continue
 		}
-
-		existedActions := make(map[string]bool, len(ident.Actions))
-		for _, action := range ident.Actions {
-			existedActions[action] = true
-		}
-
-		for _, action := range actions {
-			if !existedActions[action] {
-				ident.Actions = append(ident.Actions, action)
-			}
-		}
+		ident.Actions = actions
 		return resp, nil
 	}
 	return resp, fmt.Errorf("%s: the user with name %s cannot be found", iam.ErrCodeNoSuchEntityException, userName)
