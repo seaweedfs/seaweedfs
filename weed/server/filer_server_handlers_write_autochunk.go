@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"net/http"
 	"os"
@@ -11,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 
 	"github.com/chrislusf/seaweedfs/weed/filer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
@@ -67,6 +68,56 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 		}
 		writeJsonQuiet(w, r, http.StatusCreated, reply)
 	}
+}
+
+func (fs *FilerServer) autoChunkWithStream(ctx context.Context, w http.ResponseWriter, r *http.Request, stream io.Reader, contentLength int64, contentType string, so *operation.StorageOption) {
+	maxMB := int32(fs.option.MaxMB)
+
+	chunkSize := 1024 * 1024 * maxMB
+
+	stats.FilerRequestCounter.WithLabelValues("chunk").Inc()
+	start := time.Now()
+	defer func() {
+		stats.FilerRequestHistogram.WithLabelValues("chunk").Observe(time.Since(start).Seconds())
+	}()
+
+	reply, md5bytes, err := fs.doAutoChunkWithStream(ctx, w, r, stream, chunkSize, contentLength, contentType, so)
+	if err != nil {
+		if strings.HasPrefix(err.Error(), "read input:") {
+			writeJsonError(w, r, 499, err)
+		} else if strings.HasSuffix(err.Error(), "is a file") {
+			writeJsonError(w, r, http.StatusConflict, err)
+		} else {
+			writeJsonError(w, r, http.StatusInternalServerError, err)
+		}
+	} else if reply != nil {
+		if len(md5bytes) > 0 {
+			md5InBase64 := util.Base64Encode(md5bytes)
+			w.Header().Set("Content-MD5", md5InBase64)
+		}
+		writeJsonQuiet(w, r, http.StatusCreated, reply)
+	}
+}
+
+func (fs *FilerServer) doAutoChunkWithStream(ctx context.Context, w http.ResponseWriter, r *http.Request, stream io.Reader, chunkSize int32, contentLength int64, contentType string, so *operation.StorageOption) (filerResult *FilerPostResult, md5bytes []byte, replyerr error) {
+
+	fileName := path.Base(r.URL.Path)
+	if contentType == "application/octet-stream" {
+		contentType = ""
+	}
+
+	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadReaderToChunks(w, r, stream, chunkSize, fileName, contentType, contentLength, so)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	md5bytes = md5Hash.Sum(nil)
+	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
+	if replyerr != nil {
+		fs.filer.DeleteChunks(fileChunks)
+	}
+
+	return
 }
 
 func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, chunkSize int32, contentLength int64, so *operation.StorageOption) (filerResult *FilerPostResult, md5bytes []byte, replyerr error) {

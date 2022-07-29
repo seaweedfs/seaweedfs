@@ -94,6 +94,11 @@
                 <label class="btn btn-default" for="fileElem">
                     <span class="glyphicon glyphicon-cloud-upload" aria-hidden="true"></span> Upload
                 </label>
+                {{ if .EnableUploadFromUrl  }}
+                <label class="btn btn-default" onclick="handleUploadFromUrl()">
+                    <span class="glyphicon glyphicon-cloud-upload" aria-hidden="true"></span> Upload From URL
+                </label>
+                {{ end }}
             </div>
             <ol class="breadcrumb">
             {{ range $entry := .Breadcrumbs }}
@@ -234,7 +239,7 @@
     function handleFiles(files) {
         files = [...files];
         files.forEach(startUpload);
-        renderProgress();
+        renderProgress(false);
         files.forEach(uploadFile);
     }
 
@@ -242,18 +247,22 @@
         uploadList[file.name] = {'name': file.name, 'percent': 0, 'finish': false};
     }
 
-    function renderProgress() {
+    function renderProgress(forceLoading) {
         var values = Object.values(uploadList);
         var html = '<table class="table">\n<tr><th>Uploading</th><\/tr>\n';
         for (let i of values) {
             var progressBarClass = 'progress-bar-striped active';
-            if (i.percent >= 100) {
+            if (i.percent >= 100 && !forceLoading) {
                 progressBarClass = 'progress-bar-success';
             }
             html += '<tr>\n<td>\n';
             html += '<div class="progress" style="margin-bottom: 2px;">\n';
             html += '<div class="progress-bar ' + progressBarClass + '" role="progressbar" aria-valuenow="' + '100" aria-valuemin="0" aria-valuemax="100" style="width:' + i.percent + '%;">';
-            html += '<span style="margin-right: 10px;">' + i.name + '</span>' + i.percent + '%<\/div>';
+            if (forceLoading) {
+                html += '<span style="margin-right: 10px;">' + i.name + '</span><\/div>';
+            } else {
+                html += '<span style="margin-right: 10px;">' + i.name + '</span>' + i.percent + '%<\/div>';
+            }
             html += '<\/div>\n<\/td>\n<\/tr>\n';
         }
         html += '<\/table>\n';
@@ -263,15 +272,20 @@
         }
     }
 
+    function hideProgress() {
+        progressArea.innerHTML = '';
+        progressArea.attributes.style.value = 'display: none;';
+    }
+
     function reportProgress(file, percent) {
         var item = uploadList[file]
         item.percent = percent;
-        renderProgress();
+        renderProgress(false);
     }
 
     function finishUpload(file) {
         uploadList[file]['finish'] = true;
-        renderProgress();
+        renderProgress(false);
         var allFinish = true;
         for (let i of Object.values(uploadList)) {
             if (!i.finish) {
@@ -353,6 +367,42 @@
         xhr.open('DELETE', url, false);
         xhr.send();
         reloadPage();
+    }
+
+    function handleUploadFromUrl() {
+        var srcUrl = prompt('URL:', '');
+        srcUrl = srcUrl.trim();
+        if (srcUrl == null || srcUrl == '') {
+            return;
+        }
+        var fname = new URL(srcUrl).pathname.split('/').pop();
+        fname = fname.trim();
+        if (fname == '') {
+            return;
+        }
+        var baseUrl = window.location.href;
+        if (!baseUrl.endsWith('/')) {
+            baseUrl += '/';
+        }
+        var url = baseUrl + fname + '?from.url=' + srcUrl;
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', url);
+        xhr.setRequestHeader('Content-Type', '');
+        xhr.onreadystatechange = function () {
+            if(xhr.readyState === XMLHttpRequest.DONE) {
+                var status = xhr.status;
+                if (status > 200 && status < 400) {
+                    reloadPage();
+                } else {
+                    alert('Upload from ' + srcUrl + ' got error');
+                    uploadList = {};
+                    hideProgress();
+                }
+            }
+        };
+        xhr.send();
+        uploadList[fname] = {'name': fname, 'percent': 100, 'finish': false};
+        renderProgress(true);
     }
 </script>
 </html>
