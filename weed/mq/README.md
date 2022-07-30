@@ -16,13 +16,15 @@ SeaweedMQ is designed for use cases that need to:
 
 ## What is special about SeaweedMQ?
 
-* Separate computation and storage nodes that scales independently.
-  * Offline messages can be operated as normal files.
+* Separate computation and storage nodes to scale independently.
   * Unlimited storage space by adding volume servers.
-  * Unlimited message brokers.
+  * Unlimited message brokers to handle incoming messages.
+  * Offline messages can be operated as normal files.
 * Scale up and down with auto split and merge message topics.
   * Topics can automatically split into segments when traffic increases, and vice verse.
-  * 
+* Pass messages by reference instead of copying.
+  * Clients can optionally upload the messages first and just submit the references.
+  * Drastically reduce the broker load.
 
 # Design
 
@@ -33,11 +35,12 @@ Among all the brokers, one of them will be selected as the leader by the masters
 
 A topic needs to define its partition key on its messages.
 
-Messages for a topic are divided into segments. 
+Messages for a topic are divided into segments. One segment can cover a range of partitions. A segment can
+be split into 2 segments, or 2 neighboring segments can be merged back to one segment.
 
 During write time, the client will ask the broker leader for a few brokers to process the segment.
 
-The broker leader will check whether the segment already has assigned the brokers. If not, select a few based
+The broker leader will check whether the segment already has assigned the brokers. If not, select a few brokers based
 on their loads, save the selection into filer, and tell the client.
 
 The client will write the messages for this segment to the selected brokers.
@@ -49,7 +52,7 @@ The broker leader does not contain any state. If it fails, the masters will sele
 For a segment, if any one of the selected brokers is down, the remaining brokers should try to write received messages
 to the filer, and close the segment to the clients.
 
-Then the clients should start a new segment. The masters should other healthy brokers to handle the new segment.
+Then the clients should start a new segment. The masters should assign other healthy brokers to handle the new segment.
 
 So any brokers can go down without losing data.
 
