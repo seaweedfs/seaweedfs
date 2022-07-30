@@ -2,18 +2,20 @@ package command
 
 import (
 	"fmt"
-	"golang.org/x/exp/slices"
 	"net/http"
 	"os"
 	"path"
 	"strings"
 	"time"
 
+	"golang.org/x/exp/slices"
+
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/raft/protobuf"
-	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc/reflection"
+
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
@@ -179,6 +181,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 	ms.SetRaftServer(raftServer)
 	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
+	r.HandleFunc("/cluster/healthz", raftServer.HealthzHandler).Methods("GET", "HEAD")
 	if *m.raftHashicorp {
 		r.HandleFunc("/raft/stats", raftServer.StatsRaftHandler).Methods("GET")
 	}
