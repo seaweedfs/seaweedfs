@@ -43,7 +43,7 @@ func init() {
 
 var cmdMqBroker = &Command{
 	UsageLine: "mq.broker [-port=17777] [-master=<ip:port>]",
-	Short:     "start a message queue broker",
+	Short:     "<WIP> start a message queue broker",
 	Long: `start a message queue broker
 
 	The broker can accept gRPC calls to write or read messages. The messages are stored via filer.
