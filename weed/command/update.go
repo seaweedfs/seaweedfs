@@ -118,7 +118,7 @@ func runUpdate(cmd *Command, args []string) bool {
 
 func downloadRelease(ctx context.Context, target string, ver string) (version string, err error) {
 	currentVersion := util.VERSION_NUMBER
-	rel, err := GitHubLatestRelease(ctx, ver, "chrislusf", "seaweedfs")
+	rel, err := GitHubLatestRelease(ctx, ver, "seaweedfs", "seaweedfs")
 	if err != nil {
 		return "", err
 	}
