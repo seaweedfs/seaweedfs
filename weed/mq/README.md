@@ -25,6 +25,10 @@ SeaweedMQ is designed for use cases that need to:
 * Pass messages by reference instead of copying.
   * Clients can optionally upload the messages first and just submit the references.
   * Drastically reduce the broker load.
+* Stateless brokers
+  * All brokers are equal. One broker is dynamically picked as the leader.
+  * Add brokers at any time.
+  * Allow rolling restart brokers or remove brokers at a pace.
 
 # Design
 
