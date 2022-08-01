@@ -139,8 +139,6 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 		} else {
 			glog.V(0).Infof("Complete Committing vacuum %d on %s", vid, dn.Url())
 		}
-		// small space out for the same volume id https://github.com/seaweedfs/seaweedfs/issues/3369
-		time.Sleep(3 * time.Second)
 	}
 	if isCommitSuccess {
 		for _, dn := range locationlist.list {
