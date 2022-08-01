@@ -147,7 +147,7 @@ message VacuumVolumeCompactRequest {
 }
 message VacuumVolumeCompactResponse {
     int64 processed_bytes = 1;
-    uint32 percent_load_avg_1m = 2;
+    float percent_load_avg_1m = 2;
 }
 
 message VacuumVolumeCommitRequest {

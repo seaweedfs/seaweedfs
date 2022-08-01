@@ -7,7 +7,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
-	"math"
 	"runtime"
 )
 
@@ -41,7 +40,7 @@ func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCo
 			resp.ProcessedBytes = processed
 			if fsErr == nil && numCPU > 0 {
 				if fsLa, err := fs.LoadAvg(); err == nil {
-					resp.PercentLoadAvg_1M = uint32(math.Round(fsLa.Load1 * 100 / float64(numCPU)))
+					resp.PercentLoadAvg_1M = float32(fsLa.Load1 / float64(numCPU))
 				}
 			}
 			if sendErr = stream.Send(resp); sendErr != nil {
