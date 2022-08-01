@@ -327,12 +327,8 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 	}
 
 	if v.needleMapKind == NeedleMapInMemory {
-		NM := v.NM
-		if _, err := idx.Seek(0, 0); err != nil {
-			return fmt.Errorf("cannot seek start of indexfile %s: %v",
-				idx.Name(), err)
-		}
-		_, e := doOffsetLoading(idx, uint64(idxSize)/types.NeedleMapEntrySize, NM)
+		tmpNm := v.tmpNm
+		_, e := doOffsetLoading(idx, uint64(idxSize)/types.NeedleMapEntrySize, tmpNm)
 		return e
 	}
 	return
@@ -489,20 +485,19 @@ func copyDataBasedOnIndexFile(v *Volume, srcDatName, srcIdxName, dstDatName, dat
 		indexFile, err := os.OpenFile(datIdxName, os.O_RDWR|os.O_CREATE, 0644)
 		if err != nil {
 			glog.Errorf("cannot open Volume Index %s: %v", datIdxName, err)
-			return nil
+			return err
 		}
 		defer indexFile.Close()
 
 		//can be optimized, filling nm in  oldNm.AscendingVisit
-		v.NM, err = doOffsetLoading(indexFile, 0, nm)
+		v.tmpNm, err = doOffsetLoading(indexFile, 0, nm)
 		return err
 	}
 	return
 }
 
 func doOffsetLoading(file *os.File, startFrom uint64, nm *NeedleMap) (*NeedleMap, error) {
-
-	glog.V(0).Infof("loading idx from offset %d for file: %s %v", startFrom, file.Name(), nm)
+	glog.V(0).Infof("loading idx from offset %d for file: %s", startFrom, file.Name())
 	e := idx.WalkIndexFile(file, startFrom, func(key NeedleId, offset Offset, size Size) error {
 		nm.MaybeSetMaxFileKey(key)
 		if !offset.IsZero() && size.IsValid() {
