@@ -6,7 +6,6 @@ const (
 	// volume server
 	WriteToLocalDisk            = "writeToLocalDisk"
 	WriteToReplicas             = "writeToReplicas"
-	ReplicatedWrite             = "replicatedWrite"
 	ErrorSizeMismatchOffsetSize = "errorSizeMismatchOffsetSize"
 	ErrorSizeMismatch           = "errorSizeMismatch"
 	ErrorCRC                    = "errorCRC"
