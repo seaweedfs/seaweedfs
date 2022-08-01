@@ -40,7 +40,7 @@ func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCo
 			resp.ProcessedBytes = processed
 			if fsErr == nil && numCPU > 0 {
 				if fsLa, err := fs.LoadAvg(); err == nil {
-					resp.PercentLoadAvg_1M = float32(fsLa.Load1 / float64(numCPU))
+					resp.LoadAvg_1M = float32(fsLa.Load1 / float64(numCPU))
 				}
 			}
 			if sendErr = stream.Send(resp); sendErr != nil {

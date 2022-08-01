@@ -89,8 +89,8 @@ func (t *Topology) batchVacuumVolumeCompact(grpcDialOption grpc.DialOption, vl *
 							return recvErr
 						}
 					}
-					glog.V(0).Infof("%d vacuum %d on %s processed %d bytes, loadAvg %.0f%%",
-						index, vid, url, resp.ProcessedBytes, resp.PercentLoadAvg_1M)
+					glog.V(0).Infof("%d vacuum %d on %s processed %d bytes, loadAvg %.02f%%",
+						index, vid, url, resp.ProcessedBytes, resp.LoadAvg_1M*100)
 				}
 				return nil
 			})
