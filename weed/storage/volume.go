@@ -25,6 +25,7 @@ type Volume struct {
 	Collection         string
 	DataBackend        backend.BackendStorageFile
 	nm                 NeedleMapper
+	NM                 *NeedleMap
 	needleMapKind      NeedleMapKind
 	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete

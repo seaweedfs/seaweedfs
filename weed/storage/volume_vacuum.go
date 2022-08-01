@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -254,6 +255,12 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 	if idx, err = os.OpenFile(newIdxFileName, os.O_RDWR, 0644); err != nil {
 		return fmt.Errorf("open idx file %s failed: %v", newIdxFileName, err)
 	}
+
+	stat, err := idx.Stat()
+	if err != nil {
+		return fmt.Errorf("stat file %s: %v", idx.Name(), err)
+	}
+	idxSize := stat.Size()
 	defer idx.Close()
 
 	var newDatCompactRevision uint16
@@ -282,7 +289,6 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 				return
 			}
 		}
-
 		//updated needle
 		if !increIdxEntry.offset.IsZero() && increIdxEntry.size != 0 && increIdxEntry.size.IsValid() {
 			//even the needle cache in memory is hit, the need_bytes is correct
@@ -318,14 +324,18 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		if err != nil {
 			return fmt.Errorf("cannot write indexfile %s: %v", newIdxFileName, err)
 		}
-
-		if err = v.nm.Put(key, increIdxEntry.offset, increIdxEntry.size); err != nil {
-			return fmt.Errorf("failed to save in needle map %d: %v", key, err)
-		}
-
 	}
 
-	return nil
+	if v.needleMapKind == NeedleMapInMemory {
+		NM := v.NM
+		if _, err := idx.Seek(0, 0); err != nil {
+			return fmt.Errorf("cannot seek start of indexfile %s: %v",
+				idx.Name(), err)
+		}
+		_, e := doOffsetLoading(idx, uint64(idxSize)/types.NeedleMapEntrySize, NM)
+		return e
+	}
+	return
 }
 
 type VolumeFileScanner4Vacuum struct {
@@ -428,10 +438,6 @@ func copyDataBasedOnIndexFile(v *Volume, srcDatName, srcIdxName, dstDatName, dat
 	newOffset := int64(sb.BlockSize())
 
 	writeThrottler := util.NewWriteThrottler(compactionBytePerSecond)
-	nm := &NeedleMap{
-		m: needle_map.NewCompactMap(),
-	}
-
 	err = oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
 
 		offset, size := value.Offset, value.Size
@@ -468,29 +474,36 @@ func copyDataBasedOnIndexFile(v *Volume, srcDatName, srcIdxName, dstDatName, dat
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
 	err = newNm.SaveToIdx(datIdxName)
 	if err != nil {
 		return err
 	}
+	if v.needleMapKind == NeedleMapInMemory {
+		nm := &NeedleMap{
+			m: needle_map.NewCompactMap(),
+		}
+		indexFile, err := os.OpenFile(datIdxName, os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			glog.Errorf("cannot open Volume Index %s: %v", datIdxName, err)
+			return nil
+		}
+		defer indexFile.Close()
 
-	indexFile, err := os.OpenFile(datIdxName, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		glog.Errorf("cannot open Volume Index %s: %v", datIdxName, err)
-		return nil
-	}
-	nm.indexFile = indexFile
-	stat, err := indexFile.Stat()
-	if err != nil {
-		glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
-	}
-	nm.indexFileOffset = stat.Size()
-	v.nm = nm
-	if err != nil {
+		//can be optimized, filling nm in  oldNm.AscendingVisit
+		v.NM, err = doOffsetLoading(indexFile, 0, nm)
 		return err
 	}
+	return
+}
 
-	//can be optimized, filling nm in  oldNm.AscendingVisit
-	e := idx.WalkIndexFile(indexFile, 0, func(key NeedleId, offset Offset, size Size) error {
+func doOffsetLoading(file *os.File, startFrom uint64, nm *NeedleMap) (*NeedleMap, error) {
+
+	glog.V(0).Infof("loading idx from offset %d for file: %s %v", startFrom, file.Name(), nm)
+	e := idx.WalkIndexFile(file, startFrom, func(key NeedleId, offset Offset, size Size) error {
 		nm.MaybeSetMaxFileKey(key)
 		if !offset.IsZero() && size.IsValid() {
 			nm.FileCounter++
@@ -507,6 +520,6 @@ func copyDataBasedOnIndexFile(v *Volume, srcDatName, srcIdxName, dstDatName, dat
 		}
 		return nil
 	})
-	return e
-
+	glog.V(1).Infof("max file key: %d for file: %s", nm.MaxFileKey(), file.Name())
+	return nm, e
 }
