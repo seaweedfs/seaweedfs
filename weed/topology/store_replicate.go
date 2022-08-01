@@ -46,7 +46,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 	if s.GetVolume(volumeId) != nil {
 		start := time.Now()
 		isUnchanged, err = s.WriteVolumeNeedle(volumeId, n, true, fsync)
-		stats.VolumeServerRequestHistogram.WithLabelValues("write").Observe(time.Since(start).Seconds())
+		stats.VolumeServerRequestHistogram.WithLabelValues("localWrite").Observe(time.Since(start).Seconds())
 		if err != nil {
 			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorWriteToLocalDisk).Inc()
 			err = fmt.Errorf("failed to write to local disk: %v", err)
@@ -102,7 +102,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 			_, err := operation.UploadData(n.Data, uploadOption)
 			return err
 		})
-		stats.VolumeServerRequestHistogram.WithLabelValues("replicate").Observe(time.Since(start).Seconds())
+		stats.VolumeServerRequestHistogram.WithLabelValues("replicatedWrite").Observe(time.Since(start).Seconds())
 		if err != nil {
 			stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorWriteToReplicas).Inc()
 			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
