@@ -4,6 +4,8 @@ package stats
 // The naming convention is ErrorSomeThing = "error.some.thing"
 const (
 	// volume server
+	LocalWrite                  = "localWrite"
+	ReplicatedWrite             = "replicatedWrite"
 	ErrorSizeMismatchOffsetSize = "errorSizeMismatchOffsetSize"
 	ErrorSizeMismatch           = "errorSizeMismatch"
 	ErrorCRC                    = "errorCRC"

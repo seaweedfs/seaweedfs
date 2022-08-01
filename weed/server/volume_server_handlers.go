@@ -36,6 +36,11 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
+	stats.VolumeServerRequestCounter.WithLabelValues(r.Method).Inc()
+	start := time.Now()
+	defer func() {
+		stats.VolumeServerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
+	}()
 	switch r.Method {
 	case "GET", "HEAD":
 		stats.ReadRequest()
@@ -56,7 +61,6 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		stats.DeleteRequest()
 		vs.guard.WhiteList(vs.DeleteHandler)(w, r)
 	case "PUT", "POST":
-
 		contentLength := getContentLength(r)
 		// exclude the replication from the concurrentUploadLimitMB
 		if r.URL.Query().Get("type") != "replicate" && vs.concurrentUploadLimit != 0 {
