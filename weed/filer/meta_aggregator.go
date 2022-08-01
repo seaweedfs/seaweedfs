@@ -102,7 +102,7 @@ func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddres
 		if err != nil {
 			errLvl := glog.Level(0)
 			if strings.Contains(err.Error(), "duplicated local subscription detected") {
-				errLvl = glog.Level(1)
+				errLvl = glog.Level(4)
 			}
 			glog.V(errLvl).Infof("subscribing remote %s meta change: %v", peer, err)
 		}
