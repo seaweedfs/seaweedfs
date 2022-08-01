@@ -2,7 +2,7 @@ package filer
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"strings"
 )
 

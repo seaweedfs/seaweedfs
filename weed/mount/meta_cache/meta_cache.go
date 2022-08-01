@@ -2,11 +2,11 @@ package meta_cache
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/filer/leveldb"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/leveldb"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"os"
 )
 
@@ -65,7 +65,7 @@ func (mc *MetaCache) doInsertEntry(ctx context.Context, entry *filer.Entry) erro
 	return mc.localStore.InsertEntry(ctx, entry)
 }
 
-func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath util.FullPath, newEntry *filer.Entry, shouldDeleteChunks bool) error {
+func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath util.FullPath, newEntry *filer.Entry) error {
 	//mc.Lock()
 	//defer mc.Unlock()
 
@@ -77,14 +77,8 @@ func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath uti
 				// leave the update to the following InsertEntry operation
 			} else {
 				glog.V(3).Infof("DeleteEntry %s", oldPath)
-				if shouldDeleteChunks {
-					if err := mc.localStore.DeleteEntry(ctx, oldPath); err != nil {
-						return err
-					}
-				} else {
-					if err := mc.localStore.DeleteOneEntrySkipHardlink(ctx, oldPath); err != nil {
-						return err
-					}
+				if err := mc.localStore.DeleteEntry(ctx, oldPath); err != nil {
+					return err
 				}
 			}
 		}
@@ -119,12 +113,6 @@ func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *fi
 	}
 	mc.mapIdFromFilerToLocal(entry)
 	return
-}
-
-func (mc *MetaCache) DeleteEntrySkipHardlink(ctx context.Context, fp util.FullPath) (err error) {
-	//mc.Lock()
-	//defer mc.Unlock()
-	return mc.localStore.DeleteOneEntrySkipHardlink(ctx, fp)
 }
 
 func (mc *MetaCache) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {

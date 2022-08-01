@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"google.golang.org/grpc"
 	"math/rand"
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
 type Location struct {

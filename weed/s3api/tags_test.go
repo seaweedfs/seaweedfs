@@ -2,7 +2,7 @@ package s3api
 
 import (
 	"encoding/xml"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )

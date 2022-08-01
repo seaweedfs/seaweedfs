@@ -1,8 +1,8 @@
 package backend
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"os"
 	"time"
 )

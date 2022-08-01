@@ -3,8 +3,8 @@ package mysql
 import (
 	"fmt"
 
-	"github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
 )
 
 type SqlGenMysql struct {

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 func TestNewLogBufferFirstBuffer(t *testing.T) {

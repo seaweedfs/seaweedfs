@@ -9,8 +9,8 @@ import (
 
 	"github.com/klauspost/reedsolomon"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 const (

@@ -2,12 +2,12 @@ package needle
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"io"
 	"os"
 	"testing"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func TestPageRead(t *testing.T) {

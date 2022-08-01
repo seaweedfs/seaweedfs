@@ -4,13 +4,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/cluster"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"io"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
 func init() {
@@ -40,7 +40,9 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 	}
 
 	var filerNodes []*master_pb.ListClusterNodesResponse_ClusterNode
+	var mqBrokerNodes []*master_pb.ListClusterNodesResponse_ClusterNode
 
+	// get the list of filers
 	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.FilerType,
@@ -57,9 +59,48 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return
 	}
 
+	// get the list of message queue brokers
+	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+			ClientType: cluster.BrokerType,
+			FilerGroup: *commandEnv.option.FilerGroup,
+		})
+		if err != nil {
+			return err
+		}
+
+		mqBrokerNodes = resp.ClusterNodes
+		return err
+	})
+	if err != nil {
+		return
+	}
+
+	if len(mqBrokerNodes) > 0 {
+		fmt.Fprintf(writer, "* message queue brokers %d\n", len(mqBrokerNodes))
+		for _, node := range mqBrokerNodes {
+			fmt.Fprintf(writer, "  * %s (%v)\n", node.Address, node.Version)
+			if node.DataCenter != "" {
+				fmt.Fprintf(writer, "    DataCenter: %v\n", node.DataCenter)
+			}
+			if node.Rack != "" {
+				fmt.Fprintf(writer, "    Rack: %v\n", node.Rack)
+			}
+			if node.IsLeader {
+				fmt.Fprintf(writer, "    IsLeader: %v\n", true)
+			}
+		}
+	}
+
 	fmt.Fprintf(writer, "* filers %d\n", len(filerNodes))
 	for _, node := range filerNodes {
 		fmt.Fprintf(writer, "  * %s (%v)\n", node.Address, node.Version)
+		if node.DataCenter != "" {
+			fmt.Fprintf(writer, "    DataCenter: %v\n", node.DataCenter)
+		}
+		if node.Rack != "" {
+			fmt.Fprintf(writer, "    Rack: %v\n", node.Rack)
+		}
 		pb.WithFilerClient(false, pb.ServerAddress(node.Address), commandEnv.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err == nil {

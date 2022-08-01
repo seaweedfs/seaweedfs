@@ -2,17 +2,17 @@ package mount
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/mount/meta_cache"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/mount_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mount_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 	"math/rand"
 	"os"
@@ -144,8 +144,10 @@ func (wfs *WFS) maybeReadEntry(inode uint64, followSymLink bool) (path util.Full
 		if entry != nil && entry.Attributes != nil && entry.Attributes.Inode != 0 {
 			targetInode = entry.Attributes.Inode
 		}
-		target := filepath.Join(string(path), "../"+entry.Attributes.SymlinkTarget)
-		entry, status = wfs.maybeLoadEntry(util.FullPath(target))
+		target := util.FullPath(filepath.Join(string(path), "../"+entry.Attributes.SymlinkTarget))
+		targetParent, _ := target.DirAndName()
+		wfs.inodeToPath.EnsurePath(util.FullPath(targetParent), true)
+		entry, status = wfs.maybeLoadEntry(target)
 	}
 	return
 }

@@ -1,8 +1,8 @@
 package mount
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/mount/page_writer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mount/page_writer"
 )
 
 type PageWriter struct {

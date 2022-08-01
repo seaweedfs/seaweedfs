@@ -3,7 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -13,22 +13,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/cluster"
-	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"github.com/gorilla/mux"
 	hashicorpRaft "github.com/hashicorp/raft"
 	"github.com/seaweedfs/raft"
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/sequence"
-	"github.com/chrislusf/seaweedfs/weed/shell"
-	"github.com/chrislusf/seaweedfs/weed/topology"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/sequence"
+	"github.com/seaweedfs/seaweedfs/weed/shell"
+	"github.com/seaweedfs/seaweedfs/weed/topology"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 const (
@@ -113,7 +113,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		vgCh:            make(chan *topology.VolumeGrowRequest, 1<<6),
 		clientChans:     make(map[string]chan *master_pb.KeepConnectedResponse),
 		grpcDialOption:  grpcDialOption,
-		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "", cluster.MasterType, option.Master, "", peers),
+		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "", cluster.MasterType, option.Master, "", "", peers),
 		adminLocks:      NewAdminLocks(),
 		Cluster:         cluster.NewCluster(),
 	}
@@ -287,7 +287,7 @@ func (ms *MasterServer) startAdminScripts() {
 		for {
 			time.Sleep(time.Duration(sleepMinutes) * time.Minute)
 			if ms.Topo.IsLeader() {
-				shellOptions.FilerAddress = ms.GetOneFiler(cluster.FilerGroup(*shellOptions.FilerGroup))
+				shellOptions.FilerAddress = ms.GetOneFiler(cluster.FilerGroupName(*shellOptions.FilerGroup))
 				if shellOptions.FilerAddress == "" {
 					continue
 				}

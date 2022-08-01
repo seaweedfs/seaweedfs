@@ -2,14 +2,14 @@ package erasure_coding
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"os"
 	"path"
 	"strconv"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 type ShardId uint8

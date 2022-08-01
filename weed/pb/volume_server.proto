@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package volume_server_pb;
-option go_package = "github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb";
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb";
 
 import "remote.proto";
 

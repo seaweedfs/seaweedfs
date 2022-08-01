@@ -2,7 +2,7 @@ package sequence
 
 import (
 	"encoding/hex"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )

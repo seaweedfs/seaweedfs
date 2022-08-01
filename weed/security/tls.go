@@ -4,14 +4,15 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/security/advancedtls"
 	"io/ioutil"
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
 
@@ -87,12 +88,12 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 
 func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 	if config == nil {
-		return grpc.WithInsecure()
+		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
 
 	certFileName, keyFileName, caFileName := config.GetString(component+".cert"), config.GetString(component+".key"), config.GetString("grpc.ca")
 	if certFileName == "" || keyFileName == "" || caFileName == "" {
-		return grpc.WithInsecure()
+		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
 
 	clientOptions := pemfile.Options{
@@ -103,7 +104,7 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 	clientProvider, err := pemfile.NewProvider(clientOptions)
 	if err != nil {
 		glog.Warningf("pemfile.NewProvider(%v) failed %v", clientOptions, err)
-		return grpc.WithInsecure()
+		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
 	clientRootOptions := pemfile.Options{
 		RootFile:        config.GetString("grpc.ca"),
@@ -112,7 +113,7 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 	clientRootProvider, err := pemfile.NewProvider(clientRootOptions)
 	if err != nil {
 		glog.Warningf("pemfile.NewProvider(%v) failed: %v", clientRootOptions, err)
-		return grpc.WithInsecure()
+		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
 	options := &advancedtls.ClientOptions{
 		IdentityOptions: advancedtls.IdentityCertificateOptions{
@@ -129,7 +130,7 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 	ta, err := advancedtls.NewClientCreds(options)
 	if err != nil {
 		glog.Warningf("advancedtls.NewClientCreds(%v) failed: %v", options, err)
-		return grpc.WithInsecure()
+		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
 	return grpc.WithTransportCredentials(ta)
 }

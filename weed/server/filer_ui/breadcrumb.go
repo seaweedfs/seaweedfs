@@ -3,7 +3,7 @@ package filer_ui
 import (
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type Breadcrumb struct {

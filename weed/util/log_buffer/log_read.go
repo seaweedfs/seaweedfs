@@ -7,9 +7,9 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var (
@@ -68,7 +68,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startReadTime 
 
 			logEntry := &filer_pb.LogEntry{}
 			if err = proto.Unmarshal(entryData, logEntry); err != nil {
-				glog.Errorf("unexpected unmarshal messaging_pb.Message: %v", err)
+				glog.Errorf("unexpected unmarshal mq_pb.Message: %v", err)
 				pos += 4 + int(size)
 				continue
 			}

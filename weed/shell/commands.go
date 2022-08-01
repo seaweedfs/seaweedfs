@@ -9,11 +9,11 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"github.com/chrislusf/seaweedfs/weed/wdclient/exclusive_locks"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient/exclusive_locks"
 )
 
 type ShellOptions struct {
@@ -47,7 +47,7 @@ var (
 func NewCommandEnv(options *ShellOptions) *CommandEnv {
 	ce := &CommandEnv{
 		env:          make(map[string]string),
-		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, *options.FilerGroup, pb.AdminShellClient, "", "", pb.ServerAddresses(*options.Masters).ToAddressMap()),
+		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, *options.FilerGroup, pb.AdminShellClient, "", "", "", pb.ServerAddresses(*options.Masters).ToAddressMap()),
 		option:       options,
 	}
 	ce.locker = exclusive_locks.NewExclusiveLocker(ce.MasterClient, "admin")

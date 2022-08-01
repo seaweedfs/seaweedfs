@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package filer_pb;
 
-option go_package = "github.com/chrislusf/seaweedfs/weed/pb/filer_pb";
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb";
 option java_package = "seaweedfs.client";
 option java_outer_classname = "FilerProto";
 
@@ -58,12 +58,6 @@ service SeaweedFiler {
     }
 
     rpc SubscribeLocalMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
-    }
-
-    rpc KeepConnected (stream KeepConnectedRequest) returns (stream KeepConnectedResponse) {
-    }
-
-    rpc LocateBroker (LocateBrokerRequest) returns (LocateBrokerResponse) {
     }
 
     rpc KvGet (KvGetRequest) returns (KvGetResponse) {

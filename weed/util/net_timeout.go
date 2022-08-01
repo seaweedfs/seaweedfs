@@ -1,11 +1,11 @@
 package util
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"net"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 // Listener wraps a net.Listener, and gives a place to store the timeout

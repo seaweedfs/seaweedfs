@@ -21,7 +21,7 @@ package glog
 import (
 	"errors"
 	"fmt"
-	flag "github.com/chrislusf/seaweedfs/weed/util/fla9"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"os"
 	"os/user"
 	"path/filepath"

@@ -8,11 +8,11 @@ import (
 	"reflect"
 
 	"cloud.google.com/go/storage"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
-	"github.com/chrislusf/seaweedfs/weed/remote_storage"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )

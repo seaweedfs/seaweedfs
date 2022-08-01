@@ -38,7 +38,7 @@ jobs:
           overwrite: true
           pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
           # build_flags: -tags 5BytesOffset # optional, default is
-          ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          ldflags: -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
           project_path: weed
           binary_name: weed
@@ -52,7 +52,7 @@ jobs:
           overwrite: true
           pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
           build_flags: -tags 5BytesOffset # optional, default is
-          ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          ldflags: -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
           project_path: weed
           binary_name: weed

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package master_pb;
 
-option go_package = "github.com/chrislusf/seaweedfs/weed/pb/master_pb";
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/master_pb";
 
 //////////////////////////////////////////////////
 
@@ -139,6 +139,8 @@ message KeepConnectedRequest {
   string client_address = 3;
   string version = 4;
   string filer_group = 5;
+  string data_center = 6;
+  string rack = 7;
 }
 
 message VolumeLocation {
@@ -315,6 +317,8 @@ message GetMasterConfigurationResponse {
 message ListClusterNodesRequest {
   string client_type = 1;
   string filer_group = 2;
+  bool is_leader_only = 3;
+  int32 limit = 4;
 }
 message ListClusterNodesResponse {
   message ClusterNode {
@@ -322,6 +326,8 @@ message ListClusterNodesResponse {
     string version = 2;
     bool is_leader = 3;
     int64 created_at_ns = 4;
+    string data_center = 5;
+    string rack = 6;
   }
   repeated ClusterNode cluster_nodes = 1;
 }

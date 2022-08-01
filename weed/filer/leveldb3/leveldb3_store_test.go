@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func TestCreateAndFind(t *testing.T) {

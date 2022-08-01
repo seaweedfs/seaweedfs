@@ -1,8 +1,8 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"net/http"
 )
 
@@ -24,6 +24,15 @@ func (s *RaftServer) StatusHandler(w http.ResponseWriter, r *http.Request) {
 		ret.Leader = leader
 	}
 	writeJsonQuiet(w, r, http.StatusOK, ret)
+}
+
+func (s *RaftServer) HealthzHandler(w http.ResponseWriter, r *http.Request) {
+	_, err := s.topo.Leader()
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
 }
 
 func (s *RaftServer) StatsRaftHandler(w http.ResponseWriter, r *http.Request) {

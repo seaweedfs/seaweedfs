@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/syndtr/goleveldb/leveldb"
 )
 

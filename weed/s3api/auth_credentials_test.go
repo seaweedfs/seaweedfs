@@ -1,13 +1,13 @@
 package s3api
 
 import (
-	. "github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
+	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/assert"
 	"testing"
 
 	"github.com/golang/protobuf/jsonpb"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
 func TestIdentityListFileFormat(t *testing.T) {

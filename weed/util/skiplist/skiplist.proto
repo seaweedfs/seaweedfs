@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package skiplist;
 
-option go_package = "github.com/chrislusf/seaweedfs/weed/util/skiplist";
+option go_package = "github.com/seaweedfs/seaweedfs/weed/util/skiplist";
 
 message SkipListProto {
   repeated SkipListElementReference start_levels = 1;

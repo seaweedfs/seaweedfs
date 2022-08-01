@@ -3,7 +3,7 @@ package s3api
 import (
 	"net/http"
 
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 // GetBucketCorsHandler Get bucket CORS

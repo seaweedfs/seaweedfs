@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"golang.org/x/exp/slices"
 	"path/filepath"
 

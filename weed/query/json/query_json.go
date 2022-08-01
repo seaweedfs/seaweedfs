@@ -3,7 +3,7 @@ package json
 import (
 	"strconv"
 
-	"github.com/chrislusf/seaweedfs/weed/query/sqltypes"
+	"github.com/seaweedfs/seaweedfs/weed/query/sqltypes"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/match"
 )

@@ -1,7 +1,7 @@
 package etcd
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/filer/store_test"
+	"github.com/seaweedfs/seaweedfs/weed/filer/store_test"
 	"testing"
 )
 

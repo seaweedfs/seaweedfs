@@ -3,7 +3,7 @@ package filer
 import (
 	"testing"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/stretchr/testify/assert"
 )
 

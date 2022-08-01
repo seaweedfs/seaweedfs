@@ -2,16 +2,16 @@ package filer
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/viant/ptrie"
 	"io"
 	"math"
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var (
@@ -23,7 +23,6 @@ type VirtualFilerStore interface {
 	FilerStore
 	DeleteHardLink(ctx context.Context, hardLinkId HardLinkId) error
 	DeleteOneEntry(ctx context.Context, entry *Entry) error
-	DeleteOneEntrySkipHardlink(ctx context.Context, fullpath util.FullPath) error
 	AddPathSpecificStore(path string, storeId string, store FilerStore)
 	OnBucketCreation(bucket string)
 	OnBucketDeletion(bucket string)
@@ -215,18 +214,6 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 
 	// glog.V(4).Infof("DeleteOneEntry %s", existingEntry.FullPath)
 	return actualStore.DeleteEntry(ctx, existingEntry.FullPath)
-}
-
-func (fsw *FilerStoreWrapper) DeleteOneEntrySkipHardlink(ctx context.Context, fullpath util.FullPath) (err error) {
-	actualStore := fsw.getActualStore(fullpath)
-	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "delete").Inc()
-	start := time.Now()
-	defer func() {
-		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "delete").Observe(time.Since(start).Seconds())
-	}()
-
-	glog.V(4).Infof("DeleteOneEntrySkipHardlink %s", fullpath)
-	return actualStore.DeleteEntry(ctx, fullpath)
 }
 
 func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {

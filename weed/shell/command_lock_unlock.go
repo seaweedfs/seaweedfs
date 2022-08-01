@@ -1,7 +1,7 @@
 package shell
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 )
 

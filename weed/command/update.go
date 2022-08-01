@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"golang.org/x/net/context/ctxhttp"
 )
 
@@ -76,8 +76,8 @@ func init() {
 
 var cmdUpdate = &Command{
 	UsageLine: "update [-dir=/path/to/dir] [-name=name] [-version=x.xx]",
-	Short:     "get latest or specific version from https://github.com/chrislusf/seaweedfs",
-	Long:      `get latest or specific version from https://github.com/chrislusf/seaweedfs`,
+	Short:     "get latest or specific version from https://github.com/seaweedfs/seaweedfs",
+	Long:      `get latest or specific version from https://github.com/seaweedfs/seaweedfs`,
 }
 
 func runUpdate(cmd *Command, args []string) bool {
@@ -118,7 +118,7 @@ func runUpdate(cmd *Command, args []string) bool {
 
 func downloadRelease(ctx context.Context, target string, ver string) (version string, err error) {
 	currentVersion := util.VERSION_NUMBER
-	rel, err := GitHubLatestRelease(ctx, ver, "chrislusf", "seaweedfs")
+	rel, err := GitHubLatestRelease(ctx, ver, "seaweedfs", "seaweedfs")
 	if err != nil {
 		return "", err
 	}

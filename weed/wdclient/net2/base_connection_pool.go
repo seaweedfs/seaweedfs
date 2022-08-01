@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	rp "github.com/chrislusf/seaweedfs/weed/wdclient/resource_pool"
+	rp "github.com/seaweedfs/seaweedfs/weed/wdclient/resource_pool"
 )
 
 const defaultDialTimeout = 1 * time.Second

@@ -3,7 +3,7 @@ package util
 import (
 	"errors"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"strconv"
 	"strings"
 )

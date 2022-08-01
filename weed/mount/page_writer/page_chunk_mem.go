@@ -1,8 +1,8 @@
 package page_writer
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/util/mem"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"sync/atomic"
 )
 

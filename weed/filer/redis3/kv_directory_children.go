@@ -3,8 +3,8 @@ package redis3
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/go-redis/redis/v8"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 const maxNameBatchSizeLimit = 1000000

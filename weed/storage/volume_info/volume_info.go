@@ -7,10 +7,10 @@ import (
 
 	"github.com/golang/protobuf/jsonpb"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	_ "github.com/chrislusf/seaweedfs/weed/storage/backend/s3_backend"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	_ "github.com/seaweedfs/seaweedfs/weed/storage/backend/s3_backend"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // MaybeLoadVolumeInfo load the file data as *volume_server_pb.VolumeInfo, the returned volumeInfo will not be nil
