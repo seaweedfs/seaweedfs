@@ -1,6 +1,6 @@
-## SEAWEEDFS - helm chart (2.x)
+# SEAWEEDFS - helm chart (2.x)
 
-### info:
+## Info:
 * master/filer/volume are stateful sets with anti-affinity on the hostname,
 so your deployment will be spread/HA.
 * chart is using memsql(mysql) as the filer backend to enable HA (multiple filer instances)
@@ -9,12 +9,26 @@ and backup/HA memsql can provide.
 with ENV.
 * cert config exists and can be enabled, but not been tested.
 
-### prerequisites
-kubernetes node have labels which help to define which node(Host) will run which pod.
+## Prerequisites
+### Database
+A running MySQL-compatible database is expected by default, as specified in the `values.yaml` at `filer.extraEnvironmentVars`. 
+This database should be pre-configured and initialized by running:
+```sql
+CREATE TABLE IF NOT EXISTS filemeta (
+  dirhash     BIGINT               COMMENT 'first 64 bits of MD5 hash value of directory field',
+  name        VARCHAR(1000) BINARY COMMENT 'directory or file name',
+  directory   TEXT BINARY          COMMENT 'full path to parent directory',
+  meta        LONGBLOB,
+  PRIMARY KEY (dirhash, name)
+) DEFAULT CHARSET=utf8;
+```
 
-s3/filer/master needs the label **sw-backend=true**
+Alternative database can also be configured (e.g. leveldb) following the instructions at `filer.extraEnvironmentVars`.
 
-volume need the label **sw-volume=true**
+### Node Labels
+Kubernetes node have labels which help to define which node(Host) will run which pod:
+* s3/filer/master needs the label **sw-backend=true**
+* volume need the label **sw-volume=true**
 
 to label a node to be able to run all pod types in k8s:
 ```
@@ -29,7 +43,7 @@ please set/update the corresponding affinity rule in values.yaml to an empty one
 
 ```affinity: ""```
 
-### PVC - storage class ###
+## PVC - storage class ###
 
 on the volume stateful set added support for K8S PVC, currently example
 with the simple local-path-provisioner from Rancher (comes included with k3d / k3s)
@@ -38,7 +52,7 @@ https://github.com/rancher/local-path-provisioner
 you can use ANY storage class you like, just update the correct storage-class
 for your deployment.
 
-### current instances config (AIO):
+## current instances config (AIO):
 1 instance for each type (master/filer+s3/volume)
 
 you can update the replicas count for each node type in values.yaml,
