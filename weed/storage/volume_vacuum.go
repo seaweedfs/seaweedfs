@@ -90,7 +90,15 @@ func (v *Volume) Compact2(preallocate int64, compactionBytePerSecond int64, prog
 	if err := v.nm.Sync(); err != nil {
 		glog.V(0).Infof("compact2 fail to sync volume idx %d: %v", v.Id, err)
 	}
-	return copyDataBasedOnIndexFile(v, v.FileName(".dat"), v.FileName(".idx"), v.FileName(".cpd"), v.FileName(".cpx"), v.SuperBlock, v.Version(), preallocate, compactionBytePerSecond, progressFn)
+	return copyDataBasedOnIndexFile(v,
+		v.FileName(".dat"), v.FileName(".idx"),
+		v.FileName(".cpd"), v.FileName(".cpx"),
+		v.SuperBlock,
+		v.Version(),
+		preallocate,
+		compactionBytePerSecond,
+		progressFn,
+	)
 }
 
 func (v *Volume) CommitCompact() error {
