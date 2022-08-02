@@ -497,7 +497,11 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 		}
 		defer indexFile.Close()
 
-		//can be optimized, filling nm in  oldNm.AscendingVisit
+		//can be optimized, filling nm in oldNm.AscendingVisit
+		if v.tmpNm != nil {
+			v.tmpNm.Close()
+			v.tmpNm = nil
+		}
 		v.tmpNm, err = doOffsetLoading(indexFile, 0, nm)
 		return err
 	}
