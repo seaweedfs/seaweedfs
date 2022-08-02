@@ -42,18 +42,20 @@ type MasterOptions struct {
 	volumeSizeLimitMB *uint
 	volumePreallocate *bool
 	// pulseSeconds       *int
-	defaultReplication *string
-	garbageThreshold   *float64
-	whiteList          *string
-	disableHttp        *bool
-	metricsAddress     *string
-	metricsIntervalSec *int
-	raftResumeState    *bool
-	metricsHttpPort    *int
-	heartbeatInterval  *time.Duration
-	electionTimeout    *time.Duration
-	raftHashicorp      *bool
-	raftBootstrap      *bool
+	defaultReplication          *string
+	garbageThreshold            *float64
+	whiteList                   *string
+	disableHttp                 *bool
+	metricsAddress              *string
+	metricsIntervalSec          *int
+	pingMastersSleepDurationSec *int
+	pingMasterTimeoutSec        *int
+	raftResumeState             *bool
+	metricsHttpPort             *int
+	heartbeatInterval           *time.Duration
+	electionTimeout             *time.Duration
+	raftHashicorp               *bool
+	raftBootstrap               *bool
 }
 
 func init() {
@@ -73,6 +75,8 @@ func init() {
 	m.disableHttp = cmdMaster.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
 	m.metricsAddress = cmdMaster.Flag.String("metrics.address", "", "Prometheus gateway address <host>:<port>")
 	m.metricsIntervalSec = cmdMaster.Flag.Int("metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
+	m.pingMastersSleepDurationSec = cmdMaster.Flag.Int("pingMastersSleepDurationSec", 60, "pause between masters ping cycle in seconds")
+	m.pingMasterTimeoutSec = cmdMaster.Flag.Int("pingMasterTimeoutSec", 72*60, "timeout after master will be excluded from hashicorp.raft servers in seconds")
 	m.metricsHttpPort = cmdMaster.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	m.raftResumeState = cmdMaster.Flag.Bool("resumeState", false, "resume previous state on start master server")
 	m.heartbeatInterval = cmdMaster.Flag.Duration("heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
@@ -147,6 +151,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	r := mux.NewRouter()
 	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), masterPeers)
+
 	listeningAddress := util.JoinHostPort(*masterOption.ipBind, *masterOption.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
 	masterListener, masterLocalListner, e := util.NewIpAndLocalListeners(*masterOption.ipBind, *masterOption.port, 0)
@@ -218,6 +223,9 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 
 	go ms.MasterClient.KeepConnectedToMaster()
+	if *m.raftHashicorp {
+		go ms.CheckMastersAlive()
+	}
 
 	// start http server
 	var (
@@ -297,11 +305,13 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		VolumeSizeLimitMB: uint32(*m.volumeSizeLimitMB),
 		VolumePreallocate: *m.volumePreallocate,
 		// PulseSeconds:            *m.pulseSeconds,
-		DefaultReplicaPlacement: *m.defaultReplication,
-		GarbageThreshold:        *m.garbageThreshold,
-		WhiteList:               whiteList,
-		DisableHttp:             *m.disableHttp,
-		MetricsAddress:          *m.metricsAddress,
-		MetricsIntervalSec:      *m.metricsIntervalSec,
+		DefaultReplicaPlacement:  *m.defaultReplication,
+		GarbageThreshold:         *m.garbageThreshold,
+		WhiteList:                whiteList,
+		DisableHttp:              *m.disableHttp,
+		MetricsAddress:           *m.metricsAddress,
+		MetricsIntervalSec:       *m.metricsIntervalSec,
+		PingMastersSleepDuration: time.Second * time.Duration(*m.pingMastersSleepDurationSec),
+		PingMasterTimeout:        time.Second * time.Duration(*m.pingMasterTimeoutSec),
 	}
 }

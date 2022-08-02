@@ -1,8 +1,8 @@
 package weed_server
 
 import (
+	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -48,6 +50,9 @@ type MasterOption struct {
 	MetricsAddress          string
 	MetricsIntervalSec      int
 	IsFollower              bool
+
+	PingMastersSleepDuration time.Duration
+	PingMasterTimeout        time.Duration
 }
 
 type MasterServer struct {
@@ -242,7 +247,6 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 }
 
 func (ms *MasterServer) startAdminScripts() {
-
 	v := util.GetViper()
 	adminScripts := v.GetString("master.maintenance.scripts")
 	if adminScripts == "" {
@@ -334,6 +338,52 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 		seq = sequence.NewMemorySequencer()
 	}
 	return seq
+}
+
+func (ms *MasterServer) CheckMastersAlive() {
+	masterLastPings := make(map[string]time.Time)
+
+	for {
+		time.Sleep(ms.option.PingMastersSleepDuration)
+		if !ms.Topo.IsLeader() && len(masterLastPings) == 0 {
+			continue
+		}
+
+		raftServers := ms.Topo.HashicorpRaft.GetConfiguration().Configuration().Servers
+
+		for _, raftServer := range raftServers {
+			master := string(raftServer.ID)
+
+			lastPing, ok := masterLastPings[master]
+			if !ok {
+				if !ms.Topo.IsLeader() {
+					continue
+				}
+				lastPing = time.Now()
+				masterLastPings[master] = lastPing
+			}
+
+			if _, err := ms.Ping(context.TODO(), &master_pb.PingRequest{Target: string(master), TargetType: cluster.MasterType}); err != nil {
+				if time.Now().Sub(lastPing) > ms.option.PingMasterTimeout {
+					glog.V(0).Infof("master %s didn't respond to pings for %vms. remove raft server", master, time.Now().Sub(lastPing).Milliseconds())
+					if err := ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+						_, err := client.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
+							Id:    master,
+							Force: false,
+						})
+						return err
+					}); err != nil {
+						glog.Warningf("failed removing old raft server: %v", err)
+					}
+					delete(masterLastPings, master)
+					continue
+				}
+			} else {
+				glog.V(4).Infof("successfully pinged master: %s after %vms", master, time.Now().Sub(lastPing).Milliseconds())
+				masterLastPings[master] = time.Now()
+			}
+		}
+	}
 }
 
 func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
