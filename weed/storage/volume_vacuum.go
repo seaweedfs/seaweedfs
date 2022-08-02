@@ -352,7 +352,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		mm := v.tmpLnm.mapMetric
 		var bf *boom.BloomFilter
 		buf := make([]byte, NeedleIdSize)
-		err = ReverseWalkIndexFile(idx, 0, func(entryCount int64) {
+		err = ReverseWalkIndexFile(idx, uint64(idxSize)/types.NeedleMapEntrySize, func(entryCount int64) {
 			bf = boom.NewBloomFilter(uint(entryCount), 0.001)
 		}, func(key NeedleId, offset Offset, size Size) error {
 
@@ -524,10 +524,6 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 		return err
 	}
 
-	if v.nm != nil {
-		v.nm.Close()
-		v.nm = nil
-	}
 	dbFileName := v.FileName(".ldb")
 	indexFile, err := os.OpenFile(datIdxName, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
