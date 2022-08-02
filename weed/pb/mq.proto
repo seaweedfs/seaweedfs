@@ -10,6 +10,7 @@ option java_outer_classname = "MessagQueueProto";
 
 service SeaweedMessaging {
 
+    // control plane
     rpc FindBrokerLeader (FindBrokerLeaderRequest) returns (FindBrokerLeaderResponse) {
     }
     rpc AssignSegmentBrokers (AssignSegmentBrokersRequest) returns (AssignSegmentBrokersResponse) {
@@ -19,6 +20,9 @@ service SeaweedMessaging {
     rpc CheckBrokerLoad (CheckBrokerLoadRequest) returns (CheckBrokerLoadResponse) {
     }
 
+    // data plane
+    rpc Publish (stream PublishRequest) returns (stream PublishResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -77,4 +81,17 @@ message CheckBrokerLoadResponse {
     int64 message_count = 1;
     int64 bytes_count = 2;
 
+}
+
+//////////////////////////////////////////////////
+message PublishRequest {
+    message InitMessage {
+        Segment segment = 1;
+    }
+    InitMessage init = 1;
+    bytes message = 2;
+}
+message PublishResponse {
+    int64 ack_sequence = 1;
+    bool is_closed = 2;
 }

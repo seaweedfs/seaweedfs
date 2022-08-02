@@ -26,6 +26,15 @@ func (s *RaftServer) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	writeJsonQuiet(w, r, http.StatusOK, ret)
 }
 
+func (s *RaftServer) HealthzHandler(w http.ResponseWriter, r *http.Request) {
+	_, err := s.topo.Leader()
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
 func (s *RaftServer) StatsRaftHandler(w http.ResponseWriter, r *http.Request) {
 	if s.RaftHashicorp == nil {
 		writeJsonQuiet(w, r, http.StatusNotFound, nil)

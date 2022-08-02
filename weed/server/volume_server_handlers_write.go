@@ -11,19 +11,11 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
-	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
-
-	stats.VolumeServerRequestCounter.WithLabelValues("post").Inc()
-	start := time.Now()
-	defer func() {
-		stats.VolumeServerRequestHistogram.WithLabelValues("post").Observe(time.Since(start).Seconds())
-	}()
-
 	if e := r.ParseForm(); e != nil {
 		glog.V(0).Infoln("form parse error:", e)
 		writeJsonError(w, r, http.StatusBadRequest, e)
@@ -79,13 +71,6 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
-
-	stats.VolumeServerRequestCounter.WithLabelValues("delete").Inc()
-	start := time.Now()
-	defer func() {
-		stats.VolumeServerRequestHistogram.WithLabelValues("delete").Observe(time.Since(start).Seconds())
-	}()
-
 	n := new(needle.Needle)
 	vid, fid, _, _, _ := parseURLPath(r.URL.Path)
 	volumeId, _ := needle.NewVolumeId(vid)
