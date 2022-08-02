@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc"
@@ -23,9 +24,12 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 	}()
 	go func(garbageThreshold float64) {
 		c := time.Tick(15 * time.Minute)
-		for _ = range c {
+		for range c {
 			if t.IsLeader() {
+				time.Sleep(time.Duration(120*rand.Float32()) * time.Second)
 				t.Vacuum(grpcDialOption, garbageThreshold, 0, "", preallocate)
+			} else {
+				stats.MasterReplicaPlacementMismatch.Reset()
 			}
 		}
 	}(garbageThreshold)
