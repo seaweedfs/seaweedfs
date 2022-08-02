@@ -7,7 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"github.com/tylertreat/BoomFilters"
+	boom "github.com/tylertreat/BoomFilters"
 )
 
 type mapMetric struct {
@@ -95,7 +95,7 @@ func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
 	mm = &mapMetric{}
 	var bf *boom.BloomFilter
 	buf := make([]byte, NeedleIdSize)
-	err = reverseWalkIndexFile(r, func(entryCount int64) {
+	err = ReverseWalkIndexFile(r, 0, func(entryCount int64) {
 		bf = boom.NewBloomFilter(uint(entryCount), 0.001)
 	}, func(key NeedleId, offset Offset, size Size) error {
 
@@ -120,7 +120,7 @@ func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
 	return
 }
 
-func reverseWalkIndexFile(r *os.File, initFn func(entryCount int64), fn func(key NeedleId, offset Offset, size Size) error) error {
+func ReverseWalkIndexFile(r *os.File, startFrom uint64, initFn func(entryCount int64), fn func(key NeedleId, offset Offset, size Size) error) error {
 	fi, err := r.Stat()
 	if err != nil {
 		return fmt.Errorf("file %s stat error: %v", r.Name(), err)
@@ -130,7 +130,7 @@ func reverseWalkIndexFile(r *os.File, initFn func(entryCount int64), fn func(key
 		return fmt.Errorf("unexpected file %s size: %d", r.Name(), fileSize)
 	}
 
-	entryCount := fileSize / NeedleMapEntrySize
+	entryCount := fileSize/NeedleMapEntrySize - int64(startFrom)
 	initFn(entryCount)
 
 	batchSize := int64(1024 * 4)

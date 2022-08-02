@@ -17,6 +17,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/opt"
+	boom "github.com/tylertreat/BoomFilters"
 )
 
 type ProgressFunc func(processed int64) bool
@@ -116,7 +119,10 @@ func (v *Volume) CommitCompact() error {
 	defer v.dataFileAccessLock.Unlock()
 
 	glog.V(3).Infof("Got volume %d committing lock...", v.Id)
-	v.nm.Close()
+	if v.nm != nil {
+		v.nm.Close()
+		v.nm = nil
+	}
 	if v.DataBackend != nil {
 		if err := v.DataBackend.Close(); err != nil {
 			glog.V(0).Infof("fail to close volume %d", v.Id)
@@ -336,8 +342,39 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 
 	if v.needleMapKind == NeedleMapInMemory {
 		tmpNm := v.tmpNm
-		_, e := doOffsetLoading(idx, uint64(idxSize)/types.NeedleMapEntrySize, tmpNm)
+		_, e := v.doMemLoading(idx, uint64(idxSize)/types.NeedleMapEntrySize, tmpNm)
 		return e
+	} else {
+		e := doLDBLoading(v.tmpLnm.dbFileName, uint64(idxSize)/types.NeedleMapEntrySize, idx)
+		if e != nil {
+			return e
+		}
+		mm := v.tmpLnm.mapMetric
+		var bf *boom.BloomFilter
+		buf := make([]byte, NeedleIdSize)
+		err = ReverseWalkIndexFile(idx, 0, func(entryCount int64) {
+			bf = boom.NewBloomFilter(uint(entryCount), 0.001)
+		}, func(key NeedleId, offset Offset, size Size) error {
+
+			mm.MaybeSetMaxFileKey(key)
+			NeedleIdToBytes(buf, key)
+			if size.IsValid() {
+				mm.FileByteCounter += uint64(size)
+			}
+
+			if !bf.TestAndAdd(buf) {
+				mm.FileCounter++
+			} else {
+				// deleted file
+				mm.DeletionCounter++
+				if size.IsValid() {
+					// previously already deleted file
+					mm.DeletionByteCounter += uint64(size)
+				}
+			}
+			return nil
+		})
+
 	}
 	return
 }
@@ -486,29 +523,74 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 	if err != nil {
 		return err
 	}
+
+	if v.nm != nil {
+		v.nm.Close()
+		v.nm = nil
+	}
+	dbFileName := v.FileName(".ldb")
+	indexFile, err := os.OpenFile(datIdxName, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		glog.Errorf("cannot open Volume Index %s: %v", datIdxName, err)
+		return err
+	}
+	defer indexFile.Close()
 	if v.needleMapKind == NeedleMapInMemory {
 		nm := &NeedleMap{
 			m: needle_map.NewCompactMap(),
 		}
-		indexFile, err := os.OpenFile(datIdxName, os.O_RDWR|os.O_CREATE, 0644)
+		//can be optimized, filling nm in oldNm.AscendingVisit
+		v.tmpNm, err = v.doMemLoading(indexFile, 0, nm)
+		return err
+	} else {
+		err := os.RemoveAll(dbFileName)
 		if err != nil {
-			glog.Errorf("cannot open Volume Index %s: %v", datIdxName, err)
 			return err
 		}
-		defer indexFile.Close()
-
-		//can be optimized, filling nm in oldNm.AscendingVisit
-		if v.tmpNm != nil {
-			v.tmpNm.Close()
-			v.tmpNm = nil
+		opts := &opt.Options{}
+		m := &LevelDbNeedleMap{dbFileName: dbFileName}
+		m.dbFileName = dbFileName
+		switch v.needleMapKind {
+		case NeedleMapLevelDb:
+			glog.V(0).Infoln("loading leveldb", v.FileName(".ldb"))
+			opts = &opt.Options{
+				BlockCacheCapacity:            2 * 1024 * 1024, // default value is 8MiB
+				WriteBuffer:                   1 * 1024 * 1024, // default value is 4MiB
+				CompactionTableSizeMultiplier: 10,              // default value is 1
+			}
+		case NeedleMapLevelDbMedium:
+			glog.V(0).Infoln("loading leveldb medium", v.FileName(".ldb"))
+			opts = &opt.Options{
+				BlockCacheCapacity:            4 * 1024 * 1024, // default value is 8MiB
+				WriteBuffer:                   2 * 1024 * 1024, // default value is 4MiB
+				CompactionTableSizeMultiplier: 10,              // default value is 1
+			}
+		case NeedleMapLevelDbLarge:
+			glog.V(0).Infoln("loading leveldb large", v.FileName(".ldb"))
+			opts = &opt.Options{
+				BlockCacheCapacity:            8 * 1024 * 1024, // default value is 8MiB
+				WriteBuffer:                   4 * 1024 * 1024, // default value is 4MiB
+				CompactionTableSizeMultiplier: 10,              // default value is 1
+			}
 		}
-		v.tmpNm, err = doOffsetLoading(indexFile, 0, nm)
-		return err
+		err = doLDBLoading(dbFileName, 0, indexFile)
+		if err != nil {
+			return err
+		}
+		if m.db, err = leveldb.OpenFile(dbFileName, opts); err != nil {
+			return nil
+		}
+		mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)
+		if indexLoadError != nil {
+			return indexLoadError
+		}
+		m.mapMetric = *mm
+		v.tmpLnm = m
 	}
 	return
 }
 
-func doOffsetLoading(file *os.File, startFrom uint64, nm *NeedleMap) (*NeedleMap, error) {
+func (v *Volume) doMemLoading(file *os.File, startFrom uint64, nm *NeedleMap) (*NeedleMap, error) {
 	glog.V(0).Infof("loading idx from offset %d for file: %s", startFrom, file.Name())
 	e := idx.WalkIndexFile(file, startFrom, func(key NeedleId, offset Offset, size Size) error {
 		nm.MaybeSetMaxFileKey(key)
@@ -529,4 +611,31 @@ func doOffsetLoading(file *os.File, startFrom uint64, nm *NeedleMap) (*NeedleMap
 	})
 	glog.V(1).Infof("max file key: %d for file: %s", nm.MaxFileKey(), file.Name())
 	return nm, e
+}
+
+func doLDBLoading(dbFileName string, startFrom uint64, indexFile *os.File) error {
+	glog.V(0).Infof("loading idx to leveldb from offset %d for file: %s", startFrom, indexFile.Name())
+	db, err := leveldb.OpenFile(dbFileName, nil)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	//set watermark
+	stat, e := indexFile.Stat()
+	if e != nil {
+		return e
+	}
+	watermark := stat.Size() / watermarkBatchSize
+	e = SetWatermark(db, uint64(watermark))
+	if e != nil {
+		return e
+	}
+	return idx.WalkIndexFile(indexFile, 0, func(key NeedleId, offset Offset, size Size) (err error) {
+		if !offset.IsZero() && size.IsValid() {
+			err = levelDbWrite(db, key, offset, size, false, 0)
+		} else {
+			err = levelDbDelete(db, key)
+		}
+		return err
+	})
 }

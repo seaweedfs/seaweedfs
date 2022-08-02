@@ -26,6 +26,7 @@ type Volume struct {
 	DataBackend        backend.BackendStorageFile
 	nm                 NeedleMapper
 	tmpNm              *NeedleMap
+	tmpLnm             *LevelDbNeedleMap
 	needleMapKind      NeedleMapKind
 	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
 	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete

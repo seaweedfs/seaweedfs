@@ -54,10 +54,10 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 			return
 		}
 	}
-	glog.V(0).Infof("Loading %s... , watermark: %d", dbFileName, getWatermark(m.db))
+	glog.V(0).Infof("Loading %s... , watermark: %d", dbFileName, GetWatermark(m.db))
 	m.recordCount = uint64(m.indexFileOffset / types.NeedleMapEntrySize)
 	watermark := (m.recordCount / watermarkBatchSize) * watermarkBatchSize
-	err = setWatermark(m.db, watermark)
+	err = SetWatermark(m.db, watermark)
 	if err != nil {
 		glog.Fatalf("set watermark for %s error: %s\n", dbFileName, err)
 		return
@@ -94,7 +94,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 	}
 	defer db.Close()
 
-	watermark := getWatermark(db)
+	watermark := GetWatermark(db)
 	if stat, err := indexFile.Stat(); err != nil {
 		glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
 		return err
@@ -147,13 +147,13 @@ func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 	return levelDbWrite(m.db, key, offset, size, watermark == 0, watermark)
 }
 
-func getWatermark(db *leveldb.DB) uint64 {
+func GetWatermark(db *leveldb.DB) uint64 {
 	data, err := db.Get(watermarkKey, nil)
 	if err != nil || len(data) != 8 {
 		glog.Warningf("get watermark from db error: %v, %d", err, len(data))
 		/*
 			if !strings.Contains(strings.ToLower(err.Error()), "not found") {
-				err = setWatermark(db, 0)
+				err = SetWatermark(db, 0)
 				if err != nil {
 					glog.Errorf("failed to set watermark: %v", err)
 				}
@@ -164,12 +164,12 @@ func getWatermark(db *leveldb.DB) uint64 {
 	return util.BytesToUint64(data)
 }
 
-func setWatermark(db *leveldb.DB, watermark uint64) error {
+func SetWatermark(db *leveldb.DB, watermark uint64) error {
 	glog.V(1).Infof("set watermark %d", watermark)
 	var wmBytes = make([]byte, 8)
 	util.Uint64toBytes(wmBytes, watermark)
 	if err := db.Put(watermarkKey, wmBytes, nil); err != nil {
-		return fmt.Errorf("failed to setWatermark: %v", err)
+		return fmt.Errorf("failed to SetWatermark: %v", err)
 	}
 	return nil
 }
@@ -183,7 +183,7 @@ func levelDbWrite(db *leveldb.DB, key NeedleId, offset Offset, size Size, update
 	}
 	// set watermark
 	if updateWatermark {
-		return setWatermark(db, watermark)
+		return SetWatermark(db, watermark)
 	}
 	return nil
 }
