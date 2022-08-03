@@ -136,18 +136,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			case NeedleMapInMemory:
 				if v.tmpNm != nil {
 					glog.V(0).Infof("loading compact index %s ", v.FileName(".idx"))
-					v.tmpNm.indexFile = indexFile
-					stat, e := indexFile.Stat()
-					if e != nil {
-						glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
-						err = e
-					}
-					v.tmpNm.indexFileOffset = stat.Size()
-					if v.nm != nil {
-						v.nm.Close()
-					}
-					v.nm = v.tmpNm
-					v.tmpNm = nil
+					err = v.loadCompactMemNeedleMap(indexFile)
 				} else {
 					glog.V(0).Infoln("loading index", v.FileName(".idx"), "to memory")
 					if v.nm, err = LoadCompactNeedleMap(indexFile); err != nil {
@@ -217,11 +206,30 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	return err
 }
 
+func (v *Volume) loadCompactMemNeedleMap(indexFile *os.File) error {
+	v.tmpNm.indexFile = indexFile
+	stat, err := indexFile.Stat()
+	if err != nil {
+		glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
+		indexFile.Close()
+		return err
+	}
+	v.tmpNm.indexFileOffset = stat.Size()
+	if v.nm != nil {
+		v.nm.Close()
+		v.nm = nil
+	}
+	v.nm = v.tmpNm
+	v.tmpNm = nil
+	return nil
+}
+
 func (v *Volume) loadCompactLevelDbNeedleMap(indexFile *os.File) error {
 	v.tmpLnm.indexFile = indexFile
 	stat, e := indexFile.Stat()
 	if e != nil {
 		glog.Fatalf("stat file %s: %v", indexFile.Name(), e)
+		indexFile.Close()
 		return e
 	}
 	v.tmpLnm.indexFileOffset = stat.Size()
@@ -229,6 +237,7 @@ func (v *Volume) loadCompactLevelDbNeedleMap(indexFile *os.File) error {
 
 	if v.nm != nil {
 		v.nm.Close()
+		v.nm = nil
 	}
 	v.nm = v.tmpLnm
 	v.tmpLnm = nil
