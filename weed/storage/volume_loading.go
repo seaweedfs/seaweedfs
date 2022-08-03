@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -144,46 +145,46 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					}
 				}
 			case NeedleMapLevelDb:
+				opts := &opt.Options{
+					BlockCacheCapacity:            2 * 1024 * 1024, // default value is 8MiB
+					WriteBuffer:                   1 * 1024 * 1024, // default value is 4MiB
+					CompactionTableSizeMultiplier: 10,              // default value is 1
+				}
 				if v.tmpLnm != nil {
 					glog.V(0).Infoln("loading compact leveldb ", v.FileName(".ldb"))
-					err = v.loadCompactLevelDbNeedleMap(indexFile)
+					err = v.loadCompactLevelDbNeedleMap(indexFile, opts)
 				} else {
 					glog.V(0).Infoln("loading leveldb", v.FileName(".ldb"))
-					opts := &opt.Options{
-						BlockCacheCapacity:            2 * 1024 * 1024, // default value is 8MiB
-						WriteBuffer:                   1 * 1024 * 1024, // default value is 4MiB
-						CompactionTableSizeMultiplier: 10,              // default value is 1
-					}
 					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts); err != nil {
 						glog.V(0).Infof("loading leveldb %s error: %v", v.FileName(".ldb"), err)
 					}
 				}
 			case NeedleMapLevelDbMedium:
+				opts := &opt.Options{
+					BlockCacheCapacity:            4 * 1024 * 1024, // default value is 8MiB
+					WriteBuffer:                   2 * 1024 * 1024, // default value is 4MiB
+					CompactionTableSizeMultiplier: 10,              // default value is 1
+				}
 				if v.tmpLnm != nil {
 					glog.V(0).Infoln("loading compact leveldb medium", v.FileName(".ldb"))
-					err = v.loadCompactLevelDbNeedleMap(indexFile)
+					err = v.loadCompactLevelDbNeedleMap(indexFile, opts)
 				} else {
 					glog.V(0).Infoln("loading leveldb medium", v.FileName(".ldb"))
-					opts := &opt.Options{
-						BlockCacheCapacity:            4 * 1024 * 1024, // default value is 8MiB
-						WriteBuffer:                   2 * 1024 * 1024, // default value is 4MiB
-						CompactionTableSizeMultiplier: 10,              // default value is 1
-					}
 					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts); err != nil {
 						glog.V(0).Infof("loading leveldb %s error: %v", v.FileName(".ldb"), err)
 					}
 				}
 			case NeedleMapLevelDbLarge:
+				opts := &opt.Options{
+					BlockCacheCapacity:            8 * 1024 * 1024, // default value is 8MiB
+					WriteBuffer:                   4 * 1024 * 1024, // default value is 4MiB
+					CompactionTableSizeMultiplier: 10,              // default value is 1
+				}
 				if v.tmpLnm != nil {
 					glog.V(0).Infoln("loading compact leveldb large", v.FileName(".ldb"))
-					err = v.loadCompactLevelDbNeedleMap(indexFile)
+					err = v.loadCompactLevelDbNeedleMap(indexFile, opts)
 				} else {
 					glog.V(0).Infoln("loading leveldb large", v.FileName(".ldb"))
-					opts := &opt.Options{
-						BlockCacheCapacity:            8 * 1024 * 1024, // default value is 8MiB
-						WriteBuffer:                   4 * 1024 * 1024, // default value is 4MiB
-						CompactionTableSizeMultiplier: 10,              // default value is 1
-					}
 					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts); err != nil {
 						glog.V(0).Infof("loading leveldb %s error: %v", v.FileName(".ldb"), err)
 					}
@@ -224,21 +225,37 @@ func (v *Volume) loadCompactMemNeedleMap(indexFile *os.File) error {
 	return nil
 }
 
-func (v *Volume) loadCompactLevelDbNeedleMap(indexFile *os.File) error {
-	v.tmpLnm.indexFile = indexFile
-	stat, e := indexFile.Stat()
-	if e != nil {
-		glog.Fatalf("stat file %s: %v", indexFile.Name(), e)
-		indexFile.Close()
-		return e
-	}
-	v.tmpLnm.indexFileOffset = stat.Size()
-	v.tmpLnm.recordCount = uint64(stat.Size() / types.NeedleMapEntrySize)
-
+func (v *Volume) loadCompactLevelDbNeedleMap(indexFile *os.File, opts *opt.Options) error {
 	if v.nm != nil {
 		v.nm.Close()
 		v.nm = nil
 	}
+
+	v.tmpLnm.indexFile = indexFile
+	err := os.RemoveAll(v.FileName(".ldb"))
+	if err != nil {
+		return err
+	}
+	if err = os.Rename(v.FileName(".cpldb"), v.FileName(".ldb")); err != nil {
+		return fmt.Errorf("rename %s: %v", v.FileName(".cpldb"), err)
+	}
+
+	db, err := leveldb.OpenFile(v.FileName(".ldb"), opts)
+	if err != nil {
+		return err
+	}
+
+	stat, e := indexFile.Stat()
+	if e != nil {
+		glog.Fatalf("stat file %s: %v", indexFile.Name(), e)
+		indexFile.Close()
+		db.Close()
+		return e
+	}
+	v.tmpLnm.indexFileOffset = stat.Size()
+	v.tmpLnm.recordCount = uint64(stat.Size() / types.NeedleMapEntrySize)
+	v.tmpLnm.db = db
+
 	v.nm = v.tmpLnm
 	v.tmpLnm = nil
 	return e

@@ -18,7 +18,6 @@ import (
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/opt"
 	boom "github.com/tylertreat/BoomFilters"
 )
 
@@ -346,7 +345,8 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		_, e := v.doMemLoading(idx, uint64(idxSize)/types.NeedleMapEntrySize, tmpNm)
 		return e
 	} else {
-		e := doLDBLoading(v.tmpLnm.dbFileName, uint64(idxSize)/types.NeedleMapEntrySize, idx)
+		dbFileNameCopy := v.FileName(".cpldb")
+		e := doLDBLoading(dbFileNameCopy, uint64(idxSize)/types.NeedleMapEntrySize, idx)
 		if e != nil {
 			return e
 		}
@@ -548,43 +548,12 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 			v.tmpLnm = nil
 		}
 		dbFileName := v.FileName(".ldb")
-		//fresh inserting is faster than updating
-		err := os.RemoveAll(dbFileName)
-		if err != nil {
-			return err
-		}
-		opts := &opt.Options{}
+		dbFileNameCopy := v.FileName(".cpldb")
 		m := &LevelDbNeedleMap{dbFileName: dbFileName}
 		m.dbFileName = dbFileName
-		switch v.needleMapKind {
-		case NeedleMapLevelDb:
-			glog.V(0).Infoln("loading leveldb", v.FileName(".ldb"))
-			opts = &opt.Options{
-				BlockCacheCapacity:            2 * 1024 * 1024, // default value is 8MiB
-				WriteBuffer:                   1 * 1024 * 1024, // default value is 4MiB
-				CompactionTableSizeMultiplier: 10,              // default value is 1
-			}
-		case NeedleMapLevelDbMedium:
-			glog.V(0).Infoln("loading leveldb medium", v.FileName(".ldb"))
-			opts = &opt.Options{
-				BlockCacheCapacity:            4 * 1024 * 1024, // default value is 8MiB
-				WriteBuffer:                   2 * 1024 * 1024, // default value is 4MiB
-				CompactionTableSizeMultiplier: 10,              // default value is 1
-			}
-		case NeedleMapLevelDbLarge:
-			glog.V(0).Infoln("loading leveldb large", v.FileName(".ldb"))
-			opts = &opt.Options{
-				BlockCacheCapacity:            8 * 1024 * 1024, // default value is 8MiB
-				WriteBuffer:                   4 * 1024 * 1024, // default value is 4MiB
-				CompactionTableSizeMultiplier: 10,              // default value is 1
-			}
-		}
-		err = doLDBLoading(dbFileName, 0, indexFile)
+		err = doLDBLoading(dbFileNameCopy, 0, indexFile)
 		if err != nil {
 			return err
-		}
-		if m.db, err = leveldb.OpenFile(dbFileName, opts); err != nil {
-			return nil
 		}
 		mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)
 		if indexLoadError != nil {
@@ -625,11 +594,8 @@ func doLDBLoading(dbFileName string, startFrom uint64, indexFile *os.File) error
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			db.Close()
-		}
-	}()
+	defer db.Close()
+
 	//set watermark
 	stat, e := indexFile.Stat()
 	if e != nil {
