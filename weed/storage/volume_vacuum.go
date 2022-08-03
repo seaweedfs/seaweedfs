@@ -46,7 +46,7 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 	if v.MemoryMapMaxSizeMb != 0 { //it makes no sense to compact in memory
 		return nil
 	}
-	glog.V(3).Infof("Compacting volume %d ...", v.Id)
+	glog.V(0).Infof("Compacting volume %d ...", v.Id)
 	//no need to lock for copy on write
 	//v.accessLock.Lock()
 	//defer v.accessLock.Unlock()
@@ -171,6 +171,7 @@ func (v *Volume) CommitCompact() error {
 	if e = v.load(true, false, v.needleMapKind, 0); e != nil {
 		return e
 	}
+	glog.V(0).Infof("Finish commiting volume %d", v.Id)
 	return nil
 }
 
@@ -524,7 +525,6 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 		return err
 	}
 
-	dbFileName := v.FileName(".ldb")
 	indexFile, err := os.OpenFile(datIdxName, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		glog.Errorf("cannot open Volume Index %s: %v", datIdxName, err)
@@ -532,6 +532,10 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 	}
 	defer indexFile.Close()
 	if v.needleMapKind == NeedleMapInMemory {
+		if v.tmpNm != nil {
+			v.tmpNm.Close()
+			v.tmpNm = nil
+		}
 		nm := &NeedleMap{
 			m: needle_map.NewCompactMap(),
 		}
@@ -539,6 +543,12 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 		v.tmpNm, err = v.doMemLoading(indexFile, 0, nm)
 		return err
 	} else {
+		if v.tmpLnm != nil {
+			v.tmpLnm.Close()
+			v.tmpLnm = nil
+		}
+		dbFileName := v.FileName(".ldb")
+		//fresh inserting is faster than updating
 		err := os.RemoveAll(dbFileName)
 		if err != nil {
 			return err
@@ -615,7 +625,11 @@ func doLDBLoading(dbFileName string, startFrom uint64, indexFile *os.File) error
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() {
+		if err != nil {
+			db.Close()
+		}
+	}()
 	//set watermark
 	stat, e := indexFile.Stat()
 	if e != nil {

@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -224,6 +225,8 @@ func (v *Volume) loadCompactLevelDbNeedleMap(indexFile *os.File) error {
 		return e
 	}
 	v.tmpLnm.indexFileOffset = stat.Size()
+	v.tmpLnm.recordCount = uint64(stat.Size() / types.NeedleMapEntrySize)
+
 	if v.nm != nil {
 		v.nm.Close()
 	}
