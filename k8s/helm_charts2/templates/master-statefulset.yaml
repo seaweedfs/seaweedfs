@@ -51,6 +51,10 @@ spec:
       priorityClassName: {{ .Values.master.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
+      {{- if .Values.master.initContainers }}
+      initContainers:
+        {{ tpl .Values.master.initContainers . | nindent 8 | trim }}
+      {{- end }}
       containers:
         - name: seaweedfs
           image: {{ template "master.image" . }}
