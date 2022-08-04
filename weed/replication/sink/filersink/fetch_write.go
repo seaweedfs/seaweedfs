@@ -139,6 +139,11 @@ func (fs *FilerSink) WithFilerClient(streamingMode bool, fn func(filer_pb.Seawee
 	}, fs.grpcAddress, fs.grpcDialOption)
 
 }
+
 func (fs *FilerSink) AdjustedUrl(location *filer_pb.Location) string {
 	return location.Url
+}
+
+func (fs *FilerSink) GetDataCenter() string {
+	return fs.dataCenter
 }

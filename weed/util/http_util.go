@@ -288,7 +288,6 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 }
 
 func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
-	glog.V(1).Infof("ReadUrlAsStream(): %+v", fileUrl)
 	if cipherKey != nil {
 		return readEncryptedUrl(fileUrl, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 	}

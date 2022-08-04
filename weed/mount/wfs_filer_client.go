@@ -49,3 +49,7 @@ func (wfs *WFS) AdjustedUrl(location *filer_pb.Location) string {
 	}
 	return location.Url
 }
+
+func (wfs *WFS) GetDataCenter() string {
+	return wfs.option.DataCenter
+}

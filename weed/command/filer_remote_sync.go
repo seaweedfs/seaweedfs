@@ -33,6 +33,10 @@ func (option *RemoteSyncOptions) AdjustedUrl(location *filer_pb.Location) string
 	return location.Url
 }
 
+func (option *RemoteSyncOptions) GetDataCenter() string {
+	return ""
+}
+
 var (
 	remoteSyncOptions RemoteSyncOptions
 )

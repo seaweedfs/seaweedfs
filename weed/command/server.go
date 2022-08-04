@@ -221,6 +221,7 @@ func runServer(cmd *Command, args []string) bool {
 	filerOptions.rack = serverRack
 	mqBrokerOptions.dataCenter = serverDataCenter
 	mqBrokerOptions.rack = serverRack
+	s3Options.dataCenter = serverDataCenter
 	filerOptions.disableHttp = serverDisableHttp
 	masterOptions.disableHttp = serverDisableHttp
 

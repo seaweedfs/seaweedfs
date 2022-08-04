@@ -43,6 +43,10 @@ func (option *RemoteGatewayOptions) AdjustedUrl(location *filer_pb.Location) str
 	return location.Url
 }
 
+func (option *RemoteGatewayOptions) GetDataCenter() string {
+	return ""
+}
+
 var (
 	remoteGatewayOptions RemoteGatewayOptions
 )

@@ -27,9 +27,11 @@ type FilerSource struct {
 	Dir            string
 	address        string
 	proxyByFiler   bool
+	dataCenter     string
 }
 
 func (fs *FilerSource) Initialize(configuration util.Configuration, prefix string) error {
+	fs.dataCenter = configuration.GetString(prefix + "dataCenter")
 	return fs.DoInitialize(
 		"",
 		configuration.GetString(prefix+"grpcAddress"),
@@ -129,6 +131,10 @@ func (fs *FilerSource) WithFilerClient(streamingMode bool, fn func(filer_pb.Seaw
 
 func (fs *FilerSource) AdjustedUrl(location *filer_pb.Location) string {
 	return location.Url
+}
+
+func (fs *FilerSource) GetDataCenter() string {
+	return fs.dataCenter
 }
 
 func volumeId(fileId string) string {
