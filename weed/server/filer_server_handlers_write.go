@@ -34,9 +34,11 @@ type FilerPostResult struct {
 
 func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
 
-	stats.FilerRequestCounter.WithLabelValues("assign").Inc()
+	stats.FilerRequestCounter.WithLabelValues(stats.ChunkAssign).Inc()
 	start := time.Now()
-	defer func() { stats.FilerRequestHistogram.WithLabelValues("assign").Observe(time.Since(start).Seconds()) }()
+	defer func() {
+		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkAssign).Observe(time.Since(start).Seconds())
+	}()
 
 	ar, altRequest := so.ToAssignRequests(1)
 
