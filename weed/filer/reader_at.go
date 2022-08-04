@@ -72,9 +72,9 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 			volumeServerAddress := filerClient.AdjustedUrl(loc)
 			targetUrl := fmt.Sprintf("http://%s/%s", volumeServerAddress, fileId)
 			if fcDataCenter == "" || fcDataCenter != loc.DataCenter {
-				otherTargetUrls = append(targetUrls, targetUrl)
+				otherTargetUrls = append(otherTargetUrls, targetUrl)
 			} else {
-				sameDcTargetUrls = append(targetUrls, targetUrl)
+				sameDcTargetUrls = append(sameDcTargetUrls, targetUrl)
 			}
 		}
 		rand.Shuffle(len(sameDcTargetUrls), func(i, j int) {

@@ -86,7 +86,13 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrls []string, err error) 
 
 	if !fs.proxyByFiler {
 		for _, loc := range locations.Locations {
-			fileUrls = append(fileUrls, fmt.Sprintf("http://%s/%s?readDeleted=true", loc.Url, part))
+			fileUrl := fmt.Sprintf("http://%s/%s?readDeleted=true", loc.Url, part)
+			// Prefer same data center
+			if fs.dataCenter != "" && fs.dataCenter == loc.DataCenter {
+				fileUrls = append([]string{fileUrl}, fileUrls...)
+			} else {
+				fileUrls = append(fileUrls, fileUrl)
+			}
 		}
 	} else {
 		fileUrls = append(fileUrls, fmt.Sprintf("http://%s/?proxyChunkId=%s", fs.address, part))
