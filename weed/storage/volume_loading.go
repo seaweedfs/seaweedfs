@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -136,8 +137,8 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			switch needleMapKind {
 			case NeedleMapInMemory:
 				if v.tmpNm != nil {
-					glog.V(0).Infof("loading compact index %s ", v.FileName(".idx"))
-					err = v.loadCompactMemNeedleMap(indexFile)
+					glog.V(0).Infof("updating memory compact index %s ", v.FileName(".idx"))
+					err = v.updateMemCompactNeedleMap(indexFile)
 				} else {
 					glog.V(0).Infoln("loading index", v.FileName(".idx"), "to memory")
 					if v.nm, err = LoadCompactNeedleMap(indexFile); err != nil {
@@ -151,8 +152,8 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					CompactionTableSizeMultiplier: 10,              // default value is 1
 				}
 				if v.tmpLnm != nil {
-					glog.V(0).Infoln("loading compact leveldb ", v.FileName(".ldb"))
-					err = v.loadCompactLevelDbNeedleMap(indexFile, opts)
+					glog.V(0).Infoln("updating compact leveldb ", v.FileName(".ldb"))
+					err = v.updateLevelDbCompactNeedleMap(indexFile, opts)
 				} else {
 					glog.V(0).Infoln("loading leveldb", v.FileName(".ldb"))
 					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts); err != nil {
@@ -166,8 +167,8 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					CompactionTableSizeMultiplier: 10,              // default value is 1
 				}
 				if v.tmpLnm != nil {
-					glog.V(0).Infoln("loading compact leveldb medium", v.FileName(".ldb"))
-					err = v.loadCompactLevelDbNeedleMap(indexFile, opts)
+					glog.V(0).Infoln("updating compact leveldb medium", v.FileName(".ldb"))
+					err = v.updateLevelDbCompactNeedleMap(indexFile, opts)
 				} else {
 					glog.V(0).Infoln("loading leveldb medium", v.FileName(".ldb"))
 					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts); err != nil {
@@ -181,8 +182,8 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					CompactionTableSizeMultiplier: 10,              // default value is 1
 				}
 				if v.tmpLnm != nil {
-					glog.V(0).Infoln("loading compact leveldb large", v.FileName(".ldb"))
-					err = v.loadCompactLevelDbNeedleMap(indexFile, opts)
+					glog.V(0).Infoln("updating compact leveldb large", v.FileName(".ldb"))
+					err = v.updateLevelDbCompactNeedleMap(indexFile, opts)
 				} else {
 					glog.V(0).Infoln("loading leveldb large", v.FileName(".ldb"))
 					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts); err != nil {
@@ -207,7 +208,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	return err
 }
 
-func (v *Volume) loadCompactMemNeedleMap(indexFile *os.File) error {
+func (v *Volume) updateMemCompactNeedleMap(indexFile *os.File) error {
 	v.tmpNm.indexFile = indexFile
 	stat, err := indexFile.Stat()
 	if err != nil {
@@ -225,24 +226,29 @@ func (v *Volume) loadCompactMemNeedleMap(indexFile *os.File) error {
 	return nil
 }
 
-func (v *Volume) loadCompactLevelDbNeedleMap(indexFile *os.File, opts *opt.Options) error {
+func (v *Volume) updateLevelDbCompactNeedleMap(indexFile *os.File, opts *opt.Options) error {
 	if v.nm != nil {
 		v.nm.Close()
 		v.nm = nil
 	}
-
+	levelDbFile := v.FileName(".ldb")
 	v.tmpLnm.indexFile = indexFile
-	err := os.RemoveAll(v.FileName(".ldb"))
+	err := os.RemoveAll(levelDbFile)
 	if err != nil {
 		return err
 	}
-	if err = os.Rename(v.FileName(".cpldb"), v.FileName(".ldb")); err != nil {
-		return fmt.Errorf("rename %s: %v", v.FileName(".cpldb"), err)
+	if err = os.Rename(v.FileName(".cpldb"), levelDbFile); err != nil {
+		return fmt.Errorf("rename %s: %v", levelDbFile, err)
 	}
 
-	db, err := leveldb.OpenFile(v.FileName(".ldb"), opts)
+	db, err := leveldb.OpenFile(levelDbFile, opts)
 	if err != nil {
-		return err
+		if errors.IsCorrupted(err) {
+			db, err = leveldb.RecoverFile(levelDbFile, opts)
+		}
+		if err != nil {
+			return err
+		}
 	}
 
 	stat, e := indexFile.Stat()

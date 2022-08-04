@@ -18,6 +18,7 @@ import (
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/errors"
 	boom "github.com/tylertreat/BoomFilters"
 )
 
@@ -179,11 +180,15 @@ func (v *Volume) cleanupCompact() error {
 
 	e1 := os.Remove(v.FileName(".cpd"))
 	e2 := os.Remove(v.FileName(".cpx"))
+	e3 := os.Remove(v.FileName(".cpldb"))
 	if e1 != nil && !os.IsNotExist(e1) {
 		return e1
 	}
 	if e2 != nil && !os.IsNotExist(e2) {
 		return e2
+	}
+	if e3 != nil && !os.IsNotExist(e3) {
+		return e3
 	}
 	return nil
 }
@@ -592,7 +597,12 @@ func doLDBLoading(dbFileName string, startFrom uint64, indexFile *os.File) error
 	glog.V(0).Infof("loading idx to leveldb from offset %d for file: %s", startFrom, indexFile.Name())
 	db, err := leveldb.OpenFile(dbFileName, nil)
 	if err != nil {
-		return err
+		if errors.IsCorrupted(err) {
+			db, err = leveldb.RecoverFile(dbFileName, nil)
+		}
+		if err != nil {
+			return err
+		}
 	}
 	defer db.Close()
 
