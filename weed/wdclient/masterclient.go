@@ -278,7 +278,6 @@ func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.
 }
 
 func (mc *MasterClient) resetVidMap() {
-	glog.V(1).Infof("resetVidMap() DataCenter %v", mc.DataCenter)
 	tail := &vidMap{
 		vid2Locations:   mc.vid2Locations,
 		ecVid2Locations: mc.ecVid2Locations,
