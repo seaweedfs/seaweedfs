@@ -16,7 +16,6 @@ import (
 func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
-	stats.FilerRequestCounter.WithLabelValues(r.Method).Inc()
 	defer func() {
 		stats.FilerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
 	}()
@@ -43,6 +42,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	stats.FilerRequestCounter.WithLabelValues(r.Method).Inc()
 	w.Header().Set("Server", "SeaweedFS Filer "+util.VERSION)
 	if r.Header.Get("Origin") != "" {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
