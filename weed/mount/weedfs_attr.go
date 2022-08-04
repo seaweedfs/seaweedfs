@@ -17,7 +17,7 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 	}
 
 	inode := input.NodeId
-	_, _, entry, inode, status := wfs.maybeReadEntry(inode, false)
+	_, _, entry, status := wfs.maybeReadEntry(inode)
 	if status == fuse.OK {
 		out.AttrValid = 1
 		wfs.setAttrByPbEntry(&out.Attr, inode, entry)
@@ -40,7 +40,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		return fuse.Status(syscall.ENOSPC)
 	}
 
-	path, fh, entry, inode, status := wfs.maybeReadEntry(input.NodeId, false)
+	path, fh, entry, status := wfs.maybeReadEntry(input.NodeId)
 	if status != fuse.OK {
 		return status
 	}
@@ -112,7 +112,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	}
 
 	out.AttrValid = 1
-	wfs.setAttrByPbEntry(&out.Attr, inode, entry)
+	wfs.setAttrByPbEntry(&out.Attr, input.NodeId, entry)
 
 	if fh != nil {
 		fh.dirtyMetadata = true
