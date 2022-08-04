@@ -49,7 +49,17 @@ func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, u
 		return
 	}
 	fileId = assignResult.Fid
-	urlLocation = "http://" + assignResult.Url + "/" + assignResult.Fid
+	assignUrl := assignResult.Url
+	// Prefer same data center
+	if fs.option.DataCenter != "" {
+		for _, repl := range assignResult.Replicas {
+			if repl.DataCenter == fs.option.DataCenter {
+				assignUrl = repl.Url
+				break
+			}
+		}
+	}
+	urlLocation = "http://" + assignUrl + "/" + assignResult.Fid
 	if so.Fsync {
 		urlLocation += "?fsync=true"
 	}

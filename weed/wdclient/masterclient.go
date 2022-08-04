@@ -62,12 +62,19 @@ func (mc *MasterClient) LookupFileIdWithFallback(fileId string) (fullUrls []stri
 		for vid, vidLocation := range resp.VolumeIdLocations {
 			for _, vidLoc := range vidLocation.Locations {
 				loc := Location{
-					Url:       vidLoc.Url,
-					PublicUrl: vidLoc.PublicUrl,
-					GrpcPort:  int(vidLoc.GrpcPort),
+					Url:        vidLoc.Url,
+					PublicUrl:  vidLoc.PublicUrl,
+					GrpcPort:   int(vidLoc.GrpcPort),
+					DataCenter: vidLoc.DataCenter,
 				}
 				mc.vidMap.addLocation(uint32(vid), loc)
-				fullUrls = append(fullUrls, "http://"+loc.Url+"/"+fileId)
+				httpUrl := "http://" + loc.Url + "/" + fileId
+				// Prefer same data center
+				if mc.DataCenter != "" && mc.DataCenter == loc.DataCenter {
+					fullUrls = append([]string{httpUrl}, fullUrls...)
+				} else {
+					fullUrls = append(fullUrls, httpUrl)
+				}
 			}
 		}
 		return nil
