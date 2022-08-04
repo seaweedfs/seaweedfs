@@ -39,6 +39,7 @@ master:
   replicas: 1
   port: 9333
   grpcPort: 19333
+  metricsPort: 9327
   ipBind: "0.0.0.0"
   volumePreallocate: false
   volumeSizeLimitMB: 1000

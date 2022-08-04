@@ -1,13 +1,13 @@
-{{- if .Values.volume.metricsPort }}
+{{- if .Values.master.metricsPort }}
 {{- if .Values.global.monitoring.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ template "seaweedfs.name" . }}-volume
+  name: {{ template "seaweedfs.name" . }}-master
   namespace: {{ .Release.Namespace }}
   labels:
     app: {{ template "seaweedfs.name" . }}
-    component: volume
+    component: master
 spec:
   endpoints:
     - interval: 30s
@@ -16,6 +16,6 @@ spec:
   selector:
     matchLabels:
       app: {{ template "seaweedfs.name" . }}
-      component: volume
+      component: master
 {{- end }}
 {{- end }}

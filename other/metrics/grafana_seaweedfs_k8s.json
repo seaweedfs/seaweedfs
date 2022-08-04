@@ -1891,7 +1891,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "go_memstats_alloc_bytes{namespace=~\"$namespace\", endpoint=\"swfs-filer-metrics\"}",
+          "expr": "go_memstats_alloc_bytes{namespace=~\"$namespace\", endpoint=\"metrics\"}",
           "format": "time_series",
           "hide": false,
           "interval": "",
@@ -1909,7 +1909,7 @@
           "refId": "A"
         },
         {
-          "expr": "go_memstats_stack_inuse_bytes{namespace=~\"$namespace\", endpoint=\"swfs-filer-metrics\"}",
+          "expr": "go_memstats_stack_inuse_bytes{namespace=~\"$namespace\", endpoint=\"metrics\"}",
           "format": "time_series",
           "hide": true,
           "interval": "",
@@ -1918,7 +1918,7 @@
           "refId": "C"
         },
         {
-          "expr": "go_memstats_heap_inuse_bytes{namespace=~\"$namespace\", endpoint=\"swfs-filer-metrics\"}",
+          "expr": "go_memstats_heap_inuse_bytes{namespace=~\"$namespace\", endpoint=\"metrics\"}",
           "format": "time_series",
           "hide": true,
           "interval": "",
@@ -2019,7 +2019,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "go_gc_duration_seconds{namespace=~\"$namespace\", endpoint=\"swfs-filer-metrics\"}",
+          "expr": "go_gc_duration_seconds{namespace=~\"$namespace\", endpoint=\"metrics\"}",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
@@ -2119,7 +2119,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "go_goroutines{namespace=~\"$namespace\", endpoint=\"swfs-filer-metrics\"}",
+          "expr": "go_goroutines{namespace=~\"$namespace\", endpoint=\"metrics\"}",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
@@ -2203,7 +2203,7 @@
           "value": "s3"
         },
         "datasource": "$DS_PROMETHEUS",
-        "definition": "label_values({endpoint=\"swfs-filer-metrics\"}, namespace)",
+        "definition": "label_values({endpoint=\"metrics\"}, namespace)",
         "hide": 0,
         "includeAll": false,
         "label": "namespace",
@@ -2216,7 +2216,7 @@
             "value": "s3"
           }
         ],
-        "query": "label_values({endpoint=\"swfs-filer-metrics\"}, namespace)",
+        "query": "label_values({endpoint=\"metrics\"}, namespace)",
         "refresh": 0,
         "regex": "",
         "skipUrlSync": false,
