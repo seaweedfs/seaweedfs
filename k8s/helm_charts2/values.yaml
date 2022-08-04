@@ -73,6 +73,8 @@ master:
     size: ""
     storageClass: ""
 
+  initContainers: ""
+
   extraVolumes: ""
   extraVolumeMounts: ""
 
@@ -210,6 +212,8 @@ volume:
   # Adjust jpg orientation when uploading.
   imagesFixOrientation: false
 
+  initContainers: ""
+
   extraVolumes: ""
   extraVolumeMounts: ""
 
@@ -308,6 +312,8 @@ filer:
     type: "hostPath"
     size: ""
     storageClass: ""
+
+  initContainers: ""
 
   extraVolumes: ""
   extraVolumeMounts: ""
@@ -423,6 +429,8 @@ s3:
 
   # Suffix of the host name, {bucket}.{domainName}
   domainName: ""
+
+  initContainers: ""
 
   extraVolumes: ""
   extraVolumeMounts: ""

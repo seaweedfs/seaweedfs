@@ -338,7 +338,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			} else if delimiter == "/" {
 				var isEmpty bool
 				if !s3a.option.AllowEmptyFolder && !entry.IsDirectoryKeyObject() {
-					if isEmpty, err = s3a.isDirectoryAllEmpty(client, dir, entry.Name); err != nil {
+					if isEmpty, err = s3a.ensureDirectoryAllEmpty(client, dir, entry.Name); err != nil {
 						glog.Errorf("check empty folder %s: %v", dir, err)
 					}
 				}
@@ -383,8 +383,8 @@ func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, 
 	return
 }
 
-func (s3a *S3ApiServer) isDirectoryAllEmpty(filerClient filer_pb.SeaweedFilerClient, parentDir, name string) (isEmpty bool, err error) {
-	// println("+ isDirectoryAllEmpty", dir, name)
+func (s3a *S3ApiServer) ensureDirectoryAllEmpty(filerClient filer_pb.SeaweedFilerClient, parentDir, name string) (isEmpty bool, err error) {
+	// println("+ ensureDirectoryAllEmpty", dir, name)
 	glog.V(4).Infof("+ isEmpty %s/%s", parentDir, name)
 	defer glog.V(4).Infof("- isEmpty %s/%s %v", parentDir, name, isEmpty)
 	var fileCounter int
@@ -420,7 +420,7 @@ func (s3a *S3ApiServer) isDirectoryAllEmpty(filerClient filer_pb.SeaweedFilerCli
 	}
 
 	for _, subDir := range subDirs {
-		isSubEmpty, subErr := s3a.isDirectoryAllEmpty(filerClient, currentDir, subDir)
+		isSubEmpty, subErr := s3a.ensureDirectoryAllEmpty(filerClient, currentDir, subDir)
 		if subErr != nil {
 			return false, subErr
 		}

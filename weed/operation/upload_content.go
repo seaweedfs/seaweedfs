@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 	"mime"
@@ -267,6 +268,7 @@ func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize
 		if strings.Contains(post_err.Error(), "connection reset by peer") ||
 			strings.Contains(post_err.Error(), "use of closed network connection") {
 			glog.V(1).Infof("repeat error upload request %s: %v", option.UploadUrl, postErr)
+			stats.FilerRequestCounter.WithLabelValues(stats.RepeatErrorUploadContent).Inc()
 			resp, post_err = HttpClient.Do(req)
 		}
 	}

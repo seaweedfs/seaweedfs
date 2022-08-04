@@ -178,7 +178,7 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 			if resp.VolumeLocation.Leader != "" && string(master) != resp.VolumeLocation.Leader {
 				glog.V(0).Infof("master %v redirected to leader %v", master, resp.VolumeLocation.Leader)
 				nextHintedLeader = pb.ServerAddress(resp.VolumeLocation.Leader)
-				stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToleader).Inc()
+				stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToLeader).Inc()
 				return nil
 			}
 			//mc.vidMap = newVidMap("")
@@ -203,7 +203,7 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 				if resp.VolumeLocation.Leader != "" && string(mc.currentMaster) != resp.VolumeLocation.Leader {
 					glog.V(0).Infof("currentMaster %v redirected to leader %v", mc.currentMaster, resp.VolumeLocation.Leader)
 					nextHintedLeader = pb.ServerAddress(resp.VolumeLocation.Leader)
-					stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToleader).Inc()
+					stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToLeader).Inc()
 					return nil
 				}
 
