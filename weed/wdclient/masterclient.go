@@ -188,12 +188,10 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 				stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToLeader).Inc()
 				return nil
 			}
-			//mc.vidMap = newVidMap("")
 			mc.resetVidMap()
 			mc.updateVidMap(resp)
 		} else {
 			mc.resetVidMap()
-			//mc.vidMap = newVidMap("")
 		}
 		mc.currentMaster = master
 
@@ -213,7 +211,6 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 					stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToLeader).Inc()
 					return nil
 				}
-
 				mc.updateVidMap(resp)
 			}
 
@@ -244,6 +241,7 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 
 func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 	// process new volume location
+	glog.V(1).Infof("updateVidMap() resp.VolumeLocation.DataCenter %v", resp.VolumeLocation.DataCenter)
 	loc := Location{
 		Url:        resp.VolumeLocation.Url,
 		PublicUrl:  resp.VolumeLocation.PublicUrl,
@@ -280,8 +278,14 @@ func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.
 }
 
 func (mc *MasterClient) resetVidMap() {
-	tail := &vidMap{vid2Locations: mc.vid2Locations, ecVid2Locations: mc.ecVid2Locations, cache: mc.cache}
-	mc.vidMap = newVidMap("")
+	glog.V(1).Infof("resetVidMap() DataCenter %v", mc.DataCenter)
+	tail := &vidMap{
+		vid2Locations:   mc.vid2Locations,
+		ecVid2Locations: mc.ecVid2Locations,
+		DataCenter:      mc.DataCenter,
+		cache:           mc.cache,
+	}
+	mc.vidMap = newVidMap(mc.DataCenter)
 	mc.vidMap.cache = tail
 
 	for i := 0; i < mc.vidMapCacheSize && tail.cache != nil; i++ {

@@ -169,7 +169,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 					Url:        r.Url(),
 					PublicUrl:  r.PublicUrl,
 					GrpcPort:   uint32(r.GrpcPort),
-					DataCenter: r.GetDataCenter().String(),
+					DataCenter: r.GetDataCenterId(),
 				})
 			}
 			return &master_pb.AssignResponse{
@@ -178,7 +178,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 					Url:        dn.Url(),
 					PublicUrl:  dn.PublicUrl,
 					GrpcPort:   uint32(dn.GrpcPort),
-					DataCenter: dn.GetDataCenter().String(),
+					DataCenter: dn.GetDataCenterId(),
 				},
 				Count:    count,
 				Auth:     string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
@@ -258,7 +258,7 @@ func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.Looku
 			locations = append(locations, &master_pb.Location{
 				Url:        string(dn.Id()),
 				PublicUrl:  dn.PublicUrl,
-				DataCenter: dn.GetDataCenter().String(),
+				DataCenter: dn.GetDataCenterId(),
 			})
 		}
 		resp.ShardIdLocations = append(resp.ShardIdLocations, &master_pb.LookupEcVolumeResponse_EcShardIdLocation{

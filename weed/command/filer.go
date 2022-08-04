@@ -93,7 +93,7 @@ func init() {
 	filerS3Options.port = cmdFiler.Flag.Int("s3.port", 8333, "s3 server http listen port")
 	filerS3Options.portGrpc = cmdFiler.Flag.Int("s3.port.grpc", 0, "s3 server grpc listen port")
 	filerS3Options.domainName = cmdFiler.Flag.String("s3.domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
-	filerS3Options.dataCenter = cmdFiler.Flag.String("s3.dataCenter", *f.dataCenter, "prefer to read and write to volumes in this data center")
+	filerS3Options.dataCenter = cmdFiler.Flag.String("s3.dataCenter", "", "prefer to read and write to volumes in this data center")
 	filerS3Options.tlsPrivateKey = cmdFiler.Flag.String("s3.key.file", "", "path to the TLS private key file")
 	filerS3Options.tlsCertificate = cmdFiler.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
 	filerS3Options.config = cmdFiler.Flag.String("s3.config", "", "path to the config file")
@@ -168,6 +168,9 @@ func runFiler(cmd *Command, args []string) bool {
 		filerS3Options.filer = &filerAddress
 		filerS3Options.bindIp = f.bindIp
 		filerS3Options.localFilerSocket = f.localSocket
+		if *f.dataCenter != "" && *filerS3Options.dataCenter == "" {
+			filerS3Options.dataCenter = f.dataCenter
+		}
 		go func() {
 			time.Sleep(startDelay * time.Second)
 			filerS3Options.startS3Server()
