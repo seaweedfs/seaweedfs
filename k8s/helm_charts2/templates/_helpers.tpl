@@ -174,3 +174,12 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/* check if any InitContainers exist for Volumes */}}
+{{- define "volume.initContainers_exists" -}}
+{{- if or (not (empty .Values.volume.dir_idx )) (not (empty .Values.volume.initContainers )) -}}
+{{- printf "true" -}}
+{{- else -}}
+{{- printf "false" -}}
+{{- end -}}
+{{- end -}}
