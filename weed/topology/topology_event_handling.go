@@ -23,14 +23,13 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 		}
 	}()
 	go func(garbageThreshold float64) {
-		c := time.Tick(15 * time.Minute)
-		for range c {
+		for {
 			if t.IsLeader() {
-				time.Sleep(time.Duration(120*rand.Float32()) * time.Second)
 				t.Vacuum(grpcDialOption, garbageThreshold, 0, "", preallocate)
 			} else {
 				stats.MasterReplicaPlacementMismatch.Reset()
 			}
+			time.Sleep(14*time.Minute + time.Duration(120*rand.Float32())*time.Second)
 		}
 	}(garbageThreshold)
 	go func() {
