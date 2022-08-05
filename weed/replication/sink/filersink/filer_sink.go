@@ -52,6 +52,7 @@ func (fs *FilerSink) IsIncremental() bool {
 
 func (fs *FilerSink) Initialize(configuration util.Configuration, prefix string) error {
 	fs.isIncremental = configuration.GetBool(prefix + "is_incremental")
+	fs.dataCenter = configuration.GetString(prefix + "dataCenter")
 	return fs.DoInitialize(
 		"",
 		configuration.GetString(prefix+"grpcAddress"),

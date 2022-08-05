@@ -29,6 +29,7 @@ type S3ApiServerOption struct {
 	AllowEmptyFolder          bool
 	AllowDeleteBucketNotEmpty bool
 	LocalFilerSocket          *string
+	DataCenter                string
 }
 
 type S3ApiServer struct {

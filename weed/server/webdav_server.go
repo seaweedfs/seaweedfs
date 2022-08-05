@@ -137,6 +137,9 @@ func (fs *WebDavFileSystem) WithFilerClient(streamingMode bool, fn func(filer_pb
 func (fs *WebDavFileSystem) AdjustedUrl(location *filer_pb.Location) string {
 	return location.Url
 }
+func (fs *WebDavFileSystem) GetDataCenter() string {
+	return fs.filer.MasterClient.DataCenter
+}
 
 func clearName(name string) (string, error) {
 	slashed := strings.HasSuffix(name, "/")

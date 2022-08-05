@@ -49,8 +49,8 @@ func Post(url string, values url.Values) ([]byte, error) {
 	return b, nil
 }
 
-//	github.com/seaweedfs/seaweedfs/unmaintained/repeated_vacuum/repeated_vacuum.go
-//	may need increasing http.Client.Timeout
+// github.com/seaweedfs/seaweedfs/unmaintained/repeated_vacuum/repeated_vacuum.go
+// may need increasing http.Client.Timeout
 func Get(url string) ([]byte, bool, error) {
 
 	request, err := http.NewRequest("GET", url, nil)
@@ -288,7 +288,6 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 }
 
 func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
-
 	if cipherKey != nil {
 		return readEncryptedUrl(fileUrl, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 	}

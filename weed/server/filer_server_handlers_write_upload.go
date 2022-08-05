@@ -180,7 +180,6 @@ func (fs *FilerServer) dataToChunk(fileName, contentType string, data []byte, ch
 			time.Sleep(time.Duration(i+1) * 251 * time.Millisecond)
 			continue
 		}
-
 		// upload the chunk to the volume server
 		uploadResult, uploadErr, _ = fs.doUpload(urlLocation, dataReader, fileName, contentType, nil, auth)
 		if uploadErr != nil {

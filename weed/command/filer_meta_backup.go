@@ -234,3 +234,7 @@ func (metaBackup *FilerMetaBackupOptions) WithFilerClient(streamingMode bool, fn
 func (metaBackup *FilerMetaBackupOptions) AdjustedUrl(location *filer_pb.Location) string {
 	return location.Url
 }
+
+func (metaBackup *FilerMetaBackupOptions) GetDataCenter() string {
+	return ""
+}
