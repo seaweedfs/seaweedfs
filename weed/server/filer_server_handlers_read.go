@@ -238,7 +238,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 
-		err = filer.StreamContent(fs.filer.MasterClient, writer, chunks, offset, size)
+		err = filer.StreamContentWithThrottler(fs.filer.MasterClient, writer, chunks, offset, size, fs.option.DownloadMaxBytesPs)
 		if err != nil {
 			stats.FilerRequestCounter.WithLabelValues(stats.ErrorReadStream).Inc()
 			glog.Errorf("failed to stream content %s: %v", r.URL, err)

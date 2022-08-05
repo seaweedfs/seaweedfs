@@ -68,6 +68,7 @@ type FilerOption struct {
 	SaveToFilerLimit      int64
 	ConcurrentUploadLimit int64
 	ShowUIDirectoryDelete bool
+	DownloadMaxBytesPs    int64
 }
 
 type FilerServer struct {

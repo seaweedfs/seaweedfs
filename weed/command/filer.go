@@ -59,6 +59,7 @@ type FilerOptions struct {
 	debugPort               *int
 	localSocket             *string
 	showUIDirectoryDelete   *bool
+	downloadMaxMBps         *int
 }
 
 func init() {
@@ -87,6 +88,7 @@ func init() {
 	f.debugPort = cmdFiler.Flag.Int("debug.port", 6060, "http port for debugging")
 	f.localSocket = cmdFiler.Flag.String("localSocket", "", "default to /tmp/seaweedfs-filer-<port>.sock")
 	f.showUIDirectoryDelete = cmdFiler.Flag.Bool("ui.deleteDir", true, "enable filer UI show delete directory button")
+	f.downloadMaxMBps = cmdFiler.Flag.Int("downloadMaxMBps", 0, "download max speed for each download request, in MB per second")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -239,6 +241,7 @@ func (fo *FilerOptions) startFiler() {
 		SaveToFilerLimit:      int64(*fo.saveToFilerLimit),
 		ConcurrentUploadLimit: int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
 		ShowUIDirectoryDelete: *fo.showUIDirectoryDelete,
+		DownloadMaxBytesPs:    int64(*fo.downloadMaxMBps) * 1024 * 1024,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

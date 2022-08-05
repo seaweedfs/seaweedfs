@@ -68,6 +68,10 @@ func NewFileReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry) io.R
 }
 
 func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
+	return StreamContentWithThrottler(masterClient, writer, chunks, offset, size, 0)
+}
+
+func StreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunction, writer io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64, downloadMaxBytesPs int64) error {
 
 	glog.V(4).Infof("start to stream content for chunks: %+v", chunks)
 	chunkViews := ViewFromChunks(masterClient.GetLookupFileIdFunction(), chunks, offset, size)
@@ -95,6 +99,7 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writ
 		fileId2Url[chunkView.FileId] = urlStrings
 	}
 
+	downloadThrottler := util.NewWriteThrottler(downloadMaxBytesPs)
 	remaining := size
 	for _, chunkView := range chunkViews {
 		if offset < chunkView.LogicOffset {
@@ -118,6 +123,7 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writ
 			return fmt.Errorf("read chunk: %v", err)
 		}
 		stats.FilerRequestCounter.WithLabelValues("chunkDownload").Inc()
+		downloadThrottler.MaybeSlowdown(int64(chunkView.Size))
 	}
 	if remaining > 0 {
 		glog.V(4).Infof("zero [%d,%d)", offset, offset+remaining)
