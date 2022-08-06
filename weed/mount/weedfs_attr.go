@@ -68,6 +68,8 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 						glog.V(4).Infof("truncated whole chunk %+v\n", chunk.GetFileIdString())
 						truncatedChunks = append(truncatedChunks, chunk)
 					}
+				} else {
+					chunks = append(chunks, chunk)
 				}
 			}
 			// set the new chunks and reset entry cache
