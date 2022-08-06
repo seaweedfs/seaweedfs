@@ -57,7 +57,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 			var truncatedChunks []*filer_pb.FileChunk
 			for _, chunk := range entry.Chunks {
 				int64Size := int64(chunk.Size)
-				if chunk.Offset+int64Size > int64(size) {
+				if chunk.Offset+int64Size >= int64(size) {
 					// this chunk is truncated
 					int64Size = int64(size) - chunk.Offset
 					if int64Size > 0 {
