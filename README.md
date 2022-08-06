@@ -33,6 +33,7 @@ Your support will be really appreciated by me and other supporters!
 
 ### Gold Sponsors
 - [![nodion](https://www.nodion.com/img/logo.svg)](https://www.nodion.com)
+- [![piknik](https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/note/piknik.png)](https://www.piknik.com)
 
 ---
 
