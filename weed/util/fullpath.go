@@ -63,6 +63,14 @@ func Join(names ...string) string {
 func JoinPath(names ...string) FullPath {
 	return FullPath(Join(names...))
 }
+
+func (fp FullPath) IsUnder(other FullPath) bool {
+	if other == "/" {
+		return true
+	}
+	return strings.HasPrefix(string(fp), string(other)+"/")
+}
+
 func Split(separatedValues string, sep string) []string {
 	if separatedValues == "" {
 		return nil
