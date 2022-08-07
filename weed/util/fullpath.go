@@ -63,3 +63,9 @@ func Join(names ...string) string {
 func JoinPath(names ...string) FullPath {
 	return FullPath(Join(names...))
 }
+func Split(separatedValues string, sep string) []string {
+	if separatedValues == "" {
+		return nil
+	}
+	return strings.Split(separatedValues, sep)
+}
