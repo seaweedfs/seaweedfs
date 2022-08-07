@@ -25,5 +25,5 @@ func (rp *ReaderPattern) MonitorReadAt(offset int64, size int) {
 }
 
 func (rp *ReaderPattern) IsRandomMode() bool {
-	return rp.isSequentialCounter >= 0
+	return rp.isSequentialCounter < 0
 }
