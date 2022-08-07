@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -11,10 +12,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
 	"github.com/seaweedfs/seaweedfs/weed/filer/postgres"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-)
-
-const (
-	CONNECTION_URL_PATTERN = "host=%s port=%d sslmode=%s connect_timeout=30"
 )
 
 var _ filer.BucketAware = (*PostgresStore2)(nil)
@@ -61,7 +58,16 @@ func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableU
 		UpsertQueryTemplate:    upsertQuery,
 	}
 
-	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, hostname, port, sslmode)
+	sqlUrl := "connect_timeout=30"
+	if hostname != "" {
+		sqlUrl += " host=" + hostname
+	}
+	if port != 0 {
+	  sqlUrl += " port=" + strconv.Itoa(port)
+	}
+	if sslmode != "" {
+		sqlUrl += " sslmode=" + sslmode
+	}
 	if user != "" {
 		sqlUrl += " user=" + user
 	}
