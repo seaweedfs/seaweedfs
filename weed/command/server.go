@@ -76,8 +76,6 @@ var (
 	isStartingWebDav       = cmdServer.Flag.Bool("webdav", false, "whether to start WebDAV gateway")
 	isStartingMqBroker     = cmdServer.Flag.Bool("mq.broker", false, "whether to start message queue broker")
 
-	serverWhiteList []string
-
 	False = false
 )
 
@@ -248,9 +246,7 @@ func runServer(cmd *Command, args []string) bool {
 	}
 	filerOptions.defaultLevelDbDirectory = masterOptions.metaFolder
 
-	if *serverWhiteListOption != "" {
-		serverWhiteList = strings.Split(*serverWhiteListOption, ",")
-	}
+	serverWhiteList := util.StringSplit(*serverWhiteListOption, ",")
 
 	if *isStartingFiler {
 		go func() {

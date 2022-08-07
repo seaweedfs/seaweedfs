@@ -188,9 +188,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	}
 
 	// security related white list configuration
-	if volumeWhiteListOption != "" {
-		v.whiteList = strings.Split(volumeWhiteListOption, ",")
-	}
+	v.whiteList = util.StringSplit(volumeWhiteListOption, ",")
 
 	if *v.ip == "" {
 		*v.ip = util.DetectedHostAddress()

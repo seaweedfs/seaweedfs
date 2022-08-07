@@ -71,7 +71,7 @@ func (fp FullPath) IsUnder(other FullPath) bool {
 	return strings.HasPrefix(string(fp), string(other)+"/")
 }
 
-func Split(separatedValues string, sep string) []string {
+func StringSplit(separatedValues string, sep string) []string {
 	if separatedValues == "" {
 		return nil
 	}
