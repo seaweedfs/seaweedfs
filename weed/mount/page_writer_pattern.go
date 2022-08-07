@@ -10,7 +10,6 @@ const ModeChangeLimit = 3
 
 // For streaming write: only cache the first chunk
 // For random write: fall back to temp file approach
-// writes can only change from streaming mode to non-streaming mode
 
 func NewWriterPattern(chunkSize int64) *WriterPattern {
 	return &WriterPattern{
