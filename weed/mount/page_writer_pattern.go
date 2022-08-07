@@ -6,6 +6,8 @@ type WriterPattern struct {
 	chunkSize           int64
 }
 
+const ModeChangeLimit = 3
+
 // For streaming write: only cache the first chunk
 // For random write: fall back to temp file approach
 // writes can only change from streaming mode to non-streaming mode
@@ -20,9 +22,13 @@ func NewWriterPattern(chunkSize int64) *WriterPattern {
 
 func (rp *WriterPattern) MonitorWriteAt(offset int64, size int) {
 	if rp.lastWriteStopOffset == offset {
-		rp.isSequentialCounter++
+		if rp.isSequentialCounter < ModeChangeLimit {
+			rp.isSequentialCounter++
+		}
 	} else {
-		rp.isSequentialCounter--
+		if rp.isSequentialCounter > -ModeChangeLimit {
+			rp.isSequentialCounter--
+		}
 	}
 	rp.lastWriteStopOffset = offset + int64(size)
 }

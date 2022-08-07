@@ -5,6 +5,8 @@ type ReaderPattern struct {
 	lastReadStopOffset  int64
 }
 
+const ModeChangeLimit = 3
+
 // For streaming read: only cache the first chunk
 // For random read: only fetch the requested range, instead of the whole chunk
 
@@ -17,9 +19,13 @@ func NewReaderPattern() *ReaderPattern {
 
 func (rp *ReaderPattern) MonitorReadAt(offset int64, size int) {
 	if rp.lastReadStopOffset == offset {
-		rp.isSequentialCounter++
+		if rp.isSequentialCounter < ModeChangeLimit {
+			rp.isSequentialCounter++
+		}
 	} else {
-		rp.isSequentialCounter--
+		if rp.isSequentialCounter > -ModeChangeLimit {
+			rp.isSequentialCounter--
+		}
 	}
 	rp.lastReadStopOffset = offset + int64(size)
 }
