@@ -110,8 +110,8 @@ require (
 	go.etcd.io/etcd/client/v3 v3.5.4
 	go.mongodb.org/mongo-driver v1.10.1
 	go.opencensus.io v0.23.0 // indirect
-	gocloud.dev v0.25.0
-	gocloud.dev/pubsub/natspubsub v0.25.0
+	gocloud.dev v0.26.0
+	gocloud.dev/pubsub/natspubsub v0.26.0
 	gocloud.dev/pubsub/rabbitpubsub v0.25.0
 	golang.org/x/crypto v0.0.0-20220622213112-05595931fe9d // indirect
 	golang.org/x/exp v0.0.0-20220414153411-bcd21879b8fd
