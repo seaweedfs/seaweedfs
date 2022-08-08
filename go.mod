@@ -80,7 +80,7 @@ require (
 	github.com/prometheus/client_golang v1.12.2
 	github.com/prometheus/client_model v0.2.0 // indirect
 	github.com/prometheus/common v0.32.1 // indirect
-	github.com/prometheus/procfs v0.7.3 // indirect
+	github.com/prometheus/procfs v0.7.3
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
 	github.com/seaweedfs/goexif v2.0.0+incompatible
@@ -110,8 +110,8 @@ require (
 	go.etcd.io/etcd/client/v3 v3.5.4
 	go.mongodb.org/mongo-driver v1.10.0
 	go.opencensus.io v0.23.0 // indirect
-	gocloud.dev v0.25.0
-	gocloud.dev/pubsub/natspubsub v0.25.0
+	gocloud.dev v0.26.0
+	gocloud.dev/pubsub/natspubsub v0.26.0
 	gocloud.dev/pubsub/rabbitpubsub v0.25.0
 	golang.org/x/crypto v0.0.0-20220622213112-05595931fe9d // indirect
 	golang.org/x/exp v0.0.0-20220414153411-bcd21879b8fd
