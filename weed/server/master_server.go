@@ -394,8 +394,10 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 
 	peerAddress := pb.ServerAddress(update.Address)
 	peerName := string(peerAddress)
-	isLeader := ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader
-	if update.IsAdd && isLeader {
+	if ms.Topo.HashicorpRaft.State() != hashicorpRaft.Leader {
+		return
+	}
+	if update.IsAdd {
 		raftServerFound := false
 		for _, server := range ms.Topo.HashicorpRaft.GetConfiguration().Configuration().Servers {
 			if string(server.ID) == peerName {
@@ -408,5 +410,27 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 				hashicorpRaft.ServerID(peerName),
 				hashicorpRaft.ServerAddress(peerAddress.ToGrpcAddress()), 0, 0)
 		}
+	} else {
+		ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+			ctx, cancel := context.WithTimeout(context.TODO(), time.Minute*72)
+			defer cancel()
+			if _, err := client.Ping(ctx, &master_pb.PingRequest{Target: string(peerAddress), TargetType: cluster.MasterType}); err != nil {
+				glog.V(0).Infof("master %s didn't respond to pings for %vms. remove raft server", master, time.Now().Sub(lastPing).Milliseconds())
+				if err := ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+					_, err := client.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
+						Id:    peerName,
+						Force: false,
+					})
+					return err
+				}); err != nil {
+					glog.Warningf("failed removing old raft server: %v", err)
+					return err
+				}
+			} else {
+				glog.V(0).Infof("master %s successfully responded to ping", peerName)
+			}
+
+			return nil
+		})
 	}
 }
