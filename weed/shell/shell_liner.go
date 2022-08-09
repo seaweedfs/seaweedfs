@@ -3,19 +3,18 @@ package shell
 import (
 	"context"
 	"fmt"
-	"io"
-	"math/rand"
-	"os"
-	"path"
-	"regexp"
-	"strings"
-
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"golang.org/x/exp/slices"
+	"io"
+	"math/rand"
+	"os"
+	"path"
+	"regexp"
+	"strings"
 
 	"github.com/peterh/liner"
 )

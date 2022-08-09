@@ -4,12 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
-
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )

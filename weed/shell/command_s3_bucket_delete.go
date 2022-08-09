@@ -4,9 +4,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
-
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )

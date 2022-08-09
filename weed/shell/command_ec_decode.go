@@ -4,12 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
-	"time"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"io"
+	"time"
 
 	"google.golang.org/grpc"
 
