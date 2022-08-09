@@ -50,9 +50,6 @@ type MasterOption struct {
 	MetricsAddress          string
 	MetricsIntervalSec      int
 	IsFollower              bool
-
-	PingMastersSleepDuration time.Duration
-	PingMasterTimeout        time.Duration
 }
 
 type MasterServer struct {
