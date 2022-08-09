@@ -365,13 +365,12 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 				hashicorpRaft.ServerAddress(peerAddress.ToGrpcAddress()), 0, 0)
 		}
 	} else {
-		ms.MasterClient.WithClient(false, true, func(client master_pb.SeaweedClient) error {
-			ctx, _ := context.WithTimeout(context.TODO(), time.Minute*72)
-			// defer cancel()
-			// TODO pass WaitForReply grpc option
+		pb.WithMasterClient(false, peerAddress, ms.grpcDialOption, true, func(client master_pb.SeaweedClient) error {
+			ctx, cancel := context.WithTimeout(context.TODO(), time.Minute*72)
+			defer cancel()
 			if _, err := client.Ping(ctx, &master_pb.PingRequest{Target: string(peerAddress), TargetType: cluster.MasterType}); err != nil {
 				glog.V(0).Infof("master %s didn't respond to pings. remove raft server", peerName)
-				if err := ms.MasterClient.WithClient(false, false, func(client master_pb.SeaweedClient) error {
+				if err := ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 					_, err := client.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
 						Id:    peerName,
 						Force: false,

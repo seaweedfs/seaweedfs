@@ -42,7 +42,7 @@ func (c *commandRaftServerAdd) Do(args []string, commandEnv *CommandEnv, writer 
 		return fmt.Errorf("empty server id or address")
 	}
 
-	err = commandEnv.MasterClient.WithClient(false, false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		_, err := client.RaftAddServer(context.Background(), &master_pb.RaftAddServerRequest{
 			Id:      *serverId,
 			Address: *serverAddress,

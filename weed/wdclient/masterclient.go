@@ -262,12 +262,12 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 	}
 }
 
-func (mc *MasterClient) WithClient(streamingMode bool, waitForReady bool, fn func(client master_pb.SeaweedClient) error) error {
+func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
 	return util.Retry("master grpc", func() error {
 		for mc.currentMaster == "" {
 			time.Sleep(3 * time.Second)
 		}
-		return pb.WithMasterClient(streamingMode, mc.currentMaster, mc.grpcDialOption, waitForReady, func(client master_pb.SeaweedClient) error {
+		return pb.WithMasterClient(streamingMode, mc.currentMaster, mc.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 			return fn(client)
 		})
 	})

@@ -34,7 +34,7 @@ func (c *commandRaftClusterPs) Do(args []string, commandEnv *CommandEnv, writer 
 		return nil
 	}
 
-	err = commandEnv.MasterClient.WithClient(false, false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.RaftListClusterServers(context.Background(), &master_pb.RaftListClusterServersRequest{})
 		if err != nil {
 			return fmt.Errorf("raft list cluster: %v", err)

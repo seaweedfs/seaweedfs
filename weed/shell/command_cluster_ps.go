@@ -44,7 +44,7 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 	var mqBrokerNodes []*master_pb.ListClusterNodesResponse_ClusterNode
 
 	// get the list of filers
-	err = commandEnv.MasterClient.WithClient(false, false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.FilerType,
 			FilerGroup: *commandEnv.option.FilerGroup,
@@ -61,7 +61,7 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 	}
 
 	// get the list of message queue brokers
-	err = commandEnv.MasterClient.WithClient(false, false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 			ClientType: cluster.BrokerType,
 			FilerGroup: *commandEnv.option.FilerGroup,

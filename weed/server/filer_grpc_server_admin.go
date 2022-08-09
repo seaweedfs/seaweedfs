@@ -18,7 +18,7 @@ func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsR
 
 	var output *master_pb.StatisticsResponse
 
-	err = fs.filer.MasterClient.WithClient(false, false, func(masterClient master_pb.SeaweedClient) error {
+	err = fs.filer.MasterClient.WithClient(false, func(masterClient master_pb.SeaweedClient) error {
 		grpcResponse, grpcErr := masterClient.Statistics(context.Background(), &master_pb.StatisticsRequest{
 			Replication: req.Replication,
 			Collection:  req.Collection,

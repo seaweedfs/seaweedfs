@@ -55,7 +55,7 @@ func (c *commandCollectionDelete) Do(args []string, commandEnv *CommandEnv, writ
 		return nil
 	}
 
-	err = commandEnv.MasterClient.WithClient(false, false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 		_, err = client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
 			Name: *collectionName,
 		})
