@@ -3,18 +3,19 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/cluster"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util/grace"
-	"golang.org/x/exp/slices"
 	"io"
 	"math/rand"
 	"os"
 	"path"
 	"regexp"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"golang.org/x/exp/slices"
 
 	"github.com/peterh/liner"
 )
@@ -51,7 +52,7 @@ func RunShell(options ShellOptions) {
 
 	if commandEnv.option.FilerAddress == "" {
 		var filers []pb.ServerAddress
-		commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+		commandEnv.MasterClient.WithClient(false, false, func(client master_pb.SeaweedClient) error {
 			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 				ClientType: cluster.FilerType,
 				FilerGroup: *options.FilerGroup,

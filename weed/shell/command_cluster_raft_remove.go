@@ -4,8 +4,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"io"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
 func init() {
@@ -39,7 +40,7 @@ func (c *commandRaftServerRemove) Do(args []string, commandEnv *CommandEnv, writ
 		return fmt.Errorf("empty server id")
 	}
 
-	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(false, false, func(client master_pb.SeaweedClient) error {
 		_, err := client.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
 			Id:    *serverId,
 			Force: true,

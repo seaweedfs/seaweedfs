@@ -3,9 +3,10 @@ package shell
 import (
 	"context"
 	"fmt"
+	"io"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
-	"io"
 )
 
 func init() {
@@ -63,7 +64,7 @@ func (c *commandCollectionList) Do(args []string, commandEnv *CommandEnv, writer
 
 func ListCollectionNames(commandEnv *CommandEnv, includeNormalVolumes, includeEcVolumes bool) (collections []string, err error) {
 	var resp *master_pb.CollectionListResponse
-	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(false, false, func(client master_pb.SeaweedClient) error {
 		resp, err = client.CollectionList(context.Background(), &master_pb.CollectionListRequest{
 			IncludeNormalVolumes: includeNormalVolumes,
 			IncludeEcVolumes:     includeEcVolumes,

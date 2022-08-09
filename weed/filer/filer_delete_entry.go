@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -134,7 +135,7 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 
 func (f *Filer) doDeleteCollection(collectionName string) (err error) {
 
-	return f.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	return f.MasterClient.WithClient(false, false, func(client master_pb.SeaweedClient) error {
 		_, err := client.CollectionDelete(context.Background(), &master_pb.CollectionDeleteRequest{
 			Name: collectionName,
 		})

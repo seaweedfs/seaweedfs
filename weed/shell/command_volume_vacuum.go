@@ -41,7 +41,7 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 		return
 	}
 
-	err = commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+	err = commandEnv.MasterClient.WithClient(false, false, func(client master_pb.SeaweedClient) error {
 		_, err = client.VacuumVolume(context.Background(), &master_pb.VacuumVolumeRequest{
 			GarbageThreshold: float32(*garbageThreshold),
 			VolumeId:         uint32(*volumeId),
