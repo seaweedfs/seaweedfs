@@ -3,9 +3,10 @@ package wdclient
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"math/rand"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
@@ -261,14 +262,14 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 	}
 }
 
-func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
+func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.SeaweedClient) error, waitForReady bool) error {
 	return util.Retry("master grpc", func() error {
 		for mc.currentMaster == "" {
 			time.Sleep(3 * time.Second)
 		}
 		return pb.WithMasterClient(streamingMode, mc.currentMaster, mc.grpcDialOption, func(client master_pb.SeaweedClient) error {
 			return fn(client)
-		})
+		}, waitForReady)
 	})
 }
 

@@ -223,9 +223,6 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 
 	go ms.MasterClient.KeepConnectedToMaster()
-	if *m.raftHashicorp {
-		go ms.CheckMastersAlive()
-	}
 
 	// start http server
 	var (

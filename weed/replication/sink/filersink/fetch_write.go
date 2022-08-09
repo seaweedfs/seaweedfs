@@ -3,8 +3,9 @@ package filersink
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"sync"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
 
@@ -136,7 +137,7 @@ func (fs *FilerSink) WithFilerClient(streamingMode bool, fn func(filer_pb.Seawee
 	return pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, fs.grpcAddress, fs.grpcDialOption)
+	}, fs.grpcAddress, false, fs.grpcDialOption)
 
 }
 func (fs *FilerSink) AdjustedUrl(location *filer_pb.Location) string {

@@ -3,9 +3,10 @@ package s3api
 import (
 	"encoding/base64"
 	"fmt"
+	"net/http"
+
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"google.golang.org/grpc"
-	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -18,7 +19,7 @@ func (s3a *S3ApiServer) WithFilerClient(streamingMode bool, fn func(filer_pb.Sea
 	return pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, s3a.option.Filer.ToGrpcAddress(), s3a.option.GrpcDialOption)
+	}, s3a.option.Filer.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
 
 }
 

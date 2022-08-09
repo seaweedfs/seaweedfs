@@ -340,52 +340,6 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 	return seq
 }
 
-func (ms *MasterServer) CheckMastersAlive() {
-	masterLastPings := make(map[string]time.Time)
-
-	for {
-		time.Sleep(ms.option.PingMastersSleepDuration)
-		if !ms.Topo.IsLeader() && len(masterLastPings) == 0 {
-			continue
-		}
-
-		raftServers := ms.Topo.HashicorpRaft.GetConfiguration().Configuration().Servers
-
-		for _, raftServer := range raftServers {
-			master := string(raftServer.ID)
-
-			lastPing, ok := masterLastPings[master]
-			if !ok {
-				if !ms.Topo.IsLeader() {
-					continue
-				}
-				lastPing = time.Now()
-				masterLastPings[master] = lastPing
-			}
-
-			if _, err := ms.Ping(context.TODO(), &master_pb.PingRequest{Target: string(master), TargetType: cluster.MasterType}); err != nil {
-				if time.Now().Sub(lastPing) > ms.option.PingMasterTimeout {
-					glog.V(0).Infof("master %s didn't respond to pings for %vms. remove raft server", master, time.Now().Sub(lastPing).Milliseconds())
-					if err := ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-						_, err := client.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
-							Id:    master,
-							Force: false,
-						})
-						return err
-					}); err != nil {
-						glog.Warningf("failed removing old raft server: %v", err)
-					}
-					delete(masterLastPings, master)
-					continue
-				}
-			} else {
-				glog.V(4).Infof("successfully pinged master: %s after %vms", master, time.Now().Sub(lastPing).Milliseconds())
-				masterLastPings[master] = time.Now()
-			}
-		}
-	}
-}
-
 func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
 	if update.NodeType != cluster.MasterType || ms.Topo.HashicorpRaft == nil {
 		return
@@ -412,17 +366,18 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 		}
 	} else {
 		ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-			ctx, cancel := context.WithTimeout(context.TODO(), time.Minute*72)
-			defer cancel()
+			ctx, _ := context.WithTimeout(context.TODO(), time.Minute*72)
+			// defer cancel()
+			// TODO pass WaitForReply grpc option
 			if _, err := client.Ping(ctx, &master_pb.PingRequest{Target: string(peerAddress), TargetType: cluster.MasterType}); err != nil {
-				glog.V(0).Infof("master %s didn't respond to pings for %vms. remove raft server", master, time.Now().Sub(lastPing).Milliseconds())
+				glog.V(0).Infof("master %s didn't respond to pings. remove raft server", peerName)
 				if err := ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 					_, err := client.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
 						Id:    peerName,
 						Force: false,
 					})
 					return err
-				}); err != nil {
+				}, false); err != nil {
 					glog.Warningf("failed removing old raft server: %v", err)
 					return err
 				}
@@ -431,6 +386,6 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 			}
 
 			return nil
-		})
+		}, true)
 	}
 }
