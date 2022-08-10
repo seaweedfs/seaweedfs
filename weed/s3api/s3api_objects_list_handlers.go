@@ -133,10 +133,10 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 		reqDir = reqDir[1:]
 	}
 	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
-	bucketPrefixLen := len(bucketPrefix)
 	reqDir = fmt.Sprintf("%s%s", bucketPrefix, reqDir)
 	if strings.HasSuffix(reqDir, "/") {
-		reqDir = strings.TrimSuffix(reqDir, "/")
+		// remove trailing "/"
+		reqDir = reqDir[:len(reqDir)-1]
 	}
 
 	var contents []ListEntry
@@ -148,73 +148,37 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	// check filer
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		_, isTruncated, nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, maxKeys, marker, delimiter, false, false, bucketPrefixLen, func(dir string, entry *filer_pb.Entry) {
+		_, isTruncated, nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, maxKeys, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
 			if entry.IsDirectory {
 				if delimiter == "/" {
 					commonPrefixes = append(commonPrefixes, PrefixEntry{
-						Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[bucketPrefixLen:],
+						Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
 					})
 				}
-				if !(entry.IsDirectoryKeyObject() && strings.HasSuffix(entry.Name, "/")) {
-					return
+			} else {
+				storageClass := "STANDARD"
+				if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
+					storageClass = string(v)
 				}
+				contents = append(contents, ListEntry{
+					Key:          fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):],
+					LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
+					ETag:         "\"" + filer.ETag(entry) + "\"",
+					Size:         int64(filer.FileSize(entry)),
+					Owner: CanonicalUser{
+						ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
+						DisplayName: entry.Attributes.UserName,
+					},
+					StorageClass: StorageClass(storageClass),
+				})
 			}
-			storageClass := "STANDARD"
-			if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
-				storageClass = string(v)
-			}
-			contents = append(contents, ListEntry{
-				Key:          fmt.Sprintf("%s/%s", dir, entry.Name)[bucketPrefixLen:],
-				LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
-				ETag:         "\"" + filer.ETag(entry) + "\"",
-				Size:         int64(filer.FileSize(entry)),
-				Owner: CanonicalUser{
-					ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
-					DisplayName: entry.Attributes.UserName,
-				},
-				StorageClass: StorageClass(storageClass),
-			})
 		})
-		glog.V(4).Infof("end doListFilerEntries isTruncated:%v nextMarker:%v reqDir: %v prefix: %v", isTruncated, nextMarker, reqDir, prefix)
 		if doErr != nil {
 			return doErr
 		}
 
 		if !isTruncated {
 			nextMarker = ""
-		}
-
-		if len(contents) == 0 && len(commonPrefixes) == 0 && maxKeys > 0 {
-			if strings.HasSuffix(originalPrefix, "/") && prefix == "" {
-				reqDir, prefix = filepath.Split(strings.TrimSuffix(reqDir, "/"))
-				reqDir = strings.TrimSuffix(reqDir, "/")
-			}
-			_, _, _, doErr = s3a.doListFilerEntries(client, reqDir, prefix, 1, prefix, delimiter, true, false, bucketPrefixLen, func(dir string, entry *filer_pb.Entry) {
-				if entry.IsDirectoryKeyObject() && entry.Name == prefix {
-					storageClass := "STANDARD"
-					if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
-						storageClass = string(v)
-					}
-					contents = append(contents, ListEntry{
-						Key:          fmt.Sprintf("%s/%s/", dir, entry.Name)[bucketPrefixLen:],
-						LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
-						ETag:         "\"" + fmt.Sprintf("%x", entry.Attributes.Md5) + "\"",
-						Size:         int64(filer.FileSize(entry)),
-						Owner: CanonicalUser{
-							ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
-							DisplayName: entry.Attributes.UserName,
-						},
-						StorageClass: StorageClass(storageClass),
-					})
-				}
-			})
-			if doErr != nil {
-				return doErr
-			}
-		}
-
-		if len(nextMarker) > 0 {
-			nextMarker = nextMarker[bucketPrefixLen:]
 		}
 
 		response = ListBucketResult{
@@ -235,7 +199,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	return
 }
 
-func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, maxKeys int, marker, delimiter string, inclusiveStartFrom bool, subEntries bool, bucketPrefixLen int, eachEntryFn func(dir string, entry *filer_pb.Entry)) (counter int, isTruncated bool, nextMarker string, err error) {
+func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, maxKeys int, marker, delimiter string, inclusiveStartFrom bool, eachEntryFn func(dir string, entry *filer_pb.Entry)) (counter int, isTruncated bool, nextMarker string, err error) {
 	// invariants
 	//   prefix and marker should be under dir, marker may contain "/"
 	//   maxKeys should be updated for each recursion
@@ -248,30 +212,20 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	}
 
 	if strings.Contains(marker, "/") {
-		if strings.HasSuffix(marker, "/") {
-			marker = strings.TrimSuffix(marker, "/")
-		}
 		sepIndex := strings.Index(marker, "/")
-		if sepIndex != -1 {
-			subPrefix, subMarker := marker[0:sepIndex], marker[sepIndex+1:]
-			var subDir string
-			if len(dir) > bucketPrefixLen && dir[bucketPrefixLen:] == subPrefix {
-				subDir = dir
-			} else {
-				subDir = fmt.Sprintf("%s/%s", dir, subPrefix)
-			}
-			subCounter, subIsTruncated, subNextMarker, subErr := s3a.doListFilerEntries(client, subDir, "", maxKeys, subMarker, delimiter, false, false, bucketPrefixLen, eachEntryFn)
-			if subErr != nil {
-				err = subErr
-				return
-			}
-			counter += subCounter
-			isTruncated = isTruncated || subIsTruncated
-			maxKeys -= subCounter
-			nextMarker = subNextMarker
-			// finished processing this sub directory
-			marker = subPrefix
+		subDir, subMarker := marker[0:sepIndex], marker[sepIndex+1:]
+		glog.V(4).Infoln("doListFilerEntries dir", dir+"/"+subDir, "subMarker", subMarker, "maxKeys", maxKeys)
+		subCounter, subIsTruncated, subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+subDir, "", maxKeys, subMarker, delimiter, false, eachEntryFn)
+		if subErr != nil {
+			err = subErr
+			return
 		}
+		counter += subCounter
+		isTruncated = isTruncated || subIsTruncated
+		maxKeys -= subCounter
+		nextMarker = subDir + "/" + subNextMarker
+		// finished processing this sub directory
+		marker = subDir
 	}
 	if maxKeys <= 0 {
 		return
@@ -309,46 +263,40 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			return
 		}
 		entry := resp.Entry
-		nextMarker = dir + "/" + entry.Name
+		nextMarker = entry.Name
 		if entry.IsDirectory {
 			// println("ListEntries", dir, "dir:", entry.Name)
-			if entry.Name == s3_constants.MultipartUploadsFolder { // FIXME no need to apply to all directories. this extra also affects maxKeys
+			if entry.Name == ".uploads" { // FIXME no need to apply to all directories. this extra also affects maxKeys
 				continue
 			}
-			if delimiter == "" {
+			if delimiter != "/" {
 				eachEntryFn(dir, entry)
 				// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "maxKeys", maxKeys-counter)
-				subCounter, subIsTruncated, subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", maxKeys-counter, "", delimiter, false, true, bucketPrefixLen, eachEntryFn)
+				subCounter, subIsTruncated, subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", maxKeys-counter, "", delimiter, false, eachEntryFn)
 				if subErr != nil {
 					err = fmt.Errorf("doListFilerEntries2: %v", subErr)
 					return
 				}
 				// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "maxKeys", maxKeys-counter, "subCounter", subCounter, "subNextMarker", subNextMarker, "subIsTruncated", subIsTruncated)
-				if subCounter == 0 && entry.IsDirectoryKeyObject() {
-					entry.Name += "/"
-					eachEntryFn(dir, entry)
-					counter++
-				}
 				counter += subCounter
-				nextMarker = subNextMarker
+				nextMarker = entry.Name + "/" + subNextMarker
 				if subIsTruncated {
 					isTruncated = true
 					return
 				}
-			} else if delimiter == "/" {
+			} else {
 				var isEmpty bool
-				if !s3a.option.AllowEmptyFolder && !entry.IsDirectoryKeyObject() {
+				if !s3a.option.AllowEmptyFolder {
 					if isEmpty, err = s3a.ensureDirectoryAllEmpty(client, dir, entry.Name); err != nil {
 						glog.Errorf("check empty folder %s: %v", dir, err)
 					}
 				}
 				if !isEmpty {
-					nextMarker += "/"
 					eachEntryFn(dir, entry)
 					counter++
 				}
 			}
-		} else if !(delimiter == "/" && subEntries) {
+		} else {
 			// println("ListEntries", dir, "file:", entry.Name)
 			eachEntryFn(dir, entry)
 			counter++
