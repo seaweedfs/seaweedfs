@@ -10,19 +10,21 @@ import (
 )
 
 const (
-	// Using default File.Sync function
+	// Using default File.Sync function, same as fcntl(fd, F_FULLFSYNC)
 	DM_SYNC = 1
 
-	// Using syscall.Fsync function
+	// Using syscall.Fsync function, for MacOS this is not safe but is very fast.
 	DM_FSYNC = 2
 
-	// Using fcntl with F_BARRIERFSYNC parameter
+	// Using fcntl with F_BARRIERFSYNC parameter, for more details please refer:
+	// https://developer.apple.com/documentation/xcode/reducing-disk-writes
 	DM_BFSYNC = 3
 
 	F_BARRIERFSYNC = 85
 )
 
 var (
+	// By default using F_BARRIERFSYNC
 	DarwinSyncMode = DM_BFSYNC
 )
 
