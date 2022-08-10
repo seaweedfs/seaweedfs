@@ -1,10 +1,11 @@
 package backend
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"os"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 var (
@@ -78,9 +79,4 @@ func (df *DiskFile) GetStat() (datSize int64, modTime time.Time, err error) {
 
 func (df *DiskFile) Name() string {
 	return df.fullFilePath
-}
-
-func (df *DiskFile) Sync() error {
-	return nil
-	// return df.File.Sync()
 }
