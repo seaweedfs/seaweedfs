@@ -288,6 +288,12 @@
     function uploadFile(file, i) {
         var url = window.location.href;
         var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState == XMLHttpRequest.DONE) {
+                var resp = JSON.parse(xhr.responseText);
+                alert(`uploaded file: ${resp.name} with size: ${resp.size}`);
+            }
+        }
         var fileName = file.name;
         xhr.upload.addEventListener('progress', function(e) {
             if (e.lengthComputable) {
