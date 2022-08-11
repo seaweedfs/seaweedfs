@@ -93,7 +93,10 @@ func (mc *MasterClient) GetMasters() map[string]pb.ServerAddress {
 }
 
 func (mc *MasterClient) WaitUntilConnected() {
-	for mc.currentMaster == "" {
+	for {
+		if mc.currentMaster != "" {
+			return
+		}
 		time.Sleep(time.Duration(rand.Int31n(200)) * time.Millisecond)
 	}
 }
@@ -135,7 +138,6 @@ func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress pb.ServerAddres
 func (mc *MasterClient) tryAllMasters() {
 	var nextHintedLeader pb.ServerAddress
 	for _, master := range mc.masters {
-
 		nextHintedLeader = mc.tryConnectToMaster(master)
 		for nextHintedLeader != "" {
 			nextHintedLeader = mc.tryConnectToMaster(nextHintedLeader)
@@ -228,9 +230,7 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 					}
 				}
 			}
-
 		}
-
 	})
 	if gprcErr != nil {
 		stats.MasterClientConnectCounter.WithLabelValues(stats.Failed).Inc()
