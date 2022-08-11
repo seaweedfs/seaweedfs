@@ -72,6 +72,9 @@ type FilerOption struct {
 }
 
 type FilerServer struct {
+	inFlightDataSize      int64
+	inFlightDataLimitCond *sync.Cond
+
 	filer_pb.UnimplementedSeaweedFilerServer
 	option         *FilerOption
 	secret         security.SigningKey
@@ -90,9 +93,6 @@ type FilerServer struct {
 	// track known metadata listeners
 	knownListenersLock sync.Mutex
 	knownListeners     map[int32]int32
-
-	inFlightDataSize      int64
-	inFlightDataLimitCond *sync.Cond
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
