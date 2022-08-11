@@ -290,8 +290,7 @@
         var xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function() {
             if (xhr.readyState == XMLHttpRequest.DONE) {
-                var resp = JSON.parse(xhr.responseText);
-                alert(`uploaded file: ${resp.name} with size: ${resp.size}`);
+                location.reload();
             }
         }
         var fileName = file.name;
