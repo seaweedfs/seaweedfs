@@ -321,7 +321,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		nextMarker = entry.Name
 		if entry.IsDirectory {
 			// println("ListEntries", dir, "dir:", entry.Name)
-			if entry.Name == ".uploads" { // FIXME no need to apply to all directories. this extra also affects maxKeys
+			if entry.Name == s3_constants.MultipartUploadsFolder { // FIXME no need to apply to all directories. this extra also affects maxKeys
 				continue
 			}
 			if delimiter != "/" {
