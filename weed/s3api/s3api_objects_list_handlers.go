@@ -129,7 +129,10 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	// convert full path prefix into directory name and prefix for entry name
 	requestDir, prefix, marker := normalizePrefixMarker(originalPrefix, originalMarker)
 	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
-	reqDir := fmt.Sprintf("%s%s", bucketPrefix, requestDir)
+	reqDir := bucketPrefix[:len(bucketPrefix)-1]
+	if requestDir != "" {
+		reqDir = fmt.Sprintf("%s%s", bucketPrefix, requestDir)
+	}
 
 	var contents []ListEntry
 	var commonPrefixes []PrefixEntry
@@ -229,17 +232,29 @@ func normalizePrefixMarker(prefix, marker string) (alignedDir, alignedPrefix, al
 	}
 
 	alignedDir, alignedPrefix = toDirAndName(prefix)
-	alignedMarker = marker[len(alignedDir)+1:]
+	if alignedDir != "" {
+		alignedMarker = marker[len(alignedDir)+1:]
+	} else {
+		alignedMarker = marker
+	}
 	return
 }
 func toDirAndName(dirAndName string) (dir, name string) {
 	sepIndex := strings.LastIndex(dirAndName, "/")
-	dir, name = dirAndName[0:sepIndex], dirAndName[sepIndex+1:]
+	if sepIndex >= 0 {
+		dir, name = dirAndName[0:sepIndex], dirAndName[sepIndex+1:]
+	} else {
+		name = dirAndName
+	}
 	return
 }
 func toParentAndDescendants(dirAndName string) (dir, name string) {
 	sepIndex := strings.Index(dirAndName, "/")
-	dir, name = dirAndName[0:sepIndex], dirAndName[sepIndex+1:]
+	if sepIndex >= 0 {
+		dir, name = dirAndName[0:sepIndex], dirAndName[sepIndex+1:]
+	} else {
+		name = dirAndName
+	}
 	return
 }
 

@@ -58,6 +58,20 @@ func Test_normalizePrefixMarker(t *testing.T) {
 			"0",
 			"0e/0e149049a2137b0cc12e",
 		},
+		{"empty prefix",
+			args{"",
+				"parentDir/data/0e/0e149049a2137b0cc12e"},
+			"",
+			"",
+			"parentDir/data/0e/0e149049a2137b0cc12e",
+		},
+		{"empty directory",
+			args{"parent",
+				"parentDir/data/0e/0e149049a2137b0cc12e"},
+			"",
+			"parent",
+			"parentDir/data/0e/0e149049a2137b0cc12e",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
