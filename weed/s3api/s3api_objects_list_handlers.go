@@ -136,7 +136,6 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 
 	var contents []ListEntry
 	var commonPrefixes []PrefixEntry
-	var isTruncated bool
 	var doErr error
 	var nextMarker string
 	cursor := &ListingCursor{
@@ -190,7 +189,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			NextMarker:     nextMarker,
 			MaxKeys:        maxKeys,
 			Delimiter:      delimiter,
-			IsTruncated:    isTruncated,
+			IsTruncated:    cursor.isTruncated,
 			Contents:       contents,
 			CommonPrefixes: commonPrefixes,
 		}
