@@ -339,7 +339,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				// println("doListFilerEntries2 nextMarker", nextMarker)
 			} else {
 				var isEmpty bool
-				if !s3a.option.AllowEmptyFolder {
+				if !s3a.option.AllowEmptyFolder && !entry.IsDirectoryKeyObject() {
 					if isEmpty, err = s3a.ensureDirectoryAllEmpty(client, dir, entry.Name); err != nil {
 						glog.Errorf("check empty folder %s: %v", dir, err)
 					}
