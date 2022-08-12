@@ -214,8 +214,8 @@ type ListingCursor struct {
 func normalizePrefixMarker(prefix, marker string) (alignedDir, alignedPrefix, alignedMarker string) {
 	// alignedDir should not end with "/"
 	// alignedDir, alignedPrefix, alignedMarker should only have "/" in middle
-	prefix = strings.Trim(prefix, "/")
-	marker = strings.Trim(marker, "/")
+	prefix = strings.TrimLeft(prefix, "/")
+	marker = strings.TrimLeft(marker, "/")
 	if prefix == "" {
 		return "", "", marker
 	}

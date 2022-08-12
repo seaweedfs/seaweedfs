@@ -51,6 +51,13 @@ func Test_normalizePrefixMarker(t *testing.T) {
 		wantAlignedPrefix string
 		wantAlignedMarker string
 	}{
+		{"prefix is a directory",
+			args{"/parentDir/data/",
+				""},
+			"parentDir/data",
+			"",
+			"",
+		},
 		{"normal case",
 			args{"/parentDir/data/0",
 				"parentDir/data/0e/0e149049a2137b0cc12e"},
