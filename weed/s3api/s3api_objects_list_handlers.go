@@ -147,10 +147,13 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 
 		nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
 			if entry.IsDirectory {
-				if delimiter == "/" {
+				// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
+				if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
 					commonPrefixes = append(commonPrefixes, PrefixEntry{
 						Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
 					})
+					//All of the keys (up to 1,000) rolled up into a common prefix count as a single return when calculating the number of returns.
+					cursor.maxKeys--
 				}
 			} else {
 				storageClass := "STANDARD"
@@ -168,6 +171,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 					},
 					StorageClass: StorageClass(storageClass),
 				})
+				cursor.maxKeys--
 			}
 		})
 		if doErr != nil {
@@ -345,12 +349,10 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				}
 				if !isEmpty {
 					eachEntryFn(dir, entry)
-					cursor.maxKeys--
 				}
 			}
 		} else {
 			eachEntryFn(dir, entry)
-			cursor.maxKeys--
 			// println("ListEntries", dir, "file:", entry.Name, "maxKeys", cursor.maxKeys)
 		}
 	}
