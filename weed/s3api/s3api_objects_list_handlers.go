@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -126,29 +125,25 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	writeSuccessResponseXML(w, r, response)
 }
 
-func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, maxKeys int, marker string, delimiter string) (response ListBucketResult, err error) {
+func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, maxKeys int, originalMarker string, delimiter string) (response ListBucketResult, err error) {
 	// convert full path prefix into directory name and prefix for entry name
-	reqDir, prefix := filepath.Split(originalPrefix)
-	if strings.HasPrefix(reqDir, "/") {
-		reqDir = reqDir[1:]
-	}
+	requestDir, prefix, marker := normalizePrefixMarker(originalPrefix, originalMarker)
 	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
-	reqDir = fmt.Sprintf("%s%s", bucketPrefix, reqDir)
-	if strings.HasSuffix(reqDir, "/") {
-		// remove trailing "/"
-		reqDir = reqDir[:len(reqDir)-1]
-	}
+	reqDir := fmt.Sprintf("%s%s", bucketPrefix, requestDir)
 
 	var contents []ListEntry
 	var commonPrefixes []PrefixEntry
 	var isTruncated bool
 	var doErr error
 	var nextMarker string
+	cursor := &ListingCursor{
+		maxKeys: maxKeys,
+	}
 
 	// check filer
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		_, isTruncated, nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, maxKeys, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
+		nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
 			if entry.IsDirectory {
 				if delimiter == "/" {
 					commonPrefixes = append(commonPrefixes, PrefixEntry{
@@ -177,14 +172,18 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			return doErr
 		}
 
-		if !isTruncated {
+		if !cursor.isTruncated {
 			nextMarker = ""
+		} else {
+			if requestDir != "" {
+				nextMarker = requestDir + "/" + nextMarker
+			}
 		}
 
 		response = ListBucketResult{
 			Name:           bucket,
 			Prefix:         originalPrefix,
-			Marker:         marker,
+			Marker:         originalMarker,
 			NextMarker:     nextMarker,
 			MaxKeys:        maxKeys,
 			Delimiter:      delimiter,
@@ -199,7 +198,52 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	return
 }
 
-func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, maxKeys int, marker, delimiter string, inclusiveStartFrom bool, eachEntryFn func(dir string, entry *filer_pb.Entry)) (counter int, isTruncated bool, nextMarker string, err error) {
+type ListingCursor struct {
+	maxKeys     int
+	isTruncated bool
+}
+
+// the prefix and marker may be in different directories
+// normalizePrefixMarker ensures the prefix and marker both starts from the same directory
+func normalizePrefixMarker(prefix, marker string) (alignedDir, alignedPrefix, alignedMarker string) {
+	// alignedDir should not end with "/"
+	// alignedDir, alignedPrefix, alignedMarker should only have "/" in middle
+	prefix = strings.Trim(prefix, "/")
+	marker = strings.Trim(marker, "/")
+	if prefix == "" {
+		return "", "", marker
+	}
+	if marker == "" {
+		alignedDir, alignedPrefix = toDirAndName(prefix)
+		return
+	}
+	if !strings.HasPrefix(marker, prefix) {
+		// something wrong
+		return "", prefix, marker
+	}
+	if strings.HasPrefix(marker, prefix+"/") {
+		alignedDir = prefix
+		alignedPrefix = ""
+		alignedMarker = marker[len(alignedDir)+1:]
+		return
+	}
+
+	alignedDir, alignedPrefix = toDirAndName(prefix)
+	alignedMarker = marker[len(alignedDir)+1:]
+	return
+}
+func toDirAndName(dirAndName string) (dir, name string) {
+	sepIndex := strings.LastIndex(dirAndName, "/")
+	dir, name = dirAndName[0:sepIndex], dirAndName[sepIndex+1:]
+	return
+}
+func toParentAndDescendants(dirAndName string) (dir, name string) {
+	sepIndex := strings.Index(dirAndName, "/")
+	dir, name = dirAndName[0:sepIndex], dirAndName[sepIndex+1:]
+	return
+}
+
+func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, cursor *ListingCursor, marker, delimiter string, inclusiveStartFrom bool, eachEntryFn func(dir string, entry *filer_pb.Entry)) (nextMarker string, err error) {
 	// invariants
 	//   prefix and marker should be under dir, marker may contain "/"
 	//   maxKeys should be updated for each recursion
@@ -207,27 +251,23 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	if prefix == "/" && delimiter == "/" {
 		return
 	}
-	if maxKeys <= 0 {
+	if cursor.maxKeys <= 0 {
 		return
 	}
 
 	if strings.Contains(marker, "/") {
-		sepIndex := strings.Index(marker, "/")
-		subDir, subMarker := marker[0:sepIndex], marker[sepIndex+1:]
-		glog.V(4).Infoln("doListFilerEntries dir", dir+"/"+subDir, "subMarker", subMarker, "maxKeys", maxKeys)
-		subCounter, subIsTruncated, subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+subDir, "", maxKeys, subMarker, delimiter, false, eachEntryFn)
+		subDir, subMarker := toParentAndDescendants(marker)
+		// println("doListFilerEntries dir", dir+"/"+subDir, "subMarker", subMarker)
+		subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+subDir, "", cursor, subMarker, delimiter, false, eachEntryFn)
 		if subErr != nil {
 			err = subErr
 			return
 		}
-		counter += subCounter
-		isTruncated = isTruncated || subIsTruncated
-		maxKeys -= subCounter
 		nextMarker = subDir + "/" + subNextMarker
 		// finished processing this sub directory
 		marker = subDir
 	}
-	if maxKeys <= 0 {
+	if cursor.maxKeys <= 0 {
 		return
 	}
 
@@ -235,7 +275,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	request := &filer_pb.ListEntriesRequest{
 		Directory:          dir,
 		Prefix:             prefix,
-		Limit:              uint32(maxKeys + 2), // bucket root directory needs to skip additional s3_constants.MultipartUploadsFolder folder
+		Limit:              uint32(cursor.maxKeys + 2), // bucket root directory needs to skip additional s3_constants.MultipartUploadsFolder folder
 		StartFromFileName:  marker,
 		InclusiveStartFrom: inclusiveStartFrom,
 	}
@@ -258,8 +298,8 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				return
 			}
 		}
-		if counter >= maxKeys {
-			isTruncated = true
+		if cursor.maxKeys <= 0 {
+			cursor.isTruncated = true
 			return
 		}
 		entry := resp.Entry
@@ -271,19 +311,17 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 			if delimiter != "/" {
 				eachEntryFn(dir, entry)
-				// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "maxKeys", maxKeys-counter)
-				subCounter, subIsTruncated, subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", maxKeys-counter, "", delimiter, false, eachEntryFn)
+				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, eachEntryFn)
 				if subErr != nil {
 					err = fmt.Errorf("doListFilerEntries2: %v", subErr)
 					return
 				}
-				// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "maxKeys", maxKeys-counter, "subCounter", subCounter, "subNextMarker", subNextMarker, "subIsTruncated", subIsTruncated)
-				counter += subCounter
+				// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "subNextMarker", subNextMarker)
 				nextMarker = entry.Name + "/" + subNextMarker
-				if subIsTruncated {
-					isTruncated = true
+				if cursor.isTruncated {
 					return
 				}
+				// println("doListFilerEntries2 nextMarker", nextMarker)
 			} else {
 				var isEmpty bool
 				if !s3a.option.AllowEmptyFolder {
@@ -293,13 +331,13 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				}
 				if !isEmpty {
 					eachEntryFn(dir, entry)
-					counter++
+					cursor.maxKeys--
 				}
 			}
 		} else {
-			// println("ListEntries", dir, "file:", entry.Name)
 			eachEntryFn(dir, entry)
-			counter++
+			cursor.maxKeys--
+			// println("ListEntries", dir, "file:", entry.Name, "maxKeys", cursor.maxKeys)
 		}
 	}
 	return
