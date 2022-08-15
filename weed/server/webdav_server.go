@@ -76,7 +76,6 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 type WebDavFileSystem struct {
 	option         *WebDavOption
 	secret         security.SigningKey
-	filer          *filer.Filer
 	grpcDialOption grpc.DialOption
 	chunkCache     *chunk_cache.TieredChunkCache
 	signature      int32
@@ -138,7 +137,7 @@ func (fs *WebDavFileSystem) AdjustedUrl(location *filer_pb.Location) string {
 	return location.Url
 }
 func (fs *WebDavFileSystem) GetDataCenter() string {
-	return fs.filer.MasterClient.DataCenter
+	return ""
 }
 
 func clearName(name string) (string, error) {
