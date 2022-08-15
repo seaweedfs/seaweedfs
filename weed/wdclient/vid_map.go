@@ -128,7 +128,7 @@ func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) 
 }
 
 func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
-	glog.V(4).Infof("~ lookup volume id %d: %+v ec:%+v", vid, vc.vid2Locations, vc.ecVid2Locations)
+	// glog.V(4).Infof("~ lookup volume id %d: %+v ec:%+v", vid, vc.vid2Locations, vc.ecVid2Locations)
 	locations, found = vc.getLocations(vid)
 	if found && len(locations) > 0 {
 		return locations, found
