@@ -73,7 +73,7 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writ
 
 func StreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunction, writer io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64, downloadMaxBytesPs int64) error {
 
-	glog.V(4).Infof("start to stream content for chunks: %+v", chunks)
+	glog.V(4).Infof("start to stream content for chunks: %d", len(chunks))
 	chunkViews := ViewFromChunks(masterClient.GetLookupFileIdFunction(), chunks, offset, size)
 
 	fileId2Url := make(map[string][]string)
@@ -86,6 +86,7 @@ func StreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunction, w
 			if err == nil && len(urlStrings) > 0 {
 				break
 			}
+			glog.V(4).Infof("waiting for chunk: %s", chunkView.FileId)
 			time.Sleep(backoff)
 		}
 		if err != nil {
