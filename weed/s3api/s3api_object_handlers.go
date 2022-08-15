@@ -130,9 +130,30 @@ func urlPathEscape(object string) string {
 	return strings.Join(escapedParts, "/")
 }
 
+func removeDuplicateSlashes(object string) string {
+	result := strings.Builder{}
+	result.Grow(len(object))
+
+	isLastSlash := false
+	for _, r := range object {
+		switch r {
+		case '/':
+			if !isLastSlash {
+				result.WriteRune(r)
+			}
+			isLastSlash = true
+		default:
+			result.WriteRune(r)
+			isLastSlash = false
+		}
+	}
+	return result.String()
+}
+
 func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
+	object = urlPathEscape(removeDuplicateSlashes(object))
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, object)
 	return destUrl
 }
 
