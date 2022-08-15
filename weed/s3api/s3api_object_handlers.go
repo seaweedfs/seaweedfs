@@ -358,9 +358,11 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		return
 	}
 
-	if (resp.ContentLength == -1 || resp.StatusCode == 404) && resp.StatusCode != 304 {
-		if r.Method != "DELETE" {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+	if r.Method == "DELETE" {
+		if resp.StatusCode == http.StatusNotFound {
+			// this is normal
+			responseStatusCode := responseFn(resp, w)
+			s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
 			return
 		}
 	}

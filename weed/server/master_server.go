@@ -276,11 +276,9 @@ func (ms *MasterServer) startAdminScripts() {
 	go commandEnv.MasterClient.KeepConnectedToMaster()
 
 	go func() {
-		commandEnv.MasterClient.WaitUntilConnected()
-
 		for {
 			time.Sleep(time.Duration(sleepMinutes) * time.Minute)
-			if ms.Topo.IsLeader() {
+			if ms.Topo.IsLeader() && ms.MasterClient.GetMaster() != "" {
 				shellOptions.FilerAddress = ms.GetOneFiler(cluster.FilerGroupName(*shellOptions.FilerGroup))
 				if shellOptions.FilerAddress == "" {
 					continue
