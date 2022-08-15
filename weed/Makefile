@@ -52,3 +52,7 @@ debug_filer_remote_sync_buckets:
 debug_master_follower:
 	go build -gcflags="all=-N -l"
 	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- -v=4 master.follower
+
+debug_filer_sync:
+	go build -gcflags="all=-N -l"
+	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec weed -- -v=4 filer.sync -a 192.168.2.7:8888 -b 192.168.2.7:8889 -isActivePassive -b.debug

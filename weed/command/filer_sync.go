@@ -143,7 +143,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 				grpcDialOption,
 				filerA,
 				*syncOptions.aPath,
-				strings.Split(*syncOptions.aExcludePaths, ","),
+				util.StringSplit(*syncOptions.aExcludePaths, ","),
 				*syncOptions.aProxyByFiler,
 				filerB,
 				*syncOptions.bPath,
@@ -179,7 +179,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 					grpcDialOption,
 					filerB,
 					*syncOptions.bPath,
-					strings.Split(*syncOptions.bExcludePaths, ","),
+					util.StringSplit(*syncOptions.bExcludePaths, ","),
 					*syncOptions.bProxyByFiler,
 					filerA,
 					*syncOptions.aPath,
@@ -251,16 +251,21 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 		}
 		return persistEventFn(resp)
 	}
+	processor := NewMetadataProcessor(processEventFn, 128)
 
 	var lastLogTsNs = time.Now().UnixNano()
 	var clientName = fmt.Sprintf("syncFrom_%s_To_%s", string(sourceFiler), string(targetFiler))
-	processEventFnWithOffset := pb.AddOffsetFunc(processEventFn, 3*time.Second, func(counter int64, lastTsNs int64) error {
+	processEventFnWithOffset := pb.AddOffsetFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		processor.AddSyncJob(resp)
+		return nil
+	}, 3*time.Second, func(counter int64, lastTsNs int64) error {
+		// use processor.processedTsWatermark instead of the lastTsNs from the most recent job
 		now := time.Now().UnixNano()
-		glog.V(0).Infof("sync %s to %s progressed to %v %0.2f/sec", sourceFiler, targetFiler, time.Unix(0, lastTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
+		glog.V(0).Infof("sync %s to %s progressed to %v %0.2f/sec", sourceFiler, targetFiler, time.Unix(0, processor.processedTsWatermark), float64(counter)/(float64(now-lastLogTsNs)/1e9))
 		lastLogTsNs = now
 		// collect synchronous offset
-		statsCollect.FilerSyncOffsetGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath).Set(float64(lastTsNs))
-		return setOffset(grpcDialOption, targetFiler, getSignaturePrefixByPath(sourcePath), sourceFilerSignature, lastTsNs)
+		statsCollect.FilerSyncOffsetGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath).Set(float64(processor.processedTsWatermark))
+		return setOffset(grpcDialOption, targetFiler, getSignaturePrefixByPath(sourcePath), sourceFilerSignature, processor.processedTsWatermark)
 	})
 
 	return pb.FollowMetadata(sourceFiler, grpcDialOption, clientName, clientId, clientEpoch,

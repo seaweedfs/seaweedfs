@@ -113,10 +113,7 @@ func runMaster(cmd *Command, args []string) bool {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
 	}
 
-	var masterWhiteList []string
-	if *m.whiteList != "" {
-		masterWhiteList = strings.Split(*m.whiteList, ",")
-	}
+	masterWhiteList := util.StringSplit(*m.whiteList, ",")
 	if *m.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
 		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
 	}

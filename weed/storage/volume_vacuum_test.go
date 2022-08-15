@@ -107,7 +107,6 @@ func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 
 		if infos[i-1] == nil {
 			t.Fatal("not found file", i)
-			continue
 		}
 
 		if infos[i-1].size == 0 {

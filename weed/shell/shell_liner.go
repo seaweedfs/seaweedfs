@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"golang.org/x/exp/slices"
 	"io"
@@ -100,7 +101,7 @@ https://cloud.seaweedfs.com/ui/%s
 			return
 		}
 
-		for _, c := range strings.Split(cmd, ";") {
+		for _, c := range util.StringSplit(cmd, ";") {
 			if processEachCmd(reg, c, commandEnv) {
 				return
 			}

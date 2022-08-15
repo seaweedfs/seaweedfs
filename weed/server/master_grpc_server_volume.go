@@ -85,8 +85,9 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 		var locations []*master_pb.Location
 		for _, loc := range result.Locations {
 			locations = append(locations, &master_pb.Location{
-				Url:       loc.Url,
-				PublicUrl: loc.PublicUrl,
+				Url:        loc.Url,
+				PublicUrl:  loc.PublicUrl,
+				DataCenter: loc.DataCenter,
 			})
 		}
 		var auth string
@@ -165,17 +166,19 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			var replicas []*master_pb.Location
 			for _, r := range dnList.Rest() {
 				replicas = append(replicas, &master_pb.Location{
-					Url:       r.Url(),
-					PublicUrl: r.PublicUrl,
-					GrpcPort:  uint32(r.GrpcPort),
+					Url:        r.Url(),
+					PublicUrl:  r.PublicUrl,
+					GrpcPort:   uint32(r.GrpcPort),
+					DataCenter: r.GetDataCenterId(),
 				})
 			}
 			return &master_pb.AssignResponse{
 				Fid: fid,
 				Location: &master_pb.Location{
-					Url:       dn.Url(),
-					PublicUrl: dn.PublicUrl,
-					GrpcPort:  uint32(dn.GrpcPort),
+					Url:        dn.Url(),
+					PublicUrl:  dn.PublicUrl,
+					GrpcPort:   uint32(dn.GrpcPort),
+					DataCenter: dn.GetDataCenterId(),
 				},
 				Count:    count,
 				Auth:     string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
@@ -253,8 +256,9 @@ func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.Looku
 		var locations []*master_pb.Location
 		for _, dn := range shardLocations {
 			locations = append(locations, &master_pb.Location{
-				Url:       string(dn.Id()),
-				PublicUrl: dn.PublicUrl,
+				Url:        string(dn.Id()),
+				PublicUrl:  dn.PublicUrl,
+				DataCenter: dn.GetDataCenterId(),
 			})
 		}
 		resp.ShardIdLocations = append(resp.ShardIdLocations, &master_pb.LookupEcVolumeResponse_EcShardIdLocation{

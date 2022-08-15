@@ -115,9 +115,10 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 	if err = vg.grow(grpcDialOption, topo, vid, option, servers...); err == nil {
 		for _, server := range servers {
 			result = append(result, &master_pb.VolumeLocation{
-				Url:       server.Url(),
-				PublicUrl: server.PublicUrl,
-				NewVids:   []uint32{uint32(vid)},
+				Url:        server.Url(),
+				PublicUrl:  server.PublicUrl,
+				DataCenter: server.GetDataCenterId(),
+				NewVids:    []uint32{uint32(vid)},
 			})
 		}
 	}
