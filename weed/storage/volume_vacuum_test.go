@@ -60,10 +60,18 @@ func TestMakeDiff(t *testing.T) {
 	*/
 }
 
-func TestCompaction(t *testing.T) {
+func TestMemIndexCompaction(t *testing.T) {
+	testCompaction(t, NeedleMapInMemory)
+}
+
+func TestLDBIndexCompaction(t *testing.T) {
+	testCompaction(t, NeedleMapLevelDb)
+}
+
+func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 	dir := t.TempDir()
 
-	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0)
+	v, err := NewVolume(dir, dir, "", 1, needleMapKind, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
@@ -90,7 +98,7 @@ func TestCompaction(t *testing.T) {
 
 	v.Close()
 
-	v, err = NewVolume(dir, dir, "", 1, NeedleMapInMemory, nil, nil, 0, 0)
+	v, err = NewVolume(dir, dir, "", 1, needleMapKind, nil, nil, 0, 0)
 	if err != nil {
 		t.Fatalf("volume reloading: %v", err)
 	}
