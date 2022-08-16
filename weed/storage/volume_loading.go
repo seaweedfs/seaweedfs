@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"os"
+	"reflect"
 
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/errors"
@@ -151,7 +152,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					WriteBuffer:                   1 * 1024 * 1024, // default value is 4MiB
 					CompactionTableSizeMultiplier: 10,              // default value is 1
 				}
-				if v.tmpLnm != nil {
+				if v.tmpNm != nil {
 					glog.V(0).Infoln("updating leveldb index", v.FileName(".ldb"))
 					err = v.updateLevelDbCompactNeedleMap(indexFile, opts)
 				} else {
@@ -166,7 +167,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					WriteBuffer:                   2 * 1024 * 1024, // default value is 4MiB
 					CompactionTableSizeMultiplier: 10,              // default value is 1
 				}
-				if v.tmpLnm != nil {
+				if v.tmpNm != nil {
 					glog.V(0).Infoln("updating leveldb medium index", v.FileName(".ldb"))
 					err = v.updateLevelDbCompactNeedleMap(indexFile, opts)
 				} else {
@@ -181,7 +182,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					WriteBuffer:                   4 * 1024 * 1024, // default value is 4MiB
 					CompactionTableSizeMultiplier: 10,              // default value is 1
 				}
-				if v.tmpLnm != nil {
+				if v.tmpNm != nil {
 					glog.V(0).Infoln("updating leveldb large index", v.FileName(".ldb"))
 					err = v.updateLevelDbCompactNeedleMap(indexFile, opts)
 				} else {
@@ -209,19 +210,26 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 }
 
 func (v *Volume) updateMemCompactNeedleMap(indexFile *os.File) error {
-	v.tmpNm.indexFile = indexFile
+	if v.nm != nil {
+		v.nm.Close()
+		v.nm = nil
+	}
+	defer func() {
+		if v.tmpNm != nil {
+			v.tmpNm.Close()
+			v.tmpNm = nil
+		}
+	}()
+	nm := reflect.ValueOf(v.tmpNm).Interface().(*NeedleMap)
+	nm.indexFile = indexFile
 	stat, err := indexFile.Stat()
 	if err != nil {
 		glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
 		indexFile.Close()
 		return err
 	}
-	v.tmpNm.indexFileOffset = stat.Size()
-	if v.nm != nil {
-		v.nm.Close()
-		v.nm = nil
-	}
-	v.nm = v.tmpNm
+	nm.indexFileOffset = stat.Size()
+	v.nm = nm
 	v.tmpNm = nil
 	return nil
 }
@@ -231,8 +239,15 @@ func (v *Volume) updateLevelDbCompactNeedleMap(indexFile *os.File, opts *opt.Opt
 		v.nm.Close()
 		v.nm = nil
 	}
+	defer func() {
+		if v.tmpNm != nil {
+			v.tmpNm.Close()
+			v.tmpNm = nil
+		}
+	}()
+	nm := reflect.ValueOf(v.tmpNm).Interface().(*LevelDbNeedleMap)
 	levelDbFile := v.FileName(".ldb")
-	v.tmpLnm.indexFile = indexFile
+	nm.indexFile = indexFile
 	err := os.RemoveAll(levelDbFile)
 	if err != nil {
 		return err
@@ -258,11 +273,11 @@ func (v *Volume) updateLevelDbCompactNeedleMap(indexFile *os.File, opts *opt.Opt
 		db.Close()
 		return e
 	}
-	v.tmpLnm.indexFileOffset = stat.Size()
-	v.tmpLnm.recordCount = uint64(stat.Size() / types.NeedleMapEntrySize)
-	v.tmpLnm.db = db
+	nm.indexFileOffset = stat.Size()
+	nm.recordCount = uint64(stat.Size() / types.NeedleMapEntrySize)
+	nm.db = db
 
-	v.nm = v.tmpLnm
-	v.tmpLnm = nil
+	v.nm = nm
+	v.tmpNm = nil
 	return e
 }

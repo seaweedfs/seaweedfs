@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"runtime"
 	"time"
 
@@ -346,7 +347,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 	}
 
 	if v.needleMapKind == NeedleMapInMemory {
-		tmpNm := v.tmpNm
+		tmpNm := reflect.ValueOf(v.tmpNm).Interface().(*NeedleMap)
 		_, e := v.doMemLoading(idx, uint64(idxSize)/types.NeedleMapEntrySize, tmpNm)
 		return e
 	} else {
@@ -355,7 +356,8 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		if e != nil {
 			return e
 		}
-		mm := v.tmpLnm.mapMetric
+		tmpNm := reflect.ValueOf(v.tmpNm).Interface().(*LevelDbNeedleMap)
+		mm := tmpNm.mapMetric
 		var bf *boom.BloomFilter
 		buf := make([]byte, NeedleIdSize)
 		err = ReverseWalkIndexFile(idx, uint64(idxSize)/types.NeedleMapEntrySize, func(entryCount int64) {
@@ -536,11 +538,12 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 		return err
 	}
 	defer indexFile.Close()
+	if v.tmpNm != nil {
+		v.tmpNm.Close()
+		v.tmpNm = nil
+	}
 	if v.needleMapKind == NeedleMapInMemory {
-		if v.tmpNm != nil {
-			v.tmpNm.Close()
-			v.tmpNm = nil
-		}
+
 		nm := &NeedleMap{
 			m: needle_map.NewCompactMap(),
 		}
@@ -548,10 +551,6 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 		v.tmpNm, err = v.doMemLoading(indexFile, 0, nm)
 		return err
 	} else {
-		if v.tmpLnm != nil {
-			v.tmpLnm.Close()
-			v.tmpLnm = nil
-		}
 		dbFileName := v.FileName(".ldb")
 		dbFileNameCopy := v.FileName(".cpldb")
 		m := &LevelDbNeedleMap{dbFileName: dbFileName}
@@ -565,7 +564,7 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 			return indexLoadError
 		}
 		m.mapMetric = *mm
-		v.tmpLnm = m
+		v.tmpNm = m
 	}
 	return
 }
