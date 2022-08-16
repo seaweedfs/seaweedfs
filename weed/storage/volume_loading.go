@@ -140,7 +140,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					glog.V(0).Infof("updating memory compact index %s ", v.FileName(".idx"))
 					err = v.updateMemCompactNeedleMap(indexFile)
 				} else {
-					glog.V(0).Infoln("loading index", v.FileName(".idx"), "to memory")
+					glog.V(0).Infoln("loading memory index", v.FileName(".idx"), "to memory")
 					if v.nm, err = LoadCompactNeedleMap(indexFile); err != nil {
 						glog.V(0).Infof("loading index %s to memory error: %v", v.FileName(".idx"), err)
 					}
@@ -152,10 +152,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					CompactionTableSizeMultiplier: 10,              // default value is 1
 				}
 				if v.tmpLnm != nil {
-					glog.V(0).Infoln("updating compact leveldb ", v.FileName(".ldb"))
+					glog.V(0).Infoln("updating leveldb index", v.FileName(".ldb"))
 					err = v.updateLevelDbCompactNeedleMap(indexFile, opts)
 				} else {
-					glog.V(0).Infoln("loading leveldb", v.FileName(".ldb"))
+					glog.V(0).Infoln("loading leveldb index", v.FileName(".ldb"))
 					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts); err != nil {
 						glog.V(0).Infof("loading leveldb %s error: %v", v.FileName(".ldb"), err)
 					}
@@ -167,10 +167,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					CompactionTableSizeMultiplier: 10,              // default value is 1
 				}
 				if v.tmpLnm != nil {
-					glog.V(0).Infoln("updating compact leveldb medium", v.FileName(".ldb"))
+					glog.V(0).Infoln("updating leveldb medium index", v.FileName(".ldb"))
 					err = v.updateLevelDbCompactNeedleMap(indexFile, opts)
 				} else {
-					glog.V(0).Infoln("loading leveldb medium", v.FileName(".ldb"))
+					glog.V(0).Infoln("loading leveldb medium index", v.FileName(".ldb"))
 					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts); err != nil {
 						glog.V(0).Infof("loading leveldb %s error: %v", v.FileName(".ldb"), err)
 					}
@@ -182,10 +182,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					CompactionTableSizeMultiplier: 10,              // default value is 1
 				}
 				if v.tmpLnm != nil {
-					glog.V(0).Infoln("updating compact leveldb large", v.FileName(".ldb"))
+					glog.V(0).Infoln("updating leveldb large index", v.FileName(".ldb"))
 					err = v.updateLevelDbCompactNeedleMap(indexFile, opts)
 				} else {
-					glog.V(0).Infoln("loading leveldb large", v.FileName(".ldb"))
+					glog.V(0).Infoln("loading leveldb large index", v.FileName(".ldb"))
 					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts); err != nil {
 						glog.V(0).Infof("loading leveldb %s error: %v", v.FileName(".ldb"), err)
 					}

@@ -180,7 +180,7 @@ func (v *Volume) cleanupCompact() error {
 
 	e1 := os.Remove(v.FileName(".cpd"))
 	e2 := os.Remove(v.FileName(".cpx"))
-	e3 := os.Remove(v.FileName(".cpldb"))
+	e3 := os.RemoveAll(v.FileName(".cpldb"))
 	if e1 != nil && !os.IsNotExist(e1) {
 		return e1
 	}
@@ -570,6 +570,7 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 	return
 }
 
+// copied from doLoading()
 func (v *Volume) doMemLoading(file *os.File, startFrom uint64, nm *NeedleMap) (*NeedleMap, error) {
 	glog.V(0).Infof("loading idx from offset %d for file: %s", startFrom, file.Name())
 	e := idx.WalkIndexFile(file, startFrom, func(key NeedleId, offset Offset, size Size) error {
@@ -593,6 +594,7 @@ func (v *Volume) doMemLoading(file *os.File, startFrom uint64, nm *NeedleMap) (*
 	return nm, e
 }
 
+// copied from generateLevelDbFile()
 func doLDBLoading(dbFileName string, startFrom uint64, indexFile *os.File) error {
 	glog.V(0).Infof("loading idx to leveldb from offset %d for file: %s", startFrom, indexFile.Name())
 	db, err := leveldb.OpenFile(dbFileName, nil)

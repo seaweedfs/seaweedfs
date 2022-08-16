@@ -90,8 +90,9 @@ func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 	speed := float64(v.ContentSize()) / time.Now().Sub(startTime).Seconds()
 	t.Logf("compaction speed: %.2f bytes/s", speed)
 
-	for i := 1; i <= afterCommitFileCount; i++ {
-		doSomeWritesDeletes(i+beforeCommitFileCount, v, t, infos)
+	// update & delete original objects, upload & delete new objects
+	for i := 1; i <= afterCommitFileCount+beforeCommitFileCount; i++ {
+		doSomeWritesDeletes(i, v, t, infos)
 	}
 
 	v.CommitCompact()
