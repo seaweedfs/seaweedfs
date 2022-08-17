@@ -38,9 +38,9 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 	}
 	stats.VolumeServerRequestCounter.WithLabelValues(r.Method).Inc()
 	start := time.Now()
-	defer func() {
+	defer func(start time.Time) {
 		stats.VolumeServerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
-	}()
+	}(start)
 	switch r.Method {
 	case "GET", "HEAD":
 		stats.ReadRequest()
