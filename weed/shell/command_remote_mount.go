@@ -9,7 +9,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"google.golang.org/protobuf/jsonpb"
 	"google.golang.org/protobuf/proto"
 	"io"
 	"os"
@@ -101,17 +100,7 @@ func listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (
 }
 
 func jsonPrintln(writer io.Writer, message proto.Message) error {
-	if message == nil {
-		return nil
-	}
-	m := jsonpb.Marshaler{
-		EmitDefaults: false,
-		Indent:       "  ",
-	}
-
-	err := m.Marshal(writer, message)
-	fmt.Fprintln(writer)
-	return err
+	return filer.ProtoToText(writer, message)
 }
 
 func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {

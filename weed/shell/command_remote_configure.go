@@ -9,7 +9,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"google.golang.org/protobuf/jsonpb"
 	"google.golang.org/protobuf/proto"
 	"io"
 	"regexp"
@@ -159,15 +158,8 @@ func (c *commandRemoteConfigure) listExistingRemoteStorages(commandEnv *CommandE
 		conf.TencentSecretKey = strings.Repeat("*", len(conf.TencentSecretKey))
 		conf.WasabiSecretKey = strings.Repeat("*", len(conf.WasabiSecretKey))
 
-		m := jsonpb.Marshaler{
-			EmitDefaults: false,
-			Indent:       "  ",
-		}
+		return filer.ProtoToText(writer, conf)
 
-		err := m.Marshal(writer, conf)
-		fmt.Fprintln(writer)
-
-		return err
 	})
 
 }

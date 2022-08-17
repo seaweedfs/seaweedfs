@@ -2,8 +2,7 @@ package shell
 
 import (
 	"fmt"
-	"golang.org/x/exp/slices"
-	"google.golang.org/protobuf/jsonpb"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"google.golang.org/protobuf/proto"
 	"io"
 
@@ -50,22 +49,7 @@ func (c *commandFsMetaCat) Do(args []string, commandEnv *CommandEnv, writer io.W
 			return err
 		}
 
-		m := jsonpb.Marshaler{
-			EmitDefaults: true,
-			Indent:       "  ",
-		}
-		slices.SortFunc(respLookupEntry.Entry.Chunks, func(a, b *filer_pb.FileChunk) bool {
-			if a.Offset == b.Offset {
-				return a.Mtime < b.Mtime
-			}
-			return a.Offset < b.Offset
-		})
-		text, marshalErr := m.MarshalToString(respLookupEntry.Entry)
-		if marshalErr != nil {
-			return fmt.Errorf("marshal meta: %v", marshalErr)
-		}
-
-		fmt.Fprintf(writer, "%s\n", text)
+		filer.ProtoToText(writer, respLookupEntry.Entry)
 
 		bytes, _ := proto.Marshal(respLookupEntry.Entry)
 		gzippedBytes, _ := util.GzipData(bytes)

@@ -8,7 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
-	"google.golang.org/protobuf/jsonpb"
+	jsonpb "google.golang.org/protobuf/encoding/protojson"
 	"time"
 )
 
@@ -60,7 +60,7 @@ func (broker *MessageQueueBroker) readSegmentOnFiler(segment *mq.Segment) (info 
 
 		// parse into filer conf object
 		info = &mq_pb.SegmentInfo{}
-		if err = jsonpb.Unmarshal(bytes.NewReader(data), info); err != nil {
+		if err = jsonpb.Unmarshal(data, info); err != nil {
 			return err
 		}
 		found = true
