@@ -7,7 +7,6 @@ import (
 
 	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
-	boom "github.com/tylertreat/BoomFilters"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -55,10 +54,10 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 			return
 		}
 	}
-	glog.V(0).Infof("Loading %s... , watermark: %d", dbFileName, GetWatermark(m.db))
+	glog.V(0).Infof("Loading %s... , watermark: %d", dbFileName, getWatermark(m.db))
 	m.recordCount = uint64(m.indexFileOffset / types.NeedleMapEntrySize)
 	watermark := (m.recordCount / watermarkBatchSize) * watermarkBatchSize
-	err = SetWatermark(m.db, watermark)
+	err = setWatermark(m.db, watermark)
 	if err != nil {
 		glog.Fatalf("set watermark for %s error: %s\n", dbFileName, err)
 		return
@@ -95,7 +94,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 	}
 	defer db.Close()
 
-	watermark := GetWatermark(db)
+	watermark := getWatermark(db)
 	if stat, err := indexFile.Stat(); err != nil {
 		glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
 		return err
@@ -148,13 +147,13 @@ func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 	return levelDbWrite(m.db, key, offset, size, watermark == 0, watermark)
 }
 
-func GetWatermark(db *leveldb.DB) uint64 {
+func getWatermark(db *leveldb.DB) uint64 {
 	data, err := db.Get(watermarkKey, nil)
 	if err != nil || len(data) != 8 {
 		glog.Warningf("get watermark from db error: %v, %d", err, len(data))
 		/*
 			if !strings.Contains(strings.ToLower(err.Error()), "not found") {
-				err = SetWatermark(db, 0)
+				err = setWatermark(db, 0)
 				if err != nil {
 					glog.Errorf("failed to set watermark: %v", err)
 				}
@@ -165,12 +164,12 @@ func GetWatermark(db *leveldb.DB) uint64 {
 	return util.BytesToUint64(data)
 }
 
-func SetWatermark(db *leveldb.DB, watermark uint64) error {
+func setWatermark(db *leveldb.DB, watermark uint64) error {
 	glog.V(3).Infof("set watermark %d", watermark)
 	var wmBytes = make([]byte, 8)
 	util.Uint64toBytes(wmBytes, watermark)
 	if err := db.Put(watermarkKey, wmBytes, nil); err != nil {
-		return fmt.Errorf("failed to SetWatermark: %v", err)
+		return fmt.Errorf("failed to setWatermark: %v", err)
 	}
 	return nil
 }
@@ -184,7 +183,7 @@ func levelDbWrite(db *leveldb.DB, key NeedleId, offset Offset, size Size, update
 	}
 	// set watermark
 	if updateWatermark {
-		return SetWatermark(db, watermark)
+		return setWatermark(db, watermark)
 	}
 	return nil
 }
@@ -304,7 +303,7 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 		return e
 	}
 	watermark := stat.Size() / watermarkBatchSize
-	e = SetWatermark(db, uint64(watermark))
+	e = setWatermark(db, uint64(watermark))
 	if e != nil {
 		return e
 	}
@@ -329,31 +328,7 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 		}
 		m.mapMetric = *mm
 	} else {
-		var bf *boom.BloomFilter
-		buf := make([]byte, NeedleIdSize)
-		err = ReverseWalkIndexFile(indexFile, startFrom, func(entryCount int64) {
-			bf = boom.NewBloomFilter(uint(entryCount), 0.001)
-		}, func(key NeedleId, offset Offset, size Size) error {
-
-			mm.MaybeSetMaxFileKey(key)
-			NeedleIdToBytes(buf, key)
-			if size.IsValid() {
-				mm.FileByteCounter += uint64(size)
-			}
-
-			if !bf.TestAndAdd(buf) {
-				mm.FileCounter++
-			} else {
-				// deleted file
-				mm.DeletionCounter++
-				if size.IsValid() {
-					// previously already deleted file
-					mm.DeletionByteCounter += uint64(size)
-				}
-			}
-			return nil
-		})
-		return err
+		return NeedleMapMetricFromIndexFile(indexFile, &mm, startFrom)
 	}
 	return nil
 }
