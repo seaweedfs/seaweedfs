@@ -2,6 +2,7 @@ package storage
 
 import (
 	"math/rand"
+	"reflect"
 	"testing"
 	"time"
 
@@ -96,7 +97,16 @@ func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 	}
 
 	v.CommitCompact()
-
+	if needleMapKind == NeedleMapLevelDb {
+		nm := reflect.ValueOf(v.nm).Interface().(*LevelDbNeedleMap)
+		watermark := getWatermark(nm.db)
+		realRecordCount := v.nm.IndexFileSize() / types.NeedleMapEntrySize
+		realWatermark := (nm.recordCount / watermarkBatchSize) * watermarkBatchSize
+		t.Logf("watermark from levelDB: %d, realWatermark: %d, nm.recordCount: %d, realRecordCount:%d", watermark, realWatermark, nm.recordCount, realRecordCount)
+		if realWatermark != watermark {
+			t.Fatalf("testing watermark failed")
+		}
+	}
 	v.Close()
 
 	v, err = NewVolume(dir, dir, "", 1, needleMapKind, nil, nil, 0, 0)

@@ -278,6 +278,15 @@ func (m *LevelDbNeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *
 	m.recordCount = uint64(stat.Size() / types.NeedleMapEntrySize)
 	m.db = db
 
+	//set watermark
+	watermark := (m.recordCount / watermarkBatchSize) * watermarkBatchSize
+	err = setWatermark(db, uint64(watermark))
+	if err != nil {
+		glog.Fatalf("setting watermark failed %s: %v", indexFile.Name(), err)
+		indexFile.Close()
+		db.Close()
+		return err
+	}
 	v.nm = m
 	v.tmpNm = nil
 	return e
@@ -327,17 +336,5 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 	} else {
 		return NeedleMapMetricFromIndexFile(indexFile, &mm, startFrom)
 	}
-
-	//set watermark
-	stat, err := indexFile.Stat()
-	if err != nil {
-		return err
-	}
-	watermark := (stat.Size() / types.NeedleMapEntrySize / watermarkBatchSize) * watermarkBatchSize
-	err = setWatermark(db, uint64(watermark))
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
