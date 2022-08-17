@@ -3,12 +3,12 @@ package broker
 import (
 	"bytes"
 	"fmt"
-	"github.com/golang/protobuf/jsonpb"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mq"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"google.golang.org/protobuf/jsonpb"
 	"time"
 )
 

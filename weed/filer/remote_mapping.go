@@ -2,11 +2,11 @@ package filer
 
 import (
 	"fmt"
-	"github.com/golang/protobuf/proto"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress) (mappings *remote_pb.RemoteStorageMapping, readErr error) {

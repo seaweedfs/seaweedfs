@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/golang/protobuf/jsonpb"
-	"github.com/golang/protobuf/proto"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"google.golang.org/protobuf/jsonpb"
+	"google.golang.org/protobuf/proto"
 )
 
 func ParseS3ConfigurationFromBytes[T proto.Message](content []byte, config T) error {

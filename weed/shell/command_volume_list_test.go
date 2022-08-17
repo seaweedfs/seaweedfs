@@ -2,9 +2,9 @@ package shell
 
 import (
 	_ "embed"
-	"github.com/golang/protobuf/proto"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/proto"
 	"strconv"
 	"strings"
 	"testing"

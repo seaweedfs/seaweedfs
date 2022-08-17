@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/golang/protobuf/proto"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )

@@ -5,7 +5,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"testing"
 
-	"github.com/golang/protobuf/jsonpb"
+	"google.golang.org/protobuf/jsonpb"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )

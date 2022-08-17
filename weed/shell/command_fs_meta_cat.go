@@ -2,9 +2,9 @@ package shell
 
 import (
 	"fmt"
-	"github.com/golang/protobuf/jsonpb"
-	"github.com/golang/protobuf/proto"
 	"golang.org/x/exp/slices"
+	"google.golang.org/protobuf/jsonpb"
+	"google.golang.org/protobuf/proto"
 	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"

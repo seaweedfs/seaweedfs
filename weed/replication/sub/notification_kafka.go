@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-	"github.com/golang/protobuf/proto"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/protobuf/proto"
 )
 
 func init() {

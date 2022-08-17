@@ -9,11 +9,11 @@ import (
 	"google.golang.org/grpc"
 	"io"
 
-	"github.com/golang/protobuf/jsonpb"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/viant/ptrie"
+	"google.golang.org/protobuf/jsonpb"
 )
 
 const (

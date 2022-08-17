@@ -2,8 +2,8 @@ package command
 
 import (
 	"fmt"
-	"github.com/golang/protobuf/jsonpb"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"google.golang.org/protobuf/jsonpb"
 	"os"
 	"path/filepath"
 	"strings"
