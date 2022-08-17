@@ -283,41 +283,38 @@ func (m *LevelDbNeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *
 	return e
 }
 
-func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startFrom uint64) error {
+func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startFrom uint64) (err error) {
 	glog.V(0).Infof("loading idx to leveldb from offset %d for file: %s", startFrom, indexFile.Name())
 	dbFileName := v.FileName(".cpldb")
-	db, err := leveldb.OpenFile(dbFileName, nil)
-	if err != nil {
-		if errors.IsCorrupted(err) {
-			db, err = leveldb.RecoverFile(dbFileName, nil)
+	db, dbErr := leveldb.OpenFile(dbFileName, nil)
+	defer func() {
+		if dbErr == nil {
+			db.Close()
 		}
 		if err != nil {
-			return err
+			os.RemoveAll(dbFileName)
+		}
+
+	}()
+	if dbErr != nil {
+		if errors.IsCorrupted(err) {
+			db, dbErr = leveldb.RecoverFile(dbFileName, nil)
+		}
+		if dbErr != nil {
+			return dbErr
 		}
 	}
-	defer db.Close()
 
-	//set watermark
-	stat, e := indexFile.Stat()
-	if e != nil {
-		return e
-	}
-	watermark := stat.Size() / watermarkBatchSize
-	e = setWatermark(db, uint64(watermark))
-	if e != nil {
-		return e
-	}
-
-	e = idx.WalkIndexFile(indexFile, 0, func(key NeedleId, offset Offset, size Size) (err error) {
+	err = idx.WalkIndexFile(indexFile, 0, func(key NeedleId, offset Offset, size Size) (e error) {
 		if !offset.IsZero() && size.IsValid() {
-			err = levelDbWrite(db, key, offset, size, false, 0)
+			e = levelDbWrite(db, key, offset, size, false, 0)
 		} else {
-			err = levelDbDelete(db, key)
+			e = levelDbDelete(db, key)
 		}
-		return err
-	})
-	if e != nil {
 		return e
+	})
+	if err != nil {
+		return err
 	}
 
 	mm := m.mapMetric
@@ -330,5 +327,17 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 	} else {
 		return NeedleMapMetricFromIndexFile(indexFile, &mm, startFrom)
 	}
+
+	//set watermark
+	stat, err := indexFile.Stat()
+	if err != nil {
+		return err
+	}
+	watermark := (stat.Size() / types.NeedleMapEntrySize / watermarkBatchSize) * watermarkBatchSize
+	err = setWatermark(db, uint64(watermark))
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
