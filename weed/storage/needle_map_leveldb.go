@@ -7,6 +7,7 @@ import (
 
 	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
+	boom "github.com/tylertreat/BoomFilters"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -19,7 +20,7 @@ import (
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
-//mark it every watermarkBatchSize operations
+// mark it every watermarkBatchSize operations
 const watermarkBatchSize = 10000
 
 var watermarkKey = []byte("idx_entry_watermark")
@@ -234,4 +235,125 @@ func (m *LevelDbNeedleMap) Destroy() error {
 	m.Close()
 	os.Remove(m.indexFile.Name())
 	return os.RemoveAll(m.dbFileName)
+}
+
+func (m *LevelDbNeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *opt.Options) error {
+	if v.nm != nil {
+		v.nm.Close()
+		v.nm = nil
+	}
+	defer func() {
+		if v.tmpNm != nil {
+			v.tmpNm.Close()
+			v.tmpNm = nil
+		}
+	}()
+	levelDbFile := v.FileName(".ldb")
+	m.indexFile = indexFile
+	err := os.RemoveAll(levelDbFile)
+	if err != nil {
+		return err
+	}
+	if err = os.Rename(v.FileName(".cpldb"), levelDbFile); err != nil {
+		return fmt.Errorf("rename %s: %v", levelDbFile, err)
+	}
+
+	db, err := leveldb.OpenFile(levelDbFile, opts)
+	if err != nil {
+		if errors.IsCorrupted(err) {
+			db, err = leveldb.RecoverFile(levelDbFile, opts)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	stat, e := indexFile.Stat()
+	if e != nil {
+		glog.Fatalf("stat file %s: %v", indexFile.Name(), e)
+		indexFile.Close()
+		db.Close()
+		return e
+	}
+	m.indexFileOffset = stat.Size()
+	m.recordCount = uint64(stat.Size() / types.NeedleMapEntrySize)
+	m.db = db
+
+	v.nm = m
+	v.tmpNm = nil
+	return e
+}
+
+func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startFrom uint64) error {
+	glog.V(0).Infof("loading idx to leveldb from offset %d for file: %s", startFrom, indexFile.Name())
+	dbFileName := v.FileName(".cpldb")
+	db, err := leveldb.OpenFile(dbFileName, nil)
+	if err != nil {
+		if errors.IsCorrupted(err) {
+			db, err = leveldb.RecoverFile(dbFileName, nil)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	defer db.Close()
+
+	//set watermark
+	stat, e := indexFile.Stat()
+	if e != nil {
+		return e
+	}
+	watermark := stat.Size() / watermarkBatchSize
+	e = SetWatermark(db, uint64(watermark))
+	if e != nil {
+		return e
+	}
+
+	e = idx.WalkIndexFile(indexFile, 0, func(key NeedleId, offset Offset, size Size) (err error) {
+		if !offset.IsZero() && size.IsValid() {
+			err = levelDbWrite(db, key, offset, size, false, 0)
+		} else {
+			err = levelDbDelete(db, key)
+		}
+		return err
+	})
+	if e != nil {
+		return e
+	}
+
+	mm := m.mapMetric
+	if mm == (mapMetric{}) {
+		mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)
+		if indexLoadError != nil {
+			return indexLoadError
+		}
+		m.mapMetric = *mm
+	} else {
+		var bf *boom.BloomFilter
+		buf := make([]byte, NeedleIdSize)
+		err = ReverseWalkIndexFile(indexFile, startFrom, func(entryCount int64) {
+			bf = boom.NewBloomFilter(uint(entryCount), 0.001)
+		}, func(key NeedleId, offset Offset, size Size) error {
+
+			mm.MaybeSetMaxFileKey(key)
+			NeedleIdToBytes(buf, key)
+			if size.IsValid() {
+				mm.FileByteCounter += uint64(size)
+			}
+
+			if !bf.TestAndAdd(buf) {
+				mm.FileCounter++
+			} else {
+				// deleted file
+				mm.DeletionCounter++
+				if size.IsValid() {
+					// previously already deleted file
+					mm.DeletionByteCounter += uint64(size)
+				}
+			}
+			return nil
+		})
+		return err
+	}
+	return nil
 }

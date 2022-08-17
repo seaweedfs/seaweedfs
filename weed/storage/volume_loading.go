@@ -3,10 +3,7 @@ package storage
 import (
 	"fmt"
 	"os"
-	"reflect"
 
-	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -14,7 +11,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -139,7 +135,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			case NeedleMapInMemory:
 				if v.tmpNm != nil {
 					glog.V(0).Infof("updating memory compact index %s ", v.FileName(".idx"))
-					err = v.updateMemCompactNeedleMap(indexFile)
+					err = v.tmpNm.UpdateNeedleMap(v, indexFile, nil)
 				} else {
 					glog.V(0).Infoln("loading memory index", v.FileName(".idx"), "to memory")
 					if v.nm, err = LoadCompactNeedleMap(indexFile); err != nil {
@@ -154,7 +150,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				}
 				if v.tmpNm != nil {
 					glog.V(0).Infoln("updating leveldb index", v.FileName(".ldb"))
-					err = v.updateLevelDbCompactNeedleMap(indexFile, opts)
+					err = v.tmpNm.UpdateNeedleMap(v, indexFile, opts)
 				} else {
 					glog.V(0).Infoln("loading leveldb index", v.FileName(".ldb"))
 					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts); err != nil {
@@ -169,7 +165,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				}
 				if v.tmpNm != nil {
 					glog.V(0).Infoln("updating leveldb medium index", v.FileName(".ldb"))
-					err = v.updateLevelDbCompactNeedleMap(indexFile, opts)
+					err = v.tmpNm.UpdateNeedleMap(v, indexFile, opts)
 				} else {
 					glog.V(0).Infoln("loading leveldb medium index", v.FileName(".ldb"))
 					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts); err != nil {
@@ -184,7 +180,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				}
 				if v.tmpNm != nil {
 					glog.V(0).Infoln("updating leveldb large index", v.FileName(".ldb"))
-					err = v.updateLevelDbCompactNeedleMap(indexFile, opts)
+					err = v.tmpNm.UpdateNeedleMap(v, indexFile, opts)
 				} else {
 					glog.V(0).Infoln("loading leveldb large index", v.FileName(".ldb"))
 					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts); err != nil {
@@ -207,77 +203,4 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	}
 
 	return err
-}
-
-func (v *Volume) updateMemCompactNeedleMap(indexFile *os.File) error {
-	if v.nm != nil {
-		v.nm.Close()
-		v.nm = nil
-	}
-	defer func() {
-		if v.tmpNm != nil {
-			v.tmpNm.Close()
-			v.tmpNm = nil
-		}
-	}()
-	nm := reflect.ValueOf(v.tmpNm).Interface().(*NeedleMap)
-	nm.indexFile = indexFile
-	stat, err := indexFile.Stat()
-	if err != nil {
-		glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
-		indexFile.Close()
-		return err
-	}
-	nm.indexFileOffset = stat.Size()
-	v.nm = nm
-	v.tmpNm = nil
-	return nil
-}
-
-func (v *Volume) updateLevelDbCompactNeedleMap(indexFile *os.File, opts *opt.Options) error {
-	if v.nm != nil {
-		v.nm.Close()
-		v.nm = nil
-	}
-	defer func() {
-		if v.tmpNm != nil {
-			v.tmpNm.Close()
-			v.tmpNm = nil
-		}
-	}()
-	nm := reflect.ValueOf(v.tmpNm).Interface().(*LevelDbNeedleMap)
-	levelDbFile := v.FileName(".ldb")
-	nm.indexFile = indexFile
-	err := os.RemoveAll(levelDbFile)
-	if err != nil {
-		return err
-	}
-	if err = os.Rename(v.FileName(".cpldb"), levelDbFile); err != nil {
-		return fmt.Errorf("rename %s: %v", levelDbFile, err)
-	}
-
-	db, err := leveldb.OpenFile(levelDbFile, opts)
-	if err != nil {
-		if errors.IsCorrupted(err) {
-			db, err = leveldb.RecoverFile(levelDbFile, opts)
-		}
-		if err != nil {
-			return err
-		}
-	}
-
-	stat, e := indexFile.Stat()
-	if e != nil {
-		glog.Fatalf("stat file %s: %v", indexFile.Name(), e)
-		indexFile.Close()
-		db.Close()
-		return e
-	}
-	nm.indexFileOffset = stat.Size()
-	nm.recordCount = uint64(stat.Size() / types.NeedleMapEntrySize)
-	nm.db = db
-
-	v.nm = nm
-	v.tmpNm = nil
-	return e
 }
