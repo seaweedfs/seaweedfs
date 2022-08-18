@@ -457,6 +457,11 @@ filer:
     enableAuth: false
     skipAuthSecretCreation: false
     auditLogConfig: {}
+    # Set credentials if needed
+    # adminAccessKey: ""
+    # adminSecretKey: ""
+    # readAccessKey: ""
+    # readSecretKey: ""
 
 s3:
   enabled: false
@@ -476,6 +481,11 @@ s3:
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
   skipAuthSecretCreation: false
+  # Set credentials if needed
+  # adminAccessKey: ""
+  # adminSecretKey: ""
+  # readAccessKey: ""
+  # readSecretKey: ""
   auditLogConfig: {}
 
   # Suffix of the host name, {bucket}.{domainName}
