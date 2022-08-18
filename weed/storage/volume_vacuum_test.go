@@ -97,16 +97,28 @@ func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 	}
 
 	v.CommitCompact()
+	realRecordCount := v.nm.IndexFileSize() / types.NeedleMapEntrySize
 	if needleMapKind == NeedleMapLevelDb {
 		nm := reflect.ValueOf(v.nm).Interface().(*LevelDbNeedleMap)
+		mm := nm.mapMetric
 		watermark := getWatermark(nm.db)
-		realRecordCount := v.nm.IndexFileSize() / types.NeedleMapEntrySize
 		realWatermark := (nm.recordCount / watermarkBatchSize) * watermarkBatchSize
-		t.Logf("watermark from levelDB: %d, realWatermark: %d, nm.recordCount: %d, realRecordCount:%d", watermark, realWatermark, nm.recordCount, realRecordCount)
+		t.Logf("watermark from levelDB: %d, realWatermark: %d, nm.recordCount: %d, realRecordCount:%d, deletedcount=%d, fileCount=%d, deletedcount:%d", watermark, realWatermark, nm.recordCount, realRecordCount, mm.DeletedCount(), mm.FileCount(), v.DeletedCount())
 		if realWatermark != watermark {
 			t.Fatalf("testing watermark failed")
 		}
+		/* The statistics methord for file count is different between memory and leveldb index, which is confusing
+		// So the following check can be used in leveldb but not on memory.
+		if realRecordCount != (uint64(mm.FileCount()) + uint64(mm.DeletedCount())) {
+			t.Fatalf("testing metric failed")
+		}
+		*/
+	} else {
+		nm := reflect.ValueOf(v.nm).Interface().(*NeedleMap)
+		mm := nm.mapMetric
+		t.Logf("realRecordCount:%d, mm.FileCount():%d mm.DeletedCount():%d", realRecordCount, mm.FileCount(), mm.DeletedCount())
 	}
+
 	v.Close()
 
 	v, err = NewVolume(dir, dir, "", 1, needleMapKind, nil, nil, 0, 0)

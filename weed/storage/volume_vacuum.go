@@ -517,6 +517,8 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 		dbFileName := v.FileName(".ldb")
 		m := &LevelDbNeedleMap{dbFileName: dbFileName}
 		m.dbFileName = dbFileName
+		mm := &mapMetric{}
+		m.mapMetric = *mm
 		v.tmpNm = m
 		err = v.tmpNm.DoOffsetLoading(v, indexFile, 0)
 		if err != nil {

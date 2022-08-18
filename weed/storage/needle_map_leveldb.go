@@ -325,17 +325,6 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 	if err != nil {
 		return err
 	}
-
-	mm := m.mapMetric
-	if mm == (mapMetric{}) {
-		mmPointor, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)
-		if indexLoadError != nil {
-			err = indexLoadError
-			return err
-		}
-		m.mapMetric = *mmPointor
-	} else {
-		err = NeedleMapMetricFromIndexFile(indexFile, &mm, startFrom)
-	}
+	err = NeedleMapMetricFromIndexFile(indexFile, &m.mapMetric, startFrom)
 	return err
 }
