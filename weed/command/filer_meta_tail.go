@@ -2,7 +2,7 @@ package command
 
 import (
 	"fmt"
-	"github.com/golang/protobuf/jsonpb"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"os"
 	"path/filepath"
@@ -88,11 +88,8 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 		return false
 	}
 
-	jsonpbMarshaler := jsonpb.Marshaler{
-		EmitDefaults: false,
-	}
 	eachEntryFunc := func(resp *filer_pb.SubscribeMetadataResponse) error {
-		jsonpbMarshaler.Marshal(os.Stdout, resp)
+		filer.ProtoToText(os.Stdout, resp)
 		fmt.Fprintln(os.Stdout)
 		return nil
 	}

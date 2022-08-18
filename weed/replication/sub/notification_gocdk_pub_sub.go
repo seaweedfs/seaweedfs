@@ -5,7 +5,6 @@ package sub
 
 import (
 	"context"
-	"github.com/golang/protobuf/proto"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -13,6 +12,7 @@ import (
 	"gocloud.dev/pubsub"
 	_ "gocloud.dev/pubsub/awssnssqs"
 	"gocloud.dev/pubsub/rabbitpubsub"
+	"google.golang.org/protobuf/proto"
 	"net/url"
 	"os"
 	"path"

@@ -1,9 +1,9 @@
 package skiplist
 
 import (
-	"github.com/golang/protobuf/proto"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"golang.org/x/exp/slices"
+	"google.golang.org/protobuf/proto"
 	"strings"
 )
 

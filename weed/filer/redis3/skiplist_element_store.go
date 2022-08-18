@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"github.com/go-redis/redis/v8"
-	"github.com/golang/protobuf/proto"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util/skiplist"
+	"google.golang.org/protobuf/proto"
 )
 
 type SkipListElementStore struct {
