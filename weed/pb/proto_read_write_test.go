@@ -16,15 +16,15 @@ func TestJsonpMarshalUnmarshal(t *testing.T) {
 		FileSize:    12,
 	}
 
-	m := jsonpb.Marshaler{
-		EmitDefaults: true,
-		Indent:       "  ",
+	m := jsonpb.MarshalOptions{
+		EmitUnpopulated: true,
+		Indent:          "  ",
 	}
 
-	if text, err := m.MarshalToString(tv); err != nil {
+	if text, err := m.Marshal(tv); err != nil {
 		fmt.Printf("marshal eror: %v\n", err)
 	} else {
-		fmt.Printf("marshalled: %s\n", text)
+		fmt.Printf("marshalled: %s\n", string(text))
 	}
 
 	rawJson := `{
@@ -34,7 +34,7 @@ func TestJsonpMarshalUnmarshal(t *testing.T) {
 	}`
 
 	tv1 := &volume_server_pb.RemoteFile{}
-	if err := jsonpb.UnmarshalString(rawJson, tv1); err != nil {
+	if err := jsonpb.Unmarshal([]byte(rawJson), tv1); err != nil {
 		fmt.Printf("unmarshal error: %v\n", err)
 	}
 

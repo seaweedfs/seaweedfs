@@ -39,10 +39,10 @@ func TestProtoMarshalText(t *testing.T) {
 		DeleteChunks: true,
 	}
 
-	text := proto.MarshalTextString(notification)
+	text, _ := proto.Marshal(notification)
 
 	notification2 := &filer_pb.EventNotification{}
-	proto.UnmarshalText(text, notification2)
+	proto.Unmarshal(text, notification2)
 
 	if notification2.OldEntry.Chunks[0].SourceFileId != notification.OldEntry.Chunks[0].SourceFileId {
 		t.Fatalf("marshal/unmarshal error: %s", text)
