@@ -10,7 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func TestProtoMarshalText(t *testing.T) {
+func TestProtoMarshal(t *testing.T) {
 
 	oldEntry := &Entry{
 		FullPath: util.FullPath("/this/path/to"),
@@ -22,7 +22,7 @@ func TestProtoMarshalText(t *testing.T) {
 			TtlSec: 25,
 		},
 		Chunks: []*filer_pb.FileChunk{
-			&filer_pb.FileChunk{
+			{
 				FileId:       "234,2423423422",
 				Offset:       234234,
 				Size:         234,
@@ -48,6 +48,6 @@ func TestProtoMarshalText(t *testing.T) {
 		t.Fatalf("marshal/unmarshal error: %s", text)
 	}
 
-	println(text)
+	println(string(text))
 
 }
