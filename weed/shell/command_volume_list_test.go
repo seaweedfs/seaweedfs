@@ -2,12 +2,13 @@ package shell
 
 import (
 	_ "embed"
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"github.com/stretchr/testify/assert"
-	"google.golang.org/protobuf/proto"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
@@ -81,7 +82,7 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 		case "volume":
 			volumeLine := line[len("volume "):]
 			volume := &master_pb.VolumeInformationMessage{}
-			proto.UnmarshalText(volumeLine, volume)
+			proto.Unmarshal([]byte(volumeLine), volume)
 			disk.VolumeInfos = append(disk.VolumeInfos, volume)
 		}
 	}
