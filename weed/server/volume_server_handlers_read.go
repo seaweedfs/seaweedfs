@@ -143,7 +143,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	// glog.V(4).Infoln("read bytes", count, "error", err)
 	if err != nil || count < 0 {
 		glog.V(3).Infof("read %s isNormalVolume %v error: %v", r.URL.Path, hasVolume, err)
-		w.WriteHeader(http.StatusNotFound)
+		if err == storage.ErrorNotFound || err == storage.ErrorDeleted {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
 		return
 	}
 	if n.Cookie != cookie {
