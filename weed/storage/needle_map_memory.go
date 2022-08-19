@@ -70,6 +70,9 @@ func (nm *NeedleMap) Delete(key NeedleId, offset Offset) error {
 	return nm.appendToIndexFile(key, offset, TombstoneFileSize)
 }
 func (nm *NeedleMap) Close() {
+	if nm.indexFile == nil {
+		return
+	}
 	indexFileName := nm.indexFile.Name()
 	if err := nm.indexFile.Sync(); err != nil {
 		glog.Warningf("sync file %s failed, %v", indexFileName, err)
@@ -96,7 +99,6 @@ func (nm *NeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *opt.Op
 	stat, err := indexFile.Stat()
 	if err != nil {
 		glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
-		indexFile.Close()
 		return err
 	}
 	nm.indexFileOffset = stat.Size()

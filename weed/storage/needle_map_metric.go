@@ -91,10 +91,10 @@ func (mm *mapMetric) MaybeSetMaxFileKey(key NeedleId) {
 	}
 }
 
-func NeedleMapMetricFromIndexFile(r *os.File, mm *mapMetric, startFrom uint64) error {
+func NeedleMapMetricFromIndexFile(r *os.File, mm *mapMetric) error {
 	var bf *boom.BloomFilter
 	buf := make([]byte, NeedleIdSize)
-	err := reverseWalkIndexFile(r, startFrom, func(entryCount int64) {
+	err := reverseWalkIndexFile(r, func(entryCount int64) {
 		bf = boom.NewBloomFilter(uint(entryCount), 0.001)
 	}, func(key NeedleId, offset Offset, size Size) error {
 
@@ -121,11 +121,11 @@ func NeedleMapMetricFromIndexFile(r *os.File, mm *mapMetric, startFrom uint64) e
 
 func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
 	mm = &mapMetric{}
-	err = NeedleMapMetricFromIndexFile(r, mm, 0)
+	err = NeedleMapMetricFromIndexFile(r, mm)
 	return
 }
 
-func reverseWalkIndexFile(r *os.File, startFrom uint64, initFn func(entryCount int64), fn func(key NeedleId, offset Offset, size Size) error) error {
+func reverseWalkIndexFile(r *os.File, initFn func(entryCount int64), fn func(key NeedleId, offset Offset, size Size) error) error {
 	fi, err := r.Stat()
 	if err != nil {
 		return fmt.Errorf("file %s stat error: %v", r.Name(), err)
@@ -135,7 +135,7 @@ func reverseWalkIndexFile(r *os.File, startFrom uint64, initFn func(entryCount i
 		return fmt.Errorf("unexpected file %s size: %d", r.Name(), fileSize)
 	}
 
-	entryCount := fileSize/NeedleMapEntrySize - int64(startFrom)
+	entryCount := fileSize / NeedleMapEntrySize
 	initFn(entryCount)
 
 	batchSize := int64(1024 * 4)

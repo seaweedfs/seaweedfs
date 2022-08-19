@@ -215,12 +215,14 @@ func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
 }
 
 func (m *LevelDbNeedleMap) Close() {
-	indexFileName := m.indexFile.Name()
-	if err := m.indexFile.Sync(); err != nil {
-		glog.Warningf("sync file %s failed: %v", indexFileName, err)
-	}
-	if err := m.indexFile.Close(); err != nil {
-		glog.Warningf("close index file %s failed: %v", indexFileName, err)
+	if m.indexFile != nil {
+		indexFileName := m.indexFile.Name()
+		if err := m.indexFile.Sync(); err != nil {
+			glog.Warningf("sync file %s failed: %v", indexFileName, err)
+		}
+		if err := m.indexFile.Close(); err != nil {
+			glog.Warningf("close index file %s failed: %v", indexFileName, err)
+		}
 	}
 
 	if m.db != nil {
@@ -266,25 +268,21 @@ func (m *LevelDbNeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *
 			return err
 		}
 	}
+	m.db = db
 
 	stat, e := indexFile.Stat()
 	if e != nil {
 		glog.Fatalf("stat file %s: %v", indexFile.Name(), e)
-		indexFile.Close()
-		db.Close()
 		return e
 	}
 	m.indexFileOffset = stat.Size()
 	m.recordCount = uint64(stat.Size() / types.NeedleMapEntrySize)
-	m.db = db
 
 	//set watermark
 	watermark := (m.recordCount / watermarkBatchSize) * watermarkBatchSize
 	err = setWatermark(db, uint64(watermark))
 	if err != nil {
 		glog.Fatalf("setting watermark failed %s: %v", indexFile.Name(), err)
-		indexFile.Close()
-		db.Close()
 		return err
 	}
 	v.nm = m
@@ -325,6 +323,14 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 	if err != nil {
 		return err
 	}
-	err = NeedleMapMetricFromIndexFile(indexFile, &m.mapMetric, startFrom)
+
+	//reset mapMetric, because mapMetric cann't be updated incrementally due to BloomFilter
+	m.mapMetric.DeletionCounter = 0
+	m.mapMetric.FileCounter = 0
+	m.mapMetric.DeletionByteCounter = 0
+	m.mapMetric.FileByteCounter = 0
+	m.mapMetric.MaximumFileKey = 0
+
+	err = NeedleMapMetricFromIndexFile(indexFile, &m.mapMetric)
 	return err
 }

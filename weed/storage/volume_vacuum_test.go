@@ -86,6 +86,7 @@ func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 		doSomeWritesDeletes(i, v, t, infos)
 	}
 
+	deleteCount := v.DeletedCount()
 	startTime := time.Now()
 	v.Compact2(0, 0, nil)
 	speed := float64(v.ContentSize()) / time.Now().Sub(startTime).Seconds()
@@ -95,7 +96,6 @@ func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 	for i := 1; i <= afterCommitFileCount+beforeCommitFileCount; i++ {
 		doSomeWritesDeletes(i, v, t, infos)
 	}
-
 	v.CommitCompact()
 	realRecordCount := v.nm.IndexFileSize() / types.NeedleMapEntrySize
 	if needleMapKind == NeedleMapLevelDb {
@@ -103,16 +103,13 @@ func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 		mm := nm.mapMetric
 		watermark := getWatermark(nm.db)
 		realWatermark := (nm.recordCount / watermarkBatchSize) * watermarkBatchSize
-		t.Logf("watermark from levelDB: %d, realWatermark: %d, nm.recordCount: %d, realRecordCount:%d, deletedcount=%d, fileCount=%d, deletedcount:%d", watermark, realWatermark, nm.recordCount, realRecordCount, mm.DeletedCount(), mm.FileCount(), v.DeletedCount())
+		t.Logf("watermark from levelDB: %d, realWatermark: %d, nm.recordCount: %d, realRecordCount:%d, fileCount=%d, deletedcount:%d", watermark, realWatermark, nm.recordCount, realRecordCount, mm.FileCount(), v.DeletedCount())
 		if realWatermark != watermark {
 			t.Fatalf("testing watermark failed")
 		}
-		/* The statistics methord for file count is different between memory and leveldb index, which is confusing
-		// So the following check can be used in leveldb but not on memory.
-		if realRecordCount != (uint64(mm.FileCount()) + uint64(mm.DeletedCount())) {
+		if int(deleteCount+v.FileCount()+v.DeletedCount()) != beforeCommitFileCount+afterCommitFileCount*2 {
 			t.Fatalf("testing metric failed")
 		}
-		*/
 	} else {
 		nm := reflect.ValueOf(v.nm).Interface().(*NeedleMap)
 		mm := nm.mapMetric
