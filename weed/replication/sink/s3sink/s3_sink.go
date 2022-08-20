@@ -1,6 +1,7 @@
 package S3Sink
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -121,6 +122,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 	}
 
 	totalSize := filer.FileSize(entry)
+
 	chunkViews := filer.ViewFromChunks(s3sink.filerSource.LookupFileId, entry.Chunks, 0, int64(totalSize))
 
 	parts := make([]*s3.CompletedPart, len(chunkViews))
@@ -140,6 +142,17 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 		}(chunk, chunkIndex)
 	}
 	wg.Wait()
+
+	// for small files
+	if len(entry.Content) > 0 {
+		parts = make([]*s3.CompletedPart, 1)
+		if part, uploadErr := s3sink.doUploadPart(key, uploadId, 1, bytes.NewReader(entry.Content)); uploadErr != nil {
+			err = uploadErr
+			glog.Errorf("uploadPart: %v", uploadErr)
+		} else {
+			parts[0] = part
+		}
+	}
 
 	if err != nil {
 		s3sink.abortMultipartUpload(key, uploadId)
