@@ -161,7 +161,7 @@ func retriedUploadData(data []byte, option *UploadOption) (uploadResult *UploadR
 			uploadResult.RetryCount = i
 			return
 		} else {
-			glog.Warningf("uploading to %s: %v", option.UploadUrl, err)
+			glog.Warningf("uploading %d to %s: %v", i, option.UploadUrl, err)
 		}
 		time.Sleep(time.Millisecond * time.Duration(237*(i+1)))
 	}
