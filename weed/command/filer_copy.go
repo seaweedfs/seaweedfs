@@ -444,7 +444,6 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 	concurrentChunks := make(chan struct{}, *worker.options.concurrenctChunks)
 	var wg sync.WaitGroup
 	var uploadError error
-	var collection, replication string
 
 	fmt.Printf("uploading %s in %d chunks ...\n", fileName, chunkCount)
 	for i := int64(0); i < int64(chunkCount) && uploadError == nil; i++ {
@@ -485,12 +484,6 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 			}
 
 			targetUrl := "http://" + assignResult.Location.Url + "/" + assignResult.FileId
-			if collection == "" {
-				collection = assignResult.Collection
-			}
-			if replication == "" {
-				replication = assignResult.Replication
-			}
 
 			uploadOption := &operation.UploadOption{
 				UploadUrl:         targetUrl,
