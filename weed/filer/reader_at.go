@@ -129,7 +129,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 		if startOffset < chunk.LogicOffset {
 			gap := chunk.LogicOffset - startOffset
 			glog.V(4).Infof("zero [%d,%d)", startOffset, chunk.LogicOffset)
-			c.zero(p, startOffset-offset, gap)
+			zero(p, startOffset-offset, gap)
 			n += int(min(gap, remaining))
 			startOffset, remaining = chunk.LogicOffset, remaining-gap
 			if remaining <= 0 {
@@ -166,7 +166,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 			startOffset = max(startOffset-offset, startOffset-remaining-offset)
 		}
 		glog.V(4).Infof("zero2 [%d,%d) of file size %d bytes", startOffset, startOffset+delta, c.fileSize)
-		c.zero(p, startOffset, delta)
+		zero(p, startOffset, delta)
 		n += int(delta)
 	}
 
@@ -206,7 +206,7 @@ func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, next
 	return
 }
 
-func (c *ChunkReadAt) zero(buffer []byte, start, length int64) {
+func zero(buffer []byte, start, length int64) {
 	end := min(start+length, int64(len(buffer)))
 
 	// zero the bytes
