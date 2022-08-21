@@ -27,9 +27,9 @@ import (
 )
 
 type Option struct {
-	MountDirectory     string
+	filerIndex         int32 // align memory for atomic read/write
 	FilerAddresses     []pb.ServerAddress
-	filerIndex         int32
+	MountDirectory     string
 	GrpcDialOption     grpc.DialOption
 	FilerMountRootPath string
 	Collection         string
