@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -432,7 +431,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		f.bufWriter.FlushFunc = func(data []byte, offset int64) (flushErr error) {
 
 			var chunk *filer_pb.FileChunk
-			chunk, flushErr = f.saveDataAsChunk(bytes.NewReader(data), f.name, offset)
+			chunk, flushErr = f.saveDataAsChunk(util.NewBytesReader(data), f.name, offset)
 
 			if flushErr != nil {
 				return fmt.Errorf("%s upload result: %v", f.name, flushErr)
