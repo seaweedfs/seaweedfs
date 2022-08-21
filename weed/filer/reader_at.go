@@ -129,6 +129,10 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 		if startOffset < chunk.LogicOffset {
 			gap := int(chunk.LogicOffset - startOffset)
 			glog.V(4).Infof("zero [%d,%d)", startOffset, chunk.LogicOffset)
+			// fill the buffer with zeros for every gap
+			for o := startOffset - offset; o < startOffset-offset+min(int64(gap), remaining); o++ {
+				p[o] = 0
+			}
 			n += int(min(int64(gap), remaining))
 			startOffset, remaining = chunk.LogicOffset, remaining-int64(gap)
 			if remaining <= 0 {
@@ -154,10 +158,21 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 	// glog.V(4).Infof("doReadAt [%d,%d), n:%v, err:%v", offset, offset+int64(len(p)), n, err)
 
-	if err == nil && remaining > 0 && c.fileSize > startOffset {
-		delta := int(min(remaining, c.fileSize-startOffset))
-		glog.V(4).Infof("zero2 [%d,%d) of file size %d bytes", startOffset, startOffset+int64(delta), c.fileSize)
-		n += delta
+	// zero the remaining bytes if a gap exists at the end of the last chunk (or a fully sparse file)
+	if err == nil && remaining > 0 {
+		var delta int64
+		if c.fileSize > startOffset {
+			delta = min(remaining, c.fileSize-startOffset)
+			startOffset -= offset
+		} else {
+			delta = remaining
+			startOffset = max(startOffset-offset, startOffset-remaining-offset)
+		}
+		glog.V(4).Infof("zero2 [%d,%d) of file size %d bytes", startOffset, startOffset+delta, c.fileSize)
+		for o := startOffset; o < min(startOffset+delta, int64(len(p))); o++ {
+			p[o] = 0
+		}
+		n += int(delta)
 	}
 
 	if err == nil && offset+int64(len(p)) >= c.fileSize {
