@@ -90,7 +90,7 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	var rebuiltShardIds []uint32
 
 	for _, location := range vs.store.Locations {
-		_, _, existingShardCount, err := checkEcVolumeStatus(bName, location)
+		_, _, existingShardCount, err := checkEcVolumeStatus(baseFileName, location)
 		if err != nil {
 			return nil, err
 		}
