@@ -585,8 +585,7 @@ func detectMimeType(f *os.File) string {
 
 func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, err error) {
 
-	var finalFileId string
-	uploadResult, flushErr, _ := operation.UploadWithRetry(
+	finalFileId, uploadResult, flushErr, _ := operation.UploadWithRetry(
 		worker,
 		&filer_pb.AssignVolumeRequest{
 			Count:       1,
@@ -604,7 +603,6 @@ func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, off
 			PairMap:           nil,
 		},
 		func(host, fileId string) string {
-			finalFileId = fileId
 			return fmt.Sprintf("http://%s/%s", host, fileId)
 		},
 		reader,
