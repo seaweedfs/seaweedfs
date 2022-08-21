@@ -255,11 +255,11 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAsChunkFunctionType {
 
-	return func(reader io.Reader, name string, offset int64) (*filer_pb.FileChunk, string, string, error) {
+	return func(reader io.Reader, name string, offset int64) (*filer_pb.FileChunk, error) {
 		// assign one file id for one chunk
 		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(so)
 		if assignErr != nil {
-			return nil, "", "", assignErr
+			return nil, assignErr
 		}
 
 		// upload the chunk to the volume server
@@ -274,10 +274,10 @@ func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAs
 		}
 		uploadResult, uploadErr, _ := operation.Upload(reader, uploadOption)
 		if uploadErr != nil {
-			return nil, "", "", uploadErr
+			return nil, uploadErr
 		}
 
-		return uploadResult.ToPbFileChunk(fileId, offset), so.Collection, so.Replication, nil
+		return uploadResult.ToPbFileChunk(fileId, offset), nil
 	}
 }
 

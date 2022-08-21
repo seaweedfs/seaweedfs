@@ -15,7 +15,7 @@ import (
 
 func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFunctionType {
 
-	return func(reader io.Reader, filename string, offset int64) (chunk *filer_pb.FileChunk, collection, replication string, err error) {
+	return func(reader io.Reader, filename string, offset int64) (chunk *filer_pb.FileChunk, err error) {
 		var fileId, host string
 		var auth security.EncodedJwt
 
@@ -43,12 +43,11 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 				fileId, auth = resp.FileId, security.EncodedJwt(resp.Auth)
 				loc := resp.Location
 				host = wfs.AdjustedUrl(loc)
-				collection, replication = resp.Collection, resp.Replication
 
 				return nil
 			})
 		}); err != nil {
-			return nil, "", "", fmt.Errorf("filerGrpcAddress assign volume: %v", err)
+			return nil, fmt.Errorf("filerGrpcAddress assign volume: %v", err)
 		}
 
 		fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
@@ -67,11 +66,11 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 		uploadResult, err, data := operation.Upload(reader, uploadOption)
 		if err != nil {
 			glog.V(0).Infof("upload data %v to %s: %v", filename, fileUrl, err)
-			return nil, "", "", fmt.Errorf("upload data: %v", err)
+			return nil, fmt.Errorf("upload data: %v", err)
 		}
 		if uploadResult.Error != "" {
 			glog.V(0).Infof("upload failure %v to %s: %v", filename, fileUrl, err)
-			return nil, "", "", fmt.Errorf("upload result: %v", uploadResult.Error)
+			return nil, fmt.Errorf("upload result: %v", uploadResult.Error)
 		}
 
 		if offset == 0 {
@@ -79,6 +78,6 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 		}
 
 		chunk = uploadResult.ToPbFileChunk(fileId, offset)
-		return chunk, collection, replication, nil
+		return chunk, nil
 	}
 }

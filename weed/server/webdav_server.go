@@ -105,8 +105,6 @@ type WebDavFile struct {
 	entryViewCache []filer.VisibleInterval
 	reader         io.ReaderAt
 	bufWriter      *buffered_writer.BufferedWriteCloser
-	collection     string
-	replication    string
 }
 
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
@@ -376,7 +374,7 @@ func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo,
 	return fs.stat(ctx, name)
 }
 
-func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, collection, replication string, err error) {
+func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, err error) {
 
 	var fileId, host string
 	var auth security.EncodedJwt
@@ -404,7 +402,6 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 			}
 
 			fileId, host, auth = resp.FileId, resp.Location.Url, security.EncodedJwt(resp.Auth)
-			f.collection, f.replication = resp.Collection, resp.Replication
 
 			return nil
 		})
@@ -414,7 +411,7 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 
 		return nil
 	}); flushErr != nil {
-		return nil, f.collection, f.replication, fmt.Errorf("filerGrpcAddress assign volume: %v", flushErr)
+		return nil, fmt.Errorf("filerGrpcAddress assign volume: %v", flushErr)
 	}
 
 	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
@@ -430,13 +427,13 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 	uploadResult, flushErr, _ := operation.Upload(reader, uploadOption)
 	if flushErr != nil {
 		glog.V(0).Infof("upload data %v to %s: %v", f.name, fileUrl, flushErr)
-		return nil, f.collection, f.replication, fmt.Errorf("upload data: %v", flushErr)
+		return nil, fmt.Errorf("upload data: %v", flushErr)
 	}
 	if uploadResult.Error != "" {
 		glog.V(0).Infof("upload failure %v to %s: %v", f.name, fileUrl, flushErr)
-		return nil, f.collection, f.replication, fmt.Errorf("upload result: %v", uploadResult.Error)
+		return nil, fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
-	return uploadResult.ToPbFileChunk(fileId, offset), f.collection, f.replication, nil
+	return uploadResult.ToPbFileChunk(fileId, offset), nil
 }
 
 func (f *WebDavFile) Write(buf []byte) (int, error) {
@@ -462,7 +459,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		f.bufWriter.FlushFunc = func(data []byte, offset int64) (flushErr error) {
 
 			var chunk *filer_pb.FileChunk
-			chunk, f.collection, f.replication, flushErr = f.saveDataAsChunk(bytes.NewReader(data), f.name, offset)
+			chunk, flushErr = f.saveDataAsChunk(bytes.NewReader(data), f.name, offset)
 
 			if flushErr != nil {
 				return fmt.Errorf("%s upload result: %v", f.name, flushErr)

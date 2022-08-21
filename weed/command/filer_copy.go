@@ -583,7 +583,7 @@ func detectMimeType(f *os.File) string {
 	return mimeType
 }
 
-func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, collection, replication string, err error) {
+func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, err error) {
 
 	var fileId, host string
 	var auth security.EncodedJwt
@@ -611,7 +611,6 @@ func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, off
 			}
 
 			fileId, host, auth = resp.FileId, resp.Location.Url, security.EncodedJwt(resp.Auth)
-			collection, replication = resp.Collection, resp.Replication
 
 			return nil
 		})
@@ -621,7 +620,7 @@ func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, off
 
 		return nil
 	}); flushErr != nil {
-		return nil, collection, replication, fmt.Errorf("filerGrpcAddress assign volume: %v", flushErr)
+		return nil, fmt.Errorf("filerGrpcAddress assign volume: %v", flushErr)
 	}
 
 	uploadOption := &operation.UploadOption{
@@ -635,10 +634,10 @@ func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, off
 	}
 	uploadResult, flushErr, _ := operation.Upload(reader, uploadOption)
 	if flushErr != nil {
-		return nil, collection, replication, fmt.Errorf("upload data: %v", flushErr)
+		return nil, fmt.Errorf("upload data: %v", flushErr)
 	}
 	if uploadResult.Error != "" {
-		return nil, collection, replication, fmt.Errorf("upload result: %v", uploadResult.Error)
+		return nil, fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
-	return uploadResult.ToPbFileChunk(fileId, offset), collection, replication, nil
+	return uploadResult.ToPbFileChunk(fileId, offset), nil
 }
