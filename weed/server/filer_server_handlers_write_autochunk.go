@@ -256,25 +256,37 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAsChunkFunctionType {
 
 	return func(reader io.Reader, name string, offset int64) (*filer_pb.FileChunk, error) {
-		// assign one file id for one chunk
-		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(so)
-		if assignErr != nil {
-			return nil, assignErr
-		}
+		var fileId string
+		var uploadResult *operation.UploadResult
 
-		// upload the chunk to the volume server
-		uploadOption := &operation.UploadOption{
-			UploadUrl:         urlLocation,
-			Filename:          name,
-			Cipher:            fs.option.Cipher,
-			IsInputCompressed: false,
-			MimeType:          "",
-			PairMap:           nil,
-			Jwt:               auth,
-		}
-		uploadResult, uploadErr, _ := operation.Upload(reader, uploadOption)
-		if uploadErr != nil {
-			return nil, uploadErr
+		err := util.Retry("saveAsChunk", func() error {
+			// assign one file id for one chunk
+			assignedFileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(so)
+			if assignErr != nil {
+				return assignErr
+			}
+
+			fileId = assignedFileId
+
+			// upload the chunk to the volume server
+			uploadOption := &operation.UploadOption{
+				UploadUrl:         urlLocation,
+				Filename:          name,
+				Cipher:            fs.option.Cipher,
+				IsInputCompressed: false,
+				MimeType:          "",
+				PairMap:           nil,
+				Jwt:               auth,
+			}
+			var uploadErr error
+			uploadResult, uploadErr, _ = operation.Upload(reader, uploadOption)
+			if uploadErr != nil {
+				return uploadErr
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
 		}
 
 		return uploadResult.ToPbFileChunk(fileId, offset), nil
