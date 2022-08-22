@@ -93,6 +93,10 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 }
 
 func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, parallelCopy bool) (err error) {
+	if !commandEnv.isLocked() {
+		return fmt.Errorf("lock is lost")
+	}
+
 	// find volume location
 	locations, found := commandEnv.MasterClient.GetLocations(uint32(vid))
 	if !found && len(locations) > 0 {

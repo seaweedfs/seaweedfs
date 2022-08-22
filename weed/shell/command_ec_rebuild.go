@@ -131,6 +131,10 @@ func rebuildEcVolumes(commandEnv *CommandEnv, allEcNodes []*EcNode, collection s
 
 func rebuildOneEcVolume(commandEnv *CommandEnv, rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations, writer io.Writer, applyChanges bool) error {
 
+	if !commandEnv.isLocked() {
+		return fmt.Errorf("lock is lost")
+	}
+
 	fmt.Printf("rebuildOneEcVolume %s %d\n", collection, volumeId)
 
 	// collect shard files to rebuilder local disk
