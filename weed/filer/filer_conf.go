@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	DirectoryEtcRoot      = "/etc"
+	DirectoryEtcRoot      = "/etc/"
 	DirectoryEtcSeaweedFS = "/etc/seaweedfs"
 	DirectoryEtcRemote    = "/etc/remote"
 	FilerConfName         = "filer.conf"
