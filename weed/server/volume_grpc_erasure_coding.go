@@ -186,7 +186,7 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 
 	for _, location := range vs.store.Locations {
 		if err := deleteEcShardIdsForEachLocation(bName, location, req.ShardIds); err != nil {
-			glog.Errorf("deleteEcShards from %s %s.%v: %v", location, bName, req.ShardIds, err)
+			glog.Errorf("deleteEcShards from %s %s.%v: %v", location.Directory, bName, req.ShardIds, err)
 			return nil, err
 		}
 	}

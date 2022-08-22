@@ -32,10 +32,21 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		return err
 	}
 
-	processEventFnWithOffset := pb.AddOffsetFunc(eachEntryFunc, 3*time.Second, func(counter int64, lastTsNs int64) error {
-		lastTime := time.Unix(0, lastTsNs)
-		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, lastTime, float64(counter)/float64(3))
-		return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, lastTsNs)
+	processor := NewMetadataProcessor(eachEntryFunc, 128)
+
+	var lastLogTsNs = time.Now().UnixNano()
+	processEventFnWithOffset := pb.AddOffsetFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		processor.AddSyncJob(resp)
+		return nil
+	}, 3*time.Second, func(counter int64, lastTsNs int64) error {
+		if processor.processedTsWatermark == 0 {
+			return nil
+		}
+		// use processor.processedTsWatermark instead of the lastTsNs from the most recent job
+		now := time.Now().UnixNano()
+		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, time.Unix(0, processor.processedTsWatermark), float64(counter)/(float64(now-lastLogTsNs)/1e9))
+		lastLogTsNs = now
+		return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, processor.processedTsWatermark)
 	})
 
 	lastOffsetTs := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, *option.timeAgo)
