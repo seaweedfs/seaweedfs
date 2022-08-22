@@ -150,7 +150,7 @@ require (
 	github.com/hashicorp/raft-boltdb v0.0.0-20220329195025-15018e9b97e0
 	github.com/tikv/client-go/v2 v2.0.1
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.33.0
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.35.1
 	google.golang.org/grpc/security/advancedtls v0.0.0-20220622233350-5cdb09fa29c1
 )
 
@@ -180,6 +180,7 @@ require (
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/fclairamb/go-log v0.3.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/golang-jwt/jwt/v4 v4.4.1 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.1.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0 // indirect
 	github.com/hashicorp/go-hclog v1.2.0 // indirect
