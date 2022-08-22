@@ -1,7 +1,6 @@
 package mount
 
 import (
-	"io"
 	"net/http"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -73,11 +72,13 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 		in.OffOut, in.OffOut+in.Len,
 	)
 
-	data, totalRead, err := readDataByFileHandle(fhIn, in)
+	data := make([]byte, in.Len)
+	totalRead, err := readDataByFileHandle(data, fhIn, int64(in.OffIn))
 	if err != nil {
 		glog.Warningf("file handle read %s %d: %v", fhIn.FullPath(), totalRead, err)
 		return 0, fuse.EIO
 	}
+	data = data[:totalRead]
 
 	if totalRead == 0 {
 		return 0, fuse.OK
@@ -86,32 +87,15 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	// put data at the specified offset in target file
 	fhOut.dirtyPages.writerPattern.MonitorWriteAt(int64(in.OffOut), int(in.Len))
 	fhOut.entry.Content = nil
-	fhOut.dirtyPages.AddPage(int64(in.OffOut), data[:totalRead], fhOut.dirtyPages.writerPattern.IsSequentialMode())
+	fhOut.dirtyPages.AddPage(int64(in.OffOut), data, fhOut.dirtyPages.writerPattern.IsSequentialMode())
 	fhOut.entry.Attributes.FileSize = uint64(max(int64(in.OffOut)+totalRead, int64(fhOut.entry.Attributes.FileSize)))
 	fhOut.dirtyMetadata = true
 	written = uint32(totalRead)
 
 	// detect mime type
 	if written > 0 && in.OffOut <= 512 {
-		fhOut.contentType = http.DetectContentType(data[:min(totalRead, 512)-1])
+		fhOut.contentType = http.DetectContentType(data)
 	}
 
 	return written, fuse.OK
-}
-
-func readDataByFileHandle(fhIn *FileHandle, in *fuse.CopyFileRangeIn) ([]byte, int64, error) {
-	// read data from source file
-	fhIn.lockForRead(int64(in.OffIn), int(in.Len))
-	defer fhIn.unlockForRead(int64(in.OffIn), int(in.Len))
-
-	data := make([]byte, int(in.Len))
-	totalRead, err := fhIn.readFromChunks(data, int64(in.OffIn))
-	if err == nil || err == io.EOF {
-		maxStop := fhIn.readFromDirtyPages(data, int64(in.OffIn))
-		totalRead = max(maxStop-int64(in.OffIn), totalRead)
-	}
-	if err == io.EOF {
-		err = nil
-	}
-	return data, totalRead, err
 }
