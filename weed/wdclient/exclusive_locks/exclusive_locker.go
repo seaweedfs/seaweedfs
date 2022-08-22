@@ -19,7 +19,7 @@ const (
 type ExclusiveLocker struct {
 	token        int64
 	lockTsNs     int64
-	isLocking    bool
+	isLocked     bool
 	masterClient *wdclient.MasterClient
 	lockName     string
 	message      string
@@ -32,8 +32,8 @@ func NewExclusiveLocker(masterClient *wdclient.MasterClient, lockName string) *E
 	}
 }
 
-func (l *ExclusiveLocker) IsLocking() bool {
-	return l.isLocking
+func (l *ExclusiveLocker) IsLocked() bool {
+	return l.isLocked
 }
 
 func (l *ExclusiveLocker) GetToken() (token int64, lockTsNs int64) {
@@ -45,7 +45,7 @@ func (l *ExclusiveLocker) GetToken() (token int64, lockTsNs int64) {
 }
 
 func (l *ExclusiveLocker) RequestLock(clientName string) {
-	if l.isLocking {
+	if l.isLocked {
 		return
 	}
 
@@ -74,14 +74,14 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 		}
 	}
 
-	l.isLocking = true
+	l.isLocked = true
 
 	// start a goroutine to renew the lease
 	go func() {
 		ctx2, cancel2 := context.WithCancel(context.Background())
 		defer cancel2()
 
-		for l.isLocking {
+		for l.isLocked {
 			if err := l.masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
 				resp, err := client.LeaseAdminToken(ctx2, &master_pb.LeaseAdminTokenRequest{
 					PreviousToken:    atomic.LoadInt64(&l.token),
@@ -98,6 +98,7 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 				return err
 			}); err != nil {
 				glog.Errorf("failed to renew lock: %v", err)
+				l.isLocked = false
 				return
 			} else {
 				time.Sleep(RenewInteval)
@@ -109,7 +110,7 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 }
 
 func (l *ExclusiveLocker) ReleaseLock() {
-	l.isLocking = false
+	l.isLocked = false
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
