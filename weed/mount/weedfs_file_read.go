@@ -1,9 +1,11 @@
 package mount
 
 import (
-	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"io"
+
+	"github.com/hanwen/go-fuse/v2/fuse"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 /**
@@ -36,6 +38,9 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 	if fh == nil {
 		return nil, fuse.ENOENT
 	}
+
+	fh.entryLock.Lock()
+	defer fh.entryLock.Unlock()
 
 	offset := int64(in.Offset)
 	fh.lockForRead(offset, len(buff))
