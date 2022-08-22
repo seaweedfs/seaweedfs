@@ -24,6 +24,7 @@ type SwapFile struct {
 }
 
 type SwapFileChunk struct {
+	sync.RWMutex
 	swapfile         *SwapFile
 	usage            *ChunkWrittenIntervalList
 	logicChunkIndex  LogicChunkIndex
@@ -79,11 +80,17 @@ func (sc *SwapFileChunk) FreeResource() {
 	sc.swapfile.logicToActualChunkIndexLock.Lock()
 	defer sc.swapfile.logicToActualChunkIndexLock.Unlock()
 
+	sc.Lock()
+	defer sc.Unlock()
+
 	sc.swapfile.freeActualChunkList = append(sc.swapfile.freeActualChunkList, sc.actualChunkIndex)
 	delete(sc.swapfile.logicToActualChunkIndex, sc.logicChunkIndex)
 }
 
 func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64) (n int) {
+	sc.Lock()
+	defer sc.Unlock()
+
 	innerOffset := offset % sc.swapfile.chunkSize
 	var err error
 	n, err = sc.swapfile.file.WriteAt(src, int64(sc.actualChunkIndex)*sc.swapfile.chunkSize+innerOffset)
@@ -96,6 +103,9 @@ func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64) (n int) {
 }
 
 func (sc *SwapFileChunk) ReadDataAt(p []byte, off int64) (maxStop int64) {
+	sc.RLock()
+	defer sc.RUnlock()
+
 	chunkStartOffset := int64(sc.logicChunkIndex) * sc.swapfile.chunkSize
 	for t := sc.usage.head.next; t != sc.usage.tail; t = t.next {
 		logicStart := max(off, chunkStartOffset+t.StartOffset)
@@ -113,10 +123,14 @@ func (sc *SwapFileChunk) ReadDataAt(p []byte, off int64) (maxStop int64) {
 }
 
 func (sc *SwapFileChunk) IsComplete() bool {
+	sc.RLock()
+	defer sc.RUnlock()
 	return sc.usage.IsComplete(sc.swapfile.chunkSize)
 }
 
 func (sc *SwapFileChunk) WrittenSize() int64 {
+	sc.RLock()
+	defer sc.RUnlock()
 	return sc.usage.WrittenSize()
 }
 
@@ -124,6 +138,9 @@ func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {
 	if saveFn == nil {
 		return
 	}
+	sc.Lock()
+	defer sc.Unlock()
+
 	for t := sc.usage.head.next; t != sc.usage.tail; t = t.next {
 		data := mem.Allocate(int(t.Size()))
 		sc.swapfile.file.ReadAt(data, t.StartOffset+int64(sc.actualChunkIndex)*sc.swapfile.chunkSize)
@@ -132,5 +149,6 @@ func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {
 		})
 		mem.Free(data)
 	}
+
 	sc.usage = newChunkWrittenIntervalList()
 }
