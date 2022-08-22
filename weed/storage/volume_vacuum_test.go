@@ -60,10 +60,18 @@ func TestMakeDiff(t *testing.T) {
 	*/
 }
 
-func TestCompaction(t *testing.T) {
+func TestMemIndexCompaction(t *testing.T) {
+	testCompaction(t, NeedleMapInMemory)
+}
+
+func TestLDBIndexCompaction(t *testing.T) {
+	testCompaction(t, NeedleMapLevelDb)
+}
+
+func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 	dir := t.TempDir()
 
-	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0)
+	v, err := NewVolume(dir, dir, "", 1, needleMapKind, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
@@ -80,17 +88,16 @@ func TestCompaction(t *testing.T) {
 	startTime := time.Now()
 	v.Compact2(0, 0, nil)
 	speed := float64(v.ContentSize()) / time.Now().Sub(startTime).Seconds()
-	t.Logf("compaction speed: %.2f bytes/s", speed)
+	t.Logf("compaction speedd: %.2f bytes/s", speed)
 
-	for i := 1; i <= afterCommitFileCount; i++ {
-		doSomeWritesDeletes(i+beforeCommitFileCount, v, t, infos)
+	for i := 1; i <= afterCommitFileCount+beforeCommitFileCount; i++ {
+		doSomeWritesDeletes(i, v, t, infos)
 	}
-
 	v.CommitCompact()
-
+	t.Logf("DeletedCount:%d FileCount:%d ", v.DeletedCount(), v.FileCount())
 	v.Close()
 
-	v, err = NewVolume(dir, dir, "", 1, NeedleMapInMemory, nil, nil, 0, 0)
+	v, err = NewVolume(dir, dir, "", 1, needleMapKind, nil, nil, 0, 0)
 	if err != nil {
 		t.Fatalf("volume reloading: %v", err)
 	}
