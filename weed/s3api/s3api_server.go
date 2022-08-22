@@ -87,6 +87,13 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// Readiness Probe
 	apiRouter.Methods("GET").Path("/status").HandlerFunc(s3a.StatusHandler)
 
+	router.Methods("OPTIONS").HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request){
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			writeSuccessResponseEmpty(w, r)
+		})
+
 	var routers []*mux.Router
 	if s3a.option.DomainName != "" {
 		domainNames := strings.Split(s3a.option.DomainName, ",")
