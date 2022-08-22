@@ -108,7 +108,13 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		nextReportTarget := reportInterval
 		var modifiedTsNs int64
 		var sendErr error
-		throttler := util.NewWriteThrottler(req.IoBytePerSecond)
+		var ioBytePerSecond int64
+		if req.IoBytePerSecond <= 0 {
+			ioBytePerSecond = vs.compactionBytePerSecond
+		} else {
+			ioBytePerSecond = req.IoBytePerSecond
+		}
+		throttler := util.NewWriteThrottler(ioBytePerSecond)
 		if modifiedTsNs, err = vs.doCopyFileWithThrottler(client, false, req.Collection, req.VolumeId, volFileInfoResp.CompactionRevision, volFileInfoResp.DatFileSize, dataBaseFileName, ".dat", false, true, func(processed int64) bool {
 			if processed > nextReportTarget {
 				copyResponse.ProcessedBytes = processed
