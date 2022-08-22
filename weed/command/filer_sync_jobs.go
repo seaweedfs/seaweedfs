@@ -41,12 +41,11 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 	t.activeJobs[resp.TsNs] = resp
 	go func() {
 
-		util.RetryForever("metadata processor", func() error {
+		if err := util.Retry("metadata processor", func() error {
 			return t.fn(resp)
-		}, func(err error) bool {
+		}); err != nil {
 			glog.Errorf("process %v: %v", resp, err)
-			return true
-		})
+		}
 
 		t.activeJobsLock.Lock()
 		defer t.activeJobsLock.Unlock()
