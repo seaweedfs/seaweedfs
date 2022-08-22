@@ -9,12 +9,10 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -83,7 +81,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			break
 		}
 		if chunkOffset == 0 && !isAppend {
-			if dataSize < fs.option.SaveToFilerLimit || strings.HasPrefix(r.URL.Path, filer.DirectoryEtcRoot) {
+			if dataSize < fs.option.SaveToFilerLimit {
 				chunkOffset += dataSize
 				smallContent = make([]byte, dataSize)
 				bytesBuffer.Read(smallContent)
@@ -171,28 +169,27 @@ func (fs *FilerServer) dataToChunk(fileName, contentType string, data []byte, ch
 	var auth security.EncodedJwt
 	var uploadErr error
 	var uploadResult *operation.UploadResult
-	for i := 0; i < 3; i++ {
+
+	err := util.Retry("filerDataToChunk", func() error {
 		// assign one file id for one chunk
 		fileId, urlLocation, auth, uploadErr = fs.assignNewFileInfo(so)
 		if uploadErr != nil {
 			glog.V(4).Infof("retry later due to assign error: %v", uploadErr)
 			stats.FilerRequestCounter.WithLabelValues(stats.ChunkAssignRetry).Inc()
-			time.Sleep(time.Duration(i+1) * 251 * time.Millisecond)
-			continue
+			return uploadErr
 		}
 		// upload the chunk to the volume server
 		uploadResult, uploadErr, _ = fs.doUpload(urlLocation, dataReader, fileName, contentType, nil, auth)
 		if uploadErr != nil {
 			glog.V(4).Infof("retry later due to upload error: %v", uploadErr)
 			stats.FilerRequestCounter.WithLabelValues(stats.ChunkDoUploadRetry).Inc()
-			time.Sleep(time.Duration(i+1) * 251 * time.Millisecond)
-			continue
+			return uploadErr
 		}
-		break
-	}
-	if uploadErr != nil {
-		glog.Errorf("upload error: %v", uploadErr)
-		return nil, uploadErr
+		return nil
+	})
+	if err != nil {
+		glog.Errorf("upload error: %v", err)
+		return nil, err
 	}
 
 	// if last chunk exhausted the reader exactly at the border

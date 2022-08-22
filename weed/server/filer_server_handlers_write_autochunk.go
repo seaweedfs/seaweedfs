@@ -255,29 +255,41 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAsChunkFunctionType {
 
-	return func(reader io.Reader, name string, offset int64) (*filer_pb.FileChunk, string, string, error) {
-		// assign one file id for one chunk
-		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(so)
-		if assignErr != nil {
-			return nil, "", "", assignErr
+	return func(reader io.Reader, name string, offset int64) (*filer_pb.FileChunk, error) {
+		var fileId string
+		var uploadResult *operation.UploadResult
+
+		err := util.Retry("saveAsChunk", func() error {
+			// assign one file id for one chunk
+			assignedFileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(so)
+			if assignErr != nil {
+				return assignErr
+			}
+
+			fileId = assignedFileId
+
+			// upload the chunk to the volume server
+			uploadOption := &operation.UploadOption{
+				UploadUrl:         urlLocation,
+				Filename:          name,
+				Cipher:            fs.option.Cipher,
+				IsInputCompressed: false,
+				MimeType:          "",
+				PairMap:           nil,
+				Jwt:               auth,
+			}
+			var uploadErr error
+			uploadResult, uploadErr, _ = operation.Upload(reader, uploadOption)
+			if uploadErr != nil {
+				return uploadErr
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
 		}
 
-		// upload the chunk to the volume server
-		uploadOption := &operation.UploadOption{
-			UploadUrl:         urlLocation,
-			Filename:          name,
-			Cipher:            fs.option.Cipher,
-			IsInputCompressed: false,
-			MimeType:          "",
-			PairMap:           nil,
-			Jwt:               auth,
-		}
-		uploadResult, uploadErr, _ := operation.Upload(reader, uploadOption)
-		if uploadErr != nil {
-			return nil, "", "", uploadErr
-		}
-
-		return uploadResult.ToPbFileChunk(fileId, offset), so.Collection, so.Replication, nil
+		return uploadResult.ToPbFileChunk(fileId, offset), nil
 	}
 }
 

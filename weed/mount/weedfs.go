@@ -2,7 +2,16 @@ package mount
 
 import (
 	"context"
+	"math/rand"
+	"os"
+	"path"
+	"path/filepath"
+	"sync/atomic"
+	"time"
+
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"google.golang.org/grpc"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -13,20 +22,14 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
-	"google.golang.org/grpc"
-	"math/rand"
-	"os"
-	"path"
-	"path/filepath"
-	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 )
 
 type Option struct {
-	MountDirectory     string
+	filerIndex         int32 // align memory for atomic read/write
 	FilerAddresses     []pb.ServerAddress
-	filerIndex         int
+	MountDirectory     string
 	GrpcDialOption     grpc.DialOption
 	FilerMountRootPath string
 	Collection         string
@@ -86,7 +89,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		dhmap:         NewDirectoryHandleToInode(),
 	}
 
-	wfs.option.filerIndex = rand.Intn(len(option.FilerAddresses))
+	wfs.option.filerIndex = int32(rand.Intn(len(option.FilerAddresses)))
 	wfs.option.setupUniqueCacheDirectory()
 	if option.CacheSizeMB > 0 {
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDir(), option.CacheSizeMB, 1024*1024)
@@ -181,7 +184,8 @@ func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
 }
 
 func (wfs *WFS) getCurrentFiler() pb.ServerAddress {
-	return wfs.option.FilerAddresses[wfs.option.filerIndex]
+	i := atomic.LoadInt32(&wfs.option.filerIndex)
+	return wfs.option.FilerAddresses[i]
 }
 
 func (option *Option) setupUniqueCacheDirectory() {

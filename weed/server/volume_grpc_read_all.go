@@ -10,14 +10,14 @@ import (
 func (vs *VolumeServer) ReadAllNeedles(req *volume_server_pb.ReadAllNeedlesRequest, stream volume_server_pb.VolumeServer_ReadAllNeedlesServer) (err error) {
 
 	for _, vid := range req.VolumeIds {
-		if err := vs.streaReadOneVolume(needle.VolumeId(vid), stream, err); err != nil {
+		if err := vs.streamReadOneVolume(needle.VolumeId(vid), stream, err); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (vs *VolumeServer) streaReadOneVolume(vid needle.VolumeId, stream volume_server_pb.VolumeServer_ReadAllNeedlesServer, err error) error {
+func (vs *VolumeServer) streamReadOneVolume(vid needle.VolumeId, stream volume_server_pb.VolumeServer_ReadAllNeedlesServer, err error) error {
 	v := vs.store.GetVolume(vid)
 	if v == nil {
 		return fmt.Errorf("not found volume id %d", vid)

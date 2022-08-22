@@ -4,7 +4,6 @@ type DirtyPages interface {
 	AddPage(offset int64, data []byte, isSequential bool)
 	FlushData() error
 	ReadDirtyDataAt(data []byte, startOffset int64) (maxStop int64)
-	GetStorageOptions() (collection, replication string)
 	Destroy()
 	LockForRead(startOffset, stopOffset int64)
 	UnlockForRead(startOffset, stopOffset int64)

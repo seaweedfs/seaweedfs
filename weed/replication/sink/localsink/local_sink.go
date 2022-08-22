@@ -101,6 +101,10 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 		return writeErr
 	}
 
+	if len(entry.Content) > 0 {
+		return writeFunc(entry.Content)
+	}
+
 	if err := repl_util.CopyFromChunkViews(chunkViews, localsink.filerSource, writeFunc); err != nil {
 		return err
 	}

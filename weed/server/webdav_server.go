@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -105,8 +104,6 @@ type WebDavFile struct {
 	entryViewCache []filer.VisibleInterval
 	reader         io.ReaderAt
 	bufWriter      *buffered_writer.BufferedWriteCloser
-	collection     string
-	replication    string
 }
 
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
@@ -376,67 +373,39 @@ func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo,
 	return fs.stat(ctx, name)
 }
 
-func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, collection, replication string, err error) {
+func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, err error) {
 
-	var fileId, host string
-	var auth security.EncodedJwt
+	fileId, uploadResult, flushErr, _ := operation.UploadWithRetry(
+		f.fs,
+		&filer_pb.AssignVolumeRequest{
+			Count:       1,
+			Replication: f.fs.option.Replication,
+			Collection:  f.fs.option.Collection,
+			DiskType:    f.fs.option.DiskType,
+			Path:        name,
+		},
+		&operation.UploadOption{
+			Filename:          f.name,
+			Cipher:            f.fs.option.Cipher,
+			IsInputCompressed: false,
+			MimeType:          "",
+			PairMap:           nil,
+		},
+		func(host, fileId string) string {
+			return fmt.Sprintf("http://%s/%s", host, fileId)
+		},
+		reader,
+	)
 
-	if flushErr := f.fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-
-		ctx := context.Background()
-
-		assignErr := util.Retry("assignVolume", func() error {
-			request := &filer_pb.AssignVolumeRequest{
-				Count:       1,
-				Replication: f.fs.option.Replication,
-				Collection:  f.fs.option.Collection,
-				DiskType:    f.fs.option.DiskType,
-				Path:        name,
-			}
-
-			resp, err := client.AssignVolume(ctx, request)
-			if err != nil {
-				glog.V(0).Infof("assign volume failure %v: %v", request, err)
-				return err
-			}
-			if resp.Error != "" {
-				return fmt.Errorf("assign volume failure %v: %v", request, resp.Error)
-			}
-
-			fileId, host, auth = resp.FileId, resp.Location.Url, security.EncodedJwt(resp.Auth)
-			f.collection, f.replication = resp.Collection, resp.Replication
-
-			return nil
-		})
-		if assignErr != nil {
-			return assignErr
-		}
-
-		return nil
-	}); flushErr != nil {
-		return nil, f.collection, f.replication, fmt.Errorf("filerGrpcAddress assign volume: %v", flushErr)
-	}
-
-	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
-	uploadOption := &operation.UploadOption{
-		UploadUrl:         fileUrl,
-		Filename:          f.name,
-		Cipher:            f.fs.option.Cipher,
-		IsInputCompressed: false,
-		MimeType:          "",
-		PairMap:           nil,
-		Jwt:               auth,
-	}
-	uploadResult, flushErr, _ := operation.Upload(reader, uploadOption)
 	if flushErr != nil {
-		glog.V(0).Infof("upload data %v to %s: %v", f.name, fileUrl, flushErr)
-		return nil, f.collection, f.replication, fmt.Errorf("upload data: %v", flushErr)
+		glog.V(0).Infof("upload data %v: %v", f.name, flushErr)
+		return nil, fmt.Errorf("upload data: %v", flushErr)
 	}
 	if uploadResult.Error != "" {
-		glog.V(0).Infof("upload failure %v to %s: %v", f.name, fileUrl, flushErr)
-		return nil, f.collection, f.replication, fmt.Errorf("upload result: %v", uploadResult.Error)
+		glog.V(0).Infof("upload failure %v: %v", f.name, flushErr)
+		return nil, fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
-	return uploadResult.ToPbFileChunk(fileId, offset), f.collection, f.replication, nil
+	return uploadResult.ToPbFileChunk(fileId, offset), nil
 }
 
 func (f *WebDavFile) Write(buf []byte) (int, error) {
@@ -462,7 +431,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		f.bufWriter.FlushFunc = func(data []byte, offset int64) (flushErr error) {
 
 			var chunk *filer_pb.FileChunk
-			chunk, f.collection, f.replication, flushErr = f.saveDataAsChunk(bytes.NewReader(data), f.name, offset)
+			chunk, flushErr = f.saveDataAsChunk(util.NewBytesReader(data), f.name, offset)
 
 			if flushErr != nil {
 				return fmt.Errorf("%s upload result: %v", f.name, flushErr)

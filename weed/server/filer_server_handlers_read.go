@@ -70,7 +70,7 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 		}
 	} else if ifModifiedSinceHeader != "" {
 		if t, parseError := time.Parse(http.TimeFormat, ifModifiedSinceHeader); parseError == nil {
-			if t.After(entry.Attr.Mtime) {
+			if !t.Before(entry.Attr.Mtime) {
 				w.WriteHeader(http.StatusNotModified)
 				return true
 			}

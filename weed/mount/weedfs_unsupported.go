@@ -5,22 +5,6 @@ import "github.com/hanwen/go-fuse/v2/fuse"
 // https://github.com/libfuse/libfuse/blob/48ae2e72b39b6a31cb2194f6f11786b7ca06aac6/include/fuse.h#L778
 
 /**
- * Copy a range of data from one file to anotherNiels de Vos, 4 years ago: • libfuse: add copy_file_range() support
- *
- * Performs an optimized copy between two file descriptors without the
- * additional cost of transferring data through the FUSE kernel module
- * to user space (glibc) and then back into the FUSE filesystem again.
- *
- * In case this method is not implemented, applications are expected to
- * fall back to a regular file copy.   (Some glibc versions did this
- * emulation automatically, but the emulation has been removed from all
- * glibc release branches.)
- */
-func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) (written uint32, code fuse.Status) {
-	return 0, fuse.ENOSYS
-}
-
-/**
  * Allocates space for an open file
  *
  * This function ensures that required space is allocated for specified

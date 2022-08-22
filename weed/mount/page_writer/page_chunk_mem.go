@@ -3,6 +3,7 @@ package page_writer
 import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
+	"sync"
 	"sync/atomic"
 )
 
@@ -13,6 +14,7 @@ var (
 )
 
 type MemChunk struct {
+	sync.RWMutex
 	buf             []byte
 	usage           *ChunkWrittenIntervalList
 	chunkSize       int64
@@ -30,11 +32,17 @@ func NewMemChunk(logicChunkIndex LogicChunkIndex, chunkSize int64) *MemChunk {
 }
 
 func (mc *MemChunk) FreeResource() {
+	mc.Lock()
+	defer mc.Unlock()
+
 	atomic.AddInt64(&memChunkCounter, -1)
 	mem.Free(mc.buf)
 }
 
 func (mc *MemChunk) WriteDataAt(src []byte, offset int64) (n int) {
+	mc.Lock()
+	defer mc.Unlock()
+
 	innerOffset := offset % mc.chunkSize
 	n = copy(mc.buf[innerOffset:], src)
 	mc.usage.MarkWritten(innerOffset, innerOffset+int64(n))
@@ -42,6 +50,9 @@ func (mc *MemChunk) WriteDataAt(src []byte, offset int64) (n int) {
 }
 
 func (mc *MemChunk) ReadDataAt(p []byte, off int64) (maxStop int64) {
+	mc.RLock()
+	defer mc.RUnlock()
+
 	memChunkBaseOffset := int64(mc.logicChunkIndex) * mc.chunkSize
 	for t := mc.usage.head.next; t != mc.usage.tail; t = t.next {
 		logicStart := max(off, int64(mc.logicChunkIndex)*mc.chunkSize+t.StartOffset)
@@ -55,14 +66,23 @@ func (mc *MemChunk) ReadDataAt(p []byte, off int64) (maxStop int64) {
 }
 
 func (mc *MemChunk) IsComplete() bool {
+	mc.RLock()
+	defer mc.RUnlock()
+
 	return mc.usage.IsComplete(mc.chunkSize)
 }
 
 func (mc *MemChunk) WrittenSize() int64 {
+	mc.RLock()
+	defer mc.RUnlock()
+
 	return mc.usage.WrittenSize()
 }
 
 func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc) {
+	mc.RLock()
+	defer mc.RUnlock()
+
 	if saveFn == nil {
 		return
 	}

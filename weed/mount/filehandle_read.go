@@ -3,10 +3,11 @@ package mount
 import (
 	"context"
 	"fmt"
+	"io"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"io"
 )
 
 func (fh *FileHandle) lockForRead(startOffset int64, size int) {
@@ -24,9 +25,6 @@ func (fh *FileHandle) readFromDirtyPages(buff []byte, startOffset int64) (maxSto
 func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	fileFullPath := fh.FullPath()
-
-	fh.entryLock.Lock()
-	defer fh.entryLock.Unlock()
 
 	entry := fh.entry
 	if entry == nil {

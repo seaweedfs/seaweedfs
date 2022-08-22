@@ -116,6 +116,11 @@ func (s3sink *S3Sink) uploadPart(key, uploadId string, partId int, chunk *filer.
 		return nil, fmt.Errorf("[%s] uploadPart %s %d read: %v", s3sink.bucket, key, partId, err)
 	}
 
+	return s3sink.doUploadPart(key, uploadId, partId, readSeeker)
+}
+
+func (s3sink *S3Sink) doUploadPart(key, uploadId string, partId int, readSeeker io.ReadSeeker) (*s3.CompletedPart, error) {
+
 	input := &s3.UploadPartInput{
 		Body:       readSeeker,
 		Bucket:     aws.String(s3sink.bucket),
