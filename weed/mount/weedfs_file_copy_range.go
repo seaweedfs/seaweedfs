@@ -65,22 +65,41 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 		return 0, fuse.EISDIR
 	}
 
-	// cannot copy data to an overlapping range of the same file
-	offInEnd := in.OffIn + in.Len - 1
-	offOutEnd := in.OffOut + in.Len - 1
-
-	if fhIn.inode == fhOut.inode && in.OffIn <= offOutEnd && offInEnd >= in.OffOut {
-		return 0, fuse.EINVAL
-	}
-
 	glog.V(4).Infof(
-		"CopyFileRange %s fhIn %d -> %s fhOut %d, %d:%d -> %d:%d",
+		"CopyFileRange %s fhIn %d -> %s fhOut %d, [%d,%d) -> [%d,%d)",
 		fhIn.FullPath(), fhIn.fh,
 		fhOut.FullPath(), fhOut.fh,
-		in.OffIn, offInEnd,
-		in.OffOut, offOutEnd,
+		in.OffIn, in.OffIn+in.Len,
+		in.OffOut, in.OffOut+in.Len,
 	)
 
+	data, totalRead, err := readDataByFileHandle(fhIn, in)
+	if err != nil {
+		glog.Warningf("file handle read %s %d: %v", fhIn.FullPath(), totalRead, err)
+		return 0, fuse.EIO
+	}
+
+	if totalRead == 0 {
+		return 0, fuse.OK
+	}
+
+	// put data at the specified offset in target file
+	fhOut.dirtyPages.writerPattern.MonitorWriteAt(int64(in.OffOut), int(in.Len))
+	fhOut.entry.Content = nil
+	fhOut.dirtyPages.AddPage(int64(in.OffOut), data[:totalRead], fhOut.dirtyPages.writerPattern.IsSequentialMode())
+	fhOut.entry.Attributes.FileSize = uint64(max(int64(in.OffOut)+totalRead, int64(fhOut.entry.Attributes.FileSize)))
+	fhOut.dirtyMetadata = true
+	written = uint32(totalRead)
+
+	// detect mime type
+	if written > 0 && in.OffOut <= 512 {
+		fhOut.contentType = http.DetectContentType(data[:min(totalRead, 512)-1])
+	}
+
+	return written, fuse.OK
+}
+
+func readDataByFileHandle(fhIn *FileHandle, in *fuse.CopyFileRangeIn) ([]byte, int64, error) {
 	// read data from source file
 	fhIn.lockForRead(int64(in.OffIn), int(in.Len))
 	defer fhIn.unlockForRead(int64(in.OffIn), int(in.Len))
@@ -94,27 +113,5 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	if err == io.EOF {
 		err = nil
 	}
-	if err != nil {
-		glog.Warningf("file handle read %s %d: %v", fhIn.FullPath(), totalRead, err)
-		return 0, fuse.EIO
-	}
-
-	if totalRead == 0 {
-		return 0, fuse.OK
-	}
-
-	// put data at the specified offset in target file
-	fhOut.dirtyPages.writerPattern.MonitorWriteAt(int64(in.OffOut), int(in.Len))
-	fhOut.entry.Content = nil
-	fhOut.dirtyPages.AddPage(int64(in.OffOut), data, fhOut.dirtyPages.writerPattern.IsSequentialMode())
-	fhOut.entry.Attributes.FileSize = uint64(max(int64(in.OffOut)+totalRead, int64(fhOut.entry.Attributes.FileSize)))
-	fhOut.dirtyMetadata = true
-	written = uint32(totalRead)
-
-	// detect mime type
-	if written > 0 && in.OffOut <= 512 {
-		fhOut.contentType = http.DetectContentType(data[:min(totalRead, 512)-1])
-	}
-
-	return written, fuse.OK
+	return data, totalRead, err
 }
