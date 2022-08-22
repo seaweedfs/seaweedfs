@@ -254,6 +254,7 @@ message VolumeCopyRequest {
     string ttl = 4;
     string source_data_node = 5;
     string disk_type = 6;
+    int64 io_byte_per_second = 7;
 }
 message VolumeCopyResponse {
     uint64 last_append_at_ns = 1;
