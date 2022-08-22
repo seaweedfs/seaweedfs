@@ -36,8 +36,8 @@ func LoadCompactNeedleMap(file *os.File) (*NeedleMap, error) {
 func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
 	e := idx.WalkIndexFile(file, 0, func(key NeedleId, offset Offset, size Size) error {
 		nm.MaybeSetMaxFileKey(key)
+		nm.FileCounter++
 		if !offset.IsZero() && size.IsValid() {
-			nm.FileCounter++
 			nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 			oldOffset, oldSize := nm.m.Set(NeedleId(key), offset, size)
 			if !oldOffset.IsZero() && oldSize.IsValid() {
@@ -111,8 +111,8 @@ func (nm *NeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startFrom ui
 	glog.V(0).Infof("loading idx from offset %d for file: %s", startFrom, indexFile.Name())
 	e := idx.WalkIndexFile(indexFile, startFrom, func(key NeedleId, offset Offset, size Size) error {
 		nm.MaybeSetMaxFileKey(key)
+		nm.FileCounter++
 		if !offset.IsZero() && size.IsValid() {
-			nm.FileCounter++
 			nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 			oldOffset, oldSize := nm.m.Set(NeedleId(key), offset, size)
 			if !oldOffset.IsZero() && oldSize.IsValid() {

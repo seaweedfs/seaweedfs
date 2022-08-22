@@ -346,7 +346,6 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 	} else {
 		return v.tmpNm.DoOffsetLoading(v, idx, uint64(idxSize)/types.NeedleMapEntrySize)
 	}
-	return
 }
 
 type VolumeFileScanner4Vacuum struct {

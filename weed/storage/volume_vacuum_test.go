@@ -86,7 +86,6 @@ func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 		doSomeWritesDeletes(i, v, t, infos)
 	}
 
-	deleteCount := v.DeletedCount()
 	startTime := time.Now()
 	v.Compact2(0, 0, nil)
 	speed := float64(v.ContentSize()) / time.Now().Sub(startTime).Seconds()
@@ -107,13 +106,15 @@ func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 		if realWatermark != watermark {
 			t.Fatalf("testing watermark failed")
 		}
-		if int(deleteCount+v.FileCount()+v.DeletedCount()) != beforeCommitFileCount+afterCommitFileCount*2 {
+		// logic deletedcount is different between memmory and leveldb. So this check is not common.
+		if uint64(beforeCommitFileCount+afterCommitFileCount)+v.DeletedCount() != v.FileCount() {
 			t.Fatalf("testing metric failed")
 		}
 	} else {
-		nm := reflect.ValueOf(v.nm).Interface().(*NeedleMap)
-		mm := nm.mapMetric
-		t.Logf("realRecordCount:%d, mm.FileCount():%d mm.DeletedCount():%d", realRecordCount, mm.FileCount(), mm.DeletedCount())
+		t.Logf("realRecordCount:%d, v.FileCount():%d mm.DeletedCount():%d", realRecordCount, v.FileCount(), v.DeletedCount())
+	}
+	if realRecordCount != v.FileCount() {
+		t.Fatalf("testing file count failed")
 	}
 
 	v.Close()

@@ -312,7 +312,7 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 		}
 	}
 
-	err = idx.WalkIndexFile(indexFile, 0, func(key NeedleId, offset Offset, size Size) (e error) {
+	err = idx.WalkIndexFile(indexFile, startFrom, func(key NeedleId, offset Offset, size Size) (e error) {
 		if !offset.IsZero() && size.IsValid() {
 			e = levelDbWrite(db, key, offset, size, false, 0)
 		} else {
@@ -325,6 +325,7 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 	}
 
 	//reset mapMetric, because mapMetric cann't be updated incrementally due to BloomFilter
+	// Recaculate it when makediff
 	m.mapMetric.DeletionCounter = 0
 	m.mapMetric.FileCounter = 0
 	m.mapMetric.DeletionByteCounter = 0
