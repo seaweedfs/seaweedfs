@@ -1,6 +1,8 @@
 package page_writer
 
-import "math"
+import (
+	"math"
+)
 
 // ChunkWrittenInterval mark one written interval within one page chunk
 type ChunkWrittenInterval struct {
