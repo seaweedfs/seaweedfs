@@ -42,7 +42,7 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 	if v.MemoryMapMaxSizeMb != 0 { //it makes no sense to compact in memory
 		return nil
 	}
-	glog.V(0).Infof("Compacting volume %d ...", v.Id)
+	glog.V(3).Infof("Compacting volume %d ...", v.Id)
 	//no need to lock for copy on write
 	//v.accessLock.Lock()
 	//defer v.accessLock.Unlock()
@@ -167,7 +167,7 @@ func (v *Volume) CommitCompact() error {
 	if e = v.load(true, false, v.needleMapKind, 0); e != nil {
 		return e
 	}
-	glog.V(0).Infof("Finish commiting volume %d", v.Id)
+	glog.V(3).Infof("Finish commiting volume %d", v.Id)
 	return nil
 }
 
@@ -271,12 +271,12 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		return fmt.Errorf("open idx file %s failed: %v", newIdxFileName, err)
 	}
 
+	defer idx.Close()
 	stat, err := idx.Stat()
 	if err != nil {
 		return fmt.Errorf("stat file %s: %v", idx.Name(), err)
 	}
 	idxSize := stat.Size()
-	defer idx.Close()
 
 	var newDatCompactRevision uint16
 	newDatCompactRevision, err = fetchCompactRevisionFromDatFile(dstDatBackend)
@@ -341,11 +341,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		}
 	}
 
-	if v.needleMapKind == NeedleMapInMemory {
-		return v.tmpNm.DoOffsetLoading(nil, idx, uint64(idxSize)/types.NeedleMapEntrySize)
-	} else {
-		return v.tmpNm.DoOffsetLoading(v, idx, uint64(idxSize)/types.NeedleMapEntrySize)
-	}
+	return v.tmpNm.DoOffsetLoading(v, idx, uint64(idxSize)/types.NeedleMapEntrySize)
 }
 
 type VolumeFileScanner4Vacuum struct {

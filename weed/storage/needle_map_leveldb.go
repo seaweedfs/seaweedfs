@@ -332,6 +332,6 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 	m.mapMetric.FileByteCounter = 0
 	m.mapMetric.MaximumFileKey = 0
 
-	err = NeedleMapMetricFromIndexFile(indexFile, &m.mapMetric)
+	err = needleMapMetricFromIndexFile(indexFile, &m.mapMetric)
 	return err
 }

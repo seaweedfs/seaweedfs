@@ -106,10 +106,6 @@ func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 		if realWatermark != watermark {
 			t.Fatalf("testing watermark failed")
 		}
-		// logic deletedcount is different between memmory and leveldb. So this check is not common.
-		if uint64(beforeCommitFileCount+afterCommitFileCount)+v.DeletedCount() != v.FileCount() {
-			t.Fatalf("testing metric failed")
-		}
 	} else {
 		t.Logf("realRecordCount:%d, v.FileCount():%d mm.DeletedCount():%d", realRecordCount, v.FileCount(), v.DeletedCount())
 	}

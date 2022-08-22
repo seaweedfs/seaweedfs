@@ -91,7 +91,7 @@ func (mm *mapMetric) MaybeSetMaxFileKey(key NeedleId) {
 	}
 }
 
-func NeedleMapMetricFromIndexFile(r *os.File, mm *mapMetric) error {
+func needleMapMetricFromIndexFile(r *os.File, mm *mapMetric) error {
 	var bf *boom.BloomFilter
 	buf := make([]byte, NeedleIdSize)
 	err := reverseWalkIndexFile(r, func(entryCount int64) {
@@ -120,7 +120,7 @@ func NeedleMapMetricFromIndexFile(r *os.File, mm *mapMetric) error {
 
 func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
 	mm = &mapMetric{}
-	err = NeedleMapMetricFromIndexFile(r, mm)
+	err = needleMapMetricFromIndexFile(r, mm)
 	return
 }
 
