@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -94,12 +95,19 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	objectContentType := r.Header.Get("Content-Type")
 	if strings.HasSuffix(object, "/") {
-		if err := s3a.mkdir(s3a.option.BucketsPath, bucket+strings.TrimSuffix(object, "/"), func(entry *filer_pb.Entry) {
-			if objectContentType == "" {
-				objectContentType = "httpd/unix-directory"
-			}
-			entry.Attributes.Mime = objectContentType
-		}); err != nil {
+		object = strings.TrimSuffix(object, "/")
+		entryName := filepath.Base(object)
+		dirName := filepath.Dir(object)
+		if err := s3a.mkFile(
+			fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, strings.TrimSuffix(dirName, "/")),
+			entryName,
+			nil,
+			func(entry *filer_pb.Entry) {
+				if objectContentType == "" {
+					objectContentType = "httpd/unix-directory"
+				}
+				entry.Attributes.Mime = objectContentType
+			}); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
@@ -314,7 +322,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 func (s3a *S3ApiServer) doDeleteEmptyDirectories(client filer_pb.SeaweedFilerClient, directoriesWithDeletion map[string]int) (newDirectoriesWithDeletion map[string]int) {
 	var allDirs []string
-	for dir, _ := range directoriesWithDeletion {
+	for dir := range directoriesWithDeletion {
 		allDirs = append(allDirs, dir)
 	}
 	slices.SortFunc(allDirs, func(a, b string) bool {
