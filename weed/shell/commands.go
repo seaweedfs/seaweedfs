@@ -83,7 +83,7 @@ func (ce *CommandEnv) confirmIsLocked(args []string) error {
 }
 
 func (ce *CommandEnv) isLocked() bool {
-	return ce.locker.IsLocked()
+	return ce != nil && ce.locker.IsLocked()
 }
 
 func (ce *CommandEnv) checkDirectory(path string) error {
