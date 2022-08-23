@@ -133,7 +133,7 @@ func (c *commandVolumeServerEvacuate) evacuateNormalVolumes(commandEnv *CommandE
 			for _, vol := range diskInfo.VolumeInfos {
 				hasMoved, err := moveAwayOneNormalVolume(commandEnv, volumeReplicas, vol, thisNode, otherNodes, applyChange)
 				if err != nil {
-					fmt.Fprintf(writer, "move away volume %d from %s: %v", vol.Id, volumeServer, err)
+					fmt.Fprintf(writer, "move away volume %d from %s: %v\n", vol.Id, volumeServer, err)
 				}
 				if !hasMoved {
 					if skipNonMoveable {
