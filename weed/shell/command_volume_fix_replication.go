@@ -104,6 +104,10 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 			}
 		}
 
+		if !commandEnv.isLocked() {
+			return fmt.Errorf("lock is lost")
+		}
+
 		if len(overReplicatedVolumeIds) > 0 {
 			if err := c.deleteOneVolume(commandEnv, writer, takeAction, overReplicatedVolumeIds, volumeReplicas, allLocations, pickOneReplicaToDelete); err != nil {
 				return err
