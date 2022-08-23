@@ -94,12 +94,12 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	defer dataReader.Close()
 
 	objectContentType := r.Header.Get("Content-Type")
-	if strings.HasSuffix(object, "/") {
+	if strings.HasSuffix(object, "/") && r.ContentLength == 0 {
 		object = strings.TrimSuffix(object, "/")
 		entryName := filepath.Base(object)
-		dirName := filepath.Dir(object)
+		dirName := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, filepath.Dir(object))
 		if err := s3a.mkFile(
-			fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, strings.TrimSuffix(dirName, "/")),
+			dirName,
 			entryName,
 			nil,
 			func(entry *filer_pb.Entry) {
