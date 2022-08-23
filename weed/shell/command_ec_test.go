@@ -6,6 +6,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient/exclusive_locks"
 )
 
 func TestCommandEcDistribution(t *testing.T) {
@@ -28,7 +29,9 @@ func TestCommandEcBalanceSmall(t *testing.T) {
 	}
 
 	racks := collectRacks(allEcNodes)
-	balanceEcVolumes(nil, "c1", allEcNodes, racks, false)
+	ce := &CommandEnv{}
+	ce.locker = exclusive_locks.NewExclusiveLocker(nil, "admin")
+	balanceEcVolumes(ce, "c1", allEcNodes, racks, false)
 }
 
 func TestCommandEcBalanceNothingToMove(t *testing.T) {
@@ -43,7 +46,9 @@ func TestCommandEcBalanceNothingToMove(t *testing.T) {
 	}
 
 	racks := collectRacks(allEcNodes)
-	balanceEcVolumes(nil, "c1", allEcNodes, racks, false)
+	ce := &CommandEnv{}
+	ce.locker = exclusive_locks.NewExclusiveLocker(nil, "admin")
+	balanceEcVolumes(ce, "c1", allEcNodes, racks, false)
 }
 
 func TestCommandEcBalanceAddNewServers(t *testing.T) {
@@ -60,7 +65,9 @@ func TestCommandEcBalanceAddNewServers(t *testing.T) {
 	}
 
 	racks := collectRacks(allEcNodes)
-	balanceEcVolumes(nil, "c1", allEcNodes, racks, false)
+	ce := &CommandEnv{}
+	ce.locker = exclusive_locks.NewExclusiveLocker(nil, "admin")
+	balanceEcVolumes(ce, "c1", allEcNodes, racks, false)
 }
 
 func TestCommandEcBalanceAddNewRacks(t *testing.T) {
@@ -77,7 +84,9 @@ func TestCommandEcBalanceAddNewRacks(t *testing.T) {
 	}
 
 	racks := collectRacks(allEcNodes)
-	balanceEcVolumes(nil, "c1", allEcNodes, racks, false)
+	ce := &CommandEnv{}
+	ce.locker = exclusive_locks.NewExclusiveLocker(nil, "admin")
+	balanceEcVolumes(ce, "c1", allEcNodes, racks, false)
 }
 
 func TestCommandEcBalanceVolumeEvenButRackUneven(t *testing.T) {
@@ -119,8 +128,10 @@ func TestCommandEcBalanceVolumeEvenButRackUneven(t *testing.T) {
 	}
 
 	racks := collectRacks(allEcNodes)
-	balanceEcVolumes(nil, "c1", allEcNodes, racks, false)
-	balanceEcRacks(nil, racks, false)
+	ce := &CommandEnv{}
+	ce.locker = exclusive_locks.NewExclusiveLocker(nil, "admin")
+	balanceEcVolumes(ce, "c1", allEcNodes, racks, false)
+	balanceEcRacks(ce, racks, false)
 }
 
 func newEcNode(dc string, rack string, dataNodeId string, freeEcSlot int) *EcNode {

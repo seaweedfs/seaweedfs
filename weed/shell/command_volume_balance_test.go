@@ -1,9 +1,11 @@
 package shell
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient/exclusive_locks"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -177,8 +179,11 @@ func TestBalance(t *testing.T) {
 	volumeServers := collectVolumeServersByDc(topologyInfo, "")
 	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 	diskTypes := collectVolumeDiskTypes(topologyInfo)
-
-	if err := balanceVolumeServers(nil, diskTypes, volumeReplicas, volumeServers, 30*1024*1024*1024, "ALL_COLLECTIONS", false); err != nil {
+	ce := &CommandEnv{}
+	ce.locker = exclusive_locks.NewExclusiveLocker(nil, "admin")
+	ce.locker.RequestLock("client")
+	defer ce.locker.ReleaseLock()
+	if err := balanceVolumeServers(ce, diskTypes, volumeReplicas, volumeServers, 30*1024*1024*1024, "ALL_COLLECTIONS", false); err != nil {
 		t.Errorf("balance: %v", err)
 	}
 
