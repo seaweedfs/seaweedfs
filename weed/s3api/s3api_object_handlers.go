@@ -13,7 +13,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -95,13 +94,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	objectContentType := r.Header.Get("Content-Type")
 	if strings.HasSuffix(object, "/") && r.ContentLength == 0 {
-		object = strings.TrimSuffix(object, "/")
-		entryName := filepath.Base(object)
-		dirName := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, filepath.Dir(object))
-		if err := s3a.mkFile(
-			dirName,
-			entryName,
-			nil,
+		if err := s3a.mkdir(
+			s3a.option.BucketsPath, bucket+strings.TrimSuffix(object, "/"),
 			func(entry *filer_pb.Entry) {
 				if objectContentType == "" {
 					objectContentType = "httpd/unix-directory"
