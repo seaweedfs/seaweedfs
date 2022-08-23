@@ -101,13 +101,16 @@ func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int
 
 	targetObject := bucket.Object(key)
 	writer := targetObject.NewWriter(context.Background())
+	defer writer.Close()
 
 	writeFunc := func(data []byte) error {
 		_, writeErr := writer.Write(data)
 		return writeErr
 	}
 
-	defer writer.Close()
+	if len(entry.Content) > 0 {
+		return writeFunc(entry.Content)
+	}
 
 	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc); err != nil {
 		return err

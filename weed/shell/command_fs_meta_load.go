@@ -1,12 +1,14 @@
 package shell
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 
-	"github.com/golang/protobuf/proto"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -27,6 +29,7 @@ func (c *commandFsMetaLoad) Help() string {
 	return `load saved filer meta data to restore the directory and file structure
 
 	fs.meta.load <filer_host>-<port>-<time>.meta
+	fs.meta.load -v=false <filer_host>-<port>-<time>.meta // skip printing out the verbose output
 
 `
 }
@@ -40,6 +43,12 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	fileName := args[len(args)-1]
 
+	metaLoadCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	verbose := metaLoadCommand.Bool("v", true, "verbose mode")
+	if err = metaLoadCommand.Parse(args[0 : len(args)-1]); err != nil {
+		return nil
+	}
+
 	dst, err := os.OpenFile(fileName, os.O_RDONLY, 0644)
 	if err != nil {
 		return nil
@@ -47,6 +56,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 	defer dst.Close()
 
 	var dirCount, fileCount uint64
+	lastLogTime := time.Now()
 
 	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -81,7 +91,12 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 				return err
 			}
 
-			fmt.Fprintf(writer, "load %s\n", util.FullPath(fullEntry.Dir).Child(fullEntry.Entry.Name))
+			if *verbose || lastLogTime.Add(time.Second).Before(time.Now()) {
+				if !*verbose {
+					lastLogTime = time.Now()
+				}
+				fmt.Fprintf(writer, "load %s\n", util.FullPath(fullEntry.Dir).Child(fullEntry.Entry.Name))
+			}
 
 			if fullEntry.Entry.IsDirectory {
 				dirCount++

@@ -271,6 +271,7 @@ message Location {
     string url = 1;
     string public_url = 2;
     uint32 grpc_port = 3;
+    string data_center = 4;
 }
 message LookupVolumeResponse {
     map<string, Locations> locations_map = 1;

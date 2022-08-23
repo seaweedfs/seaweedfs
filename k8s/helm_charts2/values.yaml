@@ -39,6 +39,7 @@ master:
   replicas: 1
   port: 9333
   grpcPort: 19333
+  metricsPort: 9327
   ipBind: "0.0.0.0"
   volumePreallocate: false
   volumeSizeLimitMB: 1000
@@ -72,6 +73,8 @@ master:
     type: "hostPath"
     size: ""
     storageClass: ""
+
+  initContainers: ""
 
   extraVolumes: ""
   extraVolumeMounts: ""
@@ -210,6 +213,8 @@ volume:
   # Adjust jpg orientation when uploading.
   imagesFixOrientation: false
 
+  initContainers: ""
+
   extraVolumes: ""
   extraVolumeMounts: ""
 
@@ -308,6 +313,8 @@ filer:
     type: "hostPath"
     size: ""
     storageClass: ""
+
+  initContainers: ""
 
   extraVolumes: ""
   extraVolumeMounts: ""
@@ -423,6 +430,8 @@ s3:
 
   # Suffix of the host name, {bucket}.{domainName}
   domainName: ""
+
+  initContainers: ""
 
   extraVolumes: ""
   extraVolumeMounts: ""

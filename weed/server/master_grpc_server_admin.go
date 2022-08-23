@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/raft"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -122,6 +123,10 @@ func (locks *AdminLocks) deleteLock(lockName string) {
 
 func (ms *MasterServer) LeaseAdminToken(ctx context.Context, req *master_pb.LeaseAdminTokenRequest) (*master_pb.LeaseAdminTokenResponse, error) {
 	resp := &master_pb.LeaseAdminTokenResponse{}
+
+	if !ms.Topo.IsLeader() {
+		return resp, raft.NotLeaderError
+	}
 
 	if lastClient, lastMessage, isLocked := ms.adminLocks.isLocked(req.LockName); isLocked {
 		glog.V(4).Infof("LeaseAdminToken %v", lastClient)

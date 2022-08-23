@@ -51,6 +51,10 @@ spec:
       priorityClassName: {{ .Values.master.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
+      {{- if .Values.master.initContainers }}
+      initContainers:
+        {{ tpl .Values.master.initContainers . | nindent 8 | trim }}
+      {{- end }}
       containers:
         - name: seaweedfs
           image: {{ template "master.image" . }}
@@ -105,7 +109,14 @@ spec:
               -volumePreallocate \
               {{- end }}
               {{- if .Values.global.monitoring.enabled }}
+              {{- if and .Values.global.monitoring.gatewayHost .Values.global.monitoring.gatewayPort }}
               -metrics.address="{{ .Values.global.monitoring.gatewayHost }}:{{ .Values.global.monitoring.gatewayPort }}" \
+              {{- if .Values.master.metricsIntervalSec }}
+              -metrics.intervalSeconds={{ .Values.master.metricsIntervalSec }} \
+              {{- end }}
+              {{- else if .Values.master.metricsPort }}
+              -metricsPort={{ .Values.master.metricsPort }} \
+              {{- end }}
               {{- end }}
               -volumeSizeLimitMB={{ .Values.master.volumeSizeLimitMB }} \
               {{- if .Values.master.disableHttp }}
@@ -116,9 +127,6 @@ spec:
               {{- end }}
               {{- if .Values.master.garbageThreshold }}
               -garbageThreshold={{ .Values.master.garbageThreshold }} \
-              {{- end }}
-              {{- if .Values.master.metricsIntervalSec }}
-              -metrics.intervalSeconds={{ .Values.master.metricsIntervalSec }} \
               {{- end }}
               -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-master \
               -peers={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
@@ -152,6 +160,10 @@ spec:
           ports:
             - containerPort: {{ .Values.master.port }}
               name: swfs-master
+            {{- if and .Values.global.monitoring.enabled .Values.master.metricsPort }}
+            - containerPort: {{ .Values.master.metricsPort }}
+              name: metrics
+            {{- end }}
             - containerPort: {{ .Values.master.grpcPort }}
               #name: swfs-master-grpc
           readinessProbe:

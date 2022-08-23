@@ -27,9 +27,11 @@ type FilerSource struct {
 	Dir            string
 	address        string
 	proxyByFiler   bool
+	dataCenter     string
 }
 
 func (fs *FilerSource) Initialize(configuration util.Configuration, prefix string) error {
+	fs.dataCenter = configuration.GetString(prefix + "dataCenter")
 	return fs.DoInitialize(
 		"",
 		configuration.GetString(prefix+"grpcAddress"),
@@ -84,7 +86,13 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrls []string, err error) 
 
 	if !fs.proxyByFiler {
 		for _, loc := range locations.Locations {
-			fileUrls = append(fileUrls, fmt.Sprintf("http://%s/%s?readDeleted=true", loc.Url, part))
+			fileUrl := fmt.Sprintf("http://%s/%s?readDeleted=true", loc.Url, part)
+			// Prefer same data center
+			if fs.dataCenter != "" && fs.dataCenter == loc.DataCenter {
+				fileUrls = append([]string{fileUrl}, fileUrls...)
+			} else {
+				fileUrls = append(fileUrls, fileUrl)
+			}
 		}
 	} else {
 		fileUrls = append(fileUrls, fmt.Sprintf("http://%s/?proxyChunkId=%s", fs.address, part))
@@ -129,6 +137,10 @@ func (fs *FilerSource) WithFilerClient(streamingMode bool, fn func(filer_pb.Seaw
 
 func (fs *FilerSource) AdjustedUrl(location *filer_pb.Location) string {
 	return location.Url
+}
+
+func (fs *FilerSource) GetDataCenter() string {
+	return fs.dataCenter
 }
 
 func volumeId(fileId string) string {

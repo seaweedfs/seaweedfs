@@ -68,7 +68,7 @@ func (broker *MessageQueueBroker) OnBrokerUpdate(update *master_pb.ClusterNodeUp
 	} else {
 		delete(broker.filers, address)
 		if broker.currentFiler == address {
-			for filer, _ := range broker.filers {
+			for filer := range broker.filers {
 				broker.currentFiler = filer
 				break
 			}
@@ -90,6 +90,12 @@ func (broker *MessageQueueBroker) WithFilerClient(streamingMode bool, fn func(fi
 func (broker *MessageQueueBroker) AdjustedUrl(location *filer_pb.Location) string {
 
 	return location.Url
+
+}
+
+func (broker *MessageQueueBroker) GetDataCenter() string {
+
+	return ""
 
 }
 

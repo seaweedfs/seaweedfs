@@ -8,7 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
-	"strings"
 	"time"
 )
 
@@ -87,7 +86,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 
 	sourceFiler := pb.ServerAddress(*backupOption.filer)
 	sourcePath := *backupOption.path
-	excludePaths := strings.Split(*backupOption.excludePaths, ",")
+	excludePaths := util.StringSplit(*backupOption.excludePaths, ",")
 	timeAgo := *backupOption.timeAgo
 	targetPath := dataSink.GetSinkToDirectory()
 	debug := *backupOption.debug

@@ -3,12 +3,12 @@ package broker
 import (
 	"bytes"
 	"fmt"
-	"github.com/golang/protobuf/jsonpb"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mq"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	jsonpb "google.golang.org/protobuf/encoding/protojson"
 	"time"
 )
 
@@ -60,7 +60,7 @@ func (broker *MessageQueueBroker) readSegmentOnFiler(segment *mq.Segment) (info 
 
 		// parse into filer conf object
 		info = &mq_pb.SegmentInfo{}
-		if err = jsonpb.Unmarshal(bytes.NewReader(data), info); err != nil {
+		if err = jsonpb.Unmarshal(data, info); err != nil {
 			return err
 		}
 		found = true

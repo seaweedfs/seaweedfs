@@ -70,7 +70,7 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 		}
 	} else if ifModifiedSinceHeader != "" {
 		if t, parseError := time.Parse(http.TimeFormat, ifModifiedSinceHeader); parseError == nil {
-			if t.After(entry.Attr.Mtime) {
+			if !t.Before(entry.Attr.Mtime) {
 				w.WriteHeader(http.StatusNotModified)
 				return true
 			}
@@ -110,6 +110,10 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		if fs.option.DisableDirListing {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
+		}
+		if entry.Attr.Mime != "" {
+			// inform S3 API this is a user created directory key object
+			w.Header().Set(s3_constants.X_SeaweedFS_Header_Directory_Key, "true")
 		}
 		fs.listDirectoryHandler(w, r)
 		return
@@ -238,7 +242,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 
-		err = filer.StreamContent(fs.filer.MasterClient, writer, chunks, offset, size)
+		err = filer.StreamContentWithThrottler(fs.filer.MasterClient, writer, chunks, offset, size, fs.option.DownloadMaxBytesPs)
 		if err != nil {
 			stats.FilerRequestCounter.WithLabelValues(stats.ErrorReadStream).Inc()
 			glog.Errorf("failed to stream content %s: %v", r.URL, err)

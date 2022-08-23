@@ -20,11 +20,11 @@ package gocdk_pub_sub
 import (
 	"context"
 	"fmt"
-	"github.com/golang/protobuf/proto"
 	"github.com/streadway/amqp"
 	"gocloud.dev/pubsub"
 	_ "gocloud.dev/pubsub/awssnssqs"
 	"gocloud.dev/pubsub/rabbitpubsub"
+	"google.golang.org/protobuf/proto"
 	"net/url"
 	"path"
 	"time"

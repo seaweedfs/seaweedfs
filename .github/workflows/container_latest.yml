@@ -17,7 +17,7 @@ jobs:
     steps:
       -
         name: Checkout
-        uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
+        uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b # v2
       -
         name: Docker meta
         id: docker_meta
@@ -57,7 +57,7 @@ jobs:
           password: ${{ secrets.GHCR_TOKEN }}
       -
         name: Build
-        uses: docker/build-push-action@1cb9d22b932e4832bb29793b7777ec860fc1cde0 # v2
+        uses: docker/build-push-action@c84f38281176d4c9cdb1626ffafcd6b3911b5d94 # v2
         with:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}

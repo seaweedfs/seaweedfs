@@ -59,6 +59,7 @@ type FilerOptions struct {
 	debugPort               *int
 	localSocket             *string
 	showUIDirectoryDelete   *bool
+	downloadMaxMBps         *int
 }
 
 func init() {
@@ -87,12 +88,14 @@ func init() {
 	f.debugPort = cmdFiler.Flag.Int("debug.port", 6060, "http port for debugging")
 	f.localSocket = cmdFiler.Flag.String("localSocket", "", "default to /tmp/seaweedfs-filer-<port>.sock")
 	f.showUIDirectoryDelete = cmdFiler.Flag.Bool("ui.deleteDir", true, "enable filer UI show delete directory button")
+	f.downloadMaxMBps = cmdFiler.Flag.Int("downloadMaxMBps", 0, "download max speed for each download request, in MB per second")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
 	filerS3Options.port = cmdFiler.Flag.Int("s3.port", 8333, "s3 server http listen port")
 	filerS3Options.portGrpc = cmdFiler.Flag.Int("s3.port.grpc", 0, "s3 server grpc listen port")
 	filerS3Options.domainName = cmdFiler.Flag.String("s3.domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
+	filerS3Options.dataCenter = cmdFiler.Flag.String("s3.dataCenter", "", "prefer to read and write to volumes in this data center")
 	filerS3Options.tlsPrivateKey = cmdFiler.Flag.String("s3.key.file", "", "path to the TLS private key file")
 	filerS3Options.tlsCertificate = cmdFiler.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
 	filerS3Options.config = cmdFiler.Flag.String("s3.config", "", "path to the config file")
@@ -167,6 +170,9 @@ func runFiler(cmd *Command, args []string) bool {
 		filerS3Options.filer = &filerAddress
 		filerS3Options.bindIp = f.bindIp
 		filerS3Options.localFilerSocket = f.localSocket
+		if *f.dataCenter != "" && *filerS3Options.dataCenter == "" {
+			filerS3Options.dataCenter = f.dataCenter
+		}
 		go func() {
 			time.Sleep(startDelay * time.Second)
 			filerS3Options.startS3Server()
@@ -235,6 +241,7 @@ func (fo *FilerOptions) startFiler() {
 		SaveToFilerLimit:      int64(*fo.saveToFilerLimit),
 		ConcurrentUploadLimit: int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
 		ShowUIDirectoryDelete: *fo.showUIDirectoryDelete,
+		DownloadMaxBytesPs:    int64(*fo.downloadMaxMBps) * 1024 * 1024,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

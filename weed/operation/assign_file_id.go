@@ -49,7 +49,6 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 		}
 
 		lastError = WithMasterServerClient(false, masterFn(), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
-
 			req := &master_pb.AssignRequest{
 				Count:               request.Count,
 				Replication:         request.Replication,
@@ -79,8 +78,9 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 			ret.Auth = security.EncodedJwt(resp.Auth)
 			for _, r := range resp.Replicas {
 				ret.Replicas = append(ret.Replicas, Location{
-					Url:       r.Url,
-					PublicUrl: r.PublicUrl,
+					Url:        r.Url,
+					PublicUrl:  r.PublicUrl,
+					DataCenter: r.DataCenter,
 				})
 			}
 

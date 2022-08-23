@@ -1,6 +1,7 @@
 package S3Sink
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -121,25 +122,37 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 	}
 
 	totalSize := filer.FileSize(entry)
+
 	chunkViews := filer.ViewFromChunks(s3sink.filerSource.LookupFileId, entry.Chunks, 0, int64(totalSize))
 
 	parts := make([]*s3.CompletedPart, len(chunkViews))
 
-	var wg sync.WaitGroup
-	for chunkIndex, chunk := range chunkViews {
-		partId := chunkIndex + 1
-		wg.Add(1)
-		go func(chunk *filer.ChunkView, index int) {
-			defer wg.Done()
-			if part, uploadErr := s3sink.uploadPart(key, uploadId, partId, chunk); uploadErr != nil {
-				err = uploadErr
-				glog.Errorf("uploadPart: %v", uploadErr)
-			} else {
-				parts[index] = part
-			}
-		}(chunk, chunkIndex)
+	if len(parts) > 0 {
+		var wg sync.WaitGroup
+		for chunkIndex, chunk := range chunkViews {
+			partId := chunkIndex + 1
+			wg.Add(1)
+			go func(chunk *filer.ChunkView, index int) {
+				defer wg.Done()
+				if part, uploadErr := s3sink.uploadPart(key, uploadId, partId, chunk); uploadErr != nil {
+					err = uploadErr
+					glog.Errorf("uploadPart: %v", uploadErr)
+				} else {
+					parts[index] = part
+				}
+			}(chunk, chunkIndex)
+		}
+		wg.Wait()
+	} else if len(entry.Content) > 0 {
+		// for small files
+		if part, uploadErr := s3sink.doUploadPart(key, uploadId, 1, bytes.NewReader(entry.Content)); uploadErr != nil {
+			err = uploadErr
+			glog.Errorf("uploadPart: %v", uploadErr)
+		} else {
+			parts = make([]*s3.CompletedPart, 1)
+			parts[0] = part
+		}
 	}
-	wg.Wait()
 
 	if err != nil {
 		s3sink.abortMultipartUpload(key, uploadId)

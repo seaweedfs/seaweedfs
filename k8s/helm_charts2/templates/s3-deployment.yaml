@@ -39,6 +39,10 @@ spec:
       priorityClassName: {{ .Values.s3.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
+      {{- if .Values.s3.initContainers }}
+      initContainers:
+        {{ tpl .Values.s3.initContainers . | nindent 8 | trim }}
+      {{- end }}
       containers:
         - name: seaweedfs
           image: {{ template "s3.image" . }}
@@ -127,6 +131,10 @@ spec:
           ports:
             - containerPort: {{ .Values.s3.port }}
               name: swfs-s3
+            {{- if .Values.s3.metricsPort }}
+            - containerPort: {{ .Values.s3.metricsPort }}
+              name: "metrics"
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /status

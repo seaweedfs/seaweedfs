@@ -192,6 +192,13 @@ func (dn *DataNode) GetDataCenter() *DataCenter {
 	return dcValue.(*DataCenter)
 }
 
+func (dn *DataNode) GetDataCenterId() string {
+	if dc := dn.GetDataCenter(); dc != nil {
+		return string(dc.Id())
+	}
+	return ""
+}
+
 func (dn *DataNode) GetRack() *Rack {
 	return dn.Parent().(*NodeImpl).value.(*Rack)
 }

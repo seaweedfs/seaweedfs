@@ -63,12 +63,19 @@ func (mc *MasterClient) LookupFileIdWithFallback(fileId string) (fullUrls []stri
 		for vid, vidLocation := range resp.VolumeIdLocations {
 			for _, vidLoc := range vidLocation.Locations {
 				loc := Location{
-					Url:       vidLoc.Url,
-					PublicUrl: vidLoc.PublicUrl,
-					GrpcPort:  int(vidLoc.GrpcPort),
+					Url:        vidLoc.Url,
+					PublicUrl:  vidLoc.PublicUrl,
+					GrpcPort:   int(vidLoc.GrpcPort),
+					DataCenter: vidLoc.DataCenter,
 				}
 				mc.vidMap.addLocation(uint32(vid), loc)
-				fullUrls = append(fullUrls, "http://"+loc.Url+"/"+fileId)
+				httpUrl := "http://" + loc.Url + "/" + fileId
+				// Prefer same data center
+				if mc.DataCenter != "" && mc.DataCenter == loc.DataCenter {
+					fullUrls = append([]string{httpUrl}, fullUrls...)
+				} else {
+					fullUrls = append(fullUrls, httpUrl)
+				}
 			}
 		}
 		return nil
@@ -87,7 +94,10 @@ func (mc *MasterClient) GetMasters() map[string]pb.ServerAddress {
 }
 
 func (mc *MasterClient) WaitUntilConnected() {
-	for mc.currentMaster == "" {
+	for {
+		if mc.currentMaster != "" {
+			return
+		}
 		time.Sleep(time.Duration(rand.Int31n(200)) * time.Millisecond)
 	}
 }
@@ -129,7 +139,6 @@ func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress pb.ServerAddres
 func (mc *MasterClient) tryAllMasters() {
 	var nextHintedLeader pb.ServerAddress
 	for _, master := range mc.masters {
-
 		nextHintedLeader = mc.tryConnectToMaster(master)
 		for nextHintedLeader != "" {
 			nextHintedLeader = mc.tryConnectToMaster(nextHintedLeader)
@@ -179,15 +188,13 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 			if resp.VolumeLocation.Leader != "" && string(master) != resp.VolumeLocation.Leader {
 				glog.V(0).Infof("master %v redirected to leader %v", master, resp.VolumeLocation.Leader)
 				nextHintedLeader = pb.ServerAddress(resp.VolumeLocation.Leader)
-				stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToleader).Inc()
+				stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToLeader).Inc()
 				return nil
 			}
-			//mc.vidMap = newVidMap("")
 			mc.resetVidMap()
 			mc.updateVidMap(resp)
 		} else {
 			mc.resetVidMap()
-			//mc.vidMap = newVidMap("")
 		}
 		mc.currentMaster = master
 
@@ -204,10 +211,9 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 				if resp.VolumeLocation.Leader != "" && string(mc.currentMaster) != resp.VolumeLocation.Leader {
 					glog.V(0).Infof("currentMaster %v redirected to leader %v", mc.currentMaster, resp.VolumeLocation.Leader)
 					nextHintedLeader = pb.ServerAddress(resp.VolumeLocation.Leader)
-					stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToleader).Inc()
+					stats.MasterClientConnectCounter.WithLabelValues(stats.RedirectedToLeader).Inc()
 					return nil
 				}
-
 				mc.updateVidMap(resp)
 			}
 
@@ -225,9 +231,7 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 					}
 				}
 			}
-
 		}
-
 	})
 	if gprcErr != nil {
 		stats.MasterClientConnectCounter.WithLabelValues(stats.Failed).Inc()
@@ -238,6 +242,7 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 
 func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 	// process new volume location
+	glog.V(1).Infof("updateVidMap() resp.VolumeLocation.DataCenter %v", resp.VolumeLocation.DataCenter)
 	loc := Location{
 		Url:        resp.VolumeLocation.Url,
 		PublicUrl:  resp.VolumeLocation.PublicUrl,
@@ -274,8 +279,13 @@ func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.
 }
 
 func (mc *MasterClient) resetVidMap() {
-	tail := &vidMap{vid2Locations: mc.vid2Locations, ecVid2Locations: mc.ecVid2Locations, cache: mc.cache}
-	mc.vidMap = newVidMap("")
+	tail := &vidMap{
+		vid2Locations:   mc.vid2Locations,
+		ecVid2Locations: mc.ecVid2Locations,
+		DataCenter:      mc.DataCenter,
+		cache:           mc.cache,
+	}
+	mc.vidMap = newVidMap(mc.DataCenter)
 	mc.vidMap.cache = tail
 
 	for i := 0; i < mc.vidMapCacheSize && tail.cache != nil; i++ {

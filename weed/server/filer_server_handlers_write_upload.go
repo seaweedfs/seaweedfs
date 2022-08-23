@@ -9,12 +9,10 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -83,15 +81,18 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			break
 		}
 		if chunkOffset == 0 && !isAppend {
-			if dataSize < fs.option.SaveToFilerLimit || strings.HasPrefix(r.URL.Path, filer.DirectoryEtcRoot) {
+			if dataSize < fs.option.SaveToFilerLimit {
 				chunkOffset += dataSize
 				smallContent = make([]byte, dataSize)
 				bytesBuffer.Read(smallContent)
 				bufPool.Put(bytesBuffer)
 				atomic.AddInt64(&bytesBufferCounter, -1)
 				bytesBufferLimitCond.Signal()
+				stats.FilerRequestCounter.WithLabelValues(stats.ContentSaveToFiler).Inc()
 				break
 			}
+		} else {
+			stats.FilerRequestCounter.WithLabelValues(stats.AutoChunk).Inc()
 		}
 
 		wg.Add(1)
@@ -138,10 +139,10 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 
 func (fs *FilerServer) doUpload(urlLocation string, limitedReader io.Reader, fileName string, contentType string, pairMap map[string]string, auth security.EncodedJwt) (*operation.UploadResult, error, []byte) {
 
-	stats.FilerRequestCounter.WithLabelValues("chunkUpload").Inc()
+	stats.FilerRequestCounter.WithLabelValues(stats.ChunkUpload).Inc()
 	start := time.Now()
 	defer func() {
-		stats.FilerRequestHistogram.WithLabelValues("chunkUpload").Observe(time.Since(start).Seconds())
+		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkUpload).Observe(time.Since(start).Seconds())
 	}()
 
 	uploadOption := &operation.UploadOption{
@@ -155,7 +156,7 @@ func (fs *FilerServer) doUpload(urlLocation string, limitedReader io.Reader, fil
 	}
 	uploadResult, err, data := operation.Upload(limitedReader, uploadOption)
 	if uploadResult != nil && uploadResult.RetryCount > 0 {
-		stats.FilerRequestCounter.WithLabelValues("chunkUploadRetry").Add(float64(uploadResult.RetryCount))
+		stats.FilerRequestCounter.WithLabelValues(stats.ChunkUploadRetry).Add(float64(uploadResult.RetryCount))
 	}
 	return uploadResult, err, data
 }
@@ -168,27 +169,27 @@ func (fs *FilerServer) dataToChunk(fileName, contentType string, data []byte, ch
 	var auth security.EncodedJwt
 	var uploadErr error
 	var uploadResult *operation.UploadResult
-	for i := 0; i < 3; i++ {
+
+	err := util.Retry("filerDataToChunk", func() error {
 		// assign one file id for one chunk
 		fileId, urlLocation, auth, uploadErr = fs.assignNewFileInfo(so)
 		if uploadErr != nil {
 			glog.V(4).Infof("retry later due to assign error: %v", uploadErr)
-			time.Sleep(time.Duration(i+1) * 251 * time.Millisecond)
-			continue
+			stats.FilerRequestCounter.WithLabelValues(stats.ChunkAssignRetry).Inc()
+			return uploadErr
 		}
-
 		// upload the chunk to the volume server
 		uploadResult, uploadErr, _ = fs.doUpload(urlLocation, dataReader, fileName, contentType, nil, auth)
 		if uploadErr != nil {
 			glog.V(4).Infof("retry later due to upload error: %v", uploadErr)
-			time.Sleep(time.Duration(i+1) * 251 * time.Millisecond)
-			continue
+			stats.FilerRequestCounter.WithLabelValues(stats.ChunkDoUploadRetry).Inc()
+			return uploadErr
 		}
-		break
-	}
-	if uploadErr != nil {
-		glog.Errorf("upload error: %v", uploadErr)
-		return nil, uploadErr
+		return nil
+	})
+	if err != nil {
+		glog.Errorf("upload error: %v", err)
+		return nil, err
 	}
 
 	// if last chunk exhausted the reader exactly at the border

@@ -72,13 +72,17 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 		} else {
 			machines := ms.Topo.Lookup(collection, volumeId)
 			for _, loc := range machines {
-				locations = append(locations, operation.Location{Url: loc.Url(), PublicUrl: loc.PublicUrl})
+				locations = append(locations, operation.Location{
+					Url: loc.Url(), PublicUrl: loc.PublicUrl, DataCenter: loc.GetDataCenterId(),
+				})
 			}
 		}
 	} else {
 		machines, getVidLocationsErr := ms.MasterClient.GetVidLocations(vid)
 		for _, loc := range machines {
-			locations = append(locations, operation.Location{Url: loc.Url, PublicUrl: loc.PublicUrl})
+			locations = append(locations, operation.Location{
+				Url: loc.Url, PublicUrl: loc.PublicUrl, DataCenter: loc.DataCenter,
+			})
 		}
 		err = getVidLocationsErr
 	}

@@ -36,6 +36,8 @@ const (
 	AmzObjectTaggingPrefix    = "X-Amz-Tagging-"
 	AmzObjectTaggingDirective = "X-Amz-Tagging-Directive"
 	AmzTagCount               = "x-amz-tagging-count"
+
+	X_SeaweedFS_Header_Directory_Key = "x-seaweedfs-is-directory-key"
 )
 
 // Non-Standard S3 HTTP request constants

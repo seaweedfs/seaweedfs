@@ -73,13 +73,20 @@ func (ce *CommandEnv) isDirectory(path string) bool {
 
 func (ce *CommandEnv) confirmIsLocked(args []string) error {
 
-	if ce.locker.IsLocking() {
+	if ce.locker.IsLocked() {
 		return nil
 	}
 	ce.locker.SetMessage(fmt.Sprintf("%v", args))
 
 	return fmt.Errorf("need to run \"lock\" first to continue")
 
+}
+
+func (ce *CommandEnv) isLocked() bool {
+	if ce == nil {
+		return true
+	}
+	return ce.locker.IsLocked()
 }
 
 func (ce *CommandEnv) checkDirectory(path string) error {
@@ -106,6 +113,10 @@ func (ce *CommandEnv) WithFilerClient(streamingMode bool, fn func(filer_pb.Seawe
 
 func (ce *CommandEnv) AdjustedUrl(location *filer_pb.Location) string {
 	return location.Url
+}
+
+func (ce *CommandEnv) GetDataCenter() string {
+	return ce.MasterClient.DataCenter
 }
 
 func parseFilerUrl(entryPath string) (filerServer string, filerPort int64, path string, err error) {

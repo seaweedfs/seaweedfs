@@ -1,9 +1,11 @@
 package mount
 
 import (
-	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"io"
+
+	"github.com/hanwen/go-fuse/v2/fuse"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 /**
@@ -37,23 +39,32 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 		return nil, fuse.ENOENT
 	}
 
+	fh.entryLock.Lock()
+	defer fh.entryLock.Unlock()
+
 	offset := int64(in.Offset)
-	fh.lockForRead(offset, len(buff))
-	defer fh.unlockForRead(offset, len(buff))
-
-	totalRead, err := fh.readFromChunks(buff, offset)
-	if err == nil || err == io.EOF {
-		maxStop := fh.readFromDirtyPages(buff, offset)
-		totalRead = max(maxStop-offset, totalRead)
-	}
-	if err == io.EOF {
-		err = nil
-	}
-
+	totalRead, err := readDataByFileHandle(buff, fh, offset)
 	if err != nil {
 		glog.Warningf("file handle read %s %d: %v", fh.FullPath(), totalRead, err)
 		return nil, fuse.EIO
 	}
 
 	return fuse.ReadResultData(buff[:totalRead]), fuse.OK
+}
+
+func readDataByFileHandle(buff []byte, fhIn *FileHandle, offset int64) (int64, error) {
+	// read data from source file
+	size := len(buff)
+	fhIn.lockForRead(offset, size)
+	defer fhIn.unlockForRead(offset, size)
+
+	n, err := fhIn.readFromChunks(buff, offset)
+	if err == nil || err == io.EOF {
+		maxStop := fhIn.readFromDirtyPages(buff, offset)
+		n = max(maxStop-offset, n)
+	}
+	if err == io.EOF {
+		err = nil
+	}
+	return n, err
 }

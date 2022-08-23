@@ -1,12 +1,14 @@
 package mount
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/util"
+	"sync/atomic"
+
 	"google.golang.org/grpc"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var _ = filer_pb.FilerClient(&WFS{})
@@ -15,7 +17,7 @@ func (wfs *WFS) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFile
 
 	return util.Retry("filer grpc", func() error {
 
-		i := wfs.option.filerIndex
+		i := atomic.LoadInt32(&wfs.option.filerIndex)
 		n := len(wfs.option.FilerAddresses)
 		for x := 0; x < n; x++ {
 
@@ -28,12 +30,12 @@ func (wfs *WFS) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFile
 			if err != nil {
 				glog.V(0).Infof("WithFilerClient %d %v: %v", x, filerGrpcAddress, err)
 			} else {
-				wfs.option.filerIndex = i
+				atomic.StoreInt32(&wfs.option.filerIndex, i)
 				return nil
 			}
 
 			i++
-			if i >= n {
+			if i >= int32(n) {
 				i = 0
 			}
 
@@ -48,4 +50,8 @@ func (wfs *WFS) AdjustedUrl(location *filer_pb.Location) string {
 		return location.PublicUrl
 	}
 	return location.Url
+}
+
+func (wfs *WFS) GetDataCenter() string {
+	return wfs.option.DataCenter
 }

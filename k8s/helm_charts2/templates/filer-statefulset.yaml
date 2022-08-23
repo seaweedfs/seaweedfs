@@ -52,6 +52,10 @@ spec:
       priorityClassName: {{ .Values.filer.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
+      {{- if .Values.filer.initContainers }}
+      initContainers:
+        {{ tpl .Values.filer.initContainers . | nindent 8 | trim }}
+      {{- end }}
       containers:
         - name: seaweedfs
           image: {{ template "filer.image" . }}
@@ -106,7 +110,7 @@ spec:
               filer \
               -port={{ .Values.filer.port }} \
               {{- if .Values.filer.metricsPort }}
-              -metricsPort {{ .Values.filer.metricsPort }} \
+              -metricsPort={{ .Values.filer.metricsPort }} \
               {{- end }}
               {{- if .Values.filer.redirectOnRead }}
               -redirectOnRead \
@@ -189,6 +193,8 @@ spec:
           ports:
             - containerPort: {{ .Values.filer.port }}
               name: swfs-filer
+            - containerPort: {{ .Values.filer.metricsPort }}
+              name: metrics
             - containerPort: {{ .Values.filer.grpcPort }}
               #name: swfs-filer-grpc
           readinessProbe:

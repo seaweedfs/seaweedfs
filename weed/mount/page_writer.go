@@ -66,10 +66,6 @@ func (pw *PageWriter) ReadDirtyDataAt(data []byte, offset int64) (maxStop int64)
 	return
 }
 
-func (pw *PageWriter) GetStorageOptions() (collection, replication string) {
-	return pw.randomWriter.GetStorageOptions()
-}
-
 func (pw *PageWriter) LockForRead(startOffset, stopOffset int64) {
 	pw.randomWriter.LockForRead(startOffset, stopOffset)
 }

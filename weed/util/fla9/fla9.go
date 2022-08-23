@@ -962,7 +962,6 @@ func (f *FlagSet) findConfigArgInUnresolved() string {
 
 			if strings.HasPrefix(f.args[i], configArg+"=") {
 				return f.args[i][len(configArg)+1:]
-				break
 			}
 		}
 	}

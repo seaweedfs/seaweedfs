@@ -9,15 +9,15 @@ import (
 	"google.golang.org/grpc"
 	"io"
 
-	"github.com/golang/protobuf/jsonpb"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/viant/ptrie"
+	jsonpb "google.golang.org/protobuf/encoding/protojson"
 )
 
 const (
-	DirectoryEtcRoot      = "/etc"
+	DirectoryEtcRoot      = "/etc/"
 	DirectoryEtcSeaweedFS = "/etc/seaweedfs"
 	DirectoryEtcRemote    = "/etc/remote"
 	FilerConfName         = "filer.conf"
@@ -93,7 +93,7 @@ func (fc *FilerConf) loadFromChunks(filer *Filer, content []byte, chunks []*file
 func (fc *FilerConf) LoadFromBytes(data []byte) (err error) {
 	conf := &filer_pb.FilerConf{}
 
-	if err := jsonpb.Unmarshal(bytes.NewReader(data), conf); err != nil {
+	if err := jsonpb.Unmarshal(data, conf); err != nil {
 		return err
 	}
 
@@ -181,11 +181,5 @@ func (fc *FilerConf) ToProto() *filer_pb.FilerConf {
 }
 
 func (fc *FilerConf) ToText(writer io.Writer) error {
-
-	m := jsonpb.Marshaler{
-		EmitDefaults: false,
-		Indent:       "  ",
-	}
-
-	return m.Marshal(writer, fc.ToProto())
+	return ProtoToText(writer, fc.ToProto())
 }

@@ -66,17 +66,25 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 			return nil, err
 		}
 
+		fcDataCenter := filerClient.GetDataCenter()
+		var sameDcTargetUrls, otherTargetUrls []string
 		for _, loc := range locations.Locations {
 			volumeServerAddress := filerClient.AdjustedUrl(loc)
 			targetUrl := fmt.Sprintf("http://%s/%s", volumeServerAddress, fileId)
-			targetUrls = append(targetUrls, targetUrl)
+			if fcDataCenter == "" || fcDataCenter != loc.DataCenter {
+				otherTargetUrls = append(otherTargetUrls, targetUrl)
+			} else {
+				sameDcTargetUrls = append(sameDcTargetUrls, targetUrl)
+			}
 		}
-
-		for i := len(targetUrls) - 1; i > 0; i-- {
-			j := rand.Intn(i + 1)
-			targetUrls[i], targetUrls[j] = targetUrls[j], targetUrls[i]
-		}
-
+		rand.Shuffle(len(sameDcTargetUrls), func(i, j int) {
+			sameDcTargetUrls[i], sameDcTargetUrls[j] = sameDcTargetUrls[j], sameDcTargetUrls[i]
+		})
+		rand.Shuffle(len(otherTargetUrls), func(i, j int) {
+			otherTargetUrls[i], otherTargetUrls[j] = otherTargetUrls[j], otherTargetUrls[i]
+		})
+		// Prefer same data center
+		targetUrls = append(sameDcTargetUrls, otherTargetUrls...)
 		return
 	}
 }
@@ -119,10 +127,10 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 			nextChunks = c.chunkViews[i+1:]
 		}
 		if startOffset < chunk.LogicOffset {
-			gap := int(chunk.LogicOffset - startOffset)
+			gap := chunk.LogicOffset - startOffset
 			glog.V(4).Infof("zero [%d,%d)", startOffset, chunk.LogicOffset)
-			n += int(min(int64(gap), remaining))
-			startOffset, remaining = chunk.LogicOffset, remaining-int64(gap)
+			n += zero(p, startOffset-offset, gap)
+			startOffset, remaining = chunk.LogicOffset, remaining-gap
 			if remaining <= 0 {
 				break
 			}
@@ -146,10 +154,18 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 
 	// glog.V(4).Infof("doReadAt [%d,%d), n:%v, err:%v", offset, offset+int64(len(p)), n, err)
 
-	if err == nil && remaining > 0 && c.fileSize > startOffset {
-		delta := int(min(remaining, c.fileSize-startOffset))
-		glog.V(4).Infof("zero2 [%d,%d) of file size %d bytes", startOffset, startOffset+int64(delta), c.fileSize)
-		n += delta
+	// zero the remaining bytes if a gap exists at the end of the last chunk (or a fully sparse file)
+	if err == nil && remaining > 0 {
+		var delta int64
+		if c.fileSize > startOffset {
+			delta = min(remaining, c.fileSize-startOffset)
+			startOffset -= offset
+		} else {
+			delta = remaining
+			startOffset = max(startOffset-offset, startOffset-remaining-offset)
+		}
+		glog.V(4).Infof("zero2 [%d,%d) of file size %d bytes", startOffset, startOffset+delta, c.fileSize)
+		n += zero(p, startOffset, delta)
 	}
 
 	if err == nil && offset+int64(len(p)) >= c.fileSize {
@@ -186,4 +202,15 @@ func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, next
 	}
 	c.lastChunkFid = chunkView.FileId
 	return
+}
+
+func zero(buffer []byte, start, length int64) int {
+	end := min(start+length, int64(len(buffer)))
+	start = max(start, 0)
+
+	// zero the bytes
+	for o := start; o < end; o++ {
+		buffer[o] = 0
+	}
+	return int(end - start)
 }

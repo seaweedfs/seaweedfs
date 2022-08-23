@@ -227,7 +227,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var volumeMessages []*master_pb.VolumeInformationMessage
 	maxVolumeCounts := make(map[string]uint32)
 	var maxFileKey NeedleId
-	collectionVolumeSize := make(map[string]uint64)
+	collectionVolumeSize := make(map[string]int64)
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
 	for _, location := range s.Locations {
 		var deleteVids []needle.VolumeId
@@ -262,11 +262,11 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 				collectionVolumeSize[v.Collection] = 0
 			}
 			if !shouldDeleteVolume {
-				collectionVolumeSize[v.Collection] += volumeMessage.Size
+				collectionVolumeSize[v.Collection] += int64(volumeMessage.Size)
 			} else {
-				collectionVolumeSize[v.Collection] -= volumeMessage.Size
-				if collectionVolumeSize[v.Collection] < 0 {
-					collectionVolumeSize[v.Collection] = 0
+				collectionVolumeSize[v.Collection] -= int64(volumeMessage.Size)
+				if collectionVolumeSize[v.Collection] <= 0 {
+					delete(collectionVolumeSize, v.Collection)
 				}
 			}
 

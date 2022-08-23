@@ -90,6 +90,15 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	var rebuiltShardIds []uint32
 
 	for _, location := range vs.store.Locations {
+		_, _, existingShardCount, err := checkEcVolumeStatus(baseFileName, location)
+		if err != nil {
+			return nil, err
+		}
+
+		if existingShardCount == 0 {
+			continue
+		}
+
 		if util.FileExists(path.Join(location.IdxDirectory, baseFileName+".ecx")) {
 			// write .ec00 ~ .ec13 files
 			dataBaseFileName := path.Join(location.Directory, baseFileName)
@@ -173,70 +182,86 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 
 	bName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId))
 
-	glog.V(0).Infof("ec volume %d shard delete %v", req.VolumeId, req.ShardIds)
+	glog.V(0).Infof("ec volume %s shard delete %v", bName, req.ShardIds)
+
+	for _, location := range vs.store.Locations {
+		if err := deleteEcShardIdsForEachLocation(bName, location, req.ShardIds); err != nil {
+			glog.Errorf("deleteEcShards from %s %s.%v: %v", location.Directory, bName, req.ShardIds, err)
+			return nil, err
+		}
+	}
+
+	return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
+}
+
+func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocation, shardIds []uint32) error {
 
 	found := false
-	var indexBaseFilename, dataBaseFilename string
-	for _, location := range vs.store.Locations {
-		if util.FileExists(path.Join(location.IdxDirectory, bName+".ecx")) {
-			found = true
-			indexBaseFilename = path.Join(location.IdxDirectory, bName)
-			dataBaseFilename = path.Join(location.Directory, bName)
-			for _, shardId := range req.ShardIds {
-				os.Remove(dataBaseFilename + erasure_coding.ToExt(int(shardId)))
+
+	indexBaseFilename := path.Join(location.IdxDirectory, bName)
+	dataBaseFilename := path.Join(location.Directory, bName)
+
+	if util.FileExists(path.Join(location.IdxDirectory, bName+".ecx")) {
+		for _, shardId := range shardIds {
+			shardFileName := dataBaseFilename + erasure_coding.ToExt(int(shardId))
+			if util.FileExists(shardFileName) {
+				found = true
+				os.Remove(shardFileName)
 			}
-			break
 		}
 	}
 
 	if !found {
-		return nil, nil
+		return nil
 	}
 
-	// check whether to delete the .ecx and .ecj file also
-	hasEcxFile := false
-	hasIdxFile := false
-	existingShardCount := 0
-
-	for _, location := range vs.store.Locations {
-		fileInfos, err := os.ReadDir(location.Directory)
-		if err != nil {
-			continue
-		}
-		if location.IdxDirectory != location.Directory {
-			idxFileInfos, err := os.ReadDir(location.IdxDirectory)
-			if err != nil {
-				continue
-			}
-			fileInfos = append(fileInfos, idxFileInfos...)
-		}
-		for _, fileInfo := range fileInfos {
-			if fileInfo.Name() == bName+".ecx" || fileInfo.Name() == bName+".ecj" {
-				hasEcxFile = true
-				continue
-			}
-			if fileInfo.Name() == bName+".idx" {
-				hasIdxFile = true
-				continue
-			}
-			if strings.HasPrefix(fileInfo.Name(), bName+".ec") {
-				existingShardCount++
-			}
-		}
+	hasEcxFile, hasIdxFile, existingShardCount, err := checkEcVolumeStatus(bName, location)
+	if err != nil {
+		return err
 	}
 
 	if hasEcxFile && existingShardCount == 0 {
 		if err := os.Remove(indexBaseFilename + ".ecx"); err != nil {
-			return nil, err
+			return err
 		}
 		os.Remove(indexBaseFilename + ".ecj")
-	}
-	if !hasIdxFile {
-		// .vif is used for ec volumes and normal volumes
-		os.Remove(dataBaseFilename + ".vif")
+
+		if !hasIdxFile {
+			// .vif is used for ec volumes and normal volumes
+			os.Remove(dataBaseFilename + ".vif")
+		}
 	}
 
-	return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
+	return nil
+}
+
+func checkEcVolumeStatus(bName string, location *storage.DiskLocation) (hasEcxFile bool, hasIdxFile bool, existingShardCount int, err error) {
+	// check whether to delete the .ecx and .ecj file also
+	fileInfos, err := os.ReadDir(location.Directory)
+	if err != nil {
+		return false, false, 0, err
+	}
+	if location.IdxDirectory != location.Directory {
+		idxFileInfos, err := os.ReadDir(location.IdxDirectory)
+		if err != nil {
+			return false, false, 0, err
+		}
+		fileInfos = append(fileInfos, idxFileInfos...)
+	}
+	for _, fileInfo := range fileInfos {
+		if fileInfo.Name() == bName+".ecx" || fileInfo.Name() == bName+".ecj" {
+			hasEcxFile = true
+			continue
+		}
+		if fileInfo.Name() == bName+".idx" {
+			hasIdxFile = true
+			continue
+		}
+		if strings.HasPrefix(fileInfo.Name(), bName+".ec") {
+			existingShardCount++
+		}
+	}
+	return hasEcxFile, hasIdxFile, existingShardCount, nil
 }
 
 func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_server_pb.VolumeEcShardsMountRequest) (*volume_server_pb.VolumeEcShardsMountResponse, error) {

@@ -137,14 +137,10 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
 		stats.MasterReceivedHeartbeatCounter.WithLabelValues("total").Inc()
 
-		var dataCenter string
-		if dc := dn.GetDataCenter(); dc != nil {
-			dataCenter = string(dc.Id())
-		}
 		message := &master_pb.VolumeLocation{
 			Url:        dn.Url(),
 			PublicUrl:  dn.PublicUrl,
-			DataCenter: dataCenter,
+			DataCenter: dn.GetDataCenterId(),
 		}
 		if len(heartbeat.NewVolumes) > 0 {
 			stats.FilerRequestCounter.WithLabelValues("newVolumes").Inc()

@@ -1,8 +1,8 @@
 package skiplist
 
 import (
-	"github.com/golang/protobuf/proto"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"google.golang.org/protobuf/proto"
 )
 
 func LoadNameList(data []byte, store ListStore, batchSize int) *NameList {

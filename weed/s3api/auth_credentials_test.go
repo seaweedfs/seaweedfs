@@ -5,7 +5,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"testing"
 
-	"github.com/golang/protobuf/jsonpb"
+	jsonpb "google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
@@ -58,14 +58,14 @@ func TestIdentityListFileFormat(t *testing.T) {
 	s3ApiConfiguration.Identities = append(s3ApiConfiguration.Identities, identity2)
 	s3ApiConfiguration.Identities = append(s3ApiConfiguration.Identities, identity3)
 
-	m := jsonpb.Marshaler{
-		EmitDefaults: true,
-		Indent:       "  ",
+	m := jsonpb.MarshalOptions{
+		EmitUnpopulated: true,
+		Indent:          "  ",
 	}
 
-	text, _ := m.MarshalToString(s3ApiConfiguration)
+	text, _ := m.Marshal(s3ApiConfiguration)
 
-	println(text)
+	println(string(text))
 
 }
 
