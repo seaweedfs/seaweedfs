@@ -16,13 +16,6 @@ func (wfs *WFS) Fallocate(cancel <-chan struct{}, in *fuse.FallocateIn) (code fu
 	return fuse.ENOSYS
 }
 
-/**
- * Find next data or hole after the specified offset
- */
-func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekOut) fuse.Status {
-	return fuse.ENOSYS
-}
-
 func (wfs *WFS) GetLk(cancel <-chan struct{}, in *fuse.LkIn, out *fuse.LkOut) (code fuse.Status) {
 	return fuse.ENOSYS
 }
