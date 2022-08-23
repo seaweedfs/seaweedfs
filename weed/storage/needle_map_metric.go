@@ -7,7 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"github.com/tylertreat/BoomFilters"
+	boom "github.com/tylertreat/BoomFilters"
 )
 
 type mapMetric struct {
@@ -106,7 +106,12 @@ func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
 		}
 
 		mm.FileCounter++
-		if bf.TestAndAdd(buf) {
+		if !bf.TestAndAdd(buf) {
+			// if !size.IsValid(), then this file is deleted already
+			if !size.IsValid() {
+				mm.DeletionCounter++
+			}
+		} else {
 			// deleted file
 			mm.DeletionCounter++
 			if size.IsValid() {
