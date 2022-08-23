@@ -401,6 +401,12 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		return
 	}
 
+	if resp.Header.Get(s3_constants.X_SeaweedFS_Header_Directory_Key) == "true" {
+		responseStatusCode := responseFn(resp, w)
+		s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
+		return
+	}
+
 	// when HEAD a directory, it should be reported as no such key
 	// https://github.com/seaweedfs/seaweedfs/issues/3457
 	if resp.ContentLength == -1 && resp.StatusCode != http.StatusNotModified {
