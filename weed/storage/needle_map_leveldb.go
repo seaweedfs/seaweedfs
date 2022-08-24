@@ -324,14 +324,12 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 		return err
 	}
 
-	//reset mapMetric, because mapMetric cann't be updated incrementally due to BloomFilter
-	// Recaculate it when makediff
-	m.mapMetric.DeletionCounter = 0
-	m.mapMetric.FileCounter = 0
-	m.mapMetric.DeletionByteCounter = 0
-	m.mapMetric.FileByteCounter = 0
-	m.mapMetric.MaximumFileKey = 0
+	if startFrom != 0 {
+		return needleMapMetricFromIndexFile(indexFile, &m.mapMetric)
+	}
+	return nil
+}
 
-	err = needleMapMetricFromIndexFile(indexFile, &m.mapMetric)
-	return err
+func (m *LevelDbNeedleMap) UpdateNeedleMapMetric(indexFile *os.File) error {
+	return needleMapMetricFromIndexFile(indexFile, &m.mapMetric)
 }
