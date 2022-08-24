@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -10,7 +11,7 @@ import (
 
 func ListExistingPeerUpdates(master pb.ServerAddress, grpcDialOption grpc.DialOption, filerGroup string, clientType string) (existingNodes []*master_pb.ClusterNodeUpdate) {
 
-	if grpcErr := pb.WithMasterClient(false, master, grpcDialOption, func(client master_pb.SeaweedClient) error {
+	if grpcErr := pb.WithMasterClient(false, master, grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
 			ClientType: clientType,
 			FilerGroup: filerGroup,

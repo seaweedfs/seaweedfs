@@ -1,8 +1,8 @@
 package weed_server
 
 import (
+	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -242,7 +244,6 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 }
 
 func (ms *MasterServer) startAdminScripts() {
-
 	v := util.GetViper()
 	adminScripts := v.GetString("master.maintenance.scripts")
 	if adminScripts == "" {
@@ -342,8 +343,10 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 
 	peerAddress := pb.ServerAddress(update.Address)
 	peerName := string(peerAddress)
-	isLeader := ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader
-	if update.IsAdd && isLeader {
+	if ms.Topo.HashicorpRaft.State() != hashicorpRaft.Leader {
+		return
+	}
+	if update.IsAdd {
 		raftServerFound := false
 		for _, server := range ms.Topo.HashicorpRaft.GetConfiguration().Configuration().Servers {
 			if string(server.ID) == peerName {
@@ -356,5 +359,27 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 				hashicorpRaft.ServerID(peerName),
 				hashicorpRaft.ServerAddress(peerAddress.ToGrpcAddress()), 0, 0)
 		}
+	} else {
+		pb.WithMasterClient(false, peerAddress, ms.grpcDialOption, true, func(client master_pb.SeaweedClient) error {
+			ctx, cancel := context.WithTimeout(context.TODO(), time.Minute*72)
+			defer cancel()
+			if _, err := client.Ping(ctx, &master_pb.PingRequest{Target: string(peerAddress), TargetType: cluster.MasterType}); err != nil {
+				glog.V(0).Infof("master %s didn't respond to pings. remove raft server", peerName)
+				if err := ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+					_, err := client.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
+						Id:    peerName,
+						Force: false,
+					})
+					return err
+				}); err != nil {
+					glog.Warningf("failed removing old raft server: %v", err)
+					return err
+				}
+			} else {
+				glog.V(0).Infof("master %s successfully responded to ping", peerName)
+			}
+
+			return nil
+		})
 	}
 }

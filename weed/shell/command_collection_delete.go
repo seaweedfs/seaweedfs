@@ -4,8 +4,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"io"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
 func init() {

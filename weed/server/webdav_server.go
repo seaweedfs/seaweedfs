@@ -127,7 +127,7 @@ func (fs *WebDavFileSystem) WithFilerClient(streamingMode bool, fn func(filer_pb
 	return pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, fs.option.Filer.ToGrpcAddress(), fs.option.GrpcDialOption)
+	}, fs.option.Filer.ToGrpcAddress(), false, fs.option.GrpcDialOption)
 
 }
 func (fs *WebDavFileSystem) AdjustedUrl(location *filer_pb.Location) string {

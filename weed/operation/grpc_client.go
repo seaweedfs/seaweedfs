@@ -13,7 +13,7 @@ func WithVolumeServerClient(streamingMode bool, volumeServer pb.ServerAddress, g
 	return pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 		client := volume_server_pb.NewVolumeServerClient(grpcConnection)
 		return fn(client)
-	}, volumeServer.ToGrpcAddress(), grpcDialOption)
+	}, volumeServer.ToGrpcAddress(), false, grpcDialOption)
 
 }
 
@@ -22,6 +22,6 @@ func WithMasterServerClient(streamingMode bool, masterServer pb.ServerAddress, g
 	return pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 		client := master_pb.NewSeaweedClient(grpcConnection)
 		return fn(client)
-	}, masterServer.ToGrpcAddress(), grpcDialOption)
+	}, masterServer.ToGrpcAddress(), false, grpcDialOption)
 
 }
