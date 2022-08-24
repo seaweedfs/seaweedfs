@@ -206,11 +206,13 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	if !*m.raftHashicorp {
 		go func() {
 			time.Sleep(timeSleep)
-			if ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty() && isTheFirstOne(myMasterAddress, peers) {
-				if ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress) == "" {
-					raftServer.DoJoinCommand()
-				}
+
+			ms.Topo.RaftServerAccessLock.RLock()
+			isEmptyMaster := ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty()
+			if isEmptyMaster && isTheFirstOne(myMasterAddress, peers) && ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress) == "" {
+				raftServer.DoJoinCommand()
 			}
+			ms.Topo.RaftServerAccessLock.RUnlock()
 		}()
 	}
 

@@ -16,6 +16,10 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 	infos := make(map[string]interface{})
 	infos["Up Time"] = time.Now().Sub(startTime).String()
 	infos["Max Volume Id"] = ms.Topo.GetMaxVolumeId()
+
+	ms.Topo.RaftServerAccessLock.RLock()
+	defer ms.Topo.RaftServerAccessLock.RUnlock()
+
 	if ms.Topo.RaftServer != nil {
 		args := struct {
 			Version           string
