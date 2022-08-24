@@ -361,7 +361,7 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 		}
 	} else {
 		pb.WithMasterClient(false, peerAddress, ms.grpcDialOption, true, func(client master_pb.SeaweedClient) error {
-			ctx, cancel := context.WithTimeout(context.TODO(), time.Minute*72)
+			ctx, cancel := context.WithTimeout(context.TODO(), 15*time.Second)
 			defer cancel()
 			if _, err := client.Ping(ctx, &master_pb.PingRequest{Target: string(peerAddress), TargetType: cluster.MasterType}); err != nil {
 				glog.V(0).Infof("master %s didn't respond to pings. remove raft server", peerName)
