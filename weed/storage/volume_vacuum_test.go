@@ -2,6 +2,7 @@ package storage
 
 import (
 	"math/rand"
+	"reflect"
 	"testing"
 	"time"
 
@@ -60,10 +61,18 @@ func TestMakeDiff(t *testing.T) {
 	*/
 }
 
-func TestCompaction(t *testing.T) {
+func TestMemIndexCompaction(t *testing.T) {
+	testCompaction(t, NeedleMapInMemory)
+}
+
+func TestLDBIndexCompaction(t *testing.T) {
+	testCompaction(t, NeedleMapLevelDb)
+}
+
+func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 	dir := t.TempDir()
 
-	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0)
+	v, err := NewVolume(dir, dir, "", 1, needleMapKind, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
@@ -82,15 +91,31 @@ func TestCompaction(t *testing.T) {
 	speed := float64(v.ContentSize()) / time.Now().Sub(startTime).Seconds()
 	t.Logf("compaction speed: %.2f bytes/s", speed)
 
-	for i := 1; i <= afterCommitFileCount; i++ {
-		doSomeWritesDeletes(i+beforeCommitFileCount, v, t, infos)
+	// update & delete original objects, upload & delete new objects
+	for i := 1; i <= afterCommitFileCount+beforeCommitFileCount; i++ {
+		doSomeWritesDeletes(i, v, t, infos)
 	}
-
 	v.CommitCompact()
+	realRecordCount := v.nm.IndexFileSize() / types.NeedleMapEntrySize
+	if needleMapKind == NeedleMapLevelDb {
+		nm := reflect.ValueOf(v.nm).Interface().(*LevelDbNeedleMap)
+		mm := nm.mapMetric
+		watermark := getWatermark(nm.db)
+		realWatermark := (nm.recordCount / watermarkBatchSize) * watermarkBatchSize
+		t.Logf("watermark from levelDB: %d, realWatermark: %d, nm.recordCount: %d, realRecordCount:%d, fileCount=%d, deletedcount:%d", watermark, realWatermark, nm.recordCount, realRecordCount, mm.FileCount(), v.DeletedCount())
+		if realWatermark != watermark {
+			t.Fatalf("testing watermark failed")
+		}
+	} else {
+		t.Logf("realRecordCount:%d, v.FileCount():%d mm.DeletedCount():%d", realRecordCount, v.FileCount(), v.DeletedCount())
+	}
+	if realRecordCount != v.FileCount() {
+		t.Fatalf("testing file count failed")
+	}
 
 	v.Close()
 
-	v, err = NewVolume(dir, dir, "", 1, NeedleMapInMemory, nil, nil, 0, 0)
+	v, err = NewVolume(dir, dir, "", 1, needleMapKind, nil, nil, 0, 0)
 	if err != nil {
 		t.Fatalf("volume reloading: %v", err)
 	}
