@@ -105,7 +105,12 @@ func needleMapMetricFromIndexFile(r *os.File, mm *mapMetric) error {
 		}
 
 		mm.FileCounter++
-		if bf.TestAndAdd(buf) {
+		if !bf.TestAndAdd(buf) {
+			// if !size.IsValid(), then this file is deleted already
+			if !size.IsValid() {
+				mm.DeletionCounter++
+			}
+		} else {
 			// deleted file
 			mm.DeletionCounter++
 			if size.IsValid() {
