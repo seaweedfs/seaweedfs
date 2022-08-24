@@ -159,7 +159,7 @@ func (s *RaftServer) UpdatePeers() {
 					s.raftServer.AddVoter(
 						raft.ServerID(peerName), raft.ServerAddress(peer.ToGrpcAddress()), 0, 0)
 				}
-				for peer, _ := range existsPeerName {
+				for peer := range existsPeerName {
 					if _, found := s.peers[peer]; !found {
 						glog.V(0).Infof("removing old peer: %s", peer)
 						s.raftServer.RemoveServer(raft.ServerID(peer), 0, 0)
@@ -202,6 +202,9 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		c.LogLevel = "Error"
 	}
 
+	if err := os.MkdirAll(s.dataDir, os.ModePerm); err != nil {
+		return nil, err
+	}
 	if option.RaftBootstrap || !option.RaftResumeState {
 		os.RemoveAll(path.Join(s.dataDir, ldbFile))
 		os.RemoveAll(path.Join(s.dataDir, sdbFile))

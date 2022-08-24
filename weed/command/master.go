@@ -1,14 +1,11 @@
 package command
 
 import (
-	"net/http"
 	"fmt"
+	"net/http"
 	"os"
 	"path"
-	"strings"
 	"time"
-
-	"golang.org/x/exp/slices"
 
 	"github.com/gorilla/mux"
 	"github.com/spf13/viper"
