@@ -1,7 +1,7 @@
 package images
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"os"
 	"testing"
 )

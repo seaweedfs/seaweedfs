@@ -3,10 +3,11 @@ package storage
 import (
 	"os"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/idx"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
+	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/syndtr/goleveldb/leveldb/opt"
 )
 
 type NeedleMap struct {
@@ -33,10 +34,10 @@ func LoadCompactNeedleMap(file *os.File) (*NeedleMap, error) {
 }
 
 func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
-	e := idx.WalkIndexFile(file, func(key NeedleId, offset Offset, size Size) error {
+	e := idx.WalkIndexFile(file, 0, func(key NeedleId, offset Offset, size Size) error {
 		nm.MaybeSetMaxFileKey(key)
+		nm.FileCounter++
 		if !offset.IsZero() && size.IsValid() {
-			nm.FileCounter++
 			nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 			oldOffset, oldSize := nm.m.Set(NeedleId(key), offset, size)
 			if !oldOffset.IsZero() && oldSize.IsValid() {
@@ -69,6 +70,9 @@ func (nm *NeedleMap) Delete(key NeedleId, offset Offset) error {
 	return nm.appendToIndexFile(key, offset, TombstoneFileSize)
 }
 func (nm *NeedleMap) Close() {
+	if nm.indexFile == nil {
+		return
+	}
 	indexFileName := nm.indexFile.Name()
 	if err := nm.indexFile.Sync(); err != nil {
 		glog.Warningf("sync file %s failed, %v", indexFileName, err)
@@ -78,4 +82,54 @@ func (nm *NeedleMap) Close() {
 func (nm *NeedleMap) Destroy() error {
 	nm.Close()
 	return os.Remove(nm.indexFile.Name())
+}
+
+func (nm *NeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *opt.Options) error {
+	if v.nm != nil {
+		v.nm.Close()
+		v.nm = nil
+	}
+	defer func() {
+		if v.tmpNm != nil {
+			v.tmpNm.Close()
+			v.tmpNm = nil
+		}
+	}()
+	nm.indexFile = indexFile
+	stat, err := indexFile.Stat()
+	if err != nil {
+		glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
+		return err
+	}
+	nm.indexFileOffset = stat.Size()
+	v.nm = nm
+	v.tmpNm = nil
+	return nil
+}
+
+func (nm *NeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startFrom uint64) error {
+	glog.V(0).Infof("loading idx from offset %d for file: %s", startFrom, indexFile.Name())
+	e := idx.WalkIndexFile(indexFile, startFrom, func(key NeedleId, offset Offset, size Size) error {
+		nm.MaybeSetMaxFileKey(key)
+		nm.FileCounter++
+		if !offset.IsZero() && size.IsValid() {
+			nm.FileByteCounter = nm.FileByteCounter + uint64(size)
+			oldOffset, oldSize := nm.m.Set(NeedleId(key), offset, size)
+			if !oldOffset.IsZero() && oldSize.IsValid() {
+				nm.DeletionCounter++
+				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
+			}
+		} else {
+			oldSize := nm.m.Delete(NeedleId(key))
+			nm.DeletionCounter++
+			nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
+		}
+		return nil
+	})
+
+	return e
+}
+
+func (m *NeedleMap) UpdateNeedleMapMetric(indexFile *os.File) error {
+	return nil
 }

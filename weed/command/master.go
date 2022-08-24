@@ -2,24 +2,29 @@ package command
 
 import (
 	"net/http"
+	"fmt"
 	"os"
+	"path"
 	"strings"
 	"time"
 
-	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
+	"golang.org/x/exp/slices"
+
 	"github.com/gorilla/mux"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc/reflection"
 
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	weed_server "github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var (
@@ -105,10 +110,7 @@ func runMaster(cmd *Command, args []string) bool {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
 	}
 
-	var masterWhiteList []string
-	if *m.whiteList != "" {
-		masterWhiteList = strings.Split(*m.whiteList, ",")
-	}
+	masterWhiteList := util.StringSplit(*m.whiteList, ",")
 	if *m.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
 		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
 	}
@@ -147,11 +149,12 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 
 	// start raftServer
+	metaDir := path.Join(*masterOption.metaFolder, fmt.Sprintf("m%d", *masterOption.port))
 	raftServerOption := &weed_server.RaftServerOption{
 		GrpcDialOption:    security.LoadClientTLS(util.GetViper(), "grpc.master"),
 		Peers:             masterPeers,
 		ServerAddr:        myMasterAddress,
-		DataDir:           util.ResolvePath(*masterOption.metaFolder),
+		DataDir:           util.ResolvePath(metaDir),
 		Topo:              ms.Topo,
 		RaftResumeState:   *masterOption.raftResumeState,
 		HeartbeatInterval: *masterOption.heartbeatInterval,
@@ -167,6 +170,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 
 	ms.SetRaftServer(raftServer)
 	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
+	r.HandleFunc("/cluster/healthz", raftServer.HealthzHandler).Methods("GET", "HEAD")
 	r.HandleFunc("/raft/stats", raftServer.StatsRaftHandler).Methods("GET")
 
 	// starting grpc server

@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -10,19 +9,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/util/buffered_writer"
+	"github.com/seaweedfs/seaweedfs/weed/util/buffered_writer"
 	"golang.org/x/net/webdav"
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
 type WebDavOption struct {
@@ -48,6 +47,13 @@ type WebDavServer struct {
 	Handler        *webdav.Handler
 }
 
+func max(x, y int64) int64 {
+	if x <= y {
+		return y
+	}
+	return x
+}
+
 func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 
 	fs, _ := NewWebDavFileSystem(option)
@@ -69,7 +75,6 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 type WebDavFileSystem struct {
 	option         *WebDavOption
 	secret         security.SigningKey
-	filer          *filer.Filer
 	grpcDialOption grpc.DialOption
 	chunkCache     *chunk_cache.TieredChunkCache
 	signature      int32
@@ -99,8 +104,6 @@ type WebDavFile struct {
 	entryViewCache []filer.VisibleInterval
 	reader         io.ReaderAt
 	bufWriter      *buffered_writer.BufferedWriteCloser
-	collection     string
-	replication    string
 }
 
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
@@ -124,11 +127,14 @@ func (fs *WebDavFileSystem) WithFilerClient(streamingMode bool, fn func(filer_pb
 	return pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, fs.option.Filer.ToGrpcAddress(), fs.option.GrpcDialOption)
+	}, fs.option.Filer.ToGrpcAddress(), false, fs.option.GrpcDialOption)
 
 }
 func (fs *WebDavFileSystem) AdjustedUrl(location *filer_pb.Location) string {
 	return location.Url
+}
+func (fs *WebDavFileSystem) GetDataCenter() string {
+	return ""
 }
 
 func clearName(name string) (string, error) {
@@ -218,14 +224,12 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 					Name:        name,
 					IsDirectory: perm&os.ModeDir > 0,
 					Attributes: &filer_pb.FuseAttributes{
-						Mtime:       time.Now().Unix(),
-						Crtime:      time.Now().Unix(),
-						FileMode:    uint32(perm),
-						Uid:         fs.option.Uid,
-						Gid:         fs.option.Gid,
-						Collection:  fs.option.Collection,
-						Replication: fs.option.Replication,
-						TtlSec:      0,
+						Mtime:    time.Now().Unix(),
+						Crtime:   time.Now().Unix(),
+						FileMode: uint32(perm),
+						Uid:      fs.option.Uid,
+						Gid:      fs.option.Gid,
+						TtlSec:   0,
 					},
 				},
 				Signatures: []int32{fs.signature},
@@ -369,67 +373,39 @@ func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo,
 	return fs.stat(ctx, name)
 }
 
-func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, collection, replication string, err error) {
+func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, err error) {
 
-	var fileId, host string
-	var auth security.EncodedJwt
+	fileId, uploadResult, flushErr, _ := operation.UploadWithRetry(
+		f.fs,
+		&filer_pb.AssignVolumeRequest{
+			Count:       1,
+			Replication: f.fs.option.Replication,
+			Collection:  f.fs.option.Collection,
+			DiskType:    f.fs.option.DiskType,
+			Path:        name,
+		},
+		&operation.UploadOption{
+			Filename:          f.name,
+			Cipher:            f.fs.option.Cipher,
+			IsInputCompressed: false,
+			MimeType:          "",
+			PairMap:           nil,
+		},
+		func(host, fileId string) string {
+			return fmt.Sprintf("http://%s/%s", host, fileId)
+		},
+		reader,
+	)
 
-	if flushErr := f.fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-
-		ctx := context.Background()
-
-		assignErr := util.Retry("assignVolume", func() error {
-			request := &filer_pb.AssignVolumeRequest{
-				Count:       1,
-				Replication: f.fs.option.Replication,
-				Collection:  f.fs.option.Collection,
-				DiskType:    f.fs.option.DiskType,
-				Path:        name,
-			}
-
-			resp, err := client.AssignVolume(ctx, request)
-			if err != nil {
-				glog.V(0).Infof("assign volume failure %v: %v", request, err)
-				return err
-			}
-			if resp.Error != "" {
-				return fmt.Errorf("assign volume failure %v: %v", request, resp.Error)
-			}
-
-			fileId, host, auth = resp.FileId, resp.Location.Url, security.EncodedJwt(resp.Auth)
-			f.collection, f.replication = resp.Collection, resp.Replication
-
-			return nil
-		})
-		if assignErr != nil {
-			return assignErr
-		}
-
-		return nil
-	}); flushErr != nil {
-		return nil, f.collection, f.replication, fmt.Errorf("filerGrpcAddress assign volume: %v", flushErr)
-	}
-
-	fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
-	uploadOption := &operation.UploadOption{
-		UploadUrl:         fileUrl,
-		Filename:          f.name,
-		Cipher:            f.fs.option.Cipher,
-		IsInputCompressed: false,
-		MimeType:          "",
-		PairMap:           nil,
-		Jwt:               auth,
-	}
-	uploadResult, flushErr, _ := operation.Upload(reader, uploadOption)
 	if flushErr != nil {
-		glog.V(0).Infof("upload data %v to %s: %v", f.name, fileUrl, flushErr)
-		return nil, f.collection, f.replication, fmt.Errorf("upload data: %v", flushErr)
+		glog.V(0).Infof("upload data %v: %v", f.name, flushErr)
+		return nil, fmt.Errorf("upload data: %v", flushErr)
 	}
 	if uploadResult.Error != "" {
-		glog.V(0).Infof("upload failure %v to %s: %v", f.name, fileUrl, flushErr)
-		return nil, f.collection, f.replication, fmt.Errorf("upload result: %v", uploadResult.Error)
+		glog.V(0).Infof("upload failure %v: %v", f.name, flushErr)
+		return nil, fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
-	return uploadResult.ToPbFileChunk(fileId, offset), f.collection, f.replication, nil
+	return uploadResult.ToPbFileChunk(fileId, offset), nil
 }
 
 func (f *WebDavFile) Write(buf []byte) (int, error) {
@@ -455,7 +431,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		f.bufWriter.FlushFunc = func(data []byte, offset int64) (flushErr error) {
 
 			var chunk *filer_pb.FileChunk
-			chunk, f.collection, f.replication, flushErr = f.saveDataAsChunk(bytes.NewReader(data), f.name, offset)
+			chunk, flushErr = f.saveDataAsChunk(util.NewBytesReader(data), f.name, offset)
 
 			if flushErr != nil {
 				return fmt.Errorf("%s upload result: %v", f.name, flushErr)
@@ -478,8 +454,6 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 			flushErr := f.fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 				f.entry.Attributes.Mtime = time.Now().Unix()
-				f.entry.Attributes.Collection = f.collection
-				f.entry.Attributes.Replication = f.replication
 
 				request := &filer_pb.UpdateEntryRequest{
 					Directory:  dir,
@@ -500,6 +474,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 	written, err := f.bufWriter.Write(buf)
 
 	if err == nil {
+		f.entry.Attributes.FileSize = uint64(max(f.off+int64(written), int64(f.entry.Attributes.FileSize)))
 		glog.V(3).Infof("WebDavFileSystem.Write %v: written [%d,%d)", f.name, f.off, f.off+int64(len(buf)))
 		f.off += int64(written)
 	}

@@ -3,9 +3,9 @@ package mount
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"math"
 	"time"
 )
@@ -64,15 +64,43 @@ func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.Stat
 		}
 	}
 
+	// 	http://man.he.net/man2/statfs
+	/*
+		   struct statfs {
+			   __fsword_t f_type;    // Type of filesystem (see below)
+			   __fsword_t f_bsize;   // Optimal transfer block size
+			   fsblkcnt_t f_blocks;  // Total data blocks in filesystem
+			   fsblkcnt_t f_bfree;   // Free blocks in filesystem
+			   fsblkcnt_t f_bavail;  // Free blocks available to
+										unprivileged user
+			   fsfilcnt_t f_files;   // Total file nodes in filesystem
+			   fsfilcnt_t f_ffree;   // Free file nodes in filesystem
+			   fsid_t     f_fsid;    // Filesystem ID
+			   __fsword_t f_namelen; // Maximum length of filenames
+			   __fsword_t f_frsize;  // Fragment size (since Linux 2.6)
+			   __fsword_t f_flags;   // Mount flags of filesystem
+										(since Linux 2.6.36)
+			   __fsword_t f_spare[xxx];
+							   // Padding bytes reserved for future use
+		   };
+	*/
+
 	// Compute the total number of available blocks
 	out.Blocks = totalDiskSize / blockSize
-
+	if out.Blocks <= 0 {
+		out.Blocks = 1
+	}
 	// Compute the number of used blocks
-	numBlocks := uint64(usedDiskSize / blockSize)
+	numBlocks := usedDiskSize / blockSize
+
+	remainingBlocks := int64(out.Blocks) - int64(numBlocks)
+	if remainingBlocks < 0 {
+		remainingBlocks = 0
+	}
 
 	// Report the number of free and available blocks for the block size
-	out.Bfree = out.Blocks - numBlocks
-	out.Bavail = out.Blocks - numBlocks
+	out.Bfree = uint64(remainingBlocks)
+	out.Bavail = uint64(remainingBlocks)
 	out.Bsize = uint32(blockSize)
 
 	// Report the total number of possible files in the file system (and those free)

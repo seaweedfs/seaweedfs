@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package messaging_pb;
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/s3_pb";
+option java_package = "seaweedfs.client";
+option java_outer_classname = "S3Proto";
+
+//////////////////////////////////////////////////
+
+service SeaweedS3 {
+
+    rpc Configure (S3ConfigureRequest) returns (S3ConfigureResponse) {
+    }
+
+}
+
+//////////////////////////////////////////////////
+
+message S3ConfigureRequest {
+    bytes s3_configuration_file_content = 1;
+}
+
+message S3ConfigureResponse {
+}
+
+message S3CircuitBreakerConfig {
+    S3CircuitBreakerOptions global=1;
+    map<string, S3CircuitBreakerOptions> buckets= 2;
+}
+
+message S3CircuitBreakerOptions {
+    bool enabled=1;
+    map<string, int64> actions = 2;
+}

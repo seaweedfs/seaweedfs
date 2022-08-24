@@ -4,18 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var (
@@ -33,9 +34,11 @@ type FilerPostResult struct {
 
 func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
 
-	stats.FilerRequestCounter.WithLabelValues("assign").Inc()
+	stats.FilerRequestCounter.WithLabelValues(stats.ChunkAssign).Inc()
 	start := time.Now()
-	defer func() { stats.FilerRequestHistogram.WithLabelValues("assign").Observe(time.Since(start).Seconds()) }()
+	defer func() {
+		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkAssign).Observe(time.Since(start).Seconds())
+	}()
 
 	ar, altRequest := so.ToAssignRequests(1)
 
@@ -46,7 +49,17 @@ func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, u
 		return
 	}
 	fileId = assignResult.Fid
-	urlLocation = "http://" + assignResult.Url + "/" + assignResult.Fid
+	assignUrl := assignResult.Url
+	// Prefer same data center
+	if fs.option.DataCenter != "" {
+		for _, repl := range assignResult.Replicas {
+			if repl.DataCenter == fs.option.DataCenter {
+				assignUrl = repl.Url
+				break
+			}
+		}
+	}
+	urlLocation = "http://" + assignUrl + "/" + assignResult.Fid
 	if so.Fsync {
 		urlLocation += "?fsync=true"
 	}
@@ -58,8 +71,13 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 
 	ctx := context.Background()
 
+	destination := r.RequestURI
+	if finalDestination := r.Header.Get(s3_constants.SeaweedStorageDestinationHeader); finalDestination != "" {
+		destination = finalDestination
+	}
+
 	query := r.URL.Query()
-	so, err := fs.detectStorageOption0(r.RequestURI,
+	so, err := fs.detectStorageOption0(destination,
 		query.Get("collection"),
 		query.Get("replication"),
 		query.Get("ttl"),
@@ -194,10 +212,9 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	}
 
 	// required by buckets folder
-	bucketDefaultCollection, bucketDefaultReplication, fsync := "", "", false
+	bucketDefaultCollection := ""
 	if strings.HasPrefix(requestURI, fs.filer.DirBucketsPath+"/") {
 		bucketDefaultCollection = fs.filer.DetectBucket(util.FullPath(requestURI))
-		bucketDefaultReplication, fsync = fs.filer.ReadBucketOption(bucketDefaultCollection)
 	}
 
 	if ttlSeconds == 0 {
@@ -209,14 +226,14 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	}
 
 	return &operation.StorageOption{
-		Replication:       util.Nvl(qReplication, rule.Replication, bucketDefaultReplication, fs.option.DefaultReplication),
+		Replication:       util.Nvl(qReplication, rule.Replication, fs.option.DefaultReplication),
 		Collection:        util.Nvl(qCollection, rule.Collection, bucketDefaultCollection, fs.option.Collection),
 		DataCenter:        util.Nvl(dataCenter, rule.DataCenter, fs.option.DataCenter),
 		Rack:              util.Nvl(rack, rule.Rack, fs.option.Rack),
 		DataNode:          util.Nvl(dataNode, rule.DataNode, fs.option.DataNode),
 		TtlSeconds:        ttlSeconds,
 		DiskType:          util.Nvl(diskType, rule.DiskType),
-		Fsync:             fsync || rule.Fsync,
+		Fsync:             rule.Fsync,
 		VolumeGrowthCount: rule.VolumeGrowthCount,
 	}, nil
 }
@@ -230,7 +247,11 @@ func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplicatio
 
 	so, err := fs.detectStorageOption(requestURI, qCollection, qReplication, int32(ttl.Minutes())*60, diskType, dataCenter, rack, dataNode)
 	if so != nil {
-		so.Fsync = fsync == "true"
+		if fsync == "false" {
+			so.Fsync = false
+		} else if fsync == "true" {
+			so.Fsync = true
+		}
 	}
 
 	return so, err

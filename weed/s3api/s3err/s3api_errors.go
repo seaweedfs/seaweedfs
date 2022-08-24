@@ -64,6 +64,7 @@ const (
 	ErrInvalidMaxDeleteObjects
 	ErrInvalidPartNumberMarker
 	ErrInvalidPart
+	ErrInvalidRange
 	ErrInternalError
 	ErrInvalidCopyDest
 	ErrInvalidCopySource
@@ -103,6 +104,9 @@ const (
 
 	ErrExistingObjectIsDirectory
 	ErrExistingObjectIsFile
+
+	ErrTooManyRequest
+	ErrRequestBytesExceed
 )
 
 // error code to APIError structure, these fields carry respective
@@ -370,6 +374,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "Invalid Request",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
+	ErrInvalidRange: {
+		Code:           "InvalidRange",
+		Description:    "The requested range is not satisfiable",
+		HTTPStatusCode: http.StatusRequestedRangeNotSatisfiable,
+	},
 	ErrAuthNotSetup: {
 		Code:           "InvalidRequest",
 		Description:    "Signed request requires setting up SeaweedFS S3 authentication",
@@ -394,6 +403,16 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "ExistingObjectIsFile",
 		Description:    "Existing Object is a file.",
 		HTTPStatusCode: http.StatusConflict,
+	},
+	ErrTooManyRequest: {
+		Code:           "ErrTooManyRequest",
+		Description:    "Too many simultaneous request count",
+		HTTPStatusCode: http.StatusTooManyRequests,
+	},
+	ErrRequestBytesExceed: {
+		Code:           "ErrRequestBytesExceed",
+		Description:    "Simultaneous request bytes exceed limitations",
+		HTTPStatusCode: http.StatusTooManyRequests,
 	},
 }
 

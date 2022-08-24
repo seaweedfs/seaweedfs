@@ -1,4 +1,5 @@
-//+build rocksdb
+//go:build rocksdb
+// +build rocksdb
 
 package rocksdb
 
@@ -7,7 +8,7 @@ import (
 
 	gorocksdb "github.com/linxGnu/grocksdb"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 )
 
 type TTLFilter struct {

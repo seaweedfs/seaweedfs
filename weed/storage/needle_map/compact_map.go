@@ -4,11 +4,11 @@ import (
 	"sort"
 	"sync"
 
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 const (
-	batch = 100000
+	batch = 10000
 )
 
 type SectionalNeedleId uint32

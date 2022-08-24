@@ -1,0 +1,21 @@
+{{- if .Values.master.metricsPort }}
+{{- if .Values.global.monitoring.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ template "seaweedfs.name" . }}-master
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "seaweedfs.name" . }}
+    component: master
+spec:
+  endpoints:
+    - interval: 30s
+      port: metrics
+      scrapeTimeout: 5s
+  selector:
+    matchLabels:
+      app: {{ template "seaweedfs.name" . }}
+      component: master
+{{- end }}
+{{- end }}

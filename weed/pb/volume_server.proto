@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package volume_server_pb;
-option go_package = "github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb";
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb";
 
 import "remote.proto";
 
@@ -147,6 +147,7 @@ message VacuumVolumeCompactRequest {
 }
 message VacuumVolumeCompactResponse {
     int64 processed_bytes = 1;
+    float load_avg_1m = 2;
 }
 
 message VacuumVolumeCommitRequest {
@@ -253,6 +254,7 @@ message VolumeCopyRequest {
     string ttl = 4;
     string source_data_node = 5;
     string disk_type = 6;
+    int64 io_byte_per_second = 7;
 }
 message VolumeCopyResponse {
     uint64 last_append_at_ns = 1;
@@ -479,6 +481,9 @@ message VolumeServerStatusRequest {
 message VolumeServerStatusResponse {
     repeated DiskStatus disk_statuses = 1;
     MemStatus memory_status = 2;
+    string version = 3;
+    string data_center = 4;
+    string rack = 5;
 }
 
 message VolumeServerLeaveRequest {

@@ -3,7 +3,7 @@ package topology
 import (
 	"fmt"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 type VolumeLocationList struct {
@@ -82,12 +82,13 @@ func (dnll *VolumeLocationList) Refresh(freshThreshHold int64) {
 	}
 }
 
+// Stats returns logic size and count
 func (dnll *VolumeLocationList) Stats(vid needle.VolumeId, freshThreshHold int64) (size uint64, fileCount int) {
 	for _, dnl := range dnll.list {
 		if dnl.LastSeen < freshThreshHold {
 			vinfo, err := dnl.GetVolumesById(vid)
 			if err == nil {
-				return (vinfo.Size - vinfo.DeletedByteCount) * uint64(len(dnll.list)), vinfo.FileCount - vinfo.DeleteCount
+				return (vinfo.Size - vinfo.DeletedByteCount), vinfo.FileCount - vinfo.DeleteCount
 			}
 		}
 	}

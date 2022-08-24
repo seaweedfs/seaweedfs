@@ -3,15 +3,15 @@ package topology
 import (
 	"errors"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"math/rand"
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
 type copyState int
@@ -473,13 +473,19 @@ func (vl *VolumeLayout) SetVolumeCrowded(vid needle.VolumeId) {
 	}
 }
 
-func (vl *VolumeLayout) ToMap() map[string]interface{} {
-	m := make(map[string]interface{})
-	m["replication"] = vl.rp.String()
-	m["ttl"] = vl.ttl.String()
-	m["writables"] = vl.writables
+type VolumeLayoutInfo struct {
+	Replication string            `json:"replication"`
+	TTL         string            `json:"ttl"`
+	Writables   []needle.VolumeId `json:"writables"`
+	Collection  string            `json:"collection"`
+}
+
+func (vl *VolumeLayout) ToInfo() (info VolumeLayoutInfo) {
+	info.Replication = vl.rp.String()
+	info.TTL = vl.ttl.String()
+	info.Writables = vl.writables
 	//m["locations"] = vl.vid2location
-	return m
+	return
 }
 
 func (vl *VolumeLayout) Stats() *VolumeLayoutStats {
@@ -493,9 +499,9 @@ func (vl *VolumeLayout) Stats() *VolumeLayoutStats {
 	for vid, vll := range vl.vid2location {
 		size, fileCount := vll.Stats(vid, freshThreshold)
 		ret.FileCount += uint64(fileCount)
-		ret.UsedSize += size
+		ret.UsedSize += size * uint64(vll.Length())
 		if vl.readonlyVolumes.IsTrue(vid) {
-			ret.TotalSize += size
+			ret.TotalSize += size * uint64(vll.Length())
 		} else {
 			ret.TotalSize += vl.volumeSizeLimit * uint64(vll.Length())
 		}

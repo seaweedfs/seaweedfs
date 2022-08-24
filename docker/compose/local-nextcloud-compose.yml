@@ -1,0 +1,44 @@
+version: '2'
+
+services:
+  master:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9333:9333
+      - 19333:19333
+    command: "master -ip=master"
+  volume:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8080:8080
+      - 18080:18080
+    command: "volume -mserver=master:9333 -port=8080 -ip=volume"
+    depends_on:
+      - master
+  s3:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8888:8888
+      - 18888:18888
+      - 8333:8333
+    command: '-v 9 filer -master="master:9333" -s3'
+    depends_on:
+      - master
+      - volume
+  nextcloud:
+    image: nextcloud:23.0.5-apache
+    environment:
+      - OBJECTSTORE_S3_HOST=s3
+      - OBJECTSTORE_S3_BUCKET=nextcloud
+      - OBJECTSTORE_S3_KEY=some_access_key1
+      - OBJECTSTORE_S3_SECRET=some_secret_key1
+      - OBJECTSTORE_S3_PORT=8333
+      - OBJECTSTORE_S3_SSL=false
+      - OBJECTSTORE_S3_USEPATH_STYLE=true
+      - SQLITE_DATABASE=nextcloud
+      - NEXTCLOUD_ADMIN_USER=admin
+      - NEXTCLOUD_ADMIN_PASSWORD=admin
+    ports:
+      - 80:80
+    depends_on:
+      - s3

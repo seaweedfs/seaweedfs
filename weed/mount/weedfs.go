@@ -2,31 +2,34 @@ package mount
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/mount/meta_cache"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/mount_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"github.com/hanwen/go-fuse/v2/fuse"
-	"google.golang.org/grpc"
 	"math/rand"
 	"os"
 	"path"
 	"path/filepath"
+	"sync/atomic"
 	"time"
+
+	"github.com/hanwen/go-fuse/v2/fuse"
+	"google.golang.org/grpc"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mount_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 )
 
 type Option struct {
-	MountDirectory     string
+	filerIndex         int32 // align memory for atomic read/write
 	FilerAddresses     []pb.ServerAddress
-	filerIndex         int
+	MountDirectory     string
 	GrpcDialOption     grpc.DialOption
 	FilerMountRootPath string
 	Collection         string
@@ -40,6 +43,7 @@ type Option struct {
 	DataCenter         string
 	Umask              os.FileMode
 	Quota              int64
+	DisableXAttr       bool
 
 	MountUid         uint32
 	MountGid         uint32
@@ -85,7 +89,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		dhmap:         NewDirectoryHandleToInode(),
 	}
 
-	wfs.option.filerIndex = rand.Intn(len(option.FilerAddresses))
+	wfs.option.filerIndex = int32(rand.Intn(len(option.FilerAddresses)))
 	wfs.option.setupUniqueCacheDirectory()
 	if option.CacheSizeMB > 0 {
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDir(), option.CacheSizeMB, 1024*1024)
@@ -131,12 +135,13 @@ func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle
 	}
 	var found bool
 	if fh, found = wfs.fhmap.FindFileHandle(inode); found {
-		if fh.entry.Attributes == nil {
-			fh.entry.Attributes = &filer_pb.FuseAttributes{}
+		entry = fh.GetEntry()
+		if entry != nil && fh.entry.Attributes == nil {
+			entry.Attributes = &filer_pb.FuseAttributes{}
 		}
-		return path, fh, fh.entry, fuse.OK
+	} else {
+		entry, status = wfs.maybeLoadEntry(path)
 	}
-	entry, status = wfs.maybeLoadEntry(path)
 	return
 }
 
@@ -161,7 +166,7 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.St
 	}
 
 	// read from async meta cache
-	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir), nil)
+	meta_cache.EnsureVisited(wfs.metaCache, wfs, util.FullPath(dir))
 	cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
 	if cacheErr == filer_pb.ErrNotFound {
 		return nil, fuse.ENOENT
@@ -179,7 +184,8 @@ func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
 }
 
 func (wfs *WFS) getCurrentFiler() pb.ServerAddress {
-	return wfs.option.FilerAddresses[wfs.option.filerIndex]
+	i := atomic.LoadInt32(&wfs.option.filerIndex)
+	return wfs.option.FilerAddresses[i]
 }
 
 func (option *Option) setupUniqueCacheDirectory() {

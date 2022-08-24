@@ -4,12 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func TestCreateAndFind(t *testing.T) {
-	testFiler := filer.NewFiler(nil, nil, "", "", "", "", nil)
+	testFiler := filer.NewFiler(nil, nil, "", "", "", "", "", nil)
 	dir := t.TempDir()
 	store := &LevelDB3Store{}
 	store.initialize(dir)
@@ -62,7 +62,7 @@ func TestCreateAndFind(t *testing.T) {
 }
 
 func TestEmptyRoot(t *testing.T) {
-	testFiler := filer.NewFiler(nil, nil, "", "", "", "", nil)
+	testFiler := filer.NewFiler(nil, nil, "", "", "", "", "", nil)
 	dir := t.TempDir()
 	store := &LevelDB3Store{}
 	store.initialize(dir)

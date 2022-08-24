@@ -3,9 +3,11 @@ package filer
 import (
 	"context"
 	"errors"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 )
+
+const CountEntryChunksForGzip = 50
 
 var (
 	ErrUnsupportedListDirectoryPrefixed      = errors.New("unsupported directory prefix listing")

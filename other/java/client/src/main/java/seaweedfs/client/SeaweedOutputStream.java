@@ -75,7 +75,6 @@ public class SeaweedOutputStream extends OutputStream {
                     .setIsDirectory(false)
                     .setAttributes(FilerProto.FuseAttributes.newBuilder()
                             .setFileMode(0755)
-                            .setReplication(replication)
                             .setCrtime(now)
                             .setMtime(now)
                             .clearGroupName()

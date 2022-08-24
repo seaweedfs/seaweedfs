@@ -3,7 +3,7 @@ package needle_map
 import (
 	"testing"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func BenchmarkMemDb(b *testing.B) {

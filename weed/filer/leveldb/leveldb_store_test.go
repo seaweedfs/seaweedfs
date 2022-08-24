@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func TestCreateAndFind(t *testing.T) {
-	testFiler := filer.NewFiler(nil, nil, "", "", "", "", nil)
+	testFiler := filer.NewFiler(nil, nil, "", "", "", "", "", nil)
 	dir := t.TempDir()
 	store := &LevelDBStore{}
 	store.initialize(dir)
@@ -65,7 +65,7 @@ func TestCreateAndFind(t *testing.T) {
 }
 
 func TestEmptyRoot(t *testing.T) {
-	testFiler := filer.NewFiler(nil, nil, "", "", "", "", nil)
+	testFiler := filer.NewFiler(nil, nil, "", "", "", "", "", nil)
 	dir := t.TempDir()
 	store := &LevelDBStore{}
 	store.initialize(dir)
@@ -87,7 +87,7 @@ func TestEmptyRoot(t *testing.T) {
 }
 
 func BenchmarkInsertEntry(b *testing.B) {
-	testFiler := filer.NewFiler(nil, nil, "", "", "", "", nil)
+	testFiler := filer.NewFiler(nil, nil, "", "", "", "", "", nil)
 	dir := b.TempDir()
 	store := &LevelDBStore{}
 	store.initialize(dir)

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package filer_pb;
 
-option go_package = "github.com/chrislusf/seaweedfs/weed/pb/filer_pb";
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb";
 option java_package = "seaweedfs.client";
 option java_outer_classname = "FilerProto";
 
@@ -58,12 +58,6 @@ service SeaweedFiler {
     }
 
     rpc SubscribeLocalMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
-    }
-
-    rpc KeepConnected (stream KeepConnectedRequest) returns (stream KeepConnectedResponse) {
-    }
-
-    rpc LocateBroker (LocateBrokerRequest) returns (LocateBrokerResponse) {
     }
 
     rpc KvGet (KvGetRequest) returns (KvGetResponse) {
@@ -166,14 +160,11 @@ message FuseAttributes {
     uint32 gid = 5;
     int64 crtime = 6; // unix time in seconds
     string mime = 7;
-    string replication = 8;
-    string collection = 9;
     int32 ttl_sec = 10;
     string user_name = 11; // for hdfs
     repeated string group_name = 12; // for hdfs
     string symlink_target = 13;
     bytes md5 = 14;
-    string disk_type = 15;
     uint32 rdev = 16;
     uint64 inode = 17;
 }
@@ -280,6 +271,7 @@ message Location {
     string url = 1;
     string public_url = 2;
     uint32 grpc_port = 3;
+    string data_center = 4;
 }
 message LookupVolumeResponse {
     map<string, Locations> locations_map = 1;
@@ -338,6 +330,7 @@ message GetFilerConfigurationResponse {
     int32 metrics_interval_sec = 10;
     string version = 11;
     string cluster_id = 12;
+    string filer_group = 13;
 }
 
 message SubscribeMetadataRequest {
@@ -347,6 +340,8 @@ message SubscribeMetadataRequest {
     int32 signature = 4;
     repeated string path_prefixes = 6;
     int32 client_id = 7;
+    int64 until_ns = 8;
+    int32 client_epoch = 9;
 }
 message SubscribeMetadataResponse {
     string directory = 1;

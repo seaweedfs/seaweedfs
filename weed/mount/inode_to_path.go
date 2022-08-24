@@ -1,10 +1,11 @@
 package mount
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"sync"
+	"time"
 )
 
 type InodeToPath struct {
@@ -14,10 +15,32 @@ type InodeToPath struct {
 	path2inode  map[util.FullPath]uint64
 }
 type InodeEntry struct {
-	util.FullPath
+	paths            []util.FullPath
 	nlookup          uint64
 	isDirectory      bool
 	isChildrenCached bool
+}
+
+func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
+	if len(ie.paths) == 0 {
+		return false
+	}
+	idx := -1
+	for i, x := range ie.paths {
+		if x == p {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return false
+	}
+	for x := idx; x < len(ie.paths)-1; x++ {
+		ie.paths[x] = ie.paths[x+1]
+	}
+	ie.paths = ie.paths[0 : len(ie.paths)-1]
+	ie.nlookup--
+	return true
 }
 
 func NewInodeToPath(root util.FullPath) *InodeToPath {
@@ -25,9 +48,24 @@ func NewInodeToPath(root util.FullPath) *InodeToPath {
 		inode2path: make(map[uint64]*InodeEntry),
 		path2inode: make(map[util.FullPath]uint64),
 	}
-	t.inode2path[1] = &InodeEntry{root, 1, true, false}
+	t.inode2path[1] = &InodeEntry{[]util.FullPath{root}, 1, true, false}
 	t.path2inode[root] = 1
 	return t
+}
+
+// EnsurePath make sure the full path is tracked, used by symlink.
+func (i *InodeToPath) EnsurePath(path util.FullPath, isDirectory bool) bool {
+	for {
+		dir, _ := path.DirAndName()
+		if dir == "/" {
+			return true
+		}
+		if i.EnsurePath(util.FullPath(dir), true) {
+			i.Lookup(path, time.Now().Unix(), isDirectory, false, 0, false)
+			return true
+		}
+	}
+	return false
 }
 
 func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory bool, isHardlink bool, possibleInode uint64, isLookup bool) uint64 {
@@ -54,9 +92,9 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 		}
 	} else {
 		if !isLookup {
-			i.inode2path[inode] = &InodeEntry{path, 0, isDirectory, false}
+			i.inode2path[inode] = &InodeEntry{[]util.FullPath{path}, 0, isDirectory, false}
 		} else {
-			i.inode2path[inode] = &InodeEntry{path, 1, isDirectory, false}
+			i.inode2path[inode] = &InodeEntry{[]util.FullPath{path}, 1, isDirectory, false}
 		}
 	}
 
@@ -94,10 +132,10 @@ func (i *InodeToPath) GetPath(inode uint64) (util.FullPath, fuse.Status) {
 	i.RLock()
 	defer i.RUnlock()
 	path, found := i.inode2path[inode]
-	if !found {
+	if !found || len(path.paths) == 0 {
 		return "", fuse.ENOENT
 	}
-	return path.FullPath, fuse.OK
+	return path.paths[0], fuse.OK
 }
 
 func (i *InodeToPath) HasPath(path util.FullPath) bool {
@@ -142,21 +180,57 @@ func (i *InodeToPath) HasInode(inode uint64) bool {
 	return found
 }
 
+func (i *InodeToPath) AddPath(inode uint64, path util.FullPath) {
+	i.Lock()
+	defer i.Unlock()
+	i.path2inode[path] = inode
+
+	ie, found := i.inode2path[inode]
+	if found {
+		ie.paths = append(ie.paths, path)
+		ie.nlookup++
+	} else {
+		i.inode2path[inode] = &InodeEntry{
+			paths:            []util.FullPath{path},
+			nlookup:          1,
+			isDirectory:      false,
+			isChildrenCached: false,
+		}
+	}
+}
+
 func (i *InodeToPath) RemovePath(path util.FullPath) {
 	i.Lock()
 	defer i.Unlock()
 	inode, found := i.path2inode[path]
 	if found {
 		delete(i.path2inode, path)
+		i.removePathFromInode2Path(inode, path)
+	}
+}
+
+func (i *InodeToPath) removePathFromInode2Path(inode uint64, path util.FullPath) {
+	ie, found := i.inode2path[inode]
+	if !found {
+		return
+	}
+	if !ie.removeOnePath(path) {
+		return
+	}
+	if len(ie.paths) == 0 {
 		delete(i.inode2path, inode)
 	}
 }
 
-func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (replacedInode uint64) {
+func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInode, targetInode uint64) {
 	i.Lock()
 	defer i.Unlock()
 	sourceInode, sourceFound := i.path2inode[sourcePath]
 	targetInode, targetFound := i.path2inode[targetPath]
+	if targetFound {
+		i.removePathFromInode2Path(targetInode, targetPath)
+		delete(i.path2inode, targetPath)
+	}
 	if sourceFound {
 		delete(i.path2inode, sourcePath)
 		i.path2inode[targetPath] = sourceInode
@@ -165,13 +239,20 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (replacedIn
 		// so no need to worry about their source inodes
 		return
 	}
-	i.inode2path[sourceInode].FullPath = targetPath
-	if targetFound {
-		delete(i.inode2path, targetInode)
+	if entry, entryFound := i.inode2path[sourceInode]; entryFound {
+		for i, p := range entry.paths {
+			if p == sourcePath {
+				entry.paths[i] = targetPath
+			}
+		}
+		entry.isChildrenCached = false
+		if !targetFound {
+			entry.nlookup++
+		}
 	} else {
-		i.inode2path[sourceInode].nlookup++
+		glog.Errorf("MovePath %s to %s: sourceInode %d not found", sourcePath, targetPath, sourceInode)
 	}
-	return targetInode
+	return
 }
 
 func (i *InodeToPath) Forget(inode, nlookup uint64, onForgetDir func(dir util.FullPath)) {
@@ -180,7 +261,9 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onForgetDir func(dir util.Fu
 	if found {
 		path.nlookup -= nlookup
 		if path.nlookup <= 0 {
-			delete(i.path2inode, path.FullPath)
+			for _, p := range path.paths {
+				delete(i.path2inode, p)
+			}
 			delete(i.inode2path, inode)
 		}
 	}
@@ -188,7 +271,9 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onForgetDir func(dir util.Fu
 	if found {
 		if path.isDirectory && path.nlookup <= 0 && onForgetDir != nil {
 			path.isChildrenCached = false
-			onForgetDir(path.FullPath)
+			for _, p := range path.paths {
+				onForgetDir(p)
+			}
 		}
 	}
 }

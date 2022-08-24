@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package messaging_pb;
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/mq_pb";
+option java_package = "seaweedfs.mq";
+option java_outer_classname = "MessagQueueProto";
+
+//////////////////////////////////////////////////
+
+service SeaweedMessaging {
+
+    // control plane
+    rpc FindBrokerLeader (FindBrokerLeaderRequest) returns (FindBrokerLeaderResponse) {
+    }
+    rpc AssignSegmentBrokers (AssignSegmentBrokersRequest) returns (AssignSegmentBrokersResponse) {
+    }
+    rpc CheckSegmentStatus (CheckSegmentStatusRequest) returns (CheckSegmentStatusResponse) {
+    }
+    rpc CheckBrokerLoad (CheckBrokerLoadRequest) returns (CheckBrokerLoadResponse) {
+    }
+
+    // data plane
+    rpc Publish (stream PublishRequest) returns (stream PublishResponse) {
+    }
+}
+
+//////////////////////////////////////////////////
+message SegmentInfo {
+    Segment segment = 1;
+    int64 start_ts_ns = 2;
+    repeated string brokers = 3;
+    int64 stop_ts_ns = 4;
+    repeated int32 previous_segments = 5;
+    repeated int32 next_segments = 6;
+}
+
+//////////////////////////////////////////////////
+
+message FindBrokerLeaderRequest {
+    string filer_group = 1;
+}
+
+message FindBrokerLeaderResponse {
+    string broker = 1;
+}
+
+message Partition {
+    int32 ring_size = 1;
+    int32 range_start = 2;
+    int32 range_stop = 3;
+}
+
+message Segment {
+    string namespace = 1;
+    string topic = 2;
+    int32 id = 3;
+    Partition partition = 4;
+}
+
+message AssignSegmentBrokersRequest {
+    Segment segment = 1;
+}
+
+message AssignSegmentBrokersResponse {
+    repeated string brokers = 1;
+}
+
+message CheckSegmentStatusRequest {
+    Segment segment = 1;
+}
+
+message CheckSegmentStatusResponse {
+    bool is_active = 1;
+}
+
+message CheckBrokerLoadRequest {
+}
+
+message CheckBrokerLoadResponse {
+    int64 message_count = 1;
+    int64 bytes_count = 2;
+
+}
+
+//////////////////////////////////////////////////
+message PublishRequest {
+    message InitMessage {
+        Segment segment = 1;
+    }
+    InitMessage init = 1;
+    bytes message = 2;
+}
+message PublishResponse {
+    int64 ack_sequence = 1;
+    bool is_closed = 2;
+}

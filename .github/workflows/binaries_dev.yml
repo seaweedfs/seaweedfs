@@ -17,7 +17,7 @@ jobs:
     steps:
 
       - name: Delete old release assets
-        uses: mknejp/delete-release-assets@a8aaab13272b1eaac16cc46dddd3f725b97ee05a # v1
+        uses: mknejp/delete-release-assets@v1
         with:
           token: ${{ github.token }}
           tag: dev
@@ -38,13 +38,13 @@ jobs:
     steps:
 
       - name: Check out code into the Go module directory
-        uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
+        uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b # v2
 
       - name: Set BUILD_TIME env
         run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> ${GITHUB_ENV}
 
       - name: Go Release Binaries Large Disk
-        uses: wangyoucao577/go-release-action@16624612d4e2b73de613857a362d294700207fff # v1.22
+        uses: wangyoucao577/go-release-action@156f172aa3d27f3879a47cad8810b366c299e9e9 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
@@ -53,14 +53,14 @@ jobs:
           overwrite: true
           pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
           build_flags: -tags 5BytesOffset # optional, default is
-          ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          ldflags: -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
           project_path: weed
           binary_name: weed-large-disk
           asset_name: "weed-large-disk-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
 
       - name: Go Release Binaries Normal Volume Size
-        uses: wangyoucao577/go-release-action@16624612d4e2b73de613857a362d294700207fff # v1.22
+        uses: wangyoucao577/go-release-action@156f172aa3d27f3879a47cad8810b366c299e9e9 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
@@ -68,7 +68,7 @@ jobs:
           release_tag: dev
           overwrite: true
           pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
-          ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          ldflags: -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
           project_path: weed
           binary_name: weed-normal-disk
@@ -82,19 +82,18 @@ jobs:
     strategy:
       matrix:
         goos: [darwin]
-        # goarch: [amd64, arm64]
-        goarch: [amd64]
+        goarch: [amd64, arm64]
 
     steps:
 
       - name: Check out code into the Go module directory
-        uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
+        uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b # v2
 
       - name: Set BUILD_TIME env
         run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> ${GITHUB_ENV}
 
       - name: Go Release Binaries Large Disk
-        uses: wangyoucao577/go-release-action@16624612d4e2b73de613857a362d294700207fff # v1.22
+        uses: wangyoucao577/go-release-action@156f172aa3d27f3879a47cad8810b366c299e9e9 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
@@ -103,14 +102,14 @@ jobs:
           overwrite: true
           pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
           build_flags: -tags 5BytesOffset # optional, default is
-          ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          ldflags: -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
           project_path: weed
           binary_name: weed-large-disk
           asset_name: "weed-large-disk-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
 
       - name: Go Release Binaries Normal Volume Size
-        uses: wangyoucao577/go-release-action@16624612d4e2b73de613857a362d294700207fff # v1.22
+        uses: wangyoucao577/go-release-action@156f172aa3d27f3879a47cad8810b366c299e9e9 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
@@ -118,7 +117,7 @@ jobs:
           release_tag: dev
           overwrite: true
           pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
-          ldflags: -extldflags -static -X github.com/chrislusf/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          ldflags: -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
           project_path: weed
           binary_name: weed-normal-disk

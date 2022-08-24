@@ -8,6 +8,7 @@ scrape_configs:
     static_configs:
       - targets:
           - 'prometheus:9090'
+          - 'master:9324'
           - 'volume:9325'
           - 'filer:9326'
           - 's3:9327'

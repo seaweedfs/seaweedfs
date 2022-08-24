@@ -2,9 +2,9 @@ package remote_storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
-	"github.com/golang/protobuf/proto"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"google.golang.org/protobuf/proto"
 	"io"
 	"sort"
 	"strings"

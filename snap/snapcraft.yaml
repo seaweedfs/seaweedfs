@@ -30,7 +30,7 @@ parts:
     plugin: go
     # Snapcraft will look in this location for the source of the application
     source: .
-    go-importpath: github.com/chrislusf/seaweedfs
+    go-importpath: github.com/seaweedfs/seaweedfs
   go:
     # Defines the version of golang which will be bootstrapped into the snap
     source-tag: go1.14

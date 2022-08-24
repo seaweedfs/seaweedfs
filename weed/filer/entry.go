@@ -4,8 +4,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type Attr struct {
@@ -15,10 +15,7 @@ type Attr struct {
 	Uid           uint32      // owner uid
 	Gid           uint32      // group gid
 	Mime          string      // mime type
-	Replication   string      // replication
-	Collection    string      // collection name
 	TtlSec        int32       // ttl in seconds
-	DiskType      string
 	UserName      string
 	GroupNames    []string
 	SymlinkTarget string

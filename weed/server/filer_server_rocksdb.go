@@ -4,5 +4,5 @@
 package weed_server
 
 import (
-	_ "github.com/chrislusf/seaweedfs/weed/filer/rocksdb"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/rocksdb"
 )

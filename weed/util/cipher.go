@@ -7,7 +7,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 type CipherKey []byte

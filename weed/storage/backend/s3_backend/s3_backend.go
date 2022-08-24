@@ -11,9 +11,9 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/google/uuid"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 )
 
 func init() {
@@ -37,6 +37,7 @@ type S3BackendStorage struct {
 	region                string
 	bucket                string
 	endpoint              string
+	storageClass          string
 	conn                  s3iface.S3API
 }
 
@@ -48,6 +49,10 @@ func newS3BackendStorage(configuration backend.StringProperties, configPrefix st
 	s.region = configuration.GetString(configPrefix + "region")
 	s.bucket = configuration.GetString(configPrefix + "bucket")
 	s.endpoint = configuration.GetString(configPrefix + "endpoint")
+	s.storageClass = configuration.GetString(configPrefix + "storage_class")
+	if s.storageClass == "" {
+		s.storageClass = "STANDARD_IA"
+	}
 
 	s.conn, err = createSession(s.aws_access_key_id, s.aws_secret_access_key, s.region, s.endpoint)
 
@@ -62,6 +67,7 @@ func (s *S3BackendStorage) ToProperties() map[string]string {
 	m["region"] = s.region
 	m["bucket"] = s.bucket
 	m["endpoint"] = s.endpoint
+	m["storage_class"] = s.storageClass
 	return m
 }
 
@@ -85,7 +91,7 @@ func (s *S3BackendStorage) CopyFile(f *os.File, fn func(progressed int64, percen
 
 	glog.V(1).Infof("copying dat file of %s to remote s3.%s as %s", f.Name(), s.id, key)
 
-	size, err = uploadToS3(s.conn, f.Name(), s.bucket, key, fn)
+	size, err = uploadToS3(s.conn, f.Name(), s.bucket, key, s.storageClass, fn)
 
 	return
 }

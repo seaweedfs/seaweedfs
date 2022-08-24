@@ -3,7 +3,7 @@ package chunk_cache
 import (
 	"bytes"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/util/mem"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"math/rand"
 	"testing"
 )
@@ -88,7 +88,7 @@ func TestOnDisk(t *testing.T) {
 				--- FAIL: TestOnDisk (0.19s)
 				    chunk_cache_on_disk_test.go:73: failed to write to and read from cache: 4
 				FAIL
-				FAIL	github.com/chrislusf/seaweedfs/weed/util/chunk_cache	0.199s
+				FAIL	github.com/seaweedfs/seaweedfs/weed/util/chunk_cache	0.199s
 			*/
 			continue
 		}

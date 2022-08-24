@@ -7,9 +7,9 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
-	"github.com/chrislusf/seaweedfs/weed/remote_storage"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"os"
 )
 
@@ -25,7 +25,8 @@ func (s FilebaseRemoteStorageMaker) HasBucket() bool {
 
 func (s FilebaseRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
-		conf: conf,
+		supportTagging: true,
+		conf:           conf,
 	}
 	accessKey := util.Nvl(conf.FilebaseAccessKey, os.Getenv("AWS_ACCESS_KEY_ID"))
 	secretKey := util.Nvl(conf.FilebaseSecretKey, os.Getenv("AWS_SECRET_ACCESS_KEY"))

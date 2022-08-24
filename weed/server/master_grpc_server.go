@@ -2,21 +2,61 @@ package weed_server
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"errors"
+	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"net"
+	"sort"
 	"time"
 
-	"github.com/chrislusf/raft"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+
+	"github.com/seaweedfs/raft"
 	"google.golang.org/grpc/peer"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/topology"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
+
+func (ms *MasterServer) RegisterUuids(heartbeat *master_pb.Heartbeat) (duplicated_uuids []string, err error) {
+	ms.Topo.UuidAccessLock.Lock()
+	defer ms.Topo.UuidAccessLock.Unlock()
+	key := fmt.Sprintf("%s:%d", heartbeat.Ip, heartbeat.Port)
+	if ms.Topo.UuidMap == nil {
+		ms.Topo.UuidMap = make(map[string][]string)
+	}
+	// find whether new uuid exists
+	for k, v := range ms.Topo.UuidMap {
+		sort.Strings(v)
+		for _, id := range heartbeat.LocationUuids {
+			index := sort.SearchStrings(v, id)
+			if index < len(v) && v[index] == id {
+				duplicated_uuids = append(duplicated_uuids, id)
+				glog.Errorf("directory of %s on %s has been loaded", id, k)
+			}
+		}
+	}
+	if len(duplicated_uuids) > 0 {
+		return duplicated_uuids, errors.New("volume: Duplicated volume directories were loaded")
+	}
+
+	ms.Topo.UuidMap[key] = heartbeat.LocationUuids
+	glog.V(0).Infof("found new uuid:%v %v , %v", key, heartbeat.LocationUuids, ms.Topo.UuidMap)
+	return nil, nil
+}
+
+func (ms *MasterServer) UnRegisterUuids(ip string, port int) {
+	ms.Topo.UuidAccessLock.Lock()
+	defer ms.Topo.UuidAccessLock.Unlock()
+	key := fmt.Sprintf("%s:%d", ip, port)
+	delete(ms.Topo.UuidMap, key)
+	glog.V(0).Infof("remove volume server %v, online volume server: %v", key, ms.Topo.UuidMap)
+}
 
 func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServer) error {
 	var dn *topology.DataNode
@@ -32,6 +72,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			//  the unregister and register can race with each other
 			ms.Topo.UnRegisterDataNode(dn)
 			glog.V(0).Infof("unregister disconnected volume server %s:%d", dn.Ip, dn.Port)
+			ms.UnRegisterUuids(dn.Ip, dn.Port)
 
 			message := &master_pb.VolumeLocation{
 				Url:       dn.Url(),
@@ -69,7 +110,18 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			dc := ms.Topo.GetOrCreateDataCenter(dcName)
 			rack := dc.GetOrCreateRack(rackName)
 			dn = rack.GetOrCreateDataNode(heartbeat.Ip, int(heartbeat.Port), int(heartbeat.GrpcPort), heartbeat.PublicUrl, heartbeat.MaxVolumeCounts)
-			glog.V(0).Infof("added volume server %d: %v:%d", dn.Counter, heartbeat.GetIp(), heartbeat.GetPort())
+			glog.V(0).Infof("added volume server %d: %v:%d %v", dn.Counter, heartbeat.GetIp(), heartbeat.GetPort(), heartbeat.LocationUuids)
+			uuidlist, err := ms.RegisterUuids(heartbeat)
+			if err != nil {
+				if stream_err := stream.Send(&master_pb.HeartbeatResponse{
+					DuplicatedUuids: uuidlist,
+				}); stream_err != nil {
+					glog.Warningf("SendHeartbeat.Send DuplicatedDirectory response to %s:%d %v", dn.Ip, dn.Port, stream_err)
+					return stream_err
+				}
+				return err
+			}
+
 			if err := stream.Send(&master_pb.HeartbeatResponse{
 				VolumeSizeLimit: uint64(ms.option.VolumeSizeLimitMB) * 1024 * 1024,
 			}); err != nil {
@@ -85,14 +137,10 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
 		stats.MasterReceivedHeartbeatCounter.WithLabelValues("total").Inc()
 
-		var dataCenter string
-		if dc := dn.GetDataCenter(); dc != nil {
-			dataCenter = string(dc.Id())
-		}
 		message := &master_pb.VolumeLocation{
 			Url:        dn.Url(),
 			PublicUrl:  dn.PublicUrl,
-			DataCenter: dataCenter,
+			DataCenter: dn.GetDataCenterId(),
 		}
 		if len(heartbeat.NewVolumes) > 0 {
 			stats.FilerRequestCounter.WithLabelValues("newVolumes").Inc()
@@ -201,19 +249,23 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	// buffer by 1 so we don't end up getting stuck writing to stopChan forever
 	stopChan := make(chan bool, 1)
 
-	clientName, messageChan := ms.addClient(req.ClientType, peerAddress)
-	for _, update := range ms.Cluster.AddClusterNode(req.ClientType, peerAddress, req.Version) {
+	clientName, messageChan := ms.addClient(req.FilerGroup, req.ClientType, peerAddress)
+	for _, update := range ms.Cluster.AddClusterNode(req.FilerGroup, req.ClientType, cluster.DataCenter(req.DataCenter), cluster.Rack(req.Rack), peerAddress, req.Version) {
 		ms.broadcastToClients(update)
 	}
 
 	defer func() {
-		for _, update := range ms.Cluster.RemoveClusterNode(req.ClientType, peerAddress) {
+		for _, update := range ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, peerAddress) {
 			ms.broadcastToClients(update)
 		}
 		ms.deleteClient(clientName)
 	}()
-
-	for _, message := range ms.Topo.ToVolumeLocations() {
+	for i, message := range ms.Topo.ToVolumeLocations() {
+		if i == 0 {
+			if leader, err := ms.Topo.Leader(); err == nil {
+				message.Leader = string(leader)
+			}
+		}
 		if sendErr := stream.Send(&master_pb.KeepConnectedResponse{VolumeLocation: message}); sendErr != nil {
 			return sendErr
 		}
@@ -276,8 +328,8 @@ func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedSe
 	return nil
 }
 
-func (ms *MasterServer) addClient(clientType string, clientAddress pb.ServerAddress) (clientName string, messageChan chan *master_pb.KeepConnectedResponse) {
-	clientName = clientType + "@" + string(clientAddress)
+func (ms *MasterServer) addClient(filerGroup, clientType string, clientAddress pb.ServerAddress) (clientName string, messageChan chan *master_pb.KeepConnectedResponse) {
+	clientName = filerGroup + "." + clientType + "@" + string(clientAddress)
 	glog.V(0).Infof("+ client %v", clientName)
 
 	// we buffer this because otherwise we end up in a potential deadlock where

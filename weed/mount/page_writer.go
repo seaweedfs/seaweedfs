@@ -1,8 +1,8 @@
 package mount
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/mount/page_writer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mount/page_writer"
 )
 
 type PageWriter struct {
@@ -29,14 +29,14 @@ func newPageWriter(fh *FileHandle, chunkSize int64) *PageWriter {
 	return pw
 }
 
-func (pw *PageWriter) AddPage(offset int64, data []byte, isSequentail bool) {
+func (pw *PageWriter) AddPage(offset int64, data []byte, isSequential bool) {
 
 	glog.V(4).Infof("%v AddPage [%d, %d)", pw.fh.fh, offset, offset+int64(len(data)))
 
 	chunkIndex := offset / pw.chunkSize
 	for i := chunkIndex; len(data) > 0; i++ {
 		writeSize := min(int64(len(data)), (i+1)*pw.chunkSize-offset)
-		pw.addToOneChunk(i, offset, data[:writeSize], isSequentail)
+		pw.addToOneChunk(i, offset, data[:writeSize], isSequential)
 		offset += writeSize
 		data = data[writeSize:]
 	}
@@ -64,10 +64,6 @@ func (pw *PageWriter) ReadDirtyDataAt(data []byte, offset int64) (maxStop int64)
 	}
 
 	return
-}
-
-func (pw *PageWriter) GetStorageOptions() (collection, replication string) {
-	return pw.randomWriter.GetStorageOptions()
 }
 
 func (pw *PageWriter) LockForRead(startOffset, stopOffset int64) {

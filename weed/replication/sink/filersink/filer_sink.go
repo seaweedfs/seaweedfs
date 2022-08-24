@@ -3,20 +3,20 @@ package filersink
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"math"
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/replication/sink"
-	"github.com/chrislusf/seaweedfs/weed/replication/source"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
+	"github.com/seaweedfs/seaweedfs/weed/replication/source"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type FilerSink struct {
@@ -52,6 +52,7 @@ func (fs *FilerSink) IsIncremental() bool {
 
 func (fs *FilerSink) Initialize(configuration util.Configuration, prefix string) error {
 	fs.isIncremental = configuration.GetBool(prefix + "is_incremental")
+	fs.dataCenter = configuration.GetString(prefix + "dataCenter")
 	return fs.DoInitialize(
 		"",
 		configuration.GetString(prefix+"grpcAddress"),
@@ -208,6 +209,12 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 			return true, fmt.Errorf("replicte %s chunks error: %v", key, err)
 		}
 		existingEntry.Chunks = append(existingEntry.Chunks, replicatedChunks...)
+		existingEntry.Attributes = newEntry.Attributes
+		existingEntry.Extended = newEntry.Extended
+		existingEntry.HardLinkId = newEntry.HardLinkId
+		existingEntry.HardLinkCounter = newEntry.HardLinkCounter
+		existingEntry.Content = newEntry.Content
+		existingEntry.RemoteEntry = newEntry.RemoteEntry
 	}
 
 	// save updated meta data

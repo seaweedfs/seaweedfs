@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type Offset struct {
@@ -33,6 +33,7 @@ type Cookie uint32
 const (
 	SizeSize           = 4 // uint32 size
 	NeedleHeaderSize   = CookieSize + NeedleIdSize + SizeSize
+	DataSizeSize       = 4
 	NeedleMapEntrySize = NeedleIdSize + OffsetSize + SizeSize
 	TimestampSize      = 8 // int64 size
 	NeedlePaddingSize  = 8

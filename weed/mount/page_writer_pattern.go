@@ -1,44 +1,37 @@
 package mount
 
 type WriterPattern struct {
-	isStreaming     bool
-	lastWriteOffset int64
-	chunkSize       int64
+	isSequentialCounter int64
+	lastWriteStopOffset int64
+	chunkSize           int64
 }
+
+const ModeChangeLimit = 3
 
 // For streaming write: only cache the first chunk
 // For random write: fall back to temp file approach
-// writes can only change from streaming mode to non-streaming mode
 
 func NewWriterPattern(chunkSize int64) *WriterPattern {
 	return &WriterPattern{
-		isStreaming:     true,
-		lastWriteOffset: -1,
-		chunkSize:       chunkSize,
+		isSequentialCounter: 0,
+		lastWriteStopOffset: 0,
+		chunkSize:           chunkSize,
 	}
 }
 
 func (rp *WriterPattern) MonitorWriteAt(offset int64, size int) {
-	if rp.lastWriteOffset > offset {
-		rp.isStreaming = false
-	}
-	if rp.lastWriteOffset == -1 {
-		if offset != 0 {
-			rp.isStreaming = false
+	if rp.lastWriteStopOffset == offset {
+		if rp.isSequentialCounter < ModeChangeLimit {
+			rp.isSequentialCounter++
+		}
+	} else {
+		if rp.isSequentialCounter > -ModeChangeLimit {
+			rp.isSequentialCounter--
 		}
 	}
-	rp.lastWriteOffset = offset
+	rp.lastWriteStopOffset = offset + int64(size)
 }
 
-func (rp *WriterPattern) IsStreamingMode() bool {
-	return rp.isStreaming
-}
-
-func (rp *WriterPattern) IsRandomMode() bool {
-	return !rp.isStreaming
-}
-
-func (rp *WriterPattern) Reset() {
-	rp.isStreaming = true
-	rp.lastWriteOffset = -1
+func (rp *WriterPattern) IsSequentialMode() bool {
+	return rp.isSequentialCounter >= 0
 }

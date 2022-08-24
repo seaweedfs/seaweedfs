@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/chrislusf/seaweedfs/weed/notification"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/notification"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func init() {
@@ -21,7 +21,7 @@ func (c *commandFsMetaNotify) Name() string {
 }
 
 func (c *commandFsMetaNotify) Help() string {
-	return `recursively send directory and file meta data to notifiction message queue
+	return `recursively send directory and file meta data to notification message queue
 
 	fs.meta.notify	# send meta data from current directory to notification message queue
 

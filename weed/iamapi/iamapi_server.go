@@ -6,18 +6,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
-	"github.com/chrislusf/seaweedfs/weed/s3api"
-	. "github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
-	"github.com/gorilla/mux"
-	"google.golang.org/grpc"
 	"net/http"
+
+	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api"
+	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"google.golang.org/grpc"
 )
 
 type IamS3ApiConfig interface {
@@ -49,7 +50,7 @@ var s3ApiConfigure IamS3ApiConfig
 func NewIamApiServer(router *mux.Router, option *IamServerOption) (iamApiServer *IamApiServer, err error) {
 	s3ApiConfigure = IamS3ApiConfigure{
 		option:       option,
-		masterClient: wdclient.NewMasterClient(option.GrpcDialOption, "iam", "", "", option.Masters),
+		masterClient: wdclient.NewMasterClient(option.GrpcDialOption, "", "iam", "", "", "", option.Masters),
 	}
 	s3Option := s3api.S3ApiServerOption{Filer: option.Filer}
 	iamApiServer = &IamApiServer{
@@ -117,10 +118,10 @@ func (iam IamS3ApiConfigure) GetPolicies(policies *Policies) (err error) {
 		}
 		return nil
 	})
-	if err != nil {
+	if err != nil && err != filer_pb.ErrNotFound {
 		return err
 	}
-	if buf.Len() == 0 {
+	if err == filer_pb.ErrNotFound || buf.Len() == 0 {
 		policies.Policies = make(map[string]PolicyDocument)
 		return nil
 	}

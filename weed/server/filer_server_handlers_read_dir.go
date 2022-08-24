@@ -6,10 +6,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	ui "github.com/chrislusf/seaweedfs/weed/server/filer_ui"
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	ui "github.com/seaweedfs/seaweedfs/weed/server/filer_ui"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // listDirectoryHandler lists directories and folers under a directory
@@ -18,7 +18,7 @@ import (
 // is empty.
 func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Request) {
 
-	stats.FilerRequestCounter.WithLabelValues("list").Inc()
+	stats.FilerRequestCounter.WithLabelValues(stats.DirList).Inc()
 
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") && len(path) > 1 {
@@ -73,7 +73,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	ui.StatusTpl.Execute(w, struct {
+	err = ui.StatusTpl.Execute(w, struct {
 		Path                  string
 		Breadcrumbs           []ui.Breadcrumb
 		Entries               interface{}
@@ -81,6 +81,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		LastFileName          string
 		ShouldDisplayLoadMore bool
 		EmptyFolder           bool
+		ShowDirectoryDelete   bool
 	}{
 		path,
 		ui.ToBreadcrumb(path),
@@ -89,5 +90,9 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		lastFileName,
 		shouldDisplayLoadMore,
 		emptyFolder,
+		fs.option.ShowUIDirectoryDelete,
 	})
+	if err != nil {
+		glog.V(0).Infof("Template Execute Error: %v", err)
+	}
 }

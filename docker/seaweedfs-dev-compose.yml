@@ -20,7 +20,7 @@ services:
     ports:
       - 8888:8888
       - 18888:18888
-    command: 'filer -master="master:9333"'
+    command: 'filer -master="master:9333" -ip.bind=0.0.0.0'
     depends_on:
       - master
       - volume
@@ -28,7 +28,7 @@ services:
     image: chrislusf/seaweedfs:dev # use a remote dev image
     ports:
       - 8333:8333
-    command: 's3 -filer="filer:8888"'
+    command: 's3 -filer="filer:8888" -ip.bind=0.0.0.0'
     depends_on:
       - master
       - volume

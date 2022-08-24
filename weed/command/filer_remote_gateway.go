@@ -3,13 +3,13 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
-	"github.com/chrislusf/seaweedfs/weed/replication/source"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication/source"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"os"
 	"time"
@@ -29,6 +29,7 @@ type RemoteGatewayOptions struct {
 	remoteConfs map[string]*remote_pb.RemoteConf
 	bucketsDir  string
 	clientId    int32
+	clientEpoch int32
 }
 
 var _ = filer_pb.FilerClient(&RemoteGatewayOptions{})
@@ -40,6 +41,10 @@ func (option *RemoteGatewayOptions) WithFilerClient(streamingMode bool, fn func(
 }
 func (option *RemoteGatewayOptions) AdjustedUrl(location *filer_pb.Location) string {
 	return location.Url
+}
+
+func (option *RemoteGatewayOptions) GetDataCenter() string {
+	return ""
 }
 
 var (

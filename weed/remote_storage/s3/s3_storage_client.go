@@ -10,11 +10,11 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
-	"github.com/chrislusf/seaweedfs/weed/remote_storage"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 	"reflect"
 )
@@ -31,7 +31,8 @@ func (s s3RemoteStorageMaker) HasBucket() bool {
 
 func (s s3RemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.RemoteStorageClient, error) {
 	client := &s3RemoteStorageClient{
-		conf: conf,
+		supportTagging: true,
+		conf:           conf,
 	}
 	config := &aws.Config{
 		Region:                        aws.String(conf.S3Region),
@@ -59,11 +60,12 @@ func (s s3RemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.R
 }
 
 type s3RemoteStorageClient struct {
-	conf *remote_pb.RemoteConf
-	conn s3iface.S3API
+	conf           *remote_pb.RemoteConf
+	conn           s3iface.S3API
+	supportTagging bool
 }
 
-var _ = remote_storage.RemoteStorageClient(&s3RemoteStorageClient{})
+var _ = remote_storage.RemoteStorageClient(&s3RemoteStorageClient{supportTagging: true})
 
 func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
@@ -158,11 +160,13 @@ func (s *s3RemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, 
 
 	// process tagging
 	tags := ""
-	for k, v := range entry.Extended {
-		if len(tags) > 0 {
-			tags = tags + "&"
+	if s.supportTagging {
+		for k, v := range entry.Extended {
+			if len(tags) > 0 {
+				tags = tags + "&"
+			}
+			tags = tags + k + "=" + string(v)
 		}
-		tags = tags + k + "=" + string(v)
 	}
 
 	// Upload the file to S3.

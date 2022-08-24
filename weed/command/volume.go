@@ -10,25 +10,25 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util/httpdown"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util/httpdown"
 
 	"google.golang.org/grpc/reflection"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	weed_server "github.com/chrislusf/seaweedfs/weed/server"
-	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/storage"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var (
@@ -65,7 +65,8 @@ type VolumeServerOptions struct {
 	preStopSeconds            *int
 	metricsHttpPort           *int
 	// pulseSeconds          *int
-	enableTcp *bool
+	enableTcp                 *bool
+	inflightUploadDataTimeout *time.Duration
 }
 
 func init() {
@@ -96,6 +97,7 @@ func init() {
 	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
 	v.enableTcp = cmdVolume.Flag.Bool("tcp", false, "<experimental> enable tcp port")
+	v.inflightUploadDataTimeout = cmdVolume.Flag.Duration("inflightUploadDataTimeout", 60*time.Second, "inflight upload data wait timeout of volume servers")
 }
 
 var cmdVolume = &Command{
@@ -186,9 +188,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	}
 
 	// security related white list configuration
-	if volumeWhiteListOption != "" {
-		v.whiteList = strings.Split(volumeWhiteListOption, ",")
-	}
+	v.whiteList = util.StringSplit(volumeWhiteListOption, ",")
 
 	if *v.ip == "" {
 		*v.ip = util.DetectedHostAddress()
@@ -244,6 +244,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.fileSizeLimitMB,
 		int64(*v.concurrentUploadLimitMB)*1024*1024,
 		int64(*v.concurrentDownloadLimitMB)*1024*1024,
+		*v.inflightUploadDataTimeout,
 	)
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)
@@ -267,7 +268,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	stopChan := make(chan bool)
 	grace.OnInterrupt(func() {
-		fmt.Println("volume server has be killed")
+		fmt.Println("volume server has been killed")
 
 		// Stop heartbeats
 		if !volumeServer.StopHeartbeat() {

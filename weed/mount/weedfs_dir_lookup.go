@@ -2,11 +2,11 @@ package mount
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/mount/meta_cache"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 // Lookup is called by the kernel when the VFS wants to know
@@ -27,7 +27,7 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 	fullFilePath := dirPath.Child(name)
 
-	visitErr := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath, nil)
+	visitErr := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath)
 	if visitErr != nil {
 		glog.Errorf("dir Lookup %s: %v", dirPath, visitErr)
 		return fuse.EIO

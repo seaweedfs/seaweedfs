@@ -18,7 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 // TestIsRequestPresignedSignatureV4 - Test validates the logic for presign signature verision v4 detection.

@@ -8,19 +8,27 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
-	"github.com/chrislusf/seaweedfs/weed/storage/idx"
+	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/syndtr/goleveldb/leveldb"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle_map"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
+	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
+
+// mark it every watermarkBatchSize operations
+const watermarkBatchSize = 10000
+
+var watermarkKey = []byte("idx_entry_watermark")
 
 type LevelDbNeedleMap struct {
 	baseNeedleMapper
-	dbFileName string
-	db         *leveldb.DB
+	dbFileName  string
+	db          *leveldb.DB
+	recordCount uint64
 }
 
 func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Options) (m *LevelDbNeedleMap, err error) {
@@ -46,7 +54,14 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 			return
 		}
 	}
-	glog.V(1).Infof("Loading %s...", indexFile.Name())
+	glog.V(0).Infof("Loading %s... , watermark: %d", dbFileName, getWatermark(m.db))
+	m.recordCount = uint64(m.indexFileOffset / types.NeedleMapEntrySize)
+	watermark := (m.recordCount / watermarkBatchSize) * watermarkBatchSize
+	err = setWatermark(m.db, watermark)
+	if err != nil {
+		glog.Fatalf("set watermark for %s error: %s\n", dbFileName, err)
+		return
+	}
 	mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)
 	if indexLoadError != nil {
 		return nil, indexLoadError
@@ -78,9 +93,20 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 		return err
 	}
 	defer db.Close()
-	return idx.WalkIndexFile(indexFile, func(key NeedleId, offset Offset, size Size) error {
+
+	watermark := getWatermark(db)
+	if stat, err := indexFile.Stat(); err != nil {
+		glog.Fatalf("stat file %s: %v", indexFile.Name(), err)
+		return err
+	} else {
+		if watermark*types.NeedleMapEntrySize > uint64(stat.Size()) {
+			glog.Warningf("wrong watermark %d for filesize %d", watermark, stat.Size())
+		}
+		glog.V(0).Infof("generateLevelDbFile %s, watermark %d, num of entries:%d", dbFileName, watermark, (uint64(stat.Size())-watermark*types.NeedleMapEntrySize)/types.NeedleMapEntrySize)
+	}
+	return idx.WalkIndexFile(indexFile, watermark, func(key NeedleId, offset Offset, size Size) error {
 		if !offset.IsZero() && size.IsValid() {
-			levelDbWrite(db, key, offset, size)
+			levelDbWrite(db, key, offset, size, false, 0)
 		} else {
 			levelDbDelete(db, key)
 		}
@@ -102,6 +128,7 @@ func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, o
 
 func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 	var oldSize Size
+	var watermark uint64
 	if oldNeedle, ok := m.Get(key); ok {
 		oldSize = oldNeedle.Size
 	}
@@ -110,15 +137,53 @@ func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 	if err := m.appendToIndexFile(key, offset, size); err != nil {
 		return fmt.Errorf("cannot write to indexfile %s: %v", m.indexFile.Name(), err)
 	}
-	return levelDbWrite(m.db, key, offset, size)
+	m.recordCount++
+	if m.recordCount%watermarkBatchSize != 0 {
+		watermark = 0
+	} else {
+		watermark = (m.recordCount / watermarkBatchSize) * watermarkBatchSize
+		glog.V(1).Infof("put cnt:%d for %s,watermark: %d", m.recordCount, m.dbFileName, watermark)
+	}
+	return levelDbWrite(m.db, key, offset, size, watermark == 0, watermark)
 }
 
-func levelDbWrite(db *leveldb.DB, key NeedleId, offset Offset, size Size) error {
+func getWatermark(db *leveldb.DB) uint64 {
+	data, err := db.Get(watermarkKey, nil)
+	if err != nil || len(data) != 8 {
+		glog.Warningf("get watermark from db error: %v, %d", err, len(data))
+		/*
+			if !strings.Contains(strings.ToLower(err.Error()), "not found") {
+				err = setWatermark(db, 0)
+				if err != nil {
+					glog.Errorf("failed to set watermark: %v", err)
+				}
+			}
+		*/
+		return 0
+	}
+	return util.BytesToUint64(data)
+}
+
+func setWatermark(db *leveldb.DB, watermark uint64) error {
+	glog.V(3).Infof("set watermark %d", watermark)
+	var wmBytes = make([]byte, 8)
+	util.Uint64toBytes(wmBytes, watermark)
+	if err := db.Put(watermarkKey, wmBytes, nil); err != nil {
+		return fmt.Errorf("failed to setWatermark: %v", err)
+	}
+	return nil
+}
+
+func levelDbWrite(db *leveldb.DB, key NeedleId, offset Offset, size Size, updateWatermark bool, watermark uint64) error {
 
 	bytes := needle_map.ToBytes(key, offset, size)
 
 	if err := db.Put(bytes[0:NeedleIdSize], bytes[NeedleIdSize:NeedleIdSize+OffsetSize+SizeSize], nil); err != nil {
 		return fmt.Errorf("failed to write leveldb: %v", err)
+	}
+	// set watermark
+	if updateWatermark {
+		return setWatermark(db, watermark)
 	}
 	return nil
 }
@@ -129,6 +194,7 @@ func levelDbDelete(db *leveldb.DB, key NeedleId) error {
 }
 
 func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
+	var watermark uint64
 	oldNeedle, found := m.Get(key)
 	if !found || oldNeedle.Size.IsDeleted() {
 		return nil
@@ -139,17 +205,24 @@ func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
 	if err := m.appendToIndexFile(key, offset, TombstoneFileSize); err != nil {
 		return err
 	}
-
-	return levelDbWrite(m.db, key, oldNeedle.Offset, -oldNeedle.Size)
+	m.recordCount++
+	if m.recordCount%watermarkBatchSize != 0 {
+		watermark = 0
+	} else {
+		watermark = (m.recordCount / watermarkBatchSize) * watermarkBatchSize
+	}
+	return levelDbWrite(m.db, key, oldNeedle.Offset, -oldNeedle.Size, watermark == 0, watermark)
 }
 
 func (m *LevelDbNeedleMap) Close() {
-	indexFileName := m.indexFile.Name()
-	if err := m.indexFile.Sync(); err != nil {
-		glog.Warningf("sync file %s failed: %v", indexFileName, err)
-	}
-	if err := m.indexFile.Close(); err != nil {
-		glog.Warningf("close index file %s failed: %v", indexFileName, err)
+	if m.indexFile != nil {
+		indexFileName := m.indexFile.Name()
+		if err := m.indexFile.Sync(); err != nil {
+			glog.Warningf("sync file %s failed: %v", indexFileName, err)
+		}
+		if err := m.indexFile.Close(); err != nil {
+			glog.Warningf("close index file %s failed: %v", indexFileName, err)
+		}
 	}
 
 	if m.db != nil {
@@ -163,4 +236,100 @@ func (m *LevelDbNeedleMap) Destroy() error {
 	m.Close()
 	os.Remove(m.indexFile.Name())
 	return os.RemoveAll(m.dbFileName)
+}
+
+func (m *LevelDbNeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *opt.Options) error {
+	if v.nm != nil {
+		v.nm.Close()
+		v.nm = nil
+	}
+	defer func() {
+		if v.tmpNm != nil {
+			v.tmpNm.Close()
+			v.tmpNm = nil
+		}
+	}()
+	levelDbFile := v.FileName(".ldb")
+	m.indexFile = indexFile
+	err := os.RemoveAll(levelDbFile)
+	if err != nil {
+		return err
+	}
+	if err = os.Rename(v.FileName(".cpldb"), levelDbFile); err != nil {
+		return fmt.Errorf("rename %s: %v", levelDbFile, err)
+	}
+
+	db, err := leveldb.OpenFile(levelDbFile, opts)
+	if err != nil {
+		if errors.IsCorrupted(err) {
+			db, err = leveldb.RecoverFile(levelDbFile, opts)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	m.db = db
+
+	stat, e := indexFile.Stat()
+	if e != nil {
+		glog.Fatalf("stat file %s: %v", indexFile.Name(), e)
+		return e
+	}
+	m.indexFileOffset = stat.Size()
+	m.recordCount = uint64(stat.Size() / types.NeedleMapEntrySize)
+
+	//set watermark
+	watermark := (m.recordCount / watermarkBatchSize) * watermarkBatchSize
+	err = setWatermark(db, uint64(watermark))
+	if err != nil {
+		glog.Fatalf("setting watermark failed %s: %v", indexFile.Name(), err)
+		return err
+	}
+	v.nm = m
+	v.tmpNm = nil
+	return e
+}
+
+func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startFrom uint64) (err error) {
+	glog.V(0).Infof("loading idx to leveldb from offset %d for file: %s", startFrom, indexFile.Name())
+	dbFileName := v.FileName(".cpldb")
+	db, dbErr := leveldb.OpenFile(dbFileName, nil)
+	defer func() {
+		if dbErr == nil {
+			db.Close()
+		}
+		if err != nil {
+			os.RemoveAll(dbFileName)
+		}
+
+	}()
+	if dbErr != nil {
+		if errors.IsCorrupted(err) {
+			db, dbErr = leveldb.RecoverFile(dbFileName, nil)
+		}
+		if dbErr != nil {
+			return dbErr
+		}
+	}
+
+	err = idx.WalkIndexFile(indexFile, startFrom, func(key NeedleId, offset Offset, size Size) (e error) {
+		if !offset.IsZero() && size.IsValid() {
+			e = levelDbWrite(db, key, offset, size, false, 0)
+		} else {
+			e = levelDbDelete(db, key)
+		}
+		return e
+	})
+	if err != nil {
+		return err
+	}
+
+	if startFrom != 0 {
+		return needleMapMetricFromIndexFile(indexFile, &m.mapMetric)
+	}
+	return nil
+}
+
+func (m *LevelDbNeedleMap) UpdateNeedleMapMetric(indexFile *os.File) error {
+	return needleMapMetricFromIndexFile(indexFile, &m.mapMetric)
 }

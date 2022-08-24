@@ -6,4 +6,7 @@ const (
 	ACTION_ADMIN   = "Admin"
 	ACTION_TAGGING = "Tagging"
 	ACTION_LIST    = "List"
+
+	SeaweedStorageDestinationHeader = "x-seaweedfs-destination"
+	MultipartUploadsFolder          = ".uploads"
 )

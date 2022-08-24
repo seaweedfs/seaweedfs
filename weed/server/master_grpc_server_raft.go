@@ -3,8 +3,8 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/cluster"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/hashicorp/raft"
 )
 
@@ -45,7 +45,7 @@ func (ms *MasterServer) RaftAddServer(ctx context.Context, req *master_pb.RaftAd
 func (ms *MasterServer) RaftRemoveServer(ctx context.Context, req *master_pb.RaftRemoveServerRequest) (*master_pb.RaftRemoveServerResponse, error) {
 	resp := &master_pb.RaftRemoveServerResponse{}
 
-	if ms.Topo.IsLeader() {
+	if ms.Topo.RaftServer.State() != raft.Leader {
 		return nil, fmt.Errorf("raft remove server %s failed: %s is no current leader", req.Id, ms.Topo.RaftServer.String())
 	}
 

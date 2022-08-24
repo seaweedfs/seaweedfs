@@ -1,0 +1,23 @@
+table NameValue {
+    name:string (key);
+    value:string;
+}
+table Message {
+    seq_delta:int32         (id:0);
+    ts_ms_delta:int32       (id:1);
+    properties:[NameValue]  (id:2);
+    key:string              (id:3); // bytes
+    data:string             (id:4); // bytes
+}
+
+table MessageBatch {
+    producer_id:int32       (id:0);
+    producer_epoch:int32    (id:1);
+    segment_id:int32        (id:2);
+    flags: int32            (id:3);
+    segment_seq_base:int64          (id:4);
+    segment_seq_max_delta:int32     (id:5);
+    ts_ms_base:int64        (id:6);
+    ts_ms_max_delta:int32         (id:7);
+    messages: [Message]     (id:8);
+}

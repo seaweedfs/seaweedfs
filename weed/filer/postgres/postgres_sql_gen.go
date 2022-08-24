@@ -3,8 +3,8 @@ package postgres
 import (
 	"fmt"
 
-	"github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
 	_ "github.com/lib/pq"
+	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
 )
 
 type SqlGenPostgres struct {

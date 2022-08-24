@@ -2,9 +2,9 @@ package filer
 
 import (
 	"bytes"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // onMetadataChangeEvent is triggered after filer processed change events from local or remote filers
@@ -16,11 +16,7 @@ func (f *Filer) onMetadataChangeEvent(event *filer_pb.SubscribeMetadataResponse)
 
 func (f *Filer) onBucketEvents(event *filer_pb.SubscribeMetadataResponse) {
 	message := event.EventNotification
-	for _, sig := range message.Signatures {
-		if sig == f.Signature {
-			return
-		}
-	}
+
 	if f.DirBucketsPath == event.Directory {
 		if filer_pb.IsCreate(event) {
 			if message.NewEntry.IsDirectory {

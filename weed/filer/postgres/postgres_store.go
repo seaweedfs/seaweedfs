@@ -3,16 +3,13 @@ package postgres
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/filer/abstract_sql"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	_ "github.com/lib/pq"
-)
-
-const (
-	CONNECTION_URL_PATTERN = "host=%s port=%d sslmode=%s connect_timeout=30"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func init() {
@@ -56,7 +53,16 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 		UpsertQueryTemplate:    upsertQuery,
 	}
 
-	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, hostname, port, sslmode)
+	sqlUrl := "connect_timeout=30"
+	if hostname != "" {
+		sqlUrl += " host=" + hostname
+	}
+	if port != 0 {
+		sqlUrl += " port=" + strconv.Itoa(port)
+	}
+	if sslmode != "" {
+		sqlUrl += " sslmode=" + sslmode
+	}
 	if user != "" {
 		sqlUrl += " user=" + user
 	}

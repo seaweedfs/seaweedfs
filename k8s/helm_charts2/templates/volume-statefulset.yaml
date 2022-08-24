@@ -45,18 +45,24 @@ spec:
       priorityClassName: {{ .Values.volume.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
-      {{- if .Values.volume.dir_idx }}
+      {{- $initContainers_exists := include "volume.initContainers_exists" . -}}
+      {{- if $initContainers_exists }}
       initContainers:
+        {{- if .Values.volume.dir_idx }}
         - name: seaweedfs-vol-move-idx
           image: {{ template "volume.image" . }}
-          imagePullPolicy: {{ .Values.global.pullPolicy | default "IfNotPresent" }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default "IfNotPresent" }}
           command: [ '/bin/sh', '-c' ]
-          args: ['if ls {{ .Values.volume.dir }}/*.idx >/dev/null 2>&1; then mv {{ .Values.volume.dir }}/*.idx {{ .Values.volume.dir_idx }}/; fi;']
+          args: [ 'if ls {{ .Values.volume.dir }}/*.idx >/dev/null 2>&1; then mv {{ .Values.volume.dir }}/*.idx {{ .Values.volume.dir_idx }}/; fi;' ]
           volumeMounts:
-          - name: idx
-            mountPath: {{ .Values.volume.dir_idx }}
-          - name: data
-            mountPath: {{ .Values.volume.dir }}
+            - name: idx
+              mountPath: {{ .Values.volume.dir_idx }}
+            - name: data
+              mountPath: {{ .Values.volume.dir }}
+        {{- end }}
+        {{- if .Values.volume.initContainers }}
+        {{ tpl .Values.volume.initContainers . | nindent 8 | trim }}
+        {{- end }}
       {{- end }}
       containers:
         - name: seaweedfs
@@ -96,7 +102,7 @@ spec:
                 volume \
                 -port={{ .Values.volume.port }} \
                 {{- if .Values.volume.metricsPort }}
-                -metricsPort {{ .Values.volume.metricsPort }} \
+                -metricsPort={{ .Values.volume.metricsPort }} \
                 {{- end }}
                 -dir={{ .Values.volume.dir }} \
                 {{- if .Values.volume.dir_idx }}
@@ -164,8 +170,12 @@ spec:
           ports:
             - containerPort: {{ .Values.volume.port }}
               name: swfs-vol
+            {{- if .Values.volume.metricsPort }}
+            - containerPort: {{ .Values.filer.metricsPort }}
+              name: metrics
+            {{- end }}
             - containerPort: {{ .Values.volume.grpcPort }}
-              #name: swfs-vol-grpc
+              name: swfs-vol-grpc
           readinessProbe:
             httpGet:
               path: /status

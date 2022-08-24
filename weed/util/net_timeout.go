@@ -1,10 +1,11 @@
 package util
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"net"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 // Listener wraps a net.Listener, and gives a place to store the timeout
@@ -109,10 +110,11 @@ func NewIpAndLocalListeners(host string, port int, timeout time.Duration) (ipLis
 		WriteTimeout: timeout,
 	}
 
-	if host != "localhost" && host != "" && host != "0.0.0.0" && host != "127.0.0.1" {
+	if host != "localhost" && host != "" && host != "0.0.0.0" && host != "127.0.0.1" && host != "[::]" && host != "[::1]" {
 		listner, err = net.Listen("tcp", JoinHostPort("localhost", port))
 		if err != nil {
-			return
+			glog.V(0).Infof("skip starting on %s:%d: %v", host, port, err)
+			return ipListner, nil, nil
 		}
 
 		localListener = &Listener{

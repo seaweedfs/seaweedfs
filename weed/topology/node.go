@@ -2,10 +2,11 @@ package topology
 
 import (
 	"errors"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"math/rand"
 	"strings"
 	"sync"
@@ -245,6 +246,14 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 					n.GetTopology().chanFullVolumes <- v
 				} else if float64(v.Size) > float64(volumeSizeLimit)*growThreshold {
 					n.GetTopology().chanCrowdedVolumes <- v
+				}
+				copyCount := v.ReplicaPlacement.GetCopyCount()
+				if copyCount > 1 {
+					if copyCount > len(n.GetTopology().Lookup(v.Collection, v.Id)) {
+						stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(1)
+					} else {
+						stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(0)
+					}
 				}
 			}
 		}

@@ -46,12 +46,16 @@ spec:
       imagePullSecrets:
         - name: {{ .Values.global.imagePullSecrets }}
       {{- end }}
-      serviceAccountName: seaweefds-rw-sa #hack for delete pod master after migration
+      serviceAccountName: seaweedfs-rw-sa #hack for delete pod master after migration
       terminationGracePeriodSeconds: 60
       {{- if .Values.filer.priorityClassName }}
       priorityClassName: {{ .Values.filer.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
+      {{- if .Values.filer.initContainers }}
+      initContainers:
+        {{ tpl .Values.filer.initContainers . | nindent 8 | trim }}
+      {{- end }}
       containers:
         - name: seaweedfs
           image: {{ template "filer.image" . }}
@@ -106,7 +110,7 @@ spec:
               filer \
               -port={{ .Values.filer.port }} \
               {{- if .Values.filer.metricsPort }}
-              -metricsPort {{ .Values.filer.metricsPort }} \
+              -metricsPort={{ .Values.filer.metricsPort }} \
               {{- end }}
               {{- if .Values.filer.redirectOnRead }}
               -redirectOnRead \
@@ -189,6 +193,8 @@ spec:
           ports:
             - containerPort: {{ .Values.filer.port }}
               name: swfs-filer
+            - containerPort: {{ .Values.filer.metricsPort }}
+              name: metrics
             - containerPort: {{ .Values.filer.grpcPort }}
               #name: swfs-filer-grpc
           readinessProbe:
@@ -216,10 +222,18 @@ spec:
             {{ tpl .Values.filer.resources . | nindent 12 | trim }}
           {{- end }}
       volumes:
+        {{- if eq .Values.filer.logs.type "hostPath" }}
         - name: seaweedfs-filer-log-volume
           hostPath:
             path: /storage/logs/seaweedfs/filer
             type: DirectoryOrCreate
+        {{- end }}
+        {{- if eq .Values.filer.data.type "hostPath" }}
+        - name: data-filer
+          hostPath:
+            path: /storage/filer_store
+            type: DirectoryOrCreate
+        {{- end }}
         - name: db-schema-config-volume
           configMap:
             name: seaweedfs-db-init-config
@@ -253,6 +267,7 @@ spec:
         {{ tpl .Values.filer.nodeSelector . | indent 8 | trim }}
       {{- end }}
   {{- if .Values.filer.enablePVC }}
+  # DEPRECATION: Deprecate in favor of filer.data section below
   volumeClaimTemplates:
   - metadata:
       name: data-filer
@@ -265,5 +280,29 @@ spec:
       {{- if .Values.filer.storageClass }}
       storageClassName: {{ .Values.filer.storageClass }}
       {{- end }}
+  {{- end }}
+  {{- $pvc_exists := include "filer.pvc_exists" . -}}
+  {{- if $pvc_exists }}
+  volumeClaimTemplates:
+    {{- if eq .Values.filer.data.type "persistentVolumeClaim"}}
+    - metadata:
+        name: data-filer
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: {{ .Values.filer.data.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.filer.data.size }}
+    {{- end }}
+    {{- if eq .Values.filer.logs.type "persistentVolumeClaim"}}
+    - metadata:
+        name: seaweedfs-filer-log-volume
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: {{ .Values.filer.logs.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.filer.logs.size }}
+    {{- end }}
   {{- end }}
 {{- end }}

@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"strings"
 )
 
@@ -18,7 +18,7 @@ func (store *AbstractSqlStore) KvPut(ctx context.Context, key []byte, value []by
 		return fmt.Errorf("findDB: %v", err)
 	}
 
-	dirStr, dirHash, name := genDirAndName(key)
+	dirStr, dirHash, name := GenDirAndName(key)
 
 	res, err := db.ExecContext(ctx, store.GetSqlInsert(DEFAULT_TABLE), dirHash, name, dirStr, value)
 	if err == nil {
@@ -53,7 +53,7 @@ func (store *AbstractSqlStore) KvGet(ctx context.Context, key []byte) (value []b
 		return nil, fmt.Errorf("findDB: %v", err)
 	}
 
-	dirStr, dirHash, name := genDirAndName(key)
+	dirStr, dirHash, name := GenDirAndName(key)
 	row := db.QueryRowContext(ctx, store.GetSqlFind(DEFAULT_TABLE), dirHash, name, dirStr)
 
 	err = row.Scan(&value)
@@ -76,7 +76,7 @@ func (store *AbstractSqlStore) KvDelete(ctx context.Context, key []byte) (err er
 		return fmt.Errorf("findDB: %v", err)
 	}
 
-	dirStr, dirHash, name := genDirAndName(key)
+	dirStr, dirHash, name := GenDirAndName(key)
 
 	res, err := db.ExecContext(ctx, store.GetSqlDelete(DEFAULT_TABLE), dirHash, name, dirStr)
 	if err != nil {
@@ -92,7 +92,7 @@ func (store *AbstractSqlStore) KvDelete(ctx context.Context, key []byte) (err er
 
 }
 
-func genDirAndName(key []byte) (dirStr string, dirHash int64, name string) {
+func GenDirAndName(key []byte) (dirStr string, dirHash int64, name string) {
 	for len(key) < 8 {
 		key = append(key, 0)
 	}

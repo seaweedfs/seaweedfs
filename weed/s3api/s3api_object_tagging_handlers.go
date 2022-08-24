@@ -3,21 +3,21 @@ package s3api
 import (
 	"encoding/xml"
 	"fmt"
-	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"net/http"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // GetObjectTaggingHandler - GET object tagging
 // API reference: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectTagging.html
 func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, object := xhttp.GetBucketAndObject(r)
+	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectTaggingHandler %s %s", bucket, object)
 
 	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
@@ -43,7 +43,7 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 // API reference: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectTagging.html
 func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, object := xhttp.GetBucketAndObject(r)
+	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("PutObjectTaggingHandler %s %s", bucket, object)
 
 	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))
@@ -62,22 +62,11 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 	tags := tagging.ToTags()
-	if len(tags) > 10 {
-		glog.Errorf("PutObjectTaggingHandler tags %s: %d tags more than 10", r.URL, len(tags))
+	err = ValidateTags(tags)
+	if err != nil {
+		glog.Errorf("PutObjectTaggingHandler ValidateTags error %s: %v", r.URL, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
 		return
-	}
-	for k, v := range tags {
-		if len(k) > 128 {
-			glog.Errorf("PutObjectTaggingHandler tags %s: tag key %s longer than 128", r.URL, k)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
-			return
-		}
-		if len(v) > 256 {
-			glog.Errorf("PutObjectTaggingHandler tags %s: tag value %s longer than 256", r.URL, v)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
-			return
-		}
 	}
 
 	if err = s3a.setTags(dir, name, tagging.ToTags()); err != nil {
@@ -99,7 +88,7 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 // API reference: https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjectTagging.html
 func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, object := xhttp.GetBucketAndObject(r)
+	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteObjectTaggingHandler %s %s", bucket, object)
 
 	target := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object))

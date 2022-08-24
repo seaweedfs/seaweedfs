@@ -3,13 +3,12 @@ package filer
 import (
 	"bytes"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"golang.org/x/exp/slices"
 	"math"
-	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func TotalSize(chunks []*filer_pb.FileChunk) (size uint64) {
@@ -53,11 +52,11 @@ func ETagChunks(chunks []*filer_pb.FileChunk) (etag string) {
 	if len(chunks) == 1 {
 		return fmt.Sprintf("%x", util.Base64Md5ToBytes(chunks[0].ETag))
 	}
-	md5_digests := [][]byte{}
+	var md5Digests [][]byte
 	for _, c := range chunks {
-		md5_digests = append(md5_digests, util.Base64Md5ToBytes(c.ETag))
+		md5Digests = append(md5Digests, util.Base64Md5ToBytes(c.ETag))
 	}
-	return fmt.Sprintf("%x-%d", util.Md5(bytes.Join(md5_digests, nil)), len(chunks))
+	return fmt.Sprintf("%x-%d", util.Md5(bytes.Join(md5Digests, nil)), len(chunks))
 }
 
 func CompactFileChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (compacted, garbage []*filer_pb.FileChunk) {
@@ -115,9 +114,12 @@ func DoMinusChunksBySourceFileId(as, bs []*filer_pb.FileChunk) (delta []*filer_p
 	fileIds := make(map[string]bool)
 	for _, interval := range bs {
 		fileIds[interval.GetFileIdString()] = true
+		fileIds[interval.GetSourceFileId()] = true
 	}
 	for _, chunk := range as {
-		if _, found := fileIds[chunk.GetSourceFileId()]; !found {
+		_, sourceFileIdFound := fileIds[chunk.GetSourceFileId()]
+		_, fileIdFound := fileIds[chunk.GetFileId()]
+		if !sourceFileIdFound && !fileIdFound {
 			delta = append(delta, chunk)
 		}
 	}
@@ -188,12 +190,6 @@ func logPrintf(name string, visibles []VisibleInterval) {
 	*/
 }
 
-var bufPool = sync.Pool{
-	New: func() interface{} {
-		return new(VisibleInterval)
-	},
-}
-
 func MergeIntoVisibles(visibles []VisibleInterval, chunk *filer_pb.FileChunk) (newVisibles []VisibleInterval) {
 
 	newV := newVisibleInterval(chunk.Offset, chunk.Offset+int64(chunk.Size), chunk.GetFileIdString(), chunk.Mtime, 0, chunk.Size, chunk.CipherKey, chunk.IsCompressed)
@@ -248,6 +244,9 @@ func MergeIntoVisibles(visibles []VisibleInterval, chunk *filer_pb.FileChunk) (n
 func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles []VisibleInterval, err error) {
 
 	chunks, _, err = ResolveChunkManifest(lookupFileIdFn, chunks, startOffset, stopOffset)
+	if err != nil {
+		return
+	}
 
 	visibles2 := readResolvedChunks(chunks)
 

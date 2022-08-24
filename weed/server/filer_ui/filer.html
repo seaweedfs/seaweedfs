@@ -81,7 +81,7 @@
 <div class="container">
     <div class="page-header">
         <h1>
-            <a href="https://github.com/chrislusf/seaweedfs"><img src="/seaweedfsstatic/seaweed50x50.png"></img></a>
+            <a href="https://github.com/seaweedfs/seaweedfs"><img src="/seaweedfsstatic/seaweed50x50.png"></img></a>
             SeaweedFS Filer
         </h1>
     </div>
@@ -109,38 +109,37 @@
         <form class="upload-form">
             <input type="file" id="fileElem" multiple onchange="handleFiles(this.files)">
 
-            {{if .EmptyFolder}}
+            {{ if .EmptyFolder }}
             <div class="row add-files">
                 +
             </div>
-            {{else}}
+            {{ else }}
             <table width="100%" class="table table-hover">
-                {{$path := .Path }}
+                {{ $path := .Path }}
+                {{ $showDirDel := .ShowDirectoryDelete }}
                 {{ range $entry_index, $entry := .Entries }}
                 <tr>
                     <td>
-                        {{if $entry.IsDirectory}}
+                        {{ if $entry.IsDirectory }}
                         <span class="glyphicon glyphicon-folder-open" aria-hidden="true"></span>&nbsp;
                         <a href="{{ printpath $path  "/" $entry.Name "/"}}" >
                         {{ $entry.Name }}
                         </a>
-                        {{else}}
+                        {{ else }}
                         <a href="{{ printpath $path  "/" $entry.Name }}" >
                         {{ $entry.Name }}
                         </a>
-                        {{end}}
+                        {{ end }}
                     </td>
                     <td align="right" nowrap>
-                        {{if $entry.IsDirectory}}
-                        {{else}}
+                        {{ if not $entry.IsDirectory }}
                         {{ $entry.Mime }}&nbsp;
-                        {{end}}
+                        {{ end }}
                     </td>
                     <td align="right" nowrap>
-                        {{if $entry.IsDirectory}}
-                        {{else}}
+                        {{ if not $entry.IsDirectory }}
                         {{ $entry.Size | humanizeBytes }}&nbsp;
-                        {{end}}
+                        {{ end }}
                     </td>
                     <td align="right" nowrap>
                         {{ $entry.Timestamp.Format "2006-01-02 15:04" }}
@@ -150,31 +149,32 @@
                             <label class="btn" onclick="handleRename('{{ $entry.Name }}', '{{ printpath $path "/" }}')">
                                 <span class="glyphicon glyphicon-edit" aria-hidden="true"></span>
                             </label>
-                            {{if $entry.IsDirectory}}
-                            <label class="btn" onclick="handleDelete('{{ printpath $path  "/" $entry.Name "/"  }}')">
+                            {{ if and $entry.IsDirectory $showDirDel }}
+                            <label class="btn" onclick="handleDelete('{{ printpath $path  "/" $entry.Name "/" }}')">
                                 <span class="glyphicon glyphicon-trash" aria-hidden="true"></span>
                             </label>
-                            {{else}}
+                            {{ end }}
+                            {{ if not $entry.IsDirectory }}
                             <label class="btn" onclick="handleDelete('{{ printpath $path  "/" $entry.Name }}')">
                                 <span class="glyphicon glyphicon-trash" aria-hidden="true"></span>
                             </label>
-                            {{end}}
+                            {{ end }}
                         </div>
                     </td>
                 </tr>
                 {{ end }}
             </table>
-            {{end}}
+            {{ end }}
         </form>
     </div>
 
-    {{if .ShouldDisplayLoadMore}}
+    {{ if .ShouldDisplayLoadMore }}
     <div class="row">
-        <a href={{ print .Path "?limit=" .Limit "&lastFileName=" .LastFileName}} >
+        <a href={{ print .Path "?limit=" .Limit "&lastFileName=" .LastFileName }} >
         Load more
         </a>
     </div>
-    {{end}}
+    {{ end }}
 
     <br/>
     <br/>
@@ -223,6 +223,10 @@
         var files = dt.files;
 
         handleFiles(files);
+    }
+
+    function reloadPage() {
+        window.location.reload(true);
     }
 
     var uploadList = {};
@@ -277,13 +281,18 @@
         }
         if (allFinish) {
             console.log('All Finish');
-            window.location.reload();
+            reloadPage();
         }
     }
 
     function uploadFile(file, i) {
         var url = window.location.href;
         var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState == XMLHttpRequest.DONE) {
+                location.reload();
+            }
+        }
         var fileName = file.name;
         xhr.upload.addEventListener('progress', function(e) {
             if (e.lengthComputable) {
@@ -318,7 +327,7 @@
         xhr.open('POST', url, false);
         xhr.setRequestHeader('Content-Type', '');
         xhr.send();
-        window.location.reload();
+        reloadPage();
     }
 
     function handleRename(originName, basePath) {
@@ -333,7 +342,7 @@
         xhr.open('POST', url, false);
         xhr.setRequestHeader('Content-Type', '');
         xhr.send();
-        window.location.reload();
+        reloadPage();
     }
 
     function handleDelete(path) {
@@ -348,7 +357,7 @@
         var xhr = new XMLHttpRequest();
         xhr.open('DELETE', url, false);
         xhr.send();
-        window.location.reload();
+        reloadPage();
     }
 </script>
 </html>

@@ -5,15 +5,15 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
 	"path/filepath"
 
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
 func init() {
@@ -68,45 +68,39 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	volumeFilter := getVolumeFilter(replicaPlacement, uint32(vid), *collectionPattern)
 
 	// find all data nodes with volumes that needs replication change
-	var allLocations []location
 	eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
-		loc := newLocation(dc, string(rack), dn)
+		var targetVolumeIds []uint32
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
 				if volumeFilter(v) {
-					allLocations = append(allLocations, loc)
-					continue
+					targetVolumeIds = append(targetVolumeIds, v.Id)
 				}
 			}
 		}
-	})
-
-	if len(allLocations) == 0 {
-		return fmt.Errorf("no volume needs change")
-	}
-
-	for _, dst := range allLocations {
-		err := operation.WithVolumeServerClient(false, pb.NewServerAddressFromDataNode(dst.dataNode), commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-			resp, configureErr := volumeServerClient.VolumeConfigure(context.Background(), &volume_server_pb.VolumeConfigureRequest{
-				VolumeId:    uint32(vid),
-				Replication: replicaPlacement.String(),
-			})
-			if configureErr != nil {
-				return configureErr
-			}
-			if resp.Error != "" {
-				return errors.New(resp.Error)
+		if len(targetVolumeIds) == 0 {
+			return
+		}
+		err = operation.WithVolumeServerClient(false, pb.NewServerAddressFromDataNode(dn), commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			for _, targetVolumeId := range targetVolumeIds {
+				resp, configureErr := volumeServerClient.VolumeConfigure(context.Background(), &volume_server_pb.VolumeConfigureRequest{
+					VolumeId:    targetVolumeId,
+					Replication: replicaPlacement.String(),
+				})
+				if configureErr != nil {
+					return configureErr
+				}
+				if resp.Error != "" {
+					return errors.New(resp.Error)
+				}
 			}
 			return nil
 		})
-
 		if err != nil {
-			return err
+			return
 		}
+	})
 
-	}
-
-	return nil
+	return err
 }
 
 func getVolumeFilter(replicaPlacement *super_block.ReplicaPlacement, volumeId uint32, collectionPattern string) func(message *master_pb.VolumeInformationMessage) bool {

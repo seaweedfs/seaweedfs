@@ -9,10 +9,10 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (s3sink *S3Sink) deleteObject(key string) error {
@@ -115,6 +115,11 @@ func (s3sink *S3Sink) uploadPart(key, uploadId string, partId int, chunk *filer.
 		glog.Errorf("[%s] uploadPart %s %d read: %v", s3sink.bucket, key, partId, err)
 		return nil, fmt.Errorf("[%s] uploadPart %s %d read: %v", s3sink.bucket, key, partId, err)
 	}
+
+	return s3sink.doUploadPart(key, uploadId, partId, readSeeker)
+}
+
+func (s3sink *S3Sink) doUploadPart(key, uploadId string, partId int, readSeeker io.ReadSeeker) (*s3.CompletedPart, error) {
 
 	input := &s3.UploadPartInput{
 		Body:       readSeeker,

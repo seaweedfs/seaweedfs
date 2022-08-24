@@ -9,12 +9,12 @@ assignees: ''
 
 Sponsors SeaweedFS via Patreon https://www.patreon.com/seaweedfs
 Report issues here. Ask questions here https://stackoverflow.com/questions/tagged/seaweedfs
-Please ask questions in https://github.com/chrislusf/seaweedfs/discussions
+Please ask questions in https://github.com/seaweedfs/seaweedfs/discussions
 
 example of a good issue report:
-https://github.com/chrislusf/seaweedfs/issues/1005
+https://github.com/seaweedfs/seaweedfs/issues/1005
 example of a bad issue report:
-https://github.com/chrislusf/seaweedfs/issues/1008
+https://github.com/seaweedfs/seaweedfs/issues/1008
 
 **Describe the bug**
 A clear and concise description of what the bug is.

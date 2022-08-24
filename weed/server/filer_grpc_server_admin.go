@@ -3,14 +3,15 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/cluster"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsRequest) (resp *filer_pb.StatisticsResponse, err error) {
@@ -66,7 +67,7 @@ func (fs *FilerServer) Ping(ctx context.Context, req *filer_pb.PingRequest) (res
 		})
 	}
 	if req.TargetType == cluster.MasterType {
-		pingErr = pb.WithMasterClient(false, pb.ServerAddress(req.Target), fs.grpcDialOption, func(client master_pb.SeaweedClient) error {
+		pingErr = pb.WithMasterClient(false, pb.ServerAddress(req.Target), fs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 			pingResp, err := client.Ping(ctx, &master_pb.PingRequest{})
 			if pingResp != nil {
 				resp.RemoteTimeNs = pingResp.StartTimeNs
@@ -97,81 +98,10 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 		MetricsIntervalSec: int32(fs.metricsIntervalSec),
 		Version:            util.Version(),
 		ClusterId:          string(clusterId),
+		FilerGroup:         fs.option.FilerGroup,
 	}
 
 	glog.V(4).Infof("GetFilerConfiguration: %v", t)
 
 	return t, nil
-}
-
-func (fs *FilerServer) KeepConnected(stream filer_pb.SeaweedFiler_KeepConnectedServer) error {
-
-	req, err := stream.Recv()
-	if err != nil {
-		return err
-	}
-
-	clientName := util.JoinHostPort(req.Name, int(req.GrpcPort))
-	m := make(map[string]bool)
-	for _, tp := range req.Resources {
-		m[tp] = true
-	}
-	fs.brokersLock.Lock()
-	fs.brokers[clientName] = m
-	glog.V(0).Infof("+ broker %v", clientName)
-	fs.brokersLock.Unlock()
-
-	defer func() {
-		fs.brokersLock.Lock()
-		delete(fs.brokers, clientName)
-		glog.V(0).Infof("- broker %v: %v", clientName, err)
-		fs.brokersLock.Unlock()
-	}()
-
-	for {
-		if err := stream.Send(&filer_pb.KeepConnectedResponse{}); err != nil {
-			glog.V(0).Infof("send broker %v: %+v", clientName, err)
-			return err
-		}
-		// println("replied")
-
-		if _, err := stream.Recv(); err != nil {
-			glog.V(0).Infof("recv broker %v: %v", clientName, err)
-			return err
-		}
-		// println("received")
-	}
-
-}
-
-func (fs *FilerServer) LocateBroker(ctx context.Context, req *filer_pb.LocateBrokerRequest) (resp *filer_pb.LocateBrokerResponse, err error) {
-
-	resp = &filer_pb.LocateBrokerResponse{}
-
-	fs.brokersLock.Lock()
-	defer fs.brokersLock.Unlock()
-
-	var localBrokers []*filer_pb.LocateBrokerResponse_Resource
-
-	for b, m := range fs.brokers {
-		if _, found := m[req.Resource]; found {
-			resp.Found = true
-			resp.Resources = []*filer_pb.LocateBrokerResponse_Resource{
-				{
-					GrpcAddresses: b,
-					ResourceCount: int32(len(m)),
-				},
-			}
-			return
-		}
-		localBrokers = append(localBrokers, &filer_pb.LocateBrokerResponse_Resource{
-			GrpcAddresses: b,
-			ResourceCount: int32(len(m)),
-		})
-	}
-
-	resp.Resources = localBrokers
-
-	return resp, nil
-
 }

@@ -4,13 +4,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
-	"github.com/golang/protobuf/proto"
+	"google.golang.org/protobuf/proto"
 )
 
-func TestProtoMarshalText(t *testing.T) {
+func TestProtoMarshal(t *testing.T) {
 
 	oldEntry := &Entry{
 		FullPath: util.FullPath("/this/path/to"),
@@ -22,7 +22,7 @@ func TestProtoMarshalText(t *testing.T) {
 			TtlSec: 25,
 		},
 		Chunks: []*filer_pb.FileChunk{
-			&filer_pb.FileChunk{
+			{
 				FileId:       "234,2423423422",
 				Offset:       234234,
 				Size:         234,
@@ -39,15 +39,15 @@ func TestProtoMarshalText(t *testing.T) {
 		DeleteChunks: true,
 	}
 
-	text := proto.MarshalTextString(notification)
+	text, _ := proto.Marshal(notification)
 
 	notification2 := &filer_pb.EventNotification{}
-	proto.UnmarshalText(text, notification2)
+	proto.Unmarshal(text, notification2)
 
 	if notification2.OldEntry.Chunks[0].SourceFileId != notification.OldEntry.Chunks[0].SourceFileId {
 		t.Fatalf("marshal/unmarshal error: %s", text)
 	}
 
-	println(text)
+	println(string(text))
 
 }

@@ -3,17 +3,17 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 	"reflect"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var (
@@ -27,8 +27,9 @@ type FilerMetaBackupOptions struct {
 	restart           *bool
 	backupFilerConfig *string
 
-	store    filer.FilerStore
-	clientId int32
+	store       filer.FilerStore
+	clientId    int32
+	clientEpoch int32
 }
 
 func init() {
@@ -194,8 +195,9 @@ func (metaBackup *FilerMetaBackupOptions) streamMetadataBackup() error {
 		return metaBackup.setOffset(lastTime)
 	})
 
-	return pb.FollowMetadata(pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOption, "meta_backup", metaBackup.clientId,
-		*metaBackup.filerDirectory, nil, startTime.UnixNano(), 0, processEventFnWithOffset, false)
+	metaBackup.clientEpoch++
+	return pb.FollowMetadata(pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOption, "meta_backup", metaBackup.clientId, metaBackup.clientEpoch,
+		*metaBackup.filerDirectory, nil, startTime.UnixNano(), 0, 0, processEventFnWithOffset, pb.TrivialOnError)
 
 }
 
@@ -231,4 +233,8 @@ func (metaBackup *FilerMetaBackupOptions) WithFilerClient(streamingMode bool, fn
 
 func (metaBackup *FilerMetaBackupOptions) AdjustedUrl(location *filer_pb.Location) string {
 	return location.Url
+}
+
+func (metaBackup *FilerMetaBackupOptions) GetDataCenter() string {
+	return ""
 }

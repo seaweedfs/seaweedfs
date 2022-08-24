@@ -1,9 +1,10 @@
 package topology
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"golang.org/x/exp/slices"
 	"time"
 )
 
@@ -53,16 +54,25 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, grpcPort int, publicUrl 
 	return dn
 }
 
-func (r *Rack) ToMap() interface{} {
-	m := make(map[string]interface{})
-	m["Id"] = r.Id()
-	var dns []interface{}
+type RackInfo struct {
+	Id        NodeId         `json:"Id"`
+	DataNodes []DataNodeInfo `json:"DataNodes"`
+}
+
+func (r *Rack) ToInfo() (info RackInfo) {
+	info.Id = r.Id()
+	var dns []DataNodeInfo
 	for _, c := range r.Children() {
 		dn := c.(*DataNode)
-		dns = append(dns, dn.ToMap())
+		dns = append(dns, dn.ToInfo())
 	}
-	m["DataNodes"] = dns
-	return m
+
+	slices.SortFunc(dns, func(a, b DataNodeInfo) bool {
+		return a.Url < b.Url
+	})
+
+	info.DataNodes = dns
+	return
 }
 
 func (r *Rack) ToRackInfo() *master_pb.RackInfo {

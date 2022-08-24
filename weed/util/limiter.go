@@ -50,10 +50,10 @@ func (c *LimitedConcurrentExecutor) Execute(job func()) {
 type OperationRequest func()
 
 type LimitedOutOfOrderProcessor struct {
-	processorSlots     uint32
-	processors         []chan OperationRequest
 	processorLimit     int32
 	processorLimitCond *sync.Cond
+	processorSlots     uint32
+	processors         []chan OperationRequest
 	currentProcessor   int32
 }
 

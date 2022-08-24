@@ -11,10 +11,11 @@ metadata:
 spec:
   endpoints:
     - interval: 30s
-      port: swfs-filer-metrics
+      port: metrics
       scrapeTimeout: 5s
   selector:
-    app: {{ template "seaweedfs.name" . }}
-    component: filer
+    matchLabels:
+      app: {{ template "seaweedfs.name" . }}
+      component: filer
 {{- end }}
 {{- end }}

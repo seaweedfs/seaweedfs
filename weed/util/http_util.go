@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/util/mem"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 var (
@@ -49,8 +49,8 @@ func Post(url string, values url.Values) ([]byte, error) {
 	return b, nil
 }
 
-//	github.com/chrislusf/seaweedfs/unmaintained/repeated_vacuum/repeated_vacuum.go
-//	may need increasing http.Client.Timeout
+// github.com/seaweedfs/seaweedfs/unmaintained/repeated_vacuum/repeated_vacuum.go
+// may need increasing http.Client.Timeout
 func Get(url string) ([]byte, bool, error) {
 
 	request, err := http.NewRequest("GET", url, nil)
@@ -288,7 +288,6 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 }
 
 func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
-
 	if cipherKey != nil {
 		return readEncryptedUrl(fileUrl, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 	}
@@ -310,7 +309,7 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 	}
 	defer CloseResponse(r)
 	if r.StatusCode >= 400 {
-		retryable = r.StatusCode >= 500
+		retryable = r.StatusCode == http.StatusNotFound || r.StatusCode >= 500
 		return retryable, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
 
@@ -332,7 +331,9 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 
 	for {
 		m, err = reader.Read(buf)
-		fn(buf[:m])
+		if m > 0 {
+			fn(buf[:m])
+		}
 		if err == io.EOF {
 			return false, nil
 		}

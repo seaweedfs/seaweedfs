@@ -2,15 +2,15 @@ package B2Sink
 
 import (
 	"context"
-	"github.com/chrislusf/seaweedfs/weed/replication/repl_util"
+	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/replication/sink"
-	"github.com/chrislusf/seaweedfs/weed/replication/source"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/kurin/blazer/b2"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
+	"github.com/seaweedfs/seaweedfs/weed/replication/source"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type B2Sink struct {
@@ -101,13 +101,16 @@ func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int
 
 	targetObject := bucket.Object(key)
 	writer := targetObject.NewWriter(context.Background())
+	defer writer.Close()
 
 	writeFunc := func(data []byte) error {
 		_, writeErr := writer.Write(data)
 		return writeErr
 	}
 
-	defer writer.Close()
+	if len(entry.Content) > 0 {
+		return writeFunc(entry.Content)
+	}
 
 	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc); err != nil {
 		return err

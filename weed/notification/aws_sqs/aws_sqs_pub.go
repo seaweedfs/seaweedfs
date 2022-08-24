@@ -8,10 +8,10 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/notification"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/golang/protobuf/proto"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/notification"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/protobuf/proto"
 )
 
 func init() {
@@ -70,7 +70,10 @@ func (k *AwsSqsPub) initialize(awsAccessKeyId, awsSecretAccessKey, region, queue
 
 func (k *AwsSqsPub) SendMessage(key string, message proto.Message) (err error) {
 
-	text := proto.MarshalTextString(message)
+	text, err := proto.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("send message marshal %+v: %v", message, err)
+	}
 
 	_, err = k.svc.SendMessage(&sqs.SendMessageInput{
 		DelaySeconds: aws.Int64(10),
@@ -80,7 +83,7 @@ func (k *AwsSqsPub) SendMessage(key string, message proto.Message) (err error) {
 				StringValue: aws.String(key),
 			},
 		},
-		MessageBody: aws.String(text),
+		MessageBody: aws.String(string(text)),
 		QueueUrl:    &k.queueUrl,
 	})
 

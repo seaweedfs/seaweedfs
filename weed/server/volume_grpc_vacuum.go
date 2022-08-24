@@ -3,10 +3,14 @@ package weed_server
 import (
 	"context"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/prometheus/procfs"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"runtime"
 )
+
+var numCPU = runtime.NumCPU()
 
 func (vs *VolumeServer) VacuumVolumeCheck(ctx context.Context, req *volume_server_pb.VacuumVolumeCheckRequest) (*volume_server_pb.VacuumVolumeCheckResponse, error) {
 
@@ -29,11 +33,16 @@ func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCo
 	resp := &volume_server_pb.VacuumVolumeCompactResponse{}
 	reportInterval := int64(1024 * 1024 * 128)
 	nextReportTarget := reportInterval
-
+	fs, fsErr := procfs.NewDefaultFS()
 	var sendErr error
 	err := vs.store.CompactVolume(needle.VolumeId(req.VolumeId), req.Preallocate, vs.compactionBytePerSecond, func(processed int64) bool {
 		if processed > nextReportTarget {
 			resp.ProcessedBytes = processed
+			if fsErr == nil && numCPU > 0 {
+				if fsLa, err := fs.LoadAvg(); err == nil {
+					resp.LoadAvg_1M = float32(fsLa.Load1 / float64(numCPU))
+				}
+			}
 			if sendErr = stream.Send(resp); sendErr != nil {
 				return false
 			}

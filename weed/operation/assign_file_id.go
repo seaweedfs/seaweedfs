@@ -3,12 +3,12 @@ package operation
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
 type VolumeAssignRequest struct {
@@ -49,7 +49,6 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 		}
 
 		lastError = WithMasterServerClient(false, masterFn(), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
-
 			req := &master_pb.AssignRequest{
 				Count:               request.Count,
 				Replication:         request.Replication,
@@ -79,8 +78,9 @@ func Assign(masterFn GetMasterFn, grpcDialOption grpc.DialOption, primaryRequest
 			ret.Auth = security.EncodedJwt(resp.Auth)
 			for _, r := range resp.Replicas {
 				ret.Replicas = append(ret.Replicas, Location{
-					Url:       r.Url,
-					PublicUrl: r.PublicUrl,
+					Url:        r.Url,
+					PublicUrl:  r.PublicUrl,
+					DataCenter: r.DataCenter,
 				})
 			}
 

@@ -36,7 +36,7 @@ public class SeaweedCipher {
         byte[] encryptedText = AES_cipherInstance.doFinal(clearTextbytes, offset, length);
 
         byte[] iv = AES_cipherInstance.getIV();
-        byte[] message = new byte[GCM_NONCE_LENGTH + clearTextbytes.length + GCM_TAG_LENGTH];
+        byte[] message = new byte[GCM_NONCE_LENGTH + length + GCM_TAG_LENGTH];
         System.arraycopy(iv, 0, message, 0, GCM_NONCE_LENGTH);
         System.arraycopy(encryptedText, 0, message, GCM_NONCE_LENGTH, encryptedText.length);
 

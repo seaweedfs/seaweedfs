@@ -5,8 +5,8 @@
     <modelVersion>4.0.0</modelVersion>
 
     <properties>
-        <seaweedfs.client.version>2.85</seaweedfs.client.version>
-        <hadoop.version>3.2.3</hadoop.version>
+        <seaweedfs.client.version>3.13</seaweedfs.client.version>
+        <hadoop.version>3.2.4</hadoop.version>
     </properties>
 
     <groupId>com.github.chrislusf</groupId>

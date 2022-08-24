@@ -3,10 +3,10 @@ package mount
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"syscall"
 	"time"
 )
@@ -58,16 +58,14 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		Name:        name,
 		IsDirectory: false,
 		Attributes: &filer_pb.FuseAttributes{
-			Mtime:       now,
-			Crtime:      now,
-			FileMode:    uint32(fileMode),
-			Uid:         in.Uid,
-			Gid:         in.Gid,
-			Collection:  wfs.option.Collection,
-			Replication: wfs.option.Replication,
-			TtlSec:      wfs.option.TtlSec,
-			Rdev:        in.Rdev,
-			Inode:       inode,
+			Mtime:    now,
+			Crtime:   now,
+			FileMode: uint32(fileMode),
+			Uid:      in.Uid,
+			Gid:      in.Gid,
+			TtlSec:   wfs.option.TtlSec,
+			Rdev:     in.Rdev,
+			Inode:    inode,
 		},
 	}
 

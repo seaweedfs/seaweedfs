@@ -6,16 +6,16 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/mount"
-	"github.com/chrislusf/seaweedfs/weed/mount/meta_cache"
-	"github.com/chrislusf/seaweedfs/weed/mount/unmount"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/mount_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mount"
+	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
+	"github.com/seaweedfs/seaweedfs/weed/mount/unmount"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mount_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc/reflection"
 	"net"
 	"net/http"
@@ -26,8 +26,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 )
 
 func runMount(cmd *Command, args []string) bool {
@@ -175,7 +175,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		FsName:                   serverFriendlyName + ":" + filerMountRootPath,
 		Name:                     "seaweedfs",
 		SingleThreaded:           false,
-		DisableXAttrs:            false,
+		DisableXAttrs:            *option.disableXAttr,
 		Debug:                    *option.debug,
 		EnableLocks:              false,
 		ExplicitDataCacheControl: false,
@@ -238,6 +238,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		VolumeServerAccess: *mountOptions.volumeServerAccess,
 		Cipher:             cipher,
 		UidGidMapper:       uidGidMapper,
+		DisableXAttr:       *option.disableXAttr,
 	})
 
 	server, err := fuse.NewServer(seaweedFileSystem, dir, fuseMountOptions)

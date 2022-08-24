@@ -2,8 +2,8 @@ package page_writer
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,6 +12,8 @@ import (
 type LogicChunkIndex int
 
 type UploadPipeline struct {
+	uploaderCount        int32
+	uploaderCountCond    *sync.Cond
 	filepath             util.FullPath
 	ChunkSize            int64
 	writableChunks       map[LogicChunkIndex]PageChunk
@@ -19,8 +21,6 @@ type UploadPipeline struct {
 	sealedChunks         map[LogicChunkIndex]*SealedChunk
 	sealedChunksLock     sync.Mutex
 	uploaders            *util.LimitedConcurrentExecutor
-	uploaderCount        int32
-	uploaderCountCond    *sync.Cond
 	saveToStorageFn      SaveToStorageFunc
 	activeReadChunks     map[LogicChunkIndex]int
 	activeReadChunksLock sync.Mutex

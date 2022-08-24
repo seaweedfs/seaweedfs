@@ -7,7 +7,7 @@ import (
 	"io"
 	"math"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 func init() {
@@ -66,9 +66,6 @@ func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer i
 		fmt.Fprintf(writer, "  %s\tsize:%.0f\tfile:%.0f", entry.Name, collectionSize, fileCount)
 		if entry.Quota > 0 {
 			fmt.Fprintf(writer, "\tquota:%d\tusage:%.2f%%", entry.Quota, float64(collectionSize)*100/float64(entry.Quota))
-		}
-		if entry.Attributes.Replication != "" && entry.Attributes.Replication != "000" {
-			fmt.Fprintf(writer, "\treplication:%s", entry.Attributes.Replication)
 		}
 		fmt.Fprintln(writer)
 		return nil

@@ -2,9 +2,9 @@ package mount
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/mount/page_writer"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mount/page_writer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"io"
 	"sync"
 	"time"
@@ -65,10 +65,6 @@ func (pages *ChunkedDirtyPages) ReadDirtyDataAt(data []byte, startOffset int64) 
 	return pages.uploadPipeline.MaybeReadDataAt(data, startOffset)
 }
 
-func (pages *ChunkedDirtyPages) GetStorageOptions() (collection, replication string) {
-	return pages.collection, pages.replication
-}
-
 func (pages *ChunkedDirtyPages) saveChunkedFileIntevalToStorage(reader io.Reader, offset int64, size int64, cleanupFn func()) {
 
 	mtime := time.Now().UnixNano()
@@ -76,15 +72,14 @@ func (pages *ChunkedDirtyPages) saveChunkedFileIntevalToStorage(reader io.Reader
 
 	fileFullPath := pages.fh.FullPath()
 	fileName := fileFullPath.Name()
-	chunk, collection, replication, err := pages.fh.wfs.saveDataAsChunk(fileFullPath)(reader, fileName, offset)
+	chunk, err := pages.fh.wfs.saveDataAsChunk(fileFullPath)(reader, fileName, offset)
 	if err != nil {
 		glog.V(0).Infof("%v saveToStorage [%d,%d): %v", fileFullPath, offset, offset+size, err)
 		pages.lastErr = err
 		return
 	}
 	chunk.Mtime = mtime
-	pages.collection, pages.replication = collection, replication
-	pages.fh.addChunks([]*filer_pb.FileChunk{chunk})
+	pages.fh.AddChunks([]*filer_pb.FileChunk{chunk})
 	pages.fh.entryViewCache = nil
 	glog.V(3).Infof("%v saveToStorage %s [%d,%d)", fileFullPath, chunk.FileId, offset, offset+size)
 

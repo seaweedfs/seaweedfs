@@ -3,21 +3,22 @@ package replication
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"google.golang.org/grpc"
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/replication/sink"
-	"github.com/chrislusf/seaweedfs/weed/replication/source"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
+	"github.com/seaweedfs/seaweedfs/weed/replication/source"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type Replicator struct {
-	sink   sink.ReplicationSink
-	source *source.FilerSource
+	sink        sink.ReplicationSink
+	source      *source.FilerSource
+	excludeDirs []string
 }
 
 func NewReplicator(sourceConfig util.Configuration, configPrefix string, dataSink sink.ReplicationSink) *Replicator {
@@ -28,8 +29,9 @@ func NewReplicator(sourceConfig util.Configuration, configPrefix string, dataSin
 	dataSink.SetSourceFiler(source)
 
 	return &Replicator{
-		sink:   dataSink,
-		source: source,
+		sink:        dataSink,
+		source:      source,
+		excludeDirs: sourceConfig.GetStringSlice(configPrefix + "excludeDirectories"),
 	}
 }
 
@@ -41,6 +43,13 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		glog.V(4).Infof("skipping %v outside of %v", key, r.source.Dir)
 		return nil
 	}
+	for _, excludeDir := range r.excludeDirs {
+		if strings.HasPrefix(key, excludeDir) {
+			glog.V(4).Infof("skipping %v of exclude dir %v", key, excludeDir)
+			return nil
+		}
+	}
+
 	var dateKey string
 	if r.sink.IsIncremental() {
 		var mTime int64

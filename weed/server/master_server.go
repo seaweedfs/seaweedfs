@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/stats"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -13,27 +12,27 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/cluster"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+
 	"github.com/hashicorp/raft"
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/sequence"
-	"github.com/chrislusf/seaweedfs/weed/shell"
-	"github.com/chrislusf/seaweedfs/weed/topology"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/sequence"
+	"github.com/seaweedfs/seaweedfs/weed/shell"
+	"github.com/seaweedfs/seaweedfs/weed/topology"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 const (
-	SequencerType         = "master.sequencer.type"
-	SequencerSnowflakeId  = "master.sequencer.sequencer_snowflake_id"
-	RaftServerRemovalTime = 72 * time.Minute
+	SequencerType        = "master.sequencer.type"
+	SequencerSnowflakeId = "master.sequencer.sequencer_snowflake_id"
 )
 
 type MasterOption struct {
@@ -63,9 +62,6 @@ type MasterServer struct {
 	vgCh chan *topology.VolumeGrowRequest
 
 	boundedLeaderChan chan int
-
-	onPeerUpdatDoneCn      chan string
-	onPeerUpdatDoneCnExist bool
 
 	// notifying clients
 	clientChansLock sync.RWMutex
@@ -112,12 +108,11 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		vgCh:            make(chan *topology.VolumeGrowRequest, 1<<6),
 		clientChans:     make(map[string]chan *master_pb.KeepConnectedResponse),
 		grpcDialOption:  grpcDialOption,
-		MasterClient:    wdclient.NewMasterClient(grpcDialOption, cluster.MasterType, option.Master, "", peers),
+		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "", cluster.MasterType, option.Master, "", "", peers),
 		adminLocks:      NewAdminLocks(),
 		Cluster:         cluster.NewCluster(),
 	}
 	ms.boundedLeaderChan = make(chan int, 16)
-	ms.onPeerUpdatDoneCn = make(chan string)
 
 	ms.MasterClient.OnPeerUpdate = ms.OnPeerUpdate
 
@@ -233,7 +228,6 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 }
 
 func (ms *MasterServer) startAdminScripts() {
-
 	v := util.GetViper()
 	adminScripts := v.GetString("master.maintenance.scripts")
 	if adminScripts == "" {
@@ -257,6 +251,8 @@ func (ms *MasterServer) startAdminScripts() {
 	shellOptions.Masters = &masterAddress
 
 	shellOptions.Directory = "/"
+	emptyFilerGroup := ""
+	shellOptions.FilerGroup = &emptyFilerGroup
 
 	commandEnv := shell.NewCommandEnv(&shellOptions)
 
@@ -265,12 +261,10 @@ func (ms *MasterServer) startAdminScripts() {
 	go commandEnv.MasterClient.KeepConnectedToMaster()
 
 	go func() {
-		commandEnv.MasterClient.WaitUntilConnected()
-
 		for {
 			time.Sleep(time.Duration(sleepMinutes) * time.Minute)
-			if ms.Topo.IsLeader() {
-				shellOptions.FilerAddress = ms.GetOneFiler()
+			if ms.Topo.IsLeader() && ms.MasterClient.GetMaster() != "" {
+				shellOptions.FilerAddress = ms.GetOneFiler(cluster.FilerGroupName(*shellOptions.FilerGroup))
 				if shellOptions.FilerAddress == "" {
 					continue
 				}
@@ -325,7 +319,7 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 	return seq
 }
 
-func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate) {
+func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
 	if update.NodeType != cluster.MasterType || ms.Topo.RaftServer == nil {
 		return
 	}
@@ -333,48 +327,43 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate) {
 
 	peerAddress := pb.ServerAddress(update.Address)
 	peerName := string(peerAddress)
-	isLeader := ms.Topo.IsLeader()
+	if ms.Topo.RaftServer.State() != raft.Leader {
+		return
+	}
 	if update.IsAdd {
-		if isLeader {
-			raftServerFound := false
-			for _, server := range ms.Topo.RaftServer.GetConfiguration().Configuration().Servers {
-				if string(server.ID) == peerName {
-					raftServerFound = true
-				}
-			}
-			if !raftServerFound {
-				glog.V(0).Infof("adding new raft server: %s", peerName)
-				ms.Topo.RaftServer.AddVoter(
-					raft.ServerID(peerName),
-					raft.ServerAddress(peerAddress.ToGrpcAddress()), 0, 0)
+		raftServerFound := false
+		for _, server := range ms.Topo.RaftServer.GetConfiguration().Configuration().Servers {
+			if string(server.ID) == peerName {
+				raftServerFound = true
 			}
 		}
-		if ms.onPeerUpdatDoneCnExist {
-			ms.onPeerUpdatDoneCn <- peerName
+		if !raftServerFound {
+			glog.V(0).Infof("adding new raft server: %s", peerName)
+			ms.Topo.RaftServer.AddVoter(
+				raft.ServerID(peerName),
+				raft.ServerAddress(peerAddress.ToGrpcAddress()), 0, 0)
 		}
-	} else if isLeader {
-		go func(peerName string) {
-			for {
-				select {
-				case <-time.After(RaftServerRemovalTime):
-					err := ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
-						_, err := client.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
-							Id:    peerName,
-							Force: false,
-						})
-						return err
+	} else {
+		pb.WithMasterClient(false, peerAddress, ms.grpcDialOption, true, func(client master_pb.SeaweedClient) error {
+			ctx, cancel := context.WithTimeout(context.TODO(), 15*time.Second)
+			defer cancel()
+			if _, err := client.Ping(ctx, &master_pb.PingRequest{Target: string(peerAddress), TargetType: cluster.MasterType}); err != nil {
+				glog.V(0).Infof("master %s didn't respond to pings. remove raft server", peerName)
+				if err := ms.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+					_, err := client.RaftRemoveServer(context.Background(), &master_pb.RaftRemoveServerRequest{
+						Id:    peerName,
+						Force: false,
 					})
-					if err != nil {
-						glog.Warningf("failed to removing old raft server %s: %v", peerName, err)
-					}
-					return
-				case peerDone := <-ms.onPeerUpdatDoneCn:
-					if peerName == peerDone {
-						return
-					}
+					return err
+				}); err != nil {
+					glog.Warningf("failed removing old raft server: %v", err)
+					return err
 				}
+			} else {
+				glog.V(0).Infof("master %s successfully responded to ping", peerName)
 			}
-		}(peerName)
-		ms.onPeerUpdatDoneCnExist = true
+
+			return nil
+		})
 	}
 }

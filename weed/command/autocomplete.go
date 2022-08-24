@@ -2,9 +2,9 @@ package command
 
 import (
 	"fmt"
-	flag "github.com/chrislusf/seaweedfs/weed/util/fla9"
 	"github.com/posener/complete"
 	completeinstall "github.com/posener/complete/cmd/install"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"runtime"
 )
 
@@ -41,7 +41,7 @@ func AutocompleteMain(commands []*Command) bool {
 
 func installAutoCompletion() bool {
 	if runtime.GOOS == "windows" {
-		fmt.Println("windows is not supported")
+		fmt.Println("Windows is not supported")
 		return false
 	}
 
@@ -56,7 +56,7 @@ func installAutoCompletion() bool {
 
 func uninstallAutoCompletion() bool {
 	if runtime.GOOS == "windows" {
-		fmt.Println("windows is not supported")
+		fmt.Println("Windows is not supported")
 		return false
 	}
 
@@ -65,7 +65,7 @@ func uninstallAutoCompletion() bool {
 		fmt.Printf("uninstall failed! %s\n", err)
 		return false
 	}
-	fmt.Printf("autocompletion is disable. Please restart your shell.\n")
+	fmt.Printf("autocompletion is disabled. Please restart your shell.\n")
 	return true
 }
 

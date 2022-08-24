@@ -5,7 +5,7 @@ import (
 	"flag"
 	"io"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
 func init() {
@@ -34,7 +34,7 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 	collection := volumeVacuumCommand.String("collection", "", "vacuum this collection")
 	volumeId := volumeVacuumCommand.Uint("volumeId", 0, "the volume id")
 	if err = volumeVacuumCommand.Parse(args); err != nil {
-		return
+		return nil
 	}
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {

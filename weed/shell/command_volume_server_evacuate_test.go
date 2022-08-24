@@ -6,11 +6,11 @@ import (
 )
 
 func TestVolumeServerEvacuate(t *testing.T) {
-	topologyInfo := parseOutput(topoData)
+	c := commandVolumeServerEvacuate{}
+	c.topologyInfo = parseOutput(topoData)
 
 	volumeServer := "192.168.1.4:8080"
-
-	if err := evacuateNormalVolumes(nil, topologyInfo, volumeServer, true, false, os.Stdout); err != nil {
+	if err := c.evacuateNormalVolumes(nil, volumeServer, true, false, os.Stdout); err != nil {
 		t.Errorf("evacuate: %v", err)
 	}
 

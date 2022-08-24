@@ -1,8 +1,8 @@
 package filer
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"os"
 	"reflect"
 	"strings"
@@ -12,7 +12,7 @@ var (
 	Stores []FilerStore
 )
 
-func (f *Filer) LoadConfiguration(config *util.ViperProxy) {
+func (f *Filer) LoadConfiguration(config *util.ViperProxy) (isFresh bool) {
 
 	validateOneEnabledStore(config)
 
@@ -24,7 +24,7 @@ func (f *Filer) LoadConfiguration(config *util.ViperProxy) {
 			if err := store.Initialize(config, store.GetName()+"."); err != nil {
 				glog.Fatalf("failed to initialize store for %s: %+v", store.GetName(), err)
 			}
-			f.SetStore(store)
+			isFresh = f.SetStore(store)
 			glog.V(0).Infof("configured filer store to %s", store.GetName())
 			hasDefaultStoreConfigured = true
 			break
@@ -77,6 +77,7 @@ func (f *Filer) LoadConfiguration(config *util.ViperProxy) {
 		glog.V(0).Infof("configure filer %s for %s", store.GetName(), location)
 	}
 
+	return
 }
 
 func validateOneEnabledStore(config *util.ViperProxy) {

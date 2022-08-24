@@ -2,12 +2,12 @@ package command
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/replication/source"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication/source"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"time"
 )
@@ -19,6 +19,7 @@ type RemoteSyncOptions struct {
 	timeAgo            *time.Duration
 	dir                *string
 	clientId           int32
+	clientEpoch        int32
 }
 
 var _ = filer_pb.FilerClient(&RemoteSyncOptions{})
@@ -30,6 +31,10 @@ func (option *RemoteSyncOptions) WithFilerClient(streamingMode bool, fn func(fil
 }
 func (option *RemoteSyncOptions) AdjustedUrl(location *filer_pb.Location) string {
 	return location.Url
+}
+
+func (option *RemoteSyncOptions) GetDataCenter() string {
+	return ""
 }
 
 var (

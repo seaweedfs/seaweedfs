@@ -11,10 +11,11 @@ metadata:
 spec:
   endpoints:
     - interval: 30s
-      port: swfs-volume-metrics
+      port: metrics
       scrapeTimeout: 5s
   selector:
-    app: {{ template "seaweedfs.name" . }}
-    component: volume
+    matchLabels:
+      app: {{ template "seaweedfs.name" . }}
+      component: volume
 {{- end }}
 {{- end }}

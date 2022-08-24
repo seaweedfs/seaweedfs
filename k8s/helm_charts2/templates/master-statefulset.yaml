@@ -51,6 +51,10 @@ spec:
       priorityClassName: {{ .Values.master.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
+      {{- if .Values.master.initContainers }}
+      initContainers:
+        {{ tpl .Values.master.initContainers . | nindent 8 | trim }}
+      {{- end }}
       containers:
         - name: seaweedfs
           image: {{ template "master.image" . }}
@@ -105,7 +109,14 @@ spec:
               -volumePreallocate \
               {{- end }}
               {{- if .Values.global.monitoring.enabled }}
+              {{- if and .Values.global.monitoring.gatewayHost .Values.global.monitoring.gatewayPort }}
               -metrics.address="{{ .Values.global.monitoring.gatewayHost }}:{{ .Values.global.monitoring.gatewayPort }}" \
+              {{- if .Values.master.metricsIntervalSec }}
+              -metrics.intervalSeconds={{ .Values.master.metricsIntervalSec }} \
+              {{- end }}
+              {{- else if .Values.master.metricsPort }}
+              -metricsPort={{ .Values.master.metricsPort }} \
+              {{- end }}
               {{- end }}
               -volumeSizeLimitMB={{ .Values.master.volumeSizeLimitMB }} \
               {{- if .Values.master.disableHttp }}
@@ -116,9 +127,6 @@ spec:
               {{- end }}
               {{- if .Values.master.garbageThreshold }}
               -garbageThreshold={{ .Values.master.garbageThreshold }} \
-              {{- end }}
-              {{- if .Values.master.metricsIntervalSec }}
-              -metrics.intervalSeconds={{ .Values.master.metricsIntervalSec }} \
               {{- end }}
               -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-master \
               -peers={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
@@ -152,6 +160,10 @@ spec:
           ports:
             - containerPort: {{ .Values.master.port }}
               name: swfs-master
+            {{- if and .Values.global.monitoring.enabled .Values.master.metricsPort }}
+            - containerPort: {{ .Values.master.metricsPort }}
+              name: metrics
+            {{- end }}
             - containerPort: {{ .Values.master.grpcPort }}
               #name: swfs-master-grpc
           readinessProbe:
@@ -178,15 +190,21 @@ spec:
           resources:
             {{ tpl .Values.master.resources . | nindent 12 | trim }}
           {{- end }}
+      {{- $hostpath_exists := include "master.hostpath_exists" . -}}
+      {{- if $hostpath_exists }}
       volumes:
+        {{- if eq .Values.master.logs.type "hostPath" }}
         - name: seaweedfs-master-log-volume
           hostPath:
             path: /storage/logs/seaweedfs/master
             type: DirectoryOrCreate
+        {{- end }}
+        {{- if eq .Values.master.data.type "hostPath" }}
         - name: data-{{ .Release.Namespace }}
           hostPath:
             path: /ssd/seaweed-master/
             type: DirectoryOrCreate
+        {{- end }}
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:
@@ -208,20 +226,33 @@ spec:
             secretName: {{ template "seaweedfs.name" . }}-client-cert
         {{- end }}
         {{ tpl .Values.master.extraVolumes . | indent 8 | trim }}
+      {{- end }}
       {{- if .Values.master.nodeSelector }}
       nodeSelector:
         {{ tpl .Values.master.nodeSelector . | indent 8 | trim }}
       {{- end }}
-{{/*  volumeClaimTemplates:*/}}
-{{/*    - metadata:*/}}
-{{/*        name: data-{{ .Release.Namespace }}*/}}
-{{/*      spec:*/}}
-{{/*        accessModes:*/}}
-{{/*          - ReadWriteOnce*/}}
-{{/*        resources:*/}}
-{{/*          requests:*/}}
-{{/*            storage: {{ .Values.master.storage }}*/}}
-{{/*        {{- if .Values.master.storageClass }}*/}}
-{{/*        storageClassName: {{ .Values.master.storageClass }}*/}}
-{{/*        {{- end }}*/}}
+  {{- $pvc_exists := include "volume.pvc_exists" . -}}
+  {{- if $pvc_exists }}
+  volumeClaimTemplates:
+    {{- if eq .Values.master.data.type "persistentVolumeClaim"}}
+    - metadata:
+        name: data-{{ .Release.Namespace }}
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: {{ .Values.master.data.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.master.data.size }}
+    {{- end }}
+    {{- if eq .Values.master.logs.type "persistentVolumeClaim"}}
+    - metadata:
+        name: seaweedfs-master-log-volume
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: {{ .Values.master.logs.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.master.logs.size }}
+    {{- end }}
+  {{- end }}
 {{- end }}

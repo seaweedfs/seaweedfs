@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package iam_pb;
 
-option go_package = "github.com/chrislusf/seaweedfs/weed/pb/iam_pb";
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/iam_pb";
 option java_package = "seaweedfs.client";
 option java_outer_classname = "IamProto";
 

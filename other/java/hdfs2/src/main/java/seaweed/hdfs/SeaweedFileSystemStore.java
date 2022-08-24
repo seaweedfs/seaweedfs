@@ -200,7 +200,6 @@ public class SeaweedFileSystemStore {
                 entry.getAttributesBuilder().setMtime(now);
                 LOG.debug("createFile merged entry path:{} entry:{} from:{}", path, entry, existingEntry);
                 writePosition = SeaweedRead.fileSize(existingEntry);
-                replication = existingEntry.getAttributes().getReplication();
             }
         }
         if (entry == null) {
@@ -209,7 +208,6 @@ public class SeaweedFileSystemStore {
                 .setIsDirectory(false)
                 .setAttributes(FilerProto.FuseAttributes.newBuilder()
                     .setFileMode(permissionToMode(permission, false))
-                    .setReplication(replication)
                     .setCrtime(now)
                     .setMtime(now)
                     .setUserName(userGroupInformation.getUserName())

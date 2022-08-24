@@ -8,13 +8,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -105,9 +105,10 @@ func (fs *FilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVol
 		}
 		for _, loc := range locations {
 			locs = append(locs, &filer_pb.Location{
-				Url:       loc.Url,
-				PublicUrl: loc.PublicUrl,
-				GrpcPort:  uint32(loc.GrpcPort),
+				Url:        loc.Url,
+				PublicUrl:  loc.PublicUrl,
+				GrpcPort:   uint32(loc.GrpcPort),
+				DataCenter: loc.DataCenter,
 			})
 		}
 		resp.LocationsMap[vidString] = &filer_pb.Locations{
@@ -144,8 +145,13 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		return &filer_pb.CreateEntryResponse{}, fmt.Errorf("CreateEntry cleanupChunks %s %s: %v", req.Directory, req.Entry.Name, err2)
 	}
 
+	so, err := fs.detectStorageOption(string(util.NewFullPath(req.Directory, req.Entry.Name)), "", "", 0, "", "", "", "")
+	if err != nil {
+		return nil, err
+	}
 	newEntry := filer.FromPbEntry(req.Directory, req.Entry)
 	newEntry.Chunks = chunks
+	newEntry.TtlSec = so.TtlSeconds
 
 	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory)
 
@@ -211,10 +217,10 @@ func (fs *FilerServer) cleanupChunks(fullpath string, existingEntry *filer.Entry
 
 	if newEntry.Attributes != nil {
 		so, _ := fs.detectStorageOption(fullpath,
-			newEntry.Attributes.Collection,
-			newEntry.Attributes.Replication,
+			"",
+			"",
 			newEntry.Attributes.TtlSec,
-			newEntry.Attributes.DiskType,
+			"",
 			"",
 			"",
 			"",
@@ -259,7 +265,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	}
 
 	entry.Chunks = append(entry.Chunks, req.Chunks...)
-	so, err := fs.detectStorageOption(string(fullpath), entry.Collection, entry.Replication, entry.TtlSec, entry.DiskType, "", "", "")
+	so, err := fs.detectStorageOption(string(fullpath), "", "", entry.TtlSec, "", "", "", "")
 	if err != nil {
 		glog.Warningf("detectStorageOption: %v", err)
 		return &filer_pb.AppendToEntryResponse{}, err

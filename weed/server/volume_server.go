@@ -1,20 +1,22 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"net/http"
 	"sync"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 )
 
 type VolumeServer struct {
@@ -23,7 +25,9 @@ type VolumeServer struct {
 	inFlightDownloadDataSize      int64
 	concurrentUploadLimit         int64
 	concurrentDownloadLimit       int64
+	inFlightUploadDataLimitCond   *sync.Cond
 	inFlightDownloadDataLimitCond *sync.Cond
+	inflightUploadDataTimeout     time.Duration
 
 	SeedMasterNodes []pb.ServerAddress
 	currentMaster   pb.ServerAddress
@@ -59,6 +63,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	fileSizeLimitMB int,
 	concurrentUploadLimit int64,
 	concurrentDownloadLimit int64,
+	inflightUploadDataTimeout time.Duration,
 ) *VolumeServer {
 
 	v := util.GetViper()
@@ -83,9 +88,11 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		fileSizeLimitBytes:            int64(fileSizeLimitMB) * 1024 * 1024,
 		isHeartbeating:                true,
 		stopChan:                      make(chan bool),
+		inFlightUploadDataLimitCond:   sync.NewCond(new(sync.Mutex)),
 		inFlightDownloadDataLimitCond: sync.NewCond(new(sync.Mutex)),
 		concurrentUploadLimit:         concurrentUploadLimit,
 		concurrentDownloadLimit:       concurrentDownloadLimit,
+		inflightUploadDataTimeout:     inflightUploadDataTimeout,
 	}
 	vs.SeedMasterNodes = masterNodes
 

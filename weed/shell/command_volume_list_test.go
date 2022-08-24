@@ -2,14 +2,15 @@ package shell
 
 import (
 	_ "embed"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/golang/protobuf/proto"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
+	//"google.golang.org/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
 func TestParsing(t *testing.T) {

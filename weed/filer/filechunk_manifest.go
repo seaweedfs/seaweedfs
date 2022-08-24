@@ -3,7 +3,6 @@ package filer
 import (
 	"bytes"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
 	"io"
 	"math"
 	"net/url"
@@ -11,11 +10,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/protobuf/proto"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const (
@@ -63,17 +64,17 @@ func ResolveChunkManifest(lookupFileIdFn wdclient.LookupFileIdFunctionType, chun
 
 		resolvedChunks, err := ResolveOneChunkManifest(lookupFileIdFn, chunk)
 		if err != nil {
-			return chunks, nil, err
+			return dataChunks, nil, err
 		}
 
 		manifestChunks = append(manifestChunks, chunk)
 		// recursive
-		dataChunks, manifestChunks, subErr := ResolveChunkManifest(lookupFileIdFn, resolvedChunks, startOffset, stopOffset)
+		subDataChunks, subManifestChunks, subErr := ResolveChunkManifest(lookupFileIdFn, resolvedChunks, startOffset, stopOffset)
 		if subErr != nil {
-			return chunks, nil, subErr
+			return dataChunks, nil, subErr
 		}
-		dataChunks = append(dataChunks, dataChunks...)
-		manifestChunks = append(manifestChunks, manifestChunks...)
+		dataChunks = append(dataChunks, subDataChunks...)
+		manifestChunks = append(manifestChunks, subManifestChunks...)
 	}
 	return
 }
@@ -257,7 +258,7 @@ func mergeIntoManifest(saveFunc SaveDataAsChunkFunctionType, dataChunks []*filer
 		}
 	}
 
-	manifestChunk, _, _, err = saveFunc(bytes.NewReader(data), "", 0)
+	manifestChunk, err = saveFunc(bytes.NewReader(data), "", 0)
 	if err != nil {
 		return nil, err
 	}
@@ -268,4 +269,4 @@ func mergeIntoManifest(saveFunc SaveDataAsChunkFunctionType, dataChunks []*filer
 	return
 }
 
-type SaveDataAsChunkFunctionType func(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, collection, replication string, err error)
+type SaveDataAsChunkFunctionType func(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, err error)
