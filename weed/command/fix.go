@@ -127,11 +127,10 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 
 	if err := storage.ScanVolumeFile(basepath, collection, vid, storage.NeedleMapInMemory, scanner); err != nil {
 		glog.Fatalf("scan .dat File: %v", err)
-		os.Remove(indexFileName)
 	}
 
 	if err := nm.SaveToIdx(indexFileName); err != nil {
-		glog.Fatalf("save to .idx File: %v", err)
 		os.Remove(indexFileName)
+		glog.Fatalf("save to .idx File: %v", err)
 	}
 }
