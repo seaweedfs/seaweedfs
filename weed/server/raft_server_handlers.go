@@ -20,7 +20,7 @@ func (s *RaftServer) StatusHandler(w http.ResponseWriter, r *http.Request) {
 		MaxVolumeId: s.topo.GetMaxVolumeId(),
 	}
 
-	if leader, e := s.topo.Leader(); e == nil {
+	if leader, e := s.topo.MaybeLeader(); e == nil {
 		ret.Leader = leader
 	}
 	writeJsonQuiet(w, r, http.StatusOK, ret)

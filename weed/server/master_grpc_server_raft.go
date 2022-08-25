@@ -43,7 +43,7 @@ func (ms *MasterServer) RaftAddServer(ctx context.Context, req *master_pb.RaftAd
 	}
 
 	if ms.Topo.RaftServer.State() != raft.Leader {
-		return nil, fmt.Errorf("raft add server %s failed: %s is no current leader", req.Id, ms.Topo.HashicorpRaft.String())
+		return nil, fmt.Errorf("raft add server %s failed: %s is no current leader", req.Id, ms.Topo.RaftServer.String())
 	}
 
 	var idxFuture raft.IndexFuture
@@ -70,7 +70,7 @@ func (ms *MasterServer) RaftRemoveServer(ctx context.Context, req *master_pb.Raf
 	}
 
 	if ms.Topo.RaftServer.State() != raft.Leader {
-		return nil, fmt.Errorf("raft remove server %s failed: %s is no current leader", req.Id, ms.Topo.HashicorpRaft.String())
+		return nil, fmt.Errorf("raft remove server %s failed: %s is no current leader", req.Id, ms.Topo.RaftServer.String())
 	}
 
 	if !req.Force {
