@@ -186,8 +186,8 @@ func (s *SingleChunkCacher) destroy() {
 	if s.data != nil {
 		mem.Free(s.data)
 		s.data = nil
+		close(s.cacheStartedCh)
 	}
-	close(s.cacheStartedCh)
 }
 
 func (s *SingleChunkCacher) readChunkAt(buf []byte, offset int64) (int, error) {
