@@ -12,12 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
-	"github.com/hashicorp/raft"
+	"github.com/gorilla/mux"
+	"github.com/seaweedfs/raft"
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -164,6 +164,8 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 
 func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	var raftServerName string
+
+	ms.Topo.RaftServerAccessLock.Lock()
 	if raftServer.raftServer != nil {
 		ms.Topo.RaftServer = raftServer.raftServer
 		leaderCh := raftServer.raftServer.LeaderCh()
@@ -181,12 +183,16 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 		}()
 		raftServerName = ms.Topo.RaftServer.String()
 	}
+	ms.Topo.RaftServerAccessLock.Unlock()
+
 	if ms.Topo.IsLeader() {
 		glog.V(0).Infoln("[", raftServerName, "]", "I am the leader!")
 	} else {
+		ms.Topo.RaftServerAccessLock.RLock()
 		if ms.Topo.RaftServer != nil && ms.Topo.RaftServer.Leader() != "" {
 			glog.V(0).Infoln("[", ms.Topo.RaftServer.String(), "]", ms.Topo.RaftServer.Leader(), "is the leader.")
 		}
+		ms.Topo.RaftServerAccessLock.RUnlock()
 	}
 }
 
@@ -196,6 +202,7 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 			f(w, r)
 			return
 		}
+		// get the current raft leader
 		var raftServerLeader string
 		if ms.Topo.RaftServer != nil && ms.Topo.RaftServer.Leader() != "" {
 			raftServerLeader = string(ms.Topo.RaftServer.Leader())
@@ -204,6 +211,7 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 			f(w, r)
 			return
 		}
+
 		ms.boundedLeaderChan <- 1
 		defer func() { <-ms.boundedLeaderChan }()
 		targetUrl, err := url.Parse("http://" + raftServerLeader)
@@ -212,6 +220,8 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 				fmt.Errorf("Leader URL http://%s Parse Error: %v", raftServerLeader, err))
 			return
 		}
+
+		// proxy to leader
 		glog.V(4).Infoln("proxying to leader", raftServerLeader)
 		proxy := httputil.NewSingleHostReverseProxy(targetUrl)
 		director := proxy.Director
@@ -320,6 +330,9 @@ func (ms *MasterServer) createSequencer(option *MasterOption) sequence.Sequencer
 }
 
 func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
+	ms.Topo.RaftServerAccessLock.RLock()
+	defer ms.Topo.RaftServerAccessLock.RUnlock()
+
 	if update.NodeType != cluster.MasterType || ms.Topo.RaftServer == nil {
 		return
 	}

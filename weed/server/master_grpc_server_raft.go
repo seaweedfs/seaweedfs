@@ -3,15 +3,24 @@ package weed_server
 import (
 	"context"
 	"fmt"
+
+	"github.com/hashicorp/raft"
+
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/hashicorp/raft"
 )
 
 func (ms *MasterServer) RaftListClusterServers(ctx context.Context, req *master_pb.RaftListClusterServersRequest) (*master_pb.RaftListClusterServersResponse, error) {
 	resp := &master_pb.RaftListClusterServersResponse{}
 
+	ms.Topo.RaftServerAccessLock.RLock()
+	if ms.Topo.RaftServer == nil {
+		ms.Topo.RaftServerAccessLock.RUnlock()
+		return resp, nil
+	}
+
 	servers := ms.Topo.RaftServer.GetConfiguration().Configuration().Servers
+	ms.Topo.RaftServerAccessLock.RUnlock()
 
 	for _, server := range servers {
 		resp.ClusterServers = append(resp.ClusterServers, &master_pb.RaftListClusterServersResponse_ClusterServers{
@@ -25,8 +34,16 @@ func (ms *MasterServer) RaftListClusterServers(ctx context.Context, req *master_
 
 func (ms *MasterServer) RaftAddServer(ctx context.Context, req *master_pb.RaftAddServerRequest) (*master_pb.RaftAddServerResponse, error) {
 	resp := &master_pb.RaftAddServerResponse{}
+
+	ms.Topo.RaftServerAccessLock.RLock()
+	defer ms.Topo.RaftServerAccessLock.RUnlock()
+
+	if ms.Topo.RaftServer == nil {
+		return resp, nil
+	}
+
 	if ms.Topo.RaftServer.State() != raft.Leader {
-		return nil, fmt.Errorf("raft add server %s failed: %s is no current leader", req.Id, ms.Topo.RaftServer.String())
+		return nil, fmt.Errorf("raft add server %s failed: %s is no current leader", req.Id, ms.Topo.HashicorpRaft.String())
 	}
 
 	var idxFuture raft.IndexFuture
@@ -45,8 +62,15 @@ func (ms *MasterServer) RaftAddServer(ctx context.Context, req *master_pb.RaftAd
 func (ms *MasterServer) RaftRemoveServer(ctx context.Context, req *master_pb.RaftRemoveServerRequest) (*master_pb.RaftRemoveServerResponse, error) {
 	resp := &master_pb.RaftRemoveServerResponse{}
 
+	ms.Topo.RaftServerAccessLock.RLock()
+	defer ms.Topo.RaftServerAccessLock.RUnlock()
+
+	if ms.Topo.RaftServer == nil {
+		return resp, nil
+	}
+
 	if ms.Topo.RaftServer.State() != raft.Leader {
-		return nil, fmt.Errorf("raft remove server %s failed: %s is no current leader", req.Id, ms.Topo.RaftServer.String())
+		return nil, fmt.Errorf("raft remove server %s failed: %s is no current leader", req.Id, ms.Topo.HashicorpRaft.String())
 	}
 
 	if !req.Force {

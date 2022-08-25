@@ -42,9 +42,10 @@ type Topology struct {
 
 	Configuration *Configuration
 
-	RaftServer     *raft.Raft
-	UuidAccessLock sync.RWMutex
-	UuidMap        map[string][]string
+	RaftServer     		 *raft.Raft
+	RaftServerAccessLock sync.RWMutex
+	UuidAccessLock       sync.RWMutex
+	UuidMap              map[string][]string
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -71,32 +72,38 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 }
 
 func (t *Topology) IsLeader() bool {
+	t.RaftServerAccessLock.RLock()
+	defer t.RaftServerAccessLock.RUnlock()
 	if t.RaftServer != nil && t.RaftServer.State() == raft.Leader {
 		return true
 	}
 	return false
 }
 
-func (t *Topology) Leader() (pb.ServerAddress, error) {
-	if t.RaftServer != nil {
-		return "", errors.New("Raft Server not ready yet!")
-	}
-	leader := t.RaftServer.Leader()
-	if leader == "" {
-		return "", errors.New("Raft Server Leader is empty")
-	}
-	return pb.ServerAddress(leader), nil
-}
-
-func (t *Topology) LeaderRetry(maxCount int, timeout int) (pb.ServerAddress, error) {
-	timeoutSecond := time.Duration(timeout) * time.Second
-	var l pb.ServerAddress
-	var err error
-	for count := 0; count < maxCount; count++ {
-		if l, err = t.Leader(); err != nil {
+func (t *Topology) Leader() (l pb.ServerAddress, err error) {
+	for count := 0; count < 3; count++ {
+		l, err = t.MaybeLeader()
+		if err != nil {
+			return
+		}
+		if l != "" {
 			break
 		}
-		time.Sleep(time.Duration(count)*time.Second + timeoutSecond)
+
+		time.Sleep(time.Duration(5+count) * time.Second)
+	}
+
+	return
+}
+
+func (t *Topology) MaybeLeader() (l pb.ServerAddress, err error) {
+	t.RaftServerAccessLock.RLock()
+	defer t.RaftServerAccessLock.RUnlock()
+
+	if t.RaftServer != nil {
+		l = pb.ServerAddress(t.RaftServer.Leader())
+	} else {
+		err = errors.New("Raft Server not ready yet!")
 	}
 	return l, nil
 }
@@ -128,6 +135,10 @@ func (t *Topology) Lookup(collection string, vid needle.VolumeId) (dataNodes []*
 func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	vid := t.GetMaxVolumeId()
 	next := vid.Next()
+
+	t.RaftServerAccessLock.RLock()
+	defer t.RaftServerAccessLock.RUnlock()
+
 	if t.RaftServer != nil {
 		b, err := json.Marshal(NewMaxVolumeIdCommand(next))
 		if err != nil {

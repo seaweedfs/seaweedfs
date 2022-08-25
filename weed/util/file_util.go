@@ -45,6 +45,16 @@ func FileExists(filename string) bool {
 
 }
 
+func FolderExists(folder string) bool {
+
+	fileInfo, err := os.Stat(folder)
+	if err != nil {
+		return false
+	}
+	return fileInfo.IsDir()
+
+}
+
 func CheckFile(filename string) (exists, canRead, canWrite bool, modTime time.Time, fileSize int64) {
 	exists = true
 	fi, err := os.Stat(filename)

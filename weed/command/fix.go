@@ -62,6 +62,10 @@ func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64
 func runFix(cmd *Command, args []string) bool {
 	for _, arg := range args {
 		basePath, f := path.Split(util.ResolvePath(arg))
+		if util.FolderExists(arg) {
+			basePath = arg
+			f = ""
+		}
 
 		files := []fs.DirEntry{}
 		if f == "" {
@@ -72,7 +76,7 @@ func runFix(cmd *Command, args []string) bool {
 			}
 			files = fileInfo
 		} else {
-			fileInfo, err := os.Stat(basePath + f)
+			fileInfo, err := os.Stat(arg)
 			if err != nil {
 				fmt.Println(err)
 				return false
@@ -123,11 +127,10 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 
 	if err := storage.ScanVolumeFile(basepath, collection, vid, storage.NeedleMapInMemory, scanner); err != nil {
 		glog.Fatalf("scan .dat File: %v", err)
-		os.Remove(indexFileName)
 	}
 
 	if err := nm.SaveToIdx(indexFileName); err != nil {
-		glog.Fatalf("save to .idx File: %v", err)
 		os.Remove(indexFileName)
+		glog.Fatalf("save to .idx File: %v", err)
 	}
 }

@@ -2,13 +2,14 @@ package weed_server
 
 import (
 	"errors"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/security"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"net/http"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
@@ -63,9 +64,11 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		// wait until in flight data is less than the limit
 		contentLength := getContentLength(r)
 		fs.inFlightDataLimitCond.L.Lock()
-		for fs.option.ConcurrentUploadLimit != 0 && atomic.LoadInt64(&fs.inFlightDataSize) > fs.option.ConcurrentUploadLimit {
-			glog.V(4).Infof("wait because inflight data %d > %d", fs.inFlightDataSize, fs.option.ConcurrentUploadLimit)
+		inFlightDataSize := atomic.LoadInt64(&fs.inFlightDataSize)
+		for fs.option.ConcurrentUploadLimit != 0 && inFlightDataSize > fs.option.ConcurrentUploadLimit {
+			glog.V(4).Infof("wait because inflight data %d > %d", inFlightDataSize, fs.option.ConcurrentUploadLimit)
 			fs.inFlightDataLimitCond.Wait()
+			inFlightDataSize = atomic.LoadInt64(&fs.inFlightDataSize)
 		}
 		fs.inFlightDataLimitCond.L.Unlock()
 		atomic.AddInt64(&fs.inFlightDataSize, contentLength)
