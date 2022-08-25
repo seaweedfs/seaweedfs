@@ -62,6 +62,10 @@ func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64
 func runFix(cmd *Command, args []string) bool {
 	for _, arg := range args {
 		basePath, f := path.Split(util.ResolvePath(arg))
+		if util.FolderExists(arg) {
+			basePath = arg
+			f = ""
+		}
 
 		files := []fs.DirEntry{}
 		if f == "" {
@@ -72,7 +76,7 @@ func runFix(cmd *Command, args []string) bool {
 			}
 			files = fileInfo
 		} else {
-			fileInfo, err := os.Stat(basePath + f)
+			fileInfo, err := os.Stat(arg)
 			if err != nil {
 				fmt.Println(err)
 				return false
