@@ -1,8 +1,9 @@
 package mount
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"sync"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 type FileHandleToInode struct {
@@ -49,7 +50,11 @@ func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *fil
 	} else {
 		fh.counter++
 	}
+
+	fh.entryLock.Lock()
 	fh.entry = entry
+	fh.entryLock.Unlock()
+
 	return fh
 }
 
