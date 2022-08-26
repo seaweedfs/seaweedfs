@@ -511,12 +511,12 @@ func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
 		vifFile := filepath.Join(location.Directory, baseFileName+".vif")
 		volumeInfo, _, _, err := volume_info.MaybeLoadVolumeInfo(vifFile)
 		if err != nil {
-			return fmt.Errorf("volume %d fail to load vif", i)
+			return fmt.Errorf("volume %d fail to load vif: %v", i, err)
 		}
 		volumeInfo.Replication = replication
 		err = volume_info.SaveVolumeInfo(vifFile, volumeInfo)
 		if err != nil {
-			return fmt.Errorf("volume %d fail to save vif", i)
+			return fmt.Errorf("volume %d fail to save vif: %v", i, err)
 		}
 		return nil
 	}
