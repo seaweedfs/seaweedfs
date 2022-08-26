@@ -217,7 +217,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		// tell the volume servers about the leader
-		newLeader, err := ms.Topo.Leader()
+		newLeader, err := ms.Topo.MaybeLeader()
 		if err != nil {
 			glog.Warningf("SendHeartbeat find leader: %v", err)
 			return err
@@ -262,7 +262,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	}()
 	for i, message := range ms.Topo.ToVolumeLocations() {
 		if i == 0 {
-			if leader, err := ms.Topo.Leader(); err == nil {
+			if leader, err := ms.Topo.MaybeLeader(); err == nil {
 				message.Leader = string(leader)
 			}
 		}
@@ -313,7 +313,7 @@ func (ms *MasterServer) broadcastToClients(message *master_pb.KeepConnectedRespo
 }
 
 func (ms *MasterServer) informNewLeader(stream master_pb.Seaweed_KeepConnectedServer) error {
-	leader, err := ms.Topo.Leader()
+	leader, err := ms.Topo.MaybeLeader()
 	if err != nil {
 		glog.Errorf("topo leader: %v", err)
 		return raft.NotLeaderError
@@ -377,7 +377,10 @@ func findClientAddress(ctx context.Context, grpcPort uint32) string {
 func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_pb.GetMasterConfigurationRequest) (*master_pb.GetMasterConfigurationResponse, error) {
 
 	// tell the volume servers about the leader
-	leader, _ := ms.Topo.Leader()
+	var leader string
+	if leaderAddr, err := ms.Topo.MaybeLeader(); err == nil {
+		leader = string(leaderAddr)
+	}
 
 	resp := &master_pb.GetMasterConfigurationResponse{
 		MetricsAddress:         ms.option.MetricsAddress,
@@ -386,7 +389,7 @@ func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_
 		DefaultReplication:     ms.option.DefaultReplicaPlacement,
 		VolumeSizeLimitMB:      uint32(ms.option.VolumeSizeLimitMB),
 		VolumePreallocate:      ms.option.VolumePreallocate,
-		Leader:                 string(leader),
+		Leader:                 leader,
 	}
 
 	return resp, nil
