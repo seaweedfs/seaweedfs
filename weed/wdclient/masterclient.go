@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -28,7 +29,8 @@ type MasterClient struct {
 	vidMap
 	vidMapCacheSize int
 
-	OnPeerUpdate func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
+	OnPeerUpdate           func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
+	OnPeerUpdateAccessLock sync.RWMutex
 }
 
 func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters map[string]pb.ServerAddress) *MasterClient {
@@ -42,6 +44,12 @@ func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientTy
 		vidMap:          newVidMap(clientDataCenter),
 		vidMapCacheSize: 5,
 	}
+}
+
+func (mc *MasterClient) SetOnPeerUpdateFn(onPeerUpdate func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)) {
+	mc.OnPeerUpdateAccessLock.Lock()
+	mc.OnPeerUpdate = onPeerUpdate
+	mc.OnPeerUpdateAccessLock.Unlock()
 }
 
 func (mc *MasterClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
@@ -219,6 +227,7 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 
 			if resp.ClusterNodeUpdate != nil {
 				update := resp.ClusterNodeUpdate
+				mc.OnPeerUpdateAccessLock.RLock()
 				if mc.OnPeerUpdate != nil {
 					if update.FilerGroup == mc.FilerGroup {
 						if update.IsAdd {
@@ -230,6 +239,7 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 						mc.OnPeerUpdate(update, time.Now())
 					}
 				}
+				mc.OnPeerUpdateAccessLock.RUnlock()
 			}
 		}
 	})

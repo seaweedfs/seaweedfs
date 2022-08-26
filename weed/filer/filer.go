@@ -96,7 +96,7 @@ func (f *Filer) MaybeBootstrapFromPeers(self pb.ServerAddress, existingNodes []*
 func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*master_pb.ClusterNodeUpdate, startFrom time.Time) {
 
 	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOption)
-	f.MasterClient.OnPeerUpdate = f.MetaAggregator.OnPeerUpdate
+	f.MasterClient.SetOnPeerUpdateFn(f.MetaAggregator.OnPeerUpdate)
 
 	for _, peerUpdate := range existingNodes {
 		f.MetaAggregator.OnPeerUpdate(peerUpdate, startFrom)

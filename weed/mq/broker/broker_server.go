@@ -42,7 +42,7 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		MasterClient:   wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, pb.NewServerAddress(option.Ip, option.Port, 0), option.DataCenter, option.Rack, option.Masters),
 		filers:         make(map[pb.ServerAddress]struct{}),
 	}
-	mqBroker.MasterClient.OnPeerUpdate = mqBroker.OnBrokerUpdate
+	mqBroker.MasterClient.SetOnPeerUpdateFn(mqBroker.OnBrokerUpdate)
 
 	go mqBroker.MasterClient.KeepConnectedToMaster()
 
