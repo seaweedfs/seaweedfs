@@ -4,10 +4,11 @@ all: gen
 
 gen: dev
 
+cgo ?= 0
 binary:
 	export SWCOMMIT=$(shell git rev-parse --short HEAD)
 	export SWLDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=$(SWCOMMIT)"
-	cd ../weed; CGO_ENABLED=0 GOOS=linux go build -tags "$(tags)" -ldflags "-extldflags -static $(SWLDFLAGS)"; mv weed ../docker/
+	cd ../weed; CGO_ENABLED=$(cgo) GOOS=linux go build $(options) -tags "$(tags)" -ldflags "-extldflags -static $(SWLDFLAGS)"; mv weed ../docker/
 
 build: binary
 	docker build --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.local .
@@ -26,6 +27,11 @@ s3tests_build:
 	docker build --no-cache -t chrislusf/ceph-s3-tests:local -f Dockerfile.s3tests .
 
 dev: build
+	docker-compose -f compose/local-dev-compose.yml -p seaweedfs up
+
+dev_race: options = -race
+dev_race: cgo = 1
+dev_race: build
 	docker-compose -f compose/local-dev-compose.yml -p seaweedfs up
 
 dev_tls: build certstrap
