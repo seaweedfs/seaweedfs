@@ -1,5 +1,9 @@
 package filer
 
+import (
+	"sync/atomic"
+)
+
 type ReaderPattern struct {
 	isSequentialCounter int64
 	lastReadStopOffset  int64
@@ -18,18 +22,20 @@ func NewReaderPattern() *ReaderPattern {
 }
 
 func (rp *ReaderPattern) MonitorReadAt(offset int64, size int) {
-	if rp.lastReadStopOffset == offset {
-		if rp.isSequentialCounter < ModeChangeLimit {
-			rp.isSequentialCounter++
+	lastOffset := atomic.SwapInt64(&rp.lastReadStopOffset, offset+int64(size))
+	counter := atomic.LoadInt64(&rp.isSequentialCounter)
+
+	if lastOffset == offset {
+		if counter < ModeChangeLimit {
+			atomic.AddInt64(&rp.isSequentialCounter, 1)
 		}
 	} else {
-		if rp.isSequentialCounter > -ModeChangeLimit {
-			rp.isSequentialCounter--
+		if counter > -ModeChangeLimit {
+			atomic.AddInt64(&rp.isSequentialCounter, -1)
 		}
 	}
-	rp.lastReadStopOffset = offset + int64(size)
 }
 
 func (rp *ReaderPattern) IsRandomMode() bool {
-	return rp.isSequentialCounter < 0
+	return atomic.LoadInt64(&rp.isSequentialCounter) < 0
 }
