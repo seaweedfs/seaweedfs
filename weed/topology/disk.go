@@ -5,6 +5,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"sync"
+	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -100,11 +101,11 @@ type DiskUsageCounts struct {
 }
 
 func (a *DiskUsageCounts) addDiskUsageCounts(b *DiskUsageCounts) {
-	a.volumeCount += b.volumeCount
-	a.remoteVolumeCount += b.remoteVolumeCount
-	a.activeVolumeCount += b.activeVolumeCount
-	a.ecShardCount += b.ecShardCount
-	a.maxVolumeCount += b.maxVolumeCount
+	atomic.AddInt64(&a.volumeCount, b.volumeCount)
+	atomic.AddInt64(&a.remoteVolumeCount, b.remoteVolumeCount)
+	atomic.AddInt64(&a.activeVolumeCount, b.activeVolumeCount)
+	atomic.AddInt64(&a.ecShardCount, b.ecShardCount)
+	atomic.AddInt64(&a.maxVolumeCount, b.maxVolumeCount)
 }
 
 func (a *DiskUsageCounts) FreeSpace() int64 {
