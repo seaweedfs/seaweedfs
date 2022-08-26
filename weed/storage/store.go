@@ -539,19 +539,19 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 	}
 	for _, diskLocation := range s.Locations {
 		if diskLocation.OriginalMaxVolumeCount == 0 {
-			currentMaxVolumeCount := diskLocation.MaxVolumeCount
+			currentMaxVolumeCount := atomic.LoadInt32(&diskLocation.MaxVolumeCount)
 			diskStatus := stats.NewDiskStatus(diskLocation.Directory)
 			unusedSpace := diskLocation.UnUsedSpace(volumeSizeLimit)
 			unclaimedSpaces := int64(diskStatus.Free) - int64(unusedSpace)
 			volCount := diskLocation.VolumesLen()
-			maxVolumeCount := volCount
+			maxVolumeCount := int32(volCount)
 			if unclaimedSpaces > int64(volumeSizeLimit) {
-				maxVolumeCount += int(uint64(unclaimedSpaces)/volumeSizeLimit) - 1
+				maxVolumeCount += int32(uint64(unclaimedSpaces)/volumeSizeLimit) - 1
 			}
-			diskLocation.MaxVolumeCount = maxVolumeCount
+			atomic.StoreInt32(&diskLocation.MaxVolumeCount, maxVolumeCount)
 			glog.V(2).Infof("disk %s max %d unclaimedSpace:%dMB, unused:%dMB volumeSizeLimit:%dMB",
 				diskLocation.Directory, maxVolumeCount, unclaimedSpaces/1024/1024, unusedSpace/1024/1024, volumeSizeLimit/1024/1024)
-			hasChanges = hasChanges || currentMaxVolumeCount != diskLocation.MaxVolumeCount
+			hasChanges = hasChanges || currentMaxVolumeCount != atomic.LoadInt32(&diskLocation.MaxVolumeCount)
 		}
 	}
 	return
