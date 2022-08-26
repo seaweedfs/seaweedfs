@@ -96,7 +96,7 @@ func (rc *ReaderCache) ReadChunkAt(buffer []byte, fileId string, cipherKey []byt
 
 	// clean up old downloaders
 	if len(rc.downloaders) >= rc.limit {
-		oldestFid, oldestTime := "", time.Now().Unix()
+		oldestFid, oldestTime := "", time.Now().UnixNano()
 		for fid, downloader := range rc.downloaders {
 			completedTime := atomic.LoadInt64(&downloader.completedTimeNew)
 			if completedTime > 0 && completedTime < oldestTime {
@@ -179,7 +179,7 @@ func (s *SingleChunkCacher) startCaching() {
 	if s.shouldCache {
 		s.parent.chunkCache.SetChunk(s.chunkFileId, s.data)
 	}
-	atomic.StoreInt64(&s.completedTimeNew, time.Now().Unix())
+	atomic.StoreInt64(&s.completedTimeNew, time.Now().UnixNano())
 
 	return
 }
