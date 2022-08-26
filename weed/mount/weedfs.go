@@ -135,10 +135,11 @@ func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle
 	}
 	var found bool
 	if fh, found = wfs.fhmap.FindFileHandle(inode); found {
-		entry = fh.GetEntry()
-		if entry != nil && fh.entry.Attributes == nil {
-			entry.Attributes = &filer_pb.FuseAttributes{}
-		}
+		entry = fh.UpdateEntry(func(entry *filer_pb.Entry) {
+			if entry != nil && fh.entry.Attributes == nil {
+				entry.Attributes = &filer_pb.FuseAttributes{}
+			}
+		})
 	} else {
 		entry, status = wfs.maybeLoadEntry(path)
 	}
