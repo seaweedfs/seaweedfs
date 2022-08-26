@@ -24,8 +24,8 @@ type DiskLocation struct {
 	DirectoryUuid          string
 	IdxDirectory           string
 	DiskType               types.DiskType
-	MaxVolumeCount         int
-	OriginalMaxVolumeCount int
+	MaxVolumeCount         int32
+	OriginalMaxVolumeCount int32
 	MinFreeSpace           util.MinFreeSpace
 	volumes                map[needle.VolumeId]*Volume
 	volumesLock            sync.RWMutex
@@ -58,7 +58,7 @@ func GenerateDirUuid(dir string) (dirUuidString string, err error) {
 	return dirUuidString, nil
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType) *DiskLocation {
+func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType) *DiskLocation {
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
 		idxDir = dir
