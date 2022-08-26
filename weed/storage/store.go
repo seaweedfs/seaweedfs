@@ -70,7 +70,7 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, GrpcPort: grpcPort, PublicUrl: publicUrl, NeedleMapKind: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 	for i := 0; i < len(dirnames); i++ {
-		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i], minFreeSpaces[i], idxFolder, diskTypes[i])
+		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i])
 		location.loadExistingVolumes(needleMapKind)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
@@ -116,7 +116,7 @@ func (s *Store) findVolume(vid needle.VolumeId) *Volume {
 	return nil
 }
 func (s *Store) FindFreeLocation(diskType DiskType) (ret *DiskLocation) {
-	max := 0
+	max := int32(0)
 	for _, location := range s.Locations {
 		if diskType != location.DiskType {
 			continue
@@ -124,9 +124,9 @@ func (s *Store) FindFreeLocation(diskType DiskType) (ret *DiskLocation) {
 		if location.isDiskSpaceLow {
 			continue
 		}
-		currentFreeCount := location.MaxVolumeCount - location.VolumesLen()
+		currentFreeCount := location.MaxVolumeCount - int32(location.VolumesLen())
 		currentFreeCount *= erasure_coding.DataShardsCount
-		currentFreeCount -= location.EcVolumesLen()
+		currentFreeCount -= int32(location.EcVolumesLen())
 		currentFreeCount /= erasure_coding.DataShardsCount
 		if currentFreeCount > max {
 			max = currentFreeCount
