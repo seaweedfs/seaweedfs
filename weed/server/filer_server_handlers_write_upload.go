@@ -105,7 +105,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			}()
 
 			chunk, toChunkErr := fs.dataToChunk(fileName, contentType, bytesBuffer.Bytes(), offset, so)
-			if toChunkErr != nil {
+			if uploadErr == nil && toChunkErr != nil {
 				uploadErr = toChunkErr
 			}
 			if chunk != nil {
