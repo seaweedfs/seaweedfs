@@ -1,5 +1,7 @@
 package mount
 
+import "sync/atomic"
+
 type WriterPattern struct {
 	isSequentialCounter int64
 	lastWriteStopOffset int64
@@ -20,18 +22,19 @@ func NewWriterPattern(chunkSize int64) *WriterPattern {
 }
 
 func (rp *WriterPattern) MonitorWriteAt(offset int64, size int) {
-	if rp.lastWriteStopOffset == offset {
-		if rp.isSequentialCounter < ModeChangeLimit {
-			rp.isSequentialCounter++
+	lastOffset := atomic.SwapInt64(&rp.lastWriteStopOffset, offset+int64(size))
+	counter := atomic.LoadInt64(&rp.isSequentialCounter)
+	if lastOffset == offset {
+		if counter < ModeChangeLimit {
+			atomic.AddInt64(&rp.isSequentialCounter, 1)
 		}
 	} else {
-		if rp.isSequentialCounter > -ModeChangeLimit {
-			rp.isSequentialCounter--
+		if counter > -ModeChangeLimit {
+			atomic.AddInt64(&rp.isSequentialCounter, -1)
 		}
 	}
-	rp.lastWriteStopOffset = offset + int64(size)
 }
 
 func (rp *WriterPattern) IsSequentialMode() bool {
-	return rp.isSequentialCounter >= 0
+	return atomic.LoadInt64(&rp.isSequentialCounter) >= 0
 }
