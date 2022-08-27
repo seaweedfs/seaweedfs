@@ -57,14 +57,14 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 		// need to throttle used byte buffer
 		bytesBufferLimitCond.L.Lock()
 		for atomic.LoadInt64(&bytesBufferCounter) >= 4 {
-			glog.V(4).Infof("waiting for byte buffer %d", bytesBufferCounter)
+			glog.V(4).Infof("waiting for byte buffer %d", atomic.LoadInt64(&bytesBufferCounter))
 			bytesBufferLimitCond.Wait()
 		}
 		atomic.AddInt64(&bytesBufferCounter, 1)
 		bytesBufferLimitCond.L.Unlock()
 
 		bytesBuffer := bufPool.Get().(*bytes.Buffer)
-		glog.V(4).Infof("received byte buffer %d", bytesBufferCounter)
+		glog.V(4).Infof("received byte buffer %d", atomic.LoadInt64(&bytesBufferCounter))
 
 		limitedReader := io.LimitReader(partReader, int64(chunkSize))
 
