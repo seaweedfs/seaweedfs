@@ -51,7 +51,7 @@ type VolumeServer struct {
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	port int, grpcPort int, publicUrl string,
-	folders []string, maxCounts []int, minFreeSpaces []util.MinFreeSpace, diskTypes []types.DiskType,
+	folders []string, maxCounts []int32, minFreeSpaces []util.MinFreeSpace, diskTypes []types.DiskType,
 	idxFolder string,
 	needleMapKind storage.NeedleMapKind,
 	masterNodes []pb.ServerAddress, pulseSeconds int,

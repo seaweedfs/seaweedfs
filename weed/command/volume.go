@@ -40,7 +40,7 @@ type VolumeServerOptions struct {
 	portGrpc                  *int
 	publicPort                *int
 	folders                   []string
-	folderMaxLimits           []int
+	folderMaxLimits           []int32
 	idxFolder                 *string
 	ip                        *string
 	publicUrl                 *string
@@ -148,8 +148,8 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	// set max
 	maxCountStrings := strings.Split(maxVolumeCounts, ",")
 	for _, maxString := range maxCountStrings {
-		if max, e := strconv.Atoi(maxString); e == nil {
-			v.folderMaxLimits = append(v.folderMaxLimits, max)
+		if max, e := strconv.ParseInt(maxString, 10, 64); e == nil {
+			v.folderMaxLimits = append(v.folderMaxLimits, int32(max))
 		} else {
 			glog.Fatalf("The max specified in -max not a valid number %s", maxString)
 		}
