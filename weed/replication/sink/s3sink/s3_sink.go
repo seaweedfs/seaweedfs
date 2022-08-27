@@ -99,7 +99,7 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 	key = cleanKey(key)
 
 	if isDirectory {
-		key = key + "/"
+		return nil
 	}
 
 	return s3sink.deleteObject(key)
