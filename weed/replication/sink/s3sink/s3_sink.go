@@ -102,7 +102,20 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 		return nil
 	}
 
-	return s3sink.deleteObject(key)
+	input := &s3.DeleteObjectInput{
+		Bucket: aws.String(s3sink.bucket),
+		Key:    aws.String(key),
+	}
+
+	result, err := s3sink.conn.DeleteObject(input)
+
+	if err == nil {
+		glog.V(2).Infof("[%s] delete %s: %v", s3sink.bucket, key, result)
+	} else {
+		glog.Errorf("[%s] delete %s: %v", s3sink.bucket, key, err)
+	}
+
+	return err
 
 }
 
