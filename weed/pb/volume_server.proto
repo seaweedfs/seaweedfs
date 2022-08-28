@@ -269,6 +269,7 @@ message CopyFileRequest {
     string collection = 5;
     bool is_ec_volume = 6;
     bool ignore_source_file_not_found = 7;
+    int64 idx_cutoff_ts_ns = 8;
 }
 message CopyFileResponse {
     bytes file_content = 1;

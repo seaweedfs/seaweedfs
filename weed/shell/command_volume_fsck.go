@@ -72,6 +72,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.forcePurging = fsckCommand.Bool("forcePurging", false, "delete missing data from volumes in one replica used together with applyPurging")
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
 	tempPath := fsckCommand.String("tempPath", path.Join(os.TempDir()), "path for temporary idx files")
+	volumeFileCutoffTsNs := fsckCommand.Int64("volumeFileCutoffTsNs", time.Now().Add(-time.Minute*30).Unix(), "the offset of filtering files on volume server")
 
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
@@ -91,7 +92,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	if *verbose {
 		fmt.Fprintf(writer, "working directory: %s\n", tempFolder)
 	}
-	defer os.RemoveAll(tempFolder)
+	// defer os.RemoveAll(tempFolder)
 
 	// collect all volume id locations
 	dataNodeVolumeIdToVInfo, err := c.collectVolumeIds(commandEnv, *verbose, writer)
@@ -126,7 +127,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 				delete(volumeIdToVInfo, volumeId)
 				continue
 			}
-			err = c.collectOneVolumeFileIds(tempFolder, dataNodeId, volumeId, vinfo, *verbose, writer)
+			err = c.collectOneVolumeFileIds(tempFolder, dataNodeId, volumeId, vinfo, *verbose, writer, *volumeFileCutoffTsNs)
 			if err != nil {
 				return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, err)
 			}
@@ -351,7 +352,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	return nil
 }
 
-func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeId string, volumeId uint32, vinfo VInfo, verbose bool, writer io.Writer) error {
+func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeId string, volumeId uint32, vinfo VInfo, verbose bool, writer io.Writer, volumeFileCutoffTsNs int64) error {
 
 	if verbose {
 		fmt.Fprintf(writer, "collecting volume %d file ids from %s ...\n", volumeId, vinfo.server)
@@ -372,6 +373,7 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeI
 			Collection:               vinfo.collection,
 			IsEcVolume:               vinfo.isEcVolume,
 			IgnoreSourceFileNotFound: false,
+			IdxCutoffTsNs:            volumeFileCutoffTsNs,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to start copying volume %d%s: %v", volumeId, ext, err)
