@@ -95,7 +95,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	if *verbose {
 		fmt.Fprintf(writer, "working directory: %s\n", tempFolder)
 	}
-	// defer os.RemoveAll(tempFolder)
+	defer os.RemoveAll(tempFolder)
 
 	// collect all volume id locations
 	dataNodeVolumeIdToVInfo, err := c.collectVolumeIds(commandEnv, *verbose, writer)
