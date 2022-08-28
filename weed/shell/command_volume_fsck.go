@@ -2,7 +2,9 @@ package shell
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -11,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -72,7 +75,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.forcePurging = fsckCommand.Bool("forcePurging", false, "delete missing data from volumes in one replica used together with applyPurging")
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
 	tempPath := fsckCommand.String("tempPath", path.Join(os.TempDir()), "path for temporary idx files")
-	volumeFileCutoffTsNs := fsckCommand.Int64("volumeFileCutoffTsNs", time.Now().Add(-time.Minute*30).Unix(), "the offset of filtering files on volume server")
+	volumeFileCutoffTsNs := fsckCommand.Uint64("volumeFileCutoffTsNs", uint64(time.Now().Add(-time.Minute*30).Unix()), "the offset of filtering files on volume server")
 
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
@@ -352,8 +355,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	return nil
 }
 
-func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeId string, volumeId uint32, vinfo VInfo, verbose bool, writer io.Writer, volumeFileCutoffTsNs int64) error {
-
+func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeId string, volumeId uint32, vinfo VInfo, verbose bool, writer io.Writer, volumeFileCutoffTsNs uint64) error {
 	if verbose {
 		fmt.Fprintf(writer, "collecting volume %d file ids from %s ...\n", volumeId, vinfo.server)
 	}
@@ -373,17 +375,38 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeI
 			Collection:               vinfo.collection,
 			IsEcVolume:               vinfo.isEcVolume,
 			IgnoreSourceFileNotFound: false,
-			IdxCutoffTsNs:            volumeFileCutoffTsNs,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to start copying volume %d%s: %v", volumeId, ext, err)
 		}
-
-		err = writeToFile(copyFileClient, getVolumeFileIdFile(tempFolder, dataNodeId, volumeId))
+		var buf bytes.Buffer
+		for {
+			resp, err := copyFileClient.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			buf.Write(resp.FileContent)
+		}
+		index_size := len(buf.Bytes())
+		index, err := idx.FirstLargerIndex(buf.Bytes(), index_size, func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
+			resp, err := volumeServerClient.VolumeNeedleStatus(context.Background(), &volume_server_pb.VolumeNeedleStatusRequest{
+				VolumeId: volumeId,
+				NeedleId: uint64(key),
+			})
+			if err != nil {
+				return false, fmt.Errorf("to read needle id %d  from volume %d with error %v", key, volumeId, err)
+			}
+			return resp.LastModified <= volumeFileCutoffTsNs, nil
+		})
+		buf.Truncate(index * types.NeedleMapEntrySize)
+		idxFilename := getVolumeFileIdFile(tempFolder, dataNodeId, volumeId)
+		err = writeToFile2(buf.Bytes(), idxFilename)
 		if err != nil {
 			return fmt.Errorf("failed to copy %d%s from %s: %v", volumeId, ext, vinfo.server, err)
 		}
-
 		return nil
 
 	})
@@ -693,5 +716,17 @@ func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName s
 		}
 		dst.Write(resp.FileContent)
 	}
+	return nil
+}
+
+func writeToFile2(bytes []byte, fileName string) error {
+	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	dst, err := os.OpenFile(fileName, flags, 0644)
+	if err != nil {
+		return nil
+	}
+	defer dst.Close()
+
+	dst.Write(bytes)
 	return nil
 }

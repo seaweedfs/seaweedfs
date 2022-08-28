@@ -1,6 +1,7 @@
 package idx
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -17,6 +18,7 @@ func WalkIndexFile(r io.ReaderAt, startFrom uint64, fn func(key types.NeedleId, 
 		return nil
 	}
 	glog.V(3).Infof("readerOffset %d count %d err: %v", readerOffset, count, e)
+	fmt.Printf("readerOffset %d count %d err: %v", readerOffset, count, e)
 	readerOffset += int64(count)
 	var (
 		key    types.NeedleId
@@ -37,6 +39,7 @@ func WalkIndexFile(r io.ReaderAt, startFrom uint64, fn func(key types.NeedleId, 
 		}
 		count, e = r.ReadAt(bytes, readerOffset)
 		glog.V(3).Infof("readerOffset %d count %d err: %v", readerOffset, count, e)
+		fmt.Printf("readerOffset %d count %d err: %v", readerOffset, count, e)
 		readerOffset += int64(count)
 	}
 	return e
