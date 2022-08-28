@@ -3,7 +3,7 @@ package filer_pb
 import (
 	"testing"
 
-	"google.golang.org/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 )
 
 func TestFileIdSize(t *testing.T) {
