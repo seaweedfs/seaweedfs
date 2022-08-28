@@ -288,12 +288,12 @@
     function uploadFile(file, i) {
         var url = window.location.href;
         var xhr = new XMLHttpRequest();
+        var fileName = file.name;
         xhr.onreadystatechange = function() {
             if (xhr.readyState == XMLHttpRequest.DONE) {
-                location.reload();
+                finishUpload(fileName)
             }
         }
-        var fileName = file.name;
         xhr.upload.addEventListener('progress', function(e) {
             if (e.lengthComputable) {
                 var percent = Math.ceil((e.loaded / e.total) * 100);
