@@ -1,6 +1,6 @@
 package remote_pb
 
-import "github.com/golang/protobuf/proto"
+import "google.golang.org/protobuf/proto"
 
 func (fp *RemoteStorageLocation) Key() interface{} {
 	key, _ := proto.Marshal(fp)
