@@ -104,6 +104,8 @@ func (v *volumesBinaryState) copyState(list *VolumeLocationList) copyState {
 
 // mapping from volume to its locations, inverted from server to volume
 type VolumeLayout struct {
+	growRequestCount int32
+	growRequestTime  time.Time
 	rp               *super_block.ReplicaPlacement
 	ttl              *needle.TTL
 	diskType         types.DiskType
@@ -115,8 +117,6 @@ type VolumeLayout struct {
 	volumeSizeLimit  uint64
 	replicationAsMin bool
 	accessLock       sync.RWMutex
-	growRequestCount int32
-	growRequestTime  time.Time
 }
 
 type VolumeLayoutStats struct {
