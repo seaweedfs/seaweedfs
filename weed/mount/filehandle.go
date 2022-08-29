@@ -110,7 +110,8 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 
 func (fh *FileHandle) CloseReader() {
 	if fh.reader != nil {
-		fh.reader.Close()
+		_ = fh.reader.Close()
+		fh.reader = nil
 	}
 }
 
