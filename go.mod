@@ -112,7 +112,7 @@ require (
 	go.opencensus.io v0.23.0 // indirect
 	gocloud.dev v0.26.0
 	gocloud.dev/pubsub/natspubsub v0.26.0
-	gocloud.dev/pubsub/rabbitpubsub v0.25.0
+	gocloud.dev/pubsub/rabbitpubsub v0.26.0
 	golang.org/x/crypto v0.0.0-20220722155217-630584e8d5aa // indirect
 	golang.org/x/exp v0.0.0-20220414153411-bcd21879b8fd
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
@@ -208,6 +208,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20210918120811-547c13e3eb00 // indirect
 	github.com/pingcap/kvproto v0.0.0-20220106070556-3fa8fa04f898 // indirect
 	github.com/pingcap/log v0.0.0-20211215031037-e024ba4eb0ee // indirect
+	github.com/rabbitmq/amqp091-go v1.3.4 // indirect
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/subosito/gotenv v1.3.0 // indirect
