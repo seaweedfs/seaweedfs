@@ -66,7 +66,7 @@ func (mc *MasterClient) LookupFileIdWithFallback(fileId string) (fullUrls []stri
 			VolumeOrFileIds: []string{fileId},
 		})
 		if err != nil {
-			return fmt.Errorf("LookupVolume failed: %v", err)
+			return fmt.Errorf("LookupVolume %s failed: %v", fileId, err)
 		}
 		for vid, vidLocation := range resp.VolumeIdLocations {
 			for _, vidLoc := range vidLocation.Locations {
