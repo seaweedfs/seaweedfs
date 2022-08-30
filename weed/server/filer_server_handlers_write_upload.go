@@ -52,6 +52,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 	var bytesBufferCounter int64
 	bytesBufferLimitCond := sync.NewCond(new(sync.Mutex))
 	var fileChunksLock sync.Mutex
+	var uploadErrLock sync.Mutex
 	for {
 
 		// need to throttle used byte buffer
@@ -77,7 +78,9 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			bufPool.Put(bytesBuffer)
 			atomic.AddInt64(&bytesBufferCounter, -1)
 			bytesBufferLimitCond.Signal()
+			uploadErrLock.Lock()
 			uploadErr = err
+			uploadErrLock.Unlock()
 			break
 		}
 		if chunkOffset == 0 && !isAppend {
@@ -105,8 +108,12 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 			}()
 
 			chunk, toChunkErr := fs.dataToChunk(fileName, contentType, bytesBuffer.Bytes(), offset, so)
-			if uploadErr == nil && toChunkErr != nil {
-				uploadErr = toChunkErr
+			if toChunkErr != nil {
+				uploadErrLock.Lock()
+				if uploadErr == nil {
+					uploadErr = toChunkErr
+				}
+				uploadErrLock.Unlock()
 			}
 			if chunk != nil {
 				fileChunksLock.Lock()
