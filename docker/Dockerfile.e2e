@@ -1,11 +1,13 @@
-FROM alpine AS final
+FROM ubuntu:22.04
+
 LABEL author="Chris Lu"
-COPY  ./weed /usr/bin/
-RUN mkdir -p /etc/seaweedfs
+
+RUN apt-get update && apt-get install -y curl fio fuse
+RUN mkdir -p /etc/seaweedfs /data/filerldb2
+
+COPY ./weed /usr/bin/
 COPY ./filer.toml /etc/seaweedfs/filer.toml
 COPY ./entrypoint.sh /entrypoint.sh
-RUN apk add fuse # for weed mount
-RUN apk add curl # for health checks
 
 # volume server grpc port
 EXPOSE 18080
@@ -19,12 +21,6 @@ EXPOSE 8888
 EXPOSE 19333
 # master server shared http port
 EXPOSE 9333
-# s3 server http port
-EXPOSE 8333
-# webdav server http port
-EXPOSE 7333
-
-RUN mkdir -p /data/filerldb2
 
 VOLUME /data
 WORKDIR /data
