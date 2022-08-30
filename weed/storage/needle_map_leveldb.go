@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/opt"
@@ -187,6 +188,7 @@ func levelDbWrite(db *leveldb.DB, key NeedleId, offset Offset, size Size, update
 	}
 	return nil
 }
+
 func levelDbDelete(db *leveldb.DB, key NeedleId) error {
 	bytes := make([]byte, NeedleIdSize)
 	NeedleIdToBytes(bytes, key)
@@ -313,23 +315,38 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 	}
 
 	err = idx.WalkIndexFile(indexFile, startFrom, func(key NeedleId, offset Offset, size Size) (e error) {
-		if !offset.IsZero() && size.IsValid() {
+		m.mapMetric.FileCounter++
+		bytes := make([]byte, NeedleIdSize)
+		NeedleIdToBytes(bytes[0:NeedleIdSize], key)
+		data, err := db.Get(bytes, nil)
+		if err != nil {
+			if !strings.Contains(strings.ToLower(err.Error()), "not found") {
+				// unexpected error
+				return err
+			}
+			// new needle
+			m.mapMetric.FileByteCounter += uint64(size)
 			e = levelDbWrite(db, key, offset, size, false, 0)
 		} else {
-			e = levelDbDelete(db, key)
+			// needle is found
+			oldSize := BytesToSize(data[OffsetSize : OffsetSize+SizeSize])
+			oldOffset := BytesToOffset(data[0:OffsetSize])
+			if !offset.IsZero() && size.IsValid() {
+				// updated needle
+				m.mapMetric.FileByteCounter += uint64(size)
+				if !oldOffset.IsZero() && oldSize.IsValid() {
+					m.mapMetric.DeletionCounter++
+					m.mapMetric.DeletionByteCounter += uint64(oldSize)
+				}
+				e = levelDbWrite(db, key, offset, size, false, 0)
+			} else {
+				// deleted needle
+				m.mapMetric.DeletionCounter++
+				m.mapMetric.DeletionByteCounter += uint64(oldSize)
+				e = levelDbDelete(db, key)
+			}
 		}
 		return e
 	})
-	if err != nil {
-		return err
-	}
-
-	if startFrom != 0 {
-		return needleMapMetricFromIndexFile(indexFile, &m.mapMetric)
-	}
-	return nil
-}
-
-func (m *LevelDbNeedleMap) UpdateNeedleMapMetric(indexFile *os.File) error {
-	return needleMapMetricFromIndexFile(indexFile, &m.mapMetric)
+	return err
 }
