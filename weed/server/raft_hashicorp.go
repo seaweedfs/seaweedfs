@@ -7,7 +7,7 @@ import (
 	"fmt"
 	transport "github.com/Jille/raft-grpc-transport"
 	"github.com/hashicorp/raft"
-	boltdb "github.com/hashicorp/raft-boltdb"
+	boltdb "github.com/hashicorp/raft-boltdb/v2"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"google.golang.org/grpc"
@@ -75,7 +75,7 @@ func (s *RaftServer) UpdatePeers() {
 					s.RaftHashicorp.AddVoter(
 						raft.ServerID(peerName), raft.ServerAddress(peer.ToGrpcAddress()), 0, 0)
 				}
-				for peer, _ := range existsPeerName {
+				for peer := range existsPeerName {
 					if _, found := s.peers[peer]; !found {
 						glog.V(0).Infof("removing old peer: %s", peer)
 						s.RaftHashicorp.RemoveServer(raft.ServerID(peer), 0, 0)
