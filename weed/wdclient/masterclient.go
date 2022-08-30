@@ -18,19 +18,19 @@ import (
 )
 
 type MasterClient struct {
-	FilerGroup     string
-	clientType     string
-	clientHost     pb.ServerAddress
-	rack           string
-	currentMaster  pb.ServerAddress
-	masters        map[string]pb.ServerAddress
-	grpcDialOption grpc.DialOption
+	FilerGroup        string
+	clientType        string
+	clientHost        pb.ServerAddress
+	rack              string
+	currentMaster     pb.ServerAddress
+	currentMasterLock sync.RWMutex
+	masters           map[string]pb.ServerAddress
+	grpcDialOption    grpc.DialOption
 
 	vidMap
 	vidMapCacheSize  int
 	OnPeerUpdate     func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
 	OnPeerUpdateLock sync.RWMutex
-	accessLock       sync.RWMutex
 }
 
 func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters map[string]pb.ServerAddress) *MasterClient {
@@ -92,15 +92,15 @@ func (mc *MasterClient) LookupFileIdWithFallback(fileId string) (fullUrls []stri
 }
 
 func (mc *MasterClient) getCurrentMaster() pb.ServerAddress {
-	mc.accessLock.RLock()
-	defer mc.accessLock.RUnlock()
+	mc.currentMasterLock.RLock()
+	defer mc.currentMasterLock.RUnlock()
 	return mc.currentMaster
 }
 
 func (mc *MasterClient) setCurrentMaster(master pb.ServerAddress) {
-	mc.accessLock.Lock()
+	mc.currentMasterLock.Lock()
 	mc.currentMaster = master
-	mc.accessLock.Unlock()
+	mc.currentMasterLock.Unlock()
 }
 
 func (mc *MasterClient) GetMaster() pb.ServerAddress {
