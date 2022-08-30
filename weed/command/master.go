@@ -53,6 +53,7 @@ type MasterOptions struct {
 	heartbeatInterval  *time.Duration
 	electionTimeout    *time.Duration
 	raftHashicorp      *bool
+	raftEtcd           *bool
 	raftBootstrap      *bool
 }
 
@@ -78,6 +79,7 @@ func init() {
 	m.heartbeatInterval = cmdMaster.Flag.Duration("heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
 	m.electionTimeout = cmdMaster.Flag.Duration("electionTimeout", 10*time.Second, "election timeout of master servers")
 	m.raftHashicorp = cmdMaster.Flag.Bool("raftHashicorp", false, "use hashicorp raft")
+	m.raftEtcd = cmdMaster.Flag.Bool("raftEtcd", false, "use etcd raft")
 	m.raftBootstrap = cmdMaster.Flag.Bool("raftBootstrap", false, "Whether to bootstrap the Raft cluster")
 }
 
@@ -168,6 +170,10 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	var err error
 	if *m.raftHashicorp {
 		if raftServer, err = weed_server.NewHashicorpRaftServer(raftServerOption); err != nil {
+			glog.Fatalf("NewHashicorpRaftServer: %s", err)
+		}
+	} else if *m.raftEtcd {
+		if raftServer, err = weed_server.NewEtcdRaftServer(raftServerOption); err != nil {
 			glog.Fatalf("NewHashicorpRaftServer: %s", err)
 		}
 	} else {
