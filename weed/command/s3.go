@@ -194,7 +194,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		GrpcDialOption:            grpcDialOption,
 		AllowEmptyFolder:          *s3opt.allowEmptyFolder,
 		AllowDeleteBucketNotEmpty: *s3opt.allowDeleteBucketNotEmpty,
-		LocalFilerSocket:          s3opt.localFilerSocket,
+		LocalFilerSocket:          *s3opt.localFilerSocket,
 		DataCenter:                *s3opt.dataCenter,
 	})
 	if s3ApiServer_err != nil {
