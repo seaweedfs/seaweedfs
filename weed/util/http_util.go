@@ -60,7 +60,7 @@ func Get(url string) ([]byte, bool, error) {
 	if err != nil {
 		return nil, true, err
 	}
-	defer response.Body.Close()
+	defer CloseResponse(response)
 
 	var reader io.ReadCloser
 	switch response.Header.Get("Content-Encoding") {
@@ -242,8 +242,8 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 	if err != nil {
 		return 0, err
 	}
+	defer CloseResponse(r)
 
-	defer r.Body.Close()
 	if r.StatusCode >= 400 {
 		return 0, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
