@@ -106,10 +106,7 @@ func readChunkNeedle(fileUrl string, w io.Writer, offset int64, jwt string) (wri
 	if err != nil {
 		return written, err
 	}
-	defer func() {
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-	}()
+	defer util.CloseResponse(resp)
 
 	switch resp.StatusCode {
 	case http.StatusRequestedRangeNotSatisfiable:
