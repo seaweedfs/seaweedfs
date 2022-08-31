@@ -313,19 +313,20 @@ func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize
 	}
 	// print("+")
 	resp, post_err := HttpClient.Do(req)
+	defer util.CloseResponse(resp)
 	if post_err != nil {
 		if strings.Contains(post_err.Error(), "connection reset by peer") ||
 			strings.Contains(post_err.Error(), "use of closed network connection") {
 			glog.V(1).Infof("repeat error upload request %s: %v", option.UploadUrl, postErr)
 			stats.FilerRequestCounter.WithLabelValues(stats.RepeatErrorUploadContent).Inc()
 			resp, post_err = HttpClient.Do(req)
+			defer util.CloseResponse(resp)
 		}
 	}
 	if post_err != nil {
 		return nil, fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)
 	}
 	// print("-")
-	defer util.CloseResponse(resp)
 
 	var ret UploadResult
 	etag := getEtag(resp)
