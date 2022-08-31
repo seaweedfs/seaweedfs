@@ -77,6 +77,10 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 	fh.entryLock.Lock()
 	defer fh.entryLock.Unlock()
 
+	if fh.entry == nil {
+		return
+	}
+
 	// find the earliest incoming chunk
 	newChunks := chunks
 	earliestChunk := newChunks[0]
@@ -84,10 +88,6 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 		if lessThan(earliestChunk, newChunks[i]) {
 			earliestChunk = newChunks[i]
 		}
-	}
-
-	if fh.entry == nil {
-		return
 	}
 
 	// pick out-of-order chunks from existing chunks
