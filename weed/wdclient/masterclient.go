@@ -304,7 +304,9 @@ func (mc *MasterClient) resetVidMap() {
 		cache:           mc.cache,
 	}
 	mc.vidMap = newVidMap(mc.DataCenter)
+	mc.vidMap.Lock()
 	mc.vidMap.cache = tail
+	mc.vidMap.Unlock()
 
 	for i := 0; i < mc.vidMapCacheSize && tail.cache != nil; i++ {
 		if i == mc.vidMapCacheSize-1 {
