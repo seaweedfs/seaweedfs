@@ -408,6 +408,9 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*htt
 }
 
 func CloseResponse(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
 	reader := &CountingReader{reader: resp.Body}
 	io.Copy(io.Discard, reader)
 	resp.Body.Close()
