@@ -199,6 +199,7 @@ func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (R
 	if err != nil {
 		return Release{}, err
 	}
+	defer util.CloseResponse(res)
 
 	if res.StatusCode != http.StatusOK {
 		content := res.Header.Get("Content-Type")
@@ -211,17 +212,10 @@ func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (R
 			}
 		}
 
-		_ = res.Body.Close()
 		return Release{}, fmt.Errorf("unexpected status %v (%v) returned", res.StatusCode, res.Status)
 	}
 
 	buf, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		_ = res.Body.Close()
-		return Release{}, err
-	}
-
-	err = res.Body.Close()
 	if err != nil {
 		return Release{}, err
 	}
@@ -265,18 +259,13 @@ func getGithubData(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer util.CloseResponse(res)
 
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status %v (%v) returned", res.StatusCode, res.Status)
 	}
 
 	buf, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		_ = res.Body.Close()
-		return nil, err
-	}
-
-	err = res.Body.Close()
 	if err != nil {
 		return nil, err
 	}

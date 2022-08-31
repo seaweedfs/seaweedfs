@@ -173,29 +173,29 @@ func runFiler(cmd *Command, args []string) bool {
 		if *f.dataCenter != "" && *filerS3Options.dataCenter == "" {
 			filerS3Options.dataCenter = f.dataCenter
 		}
-		go func() {
-			time.Sleep(startDelay * time.Second)
+		go func(delay time.Duration) {
+			time.Sleep(delay * time.Second)
 			filerS3Options.startS3Server()
-		}()
+		}(startDelay)
 		startDelay++
 	}
 
 	if *filerStartWebDav {
 		filerWebDavOptions.filer = &filerAddress
-		go func() {
-			time.Sleep(startDelay * time.Second)
+		go func(delay time.Duration) {
+			time.Sleep(delay * time.Second)
 			filerWebDavOptions.startWebDav()
-		}()
+		}(startDelay)
 		startDelay++
 	}
 
 	if *filerStartIam {
 		filerIamOptions.filer = &filerAddress
 		filerIamOptions.masters = f.mastersString
-		go func() {
-			time.Sleep(startDelay * time.Second)
+		go func(delay time.Duration) {
+			time.Sleep(delay * time.Second)
 			filerIamOptions.startIamServer()
-		}()
+		}(startDelay)
 	}
 
 	f.masters = pb.ServerAddresses(*f.mastersString).ToAddressMap()

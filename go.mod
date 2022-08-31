@@ -147,7 +147,7 @@ require (
 	github.com/google/flatbuffers v2.0.6+incompatible
 	github.com/hanwen/go-fuse/v2 v2.1.1-0.20220627082937-d01fda7edf17
 	github.com/hashicorp/raft v1.3.10
-	github.com/hashicorp/raft-boltdb v0.0.0-20220329195025-15018e9b97e0
+	github.com/hashicorp/raft-boltdb/v2 v2.2.2
 	github.com/tikv/client-go/v2 v2.0.1
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.37.1
@@ -218,6 +218,7 @@ require (
 	github.com/ydb-platform/ydb-go-genproto v0.0.0-20220801095836-cf975531fd1f // indirect
 	github.com/ydb-platform/ydb-go-yc v0.8.3 // indirect
 	github.com/ydb-platform/ydb-go-yc-metadata v0.5.2 // indirect
+	go.etcd.io/bbolt v1.3.6 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.4 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.5.4 // indirect
 	go.uber.org/atomic v1.9.0 // indirect

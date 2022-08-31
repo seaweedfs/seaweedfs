@@ -174,11 +174,12 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, urlPathEscape(srcObject))
 
-	dataReader, err := util.ReadUrlAsReaderCloser(srcUrl, s3a.maybeGetFilerJwtAuthorizationToken(false), rangeHeader)
+	resp, dataReader, err := util.ReadUrlAsReaderCloser(srcUrl, s3a.maybeGetFilerJwtAuthorizationToken(false), rangeHeader)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
+	defer util.CloseResponse(resp)
 	defer dataReader.Close()
 
 	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
