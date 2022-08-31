@@ -20,7 +20,7 @@ package gocdk_pub_sub
 import (
 	"context"
 	"fmt"
-	"github.com/streadway/amqp"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"gocloud.dev/pubsub"
 	_ "gocloud.dev/pubsub/awssnssqs"
 	"gocloud.dev/pubsub/rabbitpubsub"
