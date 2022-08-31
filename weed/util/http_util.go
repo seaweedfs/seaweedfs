@@ -370,11 +370,11 @@ func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentCompressed bool
 	return false, nil
 }
 
-func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (io.ReadCloser, error) {
+func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*http.Response, io.ReadCloser, error) {
 
 	req, err := http.NewRequest("GET", fileUrl, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if rangeHeader != "" {
 		req.Header.Add("Range", rangeHeader)
@@ -388,10 +388,11 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (io.R
 
 	r, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if r.StatusCode >= 400 {
-		return nil, fmt.Errorf("%s: %s", fileUrl, r.Status)
+		CloseResponse(r)
+		return nil, nil, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
 
 	var reader io.ReadCloser
@@ -399,12 +400,11 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (io.R
 	switch contentEncoding {
 	case "gzip":
 		reader, err = gzip.NewReader(r.Body)
-		defer reader.Close()
 	default:
 		reader = r.Body
 	}
 
-	return reader, nil
+	return r, reader, nil
 }
 
 func CloseResponse(resp *http.Response) {
