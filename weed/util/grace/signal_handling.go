@@ -12,7 +12,7 @@ import (
 
 var signalChan chan os.Signal
 var hooks = make([]func(), 0)
-var hookLock sync.RWMutex
+var hookLock sync.Mutex
 
 func init() {
 	signalChan = make(chan os.Signal, 1)
@@ -27,9 +27,7 @@ func init() {
 		// syscall.SIGQUIT,
 	)
 	go func() {
-		hookLock.RLock()
-		defer hookLock.RUnlock()
-		for range signalChan {
+		for _ = range signalChan {
 			for _, hook := range hooks {
 				hook()
 			}
