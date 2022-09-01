@@ -293,17 +293,18 @@ func (fo *FilerOptions) startFiler() {
 
 	httpS := &http.Server{Handler: defaultMux}
 	if runtime.GOOS != "windows" {
-		if *fo.localSocket == "" {
-			*fo.localSocket = fmt.Sprintf("/tmp/seaweefs-filer-%d.sock", *fo.port)
+		localSocket := *fo.localSocket
+		if localSocket == "" {
+			localSocket = fmt.Sprintf("/tmp/seaweefs-filer-%d.sock", *fo.port)
 		}
-		if err := os.Remove(*fo.localSocket); err != nil && !os.IsNotExist(err) {
-			glog.Fatalf("Failed to remove %s, error: %s", *fo.localSocket, err.Error())
+		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
+			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
 		}
 		go func() {
 			// start on local unix socket
-			filerSocketListener, err := net.Listen("unix", *fo.localSocket)
+			filerSocketListener, err := net.Listen("unix", localSocket)
 			if err != nil {
-				glog.Fatalf("Failed to listen on %s: %v", *fo.localSocket, err)
+				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
 			}
 			httpS.Serve(filerSocketListener)
 		}()
