@@ -32,6 +32,8 @@ var (
 )
 
 type Filer struct {
+	UniqueFilerId       int32
+	UniqueFilerEpoch    int32
 	Store               VirtualFilerStore
 	MasterClient        *wdclient.MasterClient
 	fileIdDeletionQueue *util.UnboundedQueue
@@ -45,8 +47,6 @@ type Filer struct {
 	Signature           int32
 	FilerConf           *FilerConf
 	RemoteStorage       *FilerRemoteStorage
-	UniqueFilerId       int32
-	UniqueFilerEpoch    int32
 }
 
 func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress,
