@@ -3,6 +3,7 @@ package command
 import (
 	"bufio"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"io"
 	"os"
 	"strings"
@@ -142,6 +143,9 @@ func checkMountPointAvailable(dir string) bool {
 	}
 
 	if mounted, err := mounted(mountPoint); err != nil || mounted {
+		if err != nil {
+			glog.Errorf("check %s: %v", mountPoint, err)
+		}
 		return false
 	}
 

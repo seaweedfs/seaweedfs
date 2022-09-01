@@ -157,7 +157,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	// Ensure target mount point availability
 	if isValid := checkMountPointAvailable(dir); !isValid {
-		glog.Fatalf("Expected mount to still be active, target mount point: %s, please check!", dir)
+		glog.Fatalf("Target mount point is not available: %s, please check!", dir)
 		return true
 	}
 
