@@ -1,6 +1,6 @@
 FROM golang:1.19-alpine as builder
 RUN apk add git g++ fuse
-RUN mkdir -p /go/src/github.com/chrislusf/
+RUN mkdir -p /go/src/github.com/seaweedfs/
 RUN git clone https://github.com/seaweedfs/seaweedfs /go/src/github.com/seaweedfs/seaweedfs
 ARG BRANCH=${BRANCH:-master}
 ARG TAGS
