@@ -123,7 +123,7 @@ func (store *RocksDBStore) FindEntry(ctx context.Context, fullpath weed_util.Ful
 	key := genKey(dir, name)
 	data, err := store.db.Get(store.ro, key)
 
-	if data == nil {
+	if data == nil || !data.Exists() {
 		return nil, filer_pb.ErrNotFound
 	}
 	defer data.Free()
