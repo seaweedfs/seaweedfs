@@ -5,8 +5,8 @@ import (
 )
 
 // find the last index that satisify the check function's requirement.
-func FirstLargerIndex(bytes []byte, index_length int, fn func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error)) (int, error) {
-	left, right := 0, index_length/types.NeedleMapEntrySize-1
+func LastValidIndex(bytes []byte, indexLength int, validation func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error)) (int, error) {
+	left, right := 0, indexLength/types.NeedleMapEntrySize-1
 	index := -1
 	for left <= right {
 		mid := left + (right-left)>>1
@@ -14,7 +14,7 @@ func FirstLargerIndex(bytes []byte, index_length int, fn func(key types.NeedleId
 		key := types.BytesToNeedleId(bytes[loc:types.NeedleIdSize])
 		offset := types.BytesToOffset(bytes[loc+types.NeedleIdSize : loc+types.NeedleIdSize+types.OffsetSize])
 		size := types.BytesToSize(bytes[loc+types.NeedleIdSize+types.OffsetSize : loc+types.NeedleIdSize+types.OffsetSize+types.SizeSize])
-		res, err := fn(key, offset, size)
+		res, err := validation(key, offset, size)
 		if err != nil {
 			return -1, err
 		}

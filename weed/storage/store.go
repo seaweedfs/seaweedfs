@@ -384,6 +384,12 @@ func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle, readOption
 	}
 	return 0, fmt.Errorf("volume %d not found", i)
 }
+func (s *Store) ReadVolumeNeedleAt(i needle.VolumeId, n *needle.Needle, readOption *ReadOption, offset int64, size int32) (int, error) {
+	if v := s.findVolume(i); v != nil {
+		return v.readNeedleAt(n, readOption, offset, size)
+	}
+	return 0, fmt.Errorf("volume %d not found", i)
+}
 func (s *Store) ReadVolumeNeedleDataInto(i needle.VolumeId, n *needle.Needle, readOption *ReadOption, writer io.Writer, offset int64, size int64) error {
 	if v := s.findVolume(i); v != nil {
 		return v.readNeedleDataInto(n, readOption, writer, offset, size)

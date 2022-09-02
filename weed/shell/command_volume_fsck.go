@@ -75,7 +75,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.forcePurging = fsckCommand.Bool("forcePurging", false, "delete missing data from volumes in one replica used together with applyPurging")
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
 	tempPath := fsckCommand.String("tempPath", path.Join(os.TempDir()), "path for temporary idx files")
-	volumeFileCutoffTsNs := fsckCommand.Uint64("volumeFileCutoffTsNs", uint64(time.Now().Add(-time.Minute*30).Unix()), "the offset of filtering files on volume server")
+	cutoffTimeAgo := fsckCommand.Uint64("volumeFileCutoffTsNs", uint64(time.Now().Add(-time.Minute*30).Unix()), "the offset of filtering files on volume server")
 
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
@@ -130,7 +130,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 				delete(volumeIdToVInfo, volumeId)
 				continue
 			}
-			err = c.collectOneVolumeFileIds(tempFolder, dataNodeId, volumeId, vinfo, *verbose, writer, *volumeFileCutoffTsNs)
+			err = c.collectOneVolumeFileIds(tempFolder, dataNodeId, volumeId, vinfo, *verbose, writer, *cutoffTimeAgo)
 			if err != nil {
 				return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, err)
 			}
@@ -391,19 +391,24 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeI
 			buf.Write(resp.FileContent)
 		}
 		index_size := len(buf.Bytes())
-		index, err := idx.FirstLargerIndex(buf.Bytes(), index_size, func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
-			resp, err := volumeServerClient.VolumeNeedleStatus(context.Background(), &volume_server_pb.VolumeNeedleStatusRequest{
+		index, err := idx.LastValidIndex(buf.Bytes(), index_size, func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
+			resp, err := volumeServerClient.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
 				VolumeId: volumeId,
 				NeedleId: uint64(key),
+				Offset:   offset.ToActualOffset(),
+				Size:     int32(size),
 			})
 			if err != nil {
 				return false, fmt.Errorf("to read needle id %d  from volume %d with error %v", key, volumeId, err)
 			}
 			return resp.LastModified <= volumeFileCutoffTsNs, nil
 		})
+		if err != nil {
+			fmt.Fprintf(writer, "Failed to search for last vilad index on volume %d with error %v", volumeId, err)
+		}
 		buf.Truncate(index * types.NeedleMapEntrySize)
 		idxFilename := getVolumeFileIdFile(tempFolder, dataNodeId, volumeId)
-		err = writeToFile2(buf.Bytes(), idxFilename)
+		err = writeToFile(buf.Bytes(), idxFilename)
 		if err != nil {
 			return fmt.Errorf("failed to copy %d%s from %s: %v", volumeId, ext, vinfo.server, err)
 		}
@@ -698,28 +703,7 @@ func getFilerFileIdFile(tempFolder string, vid uint32) string {
 	return filepath.Join(tempFolder, fmt.Sprintf("%d.fid", vid))
 }
 
-func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName string) error {
-	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-	dst, err := os.OpenFile(fileName, flags, 0644)
-	if err != nil {
-		return nil
-	}
-	defer dst.Close()
-
-	for {
-		resp, receiveErr := client.Recv()
-		if receiveErr == io.EOF {
-			break
-		}
-		if receiveErr != nil {
-			return fmt.Errorf("receiving %s: %v", fileName, receiveErr)
-		}
-		dst.Write(resp.FileContent)
-	}
-	return nil
-}
-
-func writeToFile2(bytes []byte, fileName string) error {
+func writeToFile(bytes []byte, fileName string) error {
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 	dst, err := os.OpenFile(fileName, flags, 0644)
 	if err != nil {

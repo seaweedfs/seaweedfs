@@ -162,6 +162,35 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 	return 0, fmt.Errorf("ec shard %d not found", vid)
 }
 
+func (s *Store) ReadEcShardNeedleAt(vid needle.VolumeId, n *needle.Needle, offset int64, size int32) (int, error) {
+	for _, location := range s.Locations {
+		if localEcVolume, found := location.FindEcVolume(vid); found {
+			intervals, err := localEcVolume.LocateEcShardNeedleInterval(localEcVolume.Version, offset, types.Size(size))
+			if err != nil {
+				return 0, fmt.Errorf("locate in local ec volume: %v", err)
+			}
+			if len(intervals) > 1 {
+				glog.V(3).Infof("ReadEcShardNeedle needle id %s intervals:%+v", n.String(), intervals)
+			}
+			bytes, isDeleted, err := s.readEcShardIntervals(vid, n.Id, localEcVolume, intervals)
+			if err != nil {
+				return 0, fmt.Errorf("ReadEcShardIntervals: %v", err)
+			}
+			if isDeleted {
+				return 0, ErrorDeleted
+			}
+
+			err = n.ReadBytes(bytes, offset, types.Size(size), localEcVolume.Version)
+			if err != nil {
+				return 0, fmt.Errorf("readbytes: %v", err)
+			}
+
+			return len(bytes), nil
+		}
+	}
+	return 0, fmt.Errorf("ec shard %d not found", vid)
+}
+
 func (s *Store) readEcShardIntervals(vid needle.VolumeId, needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, intervals []erasure_coding.Interval) (data []byte, is_deleted bool, err error) {
 
 	if err = s.cachedLookupEcShardLocations(ecVolume); err != nil {
