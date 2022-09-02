@@ -372,7 +372,7 @@ func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentCompressed bool
 
 func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*http.Response, io.ReadCloser, error) {
 
-	req, err := http.NewRequest("GET", fileUrl, nil)
+	req, err := http.NewRequest("GET", fileUrl, nil) // lgtm[go/request-forgery]
 	if err != nil {
 		return nil, nil, err
 	}
