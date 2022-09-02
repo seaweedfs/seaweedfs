@@ -46,6 +46,9 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 	ret := operation.UploadResult{}
 	isUnchanged, writeError := topology.ReplicatedWrite(vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, reqNeedle, r)
+	if writeError != nil {
+		writeJsonError(w, r, http.StatusInternalServerError, writeError)
+	}
 
 	// http 204 status code does not allow body
 	if writeError == nil && isUnchanged {
@@ -55,10 +58,6 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpStatus := http.StatusCreated
-	if writeError != nil {
-		httpStatus = http.StatusInternalServerError
-		ret.Error = writeError.Error()
-	}
 	if reqNeedle.HasName() {
 		ret.Name = string(reqNeedle.Name)
 	}

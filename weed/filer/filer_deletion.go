@@ -58,7 +58,7 @@ func (f *Filer) loopProcessingDeletion() {
 						glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
 					}
 				} else {
-					glog.V(1).Infof("deleting fileIds len=%d", deletionCount)
+					glog.V(1).Infof("deleting fileIds %+v", toDeleteFileIds)
 				}
 			}
 		})
