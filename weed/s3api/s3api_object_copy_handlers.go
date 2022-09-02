@@ -137,7 +137,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
 
 	// Copy source path.
-	cpSrcPathEscaped := r.Header.Get("X-Amz-Copy-Source")
+	cpSrcPathEscaped := r.Header.Get("X-Amz-Copy-Source") // lgtm[go/request-forgery]
 	cpSrcPath, err := url.QueryUnescape(cpSrcPathEscaped)
 	if err != nil {
 		// Save unescaped string as is.
