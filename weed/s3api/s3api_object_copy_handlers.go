@@ -173,7 +173,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	dstUrl := fmt.Sprintf("http://%s%s/%s/%04d.part",
 		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(dstBucket), uploadID, partID)
 	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, urlPathEscape(srcObject))
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, urlPathEscape(srcBucket), urlPathEscape(srcObject))
 
 	resp, dataReader, err := util.ReadUrlAsReaderCloser(srcUrl, s3a.maybeGetFilerJwtAuthorizationToken(false), rangeHeader)
 	if err != nil {
