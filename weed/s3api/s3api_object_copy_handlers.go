@@ -137,10 +137,11 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
 
 	// Copy source path.
-	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
+	cpSrcPathEscaped := r.Header.Get("X-Amz-Copy-Source")
+	cpSrcPath, err := url.QueryUnescape(cpSrcPathEscaped)
 	if err != nil {
 		// Save unescaped string as is.
-		cpSrcPath = r.Header.Get("X-Amz-Copy-Source")
+		cpSrcPath = cpSrcPathEscaped
 	}
 
 	srcBucket, srcObject := pathToBucketAndObject(cpSrcPath)
@@ -214,7 +215,7 @@ func processMetadata(reqHeader, existing http.Header, replaceMeta, replaceTaggin
 	}
 
 	if !replaceMeta {
-		for header, _ := range reqHeader {
+		for header := range reqHeader {
 			if strings.HasPrefix(header, s3_constants.AmzUserMetaPrefix) {
 				delete(reqHeader, header)
 			}
@@ -227,14 +228,14 @@ func processMetadata(reqHeader, existing http.Header, replaceMeta, replaceTaggin
 	}
 
 	if !replaceTagging {
-		for header, _ := range reqHeader {
+		for header := range reqHeader {
 			if strings.HasPrefix(header, s3_constants.AmzObjectTagging) {
 				delete(reqHeader, header)
 			}
 		}
 
 		found := false
-		for k, _ := range existing {
+		for k := range existing {
 			if strings.HasPrefix(k, s3_constants.AmzObjectTaggingPrefix) {
 				found = true
 				break
