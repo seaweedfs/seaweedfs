@@ -27,12 +27,12 @@ func init() {
 		// syscall.SIGQUIT,
 	)
 	go func() {
-		hookLock.RLock()
-		defer hookLock.RUnlock()
 		for range signalChan {
+			hookLock.RLock()
 			for _, hook := range hooks {
 				hook()
 			}
+			hookLock.RUnlock()
 			os.Exit(0)
 		}
 	}()
