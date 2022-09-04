@@ -80,6 +80,52 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 	return -1, ErrorNotFound
 }
 
+// read needle at a specific offset
+func (v *Volume) readNeedleAt(n *needle.Needle, readOption *ReadOption, offset int64, size int32) (count int, err error) {
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
+
+	if readOption != nil && readOption.AttemptMetaOnly && size > PagedReadLimit {
+		readOption.VolumeRevision = v.SuperBlock.CompactionRevision
+		err = n.ReadNeedleMeta(v.DataBackend, offset, Size(size), v.Version())
+		if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
+			readOption.IsOutOfRange = true
+			err = n.ReadNeedleMeta(v.DataBackend, offset+int64(MaxPossibleVolumeSize), Size(size), v.Version())
+		}
+		if err != nil {
+			return 0, err
+		}
+		if !n.IsCompressed() && !n.IsChunkedManifest() {
+			readOption.IsMetaOnly = true
+		}
+	}
+	if readOption == nil || !readOption.IsMetaOnly {
+		err = n.ReadData(v.DataBackend, offset, Size(size), v.Version())
+		if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
+			err = n.ReadData(v.DataBackend, offset+int64(MaxPossibleVolumeSize), Size(size), v.Version())
+		}
+		v.checkReadWriteError(err)
+		if err != nil {
+			return 0, err
+		}
+	}
+	count = int(n.DataSize)
+	if !n.HasTtl() {
+		return
+	}
+	ttlMinutes := n.Ttl.Minutes()
+	if ttlMinutes == 0 {
+		return
+	}
+	if !n.HasLastModifiedDate() {
+		return
+	}
+	if time.Now().Before(time.Unix(0, int64(n.AppendAtNs)).Add(time.Duration(ttlMinutes) * time.Minute)) {
+		return
+	}
+	return -1, ErrorNotFound
+}
+
 // read fills in Needle content by looking up n.Id from NeedleMapper
 func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, writer io.Writer, offset int64, size int64) (err error) {
 	v.dataFileAccessLock.RLock()
