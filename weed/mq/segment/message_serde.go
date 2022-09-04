@@ -35,7 +35,7 @@ func NewMessageBatchBuilder(b *flatbuffers.Builder,
 	}
 }
 
-func (builder *MessageBatchBuilder) AddMessage(segmentSeq int64, tsMs int64, properties map[string][]byte, key []byte, value []byte) {
+func (builder *MessageBatchBuilder) AddMessage(segmentSeq int64, tsMs int64, properties map[string]string, key []byte, value []byte) {
 	if builder.segmentSeqBase == 0 {
 		builder.segmentSeqBase = segmentSeq
 	}
@@ -48,7 +48,7 @@ func (builder *MessageBatchBuilder) AddMessage(segmentSeq int64, tsMs int64, pro
 	var names, values, pairs []flatbuffers.UOffsetT
 	for k, v := range properties {
 		names = append(names, builder.b.CreateString(k))
-		values = append(values, builder.b.CreateByteVector(v))
+		values = append(values, builder.b.CreateString(v))
 	}
 	for i, _ := range names {
 		message_fbs.NameValueStart(builder.b)

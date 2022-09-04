@@ -21,7 +21,7 @@ service SeaweedMessaging {
     }
 
     // data plane
-    rpc Publish (stream PublishRequest) returns (stream PublishResponse) {
+    rpc PublishMessage (stream PublishRequest) returns (stream PublishResponse) {
     }
 }
 
@@ -85,11 +85,14 @@ message CheckBrokerLoadResponse {
 
 //////////////////////////////////////////////////
 message PublishRequest {
-    message InitMessage {
+    message DataMessage {
+        bytes message = 1;
+    }
+    DataMessage data = 1;
+    message ControlMessage {
         Segment segment = 1;
     }
-    InitMessage init = 1;
-    bytes message = 2;
+    ControlMessage control = 2;
 }
 message PublishResponse {
     int64 ack_sequence = 1;

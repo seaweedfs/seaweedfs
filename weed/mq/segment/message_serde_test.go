@@ -10,9 +10,9 @@ import (
 func TestMessageSerde(t *testing.T) {
 	b := flatbuffers.NewBuilder(1024)
 
-	prop := make(map[string][]byte)
-	prop["n1"] = []byte("v1")
-	prop["n2"] = []byte("v2")
+	prop := make(map[string]string)
+	prop["n1"] = "v1"
+	prop["n2"] = "v2"
 
 	bb := NewMessageBatchBuilder(b, 1, 2, 3, 4)
 

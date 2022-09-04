@@ -11,6 +11,7 @@ import (
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the grpc package it is being compiled against.
+// Requires gRPC-Go v1.32.0 or later.
 const _ = grpc.SupportPackageIsVersion7
 
 // SeaweedMessagingClient is the client API for SeaweedMessaging service.
@@ -23,7 +24,7 @@ type SeaweedMessagingClient interface {
 	CheckSegmentStatus(ctx context.Context, in *CheckSegmentStatusRequest, opts ...grpc.CallOption) (*CheckSegmentStatusResponse, error)
 	CheckBrokerLoad(ctx context.Context, in *CheckBrokerLoadRequest, opts ...grpc.CallOption) (*CheckBrokerLoadResponse, error)
 	// data plane
-	Publish(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublishClient, error)
+	PublishMessage(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublishMessageClient, error)
 }
 
 type seaweedMessagingClient struct {
@@ -70,30 +71,30 @@ func (c *seaweedMessagingClient) CheckBrokerLoad(ctx context.Context, in *CheckB
 	return out, nil
 }
 
-func (c *seaweedMessagingClient) Publish(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublishClient, error) {
-	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[0], "/messaging_pb.SeaweedMessaging/Publish", opts...)
+func (c *seaweedMessagingClient) PublishMessage(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublishMessageClient, error) {
+	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[0], "/messaging_pb.SeaweedMessaging/PublishMessage", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &seaweedMessagingPublishClient{stream}
+	x := &seaweedMessagingPublishMessageClient{stream}
 	return x, nil
 }
 
-type SeaweedMessaging_PublishClient interface {
+type SeaweedMessaging_PublishMessageClient interface {
 	Send(*PublishRequest) error
 	Recv() (*PublishResponse, error)
 	grpc.ClientStream
 }
 
-type seaweedMessagingPublishClient struct {
+type seaweedMessagingPublishMessageClient struct {
 	grpc.ClientStream
 }
 
-func (x *seaweedMessagingPublishClient) Send(m *PublishRequest) error {
+func (x *seaweedMessagingPublishMessageClient) Send(m *PublishRequest) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *seaweedMessagingPublishClient) Recv() (*PublishResponse, error) {
+func (x *seaweedMessagingPublishMessageClient) Recv() (*PublishResponse, error) {
 	m := new(PublishResponse)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
@@ -111,7 +112,7 @@ type SeaweedMessagingServer interface {
 	CheckSegmentStatus(context.Context, *CheckSegmentStatusRequest) (*CheckSegmentStatusResponse, error)
 	CheckBrokerLoad(context.Context, *CheckBrokerLoadRequest) (*CheckBrokerLoadResponse, error)
 	// data plane
-	Publish(SeaweedMessaging_PublishServer) error
+	PublishMessage(SeaweedMessaging_PublishMessageServer) error
 	mustEmbedUnimplementedSeaweedMessagingServer()
 }
 
@@ -131,8 +132,8 @@ func (UnimplementedSeaweedMessagingServer) CheckSegmentStatus(context.Context, *
 func (UnimplementedSeaweedMessagingServer) CheckBrokerLoad(context.Context, *CheckBrokerLoadRequest) (*CheckBrokerLoadResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CheckBrokerLoad not implemented")
 }
-func (UnimplementedSeaweedMessagingServer) Publish(SeaweedMessaging_PublishServer) error {
-	return status.Errorf(codes.Unimplemented, "method Publish not implemented")
+func (UnimplementedSeaweedMessagingServer) PublishMessage(SeaweedMessaging_PublishMessageServer) error {
+	return status.Errorf(codes.Unimplemented, "method PublishMessage not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) mustEmbedUnimplementedSeaweedMessagingServer() {}
 
@@ -219,25 +220,25 @@ func _SeaweedMessaging_CheckBrokerLoad_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
-func _SeaweedMessaging_Publish_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(SeaweedMessagingServer).Publish(&seaweedMessagingPublishServer{stream})
+func _SeaweedMessaging_PublishMessage_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(SeaweedMessagingServer).PublishMessage(&seaweedMessagingPublishMessageServer{stream})
 }
 
-type SeaweedMessaging_PublishServer interface {
+type SeaweedMessaging_PublishMessageServer interface {
 	Send(*PublishResponse) error
 	Recv() (*PublishRequest, error)
 	grpc.ServerStream
 }
 
-type seaweedMessagingPublishServer struct {
+type seaweedMessagingPublishMessageServer struct {
 	grpc.ServerStream
 }
 
-func (x *seaweedMessagingPublishServer) Send(m *PublishResponse) error {
+func (x *seaweedMessagingPublishMessageServer) Send(m *PublishResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *seaweedMessagingPublishServer) Recv() (*PublishRequest, error) {
+func (x *seaweedMessagingPublishMessageServer) Recv() (*PublishRequest, error) {
 	m := new(PublishRequest)
 	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
@@ -271,8 +272,8 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 	},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "Publish",
-			Handler:       _SeaweedMessaging_Publish_Handler,
+			StreamName:    "PublishMessage",
+			Handler:       _SeaweedMessaging_PublishMessage_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},
