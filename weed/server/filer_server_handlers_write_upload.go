@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -197,6 +198,15 @@ func (fs *FilerServer) dataToChunk(fileName, contentType string, data []byte, ch
 	})
 	if err != nil {
 		glog.Errorf("upload error: %v", err)
+		if strings.Contains(err.Error(), "failed to write to replicas for volume") {
+			fid, _ := filer_pb.ToFileIdObject(fileId)
+			fileChunk := filer_pb.FileChunk{
+				FileId: fileId,
+				Offset: chunkOffset,
+				Fid:    fid,
+			}
+			return &fileChunk, err
+		}
 		return nil, err
 	}
 
