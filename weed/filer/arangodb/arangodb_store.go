@@ -274,10 +274,10 @@ func (store *ArangodbStore) DeleteFolderChildren(ctx context.Context, fullpath u
 	for d in %s
 	filter starts_with(d.directory, "%s/")  || d.directory == "%s"
 	remove d._key in %s`,
-		targetCollection.Name(),
+		"`"+targetCollection.Name()+"`",
 		strings.Join(strings.Split(string(fullpath), "/"), ","),
 		string(fullpath),
-		targetCollection.Name(),
+		"`"+targetCollection.Name()+"`",
 	)
 	cur, err := store.database.Query(ctx, query, nil)
 	if err != nil {
