@@ -66,8 +66,8 @@ func (store *ArangodbStore) Initialize(configuration util.Configuration, prefix 
 }
 
 func (store *ArangodbStore) connection(uris []string, user string, pass string, insecure bool) (err error) {
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
-
+	ctx, cn := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cn()
 	store.connect, err = http.NewConnection(http.ConnectionConfig{
 		Endpoints: uris,
 		TLSConfig: &tls.Config{
@@ -296,7 +296,7 @@ func (store *ArangodbStore) ListDirectoryPrefixedEntries(ctx context.Context, di
 	if err != nil {
 		return lastFileName, err
 	}
-	query := "for d in " + targetCollection.Name()
+	query := "for d in " + "`" + targetCollection.Name() + "`"
 	if includeStartFile {
 		query = query + " filter d.name >= \"" + startFileName + "\" "
 	} else {
