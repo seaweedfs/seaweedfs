@@ -13,7 +13,6 @@ import (
 )
 
 const CMP_NUM = "xN--"
-const CMP_DOT = "xP--"
 
 // convert a string into arango-key safe hex bytes hash
 func hashString(dir string) string {
@@ -106,12 +105,13 @@ func bucketToCollectionName(s string) string {
 	if len(s) == 0 {
 		return ""
 	}
-	// if starts with number, then add the cmp_num
-	if s[0] >= '0' && s[0] <= '9' {
+	// replace all "." with _
+	s = strings.ReplaceAll(s, ".", "_")
+
+	// if starts with number or '.' then add the cmp_num
+	if s[0] >= '0' && s[0] <= '9' || (s[0] == '.' || s[0] == '_' || s[0] == '-') {
 		s = CMP_NUM + s
 	}
-	// replace all "." with xP--
-	s = strings.ReplaceAll(s, ".", CMP_DOT)
 	return s
 }
 
