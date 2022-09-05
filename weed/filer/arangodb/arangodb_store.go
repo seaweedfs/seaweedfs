@@ -121,7 +121,7 @@ func (store *ArangodbStore) BeginTransaction(ctx context.Context) (context.Conte
 		return nil, err
 	}
 
-	return context.WithValue(ctx, transactionKey, txn), nil
+	return context.WithValue(driver.WithTransactionID(ctx, txn), transactionKey, txn), nil
 }
 
 func (store *ArangodbStore) CommitTransaction(ctx context.Context) error {
