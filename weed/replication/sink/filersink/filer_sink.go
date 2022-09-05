@@ -133,6 +133,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 				Name:        name,
 				IsDirectory: entry.IsDirectory,
 				Attributes:  entry.Attributes,
+				Extended:    entry.Extended,
 				Chunks:      replicatedChunks,
 				Content:     entry.Content,
 				RemoteEntry: entry.RemoteEntry,
