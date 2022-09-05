@@ -90,7 +90,6 @@ require (
 	github.com/spf13/cast v1.5.0 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/viper v1.12.0
-	github.com/streadway/amqp v1.0.0
 	github.com/stretchr/testify v1.8.0
 	github.com/stvp/tempredis v0.0.0-20181119212430-b82af8480203
 	github.com/syndtr/goleveldb v1.0.1-0.20190318030020-c3a204f8e965
@@ -125,7 +124,7 @@ require (
 	google.golang.org/api v0.93.0
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20220822174746-9e6da59bd2fc // indirect
-	google.golang.org/grpc v1.48.0
+	google.golang.org/grpc v1.49.0
 	google.golang.org/protobuf v1.28.1
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	modernc.org/b v1.0.0 // indirect
@@ -148,6 +147,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.1.1-0.20220627082937-d01fda7edf17
 	github.com/hashicorp/raft v1.3.10
 	github.com/hashicorp/raft-boltdb/v2 v2.2.2
+	github.com/rabbitmq/amqp091-go v1.3.4
 	github.com/tikv/client-go/v2 v2.0.1
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.37.1
@@ -208,7 +208,6 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20210918120811-547c13e3eb00 // indirect
 	github.com/pingcap/kvproto v0.0.0-20220106070556-3fa8fa04f898 // indirect
 	github.com/pingcap/log v0.0.0-20211215031037-e024ba4eb0ee // indirect
-	github.com/rabbitmq/amqp091-go v1.3.4 // indirect
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/subosito/gotenv v1.3.0 // indirect
