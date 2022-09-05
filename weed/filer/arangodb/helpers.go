@@ -106,7 +106,7 @@ func bucketToCollectionName(s string) string {
 	// replace all "." with _
 	s = strings.ReplaceAll(s, ".", "_")
 
-	// if starts with number or '.' then add the cmp_num
+	// if starts with number or '.' then add a special prefix
 	if (s[0] >= '0' && s[0] <= '9') || (s[0] == '.' || s[0] == '_' || s[0] == '-') {
 		s = "xN--" + s
 	}
