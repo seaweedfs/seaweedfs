@@ -5,7 +5,7 @@ go 1.19
 require (
 	cloud.google.com/go v0.104.0 // indirect
 	cloud.google.com/go/pubsub v1.25.1
-	cloud.google.com/go/storage v1.25.0
+	cloud.google.com/go/storage v1.26.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/Shopify/sarama v1.36.0
