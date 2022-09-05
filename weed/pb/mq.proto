@@ -26,13 +26,27 @@ service SeaweedMessaging {
 }
 
 //////////////////////////////////////////////////
+message SegmentInfos {
+    repeated SegmentInfo segment_infos = 1;
+}
+
+message Topic {
+    string namespace = 1;
+    string topic = 2;
+}
+
 message SegmentInfo {
     Segment segment = 1;
     int64 start_ts_ns = 2;
     repeated string brokers = 3;
     int64 stop_ts_ns = 4;
-    repeated int32 previous_segments = 5;
-    repeated int32 next_segments = 6;
+}
+
+message Segment {
+    int32 id = 1;
+    int32 ring_size = 2;
+    int32 range_start = 3;
+    int32 range_stop = 4;
 }
 
 //////////////////////////////////////////////////
@@ -45,21 +59,9 @@ message FindBrokerLeaderResponse {
     string broker = 1;
 }
 
-message Partition {
-    int32 ring_size = 1;
-    int32 range_start = 2;
-    int32 range_stop = 3;
-}
-
-message Segment {
-    string namespace = 1;
-    string topic = 2;
-    int32 id = 3;
-    Partition partition = 4;
-}
-
 message AssignSegmentBrokersRequest {
-    Segment segment = 1;
+    Topic topic = 1;
+    Segment segment = 2;
 }
 
 message AssignSegmentBrokersResponse {
@@ -67,7 +69,8 @@ message AssignSegmentBrokersResponse {
 }
 
 message CheckSegmentStatusRequest {
-    Segment segment = 1;
+    Topic topic = 1;
+    Segment segment = 2;
 }
 
 message CheckSegmentStatusResponse {
