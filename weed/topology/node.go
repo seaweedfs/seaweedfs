@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 type NodeId string
@@ -139,9 +140,10 @@ func (n *NodeImpl) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts {
 }
 func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 	t := n.getOrCreateDisk(option.DiskType)
-	freeVolumeSlotCount := t.maxVolumeCount + t.remoteVolumeCount - t.volumeCount
-	if t.ecShardCount > 0 {
-		freeVolumeSlotCount = freeVolumeSlotCount - t.ecShardCount/erasure_coding.DataShardsCount - 1
+	freeVolumeSlotCount := atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount) - atomic.LoadInt64(&t.volumeCount)
+	ecShardCount := atomic.LoadInt64(&t.ecShardCount)
+	if ecShardCount > 0 {
+		freeVolumeSlotCount = freeVolumeSlotCount - ecShardCount/erasure_coding.DataShardsCount - 1
 	}
 	return freeVolumeSlotCount
 }
