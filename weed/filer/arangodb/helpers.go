@@ -12,8 +12,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-const CMP_NUM = "xN--"
-
 // convert a string into arango-key safe hex bytes hash
 func hashString(dir string) string {
 	h := md5.New()
@@ -109,8 +107,8 @@ func bucketToCollectionName(s string) string {
 	s = strings.ReplaceAll(s, ".", "_")
 
 	// if starts with number or '.' then add the cmp_num
-	if s[0] >= '0' && s[0] <= '9' || (s[0] == '.' || s[0] == '_' || s[0] == '-') {
-		s = CMP_NUM + s
+	if (s[0] >= '0' && s[0] <= '9') || (s[0] == '.' || s[0] == '_' || s[0] == '-') {
+		s = "xN--" + s
 	}
 	return s
 }
