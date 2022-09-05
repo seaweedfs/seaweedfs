@@ -173,29 +173,29 @@ func runFiler(cmd *Command, args []string) bool {
 		if *f.dataCenter != "" && *filerS3Options.dataCenter == "" {
 			filerS3Options.dataCenter = f.dataCenter
 		}
-		go func() {
-			time.Sleep(startDelay * time.Second)
+		go func(delay time.Duration) {
+			time.Sleep(delay * time.Second)
 			filerS3Options.startS3Server()
-		}()
+		}(startDelay)
 		startDelay++
 	}
 
 	if *filerStartWebDav {
 		filerWebDavOptions.filer = &filerAddress
-		go func() {
-			time.Sleep(startDelay * time.Second)
+		go func(delay time.Duration) {
+			time.Sleep(delay * time.Second)
 			filerWebDavOptions.startWebDav()
-		}()
+		}(startDelay)
 		startDelay++
 	}
 
 	if *filerStartIam {
 		filerIamOptions.filer = &filerAddress
 		filerIamOptions.masters = f.mastersString
-		go func() {
-			time.Sleep(startDelay * time.Second)
+		go func(delay time.Duration) {
+			time.Sleep(delay * time.Second)
 			filerIamOptions.startIamServer()
-		}()
+		}(startDelay)
 	}
 
 	f.masters = pb.ServerAddresses(*f.mastersString).ToAddressMap()
@@ -293,17 +293,18 @@ func (fo *FilerOptions) startFiler() {
 
 	httpS := &http.Server{Handler: defaultMux}
 	if runtime.GOOS != "windows" {
-		if *fo.localSocket == "" {
-			*fo.localSocket = fmt.Sprintf("/tmp/seaweefs-filer-%d.sock", *fo.port)
+		localSocket := *fo.localSocket
+		if localSocket == "" {
+			localSocket = fmt.Sprintf("/tmp/seaweefs-filer-%d.sock", *fo.port)
 		}
-		if err := os.Remove(*fo.localSocket); err != nil && !os.IsNotExist(err) {
-			glog.Fatalf("Failed to remove %s, error: %s", *fo.localSocket, err.Error())
+		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
+			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
 		}
 		go func() {
 			// start on local unix socket
-			filerSocketListener, err := net.Listen("unix", *fo.localSocket)
+			filerSocketListener, err := net.Listen("unix", localSocket)
 			if err != nil {
-				glog.Fatalf("Failed to listen on %s: %v", *fo.localSocket, err)
+				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
 			}
 			httpS.Serve(filerSocketListener)
 		}()

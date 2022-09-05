@@ -3,13 +3,13 @@ module github.com/seaweedfs/seaweedfs
 go 1.19
 
 require (
-	cloud.google.com/go v0.102.1 // indirect
-	cloud.google.com/go/pubsub v1.24.0
-	cloud.google.com/go/storage v1.25.0
+	cloud.google.com/go v0.104.0 // indirect
+	cloud.google.com/go/pubsub v1.25.1
+	cloud.google.com/go/storage v1.26.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/Shopify/sarama v1.36.0
-	github.com/aws/aws-sdk-go v1.44.76
+	github.com/aws/aws-sdk-go v1.44.91
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
@@ -61,7 +61,7 @@ require (
 	github.com/klauspost/reedsolomon v1.10.0
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.6
-	github.com/linxGnu/grocksdb v1.7.5
+	github.com/linxGnu/grocksdb v1.7.7
 	github.com/magiconair/properties v1.8.6 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-ieproxy v0.0.3 // indirect
@@ -90,7 +90,6 @@ require (
 	github.com/spf13/cast v1.5.0 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/viper v1.12.0
-	github.com/streadway/amqp v1.0.0
 	github.com/stretchr/testify v1.8.0
 	github.com/stvp/tempredis v0.0.0-20181119212430-b82af8480203
 	github.com/syndtr/goleveldb v1.0.1-0.20190318030020-c3a204f8e965
@@ -112,31 +111,31 @@ require (
 	go.opencensus.io v0.23.0 // indirect
 	gocloud.dev v0.26.0
 	gocloud.dev/pubsub/natspubsub v0.26.0
-	gocloud.dev/pubsub/rabbitpubsub v0.25.0
+	gocloud.dev/pubsub/rabbitpubsub v0.26.0
 	golang.org/x/crypto v0.0.0-20220722155217-630584e8d5aa // indirect
 	golang.org/x/exp v0.0.0-20220414153411-bcd21879b8fd
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
 	golang.org/x/net v0.0.0-20220809184613-07c6da5e1ced
-	golang.org/x/oauth2 v0.0.0-20220622183110-fd043fe589d2 // indirect
+	golang.org/x/oauth2 v0.0.0-20220822191816-0ebed06d0094 // indirect
 	golang.org/x/sys v0.0.0-20220818161305-2296e01440c6
 	golang.org/x/text v0.3.7 // indirect
 	golang.org/x/tools v0.1.8-0.20211029000441-d6a9af8af023
 	golang.org/x/xerrors v0.0.0-20220609144429-65e65417b02f // indirect
-	google.golang.org/api v0.92.0
+	google.golang.org/api v0.94.0
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto v0.0.0-20220720214146-176da50484ac // indirect
-	google.golang.org/grpc v1.48.0
+	google.golang.org/genproto v0.0.0-20220822174746-9e6da59bd2fc // indirect
+	google.golang.org/grpc v1.49.0
 	google.golang.org/protobuf v1.28.1
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	modernc.org/b v1.0.0 // indirect
 	modernc.org/cc/v3 v3.36.0 // indirect
 	modernc.org/ccgo/v3 v3.16.8 // indirect
 	modernc.org/libc v1.16.19 // indirect
-	modernc.org/mathutil v1.4.1 // indirect
+	modernc.org/mathutil v1.5.0 // indirect
 	modernc.org/memory v1.1.1 // indirect
 	modernc.org/opt v0.1.1 // indirect
 	modernc.org/sqlite v1.18.1
-	modernc.org/strutil v1.1.2
+	modernc.org/strutil v1.1.3
 	modernc.org/token v1.0.0 // indirect
 )
 
@@ -144,13 +143,14 @@ require (
 	github.com/Jille/raft-grpc-transport v1.2.0
 	github.com/arangodb/go-driver v1.3.3
 	github.com/fluent/fluent-logger-golang v1.9.0
-	github.com/google/flatbuffers v2.0.6+incompatible
+	github.com/google/flatbuffers v2.0.8+incompatible
 	github.com/hanwen/go-fuse/v2 v2.1.1-0.20220627082937-d01fda7edf17
 	github.com/hashicorp/raft v1.3.10
-	github.com/hashicorp/raft-boltdb v0.0.0-20220329195025-15018e9b97e0
+	github.com/hashicorp/raft-boltdb/v2 v2.2.2
+	github.com/rabbitmq/amqp091-go v1.4.0
 	github.com/tikv/client-go/v2 v2.0.1
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.35.1
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.37.4
 	google.golang.org/grpc/security/advancedtls v0.0.0-20220622233350-5cdb09fa29c1
 )
 
@@ -218,6 +218,7 @@ require (
 	github.com/ydb-platform/ydb-go-genproto v0.0.0-20220801095836-cf975531fd1f // indirect
 	github.com/ydb-platform/ydb-go-yc v0.8.3 // indirect
 	github.com/ydb-platform/ydb-go-yc-metadata v0.5.2 // indirect
+	go.etcd.io/bbolt v1.3.6 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.4 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.5.4 // indirect
 	go.uber.org/atomic v1.9.0 // indirect

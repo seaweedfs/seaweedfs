@@ -86,7 +86,7 @@ func (store *ArangodbStore) ensureBucket(ctx context.Context, bucket string) (bc
 	store.mu.RLock()
 	bc, ok = store.buckets[bucket]
 	store.mu.RUnlock()
-	if ok {
+	if ok && bc != nil {
 		return bc, nil
 	}
 	store.mu.Lock()

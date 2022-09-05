@@ -110,6 +110,7 @@ func writeJsonQuiet(w http.ResponseWriter, r *http.Request, httpStatus int, obj 
 func writeJsonError(w http.ResponseWriter, r *http.Request, httpStatus int, err error) {
 	m := make(map[string]interface{})
 	m["error"] = err.Error()
+	glog.V(1).Infof("error JSON response status %d: %s", httpStatus, m["error"])
 	writeJsonQuiet(w, r, httpStatus, m)
 }
 

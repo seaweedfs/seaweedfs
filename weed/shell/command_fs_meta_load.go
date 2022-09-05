@@ -83,19 +83,19 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 				return err
 			}
 
+			if *verbose || lastLogTime.Add(time.Second).Before(time.Now()) {
+				if !*verbose {
+					lastLogTime = time.Now()
+				}
+				fmt.Fprintf(writer, "load %s\n", util.FullPath(fullEntry.Dir).Child(fullEntry.Entry.Name))
+			}
+
 			fullEntry.Entry.Name = strings.ReplaceAll(fullEntry.Entry.Name, "/", "x")
 			if err := filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
 				Directory: fullEntry.Dir,
 				Entry:     fullEntry.Entry,
 			}); err != nil {
 				return err
-			}
-
-			if *verbose || lastLogTime.Add(time.Second).Before(time.Now()) {
-				if !*verbose {
-					lastLogTime = time.Now()
-				}
-				fmt.Fprintf(writer, "load %s\n", util.FullPath(fullEntry.Dir).Child(fullEntry.Entry.Name))
 			}
 
 			if fullEntry.Entry.IsDirectory {

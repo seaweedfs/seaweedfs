@@ -46,7 +46,7 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 		reply, md5bytes, err = fs.doPutAutoChunk(ctx, w, r, chunkSize, contentLength, so)
 	}
 	if err != nil {
-		if strings.HasPrefix(err.Error(), "read input:") {
+		if strings.HasPrefix(err.Error(), "read input:") || err.Error() == io.ErrUnexpectedEOF.Error() {
 			writeJsonError(w, r, 499, err)
 		} else if strings.HasSuffix(err.Error(), "is a file") {
 			writeJsonError(w, r, http.StatusConflict, err)

@@ -3,7 +3,7 @@ FROM golang:1.19-buster as builder
 RUN apt-get update
 RUN apt-get install -y build-essential libsnappy-dev zlib1g-dev libbz2-dev libgflags-dev liblz4-dev libzstd-dev
 
-ENV ROCKSDB_VERSION v7.4.4
+ENV ROCKSDB_VERSION v7.5.3
 
 # build RocksDB
 RUN cd /tmp && \
@@ -16,7 +16,7 @@ ENV CGO_CFLAGS "-I/tmp/rocksdb/include"
 ENV CGO_LDFLAGS "-L/tmp/rocksdb -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd"
 
 # build SeaweedFS
-RUN mkdir -p /go/src/github.com/chrislusf/
+RUN mkdir -p /go/src/github.com/seaweedfs/
 RUN git clone https://github.com/seaweedfs/seaweedfs /go/src/github.com/seaweedfs/seaweedfs
 ARG BRANCH=${BRANCH:-master}
 RUN cd /go/src/github.com/seaweedfs/seaweedfs && git checkout $BRANCH

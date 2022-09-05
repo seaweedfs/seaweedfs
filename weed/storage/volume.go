@@ -36,6 +36,7 @@ type Volume struct {
 	super_block.SuperBlock
 
 	dataFileAccessLock    sync.RWMutex
+	superBlockAccessLock  sync.Mutex
 	asyncRequestsChan     chan *needle.AsyncRequest
 	lastModifiedTsSeconds uint64 // unix time in seconds
 	lastAppendAtNs        uint64 // unix time in nanoseconds
@@ -97,6 +98,8 @@ func (v *Volume) FileName(ext string) (fileName string) {
 }
 
 func (v *Volume) Version() needle.Version {
+	v.superBlockAccessLock.Lock()
+	defer v.superBlockAccessLock.Unlock()
 	if v.volumeInfo.Version != 0 {
 		v.SuperBlock.Version = needle.Version(v.volumeInfo.Version)
 	}
@@ -281,7 +284,7 @@ func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 func (v *Volume) collectStatus() (maxFileKey types.NeedleId, datFileSize int64, modTime time.Time, fileCount, deletedCount, deletedSize uint64, ok bool) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
-	glog.V(3).Infof("collectStatus volume %d", v.Id)
+	glog.V(4).Infof("collectStatus volume %d", v.Id)
 
 	if v.nm == nil || v.DataBackend == nil {
 		return

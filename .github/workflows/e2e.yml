@@ -1,0 +1,89 @@
+name: "End to End"
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+concurrency:
+  group: ${{ github.head_ref }}/e2e
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: docker
+
+jobs:
+  e2e:
+    name: FUSE Mount
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+    - name: Set up Go 1.x
+      uses: actions/setup-go@268d8c0ca0432bb2cf416faae41297df9d262d7f # v2
+      with:
+        go-version: ^1.13
+      id: go
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b # v2
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y fuse
+
+    - name: Start SeaweedFS
+      timeout-minutes: 5
+      run: make build_e2e && docker compose -f ./compose/e2e-mount.yml up --wait
+
+    - name: Run FIO
+      timeout-minutes: 5
+      run: |
+        echo "Starting FIO at: $(date)"
+        # Concurrent r/w
+        echo 'Run randrw with size=16M bs=4k'
+        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 40 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randrw --bs=4k --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1
+        
+        echo 'Run randrw with size=16M bs=128k'
+        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 40 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randrw --bs=128k --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1
+        
+        echo 'Run randrw with size=16M bs=1m'
+        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 40 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randrw --bs=1m --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1
+        
+        # Verified write
+        echo 'Run randwrite with size=16M bs=4k'
+        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 40 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randwrite --bs=4k --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1 --do_verify=0 --verify=crc32c --verify_backlog=1
+        
+        echo 'Run randwrite with size=16M bs=128k'
+        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 40 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randwrite --bs=128k --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1 --do_verify=0 --verify=crc32c --verify_backlog=1
+        
+        echo 'Run randwrite with size=16M bs=1m'
+        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 40 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randwrite --bs=1m --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1 --do_verify=0 --verify=crc32c --verify_backlog=1
+
+    - name: Save logs
+      if: always()
+      run: |
+        docker compose -f ./compose/e2e-mount.yml logs > output.log
+        echo 'Showing last 500 log lines of mount service:'
+        docker compose -f ./compose/e2e-mount.yml logs --tail 500 mount
+
+    - name: Check for data races
+      if: always()
+      continue-on-error: true # TODO: remove this comment to enable build failure on data races (after all are fixed)
+      run: grep -A50 'DATA RACE' output.log && exit 1 || exit 0
+
+    - name: Archive logs
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: output-logs
+        path: docker/output.log
+
+    - name: Cleanup
+      if: always()
+      run: docker compose -f ./compose/e2e-mount.yml down --volumes --remove-orphans --rmi all
