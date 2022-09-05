@@ -46,10 +46,6 @@ arangodb collection name rules is character set `azAZ09_-` with a 256 character 
 
 s3 bucket name rule is the set `azAZ09.-` with a 63 characters max.
 
-
-to counteract this, we use the restriction that you cannot have two '.' in a row in aws
-
-
 the rules for collection names is then the following:
 
 1. if the bucket name is a valid arangodb collection name, then nothing is done.
