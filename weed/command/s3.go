@@ -184,7 +184,10 @@ func (s3opt *S3Options) startS3Server() bool {
 	go stats_collect.LoopPushingMetric("s3", stats_collect.SourceName(uint32(*s3opt.port)), metricsAddress, metricsIntervalSec)
 
 	router := mux.NewRouter().SkipClean(true)
-
+	var localFilerSocket string
+	if s3opt.localFilerSocket != nil {
+		localFilerSocket = *s3opt.localFilerSocket
+	}
 	s3ApiServer, s3ApiServer_err := s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
 		Filer:                     filerAddress,
 		Port:                      *s3opt.port,
@@ -194,7 +197,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		GrpcDialOption:            grpcDialOption,
 		AllowEmptyFolder:          *s3opt.allowEmptyFolder,
 		AllowDeleteBucketNotEmpty: *s3opt.allowDeleteBucketNotEmpty,
-		LocalFilerSocket:          *s3opt.localFilerSocket,
+		LocalFilerSocket:          localFilerSocket,
 		DataCenter:                *s3opt.dataCenter,
 	})
 	if s3ApiServer_err != nil {
