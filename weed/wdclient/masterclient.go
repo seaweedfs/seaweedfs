@@ -27,7 +27,7 @@ type MasterClient struct {
 	masters           map[string]pb.ServerAddress
 	grpcDialOption    grpc.DialOption
 
-	vidMap
+	*vidMap
 	vidMapCacheSize  int
 	OnPeerUpdate     func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
 	OnPeerUpdateLock sync.RWMutex
@@ -303,9 +303,12 @@ func (mc *MasterClient) resetVidMap() {
 		DataCenter:      mc.DataCenter,
 		cache:           mc.cache,
 	}
-	mc.vidMap = newVidMap(mc.DataCenter)
-	mc.vidMap.cache = tail
 
+	nvm := newVidMap(mc.DataCenter)
+	nvm.cache = tail
+	mc.vidMap = nvm
+
+	//trim
 	for i := 0; i < mc.vidMapCacheSize && tail.cache != nil; i++ {
 		if i == mc.vidMapCacheSize-1 {
 			tail.cache = nil
