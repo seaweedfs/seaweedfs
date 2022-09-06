@@ -263,7 +263,6 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 
 func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 	// process new volume location
-	glog.V(1).Infof("updateVidMap() resp.VolumeLocation.DataCenter %v", resp.VolumeLocation.DataCenter)
 	loc := Location{
 		Url:        resp.VolumeLocation.Url,
 		PublicUrl:  resp.VolumeLocation.PublicUrl,
@@ -271,21 +270,25 @@ func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
 		GrpcPort:   int(resp.VolumeLocation.GrpcPort),
 	}
 	for _, newVid := range resp.VolumeLocation.NewVids {
-		glog.V(1).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, loc.Url, newVid)
+		glog.V(2).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, loc.Url, newVid)
 		mc.addLocation(newVid, loc)
 	}
 	for _, deletedVid := range resp.VolumeLocation.DeletedVids {
-		glog.V(1).Infof("%s.%s: %s masterClient removes volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedVid)
+		glog.V(2).Infof("%s.%s: %s masterClient removes volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedVid)
 		mc.deleteLocation(deletedVid, loc)
 	}
 	for _, newEcVid := range resp.VolumeLocation.NewEcVids {
-		glog.V(1).Infof("%s.%s: %s masterClient adds ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, newEcVid)
+		glog.V(2).Infof("%s.%s: %s masterClient adds ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, newEcVid)
 		mc.addEcLocation(newEcVid, loc)
 	}
 	for _, deletedEcVid := range resp.VolumeLocation.DeletedEcVids {
-		glog.V(1).Infof("%s.%s: %s masterClient removes ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedEcVid)
+		glog.V(2).Infof("%s.%s: %s masterClient removes ec volume %d", mc.FilerGroup, mc.clientType, loc.Url, deletedEcVid)
 		mc.deleteEcLocation(deletedEcVid, loc)
 	}
+	glog.V(1).Infof("updateVidMap(%s) %s.%s: %s volume add: %d, del: %d, add ec: %d del ec: %d",
+		resp.VolumeLocation.DataCenter, mc.FilerGroup, mc.clientType, loc.Url,
+		len(resp.VolumeLocation.NewVids), len(resp.VolumeLocation.DeletedVids),
+		len(resp.VolumeLocation.NewEcVids), len(resp.VolumeLocation.DeletedEcVids))
 }
 
 func (mc *MasterClient) WithClient(streamingMode bool, fn func(client master_pb.SeaweedClient) error) error {
