@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
@@ -29,31 +28,19 @@ func (vs *VolumeServer) ReadNeedleMeta(ctx context.Context, req *volume_server_p
 	volumeId := needle.VolumeId(req.VolumeId)
 
 	n := &needle.Needle{
-		Id: types.NeedleId(req.NeedleId),
+		Id:    types.NeedleId(req.NeedleId),
+		Flags: 0x08,
 	}
 	size := req.Size
 	offset := req.Offset
 
-	var count int
 	hasVolume := vs.store.HasVolume(volumeId)
 	if !hasVolume {
-		_, hasEcVolume := vs.store.FindEcVolume(volumeId)
-		if !hasEcVolume {
-			return nil, fmt.Errorf("volume not found %d", req.VolumeId)
-		}
-		count, err = vs.store.ReadEcShardNeedleAt(volumeId, n, offset, size)
-	} else {
-		readOption := &storage.ReadOption{
-			AttemptMetaOnly: true,
-			IsMetaOnly:      true,
-		}
-		count, err = vs.store.ReadVolumeNeedleAt(volumeId, n, readOption, offset, size)
+		return nil, fmt.Errorf("not found volume id %d and read needle metadata at ec shards is not supported", req.VolumeId)
 	}
+	err = vs.store.ReadVolumeNeedleMetaAt(volumeId, n, offset, size)
 	if err != nil {
 		return nil, err
-	}
-	if count < 0 {
-		return nil, fmt.Errorf("needle not found %d", n.Id)
 	}
 
 	resp.Cookie = uint32(n.Cookie)

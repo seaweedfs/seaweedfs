@@ -81,49 +81,21 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 }
 
 // read needle at a specific offset
-func (v *Volume) readNeedleAt(n *needle.Needle, readOption *ReadOption, offset int64, size int32) (count int, err error) {
+func (v *Volume) readNeedleMetaAt(n *needle.Needle, offset int64, size int32) (err error) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
-
-	if readOption != nil && readOption.AttemptMetaOnly && size > PagedReadLimit {
-		readOption.VolumeRevision = v.SuperBlock.CompactionRevision
-		err = n.ReadNeedleMeta(v.DataBackend, offset, Size(size), v.Version())
-		if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
-			readOption.IsOutOfRange = true
-			err = n.ReadNeedleMeta(v.DataBackend, offset+int64(MaxPossibleVolumeSize), Size(size), v.Version())
-		}
-		if err != nil {
-			return 0, err
-		}
-		if !n.IsCompressed() && !n.IsChunkedManifest() {
-			readOption.IsMetaOnly = true
-		}
+	// read deleted meta data
+	if size < 0 {
+		size = -size
 	}
-	if readOption == nil || !readOption.IsMetaOnly {
-		err = n.ReadData(v.DataBackend, offset, Size(size), v.Version())
-		if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
-			err = n.ReadData(v.DataBackend, offset+int64(MaxPossibleVolumeSize), Size(size), v.Version())
-		}
-		v.checkReadWriteError(err)
-		if err != nil {
-			return 0, err
-		}
+	err = n.ReadNeedleMeta(v.DataBackend, offset, Size(size), v.Version())
+	if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
+		err = n.ReadNeedleMeta(v.DataBackend, offset+int64(MaxPossibleVolumeSize), Size(size), v.Version())
 	}
-	count = int(n.DataSize)
-	if !n.HasTtl() {
-		return
+	if err != nil {
+		return err
 	}
-	ttlMinutes := n.Ttl.Minutes()
-	if ttlMinutes == 0 {
-		return
-	}
-	if !n.HasLastModifiedDate() {
-		return
-	}
-	if time.Now().Before(time.Unix(0, int64(n.AppendAtNs)).Add(time.Duration(ttlMinutes) * time.Minute)) {
-		return
-	}
-	return -1, ErrorNotFound
+	return nil
 }
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
