@@ -37,6 +37,7 @@ type Volume struct {
 
 	dataFileAccessLock    sync.RWMutex
 	superBlockAccessLock  sync.Mutex
+	compactAccessLock  sync.RWMutex
 	asyncRequestsChan     chan *needle.AsyncRequest
 	lastModifiedTsSeconds uint64 // unix time in seconds
 	lastAppendAtNs        uint64 // unix time in nanoseconds
