@@ -49,7 +49,9 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		for vs.concurrentDownloadLimit != 0 && inFlightDownloadSize > vs.concurrentDownloadLimit {
 			select {
 			case <-r.Context().Done():
-				glog.V(4).Infof("request cancelled from %s: %v", r.RemoteAddr, r.Context().Err())
+				glog.V(0).Infof("request cancelled from %s: %v", r.RemoteAddr, r.Context().Err())
+				w.WriteHeader(http.StatusInternalServerError)
+				vs.inFlightDownloadDataLimitCond.L.Unlock()
 				return
 			default:
 				glog.V(4).Infof("wait because inflight download data %d > %d", inFlightDownloadSize, vs.concurrentDownloadLimit)
