@@ -34,6 +34,9 @@ func (store *ArangodbStore) OnBucketDeletion(bucket string) {
 		glog.Errorf("bucket delete %s: %v", bucket, err)
 		return
 	}
+	store.mu.Lock()
+	delete(store.buckets, bucket)
+	store.mu.Unlock()
 }
 func (store *ArangodbStore) CanDropWholeBucket() bool {
 	return true

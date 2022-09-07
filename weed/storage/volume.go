@@ -284,7 +284,7 @@ func (v *Volume) expiredLongEnough(maxDelayMinutes uint32) bool {
 func (v *Volume) collectStatus() (maxFileKey types.NeedleId, datFileSize int64, modTime time.Time, fileCount, deletedCount, deletedSize uint64, ok bool) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
-	glog.V(3).Infof("collectStatus volume %d", v.Id)
+	glog.V(4).Infof("collectStatus volume %d", v.Id)
 
 	if v.nm == nil || v.DataBackend == nil {
 		return

@@ -96,7 +96,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if err == filer_pb.ErrNotFound {
-			glog.V(1).Infof("Not found %s: %v", path, err)
+			glog.V(2).Infof("Not found %s: %v", path, err)
 			stats.FilerRequestCounter.WithLabelValues(stats.ErrorReadNotFound).Inc()
 			w.WriteHeader(http.StatusNotFound)
 		} else {

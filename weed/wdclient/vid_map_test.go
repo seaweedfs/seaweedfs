@@ -1,15 +1,17 @@
 package wdclient
 
 import (
+	"context"
 	"fmt"
 	"google.golang.org/grpc"
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestLocationIndex(t *testing.T) {
-	vm := vidMap{}
+	vm := &vidMap{}
 	// test must be failed
 	mustFailed := func(length int) {
 		_, err := vm.getLocationIndex(length)
@@ -129,6 +131,43 @@ func TestLookupFileId(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		mc.addLocation(uint32(i), Location{})
 	}
+	wg.Wait()
+}
+
+func TestConcurrentGetLocations(t *testing.T) {
+	mc := NewMasterClient(grpc.EmptyDialOption{}, "", "", "", "", "", nil)
+	location := Location{Url: "TestDataRacing"}
+	mc.addLocation(1, location)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	wg := sync.WaitGroup{}
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					_, found := mc.GetLocations(1)
+					if !found {
+						cancel()
+						t.Error("vid map invalid due to data racing. ")
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	//Simulate vidmap reset with cache when leader changes
+	for i := 0; i < 100; i++ {
+		mc.resetVidMap()
+		mc.addLocation(1, location)
+		time.Sleep(1 * time.Microsecond)
+	}
+	cancel()
 	wg.Wait()
 }
 

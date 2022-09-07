@@ -125,7 +125,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		readOption.IsOutOfRange = false
 		err = n.ReadNeedleMeta(v.DataBackend, nv.Offset.ToActualOffset(), readSize, v.Version())
 	}
-	buf := mem.Allocate(1024 * 1024)
+	buf := mem.Allocate(min(1024*1024, int(size)))
 	defer mem.Free(buf)
 	actualOffset := nv.Offset.ToActualOffset()
 	if readOption.IsOutOfRange {
@@ -133,6 +133,13 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 	}
 
 	return n.ReadNeedleDataInto(v.DataBackend, actualOffset, buf, writer, offset, size)
+}
+
+func min(x, y int) int {
+	if x < y {
+		return x
+	}
+	return y
 }
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
