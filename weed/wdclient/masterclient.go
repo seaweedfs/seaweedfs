@@ -262,12 +262,17 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 }
 
 func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
+	volLocGrpcPort := int(resp.VolumeLocation.GrpcPort)
+	if resp.VolumeLocation.Url == "" || volLocGrpcPort == 0 {
+		glog.V(0).Infof("updateVidMap ignore short heartbeat: %+v", resp)
+		return
+	}
 	// process new volume location
 	loc := Location{
 		Url:        resp.VolumeLocation.Url,
 		PublicUrl:  resp.VolumeLocation.PublicUrl,
 		DataCenter: resp.VolumeLocation.DataCenter,
-		GrpcPort:   int(resp.VolumeLocation.GrpcPort),
+		GrpcPort:   volLocGrpcPort,
 	}
 	for _, newVid := range resp.VolumeLocation.NewVids {
 		glog.V(2).Infof("%s.%s: %s masterClient adds volume %d", mc.FilerGroup, mc.clientType, loc.Url, newVid)

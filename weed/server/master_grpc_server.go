@@ -126,6 +126,10 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
 		if dn == nil {
+			// skip deltaBeat
+			if heartbeat.HasNoVolumes {
+				continue
+			}
 			dcName, rackName := ms.Topo.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
 			dc := ms.Topo.GetOrCreateDataCenter(dcName)
 			rack := dc.GetOrCreateRack(rackName)
