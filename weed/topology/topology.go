@@ -47,6 +47,7 @@ type Topology struct {
 	RaftServerAccessLock sync.RWMutex
 	HashicorpRaft        *hashicorpRaft.Raft
 	UuidAccessLock       sync.RWMutex
+	CreateDCLock         sync.RWMutex
 	UuidMap              map[string][]string
 }
 
@@ -258,6 +259,9 @@ func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 }
 
 func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {
+	t.CreateDCLock.Lock()
+	defer t.CreateDCLock.Unlock()
+
 	for _, c := range t.Children() {
 		dc := c.(*DataCenter)
 		if string(dc.Id()) == dcName {
