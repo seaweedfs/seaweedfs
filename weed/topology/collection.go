@@ -12,8 +12,8 @@ import (
 type Collection struct {
 	Name                     string
 	volumeSizeLimit          uint64
-	replicationAsMin         bool
 	storageType2VolumeLayout *util.ConcurrentReadMap
+	replicationAsMin         bool
 }
 
 func NewCollection(name string, volumeSizeLimit uint64, replicationAsMin bool) *Collection {

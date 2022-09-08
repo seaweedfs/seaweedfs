@@ -104,19 +104,19 @@ func (v *volumesBinaryState) copyState(list *VolumeLocationList) copyState {
 
 // mapping from volume to its locations, inverted from server to volume
 type VolumeLayout struct {
-	growRequestCount int32
 	growRequestTime  time.Time
+	writables        []needle.VolumeId // transient array of writable volume id
+	diskType         types.DiskType
 	rp               *super_block.ReplicaPlacement
 	ttl              *needle.TTL
-	diskType         types.DiskType
 	vid2location     map[needle.VolumeId]*VolumeLocationList
-	writables        []needle.VolumeId // transient array of writable volume id
 	crowded          map[needle.VolumeId]struct{}
 	readonlyVolumes  *volumesBinaryState // readonly volumes
 	oversizedVolumes *volumesBinaryState // oversized volumes
 	volumeSizeLimit  uint64
-	replicationAsMin bool
 	accessLock       sync.RWMutex
+	growRequestCount int32
+	replicationAsMin bool
 }
 
 type VolumeLayoutStats struct {
