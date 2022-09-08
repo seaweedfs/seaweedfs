@@ -262,7 +262,7 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 }
 
 func (mc *MasterClient) updateVidMap(resp *master_pb.KeepConnectedResponse) {
-	if resp.VolumeLocation.Url == "" {
+	if resp.VolumeLocation.Url == "" || resp.VolumeLocation.Url == ":0" {
 		glog.V(0).Infof("updateVidMap ignore short heartbeat: %+v", resp)
 		return
 	}
