@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -195,15 +194,13 @@ func (fs *FilerServer) dataToChunk(fileName, contentType string, data []byte, ch
 		if uploadErr != nil {
 			glog.V(4).Infof("retry later due to upload error: %v", uploadErr)
 			stats.FilerRequestCounter.WithLabelValues(stats.ChunkDoUploadRetry).Inc()
-			if strings.Contains(uploadErr.Error(), "failed to write to replicas for volume") {
-				fid, _ := filer_pb.ToFileIdObject(fileId)
-				fileChunk := filer_pb.FileChunk{
-					FileId: fileId,
-					Offset: chunkOffset,
-					Fid:    fid,
-				}
-				failedFileChunks = append(failedFileChunks, &fileChunk)
+			fid, _ := filer_pb.ToFileIdObject(fileId)
+			fileChunk := filer_pb.FileChunk{
+				FileId: fileId,
+				Offset: chunkOffset,
+				Fid:    fid,
 			}
+			failedFileChunks = append(failedFileChunks, &fileChunk)
 			return uploadErr
 		}
 		return nil
