@@ -392,23 +392,25 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeI
 			}
 			buf.Write(resp.FileContent)
 		}
-		index_size := len(buf.Bytes())
-		index, err := idx.LastValidIndex(buf.Bytes(), index_size, func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
-			resp, err := volumeServerClient.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
-				VolumeId: volumeId,
-				NeedleId: uint64(key),
-				Offset:   offset.ToActualOffset(),
-				Size:     int32(size),
+		if ext == ".idx" {
+			indexSize := len(buf.Bytes())
+			index, err := idx.LastValidIndex(buf.Bytes(), indexSize, func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
+				resp, err := volumeServerClient.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
+					VolumeId: volumeId,
+					NeedleId: uint64(key),
+					Offset:   offset.ToActualOffset(),
+					Size:     int32(size),
+				})
+				if err != nil {
+					return false, fmt.Errorf("to read needle id %d  from volume %d with error %v", key, volumeId, err)
+				}
+				return resp.LastModified <= cutoffTimeAgo, nil
 			})
 			if err != nil {
-				return false, fmt.Errorf("to read needle id %d  from volume %d with error %v", key, volumeId, err)
+				fmt.Fprintf(writer, "Failed to search for last vilad index on volume %d with error %v", volumeId, err)
 			}
-			return resp.LastModified <= cutoffTimeAgo, nil
-		})
-		if err != nil {
-			fmt.Fprintf(writer, "Failed to search for last vilad index on volume %d with error %v", volumeId, err)
+			buf.Truncate(index * types.NeedleMapEntrySize)
 		}
-		buf.Truncate(index * types.NeedleMapEntrySize)
 		idxFilename := getVolumeFileIdFile(tempFolder, dataNodeId, volumeId)
 		err = writeToFile(buf.Bytes(), idxFilename)
 		if err != nil {
