@@ -228,7 +228,11 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		if err := stream.Send(&master_pb.HeartbeatResponse{
 			Leader: string(newLeader),
 		}); err != nil {
-			glog.Warningf("SendHeartbeat.Send response to to %s:%d %v", dn.Ip, dn.Port, err)
+			if dn != nil {
+				glog.Warningf("SendHeartbeat.Send response to %s:%d %v", dn.Ip, dn.Port, err)
+			} else {
+				glog.Warningf("SendHeartbeat.Send response %v", err)
+			}
 			return err
 		}
 	}
