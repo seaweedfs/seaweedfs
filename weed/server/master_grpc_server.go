@@ -70,8 +70,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 
 			message := &master_pb.VolumeLocation{
-				Url:       dn.Url(),
-				PublicUrl: dn.PublicUrl,
+				DataCenter: dn.GetDataCenterId(),
+				Url:        dn.Url(),
+				PublicUrl:  dn.PublicUrl,
 			}
 			for _, v := range dn.GetVolumes() {
 				message.DeletedVids = append(message.DeletedVids, uint32(v.Id))
