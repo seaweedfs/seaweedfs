@@ -418,9 +418,6 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeI
 		}
 
 		return nil
-
-		return nil
-
 	})
 
 }
