@@ -230,12 +230,6 @@ func sortWritableVolumes(volumes []*master_pb.VolumeInformationMessage) {
 	})
 }
 
-func sortReadOnlyVolumes(volumes []*master_pb.VolumeInformationMessage) {
-	slices.SortFunc(volumes, func(a, b *master_pb.VolumeInformationMessage) bool {
-		return a.Id < b.Id
-	})
-}
-
 func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, capacityFunc CapacityFunc, sortCandidatesFn func(volumes []*master_pb.VolumeInformationMessage), applyBalancing bool) (err error) {
 	selectedVolumeCount, volumeMaxCount := 0, 0
 	var nodesWithCapacity []*Node
