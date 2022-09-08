@@ -127,7 +127,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
 		if dn == nil {
 			// skip deltaBeat
-			if heartbeat.DataCenter == "" || heartbeat.Rack == "" {
+			if heartbeat.Ip == "" {
 				continue
 			}
 			dcName, rackName := ms.Topo.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
@@ -185,7 +185,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		if len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes {
-			if heartbeat.DataCenter != "" && heartbeat.Rack != "" {
+			if heartbeat.Ip != "" {
 				dcName, rackName := ms.Topo.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
 				ms.Topo.DataNodeRegistration(dcName, rackName, dn)
 			}
