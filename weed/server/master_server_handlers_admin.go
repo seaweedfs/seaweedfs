@@ -126,7 +126,7 @@ func (ms *MasterServer) submitFromMasterServerHandler(w http.ResponseWriter, r *
 	if ms.Topo.IsLeader() {
 		submitForClientHandler(w, r, func() pb.ServerAddress { return ms.option.Master }, ms.grpcDialOption)
 	} else {
-		masterUrl, err := ms.Topo.Leader()
+		masterUrl, err := ms.Topo.MaybeLeader()
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 		} else {

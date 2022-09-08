@@ -20,14 +20,14 @@ func (s *RaftServer) StatusHandler(w http.ResponseWriter, r *http.Request) {
 		MaxVolumeId: s.topo.GetMaxVolumeId(),
 	}
 
-	if leader, e := s.topo.Leader(); e == nil {
+	if leader, e := s.topo.MaybeLeader(); e == nil {
 		ret.Leader = leader
 	}
 	writeJsonQuiet(w, r, http.StatusOK, ret)
 }
 
 func (s *RaftServer) HealthzHandler(w http.ResponseWriter, r *http.Request) {
-	_, err := s.topo.Leader()
+	_, err := s.topo.MaybeLeader()
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	} else {
