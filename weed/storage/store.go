@@ -41,23 +41,25 @@ type ReadOption struct {
  * A VolumeServer contains one Store
  */
 type Store struct {
-	MasterAddress       pb.ServerAddress
-	grpcDialOption      grpc.DialOption
-	volumeSizeLimit     uint64 // read from the master
-	Ip                  string
-	Port                int
-	GrpcPort            int
-	PublicUrl           string
-	Locations           []*DiskLocation
-	dataCenter          string // optional informaton, overwriting master setting if exists
-	rack                string // optional information, overwriting master setting if exists
-	connected           bool
+	Locations       []*DiskLocation
+	MasterAddress   pb.ServerAddress
+	grpcDialOption  grpc.DialOption
+	Ip              string
+	PublicUrl       string
+	dataCenter      string // optional informaton, overwriting master setting if exists
+	rack            string // optional information, overwriting master setting if exists
+	volumeSizeLimit uint64 // read from the master
+	Port            int
+	GrpcPort        int
+
 	NeedleMapKind       NeedleMapKind
 	NewVolumesChan      chan master_pb.VolumeShortInformationMessage
 	DeletedVolumesChan  chan master_pb.VolumeShortInformationMessage
 	NewEcShardsChan     chan master_pb.VolumeEcShardInformationMessage
 	DeletedEcShardsChan chan master_pb.VolumeEcShardInformationMessage
-	isStopping          bool
+
+	connected  bool
+	isStopping bool
 }
 
 func (s *Store) String() (str string) {

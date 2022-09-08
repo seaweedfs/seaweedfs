@@ -10,21 +10,21 @@ import (
 )
 
 type VolumeInfo struct {
-	Id                needle.VolumeId
+	DiskType          string
+	Collection        string
+	RemoteStorageName string
+	RemoteStorageKey  string
 	Size              uint64
 	ReplicaPlacement  *super_block.ReplicaPlacement
 	Ttl               *needle.TTL
-	DiskType          string
-	Collection        string
-	Version           needle.Version
 	FileCount         int
 	DeleteCount       int
 	DeletedByteCount  uint64
-	ReadOnly          bool
-	CompactRevision   uint32
 	ModifiedAtSecond  int64
-	RemoteStorageName string
-	RemoteStorageKey  string
+	Id                needle.VolumeId
+	CompactRevision   uint32
+	Version           needle.Version
+	ReadOnly          bool
 }
 
 func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err error) {

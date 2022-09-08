@@ -353,13 +353,13 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 }
 
 type VolumeFileScanner4Vacuum struct {
-	version        needle.Version
-	v              *Volume
 	dstBackend     backend.BackendStorageFile
+	v              *Volume
 	nm             *needle_map.MemDb
 	newOffset      int64
 	now            uint64
 	writeThrottler *util.WriteThrottler
+	version        needle.Version
 }
 
 func (scanner *VolumeFileScanner4Vacuum) VisitSuperBlock(superBlock super_block.SuperBlock) error {
