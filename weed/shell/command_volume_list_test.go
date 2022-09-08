@@ -90,5 +90,5 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 	return topo
 }
 
-//go:embed sample.topo.txt
+//go:embed volume.list.txt
 var topoData string
