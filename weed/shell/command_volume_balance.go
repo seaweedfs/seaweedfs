@@ -213,6 +213,18 @@ func (n *Node) localVolumeNextRatio(capacityFunc CapacityFunc) float64 {
 	return divide(len(n.selectedVolumes)+1, capacityFunc(n.info))
 }
 
+func (n *Node) isOneVolumeOnly() bool {
+	if len(n.selectedVolumes) != 1 {
+		return false
+	}
+	for _, disk := range n.info.DiskInfos {
+		if disk.VolumeCount == 1 && disk.MaxVolumeCount == 1 {
+			return true
+		}
+	}
+	return false
+}
+
 func (n *Node) selectVolumes(fn func(v *master_pb.VolumeInformationMessage) bool) {
 	n.selectedVolumes = make(map[uint32]*master_pb.VolumeInformationMessage)
 	for _, diskInfo := range n.info.DiskInfos {
@@ -257,7 +269,14 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 			fmt.Printf("no volume server found with capacity for %s", diskType.ReadableString())
 			return nil
 		}
-		fullNode := nodesWithCapacity[len(nodesWithCapacity)-1]
+
+		var fullNode *Node
+		for fullNodeIndex := len(nodesWithCapacity) - 1; fullNodeIndex >= 0; fullNodeIndex-- {
+			fullNode = nodesWithCapacity[fullNodeIndex]
+			if !fullNode.isOneVolumeOnly() {
+				break
+			}
+		}
 		var candidateVolumes []*master_pb.VolumeInformationMessage
 		for _, v := range fullNode.selectedVolumes {
 			candidateVolumes = append(candidateVolumes, v)
@@ -383,6 +402,18 @@ func adjustAfterMove(v *master_pb.VolumeInformationMessage, volumeReplicas map[u
 			replica.location.dc == fullNode.dc {
 			loc := newLocation(emptyNode.dc, emptyNode.rack, emptyNode.info)
 			replica.location = &loc
+			for diskType, diskInfo := range fullNode.info.DiskInfos {
+				if diskType == v.DiskType {
+					diskInfo.VolumeCount--
+					diskInfo.FreeVolumeCount++
+				}
+			}
+			for diskType, diskInfo := range emptyNode.info.DiskInfos {
+				if diskType == v.DiskType {
+					diskInfo.VolumeCount++
+					diskInfo.FreeVolumeCount--
+				}
+			}
 			return
 		}
 	}
