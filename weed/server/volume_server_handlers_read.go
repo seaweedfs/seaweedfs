@@ -328,14 +328,13 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 		return nil
 	}
 
-	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
+	return processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
 		if _, e = rs.Seek(offset, 0); e != nil {
 			return e
 		}
 		_, e = io.CopyN(writer, rs, size)
 		return e
 	})
-	return nil
 }
 
 func (vs *VolumeServer) streamWriteResponseContent(filename string, mimeType string, volumeId needle.VolumeId, n *needle.Needle, w http.ResponseWriter, r *http.Request, readOption *storage.ReadOption) {
