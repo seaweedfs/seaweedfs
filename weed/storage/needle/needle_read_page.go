@@ -1,43 +1,12 @@
 package needle
 
 import (
-	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 )
-
-// ReadNeedleDataInto uses a needle without n.Data to read the content into an io.Writer
-func (n *Needle) ReadNeedleDataInto(r backend.BackendStorageFile, volumeOffset int64, buf []byte, writer io.Writer, needleOffset int64, size int64) (err error) {
-	crc := CRC(0)
-	for x := needleOffset; x < needleOffset+size; x += int64(len(buf)) {
-		count, err := n.ReadNeedleData(r, volumeOffset, buf, x)
-		toWrite := min(int64(count), needleOffset+size-x)
-		if toWrite > 0 {
-			crc = crc.Update(buf[0:toWrite])
-			if _, err = writer.Write(buf[0:toWrite]); err != nil {
-				return fmt.Errorf("ReadNeedleData write: %v", err)
-			}
-		}
-		if err != nil {
-			if err == io.EOF {
-				err = nil
-				break
-			}
-			return fmt.Errorf("ReadNeedleData: %v", err)
-		}
-		if count <= 0 {
-			break
-		}
-	}
-	if needleOffset == 0 && size == int64(n.DataSize) && (n.Checksum != crc && uint32(n.Checksum) != crc.Value()) {
-		// the crc.Value() function is to be deprecated. this double checking is for backward compatible.
-		return fmt.Errorf("ReadNeedleData checksum %v expected %v", crc, n.Checksum)
-	}
-	return nil
-}
 
 // ReadNeedleData uses a needle without n.Data to read the content
 // volumeOffset: the offset within the volume
