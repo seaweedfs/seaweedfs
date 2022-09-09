@@ -137,16 +137,12 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		// possibly re-read needle offset if volume is compacted
 		if readOption.VolumeRevision != v.SuperBlock.CompactionRevision {
 			// the volume is compacted
-			readOption.IsOutOfRange = false
 			nv, ok = v.nm.Get(n.Id)
 			if !ok || nv.Offset.IsZero() {
 				v.dataFileAccessLock.RUnlock()
 				return ErrorNotFound
 			}
-			actualOffset := nv.Offset.ToActualOffset()
-			if readOption.IsOutOfRange {
-				actualOffset += int64(MaxPossibleVolumeSize)
-			}
+			actualOffset = nv.Offset.ToActualOffset()
 		}
 		count, err := n.ReadNeedleData(v.DataBackend, actualOffset, buf, x)
 		v.dataFileAccessLock.RUnlock()
