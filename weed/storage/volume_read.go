@@ -143,6 +143,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 				return ErrorNotFound
 			}
 			actualOffset = nv.Offset.ToActualOffset()
+			readOption.VolumeRevision = v.SuperBlock.CompactionRevision
 		}
 		count, err := n.ReadNeedleData(v.DataBackend, actualOffset, buf, x)
 		v.dataFileAccessLock.RUnlock()
