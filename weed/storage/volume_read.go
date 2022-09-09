@@ -134,12 +134,9 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 
 	// read needle data
 	crc := needle.CRC(0)
-	r := v.DataBackend
-	volumeOffset := actualOffset
-	needleOffset := offset
-	for x := needleOffset; x < needleOffset+size; x += int64(len(buf)) {
-		count, err := n.ReadNeedleData(r, volumeOffset, buf, x)
-		toWrite := min(count, int(needleOffset+size-x))
+	for x := offset; x < offset+size; x += int64(len(buf)) {
+		count, err := n.ReadNeedleData(v.DataBackend, actualOffset, buf, x)
+		toWrite := min(count, int(offset+size-x))
 		if toWrite > 0 {
 			crc = crc.Update(buf[0:toWrite])
 			if _, err = writer.Write(buf[0:toWrite]); err != nil {
@@ -157,7 +154,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 			break
 		}
 	}
-	if needleOffset == 0 && size == int64(n.DataSize) && (n.Checksum != crc && uint32(n.Checksum) != crc.Value()) {
+	if offset == 0 && size == int64(n.DataSize) && (n.Checksum != crc && uint32(n.Checksum) != crc.Value()) {
 		// the crc.Value() function is to be deprecated. this double checking is for backward compatible.
 		return fmt.Errorf("ReadNeedleData checksum %v expected %v", crc, n.Checksum)
 	}
