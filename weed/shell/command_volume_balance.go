@@ -3,13 +3,14 @@ package shell
 import (
 	"flag"
 	"fmt"
+	"io"
+	"os"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"golang.org/x/exp/slices"
-	"io"
-	"os"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -132,7 +133,7 @@ func balanceVolumeServersByDiskType(commandEnv *CommandEnv, diskType types.DiskT
 			return v.DiskType == string(diskType)
 		})
 	}
-	if err := balanceSelectedVolume(commandEnv, diskType, volumeReplicas, nodes, capacityByMaxVolumeCount(diskType), sortWritableVolumes, applyBalancing); err != nil {
+	if err := balanceSelectedVolume(commandEnv, diskType, volumeReplicas, nodes, capacityByFreeVolumeCount(diskType), sortWritableVolumes, applyBalancing); err != nil {
 		return err
 	}
 
@@ -162,7 +163,7 @@ func collectVolumeDiskTypes(t *master_pb.TopologyInfo) (diskTypes []types.DiskTy
 	for _, dc := range t.DataCenterInfos {
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {
-				for diskType, _ := range dn.DiskInfos {
+				for diskType := range dn.DiskInfos {
 					if _, found := knownTypes[diskType]; !found {
 						knownTypes[diskType] = true
 					}
@@ -170,7 +171,7 @@ func collectVolumeDiskTypes(t *master_pb.TopologyInfo) (diskTypes []types.DiskTy
 			}
 		}
 	}
-	for diskType, _ := range knownTypes {
+	for diskType := range knownTypes {
 		diskTypes = append(diskTypes, types.ToDiskType(diskType))
 	}
 	return
