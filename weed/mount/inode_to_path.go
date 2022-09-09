@@ -80,7 +80,7 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 		}
 		if !isHardlink {
 			for _, found := i.inode2path[inode]; found; inode++ {
-				_, found = i.inode2path[inode]
+				_, found = i.inode2path[inode+1]
 			}
 		}
 	}
