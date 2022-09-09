@@ -104,8 +104,27 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			return err
 		}
 
-		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
+		if !ms.Topo.IsLeader() {
+			// tell the volume servers about the leader
+			newLeader, err := ms.Topo.Leader()
+			if err != nil {
+				glog.Warningf("SendHeartbeat find leader: %v", err)
+				return err
+			}
+			if err := stream.Send(&master_pb.HeartbeatResponse{
+				Leader: string(newLeader),
+			}); err != nil {
+				if dn != nil {
+					glog.Warningf("SendHeartbeat.Send response to %s:%d %v", dn.Ip, dn.Port, err)
+				} else {
+					glog.Warningf("SendHeartbeat.Send response %v", err)
+				}
+				return err
+			}
+			continue
+		}
 
+		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
 		if dn == nil {
 			dcName, rackName := ms.Topo.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
 			dc := ms.Topo.GetOrCreateDataCenter(dcName)
@@ -215,19 +234,6 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 || len(message.NewEcVids) > 0 || len(message.DeletedEcVids) > 0 {
 			ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: message})
-		}
-
-		// tell the volume servers about the leader
-		newLeader, err := ms.Topo.Leader()
-		if err != nil {
-			glog.Warningf("SendHeartbeat find leader: %v", err)
-			return err
-		}
-		if err := stream.Send(&master_pb.HeartbeatResponse{
-			Leader: string(newLeader),
-		}); err != nil {
-			glog.Warningf("SendHeartbeat.Send response to to %s:%d %v", dn.Ip, dn.Port, err)
-			return err
 		}
 	}
 }
