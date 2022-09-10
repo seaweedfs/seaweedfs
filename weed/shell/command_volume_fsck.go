@@ -75,7 +75,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.forcePurging = fsckCommand.Bool("forcePurging", false, "delete missing data from volumes in one replica used together with applyPurging")
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
 	tempPath := fsckCommand.String("tempPath", path.Join(os.TempDir()), "path for temporary idx files")
-	cutoffTimeAgo := fsckCommand.Uint64("cutoffTimeAgo", uint64(time.Now().Add(-time.Minute*30).Unix()), "the offset of filtering files on volume server")
+	cutoffTimeAgo := fsckCommand.Duration("cutoffTimeAgo", 30*time.Minute, "the offset of filtering files on volume server")
 
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
@@ -130,7 +130,8 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 				delete(volumeIdToVInfo, volumeId)
 				continue
 			}
-			err = c.collectOneVolumeFileIds(tempFolder, dataNodeId, volumeId, vinfo, *verbose, writer, *cutoffTimeAgo)
+			startFrom := time.Now().Add(-*cutoffTimeAgo).UnixNano()
+			err = c.collectOneVolumeFileIds(tempFolder, dataNodeId, volumeId, vinfo, *verbose, writer, uint64(startFrom))
 			if err != nil {
 				return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, err)
 			}
@@ -355,7 +356,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	return nil
 }
 
-func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeId string, volumeId uint32, vinfo VInfo, verbose bool, writer io.Writer, cutoffTimeAgo uint64) error {
+func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeId string, volumeId uint32, vinfo VInfo, verbose bool, writer io.Writer, startFrom uint64) error {
 
 	if verbose {
 		fmt.Fprintf(writer, "collecting volume %d file ids from %s ...\n", volumeId, vinfo.server)
@@ -403,7 +404,7 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeI
 				if err != nil {
 					return false, fmt.Errorf("to read needle meta with id %d  from volume %d with error %v", key, volumeId, err)
 				}
-				return resp.LastModified <= cutoffTimeAgo, nil
+				return resp.LastModified <= startFrom, nil
 			})
 			if err != nil {
 				fmt.Fprintf(writer, "Failed to search for last vilad index on volume %d with error %v", volumeId, err)
