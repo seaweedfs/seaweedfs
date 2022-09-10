@@ -4,8 +4,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
-// firstInvalidIndex find the first index that do not satisfy the validation function's requirement.
-func FirstInvalidIndex(bytes []byte, validation func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error)) (int, error) {
+// firstInvalidIndex find the first index the failed lessThanOrEqualToFn function's requirement.
+func FirstInvalidIndex(bytes []byte, lessThanOrEqualToFn func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error)) (int, error) {
 	left, right := 0, len(bytes)/types.NeedleMapEntrySize-1
 	index := right + 1
 	for left <= right {
@@ -14,7 +14,7 @@ func FirstInvalidIndex(bytes []byte, validation func(key types.NeedleId, offset 
 		key := types.BytesToNeedleId(bytes[loc : loc+types.NeedleIdSize])
 		offset := types.BytesToOffset(bytes[loc+types.NeedleIdSize : loc+types.NeedleIdSize+types.OffsetSize])
 		size := types.BytesToSize(bytes[loc+types.NeedleIdSize+types.OffsetSize : loc+types.NeedleIdSize+types.OffsetSize+types.SizeSize])
-		res, err := validation(key, offset, size)
+		res, err := lessThanOrEqualToFn(key, offset, size)
 		if err != nil {
 			return -1, err
 		}
