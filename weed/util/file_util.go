@@ -2,6 +2,7 @@ package util
 
 import (
 	"errors"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -121,4 +122,10 @@ func WriteFile(name string, data []byte, perm os.FileMode) error {
 		err = err1
 	}
 	return err
+}
+
+func IsMultipartUploadFile(dir string, name string) bool {
+	return strings.HasPrefix(dir, "/buckets/") &&
+		strings.Contains(dir, "/"+s3_constants.MultipartUploadsFolder+"/") &&
+		strings.HasSuffix(name, ".part")
 }
