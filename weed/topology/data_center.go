@@ -29,7 +29,7 @@ func (dc *DataCenter) GetOrCreateRack(rackName string) *Rack {
 		}
 	}
 	rack := NewRack(rackName)
-	dc.LinkChildNode(rack)
+	dc.doLinkChildNode(rack)
 	return rack
 }
 

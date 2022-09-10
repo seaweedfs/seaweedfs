@@ -267,7 +267,7 @@ func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {
 		}
 	}
 	dc := NewDataCenter(dcName)
-	t.LinkChildNode(dc)
+	t.doLinkChildNode(dc)
 	return dc
 }
 
