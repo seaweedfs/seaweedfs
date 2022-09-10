@@ -37,6 +37,14 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 
 	var lastLogTsNs = time.Now().UnixNano()
 	processEventFnWithOffset := pb.AddOffsetFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if option.storageClass != nil {
+			storageClass := *option.storageClass
+			if storageClass == "None" {
+				delete(resp.EventNotification.NewEntry.Extended, s3_constants.AmzStorageClass)
+			} else if storageClass != "" {
+				resp.EventNotification.NewEntry.Extended[s3_constants.AmzStorageClass] = []byte(storageClass)
+			}
+		}
 		processor.AddSyncJob(resp)
 		return nil
 	}, 3*time.Second, func(counter int64, lastTsNs int64) error {

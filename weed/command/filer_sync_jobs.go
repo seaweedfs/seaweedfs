@@ -54,7 +54,7 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 
 		// if is the oldest job, write down the watermark
 		isOldest := true
-		for t, _ := range t.activeJobs {
+		for t := range t.activeJobs {
 			if resp.TsNs > t {
 				isOldest = false
 				break
