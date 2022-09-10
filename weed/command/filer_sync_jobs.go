@@ -4,7 +4,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"strings"
 	"sync"
 )
 
@@ -31,7 +33,11 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 	if filer_pb.IsEmpty(resp) {
 		return
 	}
-
+	if strings.HasPrefix(resp.Directory, "/buckets/") &&
+		strings.Contains(resp.Directory, "/"+s3_constants.MultipartUploadsFolder+"/") &&
+		strings.HasSuffix(resp.EventNotification.NewEntry.Name, ".part") {
+		return
+	}
 	t.activeJobsLock.Lock()
 	defer t.activeJobsLock.Unlock()
 
@@ -54,7 +60,7 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 
 		// if is the oldest job, write down the watermark
 		isOldest := true
-		for t, _ := range t.activeJobs {
+		for t := range t.activeJobs {
 			if resp.TsNs > t {
 				isOldest = false
 				break
