@@ -1,18 +1,17 @@
 package idx
 
 import (
-	"errors"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
-// LastValidIndex find the last index that satisfy the validation function's requirement.
-func LastValidIndex(bytes []byte, indexLength int, validation func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error)) (int, error) {
-	left, right := 0, indexLength/types.NeedleMapEntrySize-1
-	index := -1
+// firstInvalidIndex find the first index that do not satisfy the validation function's requirement.
+func FirstInvalidIndex(bytes []byte, validation func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error)) (int, error) {
+	left, right := 0, len(bytes)/types.NeedleMapEntrySize-1
+	index := right + 1
 	for left <= right {
 		mid := left + (right-left)>>1
 		loc := mid * types.NeedleMapEntrySize
-		key := types.BytesToNeedleId(bytes[loc:types.NeedleIdSize])
+		key := types.BytesToNeedleId(bytes[loc : loc+types.NeedleIdSize])
 		offset := types.BytesToOffset(bytes[loc+types.NeedleIdSize : loc+types.NeedleIdSize+types.OffsetSize])
 		size := types.BytesToSize(bytes[loc+types.NeedleIdSize+types.OffsetSize : loc+types.NeedleIdSize+types.OffsetSize+types.SizeSize])
 		res, err := validation(key, offset, size)
@@ -20,14 +19,11 @@ func LastValidIndex(bytes []byte, indexLength int, validation func(key types.Nee
 			return -1, err
 		}
 		if res {
-			index = mid
 			left = mid + 1
 		} else {
+			index = mid
 			right = mid - 1
 		}
-	}
-	if index == -1 {
-		return 0, errors.New("no valid record")
 	}
 	return index, nil
 }

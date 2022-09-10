@@ -392,9 +392,8 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeI
 			}
 			buf.Write(resp.FileContent)
 		}
-		if ext == ".idx" {
-			indexSize := len(buf.Bytes())
-			index, err := idx.LastValidIndex(buf.Bytes(), indexSize, func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
+		if vinfo.isReadOnly == false {
+			index, err := idx.FirstInvalidIndex(buf.Bytes(), func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
 				resp, err := volumeServerClient.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
 					VolumeId: volumeId,
 					NeedleId: uint64(key),
@@ -402,7 +401,7 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeI
 					Size:     int32(size),
 				})
 				if err != nil {
-					return false, fmt.Errorf("to read needle id %d  from volume %d with error %v", key, volumeId, err)
+					return false, fmt.Errorf("to read needle meta with id %d  from volume %d with error %v", key, volumeId, err)
 				}
 				return resp.LastModified <= cutoffTimeAgo, nil
 			})
