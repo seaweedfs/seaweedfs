@@ -404,7 +404,7 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeI
 				if err != nil {
 					return false, fmt.Errorf("to read needle meta with id %d  from volume %d with error %v", key, volumeId, err)
 				}
-				return resp.LastModified <= startFrom, nil
+				return resp.LastModified <= cutoffFrom, nil
 			})
 			if err != nil {
 				fmt.Fprintf(writer, "Failed to search for last vilad index on volume %d with error %v", volumeId, err)
