@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"net/http"
 	"syscall"
@@ -45,8 +46,8 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 
 	fh.dirtyPages.writerPattern.MonitorWriteAt(int64(in.Offset), int(in.Size))
 
-	fh.Lock()
-	defer fh.Unlock()
+	fh.orderedMutex.Acquire(context.Background(), 1)
+	defer fh.orderedMutex.Release(1)
 
 	entry := fh.entry
 	if entry == nil {

@@ -55,8 +55,8 @@ func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
 		return fuse.ENOENT
 	}
 
-	fh.Lock()
-	defer fh.Unlock()
+	fh.orderedMutex.Acquire(context.Background(), 1)
+	defer fh.orderedMutex.Release(1)
 
 	return wfs.doFlush(fh, in.Uid, in.Gid)
 }
@@ -87,8 +87,8 @@ func (wfs *WFS) Fsync(cancel <-chan struct{}, in *fuse.FsyncIn) (code fuse.Statu
 		return fuse.ENOENT
 	}
 
-	fh.Lock()
-	defer fh.Unlock()
+	fh.orderedMutex.Acquire(context.Background(), 1)
+	defer fh.orderedMutex.Release(1)
 
 	return wfs.doFlush(fh, in.Uid, in.Gid)
 

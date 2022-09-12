@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -43,8 +44,8 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	}
 
 	// lock source and target file handles
-	fhOut.Lock()
-	defer fhOut.Unlock()
+	fhOut.orderedMutex.Acquire(context.Background(), 1)
+	defer fhOut.orderedMutex.Release(1)
 	fhOut.entryLock.Lock()
 	defer fhOut.entryLock.Unlock()
 
@@ -53,8 +54,8 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	}
 
 	if fhIn.fh != fhOut.fh {
-		fhIn.Lock()
-		defer fhIn.Unlock()
+		fhIn.orderedMutex.Acquire(context.Background(), 1)
+		defer fhIn.orderedMutex.Release(1)
 		fhIn.entryLock.Lock()
 		defer fhIn.entryLock.Unlock()
 	}
