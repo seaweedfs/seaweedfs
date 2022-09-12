@@ -158,7 +158,7 @@ func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serv
 		return nil
 	}); grpcErr != nil {
 		glog.V(0).Infof("connect to %s: %v", vs.GetMaster(), grpcErr)
-		return resp, fmt.Errorf("grpc VolumeMarkReadonly with master: %v", vs.GetMaster(), grpcErr)
+		return resp, fmt.Errorf("grpc VolumeMarkReadonly with master %s: %v", vs.GetMaster(), grpcErr)
 	}
 
 	err := vs.store.MarkVolumeReadonly(needle.VolumeId(req.VolumeId))
@@ -186,7 +186,7 @@ func (vs *VolumeServer) VolumeMarkWritable(ctx context.Context, req *volume_serv
 		return nil
 	}); grpcErr != nil {
 		glog.V(0).Infof("connect to %s: %v", vs.GetMaster(), grpcErr)
-		return resp, fmt.Errorf("grpc VolumeMarkWritable with master: %v", vs.GetMaster(), grpcErr)
+		return resp, fmt.Errorf("grpc VolumeMarkWritable with master %s: %v", vs.GetMaster(), grpcErr)
 	}
 
 	err := vs.store.MarkVolumeWritable(needle.VolumeId(req.VolumeId))
