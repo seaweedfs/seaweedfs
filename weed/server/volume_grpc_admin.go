@@ -148,6 +148,19 @@ func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serv
 
 	resp := &volume_server_pb.VolumeMarkReadonlyResponse{}
 
+	if grpcErr := pb.WithMasterClient(false, vs.GetMaster(), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		_, err := client.VolumeMarkReadonly(context.Background(), &master_pb.VolumeMarkReadonlyRequest{
+			VolumeId: req.VolumeId,
+		})
+		if err != nil {
+			return fmt.Errorf("set volume %d to read only on master: %v", req.VolumeId, err)
+		}
+		return nil
+	}); grpcErr != nil {
+		glog.V(0).Infof("connect to %s: %v", vs.GetMaster(), grpcErr)
+		return resp, fmt.Errorf("grpc VolumeMarkReadonly with master: %v", vs.GetMaster(), grpcErr)
+	}
+
 	err := vs.store.MarkVolumeReadonly(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
@@ -162,6 +175,19 @@ func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serv
 func (vs *VolumeServer) VolumeMarkWritable(ctx context.Context, req *volume_server_pb.VolumeMarkWritableRequest) (*volume_server_pb.VolumeMarkWritableResponse, error) {
 
 	resp := &volume_server_pb.VolumeMarkWritableResponse{}
+
+	if grpcErr := pb.WithMasterClient(false, vs.GetMaster(), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		_, err := client.VolumeMarkWritable(context.Background(), &master_pb.VolumeMarkWritableRequest{
+			VolumeId: req.VolumeId,
+		})
+		if err != nil {
+			return fmt.Errorf("set volume %d to writable on master: %v", req.VolumeId, err)
+		}
+		return nil
+	}); grpcErr != nil {
+		glog.V(0).Infof("connect to %s: %v", vs.GetMaster(), grpcErr)
+		return resp, fmt.Errorf("grpc VolumeMarkWritable with master: %v", vs.GetMaster(), grpcErr)
+	}
 
 	err := vs.store.MarkVolumeWritable(needle.VolumeId(req.VolumeId))
 
