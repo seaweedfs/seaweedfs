@@ -127,10 +127,10 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
 		if dn == nil {
-			// skip deltaBeat
+			// Skip delda for versions volume server better than 3.28 https://github.com/seaweedfs/seaweedfs/pull/3630
 			if heartbeat.Ip == "" {
 				continue
-			}
+			} // ToDo must be removed after update major version
 			dcName, rackName := ms.Topo.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
 			dc := ms.Topo.GetOrCreateDataCenter(dcName)
 			rack := dc.GetOrCreateRack(rackName)
