@@ -144,13 +144,13 @@ func (d *Disk) String() string {
 	return fmt.Sprintf("Disk:%s, volumes:%v, ecShards:%v", d.NodeImpl.String(), d.volumes, d.ecShards)
 }
 
-func (d *Disk) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO bool) {
+func (d *Disk) AddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
 	d.Lock()
 	defer d.Unlock()
 	return d.doAddOrUpdateVolume(v)
 }
 
-func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO bool) {
+func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
 	deltaDiskUsages := newDiskUsages()
 	deltaDiskUsage := deltaDiskUsages.getOrCreateDisk(types.ToDiskType(v.DiskType))
 	if oldV, ok := d.volumes[v.Id]; !ok {
@@ -175,7 +175,7 @@ func (d *Disk) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO boo
 			}
 			d.UpAdjustDiskUsageDelta(deltaDiskUsages)
 		}
-		isChangedRO = d.volumes[v.Id].ReadOnly != v.ReadOnly
+		isChanged = d.volumes[v.Id].ReadOnly != v.ReadOnly
 		d.volumes[v.Id] = v
 	}
 	return
