@@ -113,7 +113,7 @@ func makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, 
 			return nil
 		}
 		if filer_pb.IsCreate(resp) {
-			if strings.Contains(message.NewParentPath, "/"+s3_constants.MultipartUploadsFolder+"/") {
+			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
 				return nil
 			}
 			if !filer.HasData(message.NewEntry) {
@@ -165,8 +165,8 @@ func makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, 
 			glog.V(2).Infof("update: %+v", resp)
 			glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
 			if err := client.DeleteFile(oldDest); err != nil {
-				if !strings.Contains(resp.Directory, "/"+s3_constants.MultipartUploadsFolder+"/") {
-					return err
+				if isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {
+					return nil
 				}
 			}
 			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, dest)
@@ -257,4 +257,10 @@ func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer
 		})
 		return err
 	})
+}
+
+func isMultipartUploadFile(dir string, name string) bool {
+	return strings.HasPrefix(dir, "/buckets/") &&
+		strings.Contains(dir, "/"+s3_constants.MultipartUploadsFolder+"/") &&
+		strings.HasSuffix(name, ".part")
 }
