@@ -70,8 +70,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 
 			message := &master_pb.VolumeLocation{
-				Url:       dn.Url(),
-				PublicUrl: dn.PublicUrl,
+				DataCenter: dn.GetDataCenterId(),
+				Url:        dn.Url(),
+				PublicUrl:  dn.PublicUrl,
 			}
 			for _, v := range dn.GetVolumes() {
 				message.DeletedVids = append(message.DeletedVids, uint32(v.Id))
@@ -126,6 +127,10 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		ms.Topo.Sequence.SetMax(heartbeat.MaxFileKey)
 		if dn == nil {
+			// Skip delta heartbeat for volume server versions  better than 3.28 https://github.com/seaweedfs/seaweedfs/pull/3630
+			if heartbeat.Ip == "" {
+				continue
+			} // ToDo must be removed after update major version
 			dcName, rackName := ms.Topo.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
 			dc := ms.Topo.GetOrCreateDataCenter(dcName)
 			rack := dc.GetOrCreateRack(rackName)
@@ -181,8 +186,10 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		if len(heartbeat.Volumes) > 0 || heartbeat.HasNoVolumes {
-			dcName, rackName := ms.Topo.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
-			ms.Topo.DataNodeRegistration(dcName, rackName, dn)
+			if heartbeat.Ip != "" {
+				dcName, rackName := ms.Topo.Configuration.Locate(heartbeat.Ip, heartbeat.DataCenter, heartbeat.Rack)
+				ms.Topo.DataNodeRegistration(dcName, rackName, dn)
+			}
 
 			// process heartbeat.Volumes
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("Volumes").Inc()
