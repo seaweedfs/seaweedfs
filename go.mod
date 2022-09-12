@@ -65,7 +65,7 @@ require (
 	github.com/magiconair/properties v1.8.6 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-ieproxy v0.0.3 // indirect
-	github.com/mattn/go-isatty v0.0.14 // indirect
+	github.com/mattn/go-isatty v0.0.16 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
@@ -128,15 +128,15 @@ require (
 	google.golang.org/protobuf v1.28.1
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	modernc.org/b v1.0.0 // indirect
-	modernc.org/cc/v3 v3.36.0 // indirect
-	modernc.org/ccgo/v3 v3.16.8 // indirect
-	modernc.org/libc v1.16.19 // indirect
+	modernc.org/cc/v3 v3.37.0 // indirect
+	modernc.org/ccgo/v3 v3.16.9 // indirect
+	modernc.org/libc v1.18.0 // indirect
 	modernc.org/mathutil v1.5.0 // indirect
-	modernc.org/memory v1.1.1 // indirect
+	modernc.org/memory v1.3.0 // indirect
 	modernc.org/opt v0.1.1 // indirect
-	modernc.org/sqlite v1.18.1
+	modernc.org/sqlite v1.18.2
 	modernc.org/strutil v1.1.3
-	modernc.org/token v1.0.0 // indirect
+	modernc.org/token v1.0.1 // indirect
 )
 
 require (
