@@ -209,7 +209,6 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20210918120811-547c13e3eb00 // indirect
 	github.com/pingcap/kvproto v0.0.0-20220106070556-3fa8fa04f898 // indirect
 	github.com/pingcap/log v0.0.0-20211215031037-e024ba4eb0ee // indirect
-	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/subosito/gotenv v1.4.1 // indirect
 	github.com/tikv/pd/client v0.0.0-20220216070739-26c668271201 // indirect
