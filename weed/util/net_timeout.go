@@ -84,13 +84,13 @@ func (c *Conn) Close() error {
 }
 
 func NewListener(addr string, timeout time.Duration) (ipListner net.Listener, err error) {
-	listner, err := net.Listen("tcp", addr)
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return
 	}
 
 	ipListner = &Listener{
-		Listener:     listner,
+		Listener:     listener,
 		ReadTimeout:  timeout,
 		WriteTimeout: timeout,
 	}
@@ -99,26 +99,26 @@ func NewListener(addr string, timeout time.Duration) (ipListner net.Listener, er
 }
 
 func NewIpAndLocalListeners(host string, port int, timeout time.Duration) (ipListner net.Listener, localListener net.Listener, err error) {
-	listner, err := net.Listen("tcp", JoinHostPort(host, port))
+	listener, err := net.Listen("tcp", JoinHostPort(host, port))
 	if err != nil {
 		return
 	}
 
 	ipListner = &Listener{
-		Listener:     listner,
+		Listener:     listener,
 		ReadTimeout:  timeout,
 		WriteTimeout: timeout,
 	}
 
 	if host != "localhost" && host != "" && host != "0.0.0.0" && host != "127.0.0.1" && host != "[::]" && host != "[::1]" {
-		listner, err = net.Listen("tcp", JoinHostPort("localhost", port))
+		listener, err = net.Listen("tcp", JoinHostPort("localhost", port))
 		if err != nil {
 			glog.V(0).Infof("skip starting on %s:%d: %v", host, port, err)
 			return ipListner, nil, nil
 		}
 
 		localListener = &Listener{
-			Listener:     listner,
+			Listener:     listener,
 			ReadTimeout:  timeout,
 			WriteTimeout: timeout,
 		}
