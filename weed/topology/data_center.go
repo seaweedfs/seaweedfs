@@ -20,14 +20,16 @@ func NewDataCenter(id string) *DataCenter {
 }
 
 func (dc *DataCenter) GetOrCreateRack(rackName string) *Rack {
-	for _, c := range dc.Children() {
+	dc.Lock()
+	defer dc.Unlock()
+	for _, c := range dc.children {
 		rack := c.(*Rack)
 		if string(rack.Id()) == rackName {
 			return rack
 		}
 	}
 	rack := NewRack(rackName)
-	dc.LinkChildNode(rack)
+	dc.doLinkChildNode(rack)
 	return rack
 }
 

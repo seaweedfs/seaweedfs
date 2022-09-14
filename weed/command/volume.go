@@ -65,7 +65,6 @@ type VolumeServerOptions struct {
 	preStopSeconds            *int
 	metricsHttpPort           *int
 	// pulseSeconds          *int
-	enableTcp                 *bool
 	inflightUploadDataTimeout *time.Duration
 }
 
@@ -96,7 +95,6 @@ func init() {
 	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
 	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
-	v.enableTcp = cmdVolume.Flag.Bool("tcp", false, "<experimental> enable tcp port")
 	v.inflightUploadDataTimeout = cmdVolume.Flag.Duration("inflightUploadDataTimeout", 60*time.Second, "inflight upload data wait timeout of volume servers")
 }
 
@@ -258,11 +256,6 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		}
 	}
 
-	// starting tcp server
-	if *v.enableTcp {
-		go v.startTcpService(volumeServer)
-	}
-
 	// starting the cluster http server
 	clusterHttpServer := v.startClusterHttpService(volumeMux)
 
@@ -387,23 +380,4 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 		}
 	}()
 	return clusterHttpServer
-}
-
-func (v VolumeServerOptions) startTcpService(volumeServer *weed_server.VolumeServer) {
-	listeningAddress := util.JoinHostPort(*v.bindIp, *v.port+20000)
-	glog.V(0).Infoln("Start Seaweed volume server", util.Version(), "tcp at", listeningAddress)
-	listener, e := util.NewListener(listeningAddress, 0)
-	if e != nil {
-		glog.Fatalf("Volume server listener error on %s:%v", listeningAddress, e)
-	}
-	defer listener.Close()
-
-	for {
-		c, err := listener.Accept()
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		go volumeServer.HandleTcpConnection(c)
-	}
 }

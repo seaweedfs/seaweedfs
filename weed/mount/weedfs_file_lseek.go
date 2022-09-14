@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -35,8 +36,8 @@ func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekO
 	}
 
 	// lock the file until the proper offset was calculated
-	fh.Lock()
-	defer fh.Unlock()
+	fh.orderedMutex.Acquire(context.Background(), 1)
+	defer fh.orderedMutex.Release(1)
 	fh.entryLock.Lock()
 	defer fh.entryLock.Unlock()
 

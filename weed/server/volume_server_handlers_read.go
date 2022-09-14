@@ -120,11 +120,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	var count int
-	var needleSize types.Size
+	var memoryCost types.Size
 	readOption.AttemptMetaOnly, readOption.MustMetaOnly = shouldAttemptStreamWrite(hasVolume, ext, r)
 	onReadSizeFn := func(size types.Size) {
-		needleSize = size
-		atomic.AddInt64(&vs.inFlightDownloadDataSize, int64(needleSize))
+		memoryCost = size
+		atomic.AddInt64(&vs.inFlightDownloadDataSize, int64(memoryCost))
 	}
 	if hasVolume {
 		count, err = vs.store.ReadVolumeNeedle(volumeId, n, readOption, onReadSizeFn)
@@ -132,7 +132,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		count, err = vs.store.ReadEcShardNeedle(volumeId, n, onReadSizeFn)
 	}
 	defer func() {
-		atomic.AddInt64(&vs.inFlightDownloadDataSize, -int64(needleSize))
+		atomic.AddInt64(&vs.inFlightDownloadDataSize, -int64(memoryCost))
 		vs.inFlightDownloadDataLimitCond.Signal()
 	}()
 
@@ -328,14 +328,13 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 		return nil
 	}
 
-	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
+	return processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
 		if _, e = rs.Seek(offset, 0); e != nil {
 			return e
 		}
 		_, e = io.CopyN(writer, rs, size)
 		return e
 	})
-	return nil
 }
 
 func (vs *VolumeServer) streamWriteResponseContent(filename string, mimeType string, volumeId needle.VolumeId, n *needle.Needle, w http.ResponseWriter, r *http.Request, readOption *storage.ReadOption) {

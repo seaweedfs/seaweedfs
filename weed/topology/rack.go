@@ -32,7 +32,9 @@ func (r *Rack) FindDataNode(ip string, port int) *DataNode {
 	return nil
 }
 func (r *Rack) GetOrCreateDataNode(ip string, port int, grpcPort int, publicUrl string, maxVolumeCounts map[string]uint32) *DataNode {
-	for _, c := range r.Children() {
+	r.Lock()
+	defer r.Unlock()
+	for _, c := range r.children {
 		dn := c.(*DataNode)
 		if dn.MatchLocation(ip, port) {
 			dn.LastSeen = time.Now().Unix()
@@ -45,7 +47,7 @@ func (r *Rack) GetOrCreateDataNode(ip string, port int, grpcPort int, publicUrl 
 	dn.GrpcPort = grpcPort
 	dn.PublicUrl = publicUrl
 	dn.LastSeen = time.Now().Unix()
-	r.LinkChildNode(dn)
+	r.doLinkChildNode(dn)
 	for diskType, maxVolumeCount := range maxVolumeCounts {
 		disk := NewDisk(diskType)
 		disk.diskUsages.getOrCreateDisk(types.ToDiskType(diskType)).maxVolumeCount = int64(maxVolumeCount)

@@ -23,6 +23,35 @@ func (vs *VolumeServer) ReadNeedleBlob(ctx context.Context, req *volume_server_p
 	return resp, nil
 }
 
+func (vs *VolumeServer) ReadNeedleMeta(ctx context.Context, req *volume_server_pb.ReadNeedleMetaRequest) (resp *volume_server_pb.ReadNeedleMetaResponse, err error) {
+	resp = &volume_server_pb.ReadNeedleMetaResponse{}
+	volumeId := needle.VolumeId(req.VolumeId)
+
+	n := &needle.Needle{
+		Id:    types.NeedleId(req.NeedleId),
+		Flags: 0x08,
+	}
+	size := req.Size
+	offset := req.Offset
+
+	hasVolume := vs.store.HasVolume(volumeId)
+	if !hasVolume {
+		return nil, fmt.Errorf("not found volume id %d and read needle metadata at ec shards is not supported", req.VolumeId)
+	}
+	err = vs.store.ReadVolumeNeedleMetaAt(volumeId, n, offset, size)
+	if err != nil {
+		return nil, err
+	}
+
+	resp.Cookie = uint32(n.Cookie)
+	resp.LastModified = n.LastModified
+	resp.Crc = n.Checksum.Value()
+	if n.HasTtl() {
+		resp.Ttl = n.Ttl.String()
+	}
+	return resp, nil
+}
+
 func (vs *VolumeServer) WriteNeedleBlob(ctx context.Context, req *volume_server_pb.WriteNeedleBlobRequest) (resp *volume_server_pb.WriteNeedleBlobResponse, err error) {
 	resp = &volume_server_pb.WriteNeedleBlobResponse{}
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))

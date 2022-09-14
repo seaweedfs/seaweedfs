@@ -20,9 +20,8 @@ type topology struct {
 	DataCenters []dataCenter `xml:"DataCenter"`
 }
 type Configuration struct {
-	XMLName     xml.Name       `xml:"Configuration"`
-	Topo        topology       `xml:"Topology"`
-	ip2location map[string]loc // this is not used any more. leave it here for later.
+	XMLName xml.Name `xml:"Configuration"`
+	Topo    topology `xml:"Topology"`
 }
 
 func (c *Configuration) String() string {
@@ -33,12 +32,6 @@ func (c *Configuration) String() string {
 }
 
 func (c *Configuration) Locate(ip string, dcName string, rackName string) (dc string, rack string) {
-	if c != nil && c.ip2location != nil {
-		if loc, ok := c.ip2location[ip]; ok {
-			return loc.dcName, loc.rackName
-		}
-	}
-
 	if dcName == "" {
 		dcName = "DefaultDataCenter"
 	}

@@ -80,12 +80,31 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 	return -1, ErrorNotFound
 }
 
-// read fills in Needle content by looking up n.Id from NeedleMapper
-func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, writer io.Writer, offset int64, size int64) (err error) {
+// read needle at a specific offset
+func (v *Volume) readNeedleMetaAt(n *needle.Needle, offset int64, size int32) (err error) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
+	// read deleted meta data
+	if size < 0 {
+		size = -size
+	}
+	err = n.ReadNeedleMeta(v.DataBackend, offset, Size(size), v.Version())
+	if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
+		err = n.ReadNeedleMeta(v.DataBackend, offset+int64(MaxPossibleVolumeSize), Size(size), v.Version())
+	}
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
+// read fills in Needle content by looking up n.Id from NeedleMapper
+func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, writer io.Writer, offset int64, size int64) (err error) {
+
+	v.dataFileAccessLock.RLock()
 	nv, ok := v.nm.Get(n.Id)
+	v.dataFileAccessLock.RUnlock()
+
 	if !ok || nv.Offset.IsZero() {
 		return ErrorNotFound
 	}
@@ -102,19 +121,57 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		return nil
 	}
 
-	if readOption.VolumeRevision != v.SuperBlock.CompactionRevision {
-		// the volume is compacted
-		readOption.IsOutOfRange = false
-		err = n.ReadNeedleMeta(v.DataBackend, nv.Offset.ToActualOffset(), readSize, v.Version())
-	}
-	buf := mem.Allocate(min(1024*1024, int(size)))
-	defer mem.Free(buf)
 	actualOffset := nv.Offset.ToActualOffset()
 	if readOption.IsOutOfRange {
 		actualOffset += int64(MaxPossibleVolumeSize)
 	}
 
-	return n.ReadNeedleDataInto(v.DataBackend, actualOffset, buf, writer, offset, size)
+	buf := mem.Allocate(min(1024*1024, int(size)))
+	defer mem.Free(buf)
+
+	// read needle data
+	crc := needle.CRC(0)
+	for x := offset; x < offset+size; x += int64(len(buf)) {
+
+		v.dataFileAccessLock.RLock()
+		// possibly re-read needle offset if volume is compacted
+		if readOption.VolumeRevision != v.SuperBlock.CompactionRevision {
+			// the volume is compacted
+			nv, ok = v.nm.Get(n.Id)
+			if !ok || nv.Offset.IsZero() {
+				v.dataFileAccessLock.RUnlock()
+				return ErrorNotFound
+			}
+			actualOffset = nv.Offset.ToActualOffset()
+			readOption.VolumeRevision = v.SuperBlock.CompactionRevision
+		}
+		count, err := n.ReadNeedleData(v.DataBackend, actualOffset, buf, x)
+		v.dataFileAccessLock.RUnlock()
+
+		toWrite := min(count, int(offset+size-x))
+		if toWrite > 0 {
+			crc = crc.Update(buf[0:toWrite])
+			if _, err = writer.Write(buf[0:toWrite]); err != nil {
+				return fmt.Errorf("ReadNeedleData write: %v", err)
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+				break
+			}
+			return fmt.Errorf("ReadNeedleData: %v", err)
+		}
+		if count <= 0 {
+			break
+		}
+	}
+	if offset == 0 && size == int64(n.DataSize) && (n.Checksum != crc && uint32(n.Checksum) != crc.Value()) {
+		// the crc.Value() function is to be deprecated. this double checking is for backward compatible.
+		return fmt.Errorf("ReadNeedleData checksum %v expected %v", crc, n.Checksum)
+	}
+	return nil
+
 }
 
 func min(x, y int) int {

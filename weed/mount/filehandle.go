@@ -1,6 +1,8 @@
 package mount
 
 import (
+	"golang.org/x/sync/semaphore"
+	"math"
 	"sync"
 
 	"golang.org/x/exp/slices"
@@ -28,17 +30,18 @@ type FileHandle struct {
 	reader         *filer.ChunkReadAt
 	contentType    string
 	handle         uint64
-	sync.Mutex
+	orderedMutex   *semaphore.Weighted
 
 	isDeleted bool
 }
 
 func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_pb.Entry) *FileHandle {
 	fh := &FileHandle{
-		fh:      handleId,
-		counter: 1,
-		inode:   inode,
-		wfs:     wfs,
+		fh:           handleId,
+		counter:      1,
+		inode:        inode,
+		wfs:          wfs,
+		orderedMutex: semaphore.NewWeighted(int64(math.MaxInt64)),
 	}
 	// dirtyPages: newContinuousDirtyPages(file, writeOnly),
 	fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)

@@ -197,7 +197,7 @@ func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 			}
 		}
 	} else {
-		err = fmt.Errorf("failed to lookup for %d: %v", volumeId, lookupErr)
+		err = fmt.Errorf("replicating lookup failed for %d: %v", volumeId, lookupErr)
 		return
 	}
 
