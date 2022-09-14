@@ -51,7 +51,7 @@ type SyncOptions struct {
 
 const (
 	SyncKeyPrefix         = "sync."
-	DefaultConcurrcyLimit = 32
+	DefaultConcurrencyLimit = 32
 )
 
 var (
@@ -83,7 +83,7 @@ func init() {
 	syncOptions.bDebug = cmdFilerSynchronize.Flag.Bool("b.debug", false, "debug mode to print out filer B received files")
 	syncOptions.aFromTsMs = cmdFilerSynchronize.Flag.Int64("a.fromTsMs", 0, "synchronization from timestamp on filer A. The unit is millisecond")
 	syncOptions.bFromTsMs = cmdFilerSynchronize.Flag.Int64("b.fromTsMs", 0, "synchronization from timestamp on filer B. The unit is millisecond")
-	syncOptions.concurrency = cmdFilerSynchronize.Flag.Int("concurrency", DefaultConcurrcyLimit, "The maximum number of files that will be synced concurrently.")
+	syncOptions.concurrency = cmdFilerSynchronize.Flag.Int("concurrency", DefaultConcurrencyLimit, "The maximum number of files that will be synced concurrently.")
 	syncCpuProfile = cmdFilerSynchronize.Flag.String("cpuprofile", "", "cpu profile output file")
 	syncMemProfile = cmdFilerSynchronize.Flag.String("memprofile", "", "memory profile output file")
 	syncOptions.metricsHttpPort = cmdFilerSynchronize.Flag.Int("metricsPort", 0, "metrics listen port")
@@ -262,8 +262,8 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 	}
 
 	if concurrency < 0 || concurrency > 1024 {
-		glog.Warningf("invalid concurrency value, using default: %d", DefaultConcurrcyLimit)
-		concurrency = DefaultConcurrcyLimit
+		glog.Warningf("invalid concurrency value, using default: %d", DefaultConcurrencyLimit)
+		concurrency = DefaultConcurrencyLimit
 	}
 	processor := NewMetadataProcessor(processEventFn, concurrency)
 
