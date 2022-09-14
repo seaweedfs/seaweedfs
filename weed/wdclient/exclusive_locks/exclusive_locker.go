@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	RenewInteval     = 4 * time.Second
+	RenewInterval     = 4 * time.Second
 	SafeRenewInterval = 3 * time.Second
 	InitLockInterval  = 1 * time.Second
 )
@@ -101,7 +101,7 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 				l.isLocked = false
 				return
 			} else {
-				time.Sleep(RenewInteval)
+				time.Sleep(RenewInterval)
 			}
 
 		}
