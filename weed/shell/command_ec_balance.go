@@ -453,7 +453,7 @@ func doBalanceEcRack(commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool
 
 func pickOneEcNodeAndMoveOneShard(commandEnv *CommandEnv, averageShardsPerEcNode int, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, possibleDestinationEcNodes []*EcNode, applyBalancing bool) error {
 
-	sortEcNodesByFreeslotsDecending(possibleDestinationEcNodes)
+	sortEcNodesByFreeslotsDescending(possibleDestinationEcNodes)
 
 	for _, destEcNode := range possibleDestinationEcNodes {
 		if destEcNode.info.Id == existingLocation.info.Id {
