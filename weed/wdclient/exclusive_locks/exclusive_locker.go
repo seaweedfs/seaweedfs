@@ -13,7 +13,7 @@ import (
 const (
 	RenewInteval     = 4 * time.Second
 	SafeRenewInterval = 3 * time.Second
-	InitLockInteval  = 1 * time.Second
+	InitLockInterval  = 1 * time.Second
 )
 
 type ExclusiveLocker struct {
@@ -68,7 +68,7 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 			return err
 		}); err != nil {
 			println("lock:", err.Error())
-			time.Sleep(InitLockInteval)
+			time.Sleep(InitLockInterval)
 		} else {
 			break
 		}
