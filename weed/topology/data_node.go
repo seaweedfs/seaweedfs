@@ -54,14 +54,14 @@ func (dn *DataNode) getOrCreateDisk(diskType string) *Disk {
 	return disk
 }
 
-func (dn *DataNode) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChangedRO bool) {
+func (dn *DataNode) doAddOrUpdateVolume(v storage.VolumeInfo) (isNew, isChanged bool) {
 	disk := dn.getOrCreateDisk(v.DiskType)
 	return disk.AddOrUpdateVolume(v)
 }
 
 // UpdateVolumes detects new/deleted/changed volumes on a volume server
 // used in master to notify master clients of these changes.
-func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolumes, deletedVolumes, changeRO []storage.VolumeInfo) {
+func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolumes, deletedVolumes, changedVolumes []storage.VolumeInfo) {
 
 	actualVolumeMap := make(map[needle.VolumeId]storage.VolumeInfo)
 	for _, v := range actualVolumes {
@@ -94,12 +94,12 @@ func (dn *DataNode) UpdateVolumes(actualVolumes []storage.VolumeInfo) (newVolume
 		}
 	}
 	for _, v := range actualVolumes {
-		isNew, isChangedRO := dn.doAddOrUpdateVolume(v)
+		isNew, isChanged := dn.doAddOrUpdateVolume(v)
 		if isNew {
 			newVolumes = append(newVolumes, v)
 		}
-		if isChangedRO {
-			changeRO = append(changeRO, v)
+		if isChanged {
+			changedVolumes = append(changedVolumes, v)
 		}
 	}
 	return

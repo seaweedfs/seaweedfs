@@ -27,6 +27,10 @@ service Seaweed {
   }
   rpc VacuumVolume (VacuumVolumeRequest) returns (VacuumVolumeResponse) {
   }
+  rpc VolumeMarkReadonly (VolumeMarkReadonlyRequest) returns (VolumeMarkReadonlyResponse) {
+  }
+  rpc VolumeMarkWritable (VolumeMarkWritableRequest) returns (VolumeMarkWritableResponse) {
+  }
   rpc GetMasterConfiguration (GetMasterConfigurationRequest) returns (GetMasterConfigurationResponse) {
   }
   rpc ListClusterNodes (ListClusterNodesRequest) returns (ListClusterNodesResponse) {
@@ -301,6 +305,18 @@ message VacuumVolumeRequest {
   string collection = 3;
 }
 message VacuumVolumeResponse {
+}
+
+message VolumeMarkReadonlyRequest {
+  uint32 volume_id = 1;
+}
+message VolumeMarkReadonlyResponse {
+}
+
+message VolumeMarkWritableRequest {
+  uint32 volume_id = 1;
+}
+message VolumeMarkWritableResponse {
 }
 
 message GetMasterConfigurationRequest {
