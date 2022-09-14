@@ -195,7 +195,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		// find out what changed
 		deletedChunks, newChunks, err := compareChunks(filer.LookupFn(fs), oldEntry, newEntry)
 		if err != nil {
-			return true, fmt.Errorf("replicte %s compare chunks error: %v", key, err)
+			return true, fmt.Errorf("replicate %s compare chunks error: %v", key, err)
 		}
 
 		// delete the chunks that are deleted from the source
@@ -207,7 +207,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		// replicate the chunks that are new in the source
 		replicatedChunks, err := fs.replicateChunks(newChunks, key)
 		if err != nil {
-			return true, fmt.Errorf("replicte %s chunks error: %v", key, err)
+			return true, fmt.Errorf("replicate %s chunks error: %v", key, err)
 		}
 		existingEntry.Chunks = append(existingEntry.Chunks, replicatedChunks...)
 		existingEntry.Attributes = newEntry.Attributes
