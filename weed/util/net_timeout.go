@@ -83,13 +83,13 @@ func (c *Conn) Close() error {
 	return err
 }
 
-func NewListener(addr string, timeout time.Duration) (ipListner net.Listener, err error) {
+func NewListener(addr string, timeout time.Duration) (ipListener net.Listener, err error) {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return
 	}
 
-	ipListner = &Listener{
+	ipListener = &Listener{
 		Listener:     listener,
 		ReadTimeout:  timeout,
 		WriteTimeout: timeout,
@@ -98,13 +98,13 @@ func NewListener(addr string, timeout time.Duration) (ipListner net.Listener, er
 	return
 }
 
-func NewIpAndLocalListeners(host string, port int, timeout time.Duration) (ipListner net.Listener, localListener net.Listener, err error) {
+func NewIpAndLocalListeners(host string, port int, timeout time.Duration) (ipListener net.Listener, localListener net.Listener, err error) {
 	listener, err := net.Listen("tcp", JoinHostPort(host, port))
 	if err != nil {
 		return
 	}
 
-	ipListner = &Listener{
+	ipListener = &Listener{
 		Listener:     listener,
 		ReadTimeout:  timeout,
 		WriteTimeout: timeout,
@@ -114,7 +114,7 @@ func NewIpAndLocalListeners(host string, port int, timeout time.Duration) (ipLis
 		listener, err = net.Listen("tcp", JoinHostPort("localhost", port))
 		if err != nil {
 			glog.V(0).Infof("skip starting on %s:%d: %v", host, port, err)
-			return ipListner, nil, nil
+			return ipListener, nil, nil
 		}
 
 		localListener = &Listener{
