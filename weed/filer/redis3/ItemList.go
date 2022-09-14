@@ -325,13 +325,13 @@ func (nl *ItemList) ListNames(startFrom string, visitNamesFn func(name string) b
 	}
 
 	if prevNode != nil {
-		if !nl.NodeScanIncluseiveAfter(prevNode.Reference(), startFrom, visitNamesFn) {
+		if !nl.NodeScanInclusiveAfter(prevNode.Reference(), startFrom, visitNamesFn) {
 			return nil
 		}
 	}
 
 	for nextNode != nil {
-		if !nl.NodeScanIncluseiveAfter(nextNode.Reference(), startFrom, visitNamesFn) {
+		if !nl.NodeScanInclusiveAfter(nextNode.Reference(), startFrom, visitNamesFn) {
 			return nil
 		}
 		nextNode, err = nl.skipList.LoadElement(nextNode.Next[0])
@@ -429,7 +429,7 @@ func (nl *ItemList) NodeMin(node *skiplist.SkipListElementReference) string {
 	return ""
 }
 
-func (nl *ItemList) NodeScanIncluseiveAfter(node *skiplist.SkipListElementReference, startFrom string, visitNamesFn func(name string) bool) bool {
+func (nl *ItemList) NodeScanInclusiveAfter(node *skiplist.SkipListElementReference, startFrom string, visitNamesFn func(name string) bool) bool {
 	key := fmt.Sprintf("%s%dm", nl.prefix, node.ElementPointer)
 	if startFrom == "" {
 		startFrom = "-"
