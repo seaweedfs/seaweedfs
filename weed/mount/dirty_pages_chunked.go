@@ -33,7 +33,7 @@ func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *ChunkedDirtyPages {
 	swapFileDir := fh.wfs.option.getTempFilePageDir()
 
 	dirtyPages.uploadPipeline = page_writer.NewUploadPipeline(fh.wfs.concurrentWriters, chunkSize,
-		dirtyPages.saveChunkedFileIntevalToStorage, fh.wfs.option.ConcurrentWriters, swapFileDir)
+		dirtyPages.saveChunkedFileIntervalToStorage, fh.wfs.option.ConcurrentWriters, swapFileDir)
 
 	return dirtyPages
 }
@@ -65,7 +65,7 @@ func (pages *ChunkedDirtyPages) ReadDirtyDataAt(data []byte, startOffset int64) 
 	return pages.uploadPipeline.MaybeReadDataAt(data, startOffset)
 }
 
-func (pages *ChunkedDirtyPages) saveChunkedFileIntevalToStorage(reader io.Reader, offset int64, size int64, cleanupFn func()) {
+func (pages *ChunkedDirtyPages) saveChunkedFileIntervalToStorage(reader io.Reader, offset int64, size int64, cleanupFn func()) {
 
 	mtime := time.Now().UnixNano()
 	defer cleanupFn()
