@@ -178,7 +178,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 
 		if !skipCreateParentDir {
 			dirParts := strings.Split(string(entry.FullPath), "/")
-			if err := f.ensureParentDirecotryEntry(ctx, entry, dirParts, len(dirParts)-1, isFromOtherCluster); err != nil {
+			if err := f.ensureParentDirectoryEntry(ctx, entry, dirParts, len(dirParts)-1, isFromOtherCluster); err != nil {
 				return err
 			}
 		}
@@ -209,7 +209,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 	return nil
 }
 
-func (f *Filer) ensureParentDirecotryEntry(ctx context.Context, entry *Entry, dirParts []string, level int, isFromOtherCluster bool) (err error) {
+func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, dirParts []string, level int, isFromOtherCluster bool) (err error) {
 
 	if level == 0 {
 		return nil
@@ -226,7 +226,7 @@ func (f *Filer) ensureParentDirecotryEntry(ctx context.Context, entry *Entry, di
 	if dirEntry == nil {
 
 		// ensure parent directory
-		if err = f.ensureParentDirecotryEntry(ctx, entry, dirParts, level-1, isFromOtherCluster); err != nil {
+		if err = f.ensureParentDirectoryEntry(ctx, entry, dirParts, level-1, isFromOtherCluster); err != nil {
 			return err
 		}
 
