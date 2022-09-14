@@ -24,7 +24,7 @@ type ManagedHandle interface {
 	// owns the resource.
 	ReleaseUnderlyingHandle() interface{}
 
-	// This indictes a user is done with the handle and releases the handle
+	// This indicates a user is done with the handle and releases the handle
 	// back to the resource pool.
 	Release() error
 
