@@ -55,9 +55,9 @@ func GetEntry(filerClient FilerClient, fullFilePath util.FullPath) (entry *Entry
 	return
 }
 
-type EachEntryFunciton func(entry *Entry, isLast bool) error
+type EachEntryFunction func(entry *Entry, isLast bool) error
 
-func ReadDirAllEntries(filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunciton) (err error) {
+func ReadDirAllEntries(filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunction) (err error) {
 
 	var counter uint32
 	var startFrom string
@@ -83,23 +83,23 @@ func ReadDirAllEntries(filerClient FilerClient, fullDirPath util.FullPath, prefi
 	return nil
 }
 
-func List(filerClient FilerClient, parentDirectoryPath, prefix string, fn EachEntryFunciton, startFrom string, inclusive bool, limit uint32) (err error) {
+func List(filerClient FilerClient, parentDirectoryPath, prefix string, fn EachEntryFunction, startFrom string, inclusive bool, limit uint32) (err error) {
 	return filerClient.WithFilerClient(false, func(client SeaweedFilerClient) error {
 		return doSeaweedList(client, util.FullPath(parentDirectoryPath), prefix, fn, startFrom, inclusive, limit)
 	})
 }
 
-func doList(filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunciton, startFrom string, inclusive bool, limit uint32) (err error) {
+func doList(filerClient FilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunction, startFrom string, inclusive bool, limit uint32) (err error) {
 	return filerClient.WithFilerClient(false, func(client SeaweedFilerClient) error {
 		return doSeaweedList(client, fullDirPath, prefix, fn, startFrom, inclusive, limit)
 	})
 }
 
-func SeaweedList(client SeaweedFilerClient, parentDirectoryPath, prefix string, fn EachEntryFunciton, startFrom string, inclusive bool, limit uint32) (err error) {
+func SeaweedList(client SeaweedFilerClient, parentDirectoryPath, prefix string, fn EachEntryFunction, startFrom string, inclusive bool, limit uint32) (err error) {
 	return doSeaweedList(client, util.FullPath(parentDirectoryPath), prefix, fn, startFrom, inclusive, limit)
 }
 
-func doSeaweedList(client SeaweedFilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunciton, startFrom string, inclusive bool, limit uint32) (err error) {
+func doSeaweedList(client SeaweedFilerClient, fullDirPath util.FullPath, prefix string, fn EachEntryFunction, startFrom string, inclusive bool, limit uint32) (err error) {
 	// Redundancy limit to make it correctly judge whether it is the last file.
 	redLimit := limit
 
