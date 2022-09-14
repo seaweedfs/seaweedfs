@@ -545,7 +545,7 @@ message QueryRequest {
             string file_header_info = 1; // Valid values: NONE | USE | IGNORE
             string record_delimiter = 2; // Default: \n
             string field_delimiter = 3; // Default: ,
-            string quote_charactoer = 4; // Default: "
+            string quote_character = 4; // Default: "
             string quote_escape_character = 5; // Default: "
             string comments = 6; // Default: #
             // If true, records might contain record delimiters within quote characters
@@ -568,7 +568,7 @@ message QueryRequest {
             string quote_fields = 1; // Valid values: ALWAYS | ASNEEDED
             string record_delimiter = 2; // Default: \n
             string field_delimiter = 3; // Default: ,
-            string quote_charactoer = 4; // Default: "
+            string quote_character = 4; // Default: "
             string quote_escape_character = 5; // Default: "
         }
         message JSONOutput {

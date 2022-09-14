@@ -5431,7 +5431,7 @@ type QueryRequest_InputSerialization_CSVInput struct {
 	FileHeaderInfo       string `protobuf:"bytes,1,opt,name=file_header_info,json=fileHeaderInfo,proto3" json:"file_header_info,omitempty"`                   // Valid values: NONE | USE | IGNORE
 	RecordDelimiter      string `protobuf:"bytes,2,opt,name=record_delimiter,json=recordDelimiter,proto3" json:"record_delimiter,omitempty"`                  // Default: \n
 	FieldDelimiter       string `protobuf:"bytes,3,opt,name=field_delimiter,json=fieldDelimiter,proto3" json:"field_delimiter,omitempty"`                     // Default: ,
-	QuoteCharactoer      string `protobuf:"bytes,4,opt,name=quote_charactoer,json=quoteCharactoer,proto3" json:"quote_charactoer,omitempty"`                  // Default: "
+	QuoteCharactoer      string `protobuf:"bytes,4,opt,name=quote_character,json=quoteCharactoer,proto3" json:"quote_character,omitempty"`                  // Default: "
 	QuoteEscapeCharacter string `protobuf:"bytes,5,opt,name=quote_escape_character,json=quoteEscapeCharacter,proto3" json:"quote_escape_character,omitempty"` // Default: "
 	Comments             string `protobuf:"bytes,6,opt,name=comments,proto3" json:"comments,omitempty"`                                                       // Default: #
 	// If true, records might contain record delimiters within quote characters
@@ -5612,7 +5612,7 @@ type QueryRequest_OutputSerialization_CSVOutput struct {
 	QuoteFields          string `protobuf:"bytes,1,opt,name=quote_fields,json=quoteFields,proto3" json:"quote_fields,omitempty"`                              // Valid values: ALWAYS | ASNEEDED
 	RecordDelimiter      string `protobuf:"bytes,2,opt,name=record_delimiter,json=recordDelimiter,proto3" json:"record_delimiter,omitempty"`                  // Default: \n
 	FieldDelimiter       string `protobuf:"bytes,3,opt,name=field_delimiter,json=fieldDelimiter,proto3" json:"field_delimiter,omitempty"`                     // Default: ,
-	QuoteCharactoer      string `protobuf:"bytes,4,opt,name=quote_charactoer,json=quoteCharactoer,proto3" json:"quote_charactoer,omitempty"`                  // Default: "
+	QuoteCharactoer      string `protobuf:"bytes,4,opt,name=quote_character,json=quoteCharactoer,proto3" json:"quote_character,omitempty"`                  // Default: "
 	QuoteEscapeCharacter string `protobuf:"bytes,5,opt,name=quote_escape_character,json=quoteEscapeCharacter,proto3" json:"quote_escape_character,omitempty"` // Default: "
 }
 
