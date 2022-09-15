@@ -128,7 +128,7 @@ func (v *ChunkCacheVolume) getNeedleSlice(key types.NeedleId, offset, length uin
 	}
 	wanted := min(int(length), int(nv.Size)-int(offset))
 	if wanted < 0 {
-		// should never happen, but better than panicing
+		// should never happen, but better than panicking
 		return nil, ErrorOutOfBounds
 	}
 	data := make([]byte, wanted)
@@ -151,7 +151,7 @@ func (v *ChunkCacheVolume) readNeedleSliceAt(data []byte, key types.NeedleId, of
 	}
 	wanted := min(len(data), int(nv.Size)-int(offset))
 	if wanted < 0 {
-		// should never happen, but better than panicing
+		// should never happen, but better than panicking
 		return 0, ErrorOutOfBounds
 	}
 	if n, err = v.DataBackend.ReadAt(data, nv.Offset.ToActualOffset()+int64(offset)); err != nil {
