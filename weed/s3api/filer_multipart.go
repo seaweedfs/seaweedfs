@@ -244,6 +244,7 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 		KeyMarker:    input.KeyMarker,
 		MaxUploads:   input.MaxUploads,
 		Prefix:       input.Prefix,
+		IsTruncated:  aws.Bool(false),
 	}
 
 	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", *input.UploadIdMarker, false, math.MaxInt32)
