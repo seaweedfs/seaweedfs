@@ -94,10 +94,10 @@ func (f *Filer) doDeleteFileIds(fileIds []string) {
 }
 
 func (f *Filer) DirectDeleteChunks(chunks []*filer_pb.FileChunk) {
-	var fildIdsToDelete []string
+	var filledIdsToDelete []string
 	for _, chunk := range chunks {
 		if !chunk.IsChunkManifest {
-			fildIdsToDelete = append(fildIdsToDelete, chunk.GetFileIdString())
+			filledIdsToDelete = append(filledIdsToDelete, chunk.GetFileIdString())
 			continue
 		}
 		dataChunks, manifestResolveErr := ResolveOneChunkManifest(f.MasterClient.LookupFileId, chunk)
@@ -105,12 +105,12 @@ func (f *Filer) DirectDeleteChunks(chunks []*filer_pb.FileChunk) {
 			glog.V(0).Infof("failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
 		}
 		for _, dChunk := range dataChunks {
-			fildIdsToDelete = append(fildIdsToDelete, dChunk.GetFileIdString())
+			filledIdsToDelete = append(filledIdsToDelete, dChunk.GetFileIdString())
 		}
-		fildIdsToDelete = append(fildIdsToDelete, chunk.GetFileIdString())
+		filledIdsToDelete = append(filledIdsToDelete, chunk.GetFileIdString())
 	}
 
-	f.doDeleteFileIds(fildIdsToDelete)
+	f.doDeleteFileIds(filledIdsToDelete)
 }
 
 func (f *Filer) DeleteChunks(chunks []*filer_pb.FileChunk) {
