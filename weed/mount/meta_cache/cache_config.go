@@ -6,7 +6,7 @@ var (
 	_ = util.Configuration(&cacheConfig{})
 )
 
-// implementing util.Configuraion
+// implementing util.Configuration
 type cacheConfig struct {
 	dir string
 }
