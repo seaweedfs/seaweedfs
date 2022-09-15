@@ -225,7 +225,7 @@ func parseSignV4(v4Auth string) (sv signValues, aec s3err.ErrorCode) {
 	signV4Values := signValues{}
 
 	var err s3err.ErrorCode
-	// Save credentail values.
+	// Save credential values.
 	signV4Values.Credential, err = parseCredentialHeader(authFields[0])
 	if err != s3err.ErrNone {
 		return sv, err
@@ -467,7 +467,7 @@ func contains(list []string, elem string) bool {
 	return false
 }
 
-// preSignValues data type represents structued form of AWS Signature V4 query string.
+// preSignValues data type represents structured form of AWS Signature V4 query string.
 type preSignValues struct {
 	signValues
 	Date    time.Time
@@ -551,7 +551,7 @@ func parsePreSignV4(query url.Values) (psv preSignValues, aec s3err.ErrorCode) {
 		return psv, err
 	}
 
-	// Return structed form of signature query string.
+	// Return structured form of signature query string.
 	return preSignV4Values, s3err.ErrNone
 }
 
