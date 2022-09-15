@@ -29,7 +29,6 @@ type SeaweedClient interface {
 	LookupEcVolume(ctx context.Context, in *LookupEcVolumeRequest, opts ...grpc.CallOption) (*LookupEcVolumeResponse, error)
 	VacuumVolume(ctx context.Context, in *VacuumVolumeRequest, opts ...grpc.CallOption) (*VacuumVolumeResponse, error)
 	VolumeMarkReadonly(ctx context.Context, in *VolumeMarkReadonlyRequest, opts ...grpc.CallOption) (*VolumeMarkReadonlyResponse, error)
-	VolumeMarkWritable(ctx context.Context, in *VolumeMarkWritableRequest, opts ...grpc.CallOption) (*VolumeMarkWritableResponse, error)
 	GetMasterConfiguration(ctx context.Context, in *GetMasterConfigurationRequest, opts ...grpc.CallOption) (*GetMasterConfigurationResponse, error)
 	ListClusterNodes(ctx context.Context, in *ListClusterNodesRequest, opts ...grpc.CallOption) (*ListClusterNodesResponse, error)
 	LeaseAdminToken(ctx context.Context, in *LeaseAdminTokenRequest, opts ...grpc.CallOption) (*LeaseAdminTokenResponse, error)
@@ -191,15 +190,6 @@ func (c *seaweedClient) VolumeMarkReadonly(ctx context.Context, in *VolumeMarkRe
 	return out, nil
 }
 
-func (c *seaweedClient) VolumeMarkWritable(ctx context.Context, in *VolumeMarkWritableRequest, opts ...grpc.CallOption) (*VolumeMarkWritableResponse, error) {
-	out := new(VolumeMarkWritableResponse)
-	err := c.cc.Invoke(ctx, "/master_pb.Seaweed/VolumeMarkWritable", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *seaweedClient) GetMasterConfiguration(ctx context.Context, in *GetMasterConfigurationRequest, opts ...grpc.CallOption) (*GetMasterConfigurationResponse, error) {
 	out := new(GetMasterConfigurationResponse)
 	err := c.cc.Invoke(ctx, "/master_pb.Seaweed/GetMasterConfiguration", in, out, opts...)
@@ -287,7 +277,6 @@ type SeaweedServer interface {
 	LookupEcVolume(context.Context, *LookupEcVolumeRequest) (*LookupEcVolumeResponse, error)
 	VacuumVolume(context.Context, *VacuumVolumeRequest) (*VacuumVolumeResponse, error)
 	VolumeMarkReadonly(context.Context, *VolumeMarkReadonlyRequest) (*VolumeMarkReadonlyResponse, error)
-	VolumeMarkWritable(context.Context, *VolumeMarkWritableRequest) (*VolumeMarkWritableResponse, error)
 	GetMasterConfiguration(context.Context, *GetMasterConfigurationRequest) (*GetMasterConfigurationResponse, error)
 	ListClusterNodes(context.Context, *ListClusterNodesRequest) (*ListClusterNodesResponse, error)
 	LeaseAdminToken(context.Context, *LeaseAdminTokenRequest) (*LeaseAdminTokenResponse, error)
@@ -335,9 +324,6 @@ func (UnimplementedSeaweedServer) VacuumVolume(context.Context, *VacuumVolumeReq
 }
 func (UnimplementedSeaweedServer) VolumeMarkReadonly(context.Context, *VolumeMarkReadonlyRequest) (*VolumeMarkReadonlyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VolumeMarkReadonly not implemented")
-}
-func (UnimplementedSeaweedServer) VolumeMarkWritable(context.Context, *VolumeMarkWritableRequest) (*VolumeMarkWritableResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method VolumeMarkWritable not implemented")
 }
 func (UnimplementedSeaweedServer) GetMasterConfiguration(context.Context, *GetMasterConfigurationRequest) (*GetMasterConfigurationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetMasterConfiguration not implemented")
@@ -590,24 +576,6 @@ func _Seaweed_VolumeMarkReadonly_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Seaweed_VolumeMarkWritable_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(VolumeMarkWritableRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SeaweedServer).VolumeMarkWritable(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/master_pb.Seaweed/VolumeMarkWritable",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedServer).VolumeMarkWritable(ctx, req.(*VolumeMarkWritableRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Seaweed_GetMasterConfiguration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetMasterConfigurationRequest)
 	if err := dec(in); err != nil {
@@ -794,10 +762,6 @@ var Seaweed_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "VolumeMarkReadonly",
 			Handler:    _Seaweed_VolumeMarkReadonly_Handler,
-		},
-		{
-			MethodName: "VolumeMarkWritable",
-			Handler:    _Seaweed_VolumeMarkWritable_Handler,
 		},
 		{
 			MethodName: "GetMasterConfiguration",

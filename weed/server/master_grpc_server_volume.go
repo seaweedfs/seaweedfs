@@ -282,3 +282,27 @@ func (ms *MasterServer) VacuumVolume(ctx context.Context, req *master_pb.VacuumV
 
 	return resp, nil
 }
+
+func (ms *MasterServer) VolumeMarkReadonly(ctx context.Context, req *master_pb.VolumeMarkReadonlyRequest) (*master_pb.VolumeMarkReadonlyResponse, error) {
+
+	if !ms.Topo.IsLeader() {
+		return nil, raft.NotLeaderError
+	}
+
+	resp := &master_pb.VolumeMarkReadonlyResponse{}
+
+	replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(req.ReplicaPlacement))
+	vl := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, needle.LoadTTLFromUint32(req.Ttl), types.ToDiskType(req.DiskType))
+	dataNodes := ms.Topo.Lookup(req.Collection, needle.VolumeId(req.VolumeId))
+	for _, dn := range dataNodes {
+		if dn.Ip == req.Ip && dn.Port == int(req.Port) {
+			if req.IsReadonly {
+				vl.SetVolumeUnavailable(dn, needle.VolumeId(req.VolumeId))
+			} else {
+				vl.SetVolumeAvailable(dn, needle.VolumeId(req.VolumeId), false)
+			}
+		}
+	}
+
+	return resp, nil
+}
