@@ -205,7 +205,7 @@ func GetWritableRemoteReplications(s *storage.Store, grpcDialOption grpc.DialOpt
 		// has one local and has remote replications
 		copyCount := v.ReplicaPlacement.GetCopyCount()
 		if len(lookupResult.Locations) < copyCount {
-			err = fmt.Errorf("replicating opetations [%d] is less than volume %d replication copy count [%d]",
+			err = fmt.Errorf("replicating operations [%d] is less than volume %d replication copy count [%d]",
 				len(lookupResult.Locations), volumeId, copyCount)
 		}
 	}

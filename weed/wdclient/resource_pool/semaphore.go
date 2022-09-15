@@ -105,7 +105,7 @@ func (s *unboundedSemaphore) Release() {
 	s.lock.Lock()
 	s.counter += 1
 	if s.counter > 0 {
-		// Not broadcasting here since it's unlike we can satify all waiting
+		// Not broadcasting here since it's unlike we can satisfy all waiting
 		// goroutines.  Instead, we will Signal again if there are left over
 		// quota after Acquire, in case of lost wakeups.
 		s.cond.Signal()
