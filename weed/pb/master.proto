@@ -305,20 +305,6 @@ message VacuumVolumeRequest {
 message VacuumVolumeResponse {
 }
 
-message VolumeMarkReadonlyRequest {
-  string ip = 1;
-  uint32 port = 2;
-  uint32 volume_id = 4;
-  string collection = 5;
-  uint32 replica_placement = 6;
-  uint32 version = 7;
-  uint32 ttl = 8;
-  string disk_type = 9;
-  bool is_readonly = 10;
-}
-message VolumeMarkReadonlyResponse {
-}
-
 message GetMasterConfigurationRequest {
 }
 message GetMasterConfigurationResponse {
@@ -403,4 +389,18 @@ message RaftListClusterServersResponse {
     string suffrage = 3; //
   }
   repeated ClusterServers cluster_servers = 1;
+}
+
+message VolumeMarkReadonlyRequest {
+  string ip = 1;
+  uint32 port = 2;
+  uint32 volume_id = 4;
+  string collection = 5;
+  uint32 replica_placement = 6;
+  uint32 version = 7;
+  uint32 ttl = 8;
+  string disk_type = 9;
+  bool is_readonly = 10;
+}
+message VolumeMarkReadonlyResponse {
 }
