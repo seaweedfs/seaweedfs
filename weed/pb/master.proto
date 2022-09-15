@@ -27,8 +27,6 @@ service Seaweed {
   }
   rpc VacuumVolume (VacuumVolumeRequest) returns (VacuumVolumeResponse) {
   }
-  rpc VolumeMarkReadonly (VolumeMarkReadonlyRequest) returns (VolumeMarkReadonlyResponse) {
-  }
   rpc GetMasterConfiguration (GetMasterConfigurationRequest) returns (GetMasterConfigurationResponse) {
   }
   rpc ListClusterNodes (ListClusterNodesRequest) returns (ListClusterNodesResponse) {
@@ -44,6 +42,8 @@ service Seaweed {
   rpc RaftAddServer (RaftAddServerRequest) returns (RaftAddServerResponse) {
   }
   rpc RaftRemoveServer (RaftRemoveServerRequest) returns (RaftRemoveServerResponse) {
+  }
+  rpc VolumeMarkReadonly (VolumeMarkReadonlyRequest) returns (VolumeMarkReadonlyResponse) {
   }
 }
 

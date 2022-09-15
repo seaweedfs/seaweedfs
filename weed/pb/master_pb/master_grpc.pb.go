@@ -11,7 +11,6 @@ import (
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the grpc package it is being compiled against.
-// Requires gRPC-Go v1.32.0 or later.
 const _ = grpc.SupportPackageIsVersion7
 
 // SeaweedClient is the client API for Seaweed service.
@@ -28,7 +27,6 @@ type SeaweedClient interface {
 	VolumeList(ctx context.Context, in *VolumeListRequest, opts ...grpc.CallOption) (*VolumeListResponse, error)
 	LookupEcVolume(ctx context.Context, in *LookupEcVolumeRequest, opts ...grpc.CallOption) (*LookupEcVolumeResponse, error)
 	VacuumVolume(ctx context.Context, in *VacuumVolumeRequest, opts ...grpc.CallOption) (*VacuumVolumeResponse, error)
-	VolumeMarkReadonly(ctx context.Context, in *VolumeMarkReadonlyRequest, opts ...grpc.CallOption) (*VolumeMarkReadonlyResponse, error)
 	GetMasterConfiguration(ctx context.Context, in *GetMasterConfigurationRequest, opts ...grpc.CallOption) (*GetMasterConfigurationResponse, error)
 	ListClusterNodes(ctx context.Context, in *ListClusterNodesRequest, opts ...grpc.CallOption) (*ListClusterNodesResponse, error)
 	LeaseAdminToken(ctx context.Context, in *LeaseAdminTokenRequest, opts ...grpc.CallOption) (*LeaseAdminTokenResponse, error)
@@ -37,6 +35,7 @@ type SeaweedClient interface {
 	RaftListClusterServers(ctx context.Context, in *RaftListClusterServersRequest, opts ...grpc.CallOption) (*RaftListClusterServersResponse, error)
 	RaftAddServer(ctx context.Context, in *RaftAddServerRequest, opts ...grpc.CallOption) (*RaftAddServerResponse, error)
 	RaftRemoveServer(ctx context.Context, in *RaftRemoveServerRequest, opts ...grpc.CallOption) (*RaftRemoveServerResponse, error)
+	VolumeMarkReadonly(ctx context.Context, in *VolumeMarkReadonlyRequest, opts ...grpc.CallOption) (*VolumeMarkReadonlyResponse, error)
 }
 
 type seaweedClient struct {
@@ -181,15 +180,6 @@ func (c *seaweedClient) VacuumVolume(ctx context.Context, in *VacuumVolumeReques
 	return out, nil
 }
 
-func (c *seaweedClient) VolumeMarkReadonly(ctx context.Context, in *VolumeMarkReadonlyRequest, opts ...grpc.CallOption) (*VolumeMarkReadonlyResponse, error) {
-	out := new(VolumeMarkReadonlyResponse)
-	err := c.cc.Invoke(ctx, "/master_pb.Seaweed/VolumeMarkReadonly", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *seaweedClient) GetMasterConfiguration(ctx context.Context, in *GetMasterConfigurationRequest, opts ...grpc.CallOption) (*GetMasterConfigurationResponse, error) {
 	out := new(GetMasterConfigurationResponse)
 	err := c.cc.Invoke(ctx, "/master_pb.Seaweed/GetMasterConfiguration", in, out, opts...)
@@ -262,6 +252,15 @@ func (c *seaweedClient) RaftRemoveServer(ctx context.Context, in *RaftRemoveServ
 	return out, nil
 }
 
+func (c *seaweedClient) VolumeMarkReadonly(ctx context.Context, in *VolumeMarkReadonlyRequest, opts ...grpc.CallOption) (*VolumeMarkReadonlyResponse, error) {
+	out := new(VolumeMarkReadonlyResponse)
+	err := c.cc.Invoke(ctx, "/master_pb.Seaweed/VolumeMarkReadonly", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SeaweedServer is the server API for Seaweed service.
 // All implementations must embed UnimplementedSeaweedServer
 // for forward compatibility
@@ -276,7 +275,6 @@ type SeaweedServer interface {
 	VolumeList(context.Context, *VolumeListRequest) (*VolumeListResponse, error)
 	LookupEcVolume(context.Context, *LookupEcVolumeRequest) (*LookupEcVolumeResponse, error)
 	VacuumVolume(context.Context, *VacuumVolumeRequest) (*VacuumVolumeResponse, error)
-	VolumeMarkReadonly(context.Context, *VolumeMarkReadonlyRequest) (*VolumeMarkReadonlyResponse, error)
 	GetMasterConfiguration(context.Context, *GetMasterConfigurationRequest) (*GetMasterConfigurationResponse, error)
 	ListClusterNodes(context.Context, *ListClusterNodesRequest) (*ListClusterNodesResponse, error)
 	LeaseAdminToken(context.Context, *LeaseAdminTokenRequest) (*LeaseAdminTokenResponse, error)
@@ -285,6 +283,7 @@ type SeaweedServer interface {
 	RaftListClusterServers(context.Context, *RaftListClusterServersRequest) (*RaftListClusterServersResponse, error)
 	RaftAddServer(context.Context, *RaftAddServerRequest) (*RaftAddServerResponse, error)
 	RaftRemoveServer(context.Context, *RaftRemoveServerRequest) (*RaftRemoveServerResponse, error)
+	VolumeMarkReadonly(context.Context, *VolumeMarkReadonlyRequest) (*VolumeMarkReadonlyResponse, error)
 	mustEmbedUnimplementedSeaweedServer()
 }
 
@@ -322,9 +321,6 @@ func (UnimplementedSeaweedServer) LookupEcVolume(context.Context, *LookupEcVolum
 func (UnimplementedSeaweedServer) VacuumVolume(context.Context, *VacuumVolumeRequest) (*VacuumVolumeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VacuumVolume not implemented")
 }
-func (UnimplementedSeaweedServer) VolumeMarkReadonly(context.Context, *VolumeMarkReadonlyRequest) (*VolumeMarkReadonlyResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method VolumeMarkReadonly not implemented")
-}
 func (UnimplementedSeaweedServer) GetMasterConfiguration(context.Context, *GetMasterConfigurationRequest) (*GetMasterConfigurationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetMasterConfiguration not implemented")
 }
@@ -348,6 +344,9 @@ func (UnimplementedSeaweedServer) RaftAddServer(context.Context, *RaftAddServerR
 }
 func (UnimplementedSeaweedServer) RaftRemoveServer(context.Context, *RaftRemoveServerRequest) (*RaftRemoveServerResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RaftRemoveServer not implemented")
+}
+func (UnimplementedSeaweedServer) VolumeMarkReadonly(context.Context, *VolumeMarkReadonlyRequest) (*VolumeMarkReadonlyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method VolumeMarkReadonly not implemented")
 }
 func (UnimplementedSeaweedServer) mustEmbedUnimplementedSeaweedServer() {}
 
@@ -558,24 +557,6 @@ func _Seaweed_VacuumVolume_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Seaweed_VolumeMarkReadonly_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(VolumeMarkReadonlyRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SeaweedServer).VolumeMarkReadonly(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/master_pb.Seaweed/VolumeMarkReadonly",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedServer).VolumeMarkReadonly(ctx, req.(*VolumeMarkReadonlyRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Seaweed_GetMasterConfiguration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetMasterConfigurationRequest)
 	if err := dec(in); err != nil {
@@ -720,6 +701,24 @@ func _Seaweed_RaftRemoveServer_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Seaweed_VolumeMarkReadonly_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VolumeMarkReadonlyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).VolumeMarkReadonly(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/master_pb.Seaweed/VolumeMarkReadonly",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).VolumeMarkReadonly(ctx, req.(*VolumeMarkReadonlyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Seaweed_ServiceDesc is the grpc.ServiceDesc for Seaweed service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -760,10 +759,6 @@ var Seaweed_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Seaweed_VacuumVolume_Handler,
 		},
 		{
-			MethodName: "VolumeMarkReadonly",
-			Handler:    _Seaweed_VolumeMarkReadonly_Handler,
-		},
-		{
 			MethodName: "GetMasterConfiguration",
 			Handler:    _Seaweed_GetMasterConfiguration_Handler,
 		},
@@ -794,6 +789,10 @@ var Seaweed_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RaftRemoveServer",
 			Handler:    _Seaweed_RaftRemoveServer_Handler,
+		},
+		{
+			MethodName: "VolumeMarkReadonly",
+			Handler:    _Seaweed_VolumeMarkReadonly_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
