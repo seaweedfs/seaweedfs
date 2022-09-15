@@ -57,15 +57,15 @@ func limitTo(nodes []*cluster.ClusterNode, limit int32) (selected []*cluster.Clu
 	if limit <= 0 || len(nodes) < int(limit) {
 		return nodes
 	}
-	seletedSet := make(map[pb.ServerAddress]*cluster.ClusterNode)
+	selectedSet := make(map[pb.ServerAddress]*cluster.ClusterNode)
 	for i := 0; i < int(limit)*3; i++ {
 		x := rand.Intn(len(nodes))
-		if _, found := seletedSet[nodes[x].Address]; found {
+		if _, found := selectedSet[nodes[x].Address]; found {
 			continue
 		}
-		seletedSet[nodes[x].Address] = nodes[x]
+		selectedSet[nodes[x].Address] = nodes[x]
 	}
-	for _, node := range seletedSet {
+	for _, node := range selectedSet {
 		selected = append(selected, node)
 	}
 	return
