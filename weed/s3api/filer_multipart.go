@@ -117,7 +117,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			}
 		}
 	}
-
+	
 	entryName := filepath.Base(*input.Key)
 	dirName := filepath.Dir(*input.Key)
 	if dirName == "." {
@@ -147,6 +147,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		} else if mime != "" {
 			entry.Attributes.Mime = mime
 		}
+		entry.Attributes.FileSize = uint64(offset)
 	})
 
 	if err != nil {
