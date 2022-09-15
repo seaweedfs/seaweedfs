@@ -231,7 +231,9 @@ type _MEMORYSTATUSEX struct {
 }
 
 // BOOL GlobalMemoryStatusEx(
-//  LPMEMORYSTATUSEX lpBuffer
+//
+//	LPMEMORYSTATUSEX lpBuffer
+//
 // );
 // https://docs.microsoft.com/en-gb/windows/win32/api/sysinfoapi/nf-sysinfoapi-globalmemorystatusex
 func globalMemoryStatusEx() (_MEMORYSTATUSEX, error) {
@@ -246,24 +248,25 @@ func globalMemoryStatusEx() (_MEMORYSTATUSEX, error) {
 	return mem_status, nil
 }
 
-// typedef struct _SYSTEM_INFO {
-//   union {
-//     DWORD  dwOemId;
-//     struct {
-//       WORD wProcessorArchitecture;
-//       WORD wReserved;
-//     };
-//   };
-//   DWORD     dwPageSize;
-//   LPVOID    lpMinimumApplicationAddress;
-//   LPVOID    lpMaximumApplicationAddress;
-//   DWORD_PTR dwActiveProcessorMask;
-//   DWORD     dwNumberOfProcessors;
-//   DWORD     dwProcessorType;
-//   DWORD     dwAllocationGranularity;
-//   WORD      wProcessorLevel;
-//   WORD      wProcessorRevision;
-// } SYSTEM_INFO;
+//	typedef struct _SYSTEM_INFO {
+//	  union {
+//	    DWORD  dwOemId;
+//	    struct {
+//	      WORD wProcessorArchitecture;
+//	      WORD wReserved;
+//	    };
+//	  };
+//	  DWORD     dwPageSize;
+//	  LPVOID    lpMinimumApplicationAddress;
+//	  LPVOID    lpMaximumApplicationAddress;
+//	  DWORD_PTR dwActiveProcessorMask;
+//	  DWORD     dwNumberOfProcessors;
+//	  DWORD     dwProcessorType;
+//	  DWORD     dwAllocationGranularity;
+//	  WORD      wProcessorLevel;
+//	  WORD      wProcessorRevision;
+//	} SYSTEM_INFO;
+//
 // https://docs.microsoft.com/en-gb/windows/win32/api/sysinfoapi/ns-sysinfoapi-system_info
 type _SYSTEM_INFO struct {
 	dwOemId                     DWORD
@@ -279,7 +282,9 @@ type _SYSTEM_INFO struct {
 }
 
 // void WINAPI GetSystemInfo(
-//   _Out_ LPSYSTEM_INFO lpSystemInfo
+//
+//	_Out_ LPSYSTEM_INFO lpSystemInfo
+//
 // );
 // https://docs.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsysteminfo
 func getSystemInfo() (_SYSTEM_INFO, error) {

@@ -52,7 +52,7 @@ type githubError struct {
 	Message string
 }
 
-//default version is not full version
+// default version is not full version
 var isFullVersion = false
 
 var (

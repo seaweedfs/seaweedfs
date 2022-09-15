@@ -31,21 +31,21 @@ var (
 )
 
 type CopyOptions struct {
-	include           *string
-	replication       *string
-	collection        *string
-	ttl               *string
-	diskType          *string
-	maxMB             *int
-	masterClient      *wdclient.MasterClient
+	include          *string
+	replication      *string
+	collection       *string
+	ttl              *string
+	diskType         *string
+	maxMB            *int
+	masterClient     *wdclient.MasterClient
 	concurrentFiles  *int
 	concurrentChunks *int
-	grpcDialOption    grpc.DialOption
-	masters           []string
-	cipher            bool
-	ttlSec            int32
-	checkSize         *bool
-	verbose           *bool
+	grpcDialOption   grpc.DialOption
+	masters          []string
+	cipher           bool
+	ttlSec           int32
+	checkSize        *bool
+	verbose          *bool
 }
 
 func init() {

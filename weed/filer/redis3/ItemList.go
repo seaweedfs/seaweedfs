@@ -198,36 +198,45 @@ func (nl *ItemList) WriteName(name string) error {
 
 /*
 // case 1: exists in nextNode
-if nextNode != nil && nextNode.Key == name {
-	remove from nextNode, update nextNode
-	// TODO: merge with prevNode if possible?
-	return
-}
+
+	if nextNode != nil && nextNode.Key == name {
+		remove from nextNode, update nextNode
+		// TODO: merge with prevNode if possible?
+		return
+	}
+
 if nextNode is nil
+
 	prevNode = list.Largestnode
+
 if prevNode == nil and nextNode.Prev != nil
+
 	prevNode = load(nextNode.Prev)
 
 // case 2: does not exist
 // case 2.1
-if prevNode == nil {
-	return
-}
+
+	if prevNode == nil {
+		return
+	}
+
 // case 2.2
-if prevNameBatch does not contain name {
-	return
-}
+
+	if prevNameBatch does not contain name {
+		return
+	}
 
 // case 3
 delete from prevNameBatch
 if prevNameBatch + nextNode < capacityList
+
 	// case 3.1
 	merge
+
 else
+
 	// case 3.2
 	update prevNode
-
-
 */
 func (nl *ItemList) DeleteName(name string) error {
 	lookupKey := []byte(name)

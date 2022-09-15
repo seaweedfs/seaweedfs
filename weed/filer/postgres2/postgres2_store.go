@@ -63,7 +63,7 @@ func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableU
 		sqlUrl += " host=" + hostname
 	}
 	if port != 0 {
-	  sqlUrl += " port=" + strconv.Itoa(port)
+		sqlUrl += " port=" + strconv.Itoa(port)
 	}
 	if sslmode != "" {
 		sqlUrl += " sslmode=" + sslmode

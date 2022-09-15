@@ -81,11 +81,11 @@ type WebDavFileSystem struct {
 }
 
 type FileInfo struct {
-	name          string
-	size          int64
-	mode          os.FileMode
+	name         string
+	size         int64
+	mode         os.FileMode
 	modifiedTime time.Time
-	isDirectory   bool
+	isDirectory  bool
 }
 
 func (fi *FileInfo) Name() string       { return fi.name }
@@ -543,11 +543,11 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 
 	err = filer_pb.ReadDirAllEntries(f.fs, util.FullPath(dir), "", func(entry *filer_pb.Entry, isLast bool) error {
 		fi := FileInfo{
-			size:          int64(filer.FileSize(entry)),
-			name:          entry.Name,
-			mode:          os.FileMode(entry.Attributes.FileMode),
+			size:         int64(filer.FileSize(entry)),
+			name:         entry.Name,
+			mode:         os.FileMode(entry.Attributes.FileMode),
 			modifiedTime: time.Unix(entry.Attributes.Mtime, 0),
-			isDirectory:   entry.IsDirectory,
+			isDirectory:  entry.IsDirectory,
 		}
 
 		if !strings.HasSuffix(fi.name, "/") && fi.IsDir() {

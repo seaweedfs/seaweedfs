@@ -164,15 +164,20 @@ func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty
 }
 
 // if an entry has synchronized metadata but has not synchronized content
-//    entry.Attributes.FileSize == entry.RemoteEntry.RemoteSize
-//    entry.Attributes.Mtime    == entry.RemoteEntry.RemoteMtime
-//    entry.RemoteEntry.LastLocalSyncTsNs == 0
+//
+//	entry.Attributes.FileSize == entry.RemoteEntry.RemoteSize
+//	entry.Attributes.Mtime    == entry.RemoteEntry.RemoteMtime
+//	entry.RemoteEntry.LastLocalSyncTsNs == 0
+//
 // if an entry has synchronized metadata but has synchronized content before
-//    entry.Attributes.FileSize == entry.RemoteEntry.RemoteSize
-//    entry.Attributes.Mtime    == entry.RemoteEntry.RemoteMtime
-//    entry.RemoteEntry.LastLocalSyncTsNs > 0
+//
+//	entry.Attributes.FileSize == entry.RemoteEntry.RemoteSize
+//	entry.Attributes.Mtime    == entry.RemoteEntry.RemoteMtime
+//	entry.RemoteEntry.LastLocalSyncTsNs > 0
+//
 // if an entry has synchronized metadata but has new updates
-//    entry.Attributes.Mtime * 1,000,000,000    > entry.RemoteEntry.LastLocalSyncTsNs
+//
+//	entry.Attributes.Mtime * 1,000,000,000    > entry.RemoteEntry.LastLocalSyncTsNs
 func doSaveRemoteEntry(client filer_pb.SeaweedFilerClient, localDir string, existingEntry *filer_pb.Entry, remoteEntry *filer_pb.RemoteEntry) error {
 	existingEntry.RemoteEntry = remoteEntry
 	existingEntry.Attributes.FileSize = uint64(remoteEntry.RemoteSize)

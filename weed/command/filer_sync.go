@@ -50,7 +50,7 @@ type SyncOptions struct {
 }
 
 const (
-	SyncKeyPrefix         = "sync."
+	SyncKeyPrefix           = "sync."
 	DefaultConcurrencyLimit = 32
 )
 

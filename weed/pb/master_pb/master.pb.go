@@ -1611,9 +1611,7 @@ func (x *StatisticsResponse) GetFileCount() uint64 {
 	return 0
 }
 
-//
 // collection related
-//
 type Collection struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -1848,9 +1846,7 @@ func (*CollectionDeleteResponse) Descriptor() ([]byte, []int) {
 	return file_master_proto_rawDescGZIP(), []int{23}
 }
 
-//
 // volume related
-//
 type DiskInfo struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
