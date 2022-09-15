@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"path/filepath"
 	"time"
 
@@ -148,19 +149,19 @@ func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serv
 
 	resp := &volume_server_pb.VolumeMarkReadonlyResponse{}
 
-	if grpcErr := pb.WithMasterClient(false, vs.GetMaster(), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
-		_, err := client.VolumeMarkReadonly(context.Background(), &master_pb.VolumeMarkReadonlyRequest{
-			VolumeId: req.VolumeId,
-		})
-		if err != nil {
-			return fmt.Errorf("set volume %d to read only on master: %v", req.VolumeId, err)
-		}
-		return nil
-	}); grpcErr != nil {
-		glog.V(0).Infof("connect to %s: %v", vs.GetMaster(), grpcErr)
-		return resp, fmt.Errorf("grpc VolumeMarkReadonly with master %s: %v", vs.GetMaster(), grpcErr)
+	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
+	if v == nil {
+		return nil, fmt.Errorf("volume %d not found", req.VolumeId)
 	}
 
+	// step 1: stop master from redirecting traffic here
+	if err := vs.notifyMasterVolumeReadonly(v, true); err != nil {
+		return resp, err
+	}
+
+	// rare case 1.5: it will be unlucky if heartbeat happened between step 1 and 2.
+
+	// step 2: mark local volume as readonly
 	err := vs.store.MarkVolumeReadonly(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
@@ -169,24 +170,44 @@ func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serv
 		glog.V(2).Infof("volume mark readonly %v", req)
 	}
 
+	// step 3: tell master from redirecting traffic here again, to prevent rare case 1.5
+	if err := vs.notifyMasterVolumeReadonly(v, true); err != nil {
+		return resp, err
+	}
+
 	return resp, err
+}
+
+func (vs *VolumeServer) notifyMasterVolumeReadonly(v *storage.Volume, isReadOnly bool) error {
+	if grpcErr := pb.WithMasterClient(false, vs.GetMaster(), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+		_, err := client.VolumeMarkReadonly(context.Background(), &master_pb.VolumeMarkReadonlyRequest{
+			Ip:               vs.store.Ip,
+			Port:             uint32(vs.store.Port),
+			VolumeId:         uint32(v.Id),
+			Collection:       v.Collection,
+			ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
+			Ttl:              v.Ttl.ToUint32(),
+			DiskType:         string(v.DiskType()),
+			IsReadonly:       isReadOnly,
+		})
+		if err != nil {
+			return fmt.Errorf("set volume %d to read only on master: %v", v.Id, err)
+		}
+		return nil
+	}); grpcErr != nil {
+		glog.V(0).Infof("connect to %s: %v", vs.GetMaster(), grpcErr)
+		return fmt.Errorf("grpc VolumeMarkReadonly with master %s: %v", vs.GetMaster(), grpcErr)
+	}
+	return nil
 }
 
 func (vs *VolumeServer) VolumeMarkWritable(ctx context.Context, req *volume_server_pb.VolumeMarkWritableRequest) (*volume_server_pb.VolumeMarkWritableResponse, error) {
 
 	resp := &volume_server_pb.VolumeMarkWritableResponse{}
 
-	if grpcErr := pb.WithMasterClient(false, vs.GetMaster(), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
-		_, err := client.VolumeMarkWritable(context.Background(), &master_pb.VolumeMarkWritableRequest{
-			VolumeId: req.VolumeId,
-		})
-		if err != nil {
-			return fmt.Errorf("set volume %d to writable on master: %v", req.VolumeId, err)
-		}
-		return nil
-	}); grpcErr != nil {
-		glog.V(0).Infof("connect to %s: %v", vs.GetMaster(), grpcErr)
-		return resp, fmt.Errorf("grpc VolumeMarkWritable with master %s: %v", vs.GetMaster(), grpcErr)
+	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
+	if v == nil {
+		return nil, fmt.Errorf("volume %d not found", req.VolumeId)
 	}
 
 	err := vs.store.MarkVolumeWritable(needle.VolumeId(req.VolumeId))
@@ -195,6 +216,11 @@ func (vs *VolumeServer) VolumeMarkWritable(ctx context.Context, req *volume_serv
 		glog.Errorf("volume mark writable %v: %v", req, err)
 	} else {
 		glog.V(2).Infof("volume mark writable %v", req)
+	}
+
+	// enable master to redirect traffic here
+	if err := vs.notifyMasterVolumeReadonly(v, false); err != nil {
+		return resp, err
 	}
 
 	return resp, err

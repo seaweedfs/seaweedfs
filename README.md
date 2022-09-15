@@ -59,8 +59,8 @@ Table of Contents
 * [Features](#features)
     * [Additional Features](#additional-features)
     * [Filer Features](#filer-features)
-* [Example: Using Seaweed Object Store](#example-Using-Seaweed-Object-Store)
-* [Architecture](#Object-Store-Architecture)
+* [Example: Using Seaweed Object Store](#example-using-seaweed-object-store)
+* [Architecture](#object-store-architecture)
 * [Compared to Other File Systems](#compared-to-other-file-systems)
     * [Compared to HDFS](#compared-to-hdfs)
     * [Compared to GlusterFS, Ceph](#compared-to-glusterfs-ceph)
@@ -69,9 +69,10 @@ Table of Contents
 * [Dev Plan](#dev-plan)
 * [Installation Guide](#installation-guide)
 * [Disk Related Topics](#disk-related-topics)
-* [Benchmark](#Benchmark)
+* [Benchmark](#benchmark)
 * [License](#license)
 
+# Quick Start #
 
 ## Quick Start for S3 API on Docker ##
 
@@ -86,7 +87,7 @@ Also, to increase capacity, just add more volume servers by running `weed volume
 ## Quick Start SeaweedFS S3 on AWS ##
 * Setup fast production-ready [SeaweedFS S3 on AWS with cloudformation](https://aws.amazon.com/marketplace/pp/prodview-nzelz5gprlrjc)
 
-## Introduction ##
+# Introduction #
 
 SeaweedFS is a simple and highly scalable distributed file system. There are two objectives:
 
@@ -123,6 +124,7 @@ Faster and Cheaper than direct cloud storage!
 
 [Back to TOC](#table-of-contents)
 
+# Features #
 ## Additional Features ##
 * Can choose no replication or different replication levels, rack and data center aware.
 * Automatic master servers failover - no single point of failure (SPOF).

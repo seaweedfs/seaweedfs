@@ -49,7 +49,7 @@ func NewCompactSection(start NeedleId) *CompactSection {
 	}
 }
 
-//return old entry size
+// return old entry size
 func (cs *CompactSection) Set(key NeedleId, offset Offset, size Size) (oldOffset Offset, oldSize Size) {
 	cs.Lock()
 	if key > cs.end {
@@ -142,7 +142,7 @@ func (cs *CompactSection) deleteOverflowEntry(key SectionalNeedleId) {
 	}
 }
 
-//return old entry size
+// return old entry size
 func (cs *CompactSection) Delete(key NeedleId) Size {
 	skey := SectionalNeedleId(key - cs.start)
 	cs.Lock()
@@ -189,8 +189,8 @@ func (cs *CompactSection) binarySearchValues(key SectionalNeedleId) int {
 	return x
 }
 
-//This map assumes mostly inserting increasing keys
-//This map assumes mostly inserting increasing keys
+// This map assumes mostly inserting increasing keys
+// This map assumes mostly inserting increasing keys
 type CompactMap struct {
 	list []*CompactSection
 }

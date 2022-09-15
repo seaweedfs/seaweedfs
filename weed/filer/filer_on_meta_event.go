@@ -80,9 +80,9 @@ func (f *Filer) LoadFilerConf() {
 	f.FilerConf = fc
 }
 
-////////////////////////////////////
+// //////////////////////////////////
 // load and maintain remote storages
-////////////////////////////////////
+// //////////////////////////////////
 func (f *Filer) LoadRemoteStorageConfAndMapping() {
 	if err := f.RemoteStorage.LoadRemoteStorageConfigurationsAndMapping(f); err != nil {
 		glog.Errorf("read remote conf and mapping: %v", err)

@@ -120,11 +120,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	var count int
-	var needleSize types.Size
+	var memoryCost types.Size
 	readOption.AttemptMetaOnly, readOption.MustMetaOnly = shouldAttemptStreamWrite(hasVolume, ext, r)
 	onReadSizeFn := func(size types.Size) {
-		needleSize = size
-		atomic.AddInt64(&vs.inFlightDownloadDataSize, int64(needleSize))
+		memoryCost = size
+		atomic.AddInt64(&vs.inFlightDownloadDataSize, int64(memoryCost))
 	}
 	if hasVolume {
 		count, err = vs.store.ReadVolumeNeedle(volumeId, n, readOption, onReadSizeFn)
@@ -132,7 +132,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		count, err = vs.store.ReadEcShardNeedle(volumeId, n, onReadSizeFn)
 	}
 	defer func() {
-		atomic.AddInt64(&vs.inFlightDownloadDataSize, -int64(needleSize))
+		atomic.AddInt64(&vs.inFlightDownloadDataSize, -int64(memoryCost))
 		vs.inFlightDownloadDataLimitCond.Signal()
 	}()
 

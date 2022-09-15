@@ -13,7 +13,7 @@ func TestEcDistribution(t *testing.T) {
 	// find out all volume servers with one slot left.
 	ecNodes, totalFreeEcSlots := collectEcVolumeServersByDc(topologyInfo, "")
 
-	sortEcNodesByFreeslotsDecending(ecNodes)
+	sortEcNodesByFreeslotsDescending(ecNodes)
 
 	if totalFreeEcSlots < erasure_coding.TotalShardsCount {
 		println("not enough free ec shard slots", totalFreeEcSlots)

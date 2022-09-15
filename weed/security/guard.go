@@ -17,12 +17,12 @@ var (
 /*
 Guard is to ensure data access security.
 There are 2 ways to check access:
-1. white list. It's checking request ip address.
-2. JSON Web Token(JWT) generated from secretKey.
-  The jwt can come from:
-  1. url parameter jwt=...
-  2. request header "Authorization"
-  3. cookie with the name "jwt"
+ 1. white list. It's checking request ip address.
+ 2. JSON Web Token(JWT) generated from secretKey.
+    The jwt can come from:
+ 1. url parameter jwt=...
+ 2. request header "Authorization"
+ 3. cookie with the name "jwt"
 
 The white list is checked first because it is easy.
 Then the JWT is checked.
@@ -32,13 +32,12 @@ The Guard will also check these claims if provided:
 2. "nbf" Not Before
 
 Generating JWT:
-1. use HS256 to sign
-2. optionally set "exp", "nbf" fields, in Unix time,
-   the number of seconds elapsed since January 1, 1970 UTC.
+ 1. use HS256 to sign
+ 2. optionally set "exp", "nbf" fields, in Unix time,
+    the number of seconds elapsed since January 1, 1970 UTC.
 
 Referenced:
 https://github.com/pkieltyka/jwtauth/blob/master/jwtauth.go
-
 */
 type Guard struct {
 	whiteList           []string
