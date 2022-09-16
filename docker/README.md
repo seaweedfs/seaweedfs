@@ -1,5 +1,15 @@
 # Docker
 
+## Compose V2 
+SeaweedFS now uses the `v2` syntax `docker compose`
+
+If you rely on using Docker Compose as docker-compose (with a hyphen), you can set up Compose V2 to act as a drop-in replacement of the previous docker-compose. Refer to the [Installing Compose](https://docs.docker.com/compose/install/) section for detailed instructions on upgrading.
+
+Confirm your system has docker compose v2 with a version check
+```bash
+$ docker compose version
+Docker Compose version v2.10.2
+```
 
 ## Try it out
 
@@ -7,7 +17,7 @@
 
 wget https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/docker/seaweedfs-compose.yml
 
-docker-compose -f seaweedfs-compose.yml -p seaweedfs up
+docker compose -f seaweedfs-compose.yml -p seaweedfs up
 
 ```
 
@@ -17,7 +27,7 @@ docker-compose -f seaweedfs-compose.yml -p seaweedfs up
 
 wget https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/docker/seaweedfs-dev-compose.yml
 
-docker-compose -f seaweedfs-dev-compose.yml -p seaweedfs up
+docker compose -f seaweedfs-dev-compose.yml -p seaweedfs up
 
 ```
 
