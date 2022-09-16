@@ -136,7 +136,7 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		actualOffset += int64(MaxPossibleVolumeSize)
 	}
 
-	buf := mem.Allocate(min(1024*1024, int(size)))
+	buf := mem.Allocate(min(readOption.ReadBufSize, int(size)))
 	defer mem.Free(buf)
 
 	// read needle data
