@@ -154,9 +154,9 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		cfg := s.AddPeersConfiguration()
 		// Need to get lock, in case all servers do this at the same time.
 		peerIdx := getPeerIdx(s.serverAddr, s.peers)
-		timeSpeep := time.Duration(float64(c.LeaderLeaseTimeout) * (rand.Float64()*0.25 + 1) * float64(peerIdx))
-		glog.V(0).Infof("Bootstrapping idx: %d sleep: %v new cluster: %+v", peerIdx, timeSpeep, cfg)
-		time.Sleep(timeSpeep)
+		timeSleep := time.Duration(float64(c.LeaderLeaseTimeout) * (rand.Float64()*0.25 + 1) * float64(peerIdx))
+		glog.V(0).Infof("Bootstrapping idx: %d sleep: %v new cluster: %+v", peerIdx, timeSleep, cfg)
+		time.Sleep(timeSleep)
 		f := s.RaftHashicorp.BootstrapCluster(cfg)
 		if err := f.Error(); err != nil {
 			return nil, fmt.Errorf("raft.Raft.BootstrapCluster: %v", err)

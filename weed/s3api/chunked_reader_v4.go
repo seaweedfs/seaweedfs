@@ -135,7 +135,7 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 		return nil, "", "", time.Time{}, s3err.ErrSignatureDoesNotMatch
 	}
 
-	// Return caculated signature.
+	// Return calculated signature.
 	return cred, newSignature, region, date, s3err.ErrNone
 }
 

@@ -119,7 +119,7 @@ func validateV2AuthHeader(v2Auth string) (accessKey string, errCode s3err.ErrorC
 		return "", s3err.ErrMissingFields
 	}
 
-	// Then will be splitting on ":", this will seprate `AWSAccessKeyId` and `Signature` string.
+	// Then will be splitting on ":", this will separate `AWSAccessKeyId` and `Signature` string.
 	keySignFields := strings.Split(strings.TrimSpace(authFields[1]), ":")
 	if len(keySignFields) != 2 {
 		return "", s3err.ErrMissingFields

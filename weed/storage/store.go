@@ -35,6 +35,15 @@ type ReadOption struct {
 	IsMetaOnly     bool // read status
 	VolumeRevision uint16
 	IsOutOfRange   bool // whether read over MaxPossibleVolumeSize
+
+	// If HasSlowRead is set to true:
+	//  * read requests and write requests compete for the lock.
+	//  * large file read P99 latency on busy sites will go up, due to the need to get locks multiple times.
+	//  * write requests will see lower latency.
+	// If HasSlowRead is set to false:
+	//  * read requests should complete asap, not blocking other requests.
+	//  * write requests may see high latency when downloading large files.
+	HasSlowRead bool
 }
 
 /*
