@@ -15,7 +15,7 @@ func TestParseFileIdFromString(t *testing.T) {
 	fidStr1 = "100, 12345678"
 	_, err = ParseFileIdFromString(fidStr1)
 	if err == nil {
-		t.Errorf("%s : needlId invalid syntax", fidStr1)
+		t.Errorf("%s : needleId invalid syntax", fidStr1)
 	}
 
 	fidStr1 = "100,123456789"
