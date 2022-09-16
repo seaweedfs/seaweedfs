@@ -19,38 +19,37 @@ import (
 )
 
 type Volume struct {
-	Id                 needle.VolumeId
-	dir                string
-	dirIdx             string
-	Collection         string
-	DataBackend        backend.BackendStorageFile
-	nm                 NeedleMapper
-	tmpNm              TempNeedleMapper
-	needleMapKind      NeedleMapKind
-	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
-	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete
-	noWriteLock        sync.RWMutex
-	hasRemoteFile      bool // if the volume has a remote file
-	MemoryMapMaxSizeMb uint32
-
 	super_block.SuperBlock
 
-	dataFileAccessLock    sync.RWMutex
-	superBlockAccessLock  sync.Mutex
-	asyncRequestsChan     chan *needle.AsyncRequest
-	lastModifiedTsSeconds uint64 // unix time in seconds
-	lastAppendAtNs        uint64 // unix time in nanoseconds
+	dir               string
+	dirIdx            string
+	Collection        string
+	DataBackend       backend.BackendStorageFile
+	nm                NeedleMapper
+	tmpNm             TempNeedleMapper
+	lastIoError       error
+	needleMapKind     NeedleMapKind
+	asyncRequestsChan chan *needle.AsyncRequest
 
+	lastModifiedTsSeconds  uint64 // unix time in seconds
+	lastAppendAtNs         uint64 // unix time in nanoseconds
 	lastCompactIndexOffset uint64
-	lastCompactRevision    uint16
+	volumeInfo             *volume_server_pb.VolumeInfo
+	location               *DiskLocation
 
+	noWriteLock          sync.RWMutex
+	dataFileAccessLock   sync.RWMutex
+	superBlockAccessLock sync.Mutex
+
+	Id                  needle.VolumeId
+	MemoryMapMaxSizeMb  uint32
+	lastCompactRevision uint16
+
+	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
+	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete
+	hasRemoteFile      bool // if the volume has a remote file
 	isCompacting       bool
 	isCommitCompacting bool
-
-	volumeInfo *volume_server_pb.VolumeInfo
-	location   *DiskLocation
-
-	lastIoError error
 }
 
 func NewVolume(dirname string, dirIdx string, collection string, id needle.VolumeId, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32) (v *Volume, e error) {
