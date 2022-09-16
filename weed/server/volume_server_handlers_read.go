@@ -116,8 +116,9 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	cookie := n.Cookie
 
 	readOption := &storage.ReadOption{
-		ReadDeleted: r.FormValue("readDeleted") == "true",
-		HasSlowRead: vs.hasSlowRead,
+		ReadDeleted:    r.FormValue("readDeleted") == "true",
+		HasSlowRead:    vs.hasSlowRead,
+		ReadBufferSize: vs.readBufferSize,
 	}
 
 	var count int
