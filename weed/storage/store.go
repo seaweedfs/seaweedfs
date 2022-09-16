@@ -45,9 +45,9 @@ type ReadOption struct {
 	//  * write requests may see high latency when downloading large files.
 	HasSlowRead bool
 
-	// increasing ReadBufSize can reduce the number of get locks times and shorten read P99 latency.
+	// increasing ReadBufferSize can reduce the number of get locks times and shorten read P99 latency.
 	// but will increase memory usage a bit. Use with hasSlowRead normally.
-	ReadBufSize int
+	ReadBufferSize int
 }
 
 /*
