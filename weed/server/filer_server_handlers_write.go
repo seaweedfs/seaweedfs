@@ -195,6 +195,8 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		httpStatus := http.StatusInternalServerError
 		if err == filer_pb.ErrNotFound {
 			httpStatus = http.StatusNoContent
+			writeJsonQuiet(w, r, httpStatus, nil)
+			return
 		}
 		writeJsonError(w, r, httpStatus, err)
 		return
