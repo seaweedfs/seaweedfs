@@ -298,7 +298,7 @@ func (fo *FilerOptions) startFiler() {
 			localSocket = fmt.Sprintf("/tmp/seaweedfs-filer-%d.sock", *fo.port)
 		}
 		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
-			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
+			glog.Fatalf("Failed to remove %s, error: %v", localSocket, err)
 		}
 		go func() {
 			// start on local unix socket
