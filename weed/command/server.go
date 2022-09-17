@@ -132,6 +132,7 @@ func init() {
 	serverOptions.v.idxFolder = cmdServer.Flag.String("volume.dir.idx", "", "directory to store .idx files")
 	serverOptions.v.inflightUploadDataTimeout = cmdServer.Flag.Duration("volume.inflightUploadDataTimeout", 60*time.Second, "inflight upload data wait timeout of volume servers")
 	serverOptions.v.hasSlowRead = cmdServer.Flag.Bool("volume.hasSlowRead", false, "<experimental> if true, this prevents slow reads from blocking other requests, but large file read P99 latency will increase.")
+	serverOptions.v.readBufferSize = cmdServer.Flag.Int("volume.readBufferSize", 1024 * 1024, "<experimental> larger values can optimize query performance but will increase some memory usage,Use with hasSlowRead normally")
 
 	s3Options.port = cmdServer.Flag.Int("s3.port", 8333, "s3 server http listen port")
 	s3Options.portGrpc = cmdServer.Flag.Int("s3.port.grpc", 0, "s3 server grpc listen port")

@@ -339,7 +339,7 @@ func (s *Store) recoverOneRemoteEcShardInterval(needleId types.NeedleId, ecVolum
 	ecVolume.ShardLocationsLock.RLock()
 	for shardId, locations := range ecVolume.ShardLocations {
 
-		// skip currnent shard or empty shard
+		// skip current shard or empty shard
 		if shardId == shardIdToRecover {
 			continue
 		}

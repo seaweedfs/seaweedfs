@@ -44,6 +44,10 @@ type ReadOption struct {
 	//  * read requests should complete asap, not blocking other requests.
 	//  * write requests may see high latency when downloading large files.
 	HasSlowRead bool
+
+	// increasing ReadBufferSize can reduce the number of get locks times and shorten read P99 latency.
+	// but will increase memory usage a bit. Use with hasSlowRead normally.
+	ReadBufferSize int
 }
 
 /*
@@ -58,7 +62,7 @@ type Store struct {
 	GrpcPort            int
 	PublicUrl           string
 	Locations           []*DiskLocation
-	dataCenter          string // optional informaton, overwriting master setting if exists
+	dataCenter          string // optional information, overwriting master setting if exists
 	rack                string // optional information, overwriting master setting if exists
 	connected           bool
 	NeedleMapKind       NeedleMapKind
