@@ -146,11 +146,11 @@ func (progress *KafkaProgress) saveProgress() error {
 	return nil
 }
 
-func (progress *KafkaProgress) setOffset(parition int32, offset int64) error {
+func (progress *KafkaProgress) setOffset(partition int32, offset int64) error {
 	progress.Lock()
 	defer progress.Unlock()
 
-	progress.PartitionOffsets[parition] = offset
+	progress.PartitionOffsets[partition] = offset
 	if int(time.Now().Sub(progress.lastSaveTime).Seconds()) > progress.offsetSaveIntervalSeconds {
 		return progress.saveProgress()
 	}

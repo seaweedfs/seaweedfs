@@ -57,6 +57,7 @@ func init() {
 	s3StandaloneOptions.metricsHttpPort = cmdS3.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	s3StandaloneOptions.allowEmptyFolder = cmdS3.Flag.Bool("allowEmptyFolder", true, "allow empty folders")
 	s3StandaloneOptions.allowDeleteBucketNotEmpty = cmdS3.Flag.Bool("allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	s3StandaloneOptions.localFilerSocket = cmdS3.Flag.String("localFilerSocket", "", "local filer socket path")
 }
 
 var cmdS3 = &Command{
@@ -214,7 +215,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	}
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.port)
-	s3ApiListener, s3ApiLocalListner, err := util.NewIpAndLocalListeners(*s3opt.bindIp, *s3opt.port, time.Duration(10)*time.Second)
+	s3ApiListener, s3ApiLocalListener, err := util.NewIpAndLocalListeners(*s3opt.bindIp, *s3opt.port, time.Duration(10)*time.Second)
 	if err != nil {
 		glog.Fatalf("S3 API Server listener on %s error: %v", listenAddress, err)
 	}
@@ -242,9 +243,9 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	if *s3opt.tlsPrivateKey != "" {
 		glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
-		if s3ApiLocalListner != nil {
+		if s3ApiLocalListener != nil {
 			go func() {
-				if err = httpS.ServeTLS(s3ApiLocalListner, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
+				if err = httpS.ServeTLS(s3ApiLocalListener, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
 					glog.Fatalf("S3 API Server Fail to serve: %v", err)
 				}
 			}()
@@ -254,9 +255,9 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 	} else {
 		glog.V(0).Infof("Start Seaweed S3 API Server %s at http port %d", util.Version(), *s3opt.port)
-		if s3ApiLocalListner != nil {
+		if s3ApiLocalListener != nil {
 			go func() {
-				if err = httpS.Serve(s3ApiLocalListner); err != nil {
+				if err = httpS.Serve(s3ApiLocalListener); err != nil {
 					glog.Fatalf("S3 API Server Fail to serve: %v", err)
 				}
 			}()

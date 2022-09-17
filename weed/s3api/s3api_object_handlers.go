@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	deleteMultipleObjectsLimmit = 1000
+	deleteMultipleObjectsLimit = 1000
 )
 
 func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
@@ -250,7 +250,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	if len(deleteObjects.Objects) > deleteMultipleObjectsLimmit {
+	if len(deleteObjects.Objects) > deleteMultipleObjectsLimit {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxDeleteObjects)
 		return
 	}

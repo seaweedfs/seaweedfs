@@ -21,7 +21,7 @@ func (c *commandLock) Name() string {
 func (c *commandLock) Help() string {
 	return `lock in order to exclusively manage the cluster
 
-	This is a blocking operation if there is alread another lock.
+	This is a blocking operation if there is already another lock.
 `
 }
 

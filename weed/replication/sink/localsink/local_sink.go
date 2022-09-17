@@ -80,7 +80,7 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 	dir := filepath.Dir(key)
 
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		glog.V(4).Infof("Create Direcotry key: %s", dir)
+		glog.V(4).Infof("Create Directory key: %s", dir)
 		if err = os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}

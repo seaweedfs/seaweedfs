@@ -14,7 +14,7 @@ import (
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
-//This map uses in memory level db
+// This map uses in memory level db
 type MemDb struct {
 	db *leveldb.DB
 }

@@ -28,6 +28,8 @@ type VolumeServer struct {
 	inFlightUploadDataLimitCond   *sync.Cond
 	inFlightDownloadDataLimitCond *sync.Cond
 	inflightUploadDataTimeout     time.Duration
+	hasSlowRead                   bool
+	readBufferSize                int
 
 	SeedMasterNodes []pb.ServerAddress
 	currentMaster   pb.ServerAddress
@@ -64,6 +66,8 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	concurrentUploadLimit int64,
 	concurrentDownloadLimit int64,
 	inflightUploadDataTimeout time.Duration,
+	hasSlowRead bool,
+	readBufferSize int,
 ) *VolumeServer {
 
 	v := util.GetViper()
@@ -93,6 +97,8 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		concurrentUploadLimit:         concurrentUploadLimit,
 		concurrentDownloadLimit:       concurrentDownloadLimit,
 		inflightUploadDataTimeout:     inflightUploadDataTimeout,
+		hasSlowRead:                   hasSlowRead,
+		readBufferSize:                readBufferSize,
 	}
 	vs.SeedMasterNodes = masterNodes
 

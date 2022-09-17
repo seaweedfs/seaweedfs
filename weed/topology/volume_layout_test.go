@@ -54,7 +54,7 @@ func TestVolumesBinaryState(t *testing.T) {
 		expectResultAfterUpdate []bool
 	}{
 		{
-			name:         "mark true when exist copies",
+			name:         "mark true when copies exist",
 			state:        state_exist,
 			expectResult: []bool{true, true, true, false, true},
 			update: func() {
@@ -67,7 +67,7 @@ func TestVolumesBinaryState(t *testing.T) {
 			expectResultAfterUpdate: []bool{true, false, true, false, false},
 		},
 		{
-			name:         "mark true when inexist copies",
+			name:         "mark true when no copies exist",
 			state:        state_no,
 			expectResult: []bool{false, true, true, false, true},
 			update: func() {
@@ -92,7 +92,7 @@ func TestVolumesBinaryState(t *testing.T) {
 			}
 			for index, val := range result {
 				if val != test.expectResult[index] {
-					t.Fatalf("result not matched, index %d, got %v, expect %v\n",
+					t.Fatalf("result not matched, index %d, got %v, expected %v\n",
 						index, val, test.expectResult[index])
 				}
 			}
@@ -107,7 +107,7 @@ func TestVolumesBinaryState(t *testing.T) {
 			}
 			for index, val := range updateResult {
 				if val != test.expectResultAfterUpdate[index] {
-					t.Fatalf("update result not matched, index %d, got %v, expect %v\n",
+					t.Fatalf("update result not matched, index %d, got %v, expected %v\n",
 						index, val, test.expectResultAfterUpdate[index])
 				}
 			}

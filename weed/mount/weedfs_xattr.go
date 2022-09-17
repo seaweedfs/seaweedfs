@@ -60,18 +60,19 @@ func (wfs *WFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr str
 
 // SetXAttr writes an extended attribute.
 // https://man7.org/linux/man-pages/man2/setxattr.2.html
-//        By default (i.e., flags is zero), the extended attribute will be
-//       created if it does not exist, or the value will be replaced if
-//       the attribute already exists.  To modify these semantics, one of
-//       the following values can be specified in flags:
 //
-//       XATTR_CREATE
-//              Perform a pure create, which fails if the named attribute
-//              exists already.
+//	 By default (i.e., flags is zero), the extended attribute will be
+//	created if it does not exist, or the value will be replaced if
+//	the attribute already exists.  To modify these semantics, one of
+//	the following values can be specified in flags:
 //
-//       XATTR_REPLACE
-//              Perform a pure replace operation, which fails if the named
-//              attribute does not already exist.
+//	XATTR_CREATE
+//	       Perform a pure create, which fails if the named attribute
+//	       exists already.
+//
+//	XATTR_REPLACE
+//	       Perform a pure replace operation, which fails if the named
+//	       attribute does not already exist.
 func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
 
 	if wfs.option.DisableXAttr {

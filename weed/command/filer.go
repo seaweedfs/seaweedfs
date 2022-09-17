@@ -250,7 +250,7 @@ func (fo *FilerOptions) startFiler() {
 	if *fo.publicPort != 0 {
 		publicListeningAddress := util.JoinHostPort(*fo.bindIp, *fo.publicPort)
 		glog.V(0).Infoln("Start Seaweed filer server", util.Version(), "public at", publicListeningAddress)
-		publicListener, localPublicListner, e := util.NewIpAndLocalListeners(*fo.bindIp, *fo.publicPort, 0)
+		publicListener, localPublicListener, e := util.NewIpAndLocalListeners(*fo.bindIp, *fo.publicPort, 0)
 		if e != nil {
 			glog.Fatalf("Filer server public listener error on port %d:%v", *fo.publicPort, e)
 		}
@@ -259,9 +259,9 @@ func (fo *FilerOptions) startFiler() {
 				glog.Fatalf("Volume server fail to serve public: %v", e)
 			}
 		}()
-		if localPublicListner != nil {
+		if localPublicListener != nil {
 			go func() {
-				if e := http.Serve(localPublicListner, publicVolumeMux); e != nil {
+				if e := http.Serve(localPublicListener, publicVolumeMux); e != nil {
 					glog.Errorf("Volume server fail to serve public: %v", e)
 				}
 			}()
@@ -295,7 +295,7 @@ func (fo *FilerOptions) startFiler() {
 	if runtime.GOOS != "windows" {
 		localSocket := *fo.localSocket
 		if localSocket == "" {
-			localSocket = fmt.Sprintf("/tmp/seaweefs-filer-%d.sock", *fo.port)
+			localSocket = fmt.Sprintf("/tmp/seaweedfs-filer-%d.sock", *fo.port)
 		}
 		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
 			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())

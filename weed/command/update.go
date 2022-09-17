@@ -52,7 +52,7 @@ type githubError struct {
 	Message string
 }
 
-//default version is not full version
+// default version is not full version
 var isFullVersion = false
 
 var (
@@ -69,7 +69,7 @@ func init() {
 	path, _ := os.Executable()
 	_, name := filepath.Split(path)
 	updateOpt.dir = cmdUpdate.Flag.String("dir", filepath.Dir(path), "directory to save new weed.")
-	updateOpt.name = cmdUpdate.Flag.String("name", name, "name of new weed. On windows, name shouldn't be same to the orignial name.")
+	updateOpt.name = cmdUpdate.Flag.String("name", name, "name of new weed. On windows, name shouldn't be same to the original name.")
 	updateOpt.Version = cmdUpdate.Flag.String("version", "0", "specific version of weed you want to download. If not specified, get the latest version.")
 	cmdUpdate.Run = runUpdate
 }
@@ -101,7 +101,7 @@ func runUpdate(cmd *Command, args []string) bool {
 
 	if runtime.GOOS == "windows" {
 		if target == path {
-			glog.Fatalf("On windows, name of the new weed shouldn't be same to the orignial name.")
+			glog.Fatalf("On windows, name of the new weed shouldn't be same to the original name.")
 			return false
 		}
 	}

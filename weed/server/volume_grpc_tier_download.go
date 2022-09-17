@@ -42,7 +42,7 @@ func (vs *VolumeServer) VolumeTierMoveDatFromRemote(req *volume_server_pb.Volume
 		for key := range backend.BackendStorages {
 			keys = append(keys, key)
 		}
-		return fmt.Errorf("remote storage %s not found from suppported: %v", storageName, keys)
+		return fmt.Errorf("remote storage %s not found from supported: %v", storageName, keys)
 	}
 
 	startTime := time.Now()

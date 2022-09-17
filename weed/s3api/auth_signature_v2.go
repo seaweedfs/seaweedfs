@@ -119,7 +119,7 @@ func validateV2AuthHeader(v2Auth string) (accessKey string, errCode s3err.ErrorC
 		return "", s3err.ErrMissingFields
 	}
 
-	// Then will be splitting on ":", this will seprate `AWSAccessKeyId` and `Signature` string.
+	// Then will be splitting on ":", this will separate `AWSAccessKeyId` and `Signature` string.
 	keySignFields := strings.Split(strings.TrimSpace(authFields[1]), ":")
 	if len(keySignFields) != 2 {
 		return "", s3err.ErrMissingFields
@@ -174,7 +174,8 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 }
 
 // doesPresignV2SignatureMatch - Verify query headers with presigned signature
-//     - http://docs.aws.amazon.com/AmazonS3/latest/dev/RESTAuthentication.html#RESTAuthenticationQueryStringAuth
+//   - http://docs.aws.amazon.com/AmazonS3/latest/dev/RESTAuthentication.html#RESTAuthenticationQueryStringAuth
+//
 // returns ErrNone if matches. S3 errors otherwise.
 func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request) (*Identity, s3err.ErrorCode) {
 

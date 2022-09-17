@@ -203,7 +203,7 @@ func ParsePostPolicyForm(policy string) (ppf PostPolicyForm, e error) {
 	return parsedPolicy, nil
 }
 
-// checkPolicyCond returns a boolean to indicate if a condition is satisified according
+// checkPolicyCond returns a boolean to indicate if a condition is satisfied according
 // to the passed operator
 func checkPolicyCond(op string, input1, input2 string) bool {
 	switch op {

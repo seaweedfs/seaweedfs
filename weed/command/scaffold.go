@@ -22,7 +22,7 @@ var cmdScaffold = &Command{
 		export WEED_MYSQL_PASSWORD=some_password
 	Environment variable rules:
 		* Prefix the variable name with "WEED_"
-		* Upppercase the reset of variable name.
+		* Uppercase the reset of variable name.
 		* Replace '.' with '_'
 
   `,

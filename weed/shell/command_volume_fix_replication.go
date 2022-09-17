@@ -70,7 +70,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	}
 
 	takeAction := !*skipChange
-	doDeletes := !*noDelete;
+	doDeletes := !*noDelete
 
 	underReplicatedVolumeIdsCount := 1
 	for underReplicatedVolumeIdsCount > 0 {
@@ -331,34 +331,40 @@ func keepDataNodesSorted(dataNodes []location, diskType types.DiskType) {
 }
 
 /*
-  if on an existing data node {
-    return false
-  }
-  if different from existing dcs {
-    if lack on different dcs {
-      return true
-    }else{
-      return false
-    }
-  }
-  if not on primary dc {
-    return false
-  }
-  if different from existing racks {
-    if lack on different racks {
-      return true
-    }else{
-      return false
-    }
-  }
-  if not on primary rack {
-    return false
-  }
-  if lacks on same rack {
-    return true
-  } else {
-    return false
-  }
+	if on an existing data node {
+	  return false
+	}
+
+	if different from existing dcs {
+	  if lack on different dcs {
+	    return true
+	  }else{
+	    return false
+	  }
+	}
+
+	if not on primary dc {
+	  return false
+	}
+
+	if different from existing racks {
+	  if lack on different racks {
+	    return true
+	  }else{
+	    return false
+	  }
+	}
+
+	if not on primary rack {
+	  return false
+	}
+
+	if lacks on same rack {
+	  return true
+	} else {
+
+	  return false
+	}
 */
 func satisfyReplicaPlacement(replicaPlacement *super_block.ReplicaPlacement, replicas []*VolumeReplica, possibleLocation location) bool {
 
