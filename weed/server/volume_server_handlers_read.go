@@ -118,7 +118,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	readOption := &storage.ReadOption{
 		ReadDeleted:    r.FormValue("readDeleted") == "true",
 		HasSlowRead:    vs.hasSlowRead,
-		ReadBufferSize: vs.readBufferSize,
+		ReadBufferSize: vs.readBufferSizeMB * 1024 * 1024,
 	}
 
 	var count int
