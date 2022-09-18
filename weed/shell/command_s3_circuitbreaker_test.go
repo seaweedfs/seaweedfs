@@ -285,7 +285,7 @@ func TestCircuitBreakerShell(t *testing.T) {
 				t.Error(err)
 			}
 			if !reflect.DeepEqual(actual, expect) {
-				t.Fatal("result of s3 circuit breaker shell command is unexpect!")
+				t.Fatal("result of s3 circuit breaker shell command is unexpected!")
 			}
 		}
 	}

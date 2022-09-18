@@ -96,7 +96,7 @@ After caching the file content, the entry.RemoteEntry will be
 	remoteEntry.LastLocalSyncTsNs == time.Now.UnixNano()
 	Attributes.FileSize = uint64(remoteEntry.RemoteSize)
 	Attributes.Mtime = remoteEntry.RemoteMtime
-	chunks = non-emtpy
+	chunks = non-empty
 
 When "weed filer.remote.sync" to upload local changes to remote, the criteria is:
 
