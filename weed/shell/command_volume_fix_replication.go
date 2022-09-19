@@ -57,6 +57,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	volFixReplicationCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	c.collectionPattern = volFixReplicationCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
 	skipChange := volFixReplicationCommand.Bool("n", false, "skip the changes")
+	noDelete := volFixReplicationCommand.Bool("noDelete", false, "Do not delete over-replicated volumes, only fix under-replication")
 	retryCount := volFixReplicationCommand.Int("retry", 0, "how many times to retry")
 	volumesPerStep := volFixReplicationCommand.Int("volumesPerStep", 0, "how many volumes to fix in one cycle")
 
@@ -69,6 +70,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	}
 
 	takeAction := !*skipChange
+	doDeletes := !*noDelete
 
 	underReplicatedVolumeIdsCount := 1
 	for underReplicatedVolumeIdsCount > 0 {
@@ -108,13 +110,13 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 			return fmt.Errorf("lock is lost")
 		}
 
-		if len(overReplicatedVolumeIds) > 0 {
+		if len(overReplicatedVolumeIds) > 0 && doDeletes {
 			if err := c.deleteOneVolume(commandEnv, writer, takeAction, overReplicatedVolumeIds, volumeReplicas, allLocations, pickOneReplicaToDelete); err != nil {
 				return err
 			}
 		}
 
-		if len(misplacedVolumeIds) > 0 {
+		if len(misplacedVolumeIds) > 0 && doDeletes {
 			if err := c.deleteOneVolume(commandEnv, writer, takeAction, misplacedVolumeIds, volumeReplicas, allLocations, pickOneMisplacedVolume); err != nil {
 				return err
 			}
@@ -329,34 +331,40 @@ func keepDataNodesSorted(dataNodes []location, diskType types.DiskType) {
 }
 
 /*
-  if on an existing data node {
-    return false
-  }
-  if different from existing dcs {
-    if lack on different dcs {
-      return true
-    }else{
-      return false
-    }
-  }
-  if not on primary dc {
-    return false
-  }
-  if different from existing racks {
-    if lack on different racks {
-      return true
-    }else{
-      return false
-    }
-  }
-  if not on primary rack {
-    return false
-  }
-  if lacks on same rack {
-    return true
-  } else {
-    return false
-  }
+	if on an existing data node {
+	  return false
+	}
+
+	if different from existing dcs {
+	  if lack on different dcs {
+	    return true
+	  }else{
+	    return false
+	  }
+	}
+
+	if not on primary dc {
+	  return false
+	}
+
+	if different from existing racks {
+	  if lack on different racks {
+	    return true
+	  }else{
+	    return false
+	  }
+	}
+
+	if not on primary rack {
+	  return false
+	}
+
+	if lacks on same rack {
+	  return true
+	} else {
+
+	  return false
+	}
 */
 func satisfyReplicaPlacement(replicaPlacement *super_block.ReplicaPlacement, replicas []*VolumeReplica, possibleLocation location) bool {
 

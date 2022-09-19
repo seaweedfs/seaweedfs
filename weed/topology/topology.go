@@ -258,14 +258,16 @@ func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 }
 
 func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {
-	for _, c := range t.Children() {
+	t.Lock()
+	defer t.Unlock()
+	for _, c := range t.children {
 		dc := c.(*DataCenter)
 		if string(dc.Id()) == dcName {
 			return dc
 		}
 	}
 	dc := NewDataCenter(dcName)
-	t.LinkChildNode(dc)
+	t.doLinkChildNode(dc)
 	return dc
 }
 

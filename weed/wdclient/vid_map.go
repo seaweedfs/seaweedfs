@@ -43,8 +43,8 @@ type vidMap struct {
 	cache           *vidMap
 }
 
-func newVidMap(dataCenter string) vidMap {
-	return vidMap{
+func newVidMap(dataCenter string) *vidMap {
+	return &vidMap{
 		vid2Locations:   make(map[uint32][]Location),
 		ecVid2Locations: make(map[uint32][]Location),
 		DataCenter:      dataCenter,

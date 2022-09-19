@@ -81,7 +81,7 @@ func removeVolumeFiles(filename string) {
 	// compaction
 	os.Remove(filename + ".cpd")
 	os.Remove(filename + ".cpx")
-	// level db indx file
+	// level db index file
 	os.RemoveAll(filename + ".ldb")
 	// marker for damaged or incomplete volume
 	os.Remove(filename + ".note")

@@ -68,7 +68,7 @@ func (vs *VolumeServer) heartbeat() {
 			vs.store.MasterAddress = master
 			newLeader, err = vs.doHeartbeat(master, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)
 			if err != nil {
-				glog.V(0).Infof("heartbeat error: %v", err)
+				glog.V(0).Infof("heartbeat to %s error: %v", master, err)
 				time.Sleep(time.Duration(vs.pulseSeconds) * time.Second)
 				newLeader = ""
 				vs.store.MasterAddress = ""
@@ -94,13 +94,13 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	grpcConection, err := pb.GrpcDial(ctx, masterAddress.ToGrpcAddress(), false, grpcDialOption)
+	grpcConnection, err := pb.GrpcDial(ctx, masterAddress.ToGrpcAddress(), false, grpcDialOption)
 	if err != nil {
 		return "", fmt.Errorf("fail to dial %s : %v", masterAddress, err)
 	}
-	defer grpcConection.Close()
+	defer grpcConnection.Close()
 
-	client := master_pb.NewSeaweedClient(grpcConection)
+	client := master_pb.NewSeaweedClient(grpcConnection)
 	stream, err := client.SendHeartbeat(ctx)
 	if err != nil {
 		glog.V(0).Infof("SendHeartbeat to %s: %v", masterAddress, err)
@@ -160,11 +160,18 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 
 	volumeTickChan := time.Tick(sleepInterval)
 	ecShardTickChan := time.Tick(17 * sleepInterval)
-
+	dataCenter := vs.store.GetDataCenter()
+	rack := vs.store.GetRack()
+	ip := vs.store.Ip
+	port := uint32(vs.store.Port)
 	for {
 		select {
 		case volumeMessage := <-vs.store.NewVolumesChan:
 			deltaBeat := &master_pb.Heartbeat{
+				Ip:         ip,
+				Port:       port,
+				DataCenter: dataCenter,
+				Rack:       rack,
 				NewVolumes: []*master_pb.VolumeShortInformationMessage{
 					&volumeMessage,
 				},
@@ -176,6 +183,10 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 			}
 		case ecShardMessage := <-vs.store.NewEcShardsChan:
 			deltaBeat := &master_pb.Heartbeat{
+				Ip:         ip,
+				Port:       port,
+				DataCenter: dataCenter,
+				Rack:       rack,
 				NewEcShards: []*master_pb.VolumeEcShardInformationMessage{
 					&ecShardMessage,
 				},
@@ -188,6 +199,10 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 			}
 		case volumeMessage := <-vs.store.DeletedVolumesChan:
 			deltaBeat := &master_pb.Heartbeat{
+				Ip:         ip,
+				Port:       port,
+				DataCenter: dataCenter,
+				Rack:       rack,
 				DeletedVolumes: []*master_pb.VolumeShortInformationMessage{
 					&volumeMessage,
 				},
@@ -199,6 +214,10 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 			}
 		case ecShardMessage := <-vs.store.DeletedEcShardsChan:
 			deltaBeat := &master_pb.Heartbeat{
+				Ip:         ip,
+				Port:       port,
+				DataCenter: dataCenter,
+				Rack:       rack,
 				DeletedEcShards: []*master_pb.VolumeEcShardInformationMessage{
 					&ecShardMessage,
 				},
@@ -227,12 +246,12 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 		case <-vs.stopChan:
 			var volumeMessages []*master_pb.VolumeInformationMessage
 			emptyBeat := &master_pb.Heartbeat{
-				Ip:           vs.store.Ip,
-				Port:         uint32(vs.store.Port),
+				Ip:           ip,
+				Port:         port,
 				PublicUrl:    vs.store.PublicUrl,
 				MaxFileKey:   uint64(0),
-				DataCenter:   vs.store.GetDataCenter(),
-				Rack:         vs.store.GetRack(),
+				DataCenter:   dataCenter,
+				Rack:         rack,
 				Volumes:      volumeMessages,
 				HasNoVolumes: len(volumeMessages) == 0,
 			}

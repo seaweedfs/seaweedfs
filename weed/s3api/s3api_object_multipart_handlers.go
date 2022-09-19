@@ -281,7 +281,7 @@ func (s3a *S3ApiServer) generateUploadID(object string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-//Check object name and uploadID when processing  multipart uploading
+// Check object name and uploadID when processing  multipart uploading
 func (s3a *S3ApiServer) checkUploadId(object string, id string) error {
 
 	hash := s3a.generateUploadID(object)

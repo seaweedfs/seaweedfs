@@ -151,15 +151,7 @@ func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 func getWatermark(db *leveldb.DB) uint64 {
 	data, err := db.Get(watermarkKey, nil)
 	if err != nil || len(data) != 8 {
-		glog.Warningf("get watermark from db error: %v, %d", err, len(data))
-		/*
-			if !strings.Contains(strings.ToLower(err.Error()), "not found") {
-				err = setWatermark(db, 0)
-				if err != nil {
-					glog.Errorf("failed to set watermark: %v", err)
-				}
-			}
-		*/
+		glog.V(1).Infof("read previous watermark from db: %v, %d", err, len(data))
 		return 0
 	}
 	return util.BytesToUint64(data)

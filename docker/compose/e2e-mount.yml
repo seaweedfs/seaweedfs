@@ -1,0 +1,53 @@
+version: '3.9'
+
+services:
+  master:
+    image: chrislusf/seaweedfs:e2e
+    command: "-v=4 master -ip=master -ip.bind=0.0.0.0 -raftBootstrap"
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "-I", "http://localhost:9333/cluster/healthz" ]
+      interval: 1s
+      timeout: 60s
+
+  volume:
+    image: chrislusf/seaweedfs:e2e
+    command: "-v=4 volume -mserver=master:9333 -ip=volume -ip.bind=0.0.0.0 -preStopSeconds=1"
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "-I", "http://localhost:8080/healthz" ]
+      interval: 1s
+      timeout: 30s
+    depends_on:
+      master:
+        condition: service_healthy
+
+  filer:
+    image: chrislusf/seaweedfs:e2e
+    command: "-v=4 filer -master=master:9333 -ip=filer -ip.bind=0.0.0.0"
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "-I", "http://localhost:8888" ]
+      interval: 1s
+      timeout: 30s
+    depends_on:
+      volume:
+        condition: service_healthy
+
+  mount:
+    image: chrislusf/seaweedfs:e2e
+    command: "-v=4 mount -filer=filer:8888 -filer.path=/ -dirAutoCreate -dir=/mnt/seaweedfs"
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    security_opt:
+      - apparmor:unconfined
+    deploy:
+      resources:
+        limits:
+          memory: 4096m
+    healthcheck:
+      test: [ "CMD", "mountpoint", "-q", "--", "/mnt/seaweedfs" ]
+      interval: 1s
+      timeout: 30s
+    depends_on:
+      filer:
+        condition: service_healthy

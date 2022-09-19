@@ -12,7 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-//convert a string into arango-key safe hex bytes hash
+// convert a string into arango-key safe hex bytes hash
 func hashString(dir string) string {
 	h := md5.New()
 	io.WriteString(h, dir)
@@ -86,7 +86,7 @@ func (store *ArangodbStore) ensureBucket(ctx context.Context, bucket string) (bc
 	store.mu.RLock()
 	bc, ok = store.buckets[bucket]
 	store.mu.RUnlock()
-	if ok {
+	if ok && bc != nil {
 		return bc, nil
 	}
 	store.mu.Lock()
@@ -98,8 +98,26 @@ func (store *ArangodbStore) ensureBucket(ctx context.Context, bucket string) (bc
 	return store.buckets[bucket], nil
 }
 
+// transform to an arango compliant name
+func bucketToCollectionName(s string) string {
+	if len(s) == 0 {
+		return ""
+	}
+	// replace all "." with _
+	s = strings.ReplaceAll(s, ".", "_")
+
+	// if starts with number or '.' then add a special prefix
+	if (s[0] >= '0' && s[0] <= '9') || (s[0] == '.' || s[0] == '_' || s[0] == '-') {
+		s = "xN--" + s
+	}
+	return s
+}
+
 // creates collection if not exist, ensures indices if not exist
-func (store *ArangodbStore) ensureCollection(ctx context.Context, name string) (c driver.Collection, err error) {
+func (store *ArangodbStore) ensureCollection(ctx context.Context, bucket_name string) (c driver.Collection, err error) {
+	// convert the bucket to collection name
+	name := bucketToCollectionName(bucket_name)
+
 	ok, err := store.database.CollectionExists(ctx, name)
 	if err != nil {
 		return

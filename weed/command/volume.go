@@ -65,8 +65,9 @@ type VolumeServerOptions struct {
 	preStopSeconds            *int
 	metricsHttpPort           *int
 	// pulseSeconds          *int
-	enableTcp                 *bool
 	inflightUploadDataTimeout *time.Duration
+	hasSlowRead               *bool
+	readBufferSizeMB          *int
 }
 
 func init() {
@@ -96,8 +97,9 @@ func init() {
 	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
 	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
-	v.enableTcp = cmdVolume.Flag.Bool("tcp", false, "<experimental> enable tcp port")
 	v.inflightUploadDataTimeout = cmdVolume.Flag.Duration("inflightUploadDataTimeout", 60*time.Second, "inflight upload data wait timeout of volume servers")
+	v.hasSlowRead = cmdVolume.Flag.Bool("hasSlowRead", false, "<experimental> if true, this prevents slow reads from blocking other requests, but large file read P99 latency will increase.")
+	v.readBufferSizeMB = cmdVolume.Flag.Int("readBufferSizeMB", 4, "<experimental> larger values can optimize query performance but will increase some memory usage,Use with hasSlowRead normally.")
 }
 
 var cmdVolume = &Command{
@@ -245,6 +247,8 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		int64(*v.concurrentUploadLimitMB)*1024*1024,
 		int64(*v.concurrentDownloadLimitMB)*1024*1024,
 		*v.inflightUploadDataTimeout,
+		*v.hasSlowRead,
+		*v.readBufferSizeMB,
 	)
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)
@@ -256,11 +260,6 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		if nil == publicHttpDown {
 			glog.Fatalf("start public http service failed")
 		}
-	}
-
-	// starting tcp server
-	if *v.enableTcp {
-		go v.startTcpService(volumeServer)
 	}
 
 	// starting the cluster http server
@@ -387,23 +386,4 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 		}
 	}()
 	return clusterHttpServer
-}
-
-func (v VolumeServerOptions) startTcpService(volumeServer *weed_server.VolumeServer) {
-	listeningAddress := util.JoinHostPort(*v.bindIp, *v.port+20000)
-	glog.V(0).Infoln("Start Seaweed volume server", util.Version(), "tcp at", listeningAddress)
-	listener, e := util.NewListener(listeningAddress, 0)
-	if e != nil {
-		glog.Fatalf("Volume server listener error on %s:%v", listeningAddress, e)
-	}
-	defer listener.Close()
-
-	for {
-		c, err := listener.Accept()
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		go volumeServer.HandleTcpConnection(c)
-	}
 }

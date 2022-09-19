@@ -167,7 +167,7 @@ func (v *Volume) CommitCompact() error {
 	if e = v.load(true, false, v.needleMapKind, 0); e != nil {
 		return e
 	}
-	glog.V(3).Infof("Finish commiting volume %d", v.Id)
+	glog.V(3).Infof("Finish committing volume %d", v.Id)
 	return nil
 }
 

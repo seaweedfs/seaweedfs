@@ -118,7 +118,7 @@ func eachDataNode(topo *master_pb.TopologyInfo, fn func(dc string, rack RackId, 
 	}
 }
 
-func sortEcNodesByFreeslotsDecending(ecNodes []*EcNode) {
+func sortEcNodesByFreeslotsDescending(ecNodes []*EcNode) {
 	slices.SortFunc(ecNodes, func(a, b *EcNode) bool {
 		return a.freeEcSlot > b.freeEcSlot
 	})
@@ -217,7 +217,7 @@ func collectEcNodes(commandEnv *CommandEnv, selectedDataCenter string) (ecNodes 
 	// find out all volume servers with one slot left.
 	ecNodes, totalFreeEcSlots = collectEcVolumeServersByDc(topologyInfo, selectedDataCenter)
 
-	sortEcNodesByFreeslotsDecending(ecNodes)
+	sortEcNodesByFreeslotsDescending(ecNodes)
 
 	return
 }

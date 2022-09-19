@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
@@ -194,13 +195,13 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 	err = pb.WithFilerClient(true, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		ma.filer.UniqueFilerEpoch++
+		atomic.AddInt32(&ma.filer.UniqueFilerEpoch, 1)
 		stream, err := client.SubscribeLocalMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
 			ClientName:  "filer:" + string(self),
 			PathPrefix:  "/",
 			SinceNs:     lastTsNs,
 			ClientId:    ma.filer.UniqueFilerId,
-			ClientEpoch: ma.filer.UniqueFilerEpoch,
+			ClientEpoch: atomic.LoadInt32(&ma.filer.UniqueFilerEpoch),
 		})
 		if err != nil {
 			return fmt.Errorf("subscribe: %v", err)

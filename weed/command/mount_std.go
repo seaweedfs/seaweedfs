@@ -107,7 +107,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		if mountDirHash < 0 {
 			mountDirHash = -mountDirHash
 		}
-		*option.localSocket = fmt.Sprintf("/tmp/seaweefs-mount-%d.sock", mountDirHash)
+		*option.localSocket = fmt.Sprintf("/tmp/seaweedfs-mount-%d.sock", mountDirHash)
 	}
 	if err := os.Remove(*option.localSocket); err != nil && !os.IsNotExist(err) {
 		glog.Fatalf("Failed to remove %s, error: %s", *option.localSocket, err.Error())
@@ -157,7 +157,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	// Ensure target mount point availability
 	if isValid := checkMountPointAvailable(dir); !isValid {
-		glog.Fatalf("Expected mount to still be active, target mount point: %s, please check!", dir)
+		glog.Fatalf("Target mount point is not available: %s, please check!", dir)
 		return true
 	}
 

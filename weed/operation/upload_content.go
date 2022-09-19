@@ -156,14 +156,15 @@ func doUpload(reader io.Reader, option *UploadOption) (uploadResult *UploadResul
 
 func retriedUploadData(data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
 	for i := 0; i < 3; i++ {
+		if i > 0 {
+			time.Sleep(time.Millisecond * time.Duration(237*(i+1)))
+		}
 		uploadResult, err = doUploadData(data, option)
 		if err == nil {
 			uploadResult.RetryCount = i
 			return
-		} else {
-			glog.Warningf("uploading %d to %s: %v", i, option.UploadUrl, err)
 		}
-		time.Sleep(time.Millisecond * time.Duration(237*(i+1)))
+		glog.Warningf("uploading %d to %s: %v", i, option.UploadUrl, err)
 	}
 	return
 }

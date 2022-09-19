@@ -34,12 +34,11 @@ const expirationDateFormat = "2006-01-02T15:04:05.999Z"
 //
 // Example:
 //
-//   policyCondition {
-//       matchType: "$eq",
-//       key: "$Content-Type",
-//       value: "image/png",
-//   }
-//
+//	policyCondition {
+//	    matchType: "$eq",
+//	    key: "$Content-Type",
+//	    value: "image/png",
+//	}
 type policyCondition struct {
 	matchType string
 	condition string

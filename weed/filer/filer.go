@@ -32,6 +32,8 @@ var (
 )
 
 type Filer struct {
+	UniqueFilerId       int32
+	UniqueFilerEpoch    int32
 	Store               VirtualFilerStore
 	MasterClient        *wdclient.MasterClient
 	fileIdDeletionQueue *util.UnboundedQueue
@@ -45,8 +47,6 @@ type Filer struct {
 	Signature           int32
 	FilerConf           *FilerConf
 	RemoteStorage       *FilerRemoteStorage
-	UniqueFilerId       int32
-	UniqueFilerEpoch    int32
 }
 
 func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress,
@@ -178,7 +178,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 
 		if !skipCreateParentDir {
 			dirParts := strings.Split(string(entry.FullPath), "/")
-			if err := f.ensureParentDirecotryEntry(ctx, entry, dirParts, len(dirParts)-1, isFromOtherCluster); err != nil {
+			if err := f.ensureParentDirectoryEntry(ctx, entry, dirParts, len(dirParts)-1, isFromOtherCluster); err != nil {
 				return err
 			}
 		}
@@ -209,7 +209,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 	return nil
 }
 
-func (f *Filer) ensureParentDirecotryEntry(ctx context.Context, entry *Entry, dirParts []string, level int, isFromOtherCluster bool) (err error) {
+func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, dirParts []string, level int, isFromOtherCluster bool) (err error) {
 
 	if level == 0 {
 		return nil
@@ -226,7 +226,7 @@ func (f *Filer) ensureParentDirecotryEntry(ctx context.Context, entry *Entry, di
 	if dirEntry == nil {
 
 		// ensure parent directory
-		if err = f.ensureParentDirecotryEntry(ctx, entry, dirParts, level-1, isFromOtherCluster); err != nil {
+		if err = f.ensureParentDirectoryEntry(ctx, entry, dirParts, level-1, isFromOtherCluster); err != nil {
 			return err
 		}
 

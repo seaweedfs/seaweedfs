@@ -31,7 +31,7 @@ type ManagedConn interface {
 	// This returns the connection pool which owns this connection.
 	Owner() ConnectionPool
 
-	// This indictes a user is done with the connection and releases the
+	// This indicates a user is done with the connection and releases the
 	// connection back to the connection pool.
 	ReleaseConnection() error
 

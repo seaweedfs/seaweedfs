@@ -8,17 +8,29 @@ cgo ?= 0
 binary:
 	export SWCOMMIT=$(shell git rev-parse --short HEAD)
 	export SWLDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=$(SWCOMMIT)"
-	cd ../weed; CGO_ENABLED=$(cgo) GOOS=linux go build $(options) -tags "$(tags)" -ldflags "-extldflags -static $(SWLDFLAGS)"; mv weed ../docker/
+	cd ../weed && CGO_ENABLED=$(cgo) GOOS=linux go build $(options) -tags "$(tags)" -ldflags "-extldflags -static $(SWLDFLAGS)" && mv weed ../docker/
+
+binary_race: options = -race
+binary_race: cgo = 1
+binary_race: binary
 
 build: binary
 	docker build --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.local .
-	rm ./weed
+
+build_e2e: binary_race
+	docker build --no-cache -t chrislusf/seaweedfs:e2e -f Dockerfile.e2e .
 
 go_build: # make go_build tags=elastic,ydb,gocdk,hdfs,5BytesOffset
 	docker build --build-arg TAGS=$(tags) --no-cache -t chrislusf/seaweedfs:go_build -f Dockerfile.go_build .
 
 go_build_large_disk:
 	docker build --build-arg TAGS=large_disk --no-cache -t chrislusf/seaweedfs:large_disk -f Dockerfile.go_build .
+
+build_rocksdb_dev_env:
+	docker build --no-cache -t chrislusf/rocksdb_dev_env -f Dockerfile.rocksdb_dev_env .
+
+build_rocksdb_local:
+	cd .. ; docker build --no-cache -t chrislusf/seaweedfs:rocksdb_local -f docker/Dockerfile.rocksdb_large_local .
 
 build_rocksdb:
 	docker build --no-cache -t chrislusf/seaweedfs:rocksdb -f Dockerfile.rocksdb_large .
@@ -29,9 +41,7 @@ s3tests_build:
 dev: build
 	docker-compose -f compose/local-dev-compose.yml -p seaweedfs up
 
-dev_race: options = -race
-dev_race: cgo = 1
-dev_race: build
+dev_race: binary_race
 	docker-compose -f compose/local-dev-compose.yml -p seaweedfs up
 
 dev_tls: build certstrap

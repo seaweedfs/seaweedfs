@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	RenewInteval     = 4 * time.Second
-	SafeRenewInteval = 3 * time.Second
-	InitLockInteval  = 1 * time.Second
+	RenewInterval     = 4 * time.Second
+	SafeRenewInterval = 3 * time.Second
+	InitLockInterval  = 1 * time.Second
 )
 
 type ExclusiveLocker struct {
@@ -37,7 +37,7 @@ func (l *ExclusiveLocker) IsLocked() bool {
 }
 
 func (l *ExclusiveLocker) GetToken() (token int64, lockTsNs int64) {
-	for time.Unix(0, atomic.LoadInt64(&l.lockTsNs)).Add(SafeRenewInteval).Before(time.Now()) {
+	for time.Unix(0, atomic.LoadInt64(&l.lockTsNs)).Add(SafeRenewInterval).Before(time.Now()) {
 		// wait until now is within the safe lock period, no immediate renewal to change the token
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -68,7 +68,7 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 			return err
 		}); err != nil {
 			println("lock:", err.Error())
-			time.Sleep(InitLockInteval)
+			time.Sleep(InitLockInterval)
 		} else {
 			break
 		}
@@ -101,7 +101,7 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 				l.isLocked = false
 				return
 			} else {
-				time.Sleep(RenewInteval)
+				time.Sleep(RenewInterval)
 			}
 
 		}

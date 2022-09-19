@@ -37,7 +37,7 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 		for key := range backend.BackendStorages {
 			keys = append(keys, key)
 		}
-		return fmt.Errorf("destination %s not found, suppported: %v", req.DestinationBackendName, keys)
+		return fmt.Errorf("destination %s not found, supported: %v", req.DestinationBackendName, keys)
 	}
 
 	// check whether the existing backend storage is the same as requested

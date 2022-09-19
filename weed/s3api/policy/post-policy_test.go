@@ -125,7 +125,7 @@ func newPostPolicyBytesV2(bucketName, objectKey string, expiration time.Time) []
 
 // postPresignSignatureV4 - presigned signature for PostPolicy requests.
 func postPresignSignatureV4(policyBase64 string, t time.Time, secretAccessKey, location string) string {
-	// Get signining key.
+	// Get signing key.
 	signingkey := getSigningKey(secretAccessKey, t, location)
 	// Calculate signature.
 	signature := getSignature(signingkey, policyBase64)

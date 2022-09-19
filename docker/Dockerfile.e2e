@@ -1,0 +1,30 @@
+FROM ubuntu:22.04
+
+LABEL author="Chris Lu"
+
+RUN apt-get update && apt-get install -y curl fio fuse
+RUN mkdir -p /etc/seaweedfs /data/filerldb2
+
+COPY ./weed /usr/bin/
+COPY ./filer.toml /etc/seaweedfs/filer.toml
+COPY ./entrypoint.sh /entrypoint.sh
+
+# volume server grpc port
+EXPOSE 18080
+# volume server http port
+EXPOSE 8080
+# filer server grpc port
+EXPOSE 18888
+# filer server http port
+EXPOSE 8888
+# master server shared grpc port
+EXPOSE 19333
+# master server shared http port
+EXPOSE 9333
+
+VOLUME /data
+WORKDIR /data
+
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

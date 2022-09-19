@@ -1,5 +1,5 @@
 [notification.log]
-# this is only for debugging perpose and does not work with "weed filer.replicate"
+# this is only for debugging purpose and does not work with "weed filer.replicate"
 enabled = false
 
 

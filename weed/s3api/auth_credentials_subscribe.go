@@ -42,9 +42,9 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, prefix string, la
 	})
 }
 
-//reload iam config
+// reload iam config
 func (s3a *S3ApiServer) onIamConfigUpdate(dir, filename string, content []byte) error {
-	if dir == filer.IamConfigDirecotry && filename == filer.IamIdentityFile {
+	if dir == filer.IamConfigDirectory && filename == filer.IamIdentityFile {
 		if err := s3a.iam.LoadS3ApiConfigurationFromBytes(content); err != nil {
 			return err
 		}
@@ -53,7 +53,7 @@ func (s3a *S3ApiServer) onIamConfigUpdate(dir, filename string, content []byte) 
 	return nil
 }
 
-//reload circuit breaker config
+// reload circuit breaker config
 func (s3a *S3ApiServer) onCircuitBreakerConfigUpdate(dir, filename string, content []byte) error {
 	if dir == s3_constants.CircuitBreakerConfigDir && filename == s3_constants.CircuitBreakerConfigFile {
 		if err := s3a.cb.LoadS3ApiConfigurationFromBytes(content); err != nil {

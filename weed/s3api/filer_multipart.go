@@ -117,7 +117,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			}
 		}
 	}
-
+	
 	entryName := filepath.Base(*input.Key)
 	dirName := filepath.Dir(*input.Key)
 	if dirName == "." {
@@ -147,6 +147,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		} else if mime != "" {
 			entry.Attributes.Mime = mime
 		}
+		entry.Attributes.FileSize = uint64(offset)
 	})
 
 	if err != nil {
@@ -244,6 +245,7 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 		KeyMarker:    input.KeyMarker,
 		MaxUploads:   input.MaxUploads,
 		Prefix:       input.Prefix,
+		IsTruncated:  aws.Bool(false),
 	}
 
 	entries, _, err := s3a.list(s3a.genUploadsFolder(*input.Bucket), "", *input.UploadIdMarker, false, math.MaxInt32)

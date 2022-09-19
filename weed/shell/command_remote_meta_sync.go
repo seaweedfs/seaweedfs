@@ -73,39 +73,48 @@ func detectMountInfo(commandEnv *CommandEnv, writer io.Writer, dir string) (*rem
 }
 
 /*
-  This function update entry.RemoteEntry if the remote has any changes.
+This function update entry.RemoteEntry if the remote has any changes.
 
-  To pull remote updates, or created for the first time, the criteria is:
-    entry == nil or (entry.RemoteEntry != nil and (entry.RemoteEntry.RemoteTag != remote.RemoteTag or entry.RemoteEntry.RemoteMTime < remote.RemoteMTime ))
-  After the meta pull, the entry.RemoteEntry will have:
-    remoteEntry.LastLocalSyncTsNs == 0
-    Attributes.FileSize = uint64(remoteEntry.RemoteSize)
-    Attributes.Mtime = remoteEntry.RemoteMtime
-    remoteEntry.RemoteTag   = actual remote tag
-    chunks = nil
+To pull remote updates, or created for the first time, the criteria is:
 
-  When reading the file content or pulling the file content in "remote.cache", the criteria is:
-    Attributes.FileSize > 0 and len(chunks) == 0
-  After caching the file content, the entry.RemoteEntry will be
-    remoteEntry.LastLocalSyncTsNs == time.Now.UnixNano()
-    Attributes.FileSize = uint64(remoteEntry.RemoteSize)
-    Attributes.Mtime = remoteEntry.RemoteMtime
-    chunks = non-emtpy
+	entry == nil or (entry.RemoteEntry != nil and (entry.RemoteEntry.RemoteTag != remote.RemoteTag or entry.RemoteEntry.RemoteMTime < remote.RemoteMTime ))
 
-  When "weed filer.remote.sync" to upload local changes to remote, the criteria is:
-    Attributes.Mtime > remoteEntry.RemoteMtime
-  Right after "weed filer.remote.sync", the entry.RemoteEntry will be
-    remoteEntry.LastLocalSyncTsNs = time.Now.UnixNano()
-    remoteEntry.RemoteSize  = actual remote size, which should equal to entry.Attributes.FileSize
-    remoteEntry.RemoteMtime = actual remote mtime, which should be a little greater than entry.Attributes.Mtime
-    remoteEntry.RemoteTag   = actual remote tag
+After the meta pull, the entry.RemoteEntry will have:
 
+	remoteEntry.LastLocalSyncTsNs == 0
+	Attributes.FileSize = uint64(remoteEntry.RemoteSize)
+	Attributes.Mtime = remoteEntry.RemoteMtime
+	remoteEntry.RemoteTag   = actual remote tag
+	chunks = nil
 
-  If entry does not exists, need to pull meta
-  If entry.RemoteEntry == nil, this is a new local change and should not be overwritten
-  If entry.RemoteEntry.RemoteTag != remoteEntry.RemoteTag {
-    the remote version is updated, need to pull meta
-  }
+When reading the file content or pulling the file content in "remote.cache", the criteria is:
+
+	Attributes.FileSize > 0 and len(chunks) == 0
+
+After caching the file content, the entry.RemoteEntry will be
+
+	remoteEntry.LastLocalSyncTsNs == time.Now.UnixNano()
+	Attributes.FileSize = uint64(remoteEntry.RemoteSize)
+	Attributes.Mtime = remoteEntry.RemoteMtime
+	chunks = non-empty
+
+When "weed filer.remote.sync" to upload local changes to remote, the criteria is:
+
+	Attributes.Mtime > remoteEntry.RemoteMtime
+
+Right after "weed filer.remote.sync", the entry.RemoteEntry will be
+
+	remoteEntry.LastLocalSyncTsNs = time.Now.UnixNano()
+	remoteEntry.RemoteSize  = actual remote size, which should equal to entry.Attributes.FileSize
+	remoteEntry.RemoteMtime = actual remote mtime, which should be a little greater than entry.Attributes.Mtime
+	remoteEntry.RemoteTag   = actual remote tag
+
+If entry does not exists, need to pull meta
+If entry.RemoteEntry == nil, this is a new local change and should not be overwritten
+
+	If entry.RemoteEntry.RemoteTag != remoteEntry.RemoteTag {
+	  the remote version is updated, need to pull meta
+	}
 */
 func pullMetadata(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToCache util.FullPath, remoteConf *remote_pb.RemoteConf) error {
 

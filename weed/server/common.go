@@ -110,6 +110,7 @@ func writeJsonQuiet(w http.ResponseWriter, r *http.Request, httpStatus int, obj 
 func writeJsonError(w http.ResponseWriter, r *http.Request, httpStatus int, err error) {
 	m := make(map[string]interface{})
 	m["error"] = err.Error()
+	glog.V(1).Infof("error JSON response status %d: %s", httpStatus, m["error"])
 	writeJsonQuiet(w, r, httpStatus, m)
 }
 
@@ -276,7 +277,7 @@ func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, file
 	}
 }
 
-func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, writeFn func(writer io.Writer, offset int64, size int64) error) {
+func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, writeFn func(writer io.Writer, offset int64, size int64) error) error {
 	rangeReq := r.Header.Get("Range")
 	bufferedWriter := bufio.NewWriterSize(w, 128*1024)
 	defer bufferedWriter.Flush()
@@ -284,11 +285,11 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	if rangeReq == "" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		if err := writeFn(bufferedWriter, 0, totalSize); err != nil {
-			glog.Errorf("processRangeRequest headers: %+v err: %v", w.Header(), err)
+			glog.Errorf("processRangeRequest: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return fmt.Errorf("processRangeRequest: %v", err)
 		}
-		return
+		return nil
 	}
 
 	//the rest is dealing with partial content request
@@ -297,17 +298,17 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	if err != nil {
 		glog.Errorf("processRangeRequest headers: %+v err: %v", w.Header(), err)
 		http.Error(w, err.Error(), http.StatusRequestedRangeNotSatisfiable)
-		return
+		return fmt.Errorf("processRangeRequest header: %v", err)
 	}
 	if sumRangesSize(ranges) > totalSize {
 		// The total number of bytes in all the ranges
 		// is larger than the size of the file by
 		// itself, so this is probably an attack, or a
 		// dumb client.  Ignore the range request.
-		return
+		return nil
 	}
 	if len(ranges) == 0 {
-		return
+		return nil
 	}
 	if len(ranges) == 1 {
 		// RFC 2616, Section 14.16:
@@ -328,18 +329,18 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		w.WriteHeader(http.StatusPartialContent)
 		err = writeFn(bufferedWriter, ra.start, ra.length)
 		if err != nil {
-			glog.Errorf("processRangeRequest headers: %+v err: %v", w.Header(), err)
+			glog.Errorf("processRangeRequest range[0]: %+v err: %v", w.Header(), err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return fmt.Errorf("processRangeRequest range[0]: %v", err)
 		}
-		return
+		return nil
 	}
 
 	// process multiple ranges
 	for _, ra := range ranges {
 		if ra.start > totalSize {
 			http.Error(w, "Out of Range", http.StatusRequestedRangeNotSatisfiable)
-			return
+			return fmt.Errorf("out of range: %v", err)
 		}
 	}
 	sendSize := rangesMIMESize(ranges, mimeType, totalSize)
@@ -370,6 +371,7 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	if _, err := io.CopyN(bufferedWriter, sendContent, sendSize); err != nil {
 		glog.Errorf("processRangeRequest err: %v", err)
 		http.Error(w, "Internal Error", http.StatusInternalServerError)
-		return
+		return fmt.Errorf("processRangeRequest err: %v", err)
 	}
+	return nil
 }

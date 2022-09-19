@@ -81,17 +81,17 @@ type WebDavFileSystem struct {
 }
 
 type FileInfo struct {
-	name          string
-	size          int64
-	mode          os.FileMode
-	modifiledTime time.Time
-	isDirectory   bool
+	name         string
+	size         int64
+	mode         os.FileMode
+	modifiedTime time.Time
+	isDirectory  bool
 }
 
 func (fi *FileInfo) Name() string       { return fi.name }
 func (fi *FileInfo) Size() int64        { return fi.size }
 func (fi *FileInfo) Mode() os.FileMode  { return fi.mode }
-func (fi *FileInfo) ModTime() time.Time { return fi.modifiledTime }
+func (fi *FileInfo) ModTime() time.Time { return fi.modifiedTime }
 func (fi *FileInfo) IsDir() bool        { return fi.isDirectory }
 func (fi *FileInfo) Sys() interface{}   { return nil }
 
@@ -356,11 +356,11 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 	fi.size = int64(filer.FileSize(entry))
 	fi.name = string(fullpath)
 	fi.mode = os.FileMode(entry.Attributes.FileMode)
-	fi.modifiledTime = time.Unix(entry.Attributes.Mtime, 0)
+	fi.modifiedTime = time.Unix(entry.Attributes.Mtime, 0)
 	fi.isDirectory = entry.IsDirectory
 
 	if fi.name == "/" {
-		fi.modifiledTime = time.Now()
+		fi.modifiedTime = time.Now()
 		fi.isDirectory = true
 	}
 	return &fi, nil
@@ -543,11 +543,11 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 
 	err = filer_pb.ReadDirAllEntries(f.fs, util.FullPath(dir), "", func(entry *filer_pb.Entry, isLast bool) error {
 		fi := FileInfo{
-			size:          int64(filer.FileSize(entry)),
-			name:          entry.Name,
-			mode:          os.FileMode(entry.Attributes.FileMode),
-			modifiledTime: time.Unix(entry.Attributes.Mtime, 0),
-			isDirectory:   entry.IsDirectory,
+			size:         int64(filer.FileSize(entry)),
+			name:         entry.Name,
+			mode:         os.FileMode(entry.Attributes.FileMode),
+			modifiedTime: time.Unix(entry.Attributes.Mtime, 0),
+			isDirectory:  entry.IsDirectory,
 		}
 
 		if !strings.HasSuffix(fi.name, "/") && fi.IsDir() {

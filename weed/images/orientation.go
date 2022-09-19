@@ -10,7 +10,7 @@ import (
 	"github.com/seaweedfs/goexif/exif"
 )
 
-//many code is copied from http://camlistore.org/pkg/images/images.go
+// many code is copied from http://camlistore.org/pkg/images/images.go
 func FixJpgOrientation(data []byte) (oriented []byte) {
 	ex, err := exif.Decode(bytes.NewReader(data))
 	if err != nil {

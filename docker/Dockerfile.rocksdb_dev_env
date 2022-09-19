@@ -1,0 +1,16 @@
+FROM golang:1.19-buster as builder
+
+RUN apt-get update
+RUN apt-get install -y build-essential libsnappy-dev zlib1g-dev libbz2-dev libgflags-dev liblz4-dev libzstd-dev
+
+ENV ROCKSDB_VERSION v7.5.3
+
+# build RocksDB
+RUN cd /tmp && \
+    git clone https://github.com/facebook/rocksdb.git /tmp/rocksdb --depth 1 --single-branch --branch $ROCKSDB_VERSION && \
+    cd rocksdb && \
+    PORTABLE=1 make static_lib && \
+    make install-static
+
+ENV CGO_CFLAGS "-I/tmp/rocksdb/include"
+ENV CGO_LDFLAGS "-L/tmp/rocksdb -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd"

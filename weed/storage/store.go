@@ -35,6 +35,19 @@ type ReadOption struct {
 	IsMetaOnly     bool // read status
 	VolumeRevision uint16
 	IsOutOfRange   bool // whether read over MaxPossibleVolumeSize
+
+	// If HasSlowRead is set to true:
+	//  * read requests and write requests compete for the lock.
+	//  * large file read P99 latency on busy sites will go up, due to the need to get locks multiple times.
+	//  * write requests will see lower latency.
+	// If HasSlowRead is set to false:
+	//  * read requests should complete asap, not blocking other requests.
+	//  * write requests may see high latency when downloading large files.
+	HasSlowRead bool
+
+	// increasing ReadBufferSize can reduce the number of get locks times and shorten read P99 latency.
+	// but will increase memory usage a bit. Use with hasSlowRead normally.
+	ReadBufferSize int
 }
 
 /*
@@ -49,7 +62,7 @@ type Store struct {
 	GrpcPort            int
 	PublicUrl           string
 	Locations           []*DiskLocation
-	dataCenter          string // optional informaton, overwriting master setting if exists
+	dataCenter          string // optional information, overwriting master setting if exists
 	rack                string // optional information, overwriting master setting if exists
 	connected           bool
 	NeedleMapKind       NeedleMapKind
@@ -384,6 +397,14 @@ func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle, readOption
 	}
 	return 0, fmt.Errorf("volume %d not found", i)
 }
+
+func (s *Store) ReadVolumeNeedleMetaAt(i needle.VolumeId, n *needle.Needle, offset int64, size int32) error {
+	if v := s.findVolume(i); v != nil {
+		return v.readNeedleMetaAt(n, offset, size)
+	}
+	return fmt.Errorf("volume %d not found", i)
+}
+
 func (s *Store) ReadVolumeNeedleDataInto(i needle.VolumeId, n *needle.Needle, readOption *ReadOption, writer io.Writer, offset int64, size int64) error {
 	if v := s.findVolume(i); v != nil {
 		return v.readNeedleDataInto(n, readOption, writer, offset, size)
@@ -549,7 +570,7 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 				maxVolumeCount += int32(uint64(unclaimedSpaces)/volumeSizeLimit) - 1
 			}
 			atomic.StoreInt32(&diskLocation.MaxVolumeCount, maxVolumeCount)
-			glog.V(2).Infof("disk %s max %d unclaimedSpace:%dMB, unused:%dMB volumeSizeLimit:%dMB",
+			glog.V(4).Infof("disk %s max %d unclaimedSpace:%dMB, unused:%dMB volumeSizeLimit:%dMB",
 				diskLocation.Directory, maxVolumeCount, unclaimedSpaces/1024/1024, unusedSpace/1024/1024, volumeSizeLimit/1024/1024)
 			hasChanges = hasChanges || currentMaxVolumeCount != atomic.LoadInt32(&diskLocation.MaxVolumeCount)
 		}

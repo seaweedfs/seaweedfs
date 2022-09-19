@@ -49,7 +49,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	var buf bytes.Buffer
 	if err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer.ReadEntry(commandEnv.MasterClient, client, filer.IamConfigDirecotry, filer.IamIdentityFile, &buf)
+		return filer.ReadEntry(commandEnv.MasterClient, client, filer.IamConfigDirectory, filer.IamIdentityFile, &buf)
 	}); err != nil && err != filer_pb.ErrNotFound {
 		return err
 	}
@@ -178,7 +178,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	if *apply {
 
 		if err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return filer.SaveInsideFiler(client, filer.IamConfigDirecotry, filer.IamIdentityFile, buf.Bytes())
+			return filer.SaveInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile, buf.Bytes())
 		}); err != nil {
 			return err
 		}
