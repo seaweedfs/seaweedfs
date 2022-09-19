@@ -230,30 +230,40 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	if s3a.iam.isEnabled() {
 		rAuthType := getRequestAuthType(r)
 		var s3ErrCode s3err.ErrorCode
+		var identity *Identity
 		switch rAuthType {
 		case authTypeStreamingSigned:
-			dataReader, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
+			dataReader, s3ErrCode, identity = s3a.iam.newSignV4ChunkedReader(r)
 		case authTypeSignedV2, authTypePresignedV2:
-			_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
+			identity, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
 		case authTypePresigned, authTypeSigned:
-			_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
+			identity, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
 		}
 		if s3ErrCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, s3ErrCode)
 			return
 		}
+
+		r.Header.Set(s3_constants.AmzIdentityAccountId, identity.AccountId)
+		r.Header.Set(s3_constants.AmzIdentityId, identity.Name)
 	}
 	defer dataReader.Close()
 
 	glog.V(2).Infof("PutObjectPartHandler %s %s %04d", bucket, uploadID, partID)
 
+	s3ErrCode := s3a.ObjectWriteAccess(r, &bucket, &object)
+	if s3ErrCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, s3ErrCode)
+		return
+	}
+
 	uploadUrl := fmt.Sprintf("http://%s%s/%s/%04d.part",
-		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(bucket), uploadID, partID)
+		s3a.Option.Filer.ToHttpAddress(), s3a.genUploadsFolder(bucket), uploadID, partID)
 
 	if partID == 1 && r.Header.Get("Content-Type") == "" {
 		dataReader = mimeDetect(r, dataReader)
 	}
-	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
+	destination := fmt.Sprintf("%s/%s%s", s3a.Option.BucketsPath, bucket, object)
 
 	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, destination)
 	if errCode != s3err.ErrNone {
@@ -268,7 +278,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 }
 
 func (s3a *S3ApiServer) genUploadsFolder(bucket string) string {
-	return fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, s3_constants.MultipartUploadsFolder)
+	return fmt.Sprintf("%s/%s/%s", s3a.Option.BucketsPath, bucket, s3_constants.MultipartUploadsFolder)
 }
 
 // Generate uploadID hash string from object

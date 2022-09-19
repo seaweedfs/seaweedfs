@@ -5,6 +5,9 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/aws/aws-sdk-go/private/protocol/json/jsonutil"
+	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
+	"io"
 	"math"
 	"net/http"
 	"time"
@@ -40,11 +43,18 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 			s3err.WriteErrorResponse(w, r, s3Err)
 			return
 		}
+
+		bucket, _ := s3_constants.GetBucketAndObject(r)
+		s3Err, _ = s3a.BucketReadAccess(r, &bucket, &s3_constants.PermissionRead)
+		if s3Err != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, s3Err)
+			return
+		}
 	}
 
 	var response ListAllMyBucketsResult
 
-	entries, _, err := s3a.list(s3a.option.BucketsPath, "", "", false, math.MaxInt32)
+	entries, _, err := s3a.list(s3a.Option.BucketsPath, "", "", false, math.MaxInt32)
 
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -104,7 +114,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-	if exist, err := s3a.exists(s3a.option.BucketsPath, bucket, true); err == nil && exist {
+	if exist, err := s3a.exists(s3a.Option.BucketsPath, bucket, true); err == nil && exist {
 		errCode = s3err.ErrBucketAlreadyExists
 	}
 	if errCode != s3err.ErrNone {
@@ -112,11 +122,21 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	var identity *Identity
 	if s3a.iam.isEnabled() {
-		if _, errCode = s3a.iam.authRequest(r, s3_constants.ACTION_ADMIN); errCode != s3err.ErrNone {
+		if identity, errCode = s3a.iam.authRequest(r, s3_constants.ACTION_ADMIN); errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
 			return
 		}
+	}
+	if identity == nil {
+		identity = IdentityAnonymous
+	}
+	accountId := ensureAccountId(r)
+	acp, err := s3a.ParseAcpFromHeaders(r, &DefaultOwnershipForCreate, nil, accountId, accountId, false)
+	if err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
 	}
 
 	fn := func(entry *filer_pb.Entry) {
@@ -126,10 +146,14 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			}
 			entry.Extended[s3_constants.AmzIdentityId] = []byte(identityId)
 		}
+
+		entry.Extended[s3_constants.ExtOwnershipKey] = []byte(DefaultOwnershipForCreate)
+		acpBytes, _ := jsonutil.BuildJSON(acp)
+		entry.Extended[s3_constants.ExtAcpKey] = acpBytes
 	}
 
 	// create the folder for bucket, but lazily create actual collection
-	if err := s3a.mkdir(s3a.option.BucketsPath, bucket, fn); err != nil {
+	if err := s3a.mkdir(s3a.Option.BucketsPath, bucket, fn); err != nil {
 		glog.Errorf("PutBucketHandler mkdir: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
@@ -149,8 +173,8 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if !s3a.option.AllowDeleteBucketNotEmpty {
-			entries, _, err := s3a.list(s3a.option.BucketsPath+"/"+bucket, "", "", false, 2)
+		if !s3a.Option.AllowDeleteBucketNotEmpty {
+			entries, _, err := s3a.list(s3a.Option.BucketsPath+"/"+bucket, "", "", false, 2)
 			if err != nil {
 				return fmt.Errorf("failed to list bucket %s: %v", bucket, err)
 			}
@@ -183,7 +207,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	err = s3a.rm(s3a.option.BucketsPath, bucket, false, true)
+	err = s3a.rm(s3a.Option.BucketsPath, bucket, false, true)
 
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -198,7 +222,7 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadBucketHandler %s", bucket)
 
-	if entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); entry == nil || err == filer_pb.ErrNotFound {
+	if entry, err := s3a.getEntry(s3a.Option.BucketsPath, bucket); entry == nil || err == filer_pb.ErrNotFound {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		return
 	}
@@ -207,7 +231,7 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 }
 
 func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorCode {
-	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	entry, err := s3a.getEntry(s3a.Option.BucketsPath, bucket)
 	if entry == nil || err == filer_pb.ErrNotFound {
 		return s3err.ErrNoSuchBucket
 	}
@@ -243,37 +267,19 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetBucketAclHandler %s", bucket)
 
-	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, err)
+	errorCode, bucketMetaData := s3a.BucketReadAccess(r, &bucket, &s3_constants.PermissionReadAcp)
+	if s3err.ErrNone != errorCode {
+		s3err.WriteErrorResponse(w, r, errorCode)
 		return
 	}
 
-	response := AccessControlPolicy{}
-	for _, ident := range s3a.iam.identities {
-		if len(ident.Credentials) == 0 {
-			continue
-		}
-		for _, action := range ident.Actions {
-			if !action.overBucket(bucket) || action.getPermission() == "" {
-				continue
-			}
-			id := ident.Credentials[0].AccessKey
-			if response.Owner.DisplayName == "" && action.isOwner(bucket) && len(ident.Credentials) > 0 {
-				response.Owner.DisplayName = ident.Name
-				response.Owner.ID = id
-			}
-			response.AccessControlList.Grant = append(response.AccessControlList.Grant, Grant{
-				Grantee: Grantee{
-					ID:          id,
-					DisplayName: ident.Name,
-					Type:        "CanonicalUser",
-					XMLXSI:      "CanonicalUser",
-					XMLNS:       "http://www.w3.org/2001/XMLSchema-instance"},
-				Permission: action.getPermission(),
-			})
-		}
+	acp := &s3.PutBucketAclInput{
+		AccessControlPolicy: &s3.AccessControlPolicy{
+			Grants: bucketMetaData.Acl,
+			Owner:  bucketMetaData.Owner,
+		},
 	}
-	writeSuccessResponseXML(w, r, response)
+	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, acp)
 }
 
 // GetBucketLifecycleConfigurationHandler Get Bucket Lifecycle configuration
@@ -287,7 +293,7 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		s3err.WriteErrorResponse(w, r, err)
 		return
 	}
-	fc, err := filer.ReadFilerConf(s3a.option.Filer, s3a.option.GrpcDialOption, nil)
+	fc, err := filer.ReadFilerConf(s3a.Option.Filer, s3a.Option.GrpcDialOption, nil)
 	if err != nil {
 		glog.Errorf("GetBucketLifecycleConfigurationHandler: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -342,4 +348,186 @@ func (s3a *S3ApiServer) GetBucketLocationHandler(w http.ResponseWriter, r *http.
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketRequestPayment.html
 func (s3a *S3ApiServer) GetBucketRequestPaymentHandler(w http.ResponseWriter, r *http.Request) {
 	writeSuccessResponseXML(w, r, RequestPaymentConfiguration{Payer: "BucketOwner"})
+}
+
+// PutBucketOwnershipControls https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketOwnershipControls.html
+func (s3a *S3ApiServer) PutBucketOwnershipControls(w http.ResponseWriter, r *http.Request) {
+
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("PutBucketOwnershipControls %s", bucket)
+
+	if s3a.iam.isEnabled() {
+		if _, errCode := s3a.iam.authRequest(r, s3_constants.ACTION_ADMIN); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+	}
+
+	errCode := s3a.OwnershipAccess(r, &bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	if r.Body == nil || r.Body == http.NoBody {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	var v s3.OwnershipControls
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+	}(r.Body)
+
+	err := xmlutil.UnmarshalXML(&v, xml.NewDecoder(r.Body), "")
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	if len(v.Rules) != 1 {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	printOwnership := true
+	ownership := *v.Rules[0].ObjectOwnership
+	switch ownership {
+	case OwnershipObjectWriter:
+	case OwnershipBucketOwnerPreferred:
+	case OwnershipBucketOwnerEnforced:
+		printOwnership = false
+	default:
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	bucketEntry, err := s3a.getEntry(s3a.Option.BucketsPath, bucket)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			return
+		}
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	oldOwnership, ok := bucketEntry.Extended[s3_constants.ExtOwnershipKey]
+	if !ok || string(oldOwnership) != ownership {
+		if bucketEntry.Extended == nil {
+			bucketEntry.Extended = make(map[string][]byte)
+		}
+		bucketEntry.Extended[s3_constants.ExtOwnershipKey] = []byte(ownership)
+		_, err = s3a.updateEntry(s3a.Option.BucketsPath, bucketEntry)
+		if err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+	}
+
+	if printOwnership {
+		result := &s3.PutBucketOwnershipControlsInput{
+			OwnershipControls: &v,
+		}
+		s3err.WriteAwsXMLResponse(w, r, http.StatusOK, result)
+	} else {
+		writeSuccessResponseEmpty(w, r)
+	}
+}
+
+// GetBucketOwnershipControls https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketOwnershipControls.html
+func (s3a *S3ApiServer) GetBucketOwnershipControls(w http.ResponseWriter, r *http.Request) {
+
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("PutBucketOwnershipControls %s", bucket)
+
+	if s3a.iam.isEnabled() {
+		if _, errCode := s3a.iam.authRequest(r, s3_constants.ACTION_ADMIN); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+	}
+
+	errCode := s3a.OwnershipAccess(r, &bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	bucketEntry, err := s3a.getEntry(s3a.Option.BucketsPath, bucket)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			return
+		}
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	v, ok := bucketEntry.Extended[s3_constants.ExtOwnershipKey]
+	if !ok {
+		s3err.WriteErrorResponse(w, r, s3err.OwnershipControlsNotFoundError)
+		return
+	}
+	ownership := string(v)
+
+	result := &s3.PutBucketOwnershipControlsInput{
+		OwnershipControls: &s3.OwnershipControls{
+			Rules: []*s3.OwnershipControlsRule{
+				{
+					ObjectOwnership: &ownership,
+				},
+			},
+		},
+	}
+
+	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, result)
+}
+
+// DeleteBucketOwnershipControls https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketOwnershipControls.html
+func (s3a *S3ApiServer) DeleteBucketOwnershipControls(w http.ResponseWriter, r *http.Request) {
+
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("PutBucketOwnershipControls %s", bucket)
+
+	if s3a.iam.isEnabled() {
+		if _, errCode := s3a.iam.authRequest(r, s3_constants.ACTION_ADMIN); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+	}
+
+	errCode := s3a.OwnershipAccess(r, &bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	bucketEntry, err := s3a.getEntry(s3a.Option.BucketsPath, bucket)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			return
+		}
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	_, ok := bucketEntry.Extended[s3_constants.ExtOwnershipKey]
+	if !ok {
+		s3err.WriteErrorResponse(w, r, s3err.OwnershipControlsNotFoundError)
+		return
+	}
+
+	delete(bucketEntry.Extended, s3_constants.ExtOwnershipKey)
+	_, err = s3a.updateEntry(s3a.Option.BucketsPath, bucketEntry)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	emptpyOwnershipControls := &s3.OwnershipControls{
+		Rules: []*s3.OwnershipControlsRule{},
+	}
+	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, emptpyOwnershipControls)
 }

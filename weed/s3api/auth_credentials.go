@@ -16,6 +16,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+var IdentityAnonymous = &Identity{
+	AccountId: AccountAnonymousId,
+	Name:      AccountAnonymousName,
+}
+
 type Action string
 
 type Iam interface {
@@ -32,8 +37,13 @@ type IdentityAccessManagement struct {
 
 type Identity struct {
 	Name        string
+	AccountId   string
 	Credentials []*Credential
 	Actions     []Action
+}
+
+func (i *Identity) isAnonymous() bool {
+	return i.Name == "anonymous"
 }
 
 type Credential struct {
@@ -125,9 +135,19 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	for _, ident := range config.Identities {
 		t := &Identity{
 			Name:        ident.Name,
+			AccountId:   AccountAdmin.CanonicalId,
 			Credentials: nil,
 			Actions:     nil,
 		}
+		if len(ident.AccountId) > 0 {
+			t.AccountId = ident.AccountId
+		} else {
+			if ident.Name == AccountAnonymousName {
+				t.AccountId = AccountAnonymous.CanonicalId
+				IdentityAnonymous = t
+			}
+		}
+
 		for _, action := range ident.Actions {
 			t.Actions = append(t.Actions, Action(action))
 		}
@@ -173,7 +193,7 @@ func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, foun
 	iam.m.RLock()
 	defer iam.m.RUnlock()
 	for _, ident := range iam.identities {
-		if ident.Name == "anonymous" {
+		if ident.isAnonymous() {
 			return ident, true
 		}
 	}
@@ -183,6 +203,8 @@ func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, foun
 func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !iam.isEnabled() {
+			r.Header.Set(s3_constants.AmzIdentityAccountId, AccountAnonymousId)
+			r.Header.Set(s3_constants.AmzIdentityId, AccountAnonymousName)
 			f(w, r)
 			return
 		}
@@ -191,6 +213,7 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		if errCode == s3err.ErrNone {
 			if identity != nil && identity.Name != "" {
 				r.Header.Set(s3_constants.AmzIdentityId, identity.Name)
+				r.Header.Set(s3_constants.AmzIdentityAccountId, identity.AccountId)
 				if identity.isAdmin() {
 					r.Header.Set(s3_constants.AmzIsAdmin, "true")
 				} else if _, ok := r.Header[s3_constants.AmzIsAdmin]; ok {

@@ -72,18 +72,25 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	rAuthType := getRequestAuthType(r)
 	if s3a.iam.isEnabled() {
 		var s3ErrCode s3err.ErrorCode
+		var identity *Identity
 		switch rAuthType {
 		case authTypeStreamingSigned:
-			dataReader, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
+			dataReader, s3ErrCode, identity = s3a.iam.newSignV4ChunkedReader(r)
 		case authTypeSignedV2, authTypePresignedV2:
-			_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
+			identity, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
 		case authTypePresigned, authTypeSigned:
-			_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
+			identity, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
+		case authTypeAnonymous:
+			identity = IdentityAnonymous
 		}
 		if s3ErrCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, s3ErrCode)
 			return
 		}
+
+		//determine acl if Acl enabled
+		r.Header.Set(s3_constants.AmzIdentityAccountId, identity.AccountId)
+		r.Header.Set(s3_constants.AmzIdentityId, identity.Name)
 	} else {
 		if authTypeStreamingSigned == rAuthType {
 			s3err.WriteErrorResponse(w, r, s3err.ErrAuthNotSetup)
@@ -92,10 +99,16 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 	defer dataReader.Close()
 
+	errCode := s3a.ObjectWriteAccess(r, &bucket, &object)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	objectContentType := r.Header.Get("Content-Type")
 	if strings.HasSuffix(object, "/") && r.ContentLength == 0 {
 		if err := s3a.mkdir(
-			s3a.option.BucketsPath, bucket+strings.TrimSuffix(object, "/"),
+			s3a.Option.BucketsPath, bucket+strings.TrimSuffix(object, "/"),
 			func(entry *filer_pb.Entry) {
 				if objectContentType == "" {
 					objectContentType = "httpd/unix-directory"
@@ -155,7 +168,7 @@ func removeDuplicateSlashes(object string) string {
 func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
 	object = urlPathEscape(removeDuplicateSlashes(object))
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, object)
+		s3a.Option.Filer.ToHttpAddress(), s3a.Option.BucketsPath, bucket, object)
 	return destUrl
 }
 
@@ -163,6 +176,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
+
+	errCode := s3a.ObjectReadAccess(r, &s3_constants.PermissionRead, &bucket, &object)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	if strings.HasSuffix(r.URL.Path, "/") {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
@@ -274,7 +293,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				entryName = object.ObjectName[lastSeparator+1:]
 				parentDirectoryPath = "/" + object.ObjectName[:lastSeparator]
 			}
-			parentDirectoryPath = fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, parentDirectoryPath)
+			parentDirectoryPath = fmt.Sprintf("%s/%s%s", s3a.Option.BucketsPath, bucket, parentDirectoryPath)
 
 			err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
 			if err == nil {
@@ -325,7 +344,7 @@ func (s3a *S3ApiServer) doDeleteEmptyDirectories(client filer_pb.SeaweedFilerCli
 	newDirectoriesWithDeletion = make(map[string]int)
 	for _, dir := range allDirs {
 		parentDir, dirName := util.FullPath(dir).DirAndName()
-		if parentDir == s3a.option.BucketsPath {
+		if parentDir == s3a.Option.BucketsPath {
 			continue
 		}
 		if err := doDeleteEntry(client, parentDir, dirName, false, false); err != nil {

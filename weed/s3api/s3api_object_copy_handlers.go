@@ -38,7 +38,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	replaceMeta, replaceTagging := replaceDirective(r.Header)
 
 	if (srcBucket == dstBucket && srcObject == dstObject || cpSrcPath == "") && (replaceMeta || replaceTagging) {
-		fullPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
+		fullPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.Option.BucketsPath, dstBucket, dstObject))
 		dir, name := fullPath.DirAndName()
 		entry, err := s3a.getEntry(dir, name)
 		if err != nil || entry.IsDirectory {
@@ -68,7 +68,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
-	srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
+	srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.Option.BucketsPath, srcBucket, srcObject))
 	dir, name := srcPath.DirAndName()
 	if entry, err := s3a.getEntry(dir, name); err != nil || entry.IsDirectory {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
@@ -81,9 +81,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	dstUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, dstBucket, urlPathEscape(dstObject))
+		s3a.Option.Filer.ToHttpAddress(), s3a.Option.BucketsPath, dstBucket, urlPathEscape(dstObject))
 	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, urlPathEscape(srcObject))
+		s3a.Option.Filer.ToHttpAddress(), s3a.Option.BucketsPath, srcBucket, urlPathEscape(srcObject))
 
 	_, _, resp, err := util.DownloadFile(srcUrl, s3a.maybeGetFilerJwtAuthorizationToken(false))
 	if err != nil {
@@ -98,7 +98,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
-	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject)
+	destination := fmt.Sprintf("%s/%s%s", s3a.Option.BucketsPath, dstBucket, dstObject)
 	etag, errCode := s3a.putToFiler(r, dstUrl, resp.Body, destination)
 
 	if errCode != s3err.ErrNone {
@@ -170,9 +170,9 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	rangeHeader := r.Header.Get("x-amz-copy-source-range")
 
 	dstUrl := fmt.Sprintf("http://%s%s/%s/%04d.part",
-		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(dstBucket), uploadID, partID)
+		s3a.Option.Filer.ToHttpAddress(), s3a.genUploadsFolder(dstBucket), uploadID, partID)
 	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, urlPathEscape(srcObject))
+		s3a.Option.Filer.ToHttpAddress(), s3a.Option.BucketsPath, srcBucket, urlPathEscape(srcObject))
 
 	resp, dataReader, err := util.ReadUrlAsReaderCloser(srcUrl, s3a.maybeGetFilerJwtAuthorizationToken(false), rangeHeader)
 	if err != nil {
@@ -183,7 +183,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	defer dataReader.Close()
 
 	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
-	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject)
+	destination := fmt.Sprintf("%s/%s%s", s3a.Option.BucketsPath, dstBucket, dstObject)
 	etag, errCode := s3a.putToFiler(r, dstUrl, dataReader, destination)
 
 	if errCode != s3err.ErrNone {

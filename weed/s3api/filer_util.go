@@ -91,6 +91,22 @@ func (s3a *S3ApiServer) getEntry(parentDirectoryPath, entryName string) (entry *
 	return filer_pb.GetEntry(s3a, fullPath)
 }
 
+func (s3a *S3ApiServer) updateEntry(parentDirectoryPath string, newEntry *filer_pb.Entry) (entry *filer_pb.Entry, err error) {
+	updateEntryRequest := &filer_pb.UpdateEntryRequest{
+		Directory: parentDirectoryPath,
+		Entry:     newEntry,
+	}
+
+	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		err := filer_pb.UpdateEntry(client, updateEntryRequest)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	return
+}
+
 func objectKey(key *string) *string {
 	if strings.HasPrefix(*key, "/") {
 		t := (*key)[1:]

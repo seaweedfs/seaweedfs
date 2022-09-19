@@ -117,7 +117,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			}
 		}
 	}
-	
+
 	entryName := filepath.Base(*input.Key)
 	dirName := filepath.Dir(*input.Key)
 	if dirName == "." {
@@ -126,7 +126,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	if strings.HasPrefix(dirName, "/") {
 		dirName = dirName[1:]
 	}
-	dirName = fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, *input.Bucket, dirName)
+	dirName = fmt.Sprintf("%s/%s/%s", s3a.Option.BucketsPath, *input.Bucket, dirName)
 
 	// remove suffix '/'
 	if strings.HasSuffix(dirName, "/") {
@@ -157,7 +157,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 
 	output = &CompleteMultipartUploadResult{
 		CompleteMultipartUploadOutput: s3.CompleteMultipartUploadOutput{
-			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlPathEscape(dirName), urlPathEscape(entryName))),
+			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.Option.Filer.ToHttpAddress(), urlPathEscape(dirName), urlPathEscape(entryName))),
 			Bucket:   input.Bucket,
 			ETag:     aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
 			Key:      objectKey(input.Key),

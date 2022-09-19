@@ -20,8 +20,9 @@ message S3ApiConfiguration {
 
 message Identity {
     string name = 1;
-    repeated Credential credentials = 2;
-    repeated string actions = 3;
+    string account = 2;
+    repeated Credential credentials = 3;
+    repeated string actions = 4;
 }
 
 message Credential {

@@ -19,7 +19,7 @@ func (s3a *S3ApiServer) WithFilerClient(streamingMode bool, fn func(filer_pb.Sea
 	return pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, s3a.option.Filer.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
+	}, s3a.Option.Filer.ToGrpcAddress(), false, s3a.Option.GrpcDialOption)
 
 }
 
@@ -28,7 +28,7 @@ func (s3a *S3ApiServer) AdjustedUrl(location *filer_pb.Location) string {
 }
 
 func (s3a *S3ApiServer) GetDataCenter() string {
-	return s3a.option.DataCenter
+	return s3a.Option.DataCenter
 }
 
 func writeSuccessResponseXML(w http.ResponseWriter, r *http.Request, response interface{}) {

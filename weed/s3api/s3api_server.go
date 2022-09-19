@@ -34,12 +34,14 @@ type S3ApiServerOption struct {
 
 type S3ApiServer struct {
 	s3_pb.UnimplementedSeaweedS3Server
-	option         *S3ApiServerOption
+	Option         *S3ApiServerOption
 	iam            *IdentityAccessManagement
 	cb             *CircuitBreaker
 	randomClientId int32
 	filerGuard     *security.Guard
 	client         *http.Client
+	*BucketRegistry
+	*AccountManager
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -53,12 +55,15 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 	readExpiresAfterSec := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
 
 	s3ApiServer = &S3ApiServer{
-		option:         option,
+		Option:         option,
 		iam:            NewIdentityAccessManagement(option),
 		randomClientId: util.RandomInt32(),
 		filerGuard:     security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
 		cb:             NewCircuitBreaker(option),
 	}
+	s3ApiServer.BucketRegistry = NewBucketRegistry(s3ApiServer)
+	s3ApiServer.AccountManager = NewAccountManager(s3ApiServer)
+
 	if option.LocalFilerSocket == "" {
 		s3ApiServer.client = &http.Client{Transport: &http.Transport{
 			MaxIdleConns:        1024,
@@ -76,7 +81,7 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 
 	s3ApiServer.registerRouter(router)
 
-	go s3ApiServer.subscribeMetaEvents("s3", filer.DirectoryEtcRoot, time.Now().UnixNano())
+	go s3ApiServer.subscribeMetaEvents("s3", time.Now().UnixNano(), filer.DirectoryEtcRoot, option.BucketsPath)
 	return s3ApiServer, nil
 }
 
@@ -97,11 +102,11 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		})
 
 	var routers []*mux.Router
-	if s3a.option.DomainName != "" {
-		domainNames := strings.Split(s3a.option.DomainName, ",")
+	if s3a.Option.DomainName != "" {
+		domainNames := strings.Split(s3a.Option.DomainName, ",")
 		for _, domainName := range domainNames {
 			routers = append(routers, apiRouter.Host(
-				fmt.Sprintf("%s.%s:%d", "{bucket:.+}", domainName, s3a.option.Port)).Subrouter())
+				fmt.Sprintf("%s.%s:%d", "{bucket:.+}", domainName, s3a.Option.Port)).Subrouter())
 			routers = append(routers, apiRouter.Host(
 				fmt.Sprintf("%s.%s", "{bucket:.+}", domainName)).Subrouter())
 		}
@@ -212,6 +217,14 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListObjectsV2Handler, ACTION_LIST)), "LIST")).Queries("list-type", "2")
 
 		// buckets with query
+		// PutBucketOwnershipControls
+		bucket.Methods("PUT").HandlerFunc(track(s3a.PutBucketOwnershipControls, "PUT")).Queries("ownershipControls", "")
+
+		//GetBucketOwnershipControls
+		bucket.Methods("GET").HandlerFunc(track(s3a.GetBucketOwnershipControls, "GET")).Queries("ownershipControls", "")
+
+		//DeleteBucketOwnershipControls
+		bucket.Methods("DELETE").HandlerFunc(track(s3a.DeleteBucketOwnershipControls, "DELETE")).Queries("ownershipControls", "")
 
 		// raw buckets
 
@@ -230,7 +243,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListObjectsV1Handler, ACTION_LIST)), "LIST"))
 
 		// raw buckets
-
 	}
 
 	// ListBuckets
