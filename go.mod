@@ -128,13 +128,13 @@ require (
 	google.golang.org/protobuf v1.28.1
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	modernc.org/b v1.0.0 // indirect
-	modernc.org/cc/v3 v3.37.0 // indirect
+	modernc.org/cc/v3 v3.38.1 // indirect
 	modernc.org/ccgo/v3 v3.16.9 // indirect
-	modernc.org/libc v1.18.0 // indirect
+	modernc.org/libc v1.19.0 // indirect
 	modernc.org/mathutil v1.5.0 // indirect
-	modernc.org/memory v1.3.0 // indirect
-	modernc.org/opt v0.1.1 // indirect
-	modernc.org/sqlite v1.18.2
+	modernc.org/memory v1.4.0 // indirect
+	modernc.org/opt v0.1.3 // indirect
+	modernc.org/sqlite v1.19.1
 	modernc.org/strutil v1.1.3
 	modernc.org/token v1.0.1 // indirect
 )
