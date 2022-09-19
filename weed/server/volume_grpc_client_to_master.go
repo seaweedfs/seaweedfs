@@ -68,7 +68,7 @@ func (vs *VolumeServer) heartbeat() {
 			vs.store.MasterAddress = master
 			newLeader, err = vs.doHeartbeat(master, grpcDialOption, time.Duration(vs.pulseSeconds)*time.Second)
 			if err != nil {
-				glog.V(0).Infof("heartbeat error: %v", err)
+				glog.V(0).Infof("heartbeat to %s error: %v", master, err)
 				time.Sleep(time.Duration(vs.pulseSeconds) * time.Second)
 				newLeader = ""
 				vs.store.MasterAddress = ""
