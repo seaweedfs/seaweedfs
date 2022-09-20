@@ -22,6 +22,7 @@ message Identity {
     string name = 1;
     repeated Credential credentials = 2;
     repeated string actions = 3;
+    string accountId = 4;
 }
 
 message Credential {

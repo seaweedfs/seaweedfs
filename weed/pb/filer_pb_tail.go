@@ -46,6 +46,18 @@ func WithFilerClientFollowMetadata(filerClient filer_pb.FilerClient,
 	return nil
 }
 
+func WithFilerClientFollowMetadataInPrefixes(filerClient filer_pb.FilerClient,
+	clientName string, clientId int32, clientEpoch int32, prefixes []string, lastTsNs *int64, untilTsNs int64, selfSignature int32,
+	processEventFn ProcessMetadataFunc, eventErrorType EventErrorType) error {
+
+	err := filerClient.WithFilerClient(true, makeSubscribeMetadataFunc(clientName, clientId, clientEpoch, "", prefixes, lastTsNs, untilTsNs, selfSignature, processEventFn, eventErrorType))
+	if err != nil {
+		return fmt.Errorf("subscribing filer meta change: %v", err)
+	}
+
+	return nil
+}
+
 func makeSubscribeMetadataFunc(clientName string, clientId int32, clientEpoch int32, pathPrefix string, additionalPathPrefixes []string, lastTsNs *int64, untilTsNs int64, selfSignature int32, processEventFn ProcessMetadataFunc, eventErrorType EventErrorType) func(client filer_pb.SeaweedFilerClient) error {
 	return func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
