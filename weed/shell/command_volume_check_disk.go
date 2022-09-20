@@ -14,6 +14,8 @@ import (
 	"math"
 )
 
+const unconditionalRepair = 30
+
 func init() {
 	Commands = append(Commands, &commandVolumeCheckDisk{})
 }
@@ -158,7 +160,7 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_m
 	}
 
 	missingNeedlesFraction := float64(len(missingNeedles)) / float64(counter)
-	if missingNeedlesFraction > nonRepairThreshold {
+	if len(missingNeedles) > unconditionalRepair && missingNeedlesFraction > nonRepairThreshold {
 		return false, fmt.Errorf(
 			"failed to start repair volume %d, percentage of missing keys is greater than the threshold: %.2f > %.2f",
 			source.info.Id, missingNeedlesFraction, nonRepairThreshold)
