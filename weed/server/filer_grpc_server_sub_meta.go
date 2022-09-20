@@ -223,6 +223,8 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 
 		if hasPrefixIn(fullpath, req.PathPrefixes) {
 			// good
+		} else if matchByDirectory(dirPath, req.Directories) {
+			// good
 		} else {
 			if !strings.HasPrefix(fullpath, req.PathPrefix) {
 				if eventNotification.NewParentPath != "" {
@@ -257,6 +259,15 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 func hasPrefixIn(text string, prefixes []string) bool {
 	for _, p := range prefixes {
 		if strings.HasPrefix(text, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchByDirectory(dirPath string, directories []string) bool {
+	for _, dir := range directories {
+		if dirPath == dir {
 			return true
 		}
 	}
