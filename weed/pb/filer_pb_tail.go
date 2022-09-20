@@ -25,20 +25,16 @@ func FollowMetadata(filerAddress ServerAddress, grpcDialOption grpc.DialOption, 
 	pathPrefix string, additionalPathPrefixes []string, lastTsNs int64, untilTsNs int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, eventErrorType EventErrorType) error {
 
-	err := WithFilerClient(true, filerAddress, grpcDialOption, makeSubscribeMetadataFunc(
-		clientName, clientId, clientEpoch,
-		pathPrefix, additionalPathPrefixes, &lastTsNs, untilTsNs, selfSignature, processEventFn, eventErrorType))
+	err := WithFilerClient(true, filerAddress, grpcDialOption, makeSubscribeMetadataFunc(clientName, clientId, clientEpoch, pathPrefix, additionalPathPrefixes, nil, &lastTsNs, untilTsNs, selfSignature, processEventFn, eventErrorType))
 	if err != nil {
 		return fmt.Errorf("subscribing filer meta change: %v", err)
 	}
 	return err
 }
 
-func WithFilerClientFollowMetadata(filerClient filer_pb.FilerClient,
-	clientName string, clientId int32, clientEpoch int32, pathPrefix string, lastTsNs *int64, untilTsNs int64, selfSignature int32,
-	processEventFn ProcessMetadataFunc, eventErrorType EventErrorType) error {
+func WithFilerClientFollowMetadata(filerClient filer_pb.FilerClient, clientName string, clientId int32, clientEpoch int32, pathPrefix string, directoriesToWatch []string, lastTsNs *int64, untilTsNs int64, selfSignature int32, processEventFn ProcessMetadataFunc, eventErrorType EventErrorType) error {
 
-	err := filerClient.WithFilerClient(true, makeSubscribeMetadataFunc(clientName, clientId, clientEpoch, pathPrefix, nil, lastTsNs, untilTsNs, selfSignature, processEventFn, eventErrorType))
+	err := filerClient.WithFilerClient(true, makeSubscribeMetadataFunc(clientName, clientId, clientEpoch, pathPrefix, nil, directoriesToWatch, lastTsNs, untilTsNs, selfSignature, processEventFn, eventErrorType))
 	if err != nil {
 		return fmt.Errorf("subscribing filer meta change: %v", err)
 	}
@@ -46,7 +42,7 @@ func WithFilerClientFollowMetadata(filerClient filer_pb.FilerClient,
 	return nil
 }
 
-func makeSubscribeMetadataFunc(clientName string, clientId int32, clientEpoch int32, pathPrefix string, additionalPathPrefixes []string, lastTsNs *int64, untilTsNs int64, selfSignature int32, processEventFn ProcessMetadataFunc, eventErrorType EventErrorType) func(client filer_pb.SeaweedFilerClient) error {
+func makeSubscribeMetadataFunc(clientName string, clientId int32, clientEpoch int32, pathPrefix string, additionalPathPrefixes []string, directoriesToWatch []string, lastTsNs *int64, untilTsNs int64, selfSignature int32, processEventFn ProcessMetadataFunc, eventErrorType EventErrorType) func(client filer_pb.SeaweedFilerClient) error {
 	return func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -54,6 +50,7 @@ func makeSubscribeMetadataFunc(clientName string, clientId int32, clientEpoch in
 			ClientName:   clientName,
 			PathPrefix:   pathPrefix,
 			PathPrefixes: additionalPathPrefixes,
+			Directories:  directoriesToWatch,
 			SinceNs:      *lastTsNs,
 			Signature:    selfSignature,
 			ClientId:     clientId,
