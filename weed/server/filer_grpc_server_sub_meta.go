@@ -226,6 +226,9 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 		} else if matchByDirectory(dirPath, req.Directories) {
 			// good
 		} else {
+			if req.PathPrefix == "" {
+				return nil
+			}
 			if !strings.HasPrefix(fullpath, req.PathPrefix) {
 				if eventNotification.NewParentPath != "" {
 					newFullPath := util.Join(eventNotification.NewParentPath, entryName)
