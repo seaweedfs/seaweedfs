@@ -81,7 +81,7 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 
 	s3ApiServer.registerRouter(router)
 
-	go s3ApiServer.subscribeMetaEvents("s3", time.Now().UnixNano(), filer.DirectoryEtcRoot, option.BucketsPath)
+	go s3ApiServer.subscribeMetaEvents("s3", time.Now().UnixNano(), "", []string{filer.IamConfigDirectory, CircuitBreakerConfigDir}, []string{option.BucketsPath})
 	return s3ApiServer, nil
 }
 
