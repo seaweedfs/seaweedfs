@@ -1,12 +1,13 @@
 package client
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/mq/messages"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"time"
 )
 
 type PublishProcessor interface {
-	AddMessage(m *Message) error
+	AddMessage(m *messages.Message) error
 	Shutdown() error
 }
 
@@ -30,14 +31,7 @@ func NewPublisher(option *PublisherOption) *Publisher {
 	return p
 }
 
-type Message struct {
-	Key        []byte
-	Content    []byte
-	Properties map[string]string
-	Ts         time.Time
-}
-
-func (p Publisher) Publish(m *Message) error {
+func (p Publisher) Publish(m *messages.Message) error {
 	return p.processor.AddMessage(m)
 }
 

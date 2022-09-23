@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/mq/client"
+	"github.com/seaweedfs/seaweedfs/weed/mq/messages"
 	"os"
 	"time"
 )
@@ -24,7 +25,7 @@ func main() {
 
 	err := eachLineStdin(func(line string) error {
 		if len(line) > 0 {
-			if err := publisher.Publish(&client.Message{
+			if err := publisher.Publish(&messages.Message{
 				Key:        nil,
 				Content:    []byte(line),
 				Properties: nil,
