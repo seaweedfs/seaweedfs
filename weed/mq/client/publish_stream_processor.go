@@ -80,12 +80,12 @@ func (p *PublishStreamProcessor) doFlush(stream mq_pb.SeaweedMessaging_PublishMe
 	}
 
 	builder := <-p.builders
-	bb := segment.NewMessageBatchBuilder(builder, p.ProducerId, p.ProducerEpoch, 3, 4)
+	bb := segment.NewMessageBatchBuilder(builder)
 	for _, m := range messages {
 		bb.AddMessage(p.messagesSequence, m.Ts.UnixNano(), m.Properties, m.Key, m.Content)
 		p.messagesSequence++
 	}
-	bb.BuildMessageBatch()
+	bb.BuildMessageBatch(p.ProducerId, p.ProducerEpoch, 3, 4)
 	defer func() {
 		p.builders <- builder
 	}()

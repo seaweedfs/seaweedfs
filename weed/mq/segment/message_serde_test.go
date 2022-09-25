@@ -14,11 +14,11 @@ func TestMessageSerde(t *testing.T) {
 	prop["n1"] = "v1"
 	prop["n2"] = "v2"
 
-	bb := NewMessageBatchBuilder(b, 1, 2, 3, 4)
+	bb := NewMessageBatchBuilder(b)
 
 	bb.AddMessage(5, 6, prop, []byte("the primary key"), []byte("body is here"))
 
-	bb.BuildMessageBatch()
+	bb.BuildMessageBatch(1, 2, 3, 4)
 
 	buf := bb.GetBytes()
 
