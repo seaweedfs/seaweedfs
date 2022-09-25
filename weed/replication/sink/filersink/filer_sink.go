@@ -187,10 +187,6 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		// skip if already changed
 		// this usually happens when the messages are not ordered
 		glog.V(2).Infof("late updates %s", key)
-	} else if filer.ETag(newEntry) == filer.ETag(existingEntry) {
-		// skip if no change
-		// this usually happens when retrying the replication
-		glog.V(3).Infof("already replicated %s", key)
 	} else {
 		// find out what changed
 		deletedChunks, newChunks, err := compareChunks(filer.LookupFn(fs), oldEntry, newEntry)

@@ -35,7 +35,7 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, prefix string, la
 	var clientEpoch int32
 	util.RetryForever("followIamChanges", func() error {
 		clientEpoch++
-		return pb.WithFilerClientFollowMetadata(s3a, clientName, s3a.randomClientId, clientEpoch, prefix, &lastTsNs, 0, 0, processEventFn, pb.FatalOnError)
+		return pb.WithFilerClientFollowMetadata(s3a, clientName, s3a.randomClientId, clientEpoch, prefix, nil, &lastTsNs, 0, 0, processEventFn, pb.FatalOnError)
 	}, func(err error) bool {
 		glog.V(0).Infof("iam follow metadata changes: %v", err)
 		return true
