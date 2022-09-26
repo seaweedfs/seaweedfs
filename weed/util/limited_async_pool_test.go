@@ -10,17 +10,17 @@ import (
 
 func TestAsyncPool(t *testing.T) {
 	p := NewLimitedAsyncExecutor(3)
-	var results []Future
 
-	results = append(results, p.Execute(FirstFunc))
-	results = append(results, p.Execute(SecondFunc))
-	results = append(results, p.Execute(ThirdFunc))
-	results = append(results, p.Execute(FourthFunc))
-	results = append(results, p.Execute(FifthFunc))
+	p.Execute(FirstFunc)
+	p.Execute(SecondFunc)
+	p.Execute(ThirdFunc)
+	p.Execute(FourthFunc)
+	p.Execute(FifthFunc)
 
 	var sorted_results []int
-	for _, r := range results {
-		x := r.Await().(int)
+	for i := 0; i < 5; i++ {
+		f := p.NextFuture()
+		x := f.Await().(int)
 		println(x)
 		sorted_results = append(sorted_results, x)
 	}
