@@ -17,13 +17,13 @@ var _ = MessageBufferMover(&EmptyMover{})
 type EmptyMover struct {
 }
 
-func (e EmptyMover) Setup() {
+func (e *EmptyMover) Setup() {
 }
 
-func (e EmptyMover) TearDown() {
+func (e *EmptyMover) TearDown() {
 }
 
-func (e EmptyMover) MoveBuffer(buffer *MessageBuffer) (MessageBufferReference, error) {
+func (e *EmptyMover) MoveBuffer(buffer *MessageBuffer) (MessageBufferReference, error) {
 	println("moving", buffer.sequenceBase)
 	return MessageBufferReference{
 		sequence: buffer.sequenceBase,
