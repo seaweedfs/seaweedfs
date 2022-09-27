@@ -170,6 +170,7 @@ func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, cipherKe
 	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
 		for _, urlString := range urlStrings {
 			var localProcessed int
+			var writeErr error
 			shouldRetry, err = util.ReadUrlAsStream(urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
 				if totalWritten > localProcessed {
 					toBeSkipped := totalWritten - localProcessed
@@ -180,11 +181,16 @@ func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, cipherKe
 					data = data[toBeSkipped:]
 					localProcessed += toBeSkipped
 				}
-				writer.Write(data)
-				localProcessed += len(data)
-				totalWritten += len(data)
+				var writtenCount int
+				writtenCount, writeErr = writer.Write(data)
+				localProcessed += writtenCount
+				totalWritten += writtenCount
 			})
 			if !shouldRetry {
+				break
+			}
+			if writeErr != nil {
+				err = writeErr
 				break
 			}
 			if err != nil {

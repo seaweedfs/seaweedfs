@@ -19,6 +19,7 @@ func init() {
 }
 
 type commandFsMetaLoad struct {
+	dirPrefix *string
 }
 
 func (c *commandFsMetaLoad) Name() string {
@@ -30,6 +31,7 @@ func (c *commandFsMetaLoad) Help() string {
 
 	fs.meta.load <filer_host>-<port>-<time>.meta
 	fs.meta.load -v=false <filer_host>-<port>-<time>.meta // skip printing out the verbose output
+	fs.meta.load -dirPrefix=/buckets/important* <filer_host>.meta // load any dirs with prefix "important"
 
 `
 }
@@ -44,6 +46,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 	fileName := args[len(args)-1]
 
 	metaLoadCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	c.dirPrefix = metaLoadCommand.String("dirPrefix", "", "load entries only with directories matching prefix")
 	verbose := metaLoadCommand.Bool("v", true, "verbose mode")
 	if err = metaLoadCommand.Parse(args[0 : len(args)-1]); err != nil {
 		return nil
@@ -83,11 +86,22 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 				return err
 			}
 
+			// check collection name pattern
+			entryFullName := string(util.FullPath(fullEntry.Dir).Child(fullEntry.Entry.Name))
+			if *c.dirPrefix != "" {
+				if !strings.HasPrefix(fullEntry.Dir, *c.dirPrefix) {
+					if *verbose {
+						fmt.Fprintf(writer, "not match dir prefix %s\n", entryFullName)
+					}
+					continue
+				}
+			}
+
 			if *verbose || lastLogTime.Add(time.Second).Before(time.Now()) {
 				if !*verbose {
 					lastLogTime = time.Now()
 				}
-				fmt.Fprintf(writer, "load %s\n", util.FullPath(fullEntry.Dir).Child(fullEntry.Entry.Name))
+				fmt.Fprintf(writer, "load %s\n", entryFullName)
 			}
 
 			fullEntry.Entry.Name = strings.ReplaceAll(fullEntry.Entry.Name, "/", "x")
