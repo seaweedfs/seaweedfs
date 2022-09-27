@@ -46,7 +46,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 	fileName := args[len(args)-1]
 
 	metaLoadCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	c.dirPrefix = metaLoadCommand.String("dirPrefix", "", "match with wildcard characters '*' and '?'")
+	c.dirPrefix = metaLoadCommand.String("dirPrefix", "", "load entries only with directories matching prefix")
 	verbose := metaLoadCommand.Bool("v", true, "verbose mode")
 	if err = metaLoadCommand.Parse(args[0 : len(args)-1]); err != nil {
 		return nil
