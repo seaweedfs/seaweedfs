@@ -407,9 +407,10 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, dataNodeI
 				return resp.LastModified <= cutoffFrom, nil
 			})
 			if err != nil {
-				fmt.Fprintf(writer, "Failed to search for last vilad index on volume %d with error %v", volumeId, err)
+				fmt.Fprintf(writer, "Failed to search for last valid index on volume %d with error %v", volumeId, err)
+			} else {
+				buf.Truncate(index * types.NeedleMapEntrySize)
 			}
-			buf.Truncate(index * types.NeedleMapEntrySize)
 		}
 		idxFilename := getVolumeFileIdFile(tempFolder, dataNodeId, volumeId)
 		err = writeToFile(buf.Bytes(), idxFilename)
