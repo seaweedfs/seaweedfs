@@ -89,7 +89,7 @@ func TestInsertAndFind(t *testing.T) {
 		}
 	}
 	// println("print list")
-	list.println()
+	// list.println()
 
 }
 
