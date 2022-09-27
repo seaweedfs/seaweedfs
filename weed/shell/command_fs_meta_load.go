@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ func init() {
 }
 
 type commandFsMetaLoad struct {
+	dirPattern *string
 }
 
 func (c *commandFsMetaLoad) Name() string {
@@ -30,6 +32,7 @@ func (c *commandFsMetaLoad) Help() string {
 
 	fs.meta.load <filer_host>-<port>-<time>.meta
 	fs.meta.load -v=false <filer_host>-<port>-<time>.meta // skip printing out the verbose output
+	fs.meta.load -dirPattern=/buckets/important* <filer_host>.meta // load any dirs with prefix "important"
 
 `
 }
@@ -44,6 +47,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 	fileName := args[len(args)-1]
 
 	metaLoadCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	c.dirPattern = metaLoadCommand.String("dirPattern", "", "match with wildcard characters '*' and '?'")
 	verbose := metaLoadCommand.Bool("v", true, "verbose mode")
 	if err = metaLoadCommand.Parse(args[0 : len(args)-1]); err != nil {
 		return nil
@@ -81,6 +85,17 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 			fullEntry := &filer_pb.FullEntry{}
 			if err = proto.Unmarshal(data, fullEntry); err != nil {
 				return err
+			}
+
+			// check collection name pattern
+			if *c.dirPattern != "" {
+				matched, err := filepath.Match(*c.dirPattern, fullEntry.Dir)
+				if err != nil {
+					return fmt.Errorf("match pattern %s with collection %s: %v", *c.dirPattern, fullEntry.Dir, err)
+				}
+				if !matched {
+					continue
+				}
 			}
 
 			if *verbose || lastLogTime.Add(time.Second).Before(time.Now()) {
