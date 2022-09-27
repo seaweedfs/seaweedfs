@@ -144,9 +144,13 @@ func (cs *CompactSection) deleteOverflowEntry(key SectionalNeedleId) {
 
 // return old entry size
 func (cs *CompactSection) Delete(key NeedleId) Size {
-	skey := SectionalNeedleId(key - cs.start)
 	cs.Lock()
+	defer cs.RUnlock()
 	ret := Size(0)
+	if key > cs.end {
+		return ret
+	}
+	skey := SectionalNeedleId(key - cs.start)
 	if i := cs.binarySearchValues(skey); i >= 0 {
 		if cs.values[i].Size > 0 && cs.values[i].Size.IsValid() {
 			ret = cs.values[i].Size
@@ -157,23 +161,23 @@ func (cs *CompactSection) Delete(key NeedleId) Size {
 		cs.deleteOverflowEntry(skey)
 		ret = v.Size
 	}
-	cs.Unlock()
 	return ret
 }
 func (cs *CompactSection) Get(key NeedleId) (*NeedleValue, bool) {
 	cs.RLock()
+	defer cs.RUnlock()
+	if key > cs.end {
+		return nil, false
+	}
 	skey := SectionalNeedleId(key - cs.start)
 	if ve, v, ok := cs.findOverflowEntry(skey); ok {
-		cs.RUnlock()
 		nv := toNeedleValue(ve, v, cs)
 		return &nv, true
 	}
 	if i := cs.binarySearchValues(skey); i >= 0 {
-		cs.RUnlock()
 		nv := toNeedleValue(cs.valuesExtra[i], cs.values[i], cs)
 		return &nv, true
 	}
-	cs.RUnlock()
 	return nil, false
 }
 func (cs *CompactSection) binarySearchValues(key SectionalNeedleId) int {
