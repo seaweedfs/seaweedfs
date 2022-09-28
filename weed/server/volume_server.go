@@ -137,6 +137,11 @@ func (vs *VolumeServer) SetStopping() {
 	vs.store.SetStopping()
 }
 
+func (vs *VolumeServer) LoadNewVolumes() {
+	glog.V(0).Infoln(" Loading new volume ids ...")
+	vs.store.LoadNewVolumes()
+}
+
 func (vs *VolumeServer) Shutdown() {
 	glog.V(0).Infoln("Shutting down volume server...")
 	vs.store.Close()
