@@ -222,12 +222,8 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 	}
 
 	// the following is case 2.1
-
-	if lastReadTime.Equal(m.stopTime) {
-		return nil, nil
-	}
-	if lastReadTime.After(m.stopTime) {
-		// glog.Fatalf("unexpected last read time %v, older than latest %v", lastReadTime, m.stopTime)
+	// stop if lastReadTime from disk covers log buffer duration.
+	if lastReadTime.After(m.stopTime) || lastReadTime.Equal(m.stopTime) {
 		return nil, nil
 	}
 	if lastReadTime.Before(m.startTime) {
@@ -237,8 +233,7 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 				// glog.V(4).Infof("%s return the %d sealed buffer %v", m.name, i, buf.startTime)
 				// println("return the", i, "th in memory", buf.startTime.UnixNano())
 				return copiedBytes(buf.buf[:buf.size]), nil
-			}
-			if !buf.startTime.After(lastReadTime) && buf.stopTime.After(lastReadTime) {
+			} else if buf.stopTime.After(lastReadTime) {
 				pos := buf.locateByTs(lastReadTime)
 				// fmt.Printf("locate buffer[%d] pos %d\n", i, pos)
 				return copiedBytes(buf.buf[pos:buf.size]), nil
