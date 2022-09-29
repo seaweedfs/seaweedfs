@@ -138,7 +138,7 @@ public class SeaweedWrite {
         } else {
             try {
                 byte[] encryptedBytes = SeaweedCipher.encrypt(bytes, (int) bytesOffset, (int) bytesLength, cipherKey);
-                md.update(bytes);
+                md.update(encryptedBytes);
                 inputStream = new ByteArrayInputStream(encryptedBytes, 0, encryptedBytes.length);
             } catch (Exception e) {
                 throw new IOException("fail to encrypt data", e);
