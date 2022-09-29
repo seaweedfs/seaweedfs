@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	//"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"net/http"
@@ -372,6 +373,12 @@ func SaveAmzMetaData(r *http.Request, existing map[string][]byte, isReplace bool
 				metadata[header] = []byte(value)
 			}
 		}
+	}
+
+	//acp
+	acp := r.Header.Get(s3_constants.ExtAcpKey)
+	if len(acp) > 0 {
+		metadata[s3_constants.ExtAcpKey] = []byte(acp)
 	}
 
 	return
