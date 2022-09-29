@@ -149,7 +149,7 @@ public class SeaweedWrite {
         CloseableHttpResponse response = SeaweedUtil.getClosableHttpClient().execute(post);
 
         try {
-            if (response.getStatusLine().getStatusCode() != 200) {
+            if (response.getStatusLine().getStatusCode() / 100 != 2) {
                 if (response.getEntity().getContentType() != null && response.getEntity().getContentType().getValue().equals("application/json")) {
                     throw new IOException(EntityUtils.toString(response.getEntity(), "UTF-8"));
                 } else {
