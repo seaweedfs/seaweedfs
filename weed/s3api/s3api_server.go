@@ -41,6 +41,7 @@ type S3ApiServer struct {
 	filerGuard     *security.Guard
 	client         *http.Client
 	accountManager *AccountManager
+	bucketRegistry *BucketRegistry
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -61,6 +62,7 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 		cb:             NewCircuitBreaker(option),
 	}
 	s3ApiServer.accountManager = NewAccountManager(s3ApiServer)
+	s3ApiServer.bucketRegistry = NewBucketRegistry(s3ApiServer)
 	if option.LocalFilerSocket == "" {
 		s3ApiServer.client = &http.Client{Transport: &http.Transport{
 			MaxIdleConns:        1024,
@@ -78,7 +80,7 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 
 	s3ApiServer.registerRouter(router)
 
-	go s3ApiServer.subscribeMetaEvents("s3", filer.DirectoryEtcRoot, time.Now().UnixNano())
+	go s3ApiServer.subscribeMetaEvents("s3", time.Now().UnixNano(), filer.DirectoryEtcRoot, []string{option.BucketsPath})
 	return s3ApiServer, nil
 }
 
