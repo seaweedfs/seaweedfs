@@ -190,6 +190,8 @@ func runFuse(cmd *Command, args []string) bool {
 			}
 		case "fusermount.path":
 			fusermountPath = parameter.value
+		default:
+			mountOptions.extraOptions = append(mountOptions.extraOptions, fmt.Sprintf("%s:%s", parameter.name, parameter.value))
 		}
 	}
 
