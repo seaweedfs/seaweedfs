@@ -136,10 +136,14 @@ spec:
               -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-master.{{ .Release.Namespace }} \
               -peers={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
           volumeMounts:
+            {{- if .Values.master.data.type }}
             - name : seaweedfs-master-data-volume
               mountPath: /data
+            {{- end -}}
+            {{- if .Values.master.logs.type }}
             - name: seaweedfs-master-log-volume
               mountPath: "/logs/"
+            {{- end -}}
             {{- if .Values.global.enableSecurity }}
             - name: security-config
               readOnly: true
@@ -161,7 +165,7 @@ spec:
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/client/
             {{- end }}
-            {{ tpl .Values.master.extraVolumeMounts . | nindent 12 | trim }}
+            {{- tpl .Values.master.extraVolumeMounts . | nindent 12 | trim }}
           ports:
             - containerPort: {{ .Values.master.port }}
               name: swfs-master

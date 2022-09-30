@@ -317,8 +317,7 @@ spec:
       storageClassName: {{ .Values.filer.storageClass }}
       {{- end }}
   {{- end }}
-  {{- $pvc_exists := include "filer.pvc_exists" . -}}
-  {{- if $pvc_exists }}
+  {{- if (include "filer.pvc_exists" .) }}
   volumeClaimTemplates:
     {{- if eq .Values.filer.data.type "persistentVolumeClaim"}}
     - metadata:

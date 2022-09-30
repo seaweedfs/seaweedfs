@@ -57,8 +57,7 @@ spec:
       priorityClassName: {{ .Values.volume.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
-      {{- $initContainers_exists := include "volume.initContainers_exists" . -}}
-      {{- if $initContainers_exists }}
+      {{- if (include "volume.initContainers_exists" .) }}
       initContainers:
         {{- if .Values.volume.dir_idx }}
         - name: seaweedfs-vol-move-idx
@@ -230,8 +229,7 @@ spec:
           resources:
             {{ tpl .Values.volume.resources . | nindent 12 | trim }}
           {{- end }}
-      {{- $hostpath_exists := include "volume.hostpath_exists" . -}}
-      {{- if $hostpath_exists }}
+      {{- if (include "volume.hostpath_exists" .) }}
       volumes:
         {{- if eq .Values.volume.data.type "hostPath" }}
         - name: data
@@ -279,8 +277,7 @@ spec:
       nodeSelector:
         {{ tpl .Values.volume.nodeSelector . | indent 8 | trim }}
       {{- end }}
-  {{- $pvc_exists := include "volume.pvc_exists" . -}}
-  {{- if $pvc_exists }}
+  {{- if (include "volume.pvc_exists" .) }}
   volumeClaimTemplates:
     {{- if eq .Values.volume.data.type "persistentVolumeClaim"}}
     - metadata:
