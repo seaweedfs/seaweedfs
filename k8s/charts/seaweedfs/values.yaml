@@ -335,13 +335,13 @@ filer:
   #    storageClass: "local-path-provisioner"
   data:
     type: "hostPath"
-    size: ""
+    size: 10G
     storageClass: ""
     hostPathPrefix: /storage
 
   logs:
     type: "hostPath"
-    size: ""
+    size: 10G
     storageClass: ""
     hostPathPrefix: /storage
 

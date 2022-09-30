@@ -116,21 +116,19 @@ Inject extra environment vars in the format key:value, if populated
 {{/* check if any Volume PVC exists */}}
 {{- define "volume.pvc_exists" -}}
 {{- if or (or (eq .Values.volume.data.type "persistentVolumeClaim") (and (eq .Values.volume.idx.type "persistentVolumeClaim") .Values.volume.dir_idx )) (eq .Values.volume.logs.type "persistentVolumeClaim") -}}
-{{- printf "true" -}}
+  {{- true -}}
 {{- else -}}
-{{- printf "false" -}}
 {{- end -}}
 {{- end -}}
 
 {{/* check if any Volume HostPath exists */}}
 {{- define "volume.hostpath_exists" -}}
 {{- if or (or (eq .Values.volume.data.type "hostPath") (and (eq .Values.volume.idx.type "hostPath") .Values.volume.dir_idx )) (eq .Values.volume.logs.type "hostPath") -}}
-{{- printf "true" -}}
+  {{- true -}}
 {{- else -}}
 {{- if or .Values.global.enableSecurity .Values.volume.extraVolumes -}}
-{{- printf "true" -}}
+  {{- true -}}
 {{- else -}}
-{{- printf "false" -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -138,48 +136,43 @@ Inject extra environment vars in the format key:value, if populated
 {{/* check if any Filer PVC exists */}}
 {{- define "filer.pvc_exists" -}}
 {{- if or (eq .Values.filer.data.type "persistentVolumeClaim") (eq .Values.filer.logs.type "persistentVolumeClaim") -}}
-{{- printf "true" -}}
+  {{- true -}}
 {{- else -}}
-{{- printf "false" -}}
 {{- end -}}
 {{- end -}}
 
 {{/* check if any Filer HostPath exists */}}
 {{- define "filer.hostpath_exists" -}}
 {{- if or (eq .Values.filer.data.type "hostPath") (eq .Values.filer.logs.type "hostPath") -}}
-{{- printf "true" -}}
+  {{- true -}}
 {{- else -}}
-{{- printf "false" -}}
 {{- end -}}
 {{- end -}}
 
 {{/* check if any Master PVC exists */}}
 {{- define "master.pvc_exists" -}}
 {{- if or (eq .Values.master.data.type "persistentVolumeClaim") (eq .Values.master.logs.type "persistentVolumeClaim") -}}
-{{- printf "true" -}}
+  {{- true -}}
 {{- else -}}
-{{- printf "false" -}}
 {{- end -}}
 {{- end -}}
 
 {{/* check if any Master HostPath exists */}}
 {{- define "master.hostpath_exists" -}}
-{{- if or (eq .Values.master.data.type "hostPath") (eq .Values.master.logs.type "hostPath") -}}
-{{- printf "true" -}}
+{{- if or (eq .Values.master.data.type "hostPath") (eq .Values.master.logs.type "hostPath") }}
+  {{- true -}}
 {{- else -}}
-{{- if or .Values.global.enableSecurity .Values.volume.extraVolumes -}}
-{{- printf "true" -}}
+{{- if or .Values.global.enableSecurity .Values.master.extraVolumes }}
+  {{- true -}}
 {{- else -}}
-{{- printf "false" -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
 
 {{/* check if any InitContainers exist for Volumes */}}
 {{- define "volume.initContainers_exists" -}}
-{{- if or (not (empty .Values.volume.dir_idx )) (not (empty .Values.volume.initContainers )) -}}
-{{- printf "true" -}}
+{{- if or (not (empty .Values.volume.dir_idx )) (not (empty .Values.volume.initContainers )) }}
+  {{- true -}}
 {{- else -}}
-{{- printf "false" -}}
 {{- end -}}
 {{- end -}}

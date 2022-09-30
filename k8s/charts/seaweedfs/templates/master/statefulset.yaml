@@ -136,7 +136,7 @@ spec:
               -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-master.{{ .Release.Namespace }} \
               -peers={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
           volumeMounts:
-            - name : data-{{ .Release.Namespace }}
+            - name : seaweedfs-master-data-volume
               mountPath: /data
             - name: seaweedfs-master-log-volume
               mountPath: "/logs/"
@@ -195,21 +195,20 @@ spec:
           resources:
             {{ tpl .Values.master.resources . | nindent 12 | trim }}
           {{- end }}
-      {{- $hostpath_exists := include "master.hostpath_exists" . -}}
-      {{- if $hostpath_exists }}
+      {{- if (include "master.hostpath_exists" .) }}
       volumes:
         {{- if eq .Values.master.logs.type "hostPath" }}
         - name: seaweedfs-master-log-volume
           hostPath:
             path: {{ .Values.master.logs.hostPathPrefix }}/logs/seaweedfs/master
             type: DirectoryOrCreate
-        {{- end }}
+        {{- end -}}
         {{- if eq .Values.master.data.type "hostPath" }}
-        - name: data-{{ .Release.Namespace }}
+        - name: seaweedfs-master-data-volume
           hostPath:
             path: {{ .Values.master.data.hostPathPrefix }}/seaweed-master/
             type: DirectoryOrCreate
-        {{- end }}
+        {{- end -}}
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:
@@ -236,15 +235,16 @@ spec:
       nodeSelector:
         {{ tpl .Values.master.nodeSelector . | indent 8 | trim }}
       {{- end }}
-  {{- $pvc_exists := include "volume.pvc_exists" . -}}
-  {{- if $pvc_exists }}
+  {{- if (include "volume.pvc_exists" .) }}
   volumeClaimTemplates:
     {{- if eq .Values.master.data.type "persistentVolumeClaim"}}
     - metadata:
-        name: data-{{ .Release.Namespace }}
+        name: seaweedfs-master-data-volume
       spec:
         accessModes: [ "ReadWriteOnce" ]
+        {{- if .Values.master.data.storageClass }}
         storageClassName: {{ .Values.master.data.storageClass }}
+        {{- end }}
         resources:
           requests:
             storage: {{ .Values.master.data.size }}
@@ -254,7 +254,9 @@ spec:
         name: seaweedfs-master-log-volume
       spec:
         accessModes: [ "ReadWriteOnce" ]
+        {{- if .Values.master.logs.storageClass }}
         storageClassName: {{ .Values.master.logs.storageClass }}
+        {{- end }}
         resources:
           requests:
             storage: {{ .Values.master.logs.size }}
