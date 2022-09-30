@@ -3,6 +3,7 @@ package s3api
 import (
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/stretchr/testify/assert"
+	"reflect"
 	"testing"
 
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
@@ -124,5 +125,98 @@ func TestCanDo(t *testing.T) {
 	}
 	assert.Equal(t, true, ident5.canDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
 	assert.Equal(t, true, ident5.canDo(ACTION_WRITE, "special_bucket", "/a/b/c/d.txt"))
+}
 
+type LoadS3ApiConfigurationTestCase struct {
+	pbIdent     *iam_pb.Identity
+	expectIdent *Identity
+}
+
+func TestLoadS3ApiConfiguration(t *testing.T) {
+	testCases := map[string]*LoadS3ApiConfigurationTestCase{
+		"notSpecifyAccountId": {
+			pbIdent: &iam_pb.Identity{
+				Name: "notSpecifyAccountId",
+				Actions: []string{
+					"Read",
+					"Write",
+				},
+				Credentials: []*iam_pb.Credential{
+					{
+						AccessKey: "some_access_key1",
+						SecretKey: "some_secret_key2",
+					},
+				},
+			},
+			expectIdent: &Identity{
+				Name:      "notSpecifyAccountId",
+				AccountId: AccountAdmin.Id,
+				Actions: []Action{
+					"Read",
+					"Write",
+				},
+				Credentials: []*Credential{
+					{
+						AccessKey: "some_access_key1",
+						SecretKey: "some_secret_key2",
+					},
+				},
+			},
+		},
+		"specifiedAccountID": {
+			pbIdent: &iam_pb.Identity{
+				Name:      "specifiedAccountID",
+				AccountId: "specifiedAccountID",
+				Actions: []string{
+					"Read",
+					"Write",
+				},
+			},
+			expectIdent: &Identity{
+				Name:      "specifiedAccountID",
+				AccountId: "specifiedAccountID",
+				Actions: []Action{
+					"Read",
+					"Write",
+				},
+			},
+		},
+		"anonymous": {
+			pbIdent: &iam_pb.Identity{
+				Name: "anonymous",
+				Actions: []string{
+					"Read",
+					"Write",
+				},
+			},
+			expectIdent: &Identity{
+				Name:      "anonymous",
+				AccountId: "anonymous",
+				Actions: []Action{
+					"Read",
+					"Write",
+				},
+			},
+		},
+	}
+
+	config := &iam_pb.S3ApiConfiguration{
+		Identities: make([]*iam_pb.Identity, 0),
+	}
+	for _, v := range testCases {
+		config.Identities = append(config.Identities, v.pbIdent)
+	}
+
+	iam := IdentityAccessManagement{}
+	err := iam.loadS3ApiConfiguration(config)
+	if err != nil {
+		return
+	}
+
+	for _, ident := range iam.identities {
+		tc := testCases[ident.Name]
+		if !reflect.DeepEqual(ident, tc.expectIdent) {
+			t.Error("not expect")
+		}
+	}
 }

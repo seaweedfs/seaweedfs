@@ -5,6 +5,8 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"net/http"
 	"time"
@@ -342,4 +344,160 @@ func (s3a *S3ApiServer) GetBucketLocationHandler(w http.ResponseWriter, r *http.
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketRequestPayment.html
 func (s3a *S3ApiServer) GetBucketRequestPaymentHandler(w http.ResponseWriter, r *http.Request) {
 	writeSuccessResponseXML(w, r, RequestPaymentConfiguration{Payer: "BucketOwner"})
+}
+
+// PutBucketOwnershipControls https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketOwnershipControls.html
+func (s3a *S3ApiServer) PutBucketOwnershipControls(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("PutBucketOwnershipControls %s", bucket)
+
+	errCode := s3a.checkAccessByOwnership(r, bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	if r.Body == nil || r.Body == http.NoBody {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	var v s3.OwnershipControls
+	defer util.CloseRequest(r)
+
+	err := xmlutil.UnmarshalXML(&v, xml.NewDecoder(r.Body), "")
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	if len(v.Rules) != 1 {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	printOwnership := true
+	ownership := *v.Rules[0].ObjectOwnership
+	switch ownership {
+	case s3_constants.OwnershipObjectWriter:
+	case s3_constants.OwnershipBucketOwnerPreferred:
+	case s3_constants.OwnershipBucketOwnerEnforced:
+		printOwnership = false
+	default:
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	bucketEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			return
+		}
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	oldOwnership, ok := bucketEntry.Extended[s3_constants.ExtOwnershipKey]
+	if !ok || string(oldOwnership) != ownership {
+		if bucketEntry.Extended == nil {
+			bucketEntry.Extended = make(map[string][]byte)
+		}
+		bucketEntry.Extended[s3_constants.ExtOwnershipKey] = []byte(ownership)
+		err = s3a.updateEntry(s3a.option.BucketsPath, bucketEntry)
+		if err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+	}
+
+	if printOwnership {
+		result := &s3.PutBucketOwnershipControlsInput{
+			OwnershipControls: &v,
+		}
+		s3err.WriteAwsXMLResponse(w, r, http.StatusOK, result)
+	} else {
+		writeSuccessResponseEmpty(w, r)
+	}
+}
+
+// GetBucketOwnershipControls https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketOwnershipControls.html
+func (s3a *S3ApiServer) GetBucketOwnershipControls(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("GetBucketOwnershipControls %s", bucket)
+
+	errCode := s3a.checkAccessByOwnership(r, bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	bucketEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			return
+		}
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	v, ok := bucketEntry.Extended[s3_constants.ExtOwnershipKey]
+	if !ok {
+		s3err.WriteErrorResponse(w, r, s3err.OwnershipControlsNotFoundError)
+		return
+	}
+	ownership := string(v)
+
+	result := &s3.PutBucketOwnershipControlsInput{
+		OwnershipControls: &s3.OwnershipControls{
+			Rules: []*s3.OwnershipControlsRule{
+				{
+					ObjectOwnership: &ownership,
+				},
+			},
+		},
+	}
+
+	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, result)
+}
+
+// DeleteBucketOwnershipControls https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketOwnershipControls.html
+func (s3a *S3ApiServer) DeleteBucketOwnershipControls(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("PutBucketOwnershipControls %s", bucket)
+
+	errCode := s3a.checkAccessByOwnership(r, bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	bucketEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+			return
+		}
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	_, ok := bucketEntry.Extended[s3_constants.ExtOwnershipKey]
+	if !ok {
+		s3err.WriteErrorResponse(w, r, s3err.OwnershipControlsNotFoundError)
+		return
+	}
+
+	delete(bucketEntry.Extended, s3_constants.ExtOwnershipKey)
+	err = s3a.updateEntry(s3a.option.BucketsPath, bucketEntry)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	emptyOwnershipControls := &s3.OwnershipControls{
+		Rules: []*s3.OwnershipControlsRule{},
+	}
+	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, emptyOwnershipControls)
 }

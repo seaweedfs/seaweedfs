@@ -216,6 +216,14 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListObjectsV2Handler, ACTION_LIST)), "LIST")).Queries("list-type", "2")
 
 		// buckets with query
+		// PutBucketOwnershipControls
+		bucket.Methods("PUT").HandlerFunc(track(s3a.iam.Auth(s3a.PutBucketOwnershipControls, ACTION_ADMIN), "PUT")).Queries("ownershipControls", "")
+
+		//GetBucketOwnershipControls
+		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.GetBucketOwnershipControls, ACTION_READ), "GET")).Queries("ownershipControls", "")
+
+		//DeleteBucketOwnershipControls
+		bucket.Methods("DELETE").HandlerFunc(track(s3a.iam.Auth(s3a.DeleteBucketOwnershipControls, ACTION_ADMIN), "DELETE")).Queries("ownershipControls", "")
 
 		// raw buckets
 
