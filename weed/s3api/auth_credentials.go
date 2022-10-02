@@ -16,6 +16,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+var IdentityAnonymous *Identity
+
 type Action string
 
 type Iam interface {
@@ -32,8 +34,13 @@ type IdentityAccessManagement struct {
 
 type Identity struct {
 	Name        string
+	AccountId   string
 	Credentials []*Credential
 	Actions     []Action
+}
+
+func (i *Identity) isAnonymous() bool {
+	return i.Name == AccountAnonymous.Name
 }
 
 type Credential struct {
@@ -125,9 +132,23 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	for _, ident := range config.Identities {
 		t := &Identity{
 			Name:        ident.Name,
+			AccountId:   AccountAdmin.Id,
 			Credentials: nil,
 			Actions:     nil,
 		}
+
+		if ident.Name == AccountAnonymous.Name {
+			if ident.AccountId != "" && ident.AccountId != AccountAnonymous.Id {
+				glog.Warningf("anonymous identity is associated with a non-anonymous account ID, the association is invalid")
+			}
+			t.AccountId = AccountAnonymous.Id
+			IdentityAnonymous = t
+		} else {
+			if len(ident.AccountId) > 0 {
+				t.AccountId = ident.AccountId
+			}
+		}
+
 		for _, action := range ident.Actions {
 			t.Actions = append(t.Actions, Action(action))
 		}
@@ -138,6 +159,13 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 			})
 		}
 		identities = append(identities, t)
+	}
+
+	if IdentityAnonymous == nil {
+		IdentityAnonymous = &Identity{
+			Name:      AccountAnonymous.Name,
+			AccountId: AccountAnonymous.Id,
+		}
 	}
 	iam.m.Lock()
 	// atomically switch
@@ -173,7 +201,7 @@ func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, foun
 	iam.m.RLock()
 	defer iam.m.RUnlock()
 	for _, ident := range iam.identities {
-		if ident.Name == "anonymous" {
+		if ident.isAnonymous() {
 			return ident, true
 		}
 	}
@@ -259,6 +287,9 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		return identity, s3err.ErrAccessDenied
 	}
 
+	if !identity.isAnonymous() {
+		r.Header.Set(s3_constants.AmzAccountId, identity.AccountId)
+	}
 	return identity, s3err.ErrNone
 
 }
