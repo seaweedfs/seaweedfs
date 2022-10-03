@@ -150,7 +150,7 @@ require (
 	github.com/rabbitmq/amqp091-go v1.5.0
 	github.com/tikv/client-go/v2 v2.0.1
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.38.1
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.38.3
 	golang.org/x/sync v0.0.0-20220923202941-7f9b1623fab7
 	google.golang.org/grpc/security/advancedtls v0.0.0-20220622233350-5cdb09fa29c1
 )
@@ -216,7 +216,7 @@ require (
 	github.com/tinylib/msgp v1.1.6 // indirect
 	github.com/twmb/murmur3 v1.1.3 // indirect
 	github.com/yandex-cloud/go-genproto v0.0.0-20211115083454-9ca41db5ed9e // indirect
-	github.com/ydb-platform/ydb-go-genproto v0.0.0-20220916101045-1c4d1accabb6 // indirect
+	github.com/ydb-platform/ydb-go-genproto v0.0.0-20220922065549-66df47a830ba // indirect
 	github.com/ydb-platform/ydb-go-yc v0.8.3 // indirect
 	github.com/ydb-platform/ydb-go-yc-metadata v0.5.2 // indirect
 	go.etcd.io/bbolt v1.3.6 // indirect

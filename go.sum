@@ -1739,13 +1739,13 @@ github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673/go.mod h1:N3UwUGtsr
 github.com/yandex-cloud/go-genproto v0.0.0-20211115083454-9ca41db5ed9e h1:9LPdmD1vqadsDQUva6t2O9MbnyvoOgo8nFNPaOIH5U8=
 github.com/yandex-cloud/go-genproto v0.0.0-20211115083454-9ca41db5ed9e/go.mod h1:HEUYX/p8966tMUHHT+TsS0hF/Ca/NYwqprC5WXSDMfE=
 github.com/ydb-platform/ydb-go-genproto v0.0.0-20220203104745-929cf9c248bc/go.mod h1:cc138nptTn9eKptCQl/grxP6pBKpo/bnXDiOxuVZtps=
-github.com/ydb-platform/ydb-go-genproto v0.0.0-20220916101045-1c4d1accabb6 h1:SysuVdFz3CjwLAuf8JzHCpnV1MpEfGygqHEuwK4nB+g=
-github.com/ydb-platform/ydb-go-genproto v0.0.0-20220916101045-1c4d1accabb6/go.mod h1:Er+FePu1dNUieD+XTMDduGpQuCPssK5Q4BjF+IIXJ3I=
+github.com/ydb-platform/ydb-go-genproto v0.0.0-20220922065549-66df47a830ba h1:htUAISxEY5MfCLmubsf2EMgN+H62cQTNcTseK5F4cJ0=
+github.com/ydb-platform/ydb-go-genproto v0.0.0-20220922065549-66df47a830ba/go.mod h1:Er+FePu1dNUieD+XTMDduGpQuCPssK5Q4BjF+IIXJ3I=
 github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2 h1:EYSI1kulnHb0H0zt3yOw4cRj4ABMSMGwNe43D+fX7e4=
 github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2/go.mod h1:Xfjce+VMU9yJVr1lj60yK2fFPWjB4jr/4cp3K7cjzi4=
 github.com/ydb-platform/ydb-go-sdk/v3 v3.25.3/go.mod h1:PFizF/vJsdAgEwjK3DVSBD52kdmRkWfSIS2q2pA+e88=
-github.com/ydb-platform/ydb-go-sdk/v3 v3.38.1 h1:1PPvpBw6P6FVzFqEnfMHlCaamVWJln3f+cIccYW0tLQ=
-github.com/ydb-platform/ydb-go-sdk/v3 v3.38.1/go.mod h1:nc2x9ukuggHwRkIpEBAvDuUuITlZWY7J9jFKoetK6eE=
+github.com/ydb-platform/ydb-go-sdk/v3 v3.38.3 h1:EplLJtawJwV/99lneZuzhucXYLVWGIrbFG/ILTgdHh8=
+github.com/ydb-platform/ydb-go-sdk/v3 v3.38.3/go.mod h1:SOpOg3nIQ7kT337LvWGNjfdpTQmFEeHXDqY/huSu+Xc=
 github.com/ydb-platform/ydb-go-yc v0.8.3 h1:92UUUMsfvtMl6mho8eQ9lbkiPrF3a9CT+RrVRAKNRwo=
 github.com/ydb-platform/ydb-go-yc v0.8.3/go.mod h1:zUolAFGzJ5XG8uwiseTLr9Lapm7L7hdVdZgLSuv9FXE=
 github.com/ydb-platform/ydb-go-yc-metadata v0.5.2 h1:nMtixUijP0Z7iHJNT9fOL+dbmEzZxqU6Xk87ll7hqXg=
