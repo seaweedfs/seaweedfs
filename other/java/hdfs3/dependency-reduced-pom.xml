@@ -108,7 +108,7 @@
       </plugin>
       <plugin>
         <artifactId>maven-javadoc-plugin</artifactId>
-        <version>2.9.1</version>
+        <version>3.0.1</version>
         <executions>
           <execution>
             <id>attach-javadocs</id>
@@ -124,7 +124,7 @@
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-client</artifactId>
-      <version>3.2.3</version>
+      <version>3.2.4</version>
       <scope>provided</scope>
       <exclusions>
         <exclusion>
@@ -156,7 +156,7 @@
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-common</artifactId>
-      <version>3.2.3</version>
+      <version>3.2.4</version>
       <scope>provided</scope>
       <exclusions>
         <exclusion>
@@ -224,8 +224,8 @@
           <groupId>com.sun.jersey</groupId>
         </exclusion>
         <exclusion>
-          <artifactId>log4j</artifactId>
-          <groupId>log4j</groupId>
+          <artifactId>reload4j</artifactId>
+          <groupId>ch.qos.reload4j</groupId>
         </exclusion>
         <exclusion>
           <artifactId>commons-beanutils</artifactId>
@@ -244,7 +244,7 @@
           <groupId>org.apache.commons</groupId>
         </exclusion>
         <exclusion>
-          <artifactId>slf4j-log4j12</artifactId>
+          <artifactId>slf4j-reload4j</artifactId>
           <groupId>org.slf4j</groupId>
         </exclusion>
         <exclusion>
@@ -317,7 +317,7 @@
     </snapshotRepository>
   </distributionManagement>
   <properties>
-    <seaweedfs.client.version>3.13</seaweedfs.client.version>
-    <hadoop.version>3.2.3</hadoop.version>
+    <seaweedfs.client.version>3.30</seaweedfs.client.version>
+    <hadoop.version>3.2.4</hadoop.version>
   </properties>
 </project>
