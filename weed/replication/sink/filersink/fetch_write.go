@@ -24,15 +24,17 @@ func (fs *FilerSink) replicateChunks(sourceChunks []*filer_pb.FileChunk, path st
 	var wg sync.WaitGroup
 	for chunkIndex, sourceChunk := range sourceChunks {
 		wg.Add(1)
-		go func(chunk *filer_pb.FileChunk, index int) {
-			defer wg.Done()
-			replicatedChunk, e := fs.replicateOneChunk(chunk, path)
-			if e != nil {
-				err = e
-				return
-			}
-			replicatedChunks[index] = replicatedChunk
-		}(sourceChunk, chunkIndex)
+		fs.executor.Execute(func() {
+			func(chunk *filer_pb.FileChunk, index int) {
+				defer wg.Done()
+				replicatedChunk, e := fs.replicateOneChunk(chunk, path)
+				if e != nil {
+					err = e
+					return
+				}
+				replicatedChunks[index] = replicatedChunk
+			}(sourceChunk, chunkIndex)
+		})
 	}
 	wg.Wait()
 
