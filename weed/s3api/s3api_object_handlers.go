@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3acl"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"golang.org/x/exp/slices"
@@ -72,17 +75,23 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	rAuthType := getRequestAuthType(r)
 	if s3a.iam.isEnabled() {
 		var s3ErrCode s3err.ErrorCode
+		var identity *Identity
 		switch rAuthType {
 		case authTypeStreamingSigned:
-			dataReader, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
+			dataReader, identity, s3ErrCode = s3a.iam.newSignV4ChunkedReader(r)
 		case authTypeSignedV2, authTypePresignedV2:
-			_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
+			identity, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
 		case authTypePresigned, authTypeSigned:
-			_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
+			identity, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
+		case authTypeAnonymous:
+			identity = IdentityAnonymous
 		}
 		if s3ErrCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, s3ErrCode)
 			return
+		}
+		if identity.AccountId != s3account.AccountAnonymous.Id {
+			r.Header.Set(s3_constants.AmzAccountId, identity.AccountId)
 		}
 	} else {
 		if authTypeStreamingSigned == rAuthType {
@@ -91,6 +100,12 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	defer dataReader.Close()
+
+	errCode := s3a.checkAccessForWriteObject(r, bucket, object)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	objectContentType := r.Header.Get("Content-Type")
 	if strings.HasSuffix(object, "/") && r.ContentLength == 0 {
@@ -163,6 +178,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
+
+	errCode := s3a.checkBucketAccessForReadObject(r, bucket, object)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	if strings.HasSuffix(r.URL.Path, "/") {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
@@ -524,4 +545,50 @@ func (s3a *S3ApiServer) maybeGetFilerJwtAuthorizationToken(isWrite bool) string 
 		encodedJwt = security.GenJwtForFilerServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec)
 	}
 	return string(encodedJwt)
+}
+
+// GetObjectAclHandler Put object ACL
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjecthtml
+func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, object := s3_constants.GetBucketAndObject(r)
+	acp, errCode := s3a.checkAccessForReadObjectAcl(r, bucket, object)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+	result := &s3.PutBucketAclInput{
+		AccessControlPolicy: acp,
+	}
+	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, &result)
+}
+
+// PutObjectAclHandler Put object ACL
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjecthtml
+func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, object := s3_constants.GetBucketAndObject(r)
+
+	accountId := s3acl.GetAccountId(r)
+	bucketMetadata, objectEntry, objectOwner, errCode := s3a.checkAccessForWriteObjectAcl(accountId, bucket, object)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	grants, errCode := s3acl.ExtractAcl(r, s3a.accountManager, bucketMetadata.ObjectOwnership, *bucketMetadata.Owner.ID, *bucketMetadata.Owner.ID, accountId)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	errCode = s3acl.AssembleEntryWithAcp(objectEntry, objectOwner, grants)
+	if errCode != s3err.ErrNone {
+		return
+	}
+
+	err := updateObjectEntry(s3a, bucket, objectEntry)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }

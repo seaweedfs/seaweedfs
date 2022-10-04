@@ -1,4 +1,4 @@
-package s3api
+package s3account
 
 import (
 	"sync"
@@ -36,28 +36,18 @@ type Account struct {
 
 type AccountManager struct {
 	sync.Mutex
-	s3a *S3ApiServer
 
 	IdNameMapping  map[string]string
 	EmailIdMapping map[string]string
 }
 
-func NewAccountManager(s3a *S3ApiServer) *AccountManager {
+func NewAccountManager() *AccountManager {
 	am := &AccountManager{
-		s3a:            s3a,
 		IdNameMapping:  make(map[string]string),
 		EmailIdMapping: make(map[string]string),
 	}
 	am.initialize()
 	return am
-}
-
-func (am *AccountManager) GetAccountNameById(canonicalId string) string {
-	return am.IdNameMapping[canonicalId]
-}
-
-func (am *AccountManager) GetAccountIdByEmail(email string) string {
-	return am.EmailIdMapping[email]
 }
 
 func (am *AccountManager) initialize() {

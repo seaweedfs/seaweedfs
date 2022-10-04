@@ -38,6 +38,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 	s3ConfigureCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	actions := s3ConfigureCommand.String("actions", "", "comma separated actions names: Read,Write,List,Tagging,Admin")
 	user := s3ConfigureCommand.String("user", "", "user name")
+	accountId := s3ConfigureCommand.String("accountId", "", "account id")
 	buckets := s3ConfigureCommand.String("buckets", "", "bucket name")
 	accessKey := s3ConfigureCommand.String("access_key", "", "specify the access key")
 	secretKey := s3ConfigureCommand.String("secret_key", "", "specify the secret key")
@@ -149,6 +150,9 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 						SecretKey: *secretKey,
 					})
 				}
+			}
+			if *accountId != "" {
+				s3cfg.Identities[idx].AccountId = *accountId
 			}
 		}
 	} else if *user != "" && *actions != "" {

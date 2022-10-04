@@ -37,7 +37,18 @@ const (
 	AmzObjectTaggingDirective = "X-Amz-Tagging-Directive"
 	AmzTagCount               = "x-amz-tagging-count"
 
+	// S3 ACL headers
+	AmzCannedAcl      = "X-Amz-Acl"
+	AmzAclFullControl = "X-Amz-Grant-Full-Control"
+	AmzAclRead        = "X-Amz-Grant-Read"
+	AmzAclWrite       = "X-Amz-Grant-Write"
+	AmzAclReadAcp     = "X-Amz-Grant-Read-Acp"
+	AmzAclWriteAcp    = "X-Amz-Grant-Write-Acp"
+
 	X_SeaweedFS_Header_Directory_Key = "x-seaweedfs-is-directory-key"
+
+	//s3 acl offload header
+	X_SeaweedFS_Header_Amz_Bucket_Owner_Id = "x-seaweedfs-amz-bucket-owner-id"
 )
 
 // Non-Standard S3 HTTP request constants

@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"net/http"
 	"os"
 	"strings"
@@ -40,7 +41,7 @@ type Identity struct {
 }
 
 func (i *Identity) isAnonymous() bool {
-	return i.Name == AccountAnonymous.Name
+	return i.Name == s3account.AccountAnonymous.Name
 }
 
 type Credential struct {
@@ -132,16 +133,16 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	for _, ident := range config.Identities {
 		t := &Identity{
 			Name:        ident.Name,
-			AccountId:   AccountAdmin.Id,
+			AccountId:   s3account.AccountAdmin.Id,
 			Credentials: nil,
 			Actions:     nil,
 		}
 
-		if ident.Name == AccountAnonymous.Name {
-			if ident.AccountId != "" && ident.AccountId != AccountAnonymous.Id {
+		if ident.Name == s3account.AccountAnonymous.Name {
+			if ident.AccountId != "" && ident.AccountId != s3account.AccountAnonymous.Id {
 				glog.Warningf("anonymous identity is associated with a non-anonymous account ID, the association is invalid")
 			}
-			t.AccountId = AccountAnonymous.Id
+			t.AccountId = s3account.AccountAnonymous.Id
 			IdentityAnonymous = t
 		} else {
 			if len(ident.AccountId) > 0 {
@@ -163,8 +164,8 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 
 	if IdentityAnonymous == nil {
 		IdentityAnonymous = &Identity{
-			Name:      AccountAnonymous.Name,
-			AccountId: AccountAnonymous.Id,
+			Name:      s3account.AccountAnonymous.Name,
+			AccountId: s3account.AccountAnonymous.Id,
 		}
 	}
 	iam.m.Lock()
@@ -210,6 +211,11 @@ func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, foun
 
 func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		//unset predefined headers
+		delete(r.Header, s3_constants.AmzAccountId)
+		delete(r.Header, s3_constants.ExtAmzOwnerKey)
+		delete(r.Header, s3_constants.ExtAmzAclKey)
+
 		if !iam.isEnabled() {
 			f(w, r)
 			return
@@ -279,7 +285,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		return identity, s3Err
 	}
 
-	glog.V(3).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
+	glog.V(3).Infof("user name: %v account id: %v actions: %v, action: %v", identity.Name, identity.AccountId, identity.Actions, action)
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 

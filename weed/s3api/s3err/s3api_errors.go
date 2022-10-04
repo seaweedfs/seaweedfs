@@ -109,6 +109,8 @@ const (
 	ErrRequestBytesExceed
 
 	OwnershipControlsNotFoundError
+	ErrAclInvalid
+	AccessControlListNotSupported
 )
 
 // error code to APIError structure, these fields carry respective
@@ -416,11 +418,20 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "Simultaneous request bytes exceed limitations",
 		HTTPStatusCode: http.StatusTooManyRequests,
 	},
-
 	OwnershipControlsNotFoundError: {
 		Code:           "OwnershipControlsNotFoundError",
 		Description:    "The bucket ownership controls were not found",
 		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrAclInvalid: {
+		Code:           "InvalidAccessControlPolicy",
+		Description:    "CannedAcl or CustomAcl is required",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	AccessControlListNotSupported: {
+		Code:           "AccessControlListNotSupported",
+		Description:    "The bucket does not allow ACLs",
+		HTTPStatusCode: http.StatusBadRequest,
 	},
 }
 

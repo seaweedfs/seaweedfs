@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3acl"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"net/http"
@@ -121,6 +122,13 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	accountId := s3acl.GetAccountId(r)
+	acpOwner, acpGrants, errCode := s3acl.ParseAndValidateAclHeaders(r, s3a.accountManager, s3_constants.DefaultOwnershipForCreate, accountId, accountId, false)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
 	fn := func(entry *filer_pb.Entry) {
 		if identityId := r.Header.Get(s3_constants.AmzIdentityId); identityId != "" {
 			if entry.Extended == nil {
@@ -128,6 +136,8 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			}
 			entry.Extended[s3_constants.AmzIdentityId] = []byte(identityId)
 		}
+
+		s3acl.AssembleEntryWithAcp(entry, acpOwner, acpGrants)
 	}
 
 	// create the folder for bucket, but lazily create actual collection
@@ -200,6 +210,11 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadBucketHandler %s", bucket)
 
+	_, errorCode := s3a.checkAccessForReadBucket(r, bucket, s3_constants.PermissionRead)
+	if errorCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errorCode)
+		return
+	}
 	if entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); entry == nil || err == filer_pb.ErrNotFound {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		return
@@ -238,6 +253,46 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 	return true
 }
 
+// PutBucketAclHandler Put bucket ACL
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAcl.html
+func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("PutBucketAclHandler %s", bucket)
+
+	accountId := s3acl.GetAccountId(r)
+	bucketMetadata, errorCode := s3a.checkAccessForPutBucketAcl(accountId, bucket)
+	if errorCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errorCode)
+		return
+	}
+
+	grants, errCode := s3acl.ExtractAcl(r, s3a.accountManager, bucketMetadata.ObjectOwnership, "", *bucketMetadata.Owner.ID, accountId)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	bucketEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if err != nil {
+		glog.Warning(err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	errCode = s3acl.AssembleEntryWithAcp(bucketEntry, *bucketMetadata.Owner.ID, grants)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	err = updateBucketEntry(s3a, bucketEntry)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	s3err.WriteEmptyResponse(w, r, http.StatusOK)
+}
+
 // GetBucketAclHandler Get Bucket ACL
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketAcl.html
 func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Request) {
@@ -245,37 +300,19 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetBucketAclHandler %s", bucket)
 
-	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, err)
+	bucketMetadata, errorCode := s3a.checkAccessForReadBucket(r, bucket, s3_constants.PermissionReadAcp)
+	if s3err.ErrNone != errorCode {
+		s3err.WriteErrorResponse(w, r, errorCode)
 		return
 	}
 
-	response := AccessControlPolicy{}
-	for _, ident := range s3a.iam.identities {
-		if len(ident.Credentials) == 0 {
-			continue
-		}
-		for _, action := range ident.Actions {
-			if !action.overBucket(bucket) || action.getPermission() == "" {
-				continue
-			}
-			id := ident.Credentials[0].AccessKey
-			if response.Owner.DisplayName == "" && action.isOwner(bucket) && len(ident.Credentials) > 0 {
-				response.Owner.DisplayName = ident.Name
-				response.Owner.ID = id
-			}
-			response.AccessControlList.Grant = append(response.AccessControlList.Grant, Grant{
-				Grantee: Grantee{
-					ID:          id,
-					DisplayName: ident.Name,
-					Type:        "CanonicalUser",
-					XMLXSI:      "CanonicalUser",
-					XMLNS:       "http://www.w3.org/2001/XMLSchema-instance"},
-				Permission: action.getPermission(),
-			})
-		}
+	acp := &s3.PutBucketAclInput{
+		AccessControlPolicy: &s3.AccessControlPolicy{
+			Grants: bucketMetadata.Acl,
+			Owner:  bucketMetadata.Owner,
+		},
 	}
-	writeSuccessResponseXML(w, r, response)
+	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, acp)
 }
 
 // GetBucketLifecycleConfigurationHandler Get Bucket Lifecycle configuration
