@@ -10,7 +10,7 @@ metadata:
     component: volume
 spec:
   endpoints:
-    - interval: 30s
+    - interval: 10s
       port: metrics
       scrapeTimeout: 5s
   selector:

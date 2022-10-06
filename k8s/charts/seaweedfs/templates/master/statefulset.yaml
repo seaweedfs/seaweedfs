@@ -123,6 +123,9 @@ spec:
               -metricsPort={{ .Values.master.metricsPort }} \
               {{- end }}
               {{- end }}
+              {{- if .Values.master.useRaftHashicorp }}
+              -raftHashicorp \
+              {{- end }}
               -volumeSizeLimitMB={{ .Values.master.volumeSizeLimitMB }} \
               {{- if .Values.master.disableHttp }}
               -disableHttp \
