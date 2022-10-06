@@ -174,41 +174,45 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 			glog.V(0).Infof("leader change event: %+v => %+v", e.PrevValue(), e.Value())
 			stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", e.Value())).Inc()
 			if ms.Topo.RaftServer.Leader() != "" {
-				glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "becomes leader.")
+				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
 			}
 		})
-		raftServerName = ms.Topo.RaftServer.Name()
+		raftServerName = fmt.Sprintf("[%s]", ms.Topo.RaftServer.Name())
 	} else if raftServer.RaftHashicorp != nil {
 		ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
 		leaderCh := raftServer.RaftHashicorp.LeaderCh()
 		prevLeader, _ := ms.Topo.HashicorpRaft.LeaderWithID()
+		raftServerName = ms.Topo.HashicorpRaft.String()
 		go func() {
 			for {
 				select {
 				case isLeader := <-leaderCh:
+					ms.Topo.RaftServerAccessLock.RLock()
 					leader, _ := ms.Topo.HashicorpRaft.LeaderWithID()
+					ms.Topo.RaftServerAccessLock.RUnlock()
 					glog.V(0).Infof("is leader %+v change event: %+v => %+v", isLeader, prevLeader, leader)
 					stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", leader)).Inc()
 					prevLeader = leader
 				}
 			}
 		}()
-		raftServerName = ms.Topo.HashicorpRaft.String()
 	}
 	ms.Topo.RaftServerAccessLock.Unlock()
 
 	if ms.Topo.IsLeader() {
-		glog.V(0).Infoln("[", raftServerName, "]", "I am the leader!")
+		glog.V(0).Infof("%s I am the leader!", raftServerName)
 	} else {
+		var raftServerLeader string
 		ms.Topo.RaftServerAccessLock.RLock()
-		if ms.Topo.RaftServer != nil && ms.Topo.RaftServer.Leader() != "" {
-			glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "is the leader.")
+		if ms.Topo.RaftServer != nil {
+			raftServerLeader = ms.Topo.RaftServer.Leader()
 		} else if ms.Topo.HashicorpRaft != nil {
-			if leader, _ := ms.Topo.HashicorpRaft.LeaderWithID(); leader != "" {
-				glog.V(0).Infoln("[", ms.Topo.HashicorpRaft.String(), "]", leader, "is the leader.")
-			}
+			raftServerName = ms.Topo.HashicorpRaft.String()
+			raftServerLeaderAddr, _ := ms.Topo.HashicorpRaft.LeaderWithID()
+			raftServerLeader = string(raftServerLeaderAddr)
 		}
 		ms.Topo.RaftServerAccessLock.RUnlock()
+		glog.V(0).Infof("%s %s - is the leader.", raftServerName, raftServerLeader)
 	}
 }
 
