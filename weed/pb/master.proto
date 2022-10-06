@@ -400,7 +400,8 @@ message RaftListClusterServersResponse {
   message ClusterServers {
     string id = 1;
     string address = 2;
-    string suffrage = 3; //
+    string suffrage = 3;
+    bool   isLeader = 4;
   }
   repeated ClusterServers cluster_servers = 1;
 }
