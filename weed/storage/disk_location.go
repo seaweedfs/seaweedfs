@@ -209,7 +209,10 @@ func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, con
 func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapKind) {
 
 	workerNum := runtime.NumCPU()
-	val, ok := os.LookupEnv("GOMAXPROCS")
+	val, ok := os.LookupEnv("SEAWEEDFS_VOLUME_CONCURRENCY")
+	if !ok {
+		val, ok = os.LookupEnv("GOMAXPROCS")
+	}
 	if ok {
 		num, err := strconv.Atoi(val)
 		if err != nil || num < 1 {

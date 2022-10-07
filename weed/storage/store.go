@@ -3,8 +3,11 @@ package storage
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -82,12 +85,41 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 	minFreeSpaces []util.MinFreeSpace, idxFolder string, needleMapKind NeedleMapKind, diskTypes []DiskType) (s *Store) {
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, GrpcPort: grpcPort, PublicUrl: publicUrl, NeedleMapKind: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
-	for i := 0; i < len(dirnames); i++ {
-		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i])
-		location.loadExistingVolumes(needleMapKind)
-		s.Locations = append(s.Locations, location)
-		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
+
+	concurrency := 1
+	val, ok := os.LookupEnv("SEAWEEDFS_DISK_CONCURRENCY")
+	if ok {
+		num, err := strconv.Atoi(val)
+		if err != nil || num < 1 {
+			glog.Warningf("failed to set worker number from SEAWEEDFS_DISK_CONCURRENCY, set to default:1")
+		} else {
+			concurrency = num
+		}
 	}
+
+	task_queue := make(chan *DiskLocation, 10*concurrency)
+	go func() {
+		for i := 0; i < len(dirnames); i++ {
+			location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i])
+			task_queue <- location
+			s.Locations = append(s.Locations, location)
+			stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
+		}
+		close(task_queue)
+	}()
+
+	var wg sync.WaitGroup
+	for workerNum := 0; workerNum < concurrency; workerNum++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for location := range task_queue {
+				location.loadExistingVolumes(needleMapKind)
+			}
+		}()
+	}
+	wg.Wait()
+
 	s.NewVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
 	s.DeletedVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
 
