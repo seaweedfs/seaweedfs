@@ -47,6 +47,14 @@ var (
 			Help:      "is leader",
 		})
 
+	MasterAdminLock = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "master",
+			Name:      "admin_lock",
+			Help:      "admin lock",
+		}, []string{"client"})
+
 	MasterReceivedHeartbeatCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -199,6 +207,7 @@ var (
 func init() {
 	Gather.MustRegister(MasterClientConnectCounter)
 	Gather.MustRegister(MasterRaftIsleader)
+	Gather.MustRegister(MasterAdminLock)
 	Gather.MustRegister(MasterReceivedHeartbeatCounter)
 	Gather.MustRegister(MasterLeaderChangeCounter)
 	Gather.MustRegister(MasterReplicaPlacementMismatch)

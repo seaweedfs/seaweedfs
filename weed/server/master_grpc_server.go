@@ -307,6 +307,8 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		case <-ticker.C:
 			if !ms.Topo.IsLeader() {
 				stats.MasterRaftIsleader.Set(0)
+				stats.MasterAdminLock.Reset()
+				stats.MasterReplicaPlacementMismatch.Reset()
 				return ms.informNewLeader(stream)
 			} else {
 				stats.MasterRaftIsleader.Set(1)
