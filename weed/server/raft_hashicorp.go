@@ -6,10 +6,13 @@ package weed_server
 import (
 	"fmt"
 	transport "github.com/Jille/raft-grpc-transport"
+	"github.com/armon/go-metrics"
+	"github.com/armon/go-metrics/prometheus"
 	"github.com/hashicorp/raft"
 	boltdb "github.com/hashicorp/raft-boltdb/v2"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"google.golang.org/grpc"
 	"math/rand"
 	"os"
@@ -180,6 +183,19 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 				}
 			}
 		}()
+	}
+
+	// Configure a prometheus sink as the raft metrics sink
+	if sink, err := prometheus.NewPrometheusSinkFrom(prometheus.PrometheusOpts{
+		Registerer: stats.Gather,
+	}); err != nil {
+		return nil, fmt.Errorf("NewPrometheusSink: %v", err)
+	} else {
+		metricsConf := metrics.DefaultConfig(stats.Namespace)
+		metricsConf.EnableRuntimeMetrics = false
+		if _, err = metrics.NewGlobal(metricsConf, sink); err != nil {
+			return nil, fmt.Errorf("metrics.NewGlobal: %v", err)
+		}
 	}
 
 	return s, nil
