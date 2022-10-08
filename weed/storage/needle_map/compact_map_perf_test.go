@@ -90,34 +90,3 @@ func PrintMemUsage(totalRowCount uint64) {
 func bToMb(b uint64) uint64 {
 	return b / 1024 / 1024
 }
-
-func TestCompactSection_Get(t *testing.T) {
-	var maps []*CompactMap
-	totalRowCount := uint64(0)
-	indexFile, ie := os.OpenFile("../../1655451851227025229-502m-single-1_388.idx",
-		os.O_RDWR|os.O_RDONLY, 0644)
-	defer indexFile.Close()
-	if ie != nil {
-		log.Fatalln(ie)
-	}
-
-	m, rowCount := loadNewNeedleMap(indexFile)
-	maps = append(maps, m)
-	totalRowCount += rowCount
-	m.Set(1574318345753513987, ToOffset(10002), 10002)
-	nv,ok := m.Get(1574318345753513987)
-	if ok {
-		t.Log(uint64(nv.Key))
-	}
-
-	nv1,ok := m.Get(1574318350048481283)
-	if ok {
-		t.Log(uint64(nv1.Key))
-	}
-
-	m.Set(1574318350048481283, ToOffset(10002), 10002)
-	nv2,ok1 := m.Get(1574318350048481283)
-	if ok1 {
-		t.Log(uint64(nv2.Key))
-	}
-}

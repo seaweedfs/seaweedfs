@@ -145,7 +145,7 @@ func (cs *CompactSection) deleteOverflowEntry(key SectionalNeedleId) {
 // return old entry size
 func (cs *CompactSection) Delete(key NeedleId) Size {
 	cs.Lock()
-	defer cs.RUnlock()
+	defer cs.Unlock()
 	ret := Size(0)
 	if key > cs.end {
 		return ret
