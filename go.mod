@@ -8,7 +8,7 @@ require (
 	cloud.google.com/go/storage v1.27.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
-	github.com/Shopify/sarama v1.37.0
+	github.com/Shopify/sarama v1.37.2
 	github.com/aws/aws-sdk-go v1.44.114
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bwmarrin/snowflake v0.3.0
