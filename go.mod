@@ -58,7 +58,7 @@ require (
 	github.com/karlseguin/ccache/v2 v2.0.8
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/klauspost/compress v1.15.11 // indirect
-	github.com/klauspost/reedsolomon v1.11.0
+	github.com/klauspost/reedsolomon v1.11.1
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.7
 	github.com/linxGnu/grocksdb v1.7.7
