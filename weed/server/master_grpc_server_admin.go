@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"math/rand"
 	"sync"
 	"time"
@@ -112,11 +113,13 @@ func (locks *AdminLocks) generateToken(lockName string, clientName string) (ts t
 		lastClient:     clientName,
 	}
 	locks.locks[lockName] = lock
+	stats.MasterAdminLock.WithLabelValues(clientName).Set(1)
 	return lock.accessLockTime, lock.accessSecret
 }
 
 func (locks *AdminLocks) deleteLock(lockName string) {
 	locks.Lock()
+	stats.MasterAdminLock.WithLabelValues(locks.locks[lockName].lastClient).Set(0)
 	defer locks.Unlock()
 	delete(locks.locks, lockName)
 }

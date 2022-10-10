@@ -19,6 +19,7 @@ import (
 
 // Readonly volume types
 const (
+	Namespace        = "SeaweedFS"
 	IsReadOnly       = "IsReadOnly"
 	NoWriteOrDelete  = "noWriteOrDelete"
 	NoWriteCanDelete = "noWriteCanDelete"
@@ -32,7 +33,7 @@ var (
 
 	MasterClientConnectCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "wdclient",
 			Name:      "connect_updates",
 			Help:      "Counter of master client leader updates.",
@@ -40,15 +41,23 @@ var (
 
 	MasterRaftIsleader = prometheus.NewGauge(
 		prometheus.GaugeOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "master",
 			Name:      "is_leader",
 			Help:      "is leader",
 		})
 
+	MasterAdminLock = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "master",
+			Name:      "admin_lock",
+			Help:      "admin lock",
+		}, []string{"client"})
+
 	MasterReceivedHeartbeatCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "master",
 			Name:      "received_heartbeats",
 			Help:      "Counter of master received heartbeat.",
@@ -56,7 +65,7 @@ var (
 
 	MasterReplicaPlacementMismatch = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "master",
 			Name:      "replica_placement_mismatch",
 			Help:      "replica placement mismatch",
@@ -64,7 +73,7 @@ var (
 
 	MasterLeaderChangeCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "master",
 			Name:      "leader_changes",
 			Help:      "Counter of master leader changes.",
@@ -72,7 +81,7 @@ var (
 
 	FilerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "filer",
 			Name:      "request_total",
 			Help:      "Counter of filer requests.",
@@ -80,7 +89,7 @@ var (
 
 	FilerRequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "filer",
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of filer request processing time.",
@@ -89,7 +98,7 @@ var (
 
 	FilerServerLastSendTsOfSubscribeGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "filer",
 			Name:      "last_send_timestamp_of_subscribe",
 			Help:      "The last send timestamp of the filer subscription.",
@@ -97,7 +106,7 @@ var (
 
 	FilerStoreCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "filerStore",
 			Name:      "request_total",
 			Help:      "Counter of filer store requests.",
@@ -105,7 +114,7 @@ var (
 
 	FilerStoreHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "filerStore",
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of filer store request processing time.",
@@ -114,7 +123,7 @@ var (
 
 	FilerSyncOffsetGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "filerSync",
 			Name:      "sync_offset",
 			Help:      "The offset of the filer synchronization service.",
@@ -122,7 +131,7 @@ var (
 
 	VolumeServerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "volumeServer",
 			Name:      "request_total",
 			Help:      "Counter of volume server requests.",
@@ -130,7 +139,7 @@ var (
 
 	VolumeServerRequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "volumeServer",
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of volume server request processing time.",
@@ -139,7 +148,7 @@ var (
 
 	VolumeServerVolumeCounter = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "volumeServer",
 			Name:      "volumes",
 			Help:      "Number of volumes or shards.",
@@ -147,7 +156,7 @@ var (
 
 	VolumeServerReadOnlyVolumeGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "volumeServer",
 			Name:      "read_only_volumes",
 			Help:      "Number of read only volumes.",
@@ -155,7 +164,7 @@ var (
 
 	VolumeServerMaxVolumeCounter = prometheus.NewGauge(
 		prometheus.GaugeOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "volumeServer",
 			Name:      "max_volumes",
 			Help:      "Maximum number of volumes.",
@@ -163,7 +172,7 @@ var (
 
 	VolumeServerDiskSizeGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "volumeServer",
 			Name:      "total_disk_size",
 			Help:      "Actual disk size used by volumes.",
@@ -171,7 +180,7 @@ var (
 
 	VolumeServerResourceGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "volumeServer",
 			Name:      "resource",
 			Help:      "Resource usage",
@@ -179,7 +188,7 @@ var (
 
 	S3RequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "s3",
 			Name:      "request_total",
 			Help:      "Counter of s3 requests.",
@@ -187,7 +196,7 @@ var (
 
 	S3RequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "SeaweedFS",
+			Namespace: Namespace,
 			Subsystem: "s3",
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of s3 request processing time.",
@@ -198,6 +207,7 @@ var (
 func init() {
 	Gather.MustRegister(MasterClientConnectCounter)
 	Gather.MustRegister(MasterRaftIsleader)
+	Gather.MustRegister(MasterAdminLock)
 	Gather.MustRegister(MasterReceivedHeartbeatCounter)
 	Gather.MustRegister(MasterLeaderChangeCounter)
 	Gather.MustRegister(MasterReplicaPlacementMismatch)
