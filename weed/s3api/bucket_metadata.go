@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 
 	//"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -93,8 +94,8 @@ func buildBucketMetadata(entry *filer_pb.Entry) *BucketMetaData {
 
 		// Default owner: `AccountAdmin`
 		Owner: &s3.Owner{
-			ID:          &AccountAdmin.Id,
-			DisplayName: &AccountAdmin.Name,
+			ID:          &s3account.AccountAdmin.Id,
+			DisplayName: &s3account.AccountAdmin.Name,
 		},
 	}
 	if entry.Extended != nil {

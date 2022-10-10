@@ -2,6 +2,7 @@ package s3api
 
 import (
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"github.com/stretchr/testify/assert"
 	"reflect"
 	"testing"
@@ -150,7 +151,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 			},
 			expectIdent: &Identity{
 				Name:      "notSpecifyAccountId",
-				AccountId: AccountAdmin.Id,
+				AccountId: s3account.AccountAdmin.Id,
 				Actions: []Action{
 					"Read",
 					"Write",

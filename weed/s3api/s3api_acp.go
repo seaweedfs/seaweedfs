@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"net/http"
 )
@@ -9,7 +10,7 @@ import (
 func getAccountId(r *http.Request) string {
 	id := r.Header.Get(s3_constants.AmzAccountId)
 	if len(id) == 0 {
-		return AccountAnonymous.Id
+		return s3account.AccountAnonymous.Id
 	} else {
 		return id
 	}
@@ -21,7 +22,7 @@ func (s3a *S3ApiServer) checkAccessByOwnership(r *http.Request, bucket string) s
 		return errCode
 	}
 	accountId := getAccountId(r)
-	if accountId == AccountAdmin.Id || accountId == *metadata.Owner.ID {
+	if accountId == s3account.AccountAdmin.Id || accountId == *metadata.Owner.ID {
 		return s3err.ErrNone
 	}
 	return s3err.ErrAccessDenied
