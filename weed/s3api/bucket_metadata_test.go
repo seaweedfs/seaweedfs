@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"reflect"
 	"sync"
@@ -27,8 +28,8 @@ var (
 	//good entry
 	goodEntryAcp, _ = jsonutil.BuildJSON(&s3.AccessControlPolicy{
 		Owner: &s3.Owner{
-			DisplayName: &AccountAdmin.Name,
-			ID:          &AccountAdmin.Id,
+			DisplayName: &s3account.AccountAdmin.Name,
+			ID:          &s3account.AccountAdmin.Id,
 		},
 		Grants: s3_constants.PublicRead,
 	})
@@ -99,8 +100,8 @@ var tcs = []*BucketMetadataTestCase{
 			Name:            badEntry.Name,
 			ObjectOwnership: s3_constants.DefaultOwnershipForExists,
 			Owner: &s3.Owner{
-				DisplayName: &AccountAdmin.Name,
-				ID:          &AccountAdmin.Id,
+				DisplayName: &s3account.AccountAdmin.Name,
+				ID:          &s3account.AccountAdmin.Id,
 			},
 			Acl: nil,
 		},
@@ -110,8 +111,8 @@ var tcs = []*BucketMetadataTestCase{
 			Name:            goodEntry.Name,
 			ObjectOwnership: s3_constants.OwnershipBucketOwnerEnforced,
 			Owner: &s3.Owner{
-				DisplayName: &AccountAdmin.Name,
-				ID:          &AccountAdmin.Id,
+				DisplayName: &s3account.AccountAdmin.Name,
+				ID:          &s3account.AccountAdmin.Id,
 			},
 			Acl: s3_constants.PublicRead,
 		},
@@ -121,8 +122,8 @@ var tcs = []*BucketMetadataTestCase{
 			Name:            ownershipEmptyStr.Name,
 			ObjectOwnership: s3_constants.DefaultOwnershipForExists,
 			Owner: &s3.Owner{
-				DisplayName: &AccountAdmin.Name,
-				ID:          &AccountAdmin.Id,
+				DisplayName: &s3account.AccountAdmin.Name,
+				ID:          &s3account.AccountAdmin.Id,
 			},
 			Acl: nil,
 		},
@@ -132,8 +133,8 @@ var tcs = []*BucketMetadataTestCase{
 			Name:            ownershipValid.Name,
 			ObjectOwnership: s3_constants.OwnershipBucketOwnerEnforced,
 			Owner: &s3.Owner{
-				DisplayName: &AccountAdmin.Name,
-				ID:          &AccountAdmin.Id,
+				DisplayName: &s3account.AccountAdmin.Name,
+				ID:          &s3account.AccountAdmin.Id,
 			},
 			Acl: nil,
 		},
@@ -143,8 +144,8 @@ var tcs = []*BucketMetadataTestCase{
 			Name:            acpEmptyStr.Name,
 			ObjectOwnership: s3_constants.DefaultOwnershipForExists,
 			Owner: &s3.Owner{
-				DisplayName: &AccountAdmin.Name,
-				ID:          &AccountAdmin.Id,
+				DisplayName: &s3account.AccountAdmin.Name,
+				ID:          &s3account.AccountAdmin.Id,
 			},
 			Acl: nil,
 		},
@@ -154,8 +155,8 @@ var tcs = []*BucketMetadataTestCase{
 			Name:            acpEmptyObject.Name,
 			ObjectOwnership: s3_constants.DefaultOwnershipForExists,
 			Owner: &s3.Owner{
-				DisplayName: &AccountAdmin.Name,
-				ID:          &AccountAdmin.Id,
+				DisplayName: &s3account.AccountAdmin.Name,
+				ID:          &s3account.AccountAdmin.Id,
 			},
 			Acl: nil,
 		},
@@ -165,8 +166,8 @@ var tcs = []*BucketMetadataTestCase{
 			Name:            acpOwnerNil.Name,
 			ObjectOwnership: s3_constants.DefaultOwnershipForExists,
 			Owner: &s3.Owner{
-				DisplayName: &AccountAdmin.Name,
-				ID:          &AccountAdmin.Id,
+				DisplayName: &s3account.AccountAdmin.Name,
+				ID:          &s3account.AccountAdmin.Id,
 			},
 			Acl: make([]*s3.Grant, 0),
 		},

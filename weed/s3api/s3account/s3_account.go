@@ -1,6 +1,7 @@
-package s3api
+package s3account
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"sync"
 )
 
@@ -36,15 +37,15 @@ type Account struct {
 
 type AccountManager struct {
 	sync.Mutex
-	s3a *S3ApiServer
+	filerClient filer_pb.FilerClient
 
 	IdNameMapping  map[string]string
 	EmailIdMapping map[string]string
 }
 
-func NewAccountManager(s3a *S3ApiServer) *AccountManager {
+func NewAccountManager(filerClient filer_pb.FilerClient) *AccountManager {
 	am := &AccountManager{
-		s3a:            s3a,
+		filerClient:    filerClient,
 		IdNameMapping:  make(map[string]string),
 		EmailIdMapping: make(map[string]string),
 	}
