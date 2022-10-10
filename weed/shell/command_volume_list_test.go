@@ -2,6 +2,7 @@ package shell
 
 import (
 	_ "embed"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
 	//"google.golang.org/protobuf/proto"
@@ -84,6 +85,29 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 			volume := &master_pb.VolumeInformationMessage{}
 			proto.UnmarshalText(volumeLine, volume)
 			disk.VolumeInfos = append(disk.VolumeInfos, volume)
+		case "ec":
+			ecVolumeLine := line[len("ec volume "):]
+			ecShard := &master_pb.VolumeEcShardInformationMessage{}
+			for _, part := range strings.Split(ecVolumeLine, " ") {
+				if strings.HasPrefix(part, "id:") {
+					id, _ := strconv.ParseInt(part[len("id:"):], 10, 64)
+					ecShard.Id = uint32(id)
+				}
+				if strings.HasPrefix(part, "collection:") {
+					ecShard.Collection = part[len("collection:"):]
+				}
+				if strings.HasPrefix(part, "shards:") {
+					shards := part[len("shards:["):]
+					shards = strings.TrimRight(shards, "]")
+					shardBits := erasure_coding.ShardBits(0)
+					for _, shardId := range strings.Split(shards, ",") {
+						sid, _ := strconv.Atoi(shardId)
+						shardBits = shardBits.AddShardId(erasure_coding.ShardId(sid))
+					}
+					ecShard.EcIndexBits = uint32(shardBits)
+				}
+			}
+			disk.EcShardInfos = append(disk.EcShardInfos, ecShard)
 		}
 	}
 
