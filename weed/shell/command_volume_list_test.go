@@ -19,6 +19,14 @@ func TestParsing(t *testing.T) {
 
 	assert.Equal(t, 5, len(topo.DataCenterInfos))
 
+	topo = parseOutput(topoData2)
+
+	dataNodes := topo.DataCenterInfos[0].RackInfos[0].DataNodeInfos
+	assert.Equal(t, 14, len(dataNodes))
+	diskInfo := dataNodes[0].DiskInfos[""]
+	assert.Equal(t, 1559, len(diskInfo.VolumeInfos))
+	assert.Equal(t, 6740, len(diskInfo.EcShardInfos))
+
 }
 
 func parseOutput(output string) *master_pb.TopologyInfo {
@@ -116,3 +124,6 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 
 //go:embed volume.list.txt
 var topoData string
+
+//go:embed volume.list2.txt
+var topoData2 string
