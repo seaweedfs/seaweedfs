@@ -58,7 +58,7 @@ require (
 	github.com/karlseguin/ccache/v2 v2.0.8
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/klauspost/compress v1.15.11 // indirect
-	github.com/klauspost/reedsolomon v1.11.0
+	github.com/klauspost/reedsolomon v1.11.1
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.7
 	github.com/linxGnu/grocksdb v1.7.7
@@ -142,6 +142,7 @@ require (
 require (
 	github.com/Jille/raft-grpc-transport v1.2.0
 	github.com/arangodb/go-driver v1.3.3
+	github.com/armon/go-metrics v0.3.10
 	github.com/fluent/fluent-logger-golang v1.9.0
 	github.com/google/flatbuffers v22.9.29+incompatible
 	github.com/hanwen/go-fuse/v2 v2.1.1-0.20220627082937-d01fda7edf17
@@ -159,7 +160,6 @@ require (
 	cloud.google.com/go/compute v1.7.0 // indirect
 	cloud.google.com/go/iam v0.3.0 // indirect
 	github.com/arangodb/go-velocypack v0.0.0-20200318135517-5af53c29c67e // indirect
-	github.com/armon/go-metrics v0.3.10 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.16.8 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.15.15 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.12.10 // indirect
