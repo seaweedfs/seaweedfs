@@ -88,7 +88,7 @@ func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_serv
 	} else {
 		glog.V(1).Infof("commit volume %d", req.VolumeId)
 	}
-	stats.VolumeServerVacuumingCompactCounter.WithLabelValues(strconv.FormatBool(err == nil)).Inc()
+	stats.VolumeServerVacuumingCommitCounter.WithLabelValues(strconv.FormatBool(err == nil)).Inc()
 	resp.IsReadOnly = readOnly
 	return resp, err
 
