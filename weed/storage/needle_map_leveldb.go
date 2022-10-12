@@ -310,6 +310,13 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 		m.mapMetric.FileCounter++
 		bytes := make([]byte, NeedleIdSize)
 		NeedleIdToBytes(bytes[0:NeedleIdSize], key)
+		// fresh loading
+		if startFrom == 0 {
+			m.mapMetric.FileByteCounter += uint64(size)
+			e = levelDbWrite(db, key, offset, size, false, 0)
+			return e
+		}
+		// increment loading
 		data, err := db.Get(bytes, nil)
 		if err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "not found") {
