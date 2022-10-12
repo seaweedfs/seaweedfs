@@ -63,9 +63,11 @@ func (store *SqliteStore) initialize(dbFile, createTable, upsertQuery string) (e
 	var dbErr error
 	store.DB, dbErr = sql.Open("sqlite", dbFile)
 	if dbErr != nil {
-		store.DB.Close()
-		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", dbFile, err)
+		if store.DB != nil {
+			store.DB.Close()
+			store.DB = nil
+		}
+		return fmt.Errorf("can not connect to %s error:%v", dbFile, dbErr)
 	}
 
 	if err = store.DB.Ping(); err != nil {
