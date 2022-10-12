@@ -219,15 +219,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		return fmt.Errorf("verifyIndexFileIntegrity %s failed: %v", oldIdxFileName, err)
 	}
 	if indexSize == 0 || uint64(indexSize) <= v.lastCompactIndexOffset {
-		if v.needleMapKind == NeedleMapInMemory {
-			return nil
-		}
-		newIdx, err := os.OpenFile(newIdxFileName, os.O_RDWR, 0644)
-		if err != nil {
-			return fmt.Errorf("open idx file %s failed: %v", newIdxFileName, err)
-		}
-		defer newIdx.Close()
-		return v.tmpNm.UpdateNeedleMapMetric(newIdx)
+		return nil
 	}
 
 	// fail if the old .dat file has changed to a new revision
