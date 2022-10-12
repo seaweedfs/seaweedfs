@@ -119,9 +119,8 @@ public class SeaweedInputStream extends InputStream {
 
         long bytesRead = 0;
         int len = buf.remaining();
-        int start = (int) this.position;
-        if (start + len <= entry.getContent().size()) {
-            entry.getContent().substring(start, start + len).copyTo(buf);
+        if (this.position< Integer.MAX_VALUE && (this.position + len )<= entry.getContent().size()) {
+            entry.getContent().substring((int)this.position, (int)(this.position + len)).copyTo(buf);
         } else {
             bytesRead = SeaweedRead.read(this.filerClient, this.visibleIntervalList, this.position, buf, SeaweedRead.fileSize(entry));
         }
