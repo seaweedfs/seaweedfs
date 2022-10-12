@@ -1,16 +1,12 @@
 package s3api
 
 import (
-	"bytes"
 	"encoding/json"
-	"github.com/aws/aws-sdk-go/private/protocol/json/jsonutil"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
-
-	//"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
@@ -23,7 +19,7 @@ var loadBucketMetadataFromFiler = func(r *BucketRegistry, bucketName string) (*B
 		return nil, err
 	}
 
-	return buildBucketMetadata(entry), nil
+	return buildBucketMetadata(r.s3a.accountManager, entry), nil
 }
 
 type BucketMetaData struct {
@@ -77,13 +73,13 @@ func (r *BucketRegistry) init() error {
 }
 
 func (r *BucketRegistry) LoadBucketMetadata(entry *filer_pb.Entry) {
-	bucketMetadata := buildBucketMetadata(entry)
+	bucketMetadata := buildBucketMetadata(r.s3a.accountManager, entry)
 	r.metadataCacheLock.Lock()
 	defer r.metadataCacheLock.Unlock()
 	r.metadataCache[entry.Name] = bucketMetadata
 }
 
-func buildBucketMetadata(entry *filer_pb.Entry) *BucketMetaData {
+func buildBucketMetadata(accountManager *s3account.AccountManager, entry *filer_pb.Entry) *BucketMetaData {
 	entryJson, _ := json.Marshal(entry)
 	glog.V(3).Infof("build bucket metadata,entry=%s", entryJson)
 	bucketMetadata := &BucketMetaData{
@@ -112,22 +108,29 @@ func buildBucketMetadata(entry *filer_pb.Entry) *BucketMetaData {
 		}
 
 		//access control policy
-		acpBytes, ok := entry.Extended[s3_constants.ExtAcpKey]
-		if ok {
-			var acp s3.AccessControlPolicy
-			err := jsonutil.UnmarshalJSON(&acp, bytes.NewReader(acpBytes))
-			if err == nil {
-				//validate owner
-				if acp.Owner != nil && acp.Owner.ID != nil {
-					bucketMetadata.Owner = acp.Owner
-				} else {
-					glog.Warningf("bucket ownerId is empty! bucket: %s", bucketMetadata.Name)
-				}
-
-				//acl
-				bucketMetadata.Acl = acp.Grants
+		//owner
+		acpOwnerBytes, ok := entry.Extended[s3_constants.ExtAmzOwnerKey]
+		if ok && len(acpOwnerBytes) > 0 {
+			ownerAccountId := string(acpOwnerBytes)
+			ownerAccountName, exists := accountManager.IdNameMapping[ownerAccountId]
+			if !exists {
+				glog.Warningf("owner[id=%s] is invalid, bucket: %s", ownerAccountId, bucketMetadata.Name)
 			} else {
-				glog.Warningf("Unmarshal ACP: %s(%v), bucket: %s", string(acpBytes), err, bucketMetadata.Name)
+				bucketMetadata.Owner = &s3.Owner{
+					ID:          &ownerAccountId,
+					DisplayName: &ownerAccountName,
+				}
+			}
+		}
+		//grants
+		acpGrantsBytes, ok := entry.Extended[s3_constants.ExtAmzAclKey]
+		if ok && len(acpGrantsBytes) > 0 {
+			var grants []*s3.Grant
+			err := json.Unmarshal(acpGrantsBytes, &grants)
+			if err == nil {
+				bucketMetadata.Acl = grants
+			} else {
+				glog.Warningf("Unmarshal ACP grants: %s(%v), bucket: %s", string(acpGrantsBytes), err, bucketMetadata.Name)
 			}
 		}
 	}
