@@ -107,9 +107,15 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	query := r.URL.Query()
+
 	if entry.IsDirectory() {
 		if fs.option.DisableDirListing {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if query.Get("metadata") == "true" {
+			writeJsonQuiet(w, r, http.StatusOK, entry)
 			return
 		}
 		if entry.Attr.Mime == "" {
@@ -125,7 +131,6 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	query := r.URL.Query()
 	if query.Get("metadata") == "true" {
 		if query.Get("resolveManifest") == "true" {
 			if entry.Chunks, _, err = filer.ResolveChunkManifest(
