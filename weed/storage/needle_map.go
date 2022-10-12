@@ -48,7 +48,6 @@ type TempNeedleMapper interface {
 	NeedleMapper
 	DoOffsetLoading(v *Volume, indexFile *os.File, startFrom uint64) error
 	UpdateNeedleMap(v *Volume, indexFile *os.File, opts *opt.Options) error
-	UpdateNeedleMapMetric(indexFile *os.File) error
 }
 
 func (nm *baseNeedleMapper) IndexFileSize() uint64 {
