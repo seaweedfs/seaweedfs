@@ -129,7 +129,3 @@ func (nm *NeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startFrom ui
 
 	return e
 }
-
-func (m *NeedleMap) UpdateNeedleMapMetric(indexFile *os.File) error {
-	return nil
-}
