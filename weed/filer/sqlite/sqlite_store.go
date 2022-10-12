@@ -74,6 +74,8 @@ func (store *SqliteStore) initialize(dbFile, createTable, upsertQuery string) (e
 		return fmt.Errorf("connect to %s error:%v", dbFile, err)
 	}
 
+	store.DB.SetMaxOpenConns(1)
+
 	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil {
 		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
 	}
