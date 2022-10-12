@@ -265,6 +265,8 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	// starting the cluster http server
 	clusterHttpServer := v.startClusterHttpService(volumeMux)
 
+	grace.OnReload(volumeServer.LoadNewVolumes)
+
 	stopChan := make(chan bool)
 	grace.OnInterrupt(func() {
 		fmt.Println("volume server has been killed")

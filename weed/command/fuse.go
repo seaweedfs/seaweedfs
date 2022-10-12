@@ -47,7 +47,10 @@ func runFuse(cmd *Command, args []string) bool {
 			for i++; i < rawArgsLen && rawArgs[i] != ' '; i++ {
 				option.WriteByte(rawArgs[i])
 			}
-			options = append(options, parameter{option.String(), "true"})
+			// ignore "-o"
+			if option.String() != "o" {
+				options = append(options, parameter{option.String(), "true"})
+			}
 			option.Reset()
 
 			// equal separator start option with pending value
@@ -190,6 +193,12 @@ func runFuse(cmd *Command, args []string) bool {
 			}
 		case "fusermount.path":
 			fusermountPath = parameter.value
+		default:
+			t := parameter.name
+			if parameter.value != "true" {
+				t = fmt.Sprintf("%s=%s", parameter.name, parameter.value)
+			}
+			mountOptions.extraOptions = append(mountOptions.extraOptions, t)
 		}
 	}
 

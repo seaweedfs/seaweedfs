@@ -31,6 +31,7 @@ type MountOptions struct {
 	debugPort          *int
 	localSocket        *string
 	disableXAttr       *bool
+	extraOptions       []string
 }
 
 var (

@@ -10,7 +10,11 @@ import (
 )
 
 func ParseS3ConfigurationFromBytes[T proto.Message](content []byte, config T) error {
-	if err := jsonpb.Unmarshal(content, config); err != nil {
+	options := &jsonpb.UnmarshalOptions{
+		DiscardUnknown: true,
+		AllowPartial:   true,
+	}
+	if err := options.Unmarshal(content, config); err != nil {
 		return err
 	}
 	return nil

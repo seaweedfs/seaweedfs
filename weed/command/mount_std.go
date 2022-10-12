@@ -166,7 +166,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	// mount fuse
 	fuseMountOptions := &fuse.MountOptions{
 		AllowOther:               *option.allowOthers,
-		Options:                  nil,
+		Options:                  option.extraOptions,
 		MaxBackground:            128,
 		MaxWrite:                 1024 * 1024 * 2,
 		MaxReadAhead:             1024 * 1024 * 2,

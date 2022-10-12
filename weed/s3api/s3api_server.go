@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"net"
 	"net/http"
 	"strings"
@@ -40,6 +41,8 @@ type S3ApiServer struct {
 	randomClientId int32
 	filerGuard     *security.Guard
 	client         *http.Client
+	accountManager *s3account.AccountManager
+	bucketRegistry *BucketRegistry
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -59,6 +62,8 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 		filerGuard:     security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
 		cb:             NewCircuitBreaker(option),
 	}
+	s3ApiServer.accountManager = s3account.NewAccountManager(s3ApiServer)
+	s3ApiServer.bucketRegistry = NewBucketRegistry(s3ApiServer)
 	if option.LocalFilerSocket == "" {
 		s3ApiServer.client = &http.Client{Transport: &http.Transport{
 			MaxIdleConns:        1024,
@@ -76,7 +81,7 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 
 	s3ApiServer.registerRouter(router)
 
-	go s3ApiServer.subscribeMetaEvents("s3", filer.DirectoryEtcRoot, time.Now().UnixNano())
+	go s3ApiServer.subscribeMetaEvents("s3", time.Now().UnixNano(), filer.DirectoryEtcRoot, []string{option.BucketsPath})
 	return s3ApiServer, nil
 }
 
@@ -212,6 +217,14 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListObjectsV2Handler, ACTION_LIST)), "LIST")).Queries("list-type", "2")
 
 		// buckets with query
+		// PutBucketOwnershipControls
+		bucket.Methods("PUT").HandlerFunc(track(s3a.iam.Auth(s3a.PutBucketOwnershipControls, ACTION_ADMIN), "PUT")).Queries("ownershipControls", "")
+
+		//GetBucketOwnershipControls
+		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.GetBucketOwnershipControls, ACTION_READ), "GET")).Queries("ownershipControls", "")
+
+		//DeleteBucketOwnershipControls
+		bucket.Methods("DELETE").HandlerFunc(track(s3a.iam.Auth(s3a.DeleteBucketOwnershipControls, ACTION_ADMIN), "DELETE")).Queries("ownershipControls", "")
 
 		// raw buckets
 

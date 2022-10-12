@@ -20,6 +20,7 @@ func (ms *MasterServer) RaftListClusterServers(ctx context.Context, req *master_
 	}
 
 	servers := ms.Topo.HashicorpRaft.GetConfiguration().Configuration().Servers
+	_, leaderId := ms.Topo.HashicorpRaft.LeaderWithID()
 	ms.Topo.RaftServerAccessLock.RUnlock()
 
 	for _, server := range servers {
@@ -27,6 +28,7 @@ func (ms *MasterServer) RaftListClusterServers(ctx context.Context, req *master_
 			Id:       string(server.ID),
 			Address:  string(server.Address),
 			Suffrage: server.Suffrage.String(),
+			IsLeader: server.ID == leaderId,
 		})
 	}
 	return resp, nil

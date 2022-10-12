@@ -33,6 +33,12 @@ func track(f http.HandlerFunc, action string) http.HandlerFunc {
 		recorder := NewStatusResponseWriter(w)
 		start := time.Now()
 		f(recorder, r)
+		if recorder.Status == http.StatusForbidden {
+			if m, _ := stats_collect.S3RequestCounter.GetMetricWithLabelValues(
+				action, strconv.Itoa(http.StatusOK), bucket); m == nil {
+				bucket = ""
+			}
+		}
 		stats_collect.S3RequestHistogram.WithLabelValues(action, bucket).Observe(time.Since(start).Seconds())
 		stats_collect.S3RequestCounter.WithLabelValues(action, strconv.Itoa(recorder.Status), bucket).Inc()
 	}

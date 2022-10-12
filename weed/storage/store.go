@@ -5,6 +5,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -82,12 +83,21 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 	minFreeSpaces []util.MinFreeSpace, idxFolder string, needleMapKind NeedleMapKind, diskTypes []DiskType) (s *Store) {
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, GrpcPort: grpcPort, PublicUrl: publicUrl, NeedleMapKind: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
+
+	var wg sync.WaitGroup
 	for i := 0; i < len(dirnames); i++ {
 		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i])
-		location.loadExistingVolumes(needleMapKind)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			location.loadExistingVolumes(needleMapKind)
+		}()
 	}
+	wg.Wait()
+
 	s.NewVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
 	s.DeletedVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
 
@@ -358,6 +368,12 @@ func (s *Store) SetStopping() {
 	s.isStopping = true
 	for _, location := range s.Locations {
 		location.SetStopping()
+	}
+}
+
+func (s *Store) LoadNewVolumes() {
+	for _, location := range s.Locations {
+		location.loadExistingVolumes(s.NeedleMapKind)
 	}
 }
 

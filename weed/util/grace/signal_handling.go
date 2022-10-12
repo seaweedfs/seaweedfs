@@ -11,39 +11,55 @@ import (
 )
 
 var signalChan chan os.Signal
-var hooks = make([]func(), 0)
-var hookLock sync.RWMutex
+var interruptHooks = make([]func(), 0)
+var interruptHookLock sync.RWMutex
+var reloadHooks = make([]func(), 0)
+var reloadHookLock sync.RWMutex
 
 func init() {
 	signalChan = make(chan os.Signal, 1)
-	signal.Ignore(syscall.SIGHUP)
 	signal.Notify(signalChan,
 		os.Interrupt,
 		os.Kill,
 		syscall.SIGALRM,
-		// syscall.SIGHUP,
+		syscall.SIGHUP,
 		syscall.SIGINT,
 		syscall.SIGTERM,
 		// syscall.SIGQUIT,
 	)
 	go func() {
-		for range signalChan {
-			hookLock.RLock()
-			for _, hook := range hooks {
-				hook()
+		for s := range signalChan {
+			if s.String() == syscall.SIGHUP.String() {
+				reloadHookLock.RLock()
+				for _, hook := range reloadHooks {
+					hook()
+				}
+				reloadHookLock.RUnlock()
+			} else {
+				interruptHookLock.RLock()
+				for _, hook := range interruptHooks {
+					hook()
+				}
+				interruptHookLock.RUnlock()
+				os.Exit(0)
 			}
-			hookLock.RUnlock()
-			os.Exit(0)
 		}
 	}()
 }
 
+func OnReload(fn func()) {
+	// prevent reentry
+	reloadHookLock.Lock()
+	defer reloadHookLock.Unlock()
+	reloadHooks = append(reloadHooks, fn)
+}
+
 func OnInterrupt(fn func()) {
 	// prevent reentry
-	hookLock.Lock()
-	defer hookLock.Unlock()
+	interruptHookLock.Lock()
+	defer interruptHookLock.Unlock()
 
 	// deal with control+c,etc
 	// controlling terminal close, daemon not exit
-	hooks = append(hooks, fn)
+	interruptHooks = append(interruptHooks, fn)
 }

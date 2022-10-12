@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"net/http"
@@ -18,6 +19,16 @@ const (
 	mimeNone mimeType = ""
 	MimeXML  mimeType = "application/xml"
 )
+
+func WriteAwsXMLResponse(w http.ResponseWriter, r *http.Request, statusCode int, result interface{}) {
+	var bytesBuffer bytes.Buffer
+	err := xmlutil.BuildXML(result, xml.NewEncoder(&bytesBuffer))
+	if err != nil {
+		WriteErrorResponse(w, r, ErrInternalError)
+		return
+	}
+	WriteResponse(w, r, statusCode, bytesBuffer.Bytes(), MimeXML)
+}
 
 func WriteXMLResponse(w http.ResponseWriter, r *http.Request, statusCode int, response interface{}) {
 	WriteResponse(w, r, statusCode, EncodeXMLResponse(response), MimeXML)

@@ -16,6 +16,15 @@ import (
 
 func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+
+	if r.Header.Get("Origin") != "" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Expose-Headers", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Allow-Methods", "PUT, POST, GET, DELETE, OPTIONS")
+	}
+
 	if r.Method == "OPTIONS" {
 		OptionsHandler(w, r, false)
 		return
@@ -45,10 +54,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	w.Header().Set("Server", "SeaweedFS Filer "+util.VERSION)
-	if r.Header.Get("Origin") != "" {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
-	}
+
 	switch r.Method {
 	case "GET":
 		fs.GetOrHeadHandler(w, r)
@@ -92,6 +98,13 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
+
+	if r.Header.Get("Origin") != "" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+	}
+
 	stats.FilerRequestCounter.WithLabelValues(r.Method).Inc()
 	defer func() {
 		stats.FilerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
@@ -108,10 +121,7 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.Header().Set("Server", "SeaweedFS Filer "+util.VERSION)
-	if r.Header.Get("Origin") != "" {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
-	}
+
 	switch r.Method {
 	case "GET":
 		fs.GetOrHeadHandler(w, r)
@@ -122,11 +132,14 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 
 func OptionsHandler(w http.ResponseWriter, r *http.Request, isReadOnly bool) {
 	if isReadOnly {
-		w.Header().Add("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	} else {
-		w.Header().Add("Access-Control-Allow-Methods", "PUT, POST, GET, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "PUT, POST, GET, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Expose-Headers", "*")
 	}
-	w.Header().Add("Access-Control-Allow-Headers", "*")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "*")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
 }
 
 // maybeCheckJwtAuthorization returns true if access should be granted, false if it should be denied

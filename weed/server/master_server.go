@@ -174,39 +174,45 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 			glog.V(0).Infof("leader change event: %+v => %+v", e.PrevValue(), e.Value())
 			stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", e.Value())).Inc()
 			if ms.Topo.RaftServer.Leader() != "" {
-				glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "becomes leader.")
+				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
 			}
 		})
-		raftServerName = ms.Topo.RaftServer.Name()
+		raftServerName = fmt.Sprintf("[%s]", ms.Topo.RaftServer.Name())
 	} else if raftServer.RaftHashicorp != nil {
 		ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
 		leaderCh := raftServer.RaftHashicorp.LeaderCh()
-		prevLeader := ms.Topo.HashicorpRaft.Leader()
+		prevLeader, _ := ms.Topo.HashicorpRaft.LeaderWithID()
+		raftServerName = ms.Topo.HashicorpRaft.String()
 		go func() {
 			for {
 				select {
 				case isLeader := <-leaderCh:
-					leader := ms.Topo.HashicorpRaft.Leader()
+					ms.Topo.RaftServerAccessLock.RLock()
+					leader, _ := ms.Topo.HashicorpRaft.LeaderWithID()
+					ms.Topo.RaftServerAccessLock.RUnlock()
 					glog.V(0).Infof("is leader %+v change event: %+v => %+v", isLeader, prevLeader, leader)
 					stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", leader)).Inc()
 					prevLeader = leader
 				}
 			}
 		}()
-		raftServerName = ms.Topo.HashicorpRaft.String()
 	}
 	ms.Topo.RaftServerAccessLock.Unlock()
 
 	if ms.Topo.IsLeader() {
-		glog.V(0).Infoln("[", raftServerName, "]", "I am the leader!")
+		glog.V(0).Infof("%s I am the leader!", raftServerName)
 	} else {
+		var raftServerLeader string
 		ms.Topo.RaftServerAccessLock.RLock()
-		if ms.Topo.RaftServer != nil && ms.Topo.RaftServer.Leader() != "" {
-			glog.V(0).Infoln("[", ms.Topo.RaftServer.Name(), "]", ms.Topo.RaftServer.Leader(), "is the leader.")
-		} else if ms.Topo.HashicorpRaft != nil && ms.Topo.HashicorpRaft.Leader() != "" {
-			glog.V(0).Infoln("[", ms.Topo.HashicorpRaft.String(), "]", ms.Topo.HashicorpRaft.Leader(), "is the leader.")
+		if ms.Topo.RaftServer != nil {
+			raftServerLeader = ms.Topo.RaftServer.Leader()
+		} else if ms.Topo.HashicorpRaft != nil {
+			raftServerName = ms.Topo.HashicorpRaft.String()
+			raftServerLeaderAddr, _ := ms.Topo.HashicorpRaft.LeaderWithID()
+			raftServerLeader = string(raftServerLeaderAddr)
 		}
 		ms.Topo.RaftServerAccessLock.RUnlock()
+		glog.V(0).Infof("%s %s - is the leader.", raftServerName, raftServerLeader)
 	}
 }
 
@@ -388,8 +394,17 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 			} else {
 				glog.V(0).Infof("master %s successfully responded to ping", peerName)
 			}
-
 			return nil
 		})
 	}
+}
+
+func (ms *MasterServer) Shutdown() {
+	if ms.Topo == nil || ms.Topo.HashicorpRaft == nil {
+		return
+	}
+	if ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader {
+		ms.Topo.HashicorpRaft.LeadershipTransfer()
+	}
+	ms.Topo.HashicorpRaft.Shutdown()
 }

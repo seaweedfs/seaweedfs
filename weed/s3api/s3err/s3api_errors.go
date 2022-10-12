@@ -107,6 +107,8 @@ const (
 
 	ErrTooManyRequest
 	ErrRequestBytesExceed
+
+	OwnershipControlsNotFoundError
 )
 
 // error code to APIError structure, these fields carry respective
@@ -413,6 +415,12 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "ErrRequestBytesExceed",
 		Description:    "Simultaneous request bytes exceed limitations",
 		HTTPStatusCode: http.StatusTooManyRequests,
+	},
+
+	OwnershipControlsNotFoundError: {
+		Code:           "OwnershipControlsNotFoundError",
+		Description:    "The bucket ownership controls were not found",
+		HTTPStatusCode: http.StatusNotFound,
 	},
 }
 
