@@ -323,7 +323,7 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 				// unexpected error
 				return err
 			}
-			// new needle
+			// new needle, unlikely happen
 			m.mapMetric.FileByteCounter += uint64(size)
 			e = levelDbWrite(db, key, offset, size, false, 0)
 		} else {
