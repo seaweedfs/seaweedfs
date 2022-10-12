@@ -32,12 +32,12 @@ func ExtractAcl(r *http.Request, accountManager *s3account.AccountManager, owner
 
 		var acp s3.AccessControlPolicy
 		err := xmlutil.UnmarshalXML(&acp, xml.NewDecoder(r.Body), "")
-		if err != nil {
+		if err != nil || acp.Owner == nil || acp.Owner.ID == nil {
 			return nil, s3err.ErrInvalidRequest
 		}
 
 		//owner should present && owner is immutable
-		if acp.Owner == nil || acp.Owner.ID == nil || *acp.Owner.ID != ownerId {
+		if *acp.Owner.ID != ownerId {
 			glog.V(3).Infof("set acl denied! owner account is not consistent, request account id: %s, expect account id: %s", accountId, ownerId)
 			return nil, s3err.ErrAccessDenied
 		}
@@ -251,7 +251,7 @@ func ParseCannedAclHeader(bucketOwnership, bucketOwnerId, accountId, cannedAcl s
 	case s3_constants.CannedAclAwsExecRead:
 		err = s3err.ErrNotImplemented
 	default:
-		err = s3err.ErrNotImplemented
+		err = s3err.ErrInvalidRequest
 	}
 	return
 }
@@ -373,7 +373,7 @@ func SetAcpOwnerHeader(r *http.Request, acpOwnerId string) {
 
 func GetAcpOwner(entryExtended map[string][]byte, defaultOwner string) string {
 	ownerIdBytes, ok := entryExtended[s3_constants.ExtAmzOwnerKey]
-	if ok {
+	if ok && len(ownerIdBytes) > 0 {
 		return string(ownerIdBytes)
 	}
 	return defaultOwner
@@ -393,7 +393,7 @@ func SetAcpGrantsHeader(r *http.Request, acpGrants []*s3.Grant) {
 // GetAcpGrants return grants parsed from entry
 func GetAcpGrants(entryExtended map[string][]byte) []*s3.Grant {
 	acpBytes, ok := entryExtended[s3_constants.ExtAmzAclKey]
-	if ok {
+	if ok && len(acpBytes) > 0 {
 		var grants []*s3.Grant
 		err := json.Unmarshal(acpBytes, &grants)
 		if err == nil {
@@ -405,13 +405,23 @@ func GetAcpGrants(entryExtended map[string][]byte) []*s3.Grant {
 
 // AssembleEntryWithAcp fill entry with owner and grants
 func AssembleEntryWithAcp(objectEntry *filer_pb.Entry, objectOwner string, grants []*s3.Grant) s3err.ErrorCode {
-	objectEntry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(objectOwner)
-	grantsBytes, err := json.Marshal(grants)
-	if err != nil {
-		glog.Warning("assemble acp to entry:", err)
-		return s3err.ErrInvalidRequest
+	if objectEntry.Extended == nil {
+		objectEntry.Extended = make(map[string][]byte, 0)
 	}
-	objectEntry.Extended[s3_constants.ExtAmzAclKey] = grantsBytes
+
+	if len(objectOwner) > 0 {
+		objectEntry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(objectOwner)
+	}
+
+	if len(grants) > 0 {
+		grantsBytes, err := json.Marshal(grants)
+		if err != nil {
+			glog.Warning("assemble acp to entry:", err)
+			return s3err.ErrInvalidRequest
+		}
+		objectEntry.Extended[s3_constants.ExtAmzAclKey] = grantsBytes
+	}
+
 	return s3err.ErrNone
 }
 
