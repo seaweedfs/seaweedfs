@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"os"
 
 	"github.com/syndtr/goleveldb/leveldb/opt"
@@ -193,7 +194,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 
 	if !hasVolumeInfoFile {
 		v.volumeInfo.Version = uint32(v.SuperBlock.Version)
-		v.SaveVolumeInfo()
+		v.volumeInfo.BytesOffset = uint32(types.OffsetSize)
+		if err := v.SaveVolumeInfo(); err != nil {
+			glog.Warningf("failed to save volume info: %+v", err)
+		}
 	}
 
 	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Inc()

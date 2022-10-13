@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
@@ -39,7 +40,7 @@ func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 		} else {
 			m = "with"
 		}
-		glog.Fatalf("BytesOffset mismatch in volume info file %s, try use binary version %s large_disk", v.FileName(".vif"), m)
+		fmt.Errorf("BytesOffset mismatch in volume info file %s, try use binary version %s large_disk", v.FileName(".vif"), m)
 		return
 	}
 
