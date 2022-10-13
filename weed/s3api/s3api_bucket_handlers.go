@@ -200,6 +200,11 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadBucketHandler %s", bucket)
 
+	_, errorCode := s3a.checkAccessForReadBucket(r, bucket, s3_constants.PermissionRead)
+	if errorCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errorCode)
+		return
+	}
 	if entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); entry == nil || err == filer_pb.ErrNotFound {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		return
@@ -245,37 +250,19 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetBucketAclHandler %s", bucket)
 
-	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, err)
+	bucketMetadata, errorCode := s3a.checkAccessForReadBucket(r, bucket, s3_constants.PermissionReadAcp)
+	if s3err.ErrNone != errorCode {
+		s3err.WriteErrorResponse(w, r, errorCode)
 		return
 	}
 
-	response := AccessControlPolicy{}
-	for _, ident := range s3a.iam.identities {
-		if len(ident.Credentials) == 0 {
-			continue
-		}
-		for _, action := range ident.Actions {
-			if !action.overBucket(bucket) || action.getPermission() == "" {
-				continue
-			}
-			id := ident.Credentials[0].AccessKey
-			if response.Owner.DisplayName == "" && action.isOwner(bucket) && len(ident.Credentials) > 0 {
-				response.Owner.DisplayName = ident.Name
-				response.Owner.ID = id
-			}
-			response.AccessControlList.Grant = append(response.AccessControlList.Grant, Grant{
-				Grantee: Grantee{
-					ID:          id,
-					DisplayName: ident.Name,
-					Type:        "CanonicalUser",
-					XMLXSI:      "CanonicalUser",
-					XMLNS:       "http://www.w3.org/2001/XMLSchema-instance"},
-				Permission: action.getPermission(),
-			})
-		}
+	acp := &s3.PutBucketAclInput{
+		AccessControlPolicy: &s3.AccessControlPolicy{
+			Grants: bucketMetadata.Acl,
+			Owner:  bucketMetadata.Owner,
+		},
 	}
-	writeSuccessResponseXML(w, r, response)
+	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, acp)
 }
 
 // GetBucketLifecycleConfigurationHandler Get Bucket Lifecycle configuration
