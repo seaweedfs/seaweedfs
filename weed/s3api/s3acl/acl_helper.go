@@ -406,7 +406,7 @@ func GetAcpGrants(entryExtended map[string][]byte) []*s3.Grant {
 // AssembleEntryWithAcp fill entry with owner and grants
 func AssembleEntryWithAcp(objectEntry *filer_pb.Entry, objectOwner string, grants []*s3.Grant) s3err.ErrorCode {
 	if objectEntry.Extended == nil {
-		objectEntry.Extended = make(map[string][]byte, 0)
+		objectEntry.Extended = make(map[string][]byte)
 	}
 
 	if len(objectOwner) > 0 {

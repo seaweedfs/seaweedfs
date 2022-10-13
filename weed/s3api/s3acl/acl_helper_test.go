@@ -32,7 +32,7 @@ var (
 
 func TestGetAccountId(t *testing.T) {
 	req := &http.Request{
-		Header: make(map[string][]string, 0),
+		Header: make(map[string][]string),
 	}
 	//case1
 	//accountId: "admin"
@@ -69,7 +69,7 @@ func TestExtractAcl(t *testing.T) {
 		//case1 (good case)
 		//parse acp from request body
 		req := &http.Request{
-			Header: make(map[string][]string, 0),
+			Header: make(map[string][]string),
 		}
 		req.Body = io.NopCloser(bytes.NewReader([]byte(`
 	<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
@@ -121,7 +121,7 @@ func TestExtractAcl(t *testing.T) {
 		//case2 (good case)
 		//parse acp from header (cannedAcl)
 		req := &http.Request{
-			Header: make(map[string][]string, 0),
+			Header: make(map[string][]string),
 		}
 		req.Body = nil
 		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclPrivate)
@@ -146,7 +146,7 @@ func TestExtractAcl(t *testing.T) {
 		//case3 (bad case)
 		//parse acp from request body (content is invalid)
 		req := &http.Request{
-			Header: make(map[string][]string, 0),
+			Header: make(map[string][]string),
 		}
 		req.Body = io.NopCloser(bytes.NewReader([]byte("zdfsaf")))
 		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclPrivate)
@@ -161,7 +161,7 @@ func TestExtractAcl(t *testing.T) {
 	//case4 (bad case)
 	//parse acp from header (cannedAcl is invalid)
 	req := &http.Request{
-		Header: make(map[string][]string, 0),
+		Header: make(map[string][]string),
 	}
 	req.Body = nil
 	req.Header.Set(s3_constants.AmzCannedAcl, "dfaksjfk")
@@ -229,7 +229,7 @@ func TestParseAndValidateAclHeaders(t *testing.T) {
 		//case1 (good case)
 		//parse custom acl
 		req := &http.Request{
-			Header: make(map[string][]string, 0),
+			Header: make(map[string][]string),
 		}
 		objectWriter := "accountA"
 		req.Header.Set(s3_constants.AmzAclFullControl, `uri="http://acs.amazonaws.com/groups/global/AllUsers", id="anonymous", emailAddress="admin@example.com"`)
@@ -267,7 +267,7 @@ func TestParseAndValidateAclHeaders(t *testing.T) {
 		//case2 (good case)
 		//parse canned acl (ownership=ObjectWriter)
 		req := &http.Request{
-			Header: make(map[string][]string, 0),
+			Header: make(map[string][]string),
 		}
 		objectWriter := "accountA"
 		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
@@ -298,7 +298,7 @@ func TestParseAndValidateAclHeaders(t *testing.T) {
 		//case3 (good case)
 		//parse canned acl (ownership=OwnershipBucketOwnerPreferred)
 		req := &http.Request{
-			Header: make(map[string][]string, 0),
+			Header: make(map[string][]string),
 		}
 		objectWriter := "accountA"
 		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
@@ -322,7 +322,7 @@ func TestParseAndValidateAclHeaders(t *testing.T) {
 		//case4 (bad case)
 		//parse custom acl (grantee id not exists)
 		req := &http.Request{
-			Header: make(map[string][]string, 0),
+			Header: make(map[string][]string),
 		}
 		objectWriter := "accountA"
 		req.Header.Set(s3_constants.AmzAclFullControl, `uri="http://acs.amazonaws.com/groups/global/AllUsers", id="notExistsAccount", emailAddress="admin@example.com"`)
@@ -337,7 +337,7 @@ func TestParseAndValidateAclHeaders(t *testing.T) {
 		//case5 (bad case)
 		//parse custom acl (invalid format)
 		req := &http.Request{
-			Header: make(map[string][]string, 0),
+			Header: make(map[string][]string),
 		}
 		objectWriter := "accountA"
 		req.Header.Set(s3_constants.AmzAclFullControl, `uri="http:sfasf"`)
@@ -352,7 +352,7 @@ func TestParseAndValidateAclHeaders(t *testing.T) {
 		//case6 (bad case)
 		//parse canned acl (invalid value)
 		req := &http.Request{
-			Header: make(map[string][]string, 0),
+			Header: make(map[string][]string),
 		}
 		objectWriter := "accountA"
 		req.Header.Set(s3_constants.AmzCannedAcl, `uri="http:sfasf"`)
@@ -676,7 +676,7 @@ func TestGrantEquals(t *testing.T) {
 func TestSetAcpOwnerHeader(t *testing.T) {
 	ownerId := "accountZ"
 	req := &http.Request{
-		Header: make(map[string][]string, 0),
+		Header: make(map[string][]string),
 	}
 	SetAcpOwnerHeader(req, ownerId)
 
@@ -687,7 +687,7 @@ func TestSetAcpOwnerHeader(t *testing.T) {
 
 func TestSetAcpGrantsHeader(t *testing.T) {
 	req := &http.Request{
-		Header: make(map[string][]string, 0),
+		Header: make(map[string][]string),
 	}
 	grants := []*s3.Grant{
 		{
