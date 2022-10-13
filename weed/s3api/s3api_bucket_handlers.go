@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3acl"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"net/http"
@@ -236,6 +237,46 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 		}
 	}
 	return true
+}
+
+// PutBucketAclHandler Put bucket ACL
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAcl.html
+func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("PutBucketAclHandler %s", bucket)
+
+	accountId := s3acl.GetAccountId(r)
+	bucketMetadata, errorCode := s3a.checkAccessForPutBucketAcl(accountId, bucket)
+	if errorCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errorCode)
+		return
+	}
+
+	grants, errCode := s3acl.ExtractAcl(r, s3a.accountManager, bucketMetadata.ObjectOwnership, "", *bucketMetadata.Owner.ID, accountId)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	bucketEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if err != nil {
+		glog.Warning(err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	errCode = s3acl.AssembleEntryWithAcp(bucketEntry, *bucketMetadata.Owner.ID, grants)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	err = updateBucketEntry(s3a, bucketEntry)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	s3err.WriteEmptyResponse(w, r, http.StatusOK)
 }
 
 // GetBucketAclHandler Get Bucket ACL
