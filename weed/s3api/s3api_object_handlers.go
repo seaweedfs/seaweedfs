@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3acl"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"golang.org/x/exp/slices"
@@ -524,4 +525,35 @@ func (s3a *S3ApiServer) maybeGetFilerJwtAuthorizationToken(isWrite bool) string 
 		encodedJwt = security.GenJwtForFilerServer(s3a.filerGuard.ReadSigningKey, s3a.filerGuard.ReadExpiresAfterSec)
 	}
 	return string(encodedJwt)
+}
+
+// PutObjectAclHandler Put object ACL
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjecthtml
+func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, object := s3_constants.GetBucketAndObject(r)
+
+	accountId := s3acl.GetAccountId(r)
+	bucketMetadata, objectEntry, objectOwner, errCode := s3a.checkAccessForWriteObjectAcl(accountId, bucket, object)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	grants, errCode := s3acl.ExtractAcl(r, s3a.accountManager, bucketMetadata.ObjectOwnership, *bucketMetadata.Owner.ID, objectOwner, accountId)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	errCode = s3acl.AssembleEntryWithAcp(objectEntry, objectOwner, grants)
+	if errCode != s3err.ErrNone {
+		return
+	}
+
+	err := updateObjectEntry(s3a, bucket, objectEntry)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }

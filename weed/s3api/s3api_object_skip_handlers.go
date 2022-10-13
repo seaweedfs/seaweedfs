@@ -12,14 +12,6 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 
 }
 
-// PutObjectAclHandler Put object ACL
-// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectAcl.html
-func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Request) {
-
-	w.WriteHeader(http.StatusNoContent)
-
-}
-
 // PutObjectRetentionHandler Put object Retention
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectRetention.html
 func (s3a *S3ApiServer) PutObjectRetentionHandler(w http.ResponseWriter, r *http.Request) {
