@@ -196,7 +196,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		v.volumeInfo.Version = uint32(v.SuperBlock.Version)
 		v.volumeInfo.BytesOffset = uint32(types.OffsetSize)
 		if err := v.SaveVolumeInfo(); err != nil {
-			glog.Warningf("failed to save volume info: %+v", err)
+			glog.Warningf("volume %d failed to save file info: %v", v.Id, err)
 		}
 	}
 
