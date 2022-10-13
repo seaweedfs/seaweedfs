@@ -120,9 +120,6 @@ func (v *Volume) CommitCompact() error {
 		v.nm = nil
 	}
 	if v.DataBackend != nil {
-		if err := v.DataBackend.Sync(); err != nil {
-			glog.V(0).Infof("failed to sync volume %d", v.Id)
-		}
 		if err := v.DataBackend.Close(); err != nil {
 			glog.V(0).Infof("failed to close volume %d", v.Id)
 		}
@@ -268,10 +265,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		return fmt.Errorf("open dat file %s failed: %v", newDatFileName, err)
 	}
 	dstDatBackend := backend.NewDiskFile(dst)
-	defer func() {
-		dstDatBackend.Sync()
-		dstDatBackend.Close()
-	}()
+	defer dstDatBackend.Close()
 
 	if idx, err = os.OpenFile(newIdxFileName, os.O_RDWR, 0644); err != nil {
 		return fmt.Errorf("open idx file %s failed: %v", newIdxFileName, err)
@@ -398,9 +392,7 @@ func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset in
 }
 
 func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, preallocate int64, compactionBytePerSecond int64) (err error) {
-	var (
-		dst backend.BackendStorageFile
-	)
+	var dst backend.BackendStorageFile
 	if dst, err = backend.CreateVolumeFile(dstName, preallocate, 0); err != nil {
 		return err
 	}
@@ -432,11 +424,7 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 	if dstDatBackend, err = backend.CreateVolumeFile(dstDatName, preallocate, 0); err != nil {
 		return err
 	}
-
-	defer func() {
-		dstDatBackend.Sync()
-		dstDatBackend.Close()
-	}()
+	defer dstDatBackend.Close()
 
 	oldNm := needle_map.NewMemDb()
 	defer oldNm.Close()
