@@ -36,10 +36,12 @@ func init() {
 
 type commandVolumeFsck struct {
 	env                      *CommandEnv
+	writer                   io.Writer
 	bucketsPath              *string
 	collection               *string
 	volumeId                 *uint
 	tempFolder               string
+	verbose                  *bool
 	forcePurging             *bool
 	findMissingChunksInFiler *bool
 }
@@ -71,7 +73,7 @@ func (c *commandVolumeFsck) Help() string {
 func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	fsckCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	verbose := fsckCommand.Bool("v", false, "verbose mode")
+	c.verbose = fsckCommand.Bool("v", false, "verbose mode")
 	c.findMissingChunksInFiler = fsckCommand.Bool("findMissingChunksInFiler", false, "see \"help volume.fsck\"")
 	c.collection = fsckCommand.String("collection", "", "the collection name")
 	c.volumeId = fsckCommand.Uint("volumeId", 0, "the volume id")
@@ -90,6 +92,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 
 	c.env = commandEnv
+	c.writer = writer
 
 	*c.bucketsPath, err = readFilerBucketsPath(commandEnv)
 	if err != nil {
@@ -101,13 +104,13 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	if err != nil {
 		return fmt.Errorf("failed to create temp folder: %v", err)
 	}
-	if *verbose {
-		fmt.Fprintf(writer, "working directory: %s\n", c.tempFolder)
+	if *c.verbose {
+		fmt.Fprintf(c.writer, "working directory: %s\n", c.tempFolder)
 	}
 	defer os.RemoveAll(c.tempFolder)
 
 	// collect all volume id locations
-	dataNodeVolumeIdToVInfo, err := c.collectVolumeIds(commandEnv, *verbose, writer)
+	dataNodeVolumeIdToVInfo, err := c.collectVolumeIds()
 	if err != nil {
 		return fmt.Errorf("failed to collect all volume locations: %v", err)
 	}
@@ -132,7 +135,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 				*c.collection = vinfo.collection
 			}
 			cutoffFrom := time.Now().Add(-*cutoffTimeAgo).UnixNano()
-			err = c.collectOneVolumeFileIds(dataNodeId, volumeId, vinfo, *verbose, writer, uint64(cutoffFrom))
+			err = c.collectOneVolumeFileIds(dataNodeId, volumeId, vinfo, uint64(cutoffFrom))
 			if err != nil {
 				return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, err)
 			}
@@ -141,22 +144,22 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	if *c.findMissingChunksInFiler {
 		// collect all filer file ids and paths
-		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, writer, *verbose, *purgeAbsent, collectMtime); err != nil {
+		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, *purgeAbsent, collectMtime); err != nil {
 			return fmt.Errorf("collectFilerFileIdAndPaths: %v", err)
 		}
 		for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 			// for each volume, check filer file ids
-			if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, dataNodeId, writer, *verbose, *applyPurging); err != nil {
+			if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, dataNodeId, *applyPurging); err != nil {
 				return fmt.Errorf("findFilerChunksMissingInVolumeServers: %v", err)
 			}
 		}
 	} else {
 		// collect all filer file ids
-		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, writer, *verbose, false, collectMtime); err != nil {
+		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, false, collectMtime); err != nil {
 			return fmt.Errorf("failed to collect file ids from filer: %v", err)
 		}
 		// volume file ids subtract filer file ids
-		if err = c.findExtraChunksInVolumeServers(dataNodeVolumeIdToVInfo, writer, *verbose, *applyPurging); err != nil {
+		if err = c.findExtraChunksInVolumeServers(dataNodeVolumeIdToVInfo, *applyPurging); err != nil {
 			return fmt.Errorf("findExtraChunksInVolumeServers: %v", err)
 		}
 	}
@@ -164,10 +167,9 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	return nil
 }
 
-func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, writer io.Writer, verbose bool, purgeAbsent bool, collectMtime int64) error {
-
-	if verbose {
-		fmt.Fprintf(writer, "checking each file from filer ...\n")
+func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, purgeAbsent bool, collectMtime int64) error {
+	if *c.verbose {
+		fmt.Fprintf(c.writer, "checking each file from filer ...\n")
 	}
 
 	files := make(map[uint32]*os.File)
@@ -197,8 +199,8 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 	}
 
 	return doTraverseBfsAndSaving(c.env, nil, c.getCollectFilerFilePath(), false, func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
-		if verbose && entry.Entry.IsDirectory {
-			fmt.Fprintf(writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
+		if *c.verbose && entry.Entry.IsDirectory {
+			fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
 		}
 		dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(filer.LookupFn(c.env), entry.Entry.Chunks, 0, math.MaxInt64)
 		if resolveErr != nil {
@@ -229,20 +231,20 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 				f.Write([]byte(i.path))
 				// fmt.Fprintf(writer, "%d,%x%08x %d %s\n", i.vid, i.fileKey, i.cookie, len(i.path), i.path)
 			} else if *c.findMissingChunksInFiler {
-				fmt.Fprintf(writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
+				fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
 				if purgeAbsent {
 					fmt.Printf("deleting path %s after volume not found", i.path)
-					c.httpDelete(i.path, verbose)
+					c.httpDelete(i.path)
 				}
 			}
 		}
 	})
 }
 
-func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInfo map[uint32]VInfo, dataNodeId string, writer io.Writer, verbose bool, applyPurging bool) error {
+func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInfo map[uint32]VInfo, dataNodeId string, applyPurging bool) error {
 
 	for volumeId, vinfo := range volumeIdToVInfo {
-		checkErr := c.oneVolumeFileIdsCheckOneVolume(dataNodeId, volumeId, writer, verbose, applyPurging)
+		checkErr := c.oneVolumeFileIdsCheckOneVolume(dataNodeId, volumeId, applyPurging)
 		if checkErr != nil {
 			return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
 		}
@@ -250,7 +252,7 @@ func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInf
 	return nil
 }
 
-func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, writer io.Writer, verbose bool, applyPurging bool) error {
+func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, applyPurging bool) error {
 
 	var totalInUseCount, totalOrphanChunkCount, totalOrphanDataSize uint64
 	volumeIdOrphanFileIds := make(map[uint32]map[string]bool)
@@ -260,7 +262,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	serverReplicas := make(map[uint32][]pb.ServerAddress)
 	for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 		for volumeId, vinfo := range volumeIdToVInfo {
-			inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(dataNodeId, volumeId, writer, verbose)
+			inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(dataNodeId, volumeId)
 			if checkErr != nil {
 				return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
 			}
@@ -283,9 +285,9 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 			totalOrphanChunkCount += uint64(len(orphanFileIds))
 			totalOrphanDataSize += orphanDataSize
 
-			if verbose {
+			if *c.verbose {
 				for _, fid := range orphanFileIds {
-					fmt.Fprintf(writer, "%s\n", fid)
+					fmt.Fprintf(c.writer, "%s\n", fid)
 				}
 			}
 			isEcVolumeReplicas[volumeId] = vinfo.isEcVolume
@@ -309,11 +311,11 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 				continue
 			}
 			if verbose {
-				fmt.Fprintf(writer, "purging process for volume %d.\n", volumeId)
+				fmt.Fprintf(c.writer, "purging process for volume %d.\n", volumeId)
 			}
 
 			if isEcVolumeReplicas[volumeId] {
-				fmt.Fprintf(writer, "skip purging for Erasure Coded volume %d.\n", volumeId)
+				fmt.Fprintf(c.writer, "skip purging for Erasure Coded volume %d.\n", volumeId)
 				continue
 			}
 			for _, server := range serverReplicas[volumeId] {
@@ -325,16 +327,16 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 						return fmt.Errorf("mark volume %d read/write: %v", volumeId, err)
 					}
 
-					fmt.Fprintf(writer, "temporarily marked %d on server %v writable for forced purge\n", volumeId, server)
+					fmt.Fprintf(c.writer, "temporarily marked %d on server %v writable for forced purge\n", volumeId, server)
 					defer markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, false)
 
-					fmt.Fprintf(writer, "marked %d on server %v writable for forced purge\n", volumeId, server)
+					fmt.Fprintf(c.writer, "marked %d on server %v writable for forced purge\n", volumeId, server)
 				}
 				if verbose {
-					fmt.Fprintf(writer, "purging files from volume %d\n", volumeId)
+					fmt.Fprintf(c.writer, "purging files from volume %d\n", volumeId)
 				}
 
-				if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds, writer); err != nil {
+				if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds); err != nil {
 					return fmt.Errorf("purging volume %d: %v", volumeId, err)
 				}
 			}
@@ -357,91 +359,76 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	return nil
 }
 
-func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId uint32, vinfo VInfo, verbose bool, writer io.Writer, cutoffFrom uint64) error {
+func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId uint32, vinfo VInfo, cutoffFrom uint64) error {
 
-	if verbose {
-		fmt.Fprintf(writer, "collecting volume %d file ids from %s ...\n", volumeId, vinfo.server)
+	if *c.verbose {
+		fmt.Fprintf(c.writer, "collecting volume %d file ids from %s ...\n", volumeId, vinfo.server)
 	}
 
-	return operation.WithVolumeServerClient(false, vinfo.server, c.env.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-
-		ext := ".idx"
-		if vinfo.isEcVolume {
-			ext = ".ecx"
-		}
-
-		copyFileClient, err := volumeServerClient.CopyFile(context.Background(), &volume_server_pb.CopyFileRequest{
-			VolumeId:                 volumeId,
-			Ext:                      ext,
-			CompactionRevision:       math.MaxUint32,
-			StopOffset:               math.MaxInt64,
-			Collection:               vinfo.collection,
-			IsEcVolume:               vinfo.isEcVolume,
-			IgnoreSourceFileNotFound: false,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to start copying volume %d%s: %v", volumeId, ext, err)
-		}
-
-		var buf bytes.Buffer
-		for {
-			resp, err := copyFileClient.Recv()
-			if errors.Is(err, io.EOF) {
-				break
+	return operation.WithVolumeServerClient(false, vinfo.server, c.env.option.GrpcDialOption,
+		func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+			ext := ".idx"
+			if vinfo.isEcVolume {
+				ext = ".ecx"
 			}
-			if err != nil {
-				return err
-			}
-			buf.Write(resp.FileContent)
-		}
-		fileredBuf := filterDeletedNeedleFromIdx(buf.Bytes())
-		if vinfo.isReadOnly == false {
-			index, err := idx.FirstInvalidIndex(fileredBuf.Bytes(), func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
-				resp, err := volumeServerClient.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
-					VolumeId: volumeId,
-					NeedleId: uint64(key),
-					Offset:   offset.ToActualOffset(),
-					Size:     int32(size),
-				})
-				if err != nil {
-					return false, fmt.Errorf("to read needle meta with id %d from volume %d with error %v", key, volumeId, err)
-				}
-				return resp.LastModified <= cutoffFrom, nil
+
+			copyFileClient, err := volumeServerClient.CopyFile(context.Background(), &volume_server_pb.CopyFileRequest{
+				VolumeId:                 volumeId,
+				Ext:                      ext,
+				CompactionRevision:       math.MaxUint32,
+				StopOffset:               math.MaxInt64,
+				Collection:               vinfo.collection,
+				IsEcVolume:               vinfo.isEcVolume,
+				IgnoreSourceFileNotFound: false,
 			})
 			if err != nil {
-				fmt.Fprintf(writer, "Failed to search for last valid index on volume %d with error %v", volumeId, err)
-			} else {
-				fileredBuf.Truncate(index * types.NeedleMapEntrySize)
+				return fmt.Errorf("failed to start copying volume %d%s: %v", volumeId, ext, err)
 			}
-		}
-		idxFilename := getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)
-		err = writeToFile(fileredBuf.Bytes(), idxFilename)
-		if err != nil {
-			return fmt.Errorf("failed to copy %d%s from %s: %v", volumeId, ext, vinfo.server, err)
-		}
 
-		return nil
-	})
+			var buf bytes.Buffer
+			for {
+				resp, err := copyFileClient.Recv()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					return err
+				}
+				buf.Write(resp.FileContent)
+			}
+			fileredBuf := filterDeletedNeedleFromIdx(buf.Bytes())
+			if vinfo.isReadOnly == false {
+				index, err := idx.FirstInvalidIndex(fileredBuf.Bytes(),
+					func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
+						resp, err := volumeServerClient.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
+							VolumeId: volumeId,
+							NeedleId: uint64(key),
+							Offset:   offset.ToActualOffset(),
+							Size:     int32(size),
+						})
+						if err != nil {
+							return false, fmt.Errorf("to read needle meta with id %d from volume %d with error %v", key, volumeId, err)
+						}
+						return resp.LastModified <= cutoffFrom, nil
+					})
+				if err != nil {
+					fmt.Fprintf(c.writer, "Failed to search for last valid index on volume %d with error %v", volumeId, err)
+				} else {
+					fileredBuf.Truncate(index * types.NeedleMapEntrySize)
+				}
+			}
+			idxFilename := getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)
+			err = writeToFile(fileredBuf.Bytes(), idxFilename)
+			if err != nil {
+				return fmt.Errorf("failed to copy %d%s from %s: %v", volumeId, ext, vinfo.server, err)
+			}
+
+			return nil
+		})
 
 }
 
-func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func()) {
-
-}
-
-func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, volumeId uint32, writer io.Writer, verbose bool, applyPurging bool) (err error) {
-
-	if verbose {
-		fmt.Fprintf(writer, "find missing file chunks in dataNodeId %s volume %d ...\n", dataNodeId, volumeId)
-	}
-
-	db := needle_map.NewMemDb()
-	defer db.Close()
-
-	if err = db.LoadFromIdx(getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)); err != nil {
-		return
-	}
-
+func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func()) error {
 	file := getFilerFileIdFile(c.tempFolder, volumeId)
 	fp, err := os.Open(file)
 	if err != nil {
@@ -471,27 +458,44 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 		pathBytes := make([]byte, int(pathSize))
 		n, err := io.ReadFull(br, pathBytes)
 		if err != nil {
-			fmt.Fprintf(writer, "%d,%x%08x in unexpected error: %v\n", volumeId, item.fileKey, item.cookie, err)
+			fmt.Fprintf(c.writer, "%d,%x%08x in unexpected error: %v\n", volumeId, item.fileKey, item.cookie, err)
 		}
 		if n != int(pathSize) {
-			fmt.Fprintf(writer, "%d,%x%08x %d unexpected file name size %d\n", volumeId, item.fileKey, item.cookie, pathSize, n)
+			fmt.Fprintf(c.writer, "%d,%x%08x %d unexpected file name size %d\n", volumeId, item.fileKey, item.cookie, pathSize, n)
 		}
 		item.path = util.FullPath(string(pathBytes))
 
 		needleId := types.NeedleId(item.fileKey)
+	}
+}
+
+func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, volumeId uint32, applyPurging bool) (err error) {
+	if *c.verbose {
+		fmt.Fprintf(c.writer, "find missing file chunks in dataNodeId %s volume %d ...\n", dataNodeId, volumeId)
+	}
+
+	db := needle_map.NewMemDb()
+	defer db.Close()
+
+	if err = db.LoadFromIdx(getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)); err != nil {
+		return
+	}
+	if err = c.readFilerFileIdFile(volumeId, func() {
 		if _, found := db.Get(needleId); !found {
-			fmt.Fprintf(writer, "%s\n", item.path)
+			fmt.Fprintf(c.writer, "%s\n", item.path)
 
 			if applyPurging {
 				// defining the URL this way automatically escapes complex path names
 				c.httpDelete(item.path, verbose)
 			}
 		}
+	}); err != nil {
+		return
 	}
 	return nil
 }
 
-func (c *commandVolumeFsck) httpDelete(path util.FullPath, verbose bool) {
+func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 	req, err := http.NewRequest(http.MethodDelete, "", nil)
 
 	req.URL = &url.URL{
@@ -499,33 +503,33 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath, verbose bool) {
 		Host:   c.env.option.FilerAddress.ToHttpAddress(),
 		Path:   string(path),
 	}
-	if verbose {
-		fmt.Printf("full HTTP delete request to be sent: %v\n", req)
+	if *c.verbose {
+		fmt.Fprintf(c.writer, "full HTTP delete request to be sent: %v\n", req)
 	}
 	if err != nil {
-		fmt.Errorf("HTTP delete request error: %v\n", err)
+		fmt.Fprintf(c.writer, "HTTP delete request error: %v\n", err)
 	}
 
 	client := &http.Client{}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Errorf("DELETE fetch error: %v\n", err)
+		fmt.Fprintf(c.writer, "DELETE fetch error: %v\n", err)
 	}
 	defer resp.Body.Close()
 
 	_, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Errorf("DELETE response error: %v\n", err)
+		fmt.Fprintf(c.writer, "DELETE response error: %v\n", err)
 	}
 
-	if verbose {
-		fmt.Println("delete response Status : ", resp.Status)
-		fmt.Println("delete response Headers : ", resp.Header)
+	if *c.verbose {
+		fmt.Fprintln(c.writer, "delete response Status : ", resp.Status)
+		fmt.Fprintln(c.writer, "delete response Headers : ", resp.Header)
 	}
 }
 
-func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId string, volumeId uint32, writer io.Writer, verbose bool) (inUseCount uint64, orphanFileIds []string, orphanDataSize uint64, err error) {
+func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId string, volumeId uint32) (inUseCount uint64, orphanFileIds []string, orphanDataSize uint64, err error) {
 
 	db := needle_map.NewMemDb()
 	defer db.Close()
@@ -561,7 +565,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 
 	if orphanFileCount > 0 {
 		pct := float64(orphanFileCount*100) / (float64(orphanFileCount + inUseCount))
-		fmt.Fprintf(writer, "dataNode:%s\tvolume:%d\tentries:%d\torphan:%d\t%.2f%%\t%dB\n",
+		fmt.Fprintf(c.writer, "dataNode:%s\tvolume:%d\tentries:%d\torphan:%d\t%.2f%%\t%dB\n",
 			dataNodeId, volumeId, orphanFileCount+inUseCount, orphanFileCount, pct, orphanDataSize)
 	}
 
@@ -576,15 +580,15 @@ type VInfo struct {
 	isReadOnly bool
 }
 
-func (c *commandVolumeFsck) collectVolumeIds(commandEnv *CommandEnv, verbose bool, writer io.Writer) (volumeIdToServer map[string]map[uint32]VInfo, err error) {
+func (c *commandVolumeFsck) collectVolumeIds() (volumeIdToServer map[string]map[uint32]VInfo, err error) {
 
-	if verbose {
-		fmt.Fprintf(writer, "collecting volume id and locations from master ...\n")
+	if *c.verbose {
+		fmt.Fprintf(c.writer, "collecting volume id and locations from master ...\n")
 	}
 
 	volumeIdToServer = make(map[string]map[uint32]VInfo)
 	// collect topology information
-	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
+	topologyInfo, _, err := collectTopologyInfo(c.env, 0)
 	if err != nil {
 		return
 	}
@@ -612,14 +616,14 @@ func (c *commandVolumeFsck) collectVolumeIds(commandEnv *CommandEnv, verbose boo
 		}
 	})
 
-	if verbose {
-		fmt.Fprintf(writer, "collected %d volumes and locations.\n", len(volumeIdToServer))
+	if *c.verbose {
+		fmt.Fprintf(c.writer, "collected %d volumes and locations.\n", len(volumeIdToServer))
 	}
 	return
 }
 
-func (c *commandVolumeFsck) purgeFileIdsForOneVolume(volumeId uint32, fileIds []string, writer io.Writer) (err error) {
-	fmt.Fprintf(writer, "purging orphan data for volume %d...\n", volumeId)
+func (c *commandVolumeFsck) purgeFileIdsForOneVolume(volumeId uint32, fileIds []string) (err error) {
+	fmt.Fprintf(c.writer, "purging orphan data for volume %d...\n", volumeId)
 	locations, found := c.env.MasterClient.GetLocations(volumeId)
 	if !found {
 		return fmt.Errorf("failed to find volume %d locations", volumeId)
@@ -646,7 +650,7 @@ func (c *commandVolumeFsck) purgeFileIdsForOneVolume(volumeId uint32, fileIds []
 	for results := range resultChan {
 		for _, result := range results {
 			if result.Error != "" {
-				fmt.Fprintf(writer, "purge error: %s\n", result.Error)
+				fmt.Fprintf(c.writer, "purge error: %s\n", result.Error)
 			}
 		}
 	}
