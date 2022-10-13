@@ -127,7 +127,8 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 				delete(volumeIdToVInfo, volumeId)
 				continue
 			}
-			if *c.collection != "" && vinfo.collection != *c.collection {
+			// or skip /topics/.system/log without collection name
+			if (*c.collection != "" && vinfo.collection != *c.collection) || vinfo.collection == "" {
 				delete(volumeIdToVInfo, volumeId)
 				continue
 			}
