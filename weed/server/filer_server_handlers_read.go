@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3acl"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
 	"math"
@@ -105,6 +106,15 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 		return
+	}
+
+	//s3 acl offload to filer
+	offloadHeaderBucketOwner := r.Header.Get(s3_constants.XSeaweedFSHeaderAmzBucketOwnerId)
+	if len(offloadHeaderBucketOwner) > 0 {
+		if statusCode, ok := s3acl.CheckObjectAccessForReadObject(r, w, entry, offloadHeaderBucketOwner); !ok {
+			w.WriteHeader(statusCode)
+			return
+		}
 	}
 
 	query := r.URL.Query()

@@ -38,6 +38,7 @@ const (
 	AmzTagCount               = "x-amz-tagging-count"
 
 	X_SeaweedFS_Header_Directory_Key = "x-seaweedfs-is-directory-key"
+	XSeaweedFSHeaderAmzBucketOwnerId = "x-seaweedfs-amz-bucket-owner-id"
 
 	// S3 ACL headers
 	AmzCannedAcl      = "X-Amz-Acl"

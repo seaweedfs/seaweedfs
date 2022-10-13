@@ -27,3 +27,23 @@ func (s3a *S3ApiServer) checkAccessByOwnership(r *http.Request, bucket string) s
 	}
 	return s3err.ErrAccessDenied
 }
+
+// Check Object-Read related access
+// includes:
+// - GetObjectHandler
+//
+// offload object access validation to Filer layer
+// - s3acl.CheckObjectAccessForReadObject
+func (s3a *S3ApiServer) checkBucketAccessForReadObject(r *http.Request, bucket string) s3err.ErrorCode {
+	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
+	if errCode != s3err.ErrNone {
+		return errCode
+	}
+
+	if bucketMetadata.ObjectOwnership != s3_constants.OwnershipBucketOwnerEnforced {
+		//offload object acl validation to filer layer
+		r.Header.Set(s3_constants.XSeaweedFSHeaderAmzBucketOwnerId, *bucketMetadata.Owner.ID)
+	}
+
+	return s3err.ErrNone
+}
