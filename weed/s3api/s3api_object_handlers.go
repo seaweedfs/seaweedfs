@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
@@ -172,6 +173,21 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	destUrl := s3a.toFilerUrl(bucket, object)
 
 	s3a.proxyToFiler(w, r, destUrl, false, passThroughResponse)
+}
+
+// GetObjectAclHandler Put object ACL
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjecthtml
+func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, object := s3_constants.GetBucketAndObject(r)
+	acp, errCode := s3a.checkAccessForReadObjectAcl(r, bucket, object)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+	result := &s3.PutBucketAclInput{
+		AccessControlPolicy: acp,
+	}
+	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, &result)
 }
 
 func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {
