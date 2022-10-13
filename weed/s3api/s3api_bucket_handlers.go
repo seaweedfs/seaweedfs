@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3acl"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"net/http"
@@ -121,6 +122,12 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	acpOwner, acpGrants, errCode := s3a.ExtractBucketAcp(r)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	fn := func(entry *filer_pb.Entry) {
 		if identityId := r.Header.Get(s3_constants.AmzIdentityId); identityId != "" {
 			if entry.Extended == nil {
@@ -128,6 +135,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			}
 			entry.Extended[s3_constants.AmzIdentityId] = []byte(identityId)
 		}
+		s3acl.AssembleEntryWithAcp(entry, acpOwner, acpGrants)
 	}
 
 	// create the folder for bucket, but lazily create actual collection
