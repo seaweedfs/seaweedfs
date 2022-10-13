@@ -37,7 +37,7 @@ func init() {
 type commandVolumeFsck struct {
 	env                      *CommandEnv
 	writer                   io.Writer
-	bucketsPath              *string
+	bucketsPath              string
 	collection               *string
 	volumeId                 *uint
 	tempFolder               string
@@ -94,7 +94,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.env = commandEnv
 	c.writer = writer
 
-	*c.bucketsPath, err = readFilerBucketsPath(commandEnv)
+	c.bucketsPath, err = readFilerBucketsPath(commandEnv)
 	if err != nil {
 		return fmt.Errorf("read filer buckets path: %v", err)
 	}
@@ -262,7 +262,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	serverReplicas := make(map[uint32][]pb.ServerAddress)
 	for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 		for volumeId, vinfo := range volumeIdToVInfo {
-			inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(dataNodeId, volumeId)
+			inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(dataNodeId, volumeId, vinfo.collection)
 			if checkErr != nil {
 				return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
 			}
@@ -310,7 +310,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 			if !(len(orphanFileIds) > 0) {
 				continue
 			}
-			if verbose {
+			if *c.verbose {
 				fmt.Fprintf(c.writer, "purging process for volume %d.\n", volumeId)
 			}
 
@@ -326,13 +326,13 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 					if err != nil {
 						return fmt.Errorf("mark volume %d read/write: %v", volumeId, err)
 					}
-
 					fmt.Fprintf(c.writer, "temporarily marked %d on server %v writable for forced purge\n", volumeId, server)
 					defer markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, false)
 
 					fmt.Fprintf(c.writer, "marked %d on server %v writable for forced purge\n", volumeId, server)
 				}
-				if verbose {
+
+				if *c.verbose {
 					fmt.Fprintf(c.writer, "purging files from volume %d\n", volumeId)
 				}
 
@@ -345,14 +345,14 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 
 	if !applyPurging {
 		pct := float64(totalOrphanChunkCount*100) / (float64(totalOrphanChunkCount + totalInUseCount))
-		fmt.Fprintf(writer, "\nTotal\t\tentries:%d\torphan:%d\t%.2f%%\t%dB\n",
+		fmt.Fprintf(c.writer, "\nTotal\t\tentries:%d\torphan:%d\t%.2f%%\t%dB\n",
 			totalOrphanChunkCount+totalInUseCount, totalOrphanChunkCount, pct, totalOrphanDataSize)
 
-		fmt.Fprintf(writer, "This could be normal if multiple filers or no filers are used.\n")
+		fmt.Fprintf(c.writer, "This could be normal if multiple filers or no filers are used.\n")
 	}
 
 	if totalOrphanChunkCount == 0 {
-		fmt.Fprintf(writer, "no orphan data\n")
+		fmt.Fprintf(c.writer, "no orphan data\n")
 		//return nil
 	}
 
@@ -428,11 +428,11 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 
 }
 
-func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func()) error {
+func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleId types.NeedleId, itemPath util.FullPath)) error {
 	file := getFilerFileIdFile(c.tempFolder, volumeId)
 	fp, err := os.Open(file)
 	if err != nil {
-		return
+		return err
 	}
 	defer fp.Close()
 
@@ -464,9 +464,10 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func()) erro
 			fmt.Fprintf(c.writer, "%d,%x%08x %d unexpected file name size %d\n", volumeId, item.fileKey, item.cookie, pathSize, n)
 		}
 		item.path = util.FullPath(string(pathBytes))
-
 		needleId := types.NeedleId(item.fileKey)
+		fn(needleId, item.path)
 	}
+	return err
 }
 
 func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, volumeId uint32, applyPurging bool) (err error) {
@@ -480,13 +481,11 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 	if err = db.LoadFromIdx(getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)); err != nil {
 		return
 	}
-	if err = c.readFilerFileIdFile(volumeId, func() {
+	if err = c.readFilerFileIdFile(volumeId, func(needleId types.NeedleId, itemPath util.FullPath) {
 		if _, found := db.Get(needleId); !found {
-			fmt.Fprintf(c.writer, "%s\n", item.path)
-
+			fmt.Fprintf(c.writer, "%s\n", itemPath)
 			if applyPurging {
-				// defining the URL this way automatically escapes complex path names
-				c.httpDelete(item.path, verbose)
+				c.httpDelete(itemPath)
 			}
 		}
 	}); err != nil {
@@ -529,7 +528,7 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 	}
 }
 
-func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId string, volumeId uint32) (inUseCount uint64, orphanFileIds []string, orphanDataSize uint64, err error) {
+func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId string, volumeId uint32, collection string) (inUseCount uint64, orphanFileIds []string, orphanDataSize uint64, err error) {
 
 	db := needle_map.NewMemDb()
 	defer db.Close()
@@ -538,26 +537,16 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		return
 	}
 
-	filerFileIdsData, err := os.ReadFile(getFilerFileIdFile(c.tempFolder, volumeId))
-	if err != nil {
-		return
-	}
-
-	dataLen := len(filerFileIdsData)
-	if dataLen%8 != 0 {
-		return 0, nil, 0, fmt.Errorf("filer data is corrupted")
-	}
-
-	for i := 0; i < len(filerFileIdsData); i += 8 {
-		fileKey := util.BytesToUint64(filerFileIdsData[i : i+8])
-		db.Delete(types.NeedleId(fileKey))
+	if err = c.readFilerFileIdFile(volumeId, func(needleId types.NeedleId, itemPath util.FullPath) {
+		db.Delete(needleId)
 		inUseCount++
+	}); err != nil {
+		return
 	}
 
 	var orphanFileCount uint64
 	db.AscendingVisit(func(n needle_map.NeedleValue) error {
-		// fmt.Printf("%d,%x\n", volumeId, n.Key)
-		orphanFileIds = append(orphanFileIds, fmt.Sprintf("%d,%s00000000", volumeId, n.Key.String()))
+		orphanFileIds = append(orphanFileIds, fmt.Sprintf("%s:%d,%s00000000", collection, volumeId, n.Key.String()))
 		orphanFileCount++
 		orphanDataSize += uint64(n.Size)
 		return nil
@@ -660,7 +649,7 @@ func (c *commandVolumeFsck) purgeFileIdsForOneVolume(volumeId uint32, fileIds []
 
 func (c *commandVolumeFsck) getCollectFilerFilePath() string {
 	if *c.collection != "" {
-		return fmt.Sprintf("%s/%s", *c.bucketsPath, *c.collection)
+		return fmt.Sprintf("%s/%s", c.bucketsPath, *c.collection)
 	}
 	return "/"
 }
