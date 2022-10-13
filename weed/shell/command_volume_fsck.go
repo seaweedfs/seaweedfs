@@ -119,7 +119,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		return fmt.Errorf("read filer buckets path: %v", err)
 	}
 
-	collectMtime := time.Now().Unix()
+	collectMtime := time.Now().UnixNano()
 	// collect each volume file ids
 	for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 		for volumeId, vinfo := range volumeIdToVInfo {
@@ -139,6 +139,9 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 			if err != nil {
 				return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, err)
 			}
+		}
+		if *c.verbose {
+			fmt.Fprintf(c.writer, "dn %+v filtred %d volumes and locations.\n", dataNodeId, len(dataNodeVolumeIdToVInfo[dataNodeId]))
 		}
 	}
 
@@ -169,7 +172,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 
 func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, purgeAbsent bool, collectMtime int64) error {
 	if *c.verbose {
-		fmt.Fprintf(c.writer, "checking each file from filer ...\n")
+		fmt.Fprintf(c.writer, "checking each file from filer path %s...\n", c.getCollectFilerFilePath())
 	}
 
 	files := make(map[uint32]*os.File)
@@ -191,54 +194,48 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 		}
 	}()
 
-	type Item struct {
-		vid     uint32
-		fileKey uint64
-		cookie  uint32
-		path    util.FullPath
-	}
-
-	return doTraverseBfsAndSaving(c.env, nil, c.getCollectFilerFilePath(), false, func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
-		if *c.verbose && entry.Entry.IsDirectory {
-			fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
-		}
-		dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(filer.LookupFn(c.env), entry.Entry.Chunks, 0, math.MaxInt64)
-		if resolveErr != nil {
-			return nil
-		}
-		dataChunks = append(dataChunks, manifestChunks...)
-		for _, chunk := range dataChunks {
-			if chunk.Mtime > collectMtime {
-				continue
+	return doTraverseBfsAndSaving(c.env, nil, c.getCollectFilerFilePath(), false,
+		func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
+			if *c.verbose && entry.Entry.IsDirectory {
+				fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
 			}
-			outputChan <- &Item{
-				vid:     chunk.Fid.VolumeId,
-				fileKey: chunk.Fid.FileKey,
-				cookie:  chunk.Fid.Cookie,
-				path:    util.NewFullPath(entry.Dir, entry.Entry.Name),
+			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(filer.LookupFn(c.env), entry.Entry.Chunks, 0, math.MaxInt64)
+			if resolveErr != nil {
+				return fmt.Errorf("failed to ResolveChunkManifest: %+v", resolveErr)
 			}
-		}
-		return nil
-	}, func(outputChan chan interface{}) {
-		buffer := make([]byte, 16)
-		for item := range outputChan {
-			i := item.(*Item)
-			if f, ok := files[i.vid]; ok {
-				util.Uint64toBytes(buffer, i.fileKey)
-				util.Uint32toBytes(buffer[8:], i.cookie)
-				util.Uint32toBytes(buffer[12:], uint32(len(i.path)))
-				f.Write(buffer)
-				f.Write([]byte(i.path))
-				// fmt.Fprintf(writer, "%d,%x%08x %d %s\n", i.vid, i.fileKey, i.cookie, len(i.path), i.path)
-			} else if *c.findMissingChunksInFiler {
-				fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
-				if purgeAbsent {
-					fmt.Printf("deleting path %s after volume not found", i.path)
-					c.httpDelete(i.path)
+			dataChunks = append(dataChunks, manifestChunks...)
+			for _, chunk := range dataChunks {
+				if chunk.Mtime > collectMtime {
+					continue
+				}
+				outputChan <- &Item{
+					vid:     chunk.Fid.VolumeId,
+					fileKey: chunk.Fid.FileKey,
+					cookie:  chunk.Fid.Cookie,
+					path:    util.NewFullPath(entry.Dir, entry.Entry.Name),
 				}
 			}
-		}
-	})
+			return nil
+		},
+		func(outputChan chan interface{}) {
+			buffer := make([]byte, 16)
+			for item := range outputChan {
+				i := item.(*Item)
+				if f, ok := files[i.vid]; ok {
+					util.Uint64toBytes(buffer, i.fileKey)
+					util.Uint32toBytes(buffer[8:], i.cookie)
+					util.Uint32toBytes(buffer[12:], uint32(len(i.path)))
+					f.Write(buffer)
+					f.Write([]byte(i.path))
+				} else if *c.findMissingChunksInFiler && *c.volumeId == 0 {
+					fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
+					if purgeAbsent {
+						fmt.Printf("deleting path %s after volume not found", i.path)
+						c.httpDelete(i.path)
+					}
+				}
+			}
+		})
 }
 
 func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInfo map[uint32]VInfo, dataNodeId string, applyPurging bool) error {
@@ -353,7 +350,6 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 
 	if totalOrphanChunkCount == 0 {
 		fmt.Fprintf(c.writer, "no orphan data\n")
-		//return nil
 	}
 
 	return nil
@@ -428,30 +424,36 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 
 }
 
+type Item struct {
+	vid     uint32
+	fileKey uint64
+	cookie  uint32
+	path    util.FullPath
+}
+
 func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleId types.NeedleId, itemPath util.FullPath)) error {
-	file := getFilerFileIdFile(c.tempFolder, volumeId)
-	fp, err := os.Open(file)
+	fp, err := os.Open(getFilerFileIdFile(c.tempFolder, volumeId))
 	if err != nil {
 		return err
 	}
 	defer fp.Close()
 
-	type Item struct {
-		fileKey uint64
-		cookie  uint32
-		path    util.FullPath
-	}
-
 	br := bufio.NewReader(fp)
 	buffer := make([]byte, 16)
-	item := &Item{}
 	var readSize int
+	var readErr error
+	item := &Item{vid: volumeId}
 	for {
-		readSize, err = io.ReadFull(br, buffer)
-		if err != nil || readSize != 16 {
+		readSize, readErr = io.ReadFull(br, buffer)
+		if errors.Is(readErr, io.EOF) {
 			break
 		}
-
+		if readErr != nil {
+			return readErr
+		}
+		if readSize != 16 {
+			return fmt.Errorf("readSize mismatch")
+		}
 		item.fileKey = util.BytesToUint64(buffer[:8])
 		item.cookie = util.BytesToUint32(buffer[8:12])
 		pathSize := util.BytesToUint32(buffer[12:16])
@@ -463,11 +465,11 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleI
 		if n != int(pathSize) {
 			fmt.Fprintf(c.writer, "%d,%x%08x %d unexpected file name size %d\n", volumeId, item.fileKey, item.cookie, pathSize, n)
 		}
-		item.path = util.FullPath(string(pathBytes))
+		item.path = util.FullPath(pathBytes)
 		needleId := types.NeedleId(item.fileKey)
 		fn(needleId, item.path)
 	}
-	return err
+	return nil
 }
 
 func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, volumeId uint32, applyPurging bool) (err error) {
@@ -534,23 +536,30 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 	defer db.Close()
 
 	if err = db.LoadFromIdx(getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)); err != nil {
+		err = fmt.Errorf("failed to LoadFromIdx %+v", err)
 		return
 	}
 
-	if err = c.readFilerFileIdFile(volumeId, func(needleId types.NeedleId, itemPath util.FullPath) {
-		db.Delete(needleId)
+	if err = c.readFilerFileIdFile(volumeId, func(nId types.NeedleId, itemPath util.FullPath) {
+		if err = db.Delete(nId); err != nil && *c.verbose {
+			fmt.Fprintf(c.writer, "failed to nm.delete %s(%+v): %+v", itemPath, nId, err)
+		}
 		inUseCount++
 	}); err != nil {
+		err = fmt.Errorf("failed to readFilerFileIdFile %+v", err)
 		return
 	}
 
 	var orphanFileCount uint64
-	db.AscendingVisit(func(n needle_map.NeedleValue) error {
+	if err = db.AscendingVisit(func(n needle_map.NeedleValue) error {
 		orphanFileIds = append(orphanFileIds, fmt.Sprintf("%s:%d,%s00000000", collection, volumeId, n.Key.String()))
 		orphanFileCount++
 		orphanDataSize += uint64(n.Size)
 		return nil
-	})
+	}); err != nil {
+		err = fmt.Errorf("failed to AscendingVisit %+v", err)
+		return
+	}
 
 	if orphanFileCount > 0 {
 		pct := float64(orphanFileCount*100) / (float64(orphanFileCount + inUseCount))
@@ -602,12 +611,11 @@ func (c *commandVolumeFsck) collectVolumeIds() (volumeIdToServer map[string]map[
 					isReadOnly: true,
 				}
 			}
+			if *c.verbose {
+				fmt.Fprintf(c.writer, "dn %+v collected %d volumes and locations.\n", dataNodeId, len(volumeIdToServer[dataNodeId]))
+			}
 		}
 	})
-
-	if *c.verbose {
-		fmt.Fprintf(c.writer, "collected %d volumes and locations.\n", len(volumeIdToServer))
-	}
 	return
 }
 
