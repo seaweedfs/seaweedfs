@@ -1,6 +1,7 @@
 package idx
 
 import (
+	"errors"
 	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -13,7 +14,7 @@ func WalkIndexFile(r io.ReaderAt, startFrom uint64, fn func(key types.NeedleId, 
 	readerOffset := int64(startFrom * types.NeedleMapEntrySize)
 	bytes := make([]byte, types.NeedleMapEntrySize*RowsToRead)
 	count, e := r.ReadAt(bytes, readerOffset)
-	if count == 0 && e == io.EOF {
+	if count == 0 && errors.Is(e, io.EOF) {
 		return nil
 	}
 	glog.V(3).Infof("readerOffset %d count %d err: %v", readerOffset, count, e)
@@ -25,14 +26,14 @@ func WalkIndexFile(r io.ReaderAt, startFrom uint64, fn func(key types.NeedleId, 
 		i      int
 	)
 
-	for count > 0 && e == nil || e == io.EOF {
+	for count > 0 && e == nil || errors.Is(e, io.EOF) {
 		for i = 0; i+types.NeedleMapEntrySize <= count; i += types.NeedleMapEntrySize {
 			key, offset, size = IdxFileEntry(bytes[i : i+types.NeedleMapEntrySize])
 			if e = fn(key, offset, size); e != nil {
 				return e
 			}
 		}
-		if e == io.EOF {
+		if errors.Is(e, io.EOF) {
 			return nil
 		}
 		count, e = r.ReadAt(bytes, readerOffset)

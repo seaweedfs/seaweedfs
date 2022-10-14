@@ -44,6 +44,7 @@ type commandVolumeFsck struct {
 	verbose                  *bool
 	forcePurging             *bool
 	findMissingChunksInFiler *bool
+	verifyNeedleMeta         *bool
 }
 
 func (c *commandVolumeFsck) Name() string {
@@ -82,6 +83,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
 	tempPath := fsckCommand.String("tempPath", path.Join(os.TempDir()), "path for temporary idx files")
 	cutoffTimeAgo := fsckCommand.Duration("cutoffTimeAgo", 5*time.Minute, "only include entries  on volume servers before this cutoff time to check orphan chunks")
+	c.verifyNeedleMeta = fsckCommand.Bool("verifyNeedleMeta", false, "get needle meta from volume server")
 
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
@@ -540,8 +542,17 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		err = fmt.Errorf("failed to LoadFromIdx %+v", err)
 		return
 	}
-
+	voluemAddr := pb.NewServerAddressWithGrpcPort(dataNodeId, 0)
 	if err = c.readFilerFileIdFile(volumeId, func(nId types.NeedleId, itemPath util.FullPath) {
+		if *c.verifyNeedleMeta {
+			if v, ok := db.Get(nId); ok {
+				v.Size = 2
+				if _, err := readSourceNeedleBlob(c.env.option.GrpcDialOption, voluemAddr, volumeId, *v); err != nil {
+					fmt.Fprintf(c.writer, "failed to read NeedleBlob %s(%+v): %+v", itemPath, nId, err)
+				}
+			}
+		}
+
 		if err = db.Delete(nId); err != nil && *c.verbose {
 			fmt.Fprintf(c.writer, "failed to nm.delete %s(%+v): %+v", itemPath, nId, err)
 		}
