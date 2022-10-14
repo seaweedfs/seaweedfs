@@ -137,6 +137,31 @@ var (
 			Help:      "Counter of volume server requests.",
 		}, []string{"type"})
 
+	VolumeServerVacuumingCompactCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "vacuuming_compact_count",
+			Help:      "Counter of volume vacuuming Compact counter",
+		}, []string{"success"})
+
+	VolumeServerVacuumingCommitCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "vacuuming_commit_count",
+			Help:      "Counter of volume vacuuming commit counter",
+		}, []string{"success"})
+
+	VolumeServerVacuumingHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "vacuuming_seconds",
+			Help:      "Bucketed histogram of volume server vacuuming processing time.",
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
+		}, []string{"type"})
+
 	VolumeServerRequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
@@ -223,6 +248,9 @@ func init() {
 
 	Gather.MustRegister(VolumeServerRequestCounter)
 	Gather.MustRegister(VolumeServerRequestHistogram)
+	Gather.MustRegister(VolumeServerVacuumingCompactCounter)
+	Gather.MustRegister(VolumeServerVacuumingCommitCounter)
+	Gather.MustRegister(VolumeServerVacuumingHistogram)
 	Gather.MustRegister(VolumeServerVolumeCounter)
 	Gather.MustRegister(VolumeServerMaxVolumeCounter)
 	Gather.MustRegister(VolumeServerReadOnlyVolumeGauge)

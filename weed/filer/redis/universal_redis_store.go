@@ -35,6 +35,22 @@ func (store *UniversalRedisStore) RollbackTransaction(ctx context.Context) error
 
 func (store *UniversalRedisStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 
+	if err = store.doInsertEntry(ctx, entry); err != nil {
+		return err
+	}
+
+	dir, name := entry.FullPath.DirAndName()
+	if name != "" {
+		_, err = store.Client.SAdd(ctx, genDirectoryListKey(dir), name).Result()
+		if err != nil {
+			return fmt.Errorf("persisting %s in parent dir: %v", entry.FullPath, err)
+		}
+	}
+
+	return nil
+}
+
+func (store *UniversalRedisStore) doInsertEntry(ctx context.Context, entry *filer.Entry) error {
 	value, err := entry.EncodeAttributesAndChunks()
 	if err != nil {
 		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
@@ -49,21 +65,12 @@ func (store *UniversalRedisStore) InsertEntry(ctx context.Context, entry *filer.
 	if err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
 	}
-
-	dir, name := entry.FullPath.DirAndName()
-	if name != "" {
-		_, err = store.Client.SAdd(ctx, genDirectoryListKey(dir), name).Result()
-		if err != nil {
-			return fmt.Errorf("persisting %s in parent dir: %v", entry.FullPath, err)
-		}
-	}
-
 	return nil
 }
 
 func (store *UniversalRedisStore) UpdateEntry(ctx context.Context, entry *filer.Entry) (err error) {
 
-	return store.InsertEntry(ctx, entry)
+	return store.doInsertEntry(ctx, entry)
 }
 
 func (store *UniversalRedisStore) FindEntry(ctx context.Context, fullpath util.FullPath) (entry *filer.Entry, err error) {

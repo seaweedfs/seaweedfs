@@ -2,6 +2,7 @@ package s3_backend
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 	"os"
 	"strings"
@@ -91,7 +92,10 @@ func (s *S3BackendStorage) CopyFile(f *os.File, fn func(progressed int64, percen
 
 	glog.V(1).Infof("copying dat file of %s to remote s3.%s as %s", f.Name(), s.id, key)
 
-	size, err = uploadToS3(s.conn, f.Name(), s.bucket, key, s.storageClass, fn)
+	util.Retry("upload to S3", func() error {
+		size, err = uploadToS3(s.conn, f.Name(), s.bucket, key, s.storageClass, fn)
+		return err
+	})
 
 	return
 }
