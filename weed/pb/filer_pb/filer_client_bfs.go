@@ -9,15 +9,14 @@ import (
 )
 
 func TraverseBfs(filerClient FilerClient, parentPath util.FullPath, fn func(parentPath util.FullPath, entry *Entry)) (err error) {
-
 	K := 5
 
 	var jobQueueWg sync.WaitGroup
 	queue := util.NewQueue()
 	jobQueueWg.Add(1)
 	queue.Enqueue(parentPath)
-
 	terminates := make([]chan bool, K)
+
 	for i := 0; i < K; i++ {
 		terminates[i] = make(chan bool)
 		go func(j int) {
@@ -43,7 +42,6 @@ func TraverseBfs(filerClient FilerClient, parentPath util.FullPath, fn func(pare
 	}
 	jobQueueWg.Wait()
 	for i := 0; i < K; i++ {
-		terminates[i] <- true
 		close(terminates[i])
 	}
 	return
