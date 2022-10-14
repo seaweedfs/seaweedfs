@@ -16,30 +16,36 @@ func TraverseBfs(filerClient FilerClient, parentPath util.FullPath, fn func(pare
 	queue := util.NewQueue()
 	jobQueueWg.Add(1)
 	queue.Enqueue(parentPath)
-	var isTerminating bool
 
+	terminates := make([]chan bool, K)
 	for i := 0; i < K; i++ {
-		go func() {
+		terminates[i] = make(chan bool)
+		go func(j int) {
 			for {
-				if isTerminating {
-					break
+				select {
+				case <-terminates[j]:
+					return
+				default:
+					t := queue.Dequeue()
+					if t == nil {
+						time.Sleep(329 * time.Millisecond)
+						continue
+					}
+					dir := t.(util.FullPath)
+					processErr := processOneDirectory(filerClient, dir, queue, &jobQueueWg, fn)
+					if processErr != nil {
+						err = processErr
+					}
+					jobQueueWg.Done()
 				}
-				t := queue.Dequeue()
-				if t == nil {
-					time.Sleep(329 * time.Millisecond)
-					continue
-				}
-				dir := t.(util.FullPath)
-				processErr := processOneDirectory(filerClient, dir, queue, &jobQueueWg, fn)
-				if processErr != nil {
-					err = processErr
-				}
-				jobQueueWg.Done()
 			}
-		}()
+		}(i)
 	}
 	jobQueueWg.Wait()
-	isTerminating = true
+	for i := 0; i < K; i++ {
+		terminates[i] <- true
+		close(terminates[i])
+	}
 	return
 }
 
