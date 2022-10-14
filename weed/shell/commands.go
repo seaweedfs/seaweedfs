@@ -169,3 +169,18 @@ func readNeedleMeta(grpcDialOption grpc.DialOption, volumeServer pb.ServerAddres
 	)
 	return
 }
+
+func readNeedleStatus(grpcDialOption grpc.DialOption, sourceVolumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.VolumeNeedleStatusResponse, err error) {
+	err = operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			if resp, err = client.VolumeNeedleStatus(context.Background(), &volume_server_pb.VolumeNeedleStatusRequest{
+				VolumeId: volumeId,
+				NeedleId: uint64(needleValue.Key),
+			}); err != nil {
+				return err
+			}
+			return nil
+		},
+	)
+	return
+}
