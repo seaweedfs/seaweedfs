@@ -195,7 +195,6 @@ func (c *commandVolumeCheckDisk) readSourceNeedleBlob(sourceVolumeServer pb.Serv
 	err = operation.WithVolumeServerClient(false, sourceVolumeServer, c.env.option.GrpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		resp, err := client.ReadNeedleBlob(context.Background(), &volume_server_pb.ReadNeedleBlobRequest{
 			VolumeId: volumeId,
-			NeedleId: uint64(needleValue.Key),
 			Offset:   needleValue.Offset.ToActualOffset(),
 			Size:     int32(needleValue.Size),
 		})

@@ -157,7 +157,7 @@ func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool) (offset uint
 	}
 
 	// append to dat file
-	n.AppendAtNs = uint64(time.Now().UnixNano())
+	n.AppendAtNs = max(uint64(time.Now().UnixNano()), v.lastAppendAtNs+1)
 	offset, size, _, err = n.Append(v.DataBackend, v.Version())
 	v.checkReadWriteError(err)
 	if err != nil {
@@ -329,4 +329,11 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 	}
 
 	return err
+}
+
+func max(x, y uint64) uint64 {
+	if x <= y {
+		return y
+	}
+	return x
 }
