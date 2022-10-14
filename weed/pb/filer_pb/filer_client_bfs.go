@@ -42,7 +42,6 @@ func TraverseBfs(filerClient FilerClient, parentPath util.FullPath, fn func(pare
 	}
 	jobQueueWg.Wait()
 	for i := 0; i < K; i++ {
-		terminates[i] <- true
 		close(terminates[i])
 	}
 	return
