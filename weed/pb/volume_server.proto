@@ -279,7 +279,6 @@ message CopyFileResponse {
 
 message ReadNeedleBlobRequest {
     uint32 volume_id = 1;
-    uint64 needle_id = 2;
     int64 offset = 3; // actual offset
     int32 size = 4;
 }
