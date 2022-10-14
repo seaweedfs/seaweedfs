@@ -63,3 +63,39 @@ func (s3a *S3ApiServer) checkAccessForPutBucketAcl(accountId, bucket string) (*B
 func updateBucketEntry(s3a *S3ApiServer, entry *filer_pb.Entry) error {
 	return s3a.updateEntry(s3a.option.BucketsPath, entry)
 }
+
+// Check Bucket/BucketAcl Read related access
+// includes:
+// - HeadBucketHandler
+// - GetBucketAclHandler
+// - ListObjectsV1Handler
+// - ListObjectsV2Handler
+func (s3a *S3ApiServer) checkAccessForReadBucket(r *http.Request, bucket, aclAction string) (*BucketMetaData, s3err.ErrorCode) {
+	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
+	if errCode != s3err.ErrNone {
+		return nil, errCode
+	}
+
+	if bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
+		return bucketMetadata, s3err.ErrNone
+	}
+
+	accountId := s3acl.GetAccountId(r)
+	if accountId == s3account.AccountAdmin.Id || accountId == *bucketMetadata.Owner.ID {
+		return bucketMetadata, s3err.ErrNone
+	}
+
+	if len(bucketMetadata.Acl) > 0 {
+		reqGrants := s3acl.DetermineReqGrants(accountId, aclAction)
+		for _, bucketGrant := range bucketMetadata.Acl {
+			for _, reqGrant := range reqGrants {
+				if s3acl.GrantEquals(bucketGrant, reqGrant) {
+					return bucketMetadata, s3err.ErrNone
+				}
+			}
+		}
+	}
+
+	glog.V(3).Infof("acl denied! request account id: %s", accountId)
+	return nil, s3err.ErrAccessDenied
+}
