@@ -44,7 +44,7 @@ type commandVolumeFsck struct {
 	verbose                  *bool
 	forcePurging             *bool
 	findMissingChunksInFiler *bool
-	verifyNeedleMeta         *bool
+	verifyNeedle             *bool
 }
 
 func (c *commandVolumeFsck) Name() string {
@@ -83,7 +83,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
 	tempPath := fsckCommand.String("tempPath", path.Join(os.TempDir()), "path for temporary idx files")
 	cutoffTimeAgo := fsckCommand.Duration("cutoffTimeAgo", 5*time.Minute, "only include entries  on volume servers before this cutoff time to check orphan chunks")
-	c.verifyNeedleMeta = fsckCommand.Bool("verifyNeedleMeta", false, "get needle meta from volume server")
+	c.verifyNeedle = fsckCommand.Bool("verifyNeedles", false, "try get head needle blob from volume server")
 
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
@@ -287,7 +287,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 
 			if *c.verbose {
 				for _, fid := range orphanFileIds {
-					fmt.Fprintf(c.writer, "%s\n", fid)
+					fmt.Fprintf(c.writer, "%s:%s\n", vinfo.collection, fid)
 				}
 			}
 			isEcVolumeReplicas[volumeId] = vinfo.isEcVolume
@@ -545,11 +545,18 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 
 	voluemAddr := pb.NewServerAddressWithGrpcPort(dataNodeId, 0)
 	if err = c.readFilerFileIdFile(volumeId, func(nId types.NeedleId, itemPath util.FullPath) {
-		if *c.verifyNeedleMeta {
-			if v, ok := db.Get(nId); ok {
-				v.Size = 2
+		inUseCount++
+		if *c.verifyNeedle {
+			if v, ok := db.Get(nId); ok && v.Size.IsValid() {
+				newSize := types.Size(16)
+				if v.Size > newSize {
+					v.Size = newSize
+				}
 				if _, err := readSourceNeedleBlob(c.env.option.GrpcDialOption, voluemAddr, volumeId, *v); err != nil {
-					fmt.Fprintf(c.writer, "failed to read NeedleBlob %s(%+v): %+v", itemPath, nId, err)
+					fmt.Fprintf(c.writer, "failed to read file %s NeedleBlob %+v: %+v", itemPath, nId, err)
+					if *c.forcePurging {
+						return
+					}
 				}
 			}
 		}
@@ -557,7 +564,6 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		if err = db.Delete(nId); err != nil && *c.verbose {
 			fmt.Fprintf(c.writer, "failed to nm.delete %s(%+v): %+v", itemPath, nId, err)
 		}
-		inUseCount++
 	}); err != nil {
 		err = fmt.Errorf("failed to readFilerFileIdFile %+v", err)
 		return
@@ -565,7 +571,10 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 
 	var orphanFileCount uint64
 	if err = db.AscendingVisit(func(n needle_map.NeedleValue) error {
-		orphanFileIds = append(orphanFileIds, fmt.Sprintf("%s:%d,%s00000000", collection, volumeId, n.Key.String()))
+		if !n.Size.IsValid() {
+			return nil
+		}
+		orphanFileIds = append(orphanFileIds, fmt.Sprintf("%d,%s00000000", volumeId, n.Key.String()))
 		orphanFileCount++
 		orphanDataSize += uint64(n.Size)
 		return nil
