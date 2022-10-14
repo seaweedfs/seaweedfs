@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3acl"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"net/http"
@@ -400,6 +402,24 @@ func (s3a *S3ApiServer) PutBucketOwnershipControls(w http.ResponseWriter, r *htt
 
 	oldOwnership, ok := bucketEntry.Extended[s3_constants.ExtOwnershipKey]
 	if !ok || string(oldOwnership) != ownership {
+
+		// must reset bucket acl to default(bucket owner with full control permission) before setting ownership
+		// to `OwnershipBucketOwnerEnforced` (bucket cannot have ACLs set with ObjectOwnership's BucketOwnerEnforced setting)
+		if ownership == s3_constants.OwnershipBucketOwnerEnforced {
+			acpGrants := s3acl.GetAcpGrants(bucketEntry.Extended)
+			if len(acpGrants) != 1 {
+				s3err.WriteErrorResponse(w, r, s3err.InvalidBucketAclWithObjectOwnership)
+				return
+			}
+
+			bucketOwner := s3acl.GetAcpOwner(bucketEntry.Extended, s3account.AccountAdmin.Id)
+			expectGrant := s3acl.GrantWithFullControl(bucketOwner)
+			if s3acl.GrantEquals(acpGrants[0], expectGrant) {
+				s3err.WriteErrorResponse(w, r, s3err.InvalidBucketAclWithObjectOwnership)
+				return
+			}
+		}
+
 		if bucketEntry.Extended == nil {
 			bucketEntry.Extended = make(map[string][]byte)
 		}

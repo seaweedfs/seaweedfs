@@ -503,3 +503,13 @@ func GrantEquals(a, b *s3.Grant) bool {
 	}
 	return true
 }
+
+func GrantWithFullControl(accountId string) *s3.Grant {
+	return &s3.Grant{
+		Permission: &s3_constants.PermissionFullControl,
+		Grantee: &s3.Grantee{
+			Type: &s3_constants.GrantTypeCanonicalUser,
+			ID:   &accountId,
+		},
+	}
+}

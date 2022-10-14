@@ -109,6 +109,7 @@ const (
 	ErrRequestBytesExceed
 
 	OwnershipControlsNotFoundError
+	InvalidBucketAclWithObjectOwnership
 )
 
 // error code to APIError structure, these fields carry respective
@@ -420,6 +421,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	OwnershipControlsNotFoundError: {
 		Code:           "OwnershipControlsNotFoundError",
 		Description:    "The bucket ownership controls were not found",
+		HTTPStatusCode: http.StatusNotFound,
+	},
+	InvalidBucketAclWithObjectOwnership: {
+		Code:           "InvalidBucketAclWithObjectOwnership",
+		Description:    "Bucket cannot have ACLs set with ObjectOwnership's BucketOwnerEnforced setting",
 		HTTPStatusCode: http.StatusNotFound,
 	},
 }

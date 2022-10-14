@@ -706,3 +706,20 @@ func TestSetAcpGrantsHeader(t *testing.T) {
 		t.Fatalf("owner unexpect")
 	}
 }
+
+func TestGrantWithFullControl(t *testing.T) {
+	accountId := "Accountaskdfj"
+	expect := &s3.Grant{
+		Permission: &s3_constants.PermissionFullControl,
+		Grantee: &s3.Grantee{
+			Type: &s3_constants.GrantTypeCanonicalUser,
+			ID:   &accountId,
+		},
+	}
+
+	result := GrantWithFullControl(accountId)
+
+	if !GrantEquals(result, expect) {
+		t.Fatal("GrantWithFullControl not expect")
+	}
+}
