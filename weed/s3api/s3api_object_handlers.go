@@ -165,6 +165,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
 
+	errCode := s3a.checkBucketAccessForReadObject(r, bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	if strings.HasSuffix(r.URL.Path, "/") {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 		return
@@ -387,14 +393,17 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	}
 	defer util.CloseResponse(resp)
 
-	if resp.StatusCode == http.StatusPreconditionFailed {
+	switch resp.StatusCode {
+	case http.StatusPreconditionFailed:
 		s3err.WriteErrorResponse(w, r, s3err.ErrPreconditionFailed)
 		return
-	}
-
-	if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+	case http.StatusRequestedRangeNotSatisfiable:
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRange)
 		return
+	case http.StatusForbidden:
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	default:
 	}
 
 	if r.Method == "DELETE" {

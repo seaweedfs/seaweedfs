@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -516,4 +517,39 @@ func GrantWithFullControl(accountId string) *s3.Grant {
 			ID:   &accountId,
 		},
 	}
+}
+
+func CheckObjectAccessForReadObject(r *http.Request, w http.ResponseWriter, entry *filer.Entry, bucketOwnerId string) (statusCode int, ok bool) {
+	if entry.IsDirectory() {
+		w.Header().Set(s3_constants.X_SeaweedFS_Header_Directory_Key, "true")
+		return http.StatusMethodNotAllowed, false
+	}
+
+	accountId := GetAccountId(r)
+	if len(accountId) == 0 {
+		glog.Warning("#checkObjectAccessForReadObject header[accountId] not exists!")
+		return http.StatusForbidden, false
+	}
+
+	//owner access
+	objectOwner := GetAcpOwner(entry.Extended, bucketOwnerId)
+	if accountId == objectOwner {
+		return http.StatusOK, true
+	}
+
+	//find in Grants
+	acpGrants := GetAcpGrants(entry.Extended)
+	if acpGrants != nil {
+		reqGrants := DetermineReqGrants(accountId, s3_constants.PermissionRead)
+		for _, requiredGrant := range reqGrants {
+			for _, grant := range acpGrants {
+				if GrantEquals(requiredGrant, grant) {
+					return http.StatusOK, true
+				}
+			}
+		}
+	}
+
+	glog.V(3).Infof("acl denied! request account id: %s", accountId)
+	return http.StatusForbidden, false
 }
