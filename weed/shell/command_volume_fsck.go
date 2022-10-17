@@ -34,6 +34,11 @@ func init() {
 	Commands = append(Commands, &commandVolumeFsck{})
 }
 
+const (
+	readbufferSize      = 16
+	verifyProbeBlobSize = 16
+)
+
 type commandVolumeFsck struct {
 	env                      *CommandEnv
 	writer                   io.Writer
@@ -221,7 +226,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 			return nil
 		},
 		func(outputChan chan interface{}) {
-			buffer := make([]byte, 16)
+			buffer := make([]byte, readbufferSize)
 			for item := range outputChan {
 				i := item.(*Item)
 				if f, ok := files[i.vid]; ok {
@@ -442,7 +447,7 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleI
 	defer fp.Close()
 
 	br := bufio.NewReader(fp)
-	buffer := make([]byte, 16)
+	buffer := make([]byte, readbufferSize)
 	var readSize int
 	var readErr error
 	item := &Item{vid: volumeId}
@@ -454,7 +459,7 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleI
 		if readErr != nil {
 			return readErr
 		}
-		if readSize != 16 {
+		if readSize != readbufferSize {
 			return fmt.Errorf("readSize mismatch")
 		}
 		item.fileKey = util.BytesToUint64(buffer[:8])
@@ -548,7 +553,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		inUseCount++
 		if *c.verifyNeedle {
 			if v, ok := db.Get(nId); ok && v.Size.IsValid() {
-				newSize := types.Size(16)
+				newSize := types.Size(verifyProbeBlobSize)
 				if v.Size > newSize {
 					v.Size = newSize
 				}
