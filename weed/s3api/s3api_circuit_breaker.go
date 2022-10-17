@@ -82,7 +82,7 @@ func (cb *CircuitBreaker) loadCircuitBreakerConfig(cfg *s3_pb.S3CircuitBreakerCo
 	return nil
 }
 
-func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), action string) (http.HandlerFunc, Action) {
+func (cb *CircuitBreaker) Limit(f http.HandlerFunc, action string) (http.HandlerFunc, Action) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !cb.Enabled {
 			f(w, r)
