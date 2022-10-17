@@ -429,6 +429,7 @@ message ReadVolumeFileStatusResponse {
     uint32 compaction_revision = 7;
     string collection = 8;
     string disk_type = 9;
+    VolumeInfo volume_info = 10;
 }
 
 message DiskStatus {
