@@ -411,6 +411,8 @@ func AssembleEntryWithAcp(objectEntry *filer_pb.Entry, objectOwner string, grant
 
 	if len(objectOwner) > 0 {
 		objectEntry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(objectOwner)
+	} else {
+		delete(objectEntry.Extended, s3_constants.ExtAmzOwnerKey)
 	}
 
 	if len(grants) > 0 {
@@ -420,6 +422,8 @@ func AssembleEntryWithAcp(objectEntry *filer_pb.Entry, objectOwner string, grant
 			return s3err.ErrInvalidRequest
 		}
 		objectEntry.Extended[s3_constants.ExtAmzAclKey] = grantsBytes
+	} else {
+		delete(objectEntry.Extended, s3_constants.ExtAmzAclKey)
 	}
 
 	return s3err.ErrNone

@@ -487,46 +487,44 @@ func TestDetermineReqGrants(t *testing.T) {
 
 func TestAssembleEntryWithAcp(t *testing.T) {
 	defaultOwner := "admin"
-	{
-		//case1
-		expectOwner := "accountS"
-		expectGrants := []*s3.Grant{
-			{
-				Permission: &s3_constants.PermissionRead,
-				Grantee: &s3.Grantee{
-					Type: &s3_constants.GrantTypeGroup,
-					ID:   &s3account.AccountAdmin.Id,
-					URI:  &s3_constants.GranteeGroupAllUsers,
-				},
+
+	//case1
+	//assemble with non-empty grants
+	expectOwner := "accountS"
+	expectGrants := []*s3.Grant{
+		{
+			Permission: &s3_constants.PermissionRead,
+			Grantee: &s3.Grantee{
+				Type: &s3_constants.GrantTypeGroup,
+				ID:   &s3account.AccountAdmin.Id,
+				URI:  &s3_constants.GranteeGroupAllUsers,
 			},
-		}
-		entry := &filer_pb.Entry{}
-		AssembleEntryWithAcp(entry, expectOwner, expectGrants)
-
-		resultOwner := GetAcpOwner(entry.Extended, defaultOwner)
-		if resultOwner != expectOwner {
-			t.Fatalf("owner not expect")
-		}
-
-		resultGrants := GetAcpGrants(entry.Extended)
-		if !grantsEquals(resultGrants, expectGrants) {
-			t.Fatal("grants not expect")
-		}
+		},
 	}
-	{
-		//case2
-		entry := &filer_pb.Entry{}
-		AssembleEntryWithAcp(entry, "", nil)
+	entry := &filer_pb.Entry{}
+	AssembleEntryWithAcp(entry, expectOwner, expectGrants)
 
-		resultOwner := GetAcpOwner(entry.Extended, defaultOwner)
-		if resultOwner != defaultOwner {
-			t.Fatalf("owner not expect")
-		}
+	resultOwner := GetAcpOwner(entry.Extended, defaultOwner)
+	if resultOwner != expectOwner {
+		t.Fatalf("owner not expect")
+	}
 
-		resultGrants := GetAcpGrants(entry.Extended)
-		if len(resultGrants) != 0 {
-			t.Fatal("grants not expect")
-		}
+	resultGrants := GetAcpGrants(entry.Extended)
+	if !grantsEquals(resultGrants, expectGrants) {
+		t.Fatal("grants not expect")
+	}
+
+	//case2
+	//assemble with empty grants (override)
+	AssembleEntryWithAcp(entry, "", nil)
+	resultOwner = GetAcpOwner(entry.Extended, defaultOwner)
+	if resultOwner != defaultOwner {
+		t.Fatalf("owner not expect")
+	}
+
+	resultGrants = GetAcpGrants(entry.Extended)
+	if len(resultGrants) != 0 {
+		t.Fatal("grants not expect")
 	}
 
 }
