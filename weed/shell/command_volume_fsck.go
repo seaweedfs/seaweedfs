@@ -482,7 +482,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 					return
 				}
 			} else {
-				fmt.Fprintf(c.writer, "failed to read file %s NeedleBlob %+v: %+v", itemPath, filerNeedleId, err)
+				fmt.Fprintf(c.writer, "failed to read file %s needle meta %+v: %+v", itemPath, filerNeedleId, err)
 			}
 			fmt.Fprintf(c.writer, "%s\n", itemPath)
 			if applyPurging {
@@ -515,14 +515,14 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		inUseCount++
 		if *c.verifyNeedle && needleValue.Size.IsValid() {
 			if _, err := raedNeedleStatus(c.env.option.GrpcDialOption, voluemAddr, volumeId, *needleValue); err != nil {
-				fmt.Fprintf(c.writer, "failed to read %+v needle status of file %s: %+v", filerNeedleId, itemPath, err)
+				fmt.Fprintf(c.writer, "failed to read %d:%s needle status of file %s: %+v\n", volumeId, filerNeedleId.String(), itemPath, err)
 				if *c.forcePurging {
 					return
 				}
 			}
 		}
 		if err = volumeFileIdDb.Delete(filerNeedleId); err != nil && *c.verbose {
-			fmt.Fprintf(c.writer, "failed to nm.delete %s(%+v): %+v", itemPath, filerNeedleId, err)
+			fmt.Fprintf(c.writer, "failed to nm.delete %s(%d:%s): %+v\n", itemPath, volumeId, filerNeedleId.String(), err)
 		}
 	}); err != nil {
 		err = fmt.Errorf("failed to readFilerFileIdFile %+v", err)
