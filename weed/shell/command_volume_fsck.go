@@ -13,11 +13,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc"
 	"io"
 	"io/ioutil"
 	"math"
@@ -35,8 +35,7 @@ func init() {
 }
 
 const (
-	readbufferSize      = 16
-	verifyProbeBlobSize = 16
+	readbufferSize = 16
 )
 
 type commandVolumeFsck struct {
@@ -87,7 +86,6 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.forcePurging = fsckCommand.Bool("forcePurging", false, "delete missing data from volumes in one replica used together with applyPurging")
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
 	tempPath := fsckCommand.String("tempPath", path.Join(os.TempDir()), "path for temporary idx files")
-	cutoffTimeAgo := fsckCommand.Duration("cutoffTimeAgo", 5*time.Minute, "only include entries  on volume servers before this cutoff time to check orphan chunks")
 	c.verifyNeedle = fsckCommand.Bool("verifyNeedles", false, "try get head needle blob from volume server")
 
 	if err = fsckCommand.Parse(args); err != nil {
@@ -142,8 +140,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 			if *c.volumeId > 0 && *c.collection == "" {
 				*c.collection = vinfo.collection
 			}
-			cutoffFrom := time.Now().Add(-*cutoffTimeAgo).UnixNano()
-			err = c.collectOneVolumeFileIds(dataNodeId, volumeId, vinfo, uint64(cutoffFrom))
+			err = c.collectOneVolumeFileIds(dataNodeId, volumeId, vinfo)
 			if err != nil {
 				return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, err)
 			}
@@ -153,8 +150,9 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		}
 	}
 
+	// Find missing(orphan) chunks in filer
 	if *c.findMissingChunksInFiler {
-		// collect all filer file ids and paths
+		// collect all filer file ids and paths where is the modification time before starting collect volume file ids
 		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, *purgeAbsent, collectMtime); err != nil {
 			return fmt.Errorf("collectFilerFileIdAndPaths: %v", err)
 		}
@@ -164,9 +162,10 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 				return fmt.Errorf("findFilerChunksMissingInVolumeServers: %v", err)
 			}
 		}
+		// Find missing(orphan) chunks in volume
 	} else {
 		// collect all filer file ids
-		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, false, collectMtime); err != nil {
+		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, false, 0); err != nil {
 			return fmt.Errorf("failed to collect file ids from filer: %v", err)
 		}
 		// volume file ids subtract filer file ids
@@ -213,7 +212,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 			}
 			dataChunks = append(dataChunks, manifestChunks...)
 			for _, chunk := range dataChunks {
-				if chunk.Mtime > collectMtime {
+				if collectMtime != 0 && chunk.Mtime > collectMtime {
 					continue
 				}
 				outputChan <- &Item{
@@ -267,7 +266,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	serverReplicas := make(map[uint32][]pb.ServerAddress)
 	for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 		for volumeId, vinfo := range volumeIdToVInfo {
-			inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(dataNodeId, volumeId, vinfo.collection)
+			inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(dataNodeId, volumeId)
 			if checkErr != nil {
 				return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
 			}
@@ -363,7 +362,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	return nil
 }
 
-func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId uint32, vinfo VInfo, cutoffFrom uint64) error {
+func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId uint32, vinfo VInfo) error {
 
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "collecting volume %d file ids from %s ...\n", volumeId, vinfo.server)
@@ -400,36 +399,13 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 				}
 				buf.Write(resp.FileContent)
 			}
-			fileredBuf := filterDeletedNeedleFromIdx(buf.Bytes())
-			if vinfo.isReadOnly == false {
-				index, err := idx.FirstInvalidIndex(fileredBuf.Bytes(),
-					func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
-						resp, err := volumeServerClient.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
-							VolumeId: volumeId,
-							NeedleId: uint64(key),
-							Offset:   offset.ToActualOffset(),
-							Size:     int32(size),
-						})
-						if err != nil {
-							return false, fmt.Errorf("to read needle meta with id %d from volume %d with error %v", key, volumeId, err)
-						}
-						return resp.LastModified <= cutoffFrom, nil
-					})
-				if err != nil {
-					fmt.Fprintf(c.writer, "Failed to search for last valid index on volume %d with error %v", volumeId, err)
-				} else {
-					fileredBuf.Truncate(index * types.NeedleMapEntrySize)
-				}
-			}
 			idxFilename := getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)
-			err = writeToFile(fileredBuf.Bytes(), idxFilename)
+			err = writeToFile(buf.Bytes(), idxFilename)
 			if err != nil {
 				return fmt.Errorf("failed to copy %d%s from %s: %v", volumeId, ext, vinfo.server, err)
 			}
-
 			return nil
 		})
-
 }
 
 type Item struct {
@@ -485,14 +461,29 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 		fmt.Fprintf(c.writer, "find missing file chunks in dataNodeId %s volume %d ...\n", dataNodeId, volumeId)
 	}
 
-	db := needle_map.NewMemDb()
-	defer db.Close()
+	volumeFileIdDb := needle_map.NewMemDb()
+	defer volumeFileIdDb.Close()
 
-	if err = db.LoadFromIdx(getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)); err != nil {
+	if err = volumeFileIdDb.LoadFromIdx(getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)); err != nil {
 		return
 	}
-	if err = c.readFilerFileIdFile(volumeId, func(needleId types.NeedleId, itemPath util.FullPath) {
-		if _, found := db.Get(needleId); !found {
+
+	voluemAddr := pb.NewServerAddressWithGrpcPort(dataNodeId, 0)
+	if err = c.readFilerFileIdFile(volumeId, func(filerNeedleId types.NeedleId, itemPath util.FullPath) {
+		// remove form filer chunk not found in volume
+		if needleValue, found := volumeFileIdDb.Get(filerNeedleId); found {
+			if needleValue.Size.IsDeleted() {
+				fmt.Fprintf(c.writer, "one of chunks with key:%+v of file %s is marked as deleted", itemPath, needleValue.Key)
+			}
+		} else {
+			// avoid delete filer chunk deleted in volume
+			if needleMeta, err := readNeedleMeta(c.env.option.GrpcDialOption, voluemAddr, volumeId, *needleValue); err == nil {
+				if needleMeta.IsDeleted {
+					return
+				}
+			} else {
+				fmt.Fprintf(c.writer, "failed to read file %s NeedleBlob %+v: %+v", itemPath, filerNeedleId, err)
+			}
 			fmt.Fprintf(c.writer, "%s\n", itemPath)
 			if applyPurging {
 				c.httpDelete(itemPath)
@@ -504,70 +495,34 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 	return nil
 }
 
-func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
-	req, err := http.NewRequest(http.MethodDelete, "", nil)
+func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId string, volumeId uint32) (inUseCount uint64, orphanFileIds []string, orphanDataSize uint64, err error) {
 
-	req.URL = &url.URL{
-		Scheme: "http",
-		Host:   c.env.option.FilerAddress.ToHttpAddress(),
-		Path:   string(path),
-	}
-	if *c.verbose {
-		fmt.Fprintf(c.writer, "full HTTP delete request to be sent: %v\n", req)
-	}
-	if err != nil {
-		fmt.Fprintf(c.writer, "HTTP delete request error: %v\n", err)
-	}
+	volumeFileIdDb := needle_map.NewMemDb()
+	defer volumeFileIdDb.Close()
 
-	client := &http.Client{}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Fprintf(c.writer, "DELETE fetch error: %v\n", err)
-	}
-	defer resp.Body.Close()
-
-	_, err = ioutil.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Fprintf(c.writer, "DELETE response error: %v\n", err)
-	}
-
-	if *c.verbose {
-		fmt.Fprintln(c.writer, "delete response Status : ", resp.Status)
-		fmt.Fprintln(c.writer, "delete response Headers : ", resp.Header)
-	}
-}
-
-func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId string, volumeId uint32, collection string) (inUseCount uint64, orphanFileIds []string, orphanDataSize uint64, err error) {
-
-	db := needle_map.NewMemDb()
-	defer db.Close()
-
-	if err = db.LoadFromIdx(getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)); err != nil {
+	if err = volumeFileIdDb.LoadFromIdx(getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)); err != nil {
 		err = fmt.Errorf("failed to LoadFromIdx %+v", err)
 		return
 	}
 
 	voluemAddr := pb.NewServerAddressWithGrpcPort(dataNodeId, 0)
-	if err = c.readFilerFileIdFile(volumeId, func(nId types.NeedleId, itemPath util.FullPath) {
+	if err = c.readFilerFileIdFile(volumeId, func(filerNeedleId types.NeedleId, itemPath util.FullPath) {
+		// remove from db needles found in filler
+		needleValue, found := volumeFileIdDb.Get(filerNeedleId)
+		if !found {
+			return
+		}
 		inUseCount++
-		if *c.verifyNeedle {
-			if v, ok := db.Get(nId); ok && v.Size.IsValid() {
-				newSize := types.Size(verifyProbeBlobSize)
-				if v.Size > newSize {
-					v.Size = newSize
-				}
-				if _, err := readSourceNeedleBlob(c.env.option.GrpcDialOption, voluemAddr, volumeId, *v); err != nil {
-					fmt.Fprintf(c.writer, "failed to read file %s NeedleBlob %+v: %+v", itemPath, nId, err)
-					if *c.forcePurging {
-						return
-					}
+		if *c.verifyNeedle && needleValue.Size.IsValid() {
+			if _, err := raedNeedleStatus(c.env.option.GrpcDialOption, voluemAddr, volumeId, *needleValue); err != nil {
+				fmt.Fprintf(c.writer, "failed to read %+v needle status of file %s: %+v", filerNeedleId, itemPath, err)
+				if *c.forcePurging {
+					return
 				}
 			}
 		}
-
-		if err = db.Delete(nId); err != nil && *c.verbose {
-			fmt.Fprintf(c.writer, "failed to nm.delete %s(%+v): %+v", itemPath, nId, err)
+		if err = volumeFileIdDb.Delete(filerNeedleId); err != nil && *c.verbose {
+			fmt.Fprintf(c.writer, "failed to nm.delete %s(%+v): %+v", itemPath, filerNeedleId, err)
 		}
 	}); err != nil {
 		err = fmt.Errorf("failed to readFilerFileIdFile %+v", err)
@@ -575,8 +530,10 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 	}
 
 	var orphanFileCount uint64
-	if err = db.AscendingVisit(func(n needle_map.NeedleValue) error {
-		if !n.Size.IsValid() {
+	// subtract
+	if err = volumeFileIdDb.AscendingVisit(func(n needle_map.NeedleValue) error {
+		// do not mark with orphan already deleted chunks
+		if n.Size.IsDeleted() {
 			return nil
 		}
 		orphanFileIds = append(orphanFileIds, fmt.Sprintf("%d,%s00000000", volumeId, n.Key.String()))
@@ -659,7 +616,6 @@ func (c *commandVolumeFsck) purgeFileIdsForOneVolume(volumeId uint32, fileIds []
 		wg.Add(1)
 		go func(server pb.ServerAddress, fidList []string) {
 			defer wg.Done()
-
 			if deleteResults, deleteErr := operation.DeleteFilesAtOneVolumeServer(server, c.env.option.GrpcDialOption, fidList, false); deleteErr != nil {
 				err = deleteErr
 			} else if deleteResults != nil {
@@ -709,13 +665,79 @@ func writeToFile(bytes []byte, fileName string) error {
 	return nil
 }
 
+func readNeedleMeta(grpcDialOption grpc.DialOption, sourceVolumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.ReadNeedleMetaResponse, err error) {
+	err = operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			if resp, err = client.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
+				VolumeId: volumeId,
+				NeedleId: uint64(needleValue.Key),
+				Offset:   needleValue.Offset.ToActualOffset(),
+				Size:     int32(needleValue.Size),
+			}); err != nil {
+				return err
+			}
+			return nil
+		},
+	)
+	return
+}
+
+func raedNeedleStatus(grpcDialOption grpc.DialOption, sourceVolumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.VolumeNeedleStatusResponse, err error) {
+	err = operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			if resp, err = client.VolumeNeedleStatus(context.Background(), &volume_server_pb.VolumeNeedleStatusRequest{
+				VolumeId: volumeId,
+				NeedleId: uint64(needleValue.Key),
+			}); err != nil {
+				return err
+			}
+			return nil
+		},
+	)
+	return
+}
+
 func filterDeletedNeedleFromIdx(arr []byte) bytes.Buffer {
 	var filteredBuf bytes.Buffer
 	for i := 0; i < len(arr); i += types.NeedleMapEntrySize {
 		size := types.BytesToSize(arr[i+types.NeedleIdSize+types.OffsetSize : i+types.NeedleIdSize+types.OffsetSize+types.SizeSize])
-		if size > 0 {
+		if size.IsValid() {
 			filteredBuf.Write(arr[i : i+types.NeedleIdSize+types.OffsetSize+types.SizeSize])
 		}
 	}
 	return filteredBuf
+}
+
+func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
+	req, err := http.NewRequest(http.MethodDelete, "", nil)
+
+	req.URL = &url.URL{
+		Scheme: "http",
+		Host:   c.env.option.FilerAddress.ToHttpAddress(),
+		Path:   string(path),
+	}
+	if *c.verbose {
+		fmt.Fprintf(c.writer, "full HTTP delete request to be sent: %v\n", req)
+	}
+	if err != nil {
+		fmt.Fprintf(c.writer, "HTTP delete request error: %v\n", err)
+	}
+
+	client := &http.Client{}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Fprintf(c.writer, "DELETE fetch error: %v\n", err)
+	}
+	defer resp.Body.Close()
+
+	_, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Fprintf(c.writer, "DELETE response error: %v\n", err)
+	}
+
+	if *c.verbose {
+		fmt.Fprintln(c.writer, "delete response Status : ", resp.Status)
+		fmt.Fprintln(c.writer, "delete response Headers : ", resp.Header)
+	}
 }

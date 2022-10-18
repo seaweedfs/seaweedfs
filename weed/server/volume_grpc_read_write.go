@@ -46,6 +46,7 @@ func (vs *VolumeServer) ReadNeedleMeta(ctx context.Context, req *volume_server_p
 	resp.Cookie = uint32(n.Cookie)
 	resp.LastModified = n.LastModified
 	resp.Crc = n.Checksum.Value()
+	resp.IsDeleted = n.Size.IsDeleted()
 	if n.HasTtl() {
 		resp.Ttl = n.Ttl.String()
 	}
