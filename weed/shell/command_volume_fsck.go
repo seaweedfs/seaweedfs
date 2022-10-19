@@ -534,15 +534,20 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 	var orphanFileCount uint64
 	cutoffFrom := uint64(c.collectStartTime.Add(-*c.cutoffTimeAgo).Unix())
 	// subtract
-	if err = volumeFileIdDb.AscendingVisit(func(n needle_map.NeedleValue) error {
+	doCutoffOfLastNeedle := true
+	if err = volumeFileIdDb.DescendingVisit(func(n needle_map.NeedleValue) error {
 		// do not mark with orphan already deleted chunks
 		if n.Size.IsDeleted() {
 			return nil
 		}
 		// do not mark with orphan the chunks during the file uploading process
-		if (*c.cutoffTimeAgo).Seconds() > 0 {
-			if needleMeta, err := readNeedleMeta(c.env.option.GrpcDialOption, voluemAddr, volumeId, n); err == nil && cutoffFrom >= needleMeta.LastModified {
-				return nil
+		if (*c.cutoffTimeAgo).Seconds() > 0 && doCutoffOfLastNeedle {
+			if needleMeta, err := readNeedleMeta(c.env.option.GrpcDialOption, voluemAddr, volumeId, n); err == nil {
+				if cutoffFrom > needleMeta.LastModified {
+					doCutoffOfLastNeedle = false
+				} else {
+					return nil
+				}
 			}
 		}
 		orphanFileIds = append(orphanFileIds, fmt.Sprintf("%d,%s00000000", volumeId, n.Key.String()))
