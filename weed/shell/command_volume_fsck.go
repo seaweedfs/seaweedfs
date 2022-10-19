@@ -532,7 +532,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 	}
 
 	var orphanFileCount uint64
-	cutoffFrom := uint64(c.collectStartTime.Add(-*c.cutoffTimeAgo).UnixNano())
+	cutoffFrom := uint64(c.collectStartTime.Add(-*c.cutoffTimeAgo).Unix())
 	// subtract
 	if err = volumeFileIdDb.AscendingVisit(func(n needle_map.NeedleValue) error {
 		// do not mark with orphan already deleted chunks
