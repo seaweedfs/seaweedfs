@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -26,6 +27,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -517,9 +519,12 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		inUseCount++
 		if *c.verifyNeedle && needleValue.Size.IsValid() {
 			if _, err := readNeedleStatus(c.env.option.GrpcDialOption, voluemAddr, volumeId, *needleValue); err != nil {
-				fmt.Fprintf(c.writer, "failed to read %d:%s needle status of file %s: %+v\n", volumeId, filerNeedleId.String(), itemPath, err)
-				if *c.forcePurging {
-					return
+				// files may be deleted during copying filesIds
+				if !strings.Contains(err.Error(), storage.ErrorDeleted.Error()) {
+					fmt.Fprintf(c.writer, "failed to read %d:%s needle status of file %s: %+v\n", volumeId, filerNeedleId.String(), itemPath, err)
+					if *c.forcePurging {
+						return
+					}
 				}
 			}
 		}
