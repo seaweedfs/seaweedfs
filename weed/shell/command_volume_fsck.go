@@ -271,7 +271,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	serverReplicas := make(map[uint32][]pb.ServerAddress)
 	for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 		for volumeId, vinfo := range volumeIdToVInfo {
-			inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(dataNodeId, volumeId)
+			inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(dataNodeId, volumeId, vinfo.modifiedAtSecond)
 			if checkErr != nil {
 				return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
 			}
@@ -499,7 +499,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 	return nil
 }
 
-func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId string, volumeId uint32) (inUseCount uint64, orphanFileIds []string, orphanDataSize uint64, err error) {
+func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId string, volumeId uint32, volumeModifiedAtSecond uint64) (inUseCount uint64, orphanFileIds []string, orphanDataSize uint64, err error) {
 
 	volumeFileIdDb := needle_map.NewMemDb()
 	defer volumeFileIdDb.Close()
@@ -532,11 +532,8 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 			fmt.Fprintf(c.writer, "failed to nm.delete %s(%d:%s): %+v\n", itemPath, volumeId, filerNeedleId.String(), err)
 		}
 	}); err != nil {
-		// pass if no one file id was found in the filler
-		if !strings.Contains(err.Error(), "no such file or directory") {
-			err = fmt.Errorf("failed to readFilerFileIdFile %+v", err)
-			return
-		}
+		err = fmt.Errorf("failed to readFilerFileIdFile %+v", err)
+		return
 	}
 
 	var orphanFileCount uint64
@@ -549,7 +546,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 			return nil
 		}
 		// do not mark with orphan the chunks during the file uploading process
-		if (*c.cutoffTimeAgo).Seconds() > 0 && doCutoffOfLastNeedle {
+		if (*c.cutoffTimeAgo).Seconds() > 0 && volumeModifiedAtSecond > cutoffFrom && doCutoffOfLastNeedle {
 			if needleMeta, err := readNeedleMeta(c.env.option.GrpcDialOption, voluemAddr, volumeId, n); err == nil {
 				if cutoffFrom > needleMeta.LastModified {
 					doCutoffOfLastNeedle = false
@@ -578,10 +575,11 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 }
 
 type VInfo struct {
-	server     pb.ServerAddress
-	collection string
-	isEcVolume bool
-	isReadOnly bool
+	server           pb.ServerAddress
+	collection       string
+	modifiedAtSecond uint64
+	isEcVolume       bool
+	isReadOnly       bool
 }
 
 func (c *commandVolumeFsck) collectVolumeIds() (volumeIdToServer map[string]map[uint32]VInfo, err error) {
@@ -603,10 +601,11 @@ func (c *commandVolumeFsck) collectVolumeIds() (volumeIdToServer map[string]map[
 			volumeIdToServer[dataNodeId] = make(map[uint32]VInfo)
 			for _, vi := range diskInfo.VolumeInfos {
 				volumeIdToServer[dataNodeId][vi.Id] = VInfo{
-					server:     pb.NewServerAddressFromDataNode(t),
-					collection: vi.Collection,
-					isEcVolume: false,
-					isReadOnly: vi.ReadOnly,
+					server:           pb.NewServerAddressFromDataNode(t),
+					collection:       vi.Collection,
+					modifiedAtSecond: uint64(vi.ModifiedAtSecond),
+					isEcVolume:       false,
+					isReadOnly:       vi.ReadOnly,
 				}
 			}
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
