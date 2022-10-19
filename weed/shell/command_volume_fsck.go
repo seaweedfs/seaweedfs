@@ -532,8 +532,11 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 			fmt.Fprintf(c.writer, "failed to nm.delete %s(%d:%s): %+v\n", itemPath, volumeId, filerNeedleId.String(), err)
 		}
 	}); err != nil {
-		err = fmt.Errorf("failed to readFilerFileIdFile %+v", err)
-		return
+		// pass if no one file id was found in the filler
+		if !strings.Contains(err.Error(), "no such file or directory") {
+			err = fmt.Errorf("failed to readFilerFileIdFile %+v", err)
+			return
+		}
 	}
 
 	var orphanFileCount uint64
