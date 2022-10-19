@@ -45,6 +45,7 @@ type commandVolumeFsck struct {
 	collection               *string
 	volumeId                 *uint
 	tempFolder               string
+	cutoffTimeAgo            *time.Duration
 	verbose                  *bool
 	forcePurging             *bool
 	findMissingChunksInFiler *bool
@@ -86,6 +87,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.forcePurging = fsckCommand.Bool("forcePurging", false, "delete missing data from volumes in one replica used together with applyPurging")
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
 	tempPath := fsckCommand.String("tempPath", path.Join(os.TempDir()), "path for temporary idx files")
+	c.cutoffTimeAgo = fsckCommand.Duration("cutoffTimeAgo", 5*time.Minute, "only include entries  on volume servers before this cutoff time to check orphan chunks")
 	c.verifyNeedle = fsckCommand.Bool("verifyNeedles", false, "try get head needle blob from volume server")
 
 	if err = fsckCommand.Parse(args); err != nil {
@@ -248,7 +250,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInfo map[uint32]VInfo, dataNodeId string, applyPurging bool) error {
 
 	for volumeId, vinfo := range volumeIdToVInfo {
-		checkErr := c.oneVolumeFileIdsCheckOneVolume(dataNodeId, volumeId, applyPurging)
+		checkErr := c.oneVolumeFileIdsCheckOneVolume(dataNodeId, vinfo.server, volumeId, applyPurging)
 		if checkErr != nil {
 			return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
 		}
@@ -456,7 +458,7 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleI
 	return nil
 }
 
-func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, volumeId uint32, applyPurging bool) (err error) {
+func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, volumeServer pb.ServerAddress, volumeId uint32, applyPurging bool) (err error) {
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "find missing file chunks in dataNodeId %s volume %d ...\n", dataNodeId, volumeId)
 	}
@@ -468,7 +470,6 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 		return
 	}
 
-	voluemAddr := pb.NewServerAddressWithGrpcPort(dataNodeId, 0)
 	if err = c.readFilerFileIdFile(volumeId, func(filerNeedleId types.NeedleId, itemPath util.FullPath) {
 		// remove form filer chunk not found in volume
 		if needleValue, found := volumeFileIdDb.Get(filerNeedleId); found {
@@ -477,7 +478,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 			}
 		} else {
 			// avoid delete filer chunk deleted in volume
-			if needleMeta, err := readNeedleMeta(c.env.option.GrpcDialOption, voluemAddr, volumeId, *needleValue); err == nil {
+			if needleMeta, err := readNeedleMeta(c.env.option.GrpcDialOption, volumeServer, volumeId, *needleValue); err == nil {
 				if needleMeta.IsDeleted {
 					return
 				}
@@ -514,7 +515,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		}
 		inUseCount++
 		if *c.verifyNeedle && needleValue.Size.IsValid() {
-			if _, err := raedNeedleStatus(c.env.option.GrpcDialOption, voluemAddr, volumeId, *needleValue); err != nil {
+			if _, err := readNeedleStatus(c.env.option.GrpcDialOption, voluemAddr, volumeId, *needleValue); err != nil {
 				fmt.Fprintf(c.writer, "failed to read %d:%s needle status of file %s: %+v\n", volumeId, filerNeedleId.String(), itemPath, err)
 				if *c.forcePurging {
 					return
@@ -530,11 +531,18 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 	}
 
 	var orphanFileCount uint64
+	cutoffFrom := uint64(time.Now().Add(-*c.cutoffTimeAgo).UnixNano())
 	// subtract
 	if err = volumeFileIdDb.AscendingVisit(func(n needle_map.NeedleValue) error {
 		// do not mark with orphan already deleted chunks
 		if n.Size.IsDeleted() {
 			return nil
+		}
+		// do not mark with orphan the chunks during the file uploading process
+		if (*c.cutoffTimeAgo).Seconds() > 0 {
+			if needleMeta, err := readNeedleMeta(c.env.option.GrpcDialOption, voluemAddr, volumeId, n); err == nil && cutoffFrom >= needleMeta.LastModified {
+				return nil
+			}
 		}
 		orphanFileIds = append(orphanFileIds, fmt.Sprintf("%d,%s00000000", volumeId, n.Key.String()))
 		orphanFileCount++
@@ -665,8 +673,8 @@ func writeToFile(bytes []byte, fileName string) error {
 	return nil
 }
 
-func readNeedleMeta(grpcDialOption grpc.DialOption, sourceVolumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.ReadNeedleMetaResponse, err error) {
-	err = operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption,
+func readNeedleMeta(grpcDialOption grpc.DialOption, volumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.ReadNeedleMetaResponse, err error) {
+	err = operation.WithVolumeServerClient(false, volumeServer, grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			if resp, err = client.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
 				VolumeId: volumeId,
@@ -682,7 +690,7 @@ func readNeedleMeta(grpcDialOption grpc.DialOption, sourceVolumeServer pb.Server
 	return
 }
 
-func raedNeedleStatus(grpcDialOption grpc.DialOption, sourceVolumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.VolumeNeedleStatusResponse, err error) {
+func readNeedleStatus(grpcDialOption grpc.DialOption, sourceVolumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.VolumeNeedleStatusResponse, err error) {
 	err = operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			if resp, err = client.VolumeNeedleStatus(context.Background(), &volume_server_pb.VolumeNeedleStatusRequest{
