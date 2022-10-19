@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"os"
-	"time"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"os"
 )
 
 var ErrorNotFound = errors.New("not found")
@@ -157,7 +155,7 @@ func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool) (offset uint
 	}
 
 	// append to dat file
-	n.AppendAtNs = max(uint64(time.Now().UnixNano()), v.lastAppendAtNs+1)
+	n.UpdateAppendAtNs(v.lastAppendAtNs)
 	offset, size, _, err = n.Append(v.DataBackend, v.Version())
 	v.checkReadWriteError(err)
 	if err != nil {
@@ -215,7 +213,7 @@ func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 	if ok && nv.Size.IsValid() {
 		size := nv.Size
 		n.Data = nil
-		n.AppendAtNs = uint64(time.Now().UnixNano())
+		n.UpdateAppendAtNs(v.lastAppendAtNs)
 		offset, _, _, err := n.Append(v.DataBackend, v.Version())
 		v.checkReadWriteError(err)
 		if err != nil {
@@ -314,7 +312,7 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 		return fmt.Errorf("volume size limit %d exceeded! current size is %d", MaxPossibleVolumeSize, v.nm.ContentSize())
 	}
 
-	appendAtNs := uint64(time.Now().UnixNano())
+	appendAtNs := needle.GetAppendAtNs(v.lastAppendAtNs)
 	offset, err := needle.WriteNeedleBlob(v.DataBackend, needleBlob, size, appendAtNs, v.Version())
 
 	v.checkReadWriteError(err)
@@ -329,11 +327,4 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 	}
 
 	return err
-}
-
-func max(x, y uint64) uint64 {
-	if x <= y {
-		return y
-	}
-	return x
 }
