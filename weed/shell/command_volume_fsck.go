@@ -202,7 +202,12 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 	}
 	defer func() {
 		for _, f := range files {
-			f.Close()
+			if err := f.Sync(); err != nil {
+				fmt.Fprintf(c.writer, "failed to fSync file %s\n", f.Name())
+			}
+			if err := f.Close(); err != nil {
+				fmt.Fprintf(c.writer, "failed to fClose file %s\n", f.Name())
+			}
 		}
 	}()
 
@@ -477,7 +482,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 		// remove form filer chunk not found in volume
 		if needleValue, found := volumeFileIdDb.Get(filerNeedleId); found {
 			if needleValue.Size.IsDeleted() {
-				fmt.Fprintf(c.writer, "one of chunks with key:%+v of file %s is marked as deleted", itemPath, needleValue.Key)
+				fmt.Fprintf(c.writer, "one of chunks with key:%+v of file %s is marked as deleted\n", itemPath, needleValue.Key)
 			}
 		} else {
 			// avoid delete filer chunk deleted in volume
@@ -486,7 +491,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 					return
 				}
 			} else {
-				fmt.Fprintf(c.writer, "failed to read file %s needle meta %+v: %+v", itemPath, filerNeedleId, err)
+				fmt.Fprintf(c.writer, "failed to read file %s needle meta %+v: %+v\n", itemPath, filerNeedleId, err)
 			}
 			fmt.Fprintf(c.writer, "%s\n", itemPath)
 			if applyPurging {
