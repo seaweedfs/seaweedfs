@@ -43,6 +43,9 @@ func (n *Needle) ReadNeedleMeta(r backend.BackendStorageFile, offset int64, size
 			return ErrorSizeMismatch
 		}
 	}
+	if !n.Size.IsValid() {
+		return ErrorSizeInvalid
+	}
 	n.DataSize = util.BytesToUint32(bytes[NeedleHeaderSize : NeedleHeaderSize+DataSizeSize])
 
 	startOffset := offset + NeedleHeaderSize + DataSizeSize + int64(n.DataSize)
