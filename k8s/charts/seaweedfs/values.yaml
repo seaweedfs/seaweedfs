@@ -68,7 +68,7 @@ master:
   #    size: "24Ti"
   #    storageClass: "local-path-provisioner"
   data:
-    type: "hostPath"
+    type: ""
     size: ""
     storageClass: ""
     hostPathPrefix: /ssd
