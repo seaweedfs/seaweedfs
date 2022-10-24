@@ -195,8 +195,10 @@ spec:
               {{- end }}
               -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
           volumeMounts:
+            {{- if eq .Values.filer.logs.type "hostPath" }}
             - name: seaweedfs-filer-log-volume
               mountPath: "/logs/"
+            {{- end }}
             - mountPath: /etc/sw
               name: config-users
               readOnly: true
