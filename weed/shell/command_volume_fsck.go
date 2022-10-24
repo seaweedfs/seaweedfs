@@ -134,13 +134,9 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 				delete(volumeIdToVInfo, volumeId)
 				continue
 			}
-			// or skip /topics/.system/log without collection name
-			if (*c.collection != "" && vinfo.collection != *c.collection) || vinfo.collection == "" {
+			if *c.collection != "" && vinfo.collection != *c.collection {
 				delete(volumeIdToVInfo, volumeId)
 				continue
-			}
-			if *c.volumeId > 0 && *c.collection == "" {
-				*c.collection = vinfo.collection
 			}
 			cutoffFrom := time.Now().Add(-*cutoffTimeAgo).UnixNano()
 			err = c.collectOneVolumeFileIds(dataNodeId, volumeId, vinfo, uint64(cutoffFrom))
@@ -548,7 +544,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		return
 	}
 
-	voluemAddr := pb.NewServerAddressWithGrpcPort(dataNodeId, 0)
+	volumeAddr := pb.NewServerAddressWithGrpcPort(dataNodeId, 0)
 	if err = c.readFilerFileIdFile(volumeId, func(nId types.NeedleId, itemPath util.FullPath) {
 		inUseCount++
 		if *c.verifyNeedle {
@@ -557,7 +553,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 				if v.Size > newSize {
 					v.Size = newSize
 				}
-				if _, err := readSourceNeedleBlob(c.env.option.GrpcDialOption, voluemAddr, volumeId, *v); err != nil {
+				if _, err := readSourceNeedleBlob(c.env.option.GrpcDialOption, volumeAddr, volumeId, *v); err != nil {
 					fmt.Fprintf(c.writer, "failed to read file %s NeedleBlob %+v: %+v", itemPath, nId, err)
 					if *c.forcePurging {
 						return
