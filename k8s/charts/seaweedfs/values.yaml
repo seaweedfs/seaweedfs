@@ -74,7 +74,7 @@ master:
     hostPathPrefix: /ssd
 
   logs:
-    type: null
+    type: ""
     size: ""
     storageClass: ""
     hostPathPrefix: /storage
@@ -188,13 +188,13 @@ volume:
     hostPathPrefix: /storage
 
   idx:
-    type: "hostPath"
+    type: ""
     size: ""
     storageClass: ""
     hostPathPrefix: /ssd
 
   logs:
-    type: null
+    type: ""
     size: ""
     storageClass: ""
     hostPathPrefix: /storage
@@ -343,13 +343,13 @@ filer:
   #    size: "24Ti"
   #    storageClass: "local-path-provisioner"
   data:
-    type: null
+    type: ""
     size: 10G
     storageClass: ""
     hostPathPrefix: /storage
 
   logs:
-    type: null
+    type: ""
     size: 10G
     storageClass: ""
     hostPathPrefix: /storage
