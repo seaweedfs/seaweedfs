@@ -194,7 +194,7 @@ volume:
     hostPathPrefix: /ssd
 
   logs:
-    type: "hostPath"
+    type: null
     size: ""
     storageClass: ""
     hostPathPrefix: /storage
@@ -346,7 +346,7 @@ filer:
     hostPathPrefix: /storage
 
   logs:
-    type: "hostPath"
+    type: null
     size: 10G
     storageClass: ""
     hostPathPrefix: /storage
@@ -526,7 +526,7 @@ s3:
   priorityClassName: ""
 
   logs:
-    type: "hostPath"
+    type: null
     size: ""
     storageClass: ""
     hostPathPrefix: /storage
