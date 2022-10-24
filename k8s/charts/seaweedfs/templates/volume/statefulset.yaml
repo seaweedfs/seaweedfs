@@ -159,6 +159,9 @@ spec:
                 {{- if .Values.volume.fileSizeLimitMB }}
                 -fileSizeLimitMB={{ .Values.volume.fileSizeLimitMB }} \
                 {{- end }}
+                {{- if .Values.volume.idleTimeout }}
+                -idleTimeout={{ .Values.volume.idleTimeout }} \
+                {{- end }}
                 -minFreeSpacePercent={{ .Values.volume.minFreeSpacePercent }} \
                 -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-volume.{{ .Release.Namespace }} \
                 -compactionMBps={{ .Values.volume.compactionMBps }} \
