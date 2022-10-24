@@ -30,7 +30,7 @@ func (c *commandVolumeBalance) Name() string {
 func (c *commandVolumeBalance) Help() string {
 	return `balance all volumes among volume servers
 
-	volume.balance [-collection ALL|EACH_COLLECTION|<collection_name>] [-force] [-dataCenter=<data_center_name>]
+	volume.balance [-collection ALL_COLLECTIONS|EACH_COLLECTION|<collection_name>] [-force] [-dataCenter=<data_center_name>]
 
 	Algorithm:
 
