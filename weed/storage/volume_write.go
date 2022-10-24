@@ -211,13 +211,18 @@ func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 	nv, ok := v.nm.Get(n.Id)
 	// fmt.Println("key", n.Id, "volume offset", nv.Offset, "data_size", n.Size, "cached size", nv.Size)
 	if ok && nv.Size.IsValid() {
+		var offset uint64
+		var err error
 		size := nv.Size
-		n.Data = nil
-		n.UpdateAppendAtNs(v.lastAppendAtNs)
-		offset, _, _, err := n.Append(v.DataBackend, v.Version())
-		v.checkReadWriteError(err)
-		if err != nil {
-			return size, err
+		if !v.hasRemoteFile {
+			n.Data = nil
+			n.UpdateAppendAtNs(v.lastAppendAtNs)
+			n.AppendAtNs = uint64(time.Now().UnixNano())
+			offset, _, _, err = n.Append(v.DataBackend, v.Version())
+			v.checkReadWriteError(err)
+			if err != nil {
+				return size, err
+			}
 		}
 		v.lastAppendAtNs = n.AppendAtNs
 		if err = v.nm.Delete(n.Id, ToOffset(int64(offset))); err != nil {
