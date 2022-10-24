@@ -408,8 +408,24 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		return
 	}
 
+	setUserMetadataKeyToLowercase(resp)
+
 	responseStatusCode := responseFn(resp, w)
 	s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
+}
+
+func setUserMetadataKeyToLowercase(resp *http.Response) {
+	newHeader := make(map[string][]string)
+
+	for key, value := range resp.Header {
+		if strings.HasPrefix(key, s3_constants.AmzUserMetaPrefix) {
+			newHeader[strings.ToLower(key)] = value
+			continue
+		}
+		newHeader[key] = value
+	}
+
+	resp.Header = newHeader
 }
 
 func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int) {
