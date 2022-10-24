@@ -217,7 +217,6 @@ func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 		if !v.hasRemoteFile {
 			n.Data = nil
 			n.UpdateAppendAtNs(v.lastAppendAtNs)
-			n.AppendAtNs = uint64(time.Now().UnixNano())
 			offset, _, _, err = n.Append(v.DataBackend, v.Version())
 			v.checkReadWriteError(err)
 			if err != nil {
