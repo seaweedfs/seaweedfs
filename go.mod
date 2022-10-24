@@ -112,14 +112,14 @@ require (
 	gocloud.dev v0.27.0
 	gocloud.dev/pubsub/natspubsub v0.27.0
 	gocloud.dev/pubsub/rabbitpubsub v0.27.0
-	golang.org/x/crypto v0.0.0-20220722155217-630584e8d5aa // indirect
+	golang.org/x/crypto v0.1.0 // indirect
 	golang.org/x/exp v0.0.0-20220414153411-bcd21879b8fd
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
-	golang.org/x/net v0.0.0-20221012135044-0b7e1fb9d458
+	golang.org/x/net v0.1.0
 	golang.org/x/oauth2 v0.0.0-20221006150949-b44042a4b9c1 // indirect
-	golang.org/x/sys v0.0.0-20220919091848-fb04ddd9f9c8
-	golang.org/x/text v0.3.7 // indirect
-	golang.org/x/tools v0.1.12
+	golang.org/x/sys v0.1.0
+	golang.org/x/text v0.4.0 // indirect
+	golang.org/x/tools v0.2.0
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/api v0.99.0
 	google.golang.org/appengine v1.6.7 // indirect
@@ -225,7 +225,7 @@ require (
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.8.0 // indirect
 	go.uber.org/zap v1.22.0 // indirect
-	golang.org/x/mod v0.6.0-dev.0.20220419223038-86c51ed26bb4 // indirect
+	golang.org/x/mod v0.6.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
