@@ -202,6 +202,9 @@ volume:
   # limit background compaction or copying speed in mega bytes per second
   compactionMBps: "50"
 
+  # connection idle seconds
+  idleTimeout: null
+
   # Directories to store data files. dir[,dir]... (default "/tmp")
   dir: "/data"
   # Directories to store index files. dir[,dir]... (default is the same as "dir")
