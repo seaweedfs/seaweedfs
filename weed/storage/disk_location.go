@@ -364,7 +364,7 @@ func (l *DiskLocation) VolumesLen() int {
 func (l *DiskLocation) SetStopping() {
 	l.volumesLock.Lock()
 	for _, v := range l.volumes {
-		v.SetStopping()
+		v.SyncToDisk()
 	}
 	l.volumesLock.Unlock()
 

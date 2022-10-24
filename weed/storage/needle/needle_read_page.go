@@ -1,6 +1,7 @@
 package needle
 
 import (
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -30,6 +31,11 @@ func (n *Needle) ReadNeedleData(r backend.BackendStorageFile, volumeOffset int64
 
 // ReadNeedleMeta fills all metadata except the n.Data
 func (n *Needle) ReadNeedleMeta(r backend.BackendStorageFile, offset int64, size Size, version Version) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic occurred: %+v", r)
+		}
+	}()
 
 	bytes := make([]byte, NeedleHeaderSize+DataSizeSize)
 
@@ -42,6 +48,9 @@ func (n *Needle) ReadNeedleMeta(r backend.BackendStorageFile, offset int64, size
 		if OffsetSize == 4 && offset < int64(MaxPossibleVolumeSize) {
 			return ErrorSizeMismatch
 		}
+	}
+	if !n.Size.IsValid() {
+		return ErrorSizeInvalid
 	}
 	n.DataSize = util.BytesToUint32(bytes[NeedleHeaderSize : NeedleHeaderSize+DataSizeSize])
 

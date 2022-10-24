@@ -2,6 +2,9 @@ package weed_server
 
 import (
 	"context"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"strconv"
+	"time"
 
 	"github.com/prometheus/procfs"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -29,6 +32,10 @@ func (vs *VolumeServer) VacuumVolumeCheck(ctx context.Context, req *volume_serve
 }
 
 func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCompactRequest, stream volume_server_pb.VolumeServer_VacuumVolumeCompactServer) error {
+	start := time.Now()
+	defer func(start time.Time) {
+		stats.VolumeServerVacuumingHistogram.WithLabelValues("compact").Observe(time.Since(start).Seconds())
+	}(start)
 
 	resp := &volume_server_pb.VacuumVolumeCompactResponse{}
 	reportInterval := int64(1024 * 1024 * 128)
@@ -51,12 +58,13 @@ func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCo
 		return true
 	})
 
+	stats.VolumeServerVacuumingCompactCounter.WithLabelValues(strconv.FormatBool(err == nil && sendErr == nil)).Inc()
 	if err != nil {
-		glog.Errorf("compact volume %d: %v", req.VolumeId, err)
+		glog.Errorf("failed compact volume %d: %v", req.VolumeId, err)
 		return err
 	}
 	if sendErr != nil {
-		glog.Errorf("compact volume %d report progress: %v", req.VolumeId, sendErr)
+		glog.Errorf("failed compact volume %d report progress: %v", req.VolumeId, sendErr)
 		return sendErr
 	}
 
@@ -66,16 +74,21 @@ func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCo
 }
 
 func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_server_pb.VacuumVolumeCommitRequest) (*volume_server_pb.VacuumVolumeCommitResponse, error) {
+	start := time.Now()
+	defer func(start time.Time) {
+		stats.VolumeServerVacuumingHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds())
+	}(start)
 
 	resp := &volume_server_pb.VacuumVolumeCommitResponse{}
 
 	readOnly, err := vs.store.CommitCompactVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
-		glog.Errorf("commit volume %d: %v", req.VolumeId, err)
+		glog.Errorf("failed commit volume %d: %v", req.VolumeId, err)
 	} else {
 		glog.V(1).Infof("commit volume %d", req.VolumeId)
 	}
+	stats.VolumeServerVacuumingCommitCounter.WithLabelValues(strconv.FormatBool(err == nil)).Inc()
 	resp.IsReadOnly = readOnly
 	return resp, err
 
@@ -88,7 +101,7 @@ func (vs *VolumeServer) VacuumVolumeCleanup(ctx context.Context, req *volume_ser
 	err := vs.store.CommitCleanupVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
-		glog.Errorf("cleanup volume %d: %v", req.VolumeId, err)
+		glog.Errorf("failed cleanup volume %d: %v", req.VolumeId, err)
 	} else {
 		glog.V(1).Infof("cleanup volume %d", req.VolumeId)
 	}

@@ -55,10 +55,10 @@ func (v *Volume) Compact(preallocate int64, compactionBytePerSecond int64) error
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
 	glog.V(3).Infof("creating copies for volume %d ,last offset %d...", v.Id, v.lastCompactIndexOffset)
 	if err := v.DataBackend.Sync(); err != nil {
-		glog.V(0).Infof("compact fail to sync volume %d", v.Id)
+		glog.V(0).Infof("compact failed to sync volume %d", v.Id)
 	}
 	if err := v.nm.Sync(); err != nil {
-		glog.V(0).Infof("compact fail to sync volume idx %d", v.Id)
+		glog.V(0).Infof("compact failed to sync volume idx %d", v.Id)
 	}
 	return v.copyDataAndGenerateIndexFile(v.FileName(".cpd"), v.FileName(".cpx"), preallocate, compactionBytePerSecond)
 }
@@ -83,10 +83,10 @@ func (v *Volume) Compact2(preallocate int64, compactionBytePerSecond int64, prog
 		return fmt.Errorf("volume %d backend is empty remote:%v", v.Id, v.HasRemoteFile())
 	}
 	if err := v.DataBackend.Sync(); err != nil {
-		glog.V(0).Infof("compact2 fail to sync volume dat %d: %v", v.Id, err)
+		glog.V(0).Infof("compact2 failed to sync volume dat %d: %v", v.Id, err)
 	}
 	if err := v.nm.Sync(); err != nil {
-		glog.V(0).Infof("compact2 fail to sync volume idx %d: %v", v.Id, err)
+		glog.V(0).Infof("compact2 failed to sync volume idx %d: %v", v.Id, err)
 	}
 	return v.copyDataBasedOnIndexFile(
 		v.FileName(".dat"), v.FileName(".idx"),
@@ -120,7 +120,7 @@ func (v *Volume) CommitCompact() error {
 	}
 	if v.DataBackend != nil {
 		if err := v.DataBackend.Close(); err != nil {
-			glog.V(0).Infof("fail to close volume %d", v.Id)
+			glog.V(0).Infof("failed to close volume %d", v.Id)
 		}
 	}
 	v.DataBackend = nil
@@ -270,7 +270,11 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 		return fmt.Errorf("open idx file %s failed: %v", newIdxFileName, err)
 	}
 
-	defer idx.Close()
+	defer func() {
+		idx.Sync()
+		idx.Close()
+	}()
+
 	stat, err := idx.Stat()
 	if err != nil {
 		return fmt.Errorf("stat file %s: %v", idx.Name(), err)
@@ -387,9 +391,7 @@ func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset in
 }
 
 func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, preallocate int64, compactionBytePerSecond int64) (err error) {
-	var (
-		dst backend.BackendStorageFile
-	)
+	var dst backend.BackendStorageFile
 	if dst, err = backend.CreateVolumeFile(dstName, preallocate, 0); err != nil {
 		return err
 	}
@@ -493,7 +495,10 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 		glog.Errorf("cannot open Volume Index %s: %v", datIdxName, err)
 		return err
 	}
-	defer indexFile.Close()
+	defer func() {
+		indexFile.Sync()
+		indexFile.Close()
+	}()
 	if v.tmpNm != nil {
 		v.tmpNm.Close()
 		v.tmpNm = nil
