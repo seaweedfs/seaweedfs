@@ -142,6 +142,9 @@ spec:
               {{- if .Values.filer.redirectOnRead }}
               -redirectOnRead \
               {{- end }}
+              {{- if .Values.filer.concurrentUploadLimitMB }}
+              -concurrentUploadLimitMB={{ .Values.filer.concurrentUploadLimitMB }} \
+              {{- end }}              
               {{- if .Values.topologyConfig }}
               -rack=$(eval "echo \$$NODE_NAME") \
               {{- end }}

@@ -311,6 +311,9 @@ filer:
   # encrypt data on volume servers
   encryptVolumeData: false
 
+  # limit total concurrent upload size
+  concurrentUploadLimitMB: null
+
   # Whether proxy or redirect to volume server during file GET request
   redirectOnRead: false
 
