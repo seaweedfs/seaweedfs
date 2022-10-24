@@ -275,9 +275,6 @@ spec:
             path: {{ .Values.filer.data.hostPathPrefix }}/filer_store
             type: DirectoryOrCreate
         {{- end }}
-        - name: db-schema-config-volume
-          configMap:
-            name: seaweedfs-db-init-config
         - name: config-users
           secret:
             defaultMode: 420
