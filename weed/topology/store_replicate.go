@@ -21,7 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request) (isUnchanged bool, err error) {
+func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request, contentMd5 string) (isUnchanged bool, err error) {
 
 	//check JWT
 	jwt := security.GetJwt(r)
@@ -98,8 +98,13 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 				MimeType:          string(n.Mime),
 				PairMap:           pairMap,
 				Jwt:               jwt,
+				Md5:               contentMd5,
 			}
+
 			_, err := operation.UploadData(n.Data, uploadOption)
+			if err != nil {
+				glog.Errorf("replication-UploadData, err:%v, url:%s", err, u.String())
+			}
 			return err
 		})
 		stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToReplicas).Observe(time.Since(start).Seconds())

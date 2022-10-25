@@ -6,15 +6,16 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/security"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
-	"golang.org/x/exp/slices"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
+	"golang.org/x/exp/slices"
 
 	"github.com/pquerna/cachecontrol/cacheobject"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -63,7 +64,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	if r.Header.Get("Expires") != "" {
 		if _, err = time.Parse(http.TimeFormat, r.Header.Get("Expires")); err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrMalformedExpires)
+			s3err.WriteErrorResponse(w, r, s3err.ErrMalformedDate)
 			return
 		}
 	}
@@ -408,8 +409,19 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		return
 	}
 
+	setUserMetadataKeyToLowercase(resp)
+
 	responseStatusCode := responseFn(resp, w)
 	s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
+}
+
+func setUserMetadataKeyToLowercase(resp *http.Response) {
+	for key, value := range resp.Header {
+		if strings.HasPrefix(key, s3_constants.AmzUserMetaPrefix) {
+			resp.Header[strings.ToLower(key)] = value
+			delete(resp.Header,key)
+		}
+	}
 }
 
 func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int) {
