@@ -298,9 +298,5 @@ func (n *Needle) SetHasPairs() {
 }
 
 func GetActualSize(size Size, version Version) int64 {
-	// read deleted data.
-	if size.IsDeleted() {
-		size = 0
-	}
 	return NeedleHeaderSize + NeedleBodyLength(size, version)
 }

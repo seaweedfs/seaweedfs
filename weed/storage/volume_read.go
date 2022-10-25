@@ -84,6 +84,10 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 func (v *Volume) readNeedleMetaAt(n *needle.Needle, offset int64, size int32) (err error) {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
+	// read deleted needle meta data
+	if size < 0 {
+		size = 0
+	}
 	err = n.ReadNeedleMeta(v.DataBackend, offset, Size(size), v.Version())
 	if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
 		err = n.ReadNeedleMeta(v.DataBackend, offset+int64(MaxPossibleVolumeSize), Size(size), v.Version())
