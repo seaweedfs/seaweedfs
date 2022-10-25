@@ -420,7 +420,6 @@ func setUserMetadataKeyToLowercase(resp *http.Response) {
 		if strings.HasPrefix(key, s3_constants.AmzUserMetaPrefix) {
 			resp.Header[strings.ToLower(key)] = value
 			delete(resp.Header,key)
-			continue
 		}
 	}
 }
