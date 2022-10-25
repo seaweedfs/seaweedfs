@@ -146,7 +146,7 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_m
 	var counter int
 	minuend.AscendingVisit(func(value needle_map.NeedleValue) error {
 		counter++
-		if _, found := subtrahend.Get(value.Key); !found {
+		if _, found := subtrahend.Get(value.Key); !found && value.Size.IsValid() {
 			missingNeedles = append(missingNeedles, value)
 		}
 		return nil
