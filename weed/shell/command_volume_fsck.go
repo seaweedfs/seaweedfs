@@ -104,7 +104,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.volumeIds = make(map[uint32]bool)
 	if *volumeIds != "" {
 		for _, volumeIdStr := range strings.Split(*volumeIds, ",") {
-			if volumeIdInt, err := strconv.Atoi(volumeIdStr); err == nil {
+			if volumeIdInt, err := strconv.ParseUint(volumeIdStr, 10, 32); err == nil {
 				c.volumeIds[uint32(volumeIdInt)] = true
 			} else {
 				return fmt.Errorf("parse volumeId string %s to int: %v", volumeIdStr, err)
