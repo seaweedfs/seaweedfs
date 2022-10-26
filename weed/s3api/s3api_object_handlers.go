@@ -550,7 +550,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	err := updateObjectEntry(s3a, bucket, objectEntry)
+	err := updateObjectEntry(s3a, bucket, object, objectEntry)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return

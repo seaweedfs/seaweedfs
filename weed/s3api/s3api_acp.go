@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"net/http"
+	"path/filepath"
 )
 
 func getAccountId(r *http.Request) string {
@@ -102,6 +103,7 @@ func getObjectEntry(s3a *S3ApiServer, bucket, object string) (*filer_pb.Entry, e
 	return s3a.getEntry(util.Join(s3a.option.BucketsPath, bucket), object)
 }
 
-func updateObjectEntry(s3a *S3ApiServer, bucket string, entry *filer_pb.Entry) error {
-	return s3a.updateEntry(util.Join(s3a.option.BucketsPath, bucket), entry)
+func updateObjectEntry(s3a *S3ApiServer, bucket, object string, entry *filer_pb.Entry) error {
+	dir, _ := filepath.Split(object)
+	return s3a.updateEntry(util.Join(s3a.option.BucketsPath, bucket, dir), entry)
 }
