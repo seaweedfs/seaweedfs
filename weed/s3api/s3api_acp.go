@@ -255,8 +255,8 @@ func (s3a *S3ApiServer) checkAccessForWriteObjectAcl(accountId, bucket, object s
 	return nil, nil, "", s3err.ErrAccessDenied
 }
 
-func updateObjectEntry(s3a *S3ApiServer, bucket string, entry *filer_pb.Entry) error {
-	return s3a.updateEntry(util.Join(s3a.option.BucketsPath, bucket), entry)
+func updateObjectEntry(s3a *S3ApiServer, bucket, object string, entry *filer_pb.Entry) error {
+	return s3a.updateEntry(util.Join(s3a.option.BucketsPath, bucket, object), entry)
 }
 
 // Check Object-Write related access
