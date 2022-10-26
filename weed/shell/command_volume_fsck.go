@@ -270,7 +270,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInfo map[uint32]VInfo, dataNodeId string, applyPurging bool) error {
 
 	for volumeId, vinfo := range volumeIdToVInfo {
-		checkErr := c.oneVolumeFileIdsCheckOneVolume(dataNodeId, vinfo.server, volumeId, applyPurging)
+		checkErr := c.oneVolumeFileIdsCheckOneVolume(dataNodeId, volumeId, applyPurging)
 		if checkErr != nil {
 			return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
 		}
@@ -478,7 +478,7 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleI
 	return nil
 }
 
-func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, volumeServer pb.ServerAddress, volumeId uint32, applyPurging bool) (err error) {
+func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, volumeId uint32, applyPurging bool) (err error) {
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "find missing file chunks in dataNodeId %s volume %d ...\n", dataNodeId, volumeId)
 	}
@@ -492,19 +492,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 
 	if err = c.readFilerFileIdFile(volumeId, func(filerNeedleId types.NeedleId, itemPath util.FullPath) {
 		// remove form filer chunk not found in volume
-		if needleValue, found := volumeFileIdDb.Get(filerNeedleId); found {
-			if needleValue.Size.IsDeleted() {
-				fmt.Fprintf(c.writer, "one of chunks with key:%+v of file %s is marked as deleted\n", itemPath, needleValue.Key)
-			}
-		} else {
-			// avoid delete filer chunk deleted in volume
-			if needleMeta, err := readNeedleMeta(c.env.option.GrpcDialOption, volumeServer, volumeId, *needleValue); err == nil {
-				if needleMeta.IsDeleted {
-					return
-				}
-			} else {
-				fmt.Fprintf(c.writer, "failed to read file %s needle meta %+v: %+v\n", itemPath, filerNeedleId, err)
-			}
+		if _, found := volumeFileIdDb.Get(filerNeedleId); !found {
 			fmt.Fprintf(c.writer, "%s\n", itemPath)
 			if applyPurging {
 				c.httpDelete(itemPath)
