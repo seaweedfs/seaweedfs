@@ -150,7 +150,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 				}
 			}
 			// or skip /topics/.system/log without collection name
-			if (*c.collection != "" && vinfo.collection != *c.collection) || vinfo.collection == "" {
+			if *c.collection != "" && vinfo.collection != *c.collection {
 				delete(volumeIdToVInfo, volumeId)
 				continue
 			}
