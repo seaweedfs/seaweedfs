@@ -34,7 +34,7 @@ spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.volume.restartPolicy }}
       {{- if .Values.volume.tolerations }}
       tolerations:
-      {{ tpl .Values.volume.tolerations . | nindent 8 | trim }}
+        {{ tpl .Values.volume.tolerations . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
