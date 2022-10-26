@@ -102,6 +102,6 @@ func getObjectEntry(s3a *S3ApiServer, bucket, object string) (*filer_pb.Entry, e
 	return s3a.getEntry(util.Join(s3a.option.BucketsPath, bucket), object)
 }
 
-func updateObjectEntry(s3a *S3ApiServer, bucket string, entry *filer_pb.Entry) error {
-	return s3a.updateEntry(util.Join(s3a.option.BucketsPath, bucket), entry)
+func updateObjectEntry(s3a *S3ApiServer, bucket, object string, entry *filer_pb.Entry) error {
+	return s3a.updateEntry(util.Join(s3a.option.BucketsPath, bucket, object), entry)
 }
