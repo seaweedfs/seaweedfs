@@ -154,9 +154,6 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 				delete(volumeIdToVInfo, volumeId)
 				continue
 			}
-			if len(c.volumeIds) > 0 && *c.collection == "" {
-				*c.collection = vinfo.collection
-			}
 			err = c.collectOneVolumeFileIds(dataNodeId, volumeId, vinfo)
 			if err != nil {
 				return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, err)
@@ -288,7 +285,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	serverReplicas := make(map[uint32][]pb.ServerAddress)
 	for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 		for volumeId, vinfo := range volumeIdToVInfo {
-			inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(dataNodeId, volumeId, vinfo.modifiedAtSecond)
+			inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(dataNodeId, volumeId, &vinfo)
 			if checkErr != nil {
 				return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, checkErr)
 			}
@@ -504,7 +501,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 	return nil
 }
 
-func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId string, volumeId uint32, volumeModifiedAtSecond uint64) (inUseCount uint64, orphanFileIds []string, orphanDataSize uint64, err error) {
+func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId string, volumeId uint32, vinfo *VInfo) (inUseCount uint64, orphanFileIds []string, orphanDataSize uint64, err error) {
 
 	volumeFileIdDb := needle_map.NewMemDb()
 	defer volumeFileIdDb.Close()
@@ -514,7 +511,6 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		return
 	}
 
-	voluemAddr := pb.NewServerAddressWithGrpcPort(dataNodeId, 0)
 	if err = c.readFilerFileIdFile(volumeId, func(filerNeedleId types.NeedleId, itemPath util.FullPath) {
 		// remove from db needles found in filler
 		needleValue, found := volumeFileIdDb.Get(filerNeedleId)
@@ -523,7 +519,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		}
 		inUseCount++
 		if *c.verifyNeedle && needleValue.Size.IsValid() {
-			if _, err := readNeedleStatus(c.env.option.GrpcDialOption, voluemAddr, volumeId, *needleValue); err != nil {
+			if _, err := readNeedleStatus(c.env.option.GrpcDialOption, vinfo.server, volumeId, *needleValue); err != nil {
 				// files may be deleted during copying filesIds
 				if !strings.Contains(err.Error(), storage.ErrorDeleted.Error()) {
 					fmt.Fprintf(c.writer, "failed to read %d:%s needle status of file %s: %+v\n", volumeId, filerNeedleId.String(), itemPath, err)
@@ -553,8 +549,8 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 			return nil
 		}
 		// do not mark with orphan the chunks during the file uploading process
-		if (*c.cutoffTimeAgo).Seconds() > 0 && volumeModifiedAtSecond > cutoffFromAtSec && doCutoffOfLastNeedle {
-			if needleMeta, err := readNeedleMeta(c.env.option.GrpcDialOption, voluemAddr, volumeId, n); err == nil {
+		if (*c.cutoffTimeAgo).Seconds() > 0 && vinfo.modifiedAtSecond > cutoffFromAtSec && doCutoffOfLastNeedle {
+			if needleMeta, err := readNeedleMeta(c.env.option.GrpcDialOption, vinfo.server, volumeId, n); err == nil {
 				if cutoffFromAtNs > needleMeta.AppendAtNs {
 					doCutoffOfLastNeedle = false
 				} else {
