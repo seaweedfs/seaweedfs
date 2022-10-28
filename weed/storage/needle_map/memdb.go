@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/iterator"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/storage"
 
@@ -61,17 +62,47 @@ func (cm *MemDb) Get(key NeedleId) (*NeedleValue, bool) {
 }
 
 // Visit visits all entries or stop if any error when visiting
+func doVisit(iter iterator.Iterator, visit func(NeedleValue) error) (ret error) {
+	key := BytesToNeedleId(iter.Key())
+	data := iter.Value()
+	offset := BytesToOffset(data[0:OffsetSize])
+	size := BytesToSize(data[OffsetSize : OffsetSize+SizeSize])
+
+	needle := NeedleValue{Key: key, Offset: offset, Size: size}
+	ret = visit(needle)
+	if ret != nil {
+		return
+	}
+	return nil
+}
+
 func (cm *MemDb) AscendingVisit(visit func(NeedleValue) error) (ret error) {
 	iter := cm.db.NewIterator(nil, nil)
+	if iter.First() {
+		if ret = doVisit(iter, visit); ret != nil {
+			return
+		}
+	}
 	for iter.Next() {
-		key := BytesToNeedleId(iter.Key())
-		data := iter.Value()
-		offset := BytesToOffset(data[0:OffsetSize])
-		size := BytesToSize(data[OffsetSize : OffsetSize+SizeSize])
+		if ret = doVisit(iter, visit); ret != nil {
+			return
+		}
+	}
+	iter.Release()
+	ret = iter.Error()
 
-		needle := NeedleValue{Key: key, Offset: offset, Size: size}
-		ret = visit(needle)
-		if ret != nil {
+	return
+}
+
+func (cm *MemDb) DescendingVisit(visit func(NeedleValue) error) (ret error) {
+	iter := cm.db.NewIterator(nil, nil)
+	if iter.Last() {
+		if ret = doVisit(iter, visit); ret != nil {
+			return
+		}
+	}
+	for iter.Prev() {
+		if ret = doVisit(iter, visit); ret != nil {
 			return
 		}
 	}
