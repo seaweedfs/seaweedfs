@@ -49,7 +49,7 @@ type commandVolumeFsck struct {
 	volumeIds                map[uint32]bool
 	tempFolder               string
 	cutoffTimeAgo            *time.Duration
-	collectStartTime         time.Time
+	collectCutoffTime        time.Time
 	verbose                  *bool
 	forcePurging             *bool
 	findMissingChunksInFiler *bool
@@ -139,7 +139,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		return fmt.Errorf("read filer buckets path: %v", err)
 	}
 
-	c.collectStartTime = time.Now()
+	c.collectCutoffTime = time.Now()
 	// collect each volume file ids
 	for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 		for volumeId, vinfo := range volumeIdToVInfo {
@@ -167,7 +167,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	// Find missing(orphan) chunks in filer
 	if *c.findMissingChunksInFiler {
 		// collect all filer file ids and paths where is the modification time before starting collect volume file ids
-		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, *purgeAbsent, c.collectStartTime.UnixNano()); err != nil {
+		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, *purgeAbsent, c.collectCutoffTime.UnixNano()); err != nil {
 			return fmt.Errorf("collectFilerFileIdAndPaths: %v", err)
 		}
 		for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
@@ -538,7 +538,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 	}
 
 	var orphanFileCount uint64
-	cutoffFrom := c.collectStartTime.Add(-*c.cutoffTimeAgo)
+	cutoffFrom := c.collectCutoffTime.Add(-*c.cutoffTimeAgo)
 	cutoffFromAtSec := uint64(cutoffFrom.Unix())
 	cutoffFromAtNs := uint64(cutoffFrom.UnixNano())
 	// subtract
