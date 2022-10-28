@@ -11,13 +11,13 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk) (visibles []VisibleInterva
 	for _, chunk := range chunks {
 		points = append(points, &Point{
 			x:       chunk.Offset,
-			ts:      chunk.Mtime,
+			ts:      chunk.ModifiedTsNs,
 			chunk:   chunk,
 			isStart: true,
 		})
 		points = append(points, &Point{
 			x:       chunk.Offset + int64(chunk.Size),
-			ts:      chunk.Mtime,
+			ts:      chunk.ModifiedTsNs,
 			chunk:   chunk,
 			isStart: false,
 		})
@@ -98,7 +98,7 @@ func addToVisibles(visibles []VisibleInterval, prevX int64, startPoint *Point, p
 			start:        prevX,
 			stop:         point.x,
 			fileId:       chunk.GetFileIdString(),
-			modifiedTime: chunk.Mtime,
+			modifiedTsNs: chunk.ModifiedTsNs,
 			chunkOffset:  prevX - chunk.Offset,
 			chunkSize:    chunk.Size,
 			cipherKey:    chunk.CipherKey,

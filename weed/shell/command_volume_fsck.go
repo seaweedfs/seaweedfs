@@ -209,7 +209,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 			}
 			dataChunks = append(dataChunks, manifestChunks...)
 			for _, chunk := range dataChunks {
-				if chunk.Mtime > collectMtime {
+				if chunk.ModifiedTsNs > collectMtime {
 					continue
 				}
 				outputChan <- &Item{

@@ -124,8 +124,8 @@ func (fh *FileHandle) Release() {
 }
 
 func lessThan(a, b *filer_pb.FileChunk) bool {
-	if a.Mtime == b.Mtime {
+	if a.ModifiedTsNs == b.ModifiedTsNs {
 		return a.Fid.FileKey < b.Fid.FileKey
 	}
-	return a.Mtime < b.Mtime
+	return a.ModifiedTsNs < b.ModifiedTsNs
 }

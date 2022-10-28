@@ -17,13 +17,13 @@ public class SeaweedReadTest {
                 .setFileId("aaa")
                 .setOffset(0)
                 .setSize(100)
-                .setMtime(1000)
+                .setModifiedTsNs(1000)
                 .build());
         chunks.add(FilerProto.FileChunk.newBuilder()
                 .setFileId("bbb")
                 .setOffset(100)
                 .setSize(133)
-                .setMtime(2000)
+                .setModifiedTsNs(2000)
                 .build());
 
         List<SeaweedRead.VisibleInterval> visibleIntervals = SeaweedRead.nonOverlappingVisibleIntervals(null, chunks);
@@ -70,31 +70,31 @@ public class SeaweedReadTest {
                 .setFileId("a")
                 .setOffset(0)
                 .setSize(100)
-                .setMtime(1)
+                .setModifiedTsNs(1)
                 .build());
         chunks.add(FilerProto.FileChunk.newBuilder()
                 .setFileId("b")
                 .setOffset(50)
                 .setSize(100)
-                .setMtime(2)
+                .setModifiedTsNs(2)
                 .build());
         chunks.add(FilerProto.FileChunk.newBuilder()
                 .setFileId("c")
                 .setOffset(200)
                 .setSize(50)
-                .setMtime(3)
+                .setModifiedTsNs(3)
                 .build());
         chunks.add(FilerProto.FileChunk.newBuilder()
                 .setFileId("d")
                 .setOffset(250)
                 .setSize(50)
-                .setMtime(4)
+                .setModifiedTsNs(4)
                 .build());
         chunks.add(FilerProto.FileChunk.newBuilder()
                 .setFileId("e")
                 .setOffset(175)
                 .setSize(100)
-                .setMtime(5)
+                .setModifiedTsNs(5)
                 .build());
 
         List<SeaweedRead.VisibleInterval> visibleIntervals = ReadChunks.readResolvedChunks(chunks);
@@ -161,7 +161,7 @@ public class SeaweedReadTest {
                 .setFileId("")
                 .setOffset(start)
                 .setSize(size)
-                .setMtime(ts)
+                .setModifiedTsNs(ts)
                 .build();
     }
 }
