@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 	"io"
 	"math"
+	"time"
 )
 
 func init() {
@@ -121,6 +122,7 @@ func (c *commandVolumeCheckDisk) checkBoth(a *VolumeReplica, b *VolumeReplica, a
 	}()
 
 	// read index db
+	readIndexDbCutoffFrom := uint64(time.Now().UnixNano())
 	if err = c.readIndexDatabase(aDB, a.info.Collection, a.info.Id, pb.NewServerAddressFromDataNode(a.location.dataNode), verbose, writer); err != nil {
 		return true, true, fmt.Errorf("readIndexDatabase %s volume %d: %v", a.location.dataNode, a.info.Id, err)
 	}
@@ -129,25 +131,37 @@ func (c *commandVolumeCheckDisk) checkBoth(a *VolumeReplica, b *VolumeReplica, a
 	}
 
 	// find and make up the differences
-	if aHasChanges, err = c.doVolumeCheckDisk(bDB, aDB, b, a, verbose, writer, applyChanges, nonRepairThreshold); err != nil {
+	if aHasChanges, err = c.doVolumeCheckDisk(bDB, aDB, b, a, verbose, writer, applyChanges, nonRepairThreshold, readIndexDbCutoffFrom); err != nil {
 		return true, true, fmt.Errorf("doVolumeCheckDisk source:%s target:%s volume %d: %v", b.location.dataNode.Id, a.location.dataNode.Id, b.info.Id, err)
 	}
-	if bHasChanges, err = c.doVolumeCheckDisk(aDB, bDB, a, b, verbose, writer, applyChanges, nonRepairThreshold); err != nil {
+	if bHasChanges, err = c.doVolumeCheckDisk(aDB, bDB, a, b, verbose, writer, applyChanges, nonRepairThreshold, readIndexDbCutoffFrom); err != nil {
 		return true, true, fmt.Errorf("doVolumeCheckDisk source:%s target:%s volume %d: %v", a.location.dataNode.Id, b.location.dataNode.Id, a.info.Id, err)
 	}
 	return
 }
 
-func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.MemDb, source, target *VolumeReplica, verbose bool, writer io.Writer, applyChanges bool, nonRepairThreshold float64) (hasChanges bool, err error) {
+func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.MemDb, source, target *VolumeReplica, verbose bool, writer io.Writer, applyChanges bool, nonRepairThreshold float64, cutoffFromAtNs uint64) (hasChanges bool, err error) {
 
 	// find missing keys
 	// hash join, can be more efficient
 	var missingNeedles []needle_map.NeedleValue
 	var counter int
-	minuend.AscendingVisit(func(value needle_map.NeedleValue) error {
+	doCutoffOfLastNeedle := true
+	minuend.DescendingVisit(func(value needle_map.NeedleValue) error {
 		counter++
-		if _, found := subtrahend.Get(value.Key); !found && value.Size.IsValid() {
+		if _, found := subtrahend.Get(value.Key); !found {
+			if doCutoffOfLastNeedle {
+				if needleMeta, err := readNeedleMeta(c.env.option.GrpcDialOption, pb.NewServerAddressFromDataNode(source.location.dataNode), source.info.Id, value); err == nil {
+					// needles older than the cutoff time are not missing yet
+					if needleMeta.AppendAtNs > cutoffFromAtNs {
+						return nil
+					}
+					doCutoffOfLastNeedle = false
+				}
+			}
 			missingNeedles = append(missingNeedles, value)
+		} else if doCutoffOfLastNeedle {
+			doCutoffOfLastNeedle = false
 		}
 		return nil
 	})
@@ -166,7 +180,6 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_m
 	}
 
 	for _, needleValue := range missingNeedles {
-
 		needleBlob, err := readSourceNeedleBlob(c.env.option.GrpcDialOption, pb.NewServerAddressFromDataNode(source.location.dataNode), source.info.Id, needleValue)
 		if err != nil {
 			return hasChanges, err
