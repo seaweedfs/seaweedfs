@@ -191,7 +191,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	return nil
 }
 
-func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, purgeAbsent bool, collectMtime int64) error {
+func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, purgeAbsent bool, collectMtimeNs int64) error {
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "checking each file from filer path %s...\n", c.getCollectFilerFilePath())
 	}
@@ -231,7 +231,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 			}
 			dataChunks = append(dataChunks, manifestChunks...)
 			for _, chunk := range dataChunks {
-				if collectMtime != 0 && chunk.Mtime > collectMtime {
+				if collectMtimeNs != 0 && chunk.ModifiedTsNs > collectMtimeNs {
 					continue
 				}
 				outputChan <- &Item{
@@ -687,23 +687,6 @@ func writeToFile(bytes []byte, fileName string) error {
 
 	dst.Write(bytes)
 	return nil
-}
-
-func readNeedleMeta(grpcDialOption grpc.DialOption, volumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.ReadNeedleMetaResponse, err error) {
-	err = operation.WithVolumeServerClient(false, volumeServer, grpcDialOption,
-		func(client volume_server_pb.VolumeServerClient) error {
-			if resp, err = client.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
-				VolumeId: volumeId,
-				NeedleId: uint64(needleValue.Key),
-				Offset:   needleValue.Offset.ToActualOffset(),
-				Size:     int32(needleValue.Size),
-			}); err != nil {
-				return err
-			}
-			return nil
-		},
-	)
-	return
 }
 
 func readNeedleStatus(grpcDialOption grpc.DialOption, sourceVolumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.VolumeNeedleStatusResponse, err error) {
