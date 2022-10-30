@@ -14,7 +14,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -204,7 +203,7 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_m
 		}
 
 		if verbose {
-			fmt.Fprintf(writer, "read %d,%x %s => %s\n", source.info.Id, needleValue.Key, source.location.dataNode.Id, target.location.dataNode.Id)
+			fmt.Fprintf(writer, "read %s %s => %s\n", needleValue.Key.FileId(source.info.Id), source.location.dataNode.Id, target.location.dataNode.Id)
 		}
 
 		hasChanges = true
@@ -216,9 +215,12 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_m
 	}
 
 	if *c.syncDeletions && len(partiallyDeletedNeedles) > 0 {
-		fidList := make([]string, len(partiallyDeletedNeedles))
+		var fidList []string
 		for _, needleValue := range partiallyDeletedNeedles {
 			fidList = append(fidList, needleValue.Key.FileId(source.info.Id))
+			if verbose {
+				fmt.Fprintf(writer, "delete %s %s => %s\n", needleValue.Key.FileId(source.info.Id), source.location.dataNode.Id, target.location.dataNode.Id)
+			}
 		}
 		deleteResults, deleteErr := operation.DeleteFilesAtOneVolumeServer(
 			pb.NewServerAddressFromDataNode(target.location.dataNode),
@@ -226,17 +228,11 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_m
 		if deleteErr != nil {
 			return hasChanges, deleteErr
 		}
-		deleteErrs := []string{}
 		for _, deleteResult := range deleteResults {
-			if deleteResult.Error != "" {
-				deleteErrs = append(deleteErrs, deleteResult.Error)
-			}
-			if !hasChanges && deleteResult.Status == http.StatusAccepted {
+			if deleteResult.Status == http.StatusAccepted {
 				hasChanges = true
+				return
 			}
-		}
-		if len(deleteErrs) > 0 {
-			return hasChanges, fmt.Errorf(strings.Join(deleteErrs, "\n"))
 		}
 	}
 	return
