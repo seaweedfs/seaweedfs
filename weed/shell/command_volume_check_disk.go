@@ -182,7 +182,7 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_m
 	fmt.Fprintf(writer, "volume %d %s has %d entries, %s missed %d and partially deleted %d entries\n",
 		source.info.Id, source.location.dataNode.Id, counter, target.location.dataNode.Id, len(missingNeedles), len(partiallyDeletedNeedles))
 
-	if counter == 0 || len(missingNeedles) == 0 {
+	if counter == 0 || (len(missingNeedles) == 0 && len(partiallyDeletedNeedles) == 0) {
 		return false, nil
 	}
 
@@ -214,6 +214,7 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_m
 		}
 
 	}
+
 	if *c.syncDeletions && len(partiallyDeletedNeedles) > 0 {
 		fidList := make([]string, len(partiallyDeletedNeedles))
 		for _, needleValue := range partiallyDeletedNeedles {
@@ -235,9 +236,8 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_m
 			}
 		}
 		if len(deleteErrs) > 0 {
-			err = fmt.Errorf(strings.Join(deleteErrs, "\n"))
+			return hasChanges, fmt.Errorf(strings.Join(deleteErrs, "\n"))
 		}
-		return
 	}
 	return
 }
