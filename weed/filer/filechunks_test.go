@@ -15,10 +15,10 @@ import (
 
 func TestCompactFileChunks(t *testing.T) {
 	chunks := []*filer_pb.FileChunk{
-		{Offset: 10, Size: 100, FileId: "abc", Mtime: 50},
-		{Offset: 100, Size: 100, FileId: "def", Mtime: 100},
-		{Offset: 200, Size: 100, FileId: "ghi", Mtime: 200},
-		{Offset: 110, Size: 200, FileId: "jkl", Mtime: 300},
+		{Offset: 10, Size: 100, FileId: "abc", ModifiedTsNs: 50},
+		{Offset: 100, Size: 100, FileId: "def", ModifiedTsNs: 100},
+		{Offset: 200, Size: 100, FileId: "ghi", ModifiedTsNs: 200},
+		{Offset: 110, Size: 200, FileId: "jkl", ModifiedTsNs: 300},
 	}
 
 	compacted, garbage := CompactFileChunks(nil, chunks)
@@ -35,22 +35,22 @@ func TestCompactFileChunks(t *testing.T) {
 func TestCompactFileChunks2(t *testing.T) {
 
 	chunks := []*filer_pb.FileChunk{
-		{Offset: 0, Size: 100, FileId: "abc", Mtime: 50},
-		{Offset: 100, Size: 100, FileId: "def", Mtime: 100},
-		{Offset: 200, Size: 100, FileId: "ghi", Mtime: 200},
-		{Offset: 0, Size: 100, FileId: "abcf", Mtime: 300},
-		{Offset: 50, Size: 100, FileId: "fhfh", Mtime: 400},
-		{Offset: 100, Size: 100, FileId: "yuyu", Mtime: 500},
+		{Offset: 0, Size: 100, FileId: "abc", ModifiedTsNs: 50},
+		{Offset: 100, Size: 100, FileId: "def", ModifiedTsNs: 100},
+		{Offset: 200, Size: 100, FileId: "ghi", ModifiedTsNs: 200},
+		{Offset: 0, Size: 100, FileId: "abcf", ModifiedTsNs: 300},
+		{Offset: 50, Size: 100, FileId: "fhfh", ModifiedTsNs: 400},
+		{Offset: 100, Size: 100, FileId: "yuyu", ModifiedTsNs: 500},
 	}
 
 	k := 3
 
 	for n := 0; n < k; n++ {
 		chunks = append(chunks, &filer_pb.FileChunk{
-			Offset: int64(n * 100), Size: 100, FileId: fmt.Sprintf("fileId%d", n), Mtime: int64(n),
+			Offset: int64(n * 100), Size: 100, FileId: fmt.Sprintf("fileId%d", n), ModifiedTsNs: int64(n),
 		})
 		chunks = append(chunks, &filer_pb.FileChunk{
-			Offset: int64(n * 50), Size: 100, FileId: fmt.Sprintf("fileId%d", n+k), Mtime: int64(n + k),
+			Offset: int64(n * 50), Size: 100, FileId: fmt.Sprintf("fileId%d", n+k), ModifiedTsNs: int64(n + k),
 		})
 	}
 
@@ -78,11 +78,11 @@ func TestRandomFileChunksCompact(t *testing.T) {
 			stop = start + 16
 		}
 		chunk := &filer_pb.FileChunk{
-			FileId: strconv.Itoa(i),
-			Offset: int64(start),
-			Size:   uint64(stop - start),
-			Mtime:  int64(i),
-			Fid:    &filer_pb.FileId{FileKey: uint64(i)},
+			FileId:       strconv.Itoa(i),
+			Offset:       int64(start),
+			Size:         uint64(stop - start),
+			ModifiedTsNs: int64(i),
+			Fid:          &filer_pb.FileId{FileKey: uint64(i)},
 		}
 		chunks = append(chunks, chunk)
 		for x := start; x < stop; x++ {
@@ -109,9 +109,9 @@ func TestIntervalMerging(t *testing.T) {
 		// case 0: normal
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 100, Size: 100, FileId: "asdf", Mtime: 134},
-				{Offset: 200, Size: 100, FileId: "fsad", Mtime: 353},
+				{Offset: 0, Size: 100, FileId: "abc", ModifiedTsNs: 123},
+				{Offset: 100, Size: 100, FileId: "asdf", ModifiedTsNs: 134},
+				{Offset: 200, Size: 100, FileId: "fsad", ModifiedTsNs: 353},
 			},
 			Expected: []*VisibleInterval{
 				{start: 0, stop: 100, fileId: "abc"},
@@ -122,8 +122,8 @@ func TestIntervalMerging(t *testing.T) {
 		// case 1: updates overwrite full chunks
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 0, Size: 200, FileId: "asdf", Mtime: 134},
+				{Offset: 0, Size: 100, FileId: "abc", ModifiedTsNs: 123},
+				{Offset: 0, Size: 200, FileId: "asdf", ModifiedTsNs: 134},
 			},
 			Expected: []*VisibleInterval{
 				{start: 0, stop: 200, fileId: "asdf"},
@@ -132,8 +132,8 @@ func TestIntervalMerging(t *testing.T) {
 		// case 2: updates overwrite part of previous chunks
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "a", Mtime: 123},
-				{Offset: 0, Size: 70, FileId: "b", Mtime: 134},
+				{Offset: 0, Size: 100, FileId: "a", ModifiedTsNs: 123},
+				{Offset: 0, Size: 70, FileId: "b", ModifiedTsNs: 134},
 			},
 			Expected: []*VisibleInterval{
 				{start: 0, stop: 70, fileId: "b"},
@@ -143,9 +143,9 @@ func TestIntervalMerging(t *testing.T) {
 		// case 3: updates overwrite full chunks
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 0, Size: 200, FileId: "asdf", Mtime: 134},
-				{Offset: 50, Size: 250, FileId: "xxxx", Mtime: 154},
+				{Offset: 0, Size: 100, FileId: "abc", ModifiedTsNs: 123},
+				{Offset: 0, Size: 200, FileId: "asdf", ModifiedTsNs: 134},
+				{Offset: 50, Size: 250, FileId: "xxxx", ModifiedTsNs: 154},
 			},
 			Expected: []*VisibleInterval{
 				{start: 0, stop: 50, fileId: "asdf"},
@@ -155,9 +155,9 @@ func TestIntervalMerging(t *testing.T) {
 		// case 4: updates far away from prev chunks
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 0, Size: 200, FileId: "asdf", Mtime: 134},
-				{Offset: 250, Size: 250, FileId: "xxxx", Mtime: 154},
+				{Offset: 0, Size: 100, FileId: "abc", ModifiedTsNs: 123},
+				{Offset: 0, Size: 200, FileId: "asdf", ModifiedTsNs: 134},
+				{Offset: 250, Size: 250, FileId: "xxxx", ModifiedTsNs: 154},
 			},
 			Expected: []*VisibleInterval{
 				{start: 0, stop: 200, fileId: "asdf"},
@@ -167,10 +167,10 @@ func TestIntervalMerging(t *testing.T) {
 		// case 5: updates overwrite full chunks
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "a", Mtime: 123},
-				{Offset: 0, Size: 200, FileId: "d", Mtime: 184},
-				{Offset: 70, Size: 150, FileId: "c", Mtime: 143},
-				{Offset: 80, Size: 100, FileId: "b", Mtime: 134},
+				{Offset: 0, Size: 100, FileId: "a", ModifiedTsNs: 123},
+				{Offset: 0, Size: 200, FileId: "d", ModifiedTsNs: 184},
+				{Offset: 70, Size: 150, FileId: "c", ModifiedTsNs: 143},
+				{Offset: 80, Size: 100, FileId: "b", ModifiedTsNs: 134},
 			},
 			Expected: []*VisibleInterval{
 				{start: 0, stop: 200, fileId: "d"},
@@ -180,9 +180,9 @@ func TestIntervalMerging(t *testing.T) {
 		// case 6: same updates
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Fid: &filer_pb.FileId{FileKey: 1}, Mtime: 123},
-				{Offset: 0, Size: 100, FileId: "axf", Fid: &filer_pb.FileId{FileKey: 2}, Mtime: 123},
-				{Offset: 0, Size: 100, FileId: "xyz", Fid: &filer_pb.FileId{FileKey: 3}, Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "abc", Fid: &filer_pb.FileId{FileKey: 1}, ModifiedTsNs: 123},
+				{Offset: 0, Size: 100, FileId: "axf", Fid: &filer_pb.FileId{FileKey: 2}, ModifiedTsNs: 123},
+				{Offset: 0, Size: 100, FileId: "xyz", Fid: &filer_pb.FileId{FileKey: 3}, ModifiedTsNs: 123},
 			},
 			Expected: []*VisibleInterval{
 				{start: 0, stop: 100, fileId: "xyz"},
@@ -191,12 +191,12 @@ func TestIntervalMerging(t *testing.T) {
 		// case 7: real updates
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 2097152, FileId: "7,0294cbb9892b", Mtime: 123},
-				{Offset: 0, Size: 3145728, FileId: "3,029565bf3092", Mtime: 130},
-				{Offset: 2097152, Size: 3145728, FileId: "6,029632f47ae2", Mtime: 140},
-				{Offset: 5242880, Size: 3145728, FileId: "2,029734c5aa10", Mtime: 150},
-				{Offset: 8388608, Size: 3145728, FileId: "5,02982f80de50", Mtime: 160},
-				{Offset: 11534336, Size: 2842193, FileId: "7,0299ad723803", Mtime: 170},
+				{Offset: 0, Size: 2097152, FileId: "7,0294cbb9892b", ModifiedTsNs: 123},
+				{Offset: 0, Size: 3145728, FileId: "3,029565bf3092", ModifiedTsNs: 130},
+				{Offset: 2097152, Size: 3145728, FileId: "6,029632f47ae2", ModifiedTsNs: 140},
+				{Offset: 5242880, Size: 3145728, FileId: "2,029734c5aa10", ModifiedTsNs: 150},
+				{Offset: 8388608, Size: 3145728, FileId: "5,02982f80de50", ModifiedTsNs: 160},
+				{Offset: 11534336, Size: 2842193, FileId: "7,0299ad723803", ModifiedTsNs: 170},
 			},
 			Expected: []*VisibleInterval{
 				{start: 0, stop: 2097152, fileId: "3,029565bf3092"},
@@ -209,11 +209,11 @@ func TestIntervalMerging(t *testing.T) {
 		// case 8: real bug
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 77824, FileId: "4,0b3df938e301", Mtime: 123},
-				{Offset: 471040, Size: 472225 - 471040, FileId: "6,0b3e0650019c", Mtime: 130},
-				{Offset: 77824, Size: 208896 - 77824, FileId: "4,0b3f0c7202f0", Mtime: 140},
-				{Offset: 208896, Size: 339968 - 208896, FileId: "2,0b4031a72689", Mtime: 150},
-				{Offset: 339968, Size: 471040 - 339968, FileId: "3,0b416a557362", Mtime: 160},
+				{Offset: 0, Size: 77824, FileId: "4,0b3df938e301", ModifiedTsNs: 123},
+				{Offset: 471040, Size: 472225 - 471040, FileId: "6,0b3e0650019c", ModifiedTsNs: 130},
+				{Offset: 77824, Size: 208896 - 77824, FileId: "4,0b3f0c7202f0", ModifiedTsNs: 140},
+				{Offset: 208896, Size: 339968 - 208896, FileId: "2,0b4031a72689", ModifiedTsNs: 150},
+				{Offset: 339968, Size: 471040 - 339968, FileId: "3,0b416a557362", ModifiedTsNs: 160},
 			},
 			Expected: []*VisibleInterval{
 				{start: 0, stop: 77824, fileId: "4,0b3df938e301"},
@@ -269,9 +269,9 @@ func TestChunksReading(t *testing.T) {
 		// case 0: normal
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 100, Size: 100, FileId: "asdf", Mtime: 134},
-				{Offset: 200, Size: 100, FileId: "fsad", Mtime: 353},
+				{Offset: 0, Size: 100, FileId: "abc", ModifiedTsNs: 123},
+				{Offset: 100, Size: 100, FileId: "asdf", ModifiedTsNs: 134},
+				{Offset: 200, Size: 100, FileId: "fsad", ModifiedTsNs: 353},
 			},
 			Offset: 0,
 			Size:   250,
@@ -284,8 +284,8 @@ func TestChunksReading(t *testing.T) {
 		// case 1: updates overwrite full chunks
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 0, Size: 200, FileId: "asdf", Mtime: 134},
+				{Offset: 0, Size: 100, FileId: "abc", ModifiedTsNs: 123},
+				{Offset: 0, Size: 200, FileId: "asdf", ModifiedTsNs: 134},
 			},
 			Offset: 50,
 			Size:   100,
@@ -296,8 +296,8 @@ func TestChunksReading(t *testing.T) {
 		// case 2: updates overwrite part of previous chunks
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 3, Size: 100, FileId: "a", Mtime: 123},
-				{Offset: 10, Size: 50, FileId: "b", Mtime: 134},
+				{Offset: 3, Size: 100, FileId: "a", ModifiedTsNs: 123},
+				{Offset: 10, Size: 50, FileId: "b", ModifiedTsNs: 134},
 			},
 			Offset: 30,
 			Size:   40,
@@ -309,9 +309,9 @@ func TestChunksReading(t *testing.T) {
 		// case 3: updates overwrite full chunks
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 0, Size: 200, FileId: "asdf", Mtime: 134},
-				{Offset: 50, Size: 250, FileId: "xxxx", Mtime: 154},
+				{Offset: 0, Size: 100, FileId: "abc", ModifiedTsNs: 123},
+				{Offset: 0, Size: 200, FileId: "asdf", ModifiedTsNs: 134},
+				{Offset: 50, Size: 250, FileId: "xxxx", ModifiedTsNs: 154},
 			},
 			Offset: 0,
 			Size:   200,
@@ -323,9 +323,9 @@ func TestChunksReading(t *testing.T) {
 		// case 4: updates far away from prev chunks
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 0, Size: 200, FileId: "asdf", Mtime: 134},
-				{Offset: 250, Size: 250, FileId: "xxxx", Mtime: 154},
+				{Offset: 0, Size: 100, FileId: "abc", ModifiedTsNs: 123},
+				{Offset: 0, Size: 200, FileId: "asdf", ModifiedTsNs: 134},
+				{Offset: 250, Size: 250, FileId: "xxxx", ModifiedTsNs: 154},
 			},
 			Offset: 0,
 			Size:   400,
@@ -337,10 +337,10 @@ func TestChunksReading(t *testing.T) {
 		// case 5: updates overwrite full chunks
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "a", Mtime: 123},
-				{Offset: 0, Size: 200, FileId: "c", Mtime: 184},
-				{Offset: 70, Size: 150, FileId: "b", Mtime: 143},
-				{Offset: 80, Size: 100, FileId: "xxxx", Mtime: 134},
+				{Offset: 0, Size: 100, FileId: "a", ModifiedTsNs: 123},
+				{Offset: 0, Size: 200, FileId: "c", ModifiedTsNs: 184},
+				{Offset: 70, Size: 150, FileId: "b", ModifiedTsNs: 143},
+				{Offset: 80, Size: 100, FileId: "xxxx", ModifiedTsNs: 134},
 			},
 			Offset: 0,
 			Size:   220,
@@ -352,9 +352,9 @@ func TestChunksReading(t *testing.T) {
 		// case 6: same updates
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Fid: &filer_pb.FileId{FileKey: 1}, Mtime: 123},
-				{Offset: 0, Size: 100, FileId: "def", Fid: &filer_pb.FileId{FileKey: 2}, Mtime: 123},
-				{Offset: 0, Size: 100, FileId: "xyz", Fid: &filer_pb.FileId{FileKey: 3}, Mtime: 123},
+				{Offset: 0, Size: 100, FileId: "abc", Fid: &filer_pb.FileId{FileKey: 1}, ModifiedTsNs: 123},
+				{Offset: 0, Size: 100, FileId: "def", Fid: &filer_pb.FileId{FileKey: 2}, ModifiedTsNs: 123},
+				{Offset: 0, Size: 100, FileId: "xyz", Fid: &filer_pb.FileId{FileKey: 3}, ModifiedTsNs: 123},
 			},
 			Offset: 0,
 			Size:   100,
@@ -365,9 +365,9 @@ func TestChunksReading(t *testing.T) {
 		// case 7: edge cases
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 100, Size: 100, FileId: "asdf", Mtime: 134},
-				{Offset: 200, Size: 100, FileId: "fsad", Mtime: 353},
+				{Offset: 0, Size: 100, FileId: "abc", ModifiedTsNs: 123},
+				{Offset: 100, Size: 100, FileId: "asdf", ModifiedTsNs: 134},
+				{Offset: 200, Size: 100, FileId: "fsad", ModifiedTsNs: 353},
 			},
 			Offset: 0,
 			Size:   200,
@@ -379,9 +379,9 @@ func TestChunksReading(t *testing.T) {
 		// case 8: edge cases
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 100, FileId: "abc", Mtime: 123},
-				{Offset: 90, Size: 200, FileId: "asdf", Mtime: 134},
-				{Offset: 190, Size: 300, FileId: "fsad", Mtime: 353},
+				{Offset: 0, Size: 100, FileId: "abc", ModifiedTsNs: 123},
+				{Offset: 90, Size: 200, FileId: "asdf", ModifiedTsNs: 134},
+				{Offset: 190, Size: 300, FileId: "fsad", ModifiedTsNs: 353},
 			},
 			Offset: 0,
 			Size:   300,
@@ -394,12 +394,12 @@ func TestChunksReading(t *testing.T) {
 		// case 9: edge cases
 		{
 			Chunks: []*filer_pb.FileChunk{
-				{Offset: 0, Size: 43175947, FileId: "2,111fc2cbfac1", Mtime: 1},
-				{Offset: 43175936, Size: 52981771 - 43175936, FileId: "2,112a36ea7f85", Mtime: 2},
-				{Offset: 52981760, Size: 72564747 - 52981760, FileId: "4,112d5f31c5e7", Mtime: 3},
-				{Offset: 72564736, Size: 133255179 - 72564736, FileId: "1,113245f0cdb6", Mtime: 4},
-				{Offset: 133255168, Size: 137269259 - 133255168, FileId: "3,1141a70733b5", Mtime: 5},
-				{Offset: 137269248, Size: 153578836 - 137269248, FileId: "1,114201d5bbdb", Mtime: 6},
+				{Offset: 0, Size: 43175947, FileId: "2,111fc2cbfac1", ModifiedTsNs: 1},
+				{Offset: 43175936, Size: 52981771 - 43175936, FileId: "2,112a36ea7f85", ModifiedTsNs: 2},
+				{Offset: 52981760, Size: 72564747 - 52981760, FileId: "4,112d5f31c5e7", ModifiedTsNs: 3},
+				{Offset: 72564736, Size: 133255179 - 72564736, FileId: "1,113245f0cdb6", ModifiedTsNs: 4},
+				{Offset: 133255168, Size: 137269259 - 133255168, FileId: "3,1141a70733b5", ModifiedTsNs: 5},
+				{Offset: 137269248, Size: 153578836 - 137269248, FileId: "1,114201d5bbdb", ModifiedTsNs: 6},
 			},
 			Offset: 0,
 			Size:   153578836,
@@ -455,10 +455,10 @@ func BenchmarkCompactFileChunks(b *testing.B) {
 
 	for n := 0; n < k; n++ {
 		chunks = append(chunks, &filer_pb.FileChunk{
-			Offset: int64(n * 100), Size: 100, FileId: fmt.Sprintf("fileId%d", n), Mtime: int64(n),
+			Offset: int64(n * 100), Size: 100, FileId: fmt.Sprintf("fileId%d", n), ModifiedTsNs: int64(n),
 		})
 		chunks = append(chunks, &filer_pb.FileChunk{
-			Offset: int64(n * 50), Size: 100, FileId: fmt.Sprintf("fileId%d", n+k), Mtime: int64(n + k),
+			Offset: int64(n * 50), Size: 100, FileId: fmt.Sprintf("fileId%d", n+k), ModifiedTsNs: int64(n + k),
 		})
 	}
 

@@ -125,6 +125,14 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	writeSuccessResponseEmpty(w, r)
 }
 
+func urlEscapeObject(object string) string {
+	t := urlPathEscape(removeDuplicateSlashes(object))
+	if strings.HasPrefix(t, "/") {
+		return t
+	}
+	return "/" + t
+}
+
 func urlPathEscape(object string) string {
 	var escapedParts []string
 	for _, part := range strings.Split(object, "/") {
@@ -419,7 +427,7 @@ func setUserMetadataKeyToLowercase(resp *http.Response) {
 	for key, value := range resp.Header {
 		if strings.HasPrefix(key, s3_constants.AmzUserMetaPrefix) {
 			resp.Header[strings.ToLower(key)] = value
-			delete(resp.Header,key)
+			delete(resp.Header, key)
 		}
 	}
 }

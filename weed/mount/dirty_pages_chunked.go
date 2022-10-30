@@ -78,7 +78,7 @@ func (pages *ChunkedDirtyPages) saveChunkedFileIntervalToStorage(reader io.Reade
 		pages.lastErr = err
 		return
 	}
-	chunk.Mtime = mtime
+	chunk.ModifiedTsNs = mtime
 	pages.fh.AddChunks([]*filer_pb.FileChunk{chunk})
 	pages.fh.entryViewCache = nil
 	glog.V(3).Infof("%v saveToStorage %s [%d,%d)", fileFullPath, chunk.FileId, offset, offset+size)
