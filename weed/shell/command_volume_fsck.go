@@ -558,7 +558,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 				}
 			}
 		}
-		orphanFileIds = append(orphanFileIds, fmt.Sprintf("%d,%s00000000", volumeId, n.Key.String()))
+		orphanFileIds = append(orphanFileIds, n.Key.FileId(volumeId))
 		orphanFileCount++
 		orphanDataSize += uint64(n.Size)
 		return nil
