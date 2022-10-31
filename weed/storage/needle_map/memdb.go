@@ -145,8 +145,12 @@ func (cm *MemDb) LoadFromIdx(idxName string) (ret error) {
 
 func (cm *MemDb) LoadFromReaderAt(readerAt io.ReaderAt) (ret error) {
 
+	return cm.LoadFilterFromReaderAt(readerAt, true, true)
+}
+
+func (cm *MemDb) LoadFilterFromReaderAt(readerAt io.ReaderAt, isFilterOffsetZero bool, isFilterDeleted bool) (ret error) {
 	return idx.WalkIndexFile(readerAt, 0, func(key NeedleId, offset Offset, size Size) error {
-		if offset.IsZero() || size.IsDeleted() {
+		if (isFilterOffsetZero && offset.IsZero()) || (isFilterDeleted && size.IsDeleted()) {
 			return cm.Delete(key)
 		}
 		return cm.Set(key, offset, size)
