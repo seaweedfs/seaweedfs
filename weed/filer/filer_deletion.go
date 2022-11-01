@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"math"
 	"strings"
 	"time"
@@ -54,7 +55,7 @@ func (f *Filer) loopProcessingDeletion() {
 				deletionCount = len(toDeleteFileIds)
 				_, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
 				if err != nil {
-					if !strings.Contains(err.Error(), "already deleted") {
+					if !strings.Contains(err.Error(), storage.ErrorDeleted.Error()) {
 						glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
 					}
 				} else {
@@ -86,7 +87,7 @@ func (f *Filer) doDeleteFileIds(fileIds []string) {
 		deletionCount := len(toDeleteFileIds)
 		_, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
 		if err != nil {
-			if !strings.Contains(err.Error(), "already deleted") {
+			if !strings.Contains(err.Error(), storage.ErrorDeleted.Error()) {
 				glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
 			}
 		}
