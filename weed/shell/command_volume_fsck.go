@@ -14,7 +14,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
-	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -567,7 +566,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 	cutoffFrom := c.collectCutoffFrom.Add(-*c.cutoffTimeAgo)
 	cutoffFromAtNs := uint64(cutoffFrom.UnixNano())
 	doCutoffOfLastNeedle := true
-	if err = db.DescendingVisit(func(n needle_map.NeedleValue) error {
+	if err = volumeFileIdDb.DescendingVisit(func(n needle_map.NeedleValue) error {
 		if n.Size.IsDeleted() {
 			return nil
 		}
