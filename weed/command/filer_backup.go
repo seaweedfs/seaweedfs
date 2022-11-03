@@ -12,13 +12,14 @@ import (
 )
 
 type FilerBackupOptions struct {
-	isActivePassive *bool
-	filer           *string
-	path            *string
-	excludePaths    *string
-	debug           *bool
-	proxyByFiler    *bool
-	timeAgo         *time.Duration
+	isActivePassive   *bool
+	filer             *string
+	path              *string
+	excludePaths      *string
+	debug             *bool
+	proxyByFiler      *bool
+	timeAgo           *time.Duration
+	retentionDuration *int
 }
 
 var (
@@ -33,6 +34,8 @@ func init() {
 	filerBackupOptions.proxyByFiler = cmdFilerBackup.Flag.Bool("filerProxy", false, "read and write file chunks by filer instead of volume servers")
 	filerBackupOptions.debug = cmdFilerBackup.Flag.Bool("debug", false, "debug mode to print out received files")
 	filerBackupOptions.timeAgo = cmdFilerBackup.Flag.Duration("timeAgo", 0, "start time before now. \"300ms\", \"1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\"")
+	filerBackupOptions.retentionDuration = cmdFilerBackup.Flag.Int("retentionDuration", 0, "incremental backup retention days")
+
 }
 
 var cmdFilerBackup = &Command{
@@ -122,6 +125,21 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		glog.V(0).Infof("backup %s progressed to %v %0.2f/sec", sourceFiler, time.Unix(0, lastTsNs), float64(counter)/float64(3))
 		return setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId), lastTsNs)
 	})
+
+	if dataSink.IsIncremental() && *filerBackupOptions.retentionDuration > 0 {
+		go func() {
+			for {
+				now := time.Now()
+				next := now.Add(time.Hour * 24)
+				next = time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, next.Location())
+				t := time.NewTimer(next.Sub(now))
+				<-t.C
+				key := util.Join(targetPath, now.Add(-1*time.Hour*24*time.Duration(*filerBackupOptions.retentionDuration)).Format("2006-01-02"))
+				_ = dataSink.DeleteEntry(util.Join(targetPath, key), true, true, nil)
+				glog.V(0).Infof("incremental backup delete directory:%s", key)
+			}
+		}()
+	}
 
 	return pb.FollowMetadata(sourceFiler, grpcDialOption, "backup_"+dataSink.GetName(), clientId, clientEpoch, sourcePath, nil, startFrom.UnixNano(), 0, 0, processEventFnWithOffset, pb.TrivialOnError)
 
