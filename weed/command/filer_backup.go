@@ -83,6 +83,11 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	if dataSink == nil {
 		return fmt.Errorf("no data sink configured in replication.toml")
 	}
+	if config.GetBool("source.filer.enabled") {
+		*backupOption.filer = config.GetString("source.filer.address")
+		*backupOption.path = config.GetString("source.filer.directory")
+		*backupOption.excludePaths = config.GetString("source.filer.excludeDirectories")
+	}
 
 	sourceFiler := pb.ServerAddress(*backupOption.filer)
 	sourcePath := *backupOption.path
