@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"net/url"
 	"os"
@@ -146,23 +147,17 @@ func (az *azureRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocati
 	fileSize := int64(filer.FileSize(entry))
 
 	_, err = uploadReaderAtToBlockBlob(context.Background(), readerAt, fileSize, blobURL, azblob.UploadToBlockBlobOptions{
-		BlockSize:   4 * 1024 * 1024,
-		Parallelism: 16})
+		BlockSize:       4 * 1024 * 1024,
+		BlobHTTPHeaders: azblob.BlobHTTPHeaders{ContentType: entry.Attributes.Mime},
+		Metadata:        toMetadata(entry.Extended),
+		Parallelism:     16,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("azure upload to %s%s: %v", loc.Bucket, loc.Path, err)
 	}
 
-	metadata := toMetadata(entry.Extended)
-	if len(metadata) > 0 {
-		_, err = blobURL.SetMetadata(context.Background(), metadata, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{})
-		if err != nil {
-			return nil, fmt.Errorf("azure set metadata on %s%s: %v", loc.Bucket, loc.Path, err)
-		}
-	}
-
 	// read back the remote entry
 	return az.readFileRemoteEntry(loc)
-
 }
 
 func (az *azureRemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
@@ -188,10 +183,9 @@ func (az *azureRemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteSto
 func toMetadata(attributes map[string][]byte) map[string]string {
 	metadata := make(map[string]string)
 	for k, v := range attributes {
-		if strings.HasPrefix(k, "X-") {
-			continue
+		if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
+			metadata[k[len(s3_constants.AmzUserMetaPrefix):]] = string(v)
 		}
-		metadata[k] = string(v)
 	}
 	return metadata
 }
