@@ -297,7 +297,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		// finished processing this sub directory
 		marker = subDir
 	}
-	if cursor.maxKeys <= 0 {
+	if cursor.isTruncated {
 		return
 	}
 

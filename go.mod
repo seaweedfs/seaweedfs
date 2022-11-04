@@ -9,7 +9,7 @@ require (
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/Shopify/sarama v1.37.2
-	github.com/aws/aws-sdk-go v1.44.116
+	github.com/aws/aws-sdk-go v1.44.126
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
@@ -43,7 +43,7 @@ require (
 	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/google/uuid v1.3.0
 	github.com/google/wire v0.5.0 // indirect
-	github.com/googleapis/gax-go/v2 v2.5.1 // indirect
+	github.com/googleapis/gax-go/v2 v2.6.0 // indirect
 	github.com/gorilla/mux v1.8.0
 	github.com/hailocab/go-hostpool v0.0.0-20160125115350-e80d13ce29ed // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
@@ -61,7 +61,7 @@ require (
 	github.com/klauspost/reedsolomon v1.11.1
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.7
-	github.com/linxGnu/grocksdb v1.7.7
+	github.com/linxGnu/grocksdb v1.7.10
 	github.com/magiconair/properties v1.8.6 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-ieproxy v0.0.9 // indirect
@@ -90,7 +90,7 @@ require (
 	github.com/spf13/cast v1.5.0 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/viper v1.13.0
-	github.com/stretchr/testify v1.8.0
+	github.com/stretchr/testify v1.8.1
 	github.com/stvp/tempredis v0.0.0-20181119212430-b82af8480203
 	github.com/syndtr/goleveldb v1.0.1-0.20190318030020-c3a204f8e965
 	github.com/tidwall/gjson v1.14.3
@@ -112,29 +112,29 @@ require (
 	gocloud.dev v0.27.0
 	gocloud.dev/pubsub/natspubsub v0.27.0
 	gocloud.dev/pubsub/rabbitpubsub v0.27.0
-	golang.org/x/crypto v0.0.0-20220722155217-630584e8d5aa // indirect
+	golang.org/x/crypto v0.1.0 // indirect
 	golang.org/x/exp v0.0.0-20220414153411-bcd21879b8fd
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
-	golang.org/x/net v0.0.0-20221012135044-0b7e1fb9d458
-	golang.org/x/oauth2 v0.0.0-20221006150949-b44042a4b9c1 // indirect
-	golang.org/x/sys v0.0.0-20220919091848-fb04ddd9f9c8
-	golang.org/x/text v0.3.7 // indirect
-	golang.org/x/tools v0.1.12
+	golang.org/x/net v0.1.0
+	golang.org/x/oauth2 v0.0.0-20221014153046-6fdb5e3db783 // indirect
+	golang.org/x/sys v0.1.0
+	golang.org/x/text v0.4.0 // indirect
+	golang.org/x/tools v0.2.0
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
-	google.golang.org/api v0.99.0
+	google.golang.org/api v0.101.0
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto v0.0.0-20221010155953-15ba04fc1c0e // indirect
+	google.golang.org/genproto v0.0.0-20221018160656-63c7b68cfc55 // indirect
 	google.golang.org/grpc v1.50.1
 	google.golang.org/protobuf v1.28.1
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	modernc.org/b v1.0.0 // indirect
 	modernc.org/cc/v3 v3.40.0 // indirect
-	modernc.org/ccgo/v3 v3.16.12 // indirect
-	modernc.org/libc v1.20.3 // indirect
+	modernc.org/ccgo/v3 v3.16.13-0.20221017192402-261537637ce8 // indirect
+	modernc.org/libc v1.21.2 // indirect
 	modernc.org/mathutil v1.5.0 // indirect
 	modernc.org/memory v1.4.0 // indirect
 	modernc.org/opt v0.1.3 // indirect
-	modernc.org/sqlite v1.19.2
+	modernc.org/sqlite v1.19.3
 	modernc.org/strutil v1.1.3
 	modernc.org/token v1.0.1 // indirect
 )
@@ -144,15 +144,15 @@ require (
 	github.com/arangodb/go-driver v1.4.0
 	github.com/armon/go-metrics v0.4.1
 	github.com/fluent/fluent-logger-golang v1.9.0
-	github.com/google/flatbuffers v22.9.29+incompatible
+	github.com/google/flatbuffers v22.10.26+incompatible
 	github.com/hanwen/go-fuse/v2 v2.1.1-0.20220627082937-d01fda7edf17
 	github.com/hashicorp/raft v1.3.11
 	github.com/hashicorp/raft-boltdb/v2 v2.2.2
 	github.com/rabbitmq/amqp091-go v1.5.0
 	github.com/tikv/client-go/v2 v2.0.1
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.38.5
-	golang.org/x/sync v0.0.0-20220929204114-8fcdb60fdcc0
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.39.0
+	golang.org/x/sync v0.1.0
 	google.golang.org/grpc/security/advancedtls v0.0.0-20220622233350-5cdb09fa29c1
 )
 
@@ -225,7 +225,7 @@ require (
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.8.0 // indirect
 	go.uber.org/zap v1.22.0 // indirect
-	golang.org/x/mod v0.6.0-dev.0.20220419223038-86c51ed26bb4 // indirect
+	golang.org/x/mod v0.6.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect

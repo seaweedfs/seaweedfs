@@ -105,19 +105,19 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			}
 			for _, chunk := range entry.Chunks {
 				p := &filer_pb.FileChunk{
-					FileId:    chunk.GetFileIdString(),
-					Offset:    offset,
-					Size:      chunk.Size,
-					Mtime:     chunk.Mtime,
-					CipherKey: chunk.CipherKey,
-					ETag:      chunk.ETag,
+					FileId:       chunk.GetFileIdString(),
+					Offset:       offset,
+					Size:         chunk.Size,
+					ModifiedTsNs: chunk.ModifiedTsNs,
+					CipherKey:    chunk.CipherKey,
+					ETag:         chunk.ETag,
 				}
 				finalParts = append(finalParts, p)
 				offset += int64(chunk.Size)
 			}
 		}
 	}
-	
+
 	entryName := filepath.Base(*input.Key)
 	dirName := filepath.Dir(*input.Key)
 	if dirName == "." {
@@ -157,7 +157,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 
 	output = &CompleteMultipartUploadResult{
 		CompleteMultipartUploadOutput: s3.CompleteMultipartUploadOutput{
-			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlPathEscape(dirName), urlPathEscape(entryName))),
+			Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
 			Bucket:   input.Bucket,
 			ETag:     aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
 			Key:      objectKey(input.Key),

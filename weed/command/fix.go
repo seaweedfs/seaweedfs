@@ -31,6 +31,7 @@ var cmdFix = &Command{
 var (
 	fixVolumeCollection = cmdFix.Flag.String("collection", "", "an optional volume collection name, if specified only it will be processed")
 	fixVolumeId         = cmdFix.Flag.Int64("volumeId", 0, "an optional volume id, if not 0 (default) only it will be processed")
+	fixIgnoreError      = cmdFix.Flag.Bool("ignoreError", false, "an optional, if true will be processed despite errors")
 )
 
 type VolumeFileScanner4Fix struct {
@@ -126,11 +127,21 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 	}
 
 	if err := storage.ScanVolumeFile(basepath, collection, vid, storage.NeedleMapInMemory, scanner); err != nil {
-		glog.Fatalf("scan .dat File: %v", err)
+		err := fmt.Errorf("scan .dat File: %v", err)
+		if *fixIgnoreError {
+			glog.Error(err)
+		} else {
+			glog.Fatal(err)
+		}
 	}
 
 	if err := nm.SaveToIdx(indexFileName); err != nil {
 		os.Remove(indexFileName)
-		glog.Fatalf("save to .idx File: %v", err)
+		err := fmt.Errorf("save to .idx File: %v", err)
+		if *fixIgnoreError {
+			glog.Error(err)
+		} else {
+			glog.Fatal(err)
+		}
 	}
 }

@@ -192,7 +192,7 @@ func logPrintf(name string, visibles []VisibleInterval) {
 
 func MergeIntoVisibles(visibles []VisibleInterval, chunk *filer_pb.FileChunk) (newVisibles []VisibleInterval) {
 
-	newV := newVisibleInterval(chunk.Offset, chunk.Offset+int64(chunk.Size), chunk.GetFileIdString(), chunk.Mtime, 0, chunk.Size, chunk.CipherKey, chunk.IsCompressed)
+	newV := newVisibleInterval(chunk.Offset, chunk.Offset+int64(chunk.Size), chunk.GetFileIdString(), chunk.ModifiedTsNs, 0, chunk.Size, chunk.CipherKey, chunk.IsCompressed)
 
 	length := len(visibles)
 	if length == 0 {
@@ -208,12 +208,12 @@ func MergeIntoVisibles(visibles []VisibleInterval, chunk *filer_pb.FileChunk) (n
 	chunkStop := chunk.Offset + int64(chunk.Size)
 	for _, v := range visibles {
 		if v.start < chunk.Offset && chunk.Offset < v.stop {
-			t := newVisibleInterval(v.start, chunk.Offset, v.fileId, v.modifiedTime, v.chunkOffset, v.chunkSize, v.cipherKey, v.isGzipped)
+			t := newVisibleInterval(v.start, chunk.Offset, v.fileId, v.modifiedTsNs, v.chunkOffset, v.chunkSize, v.cipherKey, v.isGzipped)
 			newVisibles = append(newVisibles, t)
 			// glog.V(0).Infof("visible %d [%d,%d) =1> [%d,%d)", i, v.start, v.stop, t.start, t.stop)
 		}
 		if v.start < chunkStop && chunkStop < v.stop {
-			t := newVisibleInterval(chunkStop, v.stop, v.fileId, v.modifiedTime, v.chunkOffset+(chunkStop-v.start), v.chunkSize, v.cipherKey, v.isGzipped)
+			t := newVisibleInterval(chunkStop, v.stop, v.fileId, v.modifiedTsNs, v.chunkOffset+(chunkStop-v.start), v.chunkSize, v.cipherKey, v.isGzipped)
 			newVisibles = append(newVisibles, t)
 			// glog.V(0).Infof("visible %d [%d,%d) =2> [%d,%d)", i, v.start, v.stop, t.start, t.stop)
 		}
@@ -254,7 +254,7 @@ func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunction
 		return visibles2, err
 	}
 	slices.SortFunc(chunks, func(a, b *filer_pb.FileChunk) bool {
-		if a.Mtime == b.Mtime {
+		if a.ModifiedTsNs == b.ModifiedTsNs {
 			filer_pb.EnsureFid(a)
 			filer_pb.EnsureFid(b)
 			if a.Fid == nil || b.Fid == nil {
@@ -262,7 +262,7 @@ func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunction
 			}
 			return a.Fid.FileKey < b.Fid.FileKey
 		}
-		return a.Mtime < b.Mtime
+		return a.ModifiedTsNs < b.ModifiedTsNs
 	})
 	for _, chunk := range chunks {
 
@@ -288,7 +288,7 @@ func checkDifference(x, y VisibleInterval) {
 	if x.start != y.start ||
 		x.stop != y.stop ||
 		x.fileId != y.fileId ||
-		x.modifiedTime != y.modifiedTime {
+		x.modifiedTsNs != y.modifiedTsNs {
 		fmt.Printf("different visible %+v : %+v\n", x, y)
 	}
 }
@@ -299,7 +299,7 @@ func checkDifference(x, y VisibleInterval) {
 type VisibleInterval struct {
 	start        int64
 	stop         int64
-	modifiedTime int64
+	modifiedTsNs int64
 	fileId       string
 	chunkOffset  int64
 	chunkSize    uint64
@@ -312,7 +312,7 @@ func newVisibleInterval(start, stop int64, fileId string, modifiedTime int64, ch
 		start:        start,
 		stop:         stop,
 		fileId:       fileId,
-		modifiedTime: modifiedTime,
+		modifiedTsNs: modifiedTime,
 		chunkOffset:  chunkOffset, // the starting position in the chunk
 		chunkSize:    chunkSize,
 		cipherKey:    cipherKey,

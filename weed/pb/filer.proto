@@ -132,7 +132,7 @@ message FileChunk {
     string file_id = 1; // to be deprecated
     int64 offset = 2;
     uint64 size = 3;
-    int64 mtime = 4;
+    int64 modified_ts_ns = 4;
     string e_tag = 5;
     string source_file_id = 6; // to be deprecated
     FileId fid = 7;

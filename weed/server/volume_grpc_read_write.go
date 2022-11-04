@@ -49,6 +49,7 @@ func (vs *VolumeServer) ReadNeedleMeta(ctx context.Context, req *volume_server_p
 	if n.HasTtl() {
 		resp.Ttl = n.Ttl.String()
 	}
+	resp.AppendAtNs = n.AppendAtNs
 	return resp, nil
 }
 

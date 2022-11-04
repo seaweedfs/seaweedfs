@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"strings"
 
 	"cloud.google.com/go/storage"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -166,6 +167,9 @@ func (gcs *gcsRemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStor
 func toMetadata(attributes map[string][]byte) map[string]string {
 	metadata := make(map[string]string)
 	for k, v := range attributes {
+		if strings.HasPrefix(k, "X-") {
+			continue
+		}
 		metadata[k] = string(v)
 	}
 	return metadata

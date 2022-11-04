@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"strings"
 
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -187,6 +188,9 @@ func (az *azureRemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteSto
 func toMetadata(attributes map[string][]byte) map[string]string {
 	metadata := make(map[string]string)
 	for k, v := range attributes {
+		if strings.HasPrefix(k, "X-") {
+			continue
+		}
 		metadata[k] = string(v)
 	}
 	return metadata

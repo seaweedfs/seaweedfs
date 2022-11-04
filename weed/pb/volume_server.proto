@@ -297,6 +297,7 @@ message ReadNeedleMetaResponse {
     uint64 last_modified = 2;
     uint32 crc = 3;
     string ttl = 4;
+    uint64 append_at_ns = 5;
 }
 
 message WriteNeedleBlobRequest {
