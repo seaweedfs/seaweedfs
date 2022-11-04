@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"net/url"
 	"os"
@@ -182,10 +183,9 @@ func (az *azureRemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteSto
 func toMetadata(attributes map[string][]byte) map[string]string {
 	metadata := make(map[string]string)
 	for k, v := range attributes {
-		if strings.HasPrefix(k, "X-") {
-			continue
+		if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
+			metadata[k[len(s3_constants.AmzUserMetaPrefix):]] = string(v)
 		}
-		metadata[k] = string(v)
 	}
 	return metadata
 }
