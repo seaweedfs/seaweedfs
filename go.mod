@@ -149,7 +149,7 @@ require (
 	github.com/hashicorp/raft v1.3.11
 	github.com/hashicorp/raft-boltdb/v2 v2.2.2
 	github.com/rabbitmq/amqp091-go v1.5.0
-	github.com/tikv/client-go/v2 v2.0.1
+	github.com/tikv/client-go/v2 v2.0.2
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.39.0
 	golang.org/x/sync v0.1.0
@@ -208,12 +208,13 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.17 // indirect
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c // indirect
 	github.com/pingcap/failpoint v0.0.0-20210918120811-547c13e3eb00 // indirect
-	github.com/pingcap/kvproto v0.0.0-20220106070556-3fa8fa04f898 // indirect
-	github.com/pingcap/log v0.0.0-20211215031037-e024ba4eb0ee // indirect
+	github.com/pingcap/kvproto v0.0.0-20221026112947-f8d61344b172 // indirect
+	github.com/pingcap/log v1.1.1-0.20221015072633-39906604fb81 // indirect
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
+	github.com/stathat/consistent v1.0.0 // indirect
 	github.com/subosito/gotenv v1.4.1 // indirect
-	github.com/tikv/pd/client v0.0.0-20220216070739-26c668271201 // indirect
+	github.com/tikv/pd/client v0.0.0-20221031025758-80f0d8ca4d07 // indirect
 	github.com/tinylib/msgp v1.1.6 // indirect
 	github.com/twmb/murmur3 v1.1.3 // indirect
 	github.com/yandex-cloud/go-genproto v0.0.0-20211115083454-9ca41db5ed9e // indirect
