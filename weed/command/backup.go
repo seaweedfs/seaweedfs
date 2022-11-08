@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -113,7 +114,7 @@ func runBackup(cmd *Command, args []string) bool {
 			return true
 		}
 	}
-	v, err := storage.NewVolume(util.ResolvePath(*s.dir), util.ResolvePath(*s.dir), *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, 0)
+	v, err := storage.NewVolume(util.ResolvePath(*s.dir), util.ResolvePath(*s.dir), *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, 0, 0)
 	if err != nil {
 		fmt.Printf("Error creating or reading from volume %d: %v\n", vid, err)
 		return true
@@ -138,7 +139,7 @@ func runBackup(cmd *Command, args []string) bool {
 		// remove the old data
 		v.Destroy()
 		// recreate an empty volume
-		v, err = storage.NewVolume(util.ResolvePath(*s.dir), util.ResolvePath(*s.dir), *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, 0)
+		v, err = storage.NewVolume(util.ResolvePath(*s.dir), util.ResolvePath(*s.dir), *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, 0, 0)
 		if err != nil {
 			fmt.Printf("Error creating or reading from volume %d: %v\n", vid, err)
 			return true
