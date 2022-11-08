@@ -80,7 +80,7 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 		m.ldbOpts = opts
 		m.exitChan = make(chan bool, 1)
 		m.accessFlag = 0
-		go lazyLoadingHandler(m)
+		go lazyLoadingRoutine(m)
 	}
 	return
 }
@@ -327,7 +327,7 @@ func (m *LevelDbNeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *
 		m.ldbOpts = opts
 		m.exitChan = make(chan bool, 1)
 		m.accessFlag = 0
-		go lazyLoadingHandler(m)
+		go lazyLoadingRoutine(m)
 	}
 	return e
 }
@@ -427,15 +427,15 @@ func unloadLdb(m *LevelDbNeedleMap) (err error) {
 	return nil
 }
 
-func lazyLoadingHandler(m *LevelDbNeedleMap) (err error) {
-	glog.V(1).Infof("lazyLoadingHandler %s", m.dbFileName)
+func lazyLoadingRoutine(m *LevelDbNeedleMap) (err error) {
+	glog.V(1).Infof("lazyLoadingRoutine %s", m.dbFileName)
 	var accessRecord int64
 	accessRecord = 1
 	for {
 		select {
 		case exit := <-m.exitChan:
 			if exit {
-				glog.V(1).Infof("exit from lazyLoadingHandler")
+				glog.V(1).Infof("exit from lazyLoadingRoutine")
 				return nil
 			}
 		case <-time.After(time.Hour * 1):
@@ -450,7 +450,6 @@ func lazyLoadingHandler(m *LevelDbNeedleMap) (err error) {
 				glog.V(1).Infof("reset accessRecord %s", m.dbFileName)
 				// reset accessRecord
 				accessRecord = 0
-				m.accessFlag = 0
 			}
 			continue
 		}
