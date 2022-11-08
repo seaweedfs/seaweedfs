@@ -172,7 +172,7 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	return true
 }
 
-func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, ldbTimeout int64, concurrency int) {
+func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, concurrency int, ldbTimeout int64) {
 
 	task_queue := make(chan os.DirEntry, 10*concurrency)
 	go func() {
@@ -222,7 +222,7 @@ func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapKind, ldbTimeo
 			workerNum = 10
 		}
 	}
-	l.concurrentLoadingVolumes(needleMapKind, ldbTimeout, workerNum)
+	l.concurrentLoadingVolumes(needleMapKind, workerNum, ldbTimeout)
 	glog.V(0).Infof("Store started on dir: %s with %d volumes max %d", l.Directory, len(l.volumes), l.MaxVolumeCount)
 
 	l.loadAllEcShards()

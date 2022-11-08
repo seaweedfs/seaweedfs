@@ -42,10 +42,6 @@ type LevelDbNeedleMap struct {
 func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Options, ldbTimeout int64) (m *LevelDbNeedleMap, err error) {
 	m = &LevelDbNeedleMap{dbFileName: dbFileName}
 	m.indexFile = indexFile
-	m.ldbOpts = opts
-	m.exitChan = make(chan bool, 1)
-	m.ldbTimeout = ldbTimeout
-	m.accessFlag = 1
 	if !isLevelDbFresh(dbFileName, indexFile) {
 		glog.V(1).Infof("Start to Generate %s from %s", dbFileName, indexFile.Name())
 		generateLevelDbFile(dbFileName, indexFile)
@@ -80,6 +76,10 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 	}
 	m.mapMetric = *mm
 	if m.ldbTimeout > 0 {
+		m.ldbOpts = opts
+		m.exitChan = make(chan bool, 1)
+		m.ldbTimeout = ldbTimeout
+		m.accessFlag = 0
 		go lazyLoadingHandler(m)
 	}
 	return
@@ -131,7 +131,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 
 func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, ok bool) {
 	bytes := make([]byte, NeedleIdSize)
-	if m.ldbTimeout != 0 {
+	if m.ldbTimeout > 0 {
 		m.ldbAccessLock.RLock()
 		defer m.ldbAccessLock.RUnlock()
 		loadErr := reloadLdb(m)
@@ -152,7 +152,7 @@ func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, o
 func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 	var oldSize Size
 	var watermark uint64
-	if m.ldbTimeout == 0 {
+	if m.ldbTimeout > 0 {
 		m.ldbAccessLock.RLock()
 		defer m.ldbAccessLock.RUnlock()
 		loadErr := reloadLdb(m)
@@ -219,7 +219,7 @@ func levelDbDelete(db *leveldb.DB, key NeedleId) error {
 
 func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
 	var watermark uint64
-	if m.ldbTimeout == 0 {
+	if m.ldbTimeout > 0 {
 		m.ldbAccessLock.RLock()
 		defer m.ldbAccessLock.RUnlock()
 		loadErr := reloadLdb(m)
@@ -284,9 +284,6 @@ func (m *LevelDbNeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *
 	}()
 	levelDbFile := v.FileName(".ldb")
 	m.indexFile = indexFile
-	m.ldbOpts = opts
-	m.exitChan = make(chan bool, 1)
-	m.ldbTimeout = ldbTimeout
 	err := os.RemoveAll(levelDbFile)
 	if err != nil {
 		return err
@@ -324,6 +321,10 @@ func (m *LevelDbNeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *
 	v.nm = m
 	v.tmpNm = nil
 	if m.ldbTimeout > 0 {
+		m.ldbOpts = opts
+		m.exitChan = make(chan bool, 1)
+		m.ldbTimeout = ldbTimeout
+		m.accessFlag = 0
 		go lazyLoadingHandler(m)
 	}
 	return e
@@ -397,6 +398,7 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 
 func reloadLdb(m *LevelDbNeedleMap) (err error) {
 	if m.db != nil {
+		glog.V(0).Infof("Uxpected reloading ldb %s", m.dbFileName)
 		return nil
 	}
 	glog.V(1).Infof("reloading leveldb %s", m.dbFileName)
@@ -421,19 +423,19 @@ func unloadLdb(m *LevelDbNeedleMap) (err error) {
 		m.db.Close()
 		m.db = nil
 	} else {
+		glog.V(0).Infof("Uxpected unloading ldb %s", m.dbFileName)
 		return nil
 	}
 	return nil
 }
 
 func lazyLoadingHandler(m *LevelDbNeedleMap) (err error) {
-	glog.V(1).Infof("lazyLoadingHandler unload leveldb %s", m.dbFileName)
+	glog.V(1).Infof("lazyLoadingHandler %s", m.dbFileName)
 	var accessRecord int64
 	accessRecord = 1
 	for {
 		select {
 		case exit := <-m.exitChan:
-			glog.V(1).Infof("exit %s", m.dbFileName)
 			if exit {
 				glog.V(1).Infof("exit from lazyLoadingHandler")
 				return nil
@@ -447,7 +449,7 @@ func lazyLoadingHandler(m *LevelDbNeedleMap) (err error) {
 					unloadLdb(m)
 				}
 			} else {
-				glog.V(1).Infof("reset record %s", m.dbFileName)
+				glog.V(1).Infof("reset accessRecord %s", m.dbFileName)
 				// reset accessRecord
 				accessRecord = 0
 				m.accessFlag = 0
