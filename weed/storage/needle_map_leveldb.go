@@ -262,7 +262,9 @@ func (m *LevelDbNeedleMap) Close() {
 			glog.Warningf("close levelDB failed: %v", err)
 		}
 	}
-	m.exitChan <- true
+	if m.ldbTimeout > 0 {
+		m.exitChan <- true
+	}
 }
 
 func (m *LevelDbNeedleMap) Destroy() error {
