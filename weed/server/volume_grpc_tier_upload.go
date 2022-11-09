@@ -80,11 +80,11 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 	})
 
 	if err := v.SaveVolumeInfo(); err != nil {
-		return fmt.Errorf("volume %d fail to save remote file info: %v", v.Id, err)
+		return fmt.Errorf("volume %d failed to save remote file info: %v", v.Id, err)
 	}
 
 	if err := v.LoadRemoteFile(); err != nil {
-		return fmt.Errorf("volume %d fail to load remote file: %v", v.Id, err)
+		return fmt.Errorf("volume %d failed to load remote file: %v", v.Id, err)
 	}
 
 	if !req.KeepLocalDatFile {

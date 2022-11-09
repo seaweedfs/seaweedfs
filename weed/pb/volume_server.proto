@@ -279,7 +279,6 @@ message CopyFileResponse {
 
 message ReadNeedleBlobRequest {
     uint32 volume_id = 1;
-    uint64 needle_id = 2;
     int64 offset = 3; // actual offset
     int32 size = 4;
 }
@@ -298,6 +297,7 @@ message ReadNeedleMetaResponse {
     uint64 last_modified = 2;
     uint32 crc = 3;
     string ttl = 4;
+    uint64 append_at_ns = 5;
 }
 
 message WriteNeedleBlobRequest {
@@ -430,6 +430,7 @@ message ReadVolumeFileStatusResponse {
     uint32 compaction_revision = 7;
     string collection = 8;
     string disk_type = 9;
+    VolumeInfo volume_info = 10;
 }
 
 message DiskStatus {
@@ -466,6 +467,7 @@ message VolumeInfo {
     repeated RemoteFile files = 1;
     uint32 version = 2;
     string replication = 3;
+    uint32 BytesOffset = 4;
 }
 
 // tiered storage

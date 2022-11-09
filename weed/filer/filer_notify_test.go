@@ -26,7 +26,7 @@ func TestProtoMarshal(t *testing.T) {
 				FileId:       "234,2423423422",
 				Offset:       234234,
 				Size:         234,
-				Mtime:        12312423,
+				ModifiedTsNs: 12312423,
 				ETag:         "2342342354",
 				SourceFileId: "23234,2342342342",
 			},

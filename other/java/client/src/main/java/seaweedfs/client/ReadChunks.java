@@ -83,7 +83,7 @@ public class ReadChunks {
                     prevX,
                     point.x,
                     chunk.getFileId(),
-                    chunk.getMtime(),
+                    chunk.getModifiedTsNs(),
                     prevX - chunk.getOffset(),
                     chunk.getOffset() == prevX && chunk.getSize() == prevX - startPoint.x,
                     chunk.getCipherKey().toByteArray(),
@@ -100,7 +100,7 @@ public class ReadChunks {
 
         public Point(long x, FilerProto.FileChunk chunk, boolean isStart) {
             this.x = x;
-            this.ts = chunk.getMtime();
+            this.ts = chunk.getModifiedTsNs();
             this.chunk = chunk;
             this.isStart = isStart;
         }

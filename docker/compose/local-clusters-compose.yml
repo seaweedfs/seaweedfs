@@ -1,4 +1,4 @@
-version: '2'
+version: '3.9'
 
 services:
   server1:
