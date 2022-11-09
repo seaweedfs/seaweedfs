@@ -55,7 +55,7 @@ const (
 	listEntryQueryPattern = `SELECT key, name, isdir, meta FROM
 	(
 		SELECT key, name, false as isdir, meta FROM "%s"
-		WHERE prefixes @> $1 AND cardinality(prefixes) < $2 - 1
+		WHERE prefixes @> $1 AND cardinality(prefixes) < $5
 		AND name __COMPARISON__ $3 AND name LIKE $4 ORDER BY key ASC LIMIT $6
 	) s1
 	UNION
