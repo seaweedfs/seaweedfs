@@ -1,4 +1,4 @@
-[postgres3]
+[postgres_s3]
 enabled = true
 port = 5432
 hostname = "postgres"
