@@ -1,4 +1,4 @@
-package postgres3
+package postgres_s3
 
 /*
  * Copyright 2022 Splunk Inc.
@@ -76,29 +76,28 @@ var (
 	listEntryInclusivePattern string
 )
 
-var _ filer.BucketAware = (*Postgres3Store)(nil)
+var _ filer.BucketAware = (*PostgresS3Store)(nil)
 
 func init() {
-	filer.Stores = append(filer.Stores, &Postgres3Store{})
+	filer.Stores = append(filer.Stores, &PostgresS3Store{})
 
 	listEntryExclusivePattern = strings.ReplaceAll(listEntryQueryPattern, "__COMPARISON__", ">")
 	listEntryInclusivePattern = strings.ReplaceAll(listEntryQueryPattern, "__COMPARISON__", ">=")
 }
 
-type Postgres3Store struct {
+type PostgresS3Store struct {
 	DB                 *sql.DB
 	SupportBucketTable bool
 	dbs                map[string]bool
 	dbsLock            sync.Mutex
 }
 
-func (store *Postgres3Store) GetName() string {
-	return "postgres3"
+func (store *PostgresS3Store) GetName() string {
+	return "postgres_s3"
 }
 
-func (store *Postgres3Store) Initialize(configuration util.Configuration, prefix string) error {
+func (store *PostgresS3Store) Initialize(configuration util.Configuration, prefix string) error {
 	return store.initialize(
-		configuration.GetString(prefix+"createTable"),
 		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetString(prefix+"hostname"),
@@ -112,7 +111,7 @@ func (store *Postgres3Store) Initialize(configuration util.Configuration, prefix
 	)
 }
 
-func (store *Postgres3Store) initialize(createTable, user, password, hostname string, port int, database, schema, sslmode string, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
+func (store *PostgresS3Store) initialize(user, password, hostname string, port int, database, schema, sslmode string, maxIdle, maxOpen, maxLifetimeSeconds int) (err error) {
 	store.SupportBucketTable = true
 	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, hostname, port, sslmode)
 	if user != "" {
@@ -154,11 +153,11 @@ func (store *Postgres3Store) initialize(createTable, user, password, hostname st
 	return nil
 }
 
-func (store *Postgres3Store) CanDropWholeBucket() bool {
+func (store *PostgresS3Store) CanDropWholeBucket() bool {
 	return store.SupportBucketTable
 }
 
-func (store *Postgres3Store) OnBucketCreation(bucket string) {
+func (store *PostgresS3Store) OnBucketCreation(bucket string) {
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
 
@@ -170,7 +169,7 @@ func (store *Postgres3Store) OnBucketCreation(bucket string) {
 	store.dbs[bucket] = true
 }
 
-func (store *Postgres3Store) OnBucketDeletion(bucket string) {
+func (store *PostgresS3Store) OnBucketDeletion(bucket string) {
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
 
@@ -182,7 +181,7 @@ func (store *Postgres3Store) OnBucketDeletion(bucket string) {
 	delete(store.dbs, bucket)
 }
 
-func (store *Postgres3Store) getTxOrDB(ctx context.Context, fullpath util.FullPath, isForChildren bool) (txOrDB abstract_sql.TxOrDB, bucket string, shortPath util.FullPath, err error) {
+func (store *PostgresS3Store) getTxOrDB(ctx context.Context, fullpath util.FullPath, isForChildren bool) (txOrDB abstract_sql.TxOrDB, bucket string, shortPath util.FullPath, err error) {
 
 	shortPath = fullpath
 	bucket = abstract_sql.DEFAULT_TABLE
@@ -233,7 +232,7 @@ func (store *Postgres3Store) getTxOrDB(ctx context.Context, fullpath util.FullPa
 	return
 }
 
-func (store *Postgres3Store) InsertEntry(ctx context.Context, entry *filer.Entry) error {
+func (store *PostgresS3Store) InsertEntry(ctx context.Context, entry *filer.Entry) error {
 	db, bucket, shortPath, err := store.getTxOrDB(ctx, entry.FullPath, false)
 	if err != nil {
 		return fmt.Errorf("findDB %s : %v", entry.FullPath, err)
@@ -264,11 +263,11 @@ func (store *Postgres3Store) InsertEntry(ctx context.Context, entry *filer.Entry
 	return nil
 }
 
-func (store *Postgres3Store) UpdateEntry(ctx context.Context, entry *filer.Entry) error {
+func (store *PostgresS3Store) UpdateEntry(ctx context.Context, entry *filer.Entry) error {
 	return store.InsertEntry(ctx, entry)
 }
 
-func (store *Postgres3Store) FindEntry(ctx context.Context, fullpath util.FullPath) (*filer.Entry, error) {
+func (store *PostgresS3Store) FindEntry(ctx context.Context, fullpath util.FullPath) (*filer.Entry, error) {
 
 	db, bucket, shortPath, err := store.getTxOrDB(ctx, fullpath, false)
 	if err != nil {
@@ -295,7 +294,7 @@ func (store *Postgres3Store) FindEntry(ctx context.Context, fullpath util.FullPa
 	return entry, nil
 }
 
-func (store *Postgres3Store) DeleteEntry(ctx context.Context, fullpath util.FullPath) error {
+func (store *PostgresS3Store) DeleteEntry(ctx context.Context, fullpath util.FullPath) error {
 	db, bucket, shortPath, err := store.getTxOrDB(ctx, fullpath, false)
 	if err != nil {
 		return fmt.Errorf("findDB %s : %v", fullpath, err)
@@ -314,7 +313,7 @@ func (store *Postgres3Store) DeleteEntry(ctx context.Context, fullpath util.Full
 	return nil
 }
 
-func (store *Postgres3Store) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) (err error) {
+func (store *PostgresS3Store) DeleteFolderChildren(ctx context.Context, fullpath util.FullPath) (err error) {
 	db, bucket, shortPath, err := store.getTxOrDB(ctx, fullpath, true)
 	if err != nil {
 		return fmt.Errorf("findDB %s : %v", fullpath, err)
@@ -347,11 +346,11 @@ func (store *Postgres3Store) DeleteFolderChildren(ctx context.Context, fullpath 
 	return nil
 }
 
-func (store *Postgres3Store) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+func (store *PostgresS3Store) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "", nil)
 }
 
-func (store *Postgres3Store) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+func (store *PostgresS3Store) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	db, bucket, shortPath, err := store.getTxOrDB(ctx, dirPath, true)
 	if err != nil {
 		return lastFileName, fmt.Errorf("findDB %s : %v", dirPath, err)
@@ -423,7 +422,7 @@ func (store *Postgres3Store) ListDirectoryPrefixedEntries(ctx context.Context, d
 	return lastFileName, nil
 }
 
-func (store *Postgres3Store) BeginTransaction(ctx context.Context) (context.Context, error) {
+func (store *PostgresS3Store) BeginTransaction(ctx context.Context) (context.Context, error) {
 	tx, err := store.DB.BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelReadCommitted,
 		ReadOnly:  false,
@@ -435,25 +434,25 @@ func (store *Postgres3Store) BeginTransaction(ctx context.Context) (context.Cont
 	return context.WithValue(ctx, "tx", tx), nil
 }
 
-func (store *Postgres3Store) CommitTransaction(ctx context.Context) error {
+func (store *PostgresS3Store) CommitTransaction(ctx context.Context) error {
 	if tx, ok := ctx.Value("tx").(*sql.Tx); ok {
 		return tx.Commit()
 	}
 	return nil
 }
 
-func (store *Postgres3Store) RollbackTransaction(ctx context.Context) error {
+func (store *PostgresS3Store) RollbackTransaction(ctx context.Context) error {
 	if tx, ok := ctx.Value("tx").(*sql.Tx); ok {
 		return tx.Rollback()
 	}
 	return nil
 }
 
-func (store *Postgres3Store) Shutdown() {
+func (store *PostgresS3Store) Shutdown() {
 	store.DB.Close()
 }
 
-func (store *Postgres3Store) CreateTable(ctx context.Context, bucket string) error {
+func (store *PostgresS3Store) CreateTable(ctx context.Context, bucket string) error {
 	_, err := store.DB.ExecContext(ctx, fmt.Sprintf(createTablePattern, bucket))
 	if err != nil {
 		return fmt.Errorf("create bucket table: %v", err)
@@ -466,7 +465,7 @@ func (store *Postgres3Store) CreateTable(ctx context.Context, bucket string) err
 	return err
 }
 
-func (store *Postgres3Store) deleteTable(ctx context.Context, bucket string) error {
+func (store *PostgresS3Store) deleteTable(ctx context.Context, bucket string) error {
 	if !store.SupportBucketTable {
 		return nil
 	}

@@ -1,4 +1,4 @@
-package postgres3
+package postgres_s3
 
 /*
  * Copyright 2022 Splunk Inc.

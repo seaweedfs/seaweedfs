@@ -1,4 +1,4 @@
-package postgres3
+package postgres_s3
 
 /*
  * Copyright 2022 Splunk Inc.
@@ -27,7 +27,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
 )
 
-func (store *Postgres3Store) KvPut(ctx context.Context, key []byte, value []byte) error {
+func (store *PostgresS3Store) KvPut(ctx context.Context, key []byte, value []byte) error {
 	db, _, _, err := store.getTxOrDB(ctx, "", false)
 	if err != nil {
 		return fmt.Errorf("findDB: %v", err)
@@ -42,7 +42,7 @@ func (store *Postgres3Store) KvPut(ctx context.Context, key []byte, value []byte
 	return nil
 }
 
-func (store *Postgres3Store) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
+func (store *PostgresS3Store) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
 	db, _, _, err := store.getTxOrDB(ctx, "", false)
 	if err != nil {
 		return nil, fmt.Errorf("findDB: %v", err)
@@ -63,7 +63,7 @@ func (store *Postgres3Store) KvGet(ctx context.Context, key []byte) (value []byt
 	return
 }
 
-func (store *Postgres3Store) KvDelete(ctx context.Context, key []byte) error {
+func (store *PostgresS3Store) KvDelete(ctx context.Context, key []byte) error {
 	db, _, _, err := store.getTxOrDB(ctx, "", false)
 	if err != nil {
 		return fmt.Errorf("findDB: %v", err)
