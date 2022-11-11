@@ -187,7 +187,11 @@ func toMetadata(attributes map[string][]byte) map[string]string {
 			metadata[k[len(s3_constants.AmzUserMetaPrefix):]] = string(v)
 		}
 	}
-	return metadata
+	parsed_metadata := make(map[string]string)
+	for k, v := range metadata {
+		parsed_metadata[strings.Replace(k, "-", "_", -1)] = v
+	}
+	return parsed_metadata
 }
 
 func (az *azureRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {

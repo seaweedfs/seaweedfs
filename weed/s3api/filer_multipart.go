@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"golang.org/x/exp/slices"
 	"math"
@@ -31,6 +32,8 @@ func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInp
 	glog.V(2).Infof("createMultipartUpload input %v", input)
 
 	uploadIdString := s3a.generateUploadID(*input.Key)
+
+	uploadIdString = uploadIdString + "_" +strings.ReplaceAll(uuid.New().String(),"-","")
 
 	if err := s3a.mkdir(s3a.genUploadsFolder(*input.Bucket), uploadIdString, func(entry *filer_pb.Entry) {
 		if entry.Extended == nil {
