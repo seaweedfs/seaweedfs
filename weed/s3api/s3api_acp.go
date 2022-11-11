@@ -289,19 +289,14 @@ func (s3a *S3ApiServer) checkAccessForWriteObject(r *http.Request, bucket, objec
 			},
 		}
 		if len(grants) == 0 {
-			// set default grants
-			s3acl.SetAcpOwnerHeader(r, accountId)
-			s3acl.SetAcpGrantsHeader(r, []*s3.Grant{bucketOwnerFullControlGrant})
 			return s3err.ErrNone
 		}
 
-		if !s3acl.GrantEquals(bucketOwnerFullControlGrant, grants[0]) {
-			return s3err.AccessControlListNotSupported
+		if s3acl.GrantEquals(bucketOwnerFullControlGrant, grants[0]) {
+			return s3err.ErrNone
 		}
 
-		s3acl.SetAcpOwnerHeader(r, accountId)
-		s3acl.SetAcpGrantsHeader(r, []*s3.Grant{bucketOwnerFullControlGrant})
-		return s3err.ErrNone
+		return s3err.AccessControlListNotSupported
 	}
 
 	//bucket access allowed
