@@ -284,7 +284,7 @@ func (s3a *S3ApiServer) generateUploadID(object string) string {
 // Check object name and uploadID when processing  multipart uploading
 func (s3a *S3ApiServer) checkUploadId(object string, id string) error {
 
-	hash := s3a.generateUploadID(strings.Split(object, "_")[0])
+	hash := s3a.generateUploadID(object)
 
 	if !strings.HasPrefix(id, hash) {
 		glog.Errorf("object %s and uploadID %s are not matched", object, id)
