@@ -82,7 +82,6 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 		m.ldbOpts = opts
 		m.exitChan = make(chan bool, 1)
 		m.accessFlag = 0
-		unloadLdb(m)
 		go lazyLoadingRoutine(m)
 	}
 	return
