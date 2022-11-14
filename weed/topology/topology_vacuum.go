@@ -222,15 +222,7 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 	worker := func(work <-chan vacuumTarget) {
 		defer wg.Done()
 		for w := range work {
-			glog.V(2).Infof("check vacuum on collection:%s volume:%d", c.Name, w.vid)
-			if vacuumLocationList, needVacuum := t.batchVacuumVolumeCheck(
-				grpcDialOption, w.vid, w.locationList, garbageThreshold); needVacuum {
-				if t.batchVacuumVolumeCompact(grpcDialOption, volumeLayout, w.vid, vacuumLocationList, preallocate) {
-					t.batchVacuumVolumeCommit(grpcDialOption, volumeLayout, w.vid, vacuumLocationList)
-				} else {
-					t.batchVacuumVolumeCleanup(grpcDialOption, volumeLayout, w.vid, vacuumLocationList)
-				}
-			}
+			t.vacuumOneVolumeId(grpcDialOption, volumeLayout, c, garbageThreshold, w.locationList, w.vid, preallocate)
 		}
 	}
 
@@ -241,8 +233,14 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 	}
 
 	for vid, locationList := range tmpMap {
-		t.vacuumOneVolumeId(grpcDialOption, volumeLayout, c, garbageThreshold, locationList, vid, preallocate)
+		work <- vacuumTarget{
+			vid:          vid,
+			locationList: locationList,
+		}
 	}
+
+	close(work)
+	wg.Wait()
 }
 
 func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, locationList *VolumeLocationList, vid needle.VolumeId, preallocate int64) {
@@ -255,10 +253,13 @@ func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayou
 		return
 	}
 
-	work <- vacuumTarget{
-		vid:          vid,
-		locationList: locationList,
+	glog.V(2).Infof("check vacuum on collection:%s volume:%d", c.Name, vid)
+	if vacuumLocationList, needVacuum := t.batchVacuumVolumeCheck(
+		grpcDialOption, vid, locationList, garbageThreshold); needVacuum {
+		if t.batchVacuumVolumeCompact(grpcDialOption, volumeLayout, vid, vacuumLocationList, preallocate) {
+			t.batchVacuumVolumeCommit(grpcDialOption, volumeLayout, vid, vacuumLocationList)
+		} else {
+			t.batchVacuumVolumeCleanup(grpcDialOption, volumeLayout, vid, vacuumLocationList)
+		}
 	}
-	close(work)
-	wg.Wait()
 }
