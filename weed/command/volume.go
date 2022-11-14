@@ -68,6 +68,7 @@ type VolumeServerOptions struct {
 	inflightUploadDataTimeout *time.Duration
 	hasSlowRead               *bool
 	readBufferSizeMB          *int
+	ldbTimeout                *int64
 }
 
 func init() {
@@ -92,6 +93,7 @@ func init() {
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
 	v.fileSizeLimitMB = cmdVolume.Flag.Int("fileSizeLimitMB", 256, "limit file size to avoid out of memory")
+	v.ldbTimeout = cmdVolume.Flag.Int64("index.leveldbTimeout", 0, "alive time for leveldb (default to 0). If leveldb of volume is not accessed in ldbTimeout hours, it will be off loaded to reduce opened files and memory consumption.")
 	v.concurrentUploadLimitMB = cmdVolume.Flag.Int("concurrentUploadLimitMB", 256, "limit total concurrent upload size")
 	v.concurrentDownloadLimitMB = cmdVolume.Flag.Int("concurrentDownloadLimitMB", 256, "limit total concurrent download size")
 	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
@@ -249,6 +251,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.inflightUploadDataTimeout,
 		*v.hasSlowRead,
 		*v.readBufferSizeMB,
+		*v.ldbTimeout,
 	)
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)

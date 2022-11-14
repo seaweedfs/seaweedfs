@@ -41,6 +41,7 @@ type VolumeServer struct {
 	grpcDialOption  grpc.DialOption
 
 	needleMapKind           storage.NeedleMapKind
+	ldbTimout               int64
 	FixJpgOrientation       bool
 	ReadMode                string
 	compactionBytePerSecond int64
@@ -68,6 +69,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	inflightUploadDataTimeout time.Duration,
 	hasSlowRead bool,
 	readBufferSizeMB int,
+	ldbTimeout int64,
 ) *VolumeServer {
 
 	v := util.GetViper()
@@ -99,12 +101,13 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		inflightUploadDataTimeout:     inflightUploadDataTimeout,
 		hasSlowRead:                   hasSlowRead,
 		readBufferSizeMB:              readBufferSizeMB,
+		ldbTimout:                     ldbTimeout,
 	}
 	vs.SeedMasterNodes = masterNodes
 
 	vs.checkWithMaster()
 
-	vs.store = storage.NewStore(vs.grpcDialOption, ip, port, grpcPort, publicUrl, folders, maxCounts, minFreeSpaces, idxFolder, vs.needleMapKind, diskTypes)
+	vs.store = storage.NewStore(vs.grpcDialOption, ip, port, grpcPort, publicUrl, folders, maxCounts, minFreeSpaces, idxFolder, vs.needleMapKind, diskTypes, ldbTimeout)
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)
