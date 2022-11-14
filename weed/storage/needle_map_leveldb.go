@@ -54,21 +54,23 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 	}
 	glog.V(1).Infof("Opening %s...", dbFileName)
 
-	if m.db, err = leveldb.OpenFile(dbFileName, opts); err != nil {
-		if errors.IsCorrupted(err) {
-			m.db, err = leveldb.RecoverFile(dbFileName, opts)
+	if m.ldbTimeout == 0 {
+		if m.db, err = leveldb.OpenFile(dbFileName, opts); err != nil {
+			if errors.IsCorrupted(err) {
+				m.db, err = leveldb.RecoverFile(dbFileName, opts)
+			}
+			if err != nil {
+				return
+			}
 		}
+		glog.V(0).Infof("Loading %s... , watermark: %d", dbFileName, getWatermark(m.db))
+		m.recordCount = uint64(m.indexFileOffset / NeedleMapEntrySize)
+		watermark := (m.recordCount / watermarkBatchSize) * watermarkBatchSize
+		err = setWatermark(m.db, watermark)
 		if err != nil {
+			glog.Fatalf("set watermark for %s error: %s\n", dbFileName, err)
 			return
 		}
-	}
-	glog.V(0).Infof("Loading %s... , watermark: %d", dbFileName, getWatermark(m.db))
-	m.recordCount = uint64(m.indexFileOffset / NeedleMapEntrySize)
-	watermark := (m.recordCount / watermarkBatchSize) * watermarkBatchSize
-	err = setWatermark(m.db, watermark)
-	if err != nil {
-		glog.Fatalf("set watermark for %s error: %s\n", dbFileName, err)
-		return
 	}
 	mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)
 	if indexLoadError != nil {
