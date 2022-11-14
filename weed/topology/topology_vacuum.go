@@ -2,10 +2,12 @@ package topology
 
 import (
 	"context"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
+	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"google.golang.org/grpc"
 
@@ -202,6 +204,11 @@ func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float
 	}
 }
 
+type vacuumTarget struct {
+	vid          needle.VolumeId
+	locationList *VolumeLocationList
+}
+
 func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, preallocate int64) {
 
 	volumeLayout.accessLock.RLock()
@@ -210,6 +217,28 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 		tmpMap[vid] = locationList.Copy()
 	}
 	volumeLayout.accessLock.RUnlock()
+
+	var wg sync.WaitGroup
+	worker := func(work <-chan vacuumTarget) {
+		defer wg.Done()
+		for w := range work {
+			glog.V(2).Infof("check vacuum on collection:%s volume:%d", c.Name, w.vid)
+			if vacuumLocationList, needVacuum := t.batchVacuumVolumeCheck(
+				grpcDialOption, w.vid, w.locationList, garbageThreshold); needVacuum {
+				if t.batchVacuumVolumeCompact(grpcDialOption, volumeLayout, w.vid, vacuumLocationList, preallocate) {
+					t.batchVacuumVolumeCommit(grpcDialOption, volumeLayout, w.vid, vacuumLocationList)
+				} else {
+					t.batchVacuumVolumeCleanup(grpcDialOption, volumeLayout, w.vid, vacuumLocationList)
+				}
+			}
+		}
+	}
+
+	work := make(chan vacuumTarget, t.vacuumConcurrency)
+	for w := 1; w <= t.vacuumConcurrency; w++ {
+		wg.Add(1)
+		go worker(work)
+	}
 
 	for vid, locationList := range tmpMap {
 		t.vacuumOneVolumeId(grpcDialOption, volumeLayout, c, garbageThreshold, locationList, vid, preallocate)
@@ -226,13 +255,10 @@ func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayou
 		return
 	}
 
-	glog.V(2).Infof("check vacuum on collection:%s volume:%d", c.Name, vid)
-	if vacuumLocationList, needVacuum := t.batchVacuumVolumeCheck(
-		grpcDialOption, vid, locationList, garbageThreshold); needVacuum {
-		if t.batchVacuumVolumeCompact(grpcDialOption, volumeLayout, vid, vacuumLocationList, preallocate) {
-			t.batchVacuumVolumeCommit(grpcDialOption, volumeLayout, vid, vacuumLocationList)
-		} else {
-			t.batchVacuumVolumeCleanup(grpcDialOption, volumeLayout, vid, vacuumLocationList)
-		}
+	work <- vacuumTarget{
+		vid:          vid,
+		locationList: locationList,
 	}
+	close(work)
+	wg.Wait()
 }

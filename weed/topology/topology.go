@@ -33,8 +33,9 @@ type Topology struct {
 
 	pulse int64
 
-	volumeSizeLimit  uint64
-	replicationAsMin bool
+	volumeSizeLimit   uint64
+	replicationAsMin  bool
+	vacuumConcurrency int
 
 	Sequence sequence.Sequencer
 
@@ -50,7 +51,7 @@ type Topology struct {
 	UuidMap              map[string][]string
 }
 
-func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
+func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool, vacuumConcurrency int) *Topology {
 	t := &Topology{}
 	t.id = NodeId(id)
 	t.nodeType = "Topology"
@@ -62,6 +63,7 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 	t.pulse = int64(pulse)
 	t.volumeSizeLimit = volumeSizeLimit
 	t.replicationAsMin = replicationAsMin
+	t.vacuumConcurrency = vacuumConcurrency
 
 	t.Sequence = seq
 

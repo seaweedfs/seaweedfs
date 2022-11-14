@@ -45,6 +45,7 @@ type MasterOption struct {
 	// PulseSeconds            int
 	DefaultReplicaPlacement string
 	GarbageThreshold        float64
+	VacuumConcurrency       int
 	WhiteList               []string
 	DisableHttp             bool
 	MetricsAddress          string
@@ -122,9 +123,10 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	if nil == seq {
 		glog.Fatalf("create sequencer failed.")
 	}
-	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, 5, replicationAsMin)
+	ms.Topo = topology.NewTopology("topo", seq, uint64(ms.option.VolumeSizeLimitMB)*1024*1024, 5, replicationAsMin, option.VacuumConcurrency)
 	ms.vg = topology.NewDefaultVolumeGrowth()
 	glog.V(0).Infoln("Volume Size Limit is", ms.option.VolumeSizeLimitMB, "MB")
+	glog.V(0).Infoln("Vacuum Concurrency is", ms.option.VacuumConcurrency)
 
 	ms.guard = security.NewGuard(ms.option.WhiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
