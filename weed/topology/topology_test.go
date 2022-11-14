@@ -24,7 +24,7 @@ func TestRemoveDataCenter(t *testing.T) {
 }
 
 func TestHandlingVolumeServerHeartbeat(t *testing.T) {
-	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false, 1)
 
 	dc := topo.GetOrCreateDataCenter("dc1")
 	rack := dc.GetOrCreateRack("rack1")
@@ -170,7 +170,7 @@ func assert(t *testing.T, message string, actual, expected int) {
 
 func TestAddRemoveVolume(t *testing.T) {
 
-	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false, 1)
 
 	dc := topo.GetOrCreateDataCenter("dc1")
 	rack := dc.GetOrCreateRack("rack1")
