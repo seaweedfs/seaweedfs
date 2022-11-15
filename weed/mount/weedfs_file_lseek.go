@@ -59,7 +59,7 @@ func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekO
 	// refresh view cache if necessary
 	if fh.entryViewCache == nil {
 		var err error
-		fh.entryViewCache, err = filer.NonOverlappingVisibleIntervals(fh.wfs.LookupFn(), fh.entry.Chunks, 0, fileSize)
+		fh.entryViewCache, err = filer.NonOverlappingVisibleIntervals(fh.wfs.LookupFn(), fh.entry.GetChunks(), 0, fileSize)
 		if err != nil {
 			return fuse.EIO
 		}

@@ -93,7 +93,7 @@ func (c *commandFsLs) Do(args []string, commandEnv *CommandEnv, writer io.Writer
 				dir = dir[:len(dir)-1]
 			}
 			fmt.Fprintf(writer, "%s %3d %s %s %6d %s/%s\n",
-				fileMode, len(entry.Chunks),
+				fileMode, len(entry.GetChunks()),
 				userName, groupName,
 				filer.FileSize(entry), dir, entry.Name)
 		} else {

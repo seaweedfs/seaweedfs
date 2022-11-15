@@ -30,7 +30,7 @@ func HasData(entry *filer_pb.Entry) bool {
 		return true
 	}
 
-	return len(entry.Chunks) > 0
+	return len(entry.GetChunks()) > 0
 }
 
 func IsSameData(a, b *filer_pb.Entry) bool {
@@ -64,7 +64,7 @@ func NewFileReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry) io.R
 	if len(entry.Content) > 0 {
 		return bytes.NewReader(entry.Content)
 	}
-	return NewChunkStreamReader(filerClient, entry.Chunks)
+	return NewChunkStreamReader(filerClient, entry.GetChunks())
 }
 
 func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {

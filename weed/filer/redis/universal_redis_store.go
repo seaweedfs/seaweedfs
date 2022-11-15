@@ -56,7 +56,7 @@ func (store *UniversalRedisStore) doInsertEntry(ctx context.Context, entry *file
 		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
 	}
 
-	if len(entry.Chunks) > filer.CountEntryChunksForGzip {
+	if len(entry.GetChunks()) > filer.CountEntryChunksForGzip {
 		value = util.MaybeGzipData(value)
 	}
 

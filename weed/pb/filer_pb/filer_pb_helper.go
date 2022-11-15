@@ -14,7 +14,7 @@ import (
 )
 
 func (entry *Entry) IsInRemoteOnly() bool {
-	return len(entry.Chunks) == 0 && entry.RemoteEntry != nil && entry.RemoteEntry.RemoteSize > 0
+	return len(entry.GetChunks()) == 0 && entry.RemoteEntry != nil && entry.RemoteEntry.RemoteSize > 0
 }
 
 func (entry *Entry) IsDirectoryKeyObject() bool {

@@ -33,7 +33,7 @@ func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInp
 
 	uploadIdString := s3a.generateUploadID(*input.Key)
 
-	uploadIdString = uploadIdString + "_" +strings.ReplaceAll(uuid.New().String(),"-","")
+	uploadIdString = uploadIdString + "_" + strings.ReplaceAll(uuid.New().String(), "-", "")
 
 	if err := s3a.mkdir(s3a.genUploadsFolder(*input.Bucket), uploadIdString, func(entry *filer_pb.Entry) {
 		if entry.Extended == nil {
@@ -106,7 +106,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 				glog.Errorf("completeMultipartUpload %s ETag mismatch chunk: %s part: %s", entry.Name, entryETag, partETag)
 				return nil, s3err.ErrInvalidPart
 			}
-			for _, chunk := range entry.Chunks {
+			for _, chunk := range entry.GetChunks() {
 				p := &filer_pb.FileChunk{
 					FileId:       chunk.GetFileIdString(),
 					Offset:       offset,
