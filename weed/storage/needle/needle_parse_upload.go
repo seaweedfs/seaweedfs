@@ -74,8 +74,20 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 		if mimeType == "application/octet-stream" {
 			mimeType = ""
 		}
-		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(ext, mimeType); shouldBeCompressed && iAmSure {
+
+		shouldGzipNow := false
+		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(ext, mimeType); iAmSure && shouldBeCompressed {
 			// println("ext", ext, "iAmSure", iAmSure, "shouldBeCompressed", shouldBeCompressed, "mimeType", pu.MimeType)
+			shouldGzipNow = true
+		} else if !iAmSure && mimeType == "" && len(pu.Data) > 16*1024 {
+			var compressed []byte
+			compressed, err := util.GzipData(pu.Data[0:128])
+			if err == nil {
+				shouldGzipNow = len(compressed)*10 < 128*9 // can not compress to less than 90%
+			}
+		}
+
+		if shouldGzipNow {
 			if compressedData, err := util.GzipData(pu.Data); err == nil {
 				if len(compressedData)*10 < len(pu.Data)*9 {
 					pu.Data = compressedData
