@@ -30,10 +30,13 @@ func (scanner *VolumeFileScanner4ReadAll) VisitNeedle(n *needle.Needle, offset i
 	}
 
 	sendErr := scanner.Stream.Send(&volume_server_pb.ReadAllNeedlesResponse{
-		VolumeId:   uint32(scanner.V.Id),
-		NeedleId:   uint64(n.Id),
-		Cookie:     uint32(n.Cookie),
-		NeedleBlob: n.Data,
+		VolumeId:             uint32(scanner.V.Id),
+		NeedleId:             uint64(n.Id),
+		Cookie:               uint32(n.Cookie),
+		NeedleBlob:           n.Data,
+		NeedleBlobCompressed: n.IsCompressed(),
+		LastModified:         n.LastModified,
+		Crc:                  n.Checksum.Value(),
 	})
 	if sendErr != nil {
 		return sendErr
