@@ -212,7 +212,7 @@ func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error
 		}
 
 	}
-	pu.IsGzipped = part.Header.Get("Content-Encoding") == "gzip"
+	pu.IsGzipped = r.Header.Get("Content-Encoding") == "gzip"
 	// pu.IsZstd = part.Header.Get("Content-Encoding") == "zstd"
 
 	return
