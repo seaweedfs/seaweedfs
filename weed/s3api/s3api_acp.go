@@ -52,6 +52,35 @@ func (s3a *S3ApiServer) CheckAccessForNewMultipartUpload(r *http.Request, bucket
 	return s3a.checkAccessForWriteObject(r, bucket, object, accountId)
 }
 
+// CheckAccessForCompleteMultipartUpload Check Acl for CompleteMultipartUpload API
+// includes:
+// - CompleteMultipartUploadHandler
+func (s3a *S3ApiServer) CheckAccessForCompleteMultipartUpload(r *http.Request, bucket, object string) s3err.ErrorCode {
+	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
+	if errCode != s3err.ErrNone {
+		return errCode
+	}
+
+	//bucket access allowed
+	accountId := s3acl.GetAccountId(r)
+	if accountId == *bucketMetadata.Owner.ID {
+		return s3err.ErrNone
+	} else {
+		if len(bucketMetadata.Acl) > 0 {
+			reqGrants := s3acl.DetermineReqGrants(accountId, s3_constants.PermissionWrite)
+			for _, bucketGrant := range bucketMetadata.Acl {
+				for _, requiredGrant := range reqGrants {
+					if s3acl.GrantEquals(bucketGrant, requiredGrant) {
+						return s3err.ErrNone
+					}
+				}
+			}
+		}
+	}
+	glog.V(3).Infof("acl denied! request account id: %s", accountId)
+	return s3err.ErrAccessDenied
+}
+
 func (s3a *S3ApiServer) checkAccessForWriteObject(r *http.Request, bucket, object, accountId string) s3err.ErrorCode {
 	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
 	if errCode != s3err.ErrNone {

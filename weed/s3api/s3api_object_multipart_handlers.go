@@ -70,6 +70,7 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
+	s3a.CheckAccessForCompleteMultipartUpload(r, bucket, object)
 
 	parts := &CompleteMultipartUpload{}
 	if err := xmlDecoder(r.Body, parts, r.ContentLength); err != nil {
