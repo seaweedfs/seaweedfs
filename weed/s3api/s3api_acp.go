@@ -261,17 +261,31 @@ func updateObjectEntry(s3a *S3ApiServer, bucket, object string, entry *filer_pb.
 	return s3a.updateEntry(util.Join(s3a.option.BucketsPath, bucket, dir), entry)
 }
 
-// Check Object-Write related access
+// CheckAccessForPutObject Check ACL for PutObject API
 // includes:
 // - PutObjectHandler
-// - PutObjectPartHandler
-func (s3a *S3ApiServer) checkAccessForWriteObject(r *http.Request, bucket, object string) s3err.ErrorCode {
+func (s3a *S3ApiServer) CheckAccessForPutObject(r *http.Request, bucket, object string) s3err.ErrorCode {
+	accountId := s3acl.GetAccountId(r)
+	return s3a.checkAccessForWriteObject(r, bucket, object, accountId)
+}
+
+// CheckAccessForNewMultipartUpload Check Acl for InitiateMultipartUploadResult API
+// includes:
+// - NewMultipartUploadHandler
+func (s3a *S3ApiServer) CheckAccessForNewMultipartUpload(r *http.Request, bucket, object string) s3err.ErrorCode {
+	accountId := s3acl.GetAccountId(r)
+	if accountId == IdentityAnonymous.AccountId {
+		return s3err.ErrAccessDenied
+	}
+	return s3a.checkAccessForWriteObject(r, bucket, object, accountId)
+}
+
+func (s3a *S3ApiServer) checkAccessForWriteObject(r *http.Request, bucket, object, accountId string) s3err.ErrorCode {
 	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
 	if errCode != s3err.ErrNone {
 		return errCode
 	}
 
-	accountId := s3acl.GetAccountId(r)
 	if bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
 		// validate grants (only bucketOwnerFullControl acl is allowed)
 		_, grants, errCode := s3acl.ParseAndValidateAclHeaders(r, s3a.accountManager, bucketMetadata.ObjectOwnership, *bucketMetadata.Owner.ID, accountId, false)
