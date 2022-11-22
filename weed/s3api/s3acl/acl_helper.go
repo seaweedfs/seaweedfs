@@ -521,8 +521,7 @@ func GrantWithFullControl(accountId string) *s3.Grant {
 
 func CheckObjectAccessForReadObject(r *http.Request, w http.ResponseWriter, entry *filer.Entry, bucketOwnerId string) (statusCode int, ok bool) {
 	if entry.IsDirectory() {
-		w.Header().Set(s3_constants.X_SeaweedFS_Header_Directory_Key, "true")
-		return http.StatusMethodNotAllowed, false
+		return http.StatusOK, true
 	}
 
 	accountId := GetAccountId(r)
