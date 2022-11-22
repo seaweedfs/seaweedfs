@@ -99,7 +99,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 	defer dataReader.Close()
 
-	errCode := s3a.checkAccessForWriteObject(r, bucket, object)
+	errCode := s3a.CheckAccessForPutObject(r, bucket, object)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
