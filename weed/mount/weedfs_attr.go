@@ -50,12 +50,12 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	}
 
 	if size, ok := input.GetSize(); ok && entry != nil {
-		glog.V(4).Infof("%v setattr set size=%v chunks=%d", path, size, len(entry.Chunks))
+		glog.V(4).Infof("%v setattr set size=%v chunks=%d", path, size, len(entry.GetChunks()))
 		if size < filer.FileSize(entry) {
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk
 			var truncatedChunks []*filer_pb.FileChunk
-			for _, chunk := range entry.Chunks {
+			for _, chunk := range entry.GetChunks() {
 				int64Size := int64(chunk.Size)
 				if chunk.Offset+int64Size > int64(size) {
 					// this chunk is truncated

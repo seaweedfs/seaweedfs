@@ -438,13 +438,13 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 			}
 
 			f.entry.Content = nil
-			f.entry.Chunks = append(f.entry.Chunks, chunk)
+			f.entry.Chunks = append(f.entry.GetChunks(), chunk)
 
 			return flushErr
 		}
 		f.bufWriter.CloseFunc = func() error {
 
-			manifestedChunks, manifestErr := filer.MaybeManifestize(f.saveDataAsChunk, f.entry.Chunks)
+			manifestedChunks, manifestErr := filer.MaybeManifestize(f.saveDataAsChunk, f.entry.GetChunks())
 			if manifestErr != nil {
 				// not good, but should be ok
 				glog.V(0).Infof("file %s close MaybeManifestize: %v", f.name, manifestErr)
@@ -514,7 +514,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 		return 0, io.EOF
 	}
 	if f.entryViewCache == nil {
-		f.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(filer.LookupFn(f.fs), f.entry.Chunks, 0, fileSize)
+		f.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(filer.LookupFn(f.fs), f.entry.GetChunks(), 0, fileSize)
 		f.reader = nil
 	}
 	if f.reader == nil {

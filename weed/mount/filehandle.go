@@ -94,7 +94,7 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 	}
 
 	// pick out-of-order chunks from existing chunks
-	for _, chunk := range fh.entry.Chunks {
+	for _, chunk := range fh.entry.GetChunks() {
 		if lessThan(earliestChunk, chunk) {
 			chunks = append(chunks, chunk)
 		}
@@ -105,9 +105,9 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 		return lessThan(a, b)
 	})
 
-	glog.V(4).Infof("%s existing %d chunks adds %d more", fh.FullPath(), len(fh.entry.Chunks), len(chunks))
+	glog.V(4).Infof("%s existing %d chunks adds %d more", fh.FullPath(), len(fh.entry.GetChunks()), len(chunks))
 
-	fh.entry.Chunks = append(fh.entry.Chunks, newChunks...)
+	fh.entry.Chunks = append(fh.entry.GetChunks(), newChunks...)
 	fh.entryViewCache = nil
 }
 

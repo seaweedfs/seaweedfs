@@ -36,11 +36,11 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 	} else if err != nil {
 		return fmt.Errorf("find %s: %v", fullpath, err)
 	} else {
-		offset = int64(TotalSize(entry.Chunks))
+		offset = int64(TotalSize(entry.GetChunks()))
 	}
 
 	// append to existing chunks
-	entry.Chunks = append(entry.Chunks, uploadResult.ToPbFileChunk(assignResult.Fid, offset))
+	entry.Chunks = append(entry.GetChunks(), uploadResult.ToPbFileChunk(assignResult.Fid, offset))
 
 	// update the entry
 	err = f.CreateEntry(context.Background(), entry, false, false, nil, false)

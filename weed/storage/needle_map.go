@@ -47,7 +47,7 @@ type baseNeedleMapper struct {
 type TempNeedleMapper interface {
 	NeedleMapper
 	DoOffsetLoading(v *Volume, indexFile *os.File, startFrom uint64) error
-	UpdateNeedleMap(v *Volume, indexFile *os.File, opts *opt.Options) error
+	UpdateNeedleMap(v *Volume, indexFile *os.File, opts *opt.Options, ldbTimeout int64) error
 }
 
 func (nm *baseNeedleMapper) IndexFileSize() uint64 {

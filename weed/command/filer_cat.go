@@ -114,7 +114,7 @@ func runFilerCat(cmd *Command, args []string) bool {
 
 		filerCat.filerClient = client
 
-		return filer.StreamContent(&filerCat, writer, respLookupEntry.Entry.Chunks, 0, int64(filer.FileSize(respLookupEntry.Entry)))
+		return filer.StreamContent(&filerCat, writer, respLookupEntry.Entry.GetChunks(), 0, int64(filer.FileSize(respLookupEntry.Entry)))
 
 	})
 

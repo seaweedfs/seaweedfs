@@ -319,7 +319,7 @@
         if (!baseUrl.endsWith('/')) {
             baseUrl += '/';
         }
-        var url = baseUrl + dirName;
+        var url = baseUrl + encodeURIComponent(dirName);
         if (!url.endsWith('/')) {
             url += '/';
         }
@@ -335,7 +335,7 @@
         if (newName == null || newName == '') {
             return;
         }
-        var url = basePath + newName;
+        var url = basePath + encodeURIComponent(newName);
         var originPath = basePath + originName;
         url += '?mv.from=' + originPath;
         var xhr = new XMLHttpRequest();

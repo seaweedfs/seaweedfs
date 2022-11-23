@@ -75,7 +75,7 @@ func (fc *FilerConf) loadFromFiler(filer *Filer) (err error) {
 		return fc.LoadFromBytes(entry.Content)
 	}
 
-	return fc.loadFromChunks(filer, entry.Content, entry.Chunks, entry.Size())
+	return fc.loadFromChunks(filer, entry.Content, entry.GetChunks(), entry.Size())
 }
 
 func (fc *FilerConf) loadFromChunks(filer *Filer, content []byte, chunks []*filer_pb.FileChunk, size uint64) (err error) {

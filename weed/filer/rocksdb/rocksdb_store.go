@@ -108,7 +108,7 @@ func (store *RocksDBStore) InsertEntry(ctx context.Context, entry *filer.Entry) 
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
 	}
 
-	// println("saved", entry.FullPath, "chunks", len(entry.Chunks))
+	// println("saved", entry.FullPath, "chunks", len(entry.GetChunks()))
 
 	return nil
 }
@@ -140,7 +140,7 @@ func (store *RocksDBStore) FindEntry(ctx context.Context, fullpath weed_util.Ful
 		return entry, fmt.Errorf("decode %s : %v", entry.FullPath, err)
 	}
 
-	// println("read", entry.FullPath, "chunks", len(entry.Chunks), "data", len(data), string(data))
+	// println("read", entry.FullPath, "chunks", len(entry.GetChunks()), "data", len(data), string(data))
 
 	return entry, nil
 }
@@ -259,7 +259,7 @@ func (store *RocksDBStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 		}
 		lastFileName = fileName
 
-		// println("list", entry.FullPath, "chunks", len(entry.Chunks))
+		// println("list", entry.FullPath, "chunks", len(entry.GetChunks()))
 		if decodeErr := entry.DecodeAttributesAndChunks(value); decodeErr != nil {
 			err = decodeErr
 			glog.V(0).Infof("list %s : %v", entry.FullPath, err)

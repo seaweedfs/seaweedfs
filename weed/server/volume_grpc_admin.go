@@ -3,9 +3,10 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"path/filepath"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -50,6 +51,7 @@ func (vs *VolumeServer) AllocateVolume(ctx context.Context, req *volume_server_p
 		req.Preallocate,
 		req.MemoryMapMaxSizeMb,
 		types.ToDiskType(req.DiskType),
+		vs.ldbTimout,
 	)
 
 	if err != nil {

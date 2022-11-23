@@ -118,7 +118,7 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "insert").Observe(time.Since(start).Seconds())
 	}()
 
-	filer_pb.BeforeEntrySerialization(entry.Chunks)
+	filer_pb.BeforeEntrySerialization(entry.GetChunks())
 	if entry.Mime == "application/octet-stream" {
 		entry.Mime = ""
 	}
@@ -139,7 +139,7 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "update").Observe(time.Since(start).Seconds())
 	}()
 
-	filer_pb.BeforeEntrySerialization(entry.Chunks)
+	filer_pb.BeforeEntrySerialization(entry.GetChunks())
 	if entry.Mime == "application/octet-stream" {
 		entry.Mime = ""
 	}
@@ -168,7 +168,7 @@ func (fsw *FilerStoreWrapper) FindEntry(ctx context.Context, fp util.FullPath) (
 
 	fsw.maybeReadHardLink(ctx, entry)
 
-	filer_pb.AfterEntryDeserialization(entry.Chunks)
+	filer_pb.AfterEntryDeserialization(entry.GetChunks())
 	return
 }
 
@@ -239,7 +239,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryEntries(ctx context.Context, dirPath 
 	// glog.V(4).Infof("ListDirectoryEntries %s from %s limit %d", dirPath, startFileName, limit)
 	return actualStore.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, func(entry *Entry) bool {
 		fsw.maybeReadHardLink(ctx, entry)
-		filer_pb.AfterEntryDeserialization(entry.Chunks)
+		filer_pb.AfterEntryDeserialization(entry.GetChunks())
 		return eachEntryFunc(entry)
 	})
 }
@@ -257,7 +257,7 @@ func (fsw *FilerStoreWrapper) ListDirectoryPrefixedEntries(ctx context.Context, 
 	// glog.V(4).Infof("ListDirectoryPrefixedEntries %s from %s prefix %s limit %d", dirPath, startFileName, prefix, limit)
 	adjustedEntryFunc := func(entry *Entry) bool {
 		fsw.maybeReadHardLink(ctx, entry)
-		filer_pb.AfterEntryDeserialization(entry.Chunks)
+		filer_pb.AfterEntryDeserialization(entry.GetChunks())
 		return eachEntryFunc(entry)
 	}
 	lastFileName, err = actualStore.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, prefix, adjustedEntryFunc)

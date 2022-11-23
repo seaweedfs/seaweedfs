@@ -144,7 +144,7 @@ func (store *YdbStore) insertOrUpdateEntry(ctx context.Context, entry *filer.Ent
 		return fmt.Errorf("encode %s: %s", entry.FullPath, err)
 	}
 
-	if len(entry.Chunks) > filer.CountEntryChunksForGzip {
+	if len(entry.GetChunks()) > filer.CountEntryChunksForGzip {
 		meta = util.MaybeGzipData(meta)
 	}
 	tablePathPrefix, shortDir := store.getPrefix(ctx, &dir)

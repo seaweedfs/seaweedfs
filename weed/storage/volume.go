@@ -43,6 +43,7 @@ type Volume struct {
 
 	lastCompactIndexOffset uint64
 	lastCompactRevision    uint16
+	ldbTimeout             int64
 
 	isCompacting       bool
 	isCommitCompacting bool
@@ -53,12 +54,13 @@ type Volume struct {
 	lastIoError error
 }
 
-func NewVolume(dirname string, dirIdx string, collection string, id needle.VolumeId, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32) (v *Volume, e error) {
+func NewVolume(dirname string, dirIdx string, collection string, id needle.VolumeId, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32, ldbTimeout int64) (v *Volume, e error) {
 	// if replicaPlacement is nil, the superblock will be loaded from disk
 	v = &Volume{dir: dirname, dirIdx: dirIdx, Collection: collection, Id: id, MemoryMapMaxSizeMb: memoryMapMaxSizeMb,
 		asyncRequestsChan: make(chan *needle.AsyncRequest, 128)}
 	v.SuperBlock = super_block.SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
 	v.needleMapKind = needleMapKind
+	v.ldbTimeout = ldbTimeout
 	e = v.load(true, true, needleMapKind, preallocate)
 	v.startWorker()
 	return

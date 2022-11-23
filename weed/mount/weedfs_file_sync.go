@@ -148,12 +148,12 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 			SkipCheckParentDirectory: true,
 		}
 
-		glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.Chunks))
-		for i, chunk := range entry.Chunks {
+		glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.GetChunks()))
+		for i, chunk := range entry.GetChunks() {
 			glog.V(4).Infof("%s chunks %d: %v [%d,%d)", fileFullPath, i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
 
-		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.Chunks)
+		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.GetChunks())
 
 		chunks, _ := filer.CompactFileChunks(wfs.LookupFn(), nonManifestChunks)
 		chunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), chunks)

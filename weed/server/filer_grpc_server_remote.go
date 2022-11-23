@@ -169,7 +169,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 		return nil, fetchAndWriteErr
 	}
 
-	garbage := entry.Chunks
+	garbage := entry.GetChunks()
 
 	newEntry := entry.ShallowClone()
 	newEntry.Chunks = chunks

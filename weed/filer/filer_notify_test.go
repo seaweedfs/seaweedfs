@@ -44,7 +44,7 @@ func TestProtoMarshal(t *testing.T) {
 	notification2 := &filer_pb.EventNotification{}
 	proto.Unmarshal(text, notification2)
 
-	if notification2.OldEntry.Chunks[0].SourceFileId != notification.OldEntry.Chunks[0].SourceFileId {
+	if notification2.OldEntry.GetChunks()[0].SourceFileId != notification.OldEntry.GetChunks()[0].SourceFileId {
 		t.Fatalf("marshal/unmarshal error: %s", text)
 	}
 
