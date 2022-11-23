@@ -415,7 +415,11 @@ func CloseResponse(resp *http.Response) {
 	io.Copy(io.Discard, reader)
 	resp.Body.Close()
 	if reader.BytesRead > 0 {
-		glog.V(1).Infof("response leftover %d bytes", reader.BytesRead)
+		if resp.Request != nil && resp.Request.URL != nil {
+			glog.V(1).Infof("response leftover %d bytes, url: %s", resp.Request.URL.RequestURI())
+		} else {
+			glog.V(1).Infof("response leftover %d bytes", reader.BytesRead)
+		}
 	}
 }
 
@@ -424,7 +428,12 @@ func CloseRequest(req *http.Request) {
 	io.Copy(io.Discard, reader)
 	req.Body.Close()
 	if reader.BytesRead > 0 {
-		glog.V(1).Infof("request leftover %d bytes", reader.BytesRead)
+		if req.URL != nil {
+			glog.V(1).Infof("request leftover %d bytes, url: %s", reader.BytesRead, req.URL.RequestURI())
+		} else {
+			glog.V(1).Infof("request leftover %d bytes", reader.BytesRead)
+		}
+
 	}
 }
 
