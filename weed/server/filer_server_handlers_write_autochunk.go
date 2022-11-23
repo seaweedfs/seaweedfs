@@ -375,6 +375,10 @@ func SaveAmzMetaData(r *http.Request, existing map[string][]byte, isReplace bool
 		}
 	}
 
+	if ce := r.Header.Get("Content-Encoding"); ce != "" {
+		metadata["Content-Encoding"] = []byte(ce)
+	}
+
 	//acp-owner
 	acpOwner := r.Header.Get(s3_constants.ExtAmzOwnerKey)
 	if len(acpOwner) > 0 {
