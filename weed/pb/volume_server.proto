@@ -320,6 +320,8 @@ message ReadAllNeedlesResponse {
     bool needle_blob_compressed = 6;
     uint64 last_modified = 7;
     uint32 crc = 8;
+    bytes name = 9;
+    bytes mime = 10;
 }
 
 message VolumeTailSenderRequest {
