@@ -416,7 +416,7 @@ func CloseResponse(resp *http.Response) {
 	resp.Body.Close()
 	if reader.BytesRead > 0 {
 		if resp.Request != nil && resp.Request.URL != nil {
-			glog.V(1).Infof("response leftover %d bytes, url: %s", resp.Request.URL.RequestURI())
+			glog.V(1).Infof("response leftover %d bytes, url: %s", reader.BytesRead, resp.Request.URL.RequestURI())
 		} else {
 			glog.V(1).Infof("response leftover %d bytes", reader.BytesRead)
 		}
