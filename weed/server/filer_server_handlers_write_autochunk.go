@@ -356,6 +356,10 @@ func SaveAmzMetaData(r *http.Request, existing map[string][]byte, isReplace bool
 		metadata[s3_constants.AmzStorageClass] = []byte(sc)
 	}
 
+	if ce := r.Header.Get("Content-Encoding"); ce != "" {
+		metadata["Content-Encoding"] = []byte(ce)
+	}
+
 	if tags := r.Header.Get(s3_constants.AmzObjectTagging); tags != "" {
 		for _, v := range strings.Split(tags, "&") {
 			tag := strings.Split(v, "=")
