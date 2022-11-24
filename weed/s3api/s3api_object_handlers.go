@@ -376,6 +376,13 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	s3a.maybeAddFilerJwtAuthorization(proxyReq, isWrite)
 	resp, postErr := s3a.client.Do(proxyReq)
 
+	if resp.Uncompressed && r.Header.Get("Accept-Encoding") == "" {
+		r.Header.Set("Accept-Encoding", "gzip")
+		util.CloseResponse(resp)
+		s3a.proxyToFiler(w, r, destUrl, false, passThroughResponse)
+		return
+	}
+
 	if postErr != nil {
 		glog.Errorf("post to filer: %v", postErr)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
