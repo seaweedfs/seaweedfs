@@ -233,7 +233,7 @@ func runServer(cmd *Command, args []string) bool {
 	webdavOptions.filer = &filerAddress
 	mqBrokerOptions.filerGroup = filerOptions.filerGroup
 
-	go stats_collect.StartMetricsServer(*serverMetricsHttpPort)
+	go stats_collect.StartMetricsServer(*serverBindIp, *serverMetricsHttpPort)
 
 	folders := strings.Split(*volumeDataFolders, ",")
 

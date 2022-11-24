@@ -162,7 +162,7 @@ func runFiler(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 
-	go stats_collect.StartMetricsServer(*f.metricsHttpPort)
+	go stats_collect.StartMetricsServer(*f.bindIp, *f.metricsHttpPort)
 
 	filerAddress := util.JoinHostPort(*f.ip, *f.port)
 	startDelay := time.Duration(2)

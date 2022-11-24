@@ -43,6 +43,7 @@ type SyncOptions struct {
 	bFromTsMs       *int64
 	aProxyByFiler   *bool
 	bProxyByFiler   *bool
+	metricsHttpIp   *string
 	metricsHttpPort *int
 	concurrency     *int
 	clientId        int32
@@ -86,6 +87,7 @@ func init() {
 	syncOptions.concurrency = cmdFilerSynchronize.Flag.Int("concurrency", DefaultConcurrencyLimit, "The maximum number of files that will be synced concurrently.")
 	syncCpuProfile = cmdFilerSynchronize.Flag.String("cpuprofile", "", "cpu profile output file")
 	syncMemProfile = cmdFilerSynchronize.Flag.String("memprofile", "", "memory profile output file")
+	syncOptions.metricsHttpIp = cmdFilerSynchronize.Flag.String("metricsIp", "", "metrics listen ip")
 	syncOptions.metricsHttpPort = cmdFilerSynchronize.Flag.Int("metricsPort", 0, "metrics listen port")
 	syncOptions.clientId = util.RandomInt32()
 }
@@ -119,7 +121,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	filerB := pb.ServerAddress(*syncOptions.filerB)
 
 	// start filer.sync metrics server
-	go statsCollect.StartMetricsServer(*syncOptions.metricsHttpPort)
+	go statsCollect.StartMetricsServer(*syncOptions.metricsHttpIp, *syncOptions.metricsHttpPort)
 
 	// read a filer signature
 	aFilerSignature, aFilerErr := replication.ReadFilerSignature(grpcDialOption, filerA)

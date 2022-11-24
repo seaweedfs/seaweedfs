@@ -119,7 +119,7 @@ func runMaster(cmd *Command, args []string) bool {
 		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
 	}
 
-	go stats_collect.StartMetricsServer(*m.metricsHttpPort)
+	go stats_collect.StartMetricsServer(*m.ipBind, *m.metricsHttpPort)
 	startMaster(m, masterWhiteList)
 
 	return true
