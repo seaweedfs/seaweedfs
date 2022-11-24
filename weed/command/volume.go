@@ -130,7 +130,7 @@ func runVolume(cmd *Command, args []string) bool {
 		grace.SetupProfiling(*v.cpuProfile, *v.memProfile)
 	}
 
-	go stats_collect.StartMetricsServer(*v.metricsHttpPort)
+	go stats_collect.StartMetricsServer(*v.bindIp, *v.metricsHttpPort)
 
 	minFreeSpaces := util.MustParseMinFreeSpace(*minFreeSpace, *minFreeSpacePercent)
 	v.masters = pb.ServerAddresses(*v.mastersString).ToAddresses()
