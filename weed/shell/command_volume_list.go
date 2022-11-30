@@ -18,6 +18,9 @@ func init() {
 
 type commandVolumeList struct {
 	collectionPattern *string
+	dataCenter        *string
+	rack              *string
+	dataNode          *string
 	readonly          *bool
 	volumeId          *uint64
 }
@@ -41,6 +44,9 @@ func (c *commandVolumeList) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.collectionPattern = volumeListCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
 	c.readonly = volumeListCommand.Bool("readonly", false, "show only readonly")
 	c.volumeId = volumeListCommand.Uint64("volumeId", 0, "show only volume id")
+	c.dataCenter = volumeListCommand.String("dataCenter", "", "show volumes only from the specified data center")
+	c.rack = volumeListCommand.String("rack", "", "show volumes only from the specified rack")
+	c.dataNode = volumeListCommand.String("dataNode", "", "show volumes only from the specified data node")
 
 	if err = volumeListCommand.Parse(args); err != nil {
 		return nil
@@ -80,6 +86,9 @@ func (c *commandVolumeList) writeTopologyInfo(writer io.Writer, t *master_pb.Top
 	})
 	var s statistics
 	for _, dc := range t.DataCenterInfos {
+		if *c.dataCenter != "" && *c.dataCenter != dc.Id {
+			continue
+		}
 		s = s.plus(c.writeDataCenterInfo(writer, dc, verbosityLevel))
 	}
 	output(verbosityLevel >= 0, writer, "%+v \n", s)
@@ -93,6 +102,9 @@ func (c *commandVolumeList) writeDataCenterInfo(writer io.Writer, t *master_pb.D
 		return a.Id < b.Id
 	})
 	for _, r := range t.RackInfos {
+		if *c.rack != "" && *c.rack != r.Id {
+			continue
+		}
 		s = s.plus(c.writeRackInfo(writer, r, verbosityLevel))
 	}
 	output(verbosityLevel >= 1, writer, "  DataCenter %s %+v \n", t.Id, s)
@@ -106,6 +118,9 @@ func (c *commandVolumeList) writeRackInfo(writer io.Writer, t *master_pb.RackInf
 		return a.Id < b.Id
 	})
 	for _, dn := range t.DataNodeInfos {
+		if *c.dataNode != "" && *c.dataNode != dn.Id {
+			continue
+		}
 		s = s.plus(c.writeDataNodeInfo(writer, dn, verbosityLevel))
 	}
 	output(verbosityLevel >= 2, writer, "    Rack %s %+v \n", t.Id, s)
