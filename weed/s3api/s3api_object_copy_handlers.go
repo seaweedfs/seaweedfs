@@ -98,8 +98,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 	glog.V(2).Infof("copy from %s to %s", srcUrl, dstUrl)
-	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject)
-	etag, errCode := s3a.putToFiler(r, dstUrl, resp.Body, destination)
+	etag, errCode := s3a.putToFiler(r, dstUrl, resp.Body, "")
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
