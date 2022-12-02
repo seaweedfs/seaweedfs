@@ -33,7 +33,7 @@ func (s3a *S3ApiServer) checkAccessByOwnership(r *http.Request, bucket string) s
 func (s3a *S3ApiServer) ExtractBucketAcp(r *http.Request, objectOwnership string) (owner string, grants []*s3.Grant, errCode s3err.ErrorCode) {
 	accountId := s3acl.GetAccountId(r)
 
-	if objectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
+	if objectOwnership == "" || objectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
 		return accountId, []*s3.Grant{
 			{
 				Permission: &s3_constants.PermissionFullControl,

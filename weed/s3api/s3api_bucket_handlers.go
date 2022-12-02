@@ -123,9 +123,6 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	objectOwnership := r.Header.Get("ObjectOwnership")
-	if objectOwnership == "" {
-		objectOwnership = s3_constants.DefaultOwnershipForCreate
-	}
 	acpOwner, acpGrants, errCode := s3a.ExtractBucketAcp(r, objectOwnership)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -138,6 +135,8 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 				entry.Extended = make(map[string][]byte)
 			}
 			entry.Extended[s3_constants.AmzIdentityId] = []byte(identityId)
+		}
+		if objectOwnership != "" {
 			entry.Extended[s3_constants.ExtOwnershipKey] = []byte(objectOwnership)
 		}
 		s3acl.AssembleEntryWithAcp(entry, acpOwner, acpGrants)
