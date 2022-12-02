@@ -69,7 +69,7 @@ func LoadOrCreateChunkCacheVolume(fileName string, preallocate int64) (*ChunkCac
 		WriteBuffer:                   1 * 1024 * 1024, // default value is 4MiB
 		CompactionTableSizeMultiplier: 10,              // default value is 1
 	}
-	if v.nm, err = storage.NewLevelDbNeedleMap(v.fileName+".ldb", indexFile, opts); err != nil {
+	if v.nm, err = storage.NewLevelDbNeedleMap(v.fileName+".ldb", indexFile, opts, 0); err != nil {
 		return nil, fmt.Errorf("loading leveldb %s error: %v", v.fileName+".ldb", err)
 	}
 

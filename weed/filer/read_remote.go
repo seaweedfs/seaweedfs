@@ -8,7 +8,7 @@ import (
 )
 
 func (entry *Entry) IsInRemoteOnly() bool {
-	return len(entry.Chunks) == 0 && entry.Remote != nil && entry.Remote.RemoteSize > 0
+	return len(entry.GetChunks()) == 0 && entry.Remote != nil && entry.Remote.RemoteSize > 0
 }
 
 func MapFullPathToRemoteStorageLocation(localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, fp util.FullPath) *remote_pb.RemoteStorageLocation {

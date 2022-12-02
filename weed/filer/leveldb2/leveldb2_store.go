@@ -88,7 +88,7 @@ func (store *LevelDB2Store) InsertEntry(ctx context.Context, entry *filer.Entry)
 		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
 	}
 
-	if len(entry.Chunks) > filer.CountEntryChunksForGzip {
+	if len(entry.GetChunks()) > filer.CountEntryChunksForGzip {
 		value = weed_util.MaybeGzipData(value)
 	}
 
@@ -98,7 +98,7 @@ func (store *LevelDB2Store) InsertEntry(ctx context.Context, entry *filer.Entry)
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
 	}
 
-	// println("saved", entry.FullPath, "chunks", len(entry.Chunks))
+	// println("saved", entry.FullPath, "chunks", len(entry.GetChunks()))
 
 	return nil
 }
@@ -129,7 +129,7 @@ func (store *LevelDB2Store) FindEntry(ctx context.Context, fullpath weed_util.Fu
 		return entry, fmt.Errorf("decode %s : %v", entry.FullPath, err)
 	}
 
-	// println("read", entry.FullPath, "chunks", len(entry.Chunks), "data", len(data), string(data))
+	// println("read", entry.FullPath, "chunks", len(entry.GetChunks()), "data", len(data), string(data))
 
 	return entry, nil
 }
@@ -208,7 +208,7 @@ func (store *LevelDB2Store) ListDirectoryPrefixedEntries(ctx context.Context, di
 			FullPath: weed_util.NewFullPath(string(dirPath), fileName),
 		}
 
-		// println("list", entry.FullPath, "chunks", len(entry.Chunks))
+		// println("list", entry.FullPath, "chunks", len(entry.GetChunks()))
 		if decodeErr := entry.DecodeAttributesAndChunks(weed_util.MaybeDecompressData(iter.Value())); decodeErr != nil {
 			err = decodeErr
 			glog.V(0).Infof("list %s : %v", entry.FullPath, err)

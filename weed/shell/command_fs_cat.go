@@ -55,7 +55,7 @@ func (c *commandFsCat) Do(args []string, commandEnv *CommandEnv, writer io.Write
 			return err
 		}
 
-		return filer.StreamContent(commandEnv.MasterClient, writer, respLookupEntry.Entry.Chunks, 0, int64(filer.FileSize(respLookupEntry.Entry)))
+		return filer.StreamContent(commandEnv.MasterClient, writer, respLookupEntry.Entry.GetChunks(), 0, int64(filer.FileSize(respLookupEntry.Entry)))
 
 	})
 

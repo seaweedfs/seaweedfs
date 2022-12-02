@@ -5,13 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
-	"io"
 )
 
 var (
@@ -29,7 +30,7 @@ func main() {
 	vid := uint32(*volumeId)
 
 	eachNeedleFunc := func(resp *volume_server_pb.ReadAllNeedlesResponse) error {
-		fmt.Printf("%d,%x%08x %d\n", resp.VolumeId, resp.NeedleId, resp.Cookie, len(resp.NeedleBlob))
+		fmt.Printf("%d,%x%08x %d %v %d %x\n", resp.VolumeId, resp.NeedleId, resp.Cookie, len(resp.NeedleBlob), resp.NeedleBlobCompressed, resp.LastModified, resp.Crc)
 		return nil
 	}
 

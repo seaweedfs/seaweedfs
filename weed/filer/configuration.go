@@ -63,6 +63,11 @@ func (f *Filer) LoadConfiguration(config *util.ViperProxy) (isFresh bool) {
 		if !found {
 			continue
 		}
+
+		if !config.GetBool(key + ".enabled") {
+			continue
+		}
+
 		store = reflect.New(reflect.ValueOf(store).Elem().Type()).Interface().(FilerStore)
 		if err := store.Initialize(config, key+"."); err != nil {
 			glog.Fatalf("Failed to initialize store for %s: %+v", key, err)

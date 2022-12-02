@@ -181,7 +181,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			}
 			entry.FileSize += uint64(chunkOffset)
 		}
-		newChunks = append(entry.Chunks, fileChunks...)
+		newChunks = append(entry.GetChunks(), fileChunks...)
 
 		// TODO
 		if len(entry.Content) > 0 {
