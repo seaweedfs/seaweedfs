@@ -44,6 +44,10 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	if status != fuse.OK {
 		return status
 	}
+	if fh != nil {
+		fh.entryLock.Lock()
+		defer fh.entryLock.Unlock()
+	}
 
 	if size, ok := input.GetSize(); ok && entry != nil {
 		glog.V(4).Infof("%v setattr set size=%v chunks=%d", path, size, len(entry.GetChunks()))

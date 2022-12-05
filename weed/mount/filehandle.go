@@ -8,16 +8,18 @@ import (
 	"golang.org/x/exp/slices"
 	"golang.org/x/sync/semaphore"
 	"math"
+	"sync"
 )
 
 type FileHandleId uint64
 
 type FileHandle struct {
-	fh      FileHandleId
-	counter int64
-	entry   *LockedEntry
-	inode   uint64
-	wfs     *WFS
+	fh        FileHandleId
+	counter   int64
+	entry     *LockedEntry
+	entryLock sync.Mutex
+	inode     uint64
+	wfs       *WFS
 
 	// cache file has been written to
 	dirtyMetadata  bool
@@ -69,6 +71,8 @@ func (fh *FileHandle) UpdateEntry(fn func(entry *filer_pb.Entry)) *filer_pb.Entr
 }
 
 func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
+	fh.entryLock.Lock()
+	defer fh.entryLock.Unlock()
 
 	if fh.entry == nil {
 		return
