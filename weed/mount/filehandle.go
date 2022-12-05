@@ -1,27 +1,23 @@
 package mount
 
 import (
-	"golang.org/x/sync/semaphore"
-	"math"
-	"sync"
-
-	"golang.org/x/exp/slices"
-
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"golang.org/x/exp/slices"
+	"golang.org/x/sync/semaphore"
+	"math"
 )
 
 type FileHandleId uint64
 
 type FileHandle struct {
-	fh        FileHandleId
-	counter   int64
-	entry     *filer_pb.Entry
-	entryLock sync.Mutex
-	inode     uint64
-	wfs       *WFS
+	fh      FileHandleId
+	counter int64
+	entry   *LockedEntry
+	inode   uint64
+	wfs     *WFS
 
 	// cache file has been written to
 	dirtyMetadata  bool
@@ -48,6 +44,9 @@ func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_p
 	if entry != nil {
 		entry.Attributes.FileSize = filer.FileSize(entry)
 	}
+	fh.entry = &LockedEntry{
+		Entry: entry,
+	}
 
 	return fh
 }
@@ -58,27 +57,18 @@ func (fh *FileHandle) FullPath() util.FullPath {
 }
 
 func (fh *FileHandle) GetEntry() *filer_pb.Entry {
-	fh.entryLock.Lock()
-	defer fh.entryLock.Unlock()
-	return fh.entry
+	return fh.entry.GetEntry()
 }
 
 func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
-	fh.entryLock.Lock()
-	defer fh.entryLock.Unlock()
-	fh.entry = entry
+	fh.entry.SetEntry(entry)
 }
 
 func (fh *FileHandle) UpdateEntry(fn func(entry *filer_pb.Entry)) *filer_pb.Entry {
-	fh.entryLock.Lock()
-	defer fh.entryLock.Unlock()
-	fn(fh.entry)
-	return fh.entry
+	return fh.entry.UpdateEntry(fn)
 }
 
 func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
-	fh.entryLock.Lock()
-	defer fh.entryLock.Unlock()
 
 	if fh.entry == nil {
 		return
@@ -107,7 +97,7 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 
 	glog.V(4).Infof("%s existing %d chunks adds %d more", fh.FullPath(), len(fh.entry.GetChunks()), len(chunks))
 
-	fh.entry.Chunks = append(fh.entry.GetChunks(), newChunks...)
+	fh.entry.AppendChunks(newChunks)
 	fh.entryViewCache = nil
 }
 

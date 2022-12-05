@@ -25,7 +25,7 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 	} else {
 		if fh, found := wfs.fhmap.FindFileHandle(inode); found {
 			out.AttrValid = 1
-			wfs.setAttrByPbEntry(&out.Attr, inode, fh.entry)
+			wfs.setAttrByPbEntry(&out.Attr, inode, fh.entry.GetEntry())
 			out.Nlink = 0
 			return fuse.OK
 		}
@@ -43,10 +43,6 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	path, fh, entry, status := wfs.maybeReadEntry(input.NodeId)
 	if status != fuse.OK {
 		return status
-	}
-	if fh != nil {
-		fh.entryLock.Lock()
-		defer fh.entryLock.Unlock()
 	}
 
 	if size, ok := input.GetSize(); ok && entry != nil {

@@ -46,8 +46,6 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	// lock source and target file handles
 	fhOut.orderedMutex.Acquire(context.Background(), 1)
 	defer fhOut.orderedMutex.Release(1)
-	fhOut.entryLock.Lock()
-	defer fhOut.entryLock.Unlock()
 
 	if fhOut.entry == nil {
 		return 0, fuse.ENOENT
@@ -56,8 +54,6 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	if fhIn.fh != fhOut.fh {
 		fhIn.orderedMutex.Acquire(context.Background(), 1)
 		defer fhIn.orderedMutex.Release(1)
-		fhIn.entryLock.Lock()
-		defer fhIn.entryLock.Unlock()
 	}
 
 	// directories are not supported
