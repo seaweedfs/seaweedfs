@@ -103,7 +103,7 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 		}
 	}
 
-	path, fh, entry, status := wfs.maybeReadEntry(input.NodeId)
+	path, _, entry, status := wfs.maybeReadEntry(input.NodeId)
 	if status != fuse.OK {
 		return status
 	}
@@ -181,7 +181,7 @@ func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr 
 	if len(attr) == 0 {
 		return fuse.EINVAL
 	}
-	path, fh, entry, status := wfs.maybeReadEntry(header.NodeId)
+	path, _, entry, status := wfs.maybeReadEntry(header.NodeId)
 	if status != fuse.OK {
 		return status
 	}

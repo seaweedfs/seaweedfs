@@ -173,7 +173,7 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 			}
 			if fh, found := wfs.fhmap.FindFileHandle(inode); found {
 				glog.V(4).Infof("readdir opened file %s", dirPath.Child(dirEntry.Name))
-				entry = filer.FromPbEntry(string(dirPath), fh.entry)
+				entry = filer.FromPbEntry(string(dirPath), fh.GetEntry())
 			}
 			wfs.outputFilerEntry(entryOut, inode, entry)
 		}

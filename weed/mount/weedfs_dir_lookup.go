@@ -59,9 +59,9 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 	if fh, found := wfs.fhmap.FindFileHandle(inode); found {
 		fh.entryLock.Lock()
-		if fh.entry != nil {
-			glog.V(4).Infof("lookup opened file %s size %d", dirPath.Child(localEntry.Name()), filer.FileSize(fh.entry))
-			localEntry = filer.FromPbEntry(string(dirPath), fh.entry)
+		if entry := fh.GetEntry(); entry != nil {
+			glog.V(4).Infof("lookup opened file %s size %d", dirPath.Child(localEntry.Name()), filer.FileSize(entry))
+			localEntry = filer.FromPbEntry(string(dirPath), entry)
 		}
 		fh.entryLock.Unlock()
 	}
