@@ -118,7 +118,10 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 
 	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		entry := fh.GetEntry()
+		fh.entryLock.Lock()
+		defer fh.entryLock.Unlock()
+
+		entry := fh.entry
 		if entry == nil {
 			return nil
 		}
