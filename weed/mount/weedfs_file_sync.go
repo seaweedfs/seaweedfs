@@ -55,9 +55,6 @@ func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
 		return fuse.ENOENT
 	}
 
-	fh.orderedMutex.Acquire(context.Background(), 1)
-	defer fh.orderedMutex.Release(1)
-
 	return wfs.doFlush(fh, in.Uid, in.Gid)
 }
 
@@ -87,14 +84,14 @@ func (wfs *WFS) Fsync(cancel <-chan struct{}, in *fuse.FsyncIn) (code fuse.Statu
 		return fuse.ENOENT
 	}
 
-	fh.orderedMutex.Acquire(context.Background(), 1)
-	defer fh.orderedMutex.Release(1)
-
 	return wfs.doFlush(fh, in.Uid, in.Gid)
 
 }
 
 func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
+	fh.orderedMutex.Acquire(context.Background(), 1)
+	defer fh.orderedMutex.Release(1)
+
 	// flush works at fh level
 	fileFullPath := fh.FullPath()
 	dir, name := fileFullPath.DirAndName()
@@ -117,7 +114,6 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 	}
 
 	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-
 		fh.entryLock.Lock()
 		defer fh.entryLock.Unlock()
 
