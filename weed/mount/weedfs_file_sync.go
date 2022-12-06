@@ -121,7 +121,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		fh.entryLock.Lock()
 		defer fh.entryLock.Unlock()
 
-		entry := fh.GetEntry()
+		entry := fh.entry
 		if entry == nil {
 			return nil
 		}
