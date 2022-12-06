@@ -11,6 +11,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"golang.org/x/exp/slices"
+	"golang.org/x/sync/semaphore"
+	"math"
+	"sync"
 )
 
 type FileHandleId uint64
@@ -18,7 +22,7 @@ type FileHandleId uint64
 type FileHandle struct {
 	fh        FileHandleId
 	counter   int64
-	entry     *filer_pb.Entry
+	entry     *LockedEntry
 	entryLock sync.Mutex
 	inode     uint64
 	wfs       *WFS
