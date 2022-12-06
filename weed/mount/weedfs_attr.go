@@ -45,8 +45,8 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		return status
 	}
 	if fh != nil {
-		fh.entryLock.Lock()
-		defer fh.entryLock.Unlock()
+		//fh.entryLock.Lock()
+		//defer fh.entryLock.Unlock()
 	}
 
 	if size, ok := input.GetSize(); ok && entry != nil {
