@@ -337,7 +337,7 @@
         }
         var url = basePath + encodeURIComponent(newName);
         var originPath = basePath + originName;
-        url += '?mv.from=' + originPath;
+        url += '?mv.from=' + encodeURIComponent(originPath);
         var xhr = new XMLHttpRequest();
         xhr.open('POST', url, false);
         xhr.setRequestHeader('Content-Type', '');
