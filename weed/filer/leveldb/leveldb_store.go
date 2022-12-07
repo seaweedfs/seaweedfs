@@ -43,6 +43,11 @@ func (store *LevelDBStore) Initialize(configuration weed_util.Configuration, pre
 	return store.initialize(dir)
 }
 
+// For adhoc usage
+func (store *LevelDBStore) CustomInitialize(dir string) (err error) {
+	return store.initialize(dir)
+}
+
 func (store *LevelDBStore) initialize(dir string) (err error) {
 	glog.Infof("filer store dir: %s", dir)
 	os.MkdirAll(dir, 0755)
