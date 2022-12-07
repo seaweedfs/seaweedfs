@@ -317,6 +317,11 @@ message ReadAllNeedlesResponse {
     uint64 needle_id = 2;
     uint32 cookie = 3;
     bytes needle_blob = 5;
+    bool needle_blob_compressed = 6;
+    uint64 last_modified = 7;
+    uint32 crc = 8;
+    bytes name = 9;
+    bytes mime = 10;
 }
 
 message VolumeTailSenderRequest {

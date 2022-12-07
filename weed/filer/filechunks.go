@@ -42,6 +42,9 @@ func ETag(entry *filer_pb.Entry) (etag string) {
 }
 
 func ETagEntry(entry *Entry) (etag string) {
+        if entry.IsInRemoteOnly() {
+		return entry.Remote.RemoteETag
+	}
 	if entry.Attr.Md5 == nil {
 		return ETagChunks(entry.GetChunks())
 	}
