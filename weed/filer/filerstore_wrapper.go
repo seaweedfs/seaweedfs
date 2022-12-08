@@ -2,12 +2,13 @@ package filer
 
 import (
 	"context"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/viant/ptrie"
 	"io"
 	"math"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/viant/ptrie"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -186,9 +187,12 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 	}
 	if len(existingEntry.HardLinkId) != 0 {
 		// remove hard link
-		glog.V(4).Infof("DeleteHardLink %s", existingEntry.FullPath)
-		if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
-			return err
+		op := ctx.Value("OP")
+		if op != "MV" {
+			glog.V(4).Infof("DeleteHardLink %s", existingEntry.FullPath)
+			if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -206,9 +210,12 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 
 	if len(existingEntry.HardLinkId) != 0 {
 		// remove hard link
-		glog.V(4).Infof("DeleteHardLink %s", existingEntry.FullPath)
-		if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
-			return err
+		op := ctx.Value("OP")
+		if op != "MV" {
+			glog.V(4).Infof("DeleteHardLink %s", existingEntry.FullPath)
+			if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
+				return err
+			}
 		}
 	}
 
