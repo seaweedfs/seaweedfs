@@ -19,7 +19,7 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 	oldParent := util.FullPath(filepath.ToSlash(req.OldDirectory))
 	newParent := util.FullPath(filepath.ToSlash(req.NewDirectory))
 
-	if err := fs.filer.CanRename(oldParent, newParent); err != nil {
+	if err := fs.filer.CanRename(oldParent, newParent, req.OldName); err != nil {
 		return nil, err
 	}
 
@@ -32,6 +32,20 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 	if err != nil {
 		fs.filer.RollbackTransaction(ctx)
 		return nil, fmt.Errorf("%s/%s not found: %v", req.OldDirectory, req.OldName, err)
+	}
+
+	if oldEntry.IsDirectory() {
+		targetDir := newParent.Child(req.NewName)
+		newEntry, err := fs.filer.FindEntry(ctx, targetDir)
+		if err == nil {
+			if !newEntry.IsDirectory() {
+				fs.filer.RollbackTransaction(ctx)
+				return nil, fmt.Errorf("%s is not directory", targetDir)
+			}
+			if entries, _, _ := fs.filer.ListDirectoryEntries(context.Background(), targetDir, "", false, 1, "", "", ""); len(entries) > 0 {
+				return nil, fmt.Errorf("%s is not empty", targetDir)
+			}
+		}
 	}
 
 	moveErr := fs.moveEntry(ctx, nil, oldParent, oldEntry, newParent, req.NewName, req.Signatures)
@@ -55,7 +69,7 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 	oldParent := util.FullPath(filepath.ToSlash(req.OldDirectory))
 	newParent := util.FullPath(filepath.ToSlash(req.NewDirectory))
 
-	if err := fs.filer.CanRename(oldParent, newParent); err != nil {
+	if err := fs.filer.CanRename(oldParent, newParent, req.OldName); err != nil {
 		return err
 	}
 
