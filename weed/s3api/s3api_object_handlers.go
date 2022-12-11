@@ -219,12 +219,16 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 }
 
 func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request) {
-
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadObjectHandler %s %s", bucket, object)
 
-	destUrl := s3a.toFilerUrl(bucket, object)
+	errCode := s3a.checkBucketAccessForReadObject(r, bucket)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
+	destUrl := s3a.toFilerUrl(bucket, object)
 	s3a.proxyToFiler(w, r, destUrl, false, passThroughResponse)
 }
 
@@ -592,20 +596,18 @@ func (s3a *S3ApiServer) maybeGetFilerJwtAuthorizationToken(isWrite bool) string 
 func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Request) {
 	bucket, object := s3_constants.GetBucketAndObject(r)
 
-	accountId := s3acl.GetAccountId(r)
-	bucketMetadata, objectEntry, objectOwner, errCode := s3a.checkAccessForWriteObjectAcl(accountId, bucket, object)
+	objectEntry, ownerId, grants, errCode := s3a.checkAccessForWriteObjectAcl(r, bucket, object)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
-	grants, errCode := s3acl.ExtractAcl(r, s3a.accountManager, bucketMetadata.ObjectOwnership, *bucketMetadata.Owner.ID, objectOwner, accountId)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
-	errCode = s3acl.AssembleEntryWithAcp(objectEntry, objectOwner, grants)
+	errCode = s3acl.AssembleEntryWithAcp(objectEntry, ownerId, grants)
 	if errCode != s3err.ErrNone {
 		return
 	}
