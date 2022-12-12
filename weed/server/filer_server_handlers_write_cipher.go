@@ -91,7 +91,7 @@ func (fs *FilerServer) encrypt(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 
 	if dbErr := fs.filer.CreateEntry(ctx, entry, false, false, nil, false); dbErr != nil {
-		fs.filer.DeleteChunks(entry.Chunks)
+		fs.filer.DeleteChunks(entry.GetChunks())
 		err = dbErr
 		filerResult.Error = dbErr.Error()
 		return

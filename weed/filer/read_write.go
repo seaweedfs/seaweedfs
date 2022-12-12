@@ -23,7 +23,7 @@ func ReadEntry(masterClient *wdclient.MasterClient, filerClient filer_pb.Seaweed
 		return err
 	}
 
-	return StreamContent(masterClient, byteBuffer, respLookupEntry.Entry.Chunks, 0, int64(FileSize(respLookupEntry.Entry)))
+	return StreamContent(masterClient, byteBuffer, respLookupEntry.Entry.GetChunks(), 0, int64(FileSize(respLookupEntry.Entry)))
 
 }
 

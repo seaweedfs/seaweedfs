@@ -41,7 +41,7 @@ func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekO
 	fh.entryLock.Lock()
 	defer fh.entryLock.Unlock()
 
-	fileSize := int64(filer.FileSize(fh.entry))
+	fileSize := int64(filer.FileSize(fh.GetEntry()))
 	offset := max(int64(in.Offset), 0)
 
 	glog.V(4).Infof(
@@ -59,7 +59,7 @@ func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekO
 	// refresh view cache if necessary
 	if fh.entryViewCache == nil {
 		var err error
-		fh.entryViewCache, err = filer.NonOverlappingVisibleIntervals(fh.wfs.LookupFn(), fh.entry.Chunks, 0, fileSize)
+		fh.entryViewCache, err = filer.NonOverlappingVisibleIntervals(fh.wfs.LookupFn(), fh.entry.GetChunks(), 0, fileSize)
 		if err != nil {
 			return fuse.EIO
 		}

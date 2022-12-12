@@ -2,12 +2,13 @@ package meta_cache
 
 import (
 	"context"
+	"os"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/leveldb"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"os"
 )
 
 // need to have logic similar to FilerStoreWrapper
@@ -76,6 +77,7 @@ func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath uti
 				// skip the unnecessary deletion
 				// leave the update to the following InsertEntry operation
 			} else {
+				ctx = context.WithValue(ctx, "OP", "MV")
 				glog.V(3).Infof("DeleteEntry %s", oldPath)
 				if err := mc.localStore.DeleteEntry(ctx, oldPath); err != nil {
 					return err

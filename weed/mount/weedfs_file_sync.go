@@ -55,9 +55,6 @@ func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
 		return fuse.ENOENT
 	}
 
-	fh.orderedMutex.Acquire(context.Background(), 1)
-	defer fh.orderedMutex.Release(1)
-
 	return wfs.doFlush(fh, in.Uid, in.Gid)
 }
 
@@ -87,14 +84,14 @@ func (wfs *WFS) Fsync(cancel <-chan struct{}, in *fuse.FsyncIn) (code fuse.Statu
 		return fuse.ENOENT
 	}
 
-	fh.orderedMutex.Acquire(context.Background(), 1)
-	defer fh.orderedMutex.Release(1)
-
 	return wfs.doFlush(fh, in.Uid, in.Gid)
 
 }
 
 func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
+	fh.orderedMutex.Acquire(context.Background(), 1)
+	defer fh.orderedMutex.Release(1)
+
 	// flush works at fh level
 	fileFullPath := fh.FullPath()
 	dir, name := fileFullPath.DirAndName()
@@ -117,11 +114,10 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 	}
 
 	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-
 		fh.entryLock.Lock()
 		defer fh.entryLock.Unlock()
 
-		entry := fh.entry
+		entry := fh.GetEntry()
 		if entry == nil {
 			return nil
 		}
@@ -148,12 +144,12 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 			SkipCheckParentDirectory: true,
 		}
 
-		glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.Chunks))
-		for i, chunk := range entry.Chunks {
+		glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.GetChunks()))
+		for i, chunk := range entry.GetChunks() {
 			glog.V(4).Infof("%s chunks %d: %v [%d,%d)", fileFullPath, i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
 		}
 
-		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.Chunks)
+		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.GetChunks())
 
 		chunks, _ := filer.CompactFileChunks(wfs.LookupFn(), nonManifestChunks)
 		chunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), chunks)

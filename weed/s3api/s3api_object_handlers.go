@@ -277,6 +277,9 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 		// delete file entries
 		for _, object := range deleteObjects.Objects {
+			if object.ObjectName == "" {
+				continue
+			}
 			lastSeparator := strings.LastIndex(object.ObjectName, "/")
 			parentDirectoryPath, entryName, isDeleteData, isRecursive := "", object.ObjectName, true, false
 			if lastSeparator > 0 && lastSeparator+1 < len(object.ObjectName) {

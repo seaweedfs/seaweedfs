@@ -282,12 +282,12 @@ func LoopPushingMetric(name, instance, addr string, intervalSeconds int) {
 	}
 }
 
-func StartMetricsServer(port int) {
+func StartMetricsServer(ip string, port int) {
 	if port == 0 {
 		return
 	}
 	http.Handle("/metrics", promhttp.HandlerFor(Gather, promhttp.HandlerOpts{}))
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
+	log.Fatal(http.ListenAndServe(fmt.Sprintf("%s:%d", ip, port), nil))
 }
 
 func SourceName(port uint32) string {

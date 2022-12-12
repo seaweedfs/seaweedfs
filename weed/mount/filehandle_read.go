@@ -26,7 +26,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	fileFullPath := fh.FullPath()
 
-	entry := fh.entry
+	entry := fh.GetEntry()
 	if entry == nil {
 		return 0, io.EOF
 	}
@@ -56,7 +56,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	var chunkResolveErr error
 	if fh.entryViewCache == nil {
-		fh.entryViewCache, chunkResolveErr = filer.NonOverlappingVisibleIntervals(fh.wfs.LookupFn(), entry.Chunks, 0, fileSize)
+		fh.entryViewCache, chunkResolveErr = filer.NonOverlappingVisibleIntervals(fh.wfs.LookupFn(), entry.GetChunks(), 0, fileSize)
 		if chunkResolveErr != nil {
 			return 0, fmt.Errorf("fail to resolve chunk manifest: %v", chunkResolveErr)
 		}

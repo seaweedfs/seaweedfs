@@ -123,8 +123,9 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 
 			// tell filer to tell volume server to download into needles
 			assignedServerAddress := pb.NewServerAddressWithGrpcPort(assignResult.Url, assignResult.GrpcPort)
+			var etag string
 			err = operation.WithVolumeServerClient(false, assignedServerAddress, fs.grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-				_, fetchAndWriteErr := volumeServerClient.FetchAndWriteNeedle(context.Background(), &volume_server_pb.FetchAndWriteNeedleRequest{
+				resp, fetchAndWriteErr := volumeServerClient.FetchAndWriteNeedle(context.Background(), &volume_server_pb.FetchAndWriteNeedleRequest{
 					VolumeId:   uint32(fileId.VolumeId),
 					NeedleId:   uint64(fileId.Key),
 					Cookie:     uint32(fileId.Cookie),
@@ -141,6 +142,8 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 				})
 				if fetchAndWriteErr != nil {
 					return fmt.Errorf("volume server %s fetchAndWrite %s: %v", assignResult.Url, dest, fetchAndWriteErr)
+				} else {
+					etag = resp.ETag
 				}
 				return nil
 			})
@@ -155,6 +158,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 				Offset:       localOffset,
 				Size:         uint64(size),
 				ModifiedTsNs: time.Now().Unix(),
+				ETag:         etag,
 				Fid: &filer_pb.FileId{
 					VolumeId: uint32(fileId.VolumeId),
 					FileKey:  uint64(fileId.Key),
@@ -169,7 +173,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 		return nil, fetchAndWriteErr
 	}
 
-	garbage := entry.Chunks
+	garbage := entry.GetChunks()
 
 	newEntry := entry.ShallowClone()
 	newEntry.Chunks = chunks

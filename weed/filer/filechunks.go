@@ -31,19 +31,22 @@ func FileSize(entry *filer_pb.Entry) (size uint64) {
 			fileSize = maxUint64(fileSize, uint64(entry.RemoteEntry.RemoteSize))
 		}
 	}
-	return maxUint64(TotalSize(entry.Chunks), fileSize)
+	return maxUint64(TotalSize(entry.GetChunks()), fileSize)
 }
 
 func ETag(entry *filer_pb.Entry) (etag string) {
 	if entry.Attributes == nil || entry.Attributes.Md5 == nil {
-		return ETagChunks(entry.Chunks)
+		return ETagChunks(entry.GetChunks())
 	}
 	return fmt.Sprintf("%x", entry.Attributes.Md5)
 }
 
 func ETagEntry(entry *Entry) (etag string) {
+        if entry.IsInRemoteOnly() {
+		return entry.Remote.RemoteETag
+	}
 	if entry.Attr.Md5 == nil {
-		return ETagChunks(entry.Chunks)
+		return ETagChunks(entry.GetChunks())
 	}
 	return fmt.Sprintf("%x", entry.Attr.Md5)
 }

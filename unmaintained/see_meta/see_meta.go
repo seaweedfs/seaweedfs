@@ -59,7 +59,7 @@ func walkMetaFile(dst *os.File) error {
 		}
 
 		fmt.Fprintf(os.Stdout, "file %s %v\n", util.FullPath(fullEntry.Dir).Child(fullEntry.Entry.Name), fullEntry.Entry.Attributes.String())
-		for i, chunk := range fullEntry.Entry.Chunks {
+		for i, chunk := range fullEntry.Entry.GetChunks() {
 			fmt.Fprintf(os.Stdout, "  chunk: %d %v %d,%x%08x\n", i+1, chunk, chunk.Fid.VolumeId, chunk.Fid.FileKey, chunk.Fid.Cookie)
 		}
 

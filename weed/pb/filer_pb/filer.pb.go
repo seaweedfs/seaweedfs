@@ -4480,7 +4480,7 @@ var file_filer_proto_goTypes = []interface{}{
 var file_filer_proto_depIdxs = []int32{
 	5,  // 0: filer_pb.LookupDirectoryEntryResponse.entry:type_name -> filer_pb.Entry
 	5,  // 1: filer_pb.ListEntriesResponse.entry:type_name -> filer_pb.Entry
-	8,  // 2: filer_pb.Entry.chunks:type_name -> filer_pb.FileChunk
+	8,  // 2: filer_pb.Entry.GetChunks():type_name -> filer_pb.FileChunk
 	11, // 3: filer_pb.Entry.attributes:type_name -> filer_pb.FuseAttributes
 	55, // 4: filer_pb.Entry.extended:type_name -> filer_pb.Entry.ExtendedEntry
 	4,  // 5: filer_pb.Entry.remote_entry:type_name -> filer_pb.RemoteEntry

@@ -107,7 +107,7 @@ func (store *MongodbStore) UpdateEntry(ctx context.Context, entry *filer.Entry) 
 		return fmt.Errorf("encode %s: %s", entry.FullPath, err)
 	}
 
-	if len(entry.Chunks) > filer.CountEntryChunksForGzip {
+	if len(entry.GetChunks()) > filer.CountEntryChunksForGzip {
 		meta = util.MaybeGzipData(meta)
 	}
 

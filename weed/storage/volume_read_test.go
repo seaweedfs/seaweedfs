@@ -1,17 +1,18 @@
 package storage
 
 import (
+	"testing"
+
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func TestReadNeedMetaWithWritesAndUpdates(t *testing.T) {
 	dir := t.TempDir()
 
-	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0)
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
@@ -48,7 +49,7 @@ func TestReadNeedMetaWithWritesAndUpdates(t *testing.T) {
 func TestReadNeedMetaWithDeletesThenWrites(t *testing.T) {
 	dir := t.TempDir()
 
-	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0)
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}

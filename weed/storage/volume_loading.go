@@ -2,8 +2,9 @@ package storage
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"os"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
@@ -136,7 +137,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			case NeedleMapInMemory:
 				if v.tmpNm != nil {
 					glog.V(0).Infof("updating memory compact index %s ", v.FileName(".idx"))
-					err = v.tmpNm.UpdateNeedleMap(v, indexFile, nil)
+					err = v.tmpNm.UpdateNeedleMap(v, indexFile, nil, 0)
 				} else {
 					glog.V(0).Infoln("loading memory index", v.FileName(".idx"), "to memory")
 					if v.nm, err = LoadCompactNeedleMap(indexFile); err != nil {
@@ -151,10 +152,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				}
 				if v.tmpNm != nil {
 					glog.V(0).Infoln("updating leveldb index", v.FileName(".ldb"))
-					err = v.tmpNm.UpdateNeedleMap(v, indexFile, opts)
+					err = v.tmpNm.UpdateNeedleMap(v, indexFile, opts, v.ldbTimeout)
 				} else {
 					glog.V(0).Infoln("loading leveldb index", v.FileName(".ldb"))
-					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts); err != nil {
+					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts, v.ldbTimeout); err != nil {
 						glog.V(0).Infof("loading leveldb %s error: %v", v.FileName(".ldb"), err)
 					}
 				}
@@ -166,10 +167,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				}
 				if v.tmpNm != nil {
 					glog.V(0).Infoln("updating leveldb medium index", v.FileName(".ldb"))
-					err = v.tmpNm.UpdateNeedleMap(v, indexFile, opts)
+					err = v.tmpNm.UpdateNeedleMap(v, indexFile, opts, v.ldbTimeout)
 				} else {
 					glog.V(0).Infoln("loading leveldb medium index", v.FileName(".ldb"))
-					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts); err != nil {
+					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts, v.ldbTimeout); err != nil {
 						glog.V(0).Infof("loading leveldb %s error: %v", v.FileName(".ldb"), err)
 					}
 				}
@@ -181,10 +182,10 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				}
 				if v.tmpNm != nil {
 					glog.V(0).Infoln("updating leveldb large index", v.FileName(".ldb"))
-					err = v.tmpNm.UpdateNeedleMap(v, indexFile, opts)
+					err = v.tmpNm.UpdateNeedleMap(v, indexFile, opts, v.ldbTimeout)
 				} else {
 					glog.V(0).Infoln("loading leveldb large index", v.FileName(".ldb"))
-					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts); err != nil {
+					if v.nm, err = NewLevelDbNeedleMap(v.FileName(".ldb"), indexFile, opts, v.ldbTimeout); err != nil {
 						glog.V(0).Infof("loading leveldb %s error: %v", v.FileName(".ldb"), err)
 					}
 				}

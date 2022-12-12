@@ -285,7 +285,8 @@ func (s3a *S3ApiServer) generateUploadID(object string) string {
 func (s3a *S3ApiServer) checkUploadId(object string, id string) error {
 
 	hash := s3a.generateUploadID(object)
-	if hash != id {
+
+	if !strings.HasPrefix(id, hash) {
 		glog.Errorf("object %s and uploadID %s are not matched", object, id)
 		return fmt.Errorf("object %s and uploadID %s are not matched", object, id)
 	}

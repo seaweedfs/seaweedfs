@@ -48,7 +48,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	}
 
 	if shouldDeleteChunks && !isDeleteCollection {
-		f.DirectDeleteChunks(entry.Chunks)
+		f.DirectDeleteChunks(entry.GetChunks())
 	}
 
 	// delete the file or folder
@@ -93,7 +93,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 						// hard link chunk data are deleted separately
 						err = onHardLinkIdsFn([]HardLinkId{sub.HardLinkId})
 					} else {
-						err = onChunksFn(sub.Chunks)
+						err = onChunksFn(sub.GetChunks())
 					}
 				}
 				if err != nil && !ignoreRecursiveError {

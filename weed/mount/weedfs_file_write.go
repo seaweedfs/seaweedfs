@@ -49,7 +49,7 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 	fh.orderedMutex.Acquire(context.Background(), 1)
 	defer fh.orderedMutex.Release(1)
 
-	entry := fh.entry
+	entry := fh.GetEntry()
 	if entry == nil {
 		return 0, fuse.OK
 	}

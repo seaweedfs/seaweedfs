@@ -103,7 +103,7 @@ func writeJson(w http.ResponseWriter, r *http.Request, httpStatus int, obj inter
 // wrapper for writeJson - just logs errors
 func writeJsonQuiet(w http.ResponseWriter, r *http.Request, httpStatus int, obj interface{}) {
 	if err := writeJson(w, r, httpStatus, obj); err != nil {
-		glog.V(0).Infof("error writing JSON status %d: %v", httpStatus, err)
+		glog.V(0).Infof("error writing JSON status %s %d: %v", r.URL, httpStatus, err)
 		glog.V(1).Infof("JSON content: %+v", obj)
 	}
 }
