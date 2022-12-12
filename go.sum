@@ -678,8 +678,8 @@ github.com/go-redis/redis/v8 v8.11.5 h1:AcZZR7igkdvfVmQTPnu9WE37LRrO/YrBH5zWyjDC
 github.com/go-redis/redis/v8 v8.11.5/go.mod h1:gREzHqY1hg6oD9ngVRbLStwAWKhA0FEgq8Jd4h5lpwo=
 github.com/go-redis/redis/v9 v9.0.0-beta.2 h1:ZSr84TsnQyKMAg8gnV+oawuQezeJR11/09THcWCQzr4=
 github.com/go-redis/redis/v9 v9.0.0-beta.2/go.mod h1:Bldcd/M/bm9HbnNPi/LUtYBSD8ttcZYBMupwMXhdU0o=
-github.com/go-redsync/redsync/v4 v4.6.0 h1:CXpvsHB3XzktCleBu2Vo9Df0/qInrTG3jgzhvLzyk+U=
-github.com/go-redsync/redsync/v4 v4.6.0/go.mod h1:IxV3sygNwjOERTXrj3XvNMSb1tgNgic8GvM8alwnWcM=
+github.com/go-redsync/redsync/v4 v4.7.1 h1:j5rmHCdN5qCEWp5oA2XEbGwtD4LZblqkhbcjCUsfNhs=
+github.com/go-redsync/redsync/v4 v4.7.1/go.mod h1:IxV3sygNwjOERTXrj3XvNMSb1tgNgic8GvM8alwnWcM=
 github.com/go-resty/resty/v2 v2.1.1-0.20191201195748-d7b97669fe48/go.mod h1:dZGr0i9PLlaaTD4H/hoZIDjQ+r6xq8mgbRzHZf7f2J8=
 github.com/go-sql-driver/mysql v1.4.0/go.mod h1:zAC/RDZ24gD3HViQzih4MyKcchzm+sOG5ZlKdlhCg5w=
 github.com/go-sql-driver/mysql v1.6.0/go.mod h1:DCzpHaOWr8IXmIStZouvnhqoel9Qv2LBy8hT2VhHyBg=
