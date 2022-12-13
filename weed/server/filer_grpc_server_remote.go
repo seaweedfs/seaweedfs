@@ -125,6 +125,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 
 			// tell filer to tell volume server to download into needles
 			assignedServerAddress := pb.NewServerAddressWithGrpcPort(assignResult.Url, assignResult.GrpcPort)
+			var etag string
 			err = operation.WithVolumeServerClient(false, assignedServerAddress, fs.grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 				needleReq := &volume_server_pb.FetchAndWriteNeedleRequest{
 					VolumeId:   uint32(fileId.VolumeId),
@@ -149,7 +150,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 				// Get the data for the chunk
 				data, _ := remoteStorage.ReadFile(needleReq.RemoteLocation, needleReq.Offset, needleReq.Size)
 				md5sum := md5.Sum(data)
-				fmt.Printf("md5sum is %v", md5sum)
+				etag = util.Base64Encode(md5sum[:])
 				return nil
 			})
 
@@ -162,6 +163,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 				FileId:       assignResult.Fid,
 				Offset:       localOffset,
 				Size:         uint64(size),
+				ETag:         etag,
 				ModifiedTsNs: time.Now().Unix(),
 				Fid: &filer_pb.FileId{
 					VolumeId: uint32(fileId.VolumeId),
