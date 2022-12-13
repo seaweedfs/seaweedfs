@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"crypto/md5"
 	"fmt"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
@@ -142,6 +144,12 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 				if fetchAndWriteErr != nil {
 					return fmt.Errorf("volume server %s fetchAndWrite %s: %v", assignResult.Url, dest, fetchAndWriteErr)
 				}
+				// Create a remoteStorageClient
+				remoteStorage, _ := remote_storage.GetRemoteStorage(storageConf)
+				// Get the data for the chunk
+				data, _ := remoteStorage.ReadFile(needleReq.RemoteLocation, needleReq.Offset, needleReq.Size)
+				md5sum := md5.Sum(data)
+				fmt.Printf("md5sum is %v", md5sum)
 				return nil
 			})
 
