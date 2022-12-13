@@ -71,7 +71,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 	assignRequest, altRequest := so.ToAssignRequests(1)
 
 	// find a good chunk size
-	chunkSize := int64(5 * 1024 * 1024)
+	chunkSize := int64(4 * 1024 * 1024)
 	chunkCount := entry.Remote.RemoteSize/chunkSize + 1
 	for chunkCount > 1000 && chunkSize < int64(fs.option.MaxMB)*1024*1024/2 {
 		chunkSize *= 2
@@ -124,7 +124,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 			// tell filer to tell volume server to download into needles
 			assignedServerAddress := pb.NewServerAddressWithGrpcPort(assignResult.Url, assignResult.GrpcPort)
 			err = operation.WithVolumeServerClient(false, assignedServerAddress, fs.grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-				_, fetchAndWriteErr := volumeServerClient.FetchAndWriteNeedle(context.Background(), &volume_server_pb.FetchAndWriteNeedleRequest{
+				needleReq := &volume_server_pb.FetchAndWriteNeedleRequest{
 					VolumeId:   uint32(fileId.VolumeId),
 					NeedleId:   uint64(fileId.Key),
 					Cookie:     uint32(fileId.Cookie),
@@ -137,8 +137,8 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 						Name:   remoteStorageMountedLocation.Name,
 						Bucket: remoteStorageMountedLocation.Bucket,
 						Path:   string(dest),
-					},
-				})
+					}}
+				_, fetchAndWriteErr := volumeServerClient.FetchAndWriteNeedle(context.Background(), needleReq)
 				if fetchAndWriteErr != nil {
 					return fmt.Errorf("volume server %s fetchAndWrite %s: %v", assignResult.Url, dest, fetchAndWriteErr)
 				}
