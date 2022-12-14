@@ -24,30 +24,24 @@ import (
 )
 
 type Topology struct {
-	vacuumLockCounter int64
 	NodeImpl
-
-	collectionMap  *util.ConcurrentReadMap
-	ecShardMap     map[needle.VolumeId]*EcShardLocations
-	ecShardMapLock sync.RWMutex
-
-	pulse int64
-
-	volumeSizeLimit  uint64
-	replicationAsMin bool
-
-	Sequence sequence.Sequencer
-
+	Sequence           sequence.Sequencer
+	RaftServer         raft.Server
+	vacuumLockCounter  int64
+	collectionMap      *util.ConcurrentReadMap
+	ecShardMap         map[needle.VolumeId]*EcShardLocations
+	pulse              int64
+	volumeSizeLimit    uint64
 	chanFullVolumes    chan storage.VolumeInfo
 	chanCrowdedVolumes chan storage.VolumeInfo
+	Configuration      *Configuration
+	HashicorpRaft      *hashicorpRaft.Raft
+	UuidMap            map[string][]string
 
-	Configuration *Configuration
-
-	RaftServer           raft.Server
+	ecShardMapLock       sync.RWMutex
 	RaftServerAccessLock sync.RWMutex
-	HashicorpRaft        *hashicorpRaft.Raft
 	UuidAccessLock       sync.RWMutex
-	UuidMap              map[string][]string
+	replicationAsMin     bool
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {

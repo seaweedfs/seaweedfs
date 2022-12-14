@@ -38,16 +38,14 @@ type Node interface {
 	GetValue() interface{} //get reference to the topology,dc,rack,datanode
 }
 type NodeImpl struct {
-	diskUsages   *DiskUsages
 	id           NodeId
 	parent       Node
-	sync.RWMutex // lock children
+	nodeType     string      //for rack, data center, topology
+	value        interface{} //for rack, data center, topology
+	diskUsages   *DiskUsages
 	children     map[NodeId]Node
+	sync.RWMutex // lock children
 	maxVolumeId  needle.VolumeId
-
-	//for rack, data center, topology
-	nodeType string
-	value    interface{}
 }
 
 func (n *NodeImpl) GetDiskUsages() *DiskUsages {
