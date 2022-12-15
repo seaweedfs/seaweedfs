@@ -30,6 +30,30 @@ func (c *commandFsMetaSnapshotsCreate) Name() string {
 	return "fs.meta.snapshots.create"
 }
 
+type SnapshotConfig struct {
+	dir string
+}
+
+func (c SnapshotConfig) GetString(key string) string {
+	return c.dir
+}
+
+func (c SnapshotConfig) GetBool(key string) bool {
+	panic("implement me")
+}
+
+func (c SnapshotConfig) GetInt(key string) int {
+	panic("implement me")
+}
+
+func (c SnapshotConfig) GetStringSlice(key string) []string {
+	panic("implement me")
+}
+
+func (c SnapshotConfig) SetDefault(key string, value interface{}) {
+	panic("implement me")
+}
+
 func (c *commandFsMetaSnapshotsCreate) Help() string {
 	return `create snapshots of meta data from given time range.
 
@@ -179,7 +203,10 @@ func (c *commandFsMetaSnapshotsCreate) Do(args []string, commandEnv *CommandEnv,
 		return err
 	}
 	store := &filer_leveldb.LevelDBStore{}
-	store.CustomInitialize(levelDbPath)
+	config := SnapshotConfig{
+		dir: levelDbPath,
+	}
+	store.Initialize(config, "")
 	changeLogPath := filer.SystemLogDir
 	var processEntry func(entry *filer_pb.Entry, isLast bool) error
 	processEntry = func(entry *filer_pb.Entry, isLast bool) error {
