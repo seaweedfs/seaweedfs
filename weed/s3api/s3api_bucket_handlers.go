@@ -153,6 +153,10 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
+
+	// clear cache
+	s3a.bucketRegistry.ClearCache(bucket)
+
 	w.Header().Set("Location", "/"+bucket)
 	writeSuccessResponseEmpty(w, r)
 }

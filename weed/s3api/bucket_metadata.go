@@ -232,3 +232,8 @@ func (r *BucketRegistry) unMarkNotFound(bucket string) {
 	defer r.notFoundLock.Unlock()
 	delete(r.notFound, bucket)
 }
+
+func (r *BucketRegistry) ClearCache(bucket string) {
+	r.removeMetadataCache(bucket)
+	r.unMarkNotFound(bucket)
+}
