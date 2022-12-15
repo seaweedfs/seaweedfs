@@ -187,11 +187,16 @@ func (c *commandFsMetaSnapshotsCreate) Do(args []string, commandEnv *CommandEnv,
 	if err = fsMetaSnapshotsCreateCommand.Parse(args); err != nil {
 		return err
 	}
-	snapshotdate := time.Now().AddDate(0, 0, -1)
+	yesterday := time.Now().Add(-time.Hour * 24).Format(DateFormat)
+	// ensure snapshot start at yesterday 00:00
+	snapshotDate, err := time.Parse(DateFormat, yesterday)
+	if err != nil {
+		return err
+	}
 	var snapshotCheckPoints []time.Time
 	for i := 0; i < *snapshotCnt; i++ {
-		snapshotCheckPoints = append(snapshotCheckPoints, snapshotdate)
-		snapshotdate = snapshotdate.AddDate(0, 0, -1**snapshotInterval)
+		snapshotCheckPoints = append(snapshotCheckPoints, snapshotDate)
+		snapshotDate = snapshotDate.AddDate(0, 0, -1**snapshotInterval)
 	}
 	homeDirname, err := os.UserHomeDir()
 	if err != nil {
