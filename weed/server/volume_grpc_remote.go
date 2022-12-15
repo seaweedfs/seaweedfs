@@ -51,6 +51,8 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 			if err == nil {
 				err = fmt.Errorf("local write needle %d size %d: %v", req.NeedleId, req.Size, err)
 			}
+		} else {
+			resp.ETag = n.Etag()
 		}
 	}()
 	if len(req.Replicas) > 0 {

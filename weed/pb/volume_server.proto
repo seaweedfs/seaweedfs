@@ -532,6 +532,7 @@ message FetchAndWriteNeedleRequest {
     remote_pb.RemoteStorageLocation remote_location = 16;
 }
 message FetchAndWriteNeedleResponse {
+    string e_tag = 1;
 }
 
 // select on volume servers
