@@ -26,6 +26,7 @@ import (
 
 type WebDavOption struct {
 	Filer          pb.ServerAddress
+	FilerRootPath  string
 	DomainName     string
 	BucketsPath    string
 	GrpcDialOption grpc.DialOption
@@ -57,6 +58,11 @@ func max(x, y int64) int64 {
 func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 
 	fs, _ := NewWebDavFileSystem(option)
+
+	// Fix no set filer.path , accessing "/" returns "//"
+	if option.FilerRootPath == "/" {
+		option.FilerRootPath = ""
+	}
 
 	ws = &WebDavServer{
 		option:         option,
@@ -195,7 +201,8 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 }
 
 func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, flag int, perm os.FileMode) (webdav.File, error) {
-
+	// Add filer.path
+	fullFilePath = fs.option.FilerRootPath + fullFilePath
 	glog.V(2).Infof("WebDavFileSystem.OpenFile %v %x", fullFilePath, flag)
 
 	var err error
@@ -367,7 +374,8 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 }
 
 func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo, error) {
-
+	// Add filer.path
+	name = fs.option.FilerRootPath + name
 	glog.V(2).Infof("WebDavFileSystem.Stat %v", name)
 
 	return fs.stat(ctx, name)
