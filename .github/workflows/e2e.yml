@@ -24,13 +24,13 @@ jobs:
     timeout-minutes: 15
     steps:
     - name: Set up Go 1.x
-      uses: actions/setup-go@d0a58c1c4d2b25278816e339b944508c875f3613 # v2
+      uses: actions/setup-go@6edd4406fa81c3da01a34fa6f6343087c207a568 # v2
       with:
         go-version: ^1.13
       id: go
 
     - name: Check out code into the Go module directory
-      uses: actions/checkout@93ea575cb5d8a053eaa0ac8fa3b40d7e05a33cc8 # v2
+      uses: actions/checkout@755da8c3cf115ac066823e79a1e1788f8940201b # v2
 
     - name: Install dependencies
       run: |
