@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -13,11 +14,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 )
 
-const LevelDbPath = "/tmp/snapshots.db"
+const LevelDbPath = "tmp/snapshots.db"
 const DateFormat = "2006-01-02"
+const SnapshotDirPostFix = "-snapshot"
 
 func init() {
 	Commands = append(Commands, &commandFsMetaSnapshotsCreate{})
@@ -37,7 +41,6 @@ type SnapshotConfig struct {
 func (c SnapshotConfig) GetString(key string) string {
 	return c.dir
 }
-
 func (c SnapshotConfig) GetBool(key string) bool {
 	panic("implement me")
 }
@@ -57,9 +60,10 @@ func (c SnapshotConfig) SetDefault(key string, value interface{}) {
 func (c *commandFsMetaSnapshotsCreate) Help() string {
 	return `create snapshots of meta data from given time range.
 
-	fs.meta.snapshots.create -snapshot-interval=7 -snapshot-cnt=3 -path=/your/path
+	fs.meta.snapshots.create -interval-days=7 -count=3 -path=/your/path
 	// fs.meta.snapshots.create will generate desired number of snapshots with desired duration interval from yesterday the generated files will be saved from input path.
 	// These snapshot maybe later used to backup the system to certain timestamp.
+	// path input is relative to home directory.
 `
 }
 
@@ -71,8 +75,8 @@ func processMetaDataEvents(store *filer_leveldb.LevelDBStore, data []byte, unfin
 	}
 	eventTime := event.TsNs
 	for unfinshiedSnapshotCnt >= 0 && time.Unix(0, eventTime).After(snapshotCheckPoints[unfinshiedSnapshotCnt]) {
-		snapshotPath := filepath.Join(homeDir, snapshotPath, snapshotCheckPoints[unfinshiedSnapshotCnt].Format(DateFormat))
-		err = CreateIfNotExists(snapshotPath, 0755)
+		snapshotPath := filepath.Join(homeDir, snapshotPath, snapshotCheckPoints[unfinshiedSnapshotCnt].Format(DateFormat)+SnapshotDirPostFix)
+		err = createIfNotExists(snapshotPath, 0755)
 		if err != nil {
 			return unfinshiedSnapshotCnt, err
 		}
@@ -121,14 +125,14 @@ func generateSnapshots(scrDir, dest string) error {
 
 		switch fileInfo.Mode() & os.ModeType {
 		case os.ModeDir:
-			if err := CreateIfNotExists(destPath, 0755); err != nil {
+			if err := createIfNotExists(destPath, 0755); err != nil {
 				return err
 			}
 			if err := generateSnapshots(sourcePath, destPath); err != nil {
 				return err
 			}
 		default:
-			if err := Copy(sourcePath, destPath); err != nil {
+			if err := copy(sourcePath, destPath); err != nil {
 				return err
 			}
 		}
@@ -136,7 +140,7 @@ func generateSnapshots(scrDir, dest string) error {
 	return nil
 }
 
-func Copy(srcFile, dstFile string) error {
+func copy(srcFile, dstFile string) error {
 	out, err := os.Create(dstFile)
 	if err != nil {
 		return err
@@ -158,16 +162,15 @@ func Copy(srcFile, dstFile string) error {
 	return nil
 }
 
-func Exists(filePath string) bool {
+func exists(filePath string) bool {
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		return false
 	}
-
 	return true
 }
 
-func CreateIfNotExists(dir string, perm os.FileMode) error {
-	if Exists(dir) {
+func createIfNotExists(dir string, perm os.FileMode) error {
+	if exists(dir) {
 		return nil
 	}
 
@@ -178,41 +181,114 @@ func CreateIfNotExists(dir string, perm os.FileMode) error {
 	return nil
 }
 
-func (c *commandFsMetaSnapshotsCreate) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
-	fsMetaSnapshotsCreateCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	snapshotPath := fsMetaSnapshotsCreateCommand.String("path", "", "the path to store generated snapshot files")
-	snapshotCnt := fsMetaSnapshotsCreateCommand.Int("snapshot-cnt", 3, "number of snapshots generated")
-	snapshotInterval := fsMetaSnapshotsCreateCommand.Int("snapshot-interval", 7, "the duration interval between each generated snapshot")
-	if err = fsMetaSnapshotsCreateCommand.Parse(args); err != nil {
-		return err
+func computeRequirementsFromDirectory(previousSnapshots []os.DirEntry, homeDirectory string, snapshotPath string, count int, durationDays int) (snapshotsToRemove []string, snapshotsToGenerate []time.Time, err error) {
+	lastSnapshotDate, err := time.Parse(DateFormat, previousSnapshots[len(previousSnapshots)-1].Name()[:len(DateFormat)])
+	if err != nil {
+		return snapshotsToRemove, snapshotsToGenerate, err
 	}
+	yesterday := time.Now().Add(-time.Hour * 24)
+	yesterdayStr := yesterday.Format(DateFormat)
+	// ensure snapshot start at yesterday 00:00
+	yesterday, err = time.Parse(DateFormat, yesterdayStr)
+	if err != nil {
+		return snapshotsToRemove, snapshotsToGenerate, err
+	}
+	gapDays := int(yesterday.Sub(lastSnapshotDate).Hours() / 24)
+	// gap too small no snapshot will be generated
+	if gapDays < durationDays {
+		return snapshotsToRemove, snapshotsToGenerate, errors.New(fmt.Sprintf("last snapshot was generated at %v no need to generate new snapshots", lastSnapshotDate.Format(DateFormat)))
+	} else if gapDays > durationDays*count {
+		// gap too large generate from yesterday
+		// and remove all previous snapshots
+		_, snapshotsToGenerate, err = computeRequirementsFromEmpty(homeDirectory, count, durationDays)
+		for _, file := range previousSnapshots {
+			snapshotsToRemove = append(snapshotsToRemove, filepath.Join(homeDirectory, snapshotPath, file.Name()))
+		}
+		return
+	}
+	snapshotDate := lastSnapshotDate.AddDate(0, 0, 1*durationDays)
+	for snapshotDate.Before(yesterday) || snapshotDate.Equal(yesterday) {
+		snapshotsToGenerate = append(snapshotsToGenerate, snapshotDate)
+		snapshotDate = lastSnapshotDate.AddDate(0, 0, 1*durationDays)
+	}
+	totalCount := len(previousSnapshots) + len(snapshotsToGenerate)
+	toRemoveIdx := 0
+	for toRemoveIdx < len(previousSnapshots) && totalCount-toRemoveIdx > count {
+		snapshotsToRemove = append(snapshotsToRemove, filepath.Join(homeDirectory, snapshotPath, previousSnapshots[toRemoveIdx].Name()))
+		toRemoveIdx += 1
+	}
+	return
+}
+
+func computeRequirementsFromEmpty(homeDirectory string, count int, durationDays int) (snapshotsToRemove []string, snapshotsToGenerate []time.Time, err error) {
 	yesterday := time.Now().Add(-time.Hour * 24).Format(DateFormat)
 	// ensure snapshot start at yesterday 00:00
 	snapshotDate, err := time.Parse(DateFormat, yesterday)
 	if err != nil {
-		return err
+		return snapshotsToRemove, snapshotsToGenerate, err
 	}
-	var snapshotCheckPoints []time.Time
-	for i := 0; i < *snapshotCnt; i++ {
-		snapshotCheckPoints = append(snapshotCheckPoints, snapshotDate)
-		snapshotDate = snapshotDate.AddDate(0, 0, -1**snapshotInterval)
+	for i := 0; i < count; i++ {
+		snapshotsToGenerate = append(snapshotsToGenerate, snapshotDate)
+		snapshotDate = snapshotDate.AddDate(0, 0, -1*durationDays)
 	}
+	return snapshotsToRemove, snapshotsToGenerate, nil
+}
 
-	homeDirname, err := os.UserHomeDir()
-	if err != nil {
-		return err
+// compute number of snapshot need to be generated and number of snapshots to remove from give directory.
+func computeRequirements(homeDirectory string, snapshotPath string, count int, durationDays int) (snapshotsToRemove []string, snapshotsToGenerate []time.Time, err error) {
+	snapshotDirectory := filepath.Join(homeDirectory, snapshotPath)
+	files, _ := os.ReadDir(snapshotDirectory)
+	if len(files) == 0 {
+		return computeRequirementsFromEmpty(homeDirectory, count, durationDays)
 	}
-	levelDbPath := homeDirname + LevelDbPath
+	// sort files by name
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Name() < files[j].Name()
+	})
+	// filter for snapshots file only
+	var prevSnapshotFiles []os.DirEntry
+	for _, file := range files {
+		if strings.HasSuffix(file.Name(), SnapshotDirPostFix) {
+			prevSnapshotFiles = append(prevSnapshotFiles, file)
+		}
+	}
+	return computeRequirementsFromDirectory(prevSnapshotFiles, homeDirectory, snapshotPath, count, durationDays)
+}
+
+func setupLevelDb(levelDbPath string) (store *filer_leveldb.LevelDBStore, err error) {
 	err = os.RemoveAll(levelDbPath)
 	if err != nil {
-		return err
+		return &filer_leveldb.LevelDBStore{}, err
 	}
-	store := &filer_leveldb.LevelDBStore{}
 	config := SnapshotConfig{
 		dir: levelDbPath,
 	}
 	store.Initialize(config, "")
-	unfinishedSnapshotCnt := len(snapshotCheckPoints) - 1
+	return
+}
+
+func (c *commandFsMetaSnapshotsCreate) Do(args []string, commandEnv *CommandEnv, _writer io.Writer) (err error) {
+	fsMetaSnapshotsCreateCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	snapshotPath := fsMetaSnapshotsCreateCommand.String("path", "", "the path to store generated snapshot files")
+	count := fsMetaSnapshotsCreateCommand.Int("count", 3, "number of snapshots generated")
+	intervalDays := fsMetaSnapshotsCreateCommand.Int("interval-days", 7, "the duration interval between each generated snapshot")
+	if err = fsMetaSnapshotsCreateCommand.Parse(args); err != nil {
+		return err
+	}
+	homeDirname, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	snapshotsToRemove, snapshotsToGenerate, err := computeRequirements(homeDirname, *snapshotPath, *count, *intervalDays)
+	if err != nil {
+		return err
+	}
+	levelDbPath := filepath.Join(homeDirname, LevelDbPath)
+	store, err := setupLevelDb(levelDbPath)
+	if err != nil {
+		return err
+	}
+	unfinishedSnapshotCnt := len(snapshotsToGenerate) - 1
 	changeLogPath := filer.SystemLogDir
 	var processEntry func(entry *filer_pb.Entry, isLast bool) error
 	processEntry = func(entry *filer_pb.Entry, isLast bool) error {
@@ -235,30 +311,39 @@ func (c *commandFsMetaSnapshotsCreate) Do(args []string, commandEnv *CommandEnv,
 				return err
 			}
 			idx = idx + 4 + logEntrySize
-			unfinishedSnapshotCnt, err = processMetaDataEvents(store, logEntry.Data, unfinishedSnapshotCnt, snapshotCheckPoints, homeDirname, *snapshotPath)
+			unfinishedSnapshotCnt, err = processMetaDataEvents(store, logEntry.Data, unfinishedSnapshotCnt, snapshotsToGenerate, homeDirname, *snapshotPath)
 			if err != nil {
 				return err
 			}
 		}
-		// edge case
-		// there might be unfinished snapshot left over in the duration gaps.
-		// process meta event only triggers snapshots when there are event after the snapshot time
-		for unfinishedSnapshotCnt >= 0 {
-			generatePath := filepath.Join(homeDirname, *snapshotPath, snapshotCheckPoints[unfinishedSnapshotCnt].Format(DateFormat))
-			err = CreateIfNotExists(generatePath, 0755)
-			if err != nil {
-				return err
-			}
-			err = generateSnapshots(levelDbPath, generatePath)
-			if err != nil {
-				return err
-			}
-			unfinishedSnapshotCnt--
-		}
-
-		return nil
+		return err
 	}
 
 	err = filer_pb.ReadDirAllEntries(commandEnv, util.FullPath(changeLogPath), "", processEntry)
-	return err
+	if err != nil {
+		return err
+	}
+	// edge case
+	// there might be unfinished snapshot left over in the duration gaps.
+	// process meta event only triggers snapshots when there are event after the snapshot time
+	for unfinishedSnapshotCnt >= 0 {
+		generatePath := filepath.Join(homeDirname, *snapshotPath, snapshotsToGenerate[unfinishedSnapshotCnt].Format(DateFormat))
+		err = createIfNotExists(generatePath, 0755)
+		if err != nil {
+			return err
+		}
+		err = generateSnapshots(levelDbPath, generatePath)
+		if err != nil {
+			return err
+		}
+		unfinishedSnapshotCnt--
+	}
+	// remove previous snapshot if needed.
+	for _, snapshot := range snapshotsToRemove {
+		err = os.RemoveAll(snapshot)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
