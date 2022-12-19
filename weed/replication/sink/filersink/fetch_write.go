@@ -27,12 +27,16 @@ func (fs *FilerSink) replicateChunks(sourceChunks []*filer_pb.FileChunk, path st
 		index, source := chunkIndex, sourceChunk
 		fs.executor.Execute(func() {
 			defer wg.Done()
-			replicatedChunk, e := fs.replicateOneChunk(source, path)
-			if e != nil {
-				err = e
-				return
-			}
-			replicatedChunks[index] = replicatedChunk
+			util.Retry("replicate chunks", func() error {
+				replicatedChunk, e := fs.replicateOneChunk(source, path)
+				if e != nil {
+					err = e
+					return e
+				}
+				replicatedChunks[index] = replicatedChunk
+				err = nil
+				return nil
+			})
 		})
 	}
 	wg.Wait()
