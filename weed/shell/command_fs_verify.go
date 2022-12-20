@@ -50,9 +50,6 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	c.verbose = fsVerifyCommand.Bool("v", false, "print out each processed files")
 	modifyTimeAgo := fsVerifyCommand.Duration("modifyTimeAgo", 0, "only include files after this modify time to verify")
 
-	if modifyTimeAgo.Milliseconds() > 0 {
-		c.modifyTimeAgoAtSec = int64(modifyTimeAgo.Seconds())
-	}
 	if err = fsVerifyCommand.Parse(args); err != nil {
 		return err
 	}
@@ -60,6 +57,10 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	path, parseErr := commandEnv.parseUrl(findInputDirectory(fsVerifyCommand.Args()))
 	if parseErr != nil {
 		return parseErr
+	}
+
+	if modifyTimeAgo.Milliseconds() > 0 {
+		c.modifyTimeAgoAtSec = int64(modifyTimeAgo.Seconds())
 	}
 
 	fCount, terr := c.verifyTraverseBfs(path)
@@ -88,7 +89,7 @@ func (c *commandFsVerify) collectVolumeIds() error {
 	return nil
 }
 
-func (c *commandFsVerify) verifyEntry(chunk *Item, volumeServer *pb.ServerAddress) {
+func (c *commandFsVerify) verifyEntry(chunk *Item, volumeServer *pb.ServerAddress) error {
 	err := operation.WithVolumeServerClient(false, *volumeServer, c.env.option.GrpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			_, err := client.VolumeNeedleStatus(context.Background(),
@@ -100,11 +101,12 @@ func (c *commandFsVerify) verifyEntry(chunk *Item, volumeServer *pb.ServerAddres
 	)
 	if err != nil && !strings.Contains(err.Error(), storage.ErrorDeleted.Error()) {
 		fmt.Fprintf(c.writer, "failed to read %d needle status of file %s: %+v\n", chunk.fileKey, chunk.path, err)
-		return
+		return err
 	}
 	if *c.verbose {
-		fmt.Fprintf(c.writer, "verifed %d needle status of file %s\n", chunk.fileKey, chunk.path)
+		fmt.Fprintf(c.writer, ".")
 	}
+	return nil
 }
 
 func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount int64, err error) {
@@ -133,8 +135,16 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount int64, err e
 		func(outputChan chan interface{}) {
 			for item := range outputChan {
 				i := item.(*Item)
+				if *c.verbose {
+					fmt.Fprintf(c.writer, "file:%s key:%d needle status ", i.path, i.fileKey)
+				}
 				for _, volumeServer := range c.volumeIds[i.vid] {
-					c.verifyEntry(i, &volumeServer)
+					if err = c.verifyEntry(i, &volumeServer); err != nil {
+						return
+					}
+				}
+				if *c.verbose {
+					fmt.Fprintf(c.writer, " verifed\n")
 				}
 			}
 		})
