@@ -63,10 +63,14 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		c.modifyTimeAgoAtSec = int64(modifyTimeAgo.Seconds())
 	}
 
-	fCount, terr := c.verifyTraverseBfs(path)
+	if err := c.collectVolumeIds(); err != nil {
+		return parseErr
+	}
+
+	fCount, eConut, terr := c.verifyTraverseBfs(path)
 
 	if terr == nil {
-		fmt.Fprintf(writer, "verified %d files\n", fCount)
+		fmt.Fprintf(writer, "verified %d files, error %d files \n", fCount, eConut)
 	}
 
 	return terr
@@ -89,18 +93,17 @@ func (c *commandFsVerify) collectVolumeIds() error {
 	return nil
 }
 
-func (c *commandFsVerify) verifyEntry(chunk *Item, volumeServer *pb.ServerAddress) error {
+func (c *commandFsVerify) verifyEntry(fileId *filer_pb.FileId, volumeServer *pb.ServerAddress) error {
 	err := operation.WithVolumeServerClient(false, *volumeServer, c.env.option.GrpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			_, err := client.VolumeNeedleStatus(context.Background(),
 				&volume_server_pb.VolumeNeedleStatusRequest{
-					VolumeId: chunk.vid,
-					NeedleId: chunk.fileKey})
+					VolumeId: fileId.VolumeId,
+					NeedleId: fileId.FileKey})
 			return err
 		},
 	)
 	if err != nil && !strings.Contains(err.Error(), storage.ErrorDeleted.Error()) {
-		fmt.Fprintf(c.writer, "failed to read %d needle status of file %s: %+v\n", chunk.fileKey, chunk.path, err)
 		return err
 	}
 	if *c.verbose {
@@ -109,43 +112,68 @@ func (c *commandFsVerify) verifyEntry(chunk *Item, volumeServer *pb.ServerAddres
 	return nil
 }
 
-func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount int64, err error) {
+type ItemEntry struct {
+	chunks []*filer_pb.FileChunk
+	path   util.FullPath
+}
+
+func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount int64, errCount int64, err error) {
 	timeNowAtSec := time.Now().Unix()
-	return fileCount, doTraverseBfsAndSaving(c.env, nil, path, false,
+	return fileCount, errCount, doTraverseBfsAndSaving(c.env, nil, path, false,
 		func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
-			if c.modifyTimeAgoAtSec > 0 && entry.Entry.Attributes != nil && c.modifyTimeAgoAtSec > timeNowAtSec-entry.Entry.Attributes.Mtime {
-				return nil
+			if c.modifyTimeAgoAtSec > 0 {
+				if entry.Entry.Attributes != nil && c.modifyTimeAgoAtSec < timeNowAtSec-entry.Entry.Attributes.Mtime {
+					return nil
+				}
 			}
 			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64)
 			if resolveErr != nil {
 				return fmt.Errorf("failed to ResolveChunkManifest: %+v", resolveErr)
 			}
 			dataChunks = append(dataChunks, manifestChunks...)
-			for _, chunk := range dataChunks {
-				outputChan <- &Item{
-					vid:     chunk.Fid.VolumeId,
-					fileKey: chunk.Fid.FileKey,
-					cookie:  chunk.Fid.Cookie,
-					path:    util.NewFullPath(entry.Dir, entry.Entry.Name),
+			if len(dataChunks) > 0 {
+				outputChan <- &ItemEntry{
+					chunks: dataChunks,
+					path:   util.NewFullPath(entry.Dir, entry.Entry.Name),
 				}
 			}
-			fileCount++
 			return nil
 		},
 		func(outputChan chan interface{}) {
-			for item := range outputChan {
-				i := item.(*Item)
+			for itemEntry := range outputChan {
+				i := itemEntry.(*ItemEntry)
+				fileMsg := fmt.Sprintf("file:%s needle status ", i.path)
 				if *c.verbose {
-					fmt.Fprintf(c.writer, "file:%s key:%d needle status ", i.path, i.fileKey)
+					fmt.Fprintf(c.writer, fileMsg)
+					fileMsg = ""
 				}
-				for _, volumeServer := range c.volumeIds[i.vid] {
-					if err = c.verifyEntry(i, &volumeServer); err != nil {
-						return
+				for _, chunk := range i.chunks {
+					if volumeIds, ok := c.volumeIds[chunk.Fid.VolumeId]; ok {
+						for _, volumeServer := range volumeIds {
+							if err = c.verifyEntry(chunk.Fid, &volumeServer); err != nil {
+								fmt.Fprintf(c.writer, "%sfailed verify %d:%d: %+v\n",
+									fileMsg, chunk.Fid.VolumeId, chunk.Fid.FileKey, err)
+								break
+							}
+						}
+					} else {
+						err = fmt.Errorf("volumeId %d not found", chunk.Fid.VolumeId)
+						fmt.Fprintf(c.writer, "%sfailed verify chunk %d:%d: %+v\n",
+							fileMsg, chunk.Fid.VolumeId, chunk.Fid.FileKey, err)
+						break
 					}
 				}
+
+				if err != nil {
+					errCount++
+					continue
+				}
+
 				if *c.verbose {
 					fmt.Fprintf(c.writer, " verifed\n")
 				}
+				fileCount++
 			}
 		})
+
 }
