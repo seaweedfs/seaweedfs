@@ -225,13 +225,13 @@ spec:
         {{- if eq .Values.filer.logs.type "hostPath" }}
         - name: seaweedfs-filer-log-volume
           hostPath:
-            path: /storage/logs/seaweedfs/filer
+            path: {{ .Values.filer.logs.hostPathPrefix }}/logs/seaweedfs/filer
             type: DirectoryOrCreate
         {{- end }}
         {{- if eq .Values.filer.data.type "hostPath" }}
         - name: data-filer
           hostPath:
-            path: /storage/filer_store
+            path: {{ .Values.filer.data.hostPathPrefix }}/filer_store
             type: DirectoryOrCreate
         {{- end }}
         - name: db-schema-config-volume
