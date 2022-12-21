@@ -2,9 +2,11 @@ package filersink
 
 import (
 	"fmt"
-	"sync"
-
+	"github.com/schollz/progressbar/v3"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"os"
+	"path/filepath"
+	"sync"
 
 	"google.golang.org/grpc"
 
@@ -17,6 +19,20 @@ import (
 func (fs *FilerSink) replicateChunks(sourceChunks []*filer_pb.FileChunk, path string) (replicatedChunks []*filer_pb.FileChunk, err error) {
 	if len(sourceChunks) == 0 {
 		return
+	}
+
+	// a simple progress bar. Not ideal. Fix me.
+	var bar *progressbar.ProgressBar
+	if len(sourceChunks) > 1 {
+		name := filepath.Base(path)
+		bar = progressbar.NewOptions64(int64(len(sourceChunks)),
+			progressbar.OptionClearOnFinish(),
+			progressbar.OptionOnCompletion(func() {
+				fmt.Fprint(os.Stderr, "\n")
+			}),
+			progressbar.OptionFullWidth(),
+			progressbar.OptionSetDescription(name),
+		)
 	}
 
 	replicatedChunks = make([]*filer_pb.FileChunk, len(sourceChunks))
@@ -34,6 +50,9 @@ func (fs *FilerSink) replicateChunks(sourceChunks []*filer_pb.FileChunk, path st
 					return e
 				}
 				replicatedChunks[index] = replicatedChunk
+				if bar != nil {
+					bar.Add(1)
+				}
 				err = nil
 				return nil
 			})
