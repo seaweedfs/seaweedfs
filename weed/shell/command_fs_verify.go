@@ -37,7 +37,7 @@ func (c *commandFsVerify) Name() string {
 func (c *commandFsVerify) Help() string {
 	return `recursively verify all files under a directory
 
-	fs.verify /some/dir
+	fs.verify [-v] [-modifyTimeAgo 1h] /buckets/dir
 
 `
 }
@@ -59,9 +59,7 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		return parseErr
 	}
 
-	if modifyTimeAgo.Milliseconds() > 0 {
-		c.modifyTimeAgoAtSec = int64(modifyTimeAgo.Seconds())
-	}
+	c.modifyTimeAgoAtSec = int64(modifyTimeAgo.Seconds())
 
 	if err := c.collectVolumeIds(); err != nil {
 		return parseErr
