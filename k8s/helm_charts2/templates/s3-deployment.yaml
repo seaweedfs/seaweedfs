@@ -79,6 +79,7 @@ spec:
               -v={{ .Values.global.loggingLevel }} \
               {{- end }}
               s3 \
+              -ip.bind={{ .Values.s3.bindAddress }} \
               -port={{ .Values.s3.port }} \
               {{- if .Values.s3.metricsPort }}
               -metricsPort {{ .Values.s3.metricsPort }} \

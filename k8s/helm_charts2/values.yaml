@@ -418,6 +418,7 @@ s3:
   imageTag: null
   restartPolicy: null
   replicas: 1
+  bindAddress: 0.0.0.0
   port: 8333
   metricsPort: 9327
   loggingOverrideLevel: null
