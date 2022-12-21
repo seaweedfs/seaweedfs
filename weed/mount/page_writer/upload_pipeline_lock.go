@@ -10,6 +10,8 @@ func (up *UploadPipeline) LockForRead(startOffset, stopOffset int64) {
 	if stopOffset%up.ChunkSize > 0 {
 		stopLogicChunkIndex += 1
 	}
+	up.chunksLock.Lock()
+	defer up.chunksLock.Unlock()
 	for i := startLogicChunkIndex; i < stopLogicChunkIndex; i++ {
 		if count, found := up.activeReadChunks[i]; found {
 			up.activeReadChunks[i] = count + 1
@@ -25,6 +27,8 @@ func (up *UploadPipeline) UnlockForRead(startOffset, stopOffset int64) {
 	if stopOffset%up.ChunkSize > 0 {
 		stopLogicChunkIndex += 1
 	}
+	up.chunksLock.Lock()
+	defer up.chunksLock.Unlock()
 	for i := startLogicChunkIndex; i < stopLogicChunkIndex; i++ {
 		if count, found := up.activeReadChunks[i]; found {
 			if count == 1 {
