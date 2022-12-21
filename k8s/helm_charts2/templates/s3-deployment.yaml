@@ -167,7 +167,7 @@ spec:
         {{- if eq .Values.s3.logs.type "hostPath" }}
         - name: logs
           hostPath:
-            path: /storage/logs/seaweedfs/s3
+            path: {{ .Values.s3.logs.hostPathPrefix }}/logs/seaweedfs/s3
             type: DirectoryOrCreate
         {{- end }}
         {{- if .Values.global.enableSecurity }}
