@@ -68,11 +68,13 @@ master:
     type: "hostPath"
     size: ""
     storageClass: ""
+    hostPathPrefix: /ssd
 
   logs:
     type: "hostPath"
     size: ""
     storageClass: ""
+    hostPathPrefix: /storage
 
   initContainers: ""
 
@@ -176,15 +178,19 @@ volume:
     type: "hostPath"
     size: ""
     storageClass: ""
+    hostPathPrefix: /storage
+
   idx:
     type: "hostPath"
     size: ""
     storageClass: ""
+    hostPathPrefix: /ssd
 
   logs:
     type: "hostPath"
     size: ""
     storageClass: ""
+    hostPathPrefix: /storage
 
   # limit background compaction or copying speed in mega bytes per second
   compactionMBps: "50"
@@ -308,11 +314,13 @@ filer:
     type: "hostPath"
     size: ""
     storageClass: ""
+    hostPathPrefix: /storage
 
   logs:
     type: "hostPath"
     size: ""
     storageClass: ""
+    hostPathPrefix: /storage
 
   initContainers: ""
 
@@ -463,7 +471,7 @@ s3:
     type: "hostPath"
     size: ""
     storageClass: ""
-
+    hostPathPrefix: /storage
 
 certificates:
   commonName: "SeaweedFS CA"
