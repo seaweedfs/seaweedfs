@@ -2,10 +2,12 @@ package topology
 
 import (
 	"context"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
+	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"google.golang.org/grpc"
 
@@ -202,6 +204,11 @@ func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float
 	}
 }
 
+type vacuumTarget struct {
+	vid          needle.VolumeId
+	locationList *VolumeLocationList
+}
+
 func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, preallocate int64) {
 
 	volumeLayout.accessLock.RLock()
@@ -211,9 +218,29 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 	}
 	volumeLayout.accessLock.RUnlock()
 
-	for vid, locationList := range tmpMap {
-		t.vacuumOneVolumeId(grpcDialOption, volumeLayout, c, garbageThreshold, locationList, vid, preallocate)
+	var wg sync.WaitGroup
+	worker := func(work <-chan vacuumTarget) {
+		defer wg.Done()
+		for w := range work {
+			t.vacuumOneVolumeId(grpcDialOption, volumeLayout, c, garbageThreshold, w.locationList, w.vid, preallocate)
+		}
 	}
+
+	work := make(chan vacuumTarget, t.vacuumConcurrency)
+	for w := 1; w <= t.vacuumConcurrency; w++ {
+		wg.Add(1)
+		go worker(work)
+	}
+
+	for vid, locationList := range tmpMap {
+		work <- vacuumTarget{
+			vid:          vid,
+			locationList: locationList,
+		}
+	}
+
+	close(work)
+	wg.Wait()
 }
 
 func (t *Topology) vacuumOneVolumeId(grpcDialOption grpc.DialOption, volumeLayout *VolumeLayout, c *Collection, garbageThreshold float64, locationList *VolumeLocationList, vid needle.VolumeId, preallocate int64) {

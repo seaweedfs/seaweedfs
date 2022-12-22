@@ -2,12 +2,13 @@ package command
 
 import (
 	"fmt"
-	hashicorpRaft "github.com/hashicorp/raft"
 	"net/http"
 	"os"
 	"path"
 	"strings"
 	"time"
+
+	hashicorpRaft "github.com/hashicorp/raft"
 
 	"golang.org/x/exp/slices"
 
@@ -45,6 +46,7 @@ type MasterOptions struct {
 	// pulseSeconds       *int
 	defaultReplication *string
 	garbageThreshold   *float64
+	vacuumConcurrency  *int
 	whiteList          *string
 	disableHttp        *bool
 	metricsAddress     *string
@@ -70,6 +72,7 @@ func init() {
 	// m.pulseSeconds = cmdMaster.Flag.Int("pulseSeconds", 5, "number of seconds between heartbeats")
 	m.defaultReplication = cmdMaster.Flag.String("defaultReplication", "", "Default replication type if not specified.")
 	m.garbageThreshold = cmdMaster.Flag.Float64("garbageThreshold", 0.3, "threshold to vacuum and reclaim spaces")
+	m.vacuumConcurrency = cmdMaster.Flag.Int("vacuumConcurrency", 1, "number of volumes to concurrently vacuum")
 	m.whiteList = cmdMaster.Flag.String("whiteList", "", "comma separated Ip addresses having write permission. No limit if empty.")
 	m.disableHttp = cmdMaster.Flag.Bool("disableHttp", false, "disable http requests, only gRPC operations are allowed.")
 	m.metricsAddress = cmdMaster.Flag.String("metrics.address", "", "Prometheus gateway address <host>:<port>")
@@ -306,6 +309,7 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		// PulseSeconds:            *m.pulseSeconds,
 		DefaultReplicaPlacement: *m.defaultReplication,
 		GarbageThreshold:        *m.garbageThreshold,
+		VacuumConcurrency:       *m.vacuumConcurrency,
 		WhiteList:               whiteList,
 		DisableHttp:             *m.disableHttp,
 		MetricsAddress:          *m.metricsAddress,
