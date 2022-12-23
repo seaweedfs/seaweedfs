@@ -91,7 +91,7 @@ spec:
             - "-ec"
             - | 
               exec /usr/bin/weed \
-              {{- if .Values.master.logs.type }}
+              {{- if eq .Values.master.logs.type "hostPath" }}
               -logdir=/logs \
               {{- else }}
               -logtostderr=true \
