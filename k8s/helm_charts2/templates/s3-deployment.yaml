@@ -72,7 +72,12 @@ spec:
             - "/bin/sh"
             - "-ec"
             - | 
-              exec /usr/bin/weed -logdir=/logs \
+              exec /usr/bin/weed \
+               {{- if eq .Values.s3.logs.type "hostPath" }}
+              -logdir=/logs \
+              {{- else }}
+              -logtostderr=true \
+              {{- end }}
               {{- if .Values.s3.loggingOverrideLevel }}
               -v={{ .Values.s3.loggingOverrideLevel }} \
               {{- else }}
