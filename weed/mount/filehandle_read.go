@@ -17,18 +17,18 @@ func (fh *FileHandle) unlockForRead(startOffset int64, size int) {
 	fh.dirtyPages.UnlockForRead(startOffset, startOffset+int64(size))
 }
 
-func (fh *FileHandle) readFromDirtyPages(buff []byte, startOffset int64) (maxStop int64) {
-	maxStop = fh.dirtyPages.ReadDirtyDataAt(buff, startOffset)
+func (fh *FileHandle) readFromDirtyPages(buff []byte, startOffset int64, tsNs int64) (maxStop int64) {
+	maxStop = fh.dirtyPages.ReadDirtyDataAt(buff, startOffset, tsNs)
 	return
 }
 
-func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
+func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, int64, error) {
 
 	fileFullPath := fh.FullPath()
 
 	entry := fh.GetEntry()
 	if entry == nil {
-		return 0, io.EOF
+		return 0, 0, io.EOF
 	}
 
 	if entry.IsInRemoteOnly() {
@@ -36,7 +36,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		newEntry, err := fh.downloadRemoteEntry(entry)
 		if err != nil {
 			glog.V(1).Infof("download remote entry %s: %v", fileFullPath, err)
-			return 0, err
+			return 0, 0, err
 		}
 		entry = newEntry
 	}
@@ -45,20 +45,20 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	if fileSize == 0 {
 		glog.V(1).Infof("empty fh %v", fileFullPath)
-		return 0, io.EOF
+		return 0, 0, io.EOF
 	}
 
 	if offset+int64(len(buff)) <= int64(len(entry.Content)) {
 		totalRead := copy(buff, entry.Content[offset:])
 		glog.V(4).Infof("file handle read cached %s [%d,%d] %d", fileFullPath, offset, offset+int64(totalRead), totalRead)
-		return int64(totalRead), nil
+		return int64(totalRead), 0, nil
 	}
 
 	var chunkResolveErr error
 	if fh.entryViewCache == nil {
 		fh.entryViewCache, chunkResolveErr = filer.NonOverlappingVisibleIntervals(fh.wfs.LookupFn(), entry.GetChunks(), 0, fileSize)
 		if chunkResolveErr != nil {
-			return 0, fmt.Errorf("fail to resolve chunk manifest: %v", chunkResolveErr)
+			return 0, 0, fmt.Errorf("fail to resolve chunk manifest: %v", chunkResolveErr)
 		}
 		fh.CloseReader()
 	}
@@ -72,7 +72,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 		fh.reader = filer.NewChunkReaderAtFromClient(fh.wfs.LookupFn(), chunkViews, fh.wfs.chunkCache, fileSize)
 	}
 
-	totalRead, err := fh.reader.ReadAt(buff, offset)
+	totalRead, ts, err := fh.reader.ReadAtWithTime(buff, offset)
 
 	if err != nil && err != io.EOF {
 		glog.Errorf("file handle read %s: %v", fileFullPath, err)
@@ -80,7 +80,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	// glog.V(4).Infof("file handle read %s [%d,%d] %d : %v", fileFullPath, offset, offset+int64(totalRead), totalRead, err)
 
-	return int64(totalRead), err
+	return int64(totalRead), ts, err
 }
 
 func (fh *FileHandle) downloadRemoteEntry(entry *filer_pb.Entry) (*filer_pb.Entry, error) {

@@ -29,6 +29,7 @@ type SwapFileChunk struct {
 	usage            *ChunkWrittenIntervalList
 	logicChunkIndex  LogicChunkIndex
 	actualChunkIndex ActualChunkIndex
+	lastModifiedTsNs int64
 }
 
 func NewSwapFile(dir string, chunkSize int64) *SwapFile {
@@ -87,9 +88,14 @@ func (sc *SwapFileChunk) FreeResource() {
 	delete(sc.swapfile.logicToActualChunkIndex, sc.logicChunkIndex)
 }
 
-func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64) (n int) {
+func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n int) {
 	sc.Lock()
 	defer sc.Unlock()
+
+	if sc.lastModifiedTsNs > tsNs {
+		println("write old data2", tsNs-sc.lastModifiedTsNs, "ns")
+	}
+	sc.lastModifiedTsNs = tsNs
 
 	innerOffset := offset % sc.swapfile.chunkSize
 	var err error
@@ -102,7 +108,7 @@ func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64) (n int) {
 	return
 }
 
-func (sc *SwapFileChunk) ReadDataAt(p []byte, off int64) (maxStop int64) {
+func (sc *SwapFileChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop int64) {
 	sc.RLock()
 	defer sc.RUnlock()
 
@@ -111,12 +117,16 @@ func (sc *SwapFileChunk) ReadDataAt(p []byte, off int64) (maxStop int64) {
 		logicStart := max(off, chunkStartOffset+t.StartOffset)
 		logicStop := min(off+int64(len(p)), chunkStartOffset+t.stopOffset)
 		if logicStart < logicStop {
-			actualStart := logicStart - chunkStartOffset + int64(sc.actualChunkIndex)*sc.swapfile.chunkSize
-			if _, err := sc.swapfile.file.ReadAt(p[logicStart-off:logicStop-off], actualStart); err != nil {
-				glog.Errorf("failed to reading swap file %s: %v", sc.swapfile.file.Name(), err)
-				break
+			if sc.lastModifiedTsNs > tsNs {
+				actualStart := logicStart - chunkStartOffset + int64(sc.actualChunkIndex)*sc.swapfile.chunkSize
+				if _, err := sc.swapfile.file.ReadAt(p[logicStart-off:logicStop-off], actualStart); err != nil {
+					glog.Errorf("failed to reading swap file %s: %v", sc.swapfile.file.Name(), err)
+					break
+				}
+				maxStop = max(maxStop, logicStop)
+			} else {
+				println("read old data2", tsNs-sc.lastModifiedTsNs, "ns")
 			}
-			maxStop = max(maxStop, logicStop)
 		}
 	}
 	return
@@ -145,7 +155,7 @@ func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {
 		data := mem.Allocate(int(t.Size()))
 		sc.swapfile.file.ReadAt(data, t.StartOffset+int64(sc.actualChunkIndex)*sc.swapfile.chunkSize)
 		reader := util.NewBytesReader(data)
-		saveFn(reader, int64(sc.logicChunkIndex)*sc.swapfile.chunkSize+t.StartOffset, t.Size(), func() {
+		saveFn(reader, int64(sc.logicChunkIndex)*sc.swapfile.chunkSize+t.StartOffset, t.Size(), sc.lastModifiedTsNs, func() {
 		})
 		mem.Free(data)
 	}

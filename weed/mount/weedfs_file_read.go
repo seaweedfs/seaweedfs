@@ -59,9 +59,9 @@ func readDataByFileHandle(buff []byte, fhIn *FileHandle, offset int64) (int64, e
 	fhIn.lockForRead(offset, size)
 	defer fhIn.unlockForRead(offset, size)
 
-	n, err := fhIn.readFromChunks(buff, offset)
+	n, tsNs, err := fhIn.readFromChunks(buff, offset)
 	if err == nil || err == io.EOF {
-		maxStop := fhIn.readFromDirtyPages(buff, offset)
+		maxStop := fhIn.readFromDirtyPages(buff, offset, tsNs)
 		n = max(maxStop-offset, n)
 	}
 	if err == io.EOF {

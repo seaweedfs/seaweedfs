@@ -42,6 +42,9 @@ func getSlotPool(size int) (*sync.Pool, bool) {
 func Allocate(size int) []byte {
 	if pool, found := getSlotPool(size); found {
 		slab := *pool.Get().(*[]byte)
+		for i := 0; i < size; i++ {
+			slab[i] = 0
+		}
 		return slab[:size]
 	}
 	return make([]byte, size)

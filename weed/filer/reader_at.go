@@ -112,10 +112,22 @@ func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
 	defer c.readerLock.Unlock()
 
 	// glog.V(4).Infof("ReadAt [%d,%d) of total file size %d bytes %d chunk views", offset, offset+int64(len(p)), c.fileSize, len(c.chunkViews))
+	n, _, err = c.doReadAt(p, offset)
+	return
+}
+
+func (c *ChunkReadAt) ReadAtWithTime(p []byte, offset int64) (n int, ts int64, err error) {
+
+	c.readerPattern.MonitorReadAt(offset, len(p))
+
+	c.readerLock.Lock()
+	defer c.readerLock.Unlock()
+
+	// glog.V(4).Infof("ReadAt [%d,%d) of total file size %d bytes %d chunk views", offset, offset+int64(len(p)), c.fileSize, len(c.chunkViews))
 	return c.doReadAt(p, offset)
 }
 
-func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
+func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, ts int64, err error) {
 
 	startOffset, remaining := offset, int64(len(p))
 	var nextChunks []*ChunkView
@@ -142,10 +154,11 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, err error) {
 		}
 		// glog.V(4).Infof("read [%d,%d), %d/%d chunk %s [%d,%d)", chunkStart, chunkStop, i, len(c.chunkViews), chunk.FileId, chunk.LogicOffset-chunk.Offset, chunk.LogicOffset-chunk.Offset+int64(chunk.Size))
 		bufferOffset := chunkStart - chunk.LogicOffset + chunk.Offset
+		ts = chunk.ModifiedTsNs
 		copied, err := c.readChunkSliceAt(p[startOffset-offset:chunkStop-chunkStart+startOffset-offset], chunk, nextChunks, uint64(bufferOffset))
 		if err != nil {
 			glog.Errorf("fetching chunk %+v: %v\n", chunk, err)
-			return copied, err
+			return copied, ts, err
 		}
 
 		n += copied

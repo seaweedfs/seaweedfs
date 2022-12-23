@@ -365,7 +365,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 		if flushErr != nil {
 			return flushErr
 		}
-		chunks = append(chunks, uploadResult.ToPbFileChunk(finalFileId, 0))
+		chunks = append(chunks, uploadResult.ToPbFileChunk(finalFileId, 0, time.Now().UnixNano()))
 	}
 
 	if err := pb.WithGrpcFilerClient(false, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -450,7 +450,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 				uploadError = fmt.Errorf("upload %v result: %v\n", fileName, uploadResult.Error)
 				return
 			}
-			chunksChan <- uploadResult.ToPbFileChunk(fileId, i*chunkSize)
+			chunksChan <- uploadResult.ToPbFileChunk(fileId, i*chunkSize, time.Now().UnixNano())
 
 			fmt.Printf("uploaded %s-%d [%d,%d)\n", fileName, i+1, i*chunkSize, i*chunkSize+int64(uploadResult.Size))
 		}(i)
@@ -530,7 +530,7 @@ func detectMimeType(f *os.File) string {
 	return mimeType
 }
 
-func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, err error) {
+func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
 
 	finalFileId, uploadResult, flushErr, _ := operation.UploadWithRetry(
 		worker,
@@ -561,7 +561,7 @@ func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, off
 	if uploadResult.Error != "" {
 		return nil, fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
-	return uploadResult.ToPbFileChunk(finalFileId, offset), nil
+	return uploadResult.ToPbFileChunk(finalFileId, offset, tsNs), nil
 }
 
 var _ = filer_pb.FilerClient(&FileCopyWorker{})

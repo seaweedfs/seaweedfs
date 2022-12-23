@@ -42,7 +42,7 @@ func ETag(entry *filer_pb.Entry) (etag string) {
 }
 
 func ETagEntry(entry *Entry) (etag string) {
-        if entry.IsInRemoteOnly() {
+	if entry.IsInRemoteOnly() {
 		return entry.Remote.RemoteETag
 	}
 	if entry.Attr.Md5 == nil {
@@ -131,13 +131,14 @@ func DoMinusChunksBySourceFileId(as, bs []*filer_pb.FileChunk) (delta []*filer_p
 }
 
 type ChunkView struct {
-	FileId      string
-	Offset      int64
-	Size        uint64
-	LogicOffset int64 // actual offset in the file, for the data specified via [offset, offset+size) in current chunk
-	ChunkSize   uint64
-	CipherKey   []byte
-	IsGzipped   bool
+	FileId       string
+	Offset       int64
+	Size         uint64
+	LogicOffset  int64 // actual offset in the file, for the data specified via [offset, offset+size) in current chunk
+	ChunkSize    uint64
+	CipherKey    []byte
+	IsGzipped    bool
+	ModifiedTsNs int64
 }
 
 func (cv *ChunkView) IsFullChunk() bool {
@@ -168,13 +169,14 @@ func ViewFromVisibleIntervals(visibles []VisibleInterval, offset int64, size int
 
 		if chunkStart < chunkStop {
 			views = append(views, &ChunkView{
-				FileId:      chunk.fileId,
-				Offset:      chunkStart - chunk.start + chunk.chunkOffset,
-				Size:        uint64(chunkStop - chunkStart),
-				LogicOffset: chunkStart,
-				ChunkSize:   chunk.chunkSize,
-				CipherKey:   chunk.cipherKey,
-				IsGzipped:   chunk.isGzipped,
+				FileId:       chunk.fileId,
+				Offset:       chunkStart - chunk.start + chunk.chunkOffset,
+				Size:         uint64(chunkStop - chunkStart),
+				LogicOffset:  chunkStart,
+				ChunkSize:    chunk.chunkSize,
+				CipherKey:    chunk.cipherKey,
+				IsGzipped:    chunk.isGzipped,
+				ModifiedTsNs: chunk.modifiedTsNs,
 			})
 		}
 	}

@@ -3,6 +3,7 @@ package mount
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 
@@ -88,7 +89,7 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	// put data at the specified offset in target file
 	fhOut.dirtyPages.writerPattern.MonitorWriteAt(int64(in.OffOut), int(in.Len))
 	fhOut.entry.Content = nil
-	fhOut.dirtyPages.AddPage(int64(in.OffOut), data, fhOut.dirtyPages.writerPattern.IsSequentialMode())
+	fhOut.dirtyPages.AddPage(int64(in.OffOut), data, fhOut.dirtyPages.writerPattern.IsSequentialMode(), time.Now().UnixNano())
 	fhOut.entry.Attributes.FileSize = uint64(max(int64(in.OffOut)+totalRead, int64(fhOut.entry.Attributes.FileSize)))
 	fhOut.dirtyMetadata = true
 	written = uint32(totalRead)

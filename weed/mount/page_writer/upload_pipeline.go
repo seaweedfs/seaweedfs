@@ -55,7 +55,8 @@ func NewUploadPipeline(writers *util.LimitedConcurrentExecutor, chunkSize int64,
 	return t
 }
 
-func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool) (n int) {
+func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsNs int64) (n int) {
+
 	up.chunksLock.Lock()
 	defer up.chunksLock.Unlock()
 
@@ -76,7 +77,7 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool) (n 
 			up.moveToSealed(up.writableChunks[fullestChunkIndex], fullestChunkIndex)
 			// fmt.Printf("flush chunk %d with %d bytes written\n", logicChunkIndex, fullness)
 		}
-		if isSequential &&
+		if false && isSequential &&
 			len(up.writableChunks) < up.writableChunkLimit &&
 			atomic.LoadInt64(&memChunkCounter) < 4*int64(up.writableChunkLimit) {
 			pageChunk = NewMemChunk(logicChunkIndex, up.ChunkSize)
@@ -85,13 +86,19 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool) (n 
 		}
 		up.writableChunks[logicChunkIndex] = pageChunk
 	}
-	n = pageChunk.WriteDataAt(p, off)
+	if _, foundSealed := up.sealedChunks[logicChunkIndex]; foundSealed {
+		println("found already sealed chunk", logicChunkIndex)
+	}
+	if _, foundReading := up.activeReadChunks[logicChunkIndex]; foundReading {
+		println("found active read chunk", logicChunkIndex)
+	}
+	n = pageChunk.WriteDataAt(p, off, tsNs)
 	up.maybeMoveToSealed(pageChunk, logicChunkIndex)
 
 	return
 }
 
-func (up *UploadPipeline) MaybeReadDataAt(p []byte, off int64) (maxStop int64) {
+func (up *UploadPipeline) MaybeReadDataAt(p []byte, off int64, tsNs int64) (maxStop int64) {
 	logicChunkIndex := LogicChunkIndex(off / up.ChunkSize)
 
 	up.chunksLock.Lock()
@@ -106,7 +113,7 @@ func (up *UploadPipeline) MaybeReadDataAt(p []byte, off int64) (maxStop int64) {
 		sealedChunk.referenceCounter++
 	}
 	if found {
-		maxStop = sealedChunk.chunk.ReadDataAt(p, off)
+		maxStop = sealedChunk.chunk.ReadDataAt(p, off, tsNs)
 		glog.V(4).Infof("%s read sealed memchunk [%d,%d)", up.filepath, off, maxStop)
 		sealedChunk.FreeReference(fmt.Sprintf("%s finish reading chunk %d", up.filepath, logicChunkIndex))
 	}
@@ -116,7 +123,7 @@ func (up *UploadPipeline) MaybeReadDataAt(p []byte, off int64) (maxStop int64) {
 	if !found {
 		return
 	}
-	writableMaxStop := writableChunk.ReadDataAt(p, off)
+	writableMaxStop := writableChunk.ReadDataAt(p, off, tsNs)
 	glog.V(4).Infof("%s read writable memchunk [%d,%d)", up.filepath, off, writableMaxStop)
 	maxStop = max(maxStop, writableMaxStop)
 

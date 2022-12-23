@@ -15,10 +15,11 @@ var (
 
 type MemChunk struct {
 	sync.RWMutex
-	buf             []byte
-	usage           *ChunkWrittenIntervalList
-	chunkSize       int64
-	logicChunkIndex LogicChunkIndex
+	buf              []byte
+	usage            *ChunkWrittenIntervalList
+	chunkSize        int64
+	logicChunkIndex  LogicChunkIndex
+	lastModifiedTsNs int64
 }
 
 func NewMemChunk(logicChunkIndex LogicChunkIndex, chunkSize int64) *MemChunk {
@@ -39,9 +40,14 @@ func (mc *MemChunk) FreeResource() {
 	mem.Free(mc.buf)
 }
 
-func (mc *MemChunk) WriteDataAt(src []byte, offset int64) (n int) {
+func (mc *MemChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n int) {
 	mc.Lock()
 	defer mc.Unlock()
+
+	if mc.lastModifiedTsNs > tsNs {
+		println("write old data1", tsNs-mc.lastModifiedTsNs, "ns")
+	}
+	mc.lastModifiedTsNs = tsNs
 
 	innerOffset := offset % mc.chunkSize
 	n = copy(mc.buf[innerOffset:], src)
@@ -49,7 +55,7 @@ func (mc *MemChunk) WriteDataAt(src []byte, offset int64) (n int) {
 	return
 }
 
-func (mc *MemChunk) ReadDataAt(p []byte, off int64) (maxStop int64) {
+func (mc *MemChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop int64) {
 	mc.RLock()
 	defer mc.RUnlock()
 
@@ -58,8 +64,12 @@ func (mc *MemChunk) ReadDataAt(p []byte, off int64) (maxStop int64) {
 		logicStart := max(off, int64(mc.logicChunkIndex)*mc.chunkSize+t.StartOffset)
 		logicStop := min(off+int64(len(p)), memChunkBaseOffset+t.stopOffset)
 		if logicStart < logicStop {
-			copy(p[logicStart-off:logicStop-off], mc.buf[logicStart-memChunkBaseOffset:logicStop-memChunkBaseOffset])
-			maxStop = max(maxStop, logicStop)
+			if mc.lastModifiedTsNs > tsNs {
+				copy(p[logicStart-off:logicStop-off], mc.buf[logicStart-memChunkBaseOffset:logicStop-memChunkBaseOffset])
+				maxStop = max(maxStop, logicStop)
+			} else {
+				println("read old data1", tsNs-mc.lastModifiedTsNs, "ns")
+			}
 		}
 	}
 	return
@@ -88,7 +98,7 @@ func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc) {
 	}
 	for t := mc.usage.head.next; t != mc.usage.tail; t = t.next {
 		reader := util.NewBytesReader(mc.buf[t.StartOffset:t.stopOffset])
-		saveFn(reader, int64(mc.logicChunkIndex)*mc.chunkSize+t.StartOffset, t.Size(), func() {
+		saveFn(reader, int64(mc.logicChunkIndex)*mc.chunkSize+t.StartOffset, t.Size(), mc.lastModifiedTsNs, func() {
 		})
 	}
 }
