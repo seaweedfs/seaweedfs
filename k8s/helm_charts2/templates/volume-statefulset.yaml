@@ -93,7 +93,12 @@ spec:
             - "/bin/sh"
             - "-ec"
             - |
-              exec /usr/bin/weed -logdir=/logs \
+              exec /usr/bin/weed \
+                {{- if eq .Values.volume.logs.type "hostPath" }}
+                -logdir=/logs \
+                {{- else }}
+                -logtostderr=true \
+                {{- end }}
                 {{- if .Values.volume.loggingOverrideLevel }}
                 -v={{ .Values.volume.loggingOverrideLevel }} \
                 {{- else }}
