@@ -82,11 +82,8 @@ func (mc *MemChunk) IsComplete() bool {
 	return mc.usage.IsComplete(mc.chunkSize)
 }
 
-func (mc *MemChunk) WrittenSize() int64 {
-	mc.RLock()
-	defer mc.RUnlock()
-
-	return mc.usage.WrittenSize()
+func (mc *MemChunk) LastModifiedTsNs() int64 {
+	return mc.lastModifiedTsNs
 }
 
 func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc) {

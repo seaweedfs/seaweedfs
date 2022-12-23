@@ -138,10 +138,8 @@ func (sc *SwapFileChunk) IsComplete() bool {
 	return sc.usage.IsComplete(sc.swapfile.chunkSize)
 }
 
-func (sc *SwapFileChunk) WrittenSize() int64 {
-	sc.RLock()
-	defer sc.RUnlock()
-	return sc.usage.WrittenSize()
+func (sc *SwapFileChunk) LastModifiedTsNs() int64 {
+	return sc.lastModifiedTsNs
 }
 
 func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {

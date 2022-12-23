@@ -11,6 +11,6 @@ type PageChunk interface {
 	WriteDataAt(src []byte, offset int64, tsNs int64) (n int)
 	ReadDataAt(p []byte, off int64, tsNs int64) (maxStop int64)
 	IsComplete() bool
-	WrittenSize() int64
+	LastModifiedTsNs() int64
 	SaveContent(saveFn SaveToStorageFunc)
 }

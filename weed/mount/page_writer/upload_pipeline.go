@@ -66,16 +66,16 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 	if !found {
 		if len(up.writableChunks) > up.writableChunkLimit {
 			// if current file chunks is over the per file buffer count limit
-			fullestChunkIndex, fullness := LogicChunkIndex(-1), int64(0)
+			oldestChunkIndex, oldestTs := LogicChunkIndex(-1), int64(0)
 			for lci, mc := range up.writableChunks {
-				chunkFullness := mc.WrittenSize()
-				if fullness < chunkFullness {
-					fullestChunkIndex = lci
-					fullness = chunkFullness
+				chunkModifiedTsNs := mc.LastModifiedTsNs()
+				if oldestTs < chunkModifiedTsNs {
+					oldestChunkIndex = lci
+					oldestTs = chunkModifiedTsNs
 				}
 			}
-			up.moveToSealed(up.writableChunks[fullestChunkIndex], fullestChunkIndex)
-			// fmt.Printf("flush chunk %d with %d bytes written\n", logicChunkIndex, fullness)
+			up.moveToSealed(up.writableChunks[oldestChunkIndex], oldestChunkIndex)
+			// fmt.Printf("flush chunk %d with %d bytes written\n", logicChunkIndex, oldestTs)
 		}
 		if false && isSequential &&
 			len(up.writableChunks) < up.writableChunkLimit &&
