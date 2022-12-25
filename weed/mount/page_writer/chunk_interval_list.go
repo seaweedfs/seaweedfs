@@ -64,6 +64,13 @@ func (list *ChunkWrittenIntervalList) WrittenSize() (writtenByteCount int64) {
 
 func (list *ChunkWrittenIntervalList) addInterval(interval *ChunkWrittenInterval) {
 
+	//t := list.head
+	//for ; t.next != nil; t = t.next {
+	//	if t.TsNs > interval.TsNs {
+	//		println("writes is out of order", t.TsNs-interval.TsNs, "ns")
+	//	}
+	//}
+
 	p := list.head
 	for ; p.next != nil && p.next.stopOffset <= interval.StartOffset; p = p.next {
 	}
