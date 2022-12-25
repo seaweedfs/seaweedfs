@@ -78,30 +78,7 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 		return
 	}
 
-	// find the earliest incoming chunk
-	newChunks := chunks
-	earliestChunk := newChunks[0]
-	for i := 1; i < len(newChunks); i++ {
-		if lessThan(earliestChunk, newChunks[i]) {
-			earliestChunk = newChunks[i]
-		}
-	}
-
-	// pick out-of-order chunks from existing chunks
-	for _, chunk := range fh.entry.GetChunks() {
-		if lessThan(earliestChunk, chunk) {
-			chunks = append(chunks, chunk)
-		}
-	}
-
-	// sort incoming chunks
-	slices.SortFunc(chunks, func(a, b *filer_pb.FileChunk) bool {
-		return lessThan(a, b)
-	})
-
-	glog.V(4).Infof("%s existing %d chunks adds %d more", fh.FullPath(), len(fh.entry.GetChunks()), len(chunks))
-
-	fh.entry.AppendChunks(newChunks)
+	fh.entry.AppendChunks(chunks)
 	fh.entryViewCache = nil
 }
 
@@ -115,11 +92,5 @@ func (fh *FileHandle) CloseReader() {
 func (fh *FileHandle) Release() {
 	fh.dirtyPages.Destroy()
 	fh.CloseReader()
-}
-
-func lessThan(a, b *filer_pb.FileChunk) bool {
-	if a.ModifiedTsNs == b.ModifiedTsNs {
-		return a.Fid.FileKey < b.Fid.FileKey
 	}
-	return a.ModifiedTsNs < b.ModifiedTsNs
 }
