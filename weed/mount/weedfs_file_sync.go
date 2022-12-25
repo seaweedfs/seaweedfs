@@ -145,9 +145,9 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		}
 
 		glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.GetChunks()))
-		for i, chunk := range entry.GetChunks() {
-			glog.V(4).Infof("%s chunks %d: %v [%d,%d)", fileFullPath, i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
-		}
+		//for i, chunk := range entry.GetChunks() {
+		//	glog.V(4).Infof("%s chunks %d: %v [%d,%d)", fileFullPath, i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
+		//}
 
 		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.GetChunks())
 
