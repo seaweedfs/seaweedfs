@@ -73,5 +73,10 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 
 	fh.dirtyMetadata = true
 
+	if IsDebug {
+		// print("+")
+		fh.mirrorFile.WriteAt(data, offset)
+	}
+
 	return written, fuse.OK
 }

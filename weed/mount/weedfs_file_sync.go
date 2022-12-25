@@ -181,5 +181,9 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		return fuse.EIO
 	}
 
+	if IsDebug {
+		fh.mirrorFile.Sync()
+	}
+
 	return fuse.OK
 }

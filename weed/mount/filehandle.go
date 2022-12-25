@@ -5,13 +5,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/semaphore"
 	"math"
+	"os"
 	"sync"
 )
 
 type FileHandleId uint64
+
+var IsDebug = true
 
 type FileHandle struct {
 	fh        FileHandleId
@@ -31,6 +33,9 @@ type FileHandle struct {
 	orderedMutex   *semaphore.Weighted
 
 	isDeleted bool
+
+	// for debugging
+	mirrorFile *os.File
 }
 
 func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_pb.Entry) *FileHandle {
@@ -48,6 +53,14 @@ func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_p
 	}
 	fh.entry = &LockedEntry{
 		Entry: entry,
+	}
+
+	if IsDebug {
+		var err error
+		fh.mirrorFile, err = os.OpenFile("/tmp/sw/"+entry.Name, os.O_RDWR|os.O_CREATE, 0600)
+		if err != nil {
+			println("failed to create mirror:", err.Error())
+		}
 	}
 
 	return fh
@@ -97,5 +110,7 @@ func (fh *FileHandle) Release() {
 
 	fh.dirtyPages.Destroy()
 	fh.CloseReader()
+	if IsDebug {
+		fh.mirrorFile.Close()
 	}
 }
