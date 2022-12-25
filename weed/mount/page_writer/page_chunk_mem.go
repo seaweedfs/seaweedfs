@@ -51,7 +51,7 @@ func (mc *MemChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n int) {
 
 	innerOffset := offset % mc.chunkSize
 	n = copy(mc.buf[innerOffset:], src)
-	mc.usage.MarkWritten(innerOffset, innerOffset+int64(n))
+	mc.usage.MarkWritten(innerOffset, innerOffset+int64(n), tsNs)
 	return
 }
 
@@ -64,11 +64,11 @@ func (mc *MemChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop int64) 
 		logicStart := max(off, int64(mc.logicChunkIndex)*mc.chunkSize+t.StartOffset)
 		logicStop := min(off+int64(len(p)), memChunkBaseOffset+t.stopOffset)
 		if logicStart < logicStop {
-			if mc.lastModifiedTsNs > tsNs {
+			if t.TsNs >= tsNs {
 				copy(p[logicStart-off:logicStop-off], mc.buf[logicStart-memChunkBaseOffset:logicStop-memChunkBaseOffset])
 				maxStop = max(maxStop, logicStop)
 			} else {
-				println("read old data1", tsNs-mc.lastModifiedTsNs, "ns")
+				println("read old data1", tsNs-t.TsNs, "ns")
 			}
 		}
 	}

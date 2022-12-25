@@ -101,7 +101,7 @@ func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n in
 	var err error
 	n, err = sc.swapfile.file.WriteAt(src, int64(sc.actualChunkIndex)*sc.swapfile.chunkSize+innerOffset)
 	if err == nil {
-		sc.usage.MarkWritten(innerOffset, innerOffset+int64(n))
+		sc.usage.MarkWritten(innerOffset, innerOffset+int64(n), tsNs)
 	} else {
 		glog.Errorf("failed to write swap file %s: %v", sc.swapfile.file.Name(), err)
 	}
@@ -117,7 +117,7 @@ func (sc *SwapFileChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop in
 		logicStart := max(off, chunkStartOffset+t.StartOffset)
 		logicStop := min(off+int64(len(p)), chunkStartOffset+t.stopOffset)
 		if logicStart < logicStop {
-			if sc.lastModifiedTsNs > tsNs {
+			if t.TsNs >= tsNs {
 				actualStart := logicStart - chunkStartOffset + int64(sc.actualChunkIndex)*sc.swapfile.chunkSize
 				if _, err := sc.swapfile.file.ReadAt(p[logicStart-off:logicStop-off], actualStart); err != nil {
 					glog.Errorf("failed to reading swap file %s: %v", sc.swapfile.file.Name(), err)
@@ -125,7 +125,7 @@ func (sc *SwapFileChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop in
 				}
 				maxStop = max(maxStop, logicStop)
 			} else {
-				println("read old data2", tsNs-sc.lastModifiedTsNs, "ns")
+				println("read old data2", tsNs-t.TsNs, "ns")
 			}
 		}
 	}
@@ -153,7 +153,7 @@ func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {
 		data := mem.Allocate(int(t.Size()))
 		sc.swapfile.file.ReadAt(data, t.StartOffset+int64(sc.actualChunkIndex)*sc.swapfile.chunkSize)
 		reader := util.NewBytesReader(data)
-		saveFn(reader, int64(sc.logicChunkIndex)*sc.swapfile.chunkSize+t.StartOffset, t.Size(), sc.lastModifiedTsNs, func() {
+		saveFn(reader, int64(sc.logicChunkIndex)*sc.swapfile.chunkSize+t.StartOffset, t.Size(), t.TsNs, func() {
 		})
 		mem.Free(data)
 	}

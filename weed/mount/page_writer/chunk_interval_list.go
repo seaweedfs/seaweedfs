@@ -8,6 +8,7 @@ import (
 type ChunkWrittenInterval struct {
 	StartOffset int64
 	stopOffset  int64
+	TsNs        int64
 	prev        *ChunkWrittenInterval
 	next        *ChunkWrittenInterval
 }
@@ -42,10 +43,11 @@ func newChunkWrittenIntervalList() *ChunkWrittenIntervalList {
 	return list
 }
 
-func (list *ChunkWrittenIntervalList) MarkWritten(startOffset, stopOffset int64) {
+func (list *ChunkWrittenIntervalList) MarkWritten(startOffset, stopOffset, tsNs int64) {
 	interval := &ChunkWrittenInterval{
 		StartOffset: startOffset,
 		stopOffset:  stopOffset,
+		TsNs:        tsNs,
 	}
 	list.addInterval(interval)
 }
@@ -63,49 +65,34 @@ func (list *ChunkWrittenIntervalList) WrittenSize() (writtenByteCount int64) {
 func (list *ChunkWrittenIntervalList) addInterval(interval *ChunkWrittenInterval) {
 
 	p := list.head
-	for ; p.next != nil && p.next.StartOffset <= interval.StartOffset; p = p.next {
+	for ; p.next != nil && p.next.stopOffset <= interval.StartOffset; p = p.next {
 	}
 	q := list.tail
-	for ; q.prev != nil && q.prev.stopOffset >= interval.stopOffset; q = q.prev {
+	for ; q.prev != nil && q.prev.StartOffset >= interval.stopOffset; q = q.prev {
 	}
 
-	if interval.StartOffset <= p.stopOffset && q.StartOffset <= interval.stopOffset {
-		// merge p and q together
-		p.stopOffset = q.stopOffset
-		unlinkNodesBetween(p, q.next)
-		return
-	}
-	if interval.StartOffset <= p.stopOffset {
-		// merge new interval into p
-		p.stopOffset = interval.stopOffset
-		unlinkNodesBetween(p, q)
-		return
-	}
-	if q.StartOffset <= interval.stopOffset {
-		// merge new interval into q
-		q.StartOffset = interval.StartOffset
-		unlinkNodesBetween(p, q)
-		return
+	// left side
+	// interval after p.next start
+	if p.next.StartOffset < interval.StartOffset {
+		p.next.stopOffset = interval.StartOffset
+		p.next.next = interval
+		interval.prev = p.next
+	} else {
+		p.next = interval
+		interval.prev = p
 	}
 
-	// add the new interval between p and q
-	unlinkNodesBetween(p, q)
-	p.next = interval
-	interval.prev = p
-	q.prev = interval
-	interval.next = q
-
-}
-
-// unlinkNodesBetween remove all nodes after start and before stop, exclusive
-func unlinkNodesBetween(start *ChunkWrittenInterval, stop *ChunkWrittenInterval) {
-	if start.next == stop {
-		return
+	// right side
+	// interval ends before p.prev
+	if q.prev.stopOffset > interval.stopOffset {
+		q.prev.StartOffset = interval.stopOffset
+		q.prev.prev = interval
+		interval.next = q.prev
+	} else {
+		q.prev = interval
+		interval.next = q
 	}
-	start.next.prev = nil
-	start.next = stop
-	stop.prev.next = nil
-	stop.prev = start
+
 }
 
 func (list *ChunkWrittenIntervalList) size() int {
