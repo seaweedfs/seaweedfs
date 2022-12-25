@@ -90,6 +90,11 @@ func (fh *FileHandle) CloseReader() {
 }
 
 func (fh *FileHandle) Release() {
+	fh.entryLock.Lock()
+	defer fh.entryLock.Unlock()
+
+	glog.V(4).Infof("Release %s fh %d", fh.entry.Name, fh.handle)
+
 	fh.dirtyPages.Destroy()
 	fh.CloseReader()
 	}
