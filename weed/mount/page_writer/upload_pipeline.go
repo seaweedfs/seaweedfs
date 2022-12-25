@@ -86,12 +86,12 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 		}
 		up.writableChunks[logicChunkIndex] = pageChunk
 	}
-	if _, foundSealed := up.sealedChunks[logicChunkIndex]; foundSealed {
-		println("found already sealed chunk", logicChunkIndex)
-	}
-	if _, foundReading := up.activeReadChunks[logicChunkIndex]; foundReading {
-		println("found active read chunk", logicChunkIndex)
-	}
+	//if _, foundSealed := up.sealedChunks[logicChunkIndex]; foundSealed {
+	//	println("found already sealed chunk", logicChunkIndex)
+	//}
+	//if _, foundReading := up.activeReadChunks[logicChunkIndex]; foundReading {
+	//	println("found active read chunk", logicChunkIndex)
+	//}
 	n = pageChunk.WriteDataAt(p, off, tsNs)
 	up.maybeMoveToSealed(pageChunk, logicChunkIndex)
 
