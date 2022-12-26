@@ -73,9 +73,7 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool) (n 
 					fullness = chunkFullness
 				}
 			}
-			fullWritableChunk := up.writableChunks[fullestChunkIndex]
-			delete(up.writableChunks, fullestChunkIndex)
-			up.moveToSealed(fullWritableChunk, fullestChunkIndex)
+			up.moveToSealed(up.writableChunks[fullestChunkIndex], fullestChunkIndex)
 			// fmt.Printf("flush chunk %d with %d bytes written\n", logicChunkIndex, fullness)
 		}
 		if isSequential &&
