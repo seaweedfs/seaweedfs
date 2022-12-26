@@ -80,7 +80,7 @@ require (
 	github.com/prometheus/client_golang v1.14.0
 	github.com/prometheus/client_model v0.3.0 // indirect
 	github.com/prometheus/common v0.37.0 // indirect
-	github.com/prometheus/procfs v0.8.0
+	github.com/prometheus/procfs v0.9.0
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
 	github.com/seaweedfs/goexif v2.0.0+incompatible
@@ -149,6 +149,7 @@ require (
 	github.com/hashicorp/raft v1.3.11
 	github.com/hashicorp/raft-boltdb/v2 v2.2.2
 	github.com/rabbitmq/amqp091-go v1.5.0
+	github.com/schollz/progressbar/v3 v3.12.2
 	github.com/tikv/client-go/v2 v2.0.3
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.41.0
@@ -194,7 +195,6 @@ require (
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/jonboulle/clockwork v0.2.2 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
-	github.com/k0kubun/go-ansi v0.0.0-20180517002512-3bf9e2903213 // indirect
 	github.com/klauspost/cpuid/v2 v2.1.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-runewidth v0.0.14 // indirect
@@ -214,8 +214,6 @@ require (
 	github.com/pingcap/log v1.1.1-0.20221015072633-39906604fb81 // indirect
 	github.com/rivo/uniseg v0.4.3 // indirect
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd // indirect
-	github.com/schollz/progressbar v1.0.0 // indirect
-	github.com/schollz/progressbar/v3 v3.12.2 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/stathat/consistent v1.0.0 // indirect
 	github.com/subosito/gotenv v1.4.1 // indirect
