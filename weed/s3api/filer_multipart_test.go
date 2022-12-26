@@ -57,19 +57,19 @@ func Test_findByPartNumber(t *testing.T) {
 	}
 
 	parts := []CompletedPart{
-		CompletedPart{
+		{
 			ETag:       "xxx",
 			PartNumber: 1,
 		},
-		CompletedPart{
+		{
 			ETag:       "lll",
 			PartNumber: 1,
 		},
-		CompletedPart{
+		{
 			ETag:       "yyy",
 			PartNumber: 3,
 		},
-		CompletedPart{
+		{
 			ETag:       "zzz",
 			PartNumber: 5,
 		},
