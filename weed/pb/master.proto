@@ -305,6 +305,7 @@ message VacuumVolumeRequest {
   float garbage_threshold = 1;
   uint32 volume_id = 2;
   string collection = 3;
+  bool status = 4;
 }
 message VacuumVolumeResponse {
 }
