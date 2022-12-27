@@ -16,21 +16,21 @@ type FileHandleId uint64
 var IsDebug = true
 
 type FileHandle struct {
-	fh        FileHandleId
-	counter   int64
-	entry     *LockedEntry
-	entryLock sync.Mutex
-	inode     uint64
-	wfs       *WFS
+	fh              FileHandleId
+	counter         int64
+	entry           *LockedEntry
+	entryLock       sync.Mutex
+	entryChunkGroup *filer.ChunkGroup
+	inode           uint64
+	wfs             *WFS
 
 	// cache file has been written to
-	dirtyMetadata  bool
-	dirtyPages     *PageWriter
-	entryViewCache []filer.VisibleInterval
-	reader         *filer.ChunkReadAt
-	contentType    string
-	handle         uint64
-	orderedMutex   *semaphore.Weighted
+	dirtyMetadata bool
+	dirtyPages    *PageWriter
+	reader        *filer.ChunkReadAt
+	contentType   string
+	handle        uint64
+	orderedMutex  *semaphore.Weighted
 
 	isDeleted bool
 
@@ -48,11 +48,11 @@ func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_p
 	}
 	// dirtyPages: newContinuousDirtyPages(file, writeOnly),
 	fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
-	if entry != nil {
-		entry.Attributes.FileSize = filer.FileSize(entry)
-	}
 	fh.entry = &LockedEntry{
 		Entry: entry,
+	}
+	if entry != nil {
+		fh.SetEntry(entry)
 	}
 
 	if IsDebug {
@@ -76,6 +76,17 @@ func (fh *FileHandle) GetEntry() *filer_pb.Entry {
 }
 
 func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
+	if entry != nil {
+		fileSize := filer.FileSize(entry)
+		entry.Attributes.FileSize = fileSize
+		var resolveManifestErr error
+		fh.entryChunkGroup, resolveManifestErr = filer.NewChunkGroup(fh.wfs.LookupFn(), fh.wfs.chunkCache, entry.Chunks)
+		if resolveManifestErr != nil {
+			glog.Warningf("failed to resolve manifest chunks in %+v", entry)
+		}
+	} else {
+		glog.Fatalf("setting file handle entry to nil")
+	}
 	fh.entry.SetEntry(entry)
 }
 
@@ -92,14 +103,6 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 	}
 
 	fh.entry.AppendChunks(chunks)
-	fh.entryViewCache = nil
-}
-
-func (fh *FileHandle) CloseReader() {
-	if fh.reader != nil {
-		_ = fh.reader.Close()
-		fh.reader = nil
-	}
 }
 
 func (fh *FileHandle) Release() {
@@ -109,8 +112,14 @@ func (fh *FileHandle) Release() {
 	glog.V(4).Infof("Release %s fh %d", fh.entry.Name, fh.handle)
 
 	fh.dirtyPages.Destroy()
-	fh.CloseReader()
 	if IsDebug {
 		fh.mirrorFile.Close()
 	}
+}
+
+func lessThan(a, b *filer_pb.FileChunk) bool {
+	if a.ModifiedTsNs == b.ModifiedTsNs {
+		return a.Fid.FileKey < b.Fid.FileKey
+	}
+	return a.ModifiedTsNs < b.ModifiedTsNs
 }

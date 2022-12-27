@@ -75,7 +75,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 			// set the new chunks and reset entry cache
 			entry.Chunks = chunks
 			if fh != nil {
-				fh.entryViewCache = nil
+				fh.entryChunkGroup.SetChunks(chunks)
 			}
 		}
 		entry.Attributes.Mtime = time.Now().Unix()

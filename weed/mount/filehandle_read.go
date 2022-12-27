@@ -55,26 +55,8 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, int64, e
 		glog.V(4).Infof("file handle read cached %s [%d,%d] %d", fileFullPath, offset, offset+int64(totalRead), totalRead)
 		return int64(totalRead), 0, nil
 	}
-
-	var chunkResolveErr error
-	if fh.entryViewCache == nil {
-		fh.entryViewCache, chunkResolveErr = filer.NonOverlappingVisibleIntervals(fh.wfs.LookupFn(), entry.GetChunks(), 0, fileSize)
-		if chunkResolveErr != nil {
-			return 0, 0, fmt.Errorf("fail to resolve chunk manifest: %v", chunkResolveErr)
-		}
-		fh.CloseReader()
-	}
-
-	if fh.reader == nil {
-		chunkViews := filer.ViewFromVisibleIntervals(fh.entryViewCache, 0, fileSize)
-		glog.V(4).Infof("file handle read %s [%d,%d) from %d views", fileFullPath, offset, offset+int64(len(buff)), len(chunkViews))
-		//for _, chunkView := range chunkViews {
-		//	glog.V(4).Infof("  read %s [%d,%d) from chunk %+v", fileFullPath, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size), chunkView.FileId)
-		//}
-		fh.reader = filer.NewChunkReaderAtFromClient(fh.wfs.LookupFn(), chunkViews, fh.wfs.chunkCache, fileSize)
-	}
-
-	totalRead, ts, err := fh.reader.ReadAtWithTime(buff, offset)
+	
+	totalRead, ts, err := fh.entryChunkGroup.ReadDataAt(fileSize, buff, offset)
 
 	if err != nil && err != io.EOF {
 		glog.Errorf("file handle read %s: %v", fileFullPath, err)

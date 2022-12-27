@@ -56,17 +56,8 @@ func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekO
 		return ENXIO
 	}
 
-	// refresh view cache if necessary
-	if fh.entryViewCache == nil {
-		var err error
-		fh.entryViewCache, err = filer.NonOverlappingVisibleIntervals(fh.wfs.LookupFn(), fh.entry.GetChunks(), 0, fileSize)
-		if err != nil {
-			return fuse.EIO
-		}
-	}
-
 	// search chunks for the offset
-	found, offset := searchChunks(fh, offset, fileSize, in.Whence)
+	found, offset := fh.entryChunkGroup.SearchChunks(offset, fileSize, in.Whence)
 	if found {
 		out.Offset = uint64(offset)
 		return fuse.OK
@@ -81,31 +72,4 @@ func (wfs *WFS) Lseek(cancel <-chan struct{}, in *fuse.LseekIn, out *fuse.LseekO
 	}
 
 	return fuse.OK
-}
-
-// searchChunks goes through all chunks to find the correct offset
-func searchChunks(fh *FileHandle, offset, fileSize int64, whence uint32) (found bool, out int64) {
-	chunkViews := filer.ViewFromVisibleIntervals(fh.entryViewCache, offset, fileSize)
-
-	for _, chunkView := range chunkViews {
-		if offset < chunkView.LogicOffset {
-			if whence == SEEK_HOLE {
-				out = offset
-			} else {
-				out = chunkView.LogicOffset
-			}
-
-			return true, out
-		}
-
-		if offset >= chunkView.LogicOffset && offset < chunkView.Offset+int64(chunkView.Size) && whence == SEEK_DATA {
-			out = offset
-
-			return true, out
-		}
-
-		offset += int64(chunkView.Size)
-	}
-
-	return
 }
