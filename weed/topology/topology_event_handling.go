@@ -26,7 +26,7 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 	go func(garbageThreshold float64) {
 		for {
 			if t.IsLeader() {
-				if !t.VacuumStatus {
+				if !t.isDisableVacuum {
 					t.Vacuum(grpcDialOption, garbageThreshold, 0, "", preallocate)
 				}
 			} else {
