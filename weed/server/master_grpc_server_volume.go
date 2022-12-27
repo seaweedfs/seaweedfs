@@ -284,17 +284,17 @@ func (ms *MasterServer) VacuumVolume(ctx context.Context, req *master_pb.VacuumV
 	return resp, nil
 }
 
-func (ms *MasterServer) SuspendVacuum(ctx context.Context, req *master_pb.SuspendVacuumRequest) (*master_pb.SuspendVacuumResponse, error) {
+func (ms *MasterServer) DisableVacuum(ctx context.Context, req *master_pb.DisableVacuumRequest) (*master_pb.DisableVacuumResponse, error) {
 
-	ms.Topo.SuspendVacuum()
-	resp := &master_pb.SuspendVacuumResponse{}
+	ms.Topo.DisableVacuum()
+	resp := &master_pb.DisableVacuumResponse{}
 	return resp, nil
 }
 
-func (ms *MasterServer) ResumeVacuum(ctx context.Context, req *master_pb.ResumeVacuumRequest) (*master_pb.ResumeVacuumResponse, error) {
+func (ms *MasterServer) EnableVacuum(ctx context.Context, req *master_pb.EnableVacuumRequest) (*master_pb.EnableVacuumResponse, error) {
 
-	ms.Topo.ResumeVacuum()
-	resp := &master_pb.ResumeVacuumResponse{}
+	ms.Topo.EnableVacuum()
+	resp := &master_pb.EnableVacuumResponse{}
 	return resp, nil
 }
 

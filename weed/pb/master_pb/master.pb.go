@@ -2502,14 +2502,14 @@ func (*VacuumVolumeResponse) Descriptor() ([]byte, []int) {
 	return file_master_proto_rawDescGZIP(), []int{34}
 }
 
-type SuspendVacuumRequest struct {
+type DisableVacuumRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 }
 
-func (x *SuspendVacuumRequest) Reset() {
-	*x = SuspendVacuumRequest{}
+func (x *DisableVacuumRequest) Reset() {
+	*x = DisableVacuumRequest{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_master_proto_msgTypes[35]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2517,13 +2517,13 @@ func (x *SuspendVacuumRequest) Reset() {
 	}
 }
 
-func (x *SuspendVacuumRequest) String() string {
+func (x *DisableVacuumRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SuspendVacuumRequest) ProtoMessage() {}
+func (*DisableVacuumRequest) ProtoMessage() {}
 
-func (x *SuspendVacuumRequest) ProtoReflect() protoreflect.Message {
+func (x *DisableVacuumRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_master_proto_msgTypes[35]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2535,19 +2535,19 @@ func (x *SuspendVacuumRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SuspendVacuumRequest.ProtoReflect.Descriptor instead.
-func (*SuspendVacuumRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use DisableVacuumRequest.ProtoReflect.Descriptor instead.
+func (*DisableVacuumRequest) Descriptor() ([]byte, []int) {
 	return file_master_proto_rawDescGZIP(), []int{35}
 }
 
-type SuspendVacuumResponse struct {
+type DisableVacuumResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 }
 
-func (x *SuspendVacuumResponse) Reset() {
-	*x = SuspendVacuumResponse{}
+func (x *DisableVacuumResponse) Reset() {
+	*x = DisableVacuumResponse{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_master_proto_msgTypes[36]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2555,13 +2555,13 @@ func (x *SuspendVacuumResponse) Reset() {
 	}
 }
 
-func (x *SuspendVacuumResponse) String() string {
+func (x *DisableVacuumResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SuspendVacuumResponse) ProtoMessage() {}
+func (*DisableVacuumResponse) ProtoMessage() {}
 
-func (x *SuspendVacuumResponse) ProtoReflect() protoreflect.Message {
+func (x *DisableVacuumResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_master_proto_msgTypes[36]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2573,19 +2573,19 @@ func (x *SuspendVacuumResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SuspendVacuumResponse.ProtoReflect.Descriptor instead.
-func (*SuspendVacuumResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use DisableVacuumResponse.ProtoReflect.Descriptor instead.
+func (*DisableVacuumResponse) Descriptor() ([]byte, []int) {
 	return file_master_proto_rawDescGZIP(), []int{36}
 }
 
-type ResumeVacuumRequest struct {
+type EnableVacuumRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 }
 
-func (x *ResumeVacuumRequest) Reset() {
-	*x = ResumeVacuumRequest{}
+func (x *EnableVacuumRequest) Reset() {
+	*x = EnableVacuumRequest{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_master_proto_msgTypes[37]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2593,13 +2593,13 @@ func (x *ResumeVacuumRequest) Reset() {
 	}
 }
 
-func (x *ResumeVacuumRequest) String() string {
+func (x *EnableVacuumRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ResumeVacuumRequest) ProtoMessage() {}
+func (*EnableVacuumRequest) ProtoMessage() {}
 
-func (x *ResumeVacuumRequest) ProtoReflect() protoreflect.Message {
+func (x *EnableVacuumRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_master_proto_msgTypes[37]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2611,19 +2611,19 @@ func (x *ResumeVacuumRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ResumeVacuumRequest.ProtoReflect.Descriptor instead.
-func (*ResumeVacuumRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use EnableVacuumRequest.ProtoReflect.Descriptor instead.
+func (*EnableVacuumRequest) Descriptor() ([]byte, []int) {
 	return file_master_proto_rawDescGZIP(), []int{37}
 }
 
-type ResumeVacuumResponse struct {
+type EnableVacuumResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 }
 
-func (x *ResumeVacuumResponse) Reset() {
-	*x = ResumeVacuumResponse{}
+func (x *EnableVacuumResponse) Reset() {
+	*x = EnableVacuumResponse{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_master_proto_msgTypes[38]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2631,13 +2631,13 @@ func (x *ResumeVacuumResponse) Reset() {
 	}
 }
 
-func (x *ResumeVacuumResponse) String() string {
+func (x *EnableVacuumResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ResumeVacuumResponse) ProtoMessage() {}
+func (*EnableVacuumResponse) ProtoMessage() {}
 
-func (x *ResumeVacuumResponse) ProtoReflect() protoreflect.Message {
+func (x *EnableVacuumResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_master_proto_msgTypes[38]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2649,8 +2649,8 @@ func (x *ResumeVacuumResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ResumeVacuumResponse.ProtoReflect.Descriptor instead.
-func (*ResumeVacuumResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use EnableVacuumResponse.ProtoReflect.Descriptor instead.
+func (*EnableVacuumResponse) Descriptor() ([]byte, []int) {
 	return file_master_proto_rawDescGZIP(), []int{38}
 }
 
@@ -4475,11 +4475,11 @@ var file_master_proto_rawDesc = []byte{
 	0x63, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x63, 0x6f, 0x6c,
 	0x6c, 0x65, 0x63, 0x74, 0x69, 0x6f, 0x6e, 0x22, 0x16, 0x0a, 0x14, 0x56, 0x61, 0x63, 0x75, 0x75,
 	0x6d, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22,
-	0x16, 0x0a, 0x14, 0x53, 0x75, 0x73, 0x70, 0x65, 0x6e, 0x64, 0x56, 0x61, 0x63, 0x75, 0x75, 0x6d,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x22, 0x17, 0x0a, 0x15, 0x53, 0x75, 0x73, 0x70, 0x65,
-	0x6e, 0x64, 0x56, 0x61, 0x63, 0x75, 0x75, 0x6d, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
-	0x22, 0x15, 0x0a, 0x13, 0x52, 0x65, 0x73, 0x75, 0x6d, 0x65, 0x56, 0x61, 0x63, 0x75, 0x75, 0x6d,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x22, 0x16, 0x0a, 0x14, 0x52, 0x65, 0x73, 0x75, 0x6d,
+	0x16, 0x0a, 0x14, 0x44, 0x69, 0x73, 0x61, 0x62, 0x6c, 0x65, 0x56, 0x61, 0x63, 0x75, 0x75, 0x6d,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x22, 0x17, 0x0a, 0x15, 0x44, 0x69, 0x73, 0x61, 0x62,
+	0x6c, 0x65, 0x56, 0x61, 0x63, 0x75, 0x75, 0x6d, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
+	0x22, 0x15, 0x0a, 0x13, 0x45, 0x6e, 0x61, 0x62, 0x6c, 0x65, 0x56, 0x61, 0x63, 0x75, 0x75, 0x6d,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x22, 0x16, 0x0a, 0x14, 0x45, 0x6e, 0x61, 0x62, 0x6c,
 	0x65, 0x56, 0x61, 0x63, 0x75, 0x75, 0x6d, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22,
 	0x93, 0x02, 0x0a, 0x19, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x4d, 0x61, 0x72, 0x6b, 0x52, 0x65,
 	0x61, 0x64, 0x6f, 0x6e, 0x6c, 0x79, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x0e, 0x0a,
@@ -4677,16 +4677,16 @@ var file_master_proto_rawDesc = []byte{
 	0x63, 0x75, 0x75, 0x6d, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
 	0x74, 0x1a, 0x1f, 0x2e, 0x6d, 0x61, 0x73, 0x74, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x56, 0x61,
 	0x63, 0x75, 0x75, 0x6d, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e,
-	0x73, 0x65, 0x22, 0x00, 0x12, 0x54, 0x0a, 0x0d, 0x53, 0x75, 0x73, 0x70, 0x65, 0x6e, 0x64, 0x56,
+	0x73, 0x65, 0x22, 0x00, 0x12, 0x54, 0x0a, 0x0d, 0x44, 0x69, 0x73, 0x61, 0x62, 0x6c, 0x65, 0x56,
 	0x61, 0x63, 0x75, 0x75, 0x6d, 0x12, 0x1f, 0x2e, 0x6d, 0x61, 0x73, 0x74, 0x65, 0x72, 0x5f, 0x70,
-	0x62, 0x2e, 0x53, 0x75, 0x73, 0x70, 0x65, 0x6e, 0x64, 0x56, 0x61, 0x63, 0x75, 0x75, 0x6d, 0x52,
+	0x62, 0x2e, 0x44, 0x69, 0x73, 0x61, 0x62, 0x6c, 0x65, 0x56, 0x61, 0x63, 0x75, 0x75, 0x6d, 0x52,
 	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x20, 0x2e, 0x6d, 0x61, 0x73, 0x74, 0x65, 0x72, 0x5f,
-	0x70, 0x62, 0x2e, 0x53, 0x75, 0x73, 0x70, 0x65, 0x6e, 0x64, 0x56, 0x61, 0x63, 0x75, 0x75, 0x6d,
-	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x51, 0x0a, 0x0c, 0x52, 0x65,
-	0x73, 0x75, 0x6d, 0x65, 0x56, 0x61, 0x63, 0x75, 0x75, 0x6d, 0x12, 0x1e, 0x2e, 0x6d, 0x61, 0x73,
-	0x74, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x52, 0x65, 0x73, 0x75, 0x6d, 0x65, 0x56, 0x61, 0x63,
+	0x70, 0x62, 0x2e, 0x44, 0x69, 0x73, 0x61, 0x62, 0x6c, 0x65, 0x56, 0x61, 0x63, 0x75, 0x75, 0x6d,
+	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x51, 0x0a, 0x0c, 0x45, 0x6e,
+	0x61, 0x62, 0x6c, 0x65, 0x56, 0x61, 0x63, 0x75, 0x75, 0x6d, 0x12, 0x1e, 0x2e, 0x6d, 0x61, 0x73,
+	0x74, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x45, 0x6e, 0x61, 0x62, 0x6c, 0x65, 0x56, 0x61, 0x63,
 	0x75, 0x75, 0x6d, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1f, 0x2e, 0x6d, 0x61, 0x73,
-	0x74, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x52, 0x65, 0x73, 0x75, 0x6d, 0x65, 0x56, 0x61, 0x63,
+	0x74, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e, 0x45, 0x6e, 0x61, 0x62, 0x6c, 0x65, 0x56, 0x61, 0x63,
 	0x75, 0x75, 0x6d, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x00, 0x12, 0x63, 0x0a,
 	0x12, 0x56, 0x6f, 0x6c, 0x75, 0x6d, 0x65, 0x4d, 0x61, 0x72, 0x6b, 0x52, 0x65, 0x61, 0x64, 0x6f,
 	0x6e, 0x6c, 0x79, 0x12, 0x24, 0x2e, 0x6d, 0x61, 0x73, 0x74, 0x65, 0x72, 0x5f, 0x70, 0x62, 0x2e,
@@ -4796,10 +4796,10 @@ var file_master_proto_goTypes = []interface{}{
 	(*LookupEcVolumeResponse)(nil),                // 32: master_pb.LookupEcVolumeResponse
 	(*VacuumVolumeRequest)(nil),                   // 33: master_pb.VacuumVolumeRequest
 	(*VacuumVolumeResponse)(nil),                  // 34: master_pb.VacuumVolumeResponse
-	(*SuspendVacuumRequest)(nil),                  // 35: master_pb.SuspendVacuumRequest
-	(*SuspendVacuumResponse)(nil),                 // 36: master_pb.SuspendVacuumResponse
-	(*ResumeVacuumRequest)(nil),                   // 37: master_pb.ResumeVacuumRequest
-	(*ResumeVacuumResponse)(nil),                  // 38: master_pb.ResumeVacuumResponse
+	(*DisableVacuumRequest)(nil),                  // 35: master_pb.DisableVacuumRequest
+	(*DisableVacuumResponse)(nil),                 // 36: master_pb.DisableVacuumResponse
+	(*EnableVacuumRequest)(nil),                   // 37: master_pb.EnableVacuumRequest
+	(*EnableVacuumResponse)(nil),                  // 38: master_pb.EnableVacuumResponse
 	(*VolumeMarkReadonlyRequest)(nil),             // 39: master_pb.VolumeMarkReadonlyRequest
 	(*VolumeMarkReadonlyResponse)(nil),            // 40: master_pb.VolumeMarkReadonlyResponse
 	(*GetMasterConfigurationRequest)(nil),         // 41: master_pb.GetMasterConfigurationRequest
@@ -4877,8 +4877,8 @@ var file_master_proto_depIdxs = []int32{
 	29, // 43: master_pb.Seaweed.VolumeList:input_type -> master_pb.VolumeListRequest
 	31, // 44: master_pb.Seaweed.LookupEcVolume:input_type -> master_pb.LookupEcVolumeRequest
 	33, // 45: master_pb.Seaweed.VacuumVolume:input_type -> master_pb.VacuumVolumeRequest
-	35, // 46: master_pb.Seaweed.SuspendVacuum:input_type -> master_pb.SuspendVacuumRequest
-	37, // 47: master_pb.Seaweed.ResumeVacuum:input_type -> master_pb.ResumeVacuumRequest
+	35, // 46: master_pb.Seaweed.DisableVacuum:input_type -> master_pb.DisableVacuumRequest
+	37, // 47: master_pb.Seaweed.EnableVacuum:input_type -> master_pb.EnableVacuumRequest
 	39, // 48: master_pb.Seaweed.VolumeMarkReadonly:input_type -> master_pb.VolumeMarkReadonlyRequest
 	41, // 49: master_pb.Seaweed.GetMasterConfiguration:input_type -> master_pb.GetMasterConfigurationRequest
 	43, // 50: master_pb.Seaweed.ListClusterNodes:input_type -> master_pb.ListClusterNodesRequest
@@ -4898,8 +4898,8 @@ var file_master_proto_depIdxs = []int32{
 	30, // 64: master_pb.Seaweed.VolumeList:output_type -> master_pb.VolumeListResponse
 	32, // 65: master_pb.Seaweed.LookupEcVolume:output_type -> master_pb.LookupEcVolumeResponse
 	34, // 66: master_pb.Seaweed.VacuumVolume:output_type -> master_pb.VacuumVolumeResponse
-	36, // 67: master_pb.Seaweed.SuspendVacuum:output_type -> master_pb.SuspendVacuumResponse
-	38, // 68: master_pb.Seaweed.ResumeVacuum:output_type -> master_pb.ResumeVacuumResponse
+	36, // 67: master_pb.Seaweed.DisableVacuum:output_type -> master_pb.DisableVacuumResponse
+	38, // 68: master_pb.Seaweed.EnableVacuum:output_type -> master_pb.EnableVacuumResponse
 	40, // 69: master_pb.Seaweed.VolumeMarkReadonly:output_type -> master_pb.VolumeMarkReadonlyResponse
 	42, // 70: master_pb.Seaweed.GetMasterConfiguration:output_type -> master_pb.GetMasterConfigurationResponse
 	44, // 71: master_pb.Seaweed.ListClusterNodes:output_type -> master_pb.ListClusterNodesResponse
@@ -5343,7 +5343,7 @@ func file_master_proto_init() {
 			}
 		}
 		file_master_proto_msgTypes[35].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*SuspendVacuumRequest); i {
+			switch v := v.(*DisableVacuumRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5355,7 +5355,7 @@ func file_master_proto_init() {
 			}
 		}
 		file_master_proto_msgTypes[36].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*SuspendVacuumResponse); i {
+			switch v := v.(*DisableVacuumResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5367,7 +5367,7 @@ func file_master_proto_init() {
 			}
 		}
 		file_master_proto_msgTypes[37].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ResumeVacuumRequest); i {
+			switch v := v.(*EnableVacuumRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -5379,7 +5379,7 @@ func file_master_proto_init() {
 			}
 		}
 		file_master_proto_msgTypes[38].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ResumeVacuumResponse); i {
+			switch v := v.(*EnableVacuumResponse); i {
 			case 0:
 				return &v.state
 			case 1:
