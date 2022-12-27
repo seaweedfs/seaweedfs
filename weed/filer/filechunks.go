@@ -66,6 +66,12 @@ func CompactFileChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks 
 
 	visibles, _ := NonOverlappingVisibleIntervals(lookupFileIdFn, chunks, 0, math.MaxInt64)
 
+	compacted, garbage = SeparateGarbageChunks(visibles, chunks)
+
+	return
+}
+
+func SeparateGarbageChunks(visibles []VisibleInterval, chunks []*filer_pb.FileChunk) (compacted []*filer_pb.FileChunk, garbage []*filer_pb.FileChunk) {
 	fileIds := make(map[string]bool)
 	for _, interval := range visibles {
 		fileIds[interval.fileId] = true
@@ -77,8 +83,7 @@ func CompactFileChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks 
 			garbage = append(garbage, chunk)
 		}
 	}
-
-	return
+	return compacted, garbage
 }
 
 func MinusChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk, err error) {
