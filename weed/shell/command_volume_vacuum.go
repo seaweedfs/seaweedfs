@@ -33,7 +33,6 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 	garbageThreshold := volumeVacuumCommand.Float64("garbageThreshold", 0.3, "vacuum when garbage is more than this limit")
 	collection := volumeVacuumCommand.String("collection", "", "vacuum this collection")
 	volumeId := volumeVacuumCommand.Uint("volumeId", 0, "the volume id")
-	garbageStatus := volumeVacuumCommand.Bool("garbageStatus", false, "stop vacuuming ")
 	if err = volumeVacuumCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -47,7 +46,6 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 			GarbageThreshold: float32(*garbageThreshold),
 			VolumeId:         uint32(*volumeId),
 			Collection:       *collection,
-			Status:           bool(*garbageStatus),
 		})
 		return err
 	})
