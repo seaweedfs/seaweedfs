@@ -13,7 +13,7 @@ import (
 
 type FileHandleId uint64
 
-var IsDebug = true
+var IsDebugFileReadWrite = false
 
 type FileHandle struct {
 	fh              FileHandleId
@@ -55,7 +55,7 @@ func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_p
 		fh.SetEntry(entry)
 	}
 
-	if IsDebug {
+	if IsDebugFileReadWrite {
 		var err error
 		fh.mirrorFile, err = os.OpenFile("/tmp/sw/"+entry.Name, os.O_RDWR|os.O_CREATE, 0600)
 		if err != nil {
@@ -112,7 +112,7 @@ func (fh *FileHandle) Release() {
 	glog.V(4).Infof("Release %s fh %d", fh.entry.Name, fh.handle)
 
 	fh.dirtyPages.Destroy()
-	if IsDebug {
+	if IsDebugFileReadWrite {
 		fh.mirrorFile.Close()
 	}
 }

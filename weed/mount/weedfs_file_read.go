@@ -52,7 +52,7 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 		return nil, fuse.EIO
 	}
 
-	if IsDebug {
+	if IsDebugFileReadWrite {
 		// print(".")
 		mirrorData := make([]byte, totalRead)
 		fh.mirrorFile.ReadAt(mirrorData, offset)
