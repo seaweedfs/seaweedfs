@@ -20,7 +20,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// ////////////////////////////////////////////////
+//////////////////////////////////////////////////
 type SegmentInfo struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -617,7 +617,7 @@ func (x *CheckBrokerLoadResponse) GetBytesCount() int64 {
 	return 0
 }
 
-// ////////////////////////////////////////////////
+//////////////////////////////////////////////////
 type PublishRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
