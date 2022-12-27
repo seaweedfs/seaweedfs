@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"container/list"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"golang.org/x/exp/slices"
 )
@@ -33,62 +34,50 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk) (visibles []VisibleInterva
 	})
 
 	var prevX int64
-	var queue []*Point
+	queue := list.New() // points with higher ts are at the tail
+	var lastPoint *Point
 	for _, point := range points {
+		if queue.Len() > 0 {
+			lastPoint = queue.Back().Value.(*Point)
+		} else {
+			lastPoint = nil
+		}
 		if point.isStart {
-			if len(queue) > 0 {
-				lastIndex := len(queue) - 1
-				lastPoint := queue[lastIndex]
+			if lastPoint != nil {
 				if point.x != prevX && lastPoint.ts < point.ts {
 					visibles = addToVisibles(visibles, prevX, lastPoint, point)
 					prevX = point.x
 				}
 			}
 			// insert into queue
-			for i := len(queue); i >= 0; i-- {
-				if i == 0 || queue[i-1].ts <= point.ts {
-					if i == len(queue) {
-						prevX = point.x
+			if lastPoint == nil || lastPoint.ts < point.ts {
+				queue.PushBack(point)
+				prevX = point.x
+			} else {
+				for e := queue.Front(); e != nil; e = e.Next() {
+					if e.Value.(*Point).ts > point.ts {
+						queue.InsertBefore(point, e)
+						break
 					}
-					queue = addToQueue(queue, i, point)
-					break
 				}
 			}
 		} else {
-			lastIndex := len(queue) - 1
-			index := lastIndex
-			var startPoint *Point
-			for ; index >= 0; index-- {
-				startPoint = queue[index]
-				if startPoint.ts == point.ts {
-					queue = removeFromQueue(queue, index)
+			var isLast bool
+			for e := queue.Back(); e != nil; e = e.Prev() {
+				isLast = e.Next() == nil
+				if e.Value.(*Point).ts == point.ts {
+					queue.Remove(e)
 					break
 				}
 			}
-			if index == lastIndex && startPoint != nil {
-				visibles = addToVisibles(visibles, prevX, startPoint, point)
+			if isLast && lastPoint != nil {
+				visibles = addToVisibles(visibles, prevX, lastPoint, point)
 				prevX = point.x
 			}
 		}
 	}
 
 	return
-}
-
-func removeFromQueue(queue []*Point, index int) []*Point {
-	for i := index; i < len(queue)-1; i++ {
-		queue[i] = queue[i+1]
-	}
-	queue = queue[:len(queue)-1]
-	return queue
-}
-
-func addToQueue(queue []*Point, index int, point *Point) []*Point {
-	queue = append(queue, point)
-	for i := len(queue) - 1; i > index; i-- {
-		queue[i], queue[i-1] = queue[i-1], queue[i]
-	}
-	return queue
 }
 
 func addToVisibles(visibles []VisibleInterval, prevX int64, startPoint *Point, point *Point) []VisibleInterval {

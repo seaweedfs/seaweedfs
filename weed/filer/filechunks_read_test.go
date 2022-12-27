@@ -44,6 +44,33 @@ func TestReadResolvedChunks(t *testing.T) {
 
 	visibles := readResolvedChunks(chunks)
 
+	fmt.Printf("resolved to %d visible intervales\n", len(visibles))
+	for _, visible := range visibles {
+		fmt.Printf("[%d,%d) %s %d\n", visible.start, visible.stop, visible.fileId, visible.modifiedTsNs)
+	}
+
+}
+
+func TestReadResolvedChunks2(t *testing.T) {
+
+	chunks := []*filer_pb.FileChunk{
+		{
+			FileId:       "c",
+			Offset:       200,
+			Size:         50,
+			ModifiedTsNs: 3,
+		},
+		{
+			FileId:       "e",
+			Offset:       200,
+			Size:         25,
+			ModifiedTsNs: 5,
+		},
+	}
+
+	visibles := readResolvedChunks(chunks)
+
+	fmt.Printf("resolved to %d visible intervales\n", len(visibles))
 	for _, visible := range visibles {
 		fmt.Printf("[%d,%d) %s %d\n", visible.start, visible.stop, visible.fileId, visible.modifiedTsNs)
 	}
