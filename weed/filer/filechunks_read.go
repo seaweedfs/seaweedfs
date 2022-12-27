@@ -62,13 +62,13 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk) (visibles []VisibleInterva
 				}
 			}
 		} else {
-			var isLast bool
+			isLast := true
 			for e := queue.Back(); e != nil; e = e.Prev() {
-				isLast = e.Next() == nil
 				if e.Value.(*Point).ts == point.ts {
 					queue.Remove(e)
 					break
 				}
+				isLast = false
 			}
 			if isLast && lastPoint != nil {
 				visibles = addToVisibles(visibles, prevX, lastPoint, point)
