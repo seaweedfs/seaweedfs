@@ -18,6 +18,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+const cutoffTimeNewEmptyDir = 3
+
 type ListBucketResultV2 struct {
 	XMLName               xml.Name      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListBucketResult"`
 	Name                  string        `xml:"Name"`
@@ -419,11 +421,16 @@ func (s3a *S3ApiServer) ensureDirectoryAllEmpty(filerClient filer_pb.SeaweedFile
 	var startFrom string
 	var isExhausted bool
 	var foundEntry bool
+	cutOffTimeAtSec := time.Now().Unix() + cutoffTimeNewEmptyDir
 	for fileCounter == 0 && !isExhausted && err == nil {
 		err = filer_pb.SeaweedList(filerClient, currentDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 			foundEntry = true
 			if entry.IsDirectory {
-				subDirs = append(subDirs, entry.Name)
+				if entry.Attributes != nil && cutOffTimeAtSec >= entry.Attributes.GetCrtime() {
+					fileCounter++
+				} else {
+					subDirs = append(subDirs, entry.Name)
+				}
 			} else {
 				fileCounter++
 			}

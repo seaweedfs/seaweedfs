@@ -26,7 +26,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, error) {
 
 	fileFullPath := fh.FullPath()
 
-	entry := fh.entry
+	entry := fh.GetEntry()
 	if entry == nil {
 		return 0, io.EOF
 	}

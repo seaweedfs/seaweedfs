@@ -72,13 +72,19 @@ spec:
             - "/bin/sh"
             - "-ec"
             - | 
-              exec /usr/bin/weed -logdir=/logs \
+              exec /usr/bin/weed \
+               {{- if eq .Values.s3.logs.type "hostPath" }}
+              -logdir=/logs \
+              {{- else }}
+              -logtostderr=true \
+              {{- end }}
               {{- if .Values.s3.loggingOverrideLevel }}
               -v={{ .Values.s3.loggingOverrideLevel }} \
               {{- else }}
               -v={{ .Values.global.loggingLevel }} \
               {{- end }}
               s3 \
+              -ip.bind={{ .Values.s3.bindAddress }} \
               -port={{ .Values.s3.port }} \
               {{- if .Values.s3.metricsPort }}
               -metricsPort {{ .Values.s3.metricsPort }} \
@@ -167,7 +173,7 @@ spec:
         {{- if eq .Values.s3.logs.type "hostPath" }}
         - name: logs
           hostPath:
-            path: /storage/logs/seaweedfs/s3
+            path: {{ .Values.s3.logs.hostPathPrefix }}/logs/seaweedfs/s3
             type: DirectoryOrCreate
         {{- end }}
         {{- if .Values.global.enableSecurity }}

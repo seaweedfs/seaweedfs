@@ -144,7 +144,7 @@ func runS3(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 
-	go stats_collect.StartMetricsServer(*s3StandaloneOptions.metricsHttpPort)
+	go stats_collect.StartMetricsServer(*s3StandaloneOptions.bindIp, *s3StandaloneOptions.metricsHttpPort)
 
 	return s3StandaloneOptions.startS3Server()
 

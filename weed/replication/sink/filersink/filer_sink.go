@@ -112,7 +112,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 			Directory: dir,
 			Name:      name,
 		}
-		glog.V(1).Infof("lookup: %v", lookupRequest)
+		// glog.V(1).Infof("lookup: %v", lookupRequest)
 		if resp, err := filer_pb.LookupEntry(client, lookupRequest); err == nil {
 			if filer.ETag(resp.Entry) == filer.ETag(entry) {
 				glog.V(3).Infof("already replicated %s", key)
@@ -125,9 +125,10 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 		if err != nil {
 			// only warning here since the source chunk may have been deleted already
 			glog.Warningf("replicate entry chunks %s: %v", key, err)
+			return nil
 		}
 
-		glog.V(4).Infof("replicated %s %+v ===> %+v", key, entry.GetChunks(), replicatedChunks)
+		// glog.V(4).Infof("replicated %s %+v ===> %+v", key, entry.GetChunks(), replicatedChunks)
 
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir,
@@ -205,7 +206,8 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		// replicate the chunks that are new in the source
 		replicatedChunks, err := fs.replicateChunks(newChunks, key)
 		if err != nil {
-			return true, fmt.Errorf("replicate %s chunks error: %v", key, err)
+			glog.Warningf("replicate entry chunks %s: %v", key, err)
+			return true, nil
 		}
 		existingEntry.Chunks = append(existingEntry.GetChunks(), replicatedChunks...)
 		existingEntry.Attributes = newEntry.Attributes

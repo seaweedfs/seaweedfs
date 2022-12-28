@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -37,6 +38,11 @@ func FromTags(tags map[string]string) (t *Tagging) {
 		t.TagSet.Tag = append(t.TagSet.Tag, Tag{
 			Key:   k,
 			Value: v,
+		})
+	}
+	if tagArr := t.TagSet.Tag; len(tagArr) > 0 {
+		sort.SliceStable(tagArr, func(i, j int) bool {
+			return tagArr[i].Key < tagArr[j].Key
 		})
 	}
 	return
