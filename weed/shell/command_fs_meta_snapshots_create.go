@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const LevelDbPath = "tmp/snapshots.db"
+const LevelDbPath = "snapshots.db"
 const DateFormat = "2006-01-02"
 const SnapshotDirPostFix = "-snapshot"
 
@@ -78,7 +78,7 @@ func processMetaDataEvents(store *filer_leveldb.LevelDBStore, data []byte, count
 		if err != nil {
 			return count, err
 		}
-		err = generateSnapshots(homeDir+LevelDbPath, snapshotPath)
+		err = generateSnapshots(filepath.Join(homeDir, LevelDbPath), snapshotPath)
 		if err != nil {
 			return count, err
 		}
@@ -134,6 +134,9 @@ func processEntryLog(entry *filer_pb.Entry, commandEnv *CommandEnv, snapshotCoun
 
 func generateSnapshots(scrDir, dest string) error {
 	entries, err := os.ReadDir(scrDir)
+	if err := createIfNotExists(dest, 0755); err != nil {
+		return err
+	}
 	if err != nil {
 		return err
 	}
@@ -205,9 +208,10 @@ func createIfNotExists(dir string, perm os.FileMode) error {
 }
 
 func setupLevelDb(levelDbPath string, levelDbBootstrapPath string) (store *filer_leveldb.LevelDBStore, err error) {
+	store = &filer_leveldb.LevelDBStore{}
 	err = os.RemoveAll(levelDbPath)
 	if err != nil {
-		return &filer_leveldb.LevelDBStore{}, err
+		return
 	}
 	if len(levelDbBootstrapPath) != 0 {
 		// copy the latest snapshot as starting point
@@ -219,6 +223,7 @@ func setupLevelDb(levelDbPath string, levelDbBootstrapPath string) (store *filer
 	config := SnapshotConfig{
 		dir: levelDbPath,
 	}
+
 	store.Initialize(config, "")
 	return
 }
@@ -258,8 +263,7 @@ func (c *commandFsMetaSnapshotsCreate) Do(args []string, commandEnv *CommandEnv,
 	processEntry = func(entry *filer_pb.Entry, isLast bool) error {
 		if entry.IsDirectory {
 			// skip logs prior to the latest previous snapshot
-			if entry.GetName() <= levelDbBootstrapDate {
-				println(entry.GetName())
+			if levelDbBootstrapDate != "" && entry.GetName() <= levelDbBootstrapDate {
 				return nil
 			}
 			return filer_pb.ReadDirAllEntries(commandEnv, util.FullPath(changeLogPath+"/"+entry.Name), "", processEntry)
@@ -276,7 +280,7 @@ func (c *commandFsMetaSnapshotsCreate) Do(args []string, commandEnv *CommandEnv,
 	// there might be unfinished snapshot left over in the duration gaps.
 	// process meta event only triggers snapshots when there are event after the snapshot time.
 	for snapshotCount < len(snapshotsToGenerate) {
-		generatePath := filepath.Join(homeDirname, *snapshotPath, snapshotsToGenerate[snapshotCount].Format(DateFormat))
+		generatePath := filepath.Join(homeDirname, *snapshotPath, snapshotsToGenerate[snapshotCount].Format(DateFormat)+SnapshotDirPostFix)
 		err = createIfNotExists(generatePath, 0755)
 		if err != nil {
 			return err
