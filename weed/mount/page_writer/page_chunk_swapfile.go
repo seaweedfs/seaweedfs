@@ -1,6 +1,7 @@
 package page_writer
 
 import (
+	"bytes"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
@@ -15,12 +16,12 @@ var (
 type ActualChunkIndex int
 
 type SwapFile struct {
-	dir                         string
-	file                        *os.File
-	logicToActualChunkIndex     map[LogicChunkIndex]ActualChunkIndex
-	logicToActualChunkIndexLock sync.Mutex
-	chunkSize                   int64
-	freeActualChunkList         []ActualChunkIndex
+	dir                 string
+	file                *os.File
+	chunkSize           int64
+	chunkTrackingLock   sync.Mutex
+	activeChunkCount    int
+	freeActualChunkList []ActualChunkIndex
 }
 
 type SwapFileChunk struct {
@@ -30,14 +31,14 @@ type SwapFileChunk struct {
 	logicChunkIndex  LogicChunkIndex
 	actualChunkIndex ActualChunkIndex
 	lastModifiedTsNs int64
+	memChunk         *MemChunk
 }
 
 func NewSwapFile(dir string, chunkSize int64) *SwapFile {
 	return &SwapFile{
-		dir:                     dir,
-		file:                    nil,
-		logicToActualChunkIndex: make(map[LogicChunkIndex]ActualChunkIndex),
-		chunkSize:               chunkSize,
+		dir:       dir,
+		file:      nil,
+		chunkSize: chunkSize,
 	}
 }
 func (sf *SwapFile) FreeResource() {
@@ -56,36 +57,43 @@ func (sf *SwapFile) NewTempFileChunk(logicChunkIndex LogicChunkIndex) (tc *SwapF
 			return nil
 		}
 	}
-	sf.logicToActualChunkIndexLock.Lock()
-	defer sf.logicToActualChunkIndexLock.Unlock()
-	actualChunkIndex, found := sf.logicToActualChunkIndex[logicChunkIndex]
-	if !found {
-		if len(sf.freeActualChunkList) > 0 {
-			actualChunkIndex = sf.freeActualChunkList[0]
-			sf.freeActualChunkList = sf.freeActualChunkList[1:]
-		} else {
-			actualChunkIndex = ActualChunkIndex(len(sf.logicToActualChunkIndex))
-		}
-		sf.logicToActualChunkIndex[logicChunkIndex] = actualChunkIndex
+	sf.chunkTrackingLock.Lock()
+	defer sf.chunkTrackingLock.Unlock()
+
+	sf.activeChunkCount++
+
+	// assign a new physical chunk
+	var actualChunkIndex ActualChunkIndex
+	if len(sf.freeActualChunkList) > 0 {
+		actualChunkIndex = sf.freeActualChunkList[0]
+		sf.freeActualChunkList = sf.freeActualChunkList[1:]
+	} else {
+		actualChunkIndex = ActualChunkIndex(sf.activeChunkCount)
 	}
 
-	return &SwapFileChunk{
+	swapFileChunk := &SwapFileChunk{
 		swapfile:         sf,
 		usage:            newChunkWrittenIntervalList(),
 		logicChunkIndex:  logicChunkIndex,
 		actualChunkIndex: actualChunkIndex,
+		memChunk:         NewMemChunk(logicChunkIndex, sf.chunkSize),
 	}
+
+	println(logicChunkIndex, "|", "++++", swapFileChunk.actualChunkIndex, swapFileChunk, sf)
+	return swapFileChunk
 }
 
 func (sc *SwapFileChunk) FreeResource() {
-	sc.swapfile.logicToActualChunkIndexLock.Lock()
-	defer sc.swapfile.logicToActualChunkIndexLock.Unlock()
 
 	sc.Lock()
 	defer sc.Unlock()
 
+	sc.swapfile.chunkTrackingLock.Lock()
+	defer sc.swapfile.chunkTrackingLock.Unlock()
+
 	sc.swapfile.freeActualChunkList = append(sc.swapfile.freeActualChunkList, sc.actualChunkIndex)
-	delete(sc.swapfile.logicToActualChunkIndex, sc.logicChunkIndex)
+	sc.swapfile.activeChunkCount--
+	println(sc.logicChunkIndex, "|", "----", sc.actualChunkIndex, sc, sc.swapfile)
 }
 
 func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n int) {
@@ -97,6 +105,8 @@ func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n in
 	}
 	sc.lastModifiedTsNs = tsNs
 
+	println(sc.logicChunkIndex, "|", tsNs, "write at", offset, len(src), sc.actualChunkIndex)
+
 	innerOffset := offset % sc.swapfile.chunkSize
 	var err error
 	n, err = sc.swapfile.file.WriteAt(src, int64(sc.actualChunkIndex)*sc.swapfile.chunkSize+innerOffset)
@@ -105,12 +115,18 @@ func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n in
 	} else {
 		glog.Errorf("failed to write swap file %s: %v", sc.swapfile.file.Name(), err)
 	}
+	sc.memChunk.WriteDataAt(src, offset, tsNs)
 	return
 }
 
 func (sc *SwapFileChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop int64) {
 	sc.RLock()
 	defer sc.RUnlock()
+
+	println(sc.logicChunkIndex, "|", tsNs, "read at", off, len(p), sc.actualChunkIndex)
+
+	memCopy := make([]byte, len(p))
+	copy(memCopy, p)
 
 	chunkStartOffset := int64(sc.logicChunkIndex) * sc.swapfile.chunkSize
 	for t := sc.usage.head.next; t != sc.usage.tail; t = t.next {
@@ -129,6 +145,10 @@ func (sc *SwapFileChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop in
 			}
 		}
 	}
+	sc.memChunk.ReadDataAt(memCopy, off, tsNs)
+	if bytes.Compare(memCopy, p) != 0 {
+		println("read wrong data from swap file", off, sc.logicChunkIndex)
+	}
 	return
 }
 
@@ -143,12 +163,13 @@ func (sc *SwapFileChunk) LastModifiedTsNs() int64 {
 }
 
 func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {
+	sc.RLock()
+	defer sc.RUnlock()
+
 	if saveFn == nil {
 		return
 	}
-	sc.Lock()
-	defer sc.Unlock()
-
+	println(sc.logicChunkIndex, "|", "save")
 	for t := sc.usage.head.next; t != sc.usage.tail; t = t.next {
 		data := mem.Allocate(int(t.Size()))
 		sc.swapfile.file.ReadAt(data, t.StartOffset+int64(sc.actualChunkIndex)*sc.swapfile.chunkSize)
@@ -158,5 +179,4 @@ func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {
 		mem.Free(data)
 	}
 
-	sc.usage = newChunkWrittenIntervalList()
 }
