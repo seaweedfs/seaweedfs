@@ -113,7 +113,15 @@ var tcs = []*BucketMetadataTestCase{
 				DisplayName: &s3account.AccountAdmin.Name,
 				ID:          &s3account.AccountAdmin.Id,
 			},
-			Acl: nil,
+			Acl: []*s3.Grant{
+				{
+					Permission: &s3_constants.PermissionFullControl,
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &s3account.AccountAdmin.Id,
+					},
+				},
+			},
 		},
 	},
 	{
@@ -124,7 +132,15 @@ var tcs = []*BucketMetadataTestCase{
 				DisplayName: &s3account.AccountAdmin.Name,
 				ID:          &s3account.AccountAdmin.Id,
 			},
-			Acl: nil,
+			Acl: []*s3.Grant{
+				{
+					Permission: &s3_constants.PermissionFullControl,
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &s3account.AccountAdmin.Id,
+					},
+				},
+			},
 		},
 	},
 	{
@@ -135,7 +151,15 @@ var tcs = []*BucketMetadataTestCase{
 				DisplayName: &s3account.AccountAdmin.Name,
 				ID:          &s3account.AccountAdmin.Id,
 			},
-			Acl: nil,
+			Acl: []*s3.Grant{
+				{
+					Permission: &s3_constants.PermissionFullControl,
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &s3account.AccountAdmin.Id,
+					},
+				},
+			},
 		},
 	},
 	{
@@ -146,7 +170,15 @@ var tcs = []*BucketMetadataTestCase{
 				DisplayName: &s3account.AccountAdmin.Name,
 				ID:          &s3account.AccountAdmin.Id,
 			},
-			Acl: nil,
+			Acl: []*s3.Grant{
+				{
+					Permission: &s3_constants.PermissionFullControl,
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &s3account.AccountAdmin.Id,
+					},
+				},
+			},
 		},
 	},
 	{
