@@ -399,7 +399,11 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 				return nil
 			}
 			key := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
-			return dataSink.CreateEntry(key, message.NewEntry, message.Signatures)
+			if err := dataSink.CreateEntry(key, message.NewEntry, message.Signatures); err != nil {
+				return fmt.Errorf("create entry1 : %v", err)
+			} else {
+				return nil
+			}
 		}
 
 		// this is something special?
@@ -427,7 +431,11 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 				}
 				// create the new entry
 				newKey := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
-				return dataSink.CreateEntry(newKey, message.NewEntry, message.Signatures)
+				if err := dataSink.CreateEntry(newKey, message.NewEntry, message.Signatures); err != nil {
+					return fmt.Errorf("create entry2 : %v", err)
+				} else {
+					return nil
+				}
 
 			} else {
 				// new key is outside of the watched directory
@@ -441,7 +449,11 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			if strings.HasPrefix(string(sourceNewKey), sourcePath) {
 				// new key is in the watched directory
 				key := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
-				return dataSink.CreateEntry(key, message.NewEntry, message.Signatures)
+				if err := dataSink.CreateEntry(key, message.NewEntry, message.Signatures); err != nil {
+					return fmt.Errorf("create entry3 : %v", err)
+				} else {
+					return nil
+				}
 			} else {
 				// new key is also outside of the watched directory
 				// skip
