@@ -89,8 +89,8 @@ func (wfs *WFS) Fsync(cancel <-chan struct{}, in *fuse.FsyncIn) (code fuse.Statu
 }
 
 func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
-	fh.orderedMutex.Acquire(context.Background(), 1)
-	defer fh.orderedMutex.Release(1)
+	fh.Lock()
+	defer fh.Unlock()
 
 	// flush works at fh level
 	fileFullPath := fh.FullPath()

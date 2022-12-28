@@ -5,8 +5,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"golang.org/x/sync/semaphore"
-	"math"
 	"os"
 	"sync"
 )
@@ -30,7 +28,7 @@ type FileHandle struct {
 	reader        *filer.ChunkReadAt
 	contentType   string
 	handle        uint64
-	orderedMutex  *semaphore.Weighted
+	sync.Mutex
 
 	isDeleted bool
 
@@ -40,11 +38,10 @@ type FileHandle struct {
 
 func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_pb.Entry) *FileHandle {
 	fh := &FileHandle{
-		fh:           handleId,
-		counter:      1,
-		inode:        inode,
-		wfs:          wfs,
-		orderedMutex: semaphore.NewWeighted(int64(math.MaxInt64)),
+		fh:      handleId,
+		counter: 1,
+		inode:   inode,
+		wfs:     wfs,
 	}
 	// dirtyPages: newContinuousDirtyPages(file, writeOnly),
 	fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)

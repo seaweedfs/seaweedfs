@@ -2,7 +2,6 @@ package mount
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 
@@ -42,8 +41,8 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 		return nil, fuse.ENOENT
 	}
 
-	fh.orderedMutex.Acquire(context.Background(), 1)
-	defer fh.orderedMutex.Release(1)
+	fh.Lock()
+	defer fh.Unlock()
 
 	offset := int64(in.Offset)
 	totalRead, err := readDataByFileHandle(buff, fh, offset)

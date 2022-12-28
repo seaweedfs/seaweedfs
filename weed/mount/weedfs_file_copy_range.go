@@ -1,7 +1,6 @@
 package mount
 
 import (
-	"context"
 	"net/http"
 	"time"
 
@@ -45,8 +44,8 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	}
 
 	// lock source and target file handles
-	fhOut.orderedMutex.Acquire(context.Background(), 1)
-	defer fhOut.orderedMutex.Release(1)
+	fhOut.Lock()
+	defer fhOut.Unlock()
 	fhOut.entryLock.Lock()
 	defer fhOut.entryLock.Unlock()
 
@@ -55,8 +54,8 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	}
 
 	if fhIn.fh != fhOut.fh {
-		fhIn.orderedMutex.Acquire(context.Background(), 1)
-		defer fhIn.orderedMutex.Release(1)
+		fhIn.Lock()
+		defer fhIn.Unlock()
 		fhIn.entryLock.Lock()
 		defer fhIn.entryLock.Unlock()
 	}
