@@ -110,12 +110,8 @@ func (up *UploadPipeline) MaybeReadDataAt(p []byte, off int64, tsNs int64) (maxS
 	// read from sealed chunks first
 	sealedChunk, found := up.sealedChunks[logicChunkIndex]
 	if found {
-		sealedChunk.referenceCounter++
-	}
-	if found {
 		maxStop = sealedChunk.chunk.ReadDataAt(p, off, tsNs)
 		glog.V(4).Infof("%s read sealed memchunk [%d,%d)", up.filepath, off, maxStop)
-		sealedChunk.FreeReference(fmt.Sprintf("%s finish reading chunk %d", up.filepath, logicChunkIndex))
 	}
 
 	// read from writable chunks last
