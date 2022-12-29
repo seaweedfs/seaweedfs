@@ -19,7 +19,7 @@ func (c *commandDisableVacuum) Name() string {
 }
 
 func (c *commandDisableVacuum) Help() string {
-	return `disable vacuuming
+	return `disable vacuuming request from Master, however volume.vacuum still works.
 
 	volume.vacuum.disable
 
