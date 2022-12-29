@@ -43,7 +43,10 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, int64, e
 		entry = newEntry
 	}
 
-	fileSize := int64(filer.FileSize(entry))
+	fileSize := int64(entry.Attributes.FileSize)
+	if fileSize == 0 {
+		fileSize = int64(filer.FileSize(entry))
+	}
 
 	if fileSize == 0 {
 		glog.V(1).Infof("empty fh %v", fileFullPath)
@@ -55,7 +58,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, int64, e
 		glog.V(4).Infof("file handle read cached %s [%d,%d] %d", fileFullPath, offset, offset+int64(totalRead), totalRead)
 		return int64(totalRead), 0, nil
 	}
-	
+
 	totalRead, ts, err := fh.entryChunkGroup.ReadDataAt(fileSize, buff, offset)
 
 	if err != nil && err != io.EOF {
