@@ -44,7 +44,7 @@ func newChunkWrittenIntervalList() *ChunkWrittenIntervalList {
 }
 
 func (list *ChunkWrittenIntervalList) MarkWritten(startOffset, stopOffset, tsNs int64) {
-	if startOffset <= stopOffset {
+	if startOffset >= stopOffset {
 		return
 	}
 	interval := &ChunkWrittenInterval{
