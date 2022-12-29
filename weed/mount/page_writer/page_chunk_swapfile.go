@@ -109,9 +109,8 @@ func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n in
 	innerOffset := offset % sc.swapfile.chunkSize
 	var err error
 	n, err = sc.swapfile.file.WriteAt(src, int64(sc.actualChunkIndex)*sc.swapfile.chunkSize+innerOffset)
-	if err == nil {
-		sc.usage.MarkWritten(innerOffset, innerOffset+int64(n), tsNs)
-	} else {
+	sc.usage.MarkWritten(innerOffset, innerOffset+int64(n), tsNs)
+	if err != nil {
 		glog.Errorf("failed to write swap file %s: %v", sc.swapfile.file.Name(), err)
 	}
 	//sc.memChunk.WriteDataAt(src, offset, tsNs)
@@ -171,10 +170,12 @@ func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {
 	// println(sc.logicChunkIndex, "|", "save")
 	for t := sc.usage.head.next; t != sc.usage.tail; t = t.next {
 		data := mem.Allocate(int(t.Size()))
-		sc.swapfile.file.ReadAt(data, t.StartOffset+int64(sc.actualChunkIndex)*sc.swapfile.chunkSize)
-		reader := util.NewBytesReader(data)
-		saveFn(reader, int64(sc.logicChunkIndex)*sc.swapfile.chunkSize+t.StartOffset, t.Size(), t.TsNs, func() {
-		})
+		n, _ := sc.swapfile.file.ReadAt(data, t.StartOffset+int64(sc.actualChunkIndex)*sc.swapfile.chunkSize)
+		if n > 0 {
+			reader := util.NewBytesReader(data[:n])
+			saveFn(reader, int64(sc.logicChunkIndex)*sc.swapfile.chunkSize+t.StartOffset, int64(n), t.TsNs, func() {
+			})
+		}
 		mem.Free(data)
 	}
 
