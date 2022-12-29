@@ -82,7 +82,7 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 			atomic.LoadInt64(&memChunkCounter) < 4*int64(up.writableChunkLimit) {
 			pageChunk = NewMemChunk(logicChunkIndex, up.ChunkSize)
 		} else {
-			pageChunk = up.swapFile.NewTempFileChunk(logicChunkIndex)
+			pageChunk = up.swapFile.NewSwapFileChunk(logicChunkIndex)
 		}
 		up.writableChunks[logicChunkIndex] = pageChunk
 	}
