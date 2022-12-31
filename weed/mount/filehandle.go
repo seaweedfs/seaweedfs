@@ -106,8 +106,6 @@ func (fh *FileHandle) ReleaseHandle() {
 	fh.entryLock.Lock()
 	defer fh.entryLock.Unlock()
 
-	glog.V(4).Infof("ReleaseHandle %s fh %d", fh.entry.Name, fh.handle)
-
 	fh.dirtyPages.Destroy()
 	if IsDebugFileReadWrite {
 		fh.mirrorFile.Close()
