@@ -6,10 +6,17 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-func readResolvedChunks(chunks []*filer_pb.FileChunk) (visibles []VisibleInterval) {
+func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles []VisibleInterval) {
 
 	var points []*Point
 	for _, chunk := range chunks {
+		if chunk.IsChunkManifest {
+			println("This should not happen! A manifest chunk found:", chunk.GetFileIdString())
+		}
+		start, stop := max(chunk.Offset, startOffset), min(chunk.Offset+int64(chunk.Size), stopOffset)
+		if start >= stop {
+			continue
+		}
 		points = append(points, &Point{
 			x:       chunk.Offset,
 			ts:      chunk.ModifiedTsNs,

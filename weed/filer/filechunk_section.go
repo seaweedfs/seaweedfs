@@ -36,7 +36,7 @@ func (section *FileChunkSection) readDataAt(group *ChunkGroup, fileSize int64, b
 
 func (section *FileChunkSection) setupForRead(group *ChunkGroup, fileSize int64) {
 	if section.entryViewCache == nil {
-		section.entryViewCache = readResolvedChunks(section.chunks)
+		section.entryViewCache = readResolvedChunks(section.chunks, int64(section.sectionIndex)*SectionSize, (int64(section.sectionIndex)+1)*SectionSize)
 		section.chunks, _ = SeparateGarbageChunks(section.entryViewCache, section.chunks)
 		if section.reader != nil {
 			_ = section.reader.Close()

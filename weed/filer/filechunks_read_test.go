@@ -3,6 +3,7 @@ package filer
 import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"math"
 	"math/rand"
 	"testing"
 )
@@ -42,7 +43,7 @@ func TestReadResolvedChunks(t *testing.T) {
 		},
 	}
 
-	visibles := readResolvedChunks(chunks)
+	visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
 
 	fmt.Printf("resolved to %d visible intervales\n", len(visibles))
 	for _, visible := range visibles {
@@ -68,7 +69,7 @@ func TestReadResolvedChunks2(t *testing.T) {
 		},
 	}
 
-	visibles := readResolvedChunks(chunks)
+	visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
 
 	fmt.Printf("resolved to %d visible intervales\n", len(visibles))
 	for _, visible := range visibles {
@@ -99,7 +100,7 @@ func TestRandomizedReadResolvedChunks(t *testing.T) {
 		chunks = append(chunks, randomWrite(array, start, size, ts))
 	}
 
-	visibles := readResolvedChunks(chunks)
+	visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
 
 	for _, visible := range visibles {
 		for i := visible.start; i < visible.stop; i++ {
@@ -139,7 +140,7 @@ func TestSequentialReadResolvedChunks(t *testing.T) {
 		})
 	}
 
-	visibles := readResolvedChunks(chunks)
+	visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
 
 	fmt.Printf("visibles %d", len(visibles))
 
@@ -228,7 +229,44 @@ func TestActualReadResolvedChunks(t *testing.T) {
 		},
 	}
 
-	visibles := readResolvedChunks(chunks)
+	visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
+
+	for _, visible := range visibles {
+		fmt.Printf("[%d,%d) %s %d\n", visible.start, visible.stop, visible.fileId, visible.modifiedTsNs)
+	}
+
+}
+
+func TestActualReadResolvedChunks2(t *testing.T) {
+
+	chunks := []*filer_pb.FileChunk{
+		{
+			FileId:       "1,e7b96fef48",
+			Offset:       0,
+			Size:         184320,
+			ModifiedTsNs: 1,
+		},
+		{
+			FileId:       "2,22562640b9",
+			Offset:       184320,
+			Size:         4096,
+			ModifiedTsNs: 2,
+		},
+		{
+			FileId:       "2,33562640b9",
+			Offset:       184320,
+			Size:         4096,
+			ModifiedTsNs: 4,
+		},
+		{
+			FileId:       "4,df033e0fe4",
+			Offset:       188416,
+			Size:         2097152,
+			ModifiedTsNs: 3,
+		},
+	}
+
+	visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
 
 	for _, visible := range visibles {
 		fmt.Printf("[%d,%d) %s %d\n", visible.start, visible.stop, visible.fileId, visible.modifiedTsNs)
