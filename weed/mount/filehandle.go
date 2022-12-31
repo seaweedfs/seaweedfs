@@ -102,11 +102,11 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 	fh.entry.AppendChunks(chunks)
 }
 
-func (fh *FileHandle) Release() {
+func (fh *FileHandle) ReleaseHandle() {
 	fh.entryLock.Lock()
 	defer fh.entryLock.Unlock()
 
-	glog.V(4).Infof("Release %s fh %d", fh.entry.Name, fh.handle)
+	glog.V(4).Infof("ReleaseHandle %s fh %d", fh.entry.Name, fh.handle)
 
 	fh.dirtyPages.Destroy()
 	if IsDebugFileReadWrite {
