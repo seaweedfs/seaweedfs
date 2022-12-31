@@ -9,9 +9,9 @@ const SectionSize = 2 * 1024 * 1024 * 128 // 256MiB
 type SectionIndex int64
 type FileChunkSection struct {
 	sectionIndex   SectionIndex
-	chunks         []*filer_pb.FileChunk
-	entryViewCache []VisibleInterval
-	chunkViews     []*ChunkView
+	chunks           []*filer_pb.FileChunk
+	visibleIntervals []VisibleInterval
+	chunkViews       []*ChunkView
 	reader         *ChunkReadAt
 	lock           sync.Mutex
 }
@@ -21,7 +21,7 @@ func (section *FileChunkSection) addChunk(chunk *filer_pb.FileChunk) error {
 	defer section.lock.Unlock()
 	section.chunks = append(section.chunks, chunk)
 	// FIXME: this can be improved to an incremental change
-	section.entryViewCache = nil
+	section.visibleIntervals = nil
 	return nil
 }
 
@@ -35,9 +35,9 @@ func (section *FileChunkSection) readDataAt(group *ChunkGroup, fileSize int64, b
 }
 
 func (section *FileChunkSection) setupForRead(group *ChunkGroup, fileSize int64) {
-	if section.entryViewCache == nil {
-		section.entryViewCache = readResolvedChunks(section.chunks, int64(section.sectionIndex)*SectionSize, (int64(section.sectionIndex)+1)*SectionSize)
-		section.chunks, _ = SeparateGarbageChunks(section.entryViewCache, section.chunks)
+	if section.visibleIntervals == nil {
+		section.visibleIntervals = readResolvedChunks(section.chunks, int64(section.sectionIndex)*SectionSize, (int64(section.sectionIndex)+1)*SectionSize)
+		section.chunks, _ = SeparateGarbageChunks(section.visibleIntervals, section.chunks)
 		if section.reader != nil {
 			_ = section.reader.Close()
 			section.reader = nil
@@ -45,7 +45,7 @@ func (section *FileChunkSection) setupForRead(group *ChunkGroup, fileSize int64)
 	}
 
 	if section.reader == nil {
-		chunkViews := ViewFromVisibleIntervals(section.entryViewCache, int64(section.sectionIndex)*SectionSize, (int64(section.sectionIndex)+1)*SectionSize)
+		chunkViews := ViewFromVisibleIntervals(section.visibleIntervals, int64(section.sectionIndex)*SectionSize, (int64(section.sectionIndex)+1)*SectionSize)
 		section.reader = NewChunkReaderAtFromClient(group.lookupFn, chunkViews, group.chunkCache, min(int64(section.sectionIndex+1)*SectionSize, fileSize))
 	}
 }
@@ -56,7 +56,7 @@ func (section *FileChunkSection) DataStartOffset(group *ChunkGroup, offset int64
 
 	section.setupForRead(group, fileSize)
 
-	for _, visible := range section.entryViewCache {
+	for _, visible := range section.visibleIntervals {
 		if visible.stop <= offset {
 			continue
 		}
@@ -75,7 +75,7 @@ func (section *FileChunkSection) NextStopOffset(group *ChunkGroup, offset int64,
 	section.setupForRead(group, fileSize)
 
 	isAfterOffset := false
-	for _, visible := range section.entryViewCache {
+	for _, visible := range section.visibleIntervals {
 		if !isAfterOffset {
 			if visible.stop <= offset {
 				continue
