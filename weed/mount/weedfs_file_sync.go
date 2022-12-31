@@ -158,6 +158,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 			glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
 		}
 		entry.Chunks = append(chunks, manifestChunks...)
+		fh.entryChunkGroup.SetChunks(entry.Chunks)
 
 		wfs.mapPbIdFromLocalToFiler(request.Entry)
 		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
