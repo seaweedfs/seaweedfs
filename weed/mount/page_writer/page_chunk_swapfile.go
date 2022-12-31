@@ -6,6 +6,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"os"
 	"sync"
+	"time"
 )
 
 var (
@@ -25,11 +26,12 @@ type SwapFile struct {
 
 type SwapFileChunk struct {
 	sync.RWMutex
-	swapfile         *SwapFile
-	usage            *ChunkWrittenIntervalList
-	logicChunkIndex  LogicChunkIndex
-	actualChunkIndex ActualChunkIndex
-	lastModifiedTsNs int64
+	swapfile               *SwapFile
+	usage                  *ChunkWrittenIntervalList
+	logicChunkIndex        LogicChunkIndex
+	actualChunkIndex       ActualChunkIndex
+	lastActiveTsNs         int64
+	decayedActivenessScore int64
 	//memChunk         *MemChunk
 }
 
@@ -99,10 +101,9 @@ func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n in
 	sc.Lock()
 	defer sc.Unlock()
 
-	if sc.lastModifiedTsNs > tsNs {
-		println("write old data2", tsNs-sc.lastModifiedTsNs, "ns")
-	}
-	sc.lastModifiedTsNs = tsNs
+	now := time.Now().UnixNano()
+	deltaTime := (now - sc.lastActiveTsNs) >> 30 // about number of seconds
+	sc.lastActiveTsNs = now
 
 	// println(sc.logicChunkIndex, "|", tsNs, "write at", offset, len(src), sc.actualChunkIndex)
 
@@ -114,6 +115,10 @@ func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n in
 		glog.Errorf("failed to write swap file %s: %v", sc.swapfile.file.Name(), err)
 	}
 	//sc.memChunk.WriteDataAt(src, offset, tsNs)
+	sc.decayedActivenessScore = sc.decayedActivenessScore>>deltaTime + 1024
+	if sc.decayedActivenessScore < 0 {
+		sc.decayedActivenessScore = 0
+	}
 	return
 }
 
@@ -147,6 +152,15 @@ func (sc *SwapFileChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop in
 	//if bytes.Compare(memCopy, p) != 0 {
 	//	println("read wrong data from swap file", off, sc.logicChunkIndex)
 	//}
+
+	now := time.Now().UnixNano()
+	deltaTime := (now - sc.lastActiveTsNs) >> 30 // about number of seconds
+	sc.lastActiveTsNs = now
+	sc.decayedActivenessScore = sc.decayedActivenessScore>>deltaTime + 256
+	if sc.decayedActivenessScore < 0 {
+		sc.decayedActivenessScore = 0
+	}
+
 	return
 }
 
@@ -156,8 +170,9 @@ func (sc *SwapFileChunk) IsComplete() bool {
 	return sc.usage.IsComplete(sc.swapfile.chunkSize)
 }
 
-func (sc *SwapFileChunk) LastModifiedTsNs() int64 {
-	return sc.lastModifiedTsNs
+func (sc *SwapFileChunk) ActivenessScore() int64 {
+	deltaTime := (time.Now().UnixNano() - sc.lastActiveTsNs) >> 30 // about number of seconds
+	return sc.decayedActivenessScore >> deltaTime
 }
 
 func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {

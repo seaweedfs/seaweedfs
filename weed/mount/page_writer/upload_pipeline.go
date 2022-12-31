@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"math"
 	"sync"
 	"sync/atomic"
 )
@@ -66,15 +67,15 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 	if !found {
 		if len(up.writableChunks) > up.writableChunkLimit {
 			// if current file chunks is over the per file buffer count limit
-			oldestChunkIndex, oldestTs := LogicChunkIndex(-1), int64(0)
+			laziestChunkIndex, smallestActivityScore := LogicChunkIndex(-1), int64(math.MaxInt64)
 			for lci, mc := range up.writableChunks {
-				chunkModifiedTsNs := mc.LastModifiedTsNs()
-				if oldestTs < chunkModifiedTsNs {
-					oldestChunkIndex = lci
-					oldestTs = chunkModifiedTsNs
+				activenessScore := mc.ActivenessScore()
+				if smallestActivityScore > activenessScore {
+					laziestChunkIndex = lci
+					smallestActivityScore = activenessScore
 				}
 			}
-			up.moveToSealed(up.writableChunks[oldestChunkIndex], oldestChunkIndex)
+			up.moveToSealed(up.writableChunks[laziestChunkIndex], laziestChunkIndex)
 			// fmt.Printf("flush chunk %d with %d bytes written\n", logicChunkIndex, oldestTs)
 		}
 		if isSequential &&
