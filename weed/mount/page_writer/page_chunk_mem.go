@@ -1,7 +1,6 @@
 package page_writer
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"sync"
@@ -23,8 +22,6 @@ type MemChunk struct {
 	logicChunkIndex        LogicChunkIndex
 	lastActiveTsNs         int64
 	decayedActivenessScore int64
-}
-
 }
 
 func NewMemChunk(logicChunkIndex LogicChunkIndex, chunkSize int64) *MemChunk {
@@ -113,7 +110,7 @@ func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc) {
 	}
 	for t := mc.usage.head.next; t != mc.usage.tail; t = t.next {
 		reader := util.NewBytesReader(mc.buf[t.StartOffset:t.stopOffset])
-		saveFn(reader, int64(mc.logicChunkIndex)*mc.chunkSize+t.StartOffset, t.Size(), mc.lastModifiedTsNs, func() {
+		saveFn(reader, int64(mc.logicChunkIndex)*mc.chunkSize+t.StartOffset, t.Size(), t.TsNs, func() {
 		})
 	}
 }
