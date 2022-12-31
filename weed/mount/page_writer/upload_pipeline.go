@@ -67,12 +67,12 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 	if !found {
 		if len(up.writableChunks) > up.writableChunkLimit {
 			// if current file chunks is over the per file buffer count limit
-			laziestChunkIndex, smallestActivityScore := LogicChunkIndex(-1), int64(math.MaxInt64)
-			for lci, mc := range up.writableChunks {
-				activenessScore := mc.ActivenessScore()
-				if smallestActivityScore > activenessScore {
-					laziestChunkIndex = lci
-					smallestActivityScore = activenessScore
+			laziestChunkIndex, lowestActivityScore := LogicChunkIndex(-1), int64(math.MaxInt64)
+			for wci, wc := range up.writableChunks {
+				activityScore := wc.ActivityScore()
+				if lowestActivityScore > activityScore {
+					laziestChunkIndex = wci
+					lowestActivityScore = activityScore
 				}
 			}
 			up.moveToSealed(up.writableChunks[laziestChunkIndex], laziestChunkIndex)

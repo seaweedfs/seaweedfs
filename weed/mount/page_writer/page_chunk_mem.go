@@ -5,7 +5,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 var (
@@ -16,12 +15,11 @@ var (
 
 type MemChunk struct {
 	sync.RWMutex
-	buf                    []byte
-	usage                  *ChunkWrittenIntervalList
-	chunkSize              int64
-	logicChunkIndex        LogicChunkIndex
-	lastActiveTsNs         int64
-	decayedActivenessScore int64
+	buf             []byte
+	usage           *ChunkWrittenIntervalList
+	chunkSize       int64
+	logicChunkIndex LogicChunkIndex
+	activityScore   *ActivityScore
 }
 
 func NewMemChunk(logicChunkIndex LogicChunkIndex, chunkSize int64) *MemChunk {
@@ -31,6 +29,7 @@ func NewMemChunk(logicChunkIndex LogicChunkIndex, chunkSize int64) *MemChunk {
 		chunkSize:       chunkSize,
 		buf:             mem.Allocate(int(chunkSize)),
 		usage:           newChunkWrittenIntervalList(),
+		activityScore:   NewActivityScore(),
 	}
 }
 
@@ -46,18 +45,11 @@ func (mc *MemChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n int) {
 	mc.Lock()
 	defer mc.Unlock()
 
-	now := time.Now().UnixNano()
-	deltaTime := (now - mc.lastActiveTsNs) >> 30 // about number of seconds
-	mc.lastActiveTsNs = now
-
 	innerOffset := offset % mc.chunkSize
 	n = copy(mc.buf[innerOffset:], src)
 	mc.usage.MarkWritten(innerOffset, innerOffset+int64(n), tsNs)
+	mc.activityScore.MarkWrite()
 
-	mc.decayedActivenessScore = mc.decayedActivenessScore>>deltaTime + 1024
-	if mc.decayedActivenessScore < 0 {
-		mc.decayedActivenessScore = 0
-	}
 	return
 }
 
@@ -78,14 +70,8 @@ func (mc *MemChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop int64) 
 			}
 		}
 	}
+	mc.activityScore.MarkRead()
 
-	now := time.Now().UnixNano()
-	deltaTime := (now - mc.lastActiveTsNs) >> 30 // about number of seconds
-	mc.lastActiveTsNs = now
-	mc.decayedActivenessScore = mc.decayedActivenessScore>>deltaTime + 256
-	if mc.decayedActivenessScore < 0 {
-		mc.decayedActivenessScore = 0
-	}
 	return
 }
 
@@ -96,9 +82,8 @@ func (mc *MemChunk) IsComplete() bool {
 	return mc.usage.IsComplete(mc.chunkSize)
 }
 
-func (mc *MemChunk) ActivenessScore() int64 {
-	deltaTime := (time.Now().UnixNano() - mc.lastActiveTsNs) >> 30 // about number of seconds
-	return mc.decayedActivenessScore >> deltaTime
+func (mc *MemChunk) ActivityScore() int64 {
+	return mc.activityScore.ActivityScore()
 }
 
 func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc) {
