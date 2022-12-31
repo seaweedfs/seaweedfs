@@ -47,3 +47,35 @@ func Test_PageChunkWrittenIntervalList(t *testing.T) {
 	assert.Equal(t, 5, list.size(), "covered one intervals")
 
 }
+
+type interval struct {
+	start    int64
+	stop     int64
+	expected bool
+}
+
+func Test_PageChunkWrittenIntervalList1(t *testing.T) {
+	list := newChunkWrittenIntervalList()
+	inputs := []interval{
+		{1, 5, true},
+		{2, 3, true},
+	}
+	for i, input := range inputs {
+		list.MarkWritten(input.start, input.stop, int64(i)+1)
+		actual := hasData(list, 0, 4)
+		if actual != input.expected {
+			t.Errorf("input [%d,%d) expected %v actual %v", input.start, input.stop, input.expected, actual)
+		}
+	}
+}
+
+func hasData(usage *ChunkWrittenIntervalList, chunkStartOffset, x int64) bool {
+	for t := usage.head.next; t != usage.tail; t = t.next {
+		logicStart := chunkStartOffset + t.StartOffset
+		logicStop := chunkStartOffset + t.stopOffset
+		if logicStart <= x && x < logicStop {
+			return true
+		}
+	}
+	return false
+}

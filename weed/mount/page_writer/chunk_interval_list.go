@@ -84,9 +84,15 @@ func (list *ChunkWrittenIntervalList) addInterval(interval *ChunkWrittenInterval
 	// left side
 	// interval after p.next start
 	if p.next.StartOffset < interval.StartOffset {
-		p.next.stopOffset = interval.StartOffset
-		p.next.next = interval
-		interval.prev = p.next
+		t := &ChunkWrittenInterval{
+			StartOffset: p.next.StartOffset,
+			stopOffset:  interval.StartOffset,
+			TsNs:        p.next.TsNs,
+		}
+		p.next = t
+		t.prev = p
+		t.next = interval
+		interval.prev = t
 	} else {
 		p.next = interval
 		interval.prev = p
@@ -94,10 +100,16 @@ func (list *ChunkWrittenIntervalList) addInterval(interval *ChunkWrittenInterval
 
 	// right side
 	// interval ends before p.prev
-	if q.prev.stopOffset > interval.stopOffset {
-		q.prev.StartOffset = interval.stopOffset
-		q.prev.prev = interval
-		interval.next = q.prev
+	if interval.stopOffset < q.prev.stopOffset {
+		t := &ChunkWrittenInterval{
+			StartOffset: interval.stopOffset,
+			stopOffset:  q.prev.stopOffset,
+			TsNs:        q.prev.TsNs,
+		}
+		q.prev = t
+		t.next = q
+		interval.next = t
+		t.prev = interval
 	} else {
 		q.prev = interval
 		interval.next = q
