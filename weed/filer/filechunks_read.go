@@ -42,22 +42,22 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOff
 
 	var prevX int64
 	queue := list.New() // points with higher ts are at the tail
-	var lastPoint *Point
+	var prevPoint *Point
 	for _, point := range points {
 		if queue.Len() > 0 {
-			lastPoint = queue.Back().Value.(*Point)
+			prevPoint = queue.Back().Value.(*Point)
 		} else {
-			lastPoint = nil
+			prevPoint = nil
 		}
 		if point.isStart {
-			if lastPoint != nil {
-				if point.x != prevX && lastPoint.ts < point.ts {
-					visibles = addToVisibles(visibles, prevX, lastPoint, point)
+			if prevPoint != nil {
+				if point.x != prevX && prevPoint.ts < point.ts {
+					visibles = addToVisibles(visibles, prevX, prevPoint, point)
 					prevX = point.x
 				}
 			}
 			// insert into queue
-			if lastPoint == nil || lastPoint.ts < point.ts {
+			if prevPoint == nil || prevPoint.ts < point.ts {
 				queue.PushBack(point)
 				prevX = point.x
 			} else {
@@ -77,8 +77,8 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOff
 				}
 				isLast = false
 			}
-			if isLast && lastPoint != nil {
-				visibles = addToVisibles(visibles, prevX, lastPoint, point)
+			if isLast && prevPoint != nil {
+				visibles = addToVisibles(visibles, prevX, prevPoint, point)
 				prevX = point.x
 			}
 		}
