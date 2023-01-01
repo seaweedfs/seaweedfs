@@ -41,13 +41,13 @@ enabled = false
 dbFile = "./filer.db"                # sqlite db file
 
 [mysql]  # or memsql, tidb
-# CREATE TABLE IF NOT EXISTS filemeta (
-#   dirhash     BIGINT               COMMENT 'first 64 bits of MD5 hash value of directory field',
-#   name        VARCHAR(1000) BINARY COMMENT 'directory or file name',
-#   directory   TEXT BINARY          COMMENT 'full path to parent directory',
-#   meta        LONGBLOB,
-#   PRIMARY KEY (dirhash, name)
-# ) DEFAULT CHARSET=utf8;
+# CREATE TABLE IF NOT EXISTS `filemeta` (
+#   `dirhash`   BIGINT NOT NULL       COMMENT 'first 64 bits of MD5 hash value of directory field',
+#   `name`      VARCHAR(766) NOT NULL COMMENT 'directory or file name',
+#   `directory` TEXT NOT NULL         COMMENT 'full path to parent directory',
+#   `meta`      LONGBLOB,
+#   PRIMARY KEY (`dirhash`, `name`)
+# ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 enabled = false
 hostname = "localhost"
@@ -67,12 +67,12 @@ upsertQuery = """INSERT INTO `%s` (dirhash,name,directory,meta) VALUES(?,?,?,?) 
 enabled = false
 createTable = """
   CREATE TABLE IF NOT EXISTS `%s` (
-    dirhash BIGINT,
-    name VARCHAR(1000) BINARY,
-    directory TEXT BINARY,
-    meta LONGBLOB,
-    PRIMARY KEY (dirhash, name)
-  ) DEFAULT CHARSET=utf8;
+    `dirhash`   BIGINT NOT NULL,
+    `name`      VARCHAR(766) NOT NULL,
+    `directory` TEXT NOT NULL,
+    `meta`      LONGBLOB,
+    PRIMARY KEY (`dirhash`, `name`)
+  ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 """
 hostname = "localhost"
 port = 3306

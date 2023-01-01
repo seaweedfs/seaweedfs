@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	CONNECTION_URL_PATTERN = "%s:%s@tcp(%s:%d)/%s?charset=utf8"
+	CONNECTION_URL_PATTERN = "%s:%s@tcp(%s:%d)/%s?collation=utf8mb4_bin"
 )
 
 var _ filer.BucketAware = (*MysqlStore2)(nil)

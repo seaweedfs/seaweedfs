@@ -14,13 +14,13 @@ with ENV.
 A running MySQL-compatible database is expected by default, as specified in the `values.yaml` at `filer.extraEnvironmentVars`. 
 This database should be pre-configured and initialized by running:
 ```sql
-CREATE TABLE IF NOT EXISTS filemeta (
-  dirhash     BIGINT               COMMENT 'first 64 bits of MD5 hash value of directory field',
-  name        VARCHAR(1000) BINARY COMMENT 'directory or file name',
-  directory   TEXT BINARY          COMMENT 'full path to parent directory',
-  meta        LONGBLOB,
-  PRIMARY KEY (dirhash, name)
-) DEFAULT CHARSET=utf8;
+CREATE TABLE IF NOT EXISTS `filemeta` (
+  `dirhash`   BIGINT NOT NULL       COMMENT 'first 64 bits of MD5 hash value of directory field',
+  `name`      VARCHAR(766) NOT NULL COMMENT 'directory or file name',
+  `directory` TEXT NOT NULL         COMMENT 'full path to parent directory',
+  `meta`      LONGBLOB,
+  PRIMARY KEY (`dirhash`, `name`)
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 ```
 
 Alternative database can also be configured (e.g. leveldb) following the instructions at `filer.extraEnvironmentVars`.
