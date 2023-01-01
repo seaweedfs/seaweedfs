@@ -428,9 +428,9 @@ func TestChunksReading(t *testing.T) {
 		log.Printf("++++++++++ read test case %d ++++++++++++++++++++", i)
 		chunks := ViewFromChunks(nil, testcase.Chunks, testcase.Offset, testcase.Size)
 		x := -1
-		for c := chunks.Front(); c != nil; c = c.Next() {
+		for c := chunks.Front(); c != nil; c = c.Next {
 			x++
-			chunk := c.Value.(*ChunkView)
+			chunk := c.Value
 			log.Printf("read case %d, chunk %d, offset=%d, size=%d, fileId=%s",
 				i, x, chunk.Offset, chunk.Size, chunk.FileId)
 			if chunk.Offset != testcase.Expected[x].Offset {

@@ -1,7 +1,6 @@
 package filer
 
 import (
-	"container/list"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -44,7 +43,7 @@ func newReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn
 	}
 }
 
-func (rc *ReaderCache) MaybeCache(chunkViews *list.Element) {
+func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView]) {
 	if rc.lookupFileIdFn == nil {
 		return
 	}
@@ -56,8 +55,8 @@ func (rc *ReaderCache) MaybeCache(chunkViews *list.Element) {
 		return
 	}
 
-	for x := chunkViews; x != nil; x = x.Next() {
-		chunkView := x.Value.(*ChunkView)
+	for x := chunkViews; x != nil; x = x.Next {
+		chunkView := x.Value
 		if _, found := rc.downloaders[chunkView.FileId]; found {
 			continue
 		}

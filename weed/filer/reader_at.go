@@ -1,7 +1,6 @@
 package filer
 
 import (
-	"container/list"
 	"context"
 	"fmt"
 	"io"
@@ -17,7 +16,7 @@ import (
 
 type ChunkReadAt struct {
 	masterClient  *wdclient.MasterClient
-	chunkViews    *list.List
+	chunkViews    *IntervalList[*ChunkView]
 	readerLock    sync.Mutex
 	fileSize      int64
 	readerCache   *ReaderCache
@@ -90,7 +89,7 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 	}
 }
 
-func NewChunkReaderAtFromClient(lookupFn wdclient.LookupFileIdFunctionType, chunkViews *list.List, chunkCache chunk_cache.ChunkCache, fileSize int64) *ChunkReadAt {
+func NewChunkReaderAtFromClient(lookupFn wdclient.LookupFileIdFunctionType, chunkViews *IntervalList[*ChunkView], chunkCache chunk_cache.ChunkCache, fileSize int64) *ChunkReadAt {
 
 	return &ChunkReadAt{
 		chunkViews:    chunkViews,
@@ -131,14 +130,14 @@ func (c *ChunkReadAt) ReadAtWithTime(p []byte, offset int64) (n int, ts int64, e
 func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, ts int64, err error) {
 
 	startOffset, remaining := offset, int64(len(p))
-	var nextChunks *list.Element
-	for x := c.chunkViews.Front(); x != nil; x = x.Next() {
-		chunk := x.Value.(*ChunkView)
+	var nextChunks *Interval[*ChunkView]
+	for x := c.chunkViews.Front(); x != nil; x = x.Next {
+		chunk := x.Value
 		if remaining <= 0 {
 			break
 		}
-		if x.Next() != nil {
-			nextChunks = x.Next()
+		if x.Next != nil {
+			nextChunks = x.Next
 		}
 		if startOffset < chunk.LogicOffset {
 			gap := chunk.LogicOffset - startOffset
@@ -192,7 +191,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, ts int64, err err
 
 }
 
-func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, nextChunkViews *list.Element, offset uint64) (n int, err error) {
+func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, nextChunkViews *Interval[*ChunkView], offset uint64) (n int, err error) {
 
 	if c.readerPattern.IsRandomMode() {
 		n, err := c.readerCache.chunkCache.ReadChunkAt(buffer, chunkView.FileId, offset)

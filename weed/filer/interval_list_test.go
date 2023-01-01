@@ -38,10 +38,13 @@ func TestIntervalList_Overlay2(t *testing.T) {
 func TestIntervalList_Overlay3(t *testing.T) {
 	list := NewIntervalList[int]()
 	list.Overlay(50, 100, 1, 1)
+	assert.Equal(t, 1, list.Len())
+
 	list.Overlay(0, 60, 2, 2)
 	for p := list.Front(); p != nil; p = p.Next {
 		fmt.Printf("[%d,%d) %d %d\n", p.StartOffset, p.StopOffset, p.TsNs, p.Value)
 	}
+	assert.Equal(t, 2, list.Len())
 }
 
 func TestIntervalList_Overlay4(t *testing.T) {
@@ -51,6 +54,7 @@ func TestIntervalList_Overlay4(t *testing.T) {
 	for p := list.Front(); p != nil; p = p.Next {
 		fmt.Printf("[%d,%d) %d %d\n", p.StartOffset, p.StopOffset, p.TsNs, p.Value)
 	}
+	assert.Equal(t, 1, list.Len())
 }
 
 func TestIntervalList_Overlay5(t *testing.T) {
@@ -60,6 +64,7 @@ func TestIntervalList_Overlay5(t *testing.T) {
 	for p := list.Front(); p != nil; p = p.Next {
 		fmt.Printf("[%d,%d) %d %d\n", p.StartOffset, p.StopOffset, p.TsNs, p.Value)
 	}
+	assert.Equal(t, 1, list.Len())
 }
 
 func TestIntervalList_Overlay6(t *testing.T) {
@@ -69,6 +74,7 @@ func TestIntervalList_Overlay6(t *testing.T) {
 	for p := list.Front(); p != nil; p = p.Next {
 		fmt.Printf("[%d,%d) %d %d\n", p.StartOffset, p.StopOffset, p.TsNs, p.Value)
 	}
+	assert.Equal(t, 1, list.Len())
 }
 
 func TestIntervalList_Overlay7(t *testing.T) {
@@ -78,6 +84,7 @@ func TestIntervalList_Overlay7(t *testing.T) {
 	for p := list.Front(); p != nil; p = p.Next {
 		fmt.Printf("[%d,%d) %d %d\n", p.StartOffset, p.StopOffset, p.TsNs, p.Value)
 	}
+	assert.Equal(t, 2, list.Len())
 }
 
 func TestIntervalList_Overlay8(t *testing.T) {
@@ -87,6 +94,7 @@ func TestIntervalList_Overlay8(t *testing.T) {
 	for p := list.Front(); p != nil; p = p.Next {
 		fmt.Printf("[%d,%d) %d %d\n", p.StartOffset, p.StopOffset, p.TsNs, p.Value)
 	}
+	assert.Equal(t, 3, list.Len())
 }
 
 func TestIntervalList_Overlay9(t *testing.T) {
@@ -96,6 +104,7 @@ func TestIntervalList_Overlay9(t *testing.T) {
 	for p := list.Front(); p != nil; p = p.Next {
 		fmt.Printf("[%d,%d) %d %d\n", p.StartOffset, p.StopOffset, p.TsNs, p.Value)
 	}
+	assert.Equal(t, 2, list.Len())
 }
 
 func TestIntervalList_Overlay10(t *testing.T) {
@@ -105,4 +114,5 @@ func TestIntervalList_Overlay10(t *testing.T) {
 	for p := list.Front(); p != nil; p = p.Next {
 		fmt.Printf("[%d,%d) %d %d\n", p.StartOffset, p.StopOffset, p.TsNs, p.Value)
 	}
+	assert.Equal(t, 2, list.Len())
 }

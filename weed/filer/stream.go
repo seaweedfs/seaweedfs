@@ -2,7 +2,6 @@ package filer
 
 import (
 	"bytes"
-	"container/list"
 	"fmt"
 	"golang.org/x/exp/slices"
 	"io"
@@ -78,8 +77,8 @@ func StreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunction, w
 
 	fileId2Url := make(map[string][]string)
 
-	for x := chunkViews.Front(); x != nil; x = x.Next() {
-		chunkView := x.Value.(*ChunkView)
+	for x := chunkViews.Front(); x != nil; x = x.Next {
+		chunkView := x.Value
 		var urlStrings []string
 		var err error
 		for _, backoff := range getLookupFileIdBackoffSchedule {
@@ -103,8 +102,8 @@ func StreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunction, w
 
 	downloadThrottler := util.NewWriteThrottler(downloadMaxBytesPs)
 	remaining := size
-	for x := chunkViews.Front(); x != nil; x = x.Next() {
-		chunkView := x.Value.(*ChunkView)
+	for x := chunkViews.Front(); x != nil; x = x.Next {
+		chunkView := x.Value
 		if offset < chunkView.LogicOffset {
 			gap := chunkView.LogicOffset - offset
 			remaining -= gap
@@ -169,8 +168,8 @@ func ReadAll(buffer []byte, masterClient *wdclient.MasterClient, chunks []*filer
 
 	idx := 0
 
-	for x := chunkViews.Front(); x != nil; x = x.Next() {
-		chunkView := x.Value.(*ChunkView)
+	for x := chunkViews.Front(); x != nil; x = x.Next {
+		chunkView := x.Value
 		urlStrings, err := lookupFileIdFn(chunkView.FileId)
 		if err != nil {
 			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
@@ -188,7 +187,7 @@ func ReadAll(buffer []byte, masterClient *wdclient.MasterClient, chunks []*filer
 
 // ----------------  ChunkStreamReader ----------------------------------
 type ChunkStreamReader struct {
-	chunkView    *list.Element
+	chunkView    *Interval[*ChunkView]
 	totalSize    int64
 	logicOffset  int64
 	buffer       []byte
@@ -206,8 +205,8 @@ func doNewChunkStreamReader(lookupFileIdFn wdclient.LookupFileIdFunctionType, ch
 	chunkViews := ViewFromChunks(lookupFileIdFn, chunks, 0, math.MaxInt64)
 
 	var totalSize int64
-	for x := chunkViews.Front(); x != nil; x = x.Next() {
-		chunk := x.Value.(*ChunkView)
+	for x := chunkViews.Front(); x != nil; x = x.Next {
+		chunk := x.Value
 		totalSize += int64(chunk.Size)
 	}
 
@@ -301,13 +300,13 @@ func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
 	}
 
 	// fmt.Printf("fetch for offset %d\n", offset)
-	c.chunkView = c.chunkView.Next()
+	c.chunkView = c.chunkView.Next
 	if c.chunkView == nil {
 		return io.EOF
 	}
 
 	// positioning within the new chunk
-	chunk := c.chunkView.Value.(*ChunkView)
+	chunk := c.chunkView.Value
 	if insideChunk(offset, chunk) {
 		if c.isBufferEmpty() || c.bufferOffset != chunk.LogicOffset {
 			if err = c.fetchChunkToBuffer(chunk); err != nil {

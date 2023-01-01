@@ -6,7 +6,6 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-// readResolvedChunks returns a container.List of VisibleInterval
 func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles *IntervalList[VisibleInterval]) {
 
 	var points []*Point

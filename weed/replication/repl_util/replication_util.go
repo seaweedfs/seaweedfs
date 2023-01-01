@@ -1,17 +1,16 @@
 package repl_util
 
 import (
-	"container/list"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func CopyFromChunkViews(chunkViews *list.List, filerSource *source.FilerSource, writeFunc func(data []byte) error) error {
+func CopyFromChunkViews(chunkViews *filer.IntervalList[*filer.ChunkView], filerSource *source.FilerSource, writeFunc func(data []byte) error) error {
 
-	for x := chunkViews.Front(); x != nil; x = x.Next() {
-		chunk := x.Value.(*filer.ChunkView)
+	for x := chunkViews.Front(); x != nil; x = x.Next {
+		chunk := x.Value
 
 		fileUrls, err := filerSource.LookupFileId(chunk.FileId)
 		if err != nil {

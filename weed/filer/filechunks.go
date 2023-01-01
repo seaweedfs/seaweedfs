@@ -2,7 +2,6 @@ package filer
 
 import (
 	"bytes"
-	"container/list"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"math"
@@ -151,7 +150,7 @@ func (cv *ChunkView) IsFullChunk() bool {
 	return cv.Size == cv.ChunkSize
 }
 
-func ViewFromChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (chunkViews *list.List) {
+func ViewFromChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (chunkViews *IntervalList[*ChunkView]) {
 
 	visibles, _ := NonOverlappingVisibleIntervals(lookupFileIdFn, chunks, offset, offset+size)
 
@@ -159,7 +158,7 @@ func ViewFromChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*
 
 }
 
-func ViewFromVisibleIntervals(visibles *IntervalList[VisibleInterval], offset int64, size int64) (chunkViews *list.List) {
+func ViewFromVisibleIntervals(visibles *IntervalList[VisibleInterval], offset int64, size int64) (chunkViews *IntervalList[*ChunkView]) {
 
 	stop := offset + size
 	if size == math.MaxInt64 {
@@ -169,14 +168,14 @@ func ViewFromVisibleIntervals(visibles *IntervalList[VisibleInterval], offset in
 		stop = math.MaxInt64
 	}
 
-	chunkViews = list.New()
+	chunkViews = NewIntervalList[*ChunkView]()
 	for x := visibles.Front(); x != nil; x = x.Next {
 		chunk := x.Value
 
 		chunkStart, chunkStop := max(offset, chunk.start), min(stop, chunk.stop)
 
 		if chunkStart < chunkStop {
-			chunkViews.PushBack(&ChunkView{
+			chunkView := &ChunkView{
 				FileId:       chunk.fileId,
 				Offset:       chunkStart - chunk.start + chunk.chunkOffset,
 				Size:         uint64(chunkStop - chunkStart),
@@ -185,6 +184,14 @@ func ViewFromVisibleIntervals(visibles *IntervalList[VisibleInterval], offset in
 				CipherKey:    chunk.cipherKey,
 				IsGzipped:    chunk.isGzipped,
 				ModifiedTsNs: chunk.modifiedTsNs,
+			}
+			chunkViews.AppendInterval(&Interval[*ChunkView]{
+				StartOffset: chunkStart,
+				StopOffset:  chunkStop,
+				TsNs:        chunk.modifiedTsNs,
+				Value:       chunkView,
+				Prev:        nil,
+				Next:        nil,
 			})
 		}
 	}

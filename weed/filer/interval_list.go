@@ -32,8 +32,6 @@ func NewIntervalList[T any]() *IntervalList[T] {
 			StopOffset:  math.MaxInt64,
 		},
 	}
-	list.head.Next = list.tail
-	list.tail.Prev = list.head
 	return list
 }
 
@@ -42,8 +40,13 @@ func (list *IntervalList[T]) Front() (interval *Interval[T]) {
 }
 
 func (list *IntervalList[T]) AppendInterval(interval *Interval[T]) {
+	if list.head.Next == nil {
+		list.head.Next = interval
+	}
 	interval.Prev = list.tail.Prev
-	list.tail.Prev.Next = interval
+	if list.tail.Prev != nil {
+		list.tail.Prev.Next = interval
+	}
 	list.tail.Prev = interval
 }
 
@@ -86,7 +89,9 @@ func (list *IntervalList[T]) addInterval(interval *Interval[T]) {
 			Value:       p.Next.Value,
 		}
 		p.Next = t
-		t.Prev = p
+		if p != list.head {
+			t.Prev = p
+		}
 		t.Next = interval
 		interval.Prev = t
 	} else {
@@ -106,7 +111,9 @@ func (list *IntervalList[T]) addInterval(interval *Interval[T]) {
 			Value:       q.Prev.Value,
 		}
 		q.Prev = t
-		t.Next = q
+		if q != list.tail {
+			t.Next = q
+		}
 		interval.Next = t
 		t.Prev = interval
 	} else {
