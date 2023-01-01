@@ -228,12 +228,12 @@ func MergeIntoVisibles(visibles []VisibleInterval, chunk *filer_pb.FileChunk) (n
 	chunkStop := chunk.Offset + int64(chunk.Size)
 	for _, v := range visibles {
 		if v.start < chunk.Offset && chunk.Offset < v.stop {
-			t := newVisibleInterval(v.start, chunk.Offset, v.fileId, v.modifiedTsNs, v.chunkOffset, v.chunkSize, v.cipherKey, v.isGzipped)
+			t := newVisibleInterval(v.start, chunk.Offset, v.fileId, v.modifiedTsNs, v.offsetInChunk, v.chunkSize, v.cipherKey, v.isGzipped)
 			newVisibles = append(newVisibles, t)
 			// glog.V(0).Infof("visible %d [%d,%d) =1> [%d,%d)", i, v.start, v.stop, t.start, t.stop)
 		}
 		if v.start < chunkStop && chunkStop < v.stop {
-			t := newVisibleInterval(chunkStop, v.stop, v.fileId, v.modifiedTsNs, v.chunkOffset+(chunkStop-v.start), v.chunkSize, v.cipherKey, v.isGzipped)
+			t := newVisibleInterval(chunkStop, v.stop, v.fileId, v.modifiedTsNs, v.offsetInChunk+(chunkStop-v.start), v.chunkSize, v.cipherKey, v.isGzipped)
 			newVisibles = append(newVisibles, t)
 			// glog.V(0).Infof("visible %d [%d,%d) =2> [%d,%d)", i, v.start, v.stop, t.start, t.stop)
 		}
