@@ -2,11 +2,11 @@ package filer
 
 import (
 	"bytes"
+	"container/list"
 	"fmt"
 	"golang.org/x/exp/slices"
 	"io"
 	"math"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -78,7 +78,8 @@ func StreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunction, w
 
 	fileId2Url := make(map[string][]string)
 
-	for _, chunkView := range chunkViews {
+	for x := chunkViews.Front(); x != nil; x = x.Next() {
+		chunkView := x.Value.(*ChunkView)
 		var urlStrings []string
 		var err error
 		for _, backoff := range getLookupFileIdBackoffSchedule {
@@ -102,7 +103,8 @@ func StreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunction, w
 
 	downloadThrottler := util.NewWriteThrottler(downloadMaxBytesPs)
 	remaining := size
-	for _, chunkView := range chunkViews {
+	for x := chunkViews.Front(); x != nil; x = x.Next() {
+		chunkView := x.Value.(*ChunkView)
 		if offset < chunkView.LogicOffset {
 			gap := chunkView.LogicOffset - offset
 			remaining -= gap
@@ -167,7 +169,8 @@ func ReadAll(buffer []byte, masterClient *wdclient.MasterClient, chunks []*filer
 
 	idx := 0
 
-	for _, chunkView := range chunkViews {
+	for x := chunkViews.Front(); x != nil; x = x.Next() {
+		chunkView := x.Value.(*ChunkView)
 		urlStrings, err := lookupFileIdFn(chunkView.FileId)
 		if err != nil {
 			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
@@ -185,7 +188,7 @@ func ReadAll(buffer []byte, masterClient *wdclient.MasterClient, chunks []*filer
 
 // ----------------  ChunkStreamReader ----------------------------------
 type ChunkStreamReader struct {
-	chunkViews   []*ChunkView
+	chunkView    *list.Element
 	totalSize    int64
 	logicOffset  int64
 	buffer       []byte
@@ -201,17 +204,15 @@ var _ = io.ReaderAt(&ChunkStreamReader{})
 func doNewChunkStreamReader(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
 	chunkViews := ViewFromChunks(lookupFileIdFn, chunks, 0, math.MaxInt64)
-	slices.SortFunc(chunkViews, func(a, b *ChunkView) bool {
-		return a.LogicOffset < b.LogicOffset
-	})
 
 	var totalSize int64
-	for _, chunk := range chunkViews {
+	for x := chunkViews.Front(); x != nil; x = x.Next() {
+		chunk := x.Value.(*ChunkView)
 		totalSize += int64(chunk.Size)
 	}
 
 	return &ChunkStreamReader{
-		chunkViews:   chunkViews,
+		chunkView:    chunkViews.Front(),
 		lookupFileId: lookupFileIdFn,
 		totalSize:    totalSize,
 	}
@@ -300,39 +301,13 @@ func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
 	}
 
 	// fmt.Printf("fetch for offset %d\n", offset)
-
-	// need to seek to a different chunk
-	currentChunkIndex := sort.Search(len(c.chunkViews), func(i int) bool {
-		return offset < c.chunkViews[i].LogicOffset
-	})
-	if currentChunkIndex == len(c.chunkViews) {
-		// not found
-		if insideChunk(offset, c.chunkViews[0]) {
-			// fmt.Printf("select0 chunk %d %s\n", currentChunkIndex, c.chunkViews[currentChunkIndex].FileId)
-			currentChunkIndex = 0
-		} else if insideChunk(offset, c.chunkViews[len(c.chunkViews)-1]) {
-			currentChunkIndex = len(c.chunkViews) - 1
-			// fmt.Printf("select last chunk %d %s\n", currentChunkIndex, c.chunkViews[currentChunkIndex].FileId)
-		} else {
-			return io.EOF
-		}
-	} else if currentChunkIndex > 0 {
-		if insideChunk(offset, c.chunkViews[currentChunkIndex]) {
-			// good hit
-		} else if insideChunk(offset, c.chunkViews[currentChunkIndex-1]) {
-			currentChunkIndex -= 1
-			// fmt.Printf("select -1 chunk %d %s\n", currentChunkIndex, c.chunkViews[currentChunkIndex].FileId)
-		} else {
-			// glog.Fatalf("unexpected1 offset %d", offset)
-			return fmt.Errorf("unexpected1 offset %d", offset)
-		}
-	} else {
-		// glog.Fatalf("unexpected2 offset %d", offset)
-		return fmt.Errorf("unexpected2 offset %d", offset)
+	c.chunkView = c.chunkView.Next()
+	if c.chunkView == nil {
+		return io.EOF
 	}
 
 	// positioning within the new chunk
-	chunk := c.chunkViews[currentChunkIndex]
+	chunk := c.chunkView.Value.(*ChunkView)
 	if insideChunk(offset, chunk) {
 		if c.isBufferEmpty() || c.bufferOffset != chunk.LogicOffset {
 			if err = c.fetchChunkToBuffer(chunk); err != nil {

@@ -428,7 +428,10 @@ func TestChunksReading(t *testing.T) {
 		}
 		log.Printf("++++++++++ read test case %d ++++++++++++++++++++", i)
 		chunks := ViewFromChunks(nil, testcase.Chunks, testcase.Offset, testcase.Size)
-		for x, chunk := range chunks {
+		x := -1
+		for c := chunks.Front(); c != nil; c = c.Next() {
+			x++
+			chunk := c.Value.(*ChunkView)
 			log.Printf("read case %d, chunk %d, offset=%d, size=%d, fileId=%s",
 				i, x, chunk.Offset, chunk.Size, chunk.FileId)
 			if chunk.Offset != testcase.Expected[x].Offset {
@@ -448,8 +451,8 @@ func TestChunksReading(t *testing.T) {
 					i, x, chunk.LogicOffset, testcase.Expected[x].LogicOffset)
 			}
 		}
-		if len(chunks) != len(testcase.Expected) {
-			t.Fatalf("failed to read test case %d, len %d expected %d", i, len(chunks), len(testcase.Expected))
+		if chunks.Len() != len(testcase.Expected) {
+			t.Fatalf("failed to read test case %d, len %d expected %d", i, chunks.Len(), len(testcase.Expected))
 		}
 	}
 
@@ -495,8 +498,8 @@ func TestViewFromVisibleIntervals(t *testing.T) {
 
 	views := ViewFromVisibleIntervals(visibles, 0, math.MaxInt32)
 
-	if len(views) != visibles.Len() {
-		assert.Equal(t, visibles.Len(), len(views), "ViewFromVisibleIntervals error")
+	if views.Len() != visibles.Len() {
+		assert.Equal(t, visibles.Len(), views.Len(), "ViewFromVisibleIntervals error")
 	}
 
 }
@@ -516,8 +519,8 @@ func TestViewFromVisibleIntervals2(t *testing.T) {
 
 	views := ViewFromVisibleIntervals(visibles, 0, math.MaxInt32)
 
-	if len(views) != visibles.Len() {
-		assert.Equal(t, visibles.Len(), len(views), "ViewFromVisibleIntervals error")
+	if views.Len() != visibles.Len() {
+		assert.Equal(t, visibles.Len(), views.Len(), "ViewFromVisibleIntervals error")
 	}
 
 }
@@ -537,8 +540,8 @@ func TestViewFromVisibleIntervals3(t *testing.T) {
 
 	views := ViewFromVisibleIntervals(visibles, 1700, 1500)
 
-	if len(views) != visibles.Len() {
-		assert.Equal(t, visibles.Len(), len(views), "ViewFromVisibleIntervals error")
+	if views.Len() != visibles.Len() {
+		assert.Equal(t, visibles.Len(), views.Len(), "ViewFromVisibleIntervals error")
 	}
 
 }

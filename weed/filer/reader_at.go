@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"container/list"
 	"context"
 	"fmt"
 	"io"
@@ -16,7 +17,7 @@ import (
 
 type ChunkReadAt struct {
 	masterClient  *wdclient.MasterClient
-	chunkViews    []*ChunkView
+	chunkViews    *list.List
 	readerLock    sync.Mutex
 	fileSize      int64
 	readerCache   *ReaderCache
@@ -89,7 +90,7 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 	}
 }
 
-func NewChunkReaderAtFromClient(lookupFn wdclient.LookupFileIdFunctionType, chunkViews []*ChunkView, chunkCache chunk_cache.ChunkCache, fileSize int64) *ChunkReadAt {
+func NewChunkReaderAtFromClient(lookupFn wdclient.LookupFileIdFunctionType, chunkViews *list.List, chunkCache chunk_cache.ChunkCache, fileSize int64) *ChunkReadAt {
 
 	return &ChunkReadAt{
 		chunkViews:    chunkViews,
@@ -130,13 +131,14 @@ func (c *ChunkReadAt) ReadAtWithTime(p []byte, offset int64) (n int, ts int64, e
 func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, ts int64, err error) {
 
 	startOffset, remaining := offset, int64(len(p))
-	var nextChunks []*ChunkView
-	for i, chunk := range c.chunkViews {
+	var nextChunks *list.Element
+	for x := c.chunkViews.Front(); x != nil; x = x.Next() {
+		chunk := x.Value.(*ChunkView)
 		if remaining <= 0 {
 			break
 		}
-		if i+1 < len(c.chunkViews) {
-			nextChunks = c.chunkViews[i+1:]
+		if x.Next() != nil {
+			nextChunks = x.Next()
 		}
 		if startOffset < chunk.LogicOffset {
 			gap := chunk.LogicOffset - startOffset
@@ -190,7 +192,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, ts int64, err err
 
 }
 
-func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, nextChunkViews []*ChunkView, offset uint64) (n int, err error) {
+func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, nextChunkViews *list.Element, offset uint64) (n int, err error) {
 
 	if c.readerPattern.IsRandomMode() {
 		n, err := c.readerCache.chunkCache.ReadChunkAt(buffer, chunkView.FileId, offset)
@@ -205,11 +207,9 @@ func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, next
 		if chunkView.Offset == 0 { // start of a new chunk
 			if c.lastChunkFid != "" {
 				c.readerCache.UnCache(c.lastChunkFid)
-				c.readerCache.MaybeCache(nextChunkViews)
-			} else {
-				if len(nextChunkViews) >= 1 {
-					c.readerCache.MaybeCache(nextChunkViews[:1]) // just read the next chunk if at the very beginning
-				}
+			}
+			if nextChunkViews != nil {
+				c.readerCache.MaybeCache(nextChunkViews) // just read the next chunk if at the very beginning
 			}
 		}
 	}

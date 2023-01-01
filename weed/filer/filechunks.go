@@ -151,7 +151,7 @@ func (cv *ChunkView) IsFullChunk() bool {
 	return cv.Size == cv.ChunkSize
 }
 
-func ViewFromChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (views []*ChunkView) {
+func ViewFromChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (chunkViews *list.List) {
 
 	visibles, _ := NonOverlappingVisibleIntervals(lookupFileIdFn, chunks, offset, offset+size)
 
@@ -159,7 +159,7 @@ func ViewFromChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*
 
 }
 
-func ViewFromVisibleIntervals(visibles *list.List, offset int64, size int64) (views []*ChunkView) {
+func ViewFromVisibleIntervals(visibles *list.List, offset int64, size int64) (chunkViews *list.List) {
 
 	stop := offset + size
 	if size == math.MaxInt64 {
@@ -169,13 +169,14 @@ func ViewFromVisibleIntervals(visibles *list.List, offset int64, size int64) (vi
 		stop = math.MaxInt64
 	}
 
+	chunkViews = list.New()
 	for x := visibles.Front(); x != nil; x = x.Next() {
 		chunk := x.Value.(VisibleInterval)
 
 		chunkStart, chunkStop := max(offset, chunk.start), min(stop, chunk.stop)
 
 		if chunkStart < chunkStop {
-			views = append(views, &ChunkView{
+			chunkViews.PushBack(&ChunkView{
 				FileId:       chunk.fileId,
 				Offset:       chunkStart - chunk.start + chunk.chunkOffset,
 				Size:         uint64(chunkStop - chunkStart),
@@ -188,7 +189,7 @@ func ViewFromVisibleIntervals(visibles *list.List, offset int64, size int64) (vi
 		}
 	}
 
-	return views
+	return chunkViews
 
 }
 
