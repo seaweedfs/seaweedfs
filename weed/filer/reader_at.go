@@ -139,22 +139,22 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, ts int64, err err
 		if x.Next != nil {
 			nextChunks = x.Next
 		}
-		if startOffset < chunk.LogicOffset {
-			gap := chunk.LogicOffset - startOffset
-			glog.V(4).Infof("zero [%d,%d)", startOffset, chunk.LogicOffset)
+		if startOffset < chunk.ViewOffset {
+			gap := chunk.ViewOffset - startOffset
+			glog.V(4).Infof("zero [%d,%d)", startOffset, chunk.ViewOffset)
 			n += zero(p, startOffset-offset, gap)
-			startOffset, remaining = chunk.LogicOffset, remaining-gap
+			startOffset, remaining = chunk.ViewOffset, remaining-gap
 			if remaining <= 0 {
 				break
 			}
 		}
-		// fmt.Printf(">>> doReadAt [%d,%d), chunk[%d,%d)\n", offset, offset+int64(len(p)), chunk.LogicOffset, chunk.LogicOffset+int64(chunk.Size))
-		chunkStart, chunkStop := max(chunk.LogicOffset, startOffset), min(chunk.LogicOffset+int64(chunk.Size), startOffset+remaining)
+		// fmt.Printf(">>> doReadAt [%d,%d), chunk[%d,%d)\n", offset, offset+int64(len(p)), chunk.ViewOffset, chunk.ViewOffset+int64(chunk.ViewSize))
+		chunkStart, chunkStop := max(chunk.ViewOffset, startOffset), min(chunk.ViewOffset+int64(chunk.ViewSize), startOffset+remaining)
 		if chunkStart >= chunkStop {
 			continue
 		}
-		// glog.V(4).Infof("read [%d,%d), %d/%d chunk %s [%d,%d)", chunkStart, chunkStop, i, len(c.chunkViews), chunk.FileId, chunk.LogicOffset-chunk.Offset, chunk.LogicOffset-chunk.Offset+int64(chunk.Size))
-		bufferOffset := chunkStart - chunk.LogicOffset + chunk.OffsetInChunk
+		// glog.V(4).Infof("read [%d,%d), %d/%d chunk %s [%d,%d)", chunkStart, chunkStop, i, len(c.chunkViews), chunk.FileId, chunk.ViewOffset-chunk.Offset, chunk.ViewOffset-chunk.Offset+int64(chunk.ViewSize))
+		bufferOffset := chunkStart - chunk.ViewOffset + chunk.OffsetInChunk
 		ts = chunk.ModifiedTsNs
 		copied, err := c.readChunkSliceAt(p[startOffset-offset:chunkStop-chunkStart+startOffset-offset], chunk, nextChunks, uint64(bufferOffset))
 		if err != nil {
@@ -201,7 +201,7 @@ func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, next
 		return fetchChunkRange(buffer, c.readerCache.lookupFileIdFn, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset))
 	}
 
-	n, err = c.readerCache.ReadChunkAt(buffer, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset), int(chunkView.ChunkSize), chunkView.LogicOffset == 0)
+	n, err = c.readerCache.ReadChunkAt(buffer, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset), int(chunkView.ChunkSize), chunkView.ViewOffset == 0)
 	if c.lastChunkFid != chunkView.FileId {
 		if chunkView.OffsetInChunk == 0 { // start of a new chunk
 			if c.lastChunkFid != "" {
