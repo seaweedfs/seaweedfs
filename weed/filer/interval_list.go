@@ -41,12 +41,7 @@ func (list *IntervalList[T]) Front() (interval *Interval[T]) {
 	return list.head.Next
 }
 
-func (interval *Interval[T]) IsTail() bool {
-	return interval.Next == nil
-}
-
 func (list *IntervalList[T]) AppendInterval(interval *Interval[T]) {
-	interval.Next = list.tail
 	interval.Prev = list.tail.Prev
 	list.tail.Prev.Next = interval
 	list.tail.Prev = interval
@@ -83,7 +78,7 @@ func (list *IntervalList[T]) addInterval(interval *Interval[T]) {
 
 	// left side
 	// interval after p.Next start
-	if p.Next.StartOffset < interval.StartOffset {
+	if p.Next != nil && p.Next.StartOffset < interval.StartOffset {
 		t := &Interval[T]{
 			StartOffset: p.Next.StartOffset,
 			StopOffset:  interval.StartOffset,
@@ -96,12 +91,14 @@ func (list *IntervalList[T]) addInterval(interval *Interval[T]) {
 		interval.Prev = t
 	} else {
 		p.Next = interval
-		interval.Prev = p
+		if p != list.head {
+			interval.Prev = p
+		}
 	}
 
 	// right side
 	// interval ends before p.Prev
-	if interval.StopOffset < q.Prev.StopOffset {
+	if q.Prev != nil && interval.StopOffset < q.Prev.StopOffset {
 		t := &Interval[T]{
 			StartOffset: interval.StopOffset,
 			StopOffset:  q.Prev.StopOffset,
@@ -114,7 +111,9 @@ func (list *IntervalList[T]) addInterval(interval *Interval[T]) {
 		t.Prev = interval
 	} else {
 		q.Prev = interval
-		interval.Next = q
+		if q != list.tail {
+			interval.Next = q
+		}
 	}
 
 }
@@ -124,5 +123,5 @@ func (list *IntervalList[T]) Len() int {
 	for t := list.head; t != nil; t = t.Next {
 		count++
 	}
-	return count - 2
+	return count - 1
 }

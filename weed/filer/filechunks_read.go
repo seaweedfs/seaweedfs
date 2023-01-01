@@ -7,7 +7,7 @@ import (
 )
 
 // readResolvedChunks returns a container.List of VisibleInterval
-func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles *list.List) {
+func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles *IntervalList[VisibleInterval]) {
 
 	var points []*Point
 	for _, chunk := range chunks {
@@ -43,7 +43,7 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOff
 
 	var prevX int64
 	queue := list.New() // points with higher ts are at the tail
-	visibles = list.New()
+	visibles = NewIntervalList[VisibleInterval]()
 	var prevPoint *Point
 	for _, point := range points {
 		if queue.Len() > 0 {
@@ -54,7 +54,7 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOff
 		if point.isStart {
 			if prevPoint != nil {
 				if point.x != prevX && prevPoint.ts < point.ts {
-					visibles = addToVisibles(visibles, prevX, prevPoint, point)
+					addToVisibles(visibles, prevX, prevPoint, point)
 					prevX = point.x
 				}
 			}
@@ -80,7 +80,7 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOff
 				isLast = false
 			}
 			if isLast && prevPoint != nil {
-				visibles = addToVisibles(visibles, prevX, prevPoint, point)
+				addToVisibles(visibles, prevX, prevPoint, point)
 				prevX = point.x
 			}
 		}
@@ -89,7 +89,7 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOff
 	return
 }
 
-func addToVisibles(visibles *list.List, prevX int64, startPoint *Point, point *Point) *list.List {
+func addToVisibles(visibles *IntervalList[VisibleInterval], prevX int64, startPoint *Point, point *Point) {
 	if prevX < point.x {
 		chunk := startPoint.chunk
 		visible := VisibleInterval{
@@ -102,9 +102,13 @@ func addToVisibles(visibles *list.List, prevX int64, startPoint *Point, point *P
 			cipherKey:    chunk.CipherKey,
 			isGzipped:    chunk.IsCompressed,
 		}
-		visibles.PushBack(visible)
+		visibles.AppendInterval(&Interval[VisibleInterval]{
+			StartOffset: visible.start,
+			StopOffset:  visible.stop,
+			TsNs:        visible.modifiedTsNs,
+			Value:       visible,
+		})
 	}
-	return visibles
 }
 
 type Point struct {

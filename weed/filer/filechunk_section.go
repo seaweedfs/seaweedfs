@@ -1,7 +1,6 @@
 package filer
 
 import (
-	"container/list"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"sync"
 )
@@ -11,7 +10,7 @@ type SectionIndex int64
 type FileChunkSection struct {
 	sectionIndex     SectionIndex
 	chunks           []*filer_pb.FileChunk
-	visibleIntervals *list.List
+	visibleIntervals *IntervalList[VisibleInterval]
 	chunkViews       []*ChunkView
 	reader           *ChunkReadAt
 	lock             sync.Mutex
@@ -57,8 +56,8 @@ func (section *FileChunkSection) DataStartOffset(group *ChunkGroup, offset int64
 
 	section.setupForRead(group, fileSize)
 
-	for x := section.visibleIntervals.Front(); x != nil; x = x.Next() {
-		visible := x.Value.(VisibleInterval)
+	for x := section.visibleIntervals.Front(); x != nil; x = x.Next {
+		visible := x.Value
 		if visible.stop <= offset {
 			continue
 		}
@@ -77,8 +76,8 @@ func (section *FileChunkSection) NextStopOffset(group *ChunkGroup, offset int64,
 	section.setupForRead(group, fileSize)
 
 	isAfterOffset := false
-	for x := section.visibleIntervals.Front(); x != nil; x = x.Next() {
-		visible := x.Value.(VisibleInterval)
+	for x := section.visibleIntervals.Front(); x != nil; x = x.Next {
+		visible := x.Value
 		if !isAfterOffset {
 			if visible.stop <= offset {
 				continue

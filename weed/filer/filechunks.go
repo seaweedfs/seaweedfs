@@ -71,10 +71,10 @@ func CompactFileChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks 
 	return
 }
 
-func SeparateGarbageChunks(visibles *list.List, chunks []*filer_pb.FileChunk) (compacted []*filer_pb.FileChunk, garbage []*filer_pb.FileChunk) {
+func SeparateGarbageChunks(visibles *IntervalList[VisibleInterval], chunks []*filer_pb.FileChunk) (compacted []*filer_pb.FileChunk, garbage []*filer_pb.FileChunk) {
 	fileIds := make(map[string]bool)
-	for x := visibles.Front(); x != nil; x = x.Next() {
-		interval := x.Value.(VisibleInterval)
+	for x := visibles.Front(); x != nil; x = x.Next {
+		interval := x.Value
 		fileIds[interval.fileId] = true
 	}
 	for _, chunk := range chunks {
@@ -159,7 +159,7 @@ func ViewFromChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*
 
 }
 
-func ViewFromVisibleIntervals(visibles *list.List, offset int64, size int64) (chunkViews *list.List) {
+func ViewFromVisibleIntervals(visibles *IntervalList[VisibleInterval], offset int64, size int64) (chunkViews *list.List) {
 
 	stop := offset + size
 	if size == math.MaxInt64 {
@@ -170,8 +170,8 @@ func ViewFromVisibleIntervals(visibles *list.List, offset int64, size int64) (ch
 	}
 
 	chunkViews = list.New()
-	for x := visibles.Front(); x != nil; x = x.Next() {
-		chunk := x.Value.(VisibleInterval)
+	for x := visibles.Front(); x != nil; x = x.Next {
+		chunk := x.Value
 
 		chunkStart, chunkStop := max(offset, chunk.start), min(stop, chunk.stop)
 
@@ -254,7 +254,7 @@ func MergeIntoVisibles(visibles []VisibleInterval, chunk *filer_pb.FileChunk) (n
 
 // NonOverlappingVisibleIntervals translates the file chunk into VisibleInterval in memory
 // If the file chunk content is a chunk manifest
-func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles *list.List, err error) {
+func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles *IntervalList[VisibleInterval], err error) {
 
 	chunks, _, err = ResolveChunkManifest(lookupFileIdFn, chunks, startOffset, stopOffset)
 	if err != nil {

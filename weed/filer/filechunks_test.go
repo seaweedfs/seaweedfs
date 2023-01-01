@@ -1,7 +1,6 @@
 package filer
 
 import (
-	"container/list"
 	"fmt"
 	"log"
 	"math"
@@ -93,8 +92,8 @@ func TestRandomFileChunksCompact(t *testing.T) {
 
 	visibles, _ := NonOverlappingVisibleIntervals(nil, chunks, 0, math.MaxInt64)
 
-	for visible := visibles.Front(); visible != nil; visible = visible.Next() {
-		v := visible.Value.(VisibleInterval)
+	for visible := visibles.Front(); visible != nil; visible = visible.Next {
+		v := visible.Value
 		for x := v.start; x < v.stop; x++ {
 			assert.Equal(t, strconv.Itoa(int(data[x])), v.fileId)
 		}
@@ -231,16 +230,16 @@ func TestIntervalMerging(t *testing.T) {
 		log.Printf("++++++++++ merged test case %d ++++++++++++++++++++", i)
 		intervals, _ := NonOverlappingVisibleIntervals(nil, testcase.Chunks, 0, math.MaxInt64)
 		x := -1
-		for visible := intervals.Front(); visible != nil; visible = visible.Next() {
+		for visible := intervals.Front(); visible != nil; visible = visible.Next {
 			x++
-			interval := visible.Value.(VisibleInterval)
+			interval := visible.Value
 			log.Printf("test case %d, interval start=%d, stop=%d, fileId=%s",
 				i, interval.start, interval.stop, interval.fileId)
 		}
 		x = -1
-		for visible := intervals.Front(); visible != nil; visible = visible.Next() {
+		for visible := intervals.Front(); visible != nil; visible = visible.Next {
 			x++
-			interval := visible.Value.(VisibleInterval)
+			interval := visible.Value
 			if interval.start != testcase.Expected[x].start {
 				t.Fatalf("failed on test case %d, interval %d, start %d, expect %d",
 					i, x, interval.start, testcase.Expected[x].start)
@@ -478,19 +477,28 @@ func BenchmarkCompactFileChunks(b *testing.B) {
 	}
 }
 
+func addVisibleInterval(visibles *IntervalList[VisibleInterval], x VisibleInterval) {
+	visibles.AppendInterval(&Interval[VisibleInterval]{
+		StartOffset: x.start,
+		StopOffset:  x.stop,
+		TsNs:        x.modifiedTsNs,
+		Value:       x,
+	})
+}
+
 func TestViewFromVisibleIntervals(t *testing.T) {
-	visibles := list.New()
-	visibles.PushBack(VisibleInterval{
+	visibles := NewIntervalList[VisibleInterval]()
+	addVisibleInterval(visibles, VisibleInterval{
 		start:  0,
 		stop:   25,
 		fileId: "fid1",
 	})
-	visibles.PushBack(VisibleInterval{
+	addVisibleInterval(visibles, VisibleInterval{
 		start:  4096,
 		stop:   8192,
 		fileId: "fid2",
 	})
-	visibles.PushBack(VisibleInterval{
+	addVisibleInterval(visibles, VisibleInterval{
 		start:  16384,
 		stop:   18551,
 		fileId: "fid3",
@@ -505,13 +513,13 @@ func TestViewFromVisibleIntervals(t *testing.T) {
 }
 
 func TestViewFromVisibleIntervals2(t *testing.T) {
-	visibles := list.New()
-	visibles.PushBack(VisibleInterval{
+	visibles := NewIntervalList[VisibleInterval]()
+	addVisibleInterval(visibles, VisibleInterval{
 		start:  344064,
 		stop:   348160,
 		fileId: "fid1",
 	})
-	visibles.PushBack(VisibleInterval{
+	addVisibleInterval(visibles, VisibleInterval{
 		start:  348160,
 		stop:   356352,
 		fileId: "fid2",
@@ -526,13 +534,13 @@ func TestViewFromVisibleIntervals2(t *testing.T) {
 }
 
 func TestViewFromVisibleIntervals3(t *testing.T) {
-	visibles := list.New()
-	visibles.PushBack(VisibleInterval{
+	visibles := NewIntervalList[VisibleInterval]()
+	addVisibleInterval(visibles, VisibleInterval{
 		start:  1000,
 		stop:   2000,
 		fileId: "fid1",
 	})
-	visibles.PushBack(VisibleInterval{
+	addVisibleInterval(visibles, VisibleInterval{
 		start:  3000,
 		stop:   4000,
 		fileId: "fid2",

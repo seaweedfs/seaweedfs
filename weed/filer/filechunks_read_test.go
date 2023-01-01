@@ -46,8 +46,8 @@ func TestReadResolvedChunks(t *testing.T) {
 	visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
 
 	fmt.Printf("resolved to %d visible intervales\n", visibles.Len())
-	for x := visibles.Front(); x != nil; x = x.Next() {
-		visible := x.Value.(VisibleInterval)
+	for x := visibles.Front(); x != nil; x = x.Next {
+		visible := x.Value
 		fmt.Printf("[%d,%d) %s %d\n", visible.start, visible.stop, visible.fileId, visible.modifiedTsNs)
 	}
 
@@ -73,8 +73,8 @@ func TestReadResolvedChunks2(t *testing.T) {
 	visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
 
 	fmt.Printf("resolved to %d visible intervales\n", visibles.Len())
-	for x := visibles.Front(); x != nil; x = x.Next() {
-		visible := x.Value.(VisibleInterval)
+	for x := visibles.Front(); x != nil; x = x.Next {
+		visible := x.Value
 		fmt.Printf("[%d,%d) %s %d\n", visible.start, visible.stop, visible.fileId, visible.modifiedTsNs)
 	}
 
@@ -104,8 +104,8 @@ func TestRandomizedReadResolvedChunks(t *testing.T) {
 
 	visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
 
-	for x := visibles.Front(); x != nil; x = x.Next() {
-		visible := x.Value.(VisibleInterval)
+	for x := visibles.Front(); x != nil; x = x.Next {
+		visible := x.Value
 		for i := visible.start; i < visible.stop; i++ {
 			if array[i] != visible.modifiedTsNs {
 				t.Errorf("position %d expected ts %d actual ts %d", i, array[i], visible.modifiedTsNs)
@@ -234,8 +234,8 @@ func TestActualReadResolvedChunks(t *testing.T) {
 
 	visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
 
-	for x := visibles.Front(); x != nil; x = x.Next() {
-		visible := x.Value.(VisibleInterval)
+	for x := visibles.Front(); x != nil; x = x.Next {
+		visible := x.Value
 		fmt.Printf("[%d,%d) %s %d\n", visible.start, visible.stop, visible.fileId, visible.modifiedTsNs)
 	}
 
@@ -272,8 +272,8 @@ func TestActualReadResolvedChunks2(t *testing.T) {
 
 	visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
 
-	for x := visibles.Front(); x != nil; x = x.Next() {
-		visible := x.Value.(VisibleInterval)
+	for x := visibles.Front(); x != nil; x = x.Next {
+		visible := x.Value
 		fmt.Printf("[%d,%d) %s %d\n", visible.start, visible.stop, visible.fileId, visible.modifiedTsNs)
 	}
 

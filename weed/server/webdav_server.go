@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"container/list"
 	"context"
 	"fmt"
 	"io"
@@ -108,7 +107,7 @@ type WebDavFile struct {
 	isDirectory      bool
 	off              int64
 	entry            *filer_pb.Entry
-	visibleIntervals *list.List
+	visibleIntervals *filer.IntervalList[filer.VisibleInterval]
 	reader           io.ReaderAt
 	bufWriter        *buffered_writer.BufferedWriteCloser
 }
