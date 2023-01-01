@@ -41,13 +41,13 @@ enabled = false
 dbFile = "./filer.db"                # sqlite db file
 
 [mysql]  # or memsql, tidb
-# CREATE TABLE IF NOT EXISTS filemeta (
-#   dirhash     BIGINT               COMMENT 'first 64 bits of MD5 hash value of directory field',
-#   name        VARCHAR(1000) BINARY COMMENT 'directory or file name',
-#   directory   TEXT BINARY          COMMENT 'full path to parent directory',
-#   meta        LONGBLOB,
-#   PRIMARY KEY (dirhash, name)
-# ) DEFAULT CHARSET=utf8;
+# CREATE TABLE IF NOT EXISTS `filemeta` (
+#   `dirhash`   BIGINT NOT NULL       COMMENT 'first 64 bits of MD5 hash value of directory field',
+#   `name`      VARCHAR(766) NOT NULL COMMENT 'directory or file name',
+#   `directory` TEXT NOT NULL         COMMENT 'full path to parent directory',
+#   `meta`      LONGBLOB NOT NULL,
+#   PRIMARY KEY (`dirhash`, `name`)
+# ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 enabled = false
 hostname = "localhost"
@@ -61,18 +61,18 @@ connection_max_lifetime_seconds = 0
 interpolateParams = false
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
 enableUpsert = true
-upsertQuery = """INSERT INTO `%s` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
+upsertQuery = """INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES (?,?,?,?) AS `new` ON DUPLICATE KEY UPDATE `meta` = `new`.`meta`"""
 
 [mysql2]  # or memsql, tidb
 enabled = false
 createTable = """
   CREATE TABLE IF NOT EXISTS `%s` (
-    dirhash BIGINT,
-    name VARCHAR(1000) BINARY,
-    directory TEXT BINARY,
-    meta LONGBLOB,
-    PRIMARY KEY (dirhash, name)
-  ) DEFAULT CHARSET=utf8;
+    `dirhash`   BIGINT NOT NULL,
+    `name`      VARCHAR(766) NOT NULL,
+    `directory` TEXT NOT NULL,
+    `meta`      LONGBLOB NOT NULL,
+    PRIMARY KEY (`dirhash`, `name`)
+  ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 """
 hostname = "localhost"
 port = 3306
@@ -85,7 +85,7 @@ connection_max_lifetime_seconds = 0
 interpolateParams = false
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
 enableUpsert = true
-upsertQuery = """INSERT INTO `%s` (dirhash,name,directory,meta) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE meta = VALUES(meta)"""
+upsertQuery = """INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES (?,?,?,?) AS `new` ON DUPLICATE KEY UPDATE `meta` = `new`.`meta`"""
 
 [postgres] # or cockroachdb, YugabyteDB
 # CREATE TABLE IF NOT EXISTS filemeta (

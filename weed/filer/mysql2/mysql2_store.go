@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	CONNECTION_URL_PATTERN = "%s:%s@tcp(%s:%d)/%s?charset=utf8"
+	CONNECTION_URL_PATTERN = "%s:%s@tcp(%s:%d)/%s?collation=utf8mb4_bin"
 )
 
 var _ filer.BucketAware = (*MysqlStore2)(nil)
@@ -58,7 +58,7 @@ func (store *MysqlStore2) initialize(createTable, upsertQuery string, enableUpse
 	}
 	store.SqlGenerator = &mysql.SqlGenMysql{
 		CreateTableSqlTemplate: createTable,
-		DropTableSqlTemplate:   "drop table `%s`",
+		DropTableSqlTemplate:   "DROP TABLE `%s`",
 		UpsertQueryTemplate:    upsertQuery,
 	}
 
