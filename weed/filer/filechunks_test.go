@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"container/list"
 	"fmt"
 	"log"
 	"math"
@@ -92,7 +93,8 @@ func TestRandomFileChunksCompact(t *testing.T) {
 
 	visibles, _ := NonOverlappingVisibleIntervals(nil, chunks, 0, math.MaxInt64)
 
-	for _, v := range visibles {
+	for visible := visibles.Front(); visible != nil; visible = visible.Next() {
+		v := visible.Value.(VisibleInterval)
 		for x := v.start; x < v.stop; x++ {
 			assert.Equal(t, strconv.Itoa(int(data[x])), v.fileId)
 		}
@@ -228,11 +230,17 @@ func TestIntervalMerging(t *testing.T) {
 	for i, testcase := range testcases {
 		log.Printf("++++++++++ merged test case %d ++++++++++++++++++++", i)
 		intervals, _ := NonOverlappingVisibleIntervals(nil, testcase.Chunks, 0, math.MaxInt64)
-		for x, interval := range intervals {
-			log.Printf("test case %d, interval %d, start=%d, stop=%d, fileId=%s",
-				i, x, interval.start, interval.stop, interval.fileId)
+		x := -1
+		for visible := intervals.Front(); visible != nil; visible = visible.Next() {
+			x++
+			interval := visible.Value.(VisibleInterval)
+			log.Printf("test case %d, interval start=%d, stop=%d, fileId=%s",
+				i, interval.start, interval.stop, interval.fileId)
 		}
-		for x, interval := range intervals {
+		x = -1
+		for visible := intervals.Front(); visible != nil; visible = visible.Next() {
+			x++
+			interval := visible.Value.(VisibleInterval)
 			if interval.start != testcase.Expected[x].start {
 				t.Fatalf("failed on test case %d, interval %d, start %d, expect %d",
 					i, x, interval.start, testcase.Expected[x].start)
@@ -250,8 +258,8 @@ func TestIntervalMerging(t *testing.T) {
 					i, x, interval.chunkOffset, testcase.Expected[x].chunkOffset)
 			}
 		}
-		if len(intervals) != len(testcase.Expected) {
-			t.Fatalf("failed to compact test case %d, len %d expected %d", i, len(intervals), len(testcase.Expected))
+		if intervals.Len() != len(testcase.Expected) {
+			t.Fatalf("failed to compact test case %d, len %d expected %d", i, intervals.Len(), len(testcase.Expected))
 		}
 
 	}
@@ -468,72 +476,69 @@ func BenchmarkCompactFileChunks(b *testing.B) {
 }
 
 func TestViewFromVisibleIntervals(t *testing.T) {
-	visibles := []VisibleInterval{
-		{
-			start:  0,
-			stop:   25,
-			fileId: "fid1",
-		},
-		{
-			start:  4096,
-			stop:   8192,
-			fileId: "fid2",
-		},
-		{
-			start:  16384,
-			stop:   18551,
-			fileId: "fid3",
-		},
-	}
+	visibles := list.New()
+	visibles.PushBack(VisibleInterval{
+		start:  0,
+		stop:   25,
+		fileId: "fid1",
+	})
+	visibles.PushBack(VisibleInterval{
+		start:  4096,
+		stop:   8192,
+		fileId: "fid2",
+	})
+	visibles.PushBack(VisibleInterval{
+		start:  16384,
+		stop:   18551,
+		fileId: "fid3",
+	})
 
 	views := ViewFromVisibleIntervals(visibles, 0, math.MaxInt32)
 
-	if len(views) != len(visibles) {
-		assert.Equal(t, len(visibles), len(views), "ViewFromVisibleIntervals error")
+	if len(views) != visibles.Len() {
+		assert.Equal(t, visibles.Len(), len(views), "ViewFromVisibleIntervals error")
 	}
 
 }
 
 func TestViewFromVisibleIntervals2(t *testing.T) {
-	visibles := []VisibleInterval{
-		{
-			start:  344064,
-			stop:   348160,
-			fileId: "fid1",
-		},
-		{
-			start:  348160,
-			stop:   356352,
-			fileId: "fid2",
-		},
-	}
+	visibles := list.New()
+	visibles.PushBack(VisibleInterval{
+		start:  344064,
+		stop:   348160,
+		fileId: "fid1",
+	})
+	visibles.PushBack(VisibleInterval{
+		start:  348160,
+		stop:   356352,
+		fileId: "fid2",
+	})
 
 	views := ViewFromVisibleIntervals(visibles, 0, math.MaxInt32)
 
-	if len(views) != len(visibles) {
-		assert.Equal(t, len(visibles), len(views), "ViewFromVisibleIntervals error")
+	if len(views) != visibles.Len() {
+		assert.Equal(t, visibles.Len(), len(views), "ViewFromVisibleIntervals error")
 	}
 
 }
 
 func TestViewFromVisibleIntervals3(t *testing.T) {
-	visibles := []VisibleInterval{
-		{
-			start:  1000,
-			stop:   2000,
-			fileId: "fid1",
-		},
-		{
-			start:  3000,
-			stop:   4000,
-			fileId: "fid2",
-		},
-	}
+	visibles := list.New()
+	visibles.PushBack(VisibleInterval{
+		start:  1000,
+		stop:   2000,
+		fileId: "fid1",
+	})
+	visibles.PushBack(VisibleInterval{
+		start:  3000,
+		stop:   4000,
+		fileId: "fid2",
+	})
 
 	views := ViewFromVisibleIntervals(visibles, 1700, 1500)
 
-	if len(views) != len(visibles) {
-		assert.Equal(t, len(visibles), len(views), "ViewFromVisibleIntervals error")
+	if len(views) != visibles.Len() {
+		assert.Equal(t, visibles.Len(), len(views), "ViewFromVisibleIntervals error")
 	}
 
 }

@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"container/list"
 	"context"
 	"fmt"
 	"io"
@@ -102,14 +103,14 @@ func (fi *FileInfo) IsDir() bool        { return fi.isDirectory }
 func (fi *FileInfo) Sys() interface{}   { return nil }
 
 type WebDavFile struct {
-	fs             *WebDavFileSystem
-	name           string
-	isDirectory    bool
-	off            int64
-	entry          *filer_pb.Entry
-	entryViewCache []filer.VisibleInterval
-	reader         io.ReaderAt
-	bufWriter      *buffered_writer.BufferedWriteCloser
+	fs               *WebDavFileSystem
+	name             string
+	isDirectory      bool
+	off              int64
+	entry            *filer_pb.Entry
+	visibleIntervals *list.List
+	reader           io.ReaderAt
+	bufWriter        *buffered_writer.BufferedWriteCloser
 }
 
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
@@ -498,7 +499,7 @@ func (f *WebDavFile) Close() error {
 
 	if f.entry != nil {
 		f.entry = nil
-		f.entryViewCache = nil
+		f.visibleIntervals = nil
 	}
 
 	return err
@@ -521,12 +522,12 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	if fileSize == 0 {
 		return 0, io.EOF
 	}
-	if f.entryViewCache == nil {
-		f.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(filer.LookupFn(f.fs), f.entry.GetChunks(), 0, fileSize)
+	if f.visibleIntervals == nil {
+		f.visibleIntervals, _ = filer.NonOverlappingVisibleIntervals(filer.LookupFn(f.fs), f.entry.GetChunks(), 0, fileSize)
 		f.reader = nil
 	}
 	if f.reader == nil {
-		chunkViews := filer.ViewFromVisibleIntervals(f.entryViewCache, 0, fileSize)
+		chunkViews := filer.ViewFromVisibleIntervals(f.visibleIntervals, 0, fileSize)
 		f.reader = filer.NewChunkReaderAtFromClient(filer.LookupFn(f.fs), chunkViews, f.fs.chunkCache, fileSize)
 	}
 

@@ -6,7 +6,8 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles []VisibleInterval) {
+// readResolvedChunks returns a container.List of VisibleInterval
+func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles *list.List) {
 
 	var points []*Point
 	for _, chunk := range chunks {
@@ -42,6 +43,7 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOff
 
 	var prevX int64
 	queue := list.New() // points with higher ts are at the tail
+	visibles = list.New()
 	var prevPoint *Point
 	for _, point := range points {
 		if queue.Len() > 0 {
@@ -87,10 +89,10 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOff
 	return
 }
 
-func addToVisibles(visibles []VisibleInterval, prevX int64, startPoint *Point, point *Point) []VisibleInterval {
+func addToVisibles(visibles *list.List, prevX int64, startPoint *Point, point *Point) *list.List {
 	if prevX < point.x {
 		chunk := startPoint.chunk
-		visibles = append(visibles, VisibleInterval{
+		visible := VisibleInterval{
 			start:        prevX,
 			stop:         point.x,
 			fileId:       chunk.GetFileIdString(),
@@ -99,7 +101,8 @@ func addToVisibles(visibles []VisibleInterval, prevX int64, startPoint *Point, p
 			chunkSize:    chunk.Size,
 			cipherKey:    chunk.CipherKey,
 			isGzipped:    chunk.IsCompressed,
-		})
+		}
+		visibles.PushBack(visible)
 	}
 	return visibles
 }
