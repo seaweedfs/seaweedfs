@@ -138,8 +138,8 @@ func DoMinusChunksBySourceFileId(as, bs []*filer_pb.FileChunk) (delta []*filer_p
 type ChunkView struct {
 	FileId        string
 	OffsetInChunk int64 // offset within the chunk
-	Size          uint64
-	LogicOffset   int64 // actual offset in the file, for the data specified via [offset, offset+size) in current chunk
+	ViewSize      uint64
+	ViewOffset    int64 // actual offset in the file, for the data specified via [offset, offset+size) in current chunk
 	ChunkSize     uint64
 	CipherKey     []byte
 	IsGzipped     bool
@@ -147,7 +147,7 @@ type ChunkView struct {
 }
 
 func (cv *ChunkView) IsFullChunk() bool {
-	return cv.Size == cv.ChunkSize
+	return cv.ViewSize == cv.ChunkSize
 }
 
 func ViewFromChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, offset int64, size int64) (chunkViews *IntervalList[*ChunkView]) {
@@ -178,8 +178,8 @@ func ViewFromVisibleIntervals(visibles *IntervalList[VisibleInterval], offset in
 			chunkView := &ChunkView{
 				FileId:        chunk.fileId,
 				OffsetInChunk: chunkStart - chunk.start + chunk.offsetInChunk,
-				Size:          uint64(chunkStop - chunkStart),
-				LogicOffset:   chunkStart,
+				ViewSize:      uint64(chunkStop - chunkStart),
+				ViewOffset:    chunkStart,
 				ChunkSize:     chunk.chunkSize,
 				CipherKey:     chunk.cipherKey,
 				IsGzipped:     chunk.isGzipped,
@@ -224,7 +224,7 @@ func MergeIntoVisibles(visibles []VisibleInterval, chunk *filer_pb.FileChunk) (n
 	}
 
 	logPrintf("  before", visibles)
-	// glog.V(0).Infof("newVisibles %d adding chunk [%d,%d) %s size:%d", len(newVisibles), chunk.Offset, chunk.Offset+int64(chunk.Size), chunk.GetFileIdString(), chunk.Size)
+	// glog.V(0).Infof("newVisibles %d adding chunk [%d,%d) %s size:%d", len(newVisibles), chunk.Offset, chunk.Offset+int64(chunk.ViewSize), chunk.GetFileIdString(), chunk.ViewSize)
 	chunkStop := chunk.Offset + int64(chunk.Size)
 	for _, v := range visibles {
 		if v.start < chunk.Offset && chunk.Offset < v.stop {
