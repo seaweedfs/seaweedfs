@@ -136,14 +136,14 @@ func DoMinusChunksBySourceFileId(as, bs []*filer_pb.FileChunk) (delta []*filer_p
 }
 
 type ChunkView struct {
-	FileId       string
-	Offset       int64
-	Size         uint64
-	LogicOffset  int64 // actual offset in the file, for the data specified via [offset, offset+size) in current chunk
-	ChunkSize    uint64
-	CipherKey    []byte
-	IsGzipped    bool
-	ModifiedTsNs int64
+	FileId        string
+	OffsetInChunk int64 // offset within the chunk
+	Size          uint64
+	LogicOffset   int64 // actual offset in the file, for the data specified via [offset, offset+size) in current chunk
+	ChunkSize     uint64
+	CipherKey     []byte
+	IsGzipped     bool
+	ModifiedTsNs  int64
 }
 
 func (cv *ChunkView) IsFullChunk() bool {
@@ -176,14 +176,14 @@ func ViewFromVisibleIntervals(visibles *IntervalList[VisibleInterval], offset in
 
 		if chunkStart < chunkStop {
 			chunkView := &ChunkView{
-				FileId:       chunk.fileId,
-				Offset:       chunkStart - chunk.start + chunk.chunkOffset,
-				Size:         uint64(chunkStop - chunkStart),
-				LogicOffset:  chunkStart,
-				ChunkSize:    chunk.chunkSize,
-				CipherKey:    chunk.cipherKey,
-				IsGzipped:    chunk.isGzipped,
-				ModifiedTsNs: chunk.modifiedTsNs,
+				FileId:        chunk.fileId,
+				OffsetInChunk: chunkStart - chunk.start + chunk.offsetInChunk,
+				Size:          uint64(chunkStop - chunkStart),
+				LogicOffset:   chunkStart,
+				ChunkSize:     chunk.chunkSize,
+				CipherKey:     chunk.cipherKey,
+				IsGzipped:     chunk.isGzipped,
+				ModifiedTsNs:  chunk.modifiedTsNs,
 			}
 			chunkViews.AppendInterval(&Interval[*ChunkView]{
 				StartOffset: chunkStart,
@@ -277,26 +277,26 @@ func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunction
 // visible interval map to one file chunk
 
 type VisibleInterval struct {
-	start        int64
-	stop         int64
-	modifiedTsNs int64
-	fileId       string
-	chunkOffset  int64
-	chunkSize    uint64
-	cipherKey    []byte
-	isGzipped    bool
+	start         int64
+	stop          int64
+	modifiedTsNs  int64
+	fileId        string
+	offsetInChunk int64
+	chunkSize     uint64
+	cipherKey     []byte
+	isGzipped     bool
 }
 
-func newVisibleInterval(start, stop int64, fileId string, modifiedTime int64, chunkOffset int64, chunkSize uint64, cipherKey []byte, isGzipped bool) VisibleInterval {
+func newVisibleInterval(start, stop int64, fileId string, modifiedTime int64, offsetInChunk int64, chunkSize uint64, cipherKey []byte, isGzipped bool) VisibleInterval {
 	return VisibleInterval{
-		start:        start,
-		stop:         stop,
-		fileId:       fileId,
-		modifiedTsNs: modifiedTime,
-		chunkOffset:  chunkOffset, // the starting position in the chunk
-		chunkSize:    chunkSize,
-		cipherKey:    cipherKey,
-		isGzipped:    isGzipped,
+		start:         start,
+		stop:          stop,
+		fileId:        fileId,
+		modifiedTsNs:  modifiedTime,
+		offsetInChunk: offsetInChunk, // the starting position in the chunk
+		chunkSize:     chunkSize,     // size of the chunk
+		cipherKey:     cipherKey,
+		isGzipped:     isGzipped,
 	}
 }
 

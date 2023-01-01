@@ -154,7 +154,7 @@ func (c *ChunkReadAt) doReadAt(p []byte, offset int64) (n int, ts int64, err err
 			continue
 		}
 		// glog.V(4).Infof("read [%d,%d), %d/%d chunk %s [%d,%d)", chunkStart, chunkStop, i, len(c.chunkViews), chunk.FileId, chunk.LogicOffset-chunk.Offset, chunk.LogicOffset-chunk.Offset+int64(chunk.Size))
-		bufferOffset := chunkStart - chunk.LogicOffset + chunk.Offset
+		bufferOffset := chunkStart - chunk.LogicOffset + chunk.OffsetInChunk
 		ts = chunk.ModifiedTsNs
 		copied, err := c.readChunkSliceAt(p[startOffset-offset:chunkStop-chunkStart+startOffset-offset], chunk, nextChunks, uint64(bufferOffset))
 		if err != nil {
@@ -203,7 +203,7 @@ func (c *ChunkReadAt) readChunkSliceAt(buffer []byte, chunkView *ChunkView, next
 
 	n, err = c.readerCache.ReadChunkAt(buffer, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int64(offset), int(chunkView.ChunkSize), chunkView.LogicOffset == 0)
 	if c.lastChunkFid != chunkView.FileId {
-		if chunkView.Offset == 0 { // start of a new chunk
+		if chunkView.OffsetInChunk == 0 { // start of a new chunk
 			if c.lastChunkFid != "" {
 				c.readerCache.UnCache(c.lastChunkFid)
 			}

@@ -92,14 +92,14 @@ func addToVisibles(visibles *IntervalList[VisibleInterval], prevX int64, startPo
 	if prevX < point.x {
 		chunk := startPoint.chunk
 		visible := VisibleInterval{
-			start:        prevX,
-			stop:         point.x,
-			fileId:       chunk.GetFileIdString(),
-			modifiedTsNs: chunk.ModifiedTsNs,
-			chunkOffset:  prevX - chunk.Offset,
-			chunkSize:    chunk.Size,
-			cipherKey:    chunk.CipherKey,
-			isGzipped:    chunk.IsCompressed,
+			start:         prevX,
+			stop:          point.x,
+			fileId:        chunk.GetFileIdString(),
+			modifiedTsNs:  chunk.ModifiedTsNs,
+			offsetInChunk: prevX - chunk.Offset,
+			chunkSize:     chunk.Size,
+			cipherKey:     chunk.CipherKey,
+			isGzipped:     chunk.IsCompressed,
 		}
 		visibles.AppendInterval(&Interval[VisibleInterval]{
 			StartOffset: visible.start,
