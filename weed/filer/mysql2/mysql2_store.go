@@ -58,7 +58,7 @@ func (store *MysqlStore2) initialize(createTable, upsertQuery string, enableUpse
 	}
 	store.SqlGenerator = &mysql.SqlGenMysql{
 		CreateTableSqlTemplate: createTable,
-		DropTableSqlTemplate:   "drop table `%s`",
+		DropTableSqlTemplate:   "DROP TABLE `%s`",
 		UpsertQueryTemplate:    upsertQuery,
 	}
 
