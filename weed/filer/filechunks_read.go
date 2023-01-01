@@ -101,13 +101,17 @@ func addToVisibles(visibles *IntervalList[VisibleInterval], prevX int64, startPo
 			cipherKey:     chunk.CipherKey,
 			isGzipped:     chunk.IsCompressed,
 		}
-		visibles.AppendInterval(&Interval[VisibleInterval]{
-			StartOffset: visible.start,
-			StopOffset:  visible.stop,
-			TsNs:        visible.modifiedTsNs,
-			Value:       visible,
-		})
+		appendVisibleInterfal(visibles, visible)
 	}
+}
+
+func appendVisibleInterfal(visibles *IntervalList[VisibleInterval], visible VisibleInterval) {
+	visibles.AppendInterval(&Interval[VisibleInterval]{
+		StartOffset: visible.start,
+		StopOffset:  visible.stop,
+		TsNs:        visible.modifiedTsNs,
+		Value:       visible,
+	})
 }
 
 type Point struct {
