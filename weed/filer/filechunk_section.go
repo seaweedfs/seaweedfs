@@ -16,6 +16,12 @@ type FileChunkSection struct {
 	lock             sync.Mutex
 }
 
+func NewFileChunkSection(si SectionIndex) *FileChunkSection {
+	return &FileChunkSection{
+		sectionIndex: si,
+	}
+}
+
 func (section *FileChunkSection) addChunk(chunk *filer_pb.FileChunk) error {
 	section.lock.Lock()
 	defer section.lock.Unlock()

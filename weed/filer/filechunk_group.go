@@ -35,9 +35,7 @@ func (group *ChunkGroup) AddChunk(chunk *filer_pb.FileChunk) error {
 	for si := sectionIndexStart; si < sectionIndexStop+1; si++ {
 		section, found := group.sections[si]
 		if !found {
-			section = &FileChunkSection{
-				sectionIndex: si,
-			}
+			section = NewFileChunkSection(si)
 			group.sections[si] = section
 		}
 		section.addChunk(chunk)
@@ -93,9 +91,7 @@ func (group *ChunkGroup) SetChunks(chunks []*filer_pb.FileChunk) error {
 		for si := sectionIndexStart; si < sectionIndexStop+1; si++ {
 			section, found := group.sections[si]
 			if !found {
-				section = &FileChunkSection{
-					sectionIndex: si,
-				}
+				section = NewFileChunkSection(si)
 				group.sections[si] = section
 			}
 			section.chunks = append(section.chunks, chunk)
