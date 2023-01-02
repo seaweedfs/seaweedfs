@@ -17,7 +17,6 @@ import (
 type ChunkReadAt struct {
 	masterClient  *wdclient.MasterClient
 	chunkViews    *IntervalList[*ChunkView]
-	readerLock    sync.Mutex
 	fileSize      int64
 	readerCache   *ReaderCache
 	readerPattern *ReaderPattern
@@ -108,8 +107,8 @@ func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
 
 	c.readerPattern.MonitorReadAt(offset, len(p))
 
-	c.readerLock.Lock()
-	defer c.readerLock.Unlock()
+	c.chunkViews.Lock.Lock()
+	defer c.chunkViews.Lock.Unlock()
 
 	// glog.V(4).Infof("ReadAt [%d,%d) of total file size %d bytes %d chunk views", offset, offset+int64(len(p)), c.fileSize, len(c.chunkViews))
 	n, _, err = c.doReadAt(p, offset)
@@ -120,8 +119,8 @@ func (c *ChunkReadAt) ReadAtWithTime(p []byte, offset int64) (n int, ts int64, e
 
 	c.readerPattern.MonitorReadAt(offset, len(p))
 
-	c.readerLock.Lock()
-	defer c.readerLock.Unlock()
+	c.chunkViews.Lock.Lock()
+	defer c.chunkViews.Lock.Unlock()
 
 	// glog.V(4).Infof("ReadAt [%d,%d) of total file size %d bytes %d chunk views", offset, offset+int64(len(p)), c.fileSize, len(c.chunkViews))
 	return c.doReadAt(p, offset)

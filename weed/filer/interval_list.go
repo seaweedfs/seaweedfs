@@ -2,6 +2,7 @@ package filer
 
 import (
 	"math"
+	"sync"
 )
 
 type Interval[T any] struct {
@@ -21,6 +22,7 @@ func (interval *Interval[T]) Size() int64 {
 type IntervalList[T any] struct {
 	head *Interval[T]
 	tail *Interval[T]
+	Lock sync.Mutex
 }
 
 func NewIntervalList[T any]() *IntervalList[T] {
@@ -66,6 +68,9 @@ func (list *IntervalList[T]) Overlay(startOffset, stopOffset, tsNs int64, value 
 		Value:       value,
 	}
 
+	list.Lock.Lock()
+	defer list.Lock.Unlock()
+
 	list.overlayInterval(interval)
 }
 
@@ -76,6 +81,9 @@ func (list *IntervalList[T]) InsertInterval(startOffset, stopOffset, tsNs int64,
 		TsNs:        tsNs,
 		Value:       value,
 	}
+
+	list.Lock.Lock()
+	defer list.Lock.Unlock()
 
 	list.insertInterval(interval)
 }
@@ -228,6 +236,9 @@ func (list *IntervalList[T]) overlayInterval(interval *Interval[T]) {
 }
 
 func (list *IntervalList[T]) Len() int {
+	list.Lock.Lock()
+	defer list.Lock.Unlock()
+
 	var count int
 	for t := list.head; t != nil; t = t.Next {
 		count++

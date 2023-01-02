@@ -5,7 +5,6 @@ import (
 	"io"
 	"math"
 	"strconv"
-	"sync"
 	"testing"
 )
 
@@ -68,7 +67,6 @@ func TestReaderAt(t *testing.T) {
 
 	readerAt := &ChunkReadAt{
 		chunkViews:    ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
-		readerLock:    sync.Mutex{},
 		fileSize:      10,
 		readerCache:   newReaderCache(3, &mockChunkCache{}, nil),
 		readerPattern: NewReaderPattern(),
@@ -116,7 +114,6 @@ func TestReaderAt0(t *testing.T) {
 
 	readerAt := &ChunkReadAt{
 		chunkViews:    ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
-		readerLock:    sync.Mutex{},
 		fileSize:      10,
 		readerCache:   newReaderCache(3, &mockChunkCache{}, nil),
 		readerPattern: NewReaderPattern(),
@@ -143,7 +140,6 @@ func TestReaderAt1(t *testing.T) {
 
 	readerAt := &ChunkReadAt{
 		chunkViews:    ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
-		readerLock:    sync.Mutex{},
 		fileSize:      20,
 		readerCache:   newReaderCache(3, &mockChunkCache{}, nil),
 		readerPattern: NewReaderPattern(),
@@ -177,7 +173,6 @@ func TestReaderAtGappedChunksDoNotLeak(t *testing.T) {
 
 	readerAt := &ChunkReadAt{
 		chunkViews:    ViewFromVisibleIntervals(visibles, 0, math.MaxInt64),
-		readerLock:    sync.Mutex{},
 		fileSize:      9,
 		readerCache:   newReaderCache(3, &mockChunkCache{}, nil),
 		readerPattern: NewReaderPattern(),
@@ -190,7 +185,6 @@ func TestReaderAtGappedChunksDoNotLeak(t *testing.T) {
 func TestReaderAtSparseFileDoesNotLeak(t *testing.T) {
 	readerAt := &ChunkReadAt{
 		chunkViews:    ViewFromVisibleIntervals(NewIntervalList[VisibleInterval](), 0, math.MaxInt64),
-		readerLock:    sync.Mutex{},
 		fileSize:      3,
 		readerCache:   newReaderCache(3, &mockChunkCache{}, nil),
 		readerPattern: NewReaderPattern(),
