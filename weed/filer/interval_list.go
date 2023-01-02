@@ -1,6 +1,8 @@
 package filer
 
-import "math"
+import (
+	"math"
+)
 
 type Interval[T any] struct {
 	StartOffset int64
@@ -40,6 +42,9 @@ func (list *IntervalList[T]) Front() (interval *Interval[T]) {
 }
 
 func (list *IntervalList[T]) AppendInterval(interval *Interval[T]) {
+	list.Lock.Lock()
+	defer list.Lock.Unlock()
+
 	if list.head.Next == nil {
 		list.head.Next = interval
 	}
@@ -60,10 +65,107 @@ func (list *IntervalList[T]) Overlay(startOffset, stopOffset, tsNs int64, value 
 		TsNs:        tsNs,
 		Value:       value,
 	}
-	list.addInterval(interval)
+
+	list.overlayInterval(interval)
 }
 
-func (list *IntervalList[T]) addInterval(interval *Interval[T]) {
+func (list *IntervalList[T]) InsertInterval(startOffset, stopOffset, tsNs int64, value T) {
+	interval := &Interval[T]{
+		StartOffset: startOffset,
+		StopOffset:  stopOffset,
+		TsNs:        tsNs,
+		Value:       value,
+	}
+
+	list.insertInterval(interval)
+}
+
+func (list *IntervalList[T]) insertInterval(interval *Interval[T]) {
+	prev := list.head
+	next := prev.Next
+
+	for interval.StartOffset < interval.StopOffset {
+		if next == nil {
+			// add to the end
+			list.insertBetween(prev, interval, list.tail)
+			break
+		}
+
+		// interval is ahead of the next
+		if interval.StopOffset <= next.StartOffset {
+			list.insertBetween(prev, interval, next)
+			break
+		}
+
+		// interval is after the next
+		if next.StartOffset <= interval.StartOffset {
+			prev = next
+			next = next.Next
+			continue
+		}
+
+		// intersecting next and interval
+		if interval.TsNs >= next.TsNs {
+			// interval is newer
+			if next.StartOffset < interval.StartOffset {
+				// left side of next is ahead of interval
+				t := &Interval[T]{
+					StartOffset: next.StartOffset,
+					StopOffset:  interval.StartOffset,
+					TsNs:        next.TsNs,
+					Value:       next.Value,
+				}
+				list.insertBetween(prev, t, interval)
+				next.StartOffset = interval.StartOffset
+				prev.Next = interval
+			}
+			if interval.StopOffset < next.StopOffset {
+				// right side of next is after interval
+				next.StartOffset = interval.StopOffset
+				list.insertBetween(prev, interval, next)
+				break
+			} else {
+				// next is covered
+				prev.Next = interval
+				next = next.Next
+			}
+		} else {
+			// next is newer
+			if interval.StartOffset < next.StartOffset {
+				// left side of interval is ahead of next
+				t := &Interval[T]{
+					StartOffset: interval.StartOffset,
+					StopOffset:  next.StartOffset,
+					TsNs:        interval.TsNs,
+					Value:       interval.Value,
+				}
+				list.insertBetween(prev, t, next)
+				interval.StartOffset = next.StartOffset
+			}
+			if next.StopOffset < interval.StopOffset {
+				// right side of interval is after next
+				interval.StartOffset = next.StopOffset
+			} else {
+				// interval is covered
+				break
+			}
+		}
+
+	}
+}
+
+func (list *IntervalList[T]) insertBetween(a, interval, b *Interval[T]) {
+	a.Next = interval
+	b.Prev = interval
+	if a != list.head {
+		interval.Prev = a
+	}
+	if b != list.tail {
+		interval.Next = b
+	}
+}
+
+func (list *IntervalList[T]) overlayInterval(interval *Interval[T]) {
 
 	//t := list.head
 	//for ; t.Next != nil; t = t.Next {
