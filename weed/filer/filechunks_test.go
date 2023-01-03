@@ -477,7 +477,7 @@ func BenchmarkCompactFileChunks(b *testing.B) {
 	}
 }
 
-func addVisibleInterval(visibles *IntervalList[VisibleInterval], x VisibleInterval) {
+func addVisibleInterval(visibles *IntervalList[*VisibleInterval], x VisibleInterval) {
 	visibles.AppendInterval(&Interval[VisibleInterval]{
 		StartOffset: x.start,
 		StopOffset:  x.stop,
@@ -487,7 +487,7 @@ func addVisibleInterval(visibles *IntervalList[VisibleInterval], x VisibleInterv
 }
 
 func TestViewFromVisibleIntervals(t *testing.T) {
-	visibles := NewIntervalList[VisibleInterval]()
+	visibles := NewIntervalList[*VisibleInterval]()
 	addVisibleInterval(visibles, VisibleInterval{
 		start:  0,
 		stop:   25,
@@ -513,7 +513,7 @@ func TestViewFromVisibleIntervals(t *testing.T) {
 }
 
 func TestViewFromVisibleIntervals2(t *testing.T) {
-	visibles := NewIntervalList[VisibleInterval]()
+	visibles := NewIntervalList[*VisibleInterval]()
 	addVisibleInterval(visibles, VisibleInterval{
 		start:  344064,
 		stop:   348160,
@@ -534,7 +534,7 @@ func TestViewFromVisibleIntervals2(t *testing.T) {
 }
 
 func TestViewFromVisibleIntervals3(t *testing.T) {
-	visibles := NewIntervalList[VisibleInterval]()
+	visibles := NewIntervalList[*VisibleInterval]()
 	addVisibleInterval(visibles, VisibleInterval{
 		start:  1000,
 		stop:   2000,

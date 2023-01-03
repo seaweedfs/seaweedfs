@@ -33,7 +33,7 @@ func (m *mockChunkCache) SetChunk(fileId string, data []byte) {
 
 func TestReaderAt(t *testing.T) {
 
-	visibles := NewIntervalList[VisibleInterval]()
+	visibles := NewIntervalList[*VisibleInterval]()
 	addVisibleInterval(visibles, VisibleInterval{
 		start:     1,
 		stop:      2,
@@ -98,7 +98,7 @@ func testReadAt(t *testing.T, readerAt *ChunkReadAt, offset int64, size int, exp
 
 func TestReaderAt0(t *testing.T) {
 
-	visibles := NewIntervalList[VisibleInterval]()
+	visibles := NewIntervalList[*VisibleInterval]()
 	addVisibleInterval(visibles, VisibleInterval{
 		start:     2,
 		stop:      5,
@@ -130,7 +130,7 @@ func TestReaderAt0(t *testing.T) {
 
 func TestReaderAt1(t *testing.T) {
 
-	visibles := NewIntervalList[VisibleInterval]()
+	visibles := NewIntervalList[*VisibleInterval]()
 	addVisibleInterval(visibles, VisibleInterval{
 		start:     2,
 		stop:      5,
@@ -157,7 +157,7 @@ func TestReaderAt1(t *testing.T) {
 }
 
 func TestReaderAtGappedChunksDoNotLeak(t *testing.T) {
-	visibles := NewIntervalList[VisibleInterval]()
+	visibles := NewIntervalList[*VisibleInterval]()
 	addVisibleInterval(visibles, VisibleInterval{
 		start:     2,
 		stop:      3,
@@ -184,7 +184,7 @@ func TestReaderAtGappedChunksDoNotLeak(t *testing.T) {
 
 func TestReaderAtSparseFileDoesNotLeak(t *testing.T) {
 	readerAt := &ChunkReadAt{
-		chunkViews:    ViewFromVisibleIntervals(NewIntervalList[VisibleInterval](), 0, math.MaxInt64),
+		chunkViews:    ViewFromVisibleIntervals(NewIntervalList[*VisibleInterval](), 0, math.MaxInt64),
 		fileSize:      3,
 		readerCache:   newReaderCache(3, &mockChunkCache{}, nil),
 		readerPattern: NewReaderPattern(),

@@ -107,7 +107,7 @@ type WebDavFile struct {
 	isDirectory      bool
 	off              int64
 	entry            *filer_pb.Entry
-	visibleIntervals *filer.IntervalList[filer.VisibleInterval]
+	visibleIntervals *filer.IntervalList[*filer.VisibleInterval]
 	reader           io.ReaderAt
 	bufWriter        *buffered_writer.BufferedWriteCloser
 }

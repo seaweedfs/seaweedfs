@@ -70,7 +70,7 @@ func CompactFileChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks 
 	return
 }
 
-func SeparateGarbageChunks(visibles *IntervalList[VisibleInterval], chunks []*filer_pb.FileChunk) (compacted []*filer_pb.FileChunk, garbage []*filer_pb.FileChunk) {
+func SeparateGarbageChunks(visibles *IntervalList[*VisibleInterval], chunks []*filer_pb.FileChunk) (compacted []*filer_pb.FileChunk, garbage []*filer_pb.FileChunk) {
 	fileIds := make(map[string]bool)
 	for x := visibles.Front(); x != nil; x = x.Next {
 		interval := x.Value
@@ -146,6 +146,24 @@ type ChunkView struct {
 	ModifiedTsNs  int64
 }
 
+func (cv *ChunkView) SetStartStop(start, stop int64) {
+	cv.OffsetInChunk += start - cv.ViewOffset
+	cv.ViewOffset = start
+	cv.ViewSize = uint64(stop - start)
+}
+func (cv *ChunkView) Clone() IntervalValue {
+	return &ChunkView{
+		FileId:        cv.FileId,
+		OffsetInChunk: cv.OffsetInChunk,
+		ViewSize:      cv.ViewSize,
+		ViewOffset:    cv.ViewOffset,
+		ChunkSize:     cv.ChunkSize,
+		CipherKey:     cv.CipherKey,
+		IsGzipped:     cv.IsGzipped,
+		ModifiedTsNs:  cv.ModifiedTsNs,
+	}
+}
+
 func (cv *ChunkView) IsFullChunk() bool {
 	return cv.ViewSize == cv.ChunkSize
 }
@@ -158,7 +176,7 @@ func ViewFromChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*
 
 }
 
-func ViewFromVisibleIntervals(visibles *IntervalList[VisibleInterval], offset int64, size int64) (chunkViews *IntervalList[*ChunkView]) {
+func ViewFromVisibleIntervals(visibles *IntervalList[*VisibleInterval], offset int64, size int64) (chunkViews *IntervalList[*ChunkView]) {
 
 	stop := offset + size
 	if size == math.MaxInt64 {
@@ -200,68 +218,41 @@ func ViewFromVisibleIntervals(visibles *IntervalList[VisibleInterval], offset in
 
 }
 
-func logPrintf(name string, visibles []VisibleInterval) {
+func MergeIntoVisibles(visibles *IntervalList[*VisibleInterval], start int64, stop int64, chunk *filer_pb.FileChunk) {
 
-	/*
-		glog.V(0).Infof("%s len %d", name, len(visibles))
-		for _, v := range visibles {
-			glog.V(0).Infof("%s:  [%d,%d) %s %d", name, v.start, v.stop, v.fileId, v.chunkOffset)
-		}
-	*/
+	newV := &VisibleInterval{
+		start:         start,
+		stop:          stop,
+		fileId:        chunk.GetFileIdString(),
+		modifiedTsNs:  chunk.ModifiedTsNs,
+		offsetInChunk: start - chunk.Offset, // the starting position in the chunk
+		chunkSize:     chunk.Size,           // size of the chunk
+		cipherKey:     chunk.CipherKey,
+		isGzipped:     chunk.IsCompressed,
+	}
+
+	visibles.InsertInterval(start, stop, chunk.ModifiedTsNs, newV)
 }
 
-func MergeIntoVisibles(visibles []VisibleInterval, chunk *filer_pb.FileChunk) (newVisibles []VisibleInterval) {
+func MergeIntoChunkViews(chunkViews *IntervalList[*ChunkView], start int64, stop int64, chunk *filer_pb.FileChunk) {
 
-	newV := newVisibleInterval(chunk.Offset, chunk.Offset+int64(chunk.Size), chunk.GetFileIdString(), chunk.ModifiedTsNs, 0, chunk.Size, chunk.CipherKey, chunk.IsCompressed)
-
-	length := len(visibles)
-	if length == 0 {
-		return append(visibles, newV)
+	chunkView := &ChunkView{
+		FileId:        chunk.GetFileIdString(),
+		OffsetInChunk: start - chunk.Offset,
+		ViewSize:      uint64(stop - start),
+		ViewOffset:    start,
+		ChunkSize:     chunk.Size,
+		CipherKey:     chunk.CipherKey,
+		IsGzipped:     chunk.IsCompressed,
+		ModifiedTsNs:  chunk.ModifiedTsNs,
 	}
-	last := visibles[length-1]
-	if last.stop <= chunk.Offset {
-		return append(visibles, newV)
-	}
 
-	logPrintf("  before", visibles)
-	// glog.V(0).Infof("newVisibles %d adding chunk [%d,%d) %s size:%d", len(newVisibles), chunk.Offset, chunk.Offset+int64(chunk.ViewSize), chunk.GetFileIdString(), chunk.ViewSize)
-	chunkStop := chunk.Offset + int64(chunk.Size)
-	for _, v := range visibles {
-		if v.start < chunk.Offset && chunk.Offset < v.stop {
-			t := newVisibleInterval(v.start, chunk.Offset, v.fileId, v.modifiedTsNs, v.offsetInChunk, v.chunkSize, v.cipherKey, v.isGzipped)
-			newVisibles = append(newVisibles, t)
-			// glog.V(0).Infof("visible %d [%d,%d) =1> [%d,%d)", i, v.start, v.stop, t.start, t.stop)
-		}
-		if v.start < chunkStop && chunkStop < v.stop {
-			t := newVisibleInterval(chunkStop, v.stop, v.fileId, v.modifiedTsNs, v.offsetInChunk+(chunkStop-v.start), v.chunkSize, v.cipherKey, v.isGzipped)
-			newVisibles = append(newVisibles, t)
-			// glog.V(0).Infof("visible %d [%d,%d) =2> [%d,%d)", i, v.start, v.stop, t.start, t.stop)
-		}
-		if chunkStop <= v.start || v.stop <= chunk.Offset {
-			newVisibles = append(newVisibles, v)
-			// glog.V(0).Infof("visible %d [%d,%d) =3> [%d,%d)", i, v.start, v.stop, v.start, v.stop)
-		}
-	}
-	newVisibles = append(newVisibles, newV)
-
-	logPrintf("  append", newVisibles)
-
-	for i := len(newVisibles) - 1; i >= 0; i-- {
-		if i > 0 && newV.start < newVisibles[i-1].start {
-			newVisibles[i] = newVisibles[i-1]
-		} else {
-			newVisibles[i] = newV
-			break
-		}
-	}
-	logPrintf("  sorted", newVisibles)
-
-	return newVisibles
+	chunkViews.InsertInterval(start, stop, chunk.ModifiedTsNs, chunkView)
 }
 
 // NonOverlappingVisibleIntervals translates the file chunk into VisibleInterval in memory
 // If the file chunk content is a chunk manifest
-func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles *IntervalList[VisibleInterval], err error) {
+func NonOverlappingVisibleIntervals(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles *IntervalList[*VisibleInterval], err error) {
 
 	chunks, _, err = ResolveChunkManifest(lookupFileIdFn, chunks, startOffset, stopOffset)
 	if err != nil {
@@ -287,16 +278,20 @@ type VisibleInterval struct {
 	isGzipped     bool
 }
 
-func newVisibleInterval(start, stop int64, fileId string, modifiedTime int64, offsetInChunk int64, chunkSize uint64, cipherKey []byte, isGzipped bool) VisibleInterval {
-	return VisibleInterval{
-		start:         start,
-		stop:          stop,
-		fileId:        fileId,
-		modifiedTsNs:  modifiedTime,
-		offsetInChunk: offsetInChunk, // the starting position in the chunk
-		chunkSize:     chunkSize,     // size of the chunk
-		cipherKey:     cipherKey,
-		isGzipped:     isGzipped,
+func (v *VisibleInterval) SetStartStop(start, stop int64) {
+	v.offsetInChunk += start - v.start
+	v.start, v.stop = start, stop
+}
+func (v *VisibleInterval) Clone() IntervalValue {
+	return &VisibleInterval{
+		start:         v.start,
+		stop:          v.stop,
+		modifiedTsNs:  v.modifiedTsNs,
+		fileId:        v.fileId,
+		offsetInChunk: v.offsetInChunk,
+		chunkSize:     v.chunkSize,
+		cipherKey:     v.cipherKey,
+		isGzipped:     v.isGzipped,
 	}
 }
 

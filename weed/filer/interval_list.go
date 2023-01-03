@@ -5,7 +5,12 @@ import (
 	"sync"
 )
 
-type Interval[T any] struct {
+type IntervalValue interface {
+	SetStartStop(start, stop int64)
+	Clone() IntervalValue
+}
+
+type Interval[T IntervalValue] struct {
 	StartOffset int64
 	StopOffset  int64
 	TsNs        int64
@@ -19,13 +24,13 @@ func (interval *Interval[T]) Size() int64 {
 }
 
 // IntervalList mark written intervals within one page chunk
-type IntervalList[T any] struct {
+type IntervalList[T IntervalValue] struct {
 	head *Interval[T]
 	tail *Interval[T]
 	Lock sync.Mutex
 }
 
-func NewIntervalList[T any]() *IntervalList[T] {
+func NewIntervalList[T IntervalValue]() *IntervalList[T] {
 	list := &IntervalList[T]{
 		head: &Interval[T]{
 			StartOffset: -1,
@@ -85,6 +90,7 @@ func (list *IntervalList[T]) InsertInterval(startOffset, stopOffset, tsNs int64,
 	list.Lock.Lock()
 	defer list.Lock.Unlock()
 
+	value.SetStartStop(startOffset, stopOffset)
 	list.insertInterval(interval)
 }
 
@@ -106,7 +112,7 @@ func (list *IntervalList[T]) insertInterval(interval *Interval[T]) {
 		}
 
 		// interval is after the next
-		if next.StartOffset <= interval.StartOffset {
+		if next.StopOffset <= interval.StartOffset {
 			prev = next
 			next = next.Next
 			continue
@@ -121,15 +127,18 @@ func (list *IntervalList[T]) insertInterval(interval *Interval[T]) {
 					StartOffset: next.StartOffset,
 					StopOffset:  interval.StartOffset,
 					TsNs:        next.TsNs,
-					Value:       next.Value,
+					Value:       next.Value.Clone().(T),
 				}
+				t.Value.SetStartStop(t.StartOffset, t.StopOffset)
 				list.insertBetween(prev, t, interval)
 				next.StartOffset = interval.StartOffset
-				prev.Next = interval
+				next.Value.SetStartStop(next.StartOffset, next.StopOffset)
+				prev = t
 			}
 			if interval.StopOffset < next.StopOffset {
 				// right side of next is after interval
 				next.StartOffset = interval.StopOffset
+				next.Value.SetStartStop(next.StartOffset, next.StopOffset)
 				list.insertBetween(prev, interval, next)
 				break
 			} else {
@@ -145,14 +154,17 @@ func (list *IntervalList[T]) insertInterval(interval *Interval[T]) {
 					StartOffset: interval.StartOffset,
 					StopOffset:  next.StartOffset,
 					TsNs:        interval.TsNs,
-					Value:       interval.Value,
+					Value:       interval.Value.Clone().(T),
 				}
+				t.Value.SetStartStop(t.StartOffset, t.StopOffset)
 				list.insertBetween(prev, t, next)
 				interval.StartOffset = next.StartOffset
+				interval.Value.SetStartStop(interval.StartOffset, interval.StopOffset)
 			}
 			if next.StopOffset < interval.StopOffset {
 				// right side of interval is after next
 				interval.StartOffset = next.StopOffset
+				interval.Value.SetStartStop(interval.StartOffset, interval.StopOffset)
 			} else {
 				// interval is covered
 				break
