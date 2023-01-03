@@ -59,7 +59,7 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 
 	// avoid recursive replication
 	if config.GetBool("notification.source.filer.enabled") && config.GetBool("notification.sink.filer.enabled") {
-		if config.GetString("source.filer.address") == config.GetString("sink.filer.address") {
+		if config.GetString("source.filer.grpcAddress") == config.GetString("sink.filer.grpcAddress") {
 			fromDir := config.GetString("source.filer.directory")
 			toDir := config.GetString("sink.filer.directory")
 			if strings.HasPrefix(toDir, fromDir) {
