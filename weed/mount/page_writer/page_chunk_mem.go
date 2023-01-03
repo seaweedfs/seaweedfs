@@ -19,6 +19,7 @@ type MemChunk struct {
 	usage           *ChunkWrittenIntervalList
 	chunkSize       int64
 	logicChunkIndex LogicChunkIndex
+	activityScore   *ActivityScore
 }
 
 func NewMemChunk(logicChunkIndex LogicChunkIndex, chunkSize int64) *MemChunk {
@@ -28,6 +29,7 @@ func NewMemChunk(logicChunkIndex LogicChunkIndex, chunkSize int64) *MemChunk {
 		chunkSize:       chunkSize,
 		buf:             mem.Allocate(int(chunkSize)),
 		usage:           newChunkWrittenIntervalList(),
+		activityScore:   NewActivityScore(),
 	}
 }
 
@@ -39,29 +41,37 @@ func (mc *MemChunk) FreeResource() {
 	mem.Free(mc.buf)
 }
 
-func (mc *MemChunk) WriteDataAt(src []byte, offset int64) (n int) {
+func (mc *MemChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n int) {
 	mc.Lock()
 	defer mc.Unlock()
 
 	innerOffset := offset % mc.chunkSize
 	n = copy(mc.buf[innerOffset:], src)
-	mc.usage.MarkWritten(innerOffset, innerOffset+int64(n))
+	mc.usage.MarkWritten(innerOffset, innerOffset+int64(n), tsNs)
+	mc.activityScore.MarkWrite()
+
 	return
 }
 
-func (mc *MemChunk) ReadDataAt(p []byte, off int64) (maxStop int64) {
+func (mc *MemChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop int64) {
 	mc.RLock()
 	defer mc.RUnlock()
 
 	memChunkBaseOffset := int64(mc.logicChunkIndex) * mc.chunkSize
 	for t := mc.usage.head.next; t != mc.usage.tail; t = t.next {
-		logicStart := max(off, int64(mc.logicChunkIndex)*mc.chunkSize+t.StartOffset)
+		logicStart := max(off, memChunkBaseOffset+t.StartOffset)
 		logicStop := min(off+int64(len(p)), memChunkBaseOffset+t.stopOffset)
 		if logicStart < logicStop {
-			copy(p[logicStart-off:logicStop-off], mc.buf[logicStart-memChunkBaseOffset:logicStop-memChunkBaseOffset])
-			maxStop = max(maxStop, logicStop)
+			if t.TsNs >= tsNs {
+				copy(p[logicStart-off:logicStop-off], mc.buf[logicStart-memChunkBaseOffset:logicStop-memChunkBaseOffset])
+				maxStop = max(maxStop, logicStop)
+			} else {
+				println("read old data1", tsNs-t.TsNs, "ns")
+			}
 		}
 	}
+	mc.activityScore.MarkRead()
+
 	return
 }
 
@@ -72,11 +82,8 @@ func (mc *MemChunk) IsComplete() bool {
 	return mc.usage.IsComplete(mc.chunkSize)
 }
 
-func (mc *MemChunk) WrittenSize() int64 {
-	mc.RLock()
-	defer mc.RUnlock()
-
-	return mc.usage.WrittenSize()
+func (mc *MemChunk) ActivityScore() int64 {
+	return mc.activityScore.ActivityScore()
 }
 
 func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc) {
@@ -88,7 +95,7 @@ func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc) {
 	}
 	for t := mc.usage.head.next; t != mc.usage.tail; t = t.next {
 		reader := util.NewBytesReader(mc.buf[t.StartOffset:t.stopOffset])
-		saveFn(reader, int64(mc.logicChunkIndex)*mc.chunkSize+t.StartOffset, t.Size(), func() {
+		saveFn(reader, int64(mc.logicChunkIndex)*mc.chunkSize+t.StartOffset, t.Size(), t.TsNs, func() {
 		})
 	}
 }

@@ -92,7 +92,8 @@ func TestRandomFileChunksCompact(t *testing.T) {
 
 	visibles, _ := NonOverlappingVisibleIntervals(nil, chunks, 0, math.MaxInt64)
 
-	for _, v := range visibles {
+	for visible := visibles.Front(); visible != nil; visible = visible.Next {
+		v := visible.Value
 		for x := v.start; x < v.stop; x++ {
 			assert.Equal(t, strconv.Itoa(int(data[x])), v.fileId)
 		}
@@ -137,7 +138,7 @@ func TestIntervalMerging(t *testing.T) {
 			},
 			Expected: []*VisibleInterval{
 				{start: 0, stop: 70, fileId: "b"},
-				{start: 70, stop: 100, fileId: "a", chunkOffset: 70},
+				{start: 70, stop: 100, fileId: "a", offsetInChunk: 70},
 			},
 		},
 		// case 3: updates overwrite full chunks
@@ -174,15 +175,15 @@ func TestIntervalMerging(t *testing.T) {
 			},
 			Expected: []*VisibleInterval{
 				{start: 0, stop: 200, fileId: "d"},
-				{start: 200, stop: 220, fileId: "c", chunkOffset: 130},
+				{start: 200, stop: 220, fileId: "c", offsetInChunk: 130},
 			},
 		},
 		// case 6: same updates
 		{
 			Chunks: []*filer_pb.FileChunk{
 				{Offset: 0, Size: 100, FileId: "abc", Fid: &filer_pb.FileId{FileKey: 1}, ModifiedTsNs: 123},
-				{Offset: 0, Size: 100, FileId: "axf", Fid: &filer_pb.FileId{FileKey: 2}, ModifiedTsNs: 123},
-				{Offset: 0, Size: 100, FileId: "xyz", Fid: &filer_pb.FileId{FileKey: 3}, ModifiedTsNs: 123},
+				{Offset: 0, Size: 100, FileId: "axf", Fid: &filer_pb.FileId{FileKey: 2}, ModifiedTsNs: 124},
+				{Offset: 0, Size: 100, FileId: "xyz", Fid: &filer_pb.FileId{FileKey: 3}, ModifiedTsNs: 125},
 			},
 			Expected: []*VisibleInterval{
 				{start: 0, stop: 100, fileId: "xyz"},
@@ -228,11 +229,17 @@ func TestIntervalMerging(t *testing.T) {
 	for i, testcase := range testcases {
 		log.Printf("++++++++++ merged test case %d ++++++++++++++++++++", i)
 		intervals, _ := NonOverlappingVisibleIntervals(nil, testcase.Chunks, 0, math.MaxInt64)
-		for x, interval := range intervals {
-			log.Printf("test case %d, interval %d, start=%d, stop=%d, fileId=%s",
-				i, x, interval.start, interval.stop, interval.fileId)
+		x := -1
+		for visible := intervals.Front(); visible != nil; visible = visible.Next {
+			x++
+			interval := visible.Value
+			log.Printf("test case %d, interval start=%d, stop=%d, fileId=%s",
+				i, interval.start, interval.stop, interval.fileId)
 		}
-		for x, interval := range intervals {
+		x = -1
+		for visible := intervals.Front(); visible != nil; visible = visible.Next {
+			x++
+			interval := visible.Value
 			if interval.start != testcase.Expected[x].start {
 				t.Fatalf("failed on test case %d, interval %d, start %d, expect %d",
 					i, x, interval.start, testcase.Expected[x].start)
@@ -245,13 +252,13 @@ func TestIntervalMerging(t *testing.T) {
 				t.Fatalf("failed on test case %d, interval %d, chunkId %s, expect %s",
 					i, x, interval.fileId, testcase.Expected[x].fileId)
 			}
-			if interval.chunkOffset != testcase.Expected[x].chunkOffset {
-				t.Fatalf("failed on test case %d, interval %d, chunkOffset %d, expect %d",
-					i, x, interval.chunkOffset, testcase.Expected[x].chunkOffset)
+			if interval.offsetInChunk != testcase.Expected[x].offsetInChunk {
+				t.Fatalf("failed on test case %d, interval %d, offsetInChunk %d, expect %d",
+					i, x, interval.offsetInChunk, testcase.Expected[x].offsetInChunk)
 			}
 		}
-		if len(intervals) != len(testcase.Expected) {
-			t.Fatalf("failed to compact test case %d, len %d expected %d", i, len(intervals), len(testcase.Expected))
+		if intervals.Len() != len(testcase.Expected) {
+			t.Fatalf("failed to compact test case %d, len %d expected %d", i, intervals.Len(), len(testcase.Expected))
 		}
 
 	}
@@ -276,9 +283,9 @@ func TestChunksReading(t *testing.T) {
 			Offset: 0,
 			Size:   250,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 100, FileId: "abc", LogicOffset: 0},
-				{Offset: 0, Size: 100, FileId: "asdf", LogicOffset: 100},
-				{Offset: 0, Size: 50, FileId: "fsad", LogicOffset: 200},
+				{OffsetInChunk: 0, ViewSize: 100, FileId: "abc", ViewOffset: 0},
+				{OffsetInChunk: 0, ViewSize: 100, FileId: "asdf", ViewOffset: 100},
+				{OffsetInChunk: 0, ViewSize: 50, FileId: "fsad", ViewOffset: 200},
 			},
 		},
 		// case 1: updates overwrite full chunks
@@ -290,7 +297,7 @@ func TestChunksReading(t *testing.T) {
 			Offset: 50,
 			Size:   100,
 			Expected: []*ChunkView{
-				{Offset: 50, Size: 100, FileId: "asdf", LogicOffset: 50},
+				{OffsetInChunk: 50, ViewSize: 100, FileId: "asdf", ViewOffset: 50},
 			},
 		},
 		// case 2: updates overwrite part of previous chunks
@@ -302,8 +309,8 @@ func TestChunksReading(t *testing.T) {
 			Offset: 30,
 			Size:   40,
 			Expected: []*ChunkView{
-				{Offset: 20, Size: 30, FileId: "b", LogicOffset: 30},
-				{Offset: 57, Size: 10, FileId: "a", LogicOffset: 60},
+				{OffsetInChunk: 20, ViewSize: 30, FileId: "b", ViewOffset: 30},
+				{OffsetInChunk: 57, ViewSize: 10, FileId: "a", ViewOffset: 60},
 			},
 		},
 		// case 3: updates overwrite full chunks
@@ -316,8 +323,8 @@ func TestChunksReading(t *testing.T) {
 			Offset: 0,
 			Size:   200,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 50, FileId: "asdf", LogicOffset: 0},
-				{Offset: 0, Size: 150, FileId: "xxxx", LogicOffset: 50},
+				{OffsetInChunk: 0, ViewSize: 50, FileId: "asdf", ViewOffset: 0},
+				{OffsetInChunk: 0, ViewSize: 150, FileId: "xxxx", ViewOffset: 50},
 			},
 		},
 		// case 4: updates far away from prev chunks
@@ -330,8 +337,8 @@ func TestChunksReading(t *testing.T) {
 			Offset: 0,
 			Size:   400,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 200, FileId: "asdf", LogicOffset: 0},
-				{Offset: 0, Size: 150, FileId: "xxxx", LogicOffset: 250},
+				{OffsetInChunk: 0, ViewSize: 200, FileId: "asdf", ViewOffset: 0},
+				{OffsetInChunk: 0, ViewSize: 150, FileId: "xxxx", ViewOffset: 250},
 			},
 		},
 		// case 5: updates overwrite full chunks
@@ -345,21 +352,21 @@ func TestChunksReading(t *testing.T) {
 			Offset: 0,
 			Size:   220,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 200, FileId: "c", LogicOffset: 0},
-				{Offset: 130, Size: 20, FileId: "b", LogicOffset: 200},
+				{OffsetInChunk: 0, ViewSize: 200, FileId: "c", ViewOffset: 0},
+				{OffsetInChunk: 130, ViewSize: 20, FileId: "b", ViewOffset: 200},
 			},
 		},
 		// case 6: same updates
 		{
 			Chunks: []*filer_pb.FileChunk{
 				{Offset: 0, Size: 100, FileId: "abc", Fid: &filer_pb.FileId{FileKey: 1}, ModifiedTsNs: 123},
-				{Offset: 0, Size: 100, FileId: "def", Fid: &filer_pb.FileId{FileKey: 2}, ModifiedTsNs: 123},
-				{Offset: 0, Size: 100, FileId: "xyz", Fid: &filer_pb.FileId{FileKey: 3}, ModifiedTsNs: 123},
+				{Offset: 0, Size: 100, FileId: "def", Fid: &filer_pb.FileId{FileKey: 2}, ModifiedTsNs: 124},
+				{Offset: 0, Size: 100, FileId: "xyz", Fid: &filer_pb.FileId{FileKey: 3}, ModifiedTsNs: 125},
 			},
 			Offset: 0,
 			Size:   100,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 100, FileId: "xyz", LogicOffset: 0},
+				{OffsetInChunk: 0, ViewSize: 100, FileId: "xyz", ViewOffset: 0},
 			},
 		},
 		// case 7: edge cases
@@ -372,8 +379,8 @@ func TestChunksReading(t *testing.T) {
 			Offset: 0,
 			Size:   200,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 100, FileId: "abc", LogicOffset: 0},
-				{Offset: 0, Size: 100, FileId: "asdf", LogicOffset: 100},
+				{OffsetInChunk: 0, ViewSize: 100, FileId: "abc", ViewOffset: 0},
+				{OffsetInChunk: 0, ViewSize: 100, FileId: "asdf", ViewOffset: 100},
 			},
 		},
 		// case 8: edge cases
@@ -386,9 +393,9 @@ func TestChunksReading(t *testing.T) {
 			Offset: 0,
 			Size:   300,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 90, FileId: "abc", LogicOffset: 0},
-				{Offset: 0, Size: 100, FileId: "asdf", LogicOffset: 90},
-				{Offset: 0, Size: 110, FileId: "fsad", LogicOffset: 190},
+				{OffsetInChunk: 0, ViewSize: 90, FileId: "abc", ViewOffset: 0},
+				{OffsetInChunk: 0, ViewSize: 100, FileId: "asdf", ViewOffset: 90},
+				{OffsetInChunk: 0, ViewSize: 110, FileId: "fsad", ViewOffset: 190},
 			},
 		},
 		// case 9: edge cases
@@ -404,12 +411,12 @@ func TestChunksReading(t *testing.T) {
 			Offset: 0,
 			Size:   153578836,
 			Expected: []*ChunkView{
-				{Offset: 0, Size: 43175936, FileId: "2,111fc2cbfac1", LogicOffset: 0},
-				{Offset: 0, Size: 52981760 - 43175936, FileId: "2,112a36ea7f85", LogicOffset: 43175936},
-				{Offset: 0, Size: 72564736 - 52981760, FileId: "4,112d5f31c5e7", LogicOffset: 52981760},
-				{Offset: 0, Size: 133255168 - 72564736, FileId: "1,113245f0cdb6", LogicOffset: 72564736},
-				{Offset: 0, Size: 137269248 - 133255168, FileId: "3,1141a70733b5", LogicOffset: 133255168},
-				{Offset: 0, Size: 153578836 - 137269248, FileId: "1,114201d5bbdb", LogicOffset: 137269248},
+				{OffsetInChunk: 0, ViewSize: 43175936, FileId: "2,111fc2cbfac1", ViewOffset: 0},
+				{OffsetInChunk: 0, ViewSize: 52981760 - 43175936, FileId: "2,112a36ea7f85", ViewOffset: 43175936},
+				{OffsetInChunk: 0, ViewSize: 72564736 - 52981760, FileId: "4,112d5f31c5e7", ViewOffset: 52981760},
+				{OffsetInChunk: 0, ViewSize: 133255168 - 72564736, FileId: "1,113245f0cdb6", ViewOffset: 72564736},
+				{OffsetInChunk: 0, ViewSize: 137269248 - 133255168, FileId: "3,1141a70733b5", ViewOffset: 133255168},
+				{OffsetInChunk: 0, ViewSize: 153578836 - 137269248, FileId: "1,114201d5bbdb", ViewOffset: 137269248},
 			},
 		},
 	}
@@ -420,28 +427,31 @@ func TestChunksReading(t *testing.T) {
 		}
 		log.Printf("++++++++++ read test case %d ++++++++++++++++++++", i)
 		chunks := ViewFromChunks(nil, testcase.Chunks, testcase.Offset, testcase.Size)
-		for x, chunk := range chunks {
+		x := -1
+		for c := chunks.Front(); c != nil; c = c.Next {
+			x++
+			chunk := c.Value
 			log.Printf("read case %d, chunk %d, offset=%d, size=%d, fileId=%s",
-				i, x, chunk.Offset, chunk.Size, chunk.FileId)
-			if chunk.Offset != testcase.Expected[x].Offset {
+				i, x, chunk.OffsetInChunk, chunk.ViewSize, chunk.FileId)
+			if chunk.OffsetInChunk != testcase.Expected[x].OffsetInChunk {
 				t.Fatalf("failed on read case %d, chunk %s, Offset %d, expect %d",
-					i, chunk.FileId, chunk.Offset, testcase.Expected[x].Offset)
+					i, chunk.FileId, chunk.OffsetInChunk, testcase.Expected[x].OffsetInChunk)
 			}
-			if chunk.Size != testcase.Expected[x].Size {
-				t.Fatalf("failed on read case %d, chunk %s, Size %d, expect %d",
-					i, chunk.FileId, chunk.Size, testcase.Expected[x].Size)
+			if chunk.ViewSize != testcase.Expected[x].ViewSize {
+				t.Fatalf("failed on read case %d, chunk %s, ViewSize %d, expect %d",
+					i, chunk.FileId, chunk.ViewSize, testcase.Expected[x].ViewSize)
 			}
 			if chunk.FileId != testcase.Expected[x].FileId {
 				t.Fatalf("failed on read case %d, chunk %d, FileId %s, expect %s",
 					i, x, chunk.FileId, testcase.Expected[x].FileId)
 			}
-			if chunk.LogicOffset != testcase.Expected[x].LogicOffset {
-				t.Fatalf("failed on read case %d, chunk %d, LogicOffset %d, expect %d",
-					i, x, chunk.LogicOffset, testcase.Expected[x].LogicOffset)
+			if chunk.ViewOffset != testcase.Expected[x].ViewOffset {
+				t.Fatalf("failed on read case %d, chunk %d, ViewOffset %d, expect %d",
+					i, x, chunk.ViewOffset, testcase.Expected[x].ViewOffset)
 			}
 		}
-		if len(chunks) != len(testcase.Expected) {
-			t.Fatalf("failed to read test case %d, len %d expected %d", i, len(chunks), len(testcase.Expected))
+		if chunks.Len() != len(testcase.Expected) {
+			t.Fatalf("failed to read test case %d, len %d expected %d", i, chunks.Len(), len(testcase.Expected))
 		}
 	}
 
@@ -467,73 +477,79 @@ func BenchmarkCompactFileChunks(b *testing.B) {
 	}
 }
 
+func addVisibleInterval(visibles *IntervalList[*VisibleInterval], x *VisibleInterval) {
+	visibles.AppendInterval(&Interval[*VisibleInterval]{
+		StartOffset: x.start,
+		StopOffset:  x.stop,
+		TsNs:        x.modifiedTsNs,
+		Value:       x,
+	})
+}
+
 func TestViewFromVisibleIntervals(t *testing.T) {
-	visibles := []VisibleInterval{
-		{
-			start:  0,
-			stop:   25,
-			fileId: "fid1",
-		},
-		{
-			start:  4096,
-			stop:   8192,
-			fileId: "fid2",
-		},
-		{
-			start:  16384,
-			stop:   18551,
-			fileId: "fid3",
-		},
-	}
+	visibles := NewIntervalList[*VisibleInterval]()
+	addVisibleInterval(visibles, &VisibleInterval{
+		start:  0,
+		stop:   25,
+		fileId: "fid1",
+	})
+	addVisibleInterval(visibles, &VisibleInterval{
+		start:  4096,
+		stop:   8192,
+		fileId: "fid2",
+	})
+	addVisibleInterval(visibles, &VisibleInterval{
+		start:  16384,
+		stop:   18551,
+		fileId: "fid3",
+	})
 
 	views := ViewFromVisibleIntervals(visibles, 0, math.MaxInt32)
 
-	if len(views) != len(visibles) {
-		assert.Equal(t, len(visibles), len(views), "ViewFromVisibleIntervals error")
+	if views.Len() != visibles.Len() {
+		assert.Equal(t, visibles.Len(), views.Len(), "ViewFromVisibleIntervals error")
 	}
 
 }
 
 func TestViewFromVisibleIntervals2(t *testing.T) {
-	visibles := []VisibleInterval{
-		{
-			start:  344064,
-			stop:   348160,
-			fileId: "fid1",
-		},
-		{
-			start:  348160,
-			stop:   356352,
-			fileId: "fid2",
-		},
-	}
+	visibles := NewIntervalList[*VisibleInterval]()
+	addVisibleInterval(visibles, &VisibleInterval{
+		start:  344064,
+		stop:   348160,
+		fileId: "fid1",
+	})
+	addVisibleInterval(visibles, &VisibleInterval{
+		start:  348160,
+		stop:   356352,
+		fileId: "fid2",
+	})
 
 	views := ViewFromVisibleIntervals(visibles, 0, math.MaxInt32)
 
-	if len(views) != len(visibles) {
-		assert.Equal(t, len(visibles), len(views), "ViewFromVisibleIntervals error")
+	if views.Len() != visibles.Len() {
+		assert.Equal(t, visibles.Len(), views.Len(), "ViewFromVisibleIntervals error")
 	}
 
 }
 
 func TestViewFromVisibleIntervals3(t *testing.T) {
-	visibles := []VisibleInterval{
-		{
-			start:  1000,
-			stop:   2000,
-			fileId: "fid1",
-		},
-		{
-			start:  3000,
-			stop:   4000,
-			fileId: "fid2",
-		},
-	}
+	visibles := NewIntervalList[*VisibleInterval]()
+	addVisibleInterval(visibles, &VisibleInterval{
+		start:  1000,
+		stop:   2000,
+		fileId: "fid1",
+	})
+	addVisibleInterval(visibles, &VisibleInterval{
+		start:  3000,
+		stop:   4000,
+		fileId: "fid2",
+	})
 
 	views := ViewFromVisibleIntervals(visibles, 1700, 1500)
 
-	if len(views) != len(visibles) {
-		assert.Equal(t, len(visibles), len(views), "ViewFromVisibleIntervals error")
+	if views.Len() != visibles.Len() {
+		assert.Equal(t, visibles.Len(), views.Len(), "ViewFromVisibleIntervals error")
 	}
 
 }

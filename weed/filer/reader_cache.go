@@ -43,7 +43,7 @@ func newReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn
 	}
 }
 
-func (rc *ReaderCache) MaybeCache(chunkViews []*ChunkView) {
+func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView]) {
 	if rc.lookupFileIdFn == nil {
 		return
 	}
@@ -55,7 +55,8 @@ func (rc *ReaderCache) MaybeCache(chunkViews []*ChunkView) {
 		return
 	}
 
-	for _, chunkView := range chunkViews {
+	for x := chunkViews; x != nil; x = x.Next {
+		chunkView := x.Value
 		if _, found := rc.downloaders[chunkView.FileId]; found {
 			continue
 		}
@@ -65,7 +66,7 @@ func (rc *ReaderCache) MaybeCache(chunkViews []*ChunkView) {
 			return
 		}
 
-		// glog.V(4).Infof("prefetch %s offset %d", chunkView.FileId, chunkView.LogicOffset)
+		// glog.V(4).Infof("prefetch %s offset %d", chunkView.FileId, chunkView.ViewOffset)
 		// cache this chunk if not yet
 		cacher := newSingleChunkCacher(rc, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int(chunkView.ChunkSize), false)
 		go cacher.startCaching()

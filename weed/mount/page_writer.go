@@ -29,35 +29,35 @@ func newPageWriter(fh *FileHandle, chunkSize int64) *PageWriter {
 	return pw
 }
 
-func (pw *PageWriter) AddPage(offset int64, data []byte, isSequential bool) {
+func (pw *PageWriter) AddPage(offset int64, data []byte, isSequential bool, tsNs int64) {
 
 	glog.V(4).Infof("%v AddPage [%d, %d)", pw.fh.fh, offset, offset+int64(len(data)))
 
 	chunkIndex := offset / pw.chunkSize
 	for i := chunkIndex; len(data) > 0; i++ {
 		writeSize := min(int64(len(data)), (i+1)*pw.chunkSize-offset)
-		pw.addToOneChunk(i, offset, data[:writeSize], isSequential)
+		pw.addToOneChunk(i, offset, data[:writeSize], isSequential, tsNs)
 		offset += writeSize
 		data = data[writeSize:]
 	}
 }
 
-func (pw *PageWriter) addToOneChunk(chunkIndex, offset int64, data []byte, isSequential bool) {
-	pw.randomWriter.AddPage(offset, data, isSequential)
+func (pw *PageWriter) addToOneChunk(chunkIndex, offset int64, data []byte, isSequential bool, tsNs int64) {
+	pw.randomWriter.AddPage(offset, data, isSequential, tsNs)
 }
 
 func (pw *PageWriter) FlushData() error {
 	return pw.randomWriter.FlushData()
 }
 
-func (pw *PageWriter) ReadDirtyDataAt(data []byte, offset int64) (maxStop int64) {
+func (pw *PageWriter) ReadDirtyDataAt(data []byte, offset int64, tsNs int64) (maxStop int64) {
 	glog.V(4).Infof("ReadDirtyDataAt %v [%d, %d)", pw.fh.fh, offset, offset+int64(len(data)))
 
 	chunkIndex := offset / pw.chunkSize
 	for i := chunkIndex; len(data) > 0; i++ {
 		readSize := min(int64(len(data)), (i+1)*pw.chunkSize-offset)
 
-		maxStop = pw.randomWriter.ReadDirtyDataAt(data[:readSize], offset)
+		maxStop = pw.randomWriter.ReadDirtyDataAt(data[:readSize], offset, tsNs)
 
 		offset += readSize
 		data = data[readSize:]
