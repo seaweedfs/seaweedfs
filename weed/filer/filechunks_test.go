@@ -477,8 +477,8 @@ func BenchmarkCompactFileChunks(b *testing.B) {
 	}
 }
 
-func addVisibleInterval(visibles *IntervalList[*VisibleInterval], x VisibleInterval) {
-	visibles.AppendInterval(&Interval[VisibleInterval]{
+func addVisibleInterval(visibles *IntervalList[*VisibleInterval], x *VisibleInterval) {
+	visibles.AppendInterval(&Interval[*VisibleInterval]{
 		StartOffset: x.start,
 		StopOffset:  x.stop,
 		TsNs:        x.modifiedTsNs,
@@ -488,17 +488,17 @@ func addVisibleInterval(visibles *IntervalList[*VisibleInterval], x VisibleInter
 
 func TestViewFromVisibleIntervals(t *testing.T) {
 	visibles := NewIntervalList[*VisibleInterval]()
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:  0,
 		stop:   25,
 		fileId: "fid1",
 	})
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:  4096,
 		stop:   8192,
 		fileId: "fid2",
 	})
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:  16384,
 		stop:   18551,
 		fileId: "fid3",
@@ -514,12 +514,12 @@ func TestViewFromVisibleIntervals(t *testing.T) {
 
 func TestViewFromVisibleIntervals2(t *testing.T) {
 	visibles := NewIntervalList[*VisibleInterval]()
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:  344064,
 		stop:   348160,
 		fileId: "fid1",
 	})
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:  348160,
 		stop:   356352,
 		fileId: "fid2",
@@ -535,12 +535,12 @@ func TestViewFromVisibleIntervals2(t *testing.T) {
 
 func TestViewFromVisibleIntervals3(t *testing.T) {
 	visibles := NewIntervalList[*VisibleInterval]()
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:  1000,
 		stop:   2000,
 		fileId: "fid1",
 	})
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:  3000,
 		stop:   4000,
 		fileId: "fid2",
