@@ -34,31 +34,31 @@ func (m *mockChunkCache) SetChunk(fileId string, data []byte) {
 func TestReaderAt(t *testing.T) {
 
 	visibles := NewIntervalList[*VisibleInterval]()
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:     1,
 		stop:      2,
 		fileId:    "1",
 		chunkSize: 9,
 	})
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:     3,
 		stop:      4,
 		fileId:    "3",
 		chunkSize: 1,
 	})
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:     5,
 		stop:      6,
 		fileId:    "5",
 		chunkSize: 2,
 	})
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:     7,
 		stop:      9,
 		fileId:    "7",
 		chunkSize: 2,
 	})
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:     9,
 		stop:      10,
 		fileId:    "9",
@@ -99,13 +99,13 @@ func testReadAt(t *testing.T, readerAt *ChunkReadAt, offset int64, size int, exp
 func TestReaderAt0(t *testing.T) {
 
 	visibles := NewIntervalList[*VisibleInterval]()
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:     2,
 		stop:      5,
 		fileId:    "1",
 		chunkSize: 9,
 	})
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:     7,
 		stop:      9,
 		fileId:    "2",
@@ -131,7 +131,7 @@ func TestReaderAt0(t *testing.T) {
 func TestReaderAt1(t *testing.T) {
 
 	visibles := NewIntervalList[*VisibleInterval]()
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:     2,
 		stop:      5,
 		fileId:    "1",
@@ -158,13 +158,13 @@ func TestReaderAt1(t *testing.T) {
 
 func TestReaderAtGappedChunksDoNotLeak(t *testing.T) {
 	visibles := NewIntervalList[*VisibleInterval]()
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:     2,
 		stop:      3,
 		fileId:    "1",
 		chunkSize: 5,
 	})
-	addVisibleInterval(visibles, VisibleInterval{
+	addVisibleInterval(visibles, &VisibleInterval{
 		start:     7,
 		stop:      9,
 		fileId:    "1",
