@@ -86,6 +86,13 @@ func (mc *MemChunk) ActivityScore() int64 {
 	return mc.activityScore.ActivityScore()
 }
 
+func (mc *MemChunk) WrittenSize() int64 {
+	mc.RLock()
+	defer mc.RUnlock()
+
+	return mc.usage.WrittenSize()
+}
+
 func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc) {
 	mc.RLock()
 	defer mc.RUnlock()

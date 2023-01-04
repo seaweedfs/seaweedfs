@@ -161,6 +161,12 @@ func (sc *SwapFileChunk) ActivityScore() int64 {
 	return sc.activityScore.ActivityScore()
 }
 
+func (sc *SwapFileChunk) WrittenSize() int64 {
+	sc.RLock()
+	defer sc.RUnlock()
+	return sc.usage.WrittenSize()
+}
+
 func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {
 	sc.RLock()
 	defer sc.RUnlock()

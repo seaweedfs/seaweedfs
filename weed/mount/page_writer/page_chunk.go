@@ -12,5 +12,6 @@ type PageChunk interface {
 	ReadDataAt(p []byte, off int64, tsNs int64) (maxStop int64)
 	IsComplete() bool
 	ActivityScore() int64
+	WrittenSize() int64
 	SaveContent(saveFn SaveToStorageFunc)
 }
