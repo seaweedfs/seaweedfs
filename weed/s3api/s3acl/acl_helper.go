@@ -493,9 +493,9 @@ func GetAcpOwner(entryExtended map[string][]byte, defaultOwner string) string {
 	return defaultOwner
 }
 
-func SetAcpGrantsHeader(r *http.Request, acpGrants []*s3.Grant) {
-	if len(acpGrants) > 0 {
-		a, err := json.Marshal(acpGrants)
+func SetAcpGrantsHeader(r *http.Request, grants []*s3.Grant) {
+	if len(grants) > 0 {
+		a, err := MarshalGrantsToJson(grants)
 		if err == nil {
 			r.Header.Set(s3_constants.ExtAmzAclKey, string(a))
 		} else {
@@ -542,7 +542,7 @@ func AssembleEntryWithAcp(filerEntry *filer_pb.Entry, ownerId string, grants []*
 	}
 
 	if grants != nil {
-		grantsBytes, err := json.Marshal(grants)
+		grantsBytes, err := MarshalGrantsToJson(grants)
 		if err != nil {
 			glog.Warning("assemble acp to entry:", err)
 			return s3err.ErrInvalidRequest
@@ -636,7 +636,7 @@ func GrantEquals(a, b *s3.Grant) bool {
 
 func MarshalGrantsToJson(grants []*s3.Grant) ([]byte, error) {
 	if len(grants) == 0 {
-		return nil, nil
+		return []byte{}, nil
 	}
 	var GrantsToMap []map[string]any
 	for _, grant := range grants {
