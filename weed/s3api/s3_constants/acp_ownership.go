@@ -4,9 +4,7 @@ var (
 	OwnershipBucketOwnerPreferred = "BucketOwnerPreferred"
 	OwnershipObjectWriter         = "ObjectWriter"
 	OwnershipBucketOwnerEnforced  = "BucketOwnerEnforced"
-
-	DefaultOwnershipForCreate = OwnershipObjectWriter
-	DefaultOwnershipForExists = OwnershipBucketOwnerEnforced
+	DefaultObjectOwnership        = OwnershipBucketOwnerEnforced
 )
 
 func ValidateOwnership(ownership string) bool {

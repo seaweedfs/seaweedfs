@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"golang.org/x/exp/slices"
 	"math"
@@ -27,7 +28,7 @@ type InitiateMultipartUploadResult struct {
 	s3.CreateMultipartUploadOutput
 }
 
-func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInput) (output *InitiateMultipartUploadResult, code s3err.ErrorCode) {
+func (s3a *S3ApiServer) createMultipartUpload(initiatorId string, input *s3.CreateMultipartUploadInput) (output *InitiateMultipartUploadResult, code s3err.ErrorCode) {
 
 	glog.V(2).Infof("createMultipartUpload input %v", input)
 
@@ -46,6 +47,7 @@ func (s3a *S3ApiServer) createMultipartUpload(input *s3.CreateMultipartUploadInp
 		if input.ContentType != nil {
 			entry.Attributes.Mime = *input.ContentType
 		}
+		entry.Extended[s3_constants.ExtAmzMultipartInitiator] = []byte(initiatorId)
 	}); err != nil {
 		glog.Errorf("NewMultipartUpload error: %v", err)
 		return nil, s3err.ErrInternalError
@@ -236,7 +238,7 @@ type ListMultipartUploadsResult struct {
 	Upload             []*s3.MultipartUpload `locationName:"Upload" type:"list" flattened:"true"`
 }
 
-func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput) (output *ListMultipartUploadsResult, code s3err.ErrorCode) {
+func (s3a *S3ApiServer) listMultipartUploads(bucketMetaData *BucketMetaData, input *s3.ListMultipartUploadsInput) (output *ListMultipartUploadsResult, code s3err.ErrorCode) {
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html
 
 	glog.V(2).Infof("listMultipartUploads input %v", input)
@@ -267,9 +269,27 @@ func (s3a *S3ApiServer) listMultipartUploads(input *s3.ListMultipartUploadsInput
 			if *input.Prefix != "" && !strings.HasPrefix(key, *input.Prefix) {
 				continue
 			}
+			initiatorId := string(entry.Extended[s3_constants.ExtAmzMultipartInitiator])
+			if initiatorId == "" {
+				initiatorId = *bucketMetaData.Owner.ID
+			}
+			initiatorDisplayName := s3a.accountManager.IdNameMapping[initiatorId]
+			ownerId := string(entry.Extended[s3_constants.ExtAmzOwnerKey])
+			if ownerId == "" {
+				ownerId = *bucketMetaData.Owner.ID
+			}
+			ownerDisplayName := s3a.accountManager.IdNameMapping[ownerId]
 			output.Upload = append(output.Upload, &s3.MultipartUpload{
 				Key:      objectKey(aws.String(key)),
 				UploadId: aws.String(entry.Name),
+				Owner: &s3.Owner{
+					ID:          &initiatorId,
+					DisplayName: &ownerDisplayName,
+				},
+				Initiator: &s3.Initiator{
+					ID:          &initiatorId,
+					DisplayName: &initiatorDisplayName,
+				},
 			})
 			uploadsCount += 1
 		}

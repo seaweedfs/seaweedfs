@@ -37,6 +37,8 @@ func (scanner *VolumeFileScanner4ReadAll) VisitNeedle(n *needle.Needle, offset i
 		NeedleBlobCompressed: n.IsCompressed(),
 		LastModified:         n.LastModified,
 		Crc:                  n.Checksum.Value(),
+		Name:                 n.Name,
+		Mime:                 n.Mime,
 	})
 	if sendErr != nil {
 		return sendErr

@@ -17,7 +17,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-var IdentityAnonymous *Identity
+var IdentityAnonymous = &Identity{
+	Name:      s3account.AccountAnonymous.Name,
+	AccountId: s3account.AccountAnonymous.Id,
+}
 
 type Action string
 
@@ -162,12 +165,6 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 		identities = append(identities, t)
 	}
 
-	if IdentityAnonymous == nil {
-		IdentityAnonymous = &Identity{
-			Name:      s3account.AccountAnonymous.Name,
-			AccountId: s3account.AccountAnonymous.Id,
-		}
-	}
 	iam.m.Lock()
 	// atomically switch
 	iam.identities = identities

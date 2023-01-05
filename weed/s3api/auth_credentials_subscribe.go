@@ -70,10 +70,10 @@ func (s3a *S3ApiServer) onBucketMetadataChange(dir string, oldEntry *filer_pb.En
 	if dir == s3a.option.BucketsPath {
 		if newEntry != nil {
 			s3a.bucketRegistry.LoadBucketMetadata(newEntry)
-			glog.V(0).Infof("updated bucketMetadata %s/%s", dir, newEntry)
+			glog.V(1).Infof("updated bucketMetadata %s/%s", dir, newEntry)
 		} else {
 			s3a.bucketRegistry.RemoveBucketMetadata(oldEntry)
-			glog.V(0).Infof("remove bucketMetadata  %s/%s", dir, newEntry)
+			glog.V(1).Infof("remove bucketMetadata  %s/%s", dir, newEntry)
 		}
 	}
 	return nil

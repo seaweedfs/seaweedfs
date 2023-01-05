@@ -93,7 +93,12 @@ spec:
             - "/bin/sh"
             - "-ec"
             - |
-              exec /usr/bin/weed -logdir=/logs \
+              exec /usr/bin/weed \
+                {{- if eq .Values.volume.logs.type "hostPath" }}
+                -logdir=/logs \
+                {{- else }}
+                -logtostderr=true \
+                {{- end }}
                 {{- if .Values.volume.loggingOverrideLevel }}
                 -v={{ .Values.volume.loggingOverrideLevel }} \
                 {{- else }}
@@ -206,19 +211,19 @@ spec:
         {{- if eq .Values.volume.data.type "hostPath" }}
         - name: data
           hostPath:
-            path: /storage/object_store/
+            path: {{ .Values.volume.data.hostPathPrefix }}/object_store/
             type: DirectoryOrCreate
         {{- end }}
         {{- if and (eq .Values.volume.idx.type "hostPath") .Values.volume.dir_idx }}
         - name: idx
           hostPath:
-            path: /ssd/seaweedfs-volume-idx/
+            path: {{ .Values.volume.idx.hostPathPrefix }}/seaweedfs-volume-idx/
             type: DirectoryOrCreate
         {{- end }}
         {{- if eq .Values.volume.logs.type "hostPath" }}
         - name: logs
           hostPath:
-            path: /storage/logs/seaweedfs/volume
+            path: {{ .Values.volume.logs.hostPathPrefix }}/logs/seaweedfs/volume
             type: DirectoryOrCreate
         {{- end }}
         {{- if .Values.global.enableSecurity }}

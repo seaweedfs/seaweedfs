@@ -23,19 +23,19 @@ func getAccountId(r *http.Request) string {
 }
 
 func (s3a *S3ApiServer) checkAccessByOwnership(r *http.Request, bucket string) s3err.ErrorCode {
-	metadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
+	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
 	if errCode != s3err.ErrNone {
 		return errCode
 	}
-	accountId := getAccountId(r)
-	if accountId == s3account.AccountAdmin.Id || accountId == *metadata.Owner.ID {
+	requestAccountId := getAccountId(r)
+	if s3acl.ValidateAccount(requestAccountId, *bucketMetadata.Owner.ID) {
 		return s3err.ErrNone
 	}
 	return s3err.ErrAccessDenied
 }
 
 //Check access for PutBucketAclHandler
-func (s3a *S3ApiServer) checkAccessForPutBucketAcl(accountId, bucket string) (*BucketMetaData, s3err.ErrorCode) {
+func (s3a *S3ApiServer) checkAccessForPutBucketAcl(requestAccountId, bucket string) (*BucketMetaData, s3err.ErrorCode) {
 	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
 	if errCode != s3err.ErrNone {
 		return nil, errCode
@@ -45,12 +45,12 @@ func (s3a *S3ApiServer) checkAccessForPutBucketAcl(accountId, bucket string) (*B
 		return nil, s3err.AccessControlListNotSupported
 	}
 
-	if accountId == s3account.AccountAdmin.Id || accountId == *bucketMetadata.Owner.ID {
+	if s3acl.ValidateAccount(requestAccountId, *bucketMetadata.Owner.ID) {
 		return bucketMetadata, s3err.ErrNone
 	}
 
 	if len(bucketMetadata.Acl) > 0 {
-		reqGrants := s3acl.DetermineReqGrants(accountId, s3_constants.PermissionWriteAcp)
+		reqGrants := s3acl.DetermineRequiredGrants(requestAccountId, s3_constants.PermissionWriteAcp)
 		for _, bucketGrant := range bucketMetadata.Acl {
 			for _, reqGrant := range reqGrants {
 				if s3acl.GrantEquals(bucketGrant, reqGrant) {
@@ -59,7 +59,7 @@ func (s3a *S3ApiServer) checkAccessForPutBucketAcl(accountId, bucket string) (*B
 			}
 		}
 	}
-	glog.V(3).Infof("acl denied! request account id: %s", accountId)
+	glog.V(3).Infof("acl denied! request account id: %s", requestAccountId)
 	return nil, s3err.ErrAccessDenied
 }
 
@@ -73,6 +73,7 @@ func updateBucketEntry(s3a *S3ApiServer, entry *filer_pb.Entry) error {
 // - GetBucketAclHandler
 // - ListObjectsV1Handler
 // - ListObjectsV2Handler
+// - ListMultipartUploadsHandler
 func (s3a *S3ApiServer) checkAccessForReadBucket(r *http.Request, bucket, aclAction string) (*BucketMetaData, s3err.ErrorCode) {
 	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
 	if errCode != s3err.ErrNone {
@@ -83,13 +84,13 @@ func (s3a *S3ApiServer) checkAccessForReadBucket(r *http.Request, bucket, aclAct
 		return bucketMetadata, s3err.ErrNone
 	}
 
-	accountId := s3acl.GetAccountId(r)
-	if accountId == s3account.AccountAdmin.Id || accountId == *bucketMetadata.Owner.ID {
+	requestAccountId := s3acl.GetAccountId(r)
+	if s3acl.ValidateAccount(requestAccountId, *bucketMetadata.Owner.ID) {
 		return bucketMetadata, s3err.ErrNone
 	}
 
 	if len(bucketMetadata.Acl) > 0 {
-		reqGrants := s3acl.DetermineReqGrants(accountId, aclAction)
+		reqGrants := s3acl.DetermineRequiredGrants(requestAccountId, aclAction)
 		for _, bucketGrant := range bucketMetadata.Acl {
 			for _, reqGrant := range reqGrants {
 				if s3acl.GrantEquals(bucketGrant, reqGrant) {
@@ -99,7 +100,7 @@ func (s3a *S3ApiServer) checkAccessForReadBucket(r *http.Request, bucket, aclAct
 		}
 	}
 
-	glog.V(3).Infof("acl denied! request account id: %s", accountId)
+	glog.V(3).Infof("acl denied! request account id: %s", requestAccountId)
 	return nil, s3err.ErrAccessDenied
 }
 
@@ -121,14 +122,12 @@ func (s3a *S3ApiServer) checkAccessForReadObjectAcl(r *http.Request, bucket, obj
 				return nil, s3err.ErrInternalError
 			}
 		}
-
 		if entry.IsDirectory {
 			return nil, s3err.ErrExistingObjectIsDirectory
 		}
-
 		acpOwnerId := s3acl.GetAcpOwner(entry.Extended, *bucketMetadata.Owner.ID)
 		acpOwnerName := s3a.accountManager.IdNameMapping[acpOwnerId]
-		acpGrants := s3acl.GetAcpGrants(entry.Extended)
+		acpGrants := s3acl.GetAcpGrants(&acpOwnerId, entry.Extended)
 		acp = &s3.AccessControlPolicy{
 			Owner: &s3.Owner{
 				ID:          &acpOwnerId,
@@ -138,36 +137,29 @@ func (s3a *S3ApiServer) checkAccessForReadObjectAcl(r *http.Request, bucket, obj
 		}
 		return acp, s3err.ErrNone
 	}
-
 	if bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
 		return getAcpFunc()
-	} else {
-		accountId := s3acl.GetAccountId(r)
-
-		acp, errCode := getAcpFunc()
-		if errCode != s3err.ErrNone {
-			return nil, errCode
-		}
-
-		if accountId == *acp.Owner.ID {
-			return acp, s3err.ErrNone
-		}
-
-		//find in Grants
-		if acp.Grants != nil {
-			reqGrants := s3acl.DetermineReqGrants(accountId, s3_constants.PermissionReadAcp)
-			for _, requiredGrant := range reqGrants {
-				for _, grant := range acp.Grants {
-					if s3acl.GrantEquals(requiredGrant, grant) {
-						return acp, s3err.ErrNone
-					}
+	}
+	requestAccountId := s3acl.GetAccountId(r)
+	acp, errCode = getAcpFunc()
+	if errCode != s3err.ErrNone {
+		return nil, errCode
+	}
+	if s3acl.ValidateAccount(requestAccountId, *acp.Owner.ID) {
+		return acp, s3err.ErrNone
+	}
+	if acp.Grants != nil {
+		reqGrants := s3acl.DetermineRequiredGrants(requestAccountId, s3_constants.PermissionReadAcp)
+		for _, requiredGrant := range reqGrants {
+			for _, grant := range acp.Grants {
+				if s3acl.GrantEquals(requiredGrant, grant) {
+					return acp, s3err.ErrNone
 				}
 			}
 		}
-
-		glog.V(3).Infof("acl denied! request account id: %s", accountId)
-		return nil, s3err.ErrAccessDenied
 	}
+	glog.V(3).Infof("CheckAccessForReadObjectAcl denied! request account id: %s", requestAccountId)
+	return nil, s3err.ErrAccessDenied
 }
 
 // Check Object-Read related access
@@ -184,6 +176,10 @@ func (s3a *S3ApiServer) checkBucketAccessForReadObject(r *http.Request, bucket s
 
 	if bucketMetadata.ObjectOwnership != s3_constants.OwnershipBucketOwnerEnforced {
 		//offload object acl validation to filer layer
+		_, defaultErrorCode := s3a.checkAccessForReadBucket(r, bucket, s3_constants.PermissionRead)
+		if defaultErrorCode != s3err.ErrNone {
+			r.Header.Set(s3_constants.XSeaweedFSHeaderAmzBucketAccessDenied, "true")
+		}
 		r.Header.Set(s3_constants.XSeaweedFSHeaderAmzBucketOwnerId, *bucketMetadata.Owner.ID)
 	}
 
@@ -193,67 +189,58 @@ func (s3a *S3ApiServer) checkBucketAccessForReadObject(r *http.Request, bucket s
 // Check ObjectAcl-Write related access
 // includes:
 // - PutObjectAclHandler
-func (s3a *S3ApiServer) checkAccessForWriteObjectAcl(accountId, bucket, object string) (bucketMetadata *BucketMetaData, objectEntry *filer_pb.Entry, objectOwner string, errCode s3err.ErrorCode) {
-	bucketMetadata, errCode = s3a.bucketRegistry.GetBucketMetadata(bucket)
+func (s3a *S3ApiServer) checkAccessForWriteObjectAcl(r *http.Request, bucket, object string) (*filer_pb.Entry, string, []*s3.Grant, s3err.ErrorCode) {
+	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
 	if errCode != s3err.ErrNone {
-		return nil, nil, "", errCode
+		return nil, "", nil, errCode
+	}
+
+	requestAccountId := s3acl.GetAccountId(r)
+	reqOwnerId, grants, errCode := s3acl.ExtractObjectAcl(r, s3a.accountManager, bucketMetadata.ObjectOwnership, *bucketMetadata.Owner.ID, requestAccountId, false)
+	if errCode != s3err.ErrNone {
+		return nil, "", nil, errCode
 	}
 
 	if bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
-		return nil, nil, "", s3err.AccessControlListNotSupported
-	}
-
-	//bucket acl
-	bucketAclAllowed := false
-	reqGrants := s3acl.DetermineReqGrants(accountId, s3_constants.PermissionWrite)
-	if accountId == *bucketMetadata.Owner.ID {
-		bucketAclAllowed = true
-	} else if bucketMetadata.Acl != nil {
-	bucketLoop:
-		for _, bucketGrant := range bucketMetadata.Acl {
-			for _, requiredGrant := range reqGrants {
-				if s3acl.GrantEquals(bucketGrant, requiredGrant) {
-					bucketAclAllowed = true
-					break bucketLoop
-				}
-			}
-		}
-	}
-	if !bucketAclAllowed {
-		return nil, nil, "", s3err.ErrAccessDenied
+		return nil, "", nil, s3err.AccessControlListNotSupported
 	}
 
 	//object acl
 	objectEntry, err := getObjectEntry(s3a, bucket, object)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
-			return nil, nil, "", s3err.ErrNoSuchKey
+			return nil, "", nil, s3err.ErrNoSuchKey
 		}
-		return nil, nil, "", s3err.ErrInternalError
+		return nil, "", nil, s3err.ErrInternalError
 	}
 
 	if objectEntry.IsDirectory {
-		return nil, nil, "", s3err.ErrExistingObjectIsDirectory
+		return nil, "", nil, s3err.ErrExistingObjectIsDirectory
 	}
 
-	objectOwner = s3acl.GetAcpOwner(objectEntry.Extended, *bucketMetadata.Owner.ID)
-	if accountId == objectOwner {
-		return bucketMetadata, objectEntry, objectOwner, s3err.ErrNone
+	objectOwner := s3acl.GetAcpOwner(objectEntry.Extended, *bucketMetadata.Owner.ID)
+	//object owner is immutable
+	if reqOwnerId != "" && reqOwnerId != objectOwner {
+		return nil, "", nil, s3err.ErrAccessDenied
+	}
+	if s3acl.ValidateAccount(requestAccountId, objectOwner) {
+		return objectEntry, objectOwner, grants, s3err.ErrNone
 	}
 
-	objectGrants := s3acl.GetAcpGrants(objectEntry.Extended)
+	objectGrants := s3acl.GetAcpGrants(nil, objectEntry.Extended)
 	if objectGrants != nil {
+		requiredGrants := s3acl.DetermineRequiredGrants(requestAccountId, s3_constants.PermissionWriteAcp)
 		for _, objectGrant := range objectGrants {
-			for _, requiredGrant := range reqGrants {
+			for _, requiredGrant := range requiredGrants {
 				if s3acl.GrantEquals(objectGrant, requiredGrant) {
-					return bucketMetadata, objectEntry, objectOwner, s3err.ErrNone
+					return objectEntry, objectOwner, grants, s3err.ErrNone
 				}
 			}
 		}
 	}
 
-	glog.V(3).Infof("acl denied! request account id: %s", accountId)
-	return nil, nil, "", s3err.ErrAccessDenied
+	glog.V(3).Infof("checkAccessForWriteObjectAcl denied! request account id: %s", requestAccountId)
+	return nil, "", nil, s3err.ErrAccessDenied
 }
 
 func updateObjectEntry(s3a *S3ApiServer, bucket, object string, entry *filer_pb.Entry) error {
@@ -269,151 +256,159 @@ func (s3a *S3ApiServer) CheckAccessForPutObject(r *http.Request, bucket, object 
 	return s3a.checkAccessForWriteObject(r, bucket, object, accountId)
 }
 
-// CheckAccessForNewMultipartUpload Check Acl for InitiateMultipartUploadResult API
+// CheckAccessForPutObjectPartHandler Check Acl for Upload object part
 // includes:
-// - NewMultipartUploadHandler
-func (s3a *S3ApiServer) CheckAccessForNewMultipartUpload(r *http.Request, bucket, object string) s3err.ErrorCode {
+// - PutObjectPartHandler
+func (s3a *S3ApiServer) CheckAccessForPutObjectPartHandler(r *http.Request, bucket string) s3err.ErrorCode {
+	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
+	if errCode != s3err.ErrNone {
+		return errCode
+	}
+	if bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
+		return s3err.ErrNone
+	}
 	accountId := s3acl.GetAccountId(r)
-	if accountId == IdentityAnonymous.AccountId {
+	if !CheckBucketAccess(accountId, bucketMetadata, s3_constants.PermissionWrite) {
 		return s3err.ErrAccessDenied
 	}
-	return s3a.checkAccessForWriteObject(r, bucket, object, accountId)
+	return s3err.ErrNone
 }
 
-// CheckAccessForCompleteMultipartUpload Check Acl for CompleteMultipartUpload API
+// CheckAccessForNewMultipartUpload Check Acl for  API
 // includes:
-// - CompleteMultipartUploadHandler
+// - NewMultipartUploadHandler
+func (s3a *S3ApiServer) CheckAccessForNewMultipartUpload(r *http.Request, bucket, object string) (s3err.ErrorCode, string) {
+	accountId := s3acl.GetAccountId(r)
+	if accountId == IdentityAnonymous.AccountId {
+		return s3err.ErrAccessDenied, ""
+	}
+	errCode := s3a.checkAccessForWriteObject(r, bucket, object, accountId)
+	return errCode, accountId
+}
+
+func (s3a *S3ApiServer) CheckAccessForAbortMultipartUpload(r *http.Request, bucket, object string) s3err.ErrorCode {
+	return s3a.CheckAccessWithBucketOwnerAndInitiator(r, bucket, object)
+}
+
 func (s3a *S3ApiServer) CheckAccessForCompleteMultipartUpload(r *http.Request, bucket, object string) s3err.ErrorCode {
 	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
 	if errCode != s3err.ErrNone {
 		return errCode
 	}
 
-	//bucket access allowed
-	accountId := s3acl.GetAccountId(r)
-	if accountId == *bucketMetadata.Owner.ID {
-		return s3err.ErrNone
-	} else {
-		if len(bucketMetadata.Acl) > 0 {
-			reqGrants := s3acl.DetermineReqGrants(accountId, s3_constants.PermissionWrite)
-			for _, bucketGrant := range bucketMetadata.Acl {
-				for _, requiredGrant := range reqGrants {
-					if s3acl.GrantEquals(bucketGrant, requiredGrant) {
-						return s3err.ErrNone
-					}
-				}
-			}
+	if bucketMetadata.ObjectOwnership != s3_constants.OwnershipBucketOwnerEnforced {
+		accountId := getAccountId(r)
+		if !CheckBucketAccess(accountId, bucketMetadata, s3_constants.PermissionWrite) {
+			return s3err.ErrAccessDenied
 		}
 	}
-	glog.V(3).Infof("acl denied! request account id: %s", accountId)
-	return s3err.ErrAccessDenied
+	return s3err.ErrNone
 }
 
-func (s3a *S3ApiServer) checkAccessForWriteObject(r *http.Request, bucket, object, accountId string) s3err.ErrorCode {
+func (s3a *S3ApiServer) CheckAccessForListMultipartUploadParts(r *http.Request, bucket, object string) s3err.ErrorCode {
+	return s3a.CheckAccessWithBucketOwnerAndInitiator(r, bucket, object)
+}
+
+// CheckAccessWithBucketOwnerAndInitiator Check Access Permission with 'bucketOwner' and 'multipartUpload initiator'
+func (s3a *S3ApiServer) CheckAccessWithBucketOwnerAndInitiator(r *http.Request, bucket, object string) s3err.ErrorCode {
 	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
 	if errCode != s3err.ErrNone {
 		return errCode
 	}
 
-	if bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
-		// validate grants (only bucketOwnerFullControl acl is allowed)
-		_, grants, errCode := s3acl.ParseAndValidateAclHeaders(r, s3a.accountManager, bucketMetadata.ObjectOwnership, *bucketMetadata.Owner.ID, accountId, false)
-		if errCode != s3err.ErrNone {
-			return errCode
-		}
-		if len(grants) > 1 {
-			return s3err.AccessControlListNotSupported
-		}
-		bucketOwnerFullControlGrant := &s3.Grant{
-			Permission: &s3_constants.PermissionFullControl,
-			Grantee: &s3.Grantee{
-				Type: &s3_constants.GrantTypeCanonicalUser,
-				ID:   bucketMetadata.Owner.ID,
-			},
-		}
-		if len(grants) == 0 {
-			return s3err.ErrNone
-		}
-
-		if s3acl.GrantEquals(bucketOwnerFullControlGrant, grants[0]) {
-			return s3err.ErrNone
-		}
-
-		return s3err.AccessControlListNotSupported
-	}
-
 	//bucket access allowed
-	bucketAclAllowed := false
-	if accountId == *bucketMetadata.Owner.ID {
-		bucketAclAllowed = true
-	} else {
-		if len(bucketMetadata.Acl) > 0 {
-			reqGrants := s3acl.DetermineReqGrants(accountId, s3_constants.PermissionWrite)
-		bucketLoop:
-			for _, bucketGrant := range bucketMetadata.Acl {
-				for _, requiredGrant := range reqGrants {
-					if s3acl.GrantEquals(bucketGrant, requiredGrant) {
-						bucketAclAllowed = true
-						break bucketLoop
-					}
-				}
-			}
-		}
-	}
-	if !bucketAclAllowed {
-		glog.V(3).Infof("acl denied! request account id: %s", accountId)
-		return s3err.ErrAccessDenied
+	accountId := s3acl.GetAccountId(r)
+	if s3acl.ValidateAccount(*bucketMetadata.Owner.ID, accountId) {
+		return s3err.ErrNone
 	}
 
-	//object access allowed
-	entry, err := getObjectEntry(s3a, bucket, object)
+	//multipart initiator allowed
+	entry, err := getMultipartUpload(s3a, bucket, object)
 	if err != nil {
 		if err != filer_pb.ErrNotFound {
 			return s3err.ErrInternalError
 		}
 	} else {
-		if entry.IsDirectory {
-			return s3err.ErrExistingObjectIsDirectory
-		}
-
-		//Only the owner of the bucket and the owner of the object can overwrite the object
-		objectOwner := s3acl.GetAcpOwner(entry.Extended, *bucketMetadata.Owner.ID)
-		if accountId != objectOwner && accountId != *bucketMetadata.Owner.ID {
-			glog.V(3).Infof("acl denied! request account id: %s, expect account id: %s", accountId, *bucketMetadata.Owner.ID)
-			return s3err.ErrAccessDenied
+		uploadInitiator, ok := entry.Extended[s3_constants.ExtAmzMultipartInitiator]
+		if !ok || accountId == string(uploadInitiator) {
+			return s3err.ErrNone
 		}
 	}
+	glog.V(3).Infof("CheckAccessWithBucketOwnerAndInitiator denied! request account id: %s", accountId)
+	return s3err.ErrAccessDenied
+}
 
-	ownerId, grants, errCode := s3acl.ParseAndValidateAclHeadersOrElseDefault(r, s3a.accountManager, bucketMetadata.ObjectOwnership, *bucketMetadata.Owner.ID, accountId, false)
+func (s3a *S3ApiServer) checkAccessForWriteObject(r *http.Request, bucket, object, requestAccountId string) s3err.ErrorCode {
+	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
+	if errCode != s3err.ErrNone {
+		return errCode
+	}
+	requestOwnerId, grants, errCode := s3acl.ExtractObjectAcl(r, s3a.accountManager, bucketMetadata.ObjectOwnership, *bucketMetadata.Owner.ID, requestAccountId, true)
 	if errCode != s3err.ErrNone {
 		return errCode
 	}
 
-	s3acl.SetAcpOwnerHeader(r, ownerId)
-	s3acl.SetAcpGrantsHeader(r, grants)
+	if bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
+		return s3err.ErrNone
+	}
 
+	if !CheckBucketAccess(requestAccountId, bucketMetadata, s3_constants.PermissionWrite) {
+		return s3err.ErrAccessDenied
+	}
+
+	if requestOwnerId == "" {
+		requestOwnerId = requestAccountId
+	}
+	entry, err := getObjectEntry(s3a, bucket, object)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			s3acl.SetAcpOwnerHeader(r, requestOwnerId)
+			s3acl.SetAcpGrantsHeader(r, grants)
+			return s3err.ErrNone
+		}
+		return s3err.ErrInternalError
+	}
+
+	objectOwnerId := s3acl.GetAcpOwner(entry.Extended, *bucketMetadata.Owner.ID)
+	//object owner is immutable
+	if requestOwnerId != "" && objectOwnerId != requestOwnerId {
+		return s3err.ErrAccessDenied
+	}
+
+	//Only the owner of the bucket and the owner of the object can overwrite the object
+	if s3acl.ValidateAccount(requestOwnerId, objectOwnerId, *bucketMetadata.Owner.ID) {
+		glog.V(3).Infof("checkAccessForWriteObject denied! request account id: %s, expect account id: %s", requestAccountId, *bucketMetadata.Owner.ID)
+		return s3err.ErrAccessDenied
+	}
+
+	s3acl.SetAcpOwnerHeader(r, objectOwnerId)
+	s3acl.SetAcpGrantsHeader(r, grants)
 	return s3err.ErrNone
+}
+
+func CheckBucketAccess(requestAccountId string, bucketMetadata *BucketMetaData, permission string) bool {
+	if s3acl.ValidateAccount(requestAccountId, *bucketMetadata.Owner.ID) {
+		return true
+	} else {
+		if len(bucketMetadata.Acl) > 0 {
+			reqGrants := s3acl.DetermineRequiredGrants(requestAccountId, permission)
+			for _, bucketGrant := range bucketMetadata.Acl {
+				for _, requiredGrant := range reqGrants {
+					if s3acl.GrantEquals(bucketGrant, requiredGrant) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	glog.V(3).Infof("CheckBucketAccess denied! request account id: %s", requestAccountId)
+	return false
 }
 
 func getObjectEntry(s3a *S3ApiServer, bucket, object string) (*filer_pb.Entry, error) {
 	return s3a.getEntry(util.Join(s3a.option.BucketsPath, bucket), object)
 }
 
-func (s3a *S3ApiServer) ExtractBucketAcp(r *http.Request) (owner string, grants []*s3.Grant, errCode s3err.ErrorCode) {
-	accountId := s3acl.GetAccountId(r)
-
-	ownership := s3_constants.DefaultOwnershipForCreate
-	if ownership == s3_constants.OwnershipBucketOwnerEnforced {
-		return accountId, []*s3.Grant{
-			{
-				Permission: &s3_constants.PermissionFullControl,
-				Grantee: &s3.Grantee{
-					Type: &s3_constants.GrantTypeCanonicalUser,
-					ID:   &accountId,
-				},
-			},
-		}, s3err.ErrNone
-	} else {
-		return s3acl.ParseAndValidateAclHeadersOrElseDefault(r, s3a.accountManager, ownership, accountId, accountId, false)
-	}
+func getMultipartUpload(s3a *S3ApiServer, bucket, object string) (*filer_pb.Entry, error) {
+	return s3a.getEntry(s3a.genUploadsFolder(bucket), object)
 }

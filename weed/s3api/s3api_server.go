@@ -128,15 +128,15 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// PutObjectPart
 		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(track(s3a.Auth(withAcl(s3a.cb.Limit, s3a.PutObjectPartHandler, ACTION_WRITE)), "PUT")).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
 		// CompleteMultipartUpload
-		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.CompleteMultipartUploadHandler, ACTION_WRITE)), "POST")).Queries("uploadId", "{uploadId:.*}")
+		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(track(s3a.Auth(withAcl(s3a.cb.Limit, s3a.CompleteMultipartUploadHandler, ACTION_WRITE)), "POST")).Queries("uploadId", "{uploadId:.*}")
 		// NewMultipartUpload
-		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.NewMultipartUploadHandler, ACTION_WRITE)), "POST")).Queries("uploads", "")
+		bucket.Methods("POST").Path("/{object:.+}").HandlerFunc(track(s3a.Auth(withAcl(s3a.cb.Limit, s3a.NewMultipartUploadHandler, ACTION_WRITE)), "POST")).Queries("uploads", "")
 		// AbortMultipartUpload
-		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.AbortMultipartUploadHandler, ACTION_WRITE)), "DELETE")).Queries("uploadId", "{uploadId:.*}")
+		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(track(s3a.Auth(withAcl(s3a.cb.Limit, s3a.AbortMultipartUploadHandler, ACTION_WRITE)), "DELETE")).Queries("uploadId", "{uploadId:.*}")
 		// ListObjectParts
-		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListObjectPartsHandler, ACTION_READ)), "GET")).Queries("uploadId", "{uploadId:.*}")
+		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(track(s3a.Auth(withAcl(s3a.cb.Limit, s3a.ListObjectPartsHandler, ACTION_READ)), "GET")).Queries("uploadId", "{uploadId:.*}")
 		// ListMultipartUploads
-		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListMultipartUploadsHandler, ACTION_READ)), "GET")).Queries("uploads", "")
+		bucket.Methods("GET").HandlerFunc(track(s3a.Auth(withAcl(s3a.cb.Limit, s3a.ListMultipartUploadsHandler, ACTION_READ)), "GET")).Queries("uploads", "")
 
 		// GetObjectTagging
 		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectTaggingHandler, ACTION_READ)), "GET")).Queries("tagging", "")
