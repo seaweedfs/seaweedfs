@@ -6,7 +6,6 @@ import (
 	"golang.org/x/exp/slices"
 	"io"
 	"math"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -78,7 +77,8 @@ func StreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunction, w
 
 	fileId2Url := make(map[string][]string)
 
-	for _, chunkView := range chunkViews {
+	for x := chunkViews.Front(); x != nil; x = x.Next {
+		chunkView := x.Value
 		var urlStrings []string
 		var err error
 		for _, backoff := range getLookupFileIdBackoffSchedule {
@@ -102,29 +102,30 @@ func StreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunction, w
 
 	downloadThrottler := util.NewWriteThrottler(downloadMaxBytesPs)
 	remaining := size
-	for _, chunkView := range chunkViews {
-		if offset < chunkView.LogicOffset {
-			gap := chunkView.LogicOffset - offset
+	for x := chunkViews.Front(); x != nil; x = x.Next {
+		chunkView := x.Value
+		if offset < chunkView.ViewOffset {
+			gap := chunkView.ViewOffset - offset
 			remaining -= gap
-			glog.V(4).Infof("zero [%d,%d)", offset, chunkView.LogicOffset)
+			glog.V(4).Infof("zero [%d,%d)", offset, chunkView.ViewOffset)
 			err := writeZero(writer, gap)
 			if err != nil {
-				return fmt.Errorf("write zero [%d,%d)", offset, chunkView.LogicOffset)
+				return fmt.Errorf("write zero [%d,%d)", offset, chunkView.ViewOffset)
 			}
-			offset = chunkView.LogicOffset
+			offset = chunkView.ViewOffset
 		}
 		urlStrings := fileId2Url[chunkView.FileId]
 		start := time.Now()
-		err := retriedStreamFetchChunkData(writer, urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size))
-		offset += int64(chunkView.Size)
-		remaining -= int64(chunkView.Size)
+		err := retriedStreamFetchChunkData(writer, urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
+		offset += int64(chunkView.ViewSize)
+		remaining -= int64(chunkView.ViewSize)
 		stats.FilerRequestHistogram.WithLabelValues("chunkDownload").Observe(time.Since(start).Seconds())
 		if err != nil {
 			stats.FilerRequestCounter.WithLabelValues("chunkDownloadError").Inc()
 			return fmt.Errorf("read chunk: %v", err)
 		}
 		stats.FilerRequestCounter.WithLabelValues("chunkDownload").Inc()
-		downloadThrottler.MaybeSlowdown(int64(chunkView.Size))
+		downloadThrottler.MaybeSlowdown(int64(chunkView.ViewSize))
 	}
 	if remaining > 0 {
 		glog.V(4).Infof("zero [%d,%d)", offset, offset+remaining)
@@ -167,14 +168,15 @@ func ReadAll(buffer []byte, masterClient *wdclient.MasterClient, chunks []*filer
 
 	idx := 0
 
-	for _, chunkView := range chunkViews {
+	for x := chunkViews.Front(); x != nil; x = x.Next {
+		chunkView := x.Value
 		urlStrings, err := lookupFileIdFn(chunkView.FileId)
 		if err != nil {
 			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
 			return err
 		}
 
-		n, err := retriedFetchChunkData(buffer[idx:idx+int(chunkView.Size)], urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset)
+		n, err := retriedFetchChunkData(buffer[idx:idx+int(chunkView.ViewSize)], urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk)
 		if err != nil {
 			return err
 		}
@@ -185,7 +187,8 @@ func ReadAll(buffer []byte, masterClient *wdclient.MasterClient, chunks []*filer
 
 // ----------------  ChunkStreamReader ----------------------------------
 type ChunkStreamReader struct {
-	chunkViews   []*ChunkView
+	head         *Interval[*ChunkView]
+	chunkView    *Interval[*ChunkView]
 	totalSize    int64
 	logicOffset  int64
 	buffer       []byte
@@ -201,17 +204,16 @@ var _ = io.ReaderAt(&ChunkStreamReader{})
 func doNewChunkStreamReader(lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) *ChunkStreamReader {
 
 	chunkViews := ViewFromChunks(lookupFileIdFn, chunks, 0, math.MaxInt64)
-	slices.SortFunc(chunkViews, func(a, b *ChunkView) bool {
-		return a.LogicOffset < b.LogicOffset
-	})
 
 	var totalSize int64
-	for _, chunk := range chunkViews {
-		totalSize += int64(chunk.Size)
+	for x := chunkViews.Front(); x != nil; x = x.Next {
+		chunk := x.Value
+		totalSize += int64(chunk.ViewSize)
 	}
 
 	return &ChunkStreamReader{
-		chunkViews:   chunkViews,
+		head:         chunkViews.Front(),
+		chunkView:    chunkViews.Front(),
 		lookupFileId: lookupFileIdFn,
 		totalSize:    totalSize,
 	}
@@ -290,7 +292,7 @@ func (c *ChunkStreamReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 func insideChunk(offset int64, chunk *ChunkView) bool {
-	return chunk.LogicOffset <= offset && offset < chunk.LogicOffset+int64(chunk.Size)
+	return chunk.ViewOffset <= offset && offset < chunk.ViewOffset+int64(chunk.ViewSize)
 }
 
 func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
@@ -300,50 +302,29 @@ func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
 	}
 
 	// fmt.Printf("fetch for offset %d\n", offset)
-
-	// need to seek to a different chunk
-	currentChunkIndex := sort.Search(len(c.chunkViews), func(i int) bool {
-		return offset < c.chunkViews[i].LogicOffset
-	})
-	if currentChunkIndex == len(c.chunkViews) {
-		// not found
-		if insideChunk(offset, c.chunkViews[0]) {
-			// fmt.Printf("select0 chunk %d %s\n", currentChunkIndex, c.chunkViews[currentChunkIndex].FileId)
-			currentChunkIndex = 0
-		} else if insideChunk(offset, c.chunkViews[len(c.chunkViews)-1]) {
-			currentChunkIndex = len(c.chunkViews) - 1
-			// fmt.Printf("select last chunk %d %s\n", currentChunkIndex, c.chunkViews[currentChunkIndex].FileId)
-		} else {
-			return io.EOF
-		}
-	} else if currentChunkIndex > 0 {
-		if insideChunk(offset, c.chunkViews[currentChunkIndex]) {
-			// good hit
-		} else if insideChunk(offset, c.chunkViews[currentChunkIndex-1]) {
-			currentChunkIndex -= 1
-			// fmt.Printf("select -1 chunk %d %s\n", currentChunkIndex, c.chunkViews[currentChunkIndex].FileId)
-		} else {
-			// glog.Fatalf("unexpected1 offset %d", offset)
-			return fmt.Errorf("unexpected1 offset %d", offset)
-		}
-	} else {
-		// glog.Fatalf("unexpected2 offset %d", offset)
-		return fmt.Errorf("unexpected2 offset %d", offset)
+	c.chunkView = c.chunkView.Next
+	if c.chunkView == nil {
+		return io.EOF
 	}
 
 	// positioning within the new chunk
-	chunk := c.chunkViews[currentChunkIndex]
+	chunk := c.chunkView.Value
 	if insideChunk(offset, chunk) {
-		if c.isBufferEmpty() || c.bufferOffset != chunk.LogicOffset {
-			if err = c.fetchChunkToBuffer(chunk); err != nil {
-				return
-			}
+		if c.isBufferEmpty() || c.bufferOffset != chunk.ViewOffset {
+			return c.fetchChunkToBuffer(chunk)
 		}
 	} else {
-		// glog.Fatalf("unexpected3 offset %d in %s [%d,%d)", offset, chunk.FileId, chunk.LogicOffset, chunk.LogicOffset+int64(chunk.Size))
-		return fmt.Errorf("unexpected3 offset %d in %s [%d,%d)", offset, chunk.FileId, chunk.LogicOffset, chunk.LogicOffset+int64(chunk.Size))
+		for p := c.head; p != nil; p = p.Next {
+			chunk = p.Value
+			if insideChunk(offset, chunk) {
+				if c.isBufferEmpty() || c.bufferOffset != chunk.ViewOffset {
+					return c.fetchChunkToBuffer(chunk)
+				}
+			}
+		}
 	}
-	return
+
+	return io.EOF
 }
 
 func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
@@ -355,7 +336,7 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 	var buffer bytes.Buffer
 	var shouldRetry bool
 	for _, urlString := range urlStrings {
-		shouldRetry, err = util.ReadUrlAsStream(urlString+"?readDeleted=true", chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.Offset, int(chunkView.Size), func(data []byte) {
+		shouldRetry, err = util.ReadUrlAsStream(urlString+"?readDeleted=true", chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize), func(data []byte) {
 			buffer.Write(data)
 		})
 		if !shouldRetry {
@@ -372,10 +353,10 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 		return err
 	}
 	c.buffer = buffer.Bytes()
-	c.bufferOffset = chunkView.LogicOffset
+	c.bufferOffset = chunkView.ViewOffset
 	c.chunk = chunkView.FileId
 
-	// glog.V(0).Infof("fetched %s [%d,%d)", chunkView.FileId, chunkView.LogicOffset, chunkView.LogicOffset+int64(chunkView.Size))
+	// glog.V(0).Infof("fetched %s [%d,%d)", chunkView.FileId, chunkView.ViewOffset, chunkView.ViewOffset+int64(chunkView.ViewSize))
 
 	return nil
 }

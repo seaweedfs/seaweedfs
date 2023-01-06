@@ -33,7 +33,7 @@ func (f *Filer) LoadConfiguration(config *util.ViperProxy) (isFresh bool) {
 
 	if !hasDefaultStoreConfigured {
 		println()
-		println("Supported filer stores are:")
+		println("Supported filer stores are the following. If not found, check the full version.")
 		for _, store := range Stores {
 			println("    " + store.GetName())
 		}

@@ -45,13 +45,13 @@ type UploadResult struct {
 	RetryCount int    `json:"-"`
 }
 
-func (uploadResult *UploadResult) ToPbFileChunk(fileId string, offset int64) *filer_pb.FileChunk {
+func (uploadResult *UploadResult) ToPbFileChunk(fileId string, offset int64, tsNs int64) *filer_pb.FileChunk {
 	fid, _ := filer_pb.ToFileIdObject(fileId)
 	return &filer_pb.FileChunk{
 		FileId:       fileId,
 		Offset:       offset,
 		Size:         uint64(uploadResult.Size),
-		ModifiedTsNs: time.Now().UnixNano(),
+		ModifiedTsNs: tsNs,
 		ETag:         uploadResult.ContentMd5,
 		CipherKey:    uploadResult.CipherKey,
 		IsCompressed: uploadResult.Gzip > 0,

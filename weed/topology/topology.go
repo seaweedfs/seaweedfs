@@ -35,6 +35,7 @@ type Topology struct {
 
 	volumeSizeLimit  uint64
 	replicationAsMin bool
+	isDisableVacuum     bool
 
 	Sequence sequence.Sequencer
 
@@ -337,4 +338,14 @@ func (t *Topology) DataNodeRegistration(dcName, rackName string, dn *DataNode) {
 	rack := dc.GetOrCreateRack(rackName)
 	rack.LinkChildNode(dn)
 	glog.Infof("[%s] reLink To topo  ", dn.Id())
+}
+
+func (t *Topology) DisableVacuum() {
+	glog.V(0).Infof("DisableVacuum")
+	t.isDisableVacuum = true
+}
+
+func (t *Topology) EnableVacuum() {
+	glog.V(0).Infof("EnableVacuum")
+	t.isDisableVacuum = false
 }
