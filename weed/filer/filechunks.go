@@ -86,6 +86,17 @@ func SeparateGarbageChunks(visibles *IntervalList[*VisibleInterval], chunks []*f
 	return compacted, garbage
 }
 
+func FindGarbageChunks(visibles *IntervalList[*VisibleInterval], start int64, stop int64) (garbageFileId []string) {
+	for x := visibles.Front(); x != nil; x = x.Next {
+		interval := x.Value
+		offset := interval.start - interval.offsetInChunk
+		if start <= offset && offset+int64(interval.chunkSize) <= stop {
+			garbageFileId = append(garbageFileId, interval.fileId)
+		}
+	}
+	return
+}
+
 func MinusChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk, err error) {
 
 	aData, aMeta, aErr := ResolveChunkManifest(lookupFileIdFn, as, 0, math.MaxInt64)
