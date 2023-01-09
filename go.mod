@@ -117,7 +117,7 @@ require (
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
 	golang.org/x/net v0.4.0
 	golang.org/x/oauth2 v0.0.0-20221014153046-6fdb5e3db783 // indirect
-	golang.org/x/sys v0.3.0
+	golang.org/x/sys v0.4.0
 	golang.org/x/text v0.5.0 // indirect
 	golang.org/x/tools v0.4.0
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
@@ -153,7 +153,6 @@ require (
 	github.com/tikv/client-go/v2 v2.0.3
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.42.1
-	golang.org/x/sync v0.1.0
 	google.golang.org/grpc/security/advancedtls v0.0.0-20220622233350-5cdb09fa29c1
 )
 
@@ -231,6 +230,7 @@ require (
 	go.uber.org/multierr v1.8.0 // indirect
 	go.uber.org/zap v1.22.0 // indirect
 	golang.org/x/mod v0.7.0 // indirect
+	golang.org/x/sync v0.1.0 // indirect
 	golang.org/x/term v0.3.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
