@@ -144,7 +144,7 @@ require (
 	github.com/arangodb/go-driver v1.4.1
 	github.com/armon/go-metrics v0.4.1
 	github.com/fluent/fluent-logger-golang v1.9.0
-	github.com/google/flatbuffers v22.11.23+incompatible
+	github.com/google/flatbuffers/go v0.0.0-20230108230133-3b8644d32c50
 	github.com/hanwen/go-fuse/v2 v2.1.1-0.20220627082937-d01fda7edf17
 	github.com/hashicorp/raft v1.3.11
 	github.com/hashicorp/raft-boltdb/v2 v2.2.2
