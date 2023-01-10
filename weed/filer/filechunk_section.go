@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-const SectionSize = 2 * 1024 * 1024 * 128 // 256MiB
+const SectionSize = 2 * 1024 * 1024 * 32 // 64MiB
 type SectionIndex int64
 type FileChunkSection struct {
 	sectionIndex     SectionIndex
