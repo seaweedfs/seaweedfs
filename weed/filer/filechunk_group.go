@@ -8,11 +8,10 @@ import (
 )
 
 type ChunkGroup struct {
-	lookupFn       wdclient.LookupFileIdFunctionType
-	chunkCache     chunk_cache.ChunkCache
-	manifestChunks []*filer_pb.FileChunk
-	sections       map[SectionIndex]*FileChunkSection
-	sectionsLock   sync.RWMutex
+	lookupFn     wdclient.LookupFileIdFunctionType
+	chunkCache   chunk_cache.ChunkCache
+	sections     map[SectionIndex]*FileChunkSection
+	sectionsLock sync.RWMutex
 }
 
 func NewChunkGroup(lookupFn wdclient.LookupFileIdFunctionType, chunkCache chunk_cache.ChunkCache, chunks []*filer_pb.FileChunk) (*ChunkGroup, error) {
@@ -69,6 +68,9 @@ func (group *ChunkGroup) ReadDataAt(fileSize int64, buff []byte, offset int64) (
 }
 
 func (group *ChunkGroup) SetChunks(chunks []*filer_pb.FileChunk) error {
+	group.sectionsLock.RLock()
+	defer group.sectionsLock.RUnlock()
+
 	var dataChunks []*filer_pb.FileChunk
 	for _, chunk := range chunks {
 
@@ -82,21 +84,24 @@ func (group *ChunkGroup) SetChunks(chunks []*filer_pb.FileChunk) error {
 			return err
 		}
 
-		group.manifestChunks = append(group.manifestChunks, chunk)
 		dataChunks = append(dataChunks, resolvedChunks...)
 	}
+
+	sections := make(map[SectionIndex]*FileChunkSection)
 
 	for _, chunk := range dataChunks {
 		sectionIndexStart, sectionIndexStop := SectionIndex(chunk.Offset/SectionSize), SectionIndex((chunk.Offset+int64(chunk.Size))/SectionSize)
 		for si := sectionIndexStart; si < sectionIndexStop+1; si++ {
-			section, found := group.sections[si]
+			section, found := sections[si]
 			if !found {
 				section = NewFileChunkSection(si)
-				group.sections[si] = section
+				sections[si] = section
 			}
 			section.chunks = append(section.chunks, chunk)
 		}
 	}
+
+	group.sections = sections
 	return nil
 }
 
