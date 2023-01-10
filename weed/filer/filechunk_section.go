@@ -30,7 +30,9 @@ func (section *FileChunkSection) addChunk(chunk *filer_pb.FileChunk) error {
 
 	section.chunks = append(section.chunks, chunk)
 
-	if section.visibleIntervals != nil {
+	if section.visibleIntervals == nil {
+		section.visibleIntervals = readResolvedChunks(section.chunks, int64(section.sectionIndex)*SectionSize, (int64(section.sectionIndex)+1)*SectionSize)
+	} else {
 		MergeIntoVisibles(section.visibleIntervals, start, stop, chunk)
 		garbageFileIds := FindGarbageChunks(section.visibleIntervals, start, stop)
 		removeGarbageChunks(section, garbageFileIds)
