@@ -243,10 +243,15 @@ const (
 	MetaOffsetPrefix = "Meta"
 )
 
-func (ma *MetaAggregator) readOffset(f *Filer, peer pb.ServerAddress, peerSignature int32) (lastTsNs int64, err error) {
-
+func GetPeerMetaOffsetKey(peerSignature int32) []byte {
 	key := []byte(MetaOffsetPrefix + "xxxx")
 	util.Uint32toBytes(key[len(MetaOffsetPrefix):], uint32(peerSignature))
+	return key
+}
+
+func (ma *MetaAggregator) readOffset(f *Filer, peer pb.ServerAddress, peerSignature int32) (lastTsNs int64, err error) {
+
+	key := GetPeerMetaOffsetKey(peerSignature)
 
 	value, err := f.Store.KvGet(context.Background(), key)
 
@@ -263,8 +268,7 @@ func (ma *MetaAggregator) readOffset(f *Filer, peer pb.ServerAddress, peerSignat
 
 func (ma *MetaAggregator) updateOffset(f *Filer, peer pb.ServerAddress, peerSignature int32, lastTsNs int64) (err error) {
 
-	key := []byte(MetaOffsetPrefix + "xxxx")
-	util.Uint32toBytes(key[len(MetaOffsetPrefix):], uint32(peerSignature))
+	key := GetPeerMetaOffsetKey(peerSignature)
 
 	value := make([]byte, 8)
 	util.Uint64toBytes(value, uint64(lastTsNs))
