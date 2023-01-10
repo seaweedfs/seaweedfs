@@ -8,7 +8,7 @@
 
 [source.filer]  # deprecated. Only useful with "weed filer.replicate"
 enabled = true
-grpcAddress = "localhost:18888"
+address = "localhost:8888"
 # all files under this directory tree are replicated.
 # this is not a directory on your hard drive, but on your filer.
 # i.e., all files with this "prefix" are sent to notification message queue.
@@ -25,7 +25,7 @@ is_incremental = false
 
 [sink.filer]
 enabled = false
-grpcAddress = "localhost:18888"
+address = "localhost:8888"
 # all replicated files are under this directory tree
 # this is not a directory on your hard drive, but on your filer.
 # i.e., all received files will be "prefixed" to this directory.

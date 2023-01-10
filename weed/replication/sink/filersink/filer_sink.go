@@ -54,9 +54,10 @@ func (fs *FilerSink) IsIncremental() bool {
 func (fs *FilerSink) Initialize(configuration util.Configuration, prefix string) error {
 	fs.isIncremental = configuration.GetBool(prefix + "is_incremental")
 	fs.dataCenter = configuration.GetString(prefix + "dataCenter")
+	filerAddress := pb.ServerAddress(configuration.GetString(prefix + "address"))
 	return fs.DoInitialize(
-		"",
-		configuration.GetString(prefix+"grpcAddress"),
+		filerAddress.ToHttpAddress(),
+		filerAddress.ToGrpcAddress(),
 		configuration.GetString(prefix+"directory"),
 		configuration.GetString(prefix+"replication"),
 		configuration.GetString(prefix+"collection"),

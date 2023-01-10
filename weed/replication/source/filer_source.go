@@ -32,9 +32,10 @@ type FilerSource struct {
 
 func (fs *FilerSource) Initialize(configuration util.Configuration, prefix string) error {
 	fs.dataCenter = configuration.GetString(prefix + "dataCenter")
+	filerAddress := pb.ServerAddress(configuration.GetString(prefix + "address"))
 	return fs.DoInitialize(
-		"",
-		configuration.GetString(prefix+"grpcAddress"),
+		filerAddress.ToHttpAddress(),
+		filerAddress.ToGrpcAddress(),
 		configuration.GetString(prefix+"directory"),
 		false,
 	)
