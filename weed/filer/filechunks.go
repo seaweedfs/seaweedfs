@@ -86,12 +86,13 @@ func SeparateGarbageChunks(visibles *IntervalList[*VisibleInterval], chunks []*f
 	return compacted, garbage
 }
 
-func FindGarbageChunks(visibles *IntervalList[*VisibleInterval], start int64, stop int64) (garbageFileId []string) {
+func FindGarbageChunks(visibles *IntervalList[*VisibleInterval], start int64, stop int64) (garbageFileIds map[string]struct{}) {
+	garbageFileIds = make(map[string]struct{})
 	for x := visibles.Front(); x != nil; x = x.Next {
 		interval := x.Value
 		offset := interval.start - interval.offsetInChunk
 		if start <= offset && offset+int64(interval.chunkSize) <= stop {
-			garbageFileId = append(garbageFileId, interval.fileId)
+			garbageFileIds[interval.fileId] = struct{}{}
 		}
 	}
 	return

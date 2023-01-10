@@ -33,16 +33,7 @@ func (section *FileChunkSection) addChunk(chunk *filer_pb.FileChunk) error {
 	if section.visibleIntervals != nil {
 		MergeIntoVisibles(section.visibleIntervals, start, stop, chunk)
 		garbageFileIds := FindGarbageChunks(section.visibleIntervals, start, stop)
-		for _, garbageFileId := range garbageFileIds {
-			length := len(section.chunks)
-			for i, t := range section.chunks {
-				if t.FileId == garbageFileId {
-					section.chunks[i] = section.chunks[length-1]
-					section.chunks = section.chunks[:length-1]
-					break
-				}
-			}
-		}
+		removeGarbageChunks(section, garbageFileIds)
 	}
 
 	if section.chunkViews != nil {
@@ -50,6 +41,22 @@ func (section *FileChunkSection) addChunk(chunk *filer_pb.FileChunk) error {
 	}
 
 	return nil
+}
+
+func removeGarbageChunks(section *FileChunkSection, garbageFileIds map[string]struct{}) {
+	now := time.Now()
+	for i := 0; i < len(section.chunks); {
+		t := section.chunks[i]
+		length := len(section.chunks)
+		if _, found := garbageFileIds[t.FileId]; found {
+			if i < length-1 {
+				section.chunks[i] = section.chunks[length-1]
+			}
+			section.chunks = section.chunks[:length-1]
+		} else {
+			i++
+		}
+	}
 }
 
 func (section *FileChunkSection) setupForRead(group *ChunkGroup, fileSize int64) {
