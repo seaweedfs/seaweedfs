@@ -152,13 +152,14 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.GetChunks())
 
 		chunks, _ := filer.CompactFileChunks(wfs.LookupFn(), nonManifestChunks)
+		fh.entryChunkGroup.SetChunks(chunks)
+
 		chunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), chunks)
 		if manifestErr != nil {
 			// not good, but should be ok
 			glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
 		}
 		entry.Chunks = append(chunks, manifestChunks...)
-		fh.entryChunkGroup.SetChunks(entry.Chunks)
 
 		wfs.mapPbIdFromLocalToFiler(request.Entry)
 		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
