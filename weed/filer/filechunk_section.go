@@ -46,7 +46,6 @@ func (section *FileChunkSection) addChunk(chunk *filer_pb.FileChunk) error {
 }
 
 func removeGarbageChunks(section *FileChunkSection, garbageFileIds map[string]struct{}) {
-	now := time.Now()
 	for i := 0; i < len(section.chunks); {
 		t := section.chunks[i]
 		length := len(section.chunks)
