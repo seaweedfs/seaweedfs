@@ -30,7 +30,7 @@ func (gen *SqlGenMysql) GetSqlUpdate(tableName string) string {
 }
 
 func (gen *SqlGenMysql) GetSqlFind(tableName string) string {
-	return fmt.Sprintf("SELECT `meta` FROM `%s` WHERE `dirhash` = ? AND `name = ? AND `directory` = ?", tableName)
+	return fmt.Sprintf("SELECT `meta` FROM `%s` WHERE `dirhash` = ? AND `name` = ? AND `directory` = ?", tableName)
 }
 
 func (gen *SqlGenMysql) GetSqlDelete(tableName string) string {
