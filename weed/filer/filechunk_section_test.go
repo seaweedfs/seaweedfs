@@ -7,31 +7,31 @@ import (
 
 func Test_removeGarbageChunks(t *testing.T) {
 	section := NewFileChunkSection(0)
-	section.addChunk(&filer_pb.FileChunk{
+	section.chunks = append(section.chunks, &filer_pb.FileChunk{
 		FileId:       "0",
 		Offset:       0,
 		Size:         1,
 		ModifiedTsNs: 0,
 	})
-	section.addChunk(&filer_pb.FileChunk{
+	section.chunks = append(section.chunks, &filer_pb.FileChunk{
 		FileId:       "1",
 		Offset:       1,
 		Size:         1,
 		ModifiedTsNs: 1,
 	})
-	section.addChunk(&filer_pb.FileChunk{
+	section.chunks = append(section.chunks, &filer_pb.FileChunk{
 		FileId:       "2",
 		Offset:       2,
 		Size:         1,
 		ModifiedTsNs: 2,
 	})
-	section.addChunk(&filer_pb.FileChunk{
+	section.chunks = append(section.chunks, &filer_pb.FileChunk{
 		FileId:       "3",
 		Offset:       3,
 		Size:         1,
 		ModifiedTsNs: 3,
 	})
-	section.addChunk(&filer_pb.FileChunk{
+	section.chunks = append(section.chunks, &filer_pb.FileChunk{
 		FileId:       "4",
 		Offset:       4,
 		Size:         1,
