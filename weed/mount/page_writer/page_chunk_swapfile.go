@@ -176,11 +176,20 @@ func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {
 	}
 	// println(sc.logicChunkIndex, "|", "save")
 	for t := sc.usage.head.next; t != sc.usage.tail; t = t.next {
-		data := mem.Allocate(int(t.Size()))
-		n, _ := sc.swapfile.file.ReadAt(data, t.StartOffset+int64(sc.actualChunkIndex)*sc.swapfile.chunkSize)
+		startOffset := t.StartOffset
+		stopOffset := t.stopOffset
+		tsNs := t.TsNs
+		for t != sc.usage.tail && t.next.StartOffset == stopOffset {
+			stopOffset = t.next.stopOffset
+			t = t.next
+			tsNs = max(tsNs, t.TsNs)
+		}
+
+		data := mem.Allocate(int(stopOffset - startOffset))
+		n, _ := sc.swapfile.file.ReadAt(data, startOffset+int64(sc.actualChunkIndex)*sc.swapfile.chunkSize)
 		if n > 0 {
 			reader := util.NewBytesReader(data[:n])
-			saveFn(reader, int64(sc.logicChunkIndex)*sc.swapfile.chunkSize+t.StartOffset, int64(n), t.TsNs, func() {
+			saveFn(reader, int64(sc.logicChunkIndex)*sc.swapfile.chunkSize+startOffset, int64(n), tsNs, func() {
 			})
 		}
 		mem.Free(data)

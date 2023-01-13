@@ -105,4 +105,18 @@ func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc) {
 		saveFn(reader, int64(mc.logicChunkIndex)*mc.chunkSize+t.StartOffset, t.Size(), t.TsNs, func() {
 		})
 	}
+
+	for t := mc.usage.head.next; t != mc.usage.tail; t = t.next {
+		startOffset := t.StartOffset
+		stopOffset := t.stopOffset
+		tsNs := t.TsNs
+		for t != mc.usage.tail && t.next.StartOffset == stopOffset {
+			stopOffset = t.next.stopOffset
+			t = t.next
+			tsNs = max(tsNs, t.TsNs)
+		}
+		reader := util.NewBytesReader(mc.buf[startOffset:stopOffset])
+		saveFn(reader, int64(mc.logicChunkIndex)*mc.chunkSize+startOffset, stopOffset-startOffset, tsNs, func() {
+		})
+	}
 }
