@@ -208,7 +208,7 @@ func (s *SingleChunkCacher) readChunkAt(buf []byte, offset int64) (int, error) {
 		return 0, s.err
 	}
 
-	if len(s.data) == 0 {
+	if len(s.data) <= int(offset) {
 		return 0, nil
 	}
 
