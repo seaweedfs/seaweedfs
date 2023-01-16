@@ -3,7 +3,7 @@ module github.com/seaweedfs/seaweedfs
 go 1.19
 
 require (
-	cloud.google.com/go v0.105.0 // indirect
+	cloud.google.com/go v0.107.0 // indirect
 	cloud.google.com/go/pubsub v1.28.0
 	cloud.google.com/go/storage v1.28.1
 	github.com/Azure/azure-pipeline-go v0.2.3
@@ -14,7 +14,7 @@ require (
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/coreos/go-semver v0.3.0 // indirect
-	github.com/coreos/go-systemd/v22 v22.3.3-0.20220203105225-a9a7ef127534 // indirect
+	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/disintegration/imaging v1.6.2
@@ -33,7 +33,7 @@ require (
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-redsync/redsync/v4 v4.7.1
 	github.com/go-sql-driver/mysql v1.7.0
-	github.com/go-zookeeper/zk v1.0.2 // indirect
+	github.com/go-zookeeper/zk v1.0.3 // indirect
 	github.com/gocql/gocql v0.0.0-20210707082121-9a3953d1826d
 	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
@@ -109,14 +109,14 @@ require (
 	go.etcd.io/etcd/client/v3 v3.5.6
 	go.mongodb.org/mongo-driver v1.11.1
 	go.opencensus.io v0.24.0 // indirect
-	gocloud.dev v0.27.0
+	gocloud.dev v0.28.0
 	gocloud.dev/pubsub/natspubsub v0.27.0
 	gocloud.dev/pubsub/rabbitpubsub v0.27.0
-	golang.org/x/crypto v0.1.0 // indirect
-	golang.org/x/exp v0.0.0-20220414153411-bcd21879b8fd
+	golang.org/x/crypto v0.3.0 // indirect
+	golang.org/x/exp v0.0.0-20221031165847-c99f073a8326
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
 	golang.org/x/net v0.5.0
-	golang.org/x/oauth2 v0.0.0-20221014153046-6fdb5e3db783 // indirect
+	golang.org/x/oauth2 v0.2.0 // indirect
 	golang.org/x/sys v0.4.0
 	golang.org/x/text v0.6.0 // indirect
 	golang.org/x/tools v0.5.0
@@ -161,19 +161,20 @@ require (
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
 	cloud.google.com/go/iam v0.8.0 // indirect
 	github.com/arangodb/go-velocypack v0.0.0-20200318135517-5af53c29c67e // indirect
-	github.com/aws/aws-sdk-go-v2 v1.16.8 // indirect
-	github.com/aws/aws-sdk-go-v2/config v1.15.15 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.12.10 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.12.9 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.1.15 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.4.9 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/ini v1.3.16 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.9.9 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sns v1.17.10 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sqs v1.19.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.11.13 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.16.10 // indirect
-	github.com/aws/smithy-go v1.12.0 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.17.1 // indirect
+	github.com/aws/aws-sdk-go-v2/config v1.18.3 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.13.3 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.12.19 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.1.25 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.4.19 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/ini v1.3.26 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.9.19 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sns v1.18.6 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sqs v1.19.15 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.11.25 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.13.8 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.17.5 // indirect
+	github.com/aws/smithy-go v1.13.4 // indirect
 	github.com/benbjohnson/clock v1.1.0 // indirect
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548 // indirect
@@ -182,7 +183,7 @@ require (
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/fclairamb/go-log v0.4.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang-jwt/jwt/v4 v4.4.2 // indirect
+	github.com/golang-jwt/jwt/v4 v4.4.3 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.2.1 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0 // indirect
 	github.com/hashicorp/go-hclog v1.2.0 // indirect
@@ -229,7 +230,7 @@ require (
 	go.etcd.io/etcd/client/pkg/v3 v3.5.6 // indirect
 	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/multierr v1.8.0 // indirect
-	go.uber.org/zap v1.22.0 // indirect
+	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/mod v0.7.0 // indirect
 	golang.org/x/sync v0.1.0 // indirect
 	golang.org/x/term v0.4.0 // indirect
