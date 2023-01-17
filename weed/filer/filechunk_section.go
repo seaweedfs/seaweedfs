@@ -74,7 +74,7 @@ func (section *FileChunkSection) setupForRead(group *ChunkGroup, fileSize int64)
 	}
 
 	if section.reader == nil {
-		section.reader = NewChunkReaderAtFromClient(group.lookupFn, section.chunkViews, group.chunkCache, min(int64(section.sectionIndex+1)*SectionSize, fileSize))
+		section.reader = NewChunkReaderAtFromClient(group.readerCache, section.chunkViews, min(int64(section.sectionIndex+1)*SectionSize, fileSize))
 	}
 	section.reader.fileSize = fileSize
 }
