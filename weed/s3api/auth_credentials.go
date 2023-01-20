@@ -2,11 +2,12 @@ package s3api
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -31,6 +32,8 @@ type IdentityAccessManagement struct {
 	identities    []*Identity
 	isAuthEnabled bool
 	domain        string
+	hashes        map[string]*sync.Pool
+	hashMu        sync.RWMutex
 }
 
 type Identity struct {
@@ -77,6 +80,7 @@ func (action Action) getPermission() Permission {
 func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManagement {
 	iam := &IdentityAccessManagement{
 		domain: option.DomainName,
+		hashes: make(map[string]*sync.Pool),
 	}
 	if option.Config != "" {
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
