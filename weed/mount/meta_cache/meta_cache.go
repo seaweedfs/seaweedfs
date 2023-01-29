@@ -70,8 +70,12 @@ func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath uti
 	//mc.Lock()
 	//defer mc.Unlock()
 
-	oldDir, _ := oldPath.DirAndName()
-	if mc.isCachedFn(util.FullPath(oldDir)) {
+	entry, err := mc.FindEntry(ctx, oldPath)
+	if err != nil && err != filer_pb.ErrNotFound {
+		glog.Errorf("Metacache: find entry error: %v", err)
+		return err
+	}
+	if entry != nil {
 		if oldPath != "" {
 			if newEntry != nil && oldPath == newEntry.FullPath {
 				// skip the unnecessary deletion
