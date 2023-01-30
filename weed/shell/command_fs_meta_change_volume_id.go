@@ -68,6 +68,10 @@ func (c *commandFsMetaChangeVolumeId) Do(args []string, commandEnv *CommandEnv, 
 			if !entry.IsDirectory {
 				var hasChanges bool
 				for _, chunk := range entry.Chunks {
+					if chunk.IsChunkManifest {
+						fmt.Printf("Change volume id for large file is not implemented yet: %s/%s\n", parentPath, entry.Name)
+						return
+					}
 					chunkVolumeId := chunk.Fid.VolumeId
 					if toVolumeId, found := mapping[needle.VolumeId(chunkVolumeId)]; found {
 						hasChanges = true
