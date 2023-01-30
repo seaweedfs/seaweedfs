@@ -36,7 +36,7 @@ jobs:
         uses: docker/setup-qemu-action@e81a89b1732b9c48d79cd809d8d81d79c4647a18 # v1
       -
         name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8c0edbc76e98fa90f69d9a2c020dcb50019dc325 # v1
+        uses: docker/setup-buildx-action@15c905b16b06416d2086efa066dd8e3a35cc7f98 # v1
         with:
           buildkitd-flags: "--debug"
       -
