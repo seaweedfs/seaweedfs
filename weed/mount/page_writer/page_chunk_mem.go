@@ -1,10 +1,11 @@
 package page_writer
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"sync"
 	"sync/atomic"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 )
 
 var (
@@ -99,11 +100,6 @@ func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc) {
 
 	if saveFn == nil {
 		return
-	}
-	for t := mc.usage.head.next; t != mc.usage.tail; t = t.next {
-		reader := util.NewBytesReader(mc.buf[t.StartOffset:t.stopOffset])
-		saveFn(reader, int64(mc.logicChunkIndex)*mc.chunkSize+t.StartOffset, t.Size(), t.TsNs, func() {
-		})
 	}
 
 	for t := mc.usage.head.next; t != mc.usage.tail; t = t.next {
