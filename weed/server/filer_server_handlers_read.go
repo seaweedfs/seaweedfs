@@ -162,6 +162,8 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	if mimeType != "" {
 		w.Header().Set("Content-Type", mimeType)
+	} else {
+		w.Header().Set("Content-Type", "application/octet-stream")
 	}
 
 	// print out the header from extended properties
