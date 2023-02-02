@@ -300,6 +300,9 @@ func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
 	if c.bufferOffset <= offset && offset < c.bufferOffset+int64(len(c.buffer)) {
 		return nil
 	}
+	if c.chunkView == nil {
+		return io.EOF
+	}
 
 	// fmt.Printf("fetch for offset %d\n", offset)
 	c.chunkView = c.chunkView.Next
