@@ -1509,8 +1509,8 @@ github.com/klauspost/compress v1.15.14 h1:i7WCKDToww0wA+9qrUZ1xOjp218vfFo3nTU6UH
 github.com/klauspost/compress v1.15.14/go.mod h1:QPwzmACJjUTFsnSHH934V6woptycfrDDJnH7hvFVbGM=
 github.com/klauspost/cpuid/v2 v2.1.1 h1:t0wUqjowdm8ezddV5k0tLWVklVuvLJpoHeb4WBdydm0=
 github.com/klauspost/cpuid/v2 v2.1.1/go.mod h1:RVVoqg1df56z8g3pUjL/3lE5UfnlrJX8tyFgg4nqhuY=
-github.com/klauspost/reedsolomon v1.11.5 h1:8ebqrZbby2dplht2gUPplizNlvYGCghRRfq5F9SFYKM=
-github.com/klauspost/reedsolomon v1.11.5/go.mod h1:lbYSjK96uTl22BD+PzgzlsCal+PW/0yLKlQP4MMT+i4=
+github.com/klauspost/reedsolomon v1.11.6 h1:h0MUpEzmretucmlelC3EefQHKgk6vWpKz/ctB/tmaEs=
+github.com/klauspost/reedsolomon v1.11.6/go.mod h1:cuXqklb3LNaurR5MVjy7WLXAEUqGz4I0Uc+rnQ7POUg=
 github.com/kolo/xmlrpc v0.0.0-20201022064351-38db28db192b/go.mod h1:pcaDhQK0/NJZEvtCO0qQPPropqV0sJOJ6YW7X+9kRwM=
 github.com/kolo/xmlrpc v0.0.0-20220921171641-a4b6fa1dd06b/go.mod h1:pcaDhQK0/NJZEvtCO0qQPPropqV0sJOJ6YW7X+9kRwM=
 github.com/konsorten/go-windows-terminal-sequences v1.0.1/go.mod h1:T0+1ngSBFLxvqU3pZ+m/2kptfBszLMUkC4ZK/EgS/cQ=
