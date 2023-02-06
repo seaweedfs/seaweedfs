@@ -7,6 +7,7 @@
 
 - [Evercam Camera Management Software](https://evercam.io/)
 - [Spherical Elephant GmbH](https://www.sphericalelephant.com)
+- [WizardTales GmbH](https://www.wizardtales.com)
 
 - <h2 align="center">Backers</h2>
 
