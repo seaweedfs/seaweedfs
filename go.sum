@@ -493,8 +493,8 @@ github.com/DataDog/datadog-go v2.2.0+incompatible/go.mod h1:LButxg5PwREeZtORoXG3
 github.com/DataDog/datadog-go v3.2.0+incompatible/go.mod h1:LButxg5PwREeZtORoXG3tL4fMGNddJ+vMq1mwgfaqoQ=
 github.com/GoogleCloudPlatform/cloudsql-proxy v1.31.2/go.mod h1:qR6jVnZTKDCW3j+fC9mOEPHm++1nKDMkqbbkD6KNsfo=
 github.com/GoogleCloudPlatform/cloudsql-proxy v1.33.1/go.mod h1:n3KDPrdaY2p9Nr0B1allAdjYArwIpXQcitNbsS/Qiok=
-github.com/Jille/raft-grpc-transport v1.3.0 h1:s6a7F4k23n7IlH5O6fWW5xz2sxbz6RIB4CzWlsvmbpY=
-github.com/Jille/raft-grpc-transport v1.3.0/go.mod h1:afVUd8LQKUUo3V/ToLBH3mbSyvivRlMYCDK0eJRGTfQ=
+github.com/Jille/raft-grpc-transport v1.4.0 h1:Kwk+IceQD8MpLKOulBu2ignX+aZAEjOhffEhN44sdzQ=
+github.com/Jille/raft-grpc-transport v1.4.0/go.mod h1:afVUd8LQKUUo3V/ToLBH3mbSyvivRlMYCDK0eJRGTfQ=
 github.com/Knetic/govaluate v3.0.1-0.20171022003610-9aa49832a739+incompatible/go.mod h1:r7JcOSlj0wfOMncg0iLm8Leh48TZaKVeNIfJntJ2wa0=
 github.com/Masterminds/semver/v3 v3.1.1/go.mod h1:VPu/7SZ7ePZ3QOrcuXROw5FAcLl4a0cBrbBpGY/8hQs=
 github.com/Microsoft/go-winio v0.4.11/go.mod h1:VhR8bwka0BXejwEJY73c50VrPtXAaKcyvVC4A4RozmA=
