@@ -19,7 +19,7 @@ func VerifyS3BucketName(name string) (err error) {
 		if idx > 0 && (ch == '.' && name[idx-1] == '.') {
 			return fmt.Errorf("bucket names must not contain two adjacent periods")
 		}
-		//TODO buckets with s3 transfer accleration cannot have . in name
+		//TODO buckets with s3 transfer acceleration cannot have . in name
 	}
 	if name[0] == '.' || name[0] == '-' {
 		return fmt.Errorf("name must start with number or lower case character")
