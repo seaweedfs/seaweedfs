@@ -28,10 +28,10 @@ func VerifyS3BucketName(name string) (err error) {
 		return fmt.Errorf("name must end with number or lower case character")
 	}
 	if strings.HasPrefix(name, "xn--") {
-		return fmt.Errorf("prefix xn-- is a reserved and not allowed in bucket prefix")
+		return fmt.Errorf("prefix xn-- is reserved and not allowed in bucket prefix")
 	}
 	if strings.HasSuffix(name, "-s3alias") {
-		return fmt.Errorf("suffix -s3alias is a reserved and not allowed in bucket suffix")
+		return fmt.Errorf("suffix -s3alias is reserved and not allowed in bucket suffix")
 	}
 	if net.ParseIP(name) != nil {
 		return fmt.Errorf("bucket name cannot be ip addresses")
