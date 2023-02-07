@@ -4,14 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
-	"net"
-	"os"
-	"strings"
-	"time"
-	"unicode"
-
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
+	"io"
+	"os"
+	"time"
 )
 
 func init() {
@@ -45,7 +42,7 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 		return fmt.Errorf("empty bucket name")
 	}
 
-	err = verifyS3BucketName(*bucketName)
+	err = s3bucket.VerifyS3BucketName(*bucketName)
 	if err != nil {
 		return err
 	}
@@ -85,36 +82,4 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 
 	return err
 
-}
-
-// https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
-func verifyS3BucketName(name string) (err error) {
-	if len(name) < 3 || len(name) > 63 {
-		return fmt.Errorf("bucket name must between [3, 63] characters")
-	}
-	for idx, ch := range name {
-		if !(unicode.IsLower(ch) || ch == '.' || ch == '-' || unicode.IsNumber(ch)) {
-			return fmt.Errorf("bucket name can only contain lower case characters, numbers, dots, and hyphens")
-		}
-		if idx > 0 && (ch == '.' && name[idx-1] == '.') {
-			return fmt.Errorf("bucket names must not contain two adjacent periods")
-		}
-		//TODO buckets with s3 transfer accleration cannot have . in name
-	}
-	if name[0] == '.' || name[0] == '-' {
-		return fmt.Errorf("name must start with number or lower case character")
-	}
-	if name[len(name)-1] == '.' || name[len(name)-1] == '-' {
-		return fmt.Errorf("name must end with number or lower case character")
-	}
-	if strings.HasPrefix(name, "xn--") {
-		return fmt.Errorf("prefix xn-- is a reserved and not allowed in bucket prefix")
-	}
-	if strings.HasSuffix(name, "-s3alias") {
-		return fmt.Errorf("suffix -s3alias is a reserved and not allowed in bucket suffix")
-	}
-	if net.ParseIP(name) != nil {
-		return fmt.Errorf("bucket name cannot be ip addresses")
-	}
-	return nil
 }
