@@ -45,7 +45,7 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 		return fmt.Errorf("empty bucket name")
 	}
 
-	err = verifyBucketName(*bucketName)
+	err = verifyS3BucketName(*bucketName)
 	if err != nil {
 		return err
 	}
@@ -88,16 +88,16 @@ func (c *commandS3BucketCreate) Do(args []string, commandEnv *CommandEnv, writer
 }
 
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
-func verifyBucketName(name string) (err error) {
+func verifyS3BucketName(name string) (err error) {
 	if len(name) < 3 || len(name) > 63 {
-		return fmt.Errorf("s3 bucket name must between [3, 63] characters")
+		return fmt.Errorf("bucket name must between [3, 63] characters")
 	}
 	for idx, ch := range name {
 		if !(unicode.IsLower(ch) || ch == '.' || ch == '-' || unicode.IsNumber(ch)) {
-			return fmt.Errorf("s3 bucket name can only contain lower case characters, numbers, dots, and hyphens")
+			return fmt.Errorf("bucket name can only contain lower case characters, numbers, dots, and hyphens")
 		}
-		if idx > 0 && (ch == '.' && name[idx] == '.') {
-			return fmt.Errorf("s3 bucket name cannot contain repeated dots")
+		if idx > 0 && (ch == '.' && name[idx-1] == '.') {
+			return fmt.Errorf("bucket names must not contain two adjacent periods")
 		}
 		//TODO buckets with s3 transfer accleration cannot have . in name
 	}
