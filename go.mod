@@ -82,7 +82,7 @@ require (
 	github.com/prometheus/procfs v0.9.0
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
-	github.com/seaweedfs/goexif v2.0.0+incompatible
+	github.com/seaweedfs/goexif v1.0.3
 	github.com/seaweedfs/raft v1.1.0
 	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/spf13/afero v1.9.3 // indirect
