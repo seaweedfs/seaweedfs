@@ -41,6 +41,12 @@ func (c *commandVolumeUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 	if err = volUnmountCommand.Parse(args); err != nil {
 		return nil
 	}
+	if *nodeStr == "" {
+		return fmt.Errorf("-node option is required")
+	}
+	if *volumeIdInt == 0 {
+		return fmt.Errorf("-volumeId option is required")
+	}
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
