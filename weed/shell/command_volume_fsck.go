@@ -419,7 +419,7 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 							Size:     int32(size),
 						})
 						if err != nil {
-							return false, fmt.Errorf("to read needle meta with id %d from volume %d with error %v", key, volumeId, err)
+							return false, fmt.Errorf("read needle meta with id %d from volume %d: %v", key, volumeId, err)
 						}
 						return resp.AppendAtNs <= cutoffFrom, nil
 					})
