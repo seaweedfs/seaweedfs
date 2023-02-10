@@ -330,7 +330,7 @@ func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*Vol
 	}
 
 	if candidateVolume.RemoteStorageName != "" {
-		return false, nil
+		return false, fmt.Errorf("does not move volume in remove storage")
 	}
 
 	if candidateVolume.ReplicaPlacement > 0 {
