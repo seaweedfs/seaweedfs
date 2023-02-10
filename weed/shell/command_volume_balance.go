@@ -329,6 +329,10 @@ func maybeMoveOneVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*Vol
 		return false, fmt.Errorf("lock is lost")
 	}
 
+	if candidateVolume.RemoteStorageName != "" {
+		return false, nil
+	}
+
 	if candidateVolume.ReplicaPlacement > 0 {
 		replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(candidateVolume.ReplicaPlacement))
 		if !isGoodMove(replicaPlacement, volumeReplicas[candidateVolume.Id], fullNode, emptyNode) {
