@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"flag"
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
 
