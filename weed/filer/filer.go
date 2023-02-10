@@ -264,7 +264,22 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 		glog.Errorf("CreateEntry %s: %s should be a directory", entry.FullPath, dirPath)
 		return fmt.Errorf("%s is a file", dirPath)
 	}
-
+	//Modify the last modification time of the parent file
+	if dirEntry != nil {
+		if err = f.ensureParentDirectoryEntry(ctx, entry, dirParts, level-1, isFromOtherCluster); err != nil {
+			return err
+		}
+		dirEntry.Attr.Mtime = time.Now()
+		modifyErr := f.Store.InsertEntry(ctx, dirEntry)
+		if modifyErr != nil {
+			if _, err := f.FindEntry(ctx, util.FullPath(dirPath)); err == filer_pb.ErrNotFound {
+				glog.V(3).Infof("update entry.Mtime %s: %v", dirPath, modifyErr)
+				return fmt.Errorf("update  entry.Mtime %s: %v", dirPath, modifyErr)
+			}
+		} else {
+			f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
+		}
+	}
 	return nil
 }
 
