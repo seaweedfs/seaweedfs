@@ -424,7 +424,7 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 						return resp.AppendAtNs <= cutoffFrom, nil
 					})
 				if err != nil {
-					fmt.Fprintf(c.writer, "Failed to search for last valid index on volume %d with error %v", volumeId, err)
+					fmt.Fprintf(c.writer, "Failed to search for last valid index on volume %d with error %v\n", volumeId, err)
 				} else {
 					buf.Truncate(index * types.NeedleMapEntrySize)
 				}
