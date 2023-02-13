@@ -147,7 +147,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.1.1-0.20220627082937-d01fda7edf17
 	github.com/hashicorp/raft v1.3.11
 	github.com/hashicorp/raft-boltdb/v2 v2.2.2
-	github.com/rabbitmq/amqp091-go v1.5.0
+	github.com/rabbitmq/amqp091-go v1.7.0
 	github.com/schollz/progressbar/v3 v3.13.0
 	github.com/tikv/client-go/v2 v2.0.5
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
