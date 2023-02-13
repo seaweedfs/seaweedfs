@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package columnar_pb;
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/data/columnar_pb";
+
+message FileId {
+  uint32 volume_id = 1;
+  uint64 file_key = 2;
+  fixed32 cookie = 3;
+}
+
+enum LogicalType {
+  Uint8 = 0;
+  Uint16 = 1;
+  Float32 = 4;
+}
+
+message ColumnUint16 {
+  uint32 base = 1;
+  uint32 min = 3;
+  uint32 max = 4;
+}
+
+message ColumnUint32 {
+  uint32 base = 1;
+  uint32 min = 3;
+  uint32 max = 4;
+}
+
+message ColumnFloat32 {
+  uint32 min = 3;
+  uint32 max = 4;
+}
+
+message ColumnSplit {
+  // The ids of the fields/columns in this file
+  int32 field_id = 1;
+  FileId file_id = 2;
+  int64 row_offset = 3;
+  int32 row_count = 4;
+
+  oneof storage_type {
+    ColumnUint16  meta_uint16 = 8;
+    ColumnUint32  meta_uint32 = 9;
+    ColumnFloat32 meta_float32 = 10;
+  }
+}
+
+message Snapshot {
+  // All fields of the dataset, including the nested fields.
+  repeated Field fields = 1;
+
+  repeated string data_files = 2;
+
+  // Snapshot version number.
+  uint64 version = 3;
+
+}
+
+message DataFile {
+  repeated int32 field_ids = 1;
+  repeated RowGroup row_groups = 2;
+}
+
+message RowGroup {
+  int64 row_offset = 1;
+  int32 row_count = 2;
+  repeated ColumnSplit column_splits = 3;
+}
+
+// Field metadata for a column.
+message Field {
+  enum Type {
+    PARENT = 0;
+    REPEATED = 1;
+    LEAF = 2;
+  }
+  Type type = 1;
+
+  // Fully qualified name.
+  string name = 2;
+  /// Field Id.
+  int32 id = 3;
+  /// Parent Field ID. If not set, this is a top-level column.
+  int32 parent_id = 4;
+
+  // Logical types, support parameterized Arrow Type.
+  LogicalType logical_type = 5;
+  // If this field is nullable.
+  bool nullable = 6;
+}
+
+
+message AnyValue {
+  oneof value {
+    bytes bytes_value = 1;
+    bool bool_value = 2;
+    uint64 int64_value = 3;
+    uint32 int32_value = 4;
+    double double_value = 5;
+  }
+}
