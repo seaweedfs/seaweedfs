@@ -53,7 +53,7 @@ func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, int64, e
 		return 0, 0, io.EOF
 	}
 
-	if offset+int64(len(buff)) <= int64(len(entry.Content)) {
+	if offset < int64(len(entry.Content)) {
 		totalRead := copy(buff, entry.Content[offset:])
 		glog.V(4).Infof("file handle read cached %s [%d,%d] %d", fileFullPath, offset, offset+int64(totalRead), totalRead)
 		return int64(totalRead), 0, nil
