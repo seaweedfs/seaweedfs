@@ -10,6 +10,8 @@ import com.amazonaws.client.builder.AwsClientBuilder;
 import com.amazonaws.regions.Regions;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
+import com.amazonaws.services.s3.model.CreateBucketRequest;
+import com.amazonaws.services.s3.model.GetBucketLocationRequest;
 import com.amazonaws.services.s3.transfer.TransferManager;
 import com.amazonaws.services.s3.transfer.TransferManagerBuilder;
 import com.amazonaws.services.s3.transfer.Upload;
@@ -41,6 +43,19 @@ public class HighLevelMultipartUpload {
             TransferManager tm = TransferManagerBuilder.standard()
                 .withS3Client(s3Client)
                 .build();
+
+
+            if (!s3Client.doesBucketExistV2(bucketName)) {
+                // Because the CreateBucketRequest object doesn't specify a region, the
+                // bucket is created in the region specified in the client.
+                s3Client.createBucket(new CreateBucketRequest(bucketName));
+
+                // Verify that the bucket was created by retrieving it and checking its location.
+                String bucketLocation = s3Client.getBucketLocation(new GetBucketLocationRequest(bucketName));
+                System.out.println("Bucket location: " + bucketLocation);
+            } else {
+                System.out.println("Bucket already exists");
+            }
 
             // TransferManager processes all transfers asynchronously,
             // so this call returns immediately.
