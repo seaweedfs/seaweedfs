@@ -4,6 +4,10 @@ on:
     tags: 
       - '*'
 
+permissions:
+  contents: read
+  pages: write
+
 jobs:
   release:
     runs-on: ubuntu-latest
