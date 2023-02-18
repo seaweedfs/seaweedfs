@@ -1,0 +1,15 @@
+name: Publish Helm Charts
+on:
+  push:
+    tags: 
+      - '*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Publish Helm charts
+        uses: stefanprodan/helm-gh-pages@master
+        with:          
+          token: ${{ secrets.GITHUB_TOKEN }}
