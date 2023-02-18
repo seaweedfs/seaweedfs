@@ -5,7 +5,7 @@ on:
       - '*'
 
 permissions:
-  contents: read
+  contents: write
   pages: write
 
 jobs:
@@ -18,3 +18,5 @@ jobs:
         with:          
           token: ${{ secrets.GITHUB_TOKEN }}
           charts_dir: k8s/charts
+          target_dir: helm
+          branch: gh-pages
