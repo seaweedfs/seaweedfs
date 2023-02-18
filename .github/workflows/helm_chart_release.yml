@@ -1,4 +1,4 @@
-name: Publish Helm Charts
+name: "Publish Helm Charts"
 on:
   push:
     tags: '*'
