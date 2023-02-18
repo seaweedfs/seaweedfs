@@ -300,30 +300,23 @@ func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
 	if c.bufferOffset <= offset && offset < c.bufferOffset+int64(len(c.buffer)) {
 		return nil
 	}
-	if c.chunkView == nil {
-		return io.EOF
-	}
+	// glog.V(2).Infof("c.chunkView: %v buffer:[%d,%d) offset:%d totalSize:%d", c.chunkView, c.bufferOffset, c.bufferOffset+int64(len(c.buffer)), offset, c.totalSize)
 
-	// fmt.Printf("fetch for offset %d\n", offset)
-	c.chunkView = c.chunkView.Next
-	if c.chunkView == nil {
-		return io.EOF
-	}
-
-	// positioning within the new chunk
-	chunk := c.chunkView.Value
-	if insideChunk(offset, chunk) {
-		if c.isBufferEmpty() || c.bufferOffset != chunk.ViewOffset {
-			return c.fetchChunkToBuffer(chunk)
-		}
-	} else {
-		for p := c.head; p != nil; p = p.Next {
-			chunk = p.Value
-			if insideChunk(offset, chunk) {
-				if c.isBufferEmpty() || c.bufferOffset != chunk.ViewOffset {
-					return c.fetchChunkToBuffer(chunk)
-				}
+	// find a possible chunk view
+	p := c.chunkView
+	for p != nil {
+		chunk := p.Value
+		// glog.V(2).Infof("prepareBufferFor check chunk:[%d,%d)", chunk.ViewOffset, chunk.ViewOffset+int64(chunk.ViewSize))
+		if insideChunk(offset, chunk) {
+			if c.isBufferEmpty() || c.bufferOffset != chunk.ViewOffset {
+				c.chunkView = p
+				return c.fetchChunkToBuffer(chunk)
 			}
+		}
+		if offset < c.bufferOffset {
+			p = p.Prev
+		} else {
+			p = p.Next
 		}
 	}
 
