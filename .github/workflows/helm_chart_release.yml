@@ -1,7 +1,8 @@
 name: "Publish Helm Charts"
 on:
   push:
-    tags: '*'
+    tags: 
+      - .*
 
 jobs:
   release:
