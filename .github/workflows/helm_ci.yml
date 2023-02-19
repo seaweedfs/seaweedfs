@@ -1,4 +1,4 @@
-name: Lint and Test Charts
+name: "helm: lint and test charts"
 
 on:
   push:
@@ -31,7 +31,7 @@ jobs:
       - name: Run chart-testing (list-changed)
         id: list-changed
         run: |
-          changed=$(ct list-changed --target-branch ${{ github.event.repository.default_branch }})
+          changed=$(ct list-changed --chart-dirs . --target-branch ${{ github.event.repository.default_branch }})
           if [[ -n "$changed" ]]; then
             echo "::set-output name=changed::true"
           fi
