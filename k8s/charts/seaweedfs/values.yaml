@@ -44,11 +44,11 @@ master:
   volumePreallocate: false
   volumeSizeLimitMB: 1000
   loggingOverrideLevel: null
-  #number of seconds between heartbeats, default 5
+  # number of seconds between heartbeats, default 5
   pulseSeconds: null
-  #threshold to vacuum and reclaim spaces, default 0.3 (30%)
+  # threshold to vacuum and reclaim spaces, default 0.3 (30%)
   garbageThreshold: null
-  #Prometheus push interval in seconds, default 15
+  # Prometheus push interval in seconds, default 15
   metricsIntervalSec: 15
   #  replication type is XYZ:
   # X number of replica in other data centers
@@ -410,7 +410,7 @@ filer:
   s3:
     enabled: true
     port: 8333
-    #allow empty folders
+    # allow empty folders
     allowEmptyFolder: false
     # Suffix of the host name, {bucket}.{domainName}
     domainName: ""
@@ -430,7 +430,7 @@ s3:
   port: 8333
   metricsPort: 9327
   loggingOverrideLevel: null
-  #allow empty folders
+  # allow empty folders
   allowEmptyFolder: true
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
