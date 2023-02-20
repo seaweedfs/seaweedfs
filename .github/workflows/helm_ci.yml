@@ -43,4 +43,4 @@ jobs:
         uses: helm/kind-action@v1.4.0
 
       - name: Run chart-testing (install)
-        run: ct install --validate-maintainers=false --chart-dirs k8s/charts
+        run: ct install --chart-dirs k8s/charts
