@@ -37,7 +37,7 @@ jobs:
           fi
 
       - name: Run chart-testing (lint)
-        run: ct lint --al --chart-dirs k8s/charts
+        run: ct lint --all --chart-dirs k8s/charts
 
       - name: Create kind cluster
         uses: helm/kind-action@v1.4.0
