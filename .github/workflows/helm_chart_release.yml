@@ -19,4 +19,4 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           charts_dir: k8s/charts
           target_dir: helm
-          branch: gh-pages
+          branch: master
