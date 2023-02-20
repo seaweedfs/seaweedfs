@@ -28,21 +28,20 @@ jobs:
       - name: Set up chart-testing
         uses: helm/chart-testing-action@v2.3.1
 
-      # - name: Run chart-testing (list-changed)
-      #   id: list-changed
-      #   run: |
-      #     ls
-      #     changed=$(ct list-changed --chart-dirs k8s/charts 
-      #     if [[ -n "$changed" ]]; then
-      #       echo "::set-output name=changed::true"
-      #     fi
+      - name: Run chart-testing (list-changed)
+        id: list-changed
+        run: |
+          ls
+          changed=$(ct list-changed --chart-dirs k8s/charts 
+          if [[ -n "$changed" ]]; then
+            echo "::set-output name=changed::true"
+          fi
 
       - name: Run chart-testing (lint)
-        run: ct lint --chart-dirs k8s/charts 
+        run: ct lint --al --chart-dirs k8s/charts
 
       - name: Create kind cluster
         uses: helm/kind-action@v1.4.0
-        if: steps.list-changed.outputs.changed == 'true'
 
       - name: Run chart-testing (install)
         run: ct install --chart-dirs k8s/charts
