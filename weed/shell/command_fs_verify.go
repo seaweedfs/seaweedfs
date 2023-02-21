@@ -117,7 +117,7 @@ type ItemEntry struct {
 
 func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount int64, errCount int64, err error) {
 	timeNowAtSec := time.Now().Unix()
-	return fileCount, errCount, doTraverseBfsAndSaving(c.env, nil, path, false,
+	return fileCount, errCount, doTraverseBfsAndSaving(c.env, c.writer, path, false,
 		func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 			if c.modifyTimeAgoAtSec > 0 {
 				if entry.Entry.Attributes != nil && c.modifyTimeAgoAtSec < timeNowAtSec-entry.Entry.Attributes.Mtime {

@@ -3,11 +3,12 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/raft"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/raft"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -280,6 +281,20 @@ func (ms *MasterServer) VacuumVolume(ctx context.Context, req *master_pb.VacuumV
 
 	ms.Topo.Vacuum(ms.grpcDialOption, float64(req.GarbageThreshold), req.VolumeId, req.Collection, ms.preallocateSize)
 
+	return resp, nil
+}
+
+func (ms *MasterServer) DisableVacuum(ctx context.Context, req *master_pb.DisableVacuumRequest) (*master_pb.DisableVacuumResponse, error) {
+
+	ms.Topo.DisableVacuum()
+	resp := &master_pb.DisableVacuumResponse{}
+	return resp, nil
+}
+
+func (ms *MasterServer) EnableVacuum(ctx context.Context, req *master_pb.EnableVacuumRequest) (*master_pb.EnableVacuumResponse, error) {
+
+	ms.Topo.EnableVacuum()
+	resp := &master_pb.EnableVacuumResponse{}
 	return resp, nil
 }
 

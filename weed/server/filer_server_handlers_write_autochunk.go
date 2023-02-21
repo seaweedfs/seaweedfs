@@ -256,7 +256,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAsChunkFunctionType {
 
-	return func(reader io.Reader, name string, offset int64) (*filer_pb.FileChunk, error) {
+	return func(reader io.Reader, name string, offset int64, tsNs int64) (*filer_pb.FileChunk, error) {
 		var fileId string
 		var uploadResult *operation.UploadResult
 
@@ -290,7 +290,7 @@ func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAs
 			return nil, err
 		}
 
-		return uploadResult.ToPbFileChunk(fileId, offset), nil
+		return uploadResult.ToPbFileChunk(fileId, offset, tsNs), nil
 	}
 }
 

@@ -30,7 +30,7 @@ jobs:
       id: go
 
     - name: Check out code into the Go module directory
-      uses: actions/checkout@755da8c3cf115ac066823e79a1e1788f8940201b # v2
+      uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c # v2
 
     - name: Install dependencies
       run: |
@@ -42,28 +42,43 @@ jobs:
       run: make build_e2e && docker compose -f ./compose/e2e-mount.yml up --wait
 
     - name: Run FIO
-      timeout-minutes: 5
+      timeout-minutes: 15
       run: |
         echo "Starting FIO at: $(date)"
         # Concurrent r/w
         echo 'Run randrw with size=16M bs=4k'
-        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 40 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randrw --bs=4k --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1
-        
-        echo 'Run randrw with size=16M bs=128k'
-        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 40 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randrw --bs=128k --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1
-        
-        echo 'Run randrw with size=16M bs=1m'
-        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 40 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randrw --bs=1m --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1
-        
+        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 60 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randrw --bs=4k --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1
+
+        echo "Verify FIO at: $(date)"
         # Verified write
         echo 'Run randwrite with size=16M bs=4k'
-        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 40 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randwrite --bs=4k --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1 --do_verify=0 --verify=crc32c --verify_backlog=1
-        
+        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 60 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randwrite --bs=4k --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1 --do_verify=0 --verify=crc32c --verify_backlog=1
+
+    - name: Run FIO
+      timeout-minutes: 15
+      run: |
+        echo "Starting FIO at: $(date)"
+        # Concurrent r/w
+        echo 'Run randrw with size=16M bs=128k'
+        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 60 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randrw --bs=128k --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1
+
+        echo "Verify FIO at: $(date)"
+        # Verified write
         echo 'Run randwrite with size=16M bs=128k'
-        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 40 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randwrite --bs=128k --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1 --do_verify=0 --verify=crc32c --verify_backlog=1
+        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 60 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randwrite --bs=128k --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1 --do_verify=0 --verify=crc32c --verify_backlog=1
+
+    - name: Run FIO
+      timeout-minutes: 15
+      run: |
+        echo "Starting FIO at: $(date)"
+        # Concurrent r/w
+        echo 'Run randrw with size=16M bs=1m'
+        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 60 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randrw --bs=1m --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1
         
+        echo "Verify FIO at: $(date)"
+        # Verified write
         echo 'Run randwrite with size=16M bs=1m'
-        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 40 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randwrite --bs=1m --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1 --do_verify=0 --verify=crc32c --verify_backlog=1
+        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 60 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randwrite --bs=1m --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1 --do_verify=0 --verify=crc32c --verify_backlog=1
 
     - name: Save logs
       if: always()

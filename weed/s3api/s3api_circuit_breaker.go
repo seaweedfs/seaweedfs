@@ -28,7 +28,7 @@ func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
 		limitations: make(map[string]int64),
 	}
 
-	err := pb.WithFilerClient(false, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err := pb.WithFilerClient(false, 0, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		content, err := filer.ReadInsideFiler(client, s3_constants.CircuitBreakerConfigDir, s3_constants.CircuitBreakerConfigFile)
 		if err != nil {
 			return fmt.Errorf("read S3 circuit breaker config: %v", err)

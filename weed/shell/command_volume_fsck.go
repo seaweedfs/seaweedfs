@@ -211,7 +211,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 		}
 	}()
 
-	return doTraverseBfsAndSaving(c.env, nil, c.getCollectFilerFilePath(), false,
+	return doTraverseBfsAndSaving(c.env, c.writer, c.getCollectFilerFilePath(), false,
 		func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 			if *c.verbose && entry.Entry.IsDirectory {
 				fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
@@ -419,12 +419,12 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 							Size:     int32(size),
 						})
 						if err != nil {
-							return false, fmt.Errorf("to read needle meta with id %d from volume %d with error %v", key, volumeId, err)
+							return false, fmt.Errorf("read needle meta with id %d from volume %d: %v", key, volumeId, err)
 						}
 						return resp.AppendAtNs <= cutoffFrom, nil
 					})
 				if err != nil {
-					fmt.Fprintf(c.writer, "Failed to search for last valid index on volume %d with error %v", volumeId, err)
+					fmt.Fprintf(c.writer, "Failed to search for last valid index on volume %d with error %v\n", volumeId, err)
 				} else {
 					buf.Truncate(index * types.NeedleMapEntrySize)
 				}

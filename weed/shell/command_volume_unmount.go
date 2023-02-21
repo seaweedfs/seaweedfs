@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"flag"
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
 
@@ -40,6 +41,12 @@ func (c *commandVolumeUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 	nodeStr := volUnmountCommand.String("node", "", "the volume server <host>:<port>")
 	if err = volUnmountCommand.Parse(args); err != nil {
 		return nil
+	}
+	if *nodeStr == "" {
+		return fmt.Errorf("-node option is required")
+	}
+	if *volumeIdInt == 0 {
+		return fmt.Errorf("-volumeId option is required")
 	}
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {

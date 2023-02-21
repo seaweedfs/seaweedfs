@@ -158,8 +158,8 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 		return "", err
 	}
 
-	volumeTickChan := time.Tick(sleepInterval)
-	ecShardTickChan := time.Tick(17 * sleepInterval)
+	volumeTickChan := time.NewTicker(sleepInterval)
+	ecShardTickChan := time.NewTicker(17 * sleepInterval)
 	dataCenter := vs.store.GetDataCenter()
 	rack := vs.store.GetRack()
 	ip := vs.store.Ip
@@ -228,14 +228,14 @@ func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOpti
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err
 			}
-		case <-volumeTickChan:
+		case <-volumeTickChan.C:
 			glog.V(4).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
 			vs.store.MaybeAdjustVolumeMax()
 			if err = stream.Send(vs.store.CollectHeartbeat()); err != nil {
 				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterAddress, err)
 				return "", err
 			}
-		case <-ecShardTickChan:
+		case <-ecShardTickChan.C:
 			glog.V(4).Infof("volume server %s:%d ec heartbeat", vs.store.Ip, vs.store.Port)
 			if err = stream.Send(vs.store.CollectErasureCodingHeartbeat()); err != nil {
 				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterAddress, err)
