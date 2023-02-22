@@ -3,8 +3,13 @@ name: "helm: lint and test charts"
 on:
   push:
     branches: [ master ]
+    paths: ['k8s/**']
   pull_request:
     branches: [ master ]
+    paths: ['k8s/**']
+
+permissions:
+  contents: read
 
 jobs:
   lint-test:
