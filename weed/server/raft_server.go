@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	transport "github.com/Jille/raft-grpc-transport"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"path"
@@ -90,7 +89,7 @@ func (s *StateMachine) Snapshot() (hashicorpRaft.FSMSnapshot, error) {
 }
 
 func (s *StateMachine) Restore(r io.ReadCloser) error {
-	b, err := ioutil.ReadAll(r)
+	b, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}

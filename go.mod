@@ -18,7 +18,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/disintegration/imaging v1.6.2
-	github.com/dustin/go-humanize v1.0.0
+	github.com/dustin/go-humanize v1.0.1
 	github.com/eapache/go-resiliency v1.3.0 // indirect
 	github.com/eapache/go-xerial-snappy v0.0.0-20230111030713-bf00bc1b83b6 // indirect
 	github.com/eapache/queue v1.1.0 // indirect
@@ -58,7 +58,7 @@ require (
 	github.com/karlseguin/ccache/v2 v2.0.8
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/klauspost/compress v1.15.14 // indirect
-	github.com/klauspost/reedsolomon v1.11.6
+	github.com/klauspost/reedsolomon v1.11.7
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.7
 	github.com/linxGnu/grocksdb v1.7.14
@@ -114,7 +114,7 @@ require (
 	golang.org/x/crypto v0.3.0 // indirect
 	golang.org/x/exp v0.0.0-20221031165847-c99f073a8326
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
-	golang.org/x/net v0.6.0
+	golang.org/x/net v0.7.0
 	golang.org/x/oauth2 v0.2.0 // indirect
 	golang.org/x/sys v0.5.0
 	golang.org/x/text v0.7.0 // indirect
@@ -133,7 +133,7 @@ require (
 	modernc.org/mathutil v1.5.0 // indirect
 	modernc.org/memory v1.4.0 // indirect
 	modernc.org/opt v0.1.3 // indirect
-	modernc.org/sqlite v1.20.1
+	modernc.org/sqlite v1.20.4
 	modernc.org/strutil v1.1.3
 	modernc.org/token v1.0.1 // indirect
 )
@@ -151,7 +151,7 @@ require (
 	github.com/schollz/progressbar/v3 v3.13.0
 	github.com/tikv/client-go/v2 v2.0.5
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.42.6
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.42.10
 	google.golang.org/grpc/security/advancedtls v0.0.0-20220622233350-5cdb09fa29c1
 )
 
@@ -241,6 +241,3 @@ require (
 )
 
 // replace github.com/seaweedfs/raft => /Users/chrislu/go/src/github.com/seaweedfs/raft
-
-// Fixes build issues on windows: https://github.com/mattn/go-ieproxy/issues/45
-replace github.com/mattn/go-ieproxy => github.com/mattn/go-ieproxy v0.0.7

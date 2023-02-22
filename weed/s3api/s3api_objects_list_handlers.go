@@ -146,57 +146,65 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 
 	// check filer
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-
-		nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
-			if entry.IsDirectory {
-				// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
-				if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
-					commonPrefixes = append(commonPrefixes, PrefixEntry{
-						Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
-					})
-					//All of the keys (up to 1,000) rolled up into a common prefix count as a single return when calculating the number of returns.
-					cursor.maxKeys--
-				} else if entry.IsDirectoryKeyObject() {
+		for {
+			empty := true
+			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
+				empty = false
+				if entry.IsDirectory {
+					// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
+					if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
+						commonPrefixes = append(commonPrefixes, PrefixEntry{
+							Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
+						})
+						//All of the keys (up to 1,000) rolled up into a common prefix count as a single return when calculating the number of returns.
+						cursor.maxKeys--
+					} else if entry.IsDirectoryKeyObject() {
+						contents = append(contents, ListEntry{
+							Key:          fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
+							LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
+							ETag:         "\"" + filer.ETag(entry) + "\"",
+							Owner: CanonicalUser{
+								ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
+								DisplayName: entry.Attributes.UserName,
+							},
+							StorageClass: "STANDARD",
+						})
+						cursor.maxKeys--
+					}
+				} else {
+					storageClass := "STANDARD"
+					if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
+						storageClass = string(v)
+					}
 					contents = append(contents, ListEntry{
-						Key:          fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
+						Key:          fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):],
 						LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
 						ETag:         "\"" + filer.ETag(entry) + "\"",
+						Size:         int64(filer.FileSize(entry)),
 						Owner: CanonicalUser{
 							ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
 							DisplayName: entry.Attributes.UserName,
 						},
-						StorageClass: "STANDARD",
+						StorageClass: StorageClass(storageClass),
 					})
 					cursor.maxKeys--
 				}
-			} else {
-				storageClass := "STANDARD"
-				if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
-					storageClass = string(v)
-				}
-				contents = append(contents, ListEntry{
-					Key:          fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):],
-					LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
-					ETag:         "\"" + filer.ETag(entry) + "\"",
-					Size:         int64(filer.FileSize(entry)),
-					Owner: CanonicalUser{
-						ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
-						DisplayName: entry.Attributes.UserName,
-					},
-					StorageClass: StorageClass(storageClass),
-				})
-				cursor.maxKeys--
+			})
+			if doErr != nil {
+				return doErr
 			}
-		})
-		if doErr != nil {
-			return doErr
-		}
 
-		if !cursor.isTruncated {
-			nextMarker = ""
-		} else {
-			if requestDir != "" {
-				nextMarker = requestDir + "/" + nextMarker
+			if cursor.isTruncated {
+				if requestDir != "" {
+					nextMarker = requestDir + "/" + nextMarker
+				}
+				break
+			} else if empty {
+				nextMarker = ""
+				break
+			} else {
+				// start next loop
+				marker = nextMarker
 			}
 		}
 
