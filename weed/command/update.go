@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -215,7 +214,7 @@ func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (R
 		return Release{}, fmt.Errorf("unexpected status %v (%v) returned", res.StatusCode, res.Status)
 	}
 
-	buf, err := ioutil.ReadAll(res.Body)
+	buf, err := io.ReadAll(res.Body)
 	if err != nil {
 		return Release{}, err
 	}
@@ -265,7 +264,7 @@ func getGithubData(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("unexpected status %v (%v) returned", res.StatusCode, res.Status)
 	}
 
-	buf, err := ioutil.ReadAll(res.Body)
+	buf, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +336,7 @@ func extractToFile(buf []byte, filename, target string) error {
 
 	// Write everything to a temp file
 	dir := filepath.Dir(target)
-	new, err := ioutil.TempFile(dir, "weed")
+	new, err := os.CreateTemp(dir, "weed")
 	if err != nil {
 		return err
 	}
