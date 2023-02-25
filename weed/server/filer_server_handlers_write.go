@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -95,6 +96,11 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 		return
+	}
+
+	// When DiskType is empty,use filer's -disk
+	if so.DiskType == "" {
+		so.DiskType = fs.option.DiskType
 	}
 
 	if query.Has("mv.from") {

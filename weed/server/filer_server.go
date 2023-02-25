@@ -69,6 +69,7 @@ type FilerOption struct {
 	ConcurrentUploadLimit int64
 	ShowUIDirectoryDelete bool
 	DownloadMaxBytesPs    int64
+	DiskType              string
 }
 
 type FilerServer struct {
