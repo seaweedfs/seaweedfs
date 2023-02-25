@@ -185,6 +185,11 @@ func runFiler(cmd *Command, args []string) bool {
 
 	if *filerStartWebDav {
 		filerWebDavOptions.filer = &filerAddress
+
+		if *filerWebDavOptions.disk == "" {
+			filerWebDavOptions.disk = f.diskType
+		}
+
 		go func(delay time.Duration) {
 			time.Sleep(delay * time.Second)
 			filerWebDavOptions.startWebDav()
