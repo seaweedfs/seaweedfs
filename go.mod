@@ -110,7 +110,7 @@ require (
 	go.opencensus.io v0.24.0 // indirect
 	gocloud.dev v0.28.0
 	gocloud.dev/pubsub/natspubsub v0.28.0
-	gocloud.dev/pubsub/rabbitpubsub v0.27.0
+	gocloud.dev/pubsub/rabbitpubsub v0.28.0
 	golang.org/x/crypto v0.3.0 // indirect
 	golang.org/x/exp v0.0.0-20221031165847-c99f073a8326
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1
