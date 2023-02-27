@@ -9,7 +9,7 @@ require (
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/Shopify/sarama v1.38.1
-	github.com/aws/aws-sdk-go v1.44.189
+	github.com/aws/aws-sdk-go v1.44.209
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
