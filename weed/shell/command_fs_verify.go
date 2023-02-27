@@ -15,6 +15,7 @@ import (
 	"io"
 	"math"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,13 +24,15 @@ func init() {
 }
 
 type commandFsVerify struct {
-	env                  *CommandEnv
-	volumeServers        []pb.ServerAddress
-	volumeIds            map[uint32][]pb.ServerAddress
-	verbose              *bool
-	modifyTimeAgoAtSec   int64
-	writer               io.Writer
-	volumeServerFileIdCh map[string]chan *filer_pb.FileId
+	env                         *CommandEnv
+	volumeServers               []pb.ServerAddress
+	volumeIds                   map[uint32][]pb.ServerAddress
+	verbose                     *bool
+	parallelLimitByVolumeServer *int
+	modifyTimeAgoAtSec          int64
+	writer                      io.Writer
+	waitChan                    map[string]chan struct{}
+	waitChanLock                sync.RWMutex
 }
 
 func (c *commandFsVerify) Name() string {
@@ -51,7 +54,7 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	fsVerifyCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	c.verbose = fsVerifyCommand.Bool("v", false, "print out each processed files")
 	modifyTimeAgo := fsVerifyCommand.Duration("modifyTimeAgo", 0, "only include files after this modify time to verify")
-	parallelLimitByVolumeServer := fsVerifyCommand.Int("parallelLimitByVolumeServer", 1, "number of parallel verification per volume server")
+	c.parallelLimitByVolumeServer = fsVerifyCommand.Int("parallelLimitByVolumeServer", 0, "number of parallel verification per volume server")
 
 	if err = fsVerifyCommand.Parse(args); err != nil {
 		return err
@@ -68,14 +71,12 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		return parseErr
 	}
 
-	c.volumeServerFileIdCh = make(map[string]chan *filer_pb.FileId)
-	for _, volumeServer := range c.volumeServers {
-		fileIdCh := make(chan *filer_pb.FileId, *parallelLimitByVolumeServer)
-		errorCh := make(chan error, *parallelLimitByVolumeServer)
-		go c.verifyEntry(&volumeServer, fileIdCh, errorCh)
-		c.volumeServerFileIdCh[string(volumeServer)] = fileIdCh
-		defer close(fileIdCh)
-		defer close(errorCh)
+	c.waitChan = make(map[string]chan struct{})
+	if *c.parallelLimitByVolumeServer > 0 {
+		for _, volumeServer := range c.volumeServers {
+			c.waitChan[string(volumeServer)] = make(chan struct{}, *c.parallelLimitByVolumeServer)
+			defer close(c.waitChan[string(volumeServer)])
+		}
 	}
 
 	fCount, eConut, terr := c.verifyTraverseBfs(path)
@@ -103,22 +104,20 @@ func (c *commandFsVerify) collectVolumeIds() error {
 	return nil
 }
 
-func (c *commandFsVerify) verifyEntry(volumeServer *pb.ServerAddress, fileIdCh <-chan *filer_pb.FileId, errorCh chan<- error) {
-	for fileId := range fileIdCh {
-		err := operation.WithVolumeServerClient(false, *volumeServer, c.env.option.GrpcDialOption,
-			func(client volume_server_pb.VolumeServerClient) error {
-				_, err := client.VolumeNeedleStatus(context.Background(),
-					&volume_server_pb.VolumeNeedleStatusRequest{
-						VolumeId: fileId.VolumeId,
-						NeedleId: fileId.FileKey})
-				return err
-			},
-		)
-		if err != nil && !strings.Contains(err.Error(), storage.ErrorDeleted.Error()) {
-			errorCh <- err
-		}
-		errorCh <- nil
+func (c *commandFsVerify) verifyEntry(volumeServer *pb.ServerAddress, fileId *filer_pb.FileId) error {
+	err := operation.WithVolumeServerClient(false, *volumeServer, c.env.option.GrpcDialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			_, err := client.VolumeNeedleStatus(context.Background(),
+				&volume_server_pb.VolumeNeedleStatusRequest{
+					VolumeId: fileId.VolumeId,
+					NeedleId: fileId.FileKey})
+			return err
+		},
+	)
+	if err != nil && !strings.Contains(err.Error(), storage.ErrorDeleted.Error()) {
+		return err
 	}
+	return nil
 }
 
 type ItemEntry struct {
@@ -151,25 +150,42 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount int64, errCo
 		func(outputChan chan interface{}) {
 			for itemEntry := range outputChan {
 				i := itemEntry.(*ItemEntry)
-				fileMsg := fmt.Sprintf("file:%s needle status ", i.path)
-				if *c.verbose {
-					fmt.Fprintf(c.writer, fileMsg)
-					fileMsg = ""
-				}
+				itemPath := string(i.path)
+				fileMsg := fmt.Sprintf("file:%s needle status ", itemPath)
+				errItem := make(map[string]error)
+				errItemLock := sync.RWMutex{}
 				for _, chunk := range i.chunks {
 					if volumeIds, ok := c.volumeIds[chunk.Fid.VolumeId]; ok {
 						for _, volumeServer := range volumeIds {
-							if fileIdCh, ok := c.volumeServerFileIdCh[string(volumeServer)]; ok {
-								fileIdCh <- chunk.Fid
-							} else {
+							if *c.parallelLimitByVolumeServer == 0 {
+								if err = c.verifyEntry(&volumeServer, chunk.Fid); err != nil {
+									fmt.Fprintf(c.writer, "%sfailed verify %d:%d: %+v\n",
+										fileMsg, chunk.Fid.VolumeId, chunk.Fid.FileKey, err)
+								}
+								continue
+							}
+							c.waitChanLock.RLock()
+							waitChan, ok := c.waitChan[string(volumeServer)]
+							c.waitChanLock.RUnlock()
+							if !ok {
 								fmt.Fprintf(c.writer, "%sfailed to get channel for %d:%d: %+v\n",
 									fileMsg, chunk.Fid.VolumeId, chunk.Fid.FileKey, err)
+								continue
 							}
-							//if err = c.verifyEntry(chunk.Fid, &volumeServer); err != nil {
-							//	fmt.Fprintf(c.writer, "%sfailed verify %d:%d: %+v\n",
-							//		fileMsg, chunk.Fid.VolumeId, chunk.Fid.FileKey, err)
-							//	break
-							//}
+							waitChan <- struct{}{}
+							go func(path string, volumeServer *pb.ServerAddress, msg string) {
+								if err = c.verifyEntry(volumeServer, chunk.Fid); err != nil {
+									fmt.Fprintf(c.writer, "%sfailed verify %d:%d: %+v\n",
+										msg, chunk.Fid.VolumeId, chunk.Fid.FileKey, err)
+									errItemLock.Lock()
+									errItem[path] = err
+									errItemLock.Unlock()
+								}
+								<-waitChan
+							}(itemPath, &volumeServer, fileMsg)
+							errItemLock.RLock()
+							err, _ = errItem[itemPath]
+							errItemLock.RUnlock()
 						}
 					} else {
 						err = fmt.Errorf("volumeId %d not found", chunk.Fid.VolumeId)
