@@ -1551,8 +1551,8 @@ github.com/linode/linodego v1.4.0/go.mod h1:PVsRxSlOiJyvG4/scTszpmZDTdgS+to3X6eS
 github.com/linode/linodego v1.8.0/go.mod h1:heqhl91D8QTPVm2k9qZHP78zzbOdTFLXE9NJc3bcc50=
 github.com/linode/linodego v1.9.3/go.mod h1:h6AuFR/JpqwwM/vkj7s8KV3iGN8/jxn+zc437F8SZ8w=
 github.com/linuxkit/virtsock v0.0.0-20201010232012-f8cee7dfc7a3/go.mod h1:3r6x7q95whyfWQpmGZTu3gk3v2YkMi05HEzl7Tf7YEo=
-github.com/linxGnu/grocksdb v1.7.14 h1:8lMZzyWeNP5lI0BIppX05DzmQzXj/Tgu82bgWYtowLY=
-github.com/linxGnu/grocksdb v1.7.14/go.mod h1:pY55D0o+r8yUYLq70QmhdudxYvoDb9F+9puf4m3/W+U=
+github.com/linxGnu/grocksdb v1.7.15 h1:AEhP28lkeAybv5UYNYviYISpR6bJejEnKuYbnWAnxx0=
+github.com/linxGnu/grocksdb v1.7.15/go.mod h1:pY55D0o+r8yUYLq70QmhdudxYvoDb9F+9puf4m3/W+U=
 github.com/lyft/protoc-gen-star v0.6.0/go.mod h1:TGAoBVkt8w7MPG72TrKIu85MIdXwDuzJYeZuUPFPNwA=
 github.com/lyft/protoc-gen-star v0.6.1/go.mod h1:TGAoBVkt8w7MPG72TrKIu85MIdXwDuzJYeZuUPFPNwA=
 github.com/lyft/protoc-gen-validate v0.0.13/go.mod h1:XbGvPuh87YZc5TdIa2/I4pLk0QoUACkjt2znoq26NVQ=
