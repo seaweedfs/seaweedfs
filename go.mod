@@ -61,7 +61,7 @@ require (
 	github.com/klauspost/reedsolomon v1.11.7
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.7
-	github.com/linxGnu/grocksdb v1.7.14
+	github.com/linxGnu/grocksdb v1.7.15
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-ieproxy v0.0.9 // indirect
