@@ -7,7 +7,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/security/advancedtls"
-	"io/ioutil"
+	"os"
 	"strings"
 	"time"
 
@@ -136,7 +136,7 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 }
 
 func LoadClientTLSHTTP(clientCertFile string) *tls.Config {
-	clientCerts, err := ioutil.ReadFile(clientCertFile)
+	clientCerts, err := os.ReadFile(clientCertFile)
 	if err != nil {
 		glog.Fatal(err)
 	}

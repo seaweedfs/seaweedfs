@@ -20,7 +20,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/http"
 	"net/url"
@@ -409,7 +408,7 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 				}
 				buf.Write(resp.FileContent)
 			}
-			if vinfo.isReadOnly == false {
+			if !vinfo.isReadOnly {
 				index, err := idx.FirstInvalidIndex(buf.Bytes(),
 					func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
 						resp, err := volumeServerClient.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
@@ -535,7 +534,7 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 	}
 	defer resp.Body.Close()
 
-	_, err = ioutil.ReadAll(resp.Body)
+	_, err = io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Fprintf(c.writer, "DELETE response error: %v\n", err)
 	}
