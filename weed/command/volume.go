@@ -68,6 +68,7 @@ type VolumeServerOptions struct {
 	inflightUploadDataTimeout *time.Duration
 	hasSlowRead               *bool
 	readBufferSizeMB          *int
+	ldbTimeout                *int64
 }
 
 func init() {
@@ -92,13 +93,14 @@ func init() {
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
 	v.fileSizeLimitMB = cmdVolume.Flag.Int("fileSizeLimitMB", 256, "limit file size to avoid out of memory")
+	v.ldbTimeout = cmdVolume.Flag.Int64("index.leveldbTimeout", 0, "alive time for leveldb (default to 0). If leveldb of volume is not accessed in ldbTimeout hours, it will be off loaded to reduce opened files and memory consumption.")
 	v.concurrentUploadLimitMB = cmdVolume.Flag.Int("concurrentUploadLimitMB", 256, "limit total concurrent upload size")
 	v.concurrentDownloadLimitMB = cmdVolume.Flag.Int("concurrentDownloadLimitMB", 256, "limit total concurrent download size")
 	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes --memprofile and --cpuprofile")
 	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
 	v.inflightUploadDataTimeout = cmdVolume.Flag.Duration("inflightUploadDataTimeout", 60*time.Second, "inflight upload data wait timeout of volume servers")
-	v.hasSlowRead = cmdVolume.Flag.Bool("hasSlowRead", false, "<experimental> if true, this prevents slow reads from blocking other requests, but large file read P99 latency will increase.")
+	v.hasSlowRead = cmdVolume.Flag.Bool("hasSlowRead", true, "<experimental> if true, this prevents slow reads from blocking other requests, but large file read P99 latency will increase.")
 	v.readBufferSizeMB = cmdVolume.Flag.Int("readBufferSizeMB", 4, "<experimental> larger values can optimize query performance but will increase some memory usage,Use with hasSlowRead normally.")
 }
 
@@ -128,7 +130,7 @@ func runVolume(cmd *Command, args []string) bool {
 		grace.SetupProfiling(*v.cpuProfile, *v.memProfile)
 	}
 
-	go stats_collect.StartMetricsServer(*v.metricsHttpPort)
+	go stats_collect.StartMetricsServer(*v.bindIp, *v.metricsHttpPort)
 
 	minFreeSpaces := util.MustParseMinFreeSpace(*minFreeSpace, *minFreeSpacePercent)
 	v.masters = pb.ServerAddresses(*v.mastersString).ToAddresses()
@@ -249,6 +251,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		*v.inflightUploadDataTimeout,
 		*v.hasSlowRead,
 		*v.readBufferSizeMB,
+		*v.ldbTimeout,
 	)
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)

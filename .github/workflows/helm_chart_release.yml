@@ -1,0 +1,22 @@
+name: "helm: publish charts"
+on:
+  push:
+    tags: 
+      - '*'
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Publish Helm charts
+        uses: stefanprodan/helm-gh-pages@master
+        with:          
+          token: ${{ secrets.GITHUB_TOKEN }}
+          charts_dir: k8s/charts
+          target_dir: helm
+          branch: gh-pages

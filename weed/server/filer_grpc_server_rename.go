@@ -165,7 +165,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	newEntry := &filer.Entry{
 		FullPath:        newPath,
 		Attr:            entry.Attr,
-		Chunks:          entry.Chunks,
+		Chunks:          entry.GetChunks(),
 		Extended:        entry.Extended,
 		Content:         entry.Content,
 		HardLinkCounter: entry.HardLinkCounter,
@@ -202,6 +202,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	}
 
 	// delete old entry
+	ctx = context.WithValue(ctx, "OP", "MV")
 	deleteErr := fs.filer.DeleteEntryMetaAndData(ctx, oldPath, false, false, false, false, signatures)
 	if deleteErr != nil {
 		return deleteErr

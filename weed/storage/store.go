@@ -80,7 +80,7 @@ func (s *Store) String() (str string) {
 }
 
 func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int, publicUrl string, dirnames []string, maxVolumeCounts []int32,
-	minFreeSpaces []util.MinFreeSpace, idxFolder string, needleMapKind NeedleMapKind, diskTypes []DiskType) (s *Store) {
+	minFreeSpaces []util.MinFreeSpace, idxFolder string, needleMapKind NeedleMapKind, diskTypes []DiskType, ldbTimeout int64) (s *Store) {
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, GrpcPort: grpcPort, PublicUrl: publicUrl, NeedleMapKind: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
 
@@ -93,7 +93,7 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			location.loadExistingVolumes(needleMapKind)
+			location.loadExistingVolumes(needleMapKind, ldbTimeout)
 		}()
 	}
 	wg.Wait()
@@ -106,7 +106,7 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 
 	return
 }
-func (s *Store) AddVolume(volumeId needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement string, ttlString string, preallocate int64, MemoryMapMaxSizeMb uint32, diskType DiskType) error {
+func (s *Store) AddVolume(volumeId needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement string, ttlString string, preallocate int64, MemoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {
 	rt, e := super_block.NewReplicaPlacementFromString(replicaPlacement)
 	if e != nil {
 		return e
@@ -115,7 +115,7 @@ func (s *Store) AddVolume(volumeId needle.VolumeId, collection string, needleMap
 	if e != nil {
 		return e
 	}
-	e = s.addVolume(volumeId, collection, needleMapKind, rt, ttl, preallocate, MemoryMapMaxSizeMb, diskType)
+	e = s.addVolume(volumeId, collection, needleMapKind, rt, ttl, preallocate, MemoryMapMaxSizeMb, diskType, ldbTimeout)
 	return e
 }
 func (s *Store) DeleteCollection(collection string) (e error) {
@@ -158,14 +158,14 @@ func (s *Store) FindFreeLocation(diskType DiskType) (ret *DiskLocation) {
 	}
 	return ret
 }
-func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32, diskType DiskType) error {
+func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement *super_block.ReplicaPlacement, ttl *needle.TTL, preallocate int64, memoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {
 	if s.findVolume(vid) != nil {
 		return fmt.Errorf("Volume Id %d already exists!", vid)
 	}
 	if location := s.FindFreeLocation(diskType); location != nil {
 		glog.V(0).Infof("In dir %s adds volume:%v collection:%s replicaPlacement:%v ttl:%v",
 			location.Directory, vid, collection, replicaPlacement, ttl)
-		if volume, err := NewVolume(location.Directory, location.IdxDirectory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate, memoryMapMaxSizeMb); err == nil {
+		if volume, err := NewVolume(location.Directory, location.IdxDirectory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate, memoryMapMaxSizeMb, ldbTimeout); err == nil {
 			location.SetVolume(vid, volume)
 			glog.V(0).Infof("add volume %d", vid)
 			s.NewVolumesChan <- master_pb.VolumeShortInformationMessage{
@@ -373,7 +373,7 @@ func (s *Store) SetStopping() {
 
 func (s *Store) LoadNewVolumes() {
 	for _, location := range s.Locations {
-		location.loadExistingVolumes(s.NeedleMapKind)
+		location.loadExistingVolumes(s.NeedleMapKind, 0)
 	}
 }
 
@@ -548,12 +548,12 @@ func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
 		vifFile := filepath.Join(location.Directory, baseFileName+".vif")
 		volumeInfo, _, _, err := volume_info.MaybeLoadVolumeInfo(vifFile)
 		if err != nil {
-			return fmt.Errorf("volume %d fail to load vif: %v", i, err)
+			return fmt.Errorf("volume %d failed to load vif: %v", i, err)
 		}
 		volumeInfo.Replication = replication
 		err = volume_info.SaveVolumeInfo(vifFile, volumeInfo)
 		if err != nil {
-			return fmt.Errorf("volume %d fail to save vif: %v", i, err)
+			return fmt.Errorf("volume %d failed to save vif: %v", i, err)
 		}
 		return nil
 	}

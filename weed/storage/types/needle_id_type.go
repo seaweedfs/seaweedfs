@@ -34,6 +34,10 @@ func (k NeedleId) String() string {
 	return strconv.FormatUint(uint64(k), 16)
 }
 
+func (k NeedleId) FileId(volumeId uint32) string {
+	return fmt.Sprintf("%d,%s00000000", volumeId, k.String())
+}
+
 func ParseNeedleId(idString string) (NeedleId, error) {
 	key, err := strconv.ParseUint(idString, 16, 64)
 	if err != nil {

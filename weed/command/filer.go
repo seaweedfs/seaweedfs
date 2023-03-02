@@ -60,6 +60,7 @@ type FilerOptions struct {
 	localSocket             *string
 	showUIDirectoryDelete   *bool
 	downloadMaxMBps         *int
+	diskType                *string
 }
 
 func init() {
@@ -89,6 +90,7 @@ func init() {
 	f.localSocket = cmdFiler.Flag.String("localSocket", "", "default to /tmp/seaweedfs-filer-<port>.sock")
 	f.showUIDirectoryDelete = cmdFiler.Flag.Bool("ui.deleteDir", true, "enable filer UI show delete directory button")
 	f.downloadMaxMBps = cmdFiler.Flag.Int("downloadMaxMBps", 0, "download max speed for each download request, in MB per second")
+	f.diskType = cmdFiler.Flag.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -113,6 +115,7 @@ func init() {
 	filerWebDavOptions.tlsCertificate = cmdFiler.Flag.String("webdav.cert.file", "", "path to the TLS certificate file")
 	filerWebDavOptions.cacheDir = cmdFiler.Flag.String("webdav.cacheDir", os.TempDir(), "local cache directory for file chunks")
 	filerWebDavOptions.cacheSizeMB = cmdFiler.Flag.Int64("webdav.cacheCapacityMB", 0, "local cache capacity in MB")
+	filerWebDavOptions.filerRootPath = cmdFiler.Flag.String("webdav.filer.path", "/", "use this remote path from filer server")
 
 	// start iam on filer
 	filerStartIam = cmdFiler.Flag.Bool("iam", false, "whether to start IAM service")
@@ -162,7 +165,7 @@ func runFiler(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 
-	go stats_collect.StartMetricsServer(*f.metricsHttpPort)
+	go stats_collect.StartMetricsServer(*f.bindIp, *f.metricsHttpPort)
 
 	filerAddress := util.JoinHostPort(*f.ip, *f.port)
 	startDelay := time.Duration(2)
@@ -182,6 +185,11 @@ func runFiler(cmd *Command, args []string) bool {
 
 	if *filerStartWebDav {
 		filerWebDavOptions.filer = &filerAddress
+
+		if *filerWebDavOptions.disk == "" {
+			filerWebDavOptions.disk = f.diskType
+		}
+
 		go func(delay time.Duration) {
 			time.Sleep(delay * time.Second)
 			filerWebDavOptions.startWebDav()
@@ -242,6 +250,7 @@ func (fo *FilerOptions) startFiler() {
 		ConcurrentUploadLimit: int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
 		ShowUIDirectoryDelete: *fo.showUIDirectoryDelete,
 		DownloadMaxBytesPs:    int64(*fo.downloadMaxMBps) * 1024 * 1024,
+		DiskType:              *fo.diskType,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

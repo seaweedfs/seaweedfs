@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"net/http"
@@ -83,6 +84,14 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("PutBucketHandler %s", bucket)
+
+	// validate the bucket name
+	err := s3bucket.VerifyS3BucketName(bucket)
+	if err != nil {
+		glog.Errorf("put invalid bucket name: %v %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidBucketName)
+		return
+	}
 
 	// avoid duplicated buckets
 	errCode := s3err.ErrNone

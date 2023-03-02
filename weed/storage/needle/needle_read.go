@@ -24,6 +24,7 @@ const (
 )
 
 var ErrorSizeMismatch = errors.New("size mismatch")
+var ErrorSizeInvalid = errors.New("size invalid")
 
 func (n *Needle) DiskSize(version Version) int64 {
 	return GetActualSize(n.Size, version)

@@ -38,13 +38,13 @@ jobs:
     steps:
 
       - name: Check out code into the Go module directory
-        uses: actions/checkout@93ea575cb5d8a053eaa0ac8fa3b40d7e05a33cc8 # v2
+        uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c # v2
 
       - name: Set BUILD_TIME env
         run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> ${GITHUB_ENV}
 
       - name: Go Release Binaries Large Disk
-        uses: wangyoucao577/go-release-action@156f172aa3d27f3879a47cad8810b366c299e9e9 # v1.22
+        uses: wangyoucao577/go-release-action@efb9406897e4eff1aa2c7142223b096aec90f267 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
@@ -60,7 +60,7 @@ jobs:
           asset_name: "weed-large-disk-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
 
       - name: Go Release Binaries Normal Volume Size
-        uses: wangyoucao577/go-release-action@156f172aa3d27f3879a47cad8810b366c299e9e9 # v1.22
+        uses: wangyoucao577/go-release-action@efb9406897e4eff1aa2c7142223b096aec90f267 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
@@ -87,13 +87,13 @@ jobs:
     steps:
 
       - name: Check out code into the Go module directory
-        uses: actions/checkout@93ea575cb5d8a053eaa0ac8fa3b40d7e05a33cc8 # v2
+        uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c # v2
 
       - name: Set BUILD_TIME env
         run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> ${GITHUB_ENV}
 
       - name: Go Release Binaries Large Disk
-        uses: wangyoucao577/go-release-action@156f172aa3d27f3879a47cad8810b366c299e9e9 # v1.22
+        uses: wangyoucao577/go-release-action@efb9406897e4eff1aa2c7142223b096aec90f267 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
@@ -109,7 +109,7 @@ jobs:
           asset_name: "weed-large-disk-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
 
       - name: Go Release Binaries Normal Volume Size
-        uses: wangyoucao577/go-release-action@156f172aa3d27f3879a47cad8810b366c299e9e9 # v1.22
+        uses: wangyoucao577/go-release-action@efb9406897e4eff1aa2c7142223b096aec90f267 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}

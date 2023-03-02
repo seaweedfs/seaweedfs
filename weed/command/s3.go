@@ -144,7 +144,7 @@ func runS3(cmd *Command, args []string) bool {
 
 	util.LoadConfiguration("security", false)
 
-	go stats_collect.StartMetricsServer(*s3StandaloneOptions.metricsHttpPort)
+	go stats_collect.StartMetricsServer(*s3StandaloneOptions.bindIp, *s3StandaloneOptions.metricsHttpPort)
 
 	return s3StandaloneOptions.startS3Server()
 
@@ -163,7 +163,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	var metricsIntervalSec int
 
 	for {
-		err := pb.WithGrpcFilerClient(false, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)

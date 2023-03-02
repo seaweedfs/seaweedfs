@@ -34,7 +34,7 @@ spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.volume.restartPolicy }}
       {{- if .Values.volume.tolerations }}
       tolerations:
-      {{ tpl .Values.volume.tolerations . | nindent 8 | trim }}
+        {{ tpl .Values.volume.tolerations . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
@@ -93,7 +93,12 @@ spec:
             - "/bin/sh"
             - "-ec"
             - |
-              exec /usr/bin/weed -logdir=/logs \
+              exec /usr/bin/weed \
+                {{- if eq .Values.volume.logs.type "hostPath" }}
+                -logdir=/logs \
+                {{- else }}
+                -logtostderr=true \
+                {{- end }}
                 {{- if .Values.volume.loggingOverrideLevel }}
                 -v={{ .Values.volume.loggingOverrideLevel }} \
                 {{- else }}
@@ -133,9 +138,9 @@ spec:
                 -fileSizeLimitMB={{ .Values.volume.fileSizeLimitMB }} \
                 {{- end }}
                 -minFreeSpacePercent={{ .Values.volume.minFreeSpacePercent }} \
-                -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-volume \
+                -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-volume.{{ .Release.Namespace }} \
                 -compactionMBps={{ .Values.volume.compactionMBps }} \
-                -mserver={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
+                -mserver={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
           volumeMounts:
             - name: data
               mountPath: "{{ .Values.volume.dir }}/"
@@ -182,7 +187,7 @@ spec:
               port: {{ .Values.volume.port }}
               scheme: HTTP
             initialDelaySeconds: 15
-            periodSeconds: 90
+            periodSeconds: 15
             successThreshold: 1
             failureThreshold: 100
             timeoutSeconds: 30
@@ -206,19 +211,19 @@ spec:
         {{- if eq .Values.volume.data.type "hostPath" }}
         - name: data
           hostPath:
-            path: /storage/object_store/
+            path: {{ .Values.volume.data.hostPathPrefix }}/object_store/
             type: DirectoryOrCreate
         {{- end }}
         {{- if and (eq .Values.volume.idx.type "hostPath") .Values.volume.dir_idx }}
         - name: idx
           hostPath:
-            path: /ssd/seaweedfs-volume-idx/
+            path: {{ .Values.volume.idx.hostPathPrefix }}/seaweedfs-volume-idx/
             type: DirectoryOrCreate
         {{- end }}
         {{- if eq .Values.volume.logs.type "hostPath" }}
         - name: logs
           hostPath:
-            path: /storage/logs/seaweedfs/volume
+            path: {{ .Values.volume.logs.hostPathPrefix }}/logs/seaweedfs/volume
             type: DirectoryOrCreate
         {{- end }}
         {{- if .Values.global.enableSecurity }}

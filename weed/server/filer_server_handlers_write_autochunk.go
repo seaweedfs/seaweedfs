@@ -181,7 +181,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			}
 			entry.FileSize += uint64(chunkOffset)
 		}
-		newChunks = append(entry.Chunks, fileChunks...)
+		newChunks = append(entry.GetChunks(), fileChunks...)
 
 		// TODO
 		if len(entry.Content) > 0 {
@@ -256,7 +256,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAsChunkFunctionType {
 
-	return func(reader io.Reader, name string, offset int64) (*filer_pb.FileChunk, error) {
+	return func(reader io.Reader, name string, offset int64, tsNs int64) (*filer_pb.FileChunk, error) {
 		var fileId string
 		var uploadResult *operation.UploadResult
 
@@ -290,7 +290,7 @@ func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAs
 			return nil, err
 		}
 
-		return uploadResult.ToPbFileChunk(fileId, offset), nil
+		return uploadResult.ToPbFileChunk(fileId, offset, tsNs), nil
 	}
 }
 
@@ -354,6 +354,10 @@ func SaveAmzMetaData(r *http.Request, existing map[string][]byte, isReplace bool
 
 	if sc := r.Header.Get(s3_constants.AmzStorageClass); sc != "" {
 		metadata[s3_constants.AmzStorageClass] = []byte(sc)
+	}
+
+	if ce := r.Header.Get("Content-Encoding"); ce != "" {
+		metadata["Content-Encoding"] = []byte(ce)
 	}
 
 	if tags := r.Header.Get(s3_constants.AmzObjectTagging); tags != "" {

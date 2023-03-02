@@ -6,7 +6,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	_ "github.com/seaweedfs/seaweedfs/weed/storage/backend/s3_backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
-	volume_info "github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 )
 
 func (v *Volume) GetVolumeInfo() *volume_server_pb.VolumeInfo {
@@ -25,6 +26,21 @@ func (v *Volume) maybeLoadVolumeInfo() (found bool) {
 	if v.hasRemoteFile {
 		glog.V(0).Infof("volume %d is tiered to %s as %s and read only", v.Id,
 			v.volumeInfo.Files[0].BackendName(), v.volumeInfo.Files[0].Key)
+	} else {
+		if v.volumeInfo.BytesOffset == 0 {
+			v.volumeInfo.BytesOffset = uint32(types.OffsetSize)
+		}
+	}
+
+	if v.volumeInfo.BytesOffset != 0 && v.volumeInfo.BytesOffset != uint32(types.OffsetSize) {
+		var m string
+		if types.OffsetSize == 5 {
+			m = "without"
+		} else {
+			m = "with"
+		}
+		glog.Exitf("BytesOffset mismatch in volume info file %s, try use binary version %s large_disk", v.FileName(".vif"), m)
+		return
 	}
 
 	if err != nil {

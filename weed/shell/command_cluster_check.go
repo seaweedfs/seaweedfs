@@ -161,7 +161,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 	for _, filer := range filers {
 		for _, master := range masters {
 			fmt.Fprintf(writer, "checking filer %s to master %s ... ", string(filer), string(master))
-			err := pb.WithFilerClient(false, filer, commandEnv.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			err := pb.WithFilerClient(false, 0, filer, commandEnv.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				pong, err := client.Ping(context.Background(), &filer_pb.PingRequest{
 					Target:     string(master),
 					TargetType: cluster.MasterType,
@@ -181,7 +181,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 	for _, filer := range filers {
 		for _, volumeServer := range volumeServers {
 			fmt.Fprintf(writer, "checking filer %s to volume server %s ... ", string(filer), string(volumeServer))
-			err := pb.WithFilerClient(false, filer, commandEnv.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			err := pb.WithFilerClient(false, 0, filer, commandEnv.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				pong, err := client.Ping(context.Background(), &filer_pb.PingRequest{
 					Target:     string(volumeServer),
 					TargetType: cluster.VolumeServerType,
@@ -224,7 +224,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 	for _, sourceFiler := range filers {
 		for _, targetFiler := range filers {
 			fmt.Fprintf(writer, "checking filer %s to %s ... ", string(sourceFiler), string(targetFiler))
-			err := pb.WithFilerClient(false, sourceFiler, commandEnv.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			err := pb.WithFilerClient(false, 0, sourceFiler, commandEnv.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				pong, err := client.Ping(context.Background(), &filer_pb.PingRequest{
 					Target:     string(targetFiler),
 					TargetType: cluster.FilerType,

@@ -33,6 +33,7 @@ type FilerSink struct {
 	writeChunkByFiler bool
 	isIncremental     bool
 	executor          *util.LimitedConcurrentExecutor
+	signature         int32
 }
 
 func init() {
@@ -54,6 +55,7 @@ func (fs *FilerSink) IsIncremental() bool {
 func (fs *FilerSink) Initialize(configuration util.Configuration, prefix string) error {
 	fs.isIncremental = configuration.GetBool(prefix + "is_incremental")
 	fs.dataCenter = configuration.GetString(prefix + "dataCenter")
+	fs.signature = util.RandomInt32()
 	return fs.DoInitialize(
 		"",
 		configuration.GetString(prefix+"grpcAddress"),
@@ -112,7 +114,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 			Directory: dir,
 			Name:      name,
 		}
-		glog.V(1).Infof("lookup: %v", lookupRequest)
+		// glog.V(1).Infof("lookup: %v", lookupRequest)
 		if resp, err := filer_pb.LookupEntry(client, lookupRequest); err == nil {
 			if filer.ETag(resp.Entry) == filer.ETag(entry) {
 				glog.V(3).Infof("already replicated %s", key)
@@ -120,14 +122,15 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 			}
 		}
 
-		replicatedChunks, err := fs.replicateChunks(entry.Chunks, key)
+		replicatedChunks, err := fs.replicateChunks(entry.GetChunks(), key)
 
 		if err != nil {
 			// only warning here since the source chunk may have been deleted already
 			glog.Warningf("replicate entry chunks %s: %v", key, err)
+			return nil
 		}
 
-		glog.V(4).Infof("replicated %s %+v ===> %+v", key, entry.Chunks, replicatedChunks)
+		// glog.V(4).Infof("replicated %s %+v ===> %+v", key, entry.GetChunks(), replicatedChunks)
 
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir,
@@ -199,15 +202,16 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		// delete the chunks that are deleted from the source
 		if deleteIncludeChunks {
 			// remove the deleted chunks. Actual data deletion happens in filer UpdateEntry FindUnusedFileChunks
-			existingEntry.Chunks = filer.DoMinusChunksBySourceFileId(existingEntry.Chunks, deletedChunks)
+			existingEntry.Chunks = filer.DoMinusChunksBySourceFileId(existingEntry.GetChunks(), deletedChunks)
 		}
 
 		// replicate the chunks that are new in the source
 		replicatedChunks, err := fs.replicateChunks(newChunks, key)
 		if err != nil {
-			return true, fmt.Errorf("replicate %s chunks error: %v", key, err)
+			glog.Warningf("replicate entry chunks %s: %v", key, err)
+			return true, nil
 		}
-		existingEntry.Chunks = append(existingEntry.Chunks, replicatedChunks...)
+		existingEntry.Chunks = append(existingEntry.GetChunks(), replicatedChunks...)
 		existingEntry.Attributes = newEntry.Attributes
 		existingEntry.Extended = newEntry.Extended
 		existingEntry.HardLinkId = newEntry.HardLinkId
@@ -235,11 +239,11 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 
 }
 func compareChunks(lookupFileIdFn wdclient.LookupFileIdFunctionType, oldEntry, newEntry *filer_pb.Entry) (deletedChunks, newChunks []*filer_pb.FileChunk, err error) {
-	aData, aMeta, aErr := filer.ResolveChunkManifest(lookupFileIdFn, oldEntry.Chunks, 0, math.MaxInt64)
+	aData, aMeta, aErr := filer.ResolveChunkManifest(lookupFileIdFn, oldEntry.GetChunks(), 0, math.MaxInt64)
 	if aErr != nil {
 		return nil, nil, aErr
 	}
-	bData, bMeta, bErr := filer.ResolveChunkManifest(lookupFileIdFn, newEntry.Chunks, 0, math.MaxInt64)
+	bData, bMeta, bErr := filer.ResolveChunkManifest(lookupFileIdFn, newEntry.GetChunks(), 0, math.MaxInt64)
 	if bErr != nil {
 		return nil, nil, bErr
 	}

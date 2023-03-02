@@ -25,7 +25,7 @@ func FollowMetadata(filerAddress ServerAddress, grpcDialOption grpc.DialOption, 
 	pathPrefix string, additionalPathPrefixes []string, lastTsNs int64, untilTsNs int64, selfSignature int32,
 	processEventFn ProcessMetadataFunc, eventErrorType EventErrorType) error {
 
-	err := WithFilerClient(true, filerAddress, grpcDialOption, makeSubscribeMetadataFunc(clientName, clientId, clientEpoch, pathPrefix, additionalPathPrefixes, nil, &lastTsNs, untilTsNs, selfSignature, processEventFn, eventErrorType))
+	err := WithFilerClient(true, clientId, filerAddress, grpcDialOption, makeSubscribeMetadataFunc(clientName, clientId, clientEpoch, pathPrefix, additionalPathPrefixes, nil, &lastTsNs, untilTsNs, selfSignature, processEventFn, eventErrorType))
 	if err != nil {
 		return fmt.Errorf("subscribing filer meta change: %v", err)
 	}

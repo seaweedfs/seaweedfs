@@ -34,7 +34,7 @@ type SingleChunkCacher struct {
 	completedTimeNew int64
 }
 
-func newReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType) *ReaderCache {
+func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType) *ReaderCache {
 	return &ReaderCache{
 		limit:          limit,
 		chunkCache:     chunkCache,
@@ -43,7 +43,7 @@ func newReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn
 	}
 }
 
-func (rc *ReaderCache) MaybeCache(chunkViews []*ChunkView) {
+func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView]) {
 	if rc.lookupFileIdFn == nil {
 		return
 	}
@@ -55,7 +55,8 @@ func (rc *ReaderCache) MaybeCache(chunkViews []*ChunkView) {
 		return
 	}
 
-	for _, chunkView := range chunkViews {
+	for x := chunkViews; x != nil; x = x.Next {
+		chunkView := x.Value
 		if _, found := rc.downloaders[chunkView.FileId]; found {
 			continue
 		}
@@ -65,7 +66,7 @@ func (rc *ReaderCache) MaybeCache(chunkViews []*ChunkView) {
 			return
 		}
 
-		// glog.V(4).Infof("prefetch %s offset %d", chunkView.FileId, chunkView.LogicOffset)
+		// glog.V(4).Infof("prefetch %s offset %d", chunkView.FileId, chunkView.ViewOffset)
 		// cache this chunk if not yet
 		cacher := newSingleChunkCacher(rc, chunkView.FileId, chunkView.CipherKey, chunkView.IsGzipped, int(chunkView.ChunkSize), false)
 		go cacher.startCaching()
@@ -207,7 +208,7 @@ func (s *SingleChunkCacher) readChunkAt(buf []byte, offset int64) (int, error) {
 		return 0, s.err
 	}
 
-	if len(s.data) == 0 {
+	if len(s.data) <= int(offset) {
 		return 0, nil
 	}
 

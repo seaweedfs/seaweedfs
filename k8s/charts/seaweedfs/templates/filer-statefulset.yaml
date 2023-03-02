@@ -101,7 +101,12 @@ spec:
             - "/bin/sh"
             - "-ec"
             - | 
-              exec /usr/bin/weed -logdir=/logs \
+              exec /usr/bin/weed \
+              {{- if eq .Values.filer.logs.type "hostPath" }}
+              -logdir=/logs \
+              {{- else }}
+              -logtostderr=true \
+              {{- end }}
               {{- if .Values.filer.loggingOverrideLevel }}
               -v={{ .Values.filer.loggingOverrideLevel }} \
               {{- else }}
@@ -157,7 +162,7 @@ spec:
               -s3.auditLogConfig=/etc/sw/filer_s3_auditLogConfig.json \
               {{- end }}
               {{- end }}
-              -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
+              -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
           volumeMounts:
             - name: seaweedfs-filer-log-volume
               mountPath: "/logs/"
@@ -225,13 +230,13 @@ spec:
         {{- if eq .Values.filer.logs.type "hostPath" }}
         - name: seaweedfs-filer-log-volume
           hostPath:
-            path: /storage/logs/seaweedfs/filer
+            path: {{ .Values.filer.logs.hostPathPrefix }}/logs/seaweedfs/filer
             type: DirectoryOrCreate
         {{- end }}
         {{- if eq .Values.filer.data.type "hostPath" }}
         - name: data-filer
           hostPath:
-            path: /storage/filer_store
+            path: {{ .Values.filer.data.hostPathPrefix }}/filer_store
             type: DirectoryOrCreate
         {{- end }}
         - name: db-schema-config-volume

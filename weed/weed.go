@@ -46,7 +46,8 @@ func init() {
 }
 
 func main() {
-	glog.MaxSize = 1024 * 1024 * 32
+	glog.MaxSize = 1024 * 1024 * 10
+	glog.MaxFileCount = 5
 	rand.Seed(time.Now().UnixNano())
 	flag.Usage = usage
 

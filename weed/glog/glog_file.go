@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ import (
 
 // MaxSize is the maximum size of a log file in bytes.
 var MaxSize uint64 = 1024 * 1024 * 1800
+var MaxFileCount = 5
 
 // logDirs lists the candidate directories for new log files.
 var logDirs []string
@@ -43,8 +45,9 @@ var logDir = flag.String("logdir", "", "If non-empty, write log files in this di
 func createLogDirs() {
 	if *logDir != "" {
 		logDirs = append(logDirs, *logDir)
+	} else {
+		logDirs = append(logDirs, os.TempDir())
 	}
-	logDirs = append(logDirs, os.TempDir())
 }
 
 var (
@@ -96,6 +99,15 @@ func logName(tag string, t time.Time) (name, link string) {
 	return name, program + "." + tag
 }
 
+func prefix(tag string) string {
+	return fmt.Sprintf("%s.%s.%s.log.%s.",
+		program,
+		host,
+		userName,
+		tag,
+	)
+}
+
 var onceLogDirs sync.Once
 
 // create creates a new log file and returns the file and its filename, which
@@ -108,8 +120,29 @@ func create(tag string, t time.Time) (f *os.File, filename string, err error) {
 		return nil, "", errors.New("log: no log dirs")
 	}
 	name, link := logName(tag, t)
+	logPrefix := prefix(tag)
 	var lastErr error
 	for _, dir := range logDirs {
+
+		// remove old logs
+		entries, _ := os.ReadDir(dir)
+		var previousLogs []string
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), logPrefix) {
+				previousLogs = append(previousLogs, entry.Name())
+			}
+		}
+		if len(previousLogs) >= MaxFileCount {
+			sort.Strings(previousLogs)
+			for i, entry := range previousLogs {
+				if i > len(previousLogs)-MaxFileCount {
+					break
+				}
+				os.Remove(filepath.Join(dir, entry))
+			}
+		}
+
+		// create new log file
 		fname := filepath.Join(dir, name)
 		f, err := os.Create(fname)
 		if err == nil {

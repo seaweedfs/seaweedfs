@@ -119,7 +119,7 @@ func runMaster(cmd *Command, args []string) bool {
 		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
 	}
 
-	go stats_collect.StartMetricsServer(*m.metricsHttpPort)
+	go stats_collect.StartMetricsServer(*m.ipBind, *m.metricsHttpPort)
 	startMaster(m, masterWhiteList)
 
 	return true
@@ -255,7 +255,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 
 	grace.OnInterrupt(ms.Shutdown)
-	grace.OnInterrupt(grpcS.GracefulStop)
+	grace.OnInterrupt(grpcS.Stop)
 	grace.OnReload(func() {
 		if ms.Topo.HashicorpRaft != nil && ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader {
 			ms.Topo.HashicorpRaft.LeadershipTransfer()

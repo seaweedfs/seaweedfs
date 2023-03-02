@@ -10,8 +10,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"golang.org/x/exp/slices"
+	"google.golang.org/grpc"
 	"io"
 	"math"
+	"net/http"
+	"time"
 )
 
 func init() {
@@ -19,7 +22,8 @@ func init() {
 }
 
 type commandVolumeCheckDisk struct {
-	env *CommandEnv
+	env           *CommandEnv
+	syncDeletions *bool
 }
 
 func (c *commandVolumeCheckDisk) Name() string {
@@ -47,6 +51,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	verbose := fsckCommand.Bool("v", false, "verbose mode")
 	volumeId := fsckCommand.Uint("volumeId", 0, "the volume id")
 	applyChanges := fsckCommand.Bool("force", false, "apply the fix")
+	c.syncDeletions = fsckCommand.Bool("syncDeleted", false, "sync of deletions the fix")
 	nonRepairThreshold := fsckCommand.Float64("nonRepairThreshold", 0.3, "repair when missing keys is not more than this limit")
 	if err = fsckCommand.Parse(args); err != nil {
 		return nil
@@ -120,6 +125,7 @@ func (c *commandVolumeCheckDisk) checkBoth(a *VolumeReplica, b *VolumeReplica, a
 	}()
 
 	// read index db
+	readIndexDbCutoffFrom := uint64(time.Now().UnixNano())
 	if err = c.readIndexDatabase(aDB, a.info.Collection, a.info.Id, pb.NewServerAddressFromDataNode(a.location.dataNode), verbose, writer); err != nil {
 		return true, true, fmt.Errorf("readIndexDatabase %s volume %d: %v", a.location.dataNode, a.info.Id, err)
 	}
@@ -128,32 +134,54 @@ func (c *commandVolumeCheckDisk) checkBoth(a *VolumeReplica, b *VolumeReplica, a
 	}
 
 	// find and make up the differences
-	if aHasChanges, err = c.doVolumeCheckDisk(bDB, aDB, b, a, verbose, writer, applyChanges, nonRepairThreshold); err != nil {
+	if aHasChanges, err = c.doVolumeCheckDisk(bDB, aDB, b, a, verbose, writer, applyChanges, nonRepairThreshold, readIndexDbCutoffFrom); err != nil {
 		return true, true, fmt.Errorf("doVolumeCheckDisk source:%s target:%s volume %d: %v", b.location.dataNode.Id, a.location.dataNode.Id, b.info.Id, err)
 	}
-	if bHasChanges, err = c.doVolumeCheckDisk(aDB, bDB, a, b, verbose, writer, applyChanges, nonRepairThreshold); err != nil {
+	if bHasChanges, err = c.doVolumeCheckDisk(aDB, bDB, a, b, verbose, writer, applyChanges, nonRepairThreshold, readIndexDbCutoffFrom); err != nil {
 		return true, true, fmt.Errorf("doVolumeCheckDisk source:%s target:%s volume %d: %v", a.location.dataNode.Id, b.location.dataNode.Id, a.info.Id, err)
 	}
 	return
 }
 
-func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.MemDb, source, target *VolumeReplica, verbose bool, writer io.Writer, applyChanges bool, nonRepairThreshold float64) (hasChanges bool, err error) {
+func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.MemDb, source, target *VolumeReplica, verbose bool, writer io.Writer, applyChanges bool, nonRepairThreshold float64, cutoffFromAtNs uint64) (hasChanges bool, err error) {
 
 	// find missing keys
 	// hash join, can be more efficient
 	var missingNeedles []needle_map.NeedleValue
+	var partiallyDeletedNeedles []needle_map.NeedleValue
 	var counter int
-	minuend.AscendingVisit(func(value needle_map.NeedleValue) error {
+	doCutoffOfLastNeedle := true
+	minuend.DescendingVisit(func(minuendValue needle_map.NeedleValue) error {
 		counter++
-		if _, found := subtrahend.Get(value.Key); !found {
-			missingNeedles = append(missingNeedles, value)
+		if subtrahendValue, found := subtrahend.Get(minuendValue.Key); !found {
+			if minuendValue.Size.IsDeleted() {
+				return nil
+			}
+			if doCutoffOfLastNeedle {
+				if needleMeta, err := readNeedleMeta(c.env.option.GrpcDialOption, pb.NewServerAddressFromDataNode(source.location.dataNode), source.info.Id, minuendValue); err == nil {
+					// needles older than the cutoff time are not missing yet
+					if needleMeta.AppendAtNs > cutoffFromAtNs {
+						return nil
+					}
+					doCutoffOfLastNeedle = false
+				}
+			}
+			missingNeedles = append(missingNeedles, minuendValue)
+		} else {
+			if minuendValue.Size.IsDeleted() && !subtrahendValue.Size.IsDeleted() {
+				partiallyDeletedNeedles = append(partiallyDeletedNeedles, minuendValue)
+			}
+			if doCutoffOfLastNeedle {
+				doCutoffOfLastNeedle = false
+			}
 		}
 		return nil
 	})
 
-	fmt.Fprintf(writer, "volume %d %s has %d entries, %s missed %d entries\n", source.info.Id, source.location.dataNode.Id, counter, target.location.dataNode.Id, len(missingNeedles))
+	fmt.Fprintf(writer, "volume %d %s has %d entries, %s missed %d and partially deleted %d entries\n",
+		source.info.Id, source.location.dataNode.Id, counter, target.location.dataNode.Id, len(missingNeedles), len(partiallyDeletedNeedles))
 
-	if counter == 0 || len(missingNeedles) == 0 {
+	if counter == 0 || (len(missingNeedles) == 0 && len(partiallyDeletedNeedles) == 0) {
 		return false, nil
 	}
 
@@ -165,8 +193,7 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_m
 	}
 
 	for _, needleValue := range missingNeedles {
-
-		needleBlob, err := c.readSourceNeedleBlob(pb.NewServerAddressFromDataNode(source.location.dataNode), source.info.Id, needleValue)
+		needleBlob, err := readSourceNeedleBlob(c.env.option.GrpcDialOption, pb.NewServerAddressFromDataNode(source.location.dataNode), source.info.Id, needleValue)
 		if err != nil {
 			return hasChanges, err
 		}
@@ -176,7 +203,7 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_m
 		}
 
 		if verbose {
-			fmt.Fprintf(writer, "read %d,%x %s => %s \n", source.info.Id, needleValue.Key, source.location.dataNode.Id, target.location.dataNode.Id)
+			fmt.Fprintf(writer, "read %s %s => %s\n", needleValue.Key.FileId(source.info.Id), source.location.dataNode.Id, target.location.dataNode.Id)
 		}
 
 		hasChanges = true
@@ -187,15 +214,35 @@ func (c *commandVolumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_m
 
 	}
 
+	if *c.syncDeletions && len(partiallyDeletedNeedles) > 0 {
+		var fidList []string
+		for _, needleValue := range partiallyDeletedNeedles {
+			fidList = append(fidList, needleValue.Key.FileId(source.info.Id))
+			if verbose {
+				fmt.Fprintf(writer, "delete %s %s => %s\n", needleValue.Key.FileId(source.info.Id), source.location.dataNode.Id, target.location.dataNode.Id)
+			}
+		}
+		deleteResults, deleteErr := operation.DeleteFilesAtOneVolumeServer(
+			pb.NewServerAddressFromDataNode(target.location.dataNode),
+			c.env.option.GrpcDialOption, fidList, false)
+		if deleteErr != nil {
+			return hasChanges, deleteErr
+		}
+		for _, deleteResult := range deleteResults {
+			if deleteResult.Status == http.StatusAccepted {
+				hasChanges = true
+				return
+			}
+		}
+	}
 	return
 }
 
-func (c *commandVolumeCheckDisk) readSourceNeedleBlob(sourceVolumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (needleBlob []byte, err error) {
+func readSourceNeedleBlob(grpcDialOption grpc.DialOption, sourceVolumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (needleBlob []byte, err error) {
 
-	err = operation.WithVolumeServerClient(false, sourceVolumeServer, c.env.option.GrpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+	err = operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		resp, err := client.ReadNeedleBlob(context.Background(), &volume_server_pb.ReadNeedleBlobRequest{
 			VolumeId: volumeId,
-			NeedleId: uint64(needleValue.Key),
 			Offset:   needleValue.Offset.ToActualOffset(),
 			Size:     int32(needleValue.Size),
 		})
@@ -232,9 +279,7 @@ func (c *commandVolumeCheckDisk) readIndexDatabase(db *needle_map.MemDb, collect
 	if verbose {
 		fmt.Fprintf(writer, "load collection %s volume %d index size %d from %s ...\n", collection, volumeId, buf.Len(), volumeServer)
 	}
-
-	return db.LoadFromReaderAt(bytes.NewReader(buf.Bytes()))
-
+	return db.LoadFilterFromReaderAt(bytes.NewReader(buf.Bytes()), true, false)
 }
 
 func (c *commandVolumeCheckDisk) copyVolumeIndexFile(collection string, volumeId uint32, volumeServer pb.ServerAddress, buf *bytes.Buffer, verbose bool, writer io.Writer) error {

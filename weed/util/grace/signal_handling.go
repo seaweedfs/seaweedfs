@@ -4,8 +4,11 @@
 package grace
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"os"
 	"os/signal"
+	"reflect"
+	"runtime"
 	"sync"
 	"syscall"
 )
@@ -15,6 +18,10 @@ var interruptHooks = make([]func(), 0)
 var interruptHookLock sync.RWMutex
 var reloadHooks = make([]func(), 0)
 var reloadHookLock sync.RWMutex
+
+func GetFunctionName(i interface{}) string {
+	return runtime.FuncForPC(reflect.ValueOf(i).Pointer()).Name()
+}
 
 func init() {
 	signalChan = make(chan os.Signal, 1)
@@ -38,6 +45,7 @@ func init() {
 			} else {
 				interruptHookLock.RLock()
 				for _, hook := range interruptHooks {
+					glog.V(4).Infof("exec interrupt hook func name:%s", GetFunctionName(hook))
 					hook()
 				}
 				interruptHookLock.RUnlock()
