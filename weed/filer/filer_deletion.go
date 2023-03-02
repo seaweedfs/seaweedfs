@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"math"
 	"strings"
 	"time"
@@ -54,7 +55,7 @@ func (f *Filer) loopProcessingDeletion() {
 				deletionCount = len(toDeleteFileIds)
 				_, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
 				if err != nil {
-					if !strings.Contains(err.Error(), "already deleted") {
+					if !strings.Contains(err.Error(), storage.ErrorDeleted.Error()) {
 						glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
 					}
 				} else {
@@ -86,7 +87,7 @@ func (f *Filer) doDeleteFileIds(fileIds []string) {
 		deletionCount := len(toDeleteFileIds)
 		_, err := operation.DeleteFilesWithLookupVolumeId(f.GrpcDialOption, toDeleteFileIds, lookupFunc)
 		if err != nil {
-			if !strings.Contains(err.Error(), "already deleted") {
+			if !strings.Contains(err.Error(), storage.ErrorDeleted.Error()) {
 				glog.V(0).Infof("deleting fileIds len=%d error: %v", deletionCount, err)
 			}
 		}
@@ -142,17 +143,17 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 		return
 	}
 	if newEntry == nil {
-		f.DeleteChunks(oldEntry.Chunks)
+		f.DeleteChunks(oldEntry.GetChunks())
 		return
 	}
 
 	var toDelete []*filer_pb.FileChunk
 	newChunkIds := make(map[string]bool)
 	newDataChunks, newManifestChunks, err := ResolveChunkManifest(f.MasterClient.GetLookupFileIdFunction(),
-		newEntry.Chunks, 0, math.MaxInt64)
+		newEntry.GetChunks(), 0, math.MaxInt64)
 	if err != nil {
 		glog.Errorf("Failed to resolve new entry chunks when delete old entry chunks. new: %s, old: %s",
-			newEntry.Chunks, oldEntry.Chunks)
+			newEntry.GetChunks(), oldEntry.Chunks)
 		return
 	}
 	for _, newChunk := range newDataChunks {
@@ -163,10 +164,10 @@ func (f *Filer) deleteChunksIfNotNew(oldEntry, newEntry *Entry) {
 	}
 
 	oldDataChunks, oldManifestChunks, err := ResolveChunkManifest(f.MasterClient.GetLookupFileIdFunction(),
-		oldEntry.Chunks, 0, math.MaxInt64)
+		oldEntry.GetChunks(), 0, math.MaxInt64)
 	if err != nil {
 		glog.Errorf("Failed to resolve old entry chunks when delete old entry chunks. new: %s, old: %s",
-			newEntry.Chunks, oldEntry.Chunks)
+			newEntry.GetChunks(), oldEntry.GetChunks())
 		return
 	}
 	for _, oldChunk := range oldDataChunks {

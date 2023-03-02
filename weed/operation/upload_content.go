@@ -30,6 +30,7 @@ type UploadOption struct {
 	PairMap           map[string]string
 	Jwt               security.EncodedJwt
 	RetryForever      bool
+	Md5               string
 }
 
 type UploadResult struct {
@@ -44,13 +45,13 @@ type UploadResult struct {
 	RetryCount int    `json:"-"`
 }
 
-func (uploadResult *UploadResult) ToPbFileChunk(fileId string, offset int64) *filer_pb.FileChunk {
+func (uploadResult *UploadResult) ToPbFileChunk(fileId string, offset int64, tsNs int64) *filer_pb.FileChunk {
 	fid, _ := filer_pb.ToFileIdObject(fileId)
 	return &filer_pb.FileChunk{
 		FileId:       fileId,
 		Offset:       offset,
 		Size:         uint64(uploadResult.Size),
-		Mtime:        time.Now().UnixNano(),
+		ModifiedTsNs: tsNs,
 		ETag:         uploadResult.ContentMd5,
 		CipherKey:    uploadResult.CipherKey,
 		IsCompressed: uploadResult.Gzip > 0,
@@ -254,6 +255,7 @@ func doUploadData(data []byte, option *UploadOption) (uploadResult *UploadResult
 			MimeType:          option.MimeType,
 			PairMap:           option.PairMap,
 			Jwt:               option.Jwt,
+			Md5:               option.Md5,
 		})
 		if uploadResult == nil {
 			return
@@ -283,6 +285,9 @@ func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize
 	}
 	if option.IsInputCompressed {
 		h.Set("Content-Encoding", "gzip")
+	}
+	if option.Md5 != "" {
+		h.Set("Content-MD5", option.Md5)
 	}
 
 	file_writer, cp_err := body_writer.CreatePart(h)

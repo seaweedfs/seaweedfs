@@ -1,7 +1,11 @@
 package shell
 
 import (
+	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"io"
 	"net/url"
 	"strconv"
@@ -107,7 +111,7 @@ var _ = filer_pb.FilerClient(&CommandEnv{})
 
 func (ce *CommandEnv) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithGrpcFilerClient(streamingMode, ce.option.FilerAddress, ce.option.GrpcDialOption, fn)
+	return pb.WithGrpcFilerClient(streamingMode, 0, ce.option.FilerAddress, ce.option.GrpcDialOption, fn)
 
 }
 
@@ -147,4 +151,36 @@ func findInputDirectory(args []string) (input string) {
 		}
 	}
 	return input
+}
+
+func readNeedleMeta(grpcDialOption grpc.DialOption, volumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.ReadNeedleMetaResponse, err error) {
+	err = operation.WithVolumeServerClient(false, volumeServer, grpcDialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			if resp, err = client.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
+				VolumeId: volumeId,
+				NeedleId: uint64(needleValue.Key),
+				Offset:   needleValue.Offset.ToActualOffset(),
+				Size:     int32(needleValue.Size),
+			}); err != nil {
+				return err
+			}
+			return nil
+		},
+	)
+	return
+}
+
+func readNeedleStatus(grpcDialOption grpc.DialOption, sourceVolumeServer pb.ServerAddress, volumeId uint32, needleValue needle_map.NeedleValue) (resp *volume_server_pb.VolumeNeedleStatusResponse, err error) {
+	err = operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			if resp, err = client.VolumeNeedleStatus(context.Background(), &volume_server_pb.VolumeNeedleStatusRequest{
+				VolumeId: volumeId,
+				NeedleId: uint64(needleValue.Key),
+			}); err != nil {
+				return err
+			}
+			return nil
+		},
+	)
+	return
 }

@@ -29,6 +29,7 @@ message RemoteConf {
   string backblaze_key_id = 20;
   string backblaze_application_key = 21;
   string backblaze_endpoint = 22;
+  string backblaze_region = 23;
 
   string aliyun_access_key = 25;
   string aliyun_secret_key = 26;

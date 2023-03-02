@@ -125,6 +125,7 @@ func (ev *EcVolume) Close() {
 		ev.ecjFileAccessLock.Unlock()
 	}
 	if ev.ecxFile != nil {
+		_ = ev.ecxFile.Sync()
 		_ = ev.ecxFile.Close()
 		ev.ecxFile = nil
 	}

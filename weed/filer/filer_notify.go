@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"regexp"
 	"strings"
 	"time"
 
@@ -108,6 +109,10 @@ func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
 	}
 }
 
+var (
+	VolumeNotFoundPattern = regexp.MustCompile(`volume \d+? not found`)
+)
+
 func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, stopTsNs int64, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (lastTsNs int64, isDone bool, err error) {
 
 	startTime = startTime.UTC()
@@ -153,10 +158,14 @@ func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, stopTsNs int64, each
 				}
 			}
 			// println("processing", hourMinuteEntry.FullPath)
-			chunkedFileReader := NewChunkStreamReaderFromFiler(f.MasterClient, hourMinuteEntry.Chunks)
+			chunkedFileReader := NewChunkStreamReaderFromFiler(f.MasterClient, hourMinuteEntry.GetChunks())
 			if lastTsNs, err = ReadEachLogEntry(chunkedFileReader, sizeBuf, startTsNs, stopTsNs, eachLogEntryFn); err != nil {
 				chunkedFileReader.Close()
 				if err == io.EOF {
+					continue
+				}
+				if VolumeNotFoundPattern.MatchString(err.Error()) {
+					glog.Warningf("skipping reading %s: %v", hourMinuteEntry.FullPath, err)
 					continue
 				}
 				return lastTsNs, isDone, fmt.Errorf("reading %s: %v", hourMinuteEntry.FullPath, err)

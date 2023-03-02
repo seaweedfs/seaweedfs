@@ -27,6 +27,10 @@ service Seaweed {
   }
   rpc VacuumVolume (VacuumVolumeRequest) returns (VacuumVolumeResponse) {
   }
+  rpc DisableVacuum (DisableVacuumRequest) returns (DisableVacuumResponse) {
+  }
+  rpc EnableVacuum (EnableVacuumRequest) returns (EnableVacuumResponse) {
+  }
   rpc VolumeMarkReadonly (VolumeMarkReadonlyRequest) returns (VolumeMarkReadonlyResponse) {
   }
   rpc GetMasterConfiguration (GetMasterConfigurationRequest) returns (GetMasterConfigurationResponse) {
@@ -303,6 +307,16 @@ message VacuumVolumeRequest {
   string collection = 3;
 }
 message VacuumVolumeResponse {
+}
+
+message DisableVacuumRequest {
+}
+message DisableVacuumResponse {
+}
+
+message EnableVacuumRequest {
+}
+message EnableVacuumResponse {
 }
 
 message VolumeMarkReadonlyRequest {

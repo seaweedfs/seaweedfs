@@ -114,7 +114,7 @@ func getValidVolumeName(basename string) string {
 	return ""
 }
 
-func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind NeedleMapKind, skipIfEcVolumesExists bool) bool {
+func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind NeedleMapKind, skipIfEcVolumesExists bool, ldbTimeout int64) bool {
 	basename := dirEntry.Name()
 	if dirEntry.IsDir() {
 		return false
@@ -158,7 +158,7 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	}
 
 	// load the volume
-	v, e := NewVolume(l.Directory, l.IdxDirectory, collection, vid, needleMapKind, nil, nil, 0, 0)
+	v, e := NewVolume(l.Directory, l.IdxDirectory, collection, vid, needleMapKind, nil, nil, 0, 0, ldbTimeout)
 	if e != nil {
 		glog.V(0).Infof("new volume %s error %s", volumeName, e)
 		return false
@@ -172,7 +172,7 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	return true
 }
 
-func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, concurrency int) {
+func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, concurrency int, ldbTimeout int64) {
 
 	task_queue := make(chan os.DirEntry, 10*concurrency)
 	go func() {
@@ -198,7 +198,7 @@ func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, con
 		go func() {
 			defer wg.Done()
 			for fi := range task_queue {
-				_ = l.loadExistingVolume(fi, needleMapKind, true)
+				_ = l.loadExistingVolume(fi, needleMapKind, true, ldbTimeout)
 			}
 		}()
 	}
@@ -206,7 +206,7 @@ func (l *DiskLocation) concurrentLoadingVolumes(needleMapKind NeedleMapKind, con
 
 }
 
-func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapKind) {
+func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapKind, ldbTimeout int64) {
 
 	workerNum := runtime.NumCPU()
 	val, ok := os.LookupEnv("GOMAXPROCS")
@@ -222,7 +222,7 @@ func (l *DiskLocation) loadExistingVolumes(needleMapKind NeedleMapKind) {
 			workerNum = 10
 		}
 	}
-	l.concurrentLoadingVolumes(needleMapKind, workerNum)
+	l.concurrentLoadingVolumes(needleMapKind, workerNum, ldbTimeout)
 	glog.V(0).Infof("Store started on dir: %s with %d volumes max %d", l.Directory, len(l.volumes), l.MaxVolumeCount)
 
 	l.loadAllEcShards()
@@ -292,7 +292,7 @@ func (l *DiskLocation) deleteVolumeById(vid needle.VolumeId) (found bool, e erro
 
 func (l *DiskLocation) LoadVolume(vid needle.VolumeId, needleMapKind NeedleMapKind) bool {
 	if fileInfo, found := l.LocateVolume(vid); found {
-		return l.loadExistingVolume(fileInfo, needleMapKind, false)
+		return l.loadExistingVolume(fileInfo, needleMapKind, false, 0)
 	}
 	return false
 }
@@ -364,7 +364,7 @@ func (l *DiskLocation) VolumesLen() int {
 func (l *DiskLocation) SetStopping() {
 	l.volumesLock.Lock()
 	for _, v := range l.volumes {
-		v.SetStopping()
+		v.SyncToDisk()
 	}
 	l.volumesLock.Unlock()
 

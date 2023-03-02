@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/exp/slices"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/images"
@@ -107,12 +109,18 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	query := r.URL.Query()
+
 	if entry.IsDirectory() {
 		if fs.option.DisableDirListing {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		if entry.Attr.Mime == "" {
+		if query.Get("metadata") == "true" {
+			writeJsonQuiet(w, r, http.StatusOK, entry)
+			return
+		}
+		if slices.Contains([]string{"httpd/unix-directory", ""}, entry.Attr.Mime) {
 			fs.listDirectoryHandler(w, r)
 			return
 		}
@@ -125,12 +133,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	query := r.URL.Query()
 	if query.Get("metadata") == "true" {
 		if query.Get("resolveManifest") == "true" {
 			if entry.Chunks, _, err = filer.ResolveChunkManifest(
 				fs.filer.MasterClient.GetLookupFileIdFunction(),
-				entry.Chunks, 0, math.MaxInt64); err != nil {
+				entry.GetChunks(), 0, math.MaxInt64); err != nil {
 				err = fmt.Errorf("failed to resolve chunk manifest, err: %s", err.Error())
 				writeJsonError(w, r, http.StatusInternalServerError, err)
 			}
@@ -155,6 +162,8 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	if mimeType != "" {
 		w.Header().Set("Content-Type", mimeType)
+	} else {
+		w.Header().Set("Content-Type", "application/octet-stream")
 	}
 
 	// print out the header from extended properties
@@ -207,7 +216,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		if shouldResize {
 			data := mem.Allocate(int(totalSize))
 			defer mem.Free(data)
-			err := filer.ReadAll(data, fs.filer.MasterClient, entry.Chunks)
+			err := filer.ReadAll(data, fs.filer.MasterClient, entry.GetChunks())
 			if err != nil {
 				glog.Errorf("failed to read %s: %v", path, err)
 				w.WriteHeader(http.StatusInternalServerError)
@@ -228,7 +237,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			}
 			return err
 		}
-		chunks := entry.Chunks
+		chunks := entry.GetChunks()
 		if entry.IsInRemoteOnly() {
 			dir, name := entry.FullPath.DirAndName()
 			if resp, err := fs.CacheRemoteObjectToLocalCluster(context.Background(), &filer_pb.CacheRemoteObjectToLocalClusterRequest{
@@ -239,7 +248,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				glog.Errorf("CacheRemoteObjectToLocalCluster %s: %v", entry.FullPath, err)
 				return fmt.Errorf("cache %s: %v", entry.FullPath, err)
 			} else {
-				chunks = resp.Entry.Chunks
+				chunks = resp.Entry.GetChunks()
 			}
 		}
 

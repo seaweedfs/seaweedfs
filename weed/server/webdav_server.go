@@ -26,6 +26,7 @@ import (
 
 type WebDavOption struct {
 	Filer          pb.ServerAddress
+	FilerRootPath  string
 	DomainName     string
 	BucketsPath    string
 	GrpcDialOption grpc.DialOption
@@ -58,6 +59,11 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 
 	fs, _ := NewWebDavFileSystem(option)
 
+	// Fix no set filer.path , accessing "/" returns "//"
+	if option.FilerRootPath == "/" {
+		option.FilerRootPath = ""
+	}
+
 	ws = &WebDavServer{
 		option:         option,
 		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.filer"),
@@ -77,6 +83,7 @@ type WebDavFileSystem struct {
 	secret         security.SigningKey
 	grpcDialOption grpc.DialOption
 	chunkCache     *chunk_cache.TieredChunkCache
+	readerCache    *filer.ReaderCache
 	signature      int32
 }
 
@@ -96,14 +103,14 @@ func (fi *FileInfo) IsDir() bool        { return fi.isDirectory }
 func (fi *FileInfo) Sys() interface{}   { return nil }
 
 type WebDavFile struct {
-	fs             *WebDavFileSystem
-	name           string
-	isDirectory    bool
-	off            int64
-	entry          *filer_pb.Entry
-	entryViewCache []filer.VisibleInterval
-	reader         io.ReaderAt
-	bufWriter      *buffered_writer.BufferedWriteCloser
+	fs               *WebDavFileSystem
+	name             string
+	isDirectory      bool
+	off              int64
+	entry            *filer_pb.Entry
+	visibleIntervals *filer.IntervalList[*filer.VisibleInterval]
+	reader           io.ReaderAt
+	bufWriter        *buffered_writer.BufferedWriteCloser
 }
 
 func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
@@ -113,18 +120,20 @@ func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 
 	os.MkdirAll(cacheDir, os.FileMode(0755))
 	chunkCache := chunk_cache.NewTieredChunkCache(256, cacheDir, option.CacheSizeMB, 1024*1024)
-	return &WebDavFileSystem{
+	t := &WebDavFileSystem{
 		option:     option,
 		chunkCache: chunkCache,
 		signature:  util.RandomInt32(),
-	}, nil
+	}
+	t.readerCache = filer.NewReaderCache(32, chunkCache, filer.LookupFn(t))
+	return t, nil
 }
 
 var _ = filer_pb.FilerClient(&WebDavFileSystem{})
 
 func (fs *WebDavFileSystem) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
+	return pb.WithGrpcClient(streamingMode, fs.signature, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
 	}, fs.option.Filer.ToGrpcAddress(), false, fs.option.GrpcDialOption)
@@ -195,7 +204,8 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 }
 
 func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, flag int, perm os.FileMode) (webdav.File, error) {
-
+	// Add filer.path
+	fullFilePath = fs.option.FilerRootPath + fullFilePath
 	glog.V(2).Infof("WebDavFileSystem.OpenFile %v %x", fullFilePath, flag)
 
 	var err error
@@ -367,13 +377,14 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 }
 
 func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo, error) {
-
+	// Add filer.path
+	name = fs.option.FilerRootPath + name
 	glog.V(2).Infof("WebDavFileSystem.Stat %v", name)
 
 	return fs.stat(ctx, name)
 }
 
-func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, err error) {
+func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
 
 	fileId, uploadResult, flushErr, _ := operation.UploadWithRetry(
 		f.fs,
@@ -405,7 +416,7 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 		glog.V(0).Infof("upload failure %v: %v", f.name, flushErr)
 		return nil, fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
-	return uploadResult.ToPbFileChunk(fileId, offset), nil
+	return uploadResult.ToPbFileChunk(fileId, offset, tsNs), nil
 }
 
 func (f *WebDavFile) Write(buf []byte) (int, error) {
@@ -431,20 +442,20 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 		f.bufWriter.FlushFunc = func(data []byte, offset int64) (flushErr error) {
 
 			var chunk *filer_pb.FileChunk
-			chunk, flushErr = f.saveDataAsChunk(util.NewBytesReader(data), f.name, offset)
+			chunk, flushErr = f.saveDataAsChunk(util.NewBytesReader(data), f.name, offset, time.Now().UnixNano())
 
 			if flushErr != nil {
 				return fmt.Errorf("%s upload result: %v", f.name, flushErr)
 			}
 
 			f.entry.Content = nil
-			f.entry.Chunks = append(f.entry.Chunks, chunk)
+			f.entry.Chunks = append(f.entry.GetChunks(), chunk)
 
 			return flushErr
 		}
 		f.bufWriter.CloseFunc = func() error {
 
-			manifestedChunks, manifestErr := filer.MaybeManifestize(f.saveDataAsChunk, f.entry.Chunks)
+			manifestedChunks, manifestErr := filer.MaybeManifestize(f.saveDataAsChunk, f.entry.GetChunks())
 			if manifestErr != nil {
 				// not good, but should be ok
 				glog.V(0).Infof("file %s close MaybeManifestize: %v", f.name, manifestErr)
@@ -490,7 +501,7 @@ func (f *WebDavFile) Close() error {
 
 	if f.entry != nil {
 		f.entry = nil
-		f.entryViewCache = nil
+		f.visibleIntervals = nil
 	}
 
 	return err
@@ -513,13 +524,13 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	if fileSize == 0 {
 		return 0, io.EOF
 	}
-	if f.entryViewCache == nil {
-		f.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(filer.LookupFn(f.fs), f.entry.Chunks, 0, fileSize)
+	if f.visibleIntervals == nil {
+		f.visibleIntervals, _ = filer.NonOverlappingVisibleIntervals(filer.LookupFn(f.fs), f.entry.GetChunks(), 0, fileSize)
 		f.reader = nil
 	}
 	if f.reader == nil {
-		chunkViews := filer.ViewFromVisibleIntervals(f.entryViewCache, 0, fileSize)
-		f.reader = filer.NewChunkReaderAtFromClient(filer.LookupFn(f.fs), chunkViews, f.fs.chunkCache, fileSize)
+		chunkViews := filer.ViewFromVisibleIntervals(f.visibleIntervals, 0, fileSize)
+		f.reader = filer.NewChunkReaderAtFromClient(f.fs.readerCache, chunkViews, fileSize)
 	}
 
 	readSize, err = f.reader.ReadAt(p, f.off)

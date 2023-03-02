@@ -33,7 +33,7 @@ func (f *Filer) LoadConfiguration(config *util.ViperProxy) (isFresh bool) {
 
 	if !hasDefaultStoreConfigured {
 		println()
-		println("Supported filer stores are:")
+		println("Supported filer stores are the following. If not found, check the full version.")
 		for _, store := range Stores {
 			println("    " + store.GetName())
 		}
@@ -63,6 +63,11 @@ func (f *Filer) LoadConfiguration(config *util.ViperProxy) (isFresh bool) {
 		if !found {
 			continue
 		}
+
+		if !config.GetBool(key + ".enabled") {
+			continue
+		}
+
 		store = reflect.New(reflect.ValueOf(store).Elem().Type()).Interface().(FilerStore)
 		if err := store.Initialize(config, key+"."); err != nil {
 			glog.Fatalf("Failed to initialize store for %s: %+v", key, err)

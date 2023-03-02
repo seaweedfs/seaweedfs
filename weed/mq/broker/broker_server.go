@@ -83,7 +83,7 @@ func (broker *MessageQueueBroker) GetFiler() pb.ServerAddress {
 
 func (broker *MessageQueueBroker) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithFilerClient(streamingMode, broker.GetFiler(), broker.grpcDialOption, fn)
+	return pb.WithFilerClient(streamingMode, 0, broker.GetFiler(), broker.grpcDialOption, fn)
 
 }
 

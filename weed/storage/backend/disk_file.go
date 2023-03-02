@@ -69,6 +69,9 @@ func (df *DiskFile) Truncate(off int64) error {
 }
 
 func (df *DiskFile) Close() error {
+	if err := df.Sync(); err != nil {
+		return err
+	}
 	return df.File.Close()
 }
 

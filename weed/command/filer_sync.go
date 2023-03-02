@@ -43,6 +43,7 @@ type SyncOptions struct {
 	bFromTsMs       *int64
 	aProxyByFiler   *bool
 	bProxyByFiler   *bool
+	metricsHttpIp   *string
 	metricsHttpPort *int
 	concurrency     *int
 	clientId        int32
@@ -86,6 +87,7 @@ func init() {
 	syncOptions.concurrency = cmdFilerSynchronize.Flag.Int("concurrency", DefaultConcurrencyLimit, "The maximum number of files that will be synced concurrently.")
 	syncCpuProfile = cmdFilerSynchronize.Flag.String("cpuprofile", "", "cpu profile output file")
 	syncMemProfile = cmdFilerSynchronize.Flag.String("memprofile", "", "memory profile output file")
+	syncOptions.metricsHttpIp = cmdFilerSynchronize.Flag.String("metricsIp", "", "metrics listen ip")
 	syncOptions.metricsHttpPort = cmdFilerSynchronize.Flag.Int("metricsPort", 0, "metrics listen port")
 	syncOptions.clientId = util.RandomInt32()
 }
@@ -119,7 +121,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	filerB := pb.ServerAddress(*syncOptions.filerB)
 
 	// start filer.sync metrics server
-	go statsCollect.StartMetricsServer(*syncOptions.metricsHttpPort)
+	go statsCollect.StartMetricsServer(*syncOptions.metricsHttpIp, *syncOptions.metricsHttpPort)
 
 	// read a filer signature
 	aFilerSignature, aFilerErr := replication.ReadFilerSignature(grpcDialOption, filerA)
@@ -302,7 +304,7 @@ func getSignaturePrefixByPath(path string) string {
 
 func getOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32) (lastOffsetTsNs int64, readErr error) {
 
-	readErr = pb.WithFilerClient(false, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	readErr = pb.WithFilerClient(false, signature, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		syncKey := []byte(signaturePrefix + "____")
 		util.Uint32toBytes(syncKey[len(signaturePrefix):len(signaturePrefix)+4], uint32(signature))
 
@@ -328,7 +330,7 @@ func getOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signature
 }
 
 func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signaturePrefix string, signature int32, offsetTsNs int64) error {
-	return pb.WithFilerClient(false, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithFilerClient(false, signature, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 
 		syncKey := []byte(signaturePrefix + "____")
 		util.Uint32toBytes(syncKey[len(signaturePrefix):len(signaturePrefix)+4], uint32(signature))
@@ -397,7 +399,11 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 				return nil
 			}
 			key := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
-			return dataSink.CreateEntry(key, message.NewEntry, message.Signatures)
+			if err := dataSink.CreateEntry(key, message.NewEntry, message.Signatures); err != nil {
+				return fmt.Errorf("create entry1 : %v", err)
+			} else {
+				return nil
+			}
 		}
 
 		// this is something special?
@@ -425,7 +431,11 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 				}
 				// create the new entry
 				newKey := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
-				return dataSink.CreateEntry(newKey, message.NewEntry, message.Signatures)
+				if err := dataSink.CreateEntry(newKey, message.NewEntry, message.Signatures); err != nil {
+					return fmt.Errorf("create entry2 : %v", err)
+				} else {
+					return nil
+				}
 
 			} else {
 				// new key is outside of the watched directory
@@ -439,7 +449,11 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			if strings.HasPrefix(string(sourceNewKey), sourcePath) {
 				// new key is in the watched directory
 				key := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
-				return dataSink.CreateEntry(key, message.NewEntry, message.Signatures)
+				if err := dataSink.CreateEntry(key, message.NewEntry, message.Signatures); err != nil {
+					return fmt.Errorf("create entry3 : %v", err)
+				} else {
+					return nil
+				}
 			} else {
 				// new key is also outside of the watched directory
 				// skip

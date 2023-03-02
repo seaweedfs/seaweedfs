@@ -61,22 +61,23 @@ func MaybeLoadVolumeInfo(fileName string) (volumeInfo *volume_server_pb.VolumeIn
 func SaveVolumeInfo(fileName string, volumeInfo *volume_server_pb.VolumeInfo) error {
 
 	if exists, _, canWrite, _, _ := util.CheckFile(fileName); exists && !canWrite {
-		return fmt.Errorf("%s not writable", fileName)
+		return fmt.Errorf("failed to check %s not writable", fileName)
 	}
 
 	m := jsonpb.MarshalOptions{
+		AllowPartial:    true,
 		EmitUnpopulated: true,
 		Indent:          "  ",
 	}
 
 	text, marshalErr := m.Marshal(volumeInfo)
 	if marshalErr != nil {
-		return fmt.Errorf("marshal to %s: %v", fileName, marshalErr)
+		return fmt.Errorf("failed to marshal %s: %v", fileName, marshalErr)
 	}
 
 	writeErr := util.WriteFile(fileName, text, 0755)
 	if writeErr != nil {
-		return fmt.Errorf("fail to write %s : %v", fileName, writeErr)
+		return fmt.Errorf("failed to write %s: %v", fileName, writeErr)
 	}
 
 	return nil

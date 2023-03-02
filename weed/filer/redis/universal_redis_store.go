@@ -35,19 +35,8 @@ func (store *UniversalRedisStore) RollbackTransaction(ctx context.Context) error
 
 func (store *UniversalRedisStore) InsertEntry(ctx context.Context, entry *filer.Entry) (err error) {
 
-	value, err := entry.EncodeAttributesAndChunks()
-	if err != nil {
-		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
-	}
-
-	if len(entry.Chunks) > filer.CountEntryChunksForGzip {
-		value = util.MaybeGzipData(value)
-	}
-
-	_, err = store.Client.Set(ctx, string(entry.FullPath), value, time.Duration(entry.TtlSec)*time.Second).Result()
-
-	if err != nil {
-		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
+	if err = store.doInsertEntry(ctx, entry); err != nil {
+		return err
 	}
 
 	dir, name := entry.FullPath.DirAndName()
@@ -61,9 +50,27 @@ func (store *UniversalRedisStore) InsertEntry(ctx context.Context, entry *filer.
 	return nil
 }
 
+func (store *UniversalRedisStore) doInsertEntry(ctx context.Context, entry *filer.Entry) error {
+	value, err := entry.EncodeAttributesAndChunks()
+	if err != nil {
+		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
+	}
+
+	if len(entry.GetChunks()) > filer.CountEntryChunksForGzip {
+		value = util.MaybeGzipData(value)
+	}
+
+	_, err = store.Client.Set(ctx, string(entry.FullPath), value, time.Duration(entry.TtlSec)*time.Second).Result()
+
+	if err != nil {
+		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
+	}
+	return nil
+}
+
 func (store *UniversalRedisStore) UpdateEntry(ctx context.Context, entry *filer.Entry) (err error) {
 
-	return store.InsertEntry(ctx, entry)
+	return store.doInsertEntry(ctx, entry)
 }
 
 func (store *UniversalRedisStore) FindEntry(ctx context.Context, fullpath util.FullPath) (entry *filer.Entry, err error) {

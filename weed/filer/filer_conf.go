@@ -32,7 +32,7 @@ type FilerConf struct {
 
 func ReadFilerConf(filerGrpcAddress pb.ServerAddress, grpcDialOption grpc.DialOption, masterClient *wdclient.MasterClient) (*FilerConf, error) {
 	var buf bytes.Buffer
-	if err := pb.WithGrpcFilerClient(false, filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	if err := pb.WithGrpcFilerClient(false, 0, filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		if masterClient != nil {
 			return ReadEntry(masterClient, client, DirectoryEtcSeaweedFS, FilerConfName, &buf)
 		} else {
@@ -75,7 +75,7 @@ func (fc *FilerConf) loadFromFiler(filer *Filer) (err error) {
 		return fc.LoadFromBytes(entry.Content)
 	}
 
-	return fc.loadFromChunks(filer, entry.Content, entry.Chunks, entry.Size())
+	return fc.loadFromChunks(filer, entry.Content, entry.GetChunks(), entry.Size())
 }
 
 func (fc *FilerConf) loadFromChunks(filer *Filer, content []byte, chunks []*filer_pb.FileChunk, size uint64) (err error) {

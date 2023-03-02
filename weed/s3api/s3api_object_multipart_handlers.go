@@ -121,7 +121,7 @@ func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *ht
 	glog.V(2).Info("AbortMultipartUploadHandler", string(s3err.EncodeXMLResponse(response)))
 
 	//https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html
-	s3err.WriteXMLResponse(w, r, http.StatusNoContent, response)
+	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 	s3err.PostLog(r, http.StatusNoContent, s3err.ErrNone)
 
 }
@@ -285,7 +285,8 @@ func (s3a *S3ApiServer) generateUploadID(object string) string {
 func (s3a *S3ApiServer) checkUploadId(object string, id string) error {
 
 	hash := s3a.generateUploadID(object)
-	if hash != id {
+
+	if !strings.HasPrefix(id, hash) {
 		glog.Errorf("object %s and uploadID %s are not matched", object, id)
 		return fmt.Errorf("object %s and uploadID %s are not matched", object, id)
 	}

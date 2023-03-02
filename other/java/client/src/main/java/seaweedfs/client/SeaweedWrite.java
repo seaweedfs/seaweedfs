@@ -98,7 +98,7 @@ public class SeaweedWrite {
                 .setFileId(fileId)
                 .setOffset(offset)
                 .setSize(bytesLength)
-                .setMtime(System.currentTimeMillis() / 10000L)
+                .setModifiedTsNs(System.nanoTime())
                 .setETag(etag)
                 .setCipherKey(cipherKeyString);
     }

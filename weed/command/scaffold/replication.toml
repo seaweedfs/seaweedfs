@@ -68,6 +68,7 @@ is_incremental = false
 enabled = false
 b2_account_id = ""
 b2_master_application_key = ""
+b2_region = ""
 bucket = "mybucket"            # an existing bucket
 directory = "/"                # destination directory
 is_incremental = false

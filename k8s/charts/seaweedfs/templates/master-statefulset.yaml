@@ -90,7 +90,12 @@ spec:
             - "/bin/sh"
             - "-ec"
             - | 
-              exec /usr/bin/weed -logdir=/logs \
+              exec /usr/bin/weed \
+              {{- if eq .Values.master.logs.type "hostPath" }}
+              -logdir=/logs \
+              {{- else }}
+              -logtostderr=true \
+              {{- end }}
               {{- if .Values.master.loggingOverrideLevel }}
               -v={{ .Values.master.loggingOverrideLevel }} \
               {{- else }}
@@ -128,8 +133,8 @@ spec:
               {{- if .Values.master.garbageThreshold }}
               -garbageThreshold={{ .Values.master.garbageThreshold }} \
               {{- end }}
-              -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-master \
-              -peers={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
+              -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-master.{{ .Release.Namespace }} \
+              -peers={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
           volumeMounts:
             - name : data-{{ .Release.Namespace }}
               mountPath: /data
@@ -196,13 +201,13 @@ spec:
         {{- if eq .Values.master.logs.type "hostPath" }}
         - name: seaweedfs-master-log-volume
           hostPath:
-            path: /storage/logs/seaweedfs/master
+            path: {{ .Values.master.logs.hostPathPrefix }}/logs/seaweedfs/master
             type: DirectoryOrCreate
         {{- end }}
         {{- if eq .Values.master.data.type "hostPath" }}
         - name: data-{{ .Release.Namespace }}
           hostPath:
-            path: /ssd/seaweed-master/
+            path: {{ .Values.master.data.hostPathPrefix }}/seaweed-master/
             type: DirectoryOrCreate
         {{- end }}
         {{- if .Values.global.enableSecurity }}

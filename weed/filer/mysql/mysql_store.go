@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	CONNECTION_URL_PATTERN = "%s:%s@tcp(%s:%d)/%s?charset=utf8"
+	CONNECTION_URL_PATTERN = "%s:%s@tcp(%s:%d)/%s?collation=utf8mb4_bin"
 )
 
 func init() {
@@ -53,7 +53,7 @@ func (store *MysqlStore) initialize(upsertQuery string, enableUpsert bool, user,
 	}
 	store.SqlGenerator = &SqlGenMysql{
 		CreateTableSqlTemplate: "",
-		DropTableSqlTemplate:   "drop table `%s`",
+		DropTableSqlTemplate:   "DROP TABLE `%s`",
 		UpsertQueryTemplate:    upsertQuery,
 	}
 
