@@ -163,6 +163,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	if *c.findMissingChunksInFiler {
 		// collect all filer file ids and paths
+
 		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, *purgeAbsent, collectCutoffFromAtNs); err != nil {
 			return fmt.Errorf("collectFilerFileIdAndPaths: %v", err)
 		}

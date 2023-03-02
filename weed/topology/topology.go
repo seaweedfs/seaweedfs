@@ -35,7 +35,7 @@ type Topology struct {
 
 	volumeSizeLimit  uint64
 	replicationAsMin bool
-	isDisableVacuum     bool
+	isDisableVacuum  bool
 
 	Sequence sequence.Sequencer
 
