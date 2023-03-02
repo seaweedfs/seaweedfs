@@ -154,7 +154,7 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 				FileId: assignResult.Fid,
 				Offset: localOffset,
 				Size:   uint64(size),
-				Mtime:  time.Now().Unix(),
+				Mtime:  time.Now().UnixNano(),
 				Fid: &filer_pb.FileId{
 					VolumeId: uint32(fileId.VolumeId),
 					FileKey:  uint64(fileId.Key),
