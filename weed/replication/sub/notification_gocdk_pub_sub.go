@@ -105,12 +105,6 @@ func (k *GoCDKPubSubInput) Initialize(configuration util.Configuration, prefix s
 			return err
 		}
 		defer ch.Close()
-		if prefetchCount > 0 {
-			err = ch.Qos(prefetchCount, 0, false)
-			if err != nil {
-				return fmt.Errorf("set basic.qos: %v", err)
-			}
-		}
 		_, err = ch.QueueInspect(getPath(k.subURL))
 		if err != nil {
 			if strings.HasPrefix(err.Error(), "Exception (404) Reason") {
@@ -141,9 +135,13 @@ func (k *GoCDKPubSubInput) ReceiveMessage() (key string, message *filer_pb.Event
 				return
 			}
 			if k.prefetchCount > 0 {
-				err = ch.Qos(prefetchCount, 0, false)
-				if err != nil {
-					glog.Error("set basic.qos: %v", err)
+				if ch, err := conn.Channel(); err == nil {
+					defer ch.Close()
+					if err = ch.Qos(k.prefetchCount, 0, false); err != nil {
+						glog.Error(fmt.Errorf("set basic.qos: %v", err))
+					}
+				} else {
+					glog.Error(fmt.Errorf("get channel: %v", err))
 				}
 			}
 			k.sub = rabbitpubsub.OpenSubscription(conn, getPath(k.subURL), nil)
