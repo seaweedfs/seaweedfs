@@ -134,7 +134,8 @@ func (k *GoCDKPubSubInput) ReceiveMessage() (key string, message *filer_pb.Event
 				time.Sleep(time.Second)
 				return
 			}
-			if k.prefetchCount > 0 {
+			k.sub = rabbitpubsub.OpenSubscription(conn, getPath(k.subURL), nil)
+			if k.prefetchCount > 0 && k.sub.As(&conn) {
 				if ch, err := conn.Channel(); err == nil {
 					defer ch.Close()
 					if err = ch.Qos(k.prefetchCount, 0, false); err != nil {
@@ -144,7 +145,6 @@ func (k *GoCDKPubSubInput) ReceiveMessage() (key string, message *filer_pb.Event
 					glog.Error(fmt.Errorf("get channel: %v", err))
 				}
 			}
-			k.sub = rabbitpubsub.OpenSubscription(conn, getPath(k.subURL), nil)
 			return
 		}
 		// This is permanent cached sub err
