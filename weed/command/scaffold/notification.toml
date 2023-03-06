@@ -52,3 +52,8 @@ enabled = false
 # create binding myexchange => myqueue
 topic_url = "rabbit://myexchange"
 sub_url = "rabbit://myqueue"
+# With a prefetch count greater than zero, the server will deliver that many
+# messages to consumers before acknowledgments are received.  The server ignores
+# this option when consumers are started with noAck because no acknowledgments
+# are expected or sent. https://blog.rabbitmq.com/posts/2012/04/rabbitmq-performance-measurements-part-2
+prefetchCount = 100

@@ -88,6 +88,7 @@ func (k *GoCDKPubSubInput) GetName() string {
 }
 
 func (k *GoCDKPubSubInput) Initialize(configuration util.Configuration, prefix string) error {
+	prefetchCount := configuration.GetInt(prefix + "prefetchCount")
 	topicUrl := configuration.GetString(prefix + "topic_url")
 	k.subURL = configuration.GetString(prefix + "sub_url")
 	glog.V(0).Infof("notification.gocdk_pub_sub.sub_url: %v", k.subURL)
@@ -102,6 +103,12 @@ func (k *GoCDKPubSubInput) Initialize(configuration util.Configuration, prefix s
 			return err
 		}
 		defer ch.Close()
+		if prefetchCount > 0 {
+			err = ch.Qos(prefetchCount, 0, false)
+			if err != nil {
+				return fmt.Errorf("set basic.qos: %v", err)
+			}
+		}
 		_, err = ch.QueueInspect(getPath(k.subURL))
 		if err != nil {
 			if strings.HasPrefix(err.Error(), "Exception (404) Reason") {
