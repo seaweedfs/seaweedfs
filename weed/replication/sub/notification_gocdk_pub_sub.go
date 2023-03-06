@@ -80,8 +80,9 @@ func QueueDeclareAndBind(conn *amqp.Connection, exchangeUrl string, queueUrl str
 }
 
 type GoCDKPubSubInput struct {
-	sub    *pubsub.Subscription
-	subURL string
+	sub           *pubsub.Subscription
+	prefetchCount int
+	subURL        string
 }
 
 func (k *GoCDKPubSubInput) GetName() string {
@@ -89,7 +90,7 @@ func (k *GoCDKPubSubInput) GetName() string {
 }
 
 func (k *GoCDKPubSubInput) Initialize(configuration util.Configuration, prefix string) error {
-	prefetchCount := configuration.GetInt(prefix + "prefetchCount")
+	k.prefetchCount = configuration.GetInt(prefix + "prefetchCount")
 	topicUrl := configuration.GetString(prefix + "topic_url")
 	k.subURL = configuration.GetString(prefix + "sub_url")
 	glog.V(0).Infof("notification.gocdk_pub_sub.sub_url: %v", k.subURL)
@@ -138,6 +139,12 @@ func (k *GoCDKPubSubInput) ReceiveMessage() (key string, message *filer_pb.Event
 				glog.Error(err)
 				time.Sleep(time.Second)
 				return
+			}
+			if k.prefetchCount > 0 {
+				err = ch.Qos(prefetchCount, 0, false)
+				if err != nil {
+					glog.Error("set basic.qos: %v", err)
+				}
 			}
 			k.sub = rabbitpubsub.OpenSubscription(conn, getPath(k.subURL), nil)
 			return
