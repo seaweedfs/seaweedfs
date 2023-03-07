@@ -407,6 +407,18 @@ filer:
     # directories under this folder will be automatically creating a separate bucket
     WEED_FILER_BUCKETS_FOLDER: "/buckets"
 
+
+  # secret env variables
+  secretExtraEnvironmentVars: []
+      # WEED_POSTGRES_USERNAME:     
+      #   secretKeyRef:
+      #     name: postgres-credentials
+      #     key: username
+      # WEED_POSTGRES_PASSWORD:        
+      #   secretKeyRef:
+      #     name: postgres-credentials
+      #     key: password  
+
   s3:
     enabled: true
     port: 8333
