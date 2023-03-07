@@ -410,14 +410,14 @@ filer:
 
   # secret env variables
   secretExtraEnvironmentVars: []
-      # WEED_POSTGRES_USERNAME:
+      # WEED_POSTGRES_USERNAME:     
       #   secretKeyRef:
       #     name: postgres-credentials
       #     key: username
-      # WEED_POSTGRES_PASSWORD:
+      # WEED_POSTGRES_PASSWORD:        
       #   secretKeyRef:
       #     name: postgres-credentials
-      #     key: password
+      #     key: password  
 
   s3:
     enabled: true
