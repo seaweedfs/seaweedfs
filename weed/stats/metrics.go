@@ -1,7 +1,6 @@
 package stats
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -282,12 +281,22 @@ func LoopPushingMetric(name, instance, addr string, intervalSeconds int) {
 	}
 }
 
+// Copied from util/network.go
+func JoinHostPort(host string, port int) string {
+	portStr := strconv.Itoa(port)
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		return host + ":" + portStr
+	}
+	return net.JoinHostPort(host, portStr)
+}
+
+
 func StartMetricsServer(ip string, port int) {
 	if port == 0 {
 		return
 	}
 	http.Handle("/metrics", promhttp.HandlerFor(Gather, promhttp.HandlerOpts{}))
-	log.Fatal(http.ListenAndServe(fmt.Sprintf("%s:%d", ip, port), nil))
+	log.Fatal(http.ListenAndServe(JoinHostPort(ip, port), nil))
 }
 
 func SourceName(port uint32) string {
