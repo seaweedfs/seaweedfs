@@ -281,7 +281,6 @@ func LoopPushingMetric(name, instance, addr string, intervalSeconds int) {
 	}
 }
 
-// Copied from util/network.go
 func JoinHostPort(host string, port int) string {
 	portStr := strconv.Itoa(port)
 	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
