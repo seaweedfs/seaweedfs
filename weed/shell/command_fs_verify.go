@@ -179,8 +179,8 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount int64, errCo
 								continue
 							}
 							waitChan <- struct{}{}
-							go func(path string, volumeServer *pb.ServerAddress, msg string) {
-								if err = c.verifyEntry(volumeServer, chunk.Fid); err != nil {
+							go func(path string, volumeServer pb.ServerAddress, msg string) {
+								if err = c.verifyEntry(&volumeServer, chunk.Fid); err != nil {
 									errItemLock.Lock()
 									errItem[path] = err
 									fmt.Fprintf(c.writer, "%s failed verify needle %d:%d: %+v\n",
@@ -188,7 +188,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount int64, errCo
 									errItemLock.Unlock()
 								}
 								<-waitChan
-							}(itemPath, &volumeServer, fileMsg)
+							}(itemPath, volumeServer, fileMsg)
 						}
 					} else {
 						err = fmt.Errorf("volumeId %d not found", chunk.Fid.VolumeId)
