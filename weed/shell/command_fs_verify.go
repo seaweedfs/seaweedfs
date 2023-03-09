@@ -25,15 +25,15 @@ func init() {
 }
 
 type commandFsVerify struct {
-	env                         *CommandEnv
-	volumeServers               []pb.ServerAddress
-	volumeIds                   map[uint32][]pb.ServerAddress
-	verbose                     *bool
-	parallelLimitByVolumeServer *int
-	modifyTimeAgoAtSec          int64
-	writer                      io.Writer
-	waitChan                    map[string]chan struct{}
-	waitChanLock                sync.RWMutex
+	env                *CommandEnv
+	volumeServers      []pb.ServerAddress
+	volumeIds          map[uint32][]pb.ServerAddress
+	verbose            *bool
+	concurrency        *int
+	modifyTimeAgoAtSec int64
+	writer             io.Writer
+	waitChan           map[string]chan struct{}
+	waitChanLock       sync.RWMutex
 }
 
 func (c *commandFsVerify) Name() string {
@@ -55,7 +55,7 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	fsVerifyCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	c.verbose = fsVerifyCommand.Bool("v", false, "print out each processed files")
 	modifyTimeAgo := fsVerifyCommand.Duration("modifyTimeAgo", 0, "only include files after this modify time to verify")
-	c.parallelLimitByVolumeServer = fsVerifyCommand.Int("parallelLimitByVolumeServer", 0, "number of parallel verification per volume server")
+	c.concurrency = fsVerifyCommand.Int("concurrency", 0, "number of parallel verification per volume server")
 
 	if err = fsVerifyCommand.Parse(args); err != nil {
 		return err
@@ -73,10 +73,10 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 
 	c.waitChan = make(map[string]chan struct{})
-	if *c.parallelLimitByVolumeServer > 0 {
+	if *c.concurrency > 0 {
 		for _, volumeServer := range c.volumeServers {
 			volumeServerStr := string(volumeServer)
-			c.waitChan[volumeServerStr] = make(chan struct{}, *c.parallelLimitByVolumeServer)
+			c.waitChan[volumeServerStr] = make(chan struct{}, *c.concurrency)
 			defer close(c.waitChan[volumeServerStr])
 		}
 	}
@@ -163,7 +163,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount int64, errCo
 				for _, chunk := range i.chunks {
 					if volumeIds, ok := c.volumeIds[chunk.Fid.VolumeId]; ok {
 						for _, volumeServer := range volumeIds {
-							if *c.parallelLimitByVolumeServer == 0 {
+							if *c.concurrency == 0 {
 								if err = c.verifyEntry(&volumeServer, chunk.Fid); err != nil {
 									fmt.Fprintf(c.writer, "%s failed verify needle %d:%d: %+v\n",
 										fileMsg, chunk.Fid.VolumeId, chunk.Fid.FileKey, err)
