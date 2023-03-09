@@ -66,8 +66,12 @@ func (n *Needle) ReadNeedleMeta(r backend.BackendStorageFile, offset int64, size
 	if err != nil {
 		return err
 	}
+
 	var index int
-	index, err = n.readNeedleDataVersion2NonData(metaSlice)
+	if size.IsValid() {
+		index, err = n.readNeedleDataVersion2NonData(metaSlice)
+	}
+
 	n.Checksum = CRC(util.BytesToUint32(metaSlice[index : index+NeedleChecksumSize]))
 	if version == Version3 {
 		n.AppendAtNs = util.BytesToUint64(metaSlice[index+NeedleChecksumSize : index+NeedleChecksumSize+TimestampSize])

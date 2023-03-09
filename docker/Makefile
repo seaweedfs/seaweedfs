@@ -62,7 +62,8 @@ k8s: build
 dev_registry: build
 	docker compose -f compose/local-registry-compose.yml -p seaweedfs up
 
-dev_replicate: build
+dev_replicate:
+	docker build --build-arg TAGS=gocdk --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.go_build .
 	docker compose -f compose/local-replicate-compose.yml -p seaweedfs up
 
 dev_auditlog: build

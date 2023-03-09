@@ -97,6 +97,12 @@ spec:
               value: {{ $value | quote }}
             {{- end }}
             {{- end }}
+            {{- if .Values.filer.secretExtraEnvironmentVars }}
+            {{- range $key, $value := .Values.filer.secretExtraEnvironmentVars }}
+            - name: {{ $key }}
+              valueFrom: {{ toYaml $value | nindent 16 }}
+            {{- end }}
+            {{- end }}             
           command:
             - "/bin/sh"
             - "-ec"
