@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"golang.org/x/exp/slices"
 	"io"
 	"math"
 	"strings"
@@ -74,8 +75,9 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	c.waitChan = make(map[string]chan struct{})
 	if *c.parallelLimitByVolumeServer > 0 {
 		for _, volumeServer := range c.volumeServers {
-			c.waitChan[string(volumeServer)] = make(chan struct{}, *c.parallelLimitByVolumeServer)
-			defer close(c.waitChan[string(volumeServer)])
+			volumeServerStr := string(volumeServer)
+			c.waitChan[volumeServerStr] = make(chan struct{}, *c.parallelLimitByVolumeServer)
+			defer close(c.waitChan[volumeServerStr])
 		}
 	}
 
@@ -97,7 +99,11 @@ func (c *commandFsVerify) collectVolumeIds() error {
 	eachDataNode(topologyInfo, func(dc string, rack RackId, nodeInfo *master_pb.DataNodeInfo) {
 		for _, diskInfo := range nodeInfo.DiskInfos {
 			for _, vi := range diskInfo.VolumeInfos {
-				c.volumeIds[vi.Id] = append(c.volumeIds[vi.Id], pb.NewServerAddressFromDataNode(nodeInfo))
+				volumeServer := pb.NewServerAddressFromDataNode(nodeInfo)
+				c.volumeIds[vi.Id] = append(c.volumeIds[vi.Id], volumeServer)
+				if !slices.Contains(c.volumeServers, volumeServer) {
+					c.volumeServers = append(c.volumeServers, volumeServer)
+				}
 			}
 		}
 	})
@@ -151,7 +157,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount int64, errCo
 			for itemEntry := range outputChan {
 				i := itemEntry.(*ItemEntry)
 				itemPath := string(i.path)
-				fileMsg := fmt.Sprintf("file:%s needle status ", itemPath)
+				fileMsg := fmt.Sprintf("file:%s", itemPath)
 				errItem := make(map[string]error)
 				errItemLock := sync.RWMutex{}
 				for _, chunk := range i.chunks {
@@ -159,7 +165,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount int64, errCo
 						for _, volumeServer := range volumeIds {
 							if *c.parallelLimitByVolumeServer == 0 {
 								if err = c.verifyEntry(&volumeServer, chunk.Fid); err != nil {
-									fmt.Fprintf(c.writer, "%sfailed verify %d:%d: %+v\n",
+									fmt.Fprintf(c.writer, "%s failed verify needle %d:%d: %+v\n",
 										fileMsg, chunk.Fid.VolumeId, chunk.Fid.FileKey, err)
 								}
 								continue
@@ -168,32 +174,32 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount int64, errCo
 							waitChan, ok := c.waitChan[string(volumeServer)]
 							c.waitChanLock.RUnlock()
 							if !ok {
-								fmt.Fprintf(c.writer, "%sfailed to get channel for %d:%d: %+v\n",
-									fileMsg, chunk.Fid.VolumeId, chunk.Fid.FileKey, err)
+								fmt.Fprintf(c.writer, "%s failed to get channel for %s chunk: %d:%d: %+v\n",
+									string(volumeServer), fileMsg, chunk.Fid.VolumeId, chunk.Fid.FileKey, err)
 								continue
 							}
 							waitChan <- struct{}{}
 							go func(path string, volumeServer *pb.ServerAddress, msg string) {
 								if err = c.verifyEntry(volumeServer, chunk.Fid); err != nil {
-									fmt.Fprintf(c.writer, "%sfailed verify %d:%d: %+v\n",
-										msg, chunk.Fid.VolumeId, chunk.Fid.FileKey, err)
 									errItemLock.Lock()
 									errItem[path] = err
+									fmt.Fprintf(c.writer, "%s failed verify needle %d:%d: %+v\n",
+										msg, chunk.Fid.VolumeId, chunk.Fid.FileKey, err)
 									errItemLock.Unlock()
 								}
 								<-waitChan
 							}(itemPath, &volumeServer, fileMsg)
-							errItemLock.RLock()
-							err, _ = errItem[itemPath]
-							errItemLock.RUnlock()
 						}
 					} else {
 						err = fmt.Errorf("volumeId %d not found", chunk.Fid.VolumeId)
-						fmt.Fprintf(c.writer, "%sfailed verify chunk %d:%d: %+v\n",
+						fmt.Fprintf(c.writer, "%s  %d:%d: %+v\n",
 							fileMsg, chunk.Fid.VolumeId, chunk.Fid.FileKey, err)
 						break
 					}
 				}
+				errItemLock.RLock()
+				err, _ = errItem[itemPath]
+				errItemLock.RUnlock()
 
 				if err != nil {
 					errCount++
@@ -201,7 +207,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount int64, errCo
 				}
 
 				if *c.verbose {
-					fmt.Fprintf(c.writer, " verifed\n")
+					fmt.Fprintf(c.writer, "%s needles:%d verifed\n", fileMsg, len(i.chunks))
 				}
 				fileCount++
 			}
