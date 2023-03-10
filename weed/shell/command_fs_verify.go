@@ -110,8 +110,8 @@ func (c *commandFsVerify) collectVolumeIds() error {
 	return nil
 }
 
-func (c *commandFsVerify) verifyEntry(volumeServer *pb.ServerAddress, fileId *filer_pb.FileId) error {
-	err := operation.WithVolumeServerClient(false, *volumeServer, c.env.option.GrpcDialOption,
+func (c *commandFsVerify) verifyEntry(volumeServer pb.ServerAddress, fileId *filer_pb.FileId) error {
+	err := operation.WithVolumeServerClient(false, volumeServer, c.env.option.GrpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			_, err := client.VolumeNeedleStatus(context.Background(),
 				&volume_server_pb.VolumeNeedleStatusRequest{
@@ -164,7 +164,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount int64, errCo
 					if volumeIds, ok := c.volumeIds[chunk.Fid.VolumeId]; ok {
 						for _, volumeServer := range volumeIds {
 							if *c.concurrency == 0 {
-								if err = c.verifyEntry(&volumeServer, chunk.Fid); err != nil {
+								if err = c.verifyEntry(volumeServer, chunk.Fid); err != nil {
 									fmt.Fprintf(c.writer, "%s failed verify needle %d:%d: %+v\n",
 										fileMsg, chunk.Fid.VolumeId, chunk.Fid.FileKey, err)
 								}
@@ -179,16 +179,16 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount int64, errCo
 								continue
 							}
 							waitChan <- struct{}{}
-							go func(path string, volumeServer pb.ServerAddress, msg string) {
-								if err = c.verifyEntry(&volumeServer, chunk.Fid); err != nil {
+							go func(fId *filer_pb.FileId, path string, volumeServer pb.ServerAddress, msg string) {
+								if err = c.verifyEntry(volumeServer, fId); err != nil {
 									errItemLock.Lock()
 									errItem[path] = err
 									fmt.Fprintf(c.writer, "%s failed verify needle %d:%d: %+v\n",
-										msg, chunk.Fid.VolumeId, chunk.Fid.FileKey, err)
+										msg, fId.VolumeId, fId.FileKey, err)
 									errItemLock.Unlock()
 								}
 								<-waitChan
-							}(itemPath, volumeServer, fileMsg)
+							}(chunk.Fid, itemPath, volumeServer, fileMsg)
 						}
 					} else {
 						err = fmt.Errorf("volumeId %d not found", chunk.Fid.VolumeId)
