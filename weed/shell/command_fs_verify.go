@@ -51,7 +51,6 @@ func (c *commandFsVerify) Help() string {
 func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 	c.env = commandEnv
 	c.writer = writer
-
 	fsVerifyCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	c.verbose = fsVerifyCommand.Bool("v", false, "print out each processed files")
 	modifyTimeAgo := fsVerifyCommand.Duration("modifyTimeAgo", 0, "only include files after this modify time to verify")
@@ -67,12 +66,14 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 
 	c.modifyTimeAgoAtSec = int64(modifyTimeAgo.Seconds())
+	c.volumeIds = make(map[uint32][]pb.ServerAddress)
+	c.waitChan = make(map[string]chan struct{})
+	c.volumeServers = []pb.ServerAddress{}
 
 	if err := c.collectVolumeIds(); err != nil {
 		return parseErr
 	}
 
-	c.waitChan = make(map[string]chan struct{})
 	if *c.concurrency > 0 {
 		for _, volumeServer := range c.volumeServers {
 			volumeServerStr := string(volumeServer)
@@ -91,7 +92,6 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 }
 
 func (c *commandFsVerify) collectVolumeIds() error {
-	c.volumeIds = make(map[uint32][]pb.ServerAddress)
 	topologyInfo, _, err := collectTopologyInfo(c.env, 0)
 	if err != nil {
 		return err
