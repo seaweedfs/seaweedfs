@@ -42,7 +42,7 @@ make
 
 list
 ```
-s3cmd --no-ssl --host=127.0.0.1:8333 --host-bucket=127.0.0.1:8333 ls s3://
+s3cmd --no-ssl --host=127.0.0.1:8333 ls s3://
 ```
 
 ## Build and push a multiarch build
