@@ -3,13 +3,13 @@ module github.com/seaweedfs/seaweedfs
 go 1.20
 
 require (
-	cloud.google.com/go v0.109.0 // indirect
+	cloud.google.com/go v0.110.0 // indirect
 	cloud.google.com/go/pubsub v1.28.0
 	cloud.google.com/go/storage v1.29.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/Shopify/sarama v1.38.1
-	github.com/aws/aws-sdk-go v1.44.209
+	github.com/aws/aws-sdk-go v1.44.219
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
@@ -113,16 +113,16 @@ require (
 	gocloud.dev/pubsub/rabbitpubsub v0.29.0
 	golang.org/x/crypto v0.6.0 // indirect
 	golang.org/x/exp v0.0.0-20230124195608-d38c7dcee874
-	golang.org/x/image v0.5.0
-	golang.org/x/net v0.7.0
-	golang.org/x/oauth2 v0.5.0 // indirect
+	golang.org/x/image v0.6.0
+	golang.org/x/net v0.8.0
+	golang.org/x/oauth2 v0.6.0 // indirect
 	golang.org/x/sys v0.6.0
-	golang.org/x/text v0.7.0 // indirect
+	golang.org/x/text v0.8.0 // indirect
 	golang.org/x/tools v0.6.0
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
-	google.golang.org/api v0.111.0
+	google.golang.org/api v0.112.0
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto v0.0.0-20230223222841-637eb2293923 // indirect
+	google.golang.org/genproto v0.0.0-20230303212802-e74f57abe488 // indirect
 	google.golang.org/grpc v1.53.0
 	google.golang.org/protobuf v1.28.1
 	gopkg.in/inf.v0 v0.9.1 // indirect
@@ -140,7 +140,7 @@ require (
 
 require (
 	github.com/Jille/raft-grpc-transport v1.4.0
-	github.com/arangodb/go-driver v1.4.1
+	github.com/arangodb/go-driver v1.5.2
 	github.com/armon/go-metrics v0.4.1
 	github.com/fluent/fluent-logger-golang v1.9.0
 	github.com/google/flatbuffers/go v0.0.0-20230108230133-3b8644d32c50
@@ -151,14 +151,14 @@ require (
 	github.com/schollz/progressbar/v3 v3.13.0
 	github.com/tikv/client-go/v2 v2.0.5
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.42.12
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.43.0
 	google.golang.org/grpc/security/advancedtls v0.0.0-20220622233350-5cdb09fa29c1
 )
 
 require (
 	cloud.google.com/go/compute v1.18.0 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
-	cloud.google.com/go/iam v0.11.0 // indirect
+	cloud.google.com/go/iam v0.12.0 // indirect
 	github.com/arangodb/go-velocypack v0.0.0-20200318135517-5af53c29c67e // indirect
 	github.com/aws/aws-sdk-go-v2 v1.17.4 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.18.12 // indirect
@@ -232,7 +232,7 @@ require (
 	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/mod v0.8.0 // indirect
 	golang.org/x/sync v0.1.0 // indirect
-	golang.org/x/term v0.5.0 // indirect
+	golang.org/x/term v0.6.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
