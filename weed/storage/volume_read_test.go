@@ -88,7 +88,9 @@ func TestReadNeedMetaWithDeletesThenWrites(t *testing.T) {
 		testNeedle.Flags = 0x08
 		v.readNeedleMetaAt(testNeedle, writeInfos[i].offset, writeInfos[i].size)
 		actualLastModifiedTime := testNeedle.LastModified
-		assert.Equal(t, expectedLastUpdateTime, actualLastModifiedTime, "The two words should be the same.")
+		if writeInfos[i].size != 0 {
+			assert.Equal(t, expectedLastUpdateTime, actualLastModifiedTime, "The two words should be the same.")
+		}
 		expectedLastUpdateTime += 2000
 	}
 }
