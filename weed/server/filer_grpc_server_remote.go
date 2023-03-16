@@ -154,10 +154,11 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 			}
 
 			chunks = append(chunks, &filer_pb.FileChunk{
+
 				FileId:       assignResult.Fid,
 				Offset:       localOffset,
 				Size:         uint64(size),
-				ModifiedTsNs: time.Now().Unix(),
+				ModifiedTsNs: time.Now().UnixNano(),
 				ETag:         etag,
 				Fid: &filer_pb.FileId{
 					VolumeId: uint32(fileId.VolumeId),
