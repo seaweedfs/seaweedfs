@@ -11,6 +11,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
+	backoff "github.com/cenkalti/backoff/v4"
+
 	hashicorpRaft "github.com/hashicorp/raft"
 	"github.com/seaweedfs/raft"
 
@@ -96,19 +98,10 @@ func (t *Topology) IsLeader() bool {
 }
 
 func (t *Topology) Leader() (l pb.ServerAddress, err error) {
-	for count := 0; count < 3; count++ {
-		l, err = t.MaybeLeader()
-		if err != nil {
-			return
-		}
-		if l != "" {
-			break
-		}
-
-		time.Sleep(time.Duration(5+count) * time.Second)
-	}
-
-	return
+	exponentialBackoff := backoff.NewExponentialBackOff()
+	exponentialBackoff.InitialInterval = 100 * time.Millisecond
+	exponentialBackoff.MaxElapsedTime = 20 * time.Second
+	return backoff.RetryWithData(t.MaybeLeader, exponentialBackoff)
 }
 
 func (t *Topology) MaybeLeader() (l pb.ServerAddress, err error) {
