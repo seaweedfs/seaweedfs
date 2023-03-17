@@ -101,7 +101,20 @@ func (t *Topology) Leader() (l pb.ServerAddress, err error) {
 	exponentialBackoff := backoff.NewExponentialBackOff()
 	exponentialBackoff.InitialInterval = 100 * time.Millisecond
 	exponentialBackoff.MaxElapsedTime = 20 * time.Second
-	return backoff.RetryWithData(t.MaybeLeader, exponentialBackoff)
+	leaderNotSelected := errors.New("leader not selected yet")
+	l, err = backoff.RetryWithData(
+		func() (l pb.ServerAddress, err error) {
+			l, err = t.MaybeLeader()
+			if err == nil && l == "" {
+				err = leaderNotSelected
+			}
+			return l, err
+		},
+		exponentialBackoff)
+	if err == leaderNotSelected {
+		l = ""
+	}
+	return l, err
 }
 
 func (t *Topology) MaybeLeader() (l pb.ServerAddress, err error) {
