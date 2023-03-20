@@ -88,6 +88,9 @@ func (c *commandVolumeServerEvacuate) volumeServerEvacuate(commandEnv *CommandEn
 	if err != nil {
 		return err
 	}
+	defer func() {
+		c.topologyInfo = nil
+	}()
 
 	if err := c.evacuateNormalVolumes(commandEnv, volumeServer, skipNonMoveable, applyChange, writer); err != nil {
 		return err

@@ -69,6 +69,12 @@ func (c *commandFsVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	c.volumeIds = make(map[uint32][]pb.ServerAddress)
 	c.waitChan = make(map[string]chan struct{})
 	c.volumeServers = []pb.ServerAddress{}
+	defer func() {
+		c.modifyTimeAgoAtSec = 0
+		c.volumeIds = nil
+		c.waitChan = nil
+		c.volumeServers = nil
+	}()
 
 	if err := c.collectVolumeIds(); err != nil {
 		return parseErr
