@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 15
     steps:
     - name: Set up Go 1.x
-      uses: actions/setup-go@6edd4406fa81c3da01a34fa6f6343087c207a568 # v2
+      uses: actions/setup-go@4d34df0c2316fe8122ab82dc22947d607c0c91f9 # v2
       with:
         go-version: ^1.13
       id: go
