@@ -395,6 +395,31 @@ func (vl *VolumeLayout) setVolumeWritable(vid needle.VolumeId) bool {
 	return true
 }
 
+func (vl *VolumeLayout) SetVolumeReadOnly(dn *DataNode, vid needle.VolumeId) bool {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+
+	if _, ok := vl.vid2location[vid]; ok {
+		vl.readonlyVolumes.Add(vid, dn)
+		return vl.removeFromWritable(vid)
+	}
+	return true
+}
+
+func (vl *VolumeLayout) SetVolumeWritable(dn *DataNode, vid needle.VolumeId) bool {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+
+	if _, ok := vl.vid2location[vid]; ok {
+		vl.readonlyVolumes.Remove(vid, dn)
+	}
+
+	if vl.enoughCopies(vid) {
+		return vl.setVolumeWritable(vid)
+	}
+	return false
+}
+
 func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()

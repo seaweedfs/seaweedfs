@@ -6,7 +6,12 @@ import (
 )
 
 func TestVolumeServerEvacuate(t *testing.T) {
-	c := commandVolumeServerEvacuate{}
+	targetServer := ""
+	volumeRack := "rack1"
+	c := commandVolumeServerEvacuate{
+		targetServer: &targetServer,
+		volumeRack:   &volumeRack,
+	}
 	c.topologyInfo = parseOutput(topoData)
 
 	volumeServer := "192.168.1.4:8080"

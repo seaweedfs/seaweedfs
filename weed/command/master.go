@@ -2,12 +2,13 @@ package command
 
 import (
 	"fmt"
-	hashicorpRaft "github.com/hashicorp/raft"
 	"net/http"
 	"os"
 	"path"
 	"strings"
 	"time"
+
+	hashicorpRaft "github.com/hashicorp/raft"
 
 	"golang.org/x/exp/slices"
 
@@ -163,11 +164,11 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		RaftResumeState:   *masterOption.raftResumeState,
 		HeartbeatInterval: *masterOption.heartbeatInterval,
 		ElectionTimeout:   *masterOption.electionTimeout,
-		RaftBootstrap:     *m.raftBootstrap,
+		RaftBootstrap:     *masterOption.raftBootstrap,
 	}
 	var raftServer *weed_server.RaftServer
 	var err error
-	if *m.raftHashicorp {
+	if *masterOption.raftHashicorp {
 		if raftServer, err = weed_server.NewHashicorpRaftServer(raftServerOption); err != nil {
 			glog.Fatalf("NewHashicorpRaftServer: %s", err)
 		}
@@ -180,7 +181,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	ms.SetRaftServer(raftServer)
 	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
 	r.HandleFunc("/cluster/healthz", raftServer.HealthzHandler).Methods("GET", "HEAD")
-	if *m.raftHashicorp {
+	if *masterOption.raftHashicorp {
 		r.HandleFunc("/raft/stats", raftServer.StatsRaftHandler).Methods("GET")
 	}
 	// starting grpc server
@@ -191,7 +192,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.master"))
 	master_pb.RegisterSeaweedServer(grpcS, ms)
-	if *m.raftHashicorp {
+	if *masterOption.raftHashicorp {
 		raftServer.TransportManager.Register(grpcS)
 	} else {
 		protobuf.RegisterRaftServer(grpcS, raftServer)
@@ -204,7 +205,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	go grpcS.Serve(grpcL)
 
 	timeSleep := 1500 * time.Millisecond
-	if !*m.raftHashicorp {
+	if !*masterOption.raftHashicorp {
 		go func() {
 			time.Sleep(timeSleep)
 
