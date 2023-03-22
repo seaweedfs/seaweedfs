@@ -90,10 +90,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	if isForDirectory && len(path) > 1 {
 		path = path[:len(path)-1]
 	}
+	isS3EntryPath := fs.filer.IsS3EntryPath(path)
 
 	entry, err := fs.filer.FindEntry(context.Background(), util.FullPath(path))
 	if err != nil {
-		if path == "/" {
+		if path == "/" && !isS3EntryPath {
 			fs.listDirectoryHandler(w, r)
 			return
 		}
@@ -110,22 +111,28 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	query := r.URL.Query()
-
-	if entry.IsDirectory() {
-		if fs.option.DisableDirListing {
-			w.WriteHeader(http.StatusForbidden)
+	if isS3EntryPath {
+		if entry.IsDirectory() && entry.Mime == "" {
+			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		if query.Get("metadata") == "true" {
-			writeJsonQuiet(w, r, http.StatusOK, entry)
-			return
+	} else {
+		if entry.IsDirectory() {
+			if fs.option.DisableDirListing {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			if query.Get("metadata") == "true" {
+				writeJsonQuiet(w, r, http.StatusOK, entry)
+				return
+			}
+			if slices.Contains([]string{"httpd/unix-directory", ""}, entry.Attr.Mime) {
+				fs.listDirectoryHandler(w, r)
+				return
+			}
+			// inform S3 API this is a user created directory key object
+			w.Header().Set(s3_constants.X_SeaweedFS_Header_Directory_Key, "true")
 		}
-		if slices.Contains([]string{"httpd/unix-directory", ""}, entry.Attr.Mime) {
-			fs.listDirectoryHandler(w, r)
-			return
-		}
-		// inform S3 API this is a user created directory key object
-		w.Header().Set(s3_constants.X_SeaweedFS_Header_Directory_Key, "true")
 	}
 
 	if isForDirectory {

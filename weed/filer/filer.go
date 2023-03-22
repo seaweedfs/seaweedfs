@@ -159,6 +159,22 @@ func (f *Filer) RollbackTransaction(ctx context.Context) error {
 	return f.Store.RollbackTransaction(ctx)
 }
 
+// IsS3EntryPath checks if the given fullPath is a valid S3 entry path.
+func (f *Filer) IsS3EntryPath(fullPath string) bool {
+	if strings.HasPrefix(fullPath, f.DirBucketsPath) {
+		fullPath = fullPath[len(f.DirBucketsPath):]
+		if len(fullPath) < 0 {
+			return false
+		}
+		if strings.HasSuffix(fullPath, "/") {
+			fullPath = fullPath[:len(fullPath)-1]
+		}
+		bucket, key := util.FullPath(fullPath).DirAndName()
+		return len(bucket) > 0 && len(key) > 0
+	}
+	return false
+}
+
 func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFromOtherCluster bool, signatures []int32, skipCreateParentDir bool) error {
 
 	if string(entry.FullPath) == "/" {
@@ -174,12 +190,11 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 			return fmt.Errorf("no write permission in folder %v", lastDirectoryEntry.FullPath)
 		}
 	*/
-
+	isS3EntryPath := f.IsS3EntryPath(string(entry.FullPath))
 	if oldEntry == nil {
-
 		if !skipCreateParentDir {
 			dirParts := strings.Split(string(entry.FullPath), "/")
-			if err := f.ensureParentDirectoryEntry(ctx, entry, dirParts, len(dirParts)-1, isFromOtherCluster); err != nil {
+			if err := f.ensureParentDirectoryEntry(ctx, entry, dirParts, len(dirParts)-1, isFromOtherCluster, isS3EntryPath); err != nil {
 				return err
 			}
 		}
@@ -195,7 +210,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 			return fmt.Errorf("EEXIST: entry %s already exists", entry.FullPath)
 		}
 		glog.V(4).Infof("UpdateEntry %s: old entry: %v", entry.FullPath, oldEntry.Name())
-		if err := f.UpdateEntry(ctx, oldEntry, entry); err != nil {
+		if err := f.UpdateEntry(ctx, oldEntry, entry, isS3EntryPath); err != nil {
 			glog.Errorf("update entry %s: %v", entry.FullPath, err)
 			return fmt.Errorf("update entry %s: %v", entry.FullPath, err)
 		}
@@ -210,7 +225,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 	return nil
 }
 
-func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, dirParts []string, level int, isFromOtherCluster bool) (err error) {
+func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, dirParts []string, level int, isFromOtherCluster bool, isS3EntryPath bool) (err error) {
 
 	if level == 0 {
 		return nil
@@ -227,7 +242,7 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 	if dirEntry == nil {
 
 		// ensure parent directory
-		if err = f.ensureParentDirectoryEntry(ctx, entry, dirParts, level-1, isFromOtherCluster); err != nil {
+		if err = f.ensureParentDirectoryEntry(ctx, entry, dirParts, level-1, isFromOtherCluster, isS3EntryPath); err != nil {
 			return err
 		}
 
@@ -261,23 +276,44 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 		}
 
 	} else if !dirEntry.IsDirectory() {
-		glog.Errorf("CreateEntry %s: %s should be a directory", entry.FullPath, dirPath)
-		return fmt.Errorf("%s is a file", dirPath)
+		if isS3EntryPath {
+			glog.V(2).Infof("update entry file mode to directory: %s %v", dirPath, dirEntry.Mode)
+			newEntry := dirEntry.ShallowClone()
+			newEntry.Attr.Mode |= os.ModeDir
+			updateErr := f.UpdateEntry(ctx, dirEntry, newEntry, true)
+			if updateErr != nil {
+				glog.V(3).Infof("UpdateEntry %s: %v", dirEntry.FullPath, err)
+				return updateErr
+			}
+			f.NotifyUpdateEvent(ctx, dirEntry, newEntry, false, isFromOtherCluster, nil)
+		} else {
+			glog.Errorf("CreateEntry %s: %s should be a directory", entry.FullPath, dirPath)
+			return fmt.Errorf("%s is a file", dirPath)
+		}
 	}
 
 	return nil
 }
 
-func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err error) {
+func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry, updateModeAndMime bool) (err error) {
 	if oldEntry != nil {
 		entry.Attr.Crtime = oldEntry.Attr.Crtime
 		if oldEntry.IsDirectory() && !entry.IsDirectory() {
-			glog.Errorf("existing %s is a directory", oldEntry.FullPath)
-			return fmt.Errorf("existing %s is a directory", oldEntry.FullPath)
+			if updateModeAndMime {
+				entry.Mode |= oldEntry.Mode
+			} else {
+				glog.Errorf("existing %s is a directory", oldEntry.FullPath)
+				return fmt.Errorf("existing %s is a directory", oldEntry.FullPath)
+			}
 		}
 		if !oldEntry.IsDirectory() && entry.IsDirectory() {
-			glog.Errorf("existing %s is a file", oldEntry.FullPath)
-			return fmt.Errorf("existing %s is a file", oldEntry.FullPath)
+			if updateModeAndMime {
+				entry.Mode |= oldEntry.Mode
+				entry.Mime = oldEntry.Mime
+			} else {
+				glog.Errorf("existing %s is a file", oldEntry.FullPath)
+				return fmt.Errorf("existing %s is a file", oldEntry.FullPath)
+			}
 		}
 	}
 	return f.Store.UpdateEntry(ctx, entry)

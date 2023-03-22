@@ -357,6 +357,10 @@ func (x *Entry) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
+func (x *Entry) IsS3File() bool {
+	return !x.IsDirectory || (x.Attributes != nil && x.Attributes.Mime != "")
+}
+
 func (*Entry) ProtoMessage() {}
 
 func (x *Entry) ProtoReflect() protoreflect.Message {

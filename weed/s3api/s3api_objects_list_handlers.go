@@ -158,16 +158,23 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						})
 						//All of the keys (up to 1,000) rolled up into a common prefix count as a single return when calculating the number of returns.
 						cursor.maxKeys--
-					} else if entry.IsDirectoryKeyObject() {
+					}
+					// For s3, one url can be both a file and a directory (actually directory is just a logical concept)
+					if entry.IsDirectoryKeyObject() {
+						storageClass := "STANDARD"
+						if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
+							storageClass = string(v)
+						}
 						contents = append(contents, ListEntry{
-							Key:          fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
+							Key:          fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):],
 							LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
 							ETag:         "\"" + filer.ETag(entry) + "\"",
+							Size:         int64(filer.FileSize(entry)),
 							Owner: CanonicalUser{
 								ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
 								DisplayName: entry.Attributes.UserName,
 							},
-							StorageClass: "STANDARD",
+							StorageClass: StorageClass(storageClass),
 						})
 						cursor.maxKeys--
 					}

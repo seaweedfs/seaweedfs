@@ -143,15 +143,21 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 	// fix the path
 	path := r.URL.Path
-	if strings.HasSuffix(path, "/") {
-		if fileName != "" {
-			path += fileName
+	if fs.filer.IsS3EntryPath(path) {
+		if strings.HasSuffix(path, "/") {
+			path = path[0 : len(path)-1]
 		}
 	} else {
-		if fileName != "" {
-			if possibleDirEntry, findDirErr := fs.filer.FindEntry(ctx, util.FullPath(path)); findDirErr == nil {
-				if possibleDirEntry.IsDirectory() {
-					path += "/" + fileName
+		if strings.HasSuffix(path, "/") {
+			if fileName != "" {
+				path += fileName
+			}
+		} else {
+			if fileName != "" {
+				if possibleDirEntry, findDirErr := fs.filer.FindEntry(ctx, util.FullPath(path)); findDirErr == nil {
+					if possibleDirEntry.IsDirectory() {
+						path += "/" + fileName
+					}
 				}
 			}
 		}

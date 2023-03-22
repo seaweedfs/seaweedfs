@@ -16,53 +16,78 @@ const (
 type OnChunksFunc func([]*filer_pb.FileChunk) error
 type OnHardLinkIdsFunc func([]HardLinkId) error
 
-func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32) (err error) {
+func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32, isS3EntryPath bool) (err error) {
 	if p == "/" {
 		return nil
 	}
-
 	entry, findErr := f.FindEntry(ctx, p)
 	if findErr != nil {
 		return findErr
 	}
 	isDeleteCollection := f.isBucket(entry)
-	if entry.IsDirectory() {
-		// delete the folder children, not including the folder itself
-		err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !isDeleteCollection, isDeleteCollection, isFromOtherCluster, signatures, func(chunks []*filer_pb.FileChunk) error {
-			if shouldDeleteChunks && !isDeleteCollection {
-				f.DirectDeleteChunks(chunks)
+
+	// When calling through filer.DeleteHandler (http request of s3api), batch deletion is not allowed, and the isS3EntryPath is false.
+	// when executing filer's rename operation, all entry needs to be deleted after all entry is renamed to the new entry. in this case, the isS3EntryPath is true to ensure that all old files can be deleted normally.
+	if isS3EntryPath {
+		if entry.IsDirectory() {
+			if entry.Mime == "" {
+				return filer_pb.ErrNotFound
+			}
+			oldEntry := entry.ShallowClone()
+			entry.Attr.Mime = ""
+			entry.Chunks = nil
+			err := f.UpdateEntry(ctx, oldEntry, entry, false)
+			if err != nil {
+				return fmt.Errorf("delete mixed file %s: %v", p, err)
+			}
+			f.NotifyUpdateEvent(ctx, oldEntry, entry, shouldDeleteChunks, isFromOtherCluster, signatures)
+			return nil
+		} else {
+			// delete the file or folder
+			err = f.doDeleteEntryMetaAndData(ctx, entry, shouldDeleteChunks, isFromOtherCluster, signatures)
+			if err != nil {
+				return fmt.Errorf("delete file %s: %v", p, err)
 			}
 			return nil
-		}, func(hardLinkIds []HardLinkId) error {
-			// A case not handled:
-			// what if the chunk is in a different collection?
-			if shouldDeleteChunks {
-				f.maybeDeleteHardLinks(hardLinkIds)
-			}
-			return nil
-		})
-		if err != nil {
-			glog.V(0).Infof("delete directory %s: %v", p, err)
-			return fmt.Errorf("delete directory %s: %v", p, err)
 		}
-	}
+	} else {
+		if entry.IsDirectory() {
+			// delete the folder children, not including the folder itself
+			err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !isDeleteCollection, isDeleteCollection, isFromOtherCluster, signatures, func(chunks []*filer_pb.FileChunk) error {
+				if shouldDeleteChunks && !isDeleteCollection {
+					f.DirectDeleteChunks(chunks)
+				}
+				return nil
+			}, func(hardLinkIds []HardLinkId) error {
+				// A case not handled:
+				// what if the chunk is in a different collection?
+				if shouldDeleteChunks {
+					f.maybeDeleteHardLinks(hardLinkIds)
+				}
+				return nil
+			})
+			if err != nil {
+				glog.V(0).Infof("delete directory %s: %v", p, err)
+				return fmt.Errorf("delete directory %s: %v", p, err)
+			}
+		}
 
-	if shouldDeleteChunks && !isDeleteCollection {
-		f.DirectDeleteChunks(entry.GetChunks())
-	}
+		if shouldDeleteChunks && !isDeleteCollection {
+			f.DirectDeleteChunks(entry.GetChunks())
+		}
 
-	// delete the file or folder
-	err = f.doDeleteEntryMetaAndData(ctx, entry, shouldDeleteChunks, isFromOtherCluster, signatures)
-	if err != nil {
-		return fmt.Errorf("delete file %s: %v", p, err)
-	}
+		// delete the file or folder
+		err = f.doDeleteEntryMetaAndData(ctx, entry, shouldDeleteChunks, isFromOtherCluster, signatures)
+		if err != nil {
+			return fmt.Errorf("delete file %s: %v", p, err)
+		}
 
-	if isDeleteCollection {
-		collectionName := entry.Name()
-		f.doDeleteCollection(collectionName)
+		if isDeleteCollection {
+			collectionName := entry.Name()
+			f.doDeleteCollection(collectionName)
+		}
+		return nil
 	}
-
-	return nil
 }
 
 func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isDeletingBucket, isFromOtherCluster bool, signatures []int32, onChunksFn OnChunksFunc, onHardLinkIdsFn OnHardLinkIdsFunc) (err error) {

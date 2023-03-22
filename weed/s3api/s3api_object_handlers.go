@@ -127,10 +127,13 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 func urlEscapeObject(object string) string {
 	t := urlPathEscape(removeDuplicateSlashes(object))
-	if strings.HasPrefix(t, "/") {
-		return t
+	if !strings.HasPrefix(t, "/") {
+		t = "/" + t
 	}
-	return "/" + t
+	if t != "/" && strings.HasSuffix(t, "/") {
+		return strings.Trim(t, "/")
+	}
+	return t
 }
 
 func urlPathEscape(object string) string {

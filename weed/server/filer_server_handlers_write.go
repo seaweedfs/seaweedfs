@@ -154,10 +154,15 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
+
 	if err == nil && !dstEntry.IsDirectory() && srcEntry.IsDirectory() {
-		err = fmt.Errorf("move: cannot overwrite non-directory '%s' with directory '%s'", dst, src)
-		writeJsonError(w, r, http.StatusBadRequest, err)
-		return
+		if fs.filer.IsS3EntryPath(string(dstPath)) {
+			dstEntry.Mode |= srcEntry.Mode
+		} else {
+			err = fmt.Errorf("move: cannot overwrite non-directory '%s' with directory '%s'", dst, src)
+			writeJsonError(w, r, http.StatusBadRequest, err)
+			return
+		}
 	}
 
 	_, err = fs.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
@@ -180,7 +185,6 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 // curl -X DELETE http://localhost:8888/path/to?recursive=true&ignoreRecursiveError=true
 // curl -X DELETE http://localhost:8888/path/to?recursive=true&skipChunkDeletion=true
 func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
-
 	isRecursive := r.FormValue("recursive") == "true"
 	if !isRecursive && fs.option.recursiveDelete {
 		if r.FormValue("recursive") != "false" {
@@ -195,7 +199,8 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		objectPath = objectPath[0 : len(objectPath)-1]
 	}
 
-	err := fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil)
+	isS3EntryPath := fs.filer.IsS3EntryPath(objectPath)
+	err := fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil, isS3EntryPath)
 	if err != nil {
 		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
 		httpStatus := http.StatusInternalServerError
