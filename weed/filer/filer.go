@@ -87,10 +87,23 @@ func (f *Filer) MaybeBootstrapFromPeers(self pb.ServerAddress, existingNodes []*
 
 	glog.V(0).Infof("bootstrap from %v clientId:%d", earliestNode.Address, f.UniqueFilerId)
 	f.UniqueFilerEpoch++
-	err = pb.FollowMetadata(pb.ServerAddress(earliestNode.Address), f.GrpcDialOption, "bootstrap", f.UniqueFilerId, f.UniqueFilerEpoch, "/", nil,
-		0, snapshotTime.UnixNano(), f.Signature, func(resp *filer_pb.SubscribeMetadataResponse) error {
-			return Replay(f.Store, resp)
-		}, pb.FatalOnError)
+
+	metadataFollowOption := &pb.MetadataFollowOption{
+		ClientName:             "bootstrap",
+		ClientId:               f.UniqueFilerId,
+		ClientEpoch:            f.UniqueFilerEpoch,
+		SelfSignature:          f.Signature,
+		PathPrefix:             "/",
+		AdditionalPathPrefixes: nil,
+		DirectoriesToWatch:     nil,
+		StartTsNs:              snapshotTime.UnixNano(),
+		StopTsNs:               0,
+		EventErrorType:         pb.FatalOnError,
+	}
+
+	err = pb.FollowMetadata(pb.ServerAddress(earliestNode.Address), f.GrpcDialOption, metadataFollowOption, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		return Replay(f.Store, resp)
+	})
 	return
 }
 
