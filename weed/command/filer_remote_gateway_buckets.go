@@ -39,8 +39,21 @@ func (option *RemoteGatewayOptions) followBucketUpdatesAndUploadToRemote(filerSo
 	lastOffsetTs := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), option.bucketsDir, *option.timeAgo)
 
 	option.clientEpoch++
-	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, "filer.remote.sync", option.clientId, option.clientEpoch,
-		option.bucketsDir, []string{filer.DirectoryEtcRemote}, lastOffsetTs.UnixNano(), 0, 0, processEventFnWithOffset, pb.TrivialOnError)
+
+	metadataFollowOption := &pb.MetadataFollowOption{
+		ClientName:             "filer.remote.sync",
+		ClientId:               option.clientId,
+		ClientEpoch:            option.clientEpoch,
+		SelfSignature:          0,
+		PathPrefix:             option.bucketsDir,
+		AdditionalPathPrefixes: []string{filer.DirectoryEtcRemote},
+		DirectoriesToWatch:     nil,
+		StartTsNs:              lastOffsetTs.UnixNano(),
+		StopTsNs:               0,
+		EventErrorType:         pb.TrivialOnError,
+	}
+
+	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)
 }
 
 func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *source.FilerSource) (pb.ProcessMetadataFunc, error) {

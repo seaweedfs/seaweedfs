@@ -138,6 +138,19 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		}()
 	}
 
-	return pb.FollowMetadata(sourceFiler, grpcDialOption, "backup_"+dataSink.GetName(), clientId, clientEpoch, sourcePath, nil, startFrom.UnixNano(), 0, 0, processEventFnWithOffset, pb.TrivialOnError)
+	metadataFollowOption := &pb.MetadataFollowOption{
+		ClientName:             "backup_" + dataSink.GetName(),
+		ClientId:               clientId,
+		ClientEpoch:            clientEpoch,
+		SelfSignature:          0,
+		PathPrefix:             sourcePath,
+		AdditionalPathPrefixes: nil,
+		DirectoriesToWatch:     nil,
+		StartTsNs:              startFrom.UnixNano(),
+		StopTsNs:               0,
+		EventErrorType:         pb.TrivialOnError,
+	}
+
+	return pb.FollowMetadata(sourceFiler, grpcDialOption, metadataFollowOption, processEventFnWithOffset)
 
 }

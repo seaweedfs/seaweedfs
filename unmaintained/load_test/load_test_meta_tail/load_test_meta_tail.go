@@ -79,7 +79,19 @@ func startGenerateMetadata() {
 
 func startSubscribeMetadata(eachEntryFunc func(event *filer_pb.SubscribeMetadataResponse) error) {
 
-	tailErr := pb.FollowMetadata(pb.ServerAddress(*tailFiler), grpc.WithTransportCredentials(insecure.NewCredentials()), "tail", 0, 0, *dir, nil, 0, 0, 0, eachEntryFunc, pb.TrivialOnError)
+	metadataFollowOption := &pb.MetadataFollowOption{
+		ClientName:             "tail",
+		ClientId:               0,
+		ClientEpoch:            0,
+		SelfSignature:          0,
+		PathPrefix:             *dir,
+		AdditionalPathPrefixes: nil,
+		DirectoriesToWatch:     nil,
+		StartTsNs:              0,
+		StopTsNs:               0,
+		EventErrorType:         pb.TrivialOnError,
+	}
+	tailErr := pb.FollowMetadata(pb.ServerAddress(*tailFiler), grpc.WithTransportCredentials(insecure.NewCredentials()), metadataFollowOption, eachEntryFunc)
 
 	if tailErr != nil {
 		fmt.Printf("tail %s: %v\n", *tailFiler, tailErr)
