@@ -140,3 +140,16 @@ func maxUint64(x, y uint64) uint64 {
 	}
 	return y
 }
+
+// When Entry.IsDirectory() is true, pass the Mime! = "" to determine whether it is an object file,
+// so if the mime was empty before, the default value is set to "application/octet-stream"
+func (e *Entry) ensureMimeForS3Entry(mime string) {
+	if e.Mime != "" {
+		return
+	}
+	if mime != "" {
+		e.Mime = mime
+	} else {
+		e.Mime = "application/octet-stream"
+	}
+}

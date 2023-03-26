@@ -3,6 +3,7 @@ package s3api
 import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"modernc.org/strutil"
@@ -41,7 +42,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		fullPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
 		dir, name := fullPath.DirAndName()
 		entry, err := s3a.getEntry(dir, name)
-		if err != nil || !entry.IsS3File() {
+		if err != nil || !IsS3FileEntry(entry) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 			return
 		}
@@ -70,7 +71,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 	srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
 	dir, name := srcPath.DirAndName()
-	if entry, err := s3a.getEntry(dir, name); err != nil || !entry.IsS3File() {
+	if entry, err := s3a.getEntry(dir, name); err != nil || !IsS3FileEntry(entry) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
@@ -307,4 +308,8 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 	}
 
 	return
+}
+
+func IsS3FileEntry(entry *filer_pb.Entry) bool {
+	return !entry.IsDirectory || (entry.Attributes != nil && entry.Attributes.Mime != "")
 }

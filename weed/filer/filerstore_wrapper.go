@@ -141,10 +141,6 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 	}()
 
 	filer_pb.BeforeEntrySerialization(entry.GetChunks())
-	if entry.Mime == "application/octet-stream" {
-		entry.Mime = ""
-	}
-
 	if err := fsw.handleUpdateToHardLinks(ctx, entry); err != nil {
 		return err
 	}

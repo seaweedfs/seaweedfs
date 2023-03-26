@@ -94,33 +94,19 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	defer dataReader.Close()
 
 	objectContentType := r.Header.Get("Content-Type")
-	if strings.HasSuffix(object, "/") && r.ContentLength == 0 {
-		if err := s3a.mkdir(
-			s3a.option.BucketsPath, bucket+strings.TrimSuffix(object, "/"),
-			func(entry *filer_pb.Entry) {
-				if objectContentType == "" {
-					objectContentType = "httpd/unix-directory"
-				}
-				entry.Attributes.Mime = objectContentType
-			}); err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
-		}
-	} else {
-		uploadUrl := s3a.toFilerUrl(bucket, object)
-		if objectContentType == "" {
-			dataReader = mimeDetect(r, dataReader)
-		}
-
-		etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, "")
-
-		if errCode != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, r, errCode)
-			return
-		}
-
-		setEtag(w, etag)
+	uploadUrl := s3a.toFilerUrl(bucket, object)
+	if objectContentType == "" {
+		dataReader = mimeDetect(r, dataReader)
 	}
+
+	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, "")
+
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	setEtag(w, etag)
 
 	writeSuccessResponseEmpty(w, r)
 }
@@ -129,9 +115,6 @@ func urlEscapeObject(object string) string {
 	t := urlPathEscape(removeDuplicateSlashes(object))
 	if !strings.HasPrefix(t, "/") {
 		t = "/" + t
-	}
-	if t != "/" && strings.HasSuffix(t, "/") {
-		return strings.Trim(t, "/")
 	}
 	return t
 }
@@ -161,7 +144,12 @@ func removeDuplicateSlashes(object string) string {
 			isLastSlash = false
 		}
 	}
-	return result.String()
+
+	r := result.String()
+	if r != "/" && strings.HasSuffix(r, "/") {
+		return r[:len(r)-1]
+	}
+	return r
 }
 
 func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
@@ -175,11 +163,6 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
-
-	if strings.HasSuffix(r.URL.Path, "/") {
-		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
-		return
-	}
 
 	destUrl := s3a.toFilerUrl(bucket, object)
 
