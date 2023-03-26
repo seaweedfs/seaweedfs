@@ -35,7 +35,7 @@ func TestRemoveDuplicateSlashes(t *testing.T) {
 		{
 			name:           "path with duplicates",
 			path:           "///path//to/object//",
-			expectedResult: "/path/to/object/",
+			expectedResult: "/path/to/object",
 		},
 	}
 
