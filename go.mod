@@ -38,7 +38,7 @@ require (
 	github.com/gocql/gocql v1.3.2
 	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
-	github.com/golang/protobuf v1.5.2
+	github.com/golang/protobuf v1.5.3
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/btree v1.1.2
 	github.com/google/go-cmp v0.5.9 // indirect
