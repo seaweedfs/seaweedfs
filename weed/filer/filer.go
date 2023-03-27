@@ -314,6 +314,7 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry, updateM
 		if oldEntry.IsDirectory() && !entry.IsDirectory() {
 			if updateModeAndMime {
 				entry.Mode |= oldEntry.Mode
+				entry.ensureMimeForS3Entry("")
 			} else {
 				glog.Errorf("existing %s is a directory", oldEntry.FullPath)
 				return fmt.Errorf("existing %s is a directory", oldEntry.FullPath)
@@ -322,7 +323,7 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry, updateM
 		if !oldEntry.IsDirectory() && entry.IsDirectory() {
 			if updateModeAndMime {
 				entry.Mode |= oldEntry.Mode
-				entry.Mime = oldEntry.Mime
+				entry.ensureMimeForS3Entry(oldEntry.Mime)
 			} else {
 				glog.Errorf("existing %s is a file", oldEntry.FullPath)
 				return fmt.Errorf("existing %s is a file", oldEntry.FullPath)
