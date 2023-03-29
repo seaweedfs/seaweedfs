@@ -103,6 +103,9 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 }
 
 func (fh *FileHandle) ReleaseHandle() {
+	fh.Lock()
+	defer fh.Unlock()
+
 	fh.entryLock.Lock()
 	defer fh.entryLock.Unlock()
 
