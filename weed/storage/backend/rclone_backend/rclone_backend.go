@@ -1,6 +1,7 @@
 package rclone_backend
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/rclone/rclone/fs/config/configfile"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,15 +45,22 @@ func (factory *RcloneBackendFactory) BuildStorage(configuration backend.StringPr
 }
 
 type RcloneBackendStorage struct {
-	id         string
-	remoteName string
-	fs         fs.Fs
+	id              string
+	remoteName      string
+	keyTemplate     *template.Template
+	keyTemplateText string
+	fs              fs.Fs
 }
 
 func newRcloneBackendStorage(configuration backend.StringProperties, configPrefix string, id string) (s *RcloneBackendStorage, err error) {
 	s = &RcloneBackendStorage{}
 	s.id = id
 	s.remoteName = configuration.GetString(configPrefix + "remote_name")
+	s.keyTemplateText = configuration.GetString(configPrefix + "key_template")
+	s.keyTemplate, err = template.New("keyTemplate").Parse(s.keyTemplateText)
+	if err != nil {
+		return
+	}
 
 	configfile.Install()
 	ctx := context.TODO()
@@ -68,7 +77,23 @@ func newRcloneBackendStorage(configuration backend.StringProperties, configPrefi
 func (s *RcloneBackendStorage) ToProperties() map[string]string {
 	m := make(map[string]string)
 	m["remote_name"] = s.remoteName
+	if len(s.keyTemplateText) > 0 {
+		m["key_template"] = s.keyTemplateText
+	}
 	return m
+}
+
+func formatKey(key string, storage RcloneBackendStorage) (fKey string, err error) {
+	var b bytes.Buffer
+	if len(storage.keyTemplateText) == 0 {
+		fKey = key
+	} else {
+		err = storage.keyTemplate.Execute(&b, key)
+		if err == nil {
+			fKey = b.String()
+		}
+	}
+	return
 }
 
 func (s *RcloneBackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb.VolumeInfo) backend.BackendStorageFile {
@@ -86,8 +111,16 @@ func (s *RcloneBackendStorage) NewStorageFile(key string, tierInfo *volume_serve
 }
 
 func (s *RcloneBackendStorage) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
-	randomUuid, _ := uuid.NewRandom()
+	randomUuid, err := uuid.NewRandom()
+	if err != nil {
+		return key, 0, err
+	}
 	key = randomUuid.String()
+
+	key, err = formatKey(key, *s)
+	if err != nil {
+		return key, 0, err
+	}
 
 	glog.V(1).Infof("copy dat file of %s to remote rclone.%s as %s", f.Name(), s.id, key)
 
