@@ -316,7 +316,7 @@ func processEachCmd(reg *regexp.Regexp, line string, commandEnv *shell.CommandEn
 	for i := range args {
 		args[i] = strings.Trim(string(cmds[1+i]), "\"'")
 	}
-	cmd := strings.ToLower(cmds[0])
+	cmd := cmds[0]
 
 	for _, c := range shell.Commands {
 		if c.Name() == cmd {

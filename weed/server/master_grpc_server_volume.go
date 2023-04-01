@@ -309,12 +309,19 @@ func (ms *MasterServer) VolumeMarkReadonly(ctx context.Context, req *master_pb.V
 	replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(req.ReplicaPlacement))
 	vl := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, needle.LoadTTLFromUint32(req.Ttl), types.ToDiskType(req.DiskType))
 	dataNodes := ms.Topo.Lookup(req.Collection, needle.VolumeId(req.VolumeId))
+	if req.IsReadonly {
+		for _, dn := range dataNodes {
+			if dn.Ip == req.Ip && dn.Port == int(req.Port) {
+
+			}
+		}
+	}
 	for _, dn := range dataNodes {
 		if dn.Ip == req.Ip && dn.Port == int(req.Port) {
 			if req.IsReadonly {
-				vl.SetVolumeUnavailable(dn, needle.VolumeId(req.VolumeId))
+				vl.SetVolumeReadOnly(dn, needle.VolumeId(req.VolumeId))
 			} else {
-				vl.SetVolumeAvailable(dn, needle.VolumeId(req.VolumeId), false)
+				vl.SetVolumeWritable(dn, needle.VolumeId(req.VolumeId))
 			}
 		}
 	}
