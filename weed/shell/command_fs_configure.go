@@ -105,7 +105,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 		// check ttl
 		if *ttl != "" {
-			regex := "^[1-9][0-9]*[mhdwMy]$"
+			regex := "^(0*(1\\d{1,2}|2([0-4]\\d|5[0-5])))?[mhdwMy]$"
 			match, _ := regexp.MatchString(regex, *ttl)
 
 			if !match {
