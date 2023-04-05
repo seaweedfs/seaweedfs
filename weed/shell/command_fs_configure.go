@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -51,7 +52,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	locationPrefix := fsConfigureCommand.String("locationPrefix", "", "path prefix, required to update the path-specific configuration")
 	collection := fsConfigureCommand.String("collection", "", "assign writes to this collection")
 	replication := fsConfigureCommand.String("replication", "", "assign writes with this replication")
-	ttl := fsConfigureCommand.String("ttl", "", "assign writes with this ttl")
+	ttl := fsConfigureCommand.String("ttl", "", "assign writes with this ttl (e.g., 1m, 1h, 1d, 1w, 1y)")
 	diskType := fsConfigureCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes")
 	isReadOnly := fsConfigureCommand.Bool("readOnly", false, "disable writes")
@@ -99,6 +100,16 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			}
 			if *volumeGrowthCount%rp.GetCopyCount() != 0 {
 				return fmt.Errorf("volumeGrowthCount %d should be divided by replication copy count %d", *volumeGrowthCount, rp.GetCopyCount())
+			}
+		}
+
+		// check ttl
+		if *ttl != "" {
+			regex := "^[1-9][0-9]*[mhdwMy]$"
+			match, _ := regexp.MatchString(regex, *ttl)
+
+			if !match {
+				return fmt.Errorf("ttl should be of the following format (e.g., 1m, 1h, 1d, 1w, 1y)")
 			}
 		}
 
