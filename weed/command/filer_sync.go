@@ -287,8 +287,20 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 		return setOffset(grpcDialOption, targetFiler, getSignaturePrefixByPath(sourcePath), sourceFilerSignature, processor.processedTsWatermark)
 	})
 
-	return pb.FollowMetadata(sourceFiler, grpcDialOption, clientName, clientId, clientEpoch,
-		sourcePath, nil, sourceFilerOffsetTsNs, 0, targetFilerSignature, processEventFnWithOffset, pb.RetryForeverOnError)
+	metadataFollowOption := &pb.MetadataFollowOption{
+		ClientName:             clientName,
+		ClientId:               clientId,
+		ClientEpoch:            clientEpoch,
+		SelfSignature:          targetFilerSignature,
+		PathPrefix:             sourcePath,
+		AdditionalPathPrefixes: nil,
+		DirectoriesToWatch:     nil,
+		StartTsNs:              sourceFilerOffsetTsNs,
+		StopTsNs:               0,
+		EventErrorType:         pb.RetryForeverOnError,
+	}
+
+	return pb.FollowMetadata(sourceFiler, grpcDialOption, metadataFollowOption, processEventFnWithOffset)
 
 }
 

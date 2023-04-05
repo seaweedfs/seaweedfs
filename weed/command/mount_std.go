@@ -182,7 +182,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		DirectMount:              true,
 		DirectMountFlags:         0,
 		//SyncRead:                 false, // set to false to enable the FUSE_CAP_ASYNC_READ capability
-		//EnableAcl:                true,
+		EnableAcl: true,
 	}
 	if *option.nonempty {
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "nonempty")

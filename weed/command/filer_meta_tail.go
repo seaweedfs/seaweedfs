@@ -107,16 +107,28 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 		untilTsNs = time.Now().Add(-*tailStop).UnixNano()
 	}
 
-	tailErr := pb.FollowMetadata(pb.ServerAddress(*tailFiler), grpcDialOption, "tail", clientId, 0, *tailTarget, nil,
-		time.Now().Add(-*tailStart).UnixNano(), untilTsNs, 0, func(resp *filer_pb.SubscribeMetadataResponse) error {
-			if !shouldPrint(resp) {
-				return nil
-			}
-			if err := eachEntryFunc(resp); err != nil {
-				return err
-			}
+	metadataFollowOption := &pb.MetadataFollowOption{
+		ClientName:             "tail",
+		ClientId:               clientId,
+		ClientEpoch:            0,
+		SelfSignature:          0,
+		PathPrefix:             *tailTarget,
+		AdditionalPathPrefixes: nil,
+		DirectoriesToWatch:     nil,
+		StartTsNs:              time.Now().Add(-*tailStart).UnixNano(),
+		StopTsNs:               untilTsNs,
+		EventErrorType:         pb.TrivialOnError,
+	}
+
+	tailErr := pb.FollowMetadata(pb.ServerAddress(*tailFiler), grpcDialOption, metadataFollowOption, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if !shouldPrint(resp) {
 			return nil
-		}, pb.TrivialOnError)
+		}
+		if err := eachEntryFunc(resp); err != nil {
+			return err
+		}
+		return nil
+	})
 
 	if tailErr != nil {
 		fmt.Printf("tail %s: %v\n", *tailFiler, tailErr)

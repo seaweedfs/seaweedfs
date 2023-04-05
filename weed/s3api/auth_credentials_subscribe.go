@@ -34,9 +34,21 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 	}
 
 	var clientEpoch int32
+	metadataFollowOption := &pb.MetadataFollowOption{
+		ClientName:             clientName,
+		ClientId:               s3a.randomClientId,
+		ClientEpoch:            clientEpoch,
+		SelfSignature:          0,
+		PathPrefix:             prefix,
+		AdditionalPathPrefixes: nil,
+		DirectoriesToWatch:     directoriesToWatch,
+		StartTsNs:              lastTsNs,
+		StopTsNs:               0,
+		EventErrorType:         pb.FatalOnError,
+	}
 	util.RetryForever("followIamChanges", func() error {
 		clientEpoch++
-		return pb.WithFilerClientFollowMetadata(s3a, clientName, s3a.randomClientId, clientEpoch, prefix, directoriesToWatch, &lastTsNs, 0, 0, processEventFn, pb.FatalOnError)
+		return pb.WithFilerClientFollowMetadata(s3a, metadataFollowOption, processEventFn)
 	}, func(err error) bool {
 		glog.V(0).Infof("iam follow metadata changes: %v", err)
 		return true
@@ -65,7 +77,7 @@ func (s3a *S3ApiServer) onCircuitBreakerConfigUpdate(dir, filename string, conte
 	return nil
 }
 
-//reload bucket metadata
+// reload bucket metadata
 func (s3a *S3ApiServer) onBucketMetadataChange(dir string, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) error {
 	if dir == s3a.option.BucketsPath {
 		if newEntry != nil {

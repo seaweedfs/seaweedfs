@@ -125,7 +125,8 @@ func (fc *FilerConf) DeleteLocationConf(locationPrefix string) {
 		if string(key) == locationPrefix {
 			return true
 		}
-		rules.Put(key, value)
+		key = bytes.Clone(key)
+		_ = rules.Put(key, value)
 		return true
 	})
 	fc.rules = rules
