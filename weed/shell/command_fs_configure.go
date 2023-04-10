@@ -105,11 +105,11 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 
 		// check ttl
 		if *ttl != "" {
-			regex := "^[1-9][0-9]*[mhdwMy]$"
+			regex := "^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)[mhdwMy]$"
 			match, _ := regexp.MatchString(regex, *ttl)
 
 			if !match {
-				return fmt.Errorf("ttl should be of the following format (e.g., 1m, 1h, 1d, 1w, 1y)")
+				return fmt.Errorf("ttl should be of the following format [1 to 255][unit] (e.g., 5m, 2h, 180d, 1w, 2y)")
 			}
 		}
 
