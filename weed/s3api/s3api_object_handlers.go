@@ -99,7 +99,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			s3a.option.BucketsPath, bucket+strings.TrimSuffix(object, "/"),
 			func(entry *filer_pb.Entry) {
 				if objectContentType == "" {
-					objectContentType = "httpd/unix-directory"
+					objectContentType = s3_constants.FolderMimeType
 				}
 				entry.Attributes.Mime = objectContentType
 			}); err != nil {
