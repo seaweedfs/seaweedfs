@@ -127,7 +127,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set(s3_constants.X_SeaweedFS_Header_Directory_Key, "true")
 	}
 
-	if isForDirectory {
+	if isForDirectory && entry.Attr.Mime != s3_constants.FolderMimeType {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
