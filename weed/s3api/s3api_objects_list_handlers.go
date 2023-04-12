@@ -353,7 +353,9 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		nextMarker = entry.Name
 		if cursor.prefixEndsOnDelimiter {
 			if entry.Name == prefix && entry.IsDirectory {
-				cursor.prefixEndsOnDelimiter = false
+				if delimiter != "/" {
+					cursor.prefixEndsOnDelimiter = false
+				}
 			} else {
 				continue
 			}
@@ -363,8 +365,12 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			if entry.Name == s3_constants.MultipartUploadsFolder { // FIXME no need to apply to all directories. this extra also affects maxKeys
 				continue
 			}
-			if delimiter != "/" {
-				eachEntryFn(dir, entry)
+			if delimiter != "/" || cursor.prefixEndsOnDelimiter {
+				if cursor.prefixEndsOnDelimiter {
+					cursor.prefixEndsOnDelimiter = false
+				} else {
+					eachEntryFn(dir, entry)
+				}
 				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, eachEntryFn)
 				if subErr != nil {
 					err = fmt.Errorf("doListFilerEntries2: %v", subErr)
@@ -390,6 +396,9 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		} else {
 			eachEntryFn(dir, entry)
 			// glog.V(4).Infof("List File Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
+		}
+		if cursor.prefixEndsOnDelimiter {
+			cursor.prefixEndsOnDelimiter = false
 		}
 	}
 	return
