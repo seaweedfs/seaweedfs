@@ -325,7 +325,6 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	}
 	if cursor.prefixEndsOnDelimiter {
 		request.Limit = uint32(1)
-		cursor.prefixEndsOnDelimiter = false
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -352,6 +351,13 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		}
 		entry := resp.Entry
 		nextMarker = entry.Name
+		if cursor.prefixEndsOnDelimiter {
+			if entry.Name == prefix && entry.IsDirectory {
+				cursor.prefixEndsOnDelimiter = false
+			} else {
+				continue
+			}
+		}
 		if entry.IsDirectory {
 			// glog.V(4).Infof("List Dir Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
 			if entry.Name == s3_constants.MultipartUploadsFolder { // FIXME no need to apply to all directories. this extra also affects maxKeys
