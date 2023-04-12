@@ -20,6 +20,12 @@ spec:
     port: {{ .Values.filer.grpcPort }}
     targetPort: {{ .Values.filer.grpcPort }}
     protocol: TCP
+  {{- if .Values.filer.s3.enabled }}
+  - name: "swfs-s3"
+    port: {{ .Values.filer.s3.port }}
+    targetPort: {{ .Values.filer.s3.port }}
+    protocol: TCP
+  {{- end }}
   {{- if .Values.filer.metricsPort }}
   - name: "metrics"
     port: {{ .Values.filer.metricsPort }}
