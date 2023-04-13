@@ -27,7 +27,7 @@ func (interval *Interval[T]) Size() int64 {
 type IntervalList[T IntervalValue] struct {
 	head *Interval[T]
 	tail *Interval[T]
-	Lock sync.Mutex
+	Lock sync.RWMutex
 }
 
 func NewIntervalList[T IntervalValue]() *IntervalList[T] {
@@ -248,8 +248,8 @@ func (list *IntervalList[T]) overlayInterval(interval *Interval[T]) {
 }
 
 func (list *IntervalList[T]) Len() int {
-	list.Lock.Lock()
-	defer list.Lock.Unlock()
+	list.Lock.RLock()
+	defer list.Lock.RUnlock()
 
 	var count int
 	for t := list.head; t != nil; t = t.Next {

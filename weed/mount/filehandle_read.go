@@ -23,8 +23,8 @@ func (fh *FileHandle) readFromDirtyPages(buff []byte, startOffset int64, tsNs in
 }
 
 func (fh *FileHandle) readFromChunks(buff []byte, offset int64) (int64, int64, error) {
-	fh.entryLock.Lock()
-	defer fh.entryLock.Unlock()
+	fh.entryLock.RLock()
+	defer fh.entryLock.RUnlock()
 
 	fileFullPath := fh.FullPath()
 
