@@ -4,7 +4,7 @@ go 1.20
 
 require (
 	cloud.google.com/go v0.110.0 // indirect
-	cloud.google.com/go/pubsub v1.28.0
+	cloud.google.com/go/pubsub v1.30.0
 	cloud.google.com/go/storage v1.30.1
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
@@ -62,7 +62,7 @@ require (
 	github.com/klauspost/reedsolomon v1.11.7
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.7
-	github.com/linxGnu/grocksdb v1.7.15
+	github.com/linxGnu/grocksdb v1.7.16
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-ieproxy v0.0.9 // indirect
@@ -110,22 +110,22 @@ require (
 	go.mongodb.org/mongo-driver v1.11.3
 	go.opencensus.io v0.24.0 // indirect
 	gocloud.dev v0.29.0
-	gocloud.dev/pubsub/natspubsub v0.28.0
+	gocloud.dev/pubsub/natspubsub v0.29.0
 	gocloud.dev/pubsub/rabbitpubsub v0.29.0
 	golang.org/x/crypto v0.6.0 // indirect
 	golang.org/x/exp v0.0.0-20230124195608-d38c7dcee874
 	golang.org/x/image v0.6.0
-	golang.org/x/net v0.8.0
+	golang.org/x/net v0.9.0
 	golang.org/x/oauth2 v0.6.0 // indirect
-	golang.org/x/sys v0.6.0
-	golang.org/x/text v0.8.0 // indirect
-	golang.org/x/tools v0.7.0
+	golang.org/x/sys v0.7.0
+	golang.org/x/text v0.9.0 // indirect
+	golang.org/x/tools v0.8.0
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/api v0.114.0
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20230320184635-7606e756e683 // indirect
-	google.golang.org/grpc v1.53.0
-	google.golang.org/protobuf v1.29.1
+	google.golang.org/grpc v1.54.0
+	google.golang.org/protobuf v1.30.0
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	modernc.org/b v1.0.0 // indirect
 	modernc.org/cc/v3 v3.40.0 // indirect
@@ -134,7 +134,7 @@ require (
 	modernc.org/mathutil v1.5.0 // indirect
 	modernc.org/memory v1.5.0 // indirect
 	modernc.org/opt v0.1.3 // indirect
-	modernc.org/sqlite v1.21.0
+	modernc.org/sqlite v1.21.1
 	modernc.org/strutil v1.1.3
 	modernc.org/token v1.0.1 // indirect
 )
@@ -148,8 +148,8 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.2.0
 	github.com/hashicorp/raft v1.4.0
 	github.com/hashicorp/raft-boltdb/v2 v2.2.2
-	github.com/rabbitmq/amqp091-go v1.7.0
-	github.com/schollz/progressbar/v3 v3.13.0
+	github.com/rabbitmq/amqp091-go v1.8.0
+	github.com/schollz/progressbar/v3 v3.13.1
 	github.com/tikv/client-go/v2 v2.0.6
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.43.0
@@ -201,7 +201,7 @@ require (
 	github.com/mattn/go-sqlite3 v2.0.1+incompatible // indirect
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/montanaflynn/stats v0.6.6 // indirect
-	github.com/nats-io/nats.go v1.20.0 // indirect
+	github.com/nats-io/nats.go v1.23.0 // indirect
 	github.com/nats-io/nkeys v0.3.0 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
@@ -230,9 +230,9 @@ require (
 	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
-	golang.org/x/mod v0.9.0 // indirect
+	golang.org/x/mod v0.10.0 // indirect
 	golang.org/x/sync v0.1.0 // indirect
-	golang.org/x/term v0.6.0 // indirect
+	golang.org/x/term v0.7.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect

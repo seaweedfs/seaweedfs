@@ -15,8 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/exp/slices"
-
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/images"
@@ -120,7 +118,8 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			writeJsonQuiet(w, r, http.StatusOK, entry)
 			return
 		}
-		if slices.Contains([]string{"httpd/unix-directory", ""}, entry.Attr.Mime) {
+		if entry.Attr.Mime == "" || (entry.Attr.Mime == s3_constants.FolderMimeType && r.Header.Get(s3_constants.AmzIdentityId) == "") {
+			// return index of directory for non s3 gateway
 			fs.listDirectoryHandler(w, r)
 			return
 		}
@@ -128,7 +127,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set(s3_constants.X_SeaweedFS_Header_Directory_Key, "true")
 	}
 
-	if isForDirectory {
+	if isForDirectory && entry.Attr.Mime != s3_constants.FolderMimeType {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}

@@ -94,12 +94,15 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	defer dataReader.Close()
 
 	objectContentType := r.Header.Get("Content-Type")
-	if strings.HasSuffix(object, "/") && r.ContentLength == 0 {
+	if strings.HasSuffix(object, "/") && r.ContentLength <= 1024 {
 		if err := s3a.mkdir(
 			s3a.option.BucketsPath, bucket+strings.TrimSuffix(object, "/"),
 			func(entry *filer_pb.Entry) {
 				if objectContentType == "" {
-					objectContentType = "httpd/unix-directory"
+					objectContentType = s3_constants.FolderMimeType
+				}
+				if r.ContentLength > 0 {
+					entry.Content, _ = io.ReadAll(r.Body)
 				}
 				entry.Attributes.Mime = objectContentType
 			}); err != nil {

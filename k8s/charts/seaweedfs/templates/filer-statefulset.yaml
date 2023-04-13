@@ -175,7 +175,7 @@ spec:
             - mountPath: /etc/sw
               name: config-users
               readOnly: true
-            {{- if .Values.filer.enablePVC }}
+            {{- if (or .Values.filer.enablePVC (or (eq .Values.filer.data.type "hostPath") (eq .Values.filer.data.type "persistentVolumeClaim"))) }}
             - name: data-filer
               mountPath: /data
             {{- end }}
