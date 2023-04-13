@@ -16,6 +16,7 @@ import (
 
 	_ "github.com/rclone/rclone/backend/all"
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/accounting"
 	"github.com/rclone/rclone/fs/object"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -64,6 +65,8 @@ func newRcloneBackendStorage(configuration backend.StringProperties, configPrefi
 
 	configfile.Install()
 	ctx := context.TODO()
+	accounting.Start(ctx)
+
 	fsPath := fmt.Sprintf("%s:", s.remoteName)
 	s.fs, err = fs.NewFs(ctx, fsPath)
 	if err != nil {
