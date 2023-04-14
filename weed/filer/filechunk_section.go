@@ -71,11 +71,6 @@ func (section *FileChunkSection) setupForRead(group *ChunkGroup, fileSize int64)
 	section.lock.Lock()
 	defer section.lock.Unlock()
 
-	if section.prepare {
-		section.reader.fileSize = fileSize
-		return
-	}
-
 	if section.visibleIntervals == nil {
 		section.visibleIntervals = readResolvedChunks(section.chunks, int64(section.sectionIndex)*SectionSize, (int64(section.sectionIndex)+1)*SectionSize)
 		section.chunks, _ = SeparateGarbageChunks(section.visibleIntervals, section.chunks)
