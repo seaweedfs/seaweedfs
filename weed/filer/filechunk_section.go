@@ -62,7 +62,6 @@ func removeGarbageChunks(section *FileChunkSection, garbageFileIds map[string]st
 }
 
 func (section *FileChunkSection) setupForRead(group *ChunkGroup, fileSize int64) {
-
 	if section.isPrepared {
 		section.reader.fileSize = fileSize
 		return
@@ -70,6 +69,11 @@ func (section *FileChunkSection) setupForRead(group *ChunkGroup, fileSize int64)
 
 	section.lock.Lock()
 	defer section.lock.Unlock()
+
+	if section.isPrepared {
+		section.reader.fileSize = fileSize
+		return
+	}
 
 	if section.visibleIntervals == nil {
 		section.visibleIntervals = readResolvedChunks(section.chunks, int64(section.sectionIndex)*SectionSize, (int64(section.sectionIndex)+1)*SectionSize)
