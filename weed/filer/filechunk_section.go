@@ -14,7 +14,7 @@ type FileChunkSection struct {
 	chunkViews       *IntervalList[*ChunkView]
 	reader           *ChunkReadAt
 	lock             sync.RWMutex
-	prepare          bool
+	isPrepared       bool
 }
 
 func NewFileChunkSection(si SectionIndex) *FileChunkSection {
@@ -63,7 +63,7 @@ func removeGarbageChunks(section *FileChunkSection, garbageFileIds map[string]st
 
 func (section *FileChunkSection) setupForRead(group *ChunkGroup, fileSize int64) {
 
-	if section.prepare {
+	if section.isPrepared {
 		section.reader.fileSize = fileSize
 		return
 	}
@@ -87,7 +87,7 @@ func (section *FileChunkSection) setupForRead(group *ChunkGroup, fileSize int64)
 		section.reader = NewChunkReaderAtFromClient(group.readerCache, section.chunkViews, min(int64(section.sectionIndex+1)*SectionSize, fileSize))
 	}
 
-	section.prepare = true
+	section.isPrepared = true
 	section.reader.fileSize = fileSize
 }
 
