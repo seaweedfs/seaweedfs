@@ -41,8 +41,8 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 		return nil, fuse.ENOENT
 	}
 
-	fh.Lock()
-	defer fh.Unlock()
+	fh.RLock()
+	defer fh.RUnlock()
 
 	offset := int64(in.Offset)
 	totalRead, err := readDataByFileHandle(buff, fh, offset)

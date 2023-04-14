@@ -17,7 +17,7 @@ type FileHandle struct {
 	fh              FileHandleId
 	counter         int64
 	entry           *LockedEntry
-	entryLock       sync.Mutex
+	entryLock       sync.RWMutex
 	entryChunkGroup *filer.ChunkGroup
 	inode           uint64
 	wfs             *WFS
@@ -28,7 +28,7 @@ type FileHandle struct {
 	reader        *filer.ChunkReadAt
 	contentType   string
 	handle        uint64
-	sync.Mutex
+	sync.RWMutex
 
 	isDeleted bool
 
@@ -103,6 +103,9 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 }
 
 func (fh *FileHandle) ReleaseHandle() {
+	fh.Lock()
+	defer fh.Unlock()
+
 	fh.entryLock.Lock()
 	defer fh.entryLock.Unlock()
 
