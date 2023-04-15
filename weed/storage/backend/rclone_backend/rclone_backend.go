@@ -38,7 +38,7 @@ type RcloneBackendFactory struct {
 }
 
 func (factory *RcloneBackendFactory) StorageType() backend.StorageType {
-	return backend.StorageType("rclone")
+	return "rclone"
 }
 
 func (factory *RcloneBackendFactory) BuildStorage(configuration backend.StringProperties, configPrefix string, id string) (backend.BackendStorage, error) {
