@@ -24,11 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 )
 
-// TODO
-// 1. Implement progress for {download,upload}ViaRclone functions.
-//      See <https://stackoverflow.com/questions/22421375/how-to-print-the-bytes-while-the-file-is-being-downloaded-golang>
-//      for ideas.
-// 2. Add info logging for rclone related operations
+// TODO add logging for rclone related operations
 
 func init() {
 	backend.BackendStorageFactories["rclone"] = &RcloneBackendFactory{}
@@ -136,7 +132,6 @@ func (s *RcloneBackendStorage) CopyFile(f *os.File, fn func(progressed int64, pe
 }
 
 func uploadViaRclone(rfs fs.Fs, filename string, key string, fn func(progressed int64, percentage float32) error) (fileSize int64, err error) {
-
 	ctx := context.TODO()
 
 	file, err := os.Open(filename)
@@ -157,16 +152,21 @@ func uploadViaRclone(rfs fs.Fs, filename string, key string, fn func(progressed 
 	}
 
 	info := object.NewStaticObjectInfo(key, stat.ModTime(), stat.Size(), true, nil, rfs)
-	o, err := rfs.Put(ctx, file, info)
+
+	tr := accounting.NewStats(ctx).NewTransfer(info)
+	defer tr.Done(ctx, err)
+	acc := tr.Account(ctx, file)
+	pr := ProgressReader{acc: acc, tr: tr, fn: fn}
+
+	obj, err := rfs.Put(ctx, &pr, info)
 	if err != nil {
 		return 0, err
 	}
 
-	return o.Size(), err
+	return obj.Size(), err
 }
 
 func (s *RcloneBackendStorage) DownloadFile(filename string, key string, fn func(progressed int64, percentage float32) error) (size int64, err error) {
-
 	glog.V(1).Infof("download dat file of %s from remote rclone.%s as %s", filename, s.id, key)
 
 	util.Retry("download via Rclone", func() error {
@@ -178,7 +178,6 @@ func (s *RcloneBackendStorage) DownloadFile(filename string, key string, fn func
 }
 
 func downloadViaRclone(fs fs.Fs, filename string, key string, fn func(progressed int64, percentage float32) error) (fileSize int64, err error) {
-
 	ctx := context.TODO()
 
 	obj, err := fs.NewObject(ctx, key)
@@ -206,8 +205,12 @@ func downloadViaRclone(fs fs.Fs, filename string, key string, fn func(progressed
 		}
 	}(file)
 
-	written, err := io.Copy(file, rc)
+	tr := accounting.NewStats(ctx).NewTransfer(obj)
+	defer tr.Done(ctx, err)
+	acc := tr.Account(ctx, rc)
+	pr := ProgressReader{acc: acc, tr: tr, fn: fn}
 
+	written, err := io.Copy(file, &pr)
 	if err != nil {
 		return 0, err
 	}
@@ -216,7 +219,6 @@ func downloadViaRclone(fs fs.Fs, filename string, key string, fn func(progressed
 }
 
 func (s *RcloneBackendStorage) DeleteFile(key string) (err error) {
-
 	glog.V(1).Infof("delete dat file %s from remote", key)
 
 	util.Retry("delete via Rclone", func() error {
@@ -228,7 +230,6 @@ func (s *RcloneBackendStorage) DeleteFile(key string) (err error) {
 }
 
 func deleteViaRclone(fs fs.Fs, key string) (err error) {
-
 	ctx := context.TODO()
 
 	obj, err := fs.NewObject(ctx, key)
@@ -246,7 +247,6 @@ type RcloneBackendStorageFile struct {
 }
 
 func (rcloneBackendStorageFile RcloneBackendStorageFile) ReadAt(p []byte, off int64) (n int, err error) {
-
 	ctx := context.TODO()
 
 	obj, err := rcloneBackendStorageFile.backendStorage.fs.NewObject(ctx, rcloneBackendStorageFile.key)
@@ -284,7 +284,6 @@ func (rcloneBackendStorageFile RcloneBackendStorageFile) Close() error {
 }
 
 func (rcloneBackendStorageFile RcloneBackendStorageFile) GetStat() (datSize int64, modTime time.Time, err error) {
-
 	files := rcloneBackendStorageFile.tierInfo.GetFiles()
 
 	if len(files) == 0 {
