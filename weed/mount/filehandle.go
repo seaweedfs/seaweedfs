@@ -27,7 +27,6 @@ type FileHandle struct {
 	dirtyPages    *PageWriter
 	reader        *filer.ChunkReadAt
 	contentType   string
-	handle        uint64
 	sync.RWMutex
 
 	isDeleted bool
