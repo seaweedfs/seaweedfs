@@ -61,7 +61,7 @@ require (
 	github.com/klauspost/compress v1.15.14 // indirect
 	github.com/klauspost/reedsolomon v1.11.7
 	github.com/kurin/blazer v0.5.3
-	github.com/lib/pq v1.10.7
+	github.com/lib/pq v1.10.8
 	github.com/linxGnu/grocksdb v1.7.16
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
