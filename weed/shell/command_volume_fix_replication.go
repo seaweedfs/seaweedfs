@@ -60,6 +60,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	noDelete := volFixReplicationCommand.Bool("noDelete", false, "Do not delete over-replicated volumes, only fix under-replication")
 	retryCount := volFixReplicationCommand.Int("retry", 5, "how many times to retry")
 	volumesPerStep := volFixReplicationCommand.Int("volumesPerStep", 0, "how many volumes to fix in one cycle")
+	replication := volFixReplicationCommand.String("replication", "", "Customize the number of replicas instead of following the setting when the volume was created, specify this parameter")
 
 	if err = volFixReplicationCommand.Parse(args); err != nil {
 		return nil
@@ -92,6 +93,18 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 
 		// find all under replicated volumes
 		var underReplicatedVolumeIds, overReplicatedVolumeIds, misplacedVolumeIds []uint32
+		if *replication != "" {
+			rep, err := super_block.NewReplicaPlacementFromString(*replication)
+			if err != nil {
+				fmt.Fprintf(writer, "replication not valid: %v\n", err)
+			}
+			repBytes := rep.Byte()
+			for _, replicas := range volumeReplicas {
+				for _, replica := range replicas {
+					replica.info.ReplicaPlacement = uint32(repBytes)
+				}
+			}
+		}
 		for vid, replicas := range volumeReplicas {
 			replica := replicas[0]
 			replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
