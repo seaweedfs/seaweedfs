@@ -96,7 +96,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 	fileFullPath := fh.FullPath()
 	dir, name := fileFullPath.DirAndName()
 	// send the data to the OS
-	glog.V(4).Infof("doFlush %s fh %d", fileFullPath, fh.handle)
+	glog.V(4).Infof("doFlush %s fh %d", fileFullPath, fh.fh)
 
 	if !wfs.IsOverQuota {
 		if err := fh.dirtyPages.FlushData(); err != nil {
@@ -177,7 +177,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 	}
 
 	if err != nil {
-		glog.Errorf("%v fh %d flush: %v", fileFullPath, fh.handle, err)
+		glog.Errorf("%v fh %d flush: %v", fileFullPath, fh.fh, err)
 		return fuse.EIO
 	}
 
