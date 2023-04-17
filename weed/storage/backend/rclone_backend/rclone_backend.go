@@ -7,7 +7,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -70,10 +69,6 @@ func (s *RcloneBackendStorage) ToProperties() map[string]string {
 }
 
 func (s *RcloneBackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb.VolumeInfo) backend.BackendStorageFile {
-	if strings.HasPrefix(key, "/") {
-		key = key[1:]
-	}
-
 	f := &RcloneBackendStorageFile{
 		backendStorage: s,
 		key:            key,
