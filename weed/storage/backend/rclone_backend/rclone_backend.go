@@ -24,8 +24,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 )
 
-// TODO add logging for rclone related operations
-
 func init() {
 	backend.BackendStorageFactories["rclone"] = &RcloneBackendFactory{}
 }
@@ -66,6 +64,7 @@ func newRcloneBackendStorage(configuration backend.StringProperties, configPrefi
 	fsPath := fmt.Sprintf("%s:", s.remoteName)
 	s.fs, err = fs.NewFs(ctx, fsPath)
 	if err != nil {
+		glog.Errorf("failed to instantiate Rclone filesystem: %s", err)
 		return
 	}
 
