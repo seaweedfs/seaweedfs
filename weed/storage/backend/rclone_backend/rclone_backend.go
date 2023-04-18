@@ -23,6 +23,7 @@ import (
 
 func init() {
 	backend.BackendStorageFactories["rclone"] = &RcloneBackendFactory{}
+	configfile.Install()
 }
 
 type RcloneBackendFactory struct {
@@ -47,7 +48,6 @@ func newRcloneBackendStorage(configuration backend.StringProperties, configPrefi
 	s.id = id
 	s.remoteName = configuration.GetString(configPrefix + "remote_name")
 
-	configfile.Install()
 	ctx := context.TODO()
 	accounting.Start(ctx)
 
