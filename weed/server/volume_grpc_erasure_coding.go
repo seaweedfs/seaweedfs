@@ -419,7 +419,7 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		return nil, fmt.Errorf("existing collection:%v unexpected input: %v", v.Collection, req.Collection)
 	}
 
-	for shardId := 0; shardId < DataShardsCount; shardId++ {
+	for shardId := 0; shardId < erasure_coding.DataShardsCount; shardId++ {
 		if shardFileNames[shardId] == "" {
 			return nil, fmt.Errorf("ec volume %d missing shard %d", req.VolumeId, shardId)
 		}
