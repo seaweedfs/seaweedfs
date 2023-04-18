@@ -72,7 +72,7 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 
 	// write .vif files
 	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}); err != nil {
-		return nil, fmt.Errorf("WriteEcFiles %s: %v", baseFileName, err)
+		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
 	}
 
 	shouldCleanup = false
@@ -426,7 +426,7 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 
 	// write .dat file from .ec00 ~ .ec09 files
 	if err := erasure_coding.WriteDatFile(dataBaseFileName, datFileSize); err != nil {
-		return nil, fmt.Errorf("WriteEcFiles %s: %v", dataBaseFileName, err)
+		return nil, fmt.Errorf("WriteDatFile %s: %v", dataBaseFileName, err)
 	}
 
 	// write .idx file from .ecx and .ecj files
