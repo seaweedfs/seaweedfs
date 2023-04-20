@@ -23,6 +23,9 @@ func Retry(name string, job func() error) (err error) {
 		if strings.Contains(err.Error(), "transport") {
 			hasErr = true
 			glog.V(0).Infof("retry %s: err: %v", name, err)
+		} else if name == "uploadWithRetry" && strings.Contains(err.Error(), "is read only") {
+			hasErr = true
+			glog.V(0).Infof("retry %s: err: %v", name, err)
 		} else {
 			break
 		}
