@@ -32,7 +32,7 @@ func Retry(name string, job func() error) (err error) {
 	return err
 }
 
-func UploadRetry(name string, job func() error) (err error) {
+func MultiRetry(name string, errList []string, job func() error) (err error) {
 	waitTime := time.Second
 	hasErr := false
 	for waitTime < RetryWaitTime {
@@ -43,7 +43,7 @@ func UploadRetry(name string, job func() error) (err error) {
 			}
 			break
 		}
-		if strings.Contains(err.Error(), "transport") || strings.Contains(err.Error(), "is read only") {
+		if containErr(err.Error(), errList) {
 			hasErr = true
 			glog.V(0).Infof("retry %s: err: %v", name, err)
 		} else {
@@ -84,4 +84,13 @@ func Nvl(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func containErr(err string, errList []string) bool {
+	for _, e := range errList {
+		if strings.Contains(err, e) {
+			return true
+		}
+	}
+	return false
 }
