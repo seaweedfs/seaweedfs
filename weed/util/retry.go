@@ -23,7 +23,27 @@ func Retry(name string, job func() error) (err error) {
 		if strings.Contains(err.Error(), "transport") {
 			hasErr = true
 			glog.V(0).Infof("retry %s: err: %v", name, err)
-		} else if name == "uploadWithRetry" && strings.Contains(err.Error(), "is read only") {
+		} else {
+			break
+		}
+		time.Sleep(waitTime)
+		waitTime += waitTime / 2
+	}
+	return err
+}
+
+func UploadRetry(name string, job func() error) (err error) {
+	waitTime := time.Second
+	hasErr := false
+	for waitTime < RetryWaitTime {
+		err = job()
+		if err == nil {
+			if hasErr {
+				glog.V(0).Infof("retry %s successfully", name)
+			}
+			break
+		}
+		if strings.Contains(err.Error(), "transport") || strings.Contains(err.Error(), "is read only") {
 			hasErr = true
 			glog.V(0).Infof("retry %s: err: %v", name, err)
 		} else {
