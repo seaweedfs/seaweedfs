@@ -119,7 +119,7 @@ func (s *Store) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, boo
 // shardFiles is a list of shard files, which is used to return the shard locations
 func (s *Store) CollectEcShards(vid needle.VolumeId, shardFileNames []string) (ecVolume *erasure_coding.EcVolume, found bool) {
 	for _, location := range s.Locations {
-		if s, found := location.CollectEcShards(vid, shardFileNames); found {
+		if s, foundShards := location.CollectEcShards(vid, shardFileNames); foundShards {
 			ecVolume = s
 			found = true
 		}
