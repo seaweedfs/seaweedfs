@@ -190,7 +190,7 @@ func (r *BucketRegistry) LoadBucketMetadataFromFiler(bucketName string) (*Bucket
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			// The bucket doesn't actually exist and should no longer loaded from the filer
-			glog.Warning("bucket not found in filer: ", bucketName)
+			glog.V(4).Info("bucket not found in filer: ", bucketName)
 			r.notFound[bucketName] = struct{}{}
 			return nil, s3err.ErrNoSuchBucket
 		}

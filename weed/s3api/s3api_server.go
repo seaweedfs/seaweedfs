@@ -68,6 +68,7 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 		s3ApiServer.client = &http.Client{Transport: &http.Transport{
 			MaxIdleConns:        1024,
 			MaxIdleConnsPerHost: 1024,
+			DisableCompression:  true,
 		}}
 	} else {
 		s3ApiServer.client = &http.Client{
@@ -75,6 +76,7 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 				DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
 					return net.Dial("unix", option.LocalFilerSocket)
 				},
+				DisableCompression: true,
 			},
 		}
 	}

@@ -34,7 +34,7 @@ func (s3a *S3ApiServer) checkAccessByOwnership(r *http.Request, bucket string) s
 	return s3err.ErrAccessDenied
 }
 
-//Check access for PutBucketAclHandler
+// Check access for PutBucketAclHandler
 func (s3a *S3ApiServer) checkAccessForPutBucketAcl(requestAccountId, bucket string) (*BucketMetaData, s3err.ErrorCode) {
 	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
 	if errCode != s3err.ErrNone {
@@ -104,7 +104,7 @@ func (s3a *S3ApiServer) checkAccessForReadBucket(r *http.Request, bucket, aclAct
 	return nil, s3err.ErrAccessDenied
 }
 
-//Check ObjectAcl-Read related access
+// Check ObjectAcl-Read related access
 // includes:
 // - GetObjectAclHandler
 func (s3a *S3ApiServer) checkAccessForReadObjectAcl(r *http.Request, bucket, object string) (acp *s3.AccessControlPolicy, errCode s3err.ErrorCode) {
@@ -370,14 +370,9 @@ func (s3a *S3ApiServer) checkAccessForWriteObject(r *http.Request, bucket, objec
 	}
 
 	objectOwnerId := s3acl.GetAcpOwner(entry.Extended, *bucketMetadata.Owner.ID)
-	//object owner is immutable
-	if requestOwnerId != "" && objectOwnerId != requestOwnerId {
-		return s3err.ErrAccessDenied
-	}
 
-	//Only the owner of the bucket and the owner of the object can overwrite the object
-	if s3acl.ValidateAccount(requestOwnerId, objectOwnerId, *bucketMetadata.Owner.ID) {
-		glog.V(3).Infof("checkAccessForWriteObject denied! request account id: %s, expect account id: %s", requestAccountId, *bucketMetadata.Owner.ID)
+	//object owner is immutable
+	if !s3acl.ValidateAccount(requestOwnerId, objectOwnerId, *bucketMetadata.Owner.ID) {
 		return s3err.ErrAccessDenied
 	}
 

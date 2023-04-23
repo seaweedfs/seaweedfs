@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3acl"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"net/http"
@@ -146,6 +146,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 				entry.Extended = make(map[string][]byte)
 			}
 			entry.Extended[s3_constants.AmzIdentityId] = []byte(identityId)
+			s3a.bucketRegistry.LoadBucketMetadata(entry)
 		}
 		if objectOwnership != "" {
 			if entry.Extended == nil {
