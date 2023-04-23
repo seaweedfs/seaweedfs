@@ -182,6 +182,9 @@ func doSaveRemoteEntry(client filer_pb.SeaweedFilerClient, localDir string, exis
 	existingEntry.RemoteEntry = remoteEntry
 	existingEntry.Attributes.FileSize = uint64(remoteEntry.RemoteSize)
 	existingEntry.Attributes.Mtime = remoteEntry.RemoteMtime
+	existingEntry.Attributes.Md5 = nil
+	existingEntry.Chunks = nil
+	existingEntry.Content = nil
 	_, updateErr := client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
 		Directory: localDir,
 		Entry:     existingEntry,
