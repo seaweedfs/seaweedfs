@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -30,6 +31,10 @@ import (
 
 var serverStats *stats.ServerStats
 var startTime = time.Now()
+var writePool = sync.Pool{New: func() interface{} {
+	return bufio.NewWriterSize(nil, 128*1024)
+},
+}
 
 func init() {
 	serverStats = stats.NewServerStats()
@@ -279,8 +284,13 @@ func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, file
 
 func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, writeFn func(writer io.Writer, offset int64, size int64) error) error {
 	rangeReq := r.Header.Get("Range")
-	bufferedWriter := bufio.NewWriterSize(w, 128*1024)
-	defer bufferedWriter.Flush()
+	//bufferedWriter := bufio.NewWriterSize(w, 128*1024)
+	bufferedWriter := writePool.Get().(*bufio.Writer)
+	bufferedWriter.Reset(w)
+	defer func() {
+		bufferedWriter.Flush()
+		writePool.Put(bufferedWriter)
+	}()
 
 	if rangeReq == "" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
