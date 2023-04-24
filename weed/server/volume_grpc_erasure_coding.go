@@ -72,7 +72,7 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 
 	// write .vif files
 	if err := volume_info.SaveVolumeInfo(baseFileName+".vif", &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}); err != nil {
-		return nil, fmt.Errorf("WriteEcFiles %s: %v", baseFileName, err)
+		return nil, fmt.Errorf("SaveVolumeInfo %s: %v", baseFileName, err)
 	}
 
 	shouldCleanup = false
@@ -408,13 +408,21 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 
 	glog.V(0).Infof("VolumeEcShardsToVolume: %v", req)
 
-	v, found := vs.store.FindEcVolume(needle.VolumeId(req.VolumeId))
+	// collect .ec00 ~ .ec09 files
+	shardFileNames := make([]string, erasure_coding.DataShardsCount)
+	v, found := vs.store.CollectEcShards(needle.VolumeId(req.VolumeId), shardFileNames)
 	if !found {
 		return nil, fmt.Errorf("ec volume %d not found", req.VolumeId)
 	}
 
 	if v.Collection != req.Collection {
 		return nil, fmt.Errorf("existing collection:%v unexpected input: %v", v.Collection, req.Collection)
+	}
+
+	for shardId := 0; shardId < erasure_coding.DataShardsCount; shardId++ {
+		if shardFileNames[shardId] == "" {
+			return nil, fmt.Errorf("ec volume %d missing shard %d", req.VolumeId, shardId)
+		}
 	}
 
 	dataBaseFileName, indexBaseFileName := v.DataBaseFileName(), v.IndexBaseFileName()
@@ -425,8 +433,8 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 	}
 
 	// write .dat file from .ec00 ~ .ec09 files
-	if err := erasure_coding.WriteDatFile(dataBaseFileName, datFileSize); err != nil {
-		return nil, fmt.Errorf("WriteEcFiles %s: %v", dataBaseFileName, err)
+	if err := erasure_coding.WriteDatFile(dataBaseFileName, datFileSize, shardFileNames); err != nil {
+		return nil, fmt.Errorf("WriteDatFile %s: %v", dataBaseFileName, err)
 	}
 
 	// write .idx file from .ecx and .ecj files

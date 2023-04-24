@@ -46,18 +46,14 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	// lock source and target file handles
 	fhOut.Lock()
 	defer fhOut.Unlock()
-	fhOut.entryLock.Lock()
-	defer fhOut.entryLock.Unlock()
 
 	if fhOut.entry == nil {
 		return 0, fuse.ENOENT
 	}
 
 	if fhIn.fh != fhOut.fh {
-		fhIn.Lock()
-		defer fhIn.Unlock()
-		fhIn.entryLock.Lock()
-		defer fhIn.entryLock.Unlock()
+		fhIn.RLock()
+		defer fhIn.RUnlock()
 	}
 
 	// directories are not supported
