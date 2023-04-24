@@ -284,7 +284,6 @@ func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, file
 
 func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, writeFn func(writer io.Writer, offset int64, size int64) error) error {
 	rangeReq := r.Header.Get("Range")
-	//bufferedWriter := bufio.NewWriterSize(w, 128*1024)
 	bufferedWriter := writePool.Get().(*bufio.Writer)
 	bufferedWriter.Reset(w)
 	defer func() {
