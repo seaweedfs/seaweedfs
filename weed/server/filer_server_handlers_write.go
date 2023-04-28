@@ -104,6 +104,10 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		so.DiskType = fs.option.DiskType
 	}
 
+	if strings.HasPrefix(r.URL.Path, "/etc") {
+		so.SaveInside = true
+	}
+
 	if query.Has("mv.from") {
 		fs.move(ctx, w, r, so)
 	} else {
