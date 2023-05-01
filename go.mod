@@ -35,7 +35,7 @@ require (
 	github.com/go-redsync/redsync/v4 v4.8.1
 	github.com/go-sql-driver/mysql v1.7.0
 	github.com/go-zookeeper/zk v1.0.3 // indirect
-	github.com/gocql/gocql v1.3.2
+	github.com/gocql/gocql v1.4.0
 	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.3
