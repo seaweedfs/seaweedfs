@@ -33,7 +33,7 @@ require (
 	github.com/go-errors/errors v1.1.1 // indirect
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-redsync/redsync/v4 v4.8.1
-	github.com/go-sql-driver/mysql v1.7.0
+	github.com/go-sql-driver/mysql v1.7.1
 	github.com/go-zookeeper/zk v1.0.3 // indirect
 	github.com/gocql/gocql v1.4.0
 	github.com/golang-jwt/jwt v3.2.2+incompatible
