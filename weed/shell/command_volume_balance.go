@@ -3,14 +3,15 @@ package shell
 import (
 	"flag"
 	"fmt"
+	"io"
+	"os"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"golang.org/x/exp/slices"
-	"io"
-	"os"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -371,33 +372,24 @@ func isGoodMove(placement *super_block.ReplicaPlacement, existingReplicas []*Vol
 			return false
 		}
 	}
-	dcs, racks := make(map[string]bool), make(map[string]int)
+
+	// existing replicas except the one on sourceNode
+	existingReplicasExceptSourceNode := make([]*VolumeReplica, 0)
 	for _, replica := range existingReplicas {
 		if replica.location.dataNode.Id != sourceNode.info.Id {
-			dcs[replica.location.DataCenter()] = true
-			racks[replica.location.Rack()]++
+			existingReplicasExceptSourceNode = append(existingReplicasExceptSourceNode, replica)
 		}
 	}
 
-	dcs[targetNode.dc] = true
-	racks[fmt.Sprintf("%s %s", targetNode.dc, targetNode.rack)]++
-
-	if len(dcs) != placement.DiffDataCenterCount+1 {
-		return false
+	// target location
+	targetLocation := location{
+		dc:       targetNode.dc,
+		rack:     targetNode.rack,
+		dataNode: targetNode.info,
 	}
 
-	if len(racks) != placement.DiffRackCount+placement.DiffDataCenterCount+1 {
-		return false
-	}
-
-	for _, sameRackCount := range racks {
-		if sameRackCount != placement.SameRackCount+1 {
-			return false
-		}
-	}
-
-	return true
-
+	// check if this satisfies replication requirements
+	return satisfyReplicaPlacement(placement, existingReplicasExceptSourceNode, targetLocation)
 }
 
 func adjustAfterMove(v *master_pb.VolumeInformationMessage, volumeReplicas map[uint32][]*VolumeReplica, fullNode *Node, emptyNode *Node) {
