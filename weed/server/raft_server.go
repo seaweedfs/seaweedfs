@@ -3,7 +3,6 @@ package weed_server
 import (
 	"encoding/json"
 	transport "github.com/Jille/raft-grpc-transport"
-	"github.com/seaweedfs/raft/protobuf"
 	"io"
 	"math/rand"
 	"os"
@@ -34,8 +33,6 @@ type RaftServerOption struct {
 }
 
 type RaftServer struct {
-	protobuf.UnimplementedRaftServer
-	raftGrpcServer   *raft.GrpcServer
 	peers            map[string]pb.ServerAddress // initial peers to join with
 	raftServer       raft.Server
 	RaftHashicorp    *hashicorpRaft.Raft
@@ -43,6 +40,7 @@ type RaftServer struct {
 	dataDir          string
 	serverAddr       pb.ServerAddress
 	topo             *topology.Topology
+	*raft.GrpcServer
 }
 
 type StateMachine struct {
@@ -164,7 +162,7 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		}
 	}
 
-	s.raftGrpcServer = raft.NewGrpcServer(s.raftServer)
+	s.GrpcServer = raft.NewGrpcServer(s.raftServer)
 
 	glog.V(0).Infof("current cluster leader: %v", s.raftServer.Leader())
 
