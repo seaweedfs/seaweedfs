@@ -1,9 +1,10 @@
 package shell
 
 import (
+	"testing"
+
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
-	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -148,6 +149,82 @@ func TestIsGoodMove(t *testing.T) {
 			sourceLocation: location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
 			targetLocation: location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn3"}},
 			expected:       true,
+		},
+
+		{
+			name:        "test 011 switch which rack has more replicas",
+			replication: "011",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+				},
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn2"}},
+				},
+				{
+					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn3"}},
+				},
+			},
+			sourceLocation: location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+			targetLocation: location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn4"}},
+			expected:       true,
+		},
+
+		{
+			name:        "test 011 move the lonely replica to another racks",
+			replication: "011",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+				},
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn2"}},
+				},
+				{
+					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn3"}},
+				},
+			},
+			sourceLocation: location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn3"}},
+			targetLocation: location{"dc1", "r3", &master_pb.DataNodeInfo{Id: "dn4"}},
+			expected:       true,
+		},
+
+		{
+			name:        "test 011 move to wrong racks",
+			replication: "011",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+				},
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn2"}},
+				},
+				{
+					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn3"}},
+				},
+			},
+			sourceLocation: location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+			targetLocation: location{"dc1", "r3", &master_pb.DataNodeInfo{Id: "dn4"}},
+			expected:       false,
+		},
+
+		{
+			name:        "test 011 move all to the same rack",
+			replication: "011",
+			replicas: []*VolumeReplica{
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
+				},
+				{
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn2"}},
+				},
+				{
+					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn3"}},
+				},
+			},
+			sourceLocation: location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn3"}},
+			targetLocation: location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn4"}},
+			expected:       false,
 		},
 	}
 

@@ -137,6 +137,7 @@ type StorageOption struct {
 	TtlSeconds        int32
 	Fsync             bool
 	VolumeGrowthCount uint32
+	SaveInside        bool
 }
 
 func (so *StorageOption) TtlString() string {

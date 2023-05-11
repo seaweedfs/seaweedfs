@@ -18,6 +18,7 @@ func Retry(name string, job func() error) (err error) {
 			if hasErr {
 				glog.V(0).Infof("retry %s successfully", name)
 			}
+			waitTime = time.Second
 			break
 		}
 		if strings.Contains(err.Error(), "transport") {
@@ -41,6 +42,7 @@ func MultiRetry(name string, errList []string, job func() error) (err error) {
 			if hasErr {
 				glog.V(0).Infof("retry %s successfully", name)
 			}
+			waitTime = time.Second
 			break
 		}
 		if containErr(err.Error(), errList) {
