@@ -91,9 +91,6 @@ func (fh *FileHandle) UpdateEntry(fn func(entry *filer_pb.Entry)) *filer_pb.Entr
 }
 
 func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
-	fh.entryLock.Lock()
-	defer fh.entryLock.Unlock()
-
 	if fh.entry == nil {
 		return
 	}
