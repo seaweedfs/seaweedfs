@@ -147,6 +147,8 @@ func init() {
 	s3Options.auditLogConfig = cmdServer.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	s3Options.allowEmptyFolder = cmdServer.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
 	s3Options.allowDeleteBucketNotEmpty = cmdServer.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	s3Options.filerGroup = cmdServer.Flag.String("filerGroup", "", "filerGroup of filer to use as prefix if collectionPrefix is enable")
+	s3Options.collectionPrefix = cmdServer.Flag.Bool("collectionPrefix", false, "use filerGroup as collection prefix for buckets")
 
 	iamOptions.port = cmdServer.Flag.Int("iam.port", 8111, "iam server http listen port")
 

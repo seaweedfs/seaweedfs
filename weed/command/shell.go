@@ -19,6 +19,7 @@ func init() {
 	cmdShell.Run = runShell // break init cycle
 	shellOptions.Masters = cmdShell.Flag.String("master", "", "comma-separated master servers, e.g. localhost:9333")
 	shellOptions.FilerGroup = cmdShell.Flag.String("filerGroup", "", "filerGroup for the filers")
+	shellOptions.S3CollectionPrefix = cmdShell.Flag.Bool("s3CollectionPrefix", false, "Use filergroup as prefix for s3 collections")
 	shellInitialFiler = cmdShell.Flag.String("filer", "", "filer host and port, e.g. localhost:8888")
 	shellCluster = cmdShell.Flag.String("cluster", "", "cluster defined in shell.toml")
 }

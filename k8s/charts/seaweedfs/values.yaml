@@ -273,6 +273,7 @@ filer:
   grpcPort: 18888
   metricsPort: 9327
   loggingOverrideLevel: null
+  filerGroup: ""
   #  replication type is XYZ:
   # X number of replica in other data centers
   # Y number of replica in other racks in the same data center
@@ -426,6 +427,7 @@ filer:
     allowEmptyFolder: false
     # Suffix of the host name, {bucket}.{domainName}
     domainName: ""
+    collectionPrefix: false
     # enable user & permission to s3 (need to inject to all services)
     enableAuth: false
     skipAuthSecretCreation: false
@@ -451,6 +453,8 @@ s3:
 
   # Suffix of the host name, {bucket}.{domainName}
   domainName: ""
+  collectionPrefix: false
+  filerGroup: ""
 
   initContainers: ""
 

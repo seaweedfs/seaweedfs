@@ -148,11 +148,17 @@ spec:
               -encryptVolumeData \
               {{- end }}
               -ip=${POD_IP} \
+              {{- if .Values.filer.filerGroup}}
+              -filerGroup={{ .Values.filer.filerGroup}} \
+              {{- else }}
               {{- if .Values.filer.s3.enabled }}
               -s3 \
               -s3.port={{ .Values.filer.s3.port }} \
               {{- if .Values.filer.s3.domainName }}
               -s3.domainName={{ .Values.filer.s3.domainName }} \
+              {{- end }}
+              {{- if .Values.filer.s3.collectionPrefix}}
+              -s3.collectionPrefix \
               {{- end }}
               {{- if .Values.global.enableSecurity }}
               -s3.cert.file=/usr/local/share/ca-certificates/client/tls.crt \

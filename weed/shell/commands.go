@@ -24,11 +24,12 @@ type ShellOptions struct {
 	Masters        *string
 	GrpcDialOption grpc.DialOption
 	// shell transient context
-	FilerHost    string
-	FilerPort    int64
-	FilerGroup   *string
-	FilerAddress pb.ServerAddress
-	Directory    string
+	FilerHost          string
+	FilerPort          int64
+	FilerGroup         *string
+	FilerAddress       pb.ServerAddress
+	S3CollectionPrefix *bool
+	Directory          string
 }
 
 type CommandEnv struct {
@@ -183,4 +184,11 @@ func readNeedleStatus(grpcDialOption grpc.DialOption, sourceVolumeServer pb.Serv
 		},
 	)
 	return
+}
+
+func getCollectionName(commandEnv *CommandEnv, bucket string) string {
+	if *commandEnv.option.S3CollectionPrefix {
+		return fmt.Sprintf("%s_%s", *commandEnv.option.FilerGroup, bucket)
+	}
+	return bucket
 }

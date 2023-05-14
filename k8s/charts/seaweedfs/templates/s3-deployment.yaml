@@ -93,8 +93,14 @@ spec:
               -cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -key.file=/usr/local/share/ca-certificates/client/tls.key \
               {{- end }}
-              {{- if .Values.s3.domainName }}
-              -domainName={{ .Values.s3.domainName }} \
+              {{- if .values.s3.domainname }}
+              -domainname={{ .values.s3.domainname }} \
+              {{- end }}
+              {{- if .Values.s3.collectionPrefix }}
+              -collectionPrefix \
+              {{- end }}
+              {{- if .values.s3.filerGroup }}
+              -filerGroup={{ .values.s3.filerGroup}} \
               {{- end }}
               {{- if .Values.s3.allowEmptyFolder }}
               -allowEmptyFolder={{ .Values.s3.allowEmptyFolder }} \

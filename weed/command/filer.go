@@ -104,6 +104,7 @@ func init() {
 	filerS3Options.auditLogConfig = cmdFiler.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	filerS3Options.allowEmptyFolder = cmdFiler.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
 	filerS3Options.allowDeleteBucketNotEmpty = cmdFiler.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	filerS3Options.collectionPrefix = cmdFiler.Flag.Bool("s3.collectionPrefix", false, "use filerGroup as collection prefix for buckets")
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
@@ -173,6 +174,7 @@ func runFiler(cmd *Command, args []string) bool {
 		filerS3Options.filer = &filerAddress
 		filerS3Options.bindIp = f.bindIp
 		filerS3Options.localFilerSocket = f.localSocket
+		filerS3Options.filerGroup = f.filerGroup
 		if *f.dataCenter != "" && *filerS3Options.dataCenter == "" {
 			filerS3Options.dataCenter = f.dataCenter
 		}
