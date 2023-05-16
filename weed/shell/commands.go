@@ -24,12 +24,11 @@ type ShellOptions struct {
 	Masters        *string
 	GrpcDialOption grpc.DialOption
 	// shell transient context
-	FilerHost          string
-	FilerPort          int64
-	FilerGroup         *string
-	FilerAddress       pb.ServerAddress
-	S3CollectionPrefix *bool
-	Directory          string
+	FilerHost    string
+	FilerPort    int64
+	FilerGroup   *string
+	FilerAddress pb.ServerAddress
+	Directory    string
 }
 
 type CommandEnv struct {
