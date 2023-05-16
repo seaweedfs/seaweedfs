@@ -427,7 +427,6 @@ filer:
     allowEmptyFolder: false
     # Suffix of the host name, {bucket}.{domainName}
     domainName: ""
-    collectionPrefix: false
     # enable user & permission to s3 (need to inject to all services)
     enableAuth: false
     skipAuthSecretCreation: false
@@ -453,8 +452,6 @@ s3:
 
   # Suffix of the host name, {bucket}.{domainName}
   domainName: ""
-  collectionPrefix: false
-  filerGroup: ""
 
   initContainers: ""
 

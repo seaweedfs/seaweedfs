@@ -108,7 +108,7 @@ func (s3a *S3ApiServer) updateEntry(parentDirectoryPath string, newEntry *filer_
 }
 
 func (s3a *S3ApiServer) getCollectionName(bucket string) string {
-	if s3a.option.CollectionPrefix {
+	if s3a.option.FilerGroup != "" {
 		return fmt.Sprintf("%s_%s", s3a.option.FilerGroup, bucket)
 	}
 	return bucket

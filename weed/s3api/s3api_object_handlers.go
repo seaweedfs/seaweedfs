@@ -474,7 +474,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 		proxyReq.Header.Set(s3_constants.SeaweedStorageDestinationHeader, destination)
 	}
 
-	if s3a.option.CollectionPrefix {
+	if s3a.option.FilerGroup != "" {
 		query := proxyReq.URL.Query()
 		query.Add("collection", s3a.getCollectionName(bucket))
 		proxyReq.URL.RawQuery = query.Encode()

@@ -40,8 +40,6 @@ type S3Options struct {
 	auditLogConfig            *string
 	localFilerSocket          *string
 	dataCenter                *string
-	filerGroup                *string
-	collectionPrefix          *bool
 }
 
 func init() {
@@ -60,8 +58,6 @@ func init() {
 	s3StandaloneOptions.allowEmptyFolder = cmdS3.Flag.Bool("allowEmptyFolder", true, "allow empty folders")
 	s3StandaloneOptions.allowDeleteBucketNotEmpty = cmdS3.Flag.Bool("allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 	s3StandaloneOptions.localFilerSocket = cmdS3.Flag.String("localFilerSocket", "", "local filer socket path")
-	s3StandaloneOptions.filerGroup = cmdS3.Flag.String("filerGroup", "", "filerGroup of filer to use as prefix if collectionPrefix is enable")
-	s3StandaloneOptions.collectionPrefix = cmdS3.Flag.Bool("collectionPrefix", false, "use filerGroup as collection prefix for buckets")
 }
 
 var cmdS3 = &Command{
@@ -159,6 +155,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	filerAddress := pb.ServerAddress(*s3opt.filer)
 
 	filerBucketsPath := "/buckets"
+	filerGroup := ""
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
@@ -173,6 +170,7 @@ func (s3opt *S3Options) startS3Server() bool {
 				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
 			}
 			filerBucketsPath = resp.DirBuckets
+			filerGroup = resp.FilerGroup
 			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
 			glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
 			return nil
@@ -204,8 +202,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		AllowDeleteBucketNotEmpty: *s3opt.allowDeleteBucketNotEmpty,
 		LocalFilerSocket:          localFilerSocket,
 		DataCenter:                *s3opt.dataCenter,
-		FilerGroup:                *s3opt.filerGroup,
-		CollectionPrefix:          *s3opt.collectionPrefix,
+		FilerGroup:                filerGroup,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)

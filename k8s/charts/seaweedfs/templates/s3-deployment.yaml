@@ -96,12 +96,6 @@ spec:
               {{- if .Values.s3.domainName }}
               -domainName={{ .Values.s3.domainName }} \
               {{- end }}
-              {{- if .Values.s3.collectionPrefix }}
-              -collectionPrefix \
-              {{- end }}
-              {{- if .Values.s3.filerGroup }}
-              -filerGroup={{ .Values.s3.filerGroup}} \
-              {{- end }}
               {{- if .Values.s3.allowEmptyFolder }}
               -allowEmptyFolder={{ .Values.s3.allowEmptyFolder }} \
               {{- end }}

@@ -32,7 +32,6 @@ type S3ApiServerOption struct {
 	LocalFilerSocket          string
 	DataCenter                string
 	FilerGroup                string
-	CollectionPrefix          bool
 }
 
 type S3ApiServer struct {

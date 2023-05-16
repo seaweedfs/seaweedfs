@@ -157,9 +157,6 @@ spec:
               {{- if .Values.filer.s3.domainName }}
               -s3.domainName={{ .Values.filer.s3.domainName }} \
               {{- end }}
-              {{- if .Values.filer.s3.collectionPrefix}}
-              -s3.collectionPrefix \
-              {{- end }}
               {{- if .Values.global.enableSecurity }}
               -s3.cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -s3.key.file=/usr/local/share/ca-certificates/client/tls.key \

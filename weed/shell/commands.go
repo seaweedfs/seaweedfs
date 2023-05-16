@@ -187,7 +187,7 @@ func readNeedleStatus(grpcDialOption grpc.DialOption, sourceVolumeServer pb.Serv
 }
 
 func getCollectionName(commandEnv *CommandEnv, bucket string) string {
-	if *commandEnv.option.S3CollectionPrefix {
+	if *commandEnv.option.FilerGroup != "" {
 		return fmt.Sprintf("%s_%s", *commandEnv.option.FilerGroup, bucket)
 	}
 	return bucket
