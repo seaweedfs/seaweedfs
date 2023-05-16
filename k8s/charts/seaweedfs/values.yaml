@@ -273,6 +273,7 @@ filer:
   grpcPort: 18888
   metricsPort: 9327
   loggingOverrideLevel: null
+  filerGroup: ""
   #  replication type is XYZ:
   # X number of replica in other data centers
   # Y number of replica in other racks in the same data center

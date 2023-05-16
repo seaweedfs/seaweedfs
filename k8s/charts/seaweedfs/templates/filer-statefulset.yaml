@@ -148,6 +148,9 @@ spec:
               -encryptVolumeData \
               {{- end }}
               -ip=${POD_IP} \
+              {{- if .Values.filer.filerGroup}}
+              -filerGroup={{ .Values.filer.filerGroup}} \
+              {{- end }}
               {{- if .Values.filer.s3.enabled }}
               -s3 \
               -s3.port={{ .Values.filer.s3.port }} \
