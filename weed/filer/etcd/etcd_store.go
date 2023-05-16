@@ -37,15 +37,18 @@ func (store *EtcdStore) Initialize(configuration weed_util.Configuration, prefix
 		servers = "localhost:2379"
 	}
 
+        username := configuration.GetString(prefix + "username")
+        password := configuration.GetString(prefix + "password")
+
 	timeout := configuration.GetString(prefix + "timeout")
 	if timeout == "" {
 		timeout = "3s"
 	}
 
-	return store.initialize(servers, timeout)
+	return store.initialize(servers, username, password, timeout)
 }
 
-func (store *EtcdStore) initialize(servers string, timeout string) (err error) {
+func (store *EtcdStore) initialize(servers string, username string, password string, timeout string) (err error) {
 	glog.Infof("filer store etcd: %s", servers)
 
 	to, err := time.ParseDuration(timeout)
@@ -55,6 +58,8 @@ func (store *EtcdStore) initialize(servers string, timeout string) (err error) {
 
 	store.client, err = clientv3.New(clientv3.Config{
 		Endpoints:   strings.Split(servers, ","),
+		Username:    username,
+		Password:    password,
 		DialTimeout: to,
 	})
 	if err != nil {

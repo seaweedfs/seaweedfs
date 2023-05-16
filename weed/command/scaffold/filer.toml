@@ -262,6 +262,8 @@ routeByLatency = false
 [etcd]
 enabled = false
 servers = "localhost:2379"
+username = ""
+password = ""
 timeout = "3s"
 
 [mongodb]
