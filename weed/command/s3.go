@@ -29,6 +29,7 @@ type S3Options struct {
 	filer                     *string
 	bindIp                    *string
 	port                      *int
+	portHttps                 *int
 	portGrpc                  *int
 	config                    *string
 	domainName                *string
@@ -47,6 +48,7 @@ func init() {
 	s3StandaloneOptions.filer = cmdS3.Flag.String("filer", "localhost:8888", "filer server address")
 	s3StandaloneOptions.bindIp = cmdS3.Flag.String("ip.bind", "", "ip address to bind to. Default to localhost.")
 	s3StandaloneOptions.port = cmdS3.Flag.Int("port", 8333, "s3 server http listen port")
+	s3StandaloneOptions.portHttps = cmdS3.Flag.Int("port.https", 0, "s3 server https listen port")
 	s3StandaloneOptions.portGrpc = cmdS3.Flag.Int("port.grpc", 0, "s3 server grpc listen port")
 	s3StandaloneOptions.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
 	s3StandaloneOptions.dataCenter = cmdS3.Flag.String("dataCenter", "", "prefer to read and write to volumes in this data center")
@@ -245,18 +247,37 @@ func (s3opt *S3Options) startS3Server() bool {
 	go grpcS.Serve(grpcL)
 
 	if *s3opt.tlsPrivateKey != "" {
-		glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
-		if s3ApiLocalListener != nil {
+		if *s3opt.portHttps == 0 {
+			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
+			if s3ApiLocalListener != nil {
+				go func() {
+					if err = httpS.ServeTLS(s3ApiLocalListener, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
+						glog.Fatalf("S3 API Server Fail to serve: %v", err)
+					}
+				}()
+			}
+			if err = httpS.ServeTLS(s3ApiListener, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
+				glog.Fatalf("S3 API Server Fail to serve: %v", err)
+			}
+		} else {
+			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.portHttps)
+			s3ApiListenerHttps, s3ApiLocalListenerHttps, _ := util.NewIpAndLocalListeners(
+				*s3opt.bindIp, *s3opt.portHttps, time.Duration(10)*time.Second)
+			if s3ApiLocalListenerHttps != nil {
+				go func() {
+					if err = httpS.ServeTLS(s3ApiLocalListenerHttps, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
+						glog.Fatalf("S3 API Server Fail to serve: %v", err)
+					}
+				}()
+			}
 			go func() {
-				if err = httpS.ServeTLS(s3ApiLocalListener, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
+				if err = httpS.ServeTLS(s3ApiListenerHttps, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
 					glog.Fatalf("S3 API Server Fail to serve: %v", err)
 				}
 			}()
 		}
-		if err = httpS.ServeTLS(s3ApiListener, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
-			glog.Fatalf("S3 API Server Fail to serve: %v", err)
-		}
-	} else {
+	}
+	if *s3opt.tlsPrivateKey == "" || *s3opt.portHttps > 0 {
 		glog.V(0).Infof("Start Seaweed S3 API Server %s at http port %d", util.Version(), *s3opt.port)
 		if s3ApiLocalListener != nil {
 			go func() {
