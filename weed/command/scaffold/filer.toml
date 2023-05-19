@@ -264,6 +264,7 @@ enabled = false
 servers = "localhost:2379"
 username = ""
 password = ""
+key_prefix = "seaweedfs."
 timeout = "3s"
 
 [mongodb]
