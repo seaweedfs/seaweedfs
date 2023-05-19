@@ -25,6 +25,7 @@ func init() {
 
 type EtcdStore struct {
 	client *clientv3.Client
+	etcdKeyPrefix string
 }
 
 func (store *EtcdStore) GetName() string {
@@ -39,6 +40,7 @@ func (store *EtcdStore) Initialize(configuration weed_util.Configuration, prefix
 
         username := configuration.GetString(prefix + "username")
         password := configuration.GetString(prefix + "password")
+        store.etcdKeyPrefix = configuration.GetString(prefix + "key_prefix")
 
 	timeout := configuration.GetString(prefix + "timeout")
 	if timeout == "" {
@@ -91,7 +93,7 @@ func (store *EtcdStore) InsertEntry(ctx context.Context, entry *filer.Entry) (er
 		meta = weed_util.MaybeGzipData(meta)
 	}
 
-	if _, err := store.client.Put(ctx, string(key), string(meta)); err != nil {
+	if _, err := store.client.Put(ctx, store.etcdKeyPrefix + string(key), string(meta)); err != nil {
 		return fmt.Errorf("persisting %s : %v", entry.FullPath, err)
 	}
 
@@ -105,7 +107,7 @@ func (store *EtcdStore) UpdateEntry(ctx context.Context, entry *filer.Entry) (er
 func (store *EtcdStore) FindEntry(ctx context.Context, fullpath weed_util.FullPath) (entry *filer.Entry, err error) {
 	key := genKey(fullpath.DirAndName())
 
-	resp, err := store.client.Get(ctx, string(key))
+	resp, err := store.client.Get(ctx, store.etcdKeyPrefix + string(key))
 	if err != nil {
 		return nil, fmt.Errorf("get %s : %v", fullpath, err)
 	}
@@ -128,7 +130,7 @@ func (store *EtcdStore) FindEntry(ctx context.Context, fullpath weed_util.FullPa
 func (store *EtcdStore) DeleteEntry(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	key := genKey(fullpath.DirAndName())
 
-	if _, err := store.client.Delete(ctx, string(key)); err != nil {
+	if _, err := store.client.Delete(ctx, store.etcdKeyPrefix + string(key)); err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
 
@@ -138,7 +140,7 @@ func (store *EtcdStore) DeleteEntry(ctx context.Context, fullpath weed_util.Full
 func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath weed_util.FullPath) (err error) {
 	directoryPrefix := genDirectoryKeyPrefix(fullpath, "")
 
-	if _, err := store.client.Delete(ctx, string(directoryPrefix), clientv3.WithPrefix()); err != nil {
+	if _, err := store.client.Delete(ctx, store.etcdKeyPrefix + string(directoryPrefix), clientv3.WithPrefix()); err != nil {
 		return fmt.Errorf("deleteFolderChildren %s : %v", fullpath, err)
 	}
 
@@ -156,7 +158,7 @@ func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, dirPath weed_u
 		lastFileStart = genDirectoryKeyPrefix(dirPath, startFileName)
 	}
 
-	resp, err := store.client.Get(ctx, string(lastFileStart),
+	resp, err := store.client.Get(ctx, store.etcdKeyPrefix + string(lastFileStart),
 		clientv3.WithFromKey(), clientv3.WithLimit(limit+1))
 	if err != nil {
 		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
