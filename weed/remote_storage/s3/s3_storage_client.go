@@ -169,28 +169,20 @@ func (s *s3RemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, 
 		}
 	}
 
-	// Upload the file to S3.
-	var s3_uploadInput s3manager.UploadInput
-	
-	if s.conf.S3SupportTagging {
-		s3_uploadInput = s3manager.UploadInput{
-			Bucket:       aws.String(loc.Bucket),
-			Key:          aws.String(loc.Path[1:]),
-			Body:         reader,
-			Tagging:      aws.String(tags),
-			StorageClass: aws.String(s.conf.S3StorageClass),
-		}
-	} else {
-		// swift doesn't support s3 object tagging
-		s3_uploadInput = s3manager.UploadInput{
-			Bucket:       aws.String(loc.Bucket),
-			Key:          aws.String(loc.Path[1:]),
-			Body:         reader,
-			StorageClass: aws.String(s.conf.S3StorageClass),
-		}
+	awsTags := aws.String(tags)
+	// openstack swift doesn't support s3 object tagging
+	if !s.conf.S3SupportTagging {
+		awsTags = nil
 	}
 
-	_, err = uploader.Upload(&s3_uploadInput)
+	// Upload the file to S3.
+	_, err = uploader.Upload(&s3manager.UploadInput{
+		Bucket:       aws.String(loc.Bucket),
+		Key:          aws.String(loc.Path[1:]),
+		Body:         reader,
+		Tagging:      awsTags,
+		StorageClass: aws.String(s.conf.S3StorageClass),
+	})
 
 	//in case it fails to upload
 	if err != nil {
