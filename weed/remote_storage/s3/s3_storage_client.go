@@ -160,19 +160,16 @@ func (s *s3RemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, 
 
 	// process tagging
 	tags := ""
-	if s.supportTagging {
+	var awsTags *string
+	// openstack swift doesn't support s3 object tagging
+	if s.conf.S3SupportTagging {
 		for k, v := range entry.Extended {
 			if len(tags) > 0 {
 				tags = tags + "&"
 			}
 			tags = tags + k + "=" + string(v)
 		}
-	}
-
-	awsTags := aws.String(tags)
-	// openstack swift doesn't support s3 object tagging
-	if !s.conf.S3SupportTagging {
-		awsTags = nil
+		awsTags = aws.String(tags)
 	}
 
 	// Upload the file to S3.
