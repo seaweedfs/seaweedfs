@@ -243,6 +243,7 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 	if n.IsRack() {
 		for _, c := range n.Children() {
 			dn := c.(*DataNode) //can not cast n to DataNode
+			dn.RLock()
 			for _, v := range dn.GetVolumes() {
 				if v.Size >= volumeSizeLimit {
 					//fmt.Println("volume",v.Id,"size",v.Size,">",volumeSizeLimit)
@@ -259,6 +260,7 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 					}
 				}
 			}
+			dn.RUnlock()
 		}
 	} else {
 		for _, c := range n.Children() {
