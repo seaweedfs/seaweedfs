@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
 	"math"
 	"mime"
@@ -14,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -139,6 +140,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				entry.GetChunks(), 0, math.MaxInt64); err != nil {
 				err = fmt.Errorf("failed to resolve chunk manifest, err: %s", err.Error())
 				writeJsonError(w, r, http.StatusInternalServerError, err)
+				return
 			}
 		}
 		writeJsonQuiet(w, r, http.StatusOK, entry)
