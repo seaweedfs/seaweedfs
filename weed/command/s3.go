@@ -261,7 +261,7 @@ func (s3opt *S3Options) startS3Server() bool {
 			RefreshDuration: security.CredRefreshingInterval,
 		}
 		if s3opt.certProvider, err = pemfile.NewProvider(pemfileOptions); err != nil {
-			glog.Fatalf("pemfile.NewProvider(%v) %v failed: %v", pemfileOptions, err)
+			glog.Fatalf("pemfile.NewProvider(%v) failed: %v", pemfileOptions, err)
 		}
 		httpS.TLSConfig = &tls.Config{GetCertificate: s3opt.GetCertificateWithUpdate}
 		glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
