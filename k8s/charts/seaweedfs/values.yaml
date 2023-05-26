@@ -423,6 +423,8 @@ filer:
   s3:
     enabled: true
     port: 8333
+    # add additional https port
+    httpsPort: 0
     # allow empty folders
     allowEmptyFolder: false
     # Suffix of the host name, {bucket}.{domainName}
@@ -441,6 +443,8 @@ s3:
   replicas: 1
   bindAddress: 0.0.0.0
   port: 8333
+  # add additional https port
+  httpsPort: 0
   metricsPort: 9327
   loggingOverrideLevel: null
   # allow empty folders

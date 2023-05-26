@@ -90,6 +90,9 @@ spec:
               -metricsPort {{ .Values.s3.metricsPort }} \
               {{- end }}
               {{- if .Values.global.enableSecurity }}
+              {{- if .Values.s3.httpsPort }}
+              -port.https={{ .Values.s3.httpsPort }} \
+              {{- end }}
               -cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -key.file=/usr/local/share/ca-certificates/client/tls.key \
               {{- end }}
