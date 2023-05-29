@@ -3,13 +3,13 @@ module github.com/seaweedfs/seaweedfs
 go 1.20
 
 require (
-	cloud.google.com/go v0.110.0 // indirect
-	cloud.google.com/go/pubsub v1.30.1
+	cloud.google.com/go v0.110.2 // indirect
+	cloud.google.com/go/pubsub v1.31.0
 	cloud.google.com/go/storage v1.30.1
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/Shopify/sarama v1.38.1
-	github.com/aws/aws-sdk-go v1.44.258
+	github.com/aws/aws-sdk-go v1.44.271
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/cenkalti/backoff/v4 v4.2.1
@@ -44,7 +44,7 @@ require (
 	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/google/uuid v1.3.0
 	github.com/google/wire v0.5.0 // indirect
-	github.com/googleapis/gax-go/v2 v2.8.0 // indirect
+	github.com/googleapis/gax-go/v2 v2.9.1 // indirect
 	github.com/gorilla/mux v1.8.0
 	github.com/hailocab/go-hostpool v0.0.0-20160125115350-e80d13ce29ed // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
@@ -76,11 +76,11 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/posener/complete v1.2.3
-	github.com/pquerna/cachecontrol v0.1.0
+	github.com/pquerna/cachecontrol v0.2.0
 	github.com/prometheus/client_golang v1.15.0
 	github.com/prometheus/client_model v0.3.0 // indirect
 	github.com/prometheus/common v0.42.0 // indirect
-	github.com/prometheus/procfs v0.9.0
+	github.com/prometheus/procfs v0.10.1
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/seaweedfs/goexif v1.0.3
@@ -90,7 +90,7 @@ require (
 	github.com/spf13/cast v1.5.0 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/viper v1.15.0
-	github.com/stretchr/testify v1.8.2
+	github.com/stretchr/testify v1.8.3
 	github.com/stvp/tempredis v0.0.0-20181119212430-b82af8480203
 	github.com/syndtr/goleveldb v1.0.1-0.20190318030020-c3a204f8e965
 	github.com/tidwall/gjson v1.14.4
@@ -116,12 +116,12 @@ require (
 	golang.org/x/exp v0.0.0-20230124195608-d38c7dcee874
 	golang.org/x/image v0.7.0
 	golang.org/x/net v0.10.0
-	golang.org/x/oauth2 v0.7.0 // indirect
+	golang.org/x/oauth2 v0.8.0 // indirect
 	golang.org/x/sys v0.8.0
 	golang.org/x/text v0.9.0 // indirect
 	golang.org/x/tools v0.9.1
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
-	google.golang.org/api v0.122.0
+	google.golang.org/api v0.124.0
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect
 	google.golang.org/grpc v1.55.0
@@ -148,19 +148,19 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.3.0
 	github.com/hashicorp/raft v1.5.0
 	github.com/hashicorp/raft-boltdb/v2 v2.2.2
-	github.com/rabbitmq/amqp091-go v1.8.0
+	github.com/rabbitmq/amqp091-go v1.8.1
 	github.com/rclone/rclone v1.62.2
 	github.com/schollz/progressbar/v3 v3.13.1
 	github.com/tikv/client-go/v2 v2.0.7
-	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.2
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.43.0
+	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.1.3
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.47.1
 	google.golang.org/grpc/security/advancedtls v0.0.0-20220622233350-5cdb09fa29c1
 )
 
 require (
 	cloud.google.com/go/compute v1.19.0 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
-	cloud.google.com/go/iam v0.13.0 // indirect
+	cloud.google.com/go/iam v1.0.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.4.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.2.2 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.2.0 // indirect
@@ -206,7 +206,7 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.0 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
-	github.com/google/s2a-go v0.1.3 // indirect
+	github.com/google/s2a-go v0.1.4 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.2.3 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0 // indirect
 	github.com/hashicorp/go-hclog v1.5.0 // indirect
@@ -220,7 +220,7 @@ require (
 	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/jlaffaye/ftp v0.1.1-0.20230214004652-d84bf4be2b6e // indirect
-	github.com/jonboulle/clockwork v0.2.2 // indirect
+	github.com/jonboulle/clockwork v0.3.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/jtolio/eventkit v0.0.0-20221004135224-074cf276595b // indirect
 	github.com/jzelinskie/whirlpool v0.0.0-20201016144138-0675e54bb004 // indirect
@@ -276,7 +276,7 @@ require (
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/yandex-cloud/go-genproto v0.0.0-20211115083454-9ca41db5ed9e // indirect
 	github.com/ydb-platform/ydb-go-genproto v0.0.0-20221215182650-986f9d10542f // indirect
-	github.com/ydb-platform/ydb-go-yc v0.8.3 // indirect
+	github.com/ydb-platform/ydb-go-yc v0.10.2 // indirect
 	github.com/ydb-platform/ydb-go-yc-metadata v0.5.2 // indirect
 	github.com/yunify/qingstor-sdk-go/v3 v3.2.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.2 // indirect
