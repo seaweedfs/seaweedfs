@@ -76,7 +76,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/posener/complete v1.2.3
-	github.com/pquerna/cachecontrol v0.1.0
+	github.com/pquerna/cachecontrol v0.2.0
 	github.com/prometheus/client_golang v1.15.0
 	github.com/prometheus/client_model v0.3.0 // indirect
 	github.com/prometheus/common v0.42.0 // indirect
