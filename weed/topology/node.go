@@ -179,7 +179,11 @@ func (n *NodeImpl) ReserveOneVolume(r int64, option *VolumeGrowOption) (assigned
 		} else {
 			if node.IsDataNode() && node.AvailableSpaceFor(option) > 0 {
 				// fmt.Println("vid =", vid, " assigned to node =", node, ", freeSpace =", node.FreeSpace())
-				return node.(*DataNode), nil
+				dn := node.(*DataNode)
+				if dn.IsTerminating {
+					continue
+				}
+				return dn, nil
 			}
 			assignedNode, err = node.ReserveOneVolume(r, option)
 			if err == nil {

@@ -82,6 +82,7 @@ func (t *Topology) SetVolumeCrowded(volumeInfo storage.VolumeInfo) {
 }
 
 func (t *Topology) UnRegisterDataNode(dn *DataNode) {
+	dn.IsTerminating = true
 	for _, v := range dn.GetVolumes() {
 		glog.V(0).Infoln("Removing Volume", v.Id, "from the dead volume server", dn.Id())
 		diskType := types.ToDiskType(v.DiskType)
