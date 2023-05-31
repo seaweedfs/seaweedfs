@@ -111,7 +111,7 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 				for _, i := range exists {
 					s3cfg.Identities[idx].Credentials = append(
 						s3cfg.Identities[idx].Credentials[:i],
-						s3cfg.Identities[idx].Credentials[:i+1]...,
+						s3cfg.Identities[idx].Credentials[i+1:]...,
 					)
 				}
 

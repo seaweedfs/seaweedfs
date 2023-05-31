@@ -1,8 +1,8 @@
 package mount
 
 import (
-	"context"
 	"net/http"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 
@@ -44,20 +44,16 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	}
 
 	// lock source and target file handles
-	fhOut.orderedMutex.Acquire(context.Background(), 1)
-	defer fhOut.orderedMutex.Release(1)
-	fhOut.entryLock.Lock()
-	defer fhOut.entryLock.Unlock()
+	fhOut.Lock()
+	defer fhOut.Unlock()
 
 	if fhOut.entry == nil {
 		return 0, fuse.ENOENT
 	}
 
 	if fhIn.fh != fhOut.fh {
-		fhIn.orderedMutex.Acquire(context.Background(), 1)
-		defer fhIn.orderedMutex.Release(1)
-		fhIn.entryLock.Lock()
-		defer fhIn.entryLock.Unlock()
+		fhIn.RLock()
+		defer fhIn.RUnlock()
 	}
 
 	// directories are not supported
@@ -88,7 +84,7 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	// put data at the specified offset in target file
 	fhOut.dirtyPages.writerPattern.MonitorWriteAt(int64(in.OffOut), int(in.Len))
 	fhOut.entry.Content = nil
-	fhOut.dirtyPages.AddPage(int64(in.OffOut), data, fhOut.dirtyPages.writerPattern.IsSequentialMode())
+	fhOut.dirtyPages.AddPage(int64(in.OffOut), data, fhOut.dirtyPages.writerPattern.IsSequentialMode(), time.Now().UnixNano())
 	fhOut.entry.Attributes.FileSize = uint64(max(int64(in.OffOut)+totalRead, int64(fhOut.entry.Attributes.FileSize)))
 	fhOut.dirtyMetadata = true
 	written = uint32(totalRead)

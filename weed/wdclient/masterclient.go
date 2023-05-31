@@ -119,6 +119,7 @@ func (mc *MasterClient) WaitUntilConnected() {
 			return
 		}
 		time.Sleep(time.Duration(rand.Int31n(200)) * time.Millisecond)
+		print(".")
 	}
 }
 

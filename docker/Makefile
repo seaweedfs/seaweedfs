@@ -29,7 +29,7 @@ go_build_large_disk:
 build_rocksdb_dev_env:
 	docker build --no-cache -t chrislusf/rocksdb_dev_env -f Dockerfile.rocksdb_dev_env .
 
-build_rocksdb_local:
+build_rocksdb_local: build_rocksdb_dev_env
 	cd .. ; docker build --no-cache -t chrislusf/seaweedfs:rocksdb_local -f docker/Dockerfile.rocksdb_large_local .
 
 build_rocksdb:
@@ -62,7 +62,8 @@ k8s: build
 dev_registry: build
 	docker compose -f compose/local-registry-compose.yml -p seaweedfs up
 
-dev_replicate: build
+dev_replicate:
+	docker build --build-arg TAGS=gocdk --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.go_build .
 	docker compose -f compose/local-replicate-compose.yml -p seaweedfs up
 
 dev_auditlog: build

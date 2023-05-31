@@ -121,6 +121,10 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		c.LogLevel = "Error"
 	}
 
+	if err := raft.ValidateConfig(c); err != nil {
+		return nil, fmt.Errorf(`raft.ValidateConfig: %v`, err)
+	}
+
 	if option.RaftBootstrap {
 		os.RemoveAll(path.Join(s.dataDir, ldbFile))
 		os.RemoveAll(path.Join(s.dataDir, sdbFile))

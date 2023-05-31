@@ -22,7 +22,7 @@ func (wfs *WFS) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFile
 		for x := 0; x < n; x++ {
 
 			filerGrpcAddress := wfs.option.FilerAddresses[i].ToGrpcAddress()
-			err = pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
+			err = pb.WithGrpcClient(streamingMode, wfs.signature, func(grpcConnection *grpc.ClientConn) error {
 				client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 				return fn(client)
 			}, filerGrpcAddress, false, wfs.option.GrpcDialOption)

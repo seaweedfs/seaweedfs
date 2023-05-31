@@ -1,14 +1,22 @@
 package filer
 
 import (
+	"container/list"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"golang.org/x/exp/slices"
 )
 
-func readResolvedChunks(chunks []*filer_pb.FileChunk) (visibles []VisibleInterval) {
+func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles *IntervalList[*VisibleInterval]) {
 
 	var points []*Point
 	for _, chunk := range chunks {
+		if chunk.IsChunkManifest {
+			println("This should not happen! A manifest chunk found:", chunk.GetFileIdString())
+		}
+		start, stop := max(chunk.Offset, startOffset), min(chunk.Offset+int64(chunk.Size), stopOffset)
+		if start >= stop {
+			continue
+		}
 		points = append(points, &Point{
 			x:       chunk.Offset,
 			ts:      chunk.ModifiedTsNs,
@@ -33,40 +41,45 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk) (visibles []VisibleInterva
 	})
 
 	var prevX int64
-	var queue []*Point
+	queue := list.New() // points with higher ts are at the tail
+	visibles = NewIntervalList[*VisibleInterval]()
+	var prevPoint *Point
 	for _, point := range points {
+		if queue.Len() > 0 {
+			prevPoint = queue.Back().Value.(*Point)
+		} else {
+			prevPoint = nil
+		}
 		if point.isStart {
-			if len(queue) > 0 {
-				lastIndex := len(queue) - 1
-				lastPoint := queue[lastIndex]
-				if point.x != prevX && lastPoint.ts < point.ts {
-					visibles = addToVisibles(visibles, prevX, lastPoint, point)
+			if prevPoint != nil {
+				if point.x != prevX && prevPoint.ts < point.ts {
+					addToVisibles(visibles, prevX, prevPoint, point)
 					prevX = point.x
 				}
 			}
 			// insert into queue
-			for i := len(queue); i >= 0; i-- {
-				if i == 0 || queue[i-1].ts <= point.ts {
-					if i == len(queue) {
-						prevX = point.x
+			if prevPoint == nil || prevPoint.ts < point.ts {
+				queue.PushBack(point)
+				prevX = point.x
+			} else {
+				for e := queue.Front(); e != nil; e = e.Next() {
+					if e.Value.(*Point).ts > point.ts {
+						queue.InsertBefore(point, e)
+						break
 					}
-					queue = addToQueue(queue, i, point)
-					break
 				}
 			}
 		} else {
-			lastIndex := len(queue) - 1
-			index := lastIndex
-			var startPoint *Point
-			for ; index >= 0; index-- {
-				startPoint = queue[index]
-				if startPoint.ts == point.ts {
-					queue = removeFromQueue(queue, index)
+			isLast := true
+			for e := queue.Back(); e != nil; e = e.Prev() {
+				if e.Value.(*Point).ts == point.ts {
+					queue.Remove(e)
 					break
 				}
+				isLast = false
 			}
-			if index == lastIndex && startPoint != nil {
-				visibles = addToVisibles(visibles, prevX, startPoint, point)
+			if isLast && prevPoint != nil {
+				addToVisibles(visibles, prevX, prevPoint, point)
 				prevX = point.x
 			}
 		}
@@ -75,37 +88,30 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk) (visibles []VisibleInterva
 	return
 }
 
-func removeFromQueue(queue []*Point, index int) []*Point {
-	for i := index; i < len(queue)-1; i++ {
-		queue[i] = queue[i+1]
-	}
-	queue = queue[:len(queue)-1]
-	return queue
-}
-
-func addToQueue(queue []*Point, index int, point *Point) []*Point {
-	queue = append(queue, point)
-	for i := len(queue) - 1; i > index; i-- {
-		queue[i], queue[i-1] = queue[i-1], queue[i]
-	}
-	return queue
-}
-
-func addToVisibles(visibles []VisibleInterval, prevX int64, startPoint *Point, point *Point) []VisibleInterval {
+func addToVisibles(visibles *IntervalList[*VisibleInterval], prevX int64, startPoint *Point, point *Point) {
 	if prevX < point.x {
 		chunk := startPoint.chunk
-		visibles = append(visibles, VisibleInterval{
-			start:        prevX,
-			stop:         point.x,
-			fileId:       chunk.GetFileIdString(),
-			modifiedTsNs: chunk.ModifiedTsNs,
-			chunkOffset:  prevX - chunk.Offset,
-			chunkSize:    chunk.Size,
-			cipherKey:    chunk.CipherKey,
-			isGzipped:    chunk.IsCompressed,
-		})
+		visible := &VisibleInterval{
+			start:         prevX,
+			stop:          point.x,
+			fileId:        chunk.GetFileIdString(),
+			modifiedTsNs:  chunk.ModifiedTsNs,
+			offsetInChunk: prevX - chunk.Offset,
+			chunkSize:     chunk.Size,
+			cipherKey:     chunk.CipherKey,
+			isGzipped:     chunk.IsCompressed,
+		}
+		appendVisibleInterfal(visibles, visible)
 	}
-	return visibles
+}
+
+func appendVisibleInterfal(visibles *IntervalList[*VisibleInterval], visible *VisibleInterval) {
+	visibles.AppendInterval(&Interval[*VisibleInterval]{
+		StartOffset: visible.start,
+		StopOffset:  visible.stop,
+		TsNs:        visible.modifiedTsNs,
+		Value:       visible,
+	})
 }
 
 type Point struct {

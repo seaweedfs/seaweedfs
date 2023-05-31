@@ -108,12 +108,15 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	objectContentType := r.Header.Get("Content-Type")
-	if strings.HasSuffix(object, "/") && r.ContentLength == 0 {
+	if strings.HasSuffix(object, "/") && r.ContentLength <= 1024 {
 		if err := s3a.mkdir(
 			s3a.option.BucketsPath, bucket+strings.TrimSuffix(object, "/"),
 			func(entry *filer_pb.Entry) {
 				if objectContentType == "" {
-					objectContentType = "httpd/unix-directory"
+					objectContentType = s3_constants.FolderMimeType
+				}
+				if r.ContentLength > 0 {
+					entry.Content, _ = io.ReadAll(r.Body)
 				}
 				entry.Attributes.Mime = objectContentType
 			}); err != nil {
@@ -126,7 +129,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			dataReader = mimeDetect(r, dataReader)
 		}
 
-		etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, "")
+		etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, "", bucket)
 
 		if errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
@@ -496,7 +499,7 @@ func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (s
 	return statusCode
 }
 
-func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, destination string) (etag string, code s3err.ErrorCode) {
+func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader io.Reader, destination string, bucket string) (etag string, code s3err.ErrorCode) {
 
 	hash := md5.New()
 	var body = io.TeeReader(dataReader, hash)
@@ -511,6 +514,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, uploadUrl string, dataReader
 	proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
 	if destination != "" {
 		proxyReq.Header.Set(s3_constants.SeaweedStorageDestinationHeader, destination)
+	}
+
+	if s3a.option.FilerGroup != "" {
+		query := proxyReq.URL.Query()
+		query.Add("collection", s3a.getCollectionName(bucket))
+		proxyReq.URL.RawQuery = query.Encode()
 	}
 
 	for header, values := range r.Header {

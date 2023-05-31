@@ -40,7 +40,7 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 	}
 
 	// append to existing chunks
-	entry.Chunks = append(entry.GetChunks(), uploadResult.ToPbFileChunk(assignResult.Fid, offset))
+	entry.Chunks = append(entry.GetChunks(), uploadResult.ToPbFileChunk(assignResult.Fid, offset, time.Now().UnixNano()))
 
 	// update the entry
 	err = f.CreateEntry(context.Background(), entry, false, false, nil, false)

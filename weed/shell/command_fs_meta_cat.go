@@ -5,6 +5,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"google.golang.org/protobuf/proto"
 	"io"
+	"sort"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -48,6 +49,11 @@ func (c *commandFsMetaCat) Do(args []string, commandEnv *CommandEnv, writer io.W
 		if err != nil {
 			return err
 		}
+
+		chunks := respLookupEntry.Entry.Chunks
+		sort.Slice(chunks, func(i, j int) bool {
+			return chunks[i].Offset < chunks[j].Offset
+		})
 
 		filer.ProtoToText(writer, respLookupEntry.Entry)
 

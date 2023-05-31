@@ -28,10 +28,12 @@ type FilerSource struct {
 	address        string
 	proxyByFiler   bool
 	dataCenter     string
+	signature      int32
 }
 
 func (fs *FilerSource) Initialize(configuration util.Configuration, prefix string) error {
 	fs.dataCenter = configuration.GetString(prefix + "dataCenter")
+	fs.signature = util.RandomInt32()
 	return fs.DoInitialize(
 		"",
 		configuration.GetString(prefix+"grpcAddress"),
@@ -128,7 +130,7 @@ var _ = filer_pb.FilerClient(&FilerSource{})
 
 func (fs *FilerSource) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
+	return pb.WithGrpcClient(streamingMode, fs.signature, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
 	}, fs.grpcAddress, false, fs.grpcDialOption)

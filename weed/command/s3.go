@@ -155,6 +155,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	filerAddress := pb.ServerAddress(*s3opt.filer)
 
 	filerBucketsPath := "/buckets"
+	filerGroup := ""
 
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
@@ -163,12 +164,13 @@ func (s3opt *S3Options) startS3Server() bool {
 	var metricsIntervalSec int
 
 	for {
-		err := pb.WithGrpcFilerClient(false, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
 			}
 			filerBucketsPath = resp.DirBuckets
+			filerGroup = resp.FilerGroup
 			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
 			glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
 			return nil
@@ -200,6 +202,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		AllowDeleteBucketNotEmpty: *s3opt.allowDeleteBucketNotEmpty,
 		LocalFilerSocket:          localFilerSocket,
 		DataCenter:                *s3opt.dataCenter,
+		FilerGroup:                filerGroup,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)

@@ -51,7 +51,7 @@ func (broker *MessageQueueBroker) readSegmentOnFiler(segment *mq.Segment) (info 
 		return
 	}
 
-	err = pb.WithFilerClient(false, broker.GetFiler(), broker.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithFilerClient(false, 0, broker.GetFiler(), broker.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		// read filer conf first
 		data, err := filer.ReadInsideFiler(client, dir, name)
 		if err != nil {
@@ -76,7 +76,7 @@ func (broker *MessageQueueBroker) saveSegmentToFiler(segment *mq.Segment, info *
 	var buf bytes.Buffer
 	filer.ProtoToText(&buf, info)
 
-	err = pb.WithFilerClient(false, broker.GetFiler(), broker.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithFilerClient(false, 0, broker.GetFiler(), broker.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		// read filer conf first
 		err := filer.SaveInsideFiler(client, dir, name, buf.Bytes())
 		if err != nil {

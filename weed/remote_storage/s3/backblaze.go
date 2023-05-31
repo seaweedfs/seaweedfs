@@ -27,7 +27,7 @@ func (s BackBlazeRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_st
 	}
 	config := &aws.Config{
 		Endpoint:                      aws.String(conf.BackblazeEndpoint),
-		Region:                        aws.String("us-west-002"),
+		Region:                        aws.String(conf.BackblazeRegion),
 		S3ForcePathStyle:              aws.Bool(true),
 		S3DisableContentMD5Validation: aws.Bool(true),
 	}

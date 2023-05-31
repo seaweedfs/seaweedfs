@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	//"github.com/seaweedfs/seaweedfs/weed/s3api"
@@ -49,7 +50,7 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 	if err != nil {
 		if strings.HasPrefix(err.Error(), "read input:") || err.Error() == io.ErrUnexpectedEOF.Error() {
 			writeJsonError(w, r, 499, err)
-		} else if strings.HasSuffix(err.Error(), "is a file") {
+		} else if strings.HasSuffix(err.Error(), "is a file") || strings.HasSuffix(err.Error(), "already exists") {
 			writeJsonError(w, r, http.StatusConflict, err)
 		} else {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
@@ -64,7 +65,6 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 }
 
 func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, chunkSize int32, contentLength int64, so *operation.StorageOption) (filerResult *FilerPostResult, md5bytes []byte, replyerr error) {
-
 	multipartReader, multipartReaderErr := r.MultipartReader()
 	if multipartReaderErr != nil {
 		return nil, nil, multipartReaderErr
@@ -82,6 +82,15 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 	contentType := part1.Header.Get("Content-Type")
 	if contentType == "application/octet-stream" {
 		contentType = ""
+	}
+
+	if so.SaveInside {
+		buf := bufPool.Get().(*bytes.Buffer)
+		buf.Reset()
+		buf.ReadFrom(part1)
+		filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, nil, nil, 0, buf.Bytes())
+		bufPool.Put(buf)
+		return
 	}
 
 	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadReaderToChunks(w, r, part1, chunkSize, fileName, contentType, contentLength, so)
@@ -256,7 +265,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAsChunkFunctionType {
 
-	return func(reader io.Reader, name string, offset int64) (*filer_pb.FileChunk, error) {
+	return func(reader io.Reader, name string, offset int64, tsNs int64) (*filer_pb.FileChunk, error) {
 		var fileId string
 		var uploadResult *operation.UploadResult
 
@@ -290,7 +299,7 @@ func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAs
 			return nil, err
 		}
 
-		return uploadResult.ToPbFileChunk(fileId, offset), nil
+		return uploadResult.ToPbFileChunk(fileId, offset, tsNs), nil
 	}
 }
 

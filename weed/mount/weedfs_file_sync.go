@@ -89,14 +89,14 @@ func (wfs *WFS) Fsync(cancel <-chan struct{}, in *fuse.FsyncIn) (code fuse.Statu
 }
 
 func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
-	fh.orderedMutex.Acquire(context.Background(), 1)
-	defer fh.orderedMutex.Release(1)
+	fh.Lock()
+	defer fh.Unlock()
 
 	// flush works at fh level
 	fileFullPath := fh.FullPath()
 	dir, name := fileFullPath.DirAndName()
 	// send the data to the OS
-	glog.V(4).Infof("doFlush %s fh %d", fileFullPath, fh.handle)
+	glog.V(4).Infof("doFlush %s fh %d", fileFullPath, fh.fh)
 
 	if !wfs.IsOverQuota {
 		if err := fh.dirtyPages.FlushData(); err != nil {
@@ -145,9 +145,9 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		}
 
 		glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.GetChunks()))
-		for i, chunk := range entry.GetChunks() {
-			glog.V(4).Infof("%s chunks %d: %v [%d,%d)", fileFullPath, i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
-		}
+		//for i, chunk := range entry.GetChunks() {
+		//	glog.V(4).Infof("%s chunks %d: %v [%d,%d)", fileFullPath, i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
+		//}
 
 		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.GetChunks())
 
@@ -177,8 +177,12 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 	}
 
 	if err != nil {
-		glog.Errorf("%v fh %d flush: %v", fileFullPath, fh.handle, err)
+		glog.Errorf("%v fh %d flush: %v", fileFullPath, fh.fh, err)
 		return fuse.EIO
+	}
+
+	if IsDebugFileReadWrite {
+		fh.mirrorFile.Sync()
 	}
 
 	return fuse.OK

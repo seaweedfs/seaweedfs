@@ -3,11 +3,12 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/raft"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/raft"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -283,6 +284,20 @@ func (ms *MasterServer) VacuumVolume(ctx context.Context, req *master_pb.VacuumV
 	return resp, nil
 }
 
+func (ms *MasterServer) DisableVacuum(ctx context.Context, req *master_pb.DisableVacuumRequest) (*master_pb.DisableVacuumResponse, error) {
+
+	ms.Topo.DisableVacuum()
+	resp := &master_pb.DisableVacuumResponse{}
+	return resp, nil
+}
+
+func (ms *MasterServer) EnableVacuum(ctx context.Context, req *master_pb.EnableVacuumRequest) (*master_pb.EnableVacuumResponse, error) {
+
+	ms.Topo.EnableVacuum()
+	resp := &master_pb.EnableVacuumResponse{}
+	return resp, nil
+}
+
 func (ms *MasterServer) VolumeMarkReadonly(ctx context.Context, req *master_pb.VolumeMarkReadonlyRequest) (*master_pb.VolumeMarkReadonlyResponse, error) {
 
 	if !ms.Topo.IsLeader() {
@@ -294,12 +309,13 @@ func (ms *MasterServer) VolumeMarkReadonly(ctx context.Context, req *master_pb.V
 	replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(req.ReplicaPlacement))
 	vl := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, needle.LoadTTLFromUint32(req.Ttl), types.ToDiskType(req.DiskType))
 	dataNodes := ms.Topo.Lookup(req.Collection, needle.VolumeId(req.VolumeId))
+
 	for _, dn := range dataNodes {
 		if dn.Ip == req.Ip && dn.Port == int(req.Port) {
 			if req.IsReadonly {
-				vl.SetVolumeUnavailable(dn, needle.VolumeId(req.VolumeId))
+				vl.SetVolumeReadOnly(dn, needle.VolumeId(req.VolumeId))
 			} else {
-				vl.SetVolumeAvailable(dn, needle.VolumeId(req.VolumeId), false)
+				vl.SetVolumeWritable(dn, needle.VolumeId(req.VolumeId))
 			}
 		}
 	}
