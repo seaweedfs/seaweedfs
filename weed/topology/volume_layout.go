@@ -3,11 +3,12 @@ package topology
 import (
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
@@ -112,6 +113,7 @@ type VolumeLayout struct {
 	vid2location     map[needle.VolumeId]*VolumeLocationList
 	writables        []needle.VolumeId // transient array of writable volume id
 	crowded          map[needle.VolumeId]struct{}
+	vacuumedVolumes  map[needle.VolumeId]int64
 	readonlyVolumes  *volumesBinaryState // readonly volumes
 	oversizedVolumes *volumesBinaryState // oversized volumes
 	volumeSizeLimit  uint64
@@ -133,6 +135,7 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 		vid2location:     make(map[needle.VolumeId]*VolumeLocationList),
 		writables:        *new([]needle.VolumeId),
 		crowded:          make(map[needle.VolumeId]struct{}),
+		vacuumedVolumes:  make(map[needle.VolumeId]int64),
 		readonlyVolumes:  NewVolumesBinaryState(readOnlyState, rp, ExistCopies()),
 		oversizedVolumes: NewVolumesBinaryState(oversizedState, rp, ExistCopies()),
 		volumeSizeLimit:  volumeSizeLimit,
@@ -436,7 +439,7 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) 
 	}
 	return false
 }
-func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, isReadOnly bool) bool {
+func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, isReadOnly, isFullCapacity bool) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -447,7 +450,7 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 
 	vl.vid2location[vid].Set(dn)
 
-	if vInfo.ReadOnly || isReadOnly {
+	if vInfo.ReadOnly || isReadOnly || isFullCapacity {
 		return false
 	}
 

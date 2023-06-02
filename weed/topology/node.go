@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -247,24 +248,32 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 	if n.IsRack() {
 		for _, c := range n.Children() {
 			dn := c.(*DataNode) //can not cast n to DataNode
-			dn.RLock()
 			for _, v := range dn.GetVolumes() {
+				topo := n.GetTopology()
+				diskType := types.ToDiskType(v.DiskType)
+				vl := topo.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
+
 				if v.Size >= volumeSizeLimit {
-					//fmt.Println("volume",v.Id,"size",v.Size,">",volumeSizeLimit)
-					n.GetTopology().chanFullVolumes <- v
+					vl.accessLock.RLock()
+					vacuumTime, ok := vl.vacuumedVolumes[v.Id]
+					vl.accessLock.RUnlock()
+
+					if !ok || time.Now().Unix() > vacuumTime+10 {
+						//fmt.Println("volume",v.Id,"size",v.Size,">",volumeSizeLimit)
+						topo.chanFullVolumes <- v
+					}
 				} else if float64(v.Size) > float64(volumeSizeLimit)*growThreshold {
-					n.GetTopology().chanCrowdedVolumes <- v
+					topo.chanCrowdedVolumes <- v
 				}
 				copyCount := v.ReplicaPlacement.GetCopyCount()
 				if copyCount > 1 {
-					if copyCount > len(n.GetTopology().Lookup(v.Collection, v.Id)) {
+					if copyCount > len(topo.Lookup(v.Collection, v.Id)) {
 						stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(1)
 					} else {
 						stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(0)
 					}
 				}
 			}
-			dn.RUnlock()
 		}
 	} else {
 		for _, c := range n.Children() {

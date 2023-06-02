@@ -123,14 +123,20 @@ func (t *Topology) batchVacuumVolumeCompact(grpcDialOption grpc.DialOption, vl *
 func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *VolumeLayout, vid needle.VolumeId, vacuumLocationList, locationList *VolumeLocationList) bool {
 	isCommitSuccess := true
 	isReadOnly := false
+	isFullCapacity := false
 	for _, dn := range vacuumLocationList.list {
 		glog.V(0).Infoln("Start Committing vacuum", vid, "on", dn.Url())
 		err := operation.WithVolumeServerClient(false, dn.ServerAddress(), grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 			resp, err := volumeServerClient.VacuumVolumeCommit(context.Background(), &volume_server_pb.VacuumVolumeCommitRequest{
 				VolumeId: uint32(vid),
 			})
-			if resp != nil && resp.IsReadOnly {
-				isReadOnly = true
+			if resp != nil {
+				if resp.IsReadOnly {
+					isReadOnly = true
+				}
+				if resp.VolumeSize > t.volumeSizeLimit {
+					isFullCapacity = true
+				}
 			}
 			return err
 		})
@@ -142,7 +148,7 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 		}
 	}
 
-	//we should check the status of all replicas
+	//we should check check the status of all replicas
 	if len(locationList.list) > len(vacuumLocationList.list) {
 		for _, dn := range locationList.list {
 			isFound := false
@@ -157,14 +163,19 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 					resp, err := volumeServerClient.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{
 						VolumeId: uint32(vid),
 					})
-					if resp != nil && resp.IsReadOnly {
-						isReadOnly = true
+					if resp != nil {
+						if resp.IsReadOnly {
+							isReadOnly = true
+						}
+						if resp.VolumeSize > t.volumeSizeLimit {
+							isFullCapacity = true
+						}
 					}
 					return err
 				})
 				if err != nil {
 					glog.Errorf("Error when checking volume %d status on %s: %v", vid, dn.Url(), err)
-					//we mark volume read-only, since the volume state is unknown
+					//we mark volume read-only, since the volume state is unknown,
 					isReadOnly = true
 				}
 			}
@@ -172,23 +183,12 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 	}
 
 	if isCommitSuccess {
-		//reset all vacuumed volumes size
-		for _, dn := range vacuumLocationList.list {
-			vInfo, err := dn.GetVolumesById(vid)
-			if err != nil {
-				glog.V(0).Infof("get volume info for volume: %d failed %v", vid, err)
-				return false
-			}
-
-			dn.Lock()
-			disk := dn.getOrCreateDisk(vInfo.DiskType)
-			vInfo.Size = 0
-			disk.doAddOrUpdateVolume(vInfo)
-			dn.Unlock()
-		}
+		vl.accessLock.Lock()
+		vl.vacuumedVolumes[vid] = time.Now().Unix()
+		vl.accessLock.Unlock()
 
 		for _, dn := range vacuumLocationList.list {
-			vl.SetVolumeAvailable(dn, vid, isReadOnly)
+			vl.SetVolumeAvailable(dn, vid, isReadOnly, isFullCapacity)
 		}
 	}
 	return isCommitSuccess
