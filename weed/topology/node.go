@@ -258,7 +258,7 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 					vacuumTime, ok := vl.vacuumedVolumes[v.Id]
 					vl.accessLock.RUnlock()
 
-					if !ok || time.Now().Unix() > vacuumTime+10 {
+					if !ok || time.Now().Unix() > vacuumTime+20 {
 						//fmt.Println("volume",v.Id,"size",v.Size,">",volumeSizeLimit)
 						topo.chanFullVolumes <- v
 					}
