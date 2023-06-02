@@ -148,7 +148,7 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 		}
 	}
 
-	//we should check check the status of all replicas
+	//we should check the status of all replicas
 	if len(locationList.list) > len(vacuumLocationList.list) {
 		for _, dn := range locationList.list {
 			isFound := false
@@ -175,7 +175,7 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 				})
 				if err != nil {
 					glog.Errorf("Error when checking volume %d status on %s: %v", vid, dn.Url(), err)
-					//we mark volume read-only, since the volume state is unknown,
+					//we mark volume read-only, since the volume state is unknown
 					isReadOnly = true
 				}
 			}
@@ -183,6 +183,7 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 	}
 
 	if isCommitSuccess {
+		//record vacuum time of volume
 		vl.accessLock.Lock()
 		vl.vacuumedVolumes[vid] = time.Now().Unix()
 		vl.accessLock.Unlock()

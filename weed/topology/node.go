@@ -258,6 +258,9 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 					vacuumTime, ok := vl.vacuumedVolumes[v.Id]
 					vl.accessLock.RUnlock()
 
+					// If a volume has been vacuumed in the past 20 seconds, we do not check whether it has reached full capacity.
+					// After 20s(grpc timeout), theoretically all the heartbeats of the volume server have reached the master,
+					// the volume size should be correct, not the size before the vacuum.
 					if !ok || time.Now().Unix() > vacuumTime+20 {
 						//fmt.Println("volume",v.Id,"size",v.Size,">",volumeSizeLimit)
 						topo.chanFullVolumes <- v
