@@ -9,6 +9,8 @@ global:
   restartPolicy: Always
   loggingLevel: 1
   enableSecurity: false
+  certificates:
+    alphacrds: false
   monitoring:
     enabled: false
     gatewayHost: null
