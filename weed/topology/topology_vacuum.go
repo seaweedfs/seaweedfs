@@ -172,21 +172,6 @@ func (t *Topology) batchVacuumVolumeCommit(grpcDialOption grpc.DialOption, vl *V
 	}
 
 	if isCommitSuccess {
-		//reset all vacuumed volumes size
-		for _, dn := range vacuumLocationList.list {
-			vInfo, err := dn.GetVolumesById(vid)
-			if err != nil {
-				glog.V(0).Infof("get volume info for volume: %d failed %v", vid, err)
-				return false
-			}
-
-			dn.Lock()
-			disk := dn.getOrCreateDisk(vInfo.DiskType)
-			vInfo.Size = 0
-			disk.doAddOrUpdateVolume(vInfo)
-			dn.Unlock()
-		}
-
 		for _, dn := range vacuumLocationList.list {
 			vl.SetVolumeAvailable(dn, vid, isReadOnly)
 		}
