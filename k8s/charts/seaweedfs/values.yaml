@@ -124,6 +124,7 @@ master:
   ingress:
     enabled: false
     className: "nginx"
+    host: "master.seaweedfs.local"
     annotations:
       nginx.ingress.kubernetes.io/auth-type: "basic"
       nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
@@ -371,7 +372,9 @@ filer:
   ingress:
     enabled: false
     className: "nginx"
+    host: "seaweedfs.cluster.local"
     annotations:
+      nginx.ingress.kubernetes.io/backend-protocol: GRPC
       nginx.ingress.kubernetes.io/auth-type: "basic"
       nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
       nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Filer'
