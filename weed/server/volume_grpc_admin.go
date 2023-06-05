@@ -237,7 +237,9 @@ func (vs *VolumeServer) VolumeStatus(ctx context.Context, req *volume_server_pb.
 		return nil, fmt.Errorf("not found volume id %d", req.VolumeId)
 	}
 
+	volumeSize, _, _ := v.DataBackend.GetStat()
 	resp.IsReadOnly = v.IsReadOnly()
+	resp.VolumeSize = uint64(volumeSize)
 
 	return resp, nil
 }
