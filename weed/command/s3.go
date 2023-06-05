@@ -2,8 +2,11 @@ package command
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"google.golang.org/grpc/credentials/tls/certprovider"
+	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/reflection"
 	"net/http"
 	"time"
@@ -41,6 +44,7 @@ type S3Options struct {
 	auditLogConfig            *string
 	localFilerSocket          *string
 	dataCenter                *string
+	certProvider              certprovider.Provider
 }
 
 func init() {
@@ -152,6 +156,12 @@ func runS3(cmd *Command, args []string) bool {
 
 }
 
+// GetCertificateWithUpdate Auto refreshing TSL certificate
+func (S3opt *S3Options) GetCertificateWithUpdate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	certs, err := S3opt.certProvider.KeyMaterial(context.Background())
+	return &certs.Certs[0], err
+}
+
 func (s3opt *S3Options) startS3Server() bool {
 
 	filerAddress := pb.ServerAddress(*s3opt.filer)
@@ -247,16 +257,25 @@ func (s3opt *S3Options) startS3Server() bool {
 	go grpcS.Serve(grpcL)
 
 	if *s3opt.tlsPrivateKey != "" {
+		pemfileOptions := pemfile.Options{
+			CertFile:        *s3opt.tlsCertificate,
+			KeyFile:         *s3opt.tlsPrivateKey,
+			RefreshDuration: security.CredRefreshingInterval,
+		}
+		if s3opt.certProvider, err = pemfile.NewProvider(pemfileOptions); err != nil {
+			glog.Fatalf("pemfile.NewProvider(%v) failed: %v", pemfileOptions, err)
+		}
+		httpS.TLSConfig = &tls.Config{GetCertificate: s3opt.GetCertificateWithUpdate}
 		if *s3opt.portHttps == 0 {
 			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
 			if s3ApiLocalListener != nil {
 				go func() {
-					if err = httpS.ServeTLS(s3ApiLocalListener, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
+					if err = httpS.ServeTLS(s3ApiLocalListener, "", ""); err != nil {
 						glog.Fatalf("S3 API Server Fail to serve: %v", err)
 					}
 				}()
 			}
-			if err = httpS.ServeTLS(s3ApiListener, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
+			if err = httpS.ServeTLS(s3ApiListener, "", ""); err != nil {
 				glog.Fatalf("S3 API Server Fail to serve: %v", err)
 			}
 		} else {
@@ -265,13 +284,13 @@ func (s3opt *S3Options) startS3Server() bool {
 				*s3opt.bindIp, *s3opt.portHttps, time.Duration(10)*time.Second)
 			if s3ApiLocalListenerHttps != nil {
 				go func() {
-					if err = httpS.ServeTLS(s3ApiLocalListenerHttps, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
+					if err = httpS.ServeTLS(s3ApiLocalListenerHttps, "", ""); err != nil {
 						glog.Fatalf("S3 API Server Fail to serve: %v", err)
 					}
 				}()
 			}
 			go func() {
-				if err = httpS.ServeTLS(s3ApiListenerHttps, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
+				if err = httpS.ServeTLS(s3ApiListenerHttps, "", ""); err != nil {
 					glog.Fatalf("S3 API Server Fail to serve: %v", err)
 				}
 			}()
