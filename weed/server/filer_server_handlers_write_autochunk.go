@@ -40,7 +40,7 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 	var md5bytes []byte
 	if r.Method == "POST" {
 		if r.Header.Get("Content-Type") == "" && strings.HasSuffix(r.URL.Path, "/") {
-			reply, err = fs.mkdir(ctx, w, r)
+			reply, err = fs.mkdir(ctx, w, r, so)
 		} else {
 			reply, md5bytes, err = fs.doPostAutoChunk(ctx, w, r, chunkSize, contentLength, so)
 		}
@@ -303,7 +303,7 @@ func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAs
 	}
 }
 
-func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http.Request) (filerResult *FilerPostResult, replyerr error) {
+func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) (filerResult *FilerPostResult, replyerr error) {
 
 	// detect file mode
 	modeStr := r.URL.Query().Get("mode")
@@ -337,6 +337,7 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 			Mode:   os.FileMode(mode) | os.ModeDir,
 			Uid:    OS_UID,
 			Gid:    OS_GID,
+			TtlSec: so.TtlSeconds,
 		},
 	}
 
