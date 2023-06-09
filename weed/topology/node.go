@@ -34,11 +34,13 @@ type Node interface {
 	IsDataNode() bool
 	IsRack() bool
 	IsDataCenter() bool
+	IsLocked() bool
 	Children() []Node
 	Parent() Node
 
 	GetValue() interface{} //get reference to the topology,dc,rack,datanode
 }
+
 type NodeImpl struct {
 	diskUsages   *DiskUsages
 	id           NodeId
@@ -122,24 +124,37 @@ func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, option *VolumeGrowOption
 func (n *NodeImpl) IsDataNode() bool {
 	return n.nodeType == "DataNode"
 }
+
 func (n *NodeImpl) IsRack() bool {
 	return n.nodeType == "Rack"
 }
+
 func (n *NodeImpl) IsDataCenter() bool {
 	return n.nodeType == "DataCenter"
 }
+
+func (n *NodeImpl) IsLocked() (isTryLock bool) {
+	if isTryLock = n.TryRLock(); isTryLock {
+		n.RUnlock()
+	}
+	return !isTryLock
+}
+
 func (n *NodeImpl) String() string {
 	if n.parent != nil {
 		return n.parent.String() + ":" + string(n.id)
 	}
 	return string(n.id)
 }
+
 func (n *NodeImpl) Id() NodeId {
 	return n.id
 }
+
 func (n *NodeImpl) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts {
 	return n.diskUsages.getOrCreateDisk(diskType)
 }
+
 func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 	t := n.getOrCreateDisk(option.DiskType)
 	freeVolumeSlotCount := atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount) - atomic.LoadInt64(&t.volumeCount)
@@ -152,6 +167,7 @@ func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 func (n *NodeImpl) SetParent(node Node) {
 	n.parent = node
 }
+
 func (n *NodeImpl) Children() (ret []Node) {
 	n.RLock()
 	defer n.RUnlock()
@@ -160,12 +176,15 @@ func (n *NodeImpl) Children() (ret []Node) {
 	}
 	return ret
 }
+
 func (n *NodeImpl) Parent() Node {
 	return n.parent
 }
+
 func (n *NodeImpl) GetValue() interface{} {
 	return n.value
 }
+
 func (n *NodeImpl) ReserveOneVolume(r int64, option *VolumeGrowOption) (assignedNode *DataNode, err error) {
 	n.RLock()
 	defer n.RUnlock()
