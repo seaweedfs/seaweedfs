@@ -70,9 +70,13 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 		if err != nil || dataSize == 0 {
 			bufPool.Put(bytesBuffer)
 			<-bytesBufferLimitChan
-			uploadErrLock.Lock()
-			uploadErr = err
-			uploadErrLock.Unlock()
+			if err != nil {
+				uploadErrLock.Lock()
+				if uploadErr == nil {
+					uploadErr = err
+				}
+				uploadErrLock.Unlock()
+			}
 			break
 		}
 		if chunkOffset == 0 && !isAppend {
