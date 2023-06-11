@@ -332,3 +332,6 @@ func (v *Volume) IsReadOnly() bool {
 	defer v.noWriteLock.RUnlock()
 	return v.noWriteOrDelete || v.noWriteCanDelete || v.location.isDiskSpaceLow
 }
+func (v *Volume) IsEmpty() bool {
+	return v.ContentSize() == 0
+}
