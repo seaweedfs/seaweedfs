@@ -270,7 +270,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	// remove the remaining replicas
 	for _, loc := range locations {
 		if loc.Url != dst.dataNode.Id && loc.ServerAddress() != sourceVolumeServer {
-			if err = deleteVolume(commandEnv.option.GrpcDialOption, vid, loc.ServerAddress()); err != nil {
+			if err = deleteVolume(commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), false); err != nil {
 				fmt.Fprintf(writer, "failed to delete volume %d on %s: %v\n", vid, loc.Url, err)
 			}
 			// reduce volume count? Not really necessary since they are "more" full and will not be a candidate to move to

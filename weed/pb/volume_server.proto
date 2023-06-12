@@ -219,6 +219,7 @@ message VolumeUnmountResponse {
 
 message VolumeDeleteRequest {
     uint32 volume_id = 1;
+    bool only_empty = 2;
 }
 message VolumeDeleteResponse {
 }

@@ -507,8 +507,11 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 	return fmt.Errorf("volume %d not found on disk", i)
 }
 
-func (s *Store) DeleteVolume(i needle.VolumeId) error {
+func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool) error {
 	v := s.findVolume(i)
+	if onlyEmpty && !v.IsEmpty() {
+		return fmt.Errorf("delete volume %d not empty", i)
+	}
 	if v == nil {
 		return fmt.Errorf("delete volume %d not found on disk", i)
 	}
