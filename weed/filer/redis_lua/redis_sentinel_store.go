@@ -1,10 +1,11 @@
 package redis_lua
 
 import (
-	"github.com/go-redis/redis/v8"
+	"time"
+
+	"github.com/redis/go-redis/v9"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"time"
 )
 
 func init() {
