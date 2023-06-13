@@ -509,11 +509,11 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 
 func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool) error {
 	v := s.findVolume(i)
-	if onlyEmpty && !v.IsEmpty() {
-		return fmt.Errorf("delete volume %d not empty", i)
-	}
 	if v == nil {
 		return fmt.Errorf("delete volume %d not found on disk", i)
+	}
+	if onlyEmpty && !v.IsEmpty() {
+		return fmt.Errorf("delete volume %d not empty", i)
 	}
 	message := master_pb.VolumeShortInformationMessage{
 		Id:               uint32(v.Id),
