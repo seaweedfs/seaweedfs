@@ -1,7 +1,10 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
+	"github.com/stretchr/testify/assert"
+	"os"
 	"testing"
 	"time"
 
@@ -52,4 +55,67 @@ func TestSearchVolumesWithDeletedNeedles(t *testing.T) {
 	}
 	fmt.Printf("offset: %v, isLast: %v\n", offset.ToActualOffset(), isLast)
 
+}
+
+func isFileExist(path string) (bool, error) {
+	if _, err := os.Stat(path); err == nil {
+		return true, nil
+	} else if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else {
+		return false, err
+	}
+}
+
+func assertFileExist(t *testing.T, expected bool, path string) {
+	exist, err := isFileExist(path)
+	if err != nil {
+		t.Fatalf("isFileExist: %v", err)
+	}
+	assert.Equal(t, expected, exist)
+}
+
+func TestDestroyOnlyEmptyEmptyVolume(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	path := v.DataBackend.Name()
+
+	// should can Destroy empty volume with onlyEmpty
+	assertFileExist(t, true, path)
+	err = v.Destroy(true)
+	if err != nil {
+		t.Fatalf("destroy volume: %v", err)
+	}
+	assertFileExist(t, false, path)
+}
+
+func TestDestroyOnlyEmptyNonemptyVolume(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+
+	// should return "volume not empty" error when Destroy non-empty volume
+	_, _, _, err = v.writeNeedle2(newRandomNeedle(1), true, false)
+	if err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	assert.Equal(t, uint64(1), v.FileCount())
+
+	err = v.Destroy(true)
+	assert.EqualError(t, err, "volume not empty")
+
+	// should keep working after "volume not empty"
+	_, _, _, err = v.writeNeedle2(newRandomNeedle(2), true, false)
+	if err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+
+	assert.Equal(t, uint64(2), v.FileCount())
 }
