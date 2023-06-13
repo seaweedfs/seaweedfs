@@ -137,7 +137,7 @@ func runBackup(cmd *Command, args []string) bool {
 
 	if datSize > stats.TailOffset {
 		// remove the old data
-		v.Destroy()
+		v.Destroy(false)
 		// recreate an empty volume
 		v, err = storage.NewVolume(util.ResolvePath(*s.dir), util.ResolvePath(*s.dir), *s.collection, vid, storage.NeedleMapInMemory, replication, ttl, 0, 0, 0)
 		if err != nil {

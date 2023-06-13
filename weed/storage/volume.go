@@ -133,6 +133,31 @@ func (v *Volume) ContentSize() uint64 {
 	return v.nm.ContentSize()
 }
 
+func (v *Volume) IsEmpty() (bool, error) {
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
+	return v.doIsEmpty()
+}
+
+func (v *Volume) doIsEmpty() (bool, error) {
+	if v.DataBackend != nil {
+		datFileSize, _, e := v.DataBackend.GetStat()
+		if e != nil {
+			glog.V(0).Infof("Failed to read file size %s %v", v.DataBackend.Name(), e)
+			return false, e
+		}
+		if datFileSize > 8 {
+			return false, nil
+		}
+	}
+	if v.nm != nil {
+		if v.nm.ContentSize() > 0 {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (v *Volume) DeletedSize() uint64 {
 	v.dataFileAccessLock.RLock()
 	defer v.dataFileAccessLock.RUnlock()
@@ -202,6 +227,10 @@ func (v *Volume) Close() {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
+	v.doClose()
+}
+
+func (v *Volume) doClose() {
 	for v.isCommitCompacting {
 		time.Sleep(521 * time.Millisecond)
 		glog.Warningf("Volume Close wait for compaction %d", v.Id)
@@ -331,8 +360,4 @@ func (v *Volume) IsReadOnly() bool {
 	v.noWriteLock.RLock()
 	defer v.noWriteLock.RUnlock()
 	return v.noWriteOrDelete || v.noWriteCanDelete || v.location.isDiskSpaceLow
-}
-func (v *Volume) IsEmpty() bool {
-	datSize, _, _ := v.FileStat()
-	return datSize <= super_block.SuperBlockSize && v.ContentSize() == 0
 }
