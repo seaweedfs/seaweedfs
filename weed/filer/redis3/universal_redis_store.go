@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/go-redis/redis/v8"
 
 	redsync "github.com/go-redsync/redsync/v4"
 	"github.com/seaweedfs/seaweedfs/weed/filer"

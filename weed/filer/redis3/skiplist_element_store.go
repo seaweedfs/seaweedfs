@@ -3,8 +3,7 @@ package redis3
 import (
 	"context"
 	"fmt"
-
-	"github.com/redis/go-redis/v9"
+	"github.com/go-redis/redis/v8"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util/skiplist"
 	"google.golang.org/protobuf/proto"

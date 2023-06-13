@@ -2,8 +2,7 @@ package stored_procedure
 
 import (
 	_ "embed"
-
-	"github.com/redis/go-redis/v9"
+	"github.com/go-redis/redis/v8"
 )
 
 func init() {

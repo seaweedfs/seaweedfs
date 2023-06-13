@@ -3,12 +3,11 @@ package redis
 import (
 	"context"
 	"fmt"
+	"golang.org/x/exp/slices"
 	"strings"
 	"time"
 
-	"golang.org/x/exp/slices"
-
-	"github.com/redis/go-redis/v9"
+	"github.com/go-redis/redis/v8"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"

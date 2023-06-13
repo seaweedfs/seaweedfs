@@ -1,11 +1,10 @@
 package redis2
 
 import (
-	"time"
-
-	"github.com/redis/go-redis/v9"
+	"github.com/go-redis/redis/v8"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"time"
 )
 
 func init() {

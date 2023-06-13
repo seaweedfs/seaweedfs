@@ -3,12 +3,11 @@ package redis3
 import (
 	"context"
 	"fmt"
+	"github.com/go-redis/redis/v8"
+	"github.com/stvp/tempredis"
 	"strconv"
 	"testing"
 	"time"
-
-	"github.com/redis/go-redis/v9"
-	"github.com/stvp/tempredis"
 )
 
 var names = []string{
