@@ -75,7 +75,7 @@ func assertFileExist(t *testing.T, expected bool, path string) {
 	assert.Equal(t, expected, exist)
 }
 
-func TestDestroyOnlyEmptyEmptyVolume(t *testing.T) {
+func TestDestroyEmptyVolumeWithOnlyEmpty(t *testing.T) {
 	dir := t.TempDir()
 
 	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
@@ -93,23 +93,44 @@ func TestDestroyOnlyEmptyEmptyVolume(t *testing.T) {
 	assertFileExist(t, false, path)
 }
 
-func TestDestroyOnlyEmptyNonemptyVolume(t *testing.T) {
+func TestDestroyEmptyVolumeWithoutOnlyEmpty(t *testing.T) {
 	dir := t.TempDir()
 
 	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
+	path := v.DataBackend.Name()
 
-	// should return "volume not empty" error when Destroy non-empty volume
+	// should can Destroy empty volume without onlyEmpty
+	assertFileExist(t, true, path)
+	err = v.Destroy(false)
+	if err != nil {
+		t.Fatalf("destroy volume: %v", err)
+	}
+	assertFileExist(t, false, path)
+}
+
+func TestDestroyNonemptyVolumeWithOnlyEmpty(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	path := v.DataBackend.Name()
+
+	// should return "volume not empty" error and do not delete file when Destroy non-empty volume
 	_, _, _, err = v.writeNeedle2(newRandomNeedle(1), true, false)
 	if err != nil {
 		t.Fatalf("write needle: %v", err)
 	}
 	assert.Equal(t, uint64(1), v.FileCount())
 
+	assertFileExist(t, true, path)
 	err = v.Destroy(true)
 	assert.EqualError(t, err, "volume not empty")
+	assertFileExist(t, true, path)
 
 	// should keep working after "volume not empty"
 	_, _, _, err = v.writeNeedle2(newRandomNeedle(2), true, false)
@@ -118,4 +139,28 @@ func TestDestroyOnlyEmptyNonemptyVolume(t *testing.T) {
 	}
 
 	assert.Equal(t, uint64(2), v.FileCount())
+}
+
+func TestDestroyNonemptyVolumeWithoutOnlyEmpty(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	path := v.DataBackend.Name()
+
+	// should can Destroy non-empty volume without onlyEmpty
+	_, _, _, err = v.writeNeedle2(newRandomNeedle(1), true, false)
+	if err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	assert.Equal(t, uint64(1), v.FileCount())
+
+	assertFileExist(t, true, path)
+	err = v.Destroy(false)
+	if err != nil {
+		t.Fatalf("destroy volume: %v", err)
+	}
+	assertFileExist(t, false, path)
 }
