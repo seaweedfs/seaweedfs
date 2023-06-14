@@ -333,6 +333,6 @@ func (v *Volume) IsReadOnly() bool {
 	return v.noWriteOrDelete || v.noWriteCanDelete || v.location.isDiskSpaceLow
 }
 func (v *Volume) IsEmpty() bool {
-	size, _, _ := v.DataBackend.GetStat()
-	return size <= 8 && v.ContentSize() == 0
+	datSize, _, _ := v.FileStat()
+	return datSize <= super_block.SuperBlockSize && v.ContentSize() == 0
 }
