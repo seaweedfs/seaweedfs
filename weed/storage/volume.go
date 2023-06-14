@@ -133,12 +133,6 @@ func (v *Volume) ContentSize() uint64 {
 	return v.nm.ContentSize()
 }
 
-func (v *Volume) IsEmpty() (bool, error) {
-	v.dataFileAccessLock.RLock()
-	defer v.dataFileAccessLock.RUnlock()
-	return v.doIsEmpty()
-}
-
 func (v *Volume) doIsEmpty() (bool, error) {
 	if v.DataBackend != nil {
 		datFileSize, _, e := v.DataBackend.GetStat()
