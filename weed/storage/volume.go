@@ -140,7 +140,7 @@ func (v *Volume) doIsEmpty() (bool, error) {
 			glog.V(0).Infof("Failed to read file size %s %v", v.DataBackend.Name(), e)
 			return false, e
 		}
-		if datFileSize > 8 {
+		if datFileSize > super_block.SuperBlockSize {
 			return false, nil
 		}
 	}
