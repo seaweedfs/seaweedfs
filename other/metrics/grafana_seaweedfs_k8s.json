@@ -2179,8 +2179,8 @@
       {
         "current": {
           "selected": true,
-          "text": "clickhouse-prom",
-          "value": "clickhouse-prom"
+          "text": "default",
+          "value": "default"
         },
         "hide": 0,
         "includeAll": false,
