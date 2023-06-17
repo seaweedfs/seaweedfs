@@ -82,25 +82,32 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 	resp := &master_pb.LookupVolumeResponse{}
 	volumeLocations := ms.lookupVolumeId(req.VolumeOrFileIds, req.Collection)
 
-	for _, result := range volumeLocations {
-		var locations []*master_pb.Location
-		for _, loc := range result.Locations {
-			locations = append(locations, &master_pb.Location{
-				Url:        loc.Url,
-				PublicUrl:  loc.PublicUrl,
-				DataCenter: loc.DataCenter,
+	for _, volumeOrFileId := range req.VolumeOrFileIds {
+		vid := volumeOrFileId
+		commaSep := strings.Index(vid, ",")
+		if commaSep > 0 {
+			vid = vid[0:commaSep]
+		}
+		if result, found := volumeLocations[vid]; found {
+			var locations []*master_pb.Location
+			for _, loc := range result.Locations {
+				locations = append(locations, &master_pb.Location{
+					Url:        loc.Url,
+					PublicUrl:  loc.PublicUrl,
+					DataCenter: loc.DataCenter,
+				})
+			}
+			var auth string
+			if commaSep > 0 { // this is a file id
+				auth = string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, result.VolumeOrFileId))
+			}
+			resp.VolumeIdLocations = append(resp.VolumeIdLocations, &master_pb.LookupVolumeResponse_VolumeIdLocation{
+				VolumeOrFileId: result.VolumeOrFileId,
+				Locations:      locations,
+				Error:          result.Error,
+				Auth:           auth,
 			})
 		}
-		var auth string
-		if strings.Contains(result.VolumeOrFileId, ",") { // this is a file id
-			auth = string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, result.VolumeOrFileId))
-		}
-		resp.VolumeIdLocations = append(resp.VolumeIdLocations, &master_pb.LookupVolumeResponse_VolumeIdLocation{
-			VolumeOrFileId: result.VolumeOrFileId,
-			Locations:      locations,
-			Error:          result.Error,
-			Auth:           auth,
-		})
 	}
 
 	return resp, nil
