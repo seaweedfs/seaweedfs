@@ -134,16 +134,20 @@ func (v *Volume) ContentSize() uint64 {
 }
 
 func (v *Volume) doIsEmpty() (bool, error) {
-	if v.DataBackend != nil {
+	// check v.DataBackend.GetStat()
+	if v.DataBackend == nil {
+		return false, fmt.Errorf("v.DataBackend is nil")
+	} else {
 		datFileSize, _, e := v.DataBackend.GetStat()
 		if e != nil {
 			glog.V(0).Infof("Failed to read file size %s %v", v.DataBackend.Name(), e)
-			return false, e
+			return false, fmt.Errorf("v.DataBackend.GetStat(): %v", e)
 		}
 		if datFileSize > super_block.SuperBlockSize {
 			return false, nil
 		}
 	}
+	// check v.nm.ContentSize()
 	if v.nm != nil {
 		if v.nm.ContentSize() > 0 {
 			return false, nil
