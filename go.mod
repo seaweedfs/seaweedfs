@@ -31,7 +31,7 @@ require (
 	github.com/fclairamb/ftpserverlib v0.21.0
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
 	github.com/go-errors/errors v1.1.1 // indirect
-	github.com/go-redis/redis/v8 v8.11.5 // indirect
+	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-redsync/redsync/v4 v4.8.1
 	github.com/go-sql-driver/mysql v1.7.1
 	github.com/go-zookeeper/zk v1.0.3 // indirect
@@ -112,13 +112,13 @@ require (
 	gocloud.dev v0.29.0
 	gocloud.dev/pubsub/natspubsub v0.29.0
 	gocloud.dev/pubsub/rabbitpubsub v0.29.0
-	golang.org/x/crypto v0.9.0 // indirect
+	golang.org/x/crypto v0.10.0 // indirect
 	golang.org/x/exp v0.0.0-20230124195608-d38c7dcee874
 	golang.org/x/image v0.7.0
-	golang.org/x/net v0.10.0
+	golang.org/x/net v0.11.0
 	golang.org/x/oauth2 v0.8.0 // indirect
-	golang.org/x/sys v0.8.0
-	golang.org/x/text v0.9.0 // indirect
+	golang.org/x/sys v0.9.0
+	golang.org/x/text v0.10.0 // indirect
 	golang.org/x/tools v0.9.1
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/api v0.126.0
@@ -154,7 +154,6 @@ require (
 	github.com/hashicorp/raft-boltdb/v2 v2.2.2
 	github.com/rabbitmq/amqp091-go v1.8.1
 	github.com/rclone/rclone v1.62.2
-	github.com/redis/go-redis/v9 v9.0.2
 	github.com/schollz/progressbar/v3 v3.13.1
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.2.0
@@ -297,7 +296,7 @@ require (
 	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/mod v0.10.0 // indirect
 	golang.org/x/sync v0.2.0 // indirect
-	golang.org/x/term v0.8.0 // indirect
+	golang.org/x/term v0.9.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20230530153820-e85fd2cbaebc // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20230530153820-e85fd2cbaebc // indirect
