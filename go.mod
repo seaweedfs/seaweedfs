@@ -31,11 +31,11 @@ require (
 	github.com/fclairamb/ftpserverlib v0.21.0
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
 	github.com/go-errors/errors v1.1.1 // indirect
-	github.com/go-redis/redis/v8 v8.11.5 // indirect
+	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-redsync/redsync/v4 v4.8.1
 	github.com/go-sql-driver/mysql v1.7.1
 	github.com/go-zookeeper/zk v1.0.3 // indirect
-	github.com/gocql/gocql v1.5.1
+	github.com/gocql/gocql v1.5.2
 	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.3
@@ -154,7 +154,6 @@ require (
 	github.com/hashicorp/raft-boltdb/v2 v2.2.2
 	github.com/rabbitmq/amqp091-go v1.8.1
 	github.com/rclone/rclone v1.62.2
-	github.com/redis/go-redis/v9 v9.0.2
 	github.com/schollz/progressbar/v3 v3.13.1
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.2.0
