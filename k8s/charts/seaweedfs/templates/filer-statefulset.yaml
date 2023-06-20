@@ -163,6 +163,9 @@ spec:
               -s3.domainName={{ .Values.filer.s3.domainName }} \
               {{- end }}
               {{- if .Values.global.enableSecurity }}
+              {{- if .Values.filer.s3.httpsPort }}
+              -s3.port.https={{ .Values.filer.s3.httpsPort }} \
+              {{- end }}
               -s3.cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -s3.key.file=/usr/local/share/ca-certificates/client/tls.key \
               {{- end }}
