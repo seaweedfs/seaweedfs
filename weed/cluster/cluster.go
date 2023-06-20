@@ -152,15 +152,7 @@ func (cluster *Cluster) AddClusterNode(ns, nodeType string, dataCenter DataCente
 	case BrokerType:
 		return cluster.brokerGroups.AddClusterNode(filerGroup, nodeType, dataCenter, rack, address, version)
 	case MasterType:
-		return []*master_pb.KeepConnectedResponse{
-			{
-				ClusterNodeUpdate: &master_pb.ClusterNodeUpdate{
-					NodeType: nodeType,
-					Address:  string(address),
-					IsAdd:    true,
-				},
-			},
-		}
+		return buildClusterNodeUpdateMessage(true, filerGroup, nodeType, address)
 	}
 	return nil
 }
@@ -173,15 +165,7 @@ func (cluster *Cluster) RemoveClusterNode(ns string, nodeType string, address pb
 	case BrokerType:
 		return cluster.brokerGroups.RemoveClusterNode(filerGroup, nodeType, address)
 	case MasterType:
-		return []*master_pb.KeepConnectedResponse{
-			{
-				ClusterNodeUpdate: &master_pb.ClusterNodeUpdate{
-					NodeType: nodeType,
-					Address:  string(address),
-					IsAdd:    false,
-				},
-			},
-		}
+		return buildClusterNodeUpdateMessage(false, filerGroup, nodeType, address)
 	}
 	return nil
 }
