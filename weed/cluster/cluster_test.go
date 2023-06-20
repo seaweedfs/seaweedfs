@@ -16,7 +16,7 @@ func TestClusterAddRemoveNodes(t *testing.T) {
 	assert.Equal(t, []pb.ServerAddress{
 		pb.ServerAddress("111:1"),
 		pb.ServerAddress("111:2"),
-	}, c.getGroupMembers("", "filer", true).leaders.GetLeaders())
+	}, c.getGroupMembers("", "filer", true).GetMembers)
 
 	c.AddClusterNode("", "filer", "", "", pb.ServerAddress("111:3"), "23.45")
 	c.AddClusterNode("", "filer", "", "", pb.ServerAddress("111:4"), "23.45")
@@ -24,7 +24,7 @@ func TestClusterAddRemoveNodes(t *testing.T) {
 		pb.ServerAddress("111:1"),
 		pb.ServerAddress("111:2"),
 		pb.ServerAddress("111:3"),
-	}, c.getGroupMembers("", "filer", true).leaders.GetLeaders())
+	}, c.getGroupMembers("", "filer", true).GetMembers())
 
 	c.AddClusterNode("", "filer", "", "", pb.ServerAddress("111:5"), "23.45")
 	c.AddClusterNode("", "filer", "", "", pb.ServerAddress("111:6"), "23.45")
@@ -33,7 +33,7 @@ func TestClusterAddRemoveNodes(t *testing.T) {
 		pb.ServerAddress("111:1"),
 		pb.ServerAddress("111:2"),
 		pb.ServerAddress("111:3"),
-	}, c.getGroupMembers("", "filer", true).leaders.GetLeaders())
+	}, c.getGroupMembers("", "filer", true).GetMembers())
 
 	// remove oldest
 	c.RemoveClusterNode("", "filer", pb.ServerAddress("111:1"))
@@ -41,7 +41,7 @@ func TestClusterAddRemoveNodes(t *testing.T) {
 		pb.ServerAddress("111:6"),
 		pb.ServerAddress("111:2"),
 		pb.ServerAddress("111:3"),
-	}, c.getGroupMembers("", "filer", true).leaders.GetLeaders())
+	}, c.getGroupMembers("", "filer", true).GetMembers())
 
 	// remove oldest
 	c.RemoveClusterNode("", "filer", pb.ServerAddress("111:1"))
