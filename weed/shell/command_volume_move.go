@@ -94,7 +94,7 @@ func LiveMoveVolume(grpcDialOption grpc.DialOption, writer io.Writer, volumeId n
 	}
 
 	log.Printf("deleting volume %d from %s", volumeId, sourceVolumeServer)
-	if err = deleteVolume(grpcDialOption, volumeId, sourceVolumeServer); err != nil {
+	if err = deleteVolume(grpcDialOption, volumeId, sourceVolumeServer, false); err != nil {
 		return fmt.Errorf("delete volume %d from %s: %v", volumeId, sourceVolumeServer, err)
 	}
 
@@ -187,10 +187,11 @@ func tailVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, source
 
 }
 
-func deleteVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer pb.ServerAddress) (err error) {
+func deleteVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, sourceVolumeServer pb.ServerAddress, onlyEmpty bool) (err error) {
 	return operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, deleteErr := volumeServerClient.VolumeDelete(context.Background(), &volume_server_pb.VolumeDeleteRequest{
-			VolumeId: uint32(volumeId),
+			VolumeId:  uint32(volumeId),
+			OnlyEmpty: onlyEmpty,
 		})
 		return deleteErr
 	})

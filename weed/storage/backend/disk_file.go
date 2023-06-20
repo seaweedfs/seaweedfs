@@ -40,10 +40,16 @@ func NewDiskFile(f *os.File) *DiskFile {
 }
 
 func (df *DiskFile) ReadAt(p []byte, off int64) (n int, err error) {
+	if df.File == nil {
+		return 0, os.ErrClosed
+	}
 	return df.File.ReadAt(p, off)
 }
 
 func (df *DiskFile) WriteAt(p []byte, off int64) (n int, err error) {
+	if df.File == nil {
+		return 0, os.ErrClosed
+	}
 	n, err = df.File.WriteAt(p, off)
 	if err == nil {
 		waterMark := off + int64(n)
@@ -60,6 +66,9 @@ func (df *DiskFile) Write(p []byte) (n int, err error) {
 }
 
 func (df *DiskFile) Truncate(off int64) error {
+	if df.File == nil {
+		return os.ErrClosed
+	}
 	err := df.File.Truncate(off)
 	if err == nil {
 		df.fileSize = off
@@ -69,15 +78,22 @@ func (df *DiskFile) Truncate(off int64) error {
 }
 
 func (df *DiskFile) Close() error {
+	if df.File == nil {
+		return nil
+	}
 	if err := df.Sync(); err != nil {
 		return err
 	}
-	return df.File.Close()
+	if err := df.File.Close(); err != nil {
+		return err
+	}
+	df.File = nil
+	return nil
 }
 
 func (df *DiskFile) GetStat() (datSize int64, modTime time.Time, err error) {
 	if df.File == nil {
-		err = os.ErrInvalid
+		err = os.ErrClosed
 	}
 	return df.fileSize, df.modTime, err
 }
@@ -88,7 +104,7 @@ func (df *DiskFile) Name() string {
 
 func (df *DiskFile) Sync() error {
 	if df.File == nil {
-		return os.ErrInvalid
+		return os.ErrClosed
 	}
 	if isMac {
 		return nil

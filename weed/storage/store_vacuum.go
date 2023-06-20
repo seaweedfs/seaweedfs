@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -25,14 +26,17 @@ func (s *Store) CompactVolume(vid needle.VolumeId, preallocate int64, compaction
 	}
 	return fmt.Errorf("volume id %d is not found during compact", vid)
 }
-func (s *Store) CommitCompactVolume(vid needle.VolumeId) (bool, error) {
+func (s *Store) CommitCompactVolume(vid needle.VolumeId) (bool, int64, error) {
 	if s.isStopping {
-		return false, fmt.Errorf("volume id %d skips compact because volume is stopping", vid)
+		return false, 0, fmt.Errorf("volume id %d skips compact because volume is stopping", vid)
 	}
 	if v := s.findVolume(vid); v != nil {
-		return v.IsReadOnly(), v.CommitCompact()
+		isReadOnly := v.IsReadOnly()
+		err := v.CommitCompact()
+		volumeSize, _, _ := v.DataBackend.GetStat()
+		return isReadOnly, volumeSize, err
 	}
-	return false, fmt.Errorf("volume id %d is not found during commit compact", vid)
+	return false, 0, fmt.Errorf("volume id %d is not found during commit compact", vid)
 }
 func (s *Store) CommitCleanupVolume(vid needle.VolumeId) error {
 	if v := s.findVolume(vid); v != nil {

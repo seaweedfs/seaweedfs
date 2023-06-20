@@ -76,6 +76,28 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 	return t
 }
 
+func (t *Topology) IsChildLocked() (bool, error) {
+	if t.IsLocked() {
+		return true, errors.New("topology is locked")
+	}
+	for _, dcNode := range t.Children() {
+		if dcNode.IsLocked() {
+			return true, fmt.Errorf("topology child %s is locked", dcNode.String())
+		}
+		for _, rackNode := range dcNode.Children() {
+			if rackNode.IsLocked() {
+				return true, fmt.Errorf("dc %s child %s is locked", dcNode.String(), rackNode.String())
+			}
+			for _, dataNode := range rackNode.Children() {
+				if dataNode.IsLocked() {
+					return true, fmt.Errorf("rack %s child %s is locked", rackNode.String(), dataNode.Id())
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
 func (t *Topology) IsLeader() bool {
 	t.RaftServerAccessLock.RLock()
 	defer t.RaftServerAccessLock.RUnlock()

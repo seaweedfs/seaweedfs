@@ -385,6 +385,9 @@ func extractBucketPath(bucketsDir, dir string) (util.FullPath, bool) {
 func (option *RemoteGatewayOptions) collectRemoteStorageConf() (err error) {
 
 	if mappings, err := filer.ReadMountMappings(option.grpcDialOption, pb.ServerAddress(*option.filerAddress)); err != nil {
+		if err == filer_pb.ErrNotFound {
+			return fmt.Errorf("remote storage is not configured in filer server")
+		}
 		return err
 	} else {
 		option.mappings = mappings

@@ -16,9 +16,8 @@ func (broker *MessageQueueBroker) FindBrokerLeader(c context.Context, request *m
 	ret := &mq_pb.FindBrokerLeaderResponse{}
 	err := broker.withMasterClient(false, broker.MasterClient.GetMaster(), func(client master_pb.SeaweedClient) error {
 		resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
-			ClientType:   cluster.BrokerType,
-			FilerGroup:   request.FilerGroup,
-			IsLeaderOnly: true,
+			ClientType: cluster.BrokerType,
+			FilerGroup: request.FilerGroup,
 		})
 		if err != nil {
 			return err

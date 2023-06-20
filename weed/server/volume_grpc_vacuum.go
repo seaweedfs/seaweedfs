@@ -2,15 +2,17 @@ package weed_server
 
 import (
 	"context"
-	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"strconv"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+
+	"runtime"
 
 	"github.com/prometheus/procfs"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
-	"runtime"
 )
 
 var numCPU = runtime.NumCPU()
@@ -81,7 +83,7 @@ func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_serv
 
 	resp := &volume_server_pb.VacuumVolumeCommitResponse{}
 
-	readOnly, err := vs.store.CommitCompactVolume(needle.VolumeId(req.VolumeId))
+	readOnly, volumeSize, err := vs.store.CommitCompactVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {
 		glog.Errorf("failed commit volume %d: %v", req.VolumeId, err)
@@ -90,6 +92,7 @@ func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_serv
 	}
 	stats.VolumeServerVacuumingCommitCounter.WithLabelValues(strconv.FormatBool(err == nil)).Inc()
 	resp.IsReadOnly = readOnly
+	resp.VolumeSize = uint64(volumeSize)
 	return resp, err
 
 }

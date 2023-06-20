@@ -14,12 +14,13 @@ import (
 
 type DataNode struct {
 	NodeImpl
-	Ip        string
-	Port      int
-	GrpcPort  int
-	PublicUrl string
-	LastSeen  int64 // unix time in seconds
-	Counter   int   // in race condition, the previous dataNode was not dead
+	Ip            string
+	Port          int
+	GrpcPort      int
+	PublicUrl     string
+	LastSeen      int64 // unix time in seconds
+	Counter       int   // in race condition, the previous dataNode was not dead
+	IsTerminating bool
 }
 
 func NewDataNode(id string) *DataNode {
