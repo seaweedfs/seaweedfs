@@ -44,9 +44,7 @@ func newClusterNodeGroups() *ClusterNodeGroups {
 func (g *ClusterNodeGroups) getGroupMembers(filerGroup FilerGroupName, createIfNotFound bool) *GroupMembers {
 	members, found := g.groupMembers[filerGroup]
 	if !found && createIfNotFound {
-		members = &GroupMembers{
-			members: make(map[pb.ServerAddress]*ClusterNode),
-		}
+		members = newGroupMembers()
 		g.groupMembers[filerGroup] = members
 	}
 	return members

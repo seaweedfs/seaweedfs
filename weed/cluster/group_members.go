@@ -9,6 +9,12 @@ type GroupMembers struct {
 	members map[pb.ServerAddress]*ClusterNode
 }
 
+func newGroupMembers() *GroupMembers {
+	return &GroupMembers{
+		members: make(map[pb.ServerAddress]*ClusterNode),
+	}
+}
+
 func (m *GroupMembers) addMember(dataCenter DataCenter, rack Rack, address pb.ServerAddress, version string) *ClusterNode {
 	if existingNode, found := m.members[address]; found {
 		existingNode.counter++
