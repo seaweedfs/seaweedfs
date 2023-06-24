@@ -39,32 +39,31 @@ func (factory *RcloneBackendFactory) BuildStorage(configuration backend.StringPr
 
 type RcloneBackendStorage struct {
 	id         string
-	remoteName string
+	rclonePath string
 	fs         fs.Fs
 }
 
 func newRcloneBackendStorage(configuration backend.StringProperties, configPrefix string, id string) (s *RcloneBackendStorage, err error) {
 	s = &RcloneBackendStorage{}
 	s.id = id
-	s.remoteName = configuration.GetString(configPrefix + "remote_name")
+	s.rclonePath = configuration.GetString(configPrefix + "rclone_path")
 
 	ctx := context.TODO()
 	accounting.Start(ctx)
 
-	fsPath := fmt.Sprintf("%s:", s.remoteName)
-	s.fs, err = fs.NewFs(ctx, fsPath)
+	s.fs, err = fs.NewFs(ctx, s.rclonePath)
 	if err != nil {
 		glog.Errorf("failed to instantiate Rclone filesystem: %s", err)
 		return
 	}
 
-	glog.V(0).Infof("created backend storage rclone.%s for remote name %s", s.id, s.remoteName)
+	glog.V(0).Infof("created backend storage rclone.%s for Rclone path %s", s.id, s.rclonePath)
 	return
 }
 
 func (s *RcloneBackendStorage) ToProperties() map[string]string {
 	m := make(map[string]string)
-	m["remote_name"] = s.remoteName
+	m["rclone_path"] = s.rclonePath
 	return m
 }
 
