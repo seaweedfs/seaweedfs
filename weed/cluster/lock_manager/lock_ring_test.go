@@ -8,15 +8,7 @@ import (
 )
 
 func TestAddServer(t *testing.T) {
-	counter := 0
-	r := NewLockRing(100*time.Millisecond, func(snapshot []pb.ServerAddress) {
-		counter++
-		if counter == 1 {
-			assert.Equal(t, 1, len(snapshot))
-		} else if counter == 2 {
-			assert.Equal(t, 2, len(snapshot))
-		}
-	})
+	r := NewLockRing(100 * time.Millisecond)
 	r.AddServer("localhost:8080")
 	assert.Equal(t, 1, len(r.snapshots))
 	r.AddServer("localhost:8081")
@@ -36,7 +28,7 @@ func TestAddServer(t *testing.T) {
 }
 
 func TestLockRing(t *testing.T) {
-	r := NewLockRing(100*time.Millisecond, nil)
+	r := NewLockRing(100 * time.Millisecond)
 	r.SetSnapshot([]pb.ServerAddress{"localhost:8080", "localhost:8081"})
 	assert.Equal(t, 1, len(r.snapshots))
 	r.SetSnapshot([]pb.ServerAddress{"localhost:8080", "localhost:8081", "localhost:8082"})
