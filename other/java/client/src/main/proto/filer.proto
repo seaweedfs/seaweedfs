@@ -460,7 +460,7 @@ message UnlockResponse {
 message Lock {
     string name = 1;
     string renew_token = 2;
-    int64 expiration_ns = 3;
+    int64 expired_at_ns = 3;
 }
 message TransferLocksRequest {
     repeated Lock locks = 1;

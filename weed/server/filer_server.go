@@ -97,7 +97,7 @@ type FilerServer struct {
 	knownListeners     map[int32]int32
 
 	// distributed lock manager
-	dlm *lock_manager.LockManager
+	dlm *lock_manager.DistributedLockManager
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
@@ -185,7 +185,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		fs.filer.Shutdown()
 	})
 
-	fs.dlm = lock_manager.NewLockManager()
+	fs.dlm = lock_manager.NewDistributedLockManager()
 	fs.filer.LockRing.SetTakeSnapshotCallback(fs.OnDlmChangeSnapshot)
 
 	return fs, nil
