@@ -161,7 +161,7 @@ func (r *LockRing) GetSnapshot() (servers []pb.ServerAddress) {
 	return r.snapshots[0].servers
 }
 
-func HashKeyToServer(key string, servers []pb.ServerAddress) pb.ServerAddress {
+func hashKeyToServer(key string, servers []pb.ServerAddress) pb.ServerAddress {
 	if len(servers) == 0 {
 		return ""
 	}

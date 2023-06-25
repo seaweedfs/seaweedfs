@@ -15,7 +15,7 @@ func NewDistributedLockManager() *DistributedLockManager {
 }
 
 func (dlm *DistributedLockManager) Lock(host pb.ServerAddress, key string, expiredAtNs int64, token string, servers []pb.ServerAddress) (renewToken string, movedTo pb.ServerAddress, err error) {
-	server := HashKeyToServer(key, servers)
+	server := hashKeyToServer(key, servers)
 	if server != host {
 		movedTo = server
 		return
@@ -25,7 +25,7 @@ func (dlm *DistributedLockManager) Lock(host pb.ServerAddress, key string, expir
 }
 
 func (dlm *DistributedLockManager) Unlock(host pb.ServerAddress, key string, token string, servers []pb.ServerAddress) (movedTo pb.ServerAddress, err error) {
-	server := HashKeyToServer(key, servers)
+	server := hashKeyToServer(key, servers)
 	if server != host {
 		movedTo = server
 		return
@@ -41,10 +41,10 @@ func (dlm *DistributedLockManager) InsertLock(key string, expiredAtNs int64, tok
 }
 func (dlm *DistributedLockManager) SelectNotOwnedLocks(host pb.ServerAddress, servers []pb.ServerAddress) (locks []*Lock) {
 	return dlm.lockManager.SelectLocks(func(key string) bool {
-		server := HashKeyToServer(key, servers)
+		server := hashKeyToServer(key, servers)
 		return server != host
 	})
 }
 func (dlm *DistributedLockManager) CalculateTargetServer(key string, servers []pb.ServerAddress) pb.ServerAddress {
-	return HashKeyToServer(key, servers)
+	return hashKeyToServer(key, servers)
 }
