@@ -16,7 +16,23 @@ func (fs *FilerServer) Lock(ctx context.Context, req *filer_pb.LockRequest) (res
 
 	var movedTo pb.ServerAddress
 	expiredAtNs := time.Now().Add(time.Duration(req.SecondsToLock) * time.Second).UnixNano()
-	resp.RenewToken, movedTo, err = fs.filer.Dlm.Lock(fs.option.Host, req.Name, expiredAtNs, req.PreviousLockToken)
+	resp.RenewToken, movedTo, err = fs.filer.Dlm.Lock(fs.option.Host, req.Name, expiredAtNs, req.RenewToken)
+	if !req.IsMoved && movedTo != "" {
+		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			secondResp, err := client.Lock(context.Background(), &filer_pb.LockRequest{
+				Name:          req.Name,
+				SecondsToLock: req.SecondsToLock,
+				RenewToken:    req.RenewToken,
+				IsMoved:       true,
+			})
+			if err == nil {
+				resp.RenewToken = secondResp.RenewToken
+			} else {
+				resp.Error = secondResp.Error
+			}
+			return err
+		})
+	}
 
 	if err != nil {
 		resp.Error = fmt.Sprintf("%v", err)
@@ -33,9 +49,26 @@ func (fs *FilerServer) Unlock(ctx context.Context, req *filer_pb.UnlockRequest) 
 
 	resp = &filer_pb.UnlockResponse{}
 
-	_, err = fs.filer.Dlm.Unlock(fs.option.Host, req.Name, req.LockToken)
+	var movedTo pb.ServerAddress
+	movedTo, err = fs.filer.Dlm.Unlock(fs.option.Host, req.Name, req.RenewToken)
+
+	if !req.IsMoved && movedTo != "" {
+		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			secondResp, err := client.Unlock(context.Background(), &filer_pb.UnlockRequest{
+				Name:       req.Name,
+				RenewToken: req.RenewToken,
+				IsMoved:    true,
+			})
+			resp.Error = secondResp.Error
+			return err
+		})
+	}
+
 	if err != nil {
 		resp.Error = fmt.Sprintf("%v", err)
+	}
+	if movedTo != "" {
+		resp.MovedTo = string(movedTo)
 	}
 
 	return resp, nil

@@ -442,7 +442,8 @@ message CacheRemoteObjectToLocalClusterResponse {
 message LockRequest {
     string name = 1;
     int64 seconds_to_lock = 2;
-    string previous_lock_token = 3;
+    string renew_token = 3;
+    bool is_moved = 4;
 }
 message LockResponse {
     string renew_token = 1;
@@ -451,7 +452,8 @@ message LockResponse {
 }
 message UnlockRequest {
     string name = 1;
-    string lock_token = 2;
+    string renew_token = 2;
+    bool is_moved = 3;
 }
 message UnlockResponse {
     string error = 1;

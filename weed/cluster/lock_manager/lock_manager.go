@@ -42,7 +42,8 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string) (renew
 			// not expired
 			if oldValue.Token == token {
 				// token matches, renew the lock
-				return &Lock{Token: token, ExpiredAtNs: expiredAtNs}, false
+				renewToken = uuid.New().String()
+				return &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs}, false
 			} else {
 				err = fmt.Errorf("lock: token mismatch")
 				return oldValue, false
@@ -94,6 +95,9 @@ func (lm *LockManager) CleanUp() {
 		time.Sleep(1 * time.Minute)
 		now := time.Now().UnixNano()
 		lm.locks.Range(func(key string, value *Lock) bool {
+			if value == nil {
+				return true
+			}
 			if now > value.ExpiredAtNs {
 				lm.locks.Delete(key)
 				return true
