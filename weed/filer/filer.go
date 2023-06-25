@@ -112,6 +112,14 @@ func (f *Filer) MaybeBootstrapFromPeers(self pb.ServerAddress, existingNodes []*
 
 func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*master_pb.ClusterNodeUpdate, startFrom time.Time) {
 
+	var snapshot []pb.ServerAddress
+	for _, node := range existingNodes {
+		address := pb.ServerAddress(node.Address)
+		snapshot = append(snapshot, address)
+	}
+	f.Dlm.LockRing.SetSnapshot(snapshot)
+	glog.V(0).Infof("%s aggregate from peers %+v", self, snapshot)
+
 	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOption)
 	f.MasterClient.SetOnPeerUpdateFn(func(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
 		if update.NodeType != cluster.FilerType {
