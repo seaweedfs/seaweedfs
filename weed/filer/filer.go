@@ -49,7 +49,7 @@ type Filer struct {
 	Signature           int32
 	FilerConf           *FilerConf
 	RemoteStorage       *FilerRemoteStorage
-	LockRing            *lock_manager.LockRing
+	Dlm                 *lock_manager.DistributedLockManager
 }
 
 func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress,
@@ -61,7 +61,7 @@ func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOptio
 		FilerConf:           NewFilerConf(),
 		RemoteStorage:       NewFilerRemoteStorage(),
 		UniqueFilerId:       util.RandomInt32(),
-		LockRing:            lock_manager.NewLockRing(time.Second * 5),
+		Dlm:                 lock_manager.NewDistributedLockManager(),
 	}
 	if f.UniqueFilerId < 0 {
 		f.UniqueFilerId = -f.UniqueFilerId
@@ -120,9 +120,9 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 		address := pb.ServerAddress(update.Address)
 
 		if update.IsAdd {
-			f.LockRing.AddServer(address)
+			f.Dlm.LockRing.AddServer(address)
 		} else {
-			f.LockRing.RemoveServer(address)
+			f.Dlm.LockRing.RemoveServer(address)
 		}
 		f.MetaAggregator.OnPeerUpdate(update, startFrom)
 	})

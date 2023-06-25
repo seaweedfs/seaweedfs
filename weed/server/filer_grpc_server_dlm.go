@@ -13,15 +13,10 @@ import (
 func (fs *FilerServer) Lock(ctx context.Context, req *filer_pb.LockRequest) (resp *filer_pb.LockResponse, err error) {
 
 	resp = &filer_pb.LockResponse{}
-	snapshot := fs.filer.LockRing.GetSnapshot()
-	if snapshot == nil {
-		resp.Error = "no lock server found"
-		return
-	}
 
 	var movedTo pb.ServerAddress
 	expiredAtNs := time.Now().Add(time.Duration(req.SecondsToLock) * time.Second).UnixNano()
-	resp.RenewToken, movedTo, err = fs.dlm.Lock(fs.option.Host, req.Name, expiredAtNs, req.PreviousLockToken, snapshot)
+	resp.RenewToken, movedTo, err = fs.filer.Dlm.Lock(fs.option.Host, req.Name, expiredAtNs, req.PreviousLockToken)
 
 	if err != nil {
 		resp.Error = fmt.Sprintf("%v", err)
@@ -37,13 +32,8 @@ func (fs *FilerServer) Lock(ctx context.Context, req *filer_pb.LockRequest) (res
 func (fs *FilerServer) Unlock(ctx context.Context, req *filer_pb.UnlockRequest) (resp *filer_pb.UnlockResponse, err error) {
 
 	resp = &filer_pb.UnlockResponse{}
-	snapshot := fs.filer.LockRing.GetSnapshot()
-	if snapshot == nil {
-		resp.Error = "no lock server found"
-		return
-	}
 
-	_, err = fs.dlm.Unlock(fs.option.Host, req.Name, req.LockToken, snapshot)
+	_, err = fs.filer.Dlm.Unlock(fs.option.Host, req.Name, req.LockToken)
 	if err != nil {
 		resp.Error = fmt.Sprintf("%v", err)
 	}
@@ -56,7 +46,7 @@ func (fs *FilerServer) Unlock(ctx context.Context, req *filer_pb.UnlockRequest) 
 func (fs *FilerServer) TransferLocks(ctx context.Context, req *filer_pb.TransferLocksRequest) (*filer_pb.TransferLocksResponse, error) {
 
 	for _, lock := range req.Locks {
-		fs.dlm.InsertLock(lock.Name, lock.ExpiredAtNs, lock.RenewToken)
+		fs.filer.Dlm.InsertLock(lock.Name, lock.ExpiredAtNs, lock.RenewToken)
 	}
 
 	return &filer_pb.TransferLocksResponse{}, nil
@@ -64,13 +54,13 @@ func (fs *FilerServer) TransferLocks(ctx context.Context, req *filer_pb.Transfer
 }
 
 func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
-	locks := fs.dlm.SelectNotOwnedLocks(fs.option.Host, snapshot)
+	locks := fs.filer.Dlm.SelectNotOwnedLocks(fs.option.Host, snapshot)
 	if len(locks) == 0 {
 		return
 	}
 
 	for _, lock := range locks {
-		server := fs.dlm.CalculateTargetServer(lock.Key, snapshot)
+		server := fs.filer.Dlm.CalculateTargetServer(lock.Key, snapshot)
 		if err := pb.WithFilerClient(false, 0, server, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			_, err := client.TransferLocks(context.Background(), &filer_pb.TransferLocksRequest{
 				Locks: []*filer_pb.Lock{

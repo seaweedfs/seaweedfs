@@ -1,20 +1,30 @@
 package lock_manager
 
 import (
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"time"
 )
 
 type DistributedLockManager struct {
 	lockManager *LockManager
+	LockRing    *LockRing
 }
 
 func NewDistributedLockManager() *DistributedLockManager {
 	return &DistributedLockManager{
 		lockManager: NewLockManager(),
+		LockRing:    NewLockRing(time.Second * 5),
 	}
 }
 
-func (dlm *DistributedLockManager) Lock(host pb.ServerAddress, key string, expiredAtNs int64, token string, servers []pb.ServerAddress) (renewToken string, movedTo pb.ServerAddress, err error) {
+func (dlm *DistributedLockManager) Lock(host pb.ServerAddress, key string, expiredAtNs int64, token string) (renewToken string, movedTo pb.ServerAddress, err error) {
+	servers := dlm.LockRing.GetSnapshot()
+	if servers == nil {
+		err = fmt.Errorf("no lock server found")
+		return
+	}
+
 	server := hashKeyToServer(key, servers)
 	if server != host {
 		movedTo = server
@@ -24,7 +34,13 @@ func (dlm *DistributedLockManager) Lock(host pb.ServerAddress, key string, expir
 	return
 }
 
-func (dlm *DistributedLockManager) Unlock(host pb.ServerAddress, key string, token string, servers []pb.ServerAddress) (movedTo pb.ServerAddress, err error) {
+func (dlm *DistributedLockManager) Unlock(host pb.ServerAddress, key string, token string) (movedTo pb.ServerAddress, err error) {
+	servers := dlm.LockRing.GetSnapshot()
+	if servers == nil {
+		err = fmt.Errorf("no lock server found")
+		return
+	}
+
 	server := hashKeyToServer(key, servers)
 	if server != host {
 		movedTo = server
