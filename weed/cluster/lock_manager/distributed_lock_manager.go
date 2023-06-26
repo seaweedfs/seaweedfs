@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+var NoLockServerError = fmt.Errorf("no lock server found")
+
 type DistributedLockManager struct {
 	lockManager *LockManager
 	LockRing    *LockRing
@@ -21,7 +23,7 @@ func NewDistributedLockManager() *DistributedLockManager {
 func (dlm *DistributedLockManager) Lock(host pb.ServerAddress, key string, expiredAtNs int64, token string) (renewToken string, movedTo pb.ServerAddress, err error) {
 	servers := dlm.LockRing.GetSnapshot()
 	if servers == nil {
-		err = fmt.Errorf("no lock server found")
+		err = NoLockServerError
 		return
 	}
 
@@ -37,7 +39,7 @@ func (dlm *DistributedLockManager) Lock(host pb.ServerAddress, key string, expir
 func (dlm *DistributedLockManager) Unlock(host pb.ServerAddress, key string, token string) (movedTo pb.ServerAddress, err error) {
 	servers := dlm.LockRing.GetSnapshot()
 	if servers == nil {
-		err = fmt.Errorf("no lock server found")
+		err = NoLockServerError
 		return
 	}
 

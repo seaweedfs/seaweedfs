@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+var LockErrorNonEmptyTokenOnNewLock = fmt.Errorf("lock: non-empty token on a new lock")
+var LockErrorNonEmptyTokenOnExpiredLock = fmt.Errorf("lock: non-empty token on an expired lock")
+var LockErrorTokenMismatch = fmt.Errorf("lock: token mismatch")
+var UnlockErrorTokenMismatch = fmt.Errorf("unlock: token mismatch")
+
 // LockManager lock manager
 type LockManager struct {
 	locks *xsync.MapOf[string, *Lock]
@@ -31,7 +36,7 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string) (renew
 			if oldValue.ExpiredAtNs > 0 && oldValue.ExpiredAtNs < time.Now().UnixNano() {
 				// lock is expired, set to a new lock
 				if token != "" {
-					err = fmt.Errorf("lock: non-empty token on an expired lock")
+					err = LockErrorNonEmptyTokenOnExpiredLock
 					return nil, false
 				} else {
 					// new lock
@@ -45,7 +50,7 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string) (renew
 				renewToken = uuid.New().String()
 				return &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs}, false
 			} else {
-				err = fmt.Errorf("lock: token mismatch")
+				err = LockErrorTokenMismatch
 				return oldValue, false
 			}
 		} else {
@@ -54,7 +59,7 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string) (renew
 				renewToken = uuid.New().String()
 				return &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs}, false
 			} else {
-				err = fmt.Errorf("lock: non-empty token on a new lock")
+				err = LockErrorNonEmptyTokenOnNewLock
 				return nil, false
 			}
 		}
@@ -79,7 +84,7 @@ func (lm *LockManager) Unlock(path string, token string) (isUnlocked bool, err e
 				return oldValue, false
 			} else {
 				isUnlocked = false
-				err = fmt.Errorf("unlock: token mismatch")
+				err = UnlockErrorTokenMismatch
 				return oldValue, false
 			}
 		} else {
