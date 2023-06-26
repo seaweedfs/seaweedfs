@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -240,8 +241,12 @@ func (fs *FilerServer) cleanupChunks(fullpath string, existingEntry *filer.Entry
 func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendToEntryRequest) (*filer_pb.AppendToEntryResponse, error) {
 
 	glog.V(4).Infof("AppendToEntry %v", req)
-
 	fullpath := util.NewFullPath(req.Directory, req.EntryName)
+
+	lockClient := cluster.NewLockClient(fs.grpcDialOption)
+	lock := lockClient.NewLock(fs.option.Host, string(fullpath))
+	defer lock.Unlock()
+
 	var offset int64 = 0
 	entry, err := fs.filer.FindEntry(ctx, fullpath)
 	if err == filer_pb.ErrNotFound {
