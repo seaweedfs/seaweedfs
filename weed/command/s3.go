@@ -4,12 +4,16 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"runtime"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"google.golang.org/grpc/credentials/tls/certprovider"
 	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/reflection"
-	"net/http"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -44,6 +48,7 @@ type S3Options struct {
 	auditLogConfig            *string
 	localFilerSocket          *string
 	dataCenter                *string
+	localSocket               *string
 	certProvider              certprovider.Provider
 }
 
@@ -64,6 +69,7 @@ func init() {
 	s3StandaloneOptions.allowEmptyFolder = cmdS3.Flag.Bool("allowEmptyFolder", true, "allow empty folders")
 	s3StandaloneOptions.allowDeleteBucketNotEmpty = cmdS3.Flag.Bool("allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 	s3StandaloneOptions.localFilerSocket = cmdS3.Flag.String("localFilerSocket", "", "local filer socket path")
+	s3StandaloneOptions.localSocket = cmdS3.Flag.String("localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 }
 
 var cmdS3 = &Command{
@@ -227,6 +233,24 @@ func (s3opt *S3Options) startS3Server() bool {
 	}
 	if *s3opt.bindIp == "" {
 		*s3opt.bindIp = "localhost"
+	}
+
+	if runtime.GOOS != "windows" {
+		localSocket := *s3opt.localSocket
+		if localSocket == "" {
+			localSocket = fmt.Sprintf("/tmp/seaweedfs-s3-%d.sock", *s3opt.port)
+		}
+		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
+			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
+		}
+		go func() {
+			// start on local unix socket
+			s3SocketListener, err := net.Listen("unix", localSocket)
+			if err != nil {
+				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
+			}
+			httpS.Serve(s3SocketListener)
+		}()
 	}
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.port)
