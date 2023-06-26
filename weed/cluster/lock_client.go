@@ -35,7 +35,17 @@ type LiveLock struct {
 	isLocked       bool
 }
 
-func (lc *LockClient) NewLock(filer pb.ServerAddress, key string, lockDuration time.Duration) (lock *LiveLock) {
+// NewLockWithTimeout locks the key with the given duration
+func (lc *LockClient) NewLockWithTimeout(filer pb.ServerAddress, key string, lockDuration time.Duration) (lock *LiveLock) {
+	return lc.doNewLock(filer, key, lockDuration)
+}
+
+// NewLock creates a lock with a very long duration
+func (lc *LockClient) NewLock(filer pb.ServerAddress, key string) (lock *LiveLock) {
+	return lc.doNewLock(filer, key, time.Duration(1<<63-1))
+}
+
+func (lc *LockClient) doNewLock(filer pb.ServerAddress, key string, lockDuration time.Duration) (lock *LiveLock) {
 	lock = &LiveLock{
 		key:            key,
 		filer:          filer,
