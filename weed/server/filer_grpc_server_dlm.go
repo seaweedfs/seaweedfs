@@ -16,7 +16,7 @@ func (fs *FilerServer) Lock(ctx context.Context, req *filer_pb.LockRequest) (res
 
 	var movedTo pb.ServerAddress
 	expiredAtNs := time.Now().Add(time.Duration(req.SecondsToLock) * time.Second).UnixNano()
-	resp.RenewToken, movedTo, err = fs.filer.Dlm.Lock(fs.option.Host, req.Name, expiredAtNs, req.RenewToken)
+	resp.RenewToken, movedTo, err = fs.filer.Dlm.LockWithTimeout(req.Name, expiredAtNs, req.RenewToken)
 	if !req.IsMoved && movedTo != "" {
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			secondResp, err := client.Lock(context.Background(), &filer_pb.LockRequest{
@@ -50,7 +50,7 @@ func (fs *FilerServer) Unlock(ctx context.Context, req *filer_pb.UnlockRequest) 
 	resp = &filer_pb.UnlockResponse{}
 
 	var movedTo pb.ServerAddress
-	movedTo, err = fs.filer.Dlm.Unlock(fs.option.Host, req.Name, req.RenewToken)
+	movedTo, err = fs.filer.Dlm.Unlock(req.Name, req.RenewToken)
 
 	if !req.IsMoved && movedTo != "" {
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -87,7 +87,7 @@ func (fs *FilerServer) TransferLocks(ctx context.Context, req *filer_pb.Transfer
 }
 
 func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
-	locks := fs.filer.Dlm.SelectNotOwnedLocks(fs.option.Host, snapshot)
+	locks := fs.filer.Dlm.SelectNotOwnedLocks(snapshot)
 	if len(locks) == 0 {
 		return
 	}

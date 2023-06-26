@@ -61,7 +61,7 @@ func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOptio
 		FilerConf:           NewFilerConf(),
 		RemoteStorage:       NewFilerRemoteStorage(),
 		UniqueFilerId:       util.RandomInt32(),
-		Dlm:                 lock_manager.NewDistributedLockManager(),
+		Dlm:                 lock_manager.NewDistributedLockManager(filerHost),
 	}
 	if f.UniqueFilerId < 0 {
 		f.UniqueFilerId = -f.UniqueFilerId

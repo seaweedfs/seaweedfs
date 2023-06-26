@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -42,7 +43,7 @@ func (lc *LockClient) NewLockWithTimeout(filer pb.ServerAddress, key string, loc
 
 // NewLock creates a lock with a very long duration
 func (lc *LockClient) NewLock(filer pb.ServerAddress, key string) (lock *LiveLock) {
-	return lc.doNewLock(filer, key, time.Duration(1<<63-1))
+	return lc.doNewLock(filer, key, lock_manager.MaxDuration)
 }
 
 func (lc *LockClient) doNewLock(filer pb.ServerAddress, key string, lockDuration time.Duration) (lock *LiveLock) {
