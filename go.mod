@@ -143,7 +143,7 @@ require (
 	github.com/Jille/raft-grpc-transport v1.4.0
 	github.com/arangodb/go-driver v1.6.0
 	github.com/armon/go-metrics v0.4.1
-	github.com/aws/aws-sdk-go-v2 v1.17.4
+	github.com/aws/aws-sdk-go-v2 v1.18.1
 	github.com/aws/aws-sdk-go-v2/config v1.18.12
 	github.com/aws/aws-sdk-go-v2/credentials v1.13.12
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.30.2
@@ -152,6 +152,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.3.0
 	github.com/hashicorp/raft v1.5.0
 	github.com/hashicorp/raft-boltdb/v2 v2.2.2
+	github.com/puzpuzpuz/xsync/v2 v2.4.1
 	github.com/rabbitmq/amqp091-go v1.8.1
 	github.com/rclone/rclone v1.62.2
 	github.com/schollz/progressbar/v3 v3.13.1
@@ -263,7 +264,6 @@ require (
 	github.com/pkg/xattr v0.4.9 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/putdotio/go-putio/putio v0.0.0-20200123120452-16d982cac2b8 // indirect
-	github.com/puzpuzpuz/xsync/v2 v2.4.1 // indirect
 	github.com/rfjakob/eme v1.1.2 // indirect
 	github.com/rivo/uniseg v0.4.4 // indirect
 	github.com/shirou/gopsutil/v3 v3.23.2 // indirect
