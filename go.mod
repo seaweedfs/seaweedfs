@@ -59,7 +59,7 @@ require (
 	github.com/karlseguin/ccache/v2 v2.0.8
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/klauspost/compress v1.16.0 // indirect
-	github.com/klauspost/reedsolomon v1.11.7
+	github.com/klauspost/reedsolomon v1.11.8
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.9
 	github.com/linxGnu/grocksdb v1.8.0
@@ -152,6 +152,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.3.0
 	github.com/hashicorp/raft v1.5.0
 	github.com/hashicorp/raft-boltdb/v2 v2.2.2
+	github.com/puzpuzpuz/xsync/v2 v2.4.1
 	github.com/rabbitmq/amqp091-go v1.8.1
 	github.com/rclone/rclone v1.62.2
 	github.com/schollz/progressbar/v3 v3.13.1
@@ -263,7 +264,6 @@ require (
 	github.com/pkg/xattr v0.4.9 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/putdotio/go-putio/putio v0.0.0-20200123120452-16d982cac2b8 // indirect
-	github.com/puzpuzpuz/xsync/v2 v2.4.1 // indirect
 	github.com/rfjakob/eme v1.1.2 // indirect
 	github.com/rivo/uniseg v0.4.4 // indirect
 	github.com/shirou/gopsutil/v3 v3.23.2 // indirect
