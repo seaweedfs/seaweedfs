@@ -147,7 +147,7 @@ func (s *s3RemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, 
 
 	fileSize := int64(filer.FileSize(entry))
 
-	partSize := int64(8 * 1024 * 1024) // The minimum/default allowed part size is 5MB
+	partSize := int64(s.conf.S3ChunkSize * 1024 * 1024) // The minimum/default allowed part size is 5MB
 	for partSize*1000 < fileSize {
 		partSize *= 4
 	}

@@ -20,6 +20,7 @@ message RemoteConf {
   bool s3_force_path_style = 9;
   bool s3_support_tagging = 13;
   bool s3_v4_signature = 11;
+  int64 s3_chunk_size = 14;
 
   string gcs_google_application_credentials = 10;
   string gcs_project_id = 12;
