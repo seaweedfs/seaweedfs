@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"os"
 	"sort"
 	"strings"
@@ -48,6 +49,7 @@ type Filer struct {
 	Signature           int32
 	FilerConf           *FilerConf
 	RemoteStorage       *FilerRemoteStorage
+	Dlm                 *lock_manager.DistributedLockManager
 }
 
 func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress,
@@ -59,6 +61,7 @@ func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOptio
 		FilerConf:           NewFilerConf(),
 		RemoteStorage:       NewFilerRemoteStorage(),
 		UniqueFilerId:       util.RandomInt32(),
+		Dlm:                 lock_manager.NewDistributedLockManager(filerHost),
 	}
 	if f.UniqueFilerId < 0 {
 		f.UniqueFilerId = -f.UniqueFilerId
@@ -109,8 +112,28 @@ func (f *Filer) MaybeBootstrapFromPeers(self pb.ServerAddress, existingNodes []*
 
 func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*master_pb.ClusterNodeUpdate, startFrom time.Time) {
 
+	var snapshot []pb.ServerAddress
+	for _, node := range existingNodes {
+		address := pb.ServerAddress(node.Address)
+		snapshot = append(snapshot, address)
+	}
+	f.Dlm.LockRing.SetSnapshot(snapshot)
+	glog.V(0).Infof("%s aggregate from peers %+v", self, snapshot)
+
 	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOption)
-	f.MasterClient.SetOnPeerUpdateFn(f.MetaAggregator.OnPeerUpdate)
+	f.MasterClient.SetOnPeerUpdateFn(func(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
+		if update.NodeType != cluster.FilerType {
+			return
+		}
+		address := pb.ServerAddress(update.Address)
+
+		if update.IsAdd {
+			f.Dlm.LockRing.AddServer(address)
+		} else {
+			f.Dlm.LockRing.RemoveServer(address)
+		}
+		f.MetaAggregator.OnPeerUpdate(update, startFrom)
+	})
 
 	for _, peerUpdate := range existingNodes {
 		f.MetaAggregator.OnPeerUpdate(peerUpdate, startFrom)

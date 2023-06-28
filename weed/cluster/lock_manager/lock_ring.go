@@ -2,6 +2,7 @@ package lock_manager
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"sort"
 	"sync"
 	"time"
@@ -22,12 +23,17 @@ type LockRing struct {
 	onTakeSnapshot   func(snapshot []pb.ServerAddress)
 }
 
-func NewLockRing(snapshotInterval time.Duration, onTakeSnapshot func(snapshot []pb.ServerAddress)) *LockRing {
+func NewLockRing(snapshotInterval time.Duration) *LockRing {
 	return &LockRing{
 		snapshotInterval: snapshotInterval,
 		candidateServers: make(map[pb.ServerAddress]struct{}),
-		onTakeSnapshot:   onTakeSnapshot,
 	}
+}
+
+func (r *LockRing) SetTakeSnapshotCallback(onTakeSnapshot func(snapshot []pb.ServerAddress)) {
+	r.Lock()
+	defer r.Unlock()
+	r.onTakeSnapshot = onTakeSnapshot
 }
 
 // AddServer adds a server to the ring
@@ -143,4 +149,26 @@ func (r *LockRing) getSortedServers() []pb.ServerAddress {
 		return sortedServers[i] < sortedServers[j]
 	})
 	return sortedServers
+}
+
+func (r *LockRing) GetSnapshot() (servers []pb.ServerAddress) {
+	r.RLock()
+	defer r.RUnlock()
+
+	if len(r.snapshots) == 0 {
+		return
+	}
+	return r.snapshots[0].servers
+}
+
+func hashKeyToServer(key string, servers []pb.ServerAddress) pb.ServerAddress {
+	if len(servers) == 0 {
+		return ""
+	}
+	x := util.HashStringToLong(key)
+	if x < 0 {
+		x = -x
+	}
+	x = x % int64(len(servers))
+	return servers[x]
 }
