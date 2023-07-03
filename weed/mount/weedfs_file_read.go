@@ -58,13 +58,13 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 		if bytes.Compare(mirrorData, buff[:totalRead]) != 0 {
 
 			againBuff := make([]byte, len(buff))
-			againRead, _ := readDataByFileHandle(buff, fh, offset)
+			againRead, _ := readDataByFileHandle(againBuff, fh, offset)
 			againCorrect := bytes.Compare(mirrorData, againBuff[:againRead]) == 0
 			againSame := bytes.Compare(buff[:totalRead], againBuff[:againRead]) == 0
 
 			fmt.Printf("\ncompare %v [%d,%d) size:%d againSame:%v againCorrect:%v\n", fh.mirrorFile.Name(), offset, offset+totalRead, totalRead, againSame, againCorrect)
 			//fmt.Printf("read mirrow data: %v\n", mirrorData)
-			//fmt.Printf("read actual data: %v\n", buff[:totalRead])
+			//fmt.Printf("read actual data: %v\n", againBuff[:totalRead])
 		}
 	}
 
