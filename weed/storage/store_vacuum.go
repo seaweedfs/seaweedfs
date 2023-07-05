@@ -33,7 +33,10 @@ func (s *Store) CommitCompactVolume(vid needle.VolumeId) (bool, int64, error) {
 	if v := s.findVolume(vid); v != nil {
 		isReadOnly := v.IsReadOnly()
 		err := v.CommitCompact()
-		volumeSize, _, _ := v.DataBackend.GetStat()
+		var volumeSize int64 = 0
+		if err == nil && v.DataBackend != nil {
+			volumeSize, _, _ = v.DataBackend.GetStat()
+		}
 		return isReadOnly, volumeSize, err
 	}
 	return false, 0, fmt.Errorf("volume id %d is not found during commit compact", vid)
