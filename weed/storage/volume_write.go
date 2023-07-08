@@ -197,6 +197,10 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
+	if v.nm == nil {
+		return 0, nil
+	}
+
 	if MaxPossibleVolumeSize < v.nm.ContentSize()+uint64(actualSize) {
 		err := fmt.Errorf("volume size limit %d exceeded! current size is %d", MaxPossibleVolumeSize, v.nm.ContentSize())
 		return 0, err
