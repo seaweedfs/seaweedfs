@@ -119,6 +119,7 @@ func (mc *MasterClient) WaitUntilConnected() {
 			return
 		}
 		time.Sleep(time.Duration(rand.Int31n(200)) * time.Millisecond)
+		print(".")
 	}
 }
 
@@ -242,9 +243,9 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 				if mc.OnPeerUpdate != nil {
 					if update.FilerGroup == mc.FilerGroup {
 						if update.IsAdd {
-							glog.V(0).Infof("+ %s.%s %s leader:%v\n", update.FilerGroup, update.NodeType, update.Address, update.IsLeader)
+							glog.V(0).Infof("+ %s.%s %s\n", update.FilerGroup, update.NodeType, update.Address)
 						} else {
-							glog.V(0).Infof("- %s.%s %s leader:%v\n", update.FilerGroup, update.NodeType, update.Address, update.IsLeader)
+							glog.V(0).Infof("- %s.%s %s\n", update.FilerGroup, update.NodeType, update.Address)
 						}
 						stats.MasterClientConnectCounter.WithLabelValues(stats.OnPeerUpdate).Inc()
 						mc.OnPeerUpdate(update, time.Now())

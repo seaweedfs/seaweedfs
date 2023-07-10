@@ -18,8 +18,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-const cutoffTimeNewEmptyDir = 3
-
 type ListBucketResultV2 struct {
 	XMLName               xml.Name      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListBucketResult"`
 	Name                  string        `xml:"Name"`
@@ -141,62 +139,71 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	var doErr error
 	var nextMarker string
 	cursor := &ListingCursor{
-		maxKeys: maxKeys,
+		maxKeys:               maxKeys,
+		prefixEndsOnDelimiter: strings.HasSuffix(originalPrefix, "/") && len(originalMarker) == 0,
 	}
 
 	// check filer
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-
-		nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
-			if entry.IsDirectory {
-				// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
-				if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
-					commonPrefixes = append(commonPrefixes, PrefixEntry{
-						Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
-					})
-					//All of the keys (up to 1,000) rolled up into a common prefix count as a single return when calculating the number of returns.
-					cursor.maxKeys--
-				} else if entry.IsDirectoryKeyObject() {
+		for {
+			empty := true
+			nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, cursor, marker, delimiter, false, func(dir string, entry *filer_pb.Entry) {
+				empty = false
+				if entry.IsDirectory {
+					if entry.IsDirectoryKeyObject() {
+						contents = append(contents, ListEntry{
+							Key:          fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
+							LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
+							ETag:         "\"" + filer.ETag(entry) + "\"",
+							Owner: CanonicalUser{
+								ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
+								DisplayName: entry.Attributes.UserName,
+							},
+							StorageClass: "STANDARD",
+						})
+						cursor.maxKeys--
+						// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
+					} else if delimiter == "/" { // A response can contain CommonPrefixes only if you specify a delimiter.
+						commonPrefixes = append(commonPrefixes, PrefixEntry{
+							Prefix: fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
+						})
+						//All of the keys (up to 1,000) rolled up into a common prefix count as a single return when calculating the number of returns.
+						cursor.maxKeys--
+					}
+				} else {
+					storageClass := "STANDARD"
+					if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
+						storageClass = string(v)
+					}
 					contents = append(contents, ListEntry{
-						Key:          fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):],
+						Key:          fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):],
 						LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
 						ETag:         "\"" + filer.ETag(entry) + "\"",
+						Size:         int64(filer.FileSize(entry)),
 						Owner: CanonicalUser{
 							ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
 							DisplayName: entry.Attributes.UserName,
 						},
-						StorageClass: "STANDARD",
+						StorageClass: StorageClass(storageClass),
 					})
 					cursor.maxKeys--
 				}
-			} else {
-				storageClass := "STANDARD"
-				if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
-					storageClass = string(v)
-				}
-				contents = append(contents, ListEntry{
-					Key:          fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):],
-					LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
-					ETag:         "\"" + filer.ETag(entry) + "\"",
-					Size:         int64(filer.FileSize(entry)),
-					Owner: CanonicalUser{
-						ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
-						DisplayName: entry.Attributes.UserName,
-					},
-					StorageClass: StorageClass(storageClass),
-				})
-				cursor.maxKeys--
+			})
+			if doErr != nil {
+				return doErr
 			}
-		})
-		if doErr != nil {
-			return doErr
-		}
 
-		if !cursor.isTruncated {
-			nextMarker = ""
-		} else {
-			if requestDir != "" {
-				nextMarker = requestDir + "/" + nextMarker
+			if cursor.isTruncated {
+				if requestDir != "" {
+					nextMarker = requestDir + "/" + nextMarker
+				}
+				break
+			} else if empty || strings.HasSuffix(originalPrefix, "/") {
+				nextMarker = ""
+				break
+			} else {
+				// start next loop
+				marker = nextMarker
 			}
 		}
 
@@ -219,8 +226,9 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 }
 
 type ListingCursor struct {
-	maxKeys     int
-	isTruncated bool
+	maxKeys               int
+	isTruncated           bool
+	prefixEndsOnDelimiter bool
 }
 
 // the prefix and marker may be in different directories
@@ -228,7 +236,11 @@ type ListingCursor struct {
 func normalizePrefixMarker(prefix, marker string) (alignedDir, alignedPrefix, alignedMarker string) {
 	// alignedDir should not end with "/"
 	// alignedDir, alignedPrefix, alignedMarker should only have "/" in middle
-	prefix = strings.TrimLeft(prefix, "/")
+	if len(marker) == 0 {
+		prefix = strings.Trim(prefix, "/")
+	} else {
+		prefix = strings.TrimLeft(prefix, "/")
+	}
 	marker = strings.TrimLeft(marker, "/")
 	if prefix == "" {
 		return "", "", marker
@@ -256,6 +268,7 @@ func normalizePrefixMarker(prefix, marker string) (alignedDir, alignedPrefix, al
 	}
 	return
 }
+
 func toDirAndName(dirAndName string) (dir, name string) {
 	sepIndex := strings.LastIndex(dirAndName, "/")
 	if sepIndex >= 0 {
@@ -265,6 +278,7 @@ func toDirAndName(dirAndName string) (dir, name string) {
 	}
 	return
 }
+
 func toParentAndDescendants(dirAndName string) (dir, name string) {
 	sepIndex := strings.Index(dirAndName, "/")
 	if sepIndex >= 0 {
@@ -279,7 +293,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	// invariants
 	//   prefix and marker should be under dir, marker may contain "/"
 	//   maxKeys should be updated for each recursion
-
+	// glog.V(4).Infof("doListFilerEntries dir: %s, prefix: %s, marker %s, maxKeys: %d, prefixEndsOnDelimiter: %+v", dir, prefix, marker, cursor.maxKeys, cursor.prefixEndsOnDelimiter)
 	if prefix == "/" && delimiter == "/" {
 		return
 	}
@@ -311,6 +325,9 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		StartFromFileName:  marker,
 		InclusiveStartFrom: inclusiveStartFrom,
 	}
+	if cursor.prefixEndsOnDelimiter {
+		request.Limit = uint32(1)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -336,13 +353,29 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		}
 		entry := resp.Entry
 		nextMarker = entry.Name
+		if cursor.prefixEndsOnDelimiter {
+			if entry.Name == prefix && entry.IsDirectory {
+				if delimiter != "/" {
+					cursor.prefixEndsOnDelimiter = false
+				}
+			} else {
+				continue
+			}
+		}
 		if entry.IsDirectory {
-			// println("ListEntries", dir, "dir:", entry.Name)
+			// glog.V(4).Infof("List Dir Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
 			if entry.Name == s3_constants.MultipartUploadsFolder { // FIXME no need to apply to all directories. this extra also affects maxKeys
 				continue
 			}
-			if delimiter != "/" {
-				eachEntryFn(dir, entry)
+			if delimiter != "/" || cursor.prefixEndsOnDelimiter {
+				if cursor.prefixEndsOnDelimiter {
+					cursor.prefixEndsOnDelimiter = false
+					if entry.IsDirectoryKeyObject() {
+						eachEntryFn(dir, entry)
+					}
+				} else {
+					eachEntryFn(dir, entry)
+				}
 				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, eachEntryFn)
 				if subErr != nil {
 					err = fmt.Errorf("doListFilerEntries2: %v", subErr)
@@ -356,7 +389,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				// println("doListFilerEntries2 nextMarker", nextMarker)
 			} else {
 				var isEmpty bool
-				if !s3a.option.AllowEmptyFolder && !entry.IsDirectoryKeyObject() {
+				if !s3a.option.AllowEmptyFolder && entry.IsOlderDir() {
 					if isEmpty, err = s3a.ensureDirectoryAllEmpty(client, dir, entry.Name); err != nil {
 						glog.Errorf("check empty folder %s: %v", dir, err)
 					}
@@ -367,7 +400,10 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 		} else {
 			eachEntryFn(dir, entry)
-			// println("ListEntries", dir, "file:", entry.Name, "maxKeys", cursor.maxKeys)
+			// glog.V(4).Infof("List File Entries %s, file: %s, maxKeys %d", dir, entry.Name, cursor.maxKeys)
+		}
+		if cursor.prefixEndsOnDelimiter {
+			cursor.prefixEndsOnDelimiter = false
 		}
 	}
 	return
@@ -409,16 +445,11 @@ func (s3a *S3ApiServer) ensureDirectoryAllEmpty(filerClient filer_pb.SeaweedFile
 	var startFrom string
 	var isExhausted bool
 	var foundEntry bool
-	cutOffTimeAtSec := time.Now().Unix() + cutoffTimeNewEmptyDir
 	for fileCounter == 0 && !isExhausted && err == nil {
 		err = filer_pb.SeaweedList(filerClient, currentDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 			foundEntry = true
-			if entry.IsDirectory {
-				if entry.Attributes != nil && cutOffTimeAtSec >= entry.Attributes.GetCrtime() {
-					fileCounter++
-				} else {
-					subDirs = append(subDirs, entry.Name)
-				}
+			if entry.IsOlderDir() {
+				subDirs = append(subDirs, entry.Name)
 			} else {
 				fileCounter++
 			}
@@ -451,7 +482,7 @@ func (s3a *S3ApiServer) ensureDirectoryAllEmpty(filerClient filer_pb.SeaweedFile
 	}
 
 	glog.V(1).Infof("deleting empty folder %s", currentDir)
-	if err = doDeleteEntry(filerClient, parentDir, name, true, true); err != nil {
+	if err = doDeleteEntry(filerClient, parentDir, name, true, false); err != nil {
 		return
 	}
 

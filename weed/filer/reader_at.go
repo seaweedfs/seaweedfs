@@ -10,7 +10,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
@@ -88,12 +87,12 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 	}
 }
 
-func NewChunkReaderAtFromClient(lookupFn wdclient.LookupFileIdFunctionType, chunkViews *IntervalList[*ChunkView], chunkCache chunk_cache.ChunkCache, fileSize int64) *ChunkReadAt {
+func NewChunkReaderAtFromClient(readerCache *ReaderCache, chunkViews *IntervalList[*ChunkView], fileSize int64) *ChunkReadAt {
 
 	return &ChunkReadAt{
 		chunkViews:    chunkViews,
 		fileSize:      fileSize,
-		readerCache:   newReaderCache(32, chunkCache, lookupFn),
+		readerCache:   readerCache,
 		readerPattern: NewReaderPattern(),
 	}
 }
@@ -107,8 +106,8 @@ func (c *ChunkReadAt) ReadAt(p []byte, offset int64) (n int, err error) {
 
 	c.readerPattern.MonitorReadAt(offset, len(p))
 
-	c.chunkViews.Lock.Lock()
-	defer c.chunkViews.Lock.Unlock()
+	c.chunkViews.Lock.RLock()
+	defer c.chunkViews.Lock.RUnlock()
 
 	// glog.V(4).Infof("ReadAt [%d,%d) of total file size %d bytes %d chunk views", offset, offset+int64(len(p)), c.fileSize, len(c.chunkViews))
 	n, _, err = c.doReadAt(p, offset)
@@ -119,8 +118,8 @@ func (c *ChunkReadAt) ReadAtWithTime(p []byte, offset int64) (n int, ts int64, e
 
 	c.readerPattern.MonitorReadAt(offset, len(p))
 
-	c.chunkViews.Lock.Lock()
-	defer c.chunkViews.Lock.Unlock()
+	c.chunkViews.Lock.RLock()
+	defer c.chunkViews.Lock.RUnlock()
 
 	// glog.V(4).Infof("ReadAt [%d,%d) of total file size %d bytes %d chunk views", offset, offset+int64(len(p)), c.fileSize, len(c.chunkViews))
 	return c.doReadAt(p, offset)

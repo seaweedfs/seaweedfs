@@ -22,7 +22,6 @@ func ListExistingPeerUpdates(master pb.ServerAddress, grpcDialOption grpc.DialOp
 			existingNodes = append(existingNodes, &master_pb.ClusterNodeUpdate{
 				NodeType:    FilerType,
 				Address:     node.Address,
-				IsLeader:    node.IsLeader,
 				IsAdd:       true,
 				CreatedAtNs: node.CreatedAtNs,
 			})

@@ -116,6 +116,17 @@ func (s *Store) FindEcVolume(vid needle.VolumeId) (*erasure_coding.EcVolume, boo
 	return nil, false
 }
 
+// shardFiles is a list of shard files, which is used to return the shard locations
+func (s *Store) CollectEcShards(vid needle.VolumeId, shardFileNames []string) (ecVolume *erasure_coding.EcVolume, found bool) {
+	for _, location := range s.Locations {
+		if s, foundShards := location.CollectEcShards(vid, shardFileNames); foundShards {
+			ecVolume = s
+			found = true
+		}
+	}
+	return
+}
+
 func (s *Store) DestroyEcVolume(vid needle.VolumeId) {
 	for _, location := range s.Locations {
 		location.DestroyEcVolume(vid)

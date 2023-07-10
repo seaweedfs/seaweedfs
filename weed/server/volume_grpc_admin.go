@@ -100,7 +100,7 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 
 	resp := &volume_server_pb.VolumeDeleteResponse{}
 
-	err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId))
+	err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), req.OnlyEmpty)
 
 	if err != nil {
 		glog.Errorf("volume delete %v: %v", req, err)
@@ -237,7 +237,9 @@ func (vs *VolumeServer) VolumeStatus(ctx context.Context, req *volume_server_pb.
 		return nil, fmt.Errorf("not found volume id %d", req.VolumeId)
 	}
 
+	volumeSize, _, _ := v.DataBackend.GetStat()
 	resp.IsReadOnly = v.IsReadOnly()
+	resp.VolumeSize = uint64(volumeSize)
 
 	return resp, nil
 }
@@ -317,7 +319,7 @@ func (vs *VolumeServer) Ping(ctx context.Context, req *volume_server_pb.PingRequ
 		StartTimeNs: time.Now().UnixNano(),
 	}
 	if req.TargetType == cluster.FilerType {
-		pingErr = pb.WithFilerClient(false, pb.ServerAddress(req.Target), vs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		pingErr = pb.WithFilerClient(false, 0, pb.ServerAddress(req.Target), vs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			pingResp, err := client.Ping(ctx, &filer_pb.PingRequest{})
 			if pingResp != nil {
 				resp.RemoteTimeNs = pingResp.StartTimeNs

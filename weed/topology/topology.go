@@ -11,6 +11,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
+	backoff "github.com/cenkalti/backoff/v4"
+
 	hashicorpRaft "github.com/hashicorp/raft"
 	"github.com/seaweedfs/raft"
 
@@ -35,7 +37,7 @@ type Topology struct {
 
 	volumeSizeLimit  uint64
 	replicationAsMin bool
-	isDisableVacuum     bool
+	isDisableVacuum  bool
 
 	Sequence sequence.Sequencer
 
@@ -74,6 +76,28 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 	return t
 }
 
+func (t *Topology) IsChildLocked() (bool, error) {
+	if t.IsLocked() {
+		return true, errors.New("topology is locked")
+	}
+	for _, dcNode := range t.Children() {
+		if dcNode.IsLocked() {
+			return true, fmt.Errorf("topology child %s is locked", dcNode.String())
+		}
+		for _, rackNode := range dcNode.Children() {
+			if rackNode.IsLocked() {
+				return true, fmt.Errorf("dc %s child %s is locked", dcNode.String(), rackNode.String())
+			}
+			for _, dataNode := range rackNode.Children() {
+				if dataNode.IsLocked() {
+					return true, fmt.Errorf("rack %s child %s is locked", rackNode.String(), dataNode.Id())
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
 func (t *Topology) IsLeader() bool {
 	t.RaftServerAccessLock.RLock()
 	defer t.RaftServerAccessLock.RUnlock()
@@ -96,19 +120,23 @@ func (t *Topology) IsLeader() bool {
 }
 
 func (t *Topology) Leader() (l pb.ServerAddress, err error) {
-	for count := 0; count < 3; count++ {
-		l, err = t.MaybeLeader()
-		if err != nil {
-			return
-		}
-		if l != "" {
-			break
-		}
-
-		time.Sleep(time.Duration(5+count) * time.Second)
+	exponentialBackoff := backoff.NewExponentialBackOff()
+	exponentialBackoff.InitialInterval = 100 * time.Millisecond
+	exponentialBackoff.MaxElapsedTime = 20 * time.Second
+	leaderNotSelected := errors.New("leader not selected yet")
+	l, err = backoff.RetryWithData(
+		func() (l pb.ServerAddress, err error) {
+			l, err = t.MaybeLeader()
+			if err == nil && l == "" {
+				err = leaderNotSelected
+			}
+			return l, err
+		},
+		exponentialBackoff)
+	if err == leaderNotSelected {
+		l = ""
 	}
-
-	return
+	return l, err
 }
 
 func (t *Topology) MaybeLeader() (l pb.ServerAddress, err error) {

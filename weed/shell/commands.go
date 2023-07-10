@@ -54,7 +54,7 @@ func NewCommandEnv(options *ShellOptions) *CommandEnv {
 		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, *options.FilerGroup, pb.AdminShellClient, "", "", "", pb.ServerAddresses(*options.Masters).ToAddressMap()),
 		option:       options,
 	}
-	ce.locker = exclusive_locks.NewExclusiveLocker(ce.MasterClient, "admin")
+	ce.locker = exclusive_locks.NewExclusiveLocker(ce.MasterClient, "shell")
 	return ce
 }
 
@@ -111,7 +111,7 @@ var _ = filer_pb.FilerClient(&CommandEnv{})
 
 func (ce *CommandEnv) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithGrpcFilerClient(streamingMode, ce.option.FilerAddress, ce.option.GrpcDialOption, fn)
+	return pb.WithGrpcFilerClient(streamingMode, 0, ce.option.FilerAddress, ce.option.GrpcDialOption, fn)
 
 }
 
@@ -183,4 +183,11 @@ func readNeedleStatus(grpcDialOption grpc.DialOption, sourceVolumeServer pb.Serv
 		},
 	)
 	return
+}
+
+func getCollectionName(commandEnv *CommandEnv, bucket string) string {
+	if *commandEnv.option.FilerGroup != "" {
+		return fmt.Sprintf("%s_%s", *commandEnv.option.FilerGroup, bucket)
+	}
+	return bucket
 }

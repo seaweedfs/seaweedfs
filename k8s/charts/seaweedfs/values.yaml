@@ -5,10 +5,12 @@ global:
   repository: ""
   imageName: chrislusf/seaweedfs
   imagePullPolicy: IfNotPresent
-  imagePullSecrets: imagepullsecret
+  imagePullSecrets: ""
   restartPolicy: Always
   loggingLevel: 1
   enableSecurity: false
+  certificates:
+    alphacrds: false
   monitoring:
     enabled: false
     gatewayHost: null
@@ -22,8 +24,8 @@ global:
   replicationPlacment: "001"
   extraEnvironmentVars:
     WEED_CLUSTER_DEFAULT: "sw"
-    WEED_CLUSTER_SW_MASTER: "seaweedfs-master:9333"
-    WEED_CLUSTER_SW_FILER: "seaweedfs-filer-client:8888"
+    WEED_CLUSTER_SW_MASTER: "seaweedfs-master.seaweedfs:9333"
+    WEED_CLUSTER_SW_FILER: "seaweedfs-filer-client.seaweedfs:8888"
 
 image:
   registry: ""
@@ -44,11 +46,11 @@ master:
   volumePreallocate: false
   volumeSizeLimitMB: 1000
   loggingOverrideLevel: null
-  #number of seconds between heartbeats, default 5
+  # number of seconds between heartbeats, default 5
   pulseSeconds: null
-  #threshold to vacuum and reclaim spaces, default 0.3 (30%)
+  # threshold to vacuum and reclaim spaces, default 0.3 (30%)
   garbageThreshold: null
-  #Prometheus push interval in seconds, default 15
+  # Prometheus push interval in seconds, default 15
   metricsIntervalSec: 15
   #  replication type is XYZ:
   # X number of replica in other data centers
@@ -112,10 +114,10 @@ master:
   # nodeSelector labels for master pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  # nodeSelector: |
-  #   beta.kubernetes.io/arch: amd64
   nodeSelector: |
-    sw-backend: "true"
+    beta.kubernetes.io/arch: amd64
+  # nodeSelector: |
+  #   sw-backend: "true"
 
   # used to assign priority to master pods
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
@@ -124,6 +126,7 @@ master:
   ingress:
     enabled: false
     className: "nginx"
+    host: "master.seaweedfs.local"
     annotations:
       nginx.ingress.kubernetes.io/auth-type: "basic"
       nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
@@ -241,7 +244,7 @@ volume:
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: null
+  resources: {}
 
   # Toleration Settings for server pods
   # This should be a multi-line string matching the Toleration array
@@ -251,10 +254,10 @@ volume:
   # nodeSelector labels for server pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  # nodeSelector: |
-  #   beta.kubernetes.io/arch: amd64
   nodeSelector: |
-    sw-volume: "true"
+   beta.kubernetes.io/arch: amd64
+  # nodeSelector: |
+  #   sw-volume: "true"
 
   # used to assign priority to server pods
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
@@ -273,6 +276,7 @@ filer:
   grpcPort: 18888
   metricsPort: 9327
   loggingOverrideLevel: null
+  filerGroup: ""
   #  replication type is XYZ:
   # X number of replica in other data centers
   # Y number of replica in other racks in the same data center
@@ -358,10 +362,10 @@ filer:
   # nodeSelector labels for server pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  # nodeSelector: |
-  #   beta.kubernetes.io/arch: amd64
   nodeSelector: |
-    sw-backend: "true"
+    beta.kubernetes.io/arch: amd64
+  # nodeSelector: |
+  #   sw-backend: "true"
 
   # used to assign priority to server pods
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
@@ -370,7 +374,9 @@ filer:
   ingress:
     enabled: false
     className: "nginx"
+    host: "seaweedfs.cluster.local"
     annotations:
+      nginx.ingress.kubernetes.io/backend-protocol: GRPC
       nginx.ingress.kubernetes.io/auth-type: "basic"
       nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
       nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Filer'
@@ -389,7 +395,7 @@ filer:
 
   # extraEnvVars is a list of extra enviroment variables to set with the stateful set.
   extraEnvironmentVars:
-    WEED_MYSQL_ENABLED: "true"
+    WEED_MYSQL_ENABLED: "false"
     WEED_MYSQL_HOSTNAME: "mysql-db-host"
     WEED_MYSQL_PORT: "3306"
     WEED_MYSQL_DATABASE: "sw_database"
@@ -400,17 +406,31 @@ filer:
     # enable usage of memsql as filer backend
     WEED_MYSQL_INTERPOLATEPARAMS: "true"
     # if you want to use leveldb2, then should enable "enablePVC". or you may lose your data.
-    WEED_LEVELDB2_ENABLED: "false"
+    WEED_LEVELDB2_ENABLED: "true"
     # with http DELETE, by default the filer would check whether a folder is empty.
     # recursive_delete will delete all sub folders and files, similar to "rm -Rf"
     WEED_FILER_OPTIONS_RECURSIVE_DELETE: "false"
     # directories under this folder will be automatically creating a separate bucket
     WEED_FILER_BUCKETS_FOLDER: "/buckets"
 
+
+  # secret env variables
+  secretExtraEnvironmentVars: []
+      # WEED_POSTGRES_USERNAME:
+      #   secretKeyRef:
+      #     name: postgres-credentials
+      #     key: username
+      # WEED_POSTGRES_PASSWORD:
+      #   secretKeyRef:
+      #     name: postgres-credentials
+      #     key: password
+
   s3:
     enabled: true
     port: 8333
-    #allow empty folders
+    # add additional https port
+    httpsPort: 0
+    # allow empty folders
     allowEmptyFolder: false
     # Suffix of the host name, {bucket}.{domainName}
     domainName: ""
@@ -428,9 +448,11 @@ s3:
   replicas: 1
   bindAddress: 0.0.0.0
   port: 8333
+  # add additional https port
+  httpsPort: 0
   metricsPort: 9327
   loggingOverrideLevel: null
-  #allow empty folders
+  # allow empty folders
   allowEmptyFolder: true
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
@@ -449,7 +471,7 @@ s3:
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: null
+  resources: {}
 
   # Toleration Settings for server pods
   # This should be a multi-line string matching the Toleration array
@@ -459,10 +481,10 @@ s3:
   # nodeSelector labels for server pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
-  # nodeSelector: |
-  #   beta.kubernetes.io/arch: amd64
   nodeSelector: |
-    sw-backend: "true"
+    beta.kubernetes.io/arch: amd64
+  # nodeSelector: |
+  #   sw-backend: "true"
 
   # used to assign priority to server pods
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
@@ -479,5 +501,5 @@ certificates:
   ipAddresses: []
   keyAlgorithm: rsa
   keySize: 2048
-  duration: 2160h # 90d
-  renewBefore: 360h # 15d
+  duration: 2160h  # 90d
+  renewBefore: 360h  # 15d

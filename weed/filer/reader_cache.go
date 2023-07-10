@@ -34,7 +34,7 @@ type SingleChunkCacher struct {
 	completedTimeNew int64
 }
 
-func newReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType) *ReaderCache {
+func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType) *ReaderCache {
 	return &ReaderCache{
 		limit:          limit,
 		chunkCache:     chunkCache,

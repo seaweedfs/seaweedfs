@@ -19,8 +19,8 @@ func init() {
 
 type commandVolumeServerEvacuate struct {
 	topologyInfo *master_pb.TopologyInfo
-	targetServer string
-	volumeRack   string
+	targetServer *string
+	volumeRack   *string
 }
 
 func (c *commandVolumeServerEvacuate) Name() string {
@@ -49,8 +49,8 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 
 	vsEvacuateCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	volumeServer := vsEvacuateCommand.String("node", "", "<host>:<port> of the volume server")
-	volumeRack := vsEvacuateCommand.String("rack", "", "source rack for the volume servers")
-	targetServer := vsEvacuateCommand.String("target", "", "<host>:<port> of target volume")
+	c.volumeRack = vsEvacuateCommand.String("rack", "", "source rack for the volume servers")
+	c.targetServer = vsEvacuateCommand.String("target", "", "<host>:<port> of target volume")
 	skipNonMoveable := vsEvacuateCommand.Bool("skipNonMoveable", false, "skip volumes that can not be moved")
 	applyChange := vsEvacuateCommand.Bool("force", false, "actually apply the changes")
 	retryCount := vsEvacuateCommand.Int("retry", 0, "how many times to retry")
@@ -63,15 +63,10 @@ func (c *commandVolumeServerEvacuate) Do(args []string, commandEnv *CommandEnv, 
 		return
 	}
 
-	if *volumeServer == "" && *volumeRack == "" {
+	if *volumeServer == "" && *c.volumeRack == "" {
 		return fmt.Errorf("need to specify volume server by -node=<host>:<port> or source rack")
 	}
-	if *targetServer != "" {
-		c.targetServer = *targetServer
-	}
-	if *volumeRack != "" {
-		c.volumeRack = *volumeRack
-	}
+
 	for i := 0; i < *retryCount+1; i++ {
 		if err = c.volumeServerEvacuate(commandEnv, *volumeServer, *skipNonMoveable, *applyChange, writer); err == nil {
 			return nil
@@ -93,6 +88,9 @@ func (c *commandVolumeServerEvacuate) volumeServerEvacuate(commandEnv *CommandEn
 	if err != nil {
 		return err
 	}
+	defer func() {
+		c.topologyInfo = nil
+	}()
 
 	if err := c.evacuateNormalVolumes(commandEnv, volumeServer, skipNonMoveable, applyChange, writer); err != nil {
 		return err
@@ -237,14 +235,14 @@ func moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][
 
 func (c *commandVolumeServerEvacuate) nodesOtherThan(volumeServers []*Node, thisServer string) (thisNodes []*Node, otherNodes []*Node) {
 	for _, node := range volumeServers {
-		if node.info.Id == thisServer || (c.volumeRack != "" && node.rack == c.volumeRack) {
+		if node.info.Id == thisServer || (*c.volumeRack != "" && node.rack == *c.volumeRack) {
 			thisNodes = append(thisNodes, node)
 			continue
 		}
-		if c.volumeRack != "" && c.volumeRack == node.rack {
+		if *c.volumeRack != "" && *c.volumeRack == node.rack {
 			continue
 		}
-		if c.targetServer != "" && c.targetServer != node.info.Id {
+		if *c.targetServer != "" && *c.targetServer != node.info.Id {
 			continue
 		}
 		otherNodes = append(otherNodes, node)
@@ -254,14 +252,14 @@ func (c *commandVolumeServerEvacuate) nodesOtherThan(volumeServers []*Node, this
 
 func (c *commandVolumeServerEvacuate) ecNodesOtherThan(volumeServers []*EcNode, thisServer string) (thisNodes []*EcNode, otherNodes []*EcNode) {
 	for _, node := range volumeServers {
-		if node.info.Id == thisServer || (c.volumeRack != "" && string(node.rack) == c.volumeRack) {
+		if node.info.Id == thisServer || (*c.volumeRack != "" && string(node.rack) == *c.volumeRack) {
 			thisNodes = append(thisNodes, node)
 			continue
 		}
-		if c.volumeRack != "" && c.volumeRack == string(node.rack) {
+		if *c.volumeRack != "" && *c.volumeRack == string(node.rack) {
 			continue
 		}
-		if c.targetServer != "" && c.targetServer != node.info.Id {
+		if *c.targetServer != "" && *c.targetServer != node.info.Id {
 			continue
 		}
 		otherNodes = append(otherNodes, node)

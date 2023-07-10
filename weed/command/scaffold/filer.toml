@@ -108,7 +108,7 @@ connection_max_open = 100
 connection_max_lifetime_seconds = 0
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
 enableUpsert = true
-upsertQuery = """INSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT (dirhash,name) DO UPDATE SET meta = EXCLUDED.meta WHERE "%[1]s".meta != EXCLUDED.meta"""
+upsertQuery = """UPSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4)"""
 
 [postgres2]
 enabled = false
@@ -133,7 +133,7 @@ connection_max_open = 100
 connection_max_lifetime_seconds = 0
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
 enableUpsert = true
-upsertQuery = """INSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4) ON CONFLICT (dirhash,name) DO UPDATE SET meta = EXCLUDED.meta WHERE "%[1]s".meta != EXCLUDED.meta"""
+upsertQuery = """UPSERT INTO "%[1]s" (dirhash,name,directory,meta) VALUES($1,$2,$3,$4)"""
 
 [cassandra]
 # CREATE TABLE filemeta (
@@ -262,6 +262,9 @@ routeByLatency = false
 [etcd]
 enabled = false
 servers = "localhost:2379"
+username = ""
+password = ""
+key_prefix = "seaweedfs."
 timeout = "3s"
 
 [mongodb]

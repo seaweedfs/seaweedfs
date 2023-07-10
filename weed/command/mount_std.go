@@ -182,7 +182,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		DirectMount:              true,
 		DirectMountFlags:         0,
 		//SyncRead:                 false, // set to false to enable the FUSE_CAP_ASYNC_READ capability
-		//EnableAcl:                true,
+		EnableAcl: true,
 	}
 	if *option.nonempty {
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "nonempty")
@@ -240,6 +240,14 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		UidGidMapper:       uidGidMapper,
 		DisableXAttr:       *option.disableXAttr,
 	})
+
+	// create mount root
+	mountRootPath := util.FullPath(mountRoot)
+	mountRootParent, mountDir := mountRootPath.DirAndName()
+	if err = filer_pb.Mkdir(seaweedFileSystem, mountRootParent, mountDir, nil); err != nil {
+		fmt.Printf("failed to create dir %s on filer %s: %v\n", mountRoot, filerAddresses, err)
+		return false
+	}
 
 	server, err := fuse.NewServer(seaweedFileSystem, dir, fuseMountOptions)
 	if err != nil {

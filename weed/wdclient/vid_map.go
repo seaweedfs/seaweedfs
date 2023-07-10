@@ -141,6 +141,19 @@ func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
 	return nil, false
 }
 
+func (vc *vidMap) GetLocationsClone(vid uint32) (locations []Location, found bool) {
+	locations, found = vc.GetLocations(vid)
+
+	if found {
+		// clone the locations in case the volume locations are changed below
+		existingLocations := make([]Location, len(locations))
+		copy(existingLocations, locations)
+		return existingLocations, found
+	}
+
+	return nil, false
+}
+
 func (vc *vidMap) getLocations(vid uint32) (locations []Location, found bool) {
 	vc.RLock()
 	defer vc.RUnlock()

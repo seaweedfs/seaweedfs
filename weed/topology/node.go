@@ -2,15 +2,17 @@ package topology
 
 import (
 	"errors"
+	"math/rand"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"math/rand"
-	"strings"
-	"sync"
-	"sync/atomic"
 )
 
 type NodeId string
@@ -32,11 +34,13 @@ type Node interface {
 	IsDataNode() bool
 	IsRack() bool
 	IsDataCenter() bool
+	IsLocked() bool
 	Children() []Node
 	Parent() Node
 
 	GetValue() interface{} //get reference to the topology,dc,rack,datanode
 }
+
 type NodeImpl struct {
 	diskUsages   *DiskUsages
 	id           NodeId
@@ -73,7 +77,7 @@ func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, option *VolumeGrowOption
 	n.RUnlock()
 	if len(candidates) < numberOfNodes {
 		glog.V(0).Infoln(n.Id(), "failed to pick", numberOfNodes, "from ", len(candidates), "node candidates")
-		return nil, nil, errors.New("No enough data node found!")
+		return nil, nil, errors.New("Not enough data nodes found!")
 	}
 
 	//pick nodes randomly by weights, the node picked earlier has higher final weights
@@ -120,24 +124,37 @@ func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, option *VolumeGrowOption
 func (n *NodeImpl) IsDataNode() bool {
 	return n.nodeType == "DataNode"
 }
+
 func (n *NodeImpl) IsRack() bool {
 	return n.nodeType == "Rack"
 }
+
 func (n *NodeImpl) IsDataCenter() bool {
 	return n.nodeType == "DataCenter"
 }
+
+func (n *NodeImpl) IsLocked() (isTryLock bool) {
+	if isTryLock = n.TryRLock(); isTryLock {
+		n.RUnlock()
+	}
+	return !isTryLock
+}
+
 func (n *NodeImpl) String() string {
 	if n.parent != nil {
 		return n.parent.String() + ":" + string(n.id)
 	}
 	return string(n.id)
 }
+
 func (n *NodeImpl) Id() NodeId {
 	return n.id
 }
+
 func (n *NodeImpl) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts {
 	return n.diskUsages.getOrCreateDisk(diskType)
 }
+
 func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 	t := n.getOrCreateDisk(option.DiskType)
 	freeVolumeSlotCount := atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount) - atomic.LoadInt64(&t.volumeCount)
@@ -150,6 +167,7 @@ func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 func (n *NodeImpl) SetParent(node Node) {
 	n.parent = node
 }
+
 func (n *NodeImpl) Children() (ret []Node) {
 	n.RLock()
 	defer n.RUnlock()
@@ -158,12 +176,15 @@ func (n *NodeImpl) Children() (ret []Node) {
 	}
 	return ret
 }
+
 func (n *NodeImpl) Parent() Node {
 	return n.parent
 }
+
 func (n *NodeImpl) GetValue() interface{} {
 	return n.value
 }
+
 func (n *NodeImpl) ReserveOneVolume(r int64, option *VolumeGrowOption) (assignedNode *DataNode, err error) {
 	n.RLock()
 	defer n.RUnlock()
@@ -178,7 +199,11 @@ func (n *NodeImpl) ReserveOneVolume(r int64, option *VolumeGrowOption) (assigned
 		} else {
 			if node.IsDataNode() && node.AvailableSpaceFor(option) > 0 {
 				// fmt.Println("vid =", vid, " assigned to node =", node, ", freeSpace =", node.FreeSpace())
-				return node.(*DataNode), nil
+				dn := node.(*DataNode)
+				if dn.IsTerminating {
+					continue
+				}
+				return dn, nil
 			}
 			assignedNode, err = node.ReserveOneVolume(r, option)
 			if err == nil {
@@ -243,15 +268,28 @@ func (n *NodeImpl) CollectDeadNodeAndFullVolumes(freshThreshHold int64, volumeSi
 		for _, c := range n.Children() {
 			dn := c.(*DataNode) //can not cast n to DataNode
 			for _, v := range dn.GetVolumes() {
+				topo := n.GetTopology()
+				diskType := types.ToDiskType(v.DiskType)
+				vl := topo.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
+
 				if v.Size >= volumeSizeLimit {
-					//fmt.Println("volume",v.Id,"size",v.Size,">",volumeSizeLimit)
-					n.GetTopology().chanFullVolumes <- v
+					vl.accessLock.RLock()
+					vacuumTime, ok := vl.vacuumedVolumes[v.Id]
+					vl.accessLock.RUnlock()
+
+					// If a volume has been vacuumed in the past 20 seconds, we do not check whether it has reached full capacity.
+					// After 20s(grpc timeout), theoretically all the heartbeats of the volume server have reached the master,
+					// the volume size should be correct, not the size before the vacuum.
+					if !ok || time.Now().Add(-20*time.Second).After(vacuumTime) {
+						//fmt.Println("volume",v.Id,"size",v.Size,">",volumeSizeLimit)
+						topo.chanFullVolumes <- v
+					}
 				} else if float64(v.Size) > float64(volumeSizeLimit)*growThreshold {
-					n.GetTopology().chanCrowdedVolumes <- v
+					topo.chanCrowdedVolumes <- v
 				}
 				copyCount := v.ReplicaPlacement.GetCopyCount()
 				if copyCount > 1 {
-					if copyCount > len(n.GetTopology().Lookup(v.Collection, v.Id)) {
+					if copyCount > len(topo.Lookup(v.Collection, v.Id)) {
 						stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(1)
 					} else {
 						stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(0)

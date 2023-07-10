@@ -7,7 +7,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/security/advancedtls"
-	"io/ioutil"
+	"os"
 	"strings"
 	"time"
 
@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-const credRefreshingInterval = time.Duration(5) * time.Hour
+const CredRefreshingInterval = time.Duration(5) * time.Hour
 
 type Authenticator struct {
 	AllowedWildcardDomain string
@@ -31,7 +31,10 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	serverOptions := pemfile.Options{
 		CertFile:        config.GetString(component + ".cert"),
 		KeyFile:         config.GetString(component + ".key"),
-		RefreshDuration: credRefreshingInterval,
+		RefreshDuration: CredRefreshingInterval,
+	}
+	if serverOptions.CertFile == "" || serverOptions.KeyFile == "" {
+		return nil, nil
 	}
 
 	serverIdentityProvider, err := pemfile.NewProvider(serverOptions)
@@ -42,7 +45,7 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 
 	serverRootOptions := pemfile.Options{
 		RootFile:        config.GetString("grpc.ca"),
-		RefreshDuration: credRefreshingInterval,
+		RefreshDuration: CredRefreshingInterval,
 	}
 	serverRootProvider, err := pemfile.NewProvider(serverRootOptions)
 	if err != nil {
@@ -99,7 +102,7 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 	clientOptions := pemfile.Options{
 		CertFile:        certFileName,
 		KeyFile:         keyFileName,
-		RefreshDuration: credRefreshingInterval,
+		RefreshDuration: CredRefreshingInterval,
 	}
 	clientProvider, err := pemfile.NewProvider(clientOptions)
 	if err != nil {
@@ -108,7 +111,7 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 	}
 	clientRootOptions := pemfile.Options{
 		RootFile:        config.GetString("grpc.ca"),
-		RefreshDuration: credRefreshingInterval,
+		RefreshDuration: CredRefreshingInterval,
 	}
 	clientRootProvider, err := pemfile.NewProvider(clientRootOptions)
 	if err != nil {
@@ -136,7 +139,7 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 }
 
 func LoadClientTLSHTTP(clientCertFile string) *tls.Config {
-	clientCerts, err := ioutil.ReadFile(clientCertFile)
+	clientCerts, err := os.ReadFile(clientCertFile)
 	if err != nil {
 		glog.Fatal(err)
 	}

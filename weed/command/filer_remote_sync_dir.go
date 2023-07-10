@@ -63,8 +63,21 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 	lastOffsetTs := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, *option.timeAgo)
 
 	option.clientEpoch++
-	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, "filer.remote.sync", option.clientId, option.clientEpoch,
-		mountedDir, []string{filer.DirectoryEtcRemote}, lastOffsetTs.UnixNano(), 0, 0, processEventFnWithOffset, pb.TrivialOnError)
+
+	metadataFollowOption := &pb.MetadataFollowOption{
+		ClientName:             "filer.remote.sync",
+		ClientId:               option.clientId,
+		ClientEpoch:            option.clientEpoch,
+		SelfSignature:          0,
+		PathPrefix:             mountedDir,
+		AdditionalPathPrefixes: []string{filer.DirectoryEtcRemote},
+		DirectoriesToWatch:     nil,
+		StartTsNs:              lastOffsetTs.UnixNano(),
+		StopTsNs:               0,
+		EventErrorType:         pb.TrivialOnError,
+	}
+
+	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)
 }
 
 func makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, remoteStorageMountLocation *remote_pb.RemoteStorageLocation, filerSource *source.FilerSource) (pb.ProcessMetadataFunc, error) {

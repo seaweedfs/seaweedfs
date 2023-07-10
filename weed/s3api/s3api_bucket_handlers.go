@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"net/http"
@@ -84,6 +85,14 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("PutBucketHandler %s", bucket)
 
+	// validate the bucket name
+	err := s3bucket.VerifyS3BucketName(bucket)
+	if err != nil {
+		glog.Errorf("put invalid bucket name: %v %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidBucketName)
+		return
+	}
+
 	// avoid duplicated buckets
 	errCode := s3err.ErrNone
 	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -95,7 +104,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			return fmt.Errorf("list collections: %v", err)
 		} else {
 			for _, c := range resp.Collections {
-				if bucket == c.Name {
+				if s3a.getCollectionName(bucket) == c.Name {
 					errCode = s3err.ErrBucketAlreadyExists
 					break
 				}
@@ -165,7 +174,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 		// delete collection
 		deleteCollectionRequest := &filer_pb.DeleteCollectionRequest{
-			Collection: bucket,
+			Collection: s3a.getCollectionName(bucket),
 		}
 
 		glog.V(1).Infof("delete collection: %v", deleteCollectionRequest)
@@ -295,7 +304,7 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-	ttls := fc.GetCollectionTtls(bucket)
+	ttls := fc.GetCollectionTtls(s3a.getCollectionName(bucket))
 	if len(ttls) == 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchLifecycleConfiguration)
 		return

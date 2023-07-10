@@ -88,7 +88,12 @@ spec:
             {{- if .Values.filer.extraEnvironmentVars }}
             {{- range $key, $value := .Values.filer.extraEnvironmentVars }}
             - name: {{ $key }}
+            {{- if kindIs "string" $value }}
               value: {{ $value | quote }}
+            {{- else }}
+              valueFrom:
+                {{ toYaml $value | nindent 16 | trim }}
+            {{- end -}}
             {{- end }}
             {{- end }}
             {{- if .Values.global.extraEnvironmentVars }}
@@ -97,6 +102,12 @@ spec:
               value: {{ $value | quote }}
             {{- end }}
             {{- end }}
+            {{- if .Values.filer.secretExtraEnvironmentVars }}
+            {{- range $key, $value := .Values.filer.secretExtraEnvironmentVars }}
+            - name: {{ $key }}
+              valueFrom: {{ toYaml $value | nindent 16 }}
+            {{- end }}
+            {{- end }}             
           command:
             - "/bin/sh"
             - "-ec"
@@ -142,6 +153,9 @@ spec:
               -encryptVolumeData \
               {{- end }}
               -ip=${POD_IP} \
+              {{- if .Values.filer.filerGroup}}
+              -filerGroup={{ .Values.filer.filerGroup}} \
+              {{- end }}
               {{- if .Values.filer.s3.enabled }}
               -s3 \
               -s3.port={{ .Values.filer.s3.port }} \
@@ -149,6 +163,9 @@ spec:
               -s3.domainName={{ .Values.filer.s3.domainName }} \
               {{- end }}
               {{- if .Values.global.enableSecurity }}
+              {{- if .Values.filer.s3.httpsPort }}
+              -s3.port.https={{ .Values.filer.s3.httpsPort }} \
+              {{- end }}
               -s3.cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -s3.key.file=/usr/local/share/ca-certificates/client/tls.key \
               {{- end }}
@@ -162,14 +179,14 @@ spec:
               -s3.auditLogConfig=/etc/sw/filer_s3_auditLogConfig.json \
               {{- end }}
               {{- end }}
-              -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
+              -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
           volumeMounts:
             - name: seaweedfs-filer-log-volume
               mountPath: "/logs/"
             - mountPath: /etc/sw
               name: config-users
               readOnly: true
-            {{- if .Values.filer.enablePVC }}
+            {{- if (or .Values.filer.enablePVC (or (eq .Values.filer.data.type "hostPath") (eq .Values.filer.data.type "persistentVolumeClaim"))) }}
             - name: data-filer
               mountPath: /data
             {{- end }}

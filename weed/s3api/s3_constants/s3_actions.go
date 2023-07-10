@@ -9,4 +9,5 @@ const (
 
 	SeaweedStorageDestinationHeader = "x-seaweedfs-destination"
 	MultipartUploadsFolder          = ".uploads"
+	FolderMimeType                  = "httpd/unix-directory"
 )

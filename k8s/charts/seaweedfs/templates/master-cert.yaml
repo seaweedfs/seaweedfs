@@ -1,16 +1,17 @@
 {{- if .Values.global.enableSecurity }}
-apiVersion: certmanager.k8s.io/v1alpha1
+apiVersion: cert-manager.io/v1{{ if .Values.global.certificates.alphacrds }}alpha1{{ end }}
 kind: Certificate
 metadata:
-  name: {{ template "seaweedfs.name" . }}-client-cert
+  name: {{ template "seaweedfs.name" . }}-master-cert
   namespace: {{ .Release.Namespace }}
 spec:
-  secretName: {{ template "seaweedfs.name" . }}-client-cert
+  secretName: {{ template "seaweedfs.name" . }}-master-cert
   issuerRef:
-    name: {{ template "seaweedfs.name" . }}-clusterissuer
-    kind: ClusterIssuer
+    name: {{ template "seaweedfs.name" . }}-ca-issuer
+    kind: Issuer
   commonName: {{ .Values.certificates.commonName }}
-  organization:
+  subject:
+    organizations:
     - "SeaweedFS CA"
   dnsNames:
     - '*.{{ .Release.Namespace }}'
@@ -26,8 +27,9 @@ spec:
     - {{ . }}
     {{- end }}
 {{- end }}
-  keyAlgorithm: {{ .Values.certificates.keyAlgorithm }}
-  keySize: {{ .Values.certificates.keySize }}
+  privateKey:
+    algorithm: {{ .Values.certificates.keyAlgorithm }}
+    size: {{ .Values.certificates.keySize }}
   duration: {{ .Values.certificates.duration }}
   renewBefore: {{ .Values.certificates.renewBefore }}
 {{- end }}

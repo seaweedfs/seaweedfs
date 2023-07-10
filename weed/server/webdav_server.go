@@ -83,6 +83,7 @@ type WebDavFileSystem struct {
 	secret         security.SigningKey
 	grpcDialOption grpc.DialOption
 	chunkCache     *chunk_cache.TieredChunkCache
+	readerCache    *filer.ReaderCache
 	signature      int32
 }
 
@@ -119,18 +120,20 @@ func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 
 	os.MkdirAll(cacheDir, os.FileMode(0755))
 	chunkCache := chunk_cache.NewTieredChunkCache(256, cacheDir, option.CacheSizeMB, 1024*1024)
-	return &WebDavFileSystem{
+	t := &WebDavFileSystem{
 		option:     option,
 		chunkCache: chunkCache,
 		signature:  util.RandomInt32(),
-	}, nil
+	}
+	t.readerCache = filer.NewReaderCache(32, chunkCache, filer.LookupFn(t))
+	return t, nil
 }
 
 var _ = filer_pb.FilerClient(&WebDavFileSystem{})
 
 func (fs *WebDavFileSystem) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
+	return pb.WithGrpcClient(streamingMode, fs.signature, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
 	}, fs.option.Filer.ToGrpcAddress(), false, fs.option.GrpcDialOption)
@@ -527,7 +530,7 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 	}
 	if f.reader == nil {
 		chunkViews := filer.ViewFromVisibleIntervals(f.visibleIntervals, 0, fileSize)
-		f.reader = filer.NewChunkReaderAtFromClient(filer.LookupFn(f.fs), chunkViews, f.fs.chunkCache, fileSize)
+		f.reader = filer.NewChunkReaderAtFromClient(f.fs.readerCache, chunkViews, fileSize)
 	}
 
 	readSize, err = f.reader.ReadAt(p, f.off)

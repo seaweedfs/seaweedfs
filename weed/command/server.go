@@ -97,6 +97,7 @@ func init() {
 	masterOptions.metricsIntervalSec = cmdServer.Flag.Int("master.metrics.intervalSeconds", 15, "Prometheus push interval in seconds")
 	masterOptions.raftResumeState = cmdServer.Flag.Bool("master.resumeState", false, "resume previous state on start master server")
 	masterOptions.raftHashicorp = cmdServer.Flag.Bool("master.raftHashicorp", false, "use hashicorp raft")
+	masterOptions.raftBootstrap = cmdMaster.Flag.Bool("master.raftBootstrap", false, "Whether to bootstrap the Raft cluster")
 	masterOptions.heartbeatInterval = cmdServer.Flag.Duration("master.heartbeatInterval", 300*time.Millisecond, "heartbeat interval of master servers, and will be randomly multiplied by [1, 1.25)")
 	masterOptions.electionTimeout = cmdServer.Flag.Duration("master.electionTimeout", 10*time.Second, "election timeout of master servers")
 
@@ -115,6 +116,7 @@ func init() {
 	filerOptions.localSocket = cmdServer.Flag.String("filer.localSocket", "", "default to /tmp/seaweedfs-filer-<port>.sock")
 	filerOptions.showUIDirectoryDelete = cmdServer.Flag.Bool("filer.ui.deleteDir", true, "enable filer UI show delete directory button")
 	filerOptions.downloadMaxMBps = cmdServer.Flag.Int("filer.downloadMaxMBps", 0, "download max speed for each download request, in MB per second")
+	filerOptions.diskType = cmdServer.Flag.String("filer.disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 
 	serverOptions.v.port = cmdServer.Flag.Int("volume.port", 8080, "volume server http listen port")
 	serverOptions.v.portGrpc = cmdServer.Flag.Int("volume.port.grpc", 0, "volume server grpc listen port")
@@ -145,6 +147,7 @@ func init() {
 	s3Options.auditLogConfig = cmdServer.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	s3Options.allowEmptyFolder = cmdServer.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
 	s3Options.allowDeleteBucketNotEmpty = cmdServer.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	s3Options.localSocket = cmdServer.Flag.String("s3.localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 
 	iamOptions.port = cmdServer.Flag.Int("iam.port", 8111, "iam server http listen port")
 
@@ -253,6 +256,9 @@ func runServer(cmd *Command, args []string) bool {
 	serverWhiteList := util.StringSplit(*serverWhiteListOption, ",")
 
 	if *isStartingFiler {
+		if *filerOptions.diskType == "" && *serverOptions.v.diskType != "" {
+			filerOptions.diskType = serverOptions.v.diskType
+		}
 		go func() {
 			time.Sleep(1 * time.Second)
 			filerOptions.startFiler()

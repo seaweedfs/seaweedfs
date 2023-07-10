@@ -3,11 +3,12 @@ package topology
 import (
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
@@ -114,6 +115,7 @@ type VolumeLayout struct {
 	crowded          map[needle.VolumeId]struct{}
 	readonlyVolumes  *volumesBinaryState // readonly volumes
 	oversizedVolumes *volumesBinaryState // oversized volumes
+	vacuumedVolumes  map[needle.VolumeId]time.Time
 	volumeSizeLimit  uint64
 	replicationAsMin bool
 	accessLock       sync.RWMutex
@@ -135,6 +137,7 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 		crowded:          make(map[needle.VolumeId]struct{}),
 		readonlyVolumes:  NewVolumesBinaryState(readOnlyState, rp, ExistCopies()),
 		oversizedVolumes: NewVolumesBinaryState(oversizedState, rp, ExistCopies()),
+		vacuumedVolumes:  make(map[needle.VolumeId]time.Time),
 		volumeSizeLimit:  volumeSizeLimit,
 		replicationAsMin: replicationAsMin,
 	}
@@ -395,6 +398,31 @@ func (vl *VolumeLayout) setVolumeWritable(vid needle.VolumeId) bool {
 	return true
 }
 
+func (vl *VolumeLayout) SetVolumeReadOnly(dn *DataNode, vid needle.VolumeId) bool {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+
+	if _, ok := vl.vid2location[vid]; ok {
+		vl.readonlyVolumes.Add(vid, dn)
+		return vl.removeFromWritable(vid)
+	}
+	return true
+}
+
+func (vl *VolumeLayout) SetVolumeWritable(dn *DataNode, vid needle.VolumeId) bool {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+
+	if _, ok := vl.vid2location[vid]; ok {
+		vl.readonlyVolumes.Remove(vid, dn)
+	}
+
+	if vl.enoughCopies(vid) {
+		return vl.setVolumeWritable(vid)
+	}
+	return false
+}
+
 func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
@@ -411,7 +439,7 @@ func (vl *VolumeLayout) SetVolumeUnavailable(dn *DataNode, vid needle.VolumeId) 
 	}
 	return false
 }
-func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, isReadOnly bool) bool {
+func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, isReadOnly, isFullCapacity bool) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -422,7 +450,7 @@ func (vl *VolumeLayout) SetVolumeAvailable(dn *DataNode, vid needle.VolumeId, is
 
 	vl.vid2location[vid].Set(dn)
 
-	if vInfo.ReadOnly || isReadOnly {
+	if vInfo.ReadOnly || isReadOnly || isFullCapacity {
 		return false
 	}
 

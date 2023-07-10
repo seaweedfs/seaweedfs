@@ -255,7 +255,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	}
 	destination := fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, bucket, object)
 
-	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, destination)
+	etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, destination, bucket)
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return

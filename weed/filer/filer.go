@@ -3,13 +3,15 @@ package filer
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/cluster"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"os"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 
 	"google.golang.org/grpc"
 
@@ -47,6 +49,7 @@ type Filer struct {
 	Signature           int32
 	FilerConf           *FilerConf
 	RemoteStorage       *FilerRemoteStorage
+	Dlm                 *lock_manager.DistributedLockManager
 }
 
 func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress,
@@ -58,6 +61,7 @@ func NewFiler(masters map[string]pb.ServerAddress, grpcDialOption grpc.DialOptio
 		FilerConf:           NewFilerConf(),
 		RemoteStorage:       NewFilerRemoteStorage(),
 		UniqueFilerId:       util.RandomInt32(),
+		Dlm:                 lock_manager.NewDistributedLockManager(filerHost),
 	}
 	if f.UniqueFilerId < 0 {
 		f.UniqueFilerId = -f.UniqueFilerId
@@ -86,17 +90,50 @@ func (f *Filer) MaybeBootstrapFromPeers(self pb.ServerAddress, existingNodes []*
 
 	glog.V(0).Infof("bootstrap from %v clientId:%d", earliestNode.Address, f.UniqueFilerId)
 	f.UniqueFilerEpoch++
-	err = pb.FollowMetadata(pb.ServerAddress(earliestNode.Address), f.GrpcDialOption, "bootstrap", f.UniqueFilerId, f.UniqueFilerEpoch, "/", nil,
-		0, snapshotTime.UnixNano(), f.Signature, func(resp *filer_pb.SubscribeMetadataResponse) error {
-			return Replay(f.Store, resp)
-		}, pb.FatalOnError)
+
+	metadataFollowOption := &pb.MetadataFollowOption{
+		ClientName:             "bootstrap",
+		ClientId:               f.UniqueFilerId,
+		ClientEpoch:            f.UniqueFilerEpoch,
+		SelfSignature:          f.Signature,
+		PathPrefix:             "/",
+		AdditionalPathPrefixes: nil,
+		DirectoriesToWatch:     nil,
+		StartTsNs:              snapshotTime.UnixNano(),
+		StopTsNs:               0,
+		EventErrorType:         pb.FatalOnError,
+	}
+
+	err = pb.FollowMetadata(pb.ServerAddress(earliestNode.Address), f.GrpcDialOption, metadataFollowOption, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		return Replay(f.Store, resp)
+	})
 	return
 }
 
 func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*master_pb.ClusterNodeUpdate, startFrom time.Time) {
 
+	var snapshot []pb.ServerAddress
+	for _, node := range existingNodes {
+		address := pb.ServerAddress(node.Address)
+		snapshot = append(snapshot, address)
+	}
+	f.Dlm.LockRing.SetSnapshot(snapshot)
+	glog.V(0).Infof("%s aggregate from peers %+v", self, snapshot)
+
 	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOption)
-	f.MasterClient.SetOnPeerUpdateFn(f.MetaAggregator.OnPeerUpdate)
+	f.MasterClient.SetOnPeerUpdateFn(func(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
+		if update.NodeType != cluster.FilerType {
+			return
+		}
+		address := pb.ServerAddress(update.Address)
+
+		if update.IsAdd {
+			f.Dlm.LockRing.AddServer(address)
+		} else {
+			f.Dlm.LockRing.RemoveServer(address)
+		}
+		f.MetaAggregator.OnPeerUpdate(update, startFrom)
+	})
 
 	for _, peerUpdate := range existingNodes {
 		f.MetaAggregator.OnPeerUpdate(peerUpdate, startFrom)
@@ -254,7 +291,9 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 				return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
 			}
 		} else {
-			f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
+			if !strings.HasPrefix("/"+util.Join(dirParts[:]...), SystemLogDir) {
+				f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
+			}
 		}
 
 	} else if !dirEntry.IsDirectory() {

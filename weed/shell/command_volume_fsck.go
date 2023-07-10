@@ -20,7 +20,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/http"
 	"net/url"
@@ -164,6 +163,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	if *c.findMissingChunksInFiler {
 		// collect all filer file ids and paths
+
 		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, *purgeAbsent, collectCutoffFromAtNs); err != nil {
 			return fmt.Errorf("collectFilerFileIdAndPaths: %v", err)
 		}
@@ -409,7 +409,7 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 				}
 				buf.Write(resp.FileContent)
 			}
-			if vinfo.isReadOnly == false {
+			if !vinfo.isReadOnly {
 				index, err := idx.FirstInvalidIndex(buf.Bytes(),
 					func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
 						resp, err := volumeServerClient.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
@@ -419,12 +419,12 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 							Size:     int32(size),
 						})
 						if err != nil {
-							return false, fmt.Errorf("to read needle meta with id %d from volume %d with error %v", key, volumeId, err)
+							return false, fmt.Errorf("read needle meta with id %d from volume %d: %v", key, volumeId, err)
 						}
 						return resp.AppendAtNs <= cutoffFrom, nil
 					})
 				if err != nil {
-					fmt.Fprintf(c.writer, "Failed to search for last valid index on volume %d with error %v", volumeId, err)
+					fmt.Fprintf(c.writer, "Failed to search for last valid index on volume %d with error %v\n", volumeId, err)
 				} else {
 					buf.Truncate(index * types.NeedleMapEntrySize)
 				}
@@ -535,7 +535,7 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 	}
 	defer resp.Body.Close()
 
-	_, err = ioutil.ReadAll(resp.Body)
+	_, err = io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Fprintf(c.writer, "DELETE response error: %v\n", err)
 	}

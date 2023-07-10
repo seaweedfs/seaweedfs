@@ -32,7 +32,7 @@ type FilerConf struct {
 
 func ReadFilerConf(filerGrpcAddress pb.ServerAddress, grpcDialOption grpc.DialOption, masterClient *wdclient.MasterClient) (*FilerConf, error) {
 	var buf bytes.Buffer
-	if err := pb.WithGrpcFilerClient(false, filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	if err := pb.WithGrpcFilerClient(false, 0, filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		if masterClient != nil {
 			return ReadEntry(masterClient, client, DirectoryEtcSeaweedFS, FilerConfName, &buf)
 		} else {
@@ -125,7 +125,8 @@ func (fc *FilerConf) DeleteLocationConf(locationPrefix string) {
 		if string(key) == locationPrefix {
 			return true
 		}
-		rules.Put(key, value)
+		key = bytes.Clone(key)
+		_ = rules.Put(key, value)
 		return true
 	})
 	fc.rules = rules

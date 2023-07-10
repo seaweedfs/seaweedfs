@@ -116,7 +116,7 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 			for job := range jobs {
 				fmt.Fprintf(writer, "moving volume %d from %s to %s with disk type %s ...\n", job.vid, job.src, dst.dataNode.Id, toDiskType.ReadableString())
 
-				locations, found := commandEnv.MasterClient.GetLocations(uint32(job.vid))
+				locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(job.vid))
 				if !found {
 					fmt.Printf("volume %d not found", job.vid)
 					continue
@@ -186,7 +186,7 @@ func isOneOf(server string, locations []wdclient.Location) bool {
 
 func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, allLocations []location) (err error) {
 	// find volume location
-	locations, found := commandEnv.MasterClient.GetLocations(uint32(vid))
+	locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(vid))
 	if !found {
 		return fmt.Errorf("volume %d not found", vid)
 	}
@@ -270,7 +270,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	// remove the remaining replicas
 	for _, loc := range locations {
 		if loc.Url != dst.dataNode.Id && loc.ServerAddress() != sourceVolumeServer {
-			if err = deleteVolume(commandEnv.option.GrpcDialOption, vid, loc.ServerAddress()); err != nil {
+			if err = deleteVolume(commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), false); err != nil {
 				fmt.Fprintf(writer, "failed to delete volume %d on %s: %v\n", vid, loc.Url, err)
 			}
 			// reduce volume count? Not really necessary since they are "more" full and will not be a candidate to move to

@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	//"github.com/seaweedfs/seaweedfs/weed/s3api"
@@ -39,7 +40,7 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 	var md5bytes []byte
 	if r.Method == "POST" {
 		if r.Header.Get("Content-Type") == "" && strings.HasSuffix(r.URL.Path, "/") {
-			reply, err = fs.mkdir(ctx, w, r)
+			reply, err = fs.mkdir(ctx, w, r, so)
 		} else {
 			reply, md5bytes, err = fs.doPostAutoChunk(ctx, w, r, chunkSize, contentLength, so)
 		}
@@ -49,7 +50,7 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 	if err != nil {
 		if strings.HasPrefix(err.Error(), "read input:") || err.Error() == io.ErrUnexpectedEOF.Error() {
 			writeJsonError(w, r, 499, err)
-		} else if strings.HasSuffix(err.Error(), "is a file") {
+		} else if strings.HasSuffix(err.Error(), "is a file") || strings.HasSuffix(err.Error(), "already exists") {
 			writeJsonError(w, r, http.StatusConflict, err)
 		} else {
 			writeJsonError(w, r, http.StatusInternalServerError, err)
@@ -64,7 +65,6 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 }
 
 func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWriter, r *http.Request, chunkSize int32, contentLength int64, so *operation.StorageOption) (filerResult *FilerPostResult, md5bytes []byte, replyerr error) {
-
 	multipartReader, multipartReaderErr := r.MultipartReader()
 	if multipartReaderErr != nil {
 		return nil, nil, multipartReaderErr
@@ -82,6 +82,15 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 	contentType := part1.Header.Get("Content-Type")
 	if contentType == "application/octet-stream" {
 		contentType = ""
+	}
+
+	if so.SaveInside {
+		buf := bufPool.Get().(*bytes.Buffer)
+		buf.Reset()
+		buf.ReadFrom(part1)
+		filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, nil, nil, 0, buf.Bytes())
+		bufPool.Put(buf)
+		return
 	}
 
 	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadReaderToChunks(w, r, part1, chunkSize, fileName, contentType, contentLength, so)
@@ -294,7 +303,7 @@ func (fs *FilerServer) saveAsChunk(so *operation.StorageOption) filer.SaveDataAs
 	}
 }
 
-func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http.Request) (filerResult *FilerPostResult, replyerr error) {
+func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) (filerResult *FilerPostResult, replyerr error) {
 
 	// detect file mode
 	modeStr := r.URL.Query().Get("mode")
@@ -328,6 +337,7 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 			Mode:   os.FileMode(mode) | os.ModeDir,
 			Uid:    OS_UID,
 			Gid:    OS_GID,
+			TtlSec: so.TtlSeconds,
 		},
 	}
 

@@ -60,6 +60,7 @@ type FilerOptions struct {
 	localSocket             *string
 	showUIDirectoryDelete   *bool
 	downloadMaxMBps         *int
+	diskType                *string
 }
 
 func init() {
@@ -89,10 +90,12 @@ func init() {
 	f.localSocket = cmdFiler.Flag.String("localSocket", "", "default to /tmp/seaweedfs-filer-<port>.sock")
 	f.showUIDirectoryDelete = cmdFiler.Flag.Bool("ui.deleteDir", true, "enable filer UI show delete directory button")
 	f.downloadMaxMBps = cmdFiler.Flag.Int("downloadMaxMBps", 0, "download max speed for each download request, in MB per second")
+	f.diskType = cmdFiler.Flag.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
 	filerS3Options.port = cmdFiler.Flag.Int("s3.port", 8333, "s3 server http listen port")
+	filerS3Options.portHttps = cmdFiler.Flag.Int("s3.port.https", 0, "s3 server https listen port")
 	filerS3Options.portGrpc = cmdFiler.Flag.Int("s3.port.grpc", 0, "s3 server grpc listen port")
 	filerS3Options.domainName = cmdFiler.Flag.String("s3.domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
 	filerS3Options.dataCenter = cmdFiler.Flag.String("s3.dataCenter", "", "prefer to read and write to volumes in this data center")
@@ -102,6 +105,7 @@ func init() {
 	filerS3Options.auditLogConfig = cmdFiler.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	filerS3Options.allowEmptyFolder = cmdFiler.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
 	filerS3Options.allowDeleteBucketNotEmpty = cmdFiler.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	filerS3Options.localSocket = cmdFiler.Flag.String("s3.localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
@@ -183,6 +187,11 @@ func runFiler(cmd *Command, args []string) bool {
 
 	if *filerStartWebDav {
 		filerWebDavOptions.filer = &filerAddress
+
+		if *filerWebDavOptions.disk == "" {
+			filerWebDavOptions.disk = f.diskType
+		}
+
 		go func(delay time.Duration) {
 			time.Sleep(delay * time.Second)
 			filerWebDavOptions.startWebDav()
@@ -243,6 +252,7 @@ func (fo *FilerOptions) startFiler() {
 		ConcurrentUploadLimit: int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
 		ShowUIDirectoryDelete: *fo.showUIDirectoryDelete,
 		DownloadMaxBytesPs:    int64(*fo.downloadMaxMBps) * 1024 * 1024,
+		DiskType:              *fo.diskType,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)

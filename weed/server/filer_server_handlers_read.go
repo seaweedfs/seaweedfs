@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
 	"math"
 	"mime"
@@ -14,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -118,7 +119,8 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			writeJsonQuiet(w, r, http.StatusOK, entry)
 			return
 		}
-		if entry.Attr.Mime == "" {
+		if entry.Attr.Mime == "" || (entry.Attr.Mime == s3_constants.FolderMimeType && r.Header.Get(s3_constants.AmzIdentityId) == "") {
+			// return index of directory for non s3 gateway
 			fs.listDirectoryHandler(w, r)
 			return
 		}
@@ -126,7 +128,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set(s3_constants.X_SeaweedFS_Header_Directory_Key, "true")
 	}
 
-	if isForDirectory {
+	if isForDirectory && entry.Attr.Mime != s3_constants.FolderMimeType {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -138,6 +140,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				entry.GetChunks(), 0, math.MaxInt64); err != nil {
 				err = fmt.Errorf("failed to resolve chunk manifest, err: %s", err.Error())
 				writeJsonError(w, r, http.StatusInternalServerError, err)
+				return
 			}
 		}
 		writeJsonQuiet(w, r, http.StatusOK, entry)
@@ -160,6 +163,8 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	if mimeType != "" {
 		w.Header().Set("Content-Type", mimeType)
+	} else {
+		w.Header().Set("Content-Type", "application/octet-stream")
 	}
 
 	// print out the header from extended properties

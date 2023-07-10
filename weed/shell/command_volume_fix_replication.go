@@ -58,7 +58,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	c.collectionPattern = volFixReplicationCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
 	skipChange := volFixReplicationCommand.Bool("n", false, "skip the changes")
 	noDelete := volFixReplicationCommand.Bool("noDelete", false, "Do not delete over-replicated volumes, only fix under-replication")
-	retryCount := volFixReplicationCommand.Int("retry", 0, "how many times to retry")
+	retryCount := volFixReplicationCommand.Int("retry", 5, "how many times to retry")
 	volumesPerStep := volFixReplicationCommand.Int("volumesPerStep", 0, "how many volumes to fix in one cycle")
 
 	if err = volFixReplicationCommand.Parse(args); err != nil {
@@ -223,7 +223,8 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 			break
 		}
 
-		if err := deleteVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(replica.info.Id), pb.NewServerAddressFromDataNode(replica.location.dataNode)); err != nil {
+		if err := deleteVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(replica.info.Id),
+			pb.NewServerAddressFromDataNode(replica.location.dataNode), false); err != nil {
 			return fmt.Errorf("deleting volume %d from %s : %v", replica.info.Id, replica.location.dataNode.Id, err)
 		}
 

@@ -92,13 +92,17 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 			}
 			*/
 			up.moveToSealed(up.writableChunks[candidateChunkIndex], candidateChunkIndex)
-			// fmt.Printf("flush chunk %d with %d bytes written\n", logicChunkIndex, oldestTs)
+			// fmt.Printf("flush chunk %d with %d bytes written\n", logicChunkIndex, fullness)
 		}
-		if len(up.writableChunks) < up.writableChunkLimit &&
+		// fmt.Printf("isSequential:%v len(up.writableChunks):%v memChunkCounter:%v", isSequential, len(up.writableChunks), memChunkCounter)
+		if isSequential &&
+			len(up.writableChunks) < up.writableChunkLimit &&
 			atomic.LoadInt64(&memChunkCounter) < 4*int64(up.writableChunkLimit) {
 			pageChunk = NewMemChunk(logicChunkIndex, up.ChunkSize)
+			// fmt.Printf(" create mem  chunk %d\n", logicChunkIndex)
 		} else {
 			pageChunk = up.swapFile.NewSwapFileChunk(logicChunkIndex)
+			// fmt.Printf(" create file chunk %d\n", logicChunkIndex)
 		}
 		up.writableChunks[logicChunkIndex] = pageChunk
 	}
