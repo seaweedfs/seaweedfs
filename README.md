@@ -120,7 +120,7 @@ SeaweedFS can transparently integrate with the cloud.
 With hot data on local cluster, and warm data on the cloud with O(1) access time, 
 SeaweedFS can achieve both fast local access time and elastic cloud storage capacity.
 What's more, the cloud storage access API cost is minimized. 
-Faster and Cheaper than direct cloud storage!
+Faster and cheaper than direct cloud storage!
 
 [Back to TOC](#table-of-contents)
 
@@ -131,7 +131,7 @@ Faster and Cheaper than direct cloud storage!
 * Automatic Gzip compression depending on file MIME type.
 * Automatic compaction to reclaim disk space after deletion or update.
 * [Automatic entry TTL expiration][VolumeServerTTL].
-* Any server with some disk spaces can add to the total storage space.
+* Any server with some disk space can add to the total storage space.
 * Adding/Removing servers does **not** cause any data re-balancing unless triggered by admin commands.
 * Optional picture resizing.
 * Support ETag, Accept-Range, Last-Modified, etc.
@@ -144,7 +144,7 @@ Faster and Cheaper than direct cloud storage!
 [Back to TOC](#table-of-contents)
 
 ## Filer Features ##
-* [Filer server][Filer] provides "normal" directories and files via http.
+* [Filer server][Filer] provides "normal" directories and files via HTTP.
 * [File TTL][FilerTTL] automatically expires file metadata and actual file data.
 * [Mount filer][Mount] reads and writes files directly as a local directory via FUSE.
 * [Filer Store Replication][FilerStoreReplication] enables HA for filer meta data stores.
