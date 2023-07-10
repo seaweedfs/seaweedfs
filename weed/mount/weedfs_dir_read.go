@@ -2,12 +2,13 @@ package mount
 
 import (
 	"context"
+	"math"
+	"sync"
+
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
-	"math"
-	"sync"
 )
 
 type DirectoryHandleId uint64
@@ -43,13 +44,11 @@ func NewDirectoryHandleToInode() *DirectoryHandleToInode {
 }
 
 func (wfs *WFS) AcquireDirectoryHandle() (DirectoryHandleId, *DirectoryHandle) {
-	wfs.fhmap.Lock()
-	fh := wfs.fhmap.nextFh
-	wfs.fhmap.nextFh++
-	wfs.fhmap.Unlock()
-
 	wfs.dhmap.Lock()
 	defer wfs.dhmap.Unlock()
+	fh := wfs.fhmap.nextFh
+	wfs.fhmap.nextFh++
+
 	dh := new(DirectoryHandle)
 	dh.reset()
 	wfs.dhmap.dir2inode[DirectoryHandleId(fh)] = dh
