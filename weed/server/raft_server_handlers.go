@@ -41,7 +41,9 @@ func (s *RaftServer) HealthzHandler(w http.ResponseWriter, r *http.Request) {
 		expBackoff.MaxInterval = 1 * time.Second
 		expBackoff.MaxElapsedTime = 5 * time.Second
 		isLocked, err := backoff.RetryWithData(s.topo.IsChildLocked, expBackoff)
-		glog.Errorf("HealthzHandler: %+v", err)
+		if err != nil {
+			glog.Errorf("HealthzHandler: %+v", err)
+		}
 		if isLocked {
 			w.WriteHeader(http.StatusLocked)
 			return
