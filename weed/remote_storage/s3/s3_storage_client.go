@@ -2,6 +2,9 @@ package s3
 
 import (
 	"fmt"
+	"io"
+	"reflect"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/request"
@@ -15,8 +18,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"io"
-	"reflect"
 )
 
 func init() {
@@ -155,7 +156,7 @@ func (s *s3RemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, 
 	// Create an uploader with the session and custom options
 	uploader := s3manager.NewUploaderWithClient(s.conn, func(u *s3manager.Uploader) {
 		u.PartSize = partSize
-		u.Concurrency = 8
+		u.Concurrency = 1
 	})
 
 	// process tagging
