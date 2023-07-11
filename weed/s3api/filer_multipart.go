@@ -122,7 +122,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	}
 
 	entryName := filepath.Base(*input.Key)
-	dirName := filepath.Dir(*input.Key)
+	dirName := filepath.ToSlash(filepath.Dir(*input.Key))
 	if dirName == "." {
 		dirName = ""
 	}
