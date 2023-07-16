@@ -99,8 +99,8 @@ func (f *Filer) MaybeBootstrapFromPeers(self pb.ServerAddress, existingNodes []*
 		PathPrefix:             "/",
 		AdditionalPathPrefixes: nil,
 		DirectoriesToWatch:     nil,
-		StartTsNs:              snapshotTime.UnixNano(),
-		StopTsNs:               0,
+		StartTsNs:              0,
+		StopTsNs:               snapshotTime.UnixNano(),
 		EventErrorType:         pb.FatalOnError,
 	}
 
