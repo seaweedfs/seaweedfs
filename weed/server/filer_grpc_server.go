@@ -3,11 +3,12 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -157,7 +158,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory)
 
 	if createErr == nil {
-		fs.filer.DeleteChunks(garbage)
+		fs.filer.DeleteChunksNotRecursive(garbage)
 	} else {
 		glog.V(3).Infof("CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), createErr)
 		resp.Error = createErr.Error()
@@ -189,7 +190,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 
 	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
-		fs.filer.DeleteChunks(garbage)
+		fs.filer.DeleteChunksNotRecursive(garbage)
 
 		fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, req.IsFromOtherCluster, req.Signatures)
 
