@@ -3,14 +3,18 @@ package filer
 import (
 	"bytes"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"math"
+
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func TotalSize(chunks []*filer_pb.FileChunk) (size uint64) {
+	if chunks == nil {
+		return
+	}
 	for _, c := range chunks {
 		t := uint64(c.Offset + int64(c.Size))
 		if size < t {
