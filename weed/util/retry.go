@@ -24,8 +24,6 @@ func Retry(name string, job func() error) (err error) {
 		if strings.Contains(err.Error(), "transport") {
 			hasErr = true
 			glog.V(0).Infof("retry %s: err: %v", name, err)
-		} else {
-			break
 		}
 		time.Sleep(waitTime)
 		waitTime += waitTime / 2
