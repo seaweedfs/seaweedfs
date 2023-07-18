@@ -157,6 +157,7 @@ message VacuumVolumeCommitRequest {
 }
 message VacuumVolumeCommitResponse {
     bool is_read_only = 1;
+    uint64 volume_size = 2;
 }
 
 message VacuumVolumeCleanupRequest {
@@ -218,6 +219,7 @@ message VolumeUnmountResponse {
 
 message VolumeDeleteRequest {
     uint32 volume_id = 1;
+    bool only_empty = 2;
 }
 message VolumeDeleteResponse {
 }
@@ -247,6 +249,7 @@ message VolumeStatusRequest {
 }
 message VolumeStatusResponse {
     bool is_read_only = 1;
+    uint64 volume_size = 2;
 }
 
 message VolumeCopyRequest {

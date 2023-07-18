@@ -104,7 +104,7 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			return fmt.Errorf("list collections: %v", err)
 		} else {
 			for _, c := range resp.Collections {
-				if bucket == c.Name {
+				if s3a.getCollectionName(bucket) == c.Name {
 					errCode = s3err.ErrBucketAlreadyExists
 					break
 				}
@@ -174,7 +174,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 		// delete collection
 		deleteCollectionRequest := &filer_pb.DeleteCollectionRequest{
-			Collection: bucket,
+			Collection: s3a.getCollectionName(bucket),
 		}
 
 		glog.V(1).Infof("delete collection: %v", deleteCollectionRequest)
@@ -304,7 +304,7 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-	ttls := fc.GetCollectionTtls(bucket)
+	ttls := fc.GetCollectionTtls(s3a.getCollectionName(bucket))
 	if len(ttls) == 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchLifecycleConfiguration)
 		return

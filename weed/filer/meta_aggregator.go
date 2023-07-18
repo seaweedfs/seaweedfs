@@ -3,7 +3,6 @@ package filer
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
@@ -51,10 +50,6 @@ func NewMetaAggregator(filer *Filer, self pb.ServerAddress, grpcDialOption grpc.
 }
 
 func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
-	if update.NodeType != cluster.FilerType {
-		return
-	}
-
 	address := pb.ServerAddress(update.Address)
 	if update.IsAdd {
 		// every filer should subscribe to a new filer

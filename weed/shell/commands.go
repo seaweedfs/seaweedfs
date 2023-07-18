@@ -184,3 +184,10 @@ func readNeedleStatus(grpcDialOption grpc.DialOption, sourceVolumeServer pb.Serv
 	)
 	return
 }
+
+func getCollectionName(commandEnv *CommandEnv, bucket string) string {
+	if *commandEnv.option.FilerGroup != "" {
+		return fmt.Sprintf("%s_%s", *commandEnv.option.FilerGroup, bucket)
+	}
+	return bucket
+}

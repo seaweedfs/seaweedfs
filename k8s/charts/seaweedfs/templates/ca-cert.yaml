@@ -1,5 +1,5 @@
 {{- if .Values.global.enableSecurity }}
-apiVersion: certmanager.k8s.io/v1alpha1
+apiVersion: cert-manager.io/v1{{ if .Values.global.certificates.alphacrds }}alpha1{{ end }}
 kind: Certificate
 metadata:
   name: {{ template "seaweedfs.name" . }}-ca-cert

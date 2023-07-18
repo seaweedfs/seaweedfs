@@ -3,6 +3,7 @@ package meta_cache
 import (
 	"context"
 	"os"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/leveldb"
@@ -17,7 +18,7 @@ import (
 type MetaCache struct {
 	root       util.FullPath
 	localStore filer.VirtualFilerStore
-	// sync.RWMutex
+	sync.RWMutex
 	uidGidMapper   *UidGidMapper
 	markCachedFn   func(fullpath util.FullPath)
 	isCachedFn     func(fullpath util.FullPath) bool
@@ -57,8 +58,8 @@ func openMetaStore(dbFolder string) filer.VirtualFilerStore {
 }
 
 func (mc *MetaCache) InsertEntry(ctx context.Context, entry *filer.Entry) error {
-	//mc.Lock()
-	//defer mc.Unlock()
+	mc.Lock()
+	defer mc.Unlock()
 	return mc.doInsertEntry(ctx, entry)
 }
 
@@ -67,10 +68,10 @@ func (mc *MetaCache) doInsertEntry(ctx context.Context, entry *filer.Entry) erro
 }
 
 func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath util.FullPath, newEntry *filer.Entry) error {
-	//mc.Lock()
-	//defer mc.Unlock()
+	mc.Lock()
+	defer mc.Unlock()
 
-	entry, err := mc.FindEntry(ctx, oldPath)
+	entry, err := mc.localStore.FindEntry(ctx, oldPath)
 	if err != nil && err != filer_pb.ErrNotFound {
 		glog.Errorf("Metacache: find entry error: %v", err)
 		return err
@@ -105,14 +106,14 @@ func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath uti
 }
 
 func (mc *MetaCache) UpdateEntry(ctx context.Context, entry *filer.Entry) error {
-	//mc.Lock()
-	//defer mc.Unlock()
+	mc.Lock()
+	defer mc.Unlock()
 	return mc.localStore.UpdateEntry(ctx, entry)
 }
 
 func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *filer.Entry, err error) {
-	//mc.RLock()
-	//defer mc.RUnlock()
+	mc.RLock()
+	defer mc.RUnlock()
 	entry, err = mc.localStore.FindEntry(ctx, fp)
 	if err != nil {
 		return nil, err
@@ -122,19 +123,19 @@ func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *fi
 }
 
 func (mc *MetaCache) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {
-	//mc.Lock()
-	//defer mc.Unlock()
+	mc.Lock()
+	defer mc.Unlock()
 	return mc.localStore.DeleteEntry(ctx, fp)
 }
 func (mc *MetaCache) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {
-	//mc.Lock()
-	//defer mc.Unlock()
+	mc.Lock()
+	defer mc.Unlock()
 	return mc.localStore.DeleteFolderChildren(ctx, fp)
 }
 
 func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) error {
-	//mc.RLock()
-	//defer mc.RUnlock()
+	mc.RLock()
+	defer mc.RUnlock()
 
 	if !mc.isCachedFn(dirPath) {
 		// if this request comes after renaming, it should be fine
@@ -152,8 +153,8 @@ func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.Full
 }
 
 func (mc *MetaCache) Shutdown() {
-	//mc.Lock()
-	//defer mc.Unlock()
+	mc.Lock()
+	defer mc.Unlock()
 	mc.localStore.Shutdown()
 }
 

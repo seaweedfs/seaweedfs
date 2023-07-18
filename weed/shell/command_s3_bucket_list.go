@@ -57,7 +57,7 @@ func (c *commandS3BucketList) Do(args []string, commandEnv *CommandEnv, writer i
 		if !entry.IsDirectory {
 			return nil
 		}
-		collection := entry.Name
+		collection := getCollectionName(commandEnv, entry.Name)
 		var collectionSize, fileCount float64
 		if collectionInfo, found := collectionInfos[collection]; found {
 			collectionSize = collectionInfo.Size

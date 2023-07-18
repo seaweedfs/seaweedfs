@@ -225,7 +225,7 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 
 		// get the current raft leader
 		leaderAddr, _ := ms.Topo.MaybeLeader()
-		raftServerLeader := string(leaderAddr)
+		raftServerLeader := leaderAddr.ToHttpAddress()
 		if raftServerLeader == "" {
 			f(w, r)
 			return

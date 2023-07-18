@@ -29,7 +29,7 @@ go_build_large_disk:
 build_rocksdb_dev_env:
 	docker build --no-cache -t chrislusf/rocksdb_dev_env -f Dockerfile.rocksdb_dev_env .
 
-build_rocksdb_local:
+build_rocksdb_local: build_rocksdb_dev_env
 	cd .. ; docker build --no-cache -t chrislusf/seaweedfs:rocksdb_local -f docker/Dockerfile.rocksdb_large_local .
 
 build_rocksdb:

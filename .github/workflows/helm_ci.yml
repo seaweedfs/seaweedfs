@@ -45,7 +45,7 @@ jobs:
         run: ct lint --all --validate-maintainers=false --chart-dirs k8s/charts
 
       - name: Create kind cluster
-        uses: helm/kind-action@v1.5.0
+        uses: helm/kind-action@v1.8.0
 
       - name: Run chart-testing (install)
         run: ct install --all --chart-dirs k8s/charts

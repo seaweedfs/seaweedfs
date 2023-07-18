@@ -31,6 +31,7 @@ type S3ApiServerOption struct {
 	AllowDeleteBucketNotEmpty bool
 	LocalFilerSocket          string
 	DataCenter                string
+	FilerGroup                string
 }
 
 type S3ApiServer struct {
