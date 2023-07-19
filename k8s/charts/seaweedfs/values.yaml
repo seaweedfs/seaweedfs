@@ -1,6 +1,7 @@
 # Available parameters and their default values for the SeaweedFS chart.
 
 global:
+  createClusterRole: true
   registry: ""
   repository: ""
   imageName: chrislusf/seaweedfs
