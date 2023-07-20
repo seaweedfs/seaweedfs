@@ -115,6 +115,11 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			dataReader = mimeDetect(r, dataReader)
 		}
 
+		ttl := r.Header.Get("x-amz-meta-ttl")
+		if ttl != "" {
+			uploadUrl += "?ttl=" + ttl
+		}
+
 		etag, errCode := s3a.putToFiler(r, uploadUrl, dataReader, "", bucket)
 
 		if errCode != s3err.ErrNone {
