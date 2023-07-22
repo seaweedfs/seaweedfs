@@ -416,6 +416,11 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		return
 	}
 
+	if resp.StatusCode == http.StatusInternalServerError {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
 	// when HEAD a directory, it should be reported as no such key
 	// https://github.com/seaweedfs/seaweedfs/issues/3457
 	if resp.ContentLength == -1 && resp.StatusCode != http.StatusNotModified {
