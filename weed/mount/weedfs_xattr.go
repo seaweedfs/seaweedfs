@@ -1,11 +1,12 @@
 package mount
 
 import (
-	"github.com/hanwen/go-fuse/v2/fuse"
-	sys "golang.org/x/sys/unix"
 	"runtime"
 	"strings"
 	"syscall"
+
+	"github.com/hanwen/go-fuse/v2/fuse"
+	sys "golang.org/x/sys/unix"
 )
 
 const (
@@ -129,6 +130,11 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 		fallthrough
 	default:
 		entry.Extended[XATTR_PREFIX+attr] = data
+	}
+
+	if fh != nil {
+		fh.dirtyMetadata = true
+		return fuse.OK
 	}
 
 	return wfs.saveEntry(path, entry)

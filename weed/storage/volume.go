@@ -92,7 +92,7 @@ func (v *Volume) IndexFileName() (fileName string) {
 
 func (v *Volume) FileName(ext string) (fileName string) {
 	switch ext {
-	case ".idx", ".cpx", ".ldb":
+	case ".idx", ".cpx", ".ldb", ".cpldb":
 		return VolumeFileName(v.dirIdx, v.Collection, int(v.Id)) + ext
 	}
 	// .dat, .cpd, .vif
@@ -131,6 +131,29 @@ func (v *Volume) ContentSize() uint64 {
 		return 0
 	}
 	return v.nm.ContentSize()
+}
+
+func (v *Volume) doIsEmpty() (bool, error) {
+	// check v.DataBackend.GetStat()
+	if v.DataBackend == nil {
+		return false, fmt.Errorf("v.DataBackend is nil")
+	} else {
+		datFileSize, _, e := v.DataBackend.GetStat()
+		if e != nil {
+			glog.V(0).Infof("Failed to read file size %s %v", v.DataBackend.Name(), e)
+			return false, fmt.Errorf("v.DataBackend.GetStat(): %v", e)
+		}
+		if datFileSize > super_block.SuperBlockSize {
+			return false, nil
+		}
+	}
+	// check v.nm.ContentSize()
+	if v.nm != nil {
+		if v.nm.ContentSize() > 0 {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (v *Volume) DeletedSize() uint64 {
@@ -202,6 +225,10 @@ func (v *Volume) Close() {
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
+	v.doClose()
+}
+
+func (v *Volume) doClose() {
 	for v.isCommitCompacting {
 		time.Sleep(521 * time.Millisecond)
 		glog.Warningf("Volume Close wait for compaction %d", v.Id)
@@ -283,7 +310,6 @@ func (v *Volume) collectStatus() (maxFileKey types.NeedleId, datFileSize int64, 
 	fileCount = uint64(v.nm.FileCount())
 	deletedCount = uint64(v.nm.DeletedCount())
 	deletedSize = v.nm.DeletedSize()
-	fileCount = uint64(v.nm.FileCount())
 
 	return
 }

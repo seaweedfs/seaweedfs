@@ -98,7 +98,7 @@ func doEcEncode(commandEnv *CommandEnv, collection string, vid needle.VolumeId, 
 	}
 
 	// find volume location
-	locations, found := commandEnv.MasterClient.GetLocations(uint32(vid))
+	locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(vid))
 	if !found {
 		return fmt.Errorf("volume %d not found", vid)
 	}
@@ -181,7 +181,7 @@ func spreadEcShards(commandEnv *CommandEnv, volumeId needle.VolumeId, collection
 	// ask the source volume server to delete the original volume
 	for _, location := range existingLocations {
 		fmt.Printf("delete volume %d from %s\n", volumeId, location.Url)
-		err = deleteVolume(commandEnv.option.GrpcDialOption, volumeId, location.ServerAddress())
+		err = deleteVolume(commandEnv.option.GrpcDialOption, volumeId, location.ServerAddress(), false)
 		if err != nil {
 			return fmt.Errorf("deleteVolume %s volume %d: %v", location.Url, volumeId, err)
 		}

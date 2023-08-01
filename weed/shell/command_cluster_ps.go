@@ -89,16 +89,13 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 			if node.Rack != "" {
 				fmt.Fprintf(writer, "    Rack: %v\n", node.Rack)
 			}
-			if node.IsLeader {
-				fmt.Fprintf(writer, "    IsLeader: %v\n", true)
-			}
 		}
 	}
 
 	filerSignatures := make(map[*master_pb.ListClusterNodesResponse_ClusterNode]int32)
 	fmt.Fprintf(writer, "* filers %d\n", len(filerNodes))
 	for _, node := range filerNodes {
-		fmt.Fprintf(writer, "  * %s (%v)\n", node.Address, node.Version)
+		fmt.Fprintf(writer, "  * %s (%v) %v\n", node.Address, node.Version, time.Unix(0, node.CreatedAtNs).UTC())
 		if node.DataCenter != "" {
 			fmt.Fprintf(writer, "    DataCenter: %v\n", node.DataCenter)
 		}

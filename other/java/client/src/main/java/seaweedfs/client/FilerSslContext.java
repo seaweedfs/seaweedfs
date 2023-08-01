@@ -21,7 +21,7 @@ public class FilerSslContext {
         String home = System.getProperty("user.home");
         File f1 = new File("./"+securityFileName);
         File f2 = new File(home + "/.seaweedfs/"+securityFileName);
-        File f3 = new File(home + "/etc/seaweedfs/"+securityFileName);
+        File f3 = new File("/etc/seaweedfs/"+securityFileName);
 
         File securityFile = f1.exists()? f1 : f2.exists() ? f2 : f3.exists()? f3 : null;
 

@@ -14,8 +14,11 @@ metadata:
     {{ omit .Values.filer.ingress.annotations "kubernetes.io/ingress.class" | toYaml | nindent 4 }}
 spec:
   ingressClassName: {{ .Values.filer.ingress.className | quote }}
+  tls:
+    {{ .Values.filer.ingress.tls | default list | toYaml | nindent 6}}
   rules:
-  - http:
+  - host: {{ .Values.filer.ingress.host }}
+    http:
       paths:
       - path: /sw-filer/?(.*)
         pathType: ImplementationSpecific

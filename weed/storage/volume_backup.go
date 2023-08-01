@@ -255,7 +255,7 @@ func (v *Volume) readRightNs(m int64) (index int64, offset Offset, ts uint64, er
 		index++
 		offset, err = v.readOffsetFromIndex(index)
 		if err != nil {
-			err = fmt.Errorf("read entry %d: %v", index, err)
+			err = fmt.Errorf("read left entry at %d: %v", index, err)
 			return
 		}
 	}
@@ -271,7 +271,7 @@ func (v *Volume) readLeftNs(m int64) (index int64, offset Offset, ts uint64, err
 		index--
 		offset, err = v.readOffsetFromIndex(index)
 		if err != nil {
-			err = fmt.Errorf("read entry %d: %v", index, err)
+			err = fmt.Errorf("read right entry at %d: %v", index, err)
 			return
 		}
 	}

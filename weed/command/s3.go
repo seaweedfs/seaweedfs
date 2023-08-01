@@ -2,11 +2,18 @@ package command
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"google.golang.org/grpc/reflection"
+	"net"
 	"net/http"
+	"os"
+	"runtime"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"google.golang.org/grpc/credentials/tls/certprovider"
+	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
+	"google.golang.org/grpc/reflection"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -29,6 +36,7 @@ type S3Options struct {
 	filer                     *string
 	bindIp                    *string
 	port                      *int
+	portHttps                 *int
 	portGrpc                  *int
 	config                    *string
 	domainName                *string
@@ -40,6 +48,8 @@ type S3Options struct {
 	auditLogConfig            *string
 	localFilerSocket          *string
 	dataCenter                *string
+	localSocket               *string
+	certProvider              certprovider.Provider
 }
 
 func init() {
@@ -47,6 +57,7 @@ func init() {
 	s3StandaloneOptions.filer = cmdS3.Flag.String("filer", "localhost:8888", "filer server address")
 	s3StandaloneOptions.bindIp = cmdS3.Flag.String("ip.bind", "", "ip address to bind to. Default to localhost.")
 	s3StandaloneOptions.port = cmdS3.Flag.Int("port", 8333, "s3 server http listen port")
+	s3StandaloneOptions.portHttps = cmdS3.Flag.Int("port.https", 0, "s3 server https listen port")
 	s3StandaloneOptions.portGrpc = cmdS3.Flag.Int("port.grpc", 0, "s3 server grpc listen port")
 	s3StandaloneOptions.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
 	s3StandaloneOptions.dataCenter = cmdS3.Flag.String("dataCenter", "", "prefer to read and write to volumes in this data center")
@@ -58,6 +69,7 @@ func init() {
 	s3StandaloneOptions.allowEmptyFolder = cmdS3.Flag.Bool("allowEmptyFolder", true, "allow empty folders")
 	s3StandaloneOptions.allowDeleteBucketNotEmpty = cmdS3.Flag.Bool("allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
 	s3StandaloneOptions.localFilerSocket = cmdS3.Flag.String("localFilerSocket", "", "local filer socket path")
+	s3StandaloneOptions.localSocket = cmdS3.Flag.String("localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 }
 
 var cmdS3 = &Command{
@@ -150,6 +162,12 @@ func runS3(cmd *Command, args []string) bool {
 
 }
 
+// GetCertificateWithUpdate Auto refreshing TSL certificate
+func (S3opt *S3Options) GetCertificateWithUpdate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	certs, err := S3opt.certProvider.KeyMaterial(context.Background())
+	return &certs.Certs[0], err
+}
+
 func (s3opt *S3Options) startS3Server() bool {
 
 	filerAddress := pb.ServerAddress(*s3opt.filer)
@@ -217,6 +235,24 @@ func (s3opt *S3Options) startS3Server() bool {
 		*s3opt.bindIp = "localhost"
 	}
 
+	if runtime.GOOS != "windows" {
+		localSocket := *s3opt.localSocket
+		if localSocket == "" {
+			localSocket = fmt.Sprintf("/tmp/seaweedfs-s3-%d.sock", *s3opt.port)
+		}
+		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
+			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
+		}
+		go func() {
+			// start on local unix socket
+			s3SocketListener, err := net.Listen("unix", localSocket)
+			if err != nil {
+				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
+			}
+			httpS.Serve(s3SocketListener)
+		}()
+	}
+
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.port)
 	s3ApiListener, s3ApiLocalListener, err := util.NewIpAndLocalListeners(*s3opt.bindIp, *s3opt.port, time.Duration(10)*time.Second)
 	if err != nil {
@@ -245,18 +281,46 @@ func (s3opt *S3Options) startS3Server() bool {
 	go grpcS.Serve(grpcL)
 
 	if *s3opt.tlsPrivateKey != "" {
-		glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
-		if s3ApiLocalListener != nil {
+		pemfileOptions := pemfile.Options{
+			CertFile:        *s3opt.tlsCertificate,
+			KeyFile:         *s3opt.tlsPrivateKey,
+			RefreshDuration: security.CredRefreshingInterval,
+		}
+		if s3opt.certProvider, err = pemfile.NewProvider(pemfileOptions); err != nil {
+			glog.Fatalf("pemfile.NewProvider(%v) failed: %v", pemfileOptions, err)
+		}
+		httpS.TLSConfig = &tls.Config{GetCertificate: s3opt.GetCertificateWithUpdate}
+		if *s3opt.portHttps == 0 {
+			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.port)
+			if s3ApiLocalListener != nil {
+				go func() {
+					if err = httpS.ServeTLS(s3ApiLocalListener, "", ""); err != nil {
+						glog.Fatalf("S3 API Server Fail to serve: %v", err)
+					}
+				}()
+			}
+			if err = httpS.ServeTLS(s3ApiListener, "", ""); err != nil {
+				glog.Fatalf("S3 API Server Fail to serve: %v", err)
+			}
+		} else {
+			glog.V(0).Infof("Start Seaweed S3 API Server %s at https port %d", util.Version(), *s3opt.portHttps)
+			s3ApiListenerHttps, s3ApiLocalListenerHttps, _ := util.NewIpAndLocalListeners(
+				*s3opt.bindIp, *s3opt.portHttps, time.Duration(10)*time.Second)
+			if s3ApiLocalListenerHttps != nil {
+				go func() {
+					if err = httpS.ServeTLS(s3ApiLocalListenerHttps, "", ""); err != nil {
+						glog.Fatalf("S3 API Server Fail to serve: %v", err)
+					}
+				}()
+			}
 			go func() {
-				if err = httpS.ServeTLS(s3ApiLocalListener, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
+				if err = httpS.ServeTLS(s3ApiListenerHttps, "", ""); err != nil {
 					glog.Fatalf("S3 API Server Fail to serve: %v", err)
 				}
 			}()
 		}
-		if err = httpS.ServeTLS(s3ApiListener, *s3opt.tlsCertificate, *s3opt.tlsPrivateKey); err != nil {
-			glog.Fatalf("S3 API Server Fail to serve: %v", err)
-		}
-	} else {
+	}
+	if *s3opt.tlsPrivateKey == "" || *s3opt.portHttps > 0 {
 		glog.V(0).Infof("Start Seaweed S3 API Server %s at http port %d", util.Version(), *s3opt.port)
 		if s3ApiLocalListener != nil {
 			go func() {

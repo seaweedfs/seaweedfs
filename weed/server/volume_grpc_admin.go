@@ -100,7 +100,7 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 
 	resp := &volume_server_pb.VolumeDeleteResponse{}
 
-	err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId))
+	err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), req.OnlyEmpty)
 
 	if err != nil {
 		glog.Errorf("volume delete %v: %v", req, err)
@@ -237,7 +237,9 @@ func (vs *VolumeServer) VolumeStatus(ctx context.Context, req *volume_server_pb.
 		return nil, fmt.Errorf("not found volume id %d", req.VolumeId)
 	}
 
+	volumeSize, _, _ := v.DataBackend.GetStat()
 	resp.IsReadOnly = v.IsReadOnly()
+	resp.VolumeSize = uint64(volumeSize)
 
 	return resp, nil
 }

@@ -1,6 +1,7 @@
 # Available parameters and their default values for the SeaweedFS chart.
 
 global:
+  createClusterRole: true
   registry: ""
   repository: ""
   imageName: chrislusf/seaweedfs
@@ -9,6 +10,8 @@ global:
   restartPolicy: Always
   loggingLevel: 1
   enableSecurity: false
+  certificates:
+    alphacrds: false
   monitoring:
     enabled: false
     gatewayHost: null
@@ -124,6 +127,7 @@ master:
   ingress:
     enabled: false
     className: "nginx"
+    host: "master.seaweedfs.local"
     annotations:
       nginx.ingress.kubernetes.io/auth-type: "basic"
       nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
@@ -371,7 +375,9 @@ filer:
   ingress:
     enabled: false
     className: "nginx"
+    host: "seaweedfs.cluster.local"
     annotations:
+      nginx.ingress.kubernetes.io/backend-protocol: GRPC
       nginx.ingress.kubernetes.io/auth-type: "basic"
       nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
       nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Filer'
@@ -423,6 +429,8 @@ filer:
   s3:
     enabled: true
     port: 8333
+    # add additional https port
+    httpsPort: 0
     # allow empty folders
     allowEmptyFolder: false
     # Suffix of the host name, {bucket}.{domainName}
@@ -441,6 +449,8 @@ s3:
   replicas: 1
   bindAddress: 0.0.0.0
   port: 8333
+  # add additional https port
+  httpsPort: 0
   metricsPort: 9327
   loggingOverrideLevel: null
   # allow empty folders

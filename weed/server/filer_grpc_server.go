@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -156,7 +158,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory)
 
 	if createErr == nil {
-		fs.filer.DeleteChunks(garbage)
+		fs.filer.DeleteChunksNotRecursive(garbage)
 	} else {
 		glog.V(3).Infof("CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), createErr)
 		resp.Error = createErr.Error()
@@ -188,7 +190,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 
 	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
-		fs.filer.DeleteChunks(garbage)
+		fs.filer.DeleteChunksNotRecursive(garbage)
 
 		fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, req.IsFromOtherCluster, req.Signatures)
 
@@ -240,8 +242,12 @@ func (fs *FilerServer) cleanupChunks(fullpath string, existingEntry *filer.Entry
 func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendToEntryRequest) (*filer_pb.AppendToEntryResponse, error) {
 
 	glog.V(4).Infof("AppendToEntry %v", req)
-
 	fullpath := util.NewFullPath(req.Directory, req.EntryName)
+
+	lockClient := cluster.NewLockClient(fs.grpcDialOption)
+	lock := lockClient.NewLock(fs.option.Host, string(fullpath))
+	defer lock.Unlock()
+
 	var offset int64 = 0
 	entry, err := fs.filer.FindEntry(ctx, fullpath)
 	if err == filer_pb.ErrNotFound {

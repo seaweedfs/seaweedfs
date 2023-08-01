@@ -50,8 +50,24 @@ func (v *Volume) isFileUnchanged(n *needle.Needle) bool {
 	return false
 }
 
+var ErrVolumeNotEmpty = fmt.Errorf("volume not empty")
+
 // Destroy removes everything related to this volume
-func (v *Volume) Destroy() (err error) {
+func (v *Volume) Destroy(onlyEmpty bool) (err error) {
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+
+	if onlyEmpty {
+		isEmpty, e := v.doIsEmpty()
+		if e != nil {
+			err = fmt.Errorf("failed to read isEmpty %v", e)
+			return
+		}
+		if !isEmpty {
+			err = ErrVolumeNotEmpty
+			return
+		}
+	}
 	if v.isCompacting || v.isCommitCompacting {
 		err = fmt.Errorf("volume %d is compacting", v.Id)
 		return
@@ -63,7 +79,7 @@ func (v *Volume) Destroy() (err error) {
 			backendStorage.DeleteFile(storageKey)
 		}
 	}
-	v.Close()
+	v.doClose()
 	removeVolumeFiles(v.DataFileName())
 	removeVolumeFiles(v.IndexFileName())
 	return
@@ -180,6 +196,10 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 	actualSize := needle.GetActualSize(0, v.Version())
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
+
+	if v.nm == nil {
+		return 0, nil
+	}
 
 	if MaxPossibleVolumeSize < v.nm.ContentSize()+uint64(actualSize) {
 		err := fmt.Errorf("volume size limit %d exceeded! current size is %d", MaxPossibleVolumeSize, v.nm.ContentSize())

@@ -25,6 +25,12 @@ spec:
     port: {{ .Values.filer.s3.port }}
     targetPort: {{ .Values.filer.s3.port }}
     protocol: TCP
+  {{- if .Values.filer.s3.httpsPort }}
+  - name: "swfs-s3-tls"
+    port: {{ .Values.filer.s3.httpsPort }}
+    targetPort: {{ .Values.filer.s3.httpsPort }}
+    protocol: TCP
+  {{- end }}
   {{- end }}
   {{- if .Values.filer.metricsPort }}
   - name: "metrics"

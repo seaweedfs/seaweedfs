@@ -97,7 +97,7 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 
 func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId, dest string, keepLocalDatFile bool) (err error) {
 	// find volume location
-	existingLocations, found := commandEnv.MasterClient.GetLocations(uint32(vid))
+	existingLocations, found := commandEnv.MasterClient.GetLocationsClone(uint32(vid))
 	if !found {
 		return fmt.Errorf("volume %d not found", vid)
 	}
@@ -120,7 +120,7 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 			break
 		}
 		fmt.Printf("delete volume %d from %s\n", vid, location.Url)
-		err = deleteVolume(commandEnv.option.GrpcDialOption, vid, location.ServerAddress())
+		err = deleteVolume(commandEnv.option.GrpcDialOption, vid, location.ServerAddress(), false)
 		if err != nil {
 			return fmt.Errorf("deleteVolume %s volume %d: %v", location.Url, vid, err)
 		}

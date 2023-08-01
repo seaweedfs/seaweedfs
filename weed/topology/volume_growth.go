@@ -6,6 +6,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"math/rand"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -240,6 +241,7 @@ func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid
 				Ttl:              option.Ttl,
 				Version:          needle.CurrentVersion,
 				DiskType:         option.DiskType.String(),
+				ModifiedAtSecond: time.Now().Unix(),
 			})
 			glog.V(0).Infof("Created Volume %d on %s", vid, server.NodeImpl.String())
 		} else {

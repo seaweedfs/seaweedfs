@@ -320,7 +320,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			// delete expired volumes.
 			location.volumesLock.Lock()
 			for _, vid := range deleteVids {
-				found, err := location.deleteVolumeById(vid)
+				found, err := location.deleteVolumeById(vid, false)
 				if err == nil {
 					if found {
 						glog.V(0).Infof("volume %d is deleted", vid)
@@ -507,7 +507,7 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 	return fmt.Errorf("volume %d not found on disk", i)
 }
 
-func (s *Store) DeleteVolume(i needle.VolumeId) error {
+func (s *Store) DeleteVolume(i needle.VolumeId, onlyEmpty bool) error {
 	v := s.findVolume(i)
 	if v == nil {
 		return fmt.Errorf("delete volume %d not found on disk", i)
@@ -521,13 +521,15 @@ func (s *Store) DeleteVolume(i needle.VolumeId) error {
 		DiskType:         string(v.location.DiskType),
 	}
 	for _, location := range s.Locations {
-		err := location.DeleteVolume(i)
+		err := location.DeleteVolume(i, onlyEmpty)
 		if err == nil {
 			glog.V(0).Infof("DeleteVolume %d", i)
 			s.DeletedVolumesChan <- message
 			return nil
 		} else if err == ErrVolumeNotFound {
 			continue
+		} else if err == ErrVolumeNotEmpty {
+			return fmt.Errorf("DeleteVolume %d: %v", i, err)
 		} else {
 			glog.Errorf("DeleteVolume %d: %v", i, err)
 		}
@@ -574,6 +576,7 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 	if volumeSizeLimit == 0 {
 		return
 	}
+	var newMaxVolumeCount int32
 	for _, diskLocation := range s.Locations {
 		if diskLocation.OriginalMaxVolumeCount == 0 {
 			currentMaxVolumeCount := atomic.LoadInt32(&diskLocation.MaxVolumeCount)
@@ -585,11 +588,15 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 			if unclaimedSpaces > int64(volumeSizeLimit) {
 				maxVolumeCount += int32(uint64(unclaimedSpaces)/volumeSizeLimit) - 1
 			}
+			newMaxVolumeCount = newMaxVolumeCount + maxVolumeCount
 			atomic.StoreInt32(&diskLocation.MaxVolumeCount, maxVolumeCount)
 			glog.V(4).Infof("disk %s max %d unclaimedSpace:%dMB, unused:%dMB volumeSizeLimit:%dMB",
 				diskLocation.Directory, maxVolumeCount, unclaimedSpaces/1024/1024, unusedSpace/1024/1024, volumeSizeLimit/1024/1024)
 			hasChanges = hasChanges || currentMaxVolumeCount != atomic.LoadInt32(&diskLocation.MaxVolumeCount)
+		} else {
+			newMaxVolumeCount = newMaxVolumeCount + diskLocation.OriginalMaxVolumeCount
 		}
 	}
+	stats.VolumeServerMaxVolumeCounter.Set(float64(newMaxVolumeCount))
 	return
 }
