@@ -4,8 +4,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"google.golang.org/grpc"
 
@@ -33,7 +34,6 @@ func (c *commandVolumeTierDownload) Help() string {
 	volume.tier.download [-collection=""] -volumeId=<volume_id>
 
 	e.g.:
-	volume.tier.download -volumeId=7
 	volume.tier.download -volumeId=7
 
 	This command will download the dat file of a volume from a remote tier to a volume server in local cluster.
