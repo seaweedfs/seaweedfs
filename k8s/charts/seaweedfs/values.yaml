@@ -528,6 +528,12 @@ s3:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+  ingress:
+    enabled: false      
+    className: "nginx"
+    host: "s3.local"
+    annotations: {}
+
   logs:
     type: null
     size: ""
