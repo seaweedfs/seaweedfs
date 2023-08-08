@@ -22,6 +22,7 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 
 	if ms.Topo.RaftServer != nil {
 		args := struct {
+			ContextPath       string
 			Version           string
 			Topology          interface{}
 			RaftServer        raft.Server
@@ -29,6 +30,7 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 			Counters          *stats.ServerStats
 			VolumeSizeLimitMB uint32
 		}{
+			ms.option.UIContextPath,
 			util.Version(),
 			ms.Topo.ToInfo(),
 			ms.Topo.RaftServer,
@@ -39,6 +41,7 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		ui.StatusTpl.Execute(w, args)
 	} else if ms.Topo.HashicorpRaft != nil {
 		args := struct {
+			ContextPath       string
 			Version           string
 			Topology          interface{}
 			RaftServer        *hashicorpRaft.Raft
@@ -46,6 +49,7 @@ func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 			Counters          *stats.ServerStats
 			VolumeSizeLimitMB uint32
 		}{
+			ms.option.UIContextPath,
 			util.Version(),
 			ms.Topo.ToInfo(),
 			ms.Topo.HashicorpRaft,

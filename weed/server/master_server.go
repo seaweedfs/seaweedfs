@@ -38,6 +38,7 @@ const (
 )
 
 type MasterOption struct {
+	UIContextPath     string
 	Master            pb.ServerAddress
 	MetaFolder        string
 	VolumeSizeLimitMB uint32
