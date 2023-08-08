@@ -201,7 +201,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		}
 	}
 
-	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Inc()
+	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume", string(v.DiskType())).Inc()
 
 	if err == nil {
 		hasLoadedVolume = true

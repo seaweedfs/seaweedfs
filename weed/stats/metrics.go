@@ -176,7 +176,7 @@ var (
 			Subsystem: "volumeServer",
 			Name:      "volumes",
 			Help:      "Number of volumes or shards.",
-		}, []string{"collection", "type"})
+		}, []string{"collection", "type", "disk"})
 
 	VolumeServerReadOnlyVolumeGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
