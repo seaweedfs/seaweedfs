@@ -56,6 +56,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 
 	if r.Header.Get("Accept") == "application/json" {
 		writeJsonQuiet(w, r, http.StatusOK, struct {
+			ContextPath           string
 			Path                  string
 			Entries               interface{}
 			Limit                 int
@@ -63,6 +64,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 			ShouldDisplayLoadMore bool
 			EmptyFolder           bool
 		}{
+			fs.option.UIContextPath,
 			path,
 			entries,
 			limit,
@@ -74,6 +76,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	err = ui.StatusTpl.Execute(w, struct {
+		ContextPath           string
 		Path                  string
 		Breadcrumbs           []ui.Breadcrumb
 		Entries               interface{}
@@ -83,6 +86,7 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		EmptyFolder           bool
 		ShowDirectoryDelete   bool
 	}{
+		fs.option.UIContextPath,
 		path,
 		ui.ToBreadcrumb(path),
 		entries,

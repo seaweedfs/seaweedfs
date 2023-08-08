@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <html>
+{{ $contextPath := .ContextPath }}
 <head>
     <title>SeaweedFS Filer</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
+    <link rel="stylesheet" href="{{ $contextPath }}/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
     <style>
         body {
             padding-bottom: 128px;
@@ -81,7 +82,7 @@
 <div class="container">
     <div class="page-header">
         <h1>
-            <a href="https://github.com/seaweedfs/seaweedfs"><img src="/seaweedfsstatic/seaweed50x50.png"></img></a>
+            <a href="https://github.com/seaweedfs/seaweedfs"><img src="{{ $contextPath }}/seaweedfsstatic/seaweed50x50.png"></img></a>
             SeaweedFS Filer
         </h1>
     </div>
@@ -97,7 +98,7 @@
             </div>
             <ol class="breadcrumb">
             {{ range $entry := .Breadcrumbs }}
-            <li><a href="{{ printpath $entry.Link }}">
+            <li><a href="{{ printpath $contextPath $entry.Link }}">
                 {{ $entry.Name }}
             </li></a>
             {{ end }}
@@ -122,11 +123,11 @@
                     <td>
                         {{ if $entry.IsDirectory }}
                         <span class="glyphicon glyphicon-folder-open" aria-hidden="true"></span>&nbsp;
-                        <a href="{{ printpath $path  "/" $entry.Name "/"}}" >
+                        <a href="{{ printpath $contextPath $path  "/" $entry.Name "/"}}" >
                         {{ $entry.Name }}
                         </a>
                         {{ else }}
-                        <a href="{{ printpath $path  "/" $entry.Name }}" >
+                        <a href="{{ printpath $contextPath $path  "/" $entry.Name }}" >
                         {{ $entry.Name }}
                         </a>
                         {{ end }}
@@ -170,7 +171,7 @@
 
     {{ if .ShouldDisplayLoadMore }}
     <div class="row">
-        <a href={{ print .Path "?limit=" .Limit "&lastFileName=" .LastFileName }} >
+        <a href="{{ print $contextPath .Path "?limit=" .Limit "&lastFileName=" .LastFileName }}">
         Load more
         </a>
     </div>
@@ -335,7 +336,7 @@
         if (newName == null || newName == '') {
             return;
         }
-        var url = basePath + encodeURIComponent(newName);
+        var url = "{{ $contextPath }}" + basePath + encodeURIComponent(newName);
         var originPath = basePath + originName;
         url += '?mv.from=' + encodeURIComponent(originPath);
         var xhr = new XMLHttpRequest();
@@ -349,7 +350,7 @@
         if (!confirm('Are you sure to delete ' + path + '?')) {
             return;
         }
-        var url = path;
+        var url = "{{ $contextPath }}" + path;
         if (url.endsWith('/')) {
             url += '?recursive=true';
         }

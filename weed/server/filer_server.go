@@ -53,6 +53,7 @@ type FilerOption struct {
 	Masters               *pb.ServerDiscovery
 	FilerGroup            string
 	Collection            string
+	UIContextPath         string
 	DefaultReplication    string
 	DisableDirListing     bool
 	MaxMB                 int
