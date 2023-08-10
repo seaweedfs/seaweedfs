@@ -83,6 +83,7 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
 	location.closeCh = make(chan struct{})
 	go func() {
+		location.CheckDiskSpace()
 		for {
 			select {
 			case <-location.closeCh:
