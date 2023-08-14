@@ -110,7 +110,7 @@ require (
 	go.mongodb.org/mongo-driver v1.12.1
 	go.opencensus.io v0.24.0 // indirect
 	gocloud.dev v0.33.0
-	gocloud.dev/pubsub/natspubsub v0.32.0
+	gocloud.dev/pubsub/natspubsub v0.33.0
 	gocloud.dev/pubsub/rabbitpubsub v0.33.0
 	golang.org/x/crypto v0.11.0 // indirect
 	golang.org/x/exp v0.0.0-20230321023759-10a507213a29
@@ -242,7 +242,7 @@ require (
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/montanaflynn/stats v0.7.0 // indirect
-	github.com/nats-io/nats.go v1.27.1 // indirect
+	github.com/nats-io/nats.go v1.28.0 // indirect
 	github.com/nats-io/nkeys v0.4.4 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/ncw/go-acd v0.0.0-20201019170801-fe55f33415b1 // indirect
