@@ -40,6 +40,7 @@ type Option struct {
 	ConcurrentWriters  int
 	CacheDir           string
 	CacheSizeMB        int64
+	CacheDirWrite      string
 	DataCenter         string
 	Umask              os.FileMode
 	Quota              int64
@@ -106,6 +107,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	grace.OnInterrupt(func() {
 		wfs.metaCache.Shutdown()
 		os.RemoveAll(option.getUniqueCacheDir())
+		os.RemoveAll(option.getTempFilePageDir())
 	})
 
 	if wfs.option.ConcurrentWriters > 0 {
@@ -192,7 +194,8 @@ func (wfs *WFS) getCurrentFiler() pb.ServerAddress {
 func (option *Option) setupUniqueCacheDirectory() {
 	cacheUniqueId := util.Md5String([]byte(option.MountDirectory + string(option.FilerAddresses[0]) + option.FilerMountRootPath + util.Version()))[0:8]
 	option.uniqueCacheDir = path.Join(option.CacheDir, cacheUniqueId)
-	option.uniqueCacheTempPageDir = filepath.Join(option.uniqueCacheDir, "swap")
+	os.MkdirAll(option.uniqueCacheDir, os.FileMode(0777)&^option.Umask)
+	option.uniqueCacheTempPageDir = filepath.Join(path.Join(option.CacheDirWrite, cacheUniqueId), "swap")
 	os.MkdirAll(option.uniqueCacheTempPageDir, os.FileMode(0777)&^option.Umask)
 }
 

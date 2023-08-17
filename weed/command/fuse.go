@@ -153,6 +153,8 @@ func runFuse(cmd *Command, args []string) bool {
 			} else {
 				panic(fmt.Errorf("cacheCapacityMB: %s", err))
 			}
+		case "cacheDirWrite":
+			mountOptions.cacheDirWrite = &parameter.value
 		case "dataCenter":
 			mountOptions.dataCenter = &parameter.value
 		case "allowOthers":
