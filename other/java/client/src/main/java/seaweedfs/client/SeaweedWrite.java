@@ -26,6 +26,7 @@ public class SeaweedWrite {
 
     public static void writeData(FilerProto.Entry.Builder entry,
                                  final String replication,
+                                 String collection,
                                  final FilerClient filerClient,
                                  final long offset,
                                  final byte[] bytes,
@@ -36,7 +37,7 @@ public class SeaweedWrite {
         for (long waitTime = 1000L; waitTime < 10 * 1000; waitTime += waitTime / 2) {
             try {
                 FilerProto.FileChunk.Builder chunkBuilder = writeChunk(
-                        replication, filerClient, offset, bytes, bytesOffset, bytesLength, path);
+                        replication, collection, filerClient, offset, bytes, bytesOffset, bytesLength, path);
                 lastException = null;
                 synchronized (entry) {
                     entry.addChunks(chunkBuilder);
@@ -59,6 +60,7 @@ public class SeaweedWrite {
     }
 
     public static FilerProto.FileChunk.Builder writeChunk(final String replication,
+                                                          final String collection,
                                                           final FilerClient filerClient,
                                                           final long offset,
                                                           final byte[] bytes,
@@ -67,7 +69,7 @@ public class SeaweedWrite {
                                                           final String path) throws IOException {
         FilerProto.AssignVolumeResponse response = filerClient.getBlockingStub().assignVolume(
                 FilerProto.AssignVolumeRequest.newBuilder()
-                        .setCollection(filerClient.getCollection())
+                        .setCollection(Strings.isNullOrEmpty(collection) ? filerClient.getCollection() : collection)
                         .setReplication(Strings.isNullOrEmpty(replication) ? filerClient.getReplication() : replication)
                         .setDataCenter("")
                         .setTtlSec(0)

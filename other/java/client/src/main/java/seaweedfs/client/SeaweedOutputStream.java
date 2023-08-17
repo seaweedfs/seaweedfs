@@ -33,6 +33,7 @@ public class SeaweedOutputStream extends OutputStream {
     private ByteBuffer buffer;
     private long outputIndex;
     private String replication = "";
+    private String collection = "";
 
     public SeaweedOutputStream(FilerClient filerClient, final String fullpath) {
         this(filerClient, fullpath, "");
@@ -53,7 +54,6 @@ public class SeaweedOutputStream extends OutputStream {
         this.lastFlushOffset = 0;
         this.bufferSize = bufferSize;
         this.buffer = ByteBufferPool.request(bufferSize);
-        this.outputIndex = 0;
         this.writeOperations = new ConcurrentLinkedDeque<>();
 
         this.maxConcurrentRequestCount = Runtime.getRuntime().availableProcessors();
@@ -81,6 +81,13 @@ public class SeaweedOutputStream extends OutputStream {
                     );
         }
 
+    }
+
+    public void setReplication(String replication) {
+        this.replication = replication;
+    }
+    public void setCollection(String collection) {
+        this.collection = collection;
     }
 
     public static String getParentDirectory(String path) {
@@ -144,13 +151,11 @@ public class SeaweedOutputStream extends OutputStream {
 
             if (numberOfBytesToWrite < writableBytes) {
                 buffer.put(data, currentOffset, numberOfBytesToWrite);
-                outputIndex += numberOfBytesToWrite;
                 break;
             }
 
             // System.out.println(path + "     [" + (outputIndex + currentOffset) + "," + ((outputIndex + currentOffset) + writableBytes) + ") " + buffer.capacity());
             buffer.put(data, currentOffset, writableBytes);
-            outputIndex += writableBytes;
             currentOffset += writableBytes;
             writeCurrentBufferToService();
             numberOfBytesToWrite = numberOfBytesToWrite - writableBytes;
@@ -194,7 +199,6 @@ public class SeaweedOutputStream extends OutputStream {
             lastError = new IOException("Stream is closed!");
             ByteBufferPool.release(buffer);
             buffer = null;
-            outputIndex = 0;
             closed = true;
             writeOperations.clear();
             if (!threadExecutor.isShutdown()) {
@@ -225,7 +229,7 @@ public class SeaweedOutputStream extends OutputStream {
         }
         final Future<Void> job = completionService.submit(() -> {
             // System.out.println(path + " is going to save [" + (writePosition) + "," + ((writePosition) + bytesLength) + ")");
-            SeaweedWrite.writeData(entry, replication, filerClient, writePosition, bufferToWrite.array(), bufferToWrite.position(), bufferToWrite.limit(), path);
+            SeaweedWrite.writeData(entry, replication, collection, filerClient, writePosition, bufferToWrite.array(), bufferToWrite.position(), bufferToWrite.limit(), path);
             // System.out.println(path + " saved [" + (writePosition) + "," + ((writePosition) + bytesLength) + ")");
             ByteBufferPool.release(bufferToWrite);
             return null;
