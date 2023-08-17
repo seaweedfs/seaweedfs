@@ -128,6 +128,7 @@ public class FileChunkManifest {
 
         FilerProto.FileChunk.Builder manifestChunk = SeaweedWrite.writeChunk(
                 filerClient.getReplication(),
+                filerClient.getCollection(),
                 filerClient,
                 minOffset,
                 data, 0, data.length, parentDirectory);
