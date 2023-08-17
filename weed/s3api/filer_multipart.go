@@ -90,6 +90,25 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		return nil, s3err.ErrNoSuchUpload
 	}
 
+	// check whether completedParts is more than received parts
+	{
+		partNumbers := make(map[int]struct{}, len(entries))
+		for _, entry := range entries {
+			if strings.HasSuffix(entry.Name, ".part") && !entry.IsDirectory {
+				partNumberString := entry.Name[:len(entry.Name)-len(".part")]
+				partNumber, err := strconv.Atoi(partNumberString)
+				if err == nil {
+					partNumbers[partNumber] = struct{}{}
+				}
+			}
+		}
+		for _, part := range completedParts {
+			if _, found := partNumbers[part.PartNumber]; !found {
+				return nil, s3err.ErrInvalidPart
+			}
+		}
+	}
+
 	mime := pentry.Attributes.Mime
 
 	var finalParts []*filer_pb.FileChunk
