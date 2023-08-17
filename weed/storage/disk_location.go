@@ -35,6 +35,7 @@ type DiskLocation struct {
 	ecVolumesLock sync.RWMutex
 
 	isDiskSpaceLow bool
+	closeCh        chan struct{}
 }
 
 func GenerateDirUuid(dir string) (dirUuidString string, err error) {
@@ -80,7 +81,18 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 	}
 	location.volumes = make(map[needle.VolumeId]*Volume)
 	location.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
-	go location.CheckDiskSpace()
+	location.closeCh = make(chan struct{})
+	go func() {
+		location.CheckDiskSpace()
+		for {
+			select {
+			case <-location.closeCh:
+				return
+			case <-time.After(time.Minute):
+				location.CheckDiskSpace()
+			}
+		}
+	}()
 	return location
 }
 
@@ -384,6 +396,7 @@ func (l *DiskLocation) Close() {
 	}
 	l.ecVolumesLock.Unlock()
 
+	close(l.closeCh)
 	return
 }
 
@@ -420,26 +433,22 @@ func (l *DiskLocation) UnUsedSpace(volumeSizeLimit uint64) (unUsedSpace uint64) 
 }
 
 func (l *DiskLocation) CheckDiskSpace() {
-	for {
-		if dir, e := filepath.Abs(l.Directory); e == nil {
-			s := stats.NewDiskStatus(dir)
-			stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "all").Set(float64(s.All))
-			stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "used").Set(float64(s.Used))
-			stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "free").Set(float64(s.Free))
+	if dir, e := filepath.Abs(l.Directory); e == nil {
+		s := stats.NewDiskStatus(dir)
+		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "all").Set(float64(s.All))
+		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "used").Set(float64(s.Used))
+		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "free").Set(float64(s.Free))
 
-			isLow, desc := l.MinFreeSpace.IsLow(s.Free, s.PercentFree)
-			if isLow != l.isDiskSpaceLow {
-				l.isDiskSpaceLow = !l.isDiskSpaceLow
-			}
-
-			logLevel := glog.Level(4)
-			if l.isDiskSpaceLow {
-				logLevel = glog.Level(0)
-			}
-
-			glog.V(logLevel).Infof("dir %s %s", dir, desc)
+		isLow, desc := l.MinFreeSpace.IsLow(s.Free, s.PercentFree)
+		if isLow != l.isDiskSpaceLow {
+			l.isDiskSpaceLow = !l.isDiskSpaceLow
 		}
-		time.Sleep(time.Minute)
-	}
 
+		logLevel := glog.Level(4)
+		if l.isDiskSpaceLow {
+			logLevel = glog.Level(0)
+		}
+
+		glog.V(logLevel).Infof("dir %s %s", dir, desc)
+	}
 }

@@ -120,6 +120,10 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 func encodeData(file *os.File, enc reedsolomon.Encoder, startOffset, blockSize int64, buffers [][]byte, outputs []*os.File) error {
 
 	bufferSize := int64(len(buffers[0]))
+	if bufferSize == 0 {
+		glog.Fatal("unexpected zero buffer size")
+	}
+
 	batchCount := blockSize / bufferSize
 	if blockSize%bufferSize != 0 {
 		glog.Fatalf("unexpected block size %d buffer size %d", blockSize, bufferSize)

@@ -244,6 +244,8 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 					fixedVolumes[strconv.FormatUint(uint64(vid), 10)] = len(volumeReplicas[vid])
 				}
 				break
+			} else {
+				fmt.Fprintf(writer, "fixing under replicated volume %d: %v\n", vid, err)
 			}
 		}
 	}

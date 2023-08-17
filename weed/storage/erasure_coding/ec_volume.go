@@ -3,19 +3,20 @@ package erasure_coding
 import (
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
-	"golang.org/x/exp/slices"
 	"math"
 	"os"
 	"sync"
 	"time"
 
+	"golang.org/x/exp/slices"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 )
 
 var (
@@ -52,6 +53,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	}
 	ecxFi, statErr := ev.ecxFile.Stat()
 	if statErr != nil {
+		_ = ev.ecxFile.Close()
 		return nil, fmt.Errorf("can not stat ec volume index %s.ecx: %v", indexBaseFileName, statErr)
 	}
 	ev.ecxFileSize = ecxFi.Size()

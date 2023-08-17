@@ -38,8 +38,9 @@ type Option struct {
 	DiskType           types.DiskType
 	ChunkSizeLimit     int64
 	ConcurrentWriters  int
-	CacheDir           string
-	CacheSizeMB        int64
+	CacheDirForRead    string
+	CacheSizeMBForRead int64
+	CacheDirForWrite   string
 	DataCenter         string
 	Umask              os.FileMode
 	Quota              int64
@@ -56,8 +57,8 @@ type Option struct {
 	Cipher             bool   // whether encrypt data on volume server
 	UidGidMapper       *meta_cache.UidGidMapper
 
-	uniqueCacheDir         string
-	uniqueCacheTempPageDir string
+	uniqueCacheDirForRead  string
+	uniqueCacheDirForWrite string
 }
 
 type WFS struct {
@@ -91,11 +92,11 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 
 	wfs.option.filerIndex = int32(rand.Intn(len(option.FilerAddresses)))
 	wfs.option.setupUniqueCacheDirectory()
-	if option.CacheSizeMB > 0 {
-		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDir(), option.CacheSizeMB, 1024*1024)
+	if option.CacheSizeMBForRead > 0 {
+		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDirForRead(), option.CacheSizeMBForRead, 1024*1024)
 	}
 
-	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDir(), "meta"), option.UidGidMapper,
+	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDirForRead(), "meta"), option.UidGidMapper,
 		util.FullPath(option.FilerMountRootPath),
 		func(path util.FullPath) {
 			wfs.inodeToPath.MarkChildrenCached(path)
@@ -105,7 +106,8 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		})
 	grace.OnInterrupt(func() {
 		wfs.metaCache.Shutdown()
-		os.RemoveAll(option.getUniqueCacheDir())
+		os.RemoveAll(option.getUniqueCacheDirForWrite())
+		os.RemoveAll(option.getUniqueCacheDirForRead())
 	})
 
 	if wfs.option.ConcurrentWriters > 0 {
@@ -191,15 +193,16 @@ func (wfs *WFS) getCurrentFiler() pb.ServerAddress {
 
 func (option *Option) setupUniqueCacheDirectory() {
 	cacheUniqueId := util.Md5String([]byte(option.MountDirectory + string(option.FilerAddresses[0]) + option.FilerMountRootPath + util.Version()))[0:8]
-	option.uniqueCacheDir = path.Join(option.CacheDir, cacheUniqueId)
-	option.uniqueCacheTempPageDir = filepath.Join(option.uniqueCacheDir, "swap")
-	os.MkdirAll(option.uniqueCacheTempPageDir, os.FileMode(0777)&^option.Umask)
+	option.uniqueCacheDirForRead = path.Join(option.CacheDirForRead, cacheUniqueId)
+	os.MkdirAll(option.uniqueCacheDirForRead, os.FileMode(0777)&^option.Umask)
+	option.uniqueCacheDirForWrite = filepath.Join(path.Join(option.CacheDirForWrite, cacheUniqueId), "swap")
+	os.MkdirAll(option.uniqueCacheDirForWrite, os.FileMode(0777)&^option.Umask)
 }
 
-func (option *Option) getTempFilePageDir() string {
-	return option.uniqueCacheTempPageDir
+func (option *Option) getUniqueCacheDirForWrite() string {
+	return option.uniqueCacheDirForWrite
 }
 
-func (option *Option) getUniqueCacheDir() string {
-	return option.uniqueCacheDir
+func (option *Option) getUniqueCacheDirForRead() string {
+	return option.uniqueCacheDirForRead
 }

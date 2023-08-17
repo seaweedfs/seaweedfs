@@ -25,7 +25,8 @@ var cmdFix = &Command{
 	UsageLine: "fix [-volumeId=234] [-collection=bigData] /tmp",
 	Short:     "run weed tool fix on files or whole folders to recreate index file(s) if corrupted",
 	Long: `Fix runs the SeaweedFS fix command on dat files or whole folders to re-create the index .idx file.
-  `,
+  You Need to stop the volume server when running this command.
+`,
 }
 
 var (
@@ -42,8 +43,8 @@ type VolumeFileScanner4Fix struct {
 func (scanner *VolumeFileScanner4Fix) VisitSuperBlock(superBlock super_block.SuperBlock) error {
 	scanner.version = superBlock.Version
 	return nil
-
 }
+
 func (scanner *VolumeFileScanner4Fix) ReadNeedleBody() bool {
 	return false
 }
@@ -115,7 +116,6 @@ func runFix(cmd *Command, args []string) bool {
 }
 
 func doFixOneVolume(basepath string, baseFileName string, collection string, volumeId int64) {
-
 	indexFileName := path.Join(basepath, baseFileName+".idx")
 
 	nm := needle_map.NewMemDb()
