@@ -25,6 +25,7 @@ type MasterClient struct {
 	currentMaster     pb.ServerAddress
 	currentMasterLock sync.RWMutex
 	masters           map[string]pb.ServerAddress
+	masterSrv         *pb.ServerSrvAddress
 	grpcDialOption    grpc.DialOption
 
 	*vidMap
@@ -33,13 +34,14 @@ type MasterClient struct {
 	OnPeerUpdateLock sync.RWMutex
 }
 
-func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters map[string]pb.ServerAddress) *MasterClient {
+func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters map[string]pb.ServerAddress, masterSrv *pb.ServerSrvAddress) *MasterClient {
 	return &MasterClient{
 		FilerGroup:      filerGroup,
 		clientType:      clientType,
 		clientHost:      clientHost,
 		rack:            rack,
 		masters:         masters,
+		masterSrv:       masterSrv,
 		grpcDialOption:  grpcDialOption,
 		vidMap:          newVidMap(clientDataCenter),
 		vidMapCacheSize: 5,

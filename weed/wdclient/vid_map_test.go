@@ -65,7 +65,7 @@ func TestLocationIndex(t *testing.T) {
 }
 
 func TestLookupFileId(t *testing.T) {
-	mc := NewMasterClient(grpc.EmptyDialOption{}, "", "", "", "", "", nil)
+	mc := NewMasterClient(grpc.EmptyDialOption{}, "", "", "", "", "", nil, nil)
 	length := 5
 
 	//Construct a cache linked list of length 5
@@ -135,7 +135,7 @@ func TestLookupFileId(t *testing.T) {
 }
 
 func TestConcurrentGetLocations(t *testing.T) {
-	mc := NewMasterClient(grpc.EmptyDialOption{}, "", "", "", "", "", nil)
+	mc := NewMasterClient(grpc.EmptyDialOption{}, "", "", "", "", "", nil, nil)
 	location := Location{Url: "TestDataRacing"}
 	mc.addLocation(1, location)
 
