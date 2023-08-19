@@ -25,7 +25,6 @@ type MasterClient struct {
 	currentMaster     pb.ServerAddress
 	currentMasterLock sync.RWMutex
 	masters           pb.ServerDiscovery
-	// DNS SRV provided, should resolve to a list of masters
 	grpcDialOption grpc.DialOption
 
 	*vidMap

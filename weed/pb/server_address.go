@@ -82,7 +82,7 @@ func (sa ServerAddress) ToGrpcAddress() string {
 func (r ServerSrvAddress) LookUp() (addresses []ServerAddress, err error) {
 	_, records, lookupErr := net.LookupSRV("", "", string(r))
 	if lookupErr != nil {
-		err = lookupErr
+		err = fmt.Errorf("lookup SRV address %s: %v", r, lookupErr)
 	}
 	for _, srv := range records {
 		address := fmt.Sprintf("%s:%d", srv.Target, srv.Port)
