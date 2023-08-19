@@ -38,6 +38,14 @@ var (
 			Help:      "Counter of master client leader updates.",
 		}, []string{"type"})
 
+	MasterSrvLookupCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "wdclient",
+			Name:      "srv_lookup",
+			Help:      "Counter DNS SRV lookups for the master cluster.",
+		}, []string{"type"})
+
 	MasterRaftIsleader = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -288,7 +296,6 @@ func JoinHostPort(host string, port int) string {
 	}
 	return net.JoinHostPort(host, portStr)
 }
-
 
 func StartMetricsServer(ip string, port int) {
 	if port == 0 {

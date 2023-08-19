@@ -78,7 +78,23 @@ func (sa ServerAddress) ToGrpcAddress() string {
 	return ServerToGrpcAddress(string(sa))
 }
 
-// LookUp expects one of: a comma-separated list of ip:port, like
+// LookUp may return an error for some records along with successful lookups - make sure you do not
+// discard `addresses` even if `err == nil`
+func (r ServerSrvAddress) LookUp() (addresses map[string]ServerAddress, err error) {
+	_, records, lookupErr := net.LookupSRV("", "", string(r))
+	if lookupErr != nil {
+		glog.Errorf("Provided SRV record '%s' could not be resolved: %v", r, lookupErr)
+		err = lookupErr
+	}
+	addresses = make(map[string]ServerAddress)
+	for _, srv := range records {
+		address := fmt.Sprintf("%s:%d", srv.Target, srv.Port)
+		addresses[address] = ServerAddress(address)
+	}
+	return
+}
+
+// ToAddressMapOrSrv expects one of: a comma-separated list of ip:port, like
 //
 //	10.0.0.1:9999,10.0.0.2:24:9999
 //
@@ -87,19 +103,6 @@ func (sa ServerAddress) ToGrpcAddress() string {
 //	dnssrv+_grpc._tcp.master.consul
 //	dnssrv+_grpc._tcp.headless.default.svc.cluster.local
 //	dnssrv+seaweed-master.master.consul
-func (r ServerSrvAddress) LookUp() (addresses []ServerAddress, err error) {
-	_, records, lookupErr := net.LookupSRV("", "", string(r))
-	if lookupErr != nil {
-		glog.Errorf("Provided SRV record '%s' could not be resolved: %v", r, lookupErr)
-		err = lookupErr
-	}
-	for _, srv := range records {
-		address := fmt.Sprintf("%s:%d", srv.Target, srv.Port)
-		addresses = append(addresses, ServerAddress(address))
-	}
-	return
-}
-
 func (sa ServerAddresses) ToAddressMapOrSrv() (addresses map[string]ServerAddress, srvAddress *ServerSrvAddress) {
 	prefix := "dnssrv+"
 	if strings.HasPrefix(string(sa), prefix) {
