@@ -40,7 +40,4 @@ const (
 	RepeatErrorUploadContent = "upload.content.repeat.failed"
 	ErrorReadCache           = "read.cache.failed"
 	ErrorReadStream          = "read.stream.failed"
-
-	// SRV lookups
-	ErrorLookupFailed = "lookup.failed"
 )
