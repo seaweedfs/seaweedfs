@@ -2,6 +2,7 @@ package pb
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"reflect"
 )
 
 // ServerDiscovery encodes a way to find at least 1 instance of a service,
@@ -33,7 +34,9 @@ func (sd *ServerDiscovery) RefreshBySrvIfAvailable() {
 		glog.V(0).Infof("looked up SRV for %s, but found no well-formed names", *sd.srvRecord)
 		return
 	}
-	sd.list = newList
+	if !reflect.DeepEqual(sd.list, newList) {
+		sd.list = newList
+	}
 }
 
 // GetInstances returns a copy of the latest known list of addresses
