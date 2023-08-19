@@ -2,6 +2,7 @@ package pb
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"net"
@@ -11,6 +12,7 @@ import (
 
 type ServerAddress string
 type ServerAddresses string
+type ServerSrvAddress string
 
 func NewServerAddress(host string, port int, grpcPort int) ServerAddress {
 	if grpcPort == 0 || grpcPort == port+10000 {
@@ -74,6 +76,40 @@ func (sa ServerAddress) ToGrpcAddress() string {
 		return net.JoinHostPort(host, ports[sepIndex+1:])
 	}
 	return ServerToGrpcAddress(string(sa))
+}
+
+// LookUp expects one of: a comma-separated list of ip:port, like
+//
+//	10.0.0.1:9999,10.0.0.2:24:9999
+//
+// OR an SRV Record prepended with 'dnssrv+', like:
+//
+//	dnssrv+_grpc._tcp.master.consul
+//	dnssrv+_grpc._tcp.headless.default.svc.cluster.local
+//	dnssrv+seaweed-master.master.consul
+func (r ServerSrvAddress) LookUp() (addresses []ServerAddress, err error) {
+	_, records, lookupErr := net.LookupSRV("", "", string(r))
+	if lookupErr != nil {
+		glog.Errorf("Provided SRV record '%s' could not be resolved: %v", r, lookupErr)
+		err = lookupErr
+	}
+	for _, srv := range records {
+		address := fmt.Sprintf("%s:%d", srv.Target, srv.Port)
+		addresses = append(addresses, ServerAddress(address))
+	}
+	return
+}
+
+func (sa ServerAddresses) ToAddressMapOrSrv() (addresses map[string]ServerAddress, srvAddress *ServerSrvAddress) {
+	prefix := "dnssrv+"
+	if strings.HasPrefix(string(sa), prefix) {
+		trimmed := strings.TrimPrefix(string(sa), prefix)
+		srv := ServerSrvAddress(trimmed)
+		srvAddress = &srv
+	} else {
+		addresses = sa.ToAddressMap()
+	}
+	return
 }
 
 func (sa ServerAddresses) ToAddresses() (addresses []ServerAddress) {

@@ -51,6 +51,7 @@ import (
 
 type FilerOption struct {
 	Masters               map[string]pb.ServerAddress
+	MasterSrv             pb.ServerSrvAddress
 	FilerGroup            string
 	Collection            string
 	DefaultReplication    string
