@@ -33,8 +33,7 @@ var (
 )
 
 type FilerOptions struct {
-	masters                 map[string]pb.ServerAddress
-	masterSrv               *pb.ServerSrvAddress
+	masters                 *pb.ServerDiscovery
 	mastersString           *string
 	ip                      *string
 	bindIp                  *string
@@ -209,7 +208,7 @@ func runFiler(cmd *Command, args []string) bool {
 		}(startDelay)
 	}
 
-	f.masters, f.masterSrv = pb.ServerAddresses(*f.mastersString).ToAddressMapOrSrv()
+	f.masters = pb.ServerAddresses(*f.mastersString).ToServiceDiscovery()
 
 	f.startFiler()
 
@@ -237,7 +236,6 @@ func (fo *FilerOptions) startFiler() {
 
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
 		Masters:               fo.masters,
-		MasterSrv:             *fo.masterSrv,
 		FilerGroup:            *fo.filerGroup,
 		Collection:            *fo.collection,
 		DefaultReplication:    *fo.defaultReplicaPlacement,

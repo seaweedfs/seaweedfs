@@ -24,10 +24,8 @@ type MasterClient struct {
 	rack              string
 	currentMaster     pb.ServerAddress
 	currentMasterLock sync.RWMutex
-	// hardcoded masters
-	masters map[string]pb.ServerAddress
+	masters           pb.ServerDiscovery
 	// DNS SRV provided, should resolve to a list of masters
-	masterSrv      *pb.ServerSrvAddress
 	grpcDialOption grpc.DialOption
 
 	*vidMap
@@ -36,14 +34,13 @@ type MasterClient struct {
 	OnPeerUpdateLock sync.RWMutex
 }
 
-func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters map[string]pb.ServerAddress, masterSrv *pb.ServerSrvAddress) *MasterClient {
+func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters pb.ServerDiscovery) *MasterClient {
 	return &MasterClient{
 		FilerGroup:      filerGroup,
 		clientType:      clientType,
 		clientHost:      clientHost,
 		rack:            rack,
 		masters:         masters,
-		masterSrv:       masterSrv,
 		grpcDialOption:  grpcDialOption,
 		vidMap:          newVidMap(clientDataCenter),
 		vidMapCacheSize: 5,
@@ -112,9 +109,9 @@ func (mc *MasterClient) GetMaster() pb.ServerAddress {
 	return mc.getCurrentMaster()
 }
 
-func (mc *MasterClient) GetMasters() map[string]pb.ServerAddress {
+func (mc *MasterClient) GetMasters() []pb.ServerAddress {
 	mc.WaitUntilConnected()
-	return mc.masters
+	return mc.masters.GetInstances()
 }
 
 func (mc *MasterClient) WaitUntilConnected() {
@@ -136,7 +133,7 @@ func (mc *MasterClient) KeepConnectedToMaster() {
 }
 
 func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress pb.ServerAddress) (leader string) {
-	for _, master := range mc.masters {
+	for _, master := range mc.masters.GetInstances() {
 		if master == myMasterAddress {
 			continue
 		}
@@ -161,30 +158,10 @@ func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress pb.ServerAddres
 	return
 }
 
-// refreshMastersBySrvIfAvailable performs a DNS SRV lookup of mc.masterSrv and updates mc.masters with the results
-// of the lookup
-func (mc *MasterClient) refreshMastersBySrvIfAvailable() {
-	// if not set, that means the Srv option was probably not passed in the first place, so it's safe to return
-	if mc.masterSrv == nil {
-		return
-	}
-	newMasters, err := mc.masterSrv.LookUp()
-	stats.MasterClientConnectCounter.WithLabelValues("total").Inc()
-	if err != nil {
-		stats.MasterClientConnectCounter.WithLabelValues(stats.ErrorLookupFailed).Inc()
-		glog.V(0).Infof("%s.%s masterClient failed to lookup SRV for %s: %v", mc.FilerGroup, mc.clientType, mc.masterSrv, err)
-	}
-	if newMasters == nil || len(newMasters) == 0 {
-		glog.V(0).Infof("%s.%s masterClient looked up SRV for %s, but found no well-formed names", mc.FilerGroup, mc.clientType, mc.masterSrv)
-		return
-	}
-	mc.masters = newMasters
-}
-
 func (mc *MasterClient) tryAllMasters() {
 	var nextHintedLeader pb.ServerAddress
-	mc.refreshMastersBySrvIfAvailable()
-	for _, master := range mc.masters {
+	mc.masters.RefreshBySrvIfAvailable()
+	for _, master := range mc.masters.GetInstances() {
 		nextHintedLeader = mc.tryConnectToMaster(master)
 		for nextHintedLeader != "" {
 			nextHintedLeader = mc.tryConnectToMaster(nextHintedLeader)

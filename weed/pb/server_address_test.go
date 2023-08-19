@@ -8,29 +8,29 @@ import (
 func TestServerAddresses_ToAddressMapOrSrv_shouldRemovePrefix(t *testing.T) {
 	str := ServerAddresses("dnssrv+hello.srv.consul")
 
-	_, srv := str.ToAddressMapOrSrv()
+	d := str.ToServiceDiscovery()
 
 	expected := ServerSrvAddress("hello.srv.consul")
-	if *srv != expected {
-		t.Fatalf(`ServerAddresses("dnssrv+hello.srv.consul") = %s, expected %s`, *srv, expected)
+	if *d.srvRecord != expected {
+		t.Fatalf(`ServerAddresses("dnssrv+hello.srv.consul") = %s, expected %s`, *d.srvRecord, expected)
 	}
 }
 
 func TestServerAddresses_ToAddressMapOrSrv_shouldHandleIPPortList(t *testing.T) {
 	str := ServerAddresses("10.0.0.1:23,10.0.0.2:24")
 
-	m, srv := str.ToAddressMapOrSrv()
+	d := str.ToServiceDiscovery()
 
-	if srv != nil {
-		t.Fatalf(`ServerAddresses("dnssrv+hello.srv.consul") = %s, expected nil`, *srv)
+	if d.srvRecord != nil {
+		t.Fatalf(`ServerAddresses("dnssrv+hello.srv.consul") = %s, expected nil`, *d.srvRecord)
 	}
 
-	expected := map[string]ServerAddress{
-		"10.0.0.1:23": ServerAddress("10.0.0.1:23"),
-		"10.0.0.2:24": ServerAddress("10.0.0.2:24"),
+	expected := []ServerAddress{
+		ServerAddress("10.0.0.1:23"),
+		ServerAddress("10.0.0.2:24"),
 	}
 
-	if !reflect.DeepEqual(m, expected) {
-		t.Fatalf(`Expected %q, got %q`, expected, m)
+	if !reflect.DeepEqual(d.list, expected) {
+		t.Fatalf(`Expected %q, got %q`, expected, d.list)
 	}
 }

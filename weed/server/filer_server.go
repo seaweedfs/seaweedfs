@@ -50,8 +50,7 @@ import (
 )
 
 type FilerOption struct {
-	Masters               map[string]pb.ServerAddress
-	MasterSrv             pb.ServerSrvAddress
+	Masters               *pb.ServerDiscovery
 	FilerGroup            string
 	Collection            string
 	DefaultReplication    string
@@ -116,11 +115,12 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	}
 	fs.listenersCond = sync.NewCond(&fs.listenersLock)
 
-	if len(option.Masters) == 0 {
+	option.Masters.RefreshBySrvIfAvailable()
+	if len(option.Masters.GetInstances()) == 0 {
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer.NewFiler(option.Masters, &option.MasterSrv, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, func() {
+	fs.filer = filer.NewFiler(*option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, func() {
 		fs.listenersCond.Broadcast()
 	})
 	fs.filer.Cipher = option.Cipher
@@ -191,7 +191,8 @@ func (fs *FilerServer) checkWithMaster() {
 
 	isConnected := false
 	for !isConnected {
-		for _, master := range fs.option.Masters {
+		fs.option.Masters.RefreshBySrvIfAvailable()
+		for _, master := range fs.option.Masters.GetInstances() {
 			readErr := operation.WithMasterServerClient(false, master, fs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 				if err != nil {

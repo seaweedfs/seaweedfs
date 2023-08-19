@@ -52,10 +52,9 @@ type Filer struct {
 	Dlm                 *lock_manager.DistributedLockManager
 }
 
-func NewFiler(masters map[string]pb.ServerAddress, masterSrv *pb.ServerSrvAddress, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress,
-	filerGroup string, collection string, replication string, dataCenter string, notifyFn func()) *Filer {
+func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, notifyFn func()) *Filer {
 	f := &Filer{
-		MasterClient:        wdclient.NewMasterClient(grpcDialOption, filerGroup, cluster.FilerType, filerHost, dataCenter, "", masters, masterSrv),
+		MasterClient:        wdclient.NewMasterClient(grpcDialOption, filerGroup, cluster.FilerType, filerHost, dataCenter, "", masters),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
 		GrpcDialOption:      grpcDialOption,
 		FilerConf:           NewFilerConf(),
