@@ -11,6 +11,14 @@ type ServerDiscovery struct {
 	srvRecord *ServerSrvAddress
 }
 
+func NewServiceDiscoveryFromMap(m map[string]ServerAddress) (sd *ServerDiscovery) {
+	sd = &ServerDiscovery{}
+	for _, s := range m {
+		sd.list = append(sd.list, s)
+	}
+	return sd
+}
+
 // RefreshBySrvIfAvailable performs a DNS SRV lookup and updates list with the results
 // of the lookup
 func (sd *ServerDiscovery) RefreshBySrvIfAvailable() {
@@ -33,6 +41,19 @@ func (sd *ServerDiscovery) RefreshBySrvIfAvailable() {
 func (sd *ServerDiscovery) GetInstances() (addresses []ServerAddress) {
 	for _, a := range sd.list {
 		addresses = append(addresses, a)
+	}
+	return addresses
+}
+func (sd *ServerDiscovery) GetInstancesAsStrings() (addresses []string) {
+	for _, i := range sd.list {
+		addresses = append(addresses, string(i))
+	}
+	return addresses
+}
+func (sd *ServerDiscovery) GetInstancesAsMap() (addresses map[string]ServerAddress) {
+	addresses = make(map[string]ServerAddress)
+	for _, i := range sd.list {
+		addresses[string(i)] = i
 	}
 	return addresses
 }
