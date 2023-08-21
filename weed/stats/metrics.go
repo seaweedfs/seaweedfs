@@ -230,9 +230,9 @@ var (
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
 			Subsystem: "s3",
-			Name:      "time_to_first_byte_seconds",
+			Name:      "time_to_first_byte_millisecond",
 			Help:      "Bucketed histogram of s3 time to first byte request processing time.",
-			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 27),
 		}, []string{"type", "bucket"})
 
 )

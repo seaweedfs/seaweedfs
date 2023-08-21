@@ -46,5 +46,5 @@ func track(f http.HandlerFunc, action string) http.HandlerFunc {
 
 func TimeToFirstByte(action string, start time.Time, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	stats_collect.S3TimeToFirstByteHistogram.WithLabelValues(action, bucket).Observe(time.Since(start).Seconds())
+	stats_collect.S3TimeToFirstByteHistogram.WithLabelValues(action, bucket).Observe(float64(time.Since(start).Milliseconds()))
 }
