@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -27,20 +28,22 @@ type MessageQueueBrokerOption struct {
 
 type MessageQueueBroker struct {
 	mq_pb.UnimplementedSeaweedMessagingServer
-	option         *MessageQueueBrokerOption
-	grpcDialOption grpc.DialOption
-	MasterClient   *wdclient.MasterClient
-	filers         map[pb.ServerAddress]struct{}
-	currentFiler   pb.ServerAddress
+	option            *MessageQueueBrokerOption
+	grpcDialOption    grpc.DialOption
+	MasterClient      *wdclient.MasterClient
+	filers            map[pb.ServerAddress]struct{}
+	currentFiler      pb.ServerAddress
+	localTopicManager *topic.LocalTopicManager
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
 
 	mqBroker = &MessageQueueBroker{
-		option:         option,
-		grpcDialOption: grpcDialOption,
-		MasterClient:   wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, pb.NewServerAddress(option.Ip, option.Port, 0), option.DataCenter, option.Rack, option.Masters),
-		filers:         make(map[pb.ServerAddress]struct{}),
+		option:            option,
+		grpcDialOption:    grpcDialOption,
+		MasterClient:      wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, pb.NewServerAddress(option.Ip, option.Port, 0), option.DataCenter, option.Rack, option.Masters),
+		filers:            make(map[pb.ServerAddress]struct{}),
+		localTopicManager: topic.NewLocalTopicManager(),
 	}
 	mqBroker.MasterClient.SetOnPeerUpdateFn(mqBroker.OnBrokerUpdate)
 
