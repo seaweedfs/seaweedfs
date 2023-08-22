@@ -139,8 +139,8 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	var doErr error
 	var nextMarker string
 	cursor := &ListingCursor{
-		maxKeys:               maxKeys,
-		prefixEndsOnDelimiter: strings.HasSuffix(originalPrefix, "/") && len(originalMarker) == 0,
+		maxKeys: maxKeys,
+		//prefixEndsOnDelimiter: strings.HasSuffix(originalPrefix, "/") && len(originalMarker) == 0,
 	}
 
 	// check filer
@@ -236,6 +236,7 @@ type ListingCursor struct {
 func normalizePrefixMarker(prefix, marker string) (alignedDir, alignedPrefix, alignedMarker string) {
 	// alignedDir should not end with "/"
 	// alignedDir, alignedPrefix, alignedMarker should only have "/" in middle
+	isDirSuffix := strings.HasSuffix(prefix, "/")
 	if len(marker) == 0 {
 		prefix = strings.Trim(prefix, "/")
 	} else {
@@ -246,7 +247,12 @@ func normalizePrefixMarker(prefix, marker string) (alignedDir, alignedPrefix, al
 		return "", "", marker
 	}
 	if marker == "" {
-		alignedDir, alignedPrefix = toDirAndName(prefix)
+		if isDirSuffix {
+			alignedDir = prefix
+			alignedPrefix = ""
+		} else {
+			alignedDir, alignedPrefix = toDirAndName(prefix)
+		}
 		return
 	}
 	if !strings.HasPrefix(marker, prefix) {
