@@ -26,6 +26,7 @@ type SeaweedClient interface {
 	KeepConnected(ctx context.Context, opts ...grpc.CallOption) (Seaweed_KeepConnectedClient, error)
 	LookupVolume(ctx context.Context, in *LookupVolumeRequest, opts ...grpc.CallOption) (*LookupVolumeResponse, error)
 	Assign(ctx context.Context, in *AssignRequest, opts ...grpc.CallOption) (*AssignResponse, error)
+	StreamAssign(ctx context.Context, opts ...grpc.CallOption) (Seaweed_StreamAssignClient, error)
 	Statistics(ctx context.Context, in *StatisticsRequest, opts ...grpc.CallOption) (*StatisticsResponse, error)
 	CollectionList(ctx context.Context, in *CollectionListRequest, opts ...grpc.CallOption) (*CollectionListResponse, error)
 	CollectionDelete(ctx context.Context, in *CollectionDeleteRequest, opts ...grpc.CallOption) (*CollectionDeleteResponse, error)
@@ -131,6 +132,37 @@ func (c *seaweedClient) Assign(ctx context.Context, in *AssignRequest, opts ...g
 		return nil, err
 	}
 	return out, nil
+}
+
+func (c *seaweedClient) StreamAssign(ctx context.Context, opts ...grpc.CallOption) (Seaweed_StreamAssignClient, error) {
+	stream, err := c.cc.NewStream(ctx, &Seaweed_ServiceDesc.Streams[2], "/master_pb.Seaweed/StreamAssign", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &seaweedStreamAssignClient{stream}
+	return x, nil
+}
+
+type Seaweed_StreamAssignClient interface {
+	Send(*AssignRequest) error
+	Recv() (*AssignResponse, error)
+	grpc.ClientStream
+}
+
+type seaweedStreamAssignClient struct {
+	grpc.ClientStream
+}
+
+func (x *seaweedStreamAssignClient) Send(m *AssignRequest) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *seaweedStreamAssignClient) Recv() (*AssignResponse, error) {
+	m := new(AssignResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func (c *seaweedClient) Statistics(ctx context.Context, in *StatisticsRequest, opts ...grpc.CallOption) (*StatisticsResponse, error) {
@@ -294,6 +326,7 @@ type SeaweedServer interface {
 	KeepConnected(Seaweed_KeepConnectedServer) error
 	LookupVolume(context.Context, *LookupVolumeRequest) (*LookupVolumeResponse, error)
 	Assign(context.Context, *AssignRequest) (*AssignResponse, error)
+	StreamAssign(Seaweed_StreamAssignServer) error
 	Statistics(context.Context, *StatisticsRequest) (*StatisticsResponse, error)
 	CollectionList(context.Context, *CollectionListRequest) (*CollectionListResponse, error)
 	CollectionDelete(context.Context, *CollectionDeleteRequest) (*CollectionDeleteResponse, error)
@@ -329,6 +362,9 @@ func (UnimplementedSeaweedServer) LookupVolume(context.Context, *LookupVolumeReq
 }
 func (UnimplementedSeaweedServer) Assign(context.Context, *AssignRequest) (*AssignResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Assign not implemented")
+}
+func (UnimplementedSeaweedServer) StreamAssign(Seaweed_StreamAssignServer) error {
+	return status.Errorf(codes.Unimplemented, "method StreamAssign not implemented")
 }
 func (UnimplementedSeaweedServer) Statistics(context.Context, *StatisticsRequest) (*StatisticsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Statistics not implemented")
@@ -480,6 +516,32 @@ func _Seaweed_Assign_Handler(srv interface{}, ctx context.Context, dec func(inte
 		return srv.(SeaweedServer).Assign(ctx, req.(*AssignRequest))
 	}
 	return interceptor(ctx, in, info, handler)
+}
+
+func _Seaweed_StreamAssign_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(SeaweedServer).StreamAssign(&seaweedStreamAssignServer{stream})
+}
+
+type Seaweed_StreamAssignServer interface {
+	Send(*AssignResponse) error
+	Recv() (*AssignRequest, error)
+	grpc.ServerStream
+}
+
+type seaweedStreamAssignServer struct {
+	grpc.ServerStream
+}
+
+func (x *seaweedStreamAssignServer) Send(m *AssignResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *seaweedStreamAssignServer) Recv() (*AssignRequest, error) {
+	m := new(AssignRequest)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func _Seaweed_Statistics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -882,6 +944,12 @@ var Seaweed_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "KeepConnected",
 			Handler:       _Seaweed_KeepConnected_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "StreamAssign",
+			Handler:       _Seaweed_StreamAssign_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},
