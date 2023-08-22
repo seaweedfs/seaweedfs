@@ -2,7 +2,6 @@ package erasure_coding
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"os"
 	"path"
 	"strconv"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 type ShardId uint8
@@ -39,6 +39,7 @@ func NewEcVolumeShard(diskType types.DiskType, dirname string, collection string
 	}
 	ecdFi, statErr := v.ecdFile.Stat()
 	if statErr != nil {
+		_ = v.ecdFile.Close()
 		return nil, fmt.Errorf("can not stat ec volume shard %s%s: %v", baseFileName, ToExt(int(shardId)), statErr)
 	}
 	v.ecdFileSize = ecdFi.Size()

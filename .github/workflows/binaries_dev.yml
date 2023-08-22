@@ -44,7 +44,7 @@ jobs:
         run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> ${GITHUB_ENV}
 
       - name: Go Release Binaries Large Disk
-        uses: wangyoucao577/go-release-action@0aa3e4818bacdeab4f9a97f768d3a54734a5852e # v1.22
+        uses: wangyoucao577/go-release-action@2ac3035fa4c4feed6a8272ce278b0577b93cf8e5 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
@@ -60,7 +60,7 @@ jobs:
           asset_name: "weed-large-disk-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
 
       - name: Go Release Binaries Normal Volume Size
-        uses: wangyoucao577/go-release-action@0aa3e4818bacdeab4f9a97f768d3a54734a5852e # v1.22
+        uses: wangyoucao577/go-release-action@2ac3035fa4c4feed6a8272ce278b0577b93cf8e5 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
@@ -93,7 +93,7 @@ jobs:
         run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> ${GITHUB_ENV}
 
       - name: Go Release Binaries Large Disk
-        uses: wangyoucao577/go-release-action@0aa3e4818bacdeab4f9a97f768d3a54734a5852e # v1.22
+        uses: wangyoucao577/go-release-action@2ac3035fa4c4feed6a8272ce278b0577b93cf8e5 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
@@ -109,7 +109,7 @@ jobs:
           asset_name: "weed-large-disk-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
 
       - name: Go Release Binaries Normal Volume Size
-        uses: wangyoucao577/go-release-action@0aa3e4818bacdeab4f9a97f768d3a54734a5852e # v1.22
+        uses: wangyoucao577/go-release-action@2ac3035fa4c4feed6a8272ce278b0577b93cf8e5 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}

@@ -10,7 +10,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/x/bsonx"
 	"time"
 )
 
@@ -72,7 +71,7 @@ func (store *MongodbStore) indexUnique(c *mongo.Collection) error {
 	*unique = true
 
 	index := mongo.IndexModel{
-		Keys: bsonx.Doc{{Key: "directory", Value: bsonx.Int32(1)}, {Key: "name", Value: bsonx.Int32(1)}},
+		Keys: bson.D{{Key: "directory", Value: int32(1)}, {Key: "name", Value: int32(1)}},
 		Options: &options.IndexOptions{
 			Unique: unique,
 		},

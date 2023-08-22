@@ -236,7 +236,7 @@ spec:
       nodeSelector:
         {{ tpl .Values.master.nodeSelector . | indent 8 | trim }}
       {{- end }}
-  {{- $pvc_exists := include "volume.pvc_exists" . -}}
+  {{- $pvc_exists := include "master.pvc_exists" . -}}
   {{- if $pvc_exists }}
   volumeClaimTemplates:
     {{- if eq .Values.master.data.type "persistentVolumeClaim"}}

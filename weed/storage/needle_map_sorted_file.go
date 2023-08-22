@@ -35,6 +35,7 @@ func NewSortedFileNeedleMap(indexBaseFileName string, indexFile *os.File) (m *So
 	glog.V(1).Infof("Loading %s...", indexFile.Name())
 	mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)
 	if indexLoadError != nil {
+		_ = m.dbFile.Close()
 		return nil, indexLoadError
 	}
 	m.mapMetric = *mm

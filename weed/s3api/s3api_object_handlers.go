@@ -355,6 +355,7 @@ func (s3a *S3ApiServer) doDeleteEmptyDirectories(client filer_pb.SeaweedFilerCli
 func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, destUrl string, isWrite bool, responseFn func(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int)) {
 
 	glog.V(3).Infof("s3 proxying %s to %s", r.Method, destUrl)
+	start := time.Now()
 
 	proxyReq, err := http.NewRequest(r.Method, destUrl, r.Body)
 
@@ -404,15 +405,20 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 			return
 		}
 	}
-
 	if resp.StatusCode == http.StatusNotFound {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 		return
 	}
 
+	TimeToFirstByte(r.Method, start, r)
 	if resp.Header.Get(s3_constants.X_SeaweedFS_Header_Directory_Key) == "true" {
 		responseStatusCode := responseFn(resp, w)
 		s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
+		return
+	}
+
+	if resp.StatusCode == http.StatusInternalServerError {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
 

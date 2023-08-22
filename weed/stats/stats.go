@@ -100,8 +100,6 @@ func (ss *ServerStats) Start() {
 			ss.ReadRequests.Add(tv)
 		case tv := <-Chan.WriteRequests:
 			ss.WriteRequests.Add(tv)
-		case tv := <-Chan.ReadRequests:
-			ss.ReadRequests.Add(tv)
 		case tv := <-Chan.DeleteRequests:
 			ss.DeleteRequests.Add(tv)
 		case tv := <-Chan.BytesIn:

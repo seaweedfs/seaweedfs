@@ -146,13 +146,15 @@ func runFuse(cmd *Command, args []string) bool {
 				panic(fmt.Errorf("concurrentWriters: %s", err))
 			}
 		case "cacheDir":
-			mountOptions.cacheDir = &parameter.value
+			mountOptions.cacheDirForRead = &parameter.value
 		case "cacheCapacityMB":
 			if parsed, err := strconv.ParseInt(parameter.value, 0, 64); err == nil {
-				mountOptions.cacheSizeMB = &parsed
+				mountOptions.cacheSizeMBForRead = &parsed
 			} else {
 				panic(fmt.Errorf("cacheCapacityMB: %s", err))
 			}
+		case "cacheDirWrite":
+			mountOptions.cacheDirForWrite = &parameter.value
 		case "dataCenter":
 			mountOptions.dataCenter = &parameter.value
 		case "allowOthers":

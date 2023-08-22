@@ -17,8 +17,9 @@ type MountOptions struct {
 	ttlSec             *int
 	chunkSizeLimitMB   *int
 	concurrentWriters  *int
-	cacheDir           *string
-	cacheSizeMB        *int64
+	cacheDirForRead    *string
+	cacheDirForWrite   *string
+	cacheSizeMBForRead *int64
 	dataCenter         *string
 	allowOthers        *bool
 	umaskString        *string
@@ -54,8 +55,9 @@ func init() {
 	mountOptions.ttlSec = cmdMount.Flag.Int("ttl", 0, "file ttl in seconds")
 	mountOptions.chunkSizeLimitMB = cmdMount.Flag.Int("chunkSizeLimitMB", 2, "local write buffer size, also chunk large files")
 	mountOptions.concurrentWriters = cmdMount.Flag.Int("concurrentWriters", 32, "limit concurrent goroutine writers")
-	mountOptions.cacheDir = cmdMount.Flag.String("cacheDir", os.TempDir(), "local cache directory for file chunks and meta data")
-	mountOptions.cacheSizeMB = cmdMount.Flag.Int64("cacheCapacityMB", 0, "file chunk read cache capacity in MB")
+	mountOptions.cacheDirForRead = cmdMount.Flag.String("cacheDir", os.TempDir(), "local cache directory for file chunks and meta data")
+	mountOptions.cacheSizeMBForRead = cmdMount.Flag.Int64("cacheCapacityMB", 0, "file chunk read cache capacity in MB")
+	mountOptions.cacheDirForWrite = cmdMount.Flag.String("cacheDirWrite", os.TempDir(), "buffer writes mostly for large files")
 	mountOptions.dataCenter = cmdMount.Flag.String("dataCenter", "", "prefer to write to the data center")
 	mountOptions.allowOthers = cmdMount.Flag.Bool("allowOthers", true, "allows other users to access the file system")
 	mountOptions.umaskString = cmdMount.Flag.String("umask", "022", "octal umask, e.g., 022, 0111")
