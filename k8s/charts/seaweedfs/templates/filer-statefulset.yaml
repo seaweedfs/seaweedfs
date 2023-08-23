@@ -42,10 +42,7 @@ spec:
       tolerations:
         {{ tpl .Values.filer.tolerations . | nindent 8 | trim }}
       {{- end }}
-      {{- if .Values.global.imagePullSecrets }}
-      imagePullSecrets:
-        - name: {{ .Values.global.imagePullSecrets }}
-      {{- end }}
+      {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
       {{- if .Values.global.createClusterRole }}
       serviceAccountName: seaweedfs-rw-sa #hack for delete pod master after migration
       {{- end }}
