@@ -52,7 +52,8 @@ metadata:
 spec:
   ingressClassName: {{ .Values.master.ingress.className | quote }}
   rules:
-  - http:
+  - host: {{ .Values.master.ingress.host }}
+    http:
       paths:
       - path: /sw-master/?(.*)
         pathType: ImplementationSpecific
