@@ -42,10 +42,7 @@ spec:
       tolerations:
         {{ tpl .Values.master.tolerations . | nindent 8 | trim }}
       {{- end }}
-      {{- if .Values.global.imagePullSecrets }}
-      imagePullSecrets:
-        - name: {{ .Values.global.imagePullSecrets }}
-      {{- end }}
+      {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
       terminationGracePeriodSeconds: 60
       {{- if .Values.master.priorityClassName }}
       priorityClassName: {{ .Values.master.priorityClassName | quote }}

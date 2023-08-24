@@ -94,6 +94,9 @@ type FilerServer struct {
 	// track known metadata listeners
 	knownListenersLock sync.Mutex
 	knownListeners     map[int32]int32
+
+	// client to assign file id
+	assignProxy *operation.AssignProxy
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
@@ -131,6 +134,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
 	go fs.filer.KeepMasterClientConnected()
+
+	fs.assignProxy, err = operation.NewAssignProxy(fs.filer.GetMaster, fs.grpcDialOption, 16)
 
 	if !util.LoadConfiguration("filer", false) {
 		v.SetDefault("leveldb2.enabled", true)
@@ -184,7 +189,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	fs.filer.Dlm.LockRing.SetTakeSnapshotCallback(fs.OnDlmChangeSnapshot)
 
-	return fs, nil
+	return fs, err
 }
 
 func (fs *FilerServer) checkWithMaster() {

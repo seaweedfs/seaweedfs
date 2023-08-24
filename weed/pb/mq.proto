@@ -20,6 +20,17 @@ service SeaweedMessaging {
     rpc CheckBrokerLoad (CheckBrokerLoadRequest) returns (CheckBrokerLoadResponse) {
     }
 
+    // control plane for topic partitions
+    rpc FindTopicBrokers (FindTopicBrokersRequest) returns (FindTopicBrokersResponse) {
+    }
+    // a pub client will call this to get the topic partitions assignment
+    rpc RequestTopicPartitions (RequestTopicPartitionsRequest) returns (RequestTopicPartitionsResponse) {
+    }
+    rpc AssignTopicPartitions (AssignTopicPartitionsRequest) returns (AssignTopicPartitionsResponse) {
+    }
+    rpc CheckTopicPartitionsStatus (CheckTopicPartitionsStatusRequest) returns (CheckTopicPartitionsStatusResponse) {
+    }
+
     // data plane
     rpc Publish (stream PublishRequest) returns (stream PublishResponse) {
     }
@@ -45,6 +56,10 @@ message FindBrokerLeaderResponse {
     string broker = 1;
 }
 
+message Topic {
+    string namespace = 1;
+    string name = 2;
+}
 message Partition {
     int32 ring_size = 1;
     int32 range_start = 2;
@@ -83,15 +98,68 @@ message CheckBrokerLoadResponse {
 
 }
 
+message FindTopicBrokersRequest {
+    Topic topic = 1;
+    bool is_for_publish = 2;
+}
+message FindTopicBrokersResponse {
+    Topic topic = 1;
+    TopicPartitionsAssignment topic_partitions_assignment = 2;
+}
+message BrokerPartitionsAssignment {
+    int32 partition_start = 1;
+    int32 partition_stop = 2;
+    string leader_broker = 3;
+    repeated string follower_brokers = 4;
+}
+message TopicPartitionsAssignment {
+    int32 partition_count = 1; // over-sharded partitions, usually 1024
+    repeated BrokerPartitionsAssignment broker_partitions = 2;
+}
+
+message RequestTopicPartitionsRequest {
+    Topic topic = 1;
+    int32 partition_count = 2;
+}
+message RequestTopicPartitionsResponse {
+    TopicPartitionsAssignment topic_partitions_assignment = 1;
+}
+
+message AssignTopicPartitionsRequest {
+    Topic topic = 1;
+    TopicPartitionsAssignment topic_partitions_assignment = 2;
+    bool is_leader = 3;
+}
+message AssignTopicPartitionsResponse {
+}
+
+message CheckTopicPartitionsStatusRequest {
+    string namespace = 1;
+    string topic = 2;
+    BrokerPartitionsAssignment broker_partitions_assignment = 3;
+    bool should_cancel_if_not_match = 4;
+}
+message CheckTopicPartitionsStatusResponse {
+    TopicPartitionsAssignment topic_partitions_assignment = 1;
+}
+
 //////////////////////////////////////////////////
 message PublishRequest {
     message InitMessage {
         Segment segment = 1;
     }
-    InitMessage init = 1;
-    bytes message = 2;
+    message DataMessage {
+        bytes key = 1;
+        bytes value = 2;
+    }
+    oneof message {
+        InitMessage init = 1;
+        DataMessage data = 2;
+    }
+    int64 sequence = 3;
 }
 message PublishResponse {
     int64 ack_sequence = 1;
-    bool is_closed = 2;
+    string error = 2;
+    bool is_closed = 3;
 }

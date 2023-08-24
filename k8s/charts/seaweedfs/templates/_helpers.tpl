@@ -183,3 +183,18 @@ Inject extra environment vars in the format key:value, if populated
 {{- printf "false" -}}
 {{- end -}}
 {{- end -}}
+
+{{/* Return the proper imagePullSecrets */}}
+{{- define "seaweedfs.imagePullSecrets" -}}
+{{- if .Values.global.imagePullSecrets }}
+{{- if kindIs "string" .Values.global.imagePullSecrets }}
+imagePullSecrets:
+  - name: {{ .Values.global.imagePullSecrets }}
+{{- else }}
+imagePullSecrets:
+{{- range .Values.global.imagePullSecrets }}
+  - name: {{ . }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end -}}

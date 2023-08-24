@@ -17,6 +17,7 @@ func TestMessageSerde(t *testing.T) {
 	bb := NewMessageBatchBuilder(b, 1, 2, 3, 4)
 
 	bb.AddMessage(5, 6, prop, []byte("the primary key"), []byte("body is here"))
+	bb.AddMessage(5, 7, prop, []byte("the primary 2"), []byte("body is 2"))
 
 	bb.BuildMessageBatch()
 
@@ -33,9 +34,9 @@ func TestMessageSerde(t *testing.T) {
 	assert.Equal(t, int64(5), mb.SegmentSeqBase())
 	assert.Equal(t, int32(0), mb.SegmentSeqMaxDelta())
 	assert.Equal(t, int64(6), mb.TsMsBase())
-	assert.Equal(t, int32(0), mb.TsMsMaxDelta())
+	assert.Equal(t, int32(1), mb.TsMsMaxDelta())
 
-	assert.Equal(t, 1, mb.MessagesLength())
+	assert.Equal(t, 2, mb.MessagesLength())
 
 	m := &message_fbs.Message{}
 	mb.Messages(m, 0)
