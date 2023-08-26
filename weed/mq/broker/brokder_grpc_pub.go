@@ -93,12 +93,12 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 			}
 		} else if initMessage := req.GetInit(); initMessage != nil {
 			localTopicPartition = broker.localTopicManager.GetTopicPartition(
-				topic.NewTopic(topic.Namespace(initMessage.Segment.Namespace), initMessage.Segment.Topic),
-				topic.FromPbPartition(initMessage.Segment.Partition),
+				topic.FromPbTopic(initMessage.Topic),
+				topic.FromPbPartition(initMessage.Partition),
 			)
 			if localTopicPartition == nil {
-				response.Error = fmt.Sprintf("topic partition %v not found", initMessage.Segment)
-				glog.Errorf("topic partition %v not found", initMessage.Segment)
+				response.Error = fmt.Sprintf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)
+				glog.Errorf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)
 			}
 		}
 		if err := stream.Send(response); err != nil {

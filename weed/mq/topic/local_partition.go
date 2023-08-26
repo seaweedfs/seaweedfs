@@ -14,7 +14,7 @@ type LocalPartition struct {
 	logBuffer       *log_buffer.LogBuffer
 }
 
-func (p LocalPartition) Publish(message *mq_pb.PublishRequest_DataMessage) {
+func (p LocalPartition) Publish(message *mq_pb.DataMessage) {
 	p.logBuffer.AddToBuffer(message.Key, message.Value, time.Now().UnixNano())
 }
 

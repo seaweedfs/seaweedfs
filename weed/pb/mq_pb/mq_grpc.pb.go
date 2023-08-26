@@ -35,6 +35,7 @@ type SeaweedMessagingClient interface {
 	CheckTopicPartitionsStatus(ctx context.Context, in *CheckTopicPartitionsStatusRequest, opts ...grpc.CallOption) (*CheckTopicPartitionsStatusResponse, error)
 	// data plane
 	Publish(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublishClient, error)
+	Subscribe(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_SubscribeClient, error)
 }
 
 type seaweedMessagingClient struct {
@@ -148,6 +149,37 @@ func (x *seaweedMessagingPublishClient) Recv() (*PublishResponse, error) {
 	return m, nil
 }
 
+func (c *seaweedMessagingClient) Subscribe(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_SubscribeClient, error) {
+	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[1], "/messaging_pb.SeaweedMessaging/Subscribe", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &seaweedMessagingSubscribeClient{stream}
+	return x, nil
+}
+
+type SeaweedMessaging_SubscribeClient interface {
+	Send(*SubscribeRequest) error
+	Recv() (*SubscribeResponse, error)
+	grpc.ClientStream
+}
+
+type seaweedMessagingSubscribeClient struct {
+	grpc.ClientStream
+}
+
+func (x *seaweedMessagingSubscribeClient) Send(m *SubscribeRequest) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *seaweedMessagingSubscribeClient) Recv() (*SubscribeResponse, error) {
+	m := new(SubscribeResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // SeaweedMessagingServer is the server API for SeaweedMessaging service.
 // All implementations must embed UnimplementedSeaweedMessagingServer
 // for forward compatibility
@@ -165,6 +197,7 @@ type SeaweedMessagingServer interface {
 	CheckTopicPartitionsStatus(context.Context, *CheckTopicPartitionsStatusRequest) (*CheckTopicPartitionsStatusResponse, error)
 	// data plane
 	Publish(SeaweedMessaging_PublishServer) error
+	Subscribe(SeaweedMessaging_SubscribeServer) error
 	mustEmbedUnimplementedSeaweedMessagingServer()
 }
 
@@ -198,6 +231,9 @@ func (UnimplementedSeaweedMessagingServer) CheckTopicPartitionsStatus(context.Co
 }
 func (UnimplementedSeaweedMessagingServer) Publish(SeaweedMessaging_PublishServer) error {
 	return status.Errorf(codes.Unimplemented, "method Publish not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) Subscribe(SeaweedMessaging_SubscribeServer) error {
+	return status.Errorf(codes.Unimplemented, "method Subscribe not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) mustEmbedUnimplementedSeaweedMessagingServer() {}
 
@@ -382,6 +418,32 @@ func (x *seaweedMessagingPublishServer) Recv() (*PublishRequest, error) {
 	return m, nil
 }
 
+func _SeaweedMessaging_Subscribe_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(SeaweedMessagingServer).Subscribe(&seaweedMessagingSubscribeServer{stream})
+}
+
+type SeaweedMessaging_SubscribeServer interface {
+	Send(*SubscribeResponse) error
+	Recv() (*SubscribeRequest, error)
+	grpc.ServerStream
+}
+
+type seaweedMessagingSubscribeServer struct {
+	grpc.ServerStream
+}
+
+func (x *seaweedMessagingSubscribeServer) Send(m *SubscribeResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *seaweedMessagingSubscribeServer) Recv() (*SubscribeRequest, error) {
+	m := new(SubscribeRequest)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // SeaweedMessaging_ServiceDesc is the grpc.ServiceDesc for SeaweedMessaging service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -426,6 +488,12 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "Publish",
 			Handler:       _SeaweedMessaging_Publish_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "Subscribe",
+			Handler:       _SeaweedMessaging_Subscribe_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},
