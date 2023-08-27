@@ -127,6 +127,7 @@ master:
   ingress:
     enabled: false
     className: "nginx"
+    # host: false for "*" hostname
     host: "master.seaweedfs.local"
     annotations:
       nginx.ingress.kubernetes.io/auth-type: "basic"
@@ -375,6 +376,7 @@ filer:
   ingress:
     enabled: false
     className: "nginx"
+    # host: false for "*" hostname
     host: "seaweedfs.cluster.local"
     annotations:
       nginx.ingress.kubernetes.io/backend-protocol: GRPC
