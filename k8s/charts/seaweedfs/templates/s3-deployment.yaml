@@ -107,8 +107,10 @@ spec:
               {{- end }}
               -filer={{ template "seaweedfs.name" . }}-filer-client.{{ .Release.Namespace }}:{{ .Values.filer.port }}
           volumeMounts:
+            {{- if eq .Values.s3.logs.type "hostPath" }}
             - name: logs
               mountPath: "/logs/"
+            {{- end }}
             - mountPath: /etc/sw
               name: config-users
               readOnly: true

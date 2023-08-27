@@ -17,8 +17,7 @@ spec:
   tls:
     {{ .Values.filer.ingress.tls | default list | toYaml | nindent 6}}
   rules:
-  - host: {{ .Values.filer.ingress.host }}
-    http:
+  - http:
       paths:
       - path: /sw-filer/?(.*)
         pathType: ImplementationSpecific
@@ -32,6 +31,9 @@ spec:
 {{- else }}
           serviceName: {{ template "seaweedfs.name" . }}-filer
           servicePort: {{ .Values.filer.port }}
+{{- end }}
+{{- if .Values.filer.ingress.host }}
+    host: {{ .Values.filer.ingress.host }}
 {{- end }}
 {{- end }}
 ---
@@ -52,8 +54,7 @@ metadata:
 spec:
   ingressClassName: {{ .Values.master.ingress.className | quote }}
   rules:
-  - host: {{ .Values.master.ingress.host }}
-    http:
+  - http:
       paths:
       - path: /sw-master/?(.*)
         pathType: ImplementationSpecific
@@ -67,5 +68,8 @@ spec:
 {{- else }}
           serviceName: {{ template "seaweedfs.name" . }}-master
           servicePort: {{ .Values.master.port }}
+{{- end }}
+{{- if .Values.filer.ingress.host }}
+    host: {{ .Values.master.ingress.host }}
 {{- end }}
 {{- end }}
