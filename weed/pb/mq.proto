@@ -34,7 +34,7 @@ service SeaweedMessaging {
     // data plane
     rpc Publish (stream PublishRequest) returns (stream PublishResponse) {
     }
-    rpc Subscribe (stream SubscribeRequest) returns (stream SubscribeResponse) {
+    rpc Subscribe (SubscribeRequest) returns (stream SubscribeResponse) {
     }
 }
 
@@ -171,11 +171,8 @@ message SubscribeRequest {
         Topic topic = 1;
         Partition partition = 2;
     }
-    oneof message {
-        InitMessage init = 1;
-        DataMessage data = 2;
-    }
-    int64 sequence = 3;
+    InitMessage init = 1;
+    int64 sequence = 2;
 }
 message SubscribeResponse {
     message CtrlMessage {
