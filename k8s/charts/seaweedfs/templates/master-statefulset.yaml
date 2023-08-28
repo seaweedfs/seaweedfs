@@ -48,6 +48,9 @@ spec:
       priorityClassName: {{ .Values.master.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
+      {{- if .Values.master.serviceAccountName }}
+      serviceAccountName: {{ .Values.master.serviceAccountName | quote }}
+      {{- end }}
       {{- if .Values.master.initContainers }}
       initContainers:
         {{ tpl .Values.master.initContainers . | nindent 8 | trim }}

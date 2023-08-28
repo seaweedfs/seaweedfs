@@ -42,6 +42,9 @@ spec:
       priorityClassName: {{ .Values.volume.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
+      {{- if .Values.volume.serviceAccountName }}
+      serviceAccountName: {{ .Values.volume.serviceAccountName | quote }}
+      {{- end }}
       {{- $initContainers_exists := include "volume.initContainers_exists" . -}}
       {{- if $initContainers_exists }}
       initContainers:
