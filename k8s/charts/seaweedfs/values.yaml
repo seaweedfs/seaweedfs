@@ -265,7 +265,6 @@ volume:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
-
 filer:
   enabled: true
   repository: null
