@@ -142,6 +142,10 @@ spec:
             - name: seaweedfs-master-log-volume
               mountPath: "/logs/"
             {{- end }}
+            - name: master-config
+              readOnly: true
+              mountPath: /etc/seaweedfs/master.toml
+              subPath: master.toml
             {{- if .Values.global.enableSecurity }}
             - name: security-config
               readOnly: true
@@ -212,6 +216,9 @@ spec:
             path: {{ .Values.master.data.hostPathPrefix }}/seaweed-master/
             type: DirectoryOrCreate
         {{- end }}
+        - name: master-config
+          configMap:
+            name: {{ template "seaweedfs.name" . }}-master-config
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:
