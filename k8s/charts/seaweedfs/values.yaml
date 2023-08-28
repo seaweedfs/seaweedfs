@@ -124,6 +124,10 @@ master:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+  # used to assign a service account.
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
+  serviceAccountName: ""
+
   ingress:
     enabled: false
     className: "nginx"
@@ -265,6 +269,10 @@ volume:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+  # used to assign a service account.
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
+  serviceAccountName: ""
+
 filer:
   enabled: true
   repository: null
@@ -371,6 +379,10 @@ filer:
   # used to assign priority to server pods
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
+
+  # used to assign a service account.
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
+  serviceAccountName: ""
 
   ingress:
     enabled: false
@@ -491,6 +503,10 @@ s3:
   # used to assign priority to server pods
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
+
+  # used to assign a service account.
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
+  serviceAccountName: ""
 
   logs:
     type: "hostPath"
