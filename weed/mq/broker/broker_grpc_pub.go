@@ -120,8 +120,8 @@ func (broker *MessageQueueBroker) AssignTopicPartitions(c context.Context, reque
 	ret := &mq_pb.AssignTopicPartitionsResponse{}
 	self := pb.ServerAddress(fmt.Sprintf("%s:%d", broker.option.Ip, broker.option.Port))
 
-	for _, partition := range request.TopicPartitionsAssignment.BrokerPartitions {
-		localPartiton := topic.FromPbBrokerPartitionsAssignment(self, partition)
+	for _, brokerPartition := range request.BrokerPartitionAssignments {
+		localPartiton := topic.FromPbBrokerPartitionAssignment(self, brokerPartition)
 		broker.localTopicManager.AddTopicPartition(
 			topic.FromPbTopic(request.Topic),
 			localPartiton)

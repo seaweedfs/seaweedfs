@@ -27,15 +27,11 @@ func (p LocalPartition) Subscribe(clientName string, startReadTime time.Time, ea
 	}, eachMessageFn)
 }
 
-func FromPbBrokerPartitionsAssignment(self pb.ServerAddress, assignment *mq_pb.BrokerPartitionsAssignment) *LocalPartition {
+func FromPbBrokerPartitionAssignment(self pb.ServerAddress, assignment *mq_pb.BrokerPartitionAssignment) *LocalPartition {
 	isLeaer := assignment.LeaderBroker == string(self)
 	localPartition := &LocalPartition{
-		Partition: Partition{
-			RangeStart: assignment.PartitionStart,
-			RangeStop:  assignment.PartitionStop,
-			RingSize:   PartitionCount,
-		},
-		isLeader: isLeaer,
+		Partition: FromPbPartition(assignment.Partition),
+		isLeader:  isLeaer,
 	}
 	if !isLeaer {
 		return localPartition

@@ -21,7 +21,7 @@ service SeaweedMessaging {
     }
 
     // control plane for topic partitions
-    rpc FindTopicBrokers (FindTopicBrokersRequest) returns (FindTopicBrokersResponse) {
+    rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
     }
     // a pub client will call this to get the topic partitions assignment
     rpc RequestTopicPartitions (RequestTopicPartitionsRequest) returns (RequestTopicPartitionsResponse) {
@@ -100,23 +100,18 @@ message CheckBrokerLoadResponse {
 
 }
 
-message FindTopicBrokersRequest {
+message LookupTopicBrokersRequest {
     Topic topic = 1;
     bool is_for_publish = 2;
 }
-message FindTopicBrokersResponse {
+message LookupTopicBrokersResponse {
     Topic topic = 1;
-    TopicPartitionsAssignment topic_partitions_assignment = 2;
+    repeated BrokerPartitionAssignment broker_partition_assignments = 2;
 }
-message BrokerPartitionsAssignment {
-    int32 partition_start = 1;
-    int32 partition_stop = 2;
-    string leader_broker = 3;
-    repeated string follower_brokers = 4;
-}
-message TopicPartitionsAssignment {
-    int32 partition_count = 1; // over-sharded partitions, usually 1024
-    repeated BrokerPartitionsAssignment broker_partitions = 2;
+message BrokerPartitionAssignment {
+    Partition partition = 1;
+    string leader_broker = 2;
+    repeated string follower_brokers = 3;
 }
 
 message RequestTopicPartitionsRequest {
@@ -124,12 +119,12 @@ message RequestTopicPartitionsRequest {
     int32 partition_count = 2;
 }
 message RequestTopicPartitionsResponse {
-    TopicPartitionsAssignment topic_partitions_assignment = 1;
+    repeated BrokerPartitionAssignment broker_partition_assignments = 1;
 }
 
 message AssignTopicPartitionsRequest {
     Topic topic = 1;
-    TopicPartitionsAssignment topic_partitions_assignment = 2;
+    repeated BrokerPartitionAssignment broker_partition_assignments = 2;
     bool is_leader = 3;
 }
 message AssignTopicPartitionsResponse {
@@ -138,11 +133,11 @@ message AssignTopicPartitionsResponse {
 message CheckTopicPartitionsStatusRequest {
     string namespace = 1;
     string topic = 2;
-    BrokerPartitionsAssignment broker_partitions_assignment = 3;
+    BrokerPartitionAssignment broker_partition_assignment = 3;
     bool should_cancel_if_not_match = 4;
 }
 message CheckTopicPartitionsStatusResponse {
-    TopicPartitionsAssignment topic_partitions_assignment = 1;
+    repeated BrokerPartitionAssignment broker_partition_assignments = 1;
 }
 
 //////////////////////////////////////////////////

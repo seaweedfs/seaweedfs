@@ -28,7 +28,7 @@ type SeaweedMessagingClient interface {
 	CheckSegmentStatus(ctx context.Context, in *CheckSegmentStatusRequest, opts ...grpc.CallOption) (*CheckSegmentStatusResponse, error)
 	CheckBrokerLoad(ctx context.Context, in *CheckBrokerLoadRequest, opts ...grpc.CallOption) (*CheckBrokerLoadResponse, error)
 	// control plane for topic partitions
-	FindTopicBrokers(ctx context.Context, in *FindTopicBrokersRequest, opts ...grpc.CallOption) (*FindTopicBrokersResponse, error)
+	LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error)
 	// a pub client will call this to get the topic partitions assignment
 	RequestTopicPartitions(ctx context.Context, in *RequestTopicPartitionsRequest, opts ...grpc.CallOption) (*RequestTopicPartitionsResponse, error)
 	AssignTopicPartitions(ctx context.Context, in *AssignTopicPartitionsRequest, opts ...grpc.CallOption) (*AssignTopicPartitionsResponse, error)
@@ -82,9 +82,9 @@ func (c *seaweedMessagingClient) CheckBrokerLoad(ctx context.Context, in *CheckB
 	return out, nil
 }
 
-func (c *seaweedMessagingClient) FindTopicBrokers(ctx context.Context, in *FindTopicBrokersRequest, opts ...grpc.CallOption) (*FindTopicBrokersResponse, error) {
-	out := new(FindTopicBrokersResponse)
-	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/FindTopicBrokers", in, out, opts...)
+func (c *seaweedMessagingClient) LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error) {
+	out := new(LookupTopicBrokersResponse)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/LookupTopicBrokers", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +191,7 @@ type SeaweedMessagingServer interface {
 	CheckSegmentStatus(context.Context, *CheckSegmentStatusRequest) (*CheckSegmentStatusResponse, error)
 	CheckBrokerLoad(context.Context, *CheckBrokerLoadRequest) (*CheckBrokerLoadResponse, error)
 	// control plane for topic partitions
-	FindTopicBrokers(context.Context, *FindTopicBrokersRequest) (*FindTopicBrokersResponse, error)
+	LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error)
 	// a pub client will call this to get the topic partitions assignment
 	RequestTopicPartitions(context.Context, *RequestTopicPartitionsRequest) (*RequestTopicPartitionsResponse, error)
 	AssignTopicPartitions(context.Context, *AssignTopicPartitionsRequest) (*AssignTopicPartitionsResponse, error)
@@ -218,8 +218,8 @@ func (UnimplementedSeaweedMessagingServer) CheckSegmentStatus(context.Context, *
 func (UnimplementedSeaweedMessagingServer) CheckBrokerLoad(context.Context, *CheckBrokerLoadRequest) (*CheckBrokerLoadResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CheckBrokerLoad not implemented")
 }
-func (UnimplementedSeaweedMessagingServer) FindTopicBrokers(context.Context, *FindTopicBrokersRequest) (*FindTopicBrokersResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method FindTopicBrokers not implemented")
+func (UnimplementedSeaweedMessagingServer) LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LookupTopicBrokers not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) RequestTopicPartitions(context.Context, *RequestTopicPartitionsRequest) (*RequestTopicPartitionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RequestTopicPartitions not implemented")
@@ -321,20 +321,20 @@ func _SeaweedMessaging_CheckBrokerLoad_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
-func _SeaweedMessaging_FindTopicBrokers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(FindTopicBrokersRequest)
+func _SeaweedMessaging_LookupTopicBrokers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LookupTopicBrokersRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SeaweedMessagingServer).FindTopicBrokers(ctx, in)
+		return srv.(SeaweedMessagingServer).LookupTopicBrokers(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/messaging_pb.SeaweedMessaging/FindTopicBrokers",
+		FullMethod: "/messaging_pb.SeaweedMessaging/LookupTopicBrokers",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedMessagingServer).FindTopicBrokers(ctx, req.(*FindTopicBrokersRequest))
+		return srv.(SeaweedMessagingServer).LookupTopicBrokers(ctx, req.(*LookupTopicBrokersRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -464,8 +464,8 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _SeaweedMessaging_CheckBrokerLoad_Handler,
 		},
 		{
-			MethodName: "FindTopicBrokers",
-			Handler:    _SeaweedMessaging_FindTopicBrokers_Handler,
+			MethodName: "LookupTopicBrokers",
+			Handler:    _SeaweedMessaging_LookupTopicBrokers_Handler,
 		},
 		{
 			MethodName: "RequestTopicPartitions",

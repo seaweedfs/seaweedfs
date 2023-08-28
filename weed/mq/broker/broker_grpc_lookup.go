@@ -17,8 +17,8 @@ import (
 //     2.2 if the topic is found, return the brokers
 //
 //  3. unlock the topic
-func (broker *MessageQueueBroker) FindTopicBrokers(c context.Context, request *mq_pb.FindTopicBrokersRequest) (*mq_pb.FindTopicBrokersResponse, error) {
-	ret := &mq_pb.FindTopicBrokersResponse{}
+func (broker *MessageQueueBroker) FindTopicBrokers(ctx context.Context, request *mq_pb.LookupTopicBrokersRequest) (*mq_pb.LookupTopicBrokersResponse, error) {
+	ret := &mq_pb.LookupTopicBrokersResponse{}
 	// TODO lock the topic
 
 	// find the topic partitions on the filer
@@ -27,6 +27,19 @@ func (broker *MessageQueueBroker) FindTopicBrokers(c context.Context, request *m
 	//     create the topic
 	//   if the request is_for_subscribe
 	//     return error not found
+	// t := topic.FromPbTopic(request.Topic)
+	ret.Topic = request.Topic
+	ret.BrokerPartitionAssignments = []*mq_pb.BrokerPartitionAssignment{
+		{
+			LeaderBroker:    "localhost:17777",
+			FollowerBrokers: []string{"localhost:17777"},
+			Partition: &mq_pb.Partition{
+				RingSize:   MaxPartitionCount,
+				RangeStart: 0,
+				RangeStop:  MaxPartitionCount,
+			},
+		},
+	}
 	return ret, nil
 }
 
