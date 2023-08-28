@@ -5,27 +5,27 @@ metadata:
   name: {{ template "seaweedfs.name" . }}-volume
   namespace: {{ .Release.Namespace }}
   labels:
-    app: {{ template "seaweedfs.name" . }}
-    chart: {{ template "seaweedfs.chart" . }}
-    heritage: {{ .Release.Service }}
-    release: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   serviceName: {{ template "seaweedfs.name" . }}-volume
   replicas: {{ .Values.volume.replicas }}
   podManagementPolicy: Parallel
   selector:
     matchLabels:
-      app: {{ template "seaweedfs.name" . }}
-      chart: {{ template "seaweedfs.chart" . }}
-      release: {{ .Release.Name }}
-      component: volume
+      app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+      helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: volume
   template:
     metadata:
       labels:
-        app: {{ template "seaweedfs.name" . }}
-        chart: {{ template "seaweedfs.chart" . }}
-        release: {{ .Release.Name }}
-        component: volume
+        app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: volume
     spec:
       {{- if .Values.volume.affinity }}
       affinity:
@@ -145,8 +145,10 @@ spec:
             - name: idx
               mountPath: "{{ .Values.volume.dir_idx }}/"
             {{- end }}
+            {{- if eq .Values.volume.logs.type "hostPath" }}
             - name: logs
               mountPath: "/logs/"
+            {{- end }}
             {{- if .Values.global.enableSecurity }}
             - name: security-config
               readOnly: true

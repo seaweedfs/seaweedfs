@@ -4,8 +4,10 @@ metadata:
   name: {{ template "seaweedfs.name" . }}-master
   namespace: {{ .Release.Namespace }}
   labels:
-    app: {{ template "seaweedfs.name" . }}
-    component: master
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    app.kubernetes.io/component: master
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
   annotations:
     service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"    
 spec:
@@ -27,5 +29,5 @@ spec:
     protocol: TCP
   {{- end }}
   selector:
-    app: {{ template "seaweedfs.name" . }}
-    component: master
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    app.kubernetes.io/component: master

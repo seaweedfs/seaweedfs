@@ -5,25 +5,25 @@ metadata:
   name: {{ template "seaweedfs.name" . }}-s3
   namespace: {{ .Release.Namespace }}
   labels:
-    app: {{ template "seaweedfs.name" . }}
-    chart: {{ template "seaweedfs.chart" . }}
-    heritage: {{ .Release.Service }}
-    release: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   replicas: {{ .Values.s3.replicas }}
   selector:
     matchLabels:
-      app: {{ template "seaweedfs.name" . }}
-      chart: {{ template "seaweedfs.chart" . }}
-      release: {{ .Release.Name }}
-      component: s3
+      app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+      helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: s3
   template:
     metadata:
       labels:
-        app: {{ template "seaweedfs.name" . }}
-        chart: {{ template "seaweedfs.chart" . }}
-        release: {{ .Release.Name }}
-        component: s3
+        app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: s3
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.s3.restartPolicy }}
       {{- if .Values.s3.tolerations }}

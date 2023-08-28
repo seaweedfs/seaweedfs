@@ -5,10 +5,11 @@ metadata:
   name: {{ template "seaweedfs.name" . }}-filer
   namespace: {{ .Release.Namespace }}
   labels:
-    app: {{ template "seaweedfs.name" . }}
-    chart: {{ template "seaweedfs.chart" . }}
-    heritage: {{ .Release.Service }}
-    release: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: filer
 spec:
   serviceName: {{ template "seaweedfs.name" . }}-filer
   podManagementPolicy: Parallel
@@ -21,17 +22,17 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      app: {{ template "seaweedfs.name" . }}
-      chart: {{ template "seaweedfs.chart" . }}
-      release: {{ .Release.Name }}
-      component: filer
+      app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+      helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: filer
   template:
     metadata:
       labels:
-        app: {{ template "seaweedfs.name" . }}
-        chart: {{ template "seaweedfs.chart" . }}
-        release: {{ .Release.Name }}
-        component: filer
+        app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: filer
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.filer.restartPolicy }}
       {{- if .Values.filer.affinity }}
@@ -180,8 +181,10 @@ spec:
               {{- end }}
               -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
           volumeMounts:
+            {{- if eq .Values.filer.logs.type "hostPath" }}
             - name: seaweedfs-filer-log-volume
               mountPath: "/logs/"
+            {{- end }}
             - mountPath: /etc/sw
               name: config-users
               readOnly: true
