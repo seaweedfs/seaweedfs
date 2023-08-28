@@ -17,7 +17,7 @@ import (
 //     2.2 if the topic is found, return the brokers
 //
 //  3. unlock the topic
-func (broker *MessageQueueBroker) FindTopicBrokers(ctx context.Context, request *mq_pb.LookupTopicBrokersRequest) (*mq_pb.LookupTopicBrokersResponse, error) {
+func (broker *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq_pb.LookupTopicBrokersRequest) (*mq_pb.LookupTopicBrokersResponse, error) {
 	ret := &mq_pb.LookupTopicBrokersResponse{}
 	// TODO lock the topic
 

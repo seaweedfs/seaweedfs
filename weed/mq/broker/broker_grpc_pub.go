@@ -79,16 +79,17 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 	}
 	response := &mq_pb.PublishResponse{}
 	// TODO check whether current broker should be the leader for the topic partition
-	if initMessage := req.GetInit(); initMessage != nil {
-		localTopicPartition = broker.localTopicManager.GetTopicPartition(
-			topic.FromPbTopic(initMessage.Topic),
-			topic.FromPbPartition(initMessage.Partition),
-		)
+	initMessage := req.GetInit()
+	if initMessage != nil {
+		t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
+		localTopicPartition = broker.localTopicManager.GetTopicPartition(t, p)
 		if localTopicPartition == nil {
-			response.Error = fmt.Sprintf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)
-			glog.Errorf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)
-			return stream.Send(response)
+			localTopicPartition = topic.NewLocalPartition(t, p, true, nil)
 		}
+	} else {
+		response.Error = fmt.Sprintf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)
+		glog.Errorf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)
+		return stream.Send(response)
 	}
 
 	// process each published messages
@@ -104,7 +105,7 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 			AckSequence: sequence,
 		}
 		if dataMessage := req.GetData(); dataMessage != nil {
-			print('+')
+			print("+")
 			localTopicPartition.Publish(dataMessage)
 		}
 		if err := stream.Send(response); err != nil {

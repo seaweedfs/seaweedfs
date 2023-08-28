@@ -1,6 +1,7 @@
 package topic
 
 import (
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -13,6 +14,24 @@ type LocalPartition struct {
 	isLeader        bool
 	FollowerBrokers []pb.ServerAddress
 	logBuffer       *log_buffer.LogBuffer
+}
+
+func NewLocalPartition(topic Topic, partition Partition, isLeader bool, followerBrokers []pb.ServerAddress) *LocalPartition {
+	return &LocalPartition{
+		Partition:       partition,
+		isLeader:        isLeader,
+		FollowerBrokers: followerBrokers,
+		logBuffer: log_buffer.NewLogBuffer(
+			fmt.Sprintf("%s/%s/%4d-%4d", topic.Namespace, topic.Name, partition.RangeStart, partition.RangeStop),
+			2*time.Minute,
+			func(startTime, stopTime time.Time, buf []byte) {
+
+			},
+			func() {
+
+			},
+		),
+	}
 }
 
 type OnEachMessageFn func(logEntry *filer_pb.LogEntry) error
