@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -15,7 +16,7 @@ func (broker *MessageQueueBroker) Subscribe(req *mq_pb.SubscribeRequest, stream 
 	if localTopicPartition == nil {
 		stream.Send(&mq_pb.SubscribeResponse{
 			Message: &mq_pb.SubscribeResponse_Ctrl{
-				&mq_pb.SubscribeResponse_CtrlMessage{
+				Ctrl: &mq_pb.SubscribeResponse_CtrlMessage{
 					Error: "not found",
 				},
 			},
@@ -24,10 +25,11 @@ func (broker *MessageQueueBroker) Subscribe(req *mq_pb.SubscribeRequest, stream 
 	}
 
 	localTopicPartition.Subscribe("client", time.Now(), func(logEntry *filer_pb.LogEntry) error {
+		value := logEntry.GetData()
 		if err := stream.Send(&mq_pb.SubscribeResponse{Message: &mq_pb.SubscribeResponse_Data{
 			Data: &mq_pb.DataMessage{
-				Key:   []byte("hello"),
-				Value: []byte("world"),
+				Key:   []byte(fmt.Sprintf("key-%d", logEntry.PartitionKeyHash)),
+				Value: value,
 			},
 		}}); err != nil {
 			glog.Errorf("Error sending setup response: %v", err)

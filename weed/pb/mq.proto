@@ -164,7 +164,7 @@ message PublishRequest {
 message PublishResponse {
     int64 ack_sequence = 1;
     string error = 2;
-    bool is_closed = 3;
+    string redirect_to_broker = 3;
 }
 message SubscribeRequest {
     message InitMessage {

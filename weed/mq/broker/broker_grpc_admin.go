@@ -145,7 +145,7 @@ func (broker *MessageQueueBroker) confirmBrokerPartitionAssignment(topic *topic.
 		return true
 	}
 	for _, b := range oldAssignment.FollowerBrokers {
-		pb.WithBrokerClient(false, pb.ServerAddress(b), broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+		pb.WithBrokerGrpcClient(false, b, broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 			_, err := client.CheckTopicPartitionsStatus(context.Background(), &mq_pb.CheckTopicPartitionsStatusRequest{
 				Namespace:                  string(topic.Namespace),
 				Topic:                      topic.Name,
