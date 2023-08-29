@@ -106,9 +106,9 @@ master:
       requiredDuringSchedulingIgnoredDuringExecution:
         - labelSelector:
             matchLabels:
-              app: {{ template "seaweedfs.name" . }}
-              release: "{{ .Release.Name }}"
-              component: master
+              app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: master
           topologyKey: kubernetes.io/hostname
 
   # Toleration Settings for master pods
@@ -137,7 +137,7 @@ master:
     className: "nginx"
     # host: false for "*" hostname
     host: "master.seaweedfs.local"
-    annotations:
+    annotations: |
       nginx.ingress.kubernetes.io/auth-type: "basic"
       nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
       nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Master'
@@ -245,9 +245,9 @@ volume:
       requiredDuringSchedulingIgnoredDuringExecution:
         - labelSelector:
             matchLabels:
-              app: {{ template "seaweedfs.name" . }}
-              release: "{{ .Release.Name }}"
-              component: volume
+              app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: volume
           topologyKey: kubernetes.io/hostname
 
   # Resource requests, limits, etc. for the server cluster placement. This
@@ -352,9 +352,9 @@ filer:
       requiredDuringSchedulingIgnoredDuringExecution:
         - labelSelector:
             matchLabels:
-              app: {{ template "seaweedfs.name" . }}
-              release: "{{ .Release.Name }}"
-              component: filer
+              app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: filer
           topologyKey: kubernetes.io/hostname
 
   # updatePartition is used to control a careful rolling update of SeaweedFS
@@ -393,7 +393,7 @@ filer:
     className: "nginx"
     # host: false for "*" hostname
     host: "seaweedfs.cluster.local"
-    annotations:
+    annotations: |
       nginx.ingress.kubernetes.io/backend-protocol: GRPC
       nginx.ingress.kubernetes.io/auth-type: "basic"
       nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
