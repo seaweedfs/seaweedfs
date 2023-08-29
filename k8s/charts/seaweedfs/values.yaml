@@ -62,6 +62,10 @@ master:
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
 
+  config: |-
+    # Enter any extra configuration for master.toml here.
+    # It may be be a multi-line string.
+
   # can use ANY storage-class , example with local-path-provisioner
   #  data:
   #    type: "persistentVolumeClaim"
