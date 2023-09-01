@@ -33,6 +33,7 @@ type IdentityAccessManagement struct {
 	isAuthEnabled bool
 	domain        string
 	hashes        map[string]*sync.Pool
+	hashCounters  map[string]*int32
 	hashMu        sync.RWMutex
 }
 
@@ -79,8 +80,9 @@ func (action Action) getPermission() Permission {
 
 func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManagement {
 	iam := &IdentityAccessManagement{
-		domain: option.DomainName,
-		hashes: make(map[string]*sync.Pool),
+		domain:       option.DomainName,
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
 	}
 	if option.Config != "" {
 		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {

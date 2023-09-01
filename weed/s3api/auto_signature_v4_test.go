@@ -127,7 +127,8 @@ func TestCheckAdminRequestAuthType(t *testing.T) {
 func BenchmarkGetSignature(b *testing.B) {
 	t := time.Now()
 	iam := IdentityAccessManagement{
-		hashes: make(map[string]*sync.Pool),
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
 	}
 
 	b.ReportAllocs()

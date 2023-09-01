@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -463,36 +464,67 @@ func (iam *IdentityAccessManagement) doesPresignedSignatureMatch(hashedPayload s
 	return identity, s3err.ErrNone
 }
 
-// getSignature
 func (iam *IdentityAccessManagement) getSignature(secretKey string, t time.Time, region string, service string, stringToSign string) string {
+	pool := iam.getSignatureHashPool(secretKey, t, region, service)
+	h := pool.Get().(hash.Hash)
+	defer pool.Put(h)
+
+	h.Reset()
+	h.Write([]byte(stringToSign))
+	sig := hex.EncodeToString(h.Sum(nil))
+
+	return sig
+}
+
+func (iam *IdentityAccessManagement) getSignatureHashPool(secretKey string, t time.Time, region string, service string) *sync.Pool {
+	// Build a caching key for the pool.
 	date := t.Format(yyyymmdd)
 	hashID := "AWS4" + secretKey + "/" + date + "/" + region + "/" + service + "/" + "aws4_request"
 
+	// Try to find an existing pool and return it.
 	iam.hashMu.RLock()
 	pool, ok := iam.hashes[hashID]
 	iam.hashMu.RUnlock()
 
 	if !ok {
 		iam.hashMu.Lock()
-		if pool, ok = iam.hashes[hashID]; !ok {
-			pool = &sync.Pool{
-				New: func() any {
-					signingKey := getSigningKey(secretKey, date, region, service)
-					return hmac.New(sha256.New, signingKey)
-				},
-			}
-			iam.hashes[hashID] = pool
-		}
-		iam.hashMu.Unlock()
+		defer iam.hashMu.Unlock()
+		pool, ok = iam.hashes[hashID]
 	}
 
-	h := pool.Get().(hash.Hash)
-	h.Reset()
-	h.Write([]byte(stringToSign))
-	sig := hex.EncodeToString(h.Sum(nil))
-	pool.Put(h)
+	if ok {
+		atomic.StoreInt32(iam.hashCounters[hashID], 1)
+		return pool
+	}
 
-	return sig
+	// Create a pool that returns HMAC hashers for the requested parameters to avoid expensive re-initializing
+	// of new instances on every request.
+	iam.hashes[hashID] = &sync.Pool{
+		New: func() any {
+			signingKey := getSigningKey(secretKey, date, region, service)
+			return hmac.New(sha256.New, signingKey)
+		},
+	}
+	iam.hashCounters[hashID] = new(int32)
+
+	// Clean up unused pools automatically after one hour of inactivity
+	ticker := time.NewTicker(time.Hour)
+	go func() {
+		for range ticker.C {
+			old := atomic.SwapInt32(iam.hashCounters[hashID], 0)
+			if old == 0 {
+				break
+			}
+		}
+
+		ticker.Stop()
+		iam.hashMu.Lock()
+		delete(iam.hashes, hashID)
+		delete(iam.hashCounters, hashID)
+		iam.hashMu.Unlock()
+	}()
+
+	return iam.hashes[hashID]
 }
 
 func contains(list []string, elem string) bool {
