@@ -85,6 +85,7 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 		localTopicPartition = broker.localTopicManager.GetTopicPartition(t, p)
 		if localTopicPartition == nil {
 			localTopicPartition = topic.NewLocalPartition(t, p, true, nil)
+			broker.localTopicManager.AddTopicPartition(t, localTopicPartition)
 		}
 	} else {
 		response.Error = fmt.Sprintf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)

@@ -11,20 +11,22 @@ import (
 
 func (broker *MessageQueueBroker) Subscribe(req *mq_pb.SubscribeRequest, stream mq_pb.SeaweedMessaging_SubscribeServer) error {
 
-	localTopicPartition := broker.localTopicManager.GetTopicPartition(topic.FromPbTopic(req.Init.Topic),
-		topic.FromPbPartition(req.Init.Partition))
+	localTopicPartition := broker.localTopicManager.GetTopicPartition(topic.FromPbTopic(req.Cursor.Topic),
+		topic.FromPbPartition(req.Cursor.Partition))
 	if localTopicPartition == nil {
 		stream.Send(&mq_pb.SubscribeResponse{
 			Message: &mq_pb.SubscribeResponse_Ctrl{
 				Ctrl: &mq_pb.SubscribeResponse_CtrlMessage{
-					Error: "not found",
+					Error: "not initialized",
 				},
 			},
 		})
 		return nil
 	}
 
-	localTopicPartition.Subscribe("client", time.Now(), func(logEntry *filer_pb.LogEntry) error {
+	clientName := fmt.Sprintf("%s/%s", req.Consumer.ConsumerGroup, req.Consumer.ConsumerId)
+
+	localTopicPartition.Subscribe(clientName, time.Now(), func(logEntry *filer_pb.LogEntry) error {
 		value := logEntry.GetData()
 		if err := stream.Send(&mq_pb.SubscribeResponse{Message: &mq_pb.SubscribeResponse_Data{
 			Data: &mq_pb.DataMessage{

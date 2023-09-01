@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
-	"google.golang.org/grpc"
 )
 
-func (p *TopicPublisher) doLookup(
-	brokerAddress string, grpcDialOption grpc.DialOption) error {
+func (p *TopicPublisher) doLookup(brokerAddress string) error {
 	err := pb.WithBrokerGrpcClient(true,
 		brokerAddress,
-		grpcDialOption,
+		p.grpcDialOption,
 		func(client mq_pb.SeaweedMessagingClient) error {
 			lookupResp, err := client.LookupTopicBrokers(context.Background(),
 				&mq_pb.LookupTopicBrokersRequest{
@@ -36,7 +34,7 @@ func (p *TopicPublisher) doLookup(
 				// send init message
 				// save the publishing client
 				brokerAddress := brokerPartitionAssignment.LeaderBroker
-				grpcConnection, err := pb.GrpcDial(context.Background(), brokerAddress, true, grpcDialOption)
+				grpcConnection, err := pb.GrpcDial(context.Background(), brokerAddress, true, p.grpcDialOption)
 				if err != nil {
 					return fmt.Errorf("dial broker %s: %v", brokerAddress, err)
 				}

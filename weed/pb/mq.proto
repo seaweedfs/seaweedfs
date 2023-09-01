@@ -162,12 +162,20 @@ message PublishResponse {
     string redirect_to_broker = 3;
 }
 message SubscribeRequest {
-    message InitMessage {
+    message Consumer {
+        string consumer_group = 1;
+        string consumer_id = 2;
+    }
+    message Cursor {
         Topic topic = 1;
         Partition partition = 2;
+        oneof offset {
+            int64 start_offset = 3;
+            int64 start_timestamp_ns = 4;
+        }
     }
-    InitMessage init = 1;
-    int64 sequence = 2;
+    Consumer consumer = 1;
+    Cursor cursor = 2;
 }
 message SubscribeResponse {
     message CtrlMessage {

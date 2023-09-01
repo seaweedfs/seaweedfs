@@ -25,6 +25,7 @@ func (manager *LocalTopicManager) AddTopicPartition(topic Topic, localPartition 
 			Partitions: make([]*LocalPartition, 0),
 		}
 	}
+	manager.topics.SetIfAbsent(topic.String(), localTopic)
 	if localTopic.findPartition(localPartition.Partition) != nil {
 		return
 	}

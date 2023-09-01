@@ -15,6 +15,7 @@ type TopicPublisher struct {
 	topic                string
 	partition2Broker     *interval.SearchTree[string, int32]
 	broker2PublishClient cmap.ConcurrentMap[string, mq_pb.SeaweedMessaging_PublishClient]
+	grpcDialOption       grpc.DialOption
 }
 
 func NewTopicPublisher(namespace, topic string) *TopicPublisher {
@@ -25,11 +26,12 @@ func NewTopicPublisher(namespace, topic string) *TopicPublisher {
 			return int(a - b)
 		}),
 		broker2PublishClient: cmap.New[mq_pb.SeaweedMessaging_PublishClient](),
+		grpcDialOption:       grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 }
 
 func (p *TopicPublisher) Connect(bootstrapBroker string) error {
-	if err := p.doLookup(bootstrapBroker, grpc.WithTransportCredentials(insecure.NewCredentials())); err != nil {
+	if err := p.doLookup(bootstrapBroker); err != nil {
 		return err
 	}
 	return nil
