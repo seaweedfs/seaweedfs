@@ -224,26 +224,30 @@ spec:
               name: metrics
             - containerPort: {{ .Values.filer.grpcPort }}
               #name: swfs-filer-grpc
+          {{- if .Values.filer.readinessProbe.enabled }}
           readinessProbe:
             httpGet:
-              path: /
+              path: {{ .Values.filer.readinessProbe.httpGet.path }}
               port: {{ .Values.filer.port }}
-              scheme: HTTP
-            initialDelaySeconds: 10
-            periodSeconds: 15
-            successThreshold: 1
-            failureThreshold: 100
-            timeoutSeconds: 10
+              scheme: {{ .Values.filer.readinessProbe.scheme }}
+            initialDelaySeconds: {{ .Values.filer.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.filer.readinessProbe.periodSeconds }}
+            successThreshold: {{ .Values.filer.readinessProbe.successThreshold }}
+            failureThreshold: {{ .Values.filer.readinessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.filer.readinessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if .Values.filer.livenessProbe.enabled }}
           livenessProbe:
             httpGet:
-              path: /
+              path: {{ .Values.filer.livenessProbe.httpGet.path }}
               port: {{ .Values.filer.port }}
-              scheme: HTTP
-            initialDelaySeconds: 20
-            periodSeconds: 30
-            successThreshold: 1
-            failureThreshold: 5
-            timeoutSeconds: 10
+              scheme: {{ .Values.filer.livenessProbe.scheme }}
+            initialDelaySeconds: {{ .Values.filer.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.filer.livenessProbe.periodSeconds }}
+            successThreshold: {{ .Values.filer.livenessProbe.successThreshold }}
+            failureThreshold: {{ .Values.filer.livenessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.filer.livenessProbe.timeoutSeconds }}
+          {{- end }}
           {{- if .Values.filer.resources }}
           resources:
             {{ tpl .Values.filer.resources . | nindent 12 | trim }}

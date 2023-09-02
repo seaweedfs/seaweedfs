@@ -177,26 +177,30 @@ spec:
             {{- end }}
             - containerPort: {{ .Values.master.grpcPort }}
               #name: swfs-master-grpc
+          {{- if .Values.master.readinessProbe.enabled }}
           readinessProbe:
             httpGet:
-              path: /cluster/status
+              path: {{ .Values.master.readinessProbe.httpGet.path }}
               port: {{ .Values.master.port }}
-              scheme: HTTP
-            initialDelaySeconds: 10
-            periodSeconds: 45
-            successThreshold: 2
-            failureThreshold: 100
-            timeoutSeconds: 10
+              scheme: {{ .Values.master.readinessProbe.scheme }}
+            initialDelaySeconds: {{ .Values.master.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.master.readinessProbe.periodSeconds }}
+            successThreshold: {{ .Values.master.readinessProbe.successThreshold }}
+            failureThreshold: {{ .Values.master.readinessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.master.readinessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if .Values.master.livenessProbe.enabled }}
           livenessProbe:
             httpGet:
-              path: /cluster/status
+              path: {{ .Values.master.livenessProbe.httpGet.path }}
               port: {{ .Values.master.port }}
-              scheme: HTTP
-            initialDelaySeconds: 20
-            periodSeconds: 30
-            successThreshold: 1
-            failureThreshold: 4
-            timeoutSeconds: 10
+              scheme: {{ .Values.master.livenessProbe.scheme }}
+            initialDelaySeconds: {{ .Values.master.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.master.livenessProbe.periodSeconds }}
+            successThreshold: {{ .Values.master.livenessProbe.successThreshold }}
+            failureThreshold: {{ .Values.master.livenessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.master.livenessProbe.timeoutSeconds }}
+          {{- end }}
           {{- if .Values.master.resources }}
           resources:
             {{ tpl .Values.master.resources . | nindent 12 | trim }}
