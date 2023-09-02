@@ -160,6 +160,32 @@ master:
     WEED_MASTER_VOLUME_GROWTH_COPY_3: 3
     WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
 
+  # used to configure livenessProbe on master-server containers
+  #
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /cluster/status
+      scheme: HTTP
+    initialDelaySeconds: 20
+    periodSeconds: 30
+    successThreshold: 1
+    failureThreshold: 4
+    timeoutSeconds: 10
+
+  # used to configure readinessProbe on master-server containers
+  #
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /cluster/status
+      scheme: HTTP
+    initialDelaySeconds: 10
+    periodSeconds: 45
+    successThreshold: 2
+    failureThreshold: 100
+    timeoutSeconds: 10
+
 volume:
   enabled: true
   repository: null
@@ -276,6 +302,32 @@ volume:
   # used to assign a service account.
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
   serviceAccountName: ""
+
+  # used to configure livenessProbe on volume-server containers
+  #
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /status
+      scheme: HTTP
+    initialDelaySeconds: 20
+    periodSeconds: 90
+    successThreshold: 1
+    failureThreshold: 4
+    timeoutSeconds: 30
+
+  # used to configure readinessProbe on volume-server containers
+  #
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /status
+      scheme: HTTP
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    successThreshold: 1
+    failureThreshold: 100
+    timeoutSeconds: 30
 
 filer:
   enabled: true
@@ -431,6 +483,31 @@ filer:
     # directories under this folder will be automatically creating a separate bucket
     WEED_FILER_BUCKETS_FOLDER: "/buckets"
 
+  # used to configure livenessProbe on filer containers
+  #
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /
+      scheme: HTTP
+    initialDelaySeconds: 20
+    periodSeconds: 30
+    successThreshold: 1
+    failureThreshold: 5
+    timeoutSeconds: 10
+
+  # used to configure readinessProbe on filer containers
+  #
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /
+      scheme: HTTP
+    initialDelaySeconds: 10
+    periodSeconds: 15
+    successThreshold: 1
+    failureThreshold: 100
+    timeoutSeconds: 10
 
   # secret env variables
   secretExtraEnvironmentVars: []
@@ -517,6 +594,32 @@ s3:
     size: ""
     storageClass: ""
     hostPathPrefix: /storage
+
+  # used to configure livenessProbe on s3 containers
+  #
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /status
+      scheme: HTTP
+    initialDelaySeconds: 20
+    periodSeconds: 60
+    successThreshold: 1
+    failureThreshold: 20
+    timeoutSeconds: 10
+
+  # used to configure readinessProbe on s3 containers
+  #
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /status
+      scheme: HTTP
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    successThreshold: 1
+    failureThreshold: 100
+    timeoutSeconds: 10
 
 certificates:
   commonName: "SeaweedFS CA"

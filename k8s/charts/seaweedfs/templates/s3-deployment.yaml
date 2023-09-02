@@ -146,26 +146,30 @@ spec:
             - containerPort: {{ .Values.s3.metricsPort }}
               name: "metrics"
             {{- end }}
+          {{- if .Values.s3.readinessProbe.enabled }}
           readinessProbe:
             httpGet:
-              path: /status
+              path: {{ .Values.s3.readinessProbe.httpGet.path }}
               port: {{ .Values.s3.port }}
-              scheme: HTTP
-            initialDelaySeconds: 15
-            periodSeconds: 15
-            successThreshold: 1
-            failureThreshold: 100
-            timeoutSeconds: 10
+              scheme: {{ .Values.s3.readinessProbe.scheme }}
+            initialDelaySeconds: {{ .Values.s3.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.s3.readinessProbe.periodSeconds }}
+            successThreshold: {{ .Values.s3.readinessProbe.successThreshold }}
+            failureThreshold: {{ .Values.s3.readinessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.s3.readinessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if .Values.s3.livenessProbe.enabled }}
           livenessProbe:
             httpGet:
-              path: /status
+              path: {{ .Values.s3.livenessProbe.httpGet.path }}
               port: {{ .Values.s3.port }}
-              scheme: HTTP
-            initialDelaySeconds: 20
-            periodSeconds: 60
-            successThreshold: 1
-            failureThreshold: 20
-            timeoutSeconds: 10
+              scheme: {{ .Values.s3.livenessProbe.scheme }}
+            initialDelaySeconds: {{ .Values.s3.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.s3.livenessProbe.periodSeconds }}
+            successThreshold: {{ .Values.s3.livenessProbe.successThreshold }}
+            failureThreshold: {{ .Values.s3.livenessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.s3.livenessProbe.timeoutSeconds }}
+          {{- end }}
           {{- if .Values.s3.resources }}
           resources:
             {{ tpl .Values.s3.resources . | nindent 12 | trim }}
