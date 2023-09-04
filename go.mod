@@ -154,7 +154,7 @@ require (
 	github.com/hashicorp/raft v1.5.0
 	github.com/hashicorp/raft-boltdb/v2 v2.2.2
 	github.com/orcaman/concurrent-map/v2 v2.0.1
-	github.com/puzpuzpuz/xsync/v2 v2.4.1
+	github.com/puzpuzpuz/xsync/v2 v2.5.0
 	github.com/rabbitmq/amqp091-go v1.8.1
 	github.com/rclone/rclone v1.63.1
 	github.com/schollz/progressbar/v3 v3.13.1
