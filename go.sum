@@ -269,8 +269,8 @@ github.com/fatih/color v1.12.0/go.mod h1:ELkj/draVOlAH/xkhN6mQ50Qd0MPOk5AAr3maGE
 github.com/fatih/color v1.13.0/go.mod h1:kLAiJbzzSOZDVNGyDpeOxJ47H46qBXwg5ILebYFFOfk=
 github.com/fatih/color v1.14.1 h1:qfhVLaG5s+nCROl1zJsZRxFeYrHLqWroPOQ8BWiNb4w=
 github.com/fatih/color v1.14.1/go.mod h1:2oHN61fhTpgcxD3TSWCgKDiH1+x4OiDVVGH8WlgGZGg=
-github.com/fclairamb/ftpserverlib v0.21.0 h1:QO4ex827FU6Y7FNi1cj4dmAs6bcmy+UtWcX5yzVzFAw=
-github.com/fclairamb/ftpserverlib v0.21.0/go.mod h1:03sR5yGPYyUH/8hFKML02SVNLY7A//3qIy0q0ZJGhTw=
+github.com/fclairamb/ftpserverlib v0.22.0 h1:PqzyD6YxS5sdb4fAdXUFSODTo8DelsVAOh3LgeR4VXs=
+github.com/fclairamb/ftpserverlib v0.22.0/go.mod h1:dI9/yw/KfJ0g4wmRK8ZukUfqakLr6ZTf9VDydKoLy90=
 github.com/fclairamb/go-log v0.4.1 h1:rLtdSG9x2pK41AIAnE8WYpl05xBJfw1ZyYxZaXFcBsM=
 github.com/fclairamb/go-log v0.4.1/go.mod h1:sw1KvnkZ4wKCYkvy4SL3qVZcJSWFP8Ure4pM3z+KNn4=
 github.com/fluent/fluent-logger-golang v1.9.0 h1:zUdY44CHX2oIUc7VTNZc+4m+ORuO/mldQDA7czhWXEg=
