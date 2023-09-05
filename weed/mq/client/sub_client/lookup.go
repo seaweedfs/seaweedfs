@@ -10,13 +10,13 @@ import (
 func (sub *TopicSubscriber) doLookup(brokerAddress string) error {
 	err := pb.WithBrokerGrpcClient(true,
 		brokerAddress,
-		sub.grpcDialOption,
+		sub.SubscriberConfig.GrpcDialOption,
 		func(client mq_pb.SeaweedMessagingClient) error {
 			lookupResp, err := client.LookupTopicBrokers(context.Background(),
 				&mq_pb.LookupTopicBrokersRequest{
 					Topic: &mq_pb.Topic{
-						Namespace: sub.namespace,
-						Name:      sub.topic,
+						Namespace: sub.ContentConfig.Namespace,
+						Name:      sub.ContentConfig.Topic,
 					},
 					IsForPublish: false,
 				})
@@ -28,7 +28,7 @@ func (sub *TopicSubscriber) doLookup(brokerAddress string) error {
 		})
 
 	if err != nil {
-		return fmt.Errorf("lookup topic %s/%s: %v", sub.namespace, sub.topic, err)
+		return fmt.Errorf("lookup topic %s/%s: %v", sub.ContentConfig.Namespace, sub.ContentConfig.Topic, err)
 	}
 	return nil
 }

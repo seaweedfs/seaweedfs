@@ -3,27 +3,41 @@ package main
 import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/sub_client"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
 
-	subscriber := sub_client.NewTopicSubscriber(
-		&sub_client.SubscriberConfiguration{
-			ConsumerGroup: "test",
-			ConsumerId:    "test",
-		},
-		"test", "test")
+	subscriberConfig := &sub_client.SubscriberConfiguration{
+		ClientId:        "testSubscriber",
+		GroupId:         "test",
+		GroupInstanceId: "test",
+		GrpcDialOption:  grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
+
+	contentConfig := &sub_client.ContentConfiguration{
+		Namespace: "test",
+		Topic:     "test",
+		Filter:    "",
+	}
+
+	subscriber := sub_client.NewTopicSubscriber(subscriberConfig, contentConfig)
 	if err := subscriber.Connect("localhost:17777"); err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	if err := subscriber.Subscribe(func(key, value []byte) bool {
+	subscriber.SetEachMessageFunc(func(key, value []byte) bool {
 		println(string(key), "=>", string(value))
 		return true
-	}, func() {
+	})
+
+	subscriber.SetCompletionFunc(func() {
 		println("done subscribing")
-	}); err != nil {
+	})
+
+	if err := subscriber.Subscribe(); err != nil {
 		fmt.Println(err)
 	}
 

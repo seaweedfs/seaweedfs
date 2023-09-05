@@ -24,7 +24,7 @@ func (broker *MessageQueueBroker) Subscribe(req *mq_pb.SubscribeRequest, stream 
 		return nil
 	}
 
-	clientName := fmt.Sprintf("%s/%s", req.Consumer.ConsumerGroup, req.Consumer.ConsumerId)
+	clientName := fmt.Sprintf("%s/%s-%s", req.Consumer.ConsumerGroup, req.Consumer.ConsumerId, req.Consumer.ClientId)
 
 	localTopicPartition.Subscribe(clientName, time.Now(), func(logEntry *filer_pb.LogEntry) error {
 		value := logEntry.GetData()
