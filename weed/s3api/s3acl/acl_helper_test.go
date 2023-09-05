@@ -56,326 +56,6 @@ func TestGetAccountId(t *testing.T) {
 	}
 }
 
-func TestExtractAcl(t *testing.T) {
-	type Case struct {
-		id                           int
-		resultErrCode, expectErrCode s3err.ErrorCode
-		resultGrants, expectGrants   []*s3.Grant
-	}
-	testCases := make([]*Case, 0)
-	accountAdminId := "admin"
-
-	{
-		//case1 (good case)
-		//parse acp from request body
-		req := &http.Request{
-			Header: make(map[string][]string),
-		}
-		req.Body = io.NopCloser(bytes.NewReader([]byte(`
-	<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-		<Owner>
-			<ID>admin</ID>
-			<DisplayName>admin</DisplayName>
-		</Owner>
-		<AccessControlList>
-			<Grant>
-				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
-					<ID>admin</ID>
-				</Grantee>
-				<Permission>FULL_CONTROL</Permission>
-			</Grant>
-			<Grant>
-				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
-					<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
-				</Grantee>
-				<Permission>FULL_CONTROL</Permission>
-			</Grant>
-		</AccessControlList>
-	</AccessControlPolicy>
-	`)))
-		objectWriter := "accountA"
-		grants, errCode := ExtractAcl(req, accountManager, s3_constants.OwnershipObjectWriter, accountAdminId, accountAdminId, objectWriter)
-		testCases = append(testCases, &Case{
-			1,
-			errCode, s3err.ErrNone,
-			grants, []*s3.Grant{
-				{
-					Grantee: &s3.Grantee{
-						Type: &s3_constants.GrantTypeCanonicalUser,
-						ID:   &accountAdminId,
-					},
-					Permission: &s3_constants.PermissionFullControl,
-				},
-				{
-					Grantee: &s3.Grantee{
-						Type: &s3_constants.GrantTypeGroup,
-						URI:  &s3_constants.GranteeGroupAllUsers,
-					},
-					Permission: &s3_constants.PermissionFullControl,
-				},
-			},
-		})
-	}
-
-	{
-		//case2 (good case)
-		//parse acp from header (cannedAcl)
-		req := &http.Request{
-			Header: make(map[string][]string),
-		}
-		req.Body = nil
-		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclPrivate)
-		objectWriter := "accountA"
-		grants, errCode := ExtractAcl(req, accountManager, s3_constants.OwnershipObjectWriter, accountAdminId, accountAdminId, objectWriter)
-		testCases = append(testCases, &Case{
-			2,
-			errCode, s3err.ErrNone,
-			grants, []*s3.Grant{
-				{
-					Grantee: &s3.Grantee{
-						Type: &s3_constants.GrantTypeCanonicalUser,
-						ID:   &objectWriter,
-					},
-					Permission: &s3_constants.PermissionFullControl,
-				},
-			},
-		})
-	}
-
-	{
-		//case3 (bad case)
-		//parse acp from request body (content is invalid)
-		req := &http.Request{
-			Header: make(map[string][]string),
-		}
-		req.Body = io.NopCloser(bytes.NewReader([]byte("zdfsaf")))
-		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclPrivate)
-		objectWriter := "accountA"
-		_, errCode := ExtractAcl(req, accountManager, s3_constants.OwnershipObjectWriter, accountAdminId, accountAdminId, objectWriter)
-		testCases = append(testCases, &Case{
-			id:            3,
-			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidRequest,
-		})
-	}
-
-	//case4 (bad case)
-	//parse acp from header (cannedAcl is invalid)
-	req := &http.Request{
-		Header: make(map[string][]string),
-	}
-	req.Body = nil
-	req.Header.Set(s3_constants.AmzCannedAcl, "dfaksjfk")
-	objectWriter := "accountA"
-	_, errCode := ExtractAcl(req, accountManager, s3_constants.OwnershipObjectWriter, accountAdminId, "", objectWriter)
-	testCases = append(testCases, &Case{
-		id:            4,
-		resultErrCode: errCode, expectErrCode: s3err.ErrInvalidRequest,
-	})
-
-	{
-		//case5 (bad case)
-		//parse acp from request body: owner is inconsistent
-		req.Body = io.NopCloser(bytes.NewReader([]byte(`
-	<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-		<Owner>
-			<ID>admin</ID>
-			<DisplayName>admin</DisplayName>
-		</Owner>
-		<AccessControlList>
-			<Grant>
-				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
-					<ID>admin</ID>
-				</Grantee>
-				<Permission>FULL_CONTROL</Permission>
-			</Grant>
-			<Grant>
-				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
-					<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
-				</Grantee>
-				<Permission>FULL_CONTROL</Permission>
-			</Grant>
-		</AccessControlList>
-	</AccessControlPolicy>
-	`)))
-		objectWriter = "accountA"
-		_, errCode := ExtractAcl(req, accountManager, s3_constants.OwnershipObjectWriter, accountAdminId, objectWriter, objectWriter)
-		testCases = append(testCases, &Case{
-			id:            5,
-			resultErrCode: errCode, expectErrCode: s3err.ErrAccessDenied,
-		})
-	}
-
-	for _, tc := range testCases {
-		if tc.resultErrCode != tc.expectErrCode {
-			t.Fatalf("case[%d]: errorCode not expect", tc.id)
-		}
-		if !grantsEquals(tc.resultGrants, tc.expectGrants) {
-			t.Fatalf("case[%d]: grants not expect", tc.id)
-		}
-	}
-}
-
-func TestParseAndValidateAclHeaders(t *testing.T) {
-	type Case struct {
-		id                           int
-		resultOwner, expectOwner     string
-		resultErrCode, expectErrCode s3err.ErrorCode
-		resultGrants, expectGrants   []*s3.Grant
-	}
-	testCases := make([]*Case, 0)
-	bucketOwner := "admin"
-
-	{
-		//case1 (good case)
-		//parse custom acl
-		req := &http.Request{
-			Header: make(map[string][]string),
-		}
-		objectWriter := "accountA"
-		req.Header.Set(s3_constants.AmzAclFullControl, `uri="http://acs.amazonaws.com/groups/global/AllUsers", id="anonymous", emailAddress="admin@example.com"`)
-		ownerId, grants, errCode := ParseAndValidateAclHeaders(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwner, objectWriter, false)
-		testCases = append(testCases, &Case{
-			1,
-			ownerId, objectWriter,
-			errCode, s3err.ErrNone,
-			grants, []*s3.Grant{
-				{
-					Grantee: &s3.Grantee{
-						Type: &s3_constants.GrantTypeGroup,
-						URI:  &s3_constants.GranteeGroupAllUsers,
-					},
-					Permission: &s3_constants.PermissionFullControl,
-				},
-				{
-					Grantee: &s3.Grantee{
-						Type: &s3_constants.GrantTypeCanonicalUser,
-						ID:   &s3account.AccountAnonymous.Id,
-					},
-					Permission: &s3_constants.PermissionFullControl,
-				},
-				{
-					Grantee: &s3.Grantee{
-						Type: &s3_constants.GrantTypeCanonicalUser,
-						ID:   &s3account.AccountAdmin.Id,
-					},
-					Permission: &s3_constants.PermissionFullControl,
-				},
-			},
-		})
-	}
-	{
-		//case2 (good case)
-		//parse canned acl (ownership=ObjectWriter)
-		req := &http.Request{
-			Header: make(map[string][]string),
-		}
-		objectWriter := "accountA"
-		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
-		ownerId, grants, errCode := ParseAndValidateAclHeaders(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwner, objectWriter, false)
-		testCases = append(testCases, &Case{
-			2,
-			ownerId, objectWriter,
-			errCode, s3err.ErrNone,
-			grants, []*s3.Grant{
-				{
-					Grantee: &s3.Grantee{
-						Type: &s3_constants.GrantTypeCanonicalUser,
-						ID:   &objectWriter,
-					},
-					Permission: &s3_constants.PermissionFullControl,
-				},
-				{
-					Grantee: &s3.Grantee{
-						Type: &s3_constants.GrantTypeCanonicalUser,
-						ID:   &bucketOwner,
-					},
-					Permission: &s3_constants.PermissionFullControl,
-				},
-			},
-		})
-	}
-	{
-		//case3 (good case)
-		//parse canned acl (ownership=OwnershipBucketOwnerPreferred)
-		req := &http.Request{
-			Header: make(map[string][]string),
-		}
-		objectWriter := "accountA"
-		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
-		ownerId, grants, errCode := ParseAndValidateAclHeaders(req, accountManager, s3_constants.OwnershipBucketOwnerPreferred, bucketOwner, objectWriter, false)
-		testCases = append(testCases, &Case{
-			3,
-			ownerId, bucketOwner,
-			errCode, s3err.ErrNone,
-			grants, []*s3.Grant{
-				{
-					Grantee: &s3.Grantee{
-						Type: &s3_constants.GrantTypeCanonicalUser,
-						ID:   &bucketOwner,
-					},
-					Permission: &s3_constants.PermissionFullControl,
-				},
-			},
-		})
-	}
-	{
-		//case4 (bad case)
-		//parse custom acl (grantee id not exists)
-		req := &http.Request{
-			Header: make(map[string][]string),
-		}
-		objectWriter := "accountA"
-		req.Header.Set(s3_constants.AmzAclFullControl, `uri="http://acs.amazonaws.com/groups/global/AllUsers", id="notExistsAccount", emailAddress="admin@example.com"`)
-		_, _, errCode := ParseAndValidateAclHeaders(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwner, objectWriter, false)
-		testCases = append(testCases, &Case{
-			id:            4,
-			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidRequest,
-		})
-	}
-
-	{
-		//case5 (bad case)
-		//parse custom acl (invalid format)
-		req := &http.Request{
-			Header: make(map[string][]string),
-		}
-		objectWriter := "accountA"
-		req.Header.Set(s3_constants.AmzAclFullControl, `uri="http:sfasf"`)
-		_, _, errCode := ParseAndValidateAclHeaders(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwner, objectWriter, false)
-		testCases = append(testCases, &Case{
-			id:            5,
-			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidRequest,
-		})
-	}
-
-	{
-		//case6 (bad case)
-		//parse canned acl (invalid value)
-		req := &http.Request{
-			Header: make(map[string][]string),
-		}
-		objectWriter := "accountA"
-		req.Header.Set(s3_constants.AmzCannedAcl, `uri="http:sfasf"`)
-		_, _, errCode := ParseAndValidateAclHeaders(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwner, objectWriter, false)
-		testCases = append(testCases, &Case{
-			id:            5,
-			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidRequest,
-		})
-	}
-
-	for _, tc := range testCases {
-		if tc.expectErrCode != tc.resultErrCode {
-			t.Errorf("case[%d]: errCode unexpect", tc.id)
-		}
-		if tc.resultOwner != tc.expectOwner {
-			t.Errorf("case[%d]: ownerId unexpect", tc.id)
-		}
-		if !grantsEquals(tc.resultGrants, tc.expectGrants) {
-			t.Fatalf("case[%d]: grants not expect", tc.id)
-		}
-	}
-}
-
 func grantsEquals(a, b []*s3.Grant) bool {
 	if len(a) != len(b) {
 		return false
@@ -394,7 +74,7 @@ func TestDetermineReqGrants(t *testing.T) {
 		accountId := s3account.AccountAnonymous.Id
 		reqPermission := s3_constants.PermissionRead
 
-		resultGrants := DetermineReqGrants(accountId, reqPermission)
+		resultGrants := DetermineRequiredGrants(accountId, reqPermission)
 		expectGrants := []*s3.Grant{
 			{
 				Grantee: &s3.Grantee{
@@ -434,7 +114,7 @@ func TestDetermineReqGrants(t *testing.T) {
 		accountId := "accountX"
 		reqPermission := s3_constants.PermissionRead
 
-		resultGrants := DetermineReqGrants(accountId, reqPermission)
+		resultGrants := DetermineRequiredGrants(accountId, reqPermission)
 		expectGrants := []*s3.Grant{
 			{
 				Grantee: &s3.Grantee{
@@ -509,7 +189,7 @@ func TestAssembleEntryWithAcp(t *testing.T) {
 		t.Fatalf("owner not expect")
 	}
 
-	resultGrants := GetAcpGrants(entry.Extended)
+	resultGrants := GetAcpGrants(nil, entry.Extended)
 	if !grantsEquals(resultGrants, expectGrants) {
 		t.Fatal("grants not expect")
 	}
@@ -522,7 +202,7 @@ func TestAssembleEntryWithAcp(t *testing.T) {
 		t.Fatalf("owner not expect")
 	}
 
-	resultGrants = GetAcpGrants(entry.Extended)
+	resultGrants = GetAcpGrants(nil, entry.Extended)
 	if len(resultGrants) != 0 {
 		t.Fatal("grants not expect")
 	}
@@ -702,5 +382,1085 @@ func TestSetAcpGrantsHeader(t *testing.T) {
 	grantsJson, _ := json.Marshal(grants)
 	if req.Header.Get(s3_constants.ExtAmzAclKey) != string(grantsJson) {
 		t.Fatalf("owner unexpect")
+	}
+}
+
+func TestGrantWithFullControl(t *testing.T) {
+	accountId := "Accountaskdfj"
+	expect := &s3.Grant{
+		Permission: &s3_constants.PermissionFullControl,
+		Grantee: &s3.Grantee{
+			Type: &s3_constants.GrantTypeCanonicalUser,
+			ID:   &accountId,
+		},
+	}
+
+	result := GrantWithFullControl(accountId)
+
+	if !GrantEquals(result, expect) {
+		t.Fatal("GrantWithFullControl not expect")
+	}
+}
+
+func TestExtractObjectAcl(t *testing.T) {
+	type Case struct {
+		id                           string
+		resultErrCode, expectErrCode s3err.ErrorCode
+		resultGrants, expectGrants   []*s3.Grant
+		resultOwnerId, expectOwnerId string
+	}
+	testCases := make([]*Case, 0)
+	accountAdminId := "admin"
+
+	//Request body to specify AccessControlList
+	{
+		//ownership: ObjectWriter
+		//s3:PutObjectAcl('createObject' is set to false), config acl through request body
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Body = io.NopCloser(bytes.NewReader([]byte(`
+	<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+		<Owner>
+			<ID>admin</ID>
+			<DisplayName>admin</DisplayName>
+		</Owner>
+		<AccessControlList>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
+					<ID>admin</ID>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
+					<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+		</AccessControlList>
+	</AccessControlPolicy>
+	`)))
+		requestAccountId := "accountA"
+		ownerId, grants, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipObjectWriter, accountAdminId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			"TestExtractObjectAcl: ownership-ObjectWriter, createObject-false, acl-requestBody",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &accountAdminId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeGroup,
+						URI:  &s3_constants.GranteeGroupAllUsers,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+			ownerId, accountAdminId,
+		})
+	}
+	{
+		//ownership: BucketOwnerEnforced (extra acl is not allowed)
+		//s3:PutObjectAcl('createObject' is set to false), config acl through request body
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Body = io.NopCloser(bytes.NewReader([]byte(`
+	<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+		<Owner>
+			<ID>admin</ID>
+			<DisplayName>admin</DisplayName>
+		</Owner>
+		<AccessControlList>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
+					<ID>admin</ID>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
+					<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+		</AccessControlList>
+	</AccessControlPolicy>
+	`)))
+		requestAccountId := "accountA"
+		_, _, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipBucketOwnerEnforced, accountAdminId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			id:            "TestExtractObjectAcl: ownership-BucketOwnerEnforced, createObject-false, acl-requestBody",
+			resultErrCode: errCode, expectErrCode: s3err.AccessControlListNotSupported,
+		})
+	}
+	{
+		//ownership: ObjectWriter
+		//s3:PutObject('createObject' is set to false), request body will be ignored when parse acl
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Body = io.NopCloser(bytes.NewReader([]byte(`
+	<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+		<Owner>
+			<ID>admin</ID>
+			<DisplayName>admin</DisplayName>
+		</Owner>
+		<AccessControlList>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
+					<ID>admin</ID>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
+					<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+		</AccessControlList>
+	</AccessControlPolicy>
+	`)))
+		requestAccountId := "accountA"
+		ownerId, grants, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipObjectWriter, accountAdminId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			"TestExtractObjectAcl: ownership-ObjectWriter, createObject-true, acl-requestBody",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{},
+			ownerId, "",
+		})
+	}
+	{
+		//ownership: BucketOwnerEnforced (extra acl is not allowed)
+		//s3:PutObject('createObject' is set to true), request body will be ignored when parse acl
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Body = io.NopCloser(bytes.NewReader([]byte(`
+	<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+		<Owner>
+			<ID>admin</ID>
+			<DisplayName>admin</DisplayName>
+		</Owner>
+		<AccessControlList>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
+					<ID>admin</ID>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
+					<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+		</AccessControlList>
+	</AccessControlPolicy>
+	`)))
+		requestAccountId := "accountA"
+		ownerId, grants, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipBucketOwnerEnforced, accountAdminId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			"TestExtractObjectAcl: ownership-BucketOwnerEnforced, createObject-true, acl-requestBody",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{},
+			ownerId, "",
+		})
+	}
+
+	//CannedAcl Header to specify ACL
+	//cannedAcl, putObjectACL
+	{
+		//ownership: ObjectWriter
+		//s3:PutObjectACL('createObject' is set to false), parse cannedACL header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		ownerId, grants, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwnerId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			"TestExtractObjectAcl: ownership-ObjectWriter, createObject-false, acl-CannedAcl",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &requestAccountId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &bucketOwnerId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+			ownerId, "",
+		})
+	}
+	{
+		//ownership: BucketOwnerPreferred
+		//s3:PutObjectACL('createObject' is set to false), parse cannedACL header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		ownerId, grants, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipBucketOwnerPreferred, bucketOwnerId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			"TestExtractObjectAcl: ownership-BucketOwnerPreferred, createObject-false, acl-CannedAcl",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &requestAccountId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &bucketOwnerId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+			ownerId, "",
+		})
+	}
+	{
+		//ownership: BucketOwnerEnforced
+		//s3:PutObjectACL('createObject' is set to false), parse cannedACL header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		_, _, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipBucketOwnerEnforced, bucketOwnerId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			id:            "TestExtractObjectAcl: ownership-BucketOwnerEnforced, createObject-false, acl-CannedAcl",
+			resultErrCode: errCode, expectErrCode: s3err.AccessControlListNotSupported,
+		})
+	}
+	//cannedACL, putObject
+	{
+		//ownership: ObjectWriter
+		//s3:PutObject('createObject' is set to true), parse cannedACL header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		ownerId, grants, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwnerId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			"TestExtractObjectAcl: ownership-ObjectWriter, createObject-true, acl-CannedAcl",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &requestAccountId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &bucketOwnerId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+			ownerId, "",
+		})
+	}
+	{
+		//ownership: BucketOwnerPreferred
+		//s3:PutObject('createObject' is set to true), parse cannedACL header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		ownerId, grants, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipBucketOwnerPreferred, bucketOwnerId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			"TestExtractObjectAcl: ownership-BucketOwnerPreferred, createObject-true, acl-CannedAcl",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &bucketOwnerId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+			ownerId, "",
+		})
+	}
+	{
+		//ownership: BucketOwnerEnforced
+		//s3:PutObject('createObject' is set to true), parse cannedACL header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		_, _, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipBucketOwnerEnforced, bucketOwnerId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			id:            "TestExtractObjectAcl: ownership-BucketOwnerEnforced, createObject-true, acl-CannedAcl",
+			resultErrCode: errCode, expectErrCode: s3err.AccessControlListNotSupported,
+		})
+	}
+
+	//cannedAcl, putObjectACL
+	{
+		//ownership: ObjectWriter
+		//s3:PutObjectACL('createObject' is set to false), parse customAcl header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=accountA,id=\"admin\"")
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		ownerId, grants, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwnerId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			"TestExtractObjectAcl: ownership-ObjectWriter, createObject-false, acl-customAcl",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &requestAccountId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &bucketOwnerId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+			ownerId, "",
+		})
+	}
+	{
+		//ownership: BucketOwnerPreferred
+		//s3:PutObjectACL('createObject' is set to false), parse customAcl  header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=accountA,id=\"admin\"")
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		ownerId, grants, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipBucketOwnerPreferred, bucketOwnerId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			"TestExtractObjectAcl: ownership-BucketOwnerPreferred, createObject-false, acl-customAcl",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &requestAccountId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &bucketOwnerId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+			ownerId, "",
+		})
+	}
+	{
+		//ownership: BucketOwnerEnforced
+		//s3:PutObjectACL('createObject' is set to false), parse customAcl header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=accountA,id=\"admin\"")
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		_, _, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipBucketOwnerEnforced, bucketOwnerId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			id:            "TestExtractObjectAcl: ownership-BucketOwnerEnforced, createObject-false, acl-customAcl",
+			resultErrCode: errCode, expectErrCode: s3err.AccessControlListNotSupported,
+		})
+	}
+	//customAcl, putObject
+	{
+		//ownership: ObjectWriter
+		//s3:PutObject('createObject' is set to true), parse customAcl header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=accountA,id=\"admin\"")
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		ownerId, grants, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwnerId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			"TestExtractObjectAcl: ownership-ObjectWriter, createObject-true, acl-customAcl",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &requestAccountId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &bucketOwnerId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+			ownerId, "",
+		})
+	}
+	{
+		//ownership: BucketOwnerPreferred
+		//s3:PutObject('createObject' is set to true), parse customAcl header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=\"admin\"")
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		ownerId, grants, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipBucketOwnerPreferred, bucketOwnerId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			"TestExtractObjectAcl: ownership-BucketOwnerPreferred, createObject-true, acl-customAcl",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &bucketOwnerId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+			ownerId, "",
+		})
+	}
+	{
+		//ownership: BucketOwnerEnforced
+		//s3:PutObject('createObject' is set to true), parse customAcl header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=accountA,id=\"admin\"")
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		_, _, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipBucketOwnerEnforced, bucketOwnerId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			id:            "TestExtractObjectAcl: ownership-BucketOwnerEnforced, createObject-true, acl-customAcl",
+			resultErrCode: errCode, expectErrCode: s3err.AccessControlListNotSupported,
+		})
+	}
+
+	{
+		//parse acp from request header: both canned acl and custom acl not allowed
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=admin, id=\"accountA\"")
+		req.Header.Set(s3_constants.AmzCannedAcl, "private")
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		_, _, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwnerId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			id:            "Only one of cannedAcl, customAcl is allowed",
+			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidRequest,
+		})
+	}
+
+	{
+		//Acl can only be specified in one of requestBody, cannedAcl, customAcl, simultaneous use is not allowed
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=admin, id=\"accountA\"")
+		req.Header.Set(s3_constants.AmzCannedAcl, "private")
+		req.Body = io.NopCloser(bytes.NewReader([]byte(`
+	<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+		<Owner>
+			<ID>admin</ID>
+			<DisplayName>admin</DisplayName>
+		</Owner>
+		<AccessControlList>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
+					<ID>admin</ID>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
+					<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+		</AccessControlList>
+	</AccessControlPolicy>
+	`)))
+		requestAccountId := "accountA"
+		_, _, errCode := ExtractObjectAcl(req, accountManager, s3_constants.OwnershipObjectWriter, accountAdminId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			id:            "Only one of requestBody, cannedAcl, customAcl is allowed",
+			resultErrCode: errCode, expectErrCode: s3err.ErrUnexpectedContent,
+		})
+	}
+	for _, tc := range testCases {
+		if tc.resultErrCode != tc.expectErrCode {
+			t.Fatalf("case[%s]: errorCode[%v] not expect[%v]", tc.id, s3err.GetAPIError(tc.resultErrCode).Code, s3err.GetAPIError(tc.expectErrCode).Code)
+		}
+		if !grantsEquals(tc.resultGrants, tc.expectGrants) {
+			t.Fatalf("case[%s]: grants not expect", tc.id)
+		}
+	}
+}
+
+func TestBucketObjectAcl(t *testing.T) {
+	type Case struct {
+		id                           string
+		resultErrCode, expectErrCode s3err.ErrorCode
+		resultGrants, expectGrants   []*s3.Grant
+	}
+	testCases := make([]*Case, 0)
+	accountAdminId := "admin"
+
+	//Request body to specify AccessControlList
+	{
+		//ownership: ObjectWriter
+		//s3:PutBucketAcl('createObject' is set to false), config acl through request body
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Body = io.NopCloser(bytes.NewReader([]byte(`
+	<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+		<Owner>
+			<ID>admin</ID>
+			<DisplayName>admin</DisplayName>
+		</Owner>
+		<AccessControlList>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
+					<ID>admin</ID>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
+					<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+		</AccessControlList>
+	</AccessControlPolicy>
+	`)))
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		grants, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwnerId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			"TestExtractBucketAcl: ownership-ObjectWriter, createObject-false, acl-requestBody",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &accountAdminId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeGroup,
+						URI:  &s3_constants.GranteeGroupAllUsers,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+		})
+	}
+	{
+		//ownership: BucketOwnerEnforced (extra acl is not allowed)
+		//s3:PutBucketAcl('createObject' is set to false), config acl through request body
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Body = io.NopCloser(bytes.NewReader([]byte(`
+	<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+		<Owner>
+			<ID>admin</ID>
+			<DisplayName>admin</DisplayName>
+		</Owner>
+		<AccessControlList>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
+					<ID>admin</ID>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
+					<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+		</AccessControlList>
+	</AccessControlPolicy>
+	`)))
+		requestAccountId := "accountA"
+		_, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipBucketOwnerEnforced, accountAdminId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			id:            "TestExtractBucketAcl: ownership-BucketOwnerEnforced, createObject-false, acl-requestBody",
+			resultErrCode: errCode, expectErrCode: s3err.AccessControlListNotSupported,
+		})
+	}
+	{
+		//ownership: ObjectWriter
+		//s3:PutObject('createObject' is set to false), request body will be ignored when parse acl
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Body = io.NopCloser(bytes.NewReader([]byte(`
+	<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+		<Owner>
+			<ID>admin</ID>
+			<DisplayName>admin</DisplayName>
+		</Owner>
+		<AccessControlList>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
+					<ID>admin</ID>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
+					<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+		</AccessControlList>
+	</AccessControlPolicy>
+	`)))
+		requestAccountId := "accountA"
+		grants, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipObjectWriter, accountAdminId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			"TestExtractBucketAcl: ownership-ObjectWriter, createObject-true, acl-requestBody",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{},
+		})
+	}
+	{
+		//ownership: BucketOwnerEnforced (extra acl is not allowed)
+		//s3:PutObject('createObject' is set to true), request body will be ignored when parse acl
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Body = io.NopCloser(bytes.NewReader([]byte(`
+	<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+		<Owner>
+			<ID>admin</ID>
+			<DisplayName>admin</DisplayName>
+		</Owner>
+		<AccessControlList>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
+					<ID>admin</ID>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
+					<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+		</AccessControlList>
+	</AccessControlPolicy>
+	`)))
+		requestAccountId := "accountA"
+		grants, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipBucketOwnerEnforced, accountAdminId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			"TestExtractBucketAcl: ownership-BucketOwnerEnforced, createObject-true, acl-requestBody",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{},
+		})
+	}
+
+	//CannedAcl Header to specify ACL
+	//cannedAcl, PutBucketAcl
+	{
+		//ownership: ObjectWriter
+		//s3:PutBucketAcl('createObject' is set to false), parse cannedACL header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		_, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwnerId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			id:            "TestExtractBucketAcl: ownership-ObjectWriter, createObject-false, acl-CannedAcl",
+			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidAclArgument,
+		})
+	}
+	{
+		//ownership: BucketOwnerPreferred
+		//s3:PutBucketAcl('createObject' is set to false), parse cannedACL header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		_, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipBucketOwnerPreferred, bucketOwnerId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			id:            "TestExtractBucketAcl: ownership-BucketOwnerPreferred, createObject-false, acl-CannedAcl",
+			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidAclArgument,
+		})
+	}
+	{
+		//ownership: BucketOwnerEnforced
+		//s3:PutBucketAcl('createObject' is set to false), parse cannedACL header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		_, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipBucketOwnerEnforced, bucketOwnerId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			id:            "TestExtractBucketAcl: ownership-BucketOwnerEnforced, createObject-false, acl-CannedAcl",
+			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidAclArgument,
+		})
+	}
+	//cannedACL, createBucket
+	{
+		//ownership: ObjectWriter
+		//s3:PutObject('createObject' is set to true), parse cannedACL header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		_, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwnerId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			id:            "TestExtractBucketAcl: ownership-BucketOwnerEnforced, createObject-true, acl-CannedAcl",
+			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidAclArgument,
+		})
+	}
+	{
+		//ownership: BucketOwnerPreferred
+		//s3:PutObject('createObject' is set to true), parse cannedACL header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		_, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipBucketOwnerPreferred, bucketOwnerId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			id:            "TestExtractBucketAcl: ownership-BucketOwnerPreferred, createObject-true, acl-CannedAcl",
+			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidAclArgument,
+		})
+	}
+	{
+		//ownership: BucketOwnerEnforced
+		//s3:PutObject('createObject' is set to true), parse cannedACL header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		_, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipBucketOwnerEnforced, bucketOwnerId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			id:            "TestExtractBucketAcl: ownership-BucketOwnerEnforced, createObject-true, acl-CannedAcl",
+			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidAclArgument,
+		})
+	}
+
+	//customAcl, PutBucketAcl
+	{
+		//ownership: ObjectWriter
+		//s3:PutBucketAcl('createObject' is set to false), parse customAcl header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=accountA,id=\"admin\"")
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		grants, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwnerId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			"TestExtractBucketAcl: ownership-ObjectWriter, createObject-false, acl-customAcl",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &requestAccountId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &bucketOwnerId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+		})
+	}
+	{
+		//ownership: BucketOwnerPreferred
+		//s3:PutBucketAcl('createObject' is set to false), parse customAcl  header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=accountA,id=\"admin\"")
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		grants, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipBucketOwnerPreferred, bucketOwnerId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			"TestExtractBucketAcl: ownership-BucketOwnerPreferred, createObject-false, acl-customAcl",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &requestAccountId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &bucketOwnerId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+		})
+	}
+	{
+		//ownership: BucketOwnerEnforced
+		//s3:PutBucketAcl('createObject' is set to false), parse customAcl header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=accountA,id=\"admin\"")
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		_, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipBucketOwnerEnforced, bucketOwnerId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			id:            "TestExtractBucketAcl: ownership-BucketOwnerEnforced, createObject-false, acl-customAcl",
+			resultErrCode: errCode, expectErrCode: s3err.AccessControlListNotSupported,
+		})
+	}
+	//customAcl, putObject
+	{
+		//ownership: ObjectWriter
+		//s3:PutObject('createObject' is set to true), parse customAcl header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=accountA,id=\"admin\"")
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		grants, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwnerId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			"TestExtractBucketAcl: ownership-ObjectWriter, createObject-true, acl-customAcl",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &requestAccountId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &bucketOwnerId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+		})
+	}
+	{
+		//ownership: BucketOwnerPreferred
+		//s3:PutObject('createObject' is set to true), parse customAcl header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=\"admin\"")
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		grants, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipBucketOwnerPreferred, bucketOwnerId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			"TestExtractBucketAcl: ownership-BucketOwnerPreferred, createObject-true, acl-customAcl",
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &bucketOwnerId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+		})
+	}
+	{
+		//ownership: BucketOwnerEnforced
+		//s3:PutObject('createObject' is set to true), parse customAcl header
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=accountA,id=\"admin\"")
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		_, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipBucketOwnerEnforced, bucketOwnerId, requestAccountId, true)
+		testCases = append(testCases, &Case{
+			id:            "TestExtractBucketAcl: ownership-BucketOwnerEnforced, createObject-true, acl-customAcl",
+			resultErrCode: errCode, expectErrCode: s3err.AccessControlListNotSupported,
+		})
+	}
+
+	{
+		//parse acp from request header: both canned acl and custom acl not allowed
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=admin, id=\"accountA\"")
+		req.Header.Set(s3_constants.AmzCannedAcl, "private")
+		bucketOwnerId := "admin"
+		requestAccountId := "accountA"
+		_, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwnerId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			id:            "Only one of cannedAcl, customAcl is allowed",
+			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidRequest,
+		})
+	}
+
+	{
+		//Acl can only be specified in one of requestBody, cannedAcl, customAcl, simultaneous use is not allowed
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Header.Set(s3_constants.AmzAclFullControl, "id=admin, id=\"accountA\"")
+		req.Header.Set(s3_constants.AmzCannedAcl, "private")
+		req.Body = io.NopCloser(bytes.NewReader([]byte(`
+	<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+		<Owner>
+			<ID>admin</ID>
+			<DisplayName>admin</DisplayName>
+		</Owner>
+		<AccessControlList>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
+					<ID>admin</ID>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
+					<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+		</AccessControlList>
+	</AccessControlPolicy>
+	`)))
+		requestAccountId := "accountA"
+		_, errCode := ExtractBucketAcl(req, accountManager, s3_constants.OwnershipObjectWriter, accountAdminId, requestAccountId, false)
+		testCases = append(testCases, &Case{
+			id:            "Only one of requestBody, cannedAcl, customAcl is allowed",
+			resultErrCode: errCode, expectErrCode: s3err.ErrUnexpectedContent,
+		})
+	}
+	for _, tc := range testCases {
+		if tc.resultErrCode != tc.expectErrCode {
+			t.Fatalf("case[%s]: errorCode[%v] not expect[%v]", tc.id, s3err.GetAPIError(tc.resultErrCode).Code, s3err.GetAPIError(tc.expectErrCode).Code)
+		}
+		if !grantsEquals(tc.resultGrants, tc.expectGrants) {
+			t.Fatalf("case[%s]: grants not expect", tc.id)
+		}
+	}
+}
+
+func TestMarshalGrantsToJson(t *testing.T) {
+	//ok
+	bucketOwnerId := "admin"
+	requestAccountId := "accountA"
+	grants := []*s3.Grant{
+		{
+			Grantee: &s3.Grantee{
+				Type: &s3_constants.GrantTypeCanonicalUser,
+				ID:   &requestAccountId,
+			},
+			Permission: &s3_constants.PermissionFullControl,
+		},
+		{
+			Grantee: &s3.Grantee{
+				Type: &s3_constants.GrantTypeCanonicalUser,
+				ID:   &bucketOwnerId,
+			},
+			Permission: &s3_constants.PermissionFullControl,
+		},
+	}
+	result, err := MarshalGrantsToJson(grants)
+	if err != nil {
+		t.Error(err)
+	}
+
+	var grants2 []*s3.Grant
+	err = json.Unmarshal(result, &grants2)
+	if err != nil {
+		t.Error(err)
+	}
+
+	print(string(result))
+	if !grantsEquals(grants, grants2) {
+		t.Fatal("grants not equal", grants, grants2)
+	}
+
+	//ok
+	result, err = MarshalGrantsToJson(nil)
+	if result != nil && err != nil {
+		t.Fatal("error: result, err = MarshalGrantsToJson(nil)")
 	}
 }

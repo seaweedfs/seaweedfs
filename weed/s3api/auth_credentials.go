@@ -17,7 +17,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-var IdentityAnonymous *Identity
+var IdentityAnonymous = &Identity{
+	Name:      s3account.AccountAnonymous.Name,
+	AccountId: s3account.AccountAnonymous.Id,
+}
 
 type Action string
 
@@ -162,12 +165,6 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 		identities = append(identities, t)
 	}
 
-	if IdentityAnonymous == nil {
-		IdentityAnonymous = &Identity{
-			Name:      s3account.AccountAnonymous.Name,
-			AccountId: s3account.AccountAnonymous.Id,
-		}
-	}
 	iam.m.Lock()
 	// atomically switch
 	iam.identities = identities
@@ -210,13 +207,26 @@ func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, foun
 }
 
 func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
+	return Auth(iam, nil, f, action, false)
+}
+
+func (s3a *S3ApiServer) Auth(f http.HandlerFunc, action Action, supportAcl bool) http.HandlerFunc {
+	return Auth(s3a.iam, s3a.bucketRegistry, f, action, supportAcl)
+}
+
+func Auth(iam *IdentityAccessManagement, br *BucketRegistry, f http.HandlerFunc, action Action, supportAcl bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		//unset predefined headers
+		delete(r.Header, s3_constants.AmzAccountId)
+		delete(r.Header, s3_constants.ExtAmzOwnerKey)
+		delete(r.Header, s3_constants.ExtAmzAclKey)
+
 		if !iam.isEnabled() {
 			f(w, r)
 			return
 		}
 
-		identity, errCode := iam.authRequest(r, action)
+		identity, errCode := authRequest(iam, br, r, action, supportAcl)
 		if errCode == s3err.ErrNone {
 			if identity != nil && identity.Name != "" {
 				r.Header.Set(s3_constants.AmzIdentityId, identity.Name)
@@ -233,11 +243,13 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 	}
 }
 
-// check whether the request has valid access keys
 func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action) (*Identity, s3err.ErrorCode) {
+	return authRequest(iam, nil, r, action, false)
+}
+
+func authRequest(iam *IdentityAccessManagement, br *BucketRegistry, r *http.Request, action Action, supportAcl bool) (*Identity, s3err.ErrorCode) {
 	var identity *Identity
 	var s3Err s3err.ErrorCode
-	var found bool
 	var authType string
 	switch getRequestAuthType(r) {
 	case authTypeStreamingSigned:
@@ -263,9 +275,19 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
 		return identity, s3err.ErrNotImplemented
 	case authTypeAnonymous:
+		if supportAcl && br != nil {
+			bucket, _ := s3_constants.GetBucketAndObject(r)
+			bucketMetadata, errorCode := br.GetBucketMetadata(bucket)
+			if errorCode != s3err.ErrNone {
+				return nil, errorCode
+			}
+			if bucketMetadata.ObjectOwnership != s3_constants.OwnershipBucketOwnerEnforced {
+				return IdentityAnonymous, s3err.ErrNone
+			}
+		}
 		authType = "Anonymous"
-		identity, found = iam.lookupAnonymous()
-		if !found {
+		identity = IdentityAnonymous
+		if len(identity.Actions) == 0 {
 			r.Header.Set(s3_constants.AmzAuthType, authType)
 			return identity, s3err.ErrAccessDenied
 		}
@@ -280,7 +302,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		return identity, s3Err
 	}
 
-	glog.V(3).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
+	glog.V(3).Infof("user name: %v account id: %v actions: %v, action: %v", identity.Name, identity.AccountId, identity.Actions, action)
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 

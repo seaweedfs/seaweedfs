@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3acl"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
@@ -99,13 +100,26 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		if err == filer_pb.ErrNotFound {
 			glog.V(2).Infof("Not found %s: %v", path, err)
 			stats.FilerRequestCounter.WithLabelValues(stats.ErrorReadNotFound).Inc()
-			w.WriteHeader(http.StatusNotFound)
+			if r.Header.Get(s3_constants.XSeaweedFSHeaderAmzBucketAccessDenied) == "true" {
+				w.WriteHeader(http.StatusForbidden)
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
 		} else {
 			glog.Errorf("Internal %s: %v", path, err)
 			stats.FilerRequestCounter.WithLabelValues(stats.ErrorReadInternal).Inc()
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 		return
+	}
+
+	//s3 acl offload to filer
+	offloadHeaderBucketOwner := r.Header.Get(s3_constants.XSeaweedFSHeaderAmzBucketOwnerId)
+	if len(offloadHeaderBucketOwner) > 0 {
+		if statusCode, ok := s3acl.CheckObjectAccessForReadObject(r, w, entry, offloadHeaderBucketOwner); !ok {
+			w.WriteHeader(statusCode)
+			return
+		}
 	}
 
 	query := r.URL.Query()
@@ -169,10 +183,15 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	// print out the header from extended properties
 	for k, v := range entry.Extended {
-		if !strings.HasPrefix(k, "xattr-") {
+		if strings.HasPrefix(k, "xattr-") {
 			// "xattr-" prefix is set in filesys.XATTR_PREFIX
-			w.Header().Set(k, string(v))
+			continue
 		}
+		if strings.HasPrefix(k, "Seaweed-X-") {
+			// key with "Seaweed-X-" prefix is builtin and should not expose to user
+			continue
+		}
+		w.Header().Set(k, string(v))
 	}
 
 	//Seaweed custom header are not visible to Vue or javascript
