@@ -87,6 +87,7 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 			localTopicPartition = topic.NewLocalPartition(t, p, true, nil)
 			broker.localTopicManager.AddTopicPartition(t, localTopicPartition)
 		}
+		stream.Send(response)
 	} else {
 		response.Error = fmt.Sprintf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)
 		glog.Errorf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)
@@ -106,13 +107,14 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 			AckSequence: sequence,
 		}
 		if dataMessage := req.GetData(); dataMessage != nil {
-			print("+")
 			localTopicPartition.Publish(dataMessage)
 		}
 		if err := stream.Send(response); err != nil {
 			glog.Errorf("Error sending setup response: %v", err)
 		}
 	}
+
+	glog.Infof("publish stream closed")
 
 	return nil
 }

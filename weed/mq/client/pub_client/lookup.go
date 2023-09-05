@@ -24,43 +24,21 @@ func (p *TopicPublisher) doLookup(brokerAddress string) error {
 				return err
 			}
 			for _, brokerPartitionAssignment := range lookupResp.BrokerPartitionAssignments {
-				// partition => broker
+				// partition => publishClient
+				publishClient, redirectTo, err := p.doConnect(brokerPartitionAssignment.Partition, brokerPartitionAssignment.LeaderBroker)
+				if err != nil {
+					return err
+				}
+				for redirectTo != "" {
+					publishClient, redirectTo, err = p.doConnect(brokerPartitionAssignment.Partition, redirectTo)
+					if err != nil {
+						return err
+					}
+				}
 				p.partition2Broker.Insert(
 					brokerPartitionAssignment.Partition.RangeStart,
 					brokerPartitionAssignment.Partition.RangeStop,
-					brokerPartitionAssignment.LeaderBroker)
-
-				// broker => publish client
-				// send init message
-				// save the publishing client
-				brokerAddress := brokerPartitionAssignment.LeaderBroker
-				grpcConnection, err := pb.GrpcDial(context.Background(), brokerAddress, true, p.grpcDialOption)
-				if err != nil {
-					return fmt.Errorf("dial broker %s: %v", brokerAddress, err)
-				}
-				brokerClient := mq_pb.NewSeaweedMessagingClient(grpcConnection)
-				publishClient, err := brokerClient.Publish(context.Background())
-				if err != nil {
-					return fmt.Errorf("create publish client: %v", err)
-				}
-				p.broker2PublishClient.Set(brokerAddress, publishClient)
-				if err = publishClient.Send(&mq_pb.PublishRequest{
-					Message: &mq_pb.PublishRequest_Init{
-						Init: &mq_pb.PublishRequest_InitMessage{
-							Topic: &mq_pb.Topic{
-								Namespace: p.namespace,
-								Name:      p.topic,
-							},
-							Partition: &mq_pb.Partition{
-								RingSize:   brokerPartitionAssignment.Partition.RingSize,
-								RangeStart: brokerPartitionAssignment.Partition.RangeStart,
-								RangeStop:  brokerPartitionAssignment.Partition.RangeStop,
-							},
-						},
-					},
-				}); err != nil {
-					return fmt.Errorf("send init message: %v", err)
-				}
+					publishClient)
 			}
 			return nil
 		})
@@ -69,4 +47,63 @@ func (p *TopicPublisher) doLookup(brokerAddress string) error {
 		return fmt.Errorf("lookup topic %s/%s: %v", p.namespace, p.topic, err)
 	}
 	return nil
+}
+
+// broker => publish client
+// send init message
+// save the publishing client
+func (p *TopicPublisher) doConnect(partition *mq_pb.Partition, brokerAddress string) (publishClient *PublishClient, redirectTo string, err error) {
+	grpcConnection, err := pb.GrpcDial(context.Background(), brokerAddress, true, p.grpcDialOption)
+	if err != nil {
+		return publishClient, redirectTo, fmt.Errorf("dial broker %s: %v", brokerAddress, err)
+	}
+	brokerClient := mq_pb.NewSeaweedMessagingClient(grpcConnection)
+	stream, err := brokerClient.Publish(context.Background())
+	if err != nil {
+		return publishClient, redirectTo, fmt.Errorf("create publish client: %v", err)
+	}
+	publishClient = &PublishClient{
+		SeaweedMessaging_PublishClient: stream,
+		Broker:                         brokerAddress,
+	}
+	if err = publishClient.Send(&mq_pb.PublishRequest{
+		Message: &mq_pb.PublishRequest_Init{
+			Init: &mq_pb.PublishRequest_InitMessage{
+				Topic: &mq_pb.Topic{
+					Namespace: p.namespace,
+					Name:      p.topic,
+				},
+				Partition: &mq_pb.Partition{
+					RingSize:   partition.RingSize,
+					RangeStart: partition.RangeStart,
+					RangeStop:  partition.RangeStop,
+				},
+			},
+		},
+	}); err != nil {
+		return publishClient, redirectTo, fmt.Errorf("send init message: %v", err)
+	}
+	resp, err := stream.Recv()
+	if err != nil {
+		return publishClient, redirectTo, fmt.Errorf("recv init response: %v", err)
+	}
+	if resp.Error != "" {
+		return publishClient, redirectTo, fmt.Errorf("init response error: %v", resp.Error)
+	}
+	if resp.RedirectToBroker != "" {
+		redirectTo = resp.RedirectToBroker
+		return publishClient, redirectTo, nil
+	}
+
+	go func() {
+		for {
+			_, err := publishClient.Recv()
+			if err != nil {
+				publishClient.Err = err
+				fmt.Printf("publish to %s error: %v\n", publishClient.Broker, err)
+				return
+			}
+		}
+	}()
+	return publishClient, redirectTo, nil
 }
