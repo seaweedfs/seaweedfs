@@ -60,6 +60,9 @@ func validateFiles(baseFileName string) error {
 	}
 
 	ecFiles, err := openEcFiles(baseFileName, true)
+	if err != nil {
+		return fmt.Errorf("error opening ec files: %w", err)
+	}
 	defer closeEcFiles(ecFiles)
 
 	err = nm.AscendingVisit(func(value needle_map.NeedleValue) error {
