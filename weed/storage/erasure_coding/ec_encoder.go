@@ -79,7 +79,7 @@ func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, 
 	}
 
 	glog.V(0).Infof("encodeDatFile %s.dat size:%d", baseFileName, fi.Size())
-	err = encodeDatFile(fi.Size(), err, baseFileName, bufferSize, largeBlockSize, file, smallBlockSize)
+	err = encodeDatFile(fi.Size(), baseFileName, bufferSize, largeBlockSize, file, smallBlockSize)
 	if err != nil {
 		return fmt.Errorf("encodeDatFile: %v", err)
 	}
@@ -195,7 +195,7 @@ func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blo
 	return nil
 }
 
-func encodeDatFile(remainingSize int64, err error, baseFileName string, bufferSize int, largeBlockSize int64, file *os.File, smallBlockSize int64) error {
+func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, largeBlockSize int64, file *os.File, smallBlockSize int64) error {
 
 	var processedSize int64
 
