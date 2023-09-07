@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"time"
 )
 
 // For a new or re-configured topic, or one of the broker went offline,
@@ -79,6 +80,7 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 	}
 	response := &mq_pb.PublishResponse{}
 	// TODO check whether current broker should be the leader for the topic partition
+	ackInterval := 1
 	initMessage := req.GetInit()
 	if initMessage != nil {
 		t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
@@ -87,6 +89,7 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 			localTopicPartition = topic.NewLocalPartition(t, p, true, nil)
 			broker.localTopicManager.AddTopicPartition(t, localTopicPartition)
 		}
+		ackInterval = int(initMessage.AckInterval)
 		stream.Send(response)
 	} else {
 		response.Error = fmt.Sprintf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)
@@ -94,23 +97,48 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 		return stream.Send(response)
 	}
 
+	ackCounter := 0
+	var ackSequence int64
+	respChan := make(chan *mq_pb.PublishResponse, 128)
+	defer close(respChan)
+	go func() {
+		for {
+			select {
+			case resp := <-respChan:
+				if err := stream.Send(resp); err != nil {
+					glog.Errorf("Error sending setup response: %v", err)
+				}
+			case <-time.After(1 * time.Second):
+				response := &mq_pb.PublishResponse{
+					AckSequence: ackSequence,
+				}
+				respChan <- response
+			}
+		}
+	}()
+
 	// process each published messages
 	for {
+		// receive a message
 		req, err := stream.Recv()
 		if err != nil {
 			return err
 		}
 
 		// Process the received message
-		sequence := req.GetSequence()
-		response := &mq_pb.PublishResponse{
-			AckSequence: sequence,
-		}
 		if dataMessage := req.GetData(); dataMessage != nil {
 			localTopicPartition.Publish(dataMessage)
 		}
-		if err := stream.Send(response); err != nil {
-			glog.Errorf("Error sending setup response: %v", err)
+
+		ackCounter++
+		ackSequence++
+		if ackCounter >= ackInterval {
+			ackCounter = 0
+			// send back the ack
+			response := &mq_pb.PublishResponse{
+				AckSequence: ackSequence,
+			}
+			respChan <- response
 		}
 	}
 

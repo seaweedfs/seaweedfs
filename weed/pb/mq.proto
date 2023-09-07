@@ -149,6 +149,7 @@ message PublishRequest {
     message InitMessage {
         Topic topic = 1;
         Partition partition = 2;
+        int32 ack_interval = 3;
     }
     oneof message {
         InitMessage init = 1;
