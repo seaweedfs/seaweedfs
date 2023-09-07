@@ -78,6 +78,7 @@ func (p *TopicPublisher) doConnect(partition *mq_pb.Partition, brokerAddress str
 					RangeStart: partition.RangeStart,
 					RangeStop:  partition.RangeStop,
 				},
+				AckInterval: 128,
 			},
 		},
 	}); err != nil {
