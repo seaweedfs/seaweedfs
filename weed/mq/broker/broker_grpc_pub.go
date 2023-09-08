@@ -104,10 +104,6 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 	respChan := make(chan *mq_pb.PublishResponse, 128)
 	defer func() {
 		atomic.StoreInt32(&isStopping, 1)
-		response := &mq_pb.PublishResponse{
-			Error: "end of stream",
-		}
-		respChan <- response
 		close(respChan)
 	}()
 	go func() {
@@ -117,7 +113,7 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 			case resp := <-respChan:
 				if resp != nil {
 					if err := stream.Send(resp); err != nil {
-						glog.Errorf("Error sending setup response: %v", err)
+						glog.Errorf("Error sending response %v: %v", resp, err)
 					}
 				} else {
 					return

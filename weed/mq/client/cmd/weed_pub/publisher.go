@@ -51,6 +51,7 @@ func main() {
 	// Wait for all publishers to finish
 	wg.Wait()
 	elapsed := time.Since(startTime)
+	publisher.Shutdown()
 
 	log.Printf("Published %d messages in %s (%.2f msg/s)", *messageCount, elapsed, float64(*messageCount)/elapsed.Seconds())
 

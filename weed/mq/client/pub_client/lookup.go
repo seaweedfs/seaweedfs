@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func (p *TopicPublisher) doLookup(brokerAddress string) error {
@@ -100,6 +102,10 @@ func (p *TopicPublisher) doConnect(partition *mq_pb.Partition, brokerAddress str
 		for {
 			_, err := publishClient.Recv()
 			if err != nil {
+				e, ok := status.FromError(err)
+				if ok && e.Code() == codes.Unknown && e.Message() == "EOF" {
+					return
+				}
 				publishClient.Err = err
 				fmt.Printf("publish to %s error: %v\n", publishClient.Broker, err)
 				return

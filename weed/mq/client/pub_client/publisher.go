@@ -2,10 +2,12 @@ package pub_client
 
 import (
 	"github.com/rdleal/intervalst/interval"
+	"github.com/seaweedfs/seaweedfs/weed/mq/broker"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"sync"
+	"time"
 )
 
 type PublisherConfiguration struct {
@@ -39,5 +41,17 @@ func (p *TopicPublisher) Connect(bootstrapBroker string) error {
 	if err := p.doLookup(bootstrapBroker); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (p *TopicPublisher) Shutdown() error {
+
+	if clients, found := p.partition2Broker.AllIntersections(0, broker.MaxPartitionCount); found {
+		for _, client := range clients {
+			client.CloseSend()
+		}
+	}
+	time.Sleep(1100 * time.Millisecond)
+
 	return nil
 }
