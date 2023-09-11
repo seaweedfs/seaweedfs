@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc"
+	"sync"
 )
 
 type VolumeAssignRequest struct {
@@ -66,9 +67,13 @@ func (ap *AssignProxy) Assign(primaryRequest *VolumeAssignRequest, alternativeRe
 
 type singleThreadAssignProxy struct {
 	assignClient master_pb.Seaweed_StreamAssignClient
+	sync.Mutex
 }
 
 func (ap *singleThreadAssignProxy) doAssign(grpcConnection *grpc.ClientConn, primaryRequest *VolumeAssignRequest, alternativeRequests ...*VolumeAssignRequest) (ret *AssignResult, err error) {
+	ap.Lock()
+	defer ap.Unlock()
+
 	if ap.assignClient == nil {
 		client := master_pb.NewSeaweedClient(grpcConnection)
 		ap.assignClient, err = client.StreamAssign(context.Background())
