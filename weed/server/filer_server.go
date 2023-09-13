@@ -50,7 +50,7 @@ import (
 )
 
 type FilerOption struct {
-	Masters               map[string]pb.ServerAddress
+	Masters               *pb.ServerDiscovery
 	FilerGroup            string
 	Collection            string
 	DefaultReplication    string
@@ -94,6 +94,9 @@ type FilerServer struct {
 	// track known metadata listeners
 	knownListenersLock sync.Mutex
 	knownListeners     map[int32]int32
+
+	// client to assign file id
+	assignProxy *operation.AssignProxy
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
@@ -115,11 +118,12 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	}
 	fs.listenersCond = sync.NewCond(&fs.listenersLock)
 
-	if len(option.Masters) == 0 {
+	option.Masters.RefreshBySrvIfAvailable()
+	if len(option.Masters.GetInstances()) == 0 {
 		glog.Fatal("master list is required!")
 	}
 
-	fs.filer = filer.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, func() {
+	fs.filer = filer.NewFiler(*option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, func() {
 		fs.listenersCond.Broadcast()
 	})
 	fs.filer.Cipher = option.Cipher
@@ -130,6 +134,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
 	go fs.filer.KeepMasterClientConnected()
+
+	fs.assignProxy, err = operation.NewAssignProxy(fs.filer.GetMaster, fs.grpcDialOption, 16)
 
 	if !util.LoadConfiguration("filer", false) {
 		v.SetDefault("leveldb2.enabled", true)
@@ -183,14 +189,15 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	fs.filer.Dlm.LockRing.SetTakeSnapshotCallback(fs.OnDlmChangeSnapshot)
 
-	return fs, nil
+	return fs, err
 }
 
 func (fs *FilerServer) checkWithMaster() {
 
 	isConnected := false
 	for !isConnected {
-		for _, master := range fs.option.Masters {
+		fs.option.Masters.RefreshBySrvIfAvailable()
+		for _, master := range fs.option.Masters.GetInstances() {
 			readErr := operation.WithMasterServerClient(false, master, fs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 				if err != nil {

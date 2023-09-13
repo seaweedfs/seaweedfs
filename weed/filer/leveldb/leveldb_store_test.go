@@ -3,6 +3,7 @@ package leveldb
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"os"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ import (
 )
 
 func TestCreateAndFind(t *testing.T) {
-	testFiler := filer.NewFiler(nil, nil, "", "", "", "", "", nil)
+	testFiler := filer.NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", nil)
 	dir := t.TempDir()
 	store := &LevelDBStore{}
 	store.initialize(dir)
@@ -65,7 +66,7 @@ func TestCreateAndFind(t *testing.T) {
 }
 
 func TestEmptyRoot(t *testing.T) {
-	testFiler := filer.NewFiler(nil, nil, "", "", "", "", "", nil)
+	testFiler := filer.NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", nil)
 	dir := t.TempDir()
 	store := &LevelDBStore{}
 	store.initialize(dir)
@@ -87,7 +88,7 @@ func TestEmptyRoot(t *testing.T) {
 }
 
 func BenchmarkInsertEntry(b *testing.B) {
-	testFiler := filer.NewFiler(nil, nil, "", "", "", "", "", nil)
+	testFiler := filer.NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", nil)
 	dir := b.TempDir()
 	store := &LevelDBStore{}
 	store.initialize(dir)

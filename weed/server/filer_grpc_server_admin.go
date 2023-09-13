@@ -87,7 +87,7 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 	clusterId, _ := fs.filer.Store.KvGet(context.Background(), []byte("clusterId"))
 
 	t := &filer_pb.GetFilerConfigurationResponse{
-		Masters:            pb.ToAddressStringsFromMap(fs.option.Masters),
+		Masters:            fs.option.Masters.GetInstancesAsStrings(),
 		Collection:         fs.option.Collection,
 		Replication:        fs.option.DefaultReplication,
 		MaxMb:              uint32(fs.option.MaxMB),

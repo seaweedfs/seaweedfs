@@ -33,7 +33,7 @@ var (
 )
 
 type FilerOptions struct {
-	masters                 map[string]pb.ServerAddress
+	masters                 *pb.ServerDiscovery
 	mastersString           *string
 	ip                      *string
 	bindIp                  *string
@@ -65,7 +65,7 @@ type FilerOptions struct {
 
 func init() {
 	cmdFiler.Run = runFiler // break init cycle
-	f.mastersString = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
+	f.mastersString = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers or a single DNS SRV record of at least 1 master server, prepended with dnssrv+")
 	f.filerGroup = cmdFiler.Flag.String("filerGroup", "", "share metadata with other filers in the same filerGroup")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this default collection")
 	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
@@ -208,7 +208,7 @@ func runFiler(cmd *Command, args []string) bool {
 		}(startDelay)
 	}
 
-	f.masters = pb.ServerAddresses(*f.mastersString).ToAddressMap()
+	f.masters = pb.ServerAddresses(*f.mastersString).ToServiceDiscovery()
 
 	f.startFiler()
 

@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -114,12 +115,26 @@ func TestCheckAdminRequestAuthType(t *testing.T) {
 	}{
 		{Request: mustNewRequest("GET", "http://127.0.0.1:9000", 0, nil, t), ErrCode: s3err.ErrAccessDenied},
 		{Request: mustNewSignedRequest("GET", "http://127.0.0.1:9000", 0, nil, t), ErrCode: s3err.ErrNone},
-		{Request: mustNewPresignedRequest("GET", "http://127.0.0.1:9000", 0, nil, t), ErrCode: s3err.ErrNone},
+		{Request: mustNewPresignedRequest(iam, "GET", "http://127.0.0.1:9000", 0, nil, t), ErrCode: s3err.ErrNone},
 	}
 	for i, testCase := range testCases {
 		if _, s3Error := iam.reqSignatureV4Verify(testCase.Request); s3Error != testCase.ErrCode {
 			t.Errorf("Test %d: Unexpected s3error returned wanted %d, got %d", i, testCase.ErrCode, s3Error)
 		}
+	}
+}
+
+func BenchmarkGetSignature(b *testing.B) {
+	t := time.Now()
+	iam := IdentityAccessManagement{
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		iam.getSignature("secret-key", t, "us-east-1", "s3", "random data")
 	}
 }
 
@@ -145,10 +160,10 @@ func mustNewSignedRequest(method string, urlStr string, contentLength int64, bod
 
 // This is similar to mustNewRequest but additionally the request
 // is presigned with AWS Signature V4, fails if not able to do so.
-func mustNewPresignedRequest(method string, urlStr string, contentLength int64, body io.ReadSeeker, t *testing.T) *http.Request {
+func mustNewPresignedRequest(iam *IdentityAccessManagement, method string, urlStr string, contentLength int64, body io.ReadSeeker, t *testing.T) *http.Request {
 	req := mustNewRequest(method, urlStr, contentLength, body, t)
 	cred := &Credential{"access_key_1", "secret_key_1"}
-	if err := preSignV4(req, cred.AccessKey, cred.SecretKey, int64(10*time.Minute.Seconds())); err != nil {
+	if err := preSignV4(iam, req, cred.AccessKey, cred.SecretKey, int64(10*time.Minute.Seconds())); err != nil {
 		t.Fatalf("Unable to initialized new signed http request %s", err)
 	}
 	return req
@@ -343,7 +358,7 @@ func signRequestV4(req *http.Request, accessKey, secretKey string) error {
 
 // preSignV4 presign the request, in accordance with
 // http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html.
-func preSignV4(req *http.Request, accessKeyID, secretAccessKey string, expires int64) error {
+func preSignV4(iam *IdentityAccessManagement, req *http.Request, accessKeyID, secretAccessKey string, expires int64) error {
 	// Presign is not needed for anonymous credentials.
 	if accessKeyID == "" || secretAccessKey == "" {
 		return errors.New("Presign cannot be generated without access and secret keys")
@@ -370,8 +385,7 @@ func preSignV4(req *http.Request, accessKeyID, secretAccessKey string, expires i
 	queryStr := strings.Replace(query.Encode(), "+", "%20", -1)
 	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, unsignedPayload, queryStr, req.URL.Path, req.Method)
 	stringToSign := getStringToSign(canonicalRequest, date, scope)
-	signingKey := getSigningKey(secretAccessKey, date, region, "s3")
-	signature := getSignature(signingKey, stringToSign)
+	signature := iam.getSignature(secretAccessKey, date, region, "s3", stringToSign)
 
 	req.URL.RawQuery = query.Encode()
 

@@ -5,40 +5,40 @@ metadata:
   name: {{ template "seaweedfs.name" . }}-s3
   namespace: {{ .Release.Namespace }}
   labels:
-    app: {{ template "seaweedfs.name" . }}
-    chart: {{ template "seaweedfs.chart" . }}
-    heritage: {{ .Release.Service }}
-    release: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   replicas: {{ .Values.s3.replicas }}
   selector:
     matchLabels:
-      app: {{ template "seaweedfs.name" . }}
-      chart: {{ template "seaweedfs.chart" . }}
-      release: {{ .Release.Name }}
-      component: s3
+      app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+      helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: s3
   template:
     metadata:
       labels:
-        app: {{ template "seaweedfs.name" . }}
-        chart: {{ template "seaweedfs.chart" . }}
-        release: {{ .Release.Name }}
-        component: s3
+        app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: s3
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.s3.restartPolicy }}
       {{- if .Values.s3.tolerations }}
       tolerations:
         {{ tpl .Values.s3.tolerations . | nindent 8 | trim }}
       {{- end }}
-      {{- if .Values.global.imagePullSecrets }}
-      imagePullSecrets:
-        - name: {{ .Values.global.imagePullSecrets }}
-      {{- end }}
+      {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
       terminationGracePeriodSeconds: 10
       {{- if .Values.s3.priorityClassName }}
       priorityClassName: {{ .Values.s3.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
+      {{- if .Values.s3.serviceAccountName }}
+      serviceAccountName: {{ .Values.s3.serviceAccountName | quote }}
+      {{- end }}
       {{- if .Values.s3.initContainers }}
       initContainers:
         {{ tpl .Values.s3.initContainers . | nindent 8 | trim }}
@@ -110,8 +110,10 @@ spec:
               {{- end }}
               -filer={{ template "seaweedfs.name" . }}-filer-client.{{ .Release.Namespace }}:{{ .Values.filer.port }}
           volumeMounts:
+            {{- if eq .Values.s3.logs.type "hostPath" }}
             - name: logs
               mountPath: "/logs/"
+            {{- end }}
             - mountPath: /etc/sw
               name: config-users
               readOnly: true
@@ -144,26 +146,30 @@ spec:
             - containerPort: {{ .Values.s3.metricsPort }}
               name: "metrics"
             {{- end }}
+          {{- if .Values.s3.readinessProbe.enabled }}
           readinessProbe:
             httpGet:
-              path: /status
+              path: {{ .Values.s3.readinessProbe.httpGet.path }}
               port: {{ .Values.s3.port }}
-              scheme: HTTP
-            initialDelaySeconds: 15
-            periodSeconds: 15
-            successThreshold: 1
-            failureThreshold: 100
-            timeoutSeconds: 10
+              scheme: {{ .Values.s3.readinessProbe.scheme }}
+            initialDelaySeconds: {{ .Values.s3.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.s3.readinessProbe.periodSeconds }}
+            successThreshold: {{ .Values.s3.readinessProbe.successThreshold }}
+            failureThreshold: {{ .Values.s3.readinessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.s3.readinessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if .Values.s3.livenessProbe.enabled }}
           livenessProbe:
             httpGet:
-              path: /status
+              path: {{ .Values.s3.livenessProbe.httpGet.path }}
               port: {{ .Values.s3.port }}
-              scheme: HTTP
-            initialDelaySeconds: 20
-            periodSeconds: 60
-            successThreshold: 1
-            failureThreshold: 20
-            timeoutSeconds: 10
+              scheme: {{ .Values.s3.livenessProbe.scheme }}
+            initialDelaySeconds: {{ .Values.s3.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.s3.livenessProbe.periodSeconds }}
+            successThreshold: {{ .Values.s3.livenessProbe.successThreshold }}
+            failureThreshold: {{ .Values.s3.livenessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.s3.livenessProbe.timeoutSeconds }}
+          {{- end }}
           {{- if .Values.s3.resources }}
           resources:
             {{ tpl .Values.s3.resources . | nindent 12 | trim }}

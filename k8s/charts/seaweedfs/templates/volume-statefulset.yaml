@@ -5,27 +5,27 @@ metadata:
   name: {{ template "seaweedfs.name" . }}-volume
   namespace: {{ .Release.Namespace }}
   labels:
-    app: {{ template "seaweedfs.name" . }}
-    chart: {{ template "seaweedfs.chart" . }}
-    heritage: {{ .Release.Service }}
-    release: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   serviceName: {{ template "seaweedfs.name" . }}-volume
   replicas: {{ .Values.volume.replicas }}
   podManagementPolicy: Parallel
   selector:
     matchLabels:
-      app: {{ template "seaweedfs.name" . }}
-      chart: {{ template "seaweedfs.chart" . }}
-      release: {{ .Release.Name }}
-      component: volume
+      app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+      helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: volume
   template:
     metadata:
       labels:
-        app: {{ template "seaweedfs.name" . }}
-        chart: {{ template "seaweedfs.chart" . }}
-        release: {{ .Release.Name }}
-        component: volume
+        app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: volume
     spec:
       {{- if .Values.volume.affinity }}
       affinity:
@@ -36,15 +36,15 @@ spec:
       tolerations:
         {{ tpl .Values.volume.tolerations . | nindent 8 | trim }}
       {{- end }}
-      {{- if .Values.global.imagePullSecrets }}
-      imagePullSecrets:
-        - name: {{ .Values.global.imagePullSecrets }}
-      {{- end }}
+      {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
       terminationGracePeriodSeconds: 150
       {{- if .Values.volume.priorityClassName }}
       priorityClassName: {{ .Values.volume.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
+      {{- if .Values.volume.serviceAccountName }}
+      serviceAccountName: {{ .Values.volume.serviceAccountName | quote }}
+      {{- end }}
       {{- $initContainers_exists := include "volume.initContainers_exists" . -}}
       {{- if $initContainers_exists }}
       initContainers:
@@ -148,8 +148,10 @@ spec:
             - name: idx
               mountPath: "{{ .Values.volume.dir_idx }}/"
             {{- end }}
+            {{- if eq .Values.volume.logs.type "hostPath" }}
             - name: logs
               mountPath: "/logs/"
+            {{- end }}
             {{- if .Values.global.enableSecurity }}
             - name: security-config
               readOnly: true
@@ -181,26 +183,30 @@ spec:
             {{- end }}
             - containerPort: {{ .Values.volume.grpcPort }}
               name: swfs-vol-grpc
+          {{- if .Values.volume.readinessProbe.enabled }}
           readinessProbe:
             httpGet:
-              path: /status
+              path: {{ .Values.volume.readinessProbe.httpGet.path }}
               port: {{ .Values.volume.port }}
-              scheme: HTTP
-            initialDelaySeconds: 15
-            periodSeconds: 15
-            successThreshold: 1
-            failureThreshold: 100
-            timeoutSeconds: 30
+              scheme: {{ .Values.volume.readinessProbe.scheme }}
+            initialDelaySeconds: {{ .Values.volume.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.volume.readinessProbe.periodSeconds }}
+            successThreshold: {{ .Values.volume.readinessProbe.successThreshold }}
+            failureThreshold: {{ .Values.volume.readinessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.volume.readinessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if .Values.volume.livenessProbe.enabled }}
           livenessProbe:
             httpGet:
-              path: /status
+              path: {{ .Values.volume.livenessProbe.httpGet.path }}
               port: {{ .Values.volume.port }}
-              scheme: HTTP
-            initialDelaySeconds: 20
-            periodSeconds: 90
-            successThreshold: 1
-            failureThreshold: 4
-            timeoutSeconds: 30
+              scheme: {{ .Values.volume.livenessProbe.scheme }}
+            initialDelaySeconds: {{ .Values.volume.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.volume.livenessProbe.periodSeconds }}
+            successThreshold: {{ .Values.volume.livenessProbe.successThreshold }}
+            failureThreshold: {{ .Values.volume.livenessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.volume.livenessProbe.timeoutSeconds }}
+          {{- end }}
           {{- if .Values.volume.resources }}
           resources:
             {{ tpl .Values.volume.resources . | nindent 12 | trim }}

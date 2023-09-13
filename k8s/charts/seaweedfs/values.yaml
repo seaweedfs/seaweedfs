@@ -62,6 +62,10 @@ master:
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
 
+  config: |-
+    # Enter any extra configuration for master.toml here.
+    # It may be be a multi-line string.
+
   # can use ANY storage-class , example with local-path-provisioner
   #  data:
   #    type: "persistentVolumeClaim"
@@ -102,9 +106,9 @@ master:
       requiredDuringSchedulingIgnoredDuringExecution:
         - labelSelector:
             matchLabels:
-              app: {{ template "seaweedfs.name" . }}
-              release: "{{ .Release.Name }}"
-              component: master
+              app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: master
           topologyKey: kubernetes.io/hostname
 
   # Toleration Settings for master pods
@@ -124,11 +128,16 @@ master:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+  # used to assign a service account.
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
+  serviceAccountName: ""
+
   ingress:
     enabled: false
     className: "nginx"
+    # host: false for "*" hostname
     host: "master.seaweedfs.local"
-    annotations:
+    annotations: |
       nginx.ingress.kubernetes.io/auth-type: "basic"
       nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
       nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Master'
@@ -150,6 +159,32 @@ master:
     WEED_MASTER_VOLUME_GROWTH_COPY_2: 6
     WEED_MASTER_VOLUME_GROWTH_COPY_3: 3
     WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+
+  # used to configure livenessProbe on master-server containers
+  #
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /cluster/status
+      scheme: HTTP
+    initialDelaySeconds: 20
+    periodSeconds: 30
+    successThreshold: 1
+    failureThreshold: 4
+    timeoutSeconds: 10
+
+  # used to configure readinessProbe on master-server containers
+  #
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /cluster/status
+      scheme: HTTP
+    initialDelaySeconds: 10
+    periodSeconds: 45
+    successThreshold: 2
+    failureThreshold: 100
+    timeoutSeconds: 10
 
 volume:
   enabled: true
@@ -236,9 +271,9 @@ volume:
       requiredDuringSchedulingIgnoredDuringExecution:
         - labelSelector:
             matchLabels:
-              app: {{ template "seaweedfs.name" . }}
-              release: "{{ .Release.Name }}"
-              component: volume
+              app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: volume
           topologyKey: kubernetes.io/hostname
 
   # Resource requests, limits, etc. for the server cluster placement. This
@@ -264,6 +299,35 @@ volume:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+  # used to assign a service account.
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
+  serviceAccountName: ""
+
+  # used to configure livenessProbe on volume-server containers
+  #
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /status
+      scheme: HTTP
+    initialDelaySeconds: 20
+    periodSeconds: 90
+    successThreshold: 1
+    failureThreshold: 4
+    timeoutSeconds: 30
+
+  # used to configure readinessProbe on volume-server containers
+  #
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /status
+      scheme: HTTP
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    successThreshold: 1
+    failureThreshold: 100
+    timeoutSeconds: 30
 
 filer:
   enabled: true
@@ -340,9 +404,9 @@ filer:
       requiredDuringSchedulingIgnoredDuringExecution:
         - labelSelector:
             matchLabels:
-              app: {{ template "seaweedfs.name" . }}
-              release: "{{ .Release.Name }}"
-              component: filer
+              app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: filer
           topologyKey: kubernetes.io/hostname
 
   # updatePartition is used to control a careful rolling update of SeaweedFS
@@ -372,11 +436,16 @@ filer:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+  # used to assign a service account.
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
+  serviceAccountName: ""
+
   ingress:
     enabled: false
     className: "nginx"
+    # host: false for "*" hostname
     host: "seaweedfs.cluster.local"
-    annotations:
+    annotations: |
       nginx.ingress.kubernetes.io/backend-protocol: GRPC
       nginx.ingress.kubernetes.io/auth-type: "basic"
       nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
@@ -414,6 +483,31 @@ filer:
     # directories under this folder will be automatically creating a separate bucket
     WEED_FILER_BUCKETS_FOLDER: "/buckets"
 
+  # used to configure livenessProbe on filer containers
+  #
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /
+      scheme: HTTP
+    initialDelaySeconds: 20
+    periodSeconds: 30
+    successThreshold: 1
+    failureThreshold: 5
+    timeoutSeconds: 10
+
+  # used to configure readinessProbe on filer containers
+  #
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /
+      scheme: HTTP
+    initialDelaySeconds: 10
+    periodSeconds: 15
+    successThreshold: 1
+    failureThreshold: 100
+    timeoutSeconds: 10
 
   # secret env variables
   secretExtraEnvironmentVars: []
@@ -491,11 +585,41 @@ s3:
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
+  # used to assign a service account.
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
+  serviceAccountName: ""
+
   logs:
     type: "hostPath"
     size: ""
     storageClass: ""
     hostPathPrefix: /storage
+
+  # used to configure livenessProbe on s3 containers
+  #
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /status
+      scheme: HTTP
+    initialDelaySeconds: 20
+    periodSeconds: 60
+    successThreshold: 1
+    failureThreshold: 20
+    timeoutSeconds: 10
+
+  # used to configure readinessProbe on s3 containers
+  #
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /status
+      scheme: HTTP
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    successThreshold: 1
+    failureThreshold: 100
+    timeoutSeconds: 10
 
 certificates:
   commonName: "SeaweedFS CA"

@@ -11,6 +11,7 @@ import (
 
 type ServerAddress string
 type ServerAddresses string
+type ServerSrvAddress string
 
 func NewServerAddress(host string, port int, grpcPort int) ServerAddress {
 	if grpcPort == 0 || grpcPort == port+10000 {
@@ -74,6 +75,42 @@ func (sa ServerAddress) ToGrpcAddress() string {
 		return net.JoinHostPort(host, ports[sepIndex+1:])
 	}
 	return ServerToGrpcAddress(string(sa))
+}
+
+// LookUp may return an error for some records along with successful lookups - make sure you do not
+// discard `addresses` even if `err == nil`
+func (r ServerSrvAddress) LookUp() (addresses []ServerAddress, err error) {
+	_, records, lookupErr := net.LookupSRV("", "", string(r))
+	if lookupErr != nil {
+		err = fmt.Errorf("lookup SRV address %s: %v", r, lookupErr)
+	}
+	for _, srv := range records {
+		address := fmt.Sprintf("%s:%d", srv.Target, srv.Port)
+		addresses = append(addresses, ServerAddress(address))
+	}
+	return
+}
+
+// ToServiceDiscovery expects one of: a comma-separated list of ip:port, like
+//
+//	10.0.0.1:9999,10.0.0.2:24:9999
+//
+// OR an SRV Record prepended with 'dnssrv+', like:
+//
+//	dnssrv+_grpc._tcp.master.consul
+//	dnssrv+_grpc._tcp.headless.default.svc.cluster.local
+//	dnssrv+seaweed-master.master.consul
+func (sa ServerAddresses) ToServiceDiscovery() (sd *ServerDiscovery) {
+	sd = &ServerDiscovery{}
+	prefix := "dnssrv+"
+	if strings.HasPrefix(string(sa), prefix) {
+		trimmed := strings.TrimPrefix(string(sa), prefix)
+		srv := ServerSrvAddress(trimmed)
+		sd.srvRecord = &srv
+	} else {
+		sd.list = sa.ToAddresses()
+	}
+	return
 }
 
 func (sa ServerAddresses) ToAddresses() (addresses []ServerAddress) {
