@@ -20,6 +20,9 @@ service SeaweedMessaging {
     rpc CheckBrokerLoad (CheckBrokerLoadRequest) returns (CheckBrokerLoadResponse) {
     }
 
+    // control plane for balancer
+    rpc ConnectToBalancer (stream ConnectToBalancerRequest) returns (stream ConnectToBalancerResponse) {
+    }
     // control plane for topic partitions
     rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
     }
@@ -100,6 +103,26 @@ message CheckBrokerLoadResponse {
 
 }
 
+//////////////////////////////////////////////////
+message BrokerStats {
+    int32 topic_partition_count = 1;
+    int64 message_count = 2;
+    int64 bytes_count = 3;
+    int32 cpu_usage_percent = 4;
+}
+message ConnectToBalancerRequest {
+    message InitMessage {
+        string broker = 1;
+    }
+    oneof message {
+        InitMessage init = 1;
+        BrokerStats stats = 2;
+    }
+}
+message ConnectToBalancerResponse {
+    string error = 1;
+}
+//////////////////////////////////////////////////
 message LookupTopicBrokersRequest {
     Topic topic = 1;
     bool is_for_publish = 2;
