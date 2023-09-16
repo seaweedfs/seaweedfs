@@ -73,6 +73,7 @@ service SeaweedFiler {
     }
     rpc Unlock(UnlockRequest) returns (UnlockResponse) {
     }
+    // distributed lock management internal use only
     rpc TransferLocks(TransferLocksRequest) returns (TransferLocksResponse) {
     }
 }

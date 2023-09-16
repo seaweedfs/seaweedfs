@@ -29,18 +29,25 @@ func (dlm *DistributedLockManager) Lock(key string, token string) (renewToken st
 }
 
 func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64, token string) (renewToken string, movedTo pb.ServerAddress, err error) {
+	movedTo, err = dlm.FindLockOwner(key)
+	if err != nil {
+		return
+	}
+	if movedTo != dlm.Host {
+		return
+	}
+	renewToken, err = dlm.lockManager.Lock(key, expiredAtNs, token)
+	return
+}
+
+func (dlm *DistributedLockManager) FindLockOwner(key string) (movedTo pb.ServerAddress, err error) {
 	servers := dlm.LockRing.GetSnapshot()
 	if servers == nil {
 		err = NoLockServerError
 		return
 	}
 
-	server := hashKeyToServer(key, servers)
-	if server != dlm.Host {
-		movedTo = server
-		return
-	}
-	renewToken, err = dlm.lockManager.Lock(key, expiredAtNs, token)
+	movedTo = hashKeyToServer(key, servers)
 	return
 }
 
