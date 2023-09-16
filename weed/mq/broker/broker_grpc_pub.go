@@ -7,6 +7,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"sync/atomic"
+	"time"
 )
 
 // For a new or re-configured topic, or one of the broker went offline,
@@ -73,38 +75,88 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 	// 3. write to the filer
 
 	var localTopicPartition *topic.LocalPartition
+	req, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	response := &mq_pb.PublishResponse{}
+	// TODO check whether current broker should be the leader for the topic partition
+	ackInterval := 1
+	initMessage := req.GetInit()
+	if initMessage != nil {
+		t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
+		localTopicPartition = broker.localTopicManager.GetTopicPartition(t, p)
+		if localTopicPartition == nil {
+			localTopicPartition = topic.NewLocalPartition(t, p, true, nil)
+			broker.localTopicManager.AddTopicPartition(t, localTopicPartition)
+		}
+		ackInterval = int(initMessage.AckInterval)
+		stream.Send(response)
+	} else {
+		response.Error = fmt.Sprintf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)
+		glog.Errorf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)
+		return stream.Send(response)
+	}
+
+	ackCounter := 0
+	var ackSequence int64
+	var isStopping int32
+	respChan := make(chan *mq_pb.PublishResponse, 128)
+	defer func() {
+		atomic.StoreInt32(&isStopping, 1)
+		close(respChan)
+	}()
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		for {
+			select {
+			case resp := <-respChan:
+				if resp != nil {
+					if err := stream.Send(resp); err != nil {
+						glog.Errorf("Error sending response %v: %v", resp, err)
+					}
+				} else {
+					return
+				}
+			case <-ticker.C:
+				if atomic.LoadInt32(&isStopping) == 0 {
+					response := &mq_pb.PublishResponse{
+						AckSequence: ackSequence,
+					}
+					respChan <- response
+				} else {
+					return
+				}
+			}
+		}
+	}()
+
+	// process each published messages
 	for {
+		// receive a message
 		req, err := stream.Recv()
 		if err != nil {
 			return err
 		}
 
 		// Process the received message
-		sequence := req.GetSequence()
-		response := &mq_pb.PublishResponse{
-			AckSequence: sequence,
-		}
 		if dataMessage := req.GetData(); dataMessage != nil {
-			if localTopicPartition == nil {
-				response.Error = "topic partition not initialized"
-				glog.Errorf("topic partition not found")
-			} else {
-				localTopicPartition.Publish(dataMessage)
-			}
-		} else if initMessage := req.GetInit(); initMessage != nil {
-			localTopicPartition = broker.localTopicManager.GetTopicPartition(
-				topic.NewTopic(topic.Namespace(initMessage.Segment.Namespace), initMessage.Segment.Topic),
-				topic.FromPbPartition(initMessage.Segment.Partition),
-			)
-			if localTopicPartition == nil {
-				response.Error = fmt.Sprintf("topic partition %v not found", initMessage.Segment)
-				glog.Errorf("topic partition %v not found", initMessage.Segment)
-			}
+			localTopicPartition.Publish(dataMessage)
 		}
-		if err := stream.Send(response); err != nil {
-			glog.Errorf("Error sending setup response: %v", err)
+
+		ackCounter++
+		ackSequence++
+		if ackCounter >= ackInterval {
+			ackCounter = 0
+			// send back the ack
+			response := &mq_pb.PublishResponse{
+				AckSequence: ackSequence,
+			}
+			respChan <- response
 		}
 	}
+
+	glog.Infof("publish stream closed")
 
 	return nil
 }
@@ -114,14 +166,14 @@ func (broker *MessageQueueBroker) AssignTopicPartitions(c context.Context, reque
 	ret := &mq_pb.AssignTopicPartitionsResponse{}
 	self := pb.ServerAddress(fmt.Sprintf("%s:%d", broker.option.Ip, broker.option.Port))
 
-	for _, partition := range request.TopicPartitionsAssignment.BrokerPartitions {
-		localPartiton := topic.FromPbBrokerPartitionsAssignment(self, partition)
+	for _, brokerPartition := range request.BrokerPartitionAssignments {
+		localPartiton := topic.FromPbBrokerPartitionAssignment(self, brokerPartition)
 		broker.localTopicManager.AddTopicPartition(
 			topic.FromPbTopic(request.Topic),
 			localPartiton)
 		if request.IsLeader {
 			for _, follower := range localPartiton.FollowerBrokers {
-				err := pb.WithBrokerClient(false, follower, broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+				err := pb.WithBrokerGrpcClient(false, follower.String(), broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 					_, err := client.AssignTopicPartitions(context.Background(), request)
 					return err
 				})

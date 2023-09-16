@@ -25,7 +25,7 @@ type MasterClient struct {
 	currentMaster     pb.ServerAddress
 	currentMasterLock sync.RWMutex
 	masters           pb.ServerDiscovery
-	grpcDialOption grpc.DialOption
+	grpcDialOption    grpc.DialOption
 
 	*vidMap
 	vidMapCacheSize  int
@@ -244,9 +244,9 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 				if mc.OnPeerUpdate != nil {
 					if update.FilerGroup == mc.FilerGroup {
 						if update.IsAdd {
-							glog.V(0).Infof("+ %s.%s %s\n", update.FilerGroup, update.NodeType, update.Address)
+							glog.V(0).Infof("+ %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
 						} else {
-							glog.V(0).Infof("- %s.%s %s\n", update.FilerGroup, update.NodeType, update.Address)
+							glog.V(0).Infof("- %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
 						}
 						stats.MasterClientConnectCounter.WithLabelValues(stats.OnPeerUpdate).Inc()
 						mc.OnPeerUpdate(update, time.Now())
