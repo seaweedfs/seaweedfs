@@ -2,6 +2,9 @@ package topic
 
 import (
 	cmap "github.com/orcaman/concurrent-map/v2"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/shirou/gopsutil/v3/cpu"
+	"time"
 )
 
 // LocalTopicManager manages topics on local broker
@@ -52,4 +55,23 @@ func (manager *LocalTopicManager) RemoveTopicPartition(topic Topic, partition Pa
 		return false
 	}
 	return localTopic.removePartition(partition)
+}
+
+func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.BrokerStats {
+	stats := &mq_pb.BrokerStats{}
+	manager.topics.IterCb(func(topic string, localTopic *LocalTopic) {
+		for _, localPartition := range localTopic.Partitions {
+			stats.TopicPartitionCount++
+			stats.ConsumerCount += localPartition.ConsumerCount
+		}
+	})
+
+	// collect current broker's cpu usage
+	usages, err := cpu.Percent(duration, false)
+	if err == nil && len(usages) > 0 {
+		stats.CpuUsagePercent = int32(usages[0])
+	}
+
+	return stats
+
 }

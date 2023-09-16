@@ -42,8 +42,10 @@ type SeaweedFilerClient interface {
 	KvGet(ctx context.Context, in *KvGetRequest, opts ...grpc.CallOption) (*KvGetResponse, error)
 	KvPut(ctx context.Context, in *KvPutRequest, opts ...grpc.CallOption) (*KvPutResponse, error)
 	CacheRemoteObjectToLocalCluster(ctx context.Context, in *CacheRemoteObjectToLocalClusterRequest, opts ...grpc.CallOption) (*CacheRemoteObjectToLocalClusterResponse, error)
-	Lock(ctx context.Context, in *LockRequest, opts ...grpc.CallOption) (*LockResponse, error)
-	Unlock(ctx context.Context, in *UnlockRequest, opts ...grpc.CallOption) (*UnlockResponse, error)
+	DistributedLock(ctx context.Context, in *LockRequest, opts ...grpc.CallOption) (*LockResponse, error)
+	DistributedUnlock(ctx context.Context, in *UnlockRequest, opts ...grpc.CallOption) (*UnlockResponse, error)
+	FindLockOwner(ctx context.Context, in *FindLockOwnerRequest, opts ...grpc.CallOption) (*FindLockOwnerResponse, error)
+	// distributed lock management internal use only
 	TransferLocks(ctx context.Context, in *TransferLocksRequest, opts ...grpc.CallOption) (*TransferLocksResponse, error)
 }
 
@@ -327,18 +329,27 @@ func (c *seaweedFilerClient) CacheRemoteObjectToLocalCluster(ctx context.Context
 	return out, nil
 }
 
-func (c *seaweedFilerClient) Lock(ctx context.Context, in *LockRequest, opts ...grpc.CallOption) (*LockResponse, error) {
+func (c *seaweedFilerClient) DistributedLock(ctx context.Context, in *LockRequest, opts ...grpc.CallOption) (*LockResponse, error) {
 	out := new(LockResponse)
-	err := c.cc.Invoke(ctx, "/filer_pb.SeaweedFiler/Lock", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/filer_pb.SeaweedFiler/DistributedLock", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *seaweedFilerClient) Unlock(ctx context.Context, in *UnlockRequest, opts ...grpc.CallOption) (*UnlockResponse, error) {
+func (c *seaweedFilerClient) DistributedUnlock(ctx context.Context, in *UnlockRequest, opts ...grpc.CallOption) (*UnlockResponse, error) {
 	out := new(UnlockResponse)
-	err := c.cc.Invoke(ctx, "/filer_pb.SeaweedFiler/Unlock", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/filer_pb.SeaweedFiler/DistributedUnlock", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedFilerClient) FindLockOwner(ctx context.Context, in *FindLockOwnerRequest, opts ...grpc.CallOption) (*FindLockOwnerResponse, error) {
+	out := new(FindLockOwnerResponse)
+	err := c.cc.Invoke(ctx, "/filer_pb.SeaweedFiler/FindLockOwner", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -378,8 +389,10 @@ type SeaweedFilerServer interface {
 	KvGet(context.Context, *KvGetRequest) (*KvGetResponse, error)
 	KvPut(context.Context, *KvPutRequest) (*KvPutResponse, error)
 	CacheRemoteObjectToLocalCluster(context.Context, *CacheRemoteObjectToLocalClusterRequest) (*CacheRemoteObjectToLocalClusterResponse, error)
-	Lock(context.Context, *LockRequest) (*LockResponse, error)
-	Unlock(context.Context, *UnlockRequest) (*UnlockResponse, error)
+	DistributedLock(context.Context, *LockRequest) (*LockResponse, error)
+	DistributedUnlock(context.Context, *UnlockRequest) (*UnlockResponse, error)
+	FindLockOwner(context.Context, *FindLockOwnerRequest) (*FindLockOwnerResponse, error)
+	// distributed lock management internal use only
 	TransferLocks(context.Context, *TransferLocksRequest) (*TransferLocksResponse, error)
 	mustEmbedUnimplementedSeaweedFilerServer()
 }
@@ -448,11 +461,14 @@ func (UnimplementedSeaweedFilerServer) KvPut(context.Context, *KvPutRequest) (*K
 func (UnimplementedSeaweedFilerServer) CacheRemoteObjectToLocalCluster(context.Context, *CacheRemoteObjectToLocalClusterRequest) (*CacheRemoteObjectToLocalClusterResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CacheRemoteObjectToLocalCluster not implemented")
 }
-func (UnimplementedSeaweedFilerServer) Lock(context.Context, *LockRequest) (*LockResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Lock not implemented")
+func (UnimplementedSeaweedFilerServer) DistributedLock(context.Context, *LockRequest) (*LockResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DistributedLock not implemented")
 }
-func (UnimplementedSeaweedFilerServer) Unlock(context.Context, *UnlockRequest) (*UnlockResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Unlock not implemented")
+func (UnimplementedSeaweedFilerServer) DistributedUnlock(context.Context, *UnlockRequest) (*UnlockResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DistributedUnlock not implemented")
+}
+func (UnimplementedSeaweedFilerServer) FindLockOwner(context.Context, *FindLockOwnerRequest) (*FindLockOwnerResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method FindLockOwner not implemented")
 }
 func (UnimplementedSeaweedFilerServer) TransferLocks(context.Context, *TransferLocksRequest) (*TransferLocksResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TransferLocks not implemented")
@@ -842,38 +858,56 @@ func _SeaweedFiler_CacheRemoteObjectToLocalCluster_Handler(srv interface{}, ctx 
 	return interceptor(ctx, in, info, handler)
 }
 
-func _SeaweedFiler_Lock_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _SeaweedFiler_DistributedLock_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(LockRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SeaweedFilerServer).Lock(ctx, in)
+		return srv.(SeaweedFilerServer).DistributedLock(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/filer_pb.SeaweedFiler/Lock",
+		FullMethod: "/filer_pb.SeaweedFiler/DistributedLock",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedFilerServer).Lock(ctx, req.(*LockRequest))
+		return srv.(SeaweedFilerServer).DistributedLock(ctx, req.(*LockRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _SeaweedFiler_Unlock_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _SeaweedFiler_DistributedUnlock_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(UnlockRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SeaweedFilerServer).Unlock(ctx, in)
+		return srv.(SeaweedFilerServer).DistributedUnlock(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/filer_pb.SeaweedFiler/Unlock",
+		FullMethod: "/filer_pb.SeaweedFiler/DistributedUnlock",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedFilerServer).Unlock(ctx, req.(*UnlockRequest))
+		return srv.(SeaweedFilerServer).DistributedUnlock(ctx, req.(*UnlockRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedFiler_FindLockOwner_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FindLockOwnerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedFilerServer).FindLockOwner(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/filer_pb.SeaweedFiler/FindLockOwner",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedFilerServer).FindLockOwner(ctx, req.(*FindLockOwnerRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -968,12 +1002,16 @@ var SeaweedFiler_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _SeaweedFiler_CacheRemoteObjectToLocalCluster_Handler,
 		},
 		{
-			MethodName: "Lock",
-			Handler:    _SeaweedFiler_Lock_Handler,
+			MethodName: "DistributedLock",
+			Handler:    _SeaweedFiler_DistributedLock_Handler,
 		},
 		{
-			MethodName: "Unlock",
-			Handler:    _SeaweedFiler_Unlock_Handler,
+			MethodName: "DistributedUnlock",
+			Handler:    _SeaweedFiler_DistributedUnlock_Handler,
+		},
+		{
+			MethodName: "FindLockOwner",
+			Handler:    _SeaweedFiler_FindLockOwner_Handler,
 		},
 		{
 			MethodName: "TransferLocks",

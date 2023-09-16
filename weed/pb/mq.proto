@@ -106,9 +106,8 @@ message CheckBrokerLoadResponse {
 //////////////////////////////////////////////////
 message BrokerStats {
     int32 topic_partition_count = 1;
-    int64 message_count = 2;
-    int64 bytes_count = 3;
-    int32 cpu_usage_percent = 4;
+    int32 consumer_count = 2;
+    int32 cpu_usage_percent = 3;
 }
 message ConnectToBalancerRequest {
     message InitMessage {
@@ -120,7 +119,6 @@ message ConnectToBalancerRequest {
     }
 }
 message ConnectToBalancerResponse {
-    string error = 1;
 }
 //////////////////////////////////////////////////
 message LookupTopicBrokersRequest {

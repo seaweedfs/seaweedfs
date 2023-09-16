@@ -1,6 +1,8 @@
 package broker
 
 import (
+	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"time"
@@ -36,6 +38,7 @@ type MessageQueueBroker struct {
 	currentFiler      pb.ServerAddress
 	localTopicManager *topic.LocalTopicManager
 	Balancer          *balancer.Balancer
+	lockAsBalancer    *cluster.LiveLock
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
@@ -56,6 +59,25 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 	for _, newNode := range existingNodes {
 		mqBroker.OnBrokerUpdate(newNode, time.Now())
 	}
+
+	// keep connecting to balancer
+	go func() {
+		for mqBroker.currentFiler == "" {
+			time.Sleep(time.Millisecond * 237)
+		}
+		self := fmt.Sprintf("%s:%d", option.Ip, option.Port)
+		glog.V(1).Infof("broker %s found filer %s", self, mqBroker.currentFiler)
+
+		lockClient := cluster.NewLockClient(grpcDialOption, mqBroker.currentFiler)
+		mqBroker.lockAsBalancer = lockClient.StartLock(LockBrokerBalancer, self)
+		for {
+			err := mqBroker.BrokerConnectToBalancer(self)
+			if err != nil {
+				fmt.Printf("BrokerConnectToBalancer: %v\n", err)
+			}
+			time.Sleep(time.Second)
+		}
+	}()
 
 	return mqBroker, nil
 }
