@@ -2,11 +2,12 @@ package mount
 
 import (
 	"fmt"
+	"io"
+	"sync"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/page_writer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"io"
-	"sync"
 )
 
 type ChunkedDirtyPages struct {
@@ -82,7 +83,7 @@ func (pages *ChunkedDirtyPages) saveChunkedFileIntervalToStorage(reader io.Reade
 
 }
 
-func (pages ChunkedDirtyPages) Destroy() {
+func (pages *ChunkedDirtyPages) Destroy() {
 	pages.uploadPipeline.Shutdown()
 }
 
