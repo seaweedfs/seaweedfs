@@ -12,7 +12,7 @@ var LockErrorNonEmptyTokenOnExpiredLock = fmt.Errorf("lock: non-empty token on a
 var LockErrorTokenMismatch = fmt.Errorf("lock: token mismatch")
 var UnlockErrorTokenMismatch = fmt.Errorf("unlock: token mismatch")
 
-// LockManager lock manager
+// LockManager local lock manager, used by distributed lock manager
 type LockManager struct {
 	locks *xsync.MapOf[string, *Lock]
 }
