@@ -2,13 +2,13 @@ package pub_client
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/mq/broker"
+	"github.com/seaweedfs/seaweedfs/weed/mq/balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (p *TopicPublisher) Publish(key, value []byte) error {
-	hashKey := util.HashToInt32(key) % broker.MaxPartitionCount
+	hashKey := util.HashToInt32(key) % balancer.MaxPartitionCount
 	if hashKey < 0 {
 		hashKey = -hashKey
 	}

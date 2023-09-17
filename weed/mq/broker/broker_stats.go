@@ -34,6 +34,7 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 	}
 
 	glog.V(1).Infof("broker %s found balancer %s", self, brokerBalancer)
+	broker.currentBalancer = pb.ServerAddress(brokerBalancer)
 
 	// connect to the lock owner
 	err = pb.WithBrokerGrpcClient(false, brokerBalancer, broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
