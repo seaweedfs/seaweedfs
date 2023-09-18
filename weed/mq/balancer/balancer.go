@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	MaxPartitionCount = 1024
+	MaxPartitionCount = 8 * 9 * 5 * 7 //2520
 )
 
 type Balancer struct {
@@ -36,6 +36,7 @@ func (bs *BrokerStats) UpdateStats(stats *mq_pb.BrokerStats) {
 				RangeStop:  topicPartitionStats.Partition.RangeStop,
 			},
 			ConsumerCount: topicPartitionStats.ConsumerCount,
+			IsLeader:      topicPartitionStats.IsLeader,
 		}
 		consumerCount += topicPartitionStats.ConsumerCount
 		key := tps.TopicPartition.String()
@@ -60,6 +61,7 @@ type TopicPartition struct {
 type TopicPartitionStats struct {
 	TopicPartition
 	ConsumerCount int32
+	IsLeader      bool
 }
 
 func NewBalancer() *Balancer {
