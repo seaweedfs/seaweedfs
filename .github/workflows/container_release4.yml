@@ -20,7 +20,7 @@ jobs:
       -
         name: Docker meta
         id: docker_meta
-        uses: docker/metadata-action@818d4b7b91585d195f67373fd9cb0332e31a7175 # v3
+        uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v3
         with:
           images: |
             chrislusf/seaweedfs
