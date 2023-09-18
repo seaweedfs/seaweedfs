@@ -84,8 +84,11 @@ func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
 		}
 	}
 	ev.Shards = append(ev.Shards, ecVolumeShard)
-	slices.SortFunc(ev.Shards, func(a, b *EcVolumeShard) bool {
-		return a.VolumeId < b.VolumeId || a.VolumeId == b.VolumeId && a.ShardId < b.ShardId
+	slices.SortFunc(ev.Shards, func(a, b *EcVolumeShard) int {
+		if a.VolumeId != b.VolumeId {
+			return int(a.VolumeId - b.VolumeId)
+		}
+		return int(a.ShardId - b.ShardId)
 	})
 	return true
 }

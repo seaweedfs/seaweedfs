@@ -119,14 +119,14 @@ func eachDataNode(topo *master_pb.TopologyInfo, fn func(dc string, rack RackId, 
 }
 
 func sortEcNodesByFreeslotsDescending(ecNodes []*EcNode) {
-	slices.SortFunc(ecNodes, func(a, b *EcNode) bool {
-		return a.freeEcSlot > b.freeEcSlot
+	slices.SortFunc(ecNodes, func(a, b *EcNode) int {
+		return b.freeEcSlot - a.freeEcSlot
 	})
 }
 
 func sortEcNodesByFreeslotsAscending(ecNodes []*EcNode) {
-	slices.SortFunc(ecNodes, func(a, b *EcNode) bool {
-		return a.freeEcSlot < b.freeEcSlot
+	slices.SortFunc(ecNodes, func(a, b *EcNode) int {
+		return a.freeEcSlot - b.freeEcSlot
 	})
 }
 
