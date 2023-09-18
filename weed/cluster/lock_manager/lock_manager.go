@@ -139,7 +139,7 @@ func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, 
 
 func (lm *LockManager) GetLockOwner(key string) (owner string, err error) {
 	lm.locks.Range(func(k string, lock *Lock) bool {
-		if k == key {
+		if k == key && lock != nil {
 			owner = lock.Owner
 			return false
 		}
