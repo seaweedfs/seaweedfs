@@ -30,14 +30,20 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOff
 			isStart: false,
 		})
 	}
-	slices.SortFunc(points, func(a, b *Point) bool {
+	slices.SortFunc(points, func(a, b *Point) int {
 		if a.x != b.x {
-			return a.x < b.x
+			return int(a.x - b.x)
 		}
 		if a.ts != b.ts {
-			return a.ts < b.ts
+			return int(a.ts - b.ts)
 		}
-		return !a.isStart
+		if a.isStart {
+			return -1
+		}
+		if b.isStart {
+			return 1
+		}
+		return 0
 	})
 
 	var prevX int64

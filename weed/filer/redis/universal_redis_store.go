@@ -164,8 +164,8 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, dirP
 	}
 
 	// sort
-	slices.SortFunc(members, func(a, b string) bool {
-		return strings.Compare(a, b) < 0
+	slices.SortFunc(members, func(a, b string) int {
+		return strings.Compare(a, b)
 	})
 
 	// limit

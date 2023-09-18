@@ -179,8 +179,8 @@ func (c *commandVolumeServerEvacuate) evacuateEcVolumes(commandEnv *CommandEnv, 
 func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv, ecShardInfo *master_pb.VolumeEcShardInformationMessage, thisNode *EcNode, otherNodes []*EcNode, applyChange bool) (hasMoved bool, err error) {
 
 	for _, shardId := range erasure_coding.ShardBits(ecShardInfo.EcIndexBits).ShardIds() {
-		slices.SortFunc(otherNodes, func(a, b *EcNode) bool {
-			return a.localShardIdCount(ecShardInfo.Id) < b.localShardIdCount(ecShardInfo.Id)
+		slices.SortFunc(otherNodes, func(a, b *EcNode) int {
+			return a.localShardIdCount(ecShardInfo.Id) - b.localShardIdCount(ecShardInfo.Id)
 		})
 		for i := 0; i < len(otherNodes); i++ {
 			emptyNode := otherNodes[i]
@@ -214,8 +214,8 @@ func moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][
 		})
 	}
 	// most empty one is in the front
-	slices.SortFunc(otherNodes, func(a, b *Node) bool {
-		return a.localVolumeRatio(maxVolumeCountFn) < b.localVolumeRatio(maxVolumeCountFn)
+	slices.SortFunc(otherNodes, func(a, b *Node) int {
+		return int(a.localVolumeRatio(maxVolumeCountFn) - b.localVolumeRatio(maxVolumeCountFn))
 	})
 	for i := 0; i < len(otherNodes); i++ {
 		emptyNode := otherNodes[i]
