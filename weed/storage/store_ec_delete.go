@@ -36,9 +36,7 @@ func (s *Store) DeleteEcShardNeedle(ecVolume *erasure_coding.EcVolume, n *needle
 func (s *Store) doDeleteNeedleFromAtLeastOneRemoteEcShards(ecVolume *erasure_coding.EcVolume, needleId types.NeedleId) error {
 
 	_, _, intervals, err := ecVolume.LocateEcShardNeedle(needleId, ecVolume.Version)
-	if err != nil {
-		return err
-	}
+
 	if len(intervals) == 0 {
 		return erasure_coding.NotFoundError
 	}

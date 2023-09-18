@@ -12,6 +12,10 @@ import (
 	"sync"
 )
 
+const (
+	MaxPartitionCount = 1024
+)
+
 func (broker *MessageQueueBroker) FindBrokerLeader(c context.Context, request *mq_pb.FindBrokerLeaderRequest) (*mq_pb.FindBrokerLeaderResponse, error) {
 	ret := &mq_pb.FindBrokerLeaderResponse{}
 	err := broker.withMasterClient(false, broker.MasterClient.GetMaster(), func(client master_pb.SeaweedClient) error {
