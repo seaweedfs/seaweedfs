@@ -73,11 +73,11 @@ func TestCompactFileChunksRealCase(t *testing.T) {
 }
 
 func printChunks(name string, chunks []*filer_pb.FileChunk) {
-	slices.SortFunc(chunks, func(a, b *filer_pb.FileChunk) bool {
+	slices.SortFunc(chunks, func(a, b *filer_pb.FileChunk) int {
 		if a.Offset == b.Offset {
-			return a.ModifiedTsNs < b.ModifiedTsNs
+			return int(a.ModifiedTsNs - b.ModifiedTsNs)
 		}
-		return a.Offset < b.Offset
+		return int(a.Offset - b.Offset)
 	})
 	for _, chunk := range chunks {
 		glog.V(0).Infof("%s chunk %s [%10d,%10d)", name, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))

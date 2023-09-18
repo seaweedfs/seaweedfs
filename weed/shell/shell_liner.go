@@ -26,8 +26,8 @@ var (
 )
 
 func RunShell(options ShellOptions) {
-	slices.SortFunc(Commands, func(a, b command) bool {
-		return strings.Compare(a.Name(), b.Name()) < 0
+	slices.SortFunc(Commands, func(a, b command) int {
+		return strings.Compare(a.Name(), b.Name())
 	})
 	line = liner.NewLiner()
 	defer line.Close()

@@ -72,8 +72,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	glog.V(2).Infof("completeMultipartUpload input %v", input)
 
 	completedParts := parts.Parts
-	slices.SortFunc(completedParts, func(a, b CompletedPart) bool {
-		return a.PartNumber < b.PartNumber
+	slices.SortFunc(completedParts, func(a, b CompletedPart) int {
+		return a.PartNumber - b.PartNumber
 	})
 
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
