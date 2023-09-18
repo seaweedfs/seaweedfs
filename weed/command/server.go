@@ -203,7 +203,7 @@ func runServer(cmd *Command, args []string) bool {
 	// ip address
 	masterOptions.ip = serverIp
 	masterOptions.ipBind = serverBindIp
-	filerOptions.masters = pb.ServerAddresses(*masterOptions.peers).ToAddressMap()
+	filerOptions.masters = pb.ServerAddresses(*masterOptions.peers).ToServiceDiscovery()
 	filerOptions.ip = serverIp
 	filerOptions.bindIp = serverBindIp
 	s3Options.bindIp = serverBindIp
@@ -216,7 +216,7 @@ func runServer(cmd *Command, args []string) bool {
 	serverOptions.v.dataCenter = serverDataCenter
 	serverOptions.v.rack = serverRack
 	mqBrokerOptions.ip = serverIp
-	mqBrokerOptions.masters = filerOptions.masters
+	mqBrokerOptions.masters = filerOptions.masters.GetInstancesAsMap()
 	mqBrokerOptions.filerGroup = filerOptions.filerGroup
 
 	// serverOptions.v.pulseSeconds = pulseSeconds

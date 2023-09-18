@@ -69,10 +69,13 @@ service SeaweedFiler {
     rpc CacheRemoteObjectToLocalCluster (CacheRemoteObjectToLocalClusterRequest) returns (CacheRemoteObjectToLocalClusterResponse) {
     }
 
-    rpc Lock(LockRequest) returns (LockResponse) {
+    rpc DistributedLock(LockRequest) returns (LockResponse) {
     }
-    rpc Unlock(UnlockRequest) returns (UnlockResponse) {
+    rpc DistributedUnlock(UnlockRequest) returns (UnlockResponse) {
     }
+    rpc FindLockOwner(FindLockOwnerRequest) returns (FindLockOwnerResponse) {
+    }
+    // distributed lock management internal use only
     rpc TransferLocks(TransferLocksRequest) returns (TransferLocksResponse) {
     }
 }
@@ -444,6 +447,7 @@ message LockRequest {
     int64 seconds_to_lock = 2;
     string renew_token = 3;
     bool is_moved = 4;
+    string owner = 5;
 }
 message LockResponse {
     string renew_token = 1;
@@ -459,10 +463,18 @@ message UnlockResponse {
     string error = 1;
     string moved_to = 2;
 }
+message FindLockOwnerRequest {
+    string name = 1;
+    bool is_moved = 2;
+}
+message FindLockOwnerResponse {
+    string owner = 1;
+}
 message Lock {
     string name = 1;
     string renew_token = 2;
     int64 expired_at_ns = 3;
+    string owner = 4;
 }
 message TransferLocksRequest {
     repeated Lock locks = 1;

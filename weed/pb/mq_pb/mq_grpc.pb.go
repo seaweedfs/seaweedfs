@@ -27,8 +27,17 @@ type SeaweedMessagingClient interface {
 	AssignSegmentBrokers(ctx context.Context, in *AssignSegmentBrokersRequest, opts ...grpc.CallOption) (*AssignSegmentBrokersResponse, error)
 	CheckSegmentStatus(ctx context.Context, in *CheckSegmentStatusRequest, opts ...grpc.CallOption) (*CheckSegmentStatusResponse, error)
 	CheckBrokerLoad(ctx context.Context, in *CheckBrokerLoadRequest, opts ...grpc.CallOption) (*CheckBrokerLoadResponse, error)
+	// control plane for balancer
+	ConnectToBalancer(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_ConnectToBalancerClient, error)
+	// control plane for topic partitions
+	LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error)
+	// a pub client will call this to get the topic partitions assignment
+	RequestTopicPartitions(ctx context.Context, in *RequestTopicPartitionsRequest, opts ...grpc.CallOption) (*RequestTopicPartitionsResponse, error)
+	AssignTopicPartitions(ctx context.Context, in *AssignTopicPartitionsRequest, opts ...grpc.CallOption) (*AssignTopicPartitionsResponse, error)
+	CheckTopicPartitionsStatus(ctx context.Context, in *CheckTopicPartitionsStatusRequest, opts ...grpc.CallOption) (*CheckTopicPartitionsStatusResponse, error)
 	// data plane
 	Publish(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublishClient, error)
+	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (SeaweedMessaging_SubscribeClient, error)
 }
 
 type seaweedMessagingClient struct {
@@ -75,8 +84,75 @@ func (c *seaweedMessagingClient) CheckBrokerLoad(ctx context.Context, in *CheckB
 	return out, nil
 }
 
+func (c *seaweedMessagingClient) ConnectToBalancer(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_ConnectToBalancerClient, error) {
+	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[0], "/messaging_pb.SeaweedMessaging/ConnectToBalancer", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &seaweedMessagingConnectToBalancerClient{stream}
+	return x, nil
+}
+
+type SeaweedMessaging_ConnectToBalancerClient interface {
+	Send(*ConnectToBalancerRequest) error
+	Recv() (*ConnectToBalancerResponse, error)
+	grpc.ClientStream
+}
+
+type seaweedMessagingConnectToBalancerClient struct {
+	grpc.ClientStream
+}
+
+func (x *seaweedMessagingConnectToBalancerClient) Send(m *ConnectToBalancerRequest) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *seaweedMessagingConnectToBalancerClient) Recv() (*ConnectToBalancerResponse, error) {
+	m := new(ConnectToBalancerResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (c *seaweedMessagingClient) LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error) {
+	out := new(LookupTopicBrokersResponse)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/LookupTopicBrokers", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedMessagingClient) RequestTopicPartitions(ctx context.Context, in *RequestTopicPartitionsRequest, opts ...grpc.CallOption) (*RequestTopicPartitionsResponse, error) {
+	out := new(RequestTopicPartitionsResponse)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/RequestTopicPartitions", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedMessagingClient) AssignTopicPartitions(ctx context.Context, in *AssignTopicPartitionsRequest, opts ...grpc.CallOption) (*AssignTopicPartitionsResponse, error) {
+	out := new(AssignTopicPartitionsResponse)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/AssignTopicPartitions", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedMessagingClient) CheckTopicPartitionsStatus(ctx context.Context, in *CheckTopicPartitionsStatusRequest, opts ...grpc.CallOption) (*CheckTopicPartitionsStatusResponse, error) {
+	out := new(CheckTopicPartitionsStatusResponse)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/CheckTopicPartitionsStatus", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *seaweedMessagingClient) Publish(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublishClient, error) {
-	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[0], "/messaging_pb.SeaweedMessaging/Publish", opts...)
+	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[1], "/messaging_pb.SeaweedMessaging/Publish", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +182,38 @@ func (x *seaweedMessagingPublishClient) Recv() (*PublishResponse, error) {
 	return m, nil
 }
 
+func (c *seaweedMessagingClient) Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (SeaweedMessaging_SubscribeClient, error) {
+	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[2], "/messaging_pb.SeaweedMessaging/Subscribe", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &seaweedMessagingSubscribeClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type SeaweedMessaging_SubscribeClient interface {
+	Recv() (*SubscribeResponse, error)
+	grpc.ClientStream
+}
+
+type seaweedMessagingSubscribeClient struct {
+	grpc.ClientStream
+}
+
+func (x *seaweedMessagingSubscribeClient) Recv() (*SubscribeResponse, error) {
+	m := new(SubscribeResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // SeaweedMessagingServer is the server API for SeaweedMessaging service.
 // All implementations must embed UnimplementedSeaweedMessagingServer
 // for forward compatibility
@@ -115,8 +223,17 @@ type SeaweedMessagingServer interface {
 	AssignSegmentBrokers(context.Context, *AssignSegmentBrokersRequest) (*AssignSegmentBrokersResponse, error)
 	CheckSegmentStatus(context.Context, *CheckSegmentStatusRequest) (*CheckSegmentStatusResponse, error)
 	CheckBrokerLoad(context.Context, *CheckBrokerLoadRequest) (*CheckBrokerLoadResponse, error)
+	// control plane for balancer
+	ConnectToBalancer(SeaweedMessaging_ConnectToBalancerServer) error
+	// control plane for topic partitions
+	LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error)
+	// a pub client will call this to get the topic partitions assignment
+	RequestTopicPartitions(context.Context, *RequestTopicPartitionsRequest) (*RequestTopicPartitionsResponse, error)
+	AssignTopicPartitions(context.Context, *AssignTopicPartitionsRequest) (*AssignTopicPartitionsResponse, error)
+	CheckTopicPartitionsStatus(context.Context, *CheckTopicPartitionsStatusRequest) (*CheckTopicPartitionsStatusResponse, error)
 	// data plane
 	Publish(SeaweedMessaging_PublishServer) error
+	Subscribe(*SubscribeRequest, SeaweedMessaging_SubscribeServer) error
 	mustEmbedUnimplementedSeaweedMessagingServer()
 }
 
@@ -136,8 +253,26 @@ func (UnimplementedSeaweedMessagingServer) CheckSegmentStatus(context.Context, *
 func (UnimplementedSeaweedMessagingServer) CheckBrokerLoad(context.Context, *CheckBrokerLoadRequest) (*CheckBrokerLoadResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CheckBrokerLoad not implemented")
 }
+func (UnimplementedSeaweedMessagingServer) ConnectToBalancer(SeaweedMessaging_ConnectToBalancerServer) error {
+	return status.Errorf(codes.Unimplemented, "method ConnectToBalancer not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LookupTopicBrokers not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) RequestTopicPartitions(context.Context, *RequestTopicPartitionsRequest) (*RequestTopicPartitionsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RequestTopicPartitions not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) AssignTopicPartitions(context.Context, *AssignTopicPartitionsRequest) (*AssignTopicPartitionsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AssignTopicPartitions not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) CheckTopicPartitionsStatus(context.Context, *CheckTopicPartitionsStatusRequest) (*CheckTopicPartitionsStatusResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CheckTopicPartitionsStatus not implemented")
+}
 func (UnimplementedSeaweedMessagingServer) Publish(SeaweedMessaging_PublishServer) error {
 	return status.Errorf(codes.Unimplemented, "method Publish not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) Subscribe(*SubscribeRequest, SeaweedMessaging_SubscribeServer) error {
+	return status.Errorf(codes.Unimplemented, "method Subscribe not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) mustEmbedUnimplementedSeaweedMessagingServer() {}
 
@@ -224,6 +359,104 @@ func _SeaweedMessaging_CheckBrokerLoad_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeaweedMessaging_ConnectToBalancer_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(SeaweedMessagingServer).ConnectToBalancer(&seaweedMessagingConnectToBalancerServer{stream})
+}
+
+type SeaweedMessaging_ConnectToBalancerServer interface {
+	Send(*ConnectToBalancerResponse) error
+	Recv() (*ConnectToBalancerRequest, error)
+	grpc.ServerStream
+}
+
+type seaweedMessagingConnectToBalancerServer struct {
+	grpc.ServerStream
+}
+
+func (x *seaweedMessagingConnectToBalancerServer) Send(m *ConnectToBalancerResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *seaweedMessagingConnectToBalancerServer) Recv() (*ConnectToBalancerRequest, error) {
+	m := new(ConnectToBalancerRequest)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func _SeaweedMessaging_LookupTopicBrokers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LookupTopicBrokersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).LookupTopicBrokers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/messaging_pb.SeaweedMessaging/LookupTopicBrokers",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).LookupTopicBrokers(ctx, req.(*LookupTopicBrokersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedMessaging_RequestTopicPartitions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequestTopicPartitionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).RequestTopicPartitions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/messaging_pb.SeaweedMessaging/RequestTopicPartitions",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).RequestTopicPartitions(ctx, req.(*RequestTopicPartitionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedMessaging_AssignTopicPartitions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AssignTopicPartitionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).AssignTopicPartitions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/messaging_pb.SeaweedMessaging/AssignTopicPartitions",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).AssignTopicPartitions(ctx, req.(*AssignTopicPartitionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedMessaging_CheckTopicPartitionsStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckTopicPartitionsStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).CheckTopicPartitionsStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/messaging_pb.SeaweedMessaging/CheckTopicPartitionsStatus",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).CheckTopicPartitionsStatus(ctx, req.(*CheckTopicPartitionsStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SeaweedMessaging_Publish_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(SeaweedMessagingServer).Publish(&seaweedMessagingPublishServer{stream})
 }
@@ -250,6 +483,27 @@ func (x *seaweedMessagingPublishServer) Recv() (*PublishRequest, error) {
 	return m, nil
 }
 
+func _SeaweedMessaging_Subscribe_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(SubscribeRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(SeaweedMessagingServer).Subscribe(m, &seaweedMessagingSubscribeServer{stream})
+}
+
+type SeaweedMessaging_SubscribeServer interface {
+	Send(*SubscribeResponse) error
+	grpc.ServerStream
+}
+
+type seaweedMessagingSubscribeServer struct {
+	grpc.ServerStream
+}
+
+func (x *seaweedMessagingSubscribeServer) Send(m *SubscribeResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
 // SeaweedMessaging_ServiceDesc is the grpc.ServiceDesc for SeaweedMessaging service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -273,13 +527,40 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "CheckBrokerLoad",
 			Handler:    _SeaweedMessaging_CheckBrokerLoad_Handler,
 		},
+		{
+			MethodName: "LookupTopicBrokers",
+			Handler:    _SeaweedMessaging_LookupTopicBrokers_Handler,
+		},
+		{
+			MethodName: "RequestTopicPartitions",
+			Handler:    _SeaweedMessaging_RequestTopicPartitions_Handler,
+		},
+		{
+			MethodName: "AssignTopicPartitions",
+			Handler:    _SeaweedMessaging_AssignTopicPartitions_Handler,
+		},
+		{
+			MethodName: "CheckTopicPartitionsStatus",
+			Handler:    _SeaweedMessaging_CheckTopicPartitionsStatus_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "ConnectToBalancer",
+			Handler:       _SeaweedMessaging_ConnectToBalancer_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
 		{
 			StreamName:    "Publish",
 			Handler:       _SeaweedMessaging_Publish_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
+		},
+		{
+			StreamName:    "Subscribe",
+			Handler:       _SeaweedMessaging_Subscribe_Handler,
+			ServerStreams: true,
 		},
 	},
 	Metadata: "mq.proto",

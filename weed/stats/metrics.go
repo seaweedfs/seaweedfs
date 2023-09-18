@@ -299,7 +299,6 @@ func JoinHostPort(host string, port int) string {
 	return net.JoinHostPort(host, portStr)
 }
 
-
 func StartMetricsServer(ip string, port int) {
 	if port == 0 {
 		return

@@ -292,10 +292,8 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 
 	count := int64(0)
 	for count < limit && len(notPrefixed) > 0 {
-		var isLastItemHasPrefix bool
 		for _, entry := range notPrefixed {
 			if strings.HasPrefix(entry.Name(), prefix) {
-				isLastItemHasPrefix = true
 				count++
 				if !eachEntryFunc(entry) {
 					return
@@ -303,11 +301,9 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 				if count >= limit {
 					break
 				}
-			} else {
-				isLastItemHasPrefix = false
 			}
 		}
-		if count < limit && isLastItemHasPrefix && len(notPrefixed) == int(limit) {
+		if count < limit && lastFileName <= prefix && len(notPrefixed) == int(limit) {
 			notPrefixed = notPrefixed[:0]
 			lastFileName, err = actualStore.ListDirectoryEntries(ctx, dirPath, lastFileName, false, limit, func(entry *Entry) bool {
 				notPrefixed = append(notPrefixed, entry)

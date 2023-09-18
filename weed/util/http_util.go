@@ -54,6 +54,9 @@ func Post(url string, values url.Values) ([]byte, error) {
 func Get(url string) ([]byte, bool, error) {
 
 	request, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, true, err
+	}
 	request.Header.Add("Accept-Encoding", "gzip")
 
 	response, err := client.Do(request)
@@ -66,6 +69,9 @@ func Get(url string) ([]byte, bool, error) {
 	switch response.Header.Get("Content-Encoding") {
 	case "gzip":
 		reader, err = gzip.NewReader(response.Body)
+		if err != nil {
+			return nil, true, err
+		}
 		defer reader.Close()
 	default:
 		reader = response.Body
@@ -253,6 +259,9 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 	switch contentEncoding {
 	case "gzip":
 		reader, err = gzip.NewReader(r.Body)
+		if err != nil {
+			return 0, err
+		}
 		defer reader.Close()
 	default:
 		reader = r.Body
@@ -400,6 +409,9 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*htt
 	switch contentEncoding {
 	case "gzip":
 		reader, err = gzip.NewReader(r.Body)
+		if err != nil {
+			return nil, nil, err
+		}
 	default:
 		reader = r.Body
 	}

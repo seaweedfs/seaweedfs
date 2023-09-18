@@ -12,7 +12,7 @@ var LockErrorNonEmptyTokenOnExpiredLock = fmt.Errorf("lock: non-empty token on a
 var LockErrorTokenMismatch = fmt.Errorf("lock: token mismatch")
 var UnlockErrorTokenMismatch = fmt.Errorf("unlock: token mismatch")
 
-// LockManager lock manager
+// LockManager local lock manager, used by distributed lock manager
 type LockManager struct {
 	locks *xsync.MapOf[string, *Lock]
 }
@@ -20,6 +20,7 @@ type Lock struct {
 	Token       string
 	ExpiredAtNs int64
 	Key         string // only used for moving locks
+	Owner       string
 }
 
 func NewLockManager() *LockManager {
@@ -30,7 +31,7 @@ func NewLockManager() *LockManager {
 	return t
 }
 
-func (lm *LockManager) Lock(path string, expiredAtNs int64, token string) (renewToken string, err error) {
+func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner string) (renewToken string, err error) {
 	lm.locks.Compute(path, func(oldValue *Lock, loaded bool) (newValue *Lock, delete bool) {
 		if oldValue != nil {
 			if oldValue.ExpiredAtNs > 0 && oldValue.ExpiredAtNs < time.Now().UnixNano() {
@@ -41,14 +42,14 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string) (renew
 				} else {
 					// new lock
 					renewToken = uuid.New().String()
-					return &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs}, false
+					return &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs, Owner: owner}, false
 				}
 			}
 			// not expired
 			if oldValue.Token == token {
 				// token matches, renew the lock
 				renewToken = uuid.New().String()
-				return &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs}, false
+				return &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs, Owner: owner}, false
 			} else {
 				err = LockErrorTokenMismatch
 				return oldValue, false
@@ -57,7 +58,7 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string) (renew
 			if token == "" {
 				// new lock
 				renewToken = uuid.New().String()
-				return &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs}, false
+				return &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs, Owner: owner}, false
 			} else {
 				err = LockErrorNonEmptyTokenOnNewLock
 				return nil, false
@@ -132,6 +133,18 @@ func (lm *LockManager) SelectLocks(selectFn func(key string) bool) (locks []*Loc
 }
 
 // InsertLock inserts a lock unconditionally
-func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string) {
-	lm.locks.Store(path, &Lock{Token: token, ExpiredAtNs: expiredAtNs})
+func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, owner string) {
+	lm.locks.Store(path, &Lock{Token: token, ExpiredAtNs: expiredAtNs, Owner: owner})
+}
+
+func (lm *LockManager) GetLockOwner(key string) (owner string, err error) {
+	lm.locks.Range(func(k string, lock *Lock) bool {
+		if k == key && lock != nil {
+			owner = lock.Owner
+			return false
+		}
+		return true
+	})
+	return
+
 }

@@ -43,10 +43,10 @@ func TestEncodingDecoding(t *testing.T) {
 
 func validateFiles(baseFileName string) error {
 	nm, err := readNeedleMap(baseFileName)
-	defer nm.Close()
 	if err != nil {
 		return fmt.Errorf("readNeedleMap: %v", err)
 	}
+	defer nm.Close()
 
 	datFile, err := os.OpenFile(baseFileName+".dat", os.O_RDONLY, 0)
 	if err != nil {
@@ -60,6 +60,9 @@ func validateFiles(baseFileName string) error {
 	}
 
 	ecFiles, err := openEcFiles(baseFileName, true)
+	if err != nil {
+		return fmt.Errorf("error opening ec files: %w", err)
+	}
 	defer closeEcFiles(ecFiles)
 
 	err = nm.AscendingVisit(func(value needle_map.NeedleValue) error {
