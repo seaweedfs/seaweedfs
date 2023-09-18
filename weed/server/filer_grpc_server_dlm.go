@@ -90,8 +90,11 @@ func (fs *FilerServer) FindLockOwner(ctx context.Context, req *filer_pb.FindLock
 				Name:    req.Name,
 				IsMoved: true,
 			})
+			if err != nil {
+				return err
+			}
 			owner = secondResp.Owner
-			return err
+			return nil
 		})
 		if err != nil {
 			return nil, err
