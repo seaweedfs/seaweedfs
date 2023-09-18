@@ -5,7 +5,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"golang.org/x/exp/slices"
-	"strings"
 	"time"
 )
 
@@ -70,8 +69,8 @@ func (r *Rack) ToInfo() (info RackInfo) {
 		dns = append(dns, dn.ToInfo())
 	}
 
-	slices.SortFunc(dns, func(a, b DataNodeInfo) int {
-		return strings.Compare(a.Url, b.Url)
+	slices.SortFunc(dns, func(a, b DataNodeInfo) bool {
+		return a.Url < b.Url
 	})
 
 	info.DataNodes = dns

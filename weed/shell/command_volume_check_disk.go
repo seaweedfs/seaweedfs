@@ -80,8 +80,8 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 		if *volumeId > 0 && replicas[0].info.Id != uint32(*volumeId) {
 			continue
 		}
-		slices.SortFunc(replicas, func(a, b *VolumeReplica) int {
-			return int(fileCount(b) - fileCount(a))
+		slices.SortFunc(replicas, func(a, b *VolumeReplica) bool {
+			return fileCount(a) > fileCount(b)
 		})
 		for len(replicas) >= 2 {
 			a, b := replicas[0], replicas[1]

@@ -411,8 +411,8 @@ func doBalanceEcRack(commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool
 	hasMove := true
 	for hasMove {
 		hasMove = false
-		slices.SortFunc(rackEcNodes, func(a, b *EcNode) int {
-			return b.freeEcSlot - a.freeEcSlot
+		slices.SortFunc(rackEcNodes, func(a, b *EcNode) bool {
+			return a.freeEcSlot > b.freeEcSlot
 		})
 		emptyNode, fullNode := rackEcNodes[0], rackEcNodes[len(rackEcNodes)-1]
 		emptyNodeShardCount, fullNodeShardCount := ecNodeIdToShardCount[emptyNode.info.Id], ecNodeIdToShardCount[fullNode.info.Id]
@@ -492,8 +492,8 @@ func pickNEcShardsToMoveFrom(ecNodes []*EcNode, vid needle.VolumeId, n int) map[
 			})
 		}
 	}
-	slices.SortFunc(candidateEcNodes, func(a, b *CandidateEcNode) int {
-		return b.shardCount - a.shardCount
+	slices.SortFunc(candidateEcNodes, func(a, b *CandidateEcNode) bool {
+		return a.shardCount > b.shardCount
 	})
 	for i := 0; i < n; i++ {
 		selectedEcNodeIndex := -1

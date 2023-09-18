@@ -334,8 +334,8 @@ func (s3a *S3ApiServer) doDeleteEmptyDirectories(client filer_pb.SeaweedFilerCli
 	for dir := range directoriesWithDeletion {
 		allDirs = append(allDirs, dir)
 	}
-	slices.SortFunc(allDirs, func(a, b string) int {
-		return len(b) - len(a)
+	slices.SortFunc(allDirs, func(a, b string) bool {
+		return len(a) > len(b)
 	})
 	newDirectoriesWithDeletion = make(map[string]int)
 	for _, dir := range allDirs {

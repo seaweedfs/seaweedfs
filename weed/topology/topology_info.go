@@ -3,7 +3,6 @@ package topology
 import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"golang.org/x/exp/slices"
-	"strings"
 )
 
 type TopologyInfo struct {
@@ -22,8 +21,8 @@ func (t *Topology) ToInfo() (info TopologyInfo) {
 		dcs = append(dcs, dc.ToInfo())
 	}
 
-	slices.SortFunc(dcs, func(a, b DataCenterInfo) int {
-		return strings.Compare(string(a.Id), string(b.Id))
+	slices.SortFunc(dcs, func(a, b DataCenterInfo) bool {
+		return a.Id < b.Id
 	})
 
 	info.DataCenters = dcs
