@@ -112,6 +112,7 @@ message TopicPartitionStats {
     Topic topic = 1;
     Partition partition = 2;
     int32 consumer_count = 3;
+    bool is_leader = 4;
 }
 
 message ConnectToBalancerRequest {
