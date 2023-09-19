@@ -40,9 +40,7 @@ func (broker *MessageQueueBroker) ConnectToBalancer(stream mq_pb.SeaweedMessagin
 			return status.Errorf(codes.Unavailable, "not current broker balancer")
 		}
 		if receivedStats := req.GetStats(); receivedStats != nil {
-			brokerStats.TopicPartitionCount = receivedStats.TopicPartitionCount
-			brokerStats.ConsumerCount = receivedStats.ConsumerCount
-			brokerStats.CpuUsagePercent = receivedStats.CpuUsagePercent
+			brokerStats.UpdateStats(receivedStats)
 
 			glog.V(3).Infof("broker %s stats: %+v", initMessage.Broker, brokerStats)
 		}

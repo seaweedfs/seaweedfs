@@ -105,10 +105,17 @@ message CheckBrokerLoadResponse {
 
 //////////////////////////////////////////////////
 message BrokerStats {
-    int32 topic_partition_count = 1;
-    int32 consumer_count = 2;
-    int32 cpu_usage_percent = 3;
+    int32 cpu_usage_percent = 1;
+    map<string, TopicPartitionStats> stats = 2;
 }
+message TopicPartitionStats {
+    Topic topic = 1;
+    Partition partition = 2;
+    int32 consumer_count = 3;
+    bool is_leader = 4;
+}
+
+
 message ConnectToBalancerRequest {
     message InitMessage {
         string broker = 1;
