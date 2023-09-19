@@ -19,7 +19,7 @@ func (fs *FilerServer) DistributedLock(ctx context.Context, req *filer_pb.LockRe
 	var movedTo pb.ServerAddress
 	expiredAtNs := time.Now().Add(time.Duration(req.SecondsToLock) * time.Second).UnixNano()
 	resp.RenewToken, movedTo, err = fs.filer.Dlm.LockWithTimeout(req.Name, expiredAtNs, req.RenewToken, req.Owner)
-	glog.Infof("lock %s %v %v %v, isMoved=%v %v", req.Name, req.SecondsToLock, req.RenewToken, req.Owner, req.IsMoved, movedTo)
+	glog.V(3).Infof("lock %s %v %v %v, isMoved=%v %v", req.Name, req.SecondsToLock, req.RenewToken, req.Owner, req.IsMoved, movedTo)
 	if movedTo != "" && movedTo != fs.option.Host && !req.IsMoved {
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			secondResp, err := client.DistributedLock(context.Background(), &filer_pb.LockRequest{
@@ -90,8 +90,11 @@ func (fs *FilerServer) FindLockOwner(ctx context.Context, req *filer_pb.FindLock
 				Name:    req.Name,
 				IsMoved: true,
 			})
+			if err != nil {
+				return err
+			}
 			owner = secondResp.Owner
-			return err
+			return nil
 		})
 		if err != nil {
 			return nil, err
