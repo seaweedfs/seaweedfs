@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"io"
 	"net/http"
 	"net/url"
@@ -58,7 +60,9 @@ func TestIsRequestPresignedSignatureV4(t *testing.T) {
 
 // Tests is requested authenticated function, tests replies for s3 errors.
 func TestIsReqAuthenticated(t *testing.T) {
-	option := S3ApiServerOption{}
+	option := S3ApiServerOption{
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
 	iam := NewIdentityAccessManagement(&option)
 	iam.identities = []*Identity{
 		{
@@ -94,7 +98,9 @@ func TestIsReqAuthenticated(t *testing.T) {
 }
 
 func TestCheckAdminRequestAuthType(t *testing.T) {
-	option := S3ApiServerOption{}
+	option := S3ApiServerOption{
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
 	iam := NewIdentityAccessManagement(&option)
 	iam.identities = []*Identity{
 		{
