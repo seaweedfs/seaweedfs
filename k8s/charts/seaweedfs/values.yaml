@@ -280,7 +280,7 @@ volume:
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: {}
+  resources: null
 
   # Toleration Settings for server pods
   # This should be a multi-line string matching the Toleration array
