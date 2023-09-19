@@ -87,7 +87,8 @@ func (iam IamS3ApiConfigure) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfigurat
 		return err
 	}
 	if buf.Len() > 0 {
-		if err = filer.ParseS3ConfigurationFromBytes(buf.Bytes(), s3cfg); err != nil {
+		content := buf.Bytes()
+		if err = filer.ParseS3ConfigurationFromBytes(&content, s3cfg); err != nil {
 			return err
 		}
 	}

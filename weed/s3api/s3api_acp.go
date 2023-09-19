@@ -1,9 +1,15 @@
 package s3api
 
 import (
+	"bytes"
+	"fmt"
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3acl"
@@ -11,7 +17,169 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"net/http"
 	"path/filepath"
+	"sync"
 )
+
+type BucketAccessControlPolicies struct {
+	sync.RWMutex
+	policies *map[string]*BucketAccessControlPolicy
+}
+
+type BucketAccessControlPolicy struct {
+	sync.RWMutex
+	s3.AccessControlPolicy
+
+	ObjectOwnership string
+	Owner           *s3.Owner `type:"structure"` // Container for the bucket owner's display name and ID.
+	// A list of grants for access controls.
+	Grants []*s3.Grant `locationName:"AccessControlList" locationNameList:"Grant" type:"list"`
+}
+
+func NewBucketAccessControlPolicies() *BucketAccessControlPolicies {
+	policies := make(map[string]*BucketAccessControlPolicy)
+	bacp := BucketAccessControlPolicies{
+		policies: &policies,
+	}
+	return &bacp
+}
+
+func (bacp *BucketAccessControlPolicies) LoadConfigurationFromBytes(content *[]byte) error {
+	bpCfg := &s3_pb.S3BucketAccessControlPolices{}
+	if err := filer.ParseS3ConfigurationFromBytes(content, bpCfg); err != nil {
+		glog.Warningf("unmarshal bucket policies error: %v", err)
+		return fmt.Errorf("unmarshal bucket policies error: %v", err)
+	}
+	bacp.loadPbConfig(bpCfg)
+	return nil
+}
+
+func (s3a *S3ApiServer) SaveBucketAccessControlPoliciesConfig() (err error) {
+	buf := bytes.Buffer{}
+	cfg := s3a.bacp.ToPbConfig()
+	if err := filer.ProtoToText(&buf, cfg); err != nil {
+		return fmt.Errorf("ProtoToText: %s", err)
+	}
+	return pb.WithGrpcFilerClient(false, 0, s3a.option.Filer, s3a.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err = util.Retry("saveACLs", func() error {
+			return filer.SaveInsideFiler(client, s3_constants.S3ConfigDir, s3_constants.BucketACLsConfigFile, buf.Bytes())
+		})
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (bacp *BucketAccessControlPolicies) ToPbConfig() *s3_pb.S3BucketAccessControlPolices {
+	cfg := s3_pb.S3BucketAccessControlPolices{
+		Policies: make(map[string]*s3_pb.AccessControlPolicy),
+	}
+	bacp.RLock()
+	defer bacp.RUnlock()
+	if bacp.policies == nil {
+		return &cfg
+	}
+	for bucket, acp := range *bacp.policies {
+		acp.RLock()
+		var grants []*s3_pb.Grant
+		for _, grant := range acp.Grants {
+			if grant == nil {
+				continue
+			}
+			pbGrant := s3_pb.Grant{}
+			if grant.Permission != nil {
+				pbGrant.Permission = *grant.Permission
+			}
+			if grant.Grantee != nil {
+				pbGrant.Grantee = &s3_pb.Grantee{}
+				if grant.Grantee.DisplayName != nil {
+					pbGrant.Grantee.DisplayName = *grant.Grantee.DisplayName
+				}
+				if grant.Grantee.EmailAddress != nil {
+					pbGrant.Grantee.EmailAddress = *grant.Grantee.EmailAddress
+				}
+				if grant.Grantee.ID != nil {
+					pbGrant.Grantee.Id = *grant.Grantee.ID
+				}
+				if grant.Grantee.Type != nil {
+					pbGrant.Grantee.Type = *grant.Grantee.Type
+				}
+				if grant.Grantee.URI != nil {
+					pbGrant.Grantee.Uri = *grant.Grantee.URI
+				}
+			}
+			grants = append(grants, &pbGrant)
+		}
+		pbAcp := s3_pb.AccessControlPolicy{
+			ObjectOwnership:   acp.ObjectOwnership,
+			AccessControlList: grants,
+		}
+		if acp.Owner != nil {
+			pbAcp.Owner = &s3_pb.BucketOwner{}
+			if acp.Owner.DisplayName != nil {
+				pbAcp.Owner.DisplayName = *acp.Owner.DisplayName
+			}
+			if acp.Owner.ID != nil {
+				pbAcp.Owner.Id = *acp.Owner.ID
+			}
+		}
+		cfg.Policies[bucket] = &pbAcp
+		acp.RUnlock()
+	}
+	return &cfg
+}
+
+func (bacp *BucketAccessControlPolicies) loadPbConfig(cfg *s3_pb.S3BucketAccessControlPolices) {
+	bucketPolicies := make(map[string]*BucketAccessControlPolicy)
+	for bucket, policy := range cfg.Policies {
+		var grants []*s3.Grant
+		for _, grant := range policy.AccessControlList {
+			grants = append(grants, s3acl.GrantFromPb(grant))
+		}
+		bucketPolicies[bucket] = &BucketAccessControlPolicy{
+			ObjectOwnership: policy.ObjectOwnership,
+			Owner: &s3.Owner{
+				DisplayName: aws.String(policy.Owner.DisplayName),
+				ID:          aws.String(policy.Owner.Id),
+			},
+			Grants: grants,
+		}
+	}
+	bacp.Lock()
+	bacp.policies = &bucketPolicies
+	bacp.Unlock()
+}
+
+func (bacp *BucketAccessControlPolicies) DeleteAccessControlPolicy(bucket string) {
+	bacp.Lock()
+	defer bacp.Unlock()
+	if _, ok := (*bacp.policies)[bucket]; ok {
+		delete(*bacp.policies, bucket)
+	}
+}
+
+func (bacp *BucketAccessControlPolicies) GetAccessControlPolicy(bucket string) *BucketAccessControlPolicy {
+	bacp.RLock()
+	acp, ok := (*bacp.policies)[bucket]
+	bacp.RUnlock()
+	if !ok {
+		acp = &BucketAccessControlPolicy{
+			Owner:  &s3.Owner{},
+			Grants: []*s3.Grant{},
+		}
+		bacp.Lock()
+		(*bacp.policies)[bucket] = acp
+		bacp.Unlock()
+	}
+	return acp
+}
+
+func (bacp *BucketAccessControlPolicies) GetOwnerAccountId(bucket string) string {
+	if ownerAccountId := bacp.GetAccessControlPolicy(bucket).Owner.ID; ownerAccountId != nil {
+		return *ownerAccountId
+	}
+	return ""
+}
 
 func getAccountId(r *http.Request) string {
 	id := r.Header.Get(s3_constants.AmzAccountId)
@@ -22,19 +190,15 @@ func getAccountId(r *http.Request) string {
 	}
 }
 
-func (s3a *S3ApiServer) checkAccessByOwnership(r *http.Request, bucket string) s3err.ErrorCode {
-	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
-	if errCode != s3err.ErrNone {
-		return errCode
-	}
+func (s3a *S3ApiServer) checkAccessByOwnership(r *http.Request, acp *BucketAccessControlPolicy) s3err.ErrorCode {
 	requestAccountId := getAccountId(r)
-	if s3acl.ValidateAccount(requestAccountId, *bucketMetadata.Owner.ID) {
+	if acp != nil && s3acl.ValidateAccount(requestAccountId, *acp.Owner.ID) {
 		return s3err.ErrNone
 	}
 	return s3err.ErrAccessDenied
 }
 
-//Check access for PutBucketAclHandler
+// Check access for PutBucketAclHandler Говно функция
 func (s3a *S3ApiServer) checkAccessForPutBucketAcl(requestAccountId, bucket string) (*BucketMetaData, s3err.ErrorCode) {
 	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
 	if errCode != s3err.ErrNone {
@@ -104,7 +268,7 @@ func (s3a *S3ApiServer) checkAccessForReadBucket(r *http.Request, bucket, aclAct
 	return nil, s3err.ErrAccessDenied
 }
 
-//Check ObjectAcl-Read related access
+// Todo Check ObjectAcl-Read related access
 // includes:
 // - GetObjectAclHandler
 func (s3a *S3ApiServer) checkAccessForReadObjectAcl(r *http.Request, bucket, object string) (acp *s3.AccessControlPolicy, errCode s3err.ErrorCode) {
@@ -186,58 +350,61 @@ func (s3a *S3ApiServer) checkBucketAccessForReadObject(r *http.Request, bucket s
 	return s3err.ErrNone
 }
 
-// Check ObjectAcl-Write related access
+// Todo Check ObjectAcl-Write related access
 // includes:
 // - PutObjectAclHandler
 func (s3a *S3ApiServer) checkAccessForWriteObjectAcl(r *http.Request, bucket, object string) (*filer_pb.Entry, string, []*s3.Grant, s3err.ErrorCode) {
-	bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
-	if errCode != s3err.ErrNone {
-		return nil, "", nil, errCode
-	}
+	//bucketMetadata, errCode := s3a.bucketRegistry.GetBucketMetadata(bucket)
+	//if errCode != s3err.ErrNone {
+	//	return nil, "", nil, errCode
+	//}
 
 	requestAccountId := s3acl.GetAccountId(r)
-	reqOwnerId, grants, errCode := s3acl.ExtractObjectAcl(r, s3a.accountManager, bucketMetadata.ObjectOwnership, *bucketMetadata.Owner.ID, requestAccountId, false)
-	if errCode != s3err.ErrNone {
-		return nil, "", nil, errCode
-	}
+	//acp := s3a.bacp.GetAccessControlPolicy(bucket)
+	//reqOwnerId, grants, errCode := s3acl.ExtractObjectAcl(r, s3a.accountManager, acp.ObjectOwnership, *acp.Owner.ID, requestAccountId, false)
+	//if errCode != s3err.ErrNone {
+	//	return nil, "", nil, errCode
+	//}
 
-	if bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
-		return nil, "", nil, s3err.AccessControlListNotSupported
-	}
+	//if bucketMetadata.ObjectOwnership == s3_constants.OwnershipBucketOwnerEnforced {
+	//	return nil, "", nil, s3err.AccessControlListNotSupported
+	//}
 
 	//object acl
-	objectEntry, err := getObjectEntry(s3a, bucket, object)
-	if err != nil {
-		if err == filer_pb.ErrNotFound {
-			return nil, "", nil, s3err.ErrNoSuchKey
-		}
-		return nil, "", nil, s3err.ErrInternalError
-	}
+	// objectEntry, err := getObjectEntry(s3a, bucket, object)
+	// if err != nil {
+	//	if err == filer_pb.ErrNotFound {
+	//		return nil, "", nil, s3err.ErrNoSuchKey
+	//	}
+	//	return nil, "", nil, s3err.ErrInternalError
+	//}
 
-	if objectEntry.IsDirectory {
-		return nil, "", nil, s3err.ErrExistingObjectIsDirectory
-	}
+	//if objectEntry.IsDirectory {
+	//	return nil, "", nil, s3err.ErrExistingObjectIsDirectory
+	//}
 
-	objectOwner := s3acl.GetAcpOwner(objectEntry.Extended, *bucketMetadata.Owner.ID)
+	//objectOwner := s3acl.GetAcpOwner(objectEntry.Extended, *bucketMetadata.Owner.ID)
 	//object owner is immutable
-	if reqOwnerId != "" && reqOwnerId != objectOwner {
-		return nil, "", nil, s3err.ErrAccessDenied
-	}
-	if s3acl.ValidateAccount(requestAccountId, objectOwner) {
-		return objectEntry, objectOwner, grants, s3err.ErrNone
-	}
 
-	objectGrants := s3acl.GetAcpGrants(nil, objectEntry.Extended)
-	if objectGrants != nil {
-		requiredGrants := s3acl.DetermineRequiredGrants(requestAccountId, s3_constants.PermissionWriteAcp)
-		for _, objectGrant := range objectGrants {
-			for _, requiredGrant := range requiredGrants {
-				if s3acl.GrantEquals(objectGrant, requiredGrant) {
-					return objectEntry, objectOwner, grants, s3err.ErrNone
-				}
-			}
-		}
-	}
+	// Todo use s3test
+	//if reqOwnerId != "" && reqOwnerId != *acp.Owner.ID {
+	//	return nil, "", nil, s3err.ErrAccessDenied
+	//}
+	//if s3acl.ValidateAccount(requestAccountId, objectOwner) {
+	//	return objectEntry, objectOwner, grants, s3err.ErrNone
+	//}
+
+	//objectGrants := s3acl.GetAcpGrants(nil, objectEntry.Extended)
+	//if objectGrants != nil {
+	//	requiredGrants := s3acl.DetermineRequiredGrants(requestAccountId, s3_constants.PermissionWriteAcp)
+	//	for _, objectGrant := range objectGrants {
+	//		for _, requiredGrant := range requiredGrants {
+	//			if s3acl.GrantEquals(objectGrant, requiredGrant) {
+	//				return objectEntry, objectOwner, grants, s3err.ErrNone
+	//			}
+	//		}
+	//	}
+	//}
 
 	glog.V(3).Infof("checkAccessForWriteObjectAcl denied! request account id: %s", requestAccountId)
 	return nil, "", nil, s3err.ErrAccessDenied
@@ -252,8 +419,7 @@ func updateObjectEntry(s3a *S3ApiServer, bucket, object string, entry *filer_pb.
 // includes:
 // - PutObjectHandler
 func (s3a *S3ApiServer) CheckAccessForPutObject(r *http.Request, bucket, object string) s3err.ErrorCode {
-	accountId := s3acl.GetAccountId(r)
-	return s3a.checkAccessForWriteObject(r, bucket, object, accountId)
+	return s3a.checkAccessForWriteObject(r, bucket, object, s3acl.GetAccountId(r))
 }
 
 // CheckAccessForPutObjectPartHandler Check Acl for Upload object part

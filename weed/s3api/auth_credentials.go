@@ -47,6 +47,14 @@ func (i *Identity) isAnonymous() bool {
 	return i.Name == s3account.AccountAnonymous.Name
 }
 
+func (i *Identity) GetAccountId() string {
+	if i.AccountId != "" {
+		return i.AccountId
+	} else {
+		return i.Name
+	}
+}
+
 type Credential struct {
 	AccessKey string
 	SecretKey string
@@ -102,7 +110,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3A
 	if err != nil {
 		return fmt.Errorf("read S3 config: %v", err)
 	}
-	return iam.LoadS3ApiConfigurationFromBytes(content)
+	return iam.LoadS3ApiConfigurationFromBytes(&content)
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName string) error {
@@ -111,10 +119,10 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFile(fileName str
 		glog.Warningf("fail to read %s : %v", fileName, readErr)
 		return fmt.Errorf("fail to read %s : %v", fileName, readErr)
 	}
-	return iam.LoadS3ApiConfigurationFromBytes(content)
+	return iam.LoadS3ApiConfigurationFromBytes(&content)
 }
 
-func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content []byte) error {
+func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content *[]byte) error {
 	s3ApiConfiguration := &iam_pb.S3ApiConfiguration{}
 	if err := filer.ParseS3ConfigurationFromBytes(content, s3ApiConfiguration); err != nil {
 		glog.Warningf("unmarshal error: %v", err)
@@ -207,50 +215,51 @@ func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, foun
 }
 
 func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
-	return Auth(iam, nil, f, action, false)
+	return Auth(iam, nil, f, action)
 }
 
-func (s3a *S3ApiServer) Auth(f http.HandlerFunc, action Action, supportAcl bool) http.HandlerFunc {
-	return Auth(s3a.iam, s3a.bucketRegistry, f, action, supportAcl)
+func (s3a *S3ApiServer) Auth(f http.HandlerFunc, action Action) http.HandlerFunc {
+	return Auth(s3a.iam, s3a.bacp, f, action)
 }
 
-func Auth(iam *IdentityAccessManagement, br *BucketRegistry, f http.HandlerFunc, action Action, supportAcl bool) http.HandlerFunc {
+func Auth(iam *IdentityAccessManagement, bacp *BucketAccessControlPolicies, f http.HandlerFunc, action Action) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		//unset predefined headers
-		delete(r.Header, s3_constants.AmzAccountId)
-		delete(r.Header, s3_constants.ExtAmzOwnerKey)
-		delete(r.Header, s3_constants.ExtAmzAclKey)
 
 		if !iam.isEnabled() {
 			f(w, r)
 			return
 		}
 
-		identity, errCode := authRequest(iam, br, r, action, supportAcl)
+		identity, errCode := authRequest(iam, r, action)
 		if errCode == s3err.ErrNone {
-			if identity != nil && identity.Name != "" {
-				r.Header.Set(s3_constants.AmzIdentityId, identity.Name)
-				if identity.isAdmin() {
-					r.Header.Set(s3_constants.AmzIsAdmin, "true")
-				} else if _, ok := r.Header[s3_constants.AmzIsAdmin]; ok {
-					r.Header.Del(s3_constants.AmzIsAdmin)
-				}
-			}
 			f(w, r)
 			return
+		}
+		if bacp != nil && identity.isAnonymous() && errCode == s3err.ErrAccessDenied {
+			bucket, _ := s3_constants.GetBucketAndObject(r)
+			acp := bacp.GetAccessControlPolicy(bucket)
+			if acp.ObjectOwnership != s3_constants.OwnershipBucketOwnerEnforced {
+				f(w, r)
+				return
+			}
 		}
 		s3err.WriteErrorResponse(w, r, errCode)
 	}
 }
 
+// check whether the request has valid access keys
 func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action) (*Identity, s3err.ErrorCode) {
-	return authRequest(iam, nil, r, action, false)
+	return authRequest(iam, r, action)
 }
 
-func authRequest(iam *IdentityAccessManagement, br *BucketRegistry, r *http.Request, action Action, supportAcl bool) (*Identity, s3err.ErrorCode) {
+func authRequest(iam *IdentityAccessManagement, r *http.Request, action Action) (*Identity, s3err.ErrorCode) {
 	var identity *Identity
 	var s3Err s3err.ErrorCode
+	var found bool
 	var authType string
+	if _, ok := r.Header[s3_constants.AmzAuthType]; ok {
+		r.Header.Del(s3_constants.AmzAuthType)
+	}
 	switch getRequestAuthType(r) {
 	case authTypeStreamingSigned:
 		return identity, s3err.ErrNone
@@ -275,21 +284,10 @@ func authRequest(iam *IdentityAccessManagement, br *BucketRegistry, r *http.Requ
 		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
 		return identity, s3err.ErrNotImplemented
 	case authTypeAnonymous:
-		if supportAcl && br != nil {
-			bucket, _ := s3_constants.GetBucketAndObject(r)
-			bucketMetadata, errorCode := br.GetBucketMetadata(bucket)
-			if errorCode != s3err.ErrNone {
-				return nil, errorCode
-			}
-			if bucketMetadata.ObjectOwnership != s3_constants.OwnershipBucketOwnerEnforced {
-				return IdentityAnonymous, s3err.ErrNone
-			}
-		}
-		authType = "Anonymous"
-		identity = IdentityAnonymous
-		if len(identity.Actions) == 0 {
-			r.Header.Set(s3_constants.AmzAuthType, authType)
-			return identity, s3err.ErrAccessDenied
+		if identity, found = iam.lookupAnonymous(); found {
+			r.Header.Set(s3_constants.AmzAuthType, "Anonymous")
+		} else {
+			identity = IdentityAnonymous
 		}
 	default:
 		return identity, s3err.ErrNotImplemented
@@ -302,19 +300,21 @@ func authRequest(iam *IdentityAccessManagement, br *BucketRegistry, r *http.Requ
 		return identity, s3Err
 	}
 
-	glog.V(3).Infof("user name: %v account id: %v actions: %v, action: %v", identity.Name, identity.AccountId, identity.Actions, action)
+	glog.V(3).Infof("user name: %v account id: %v actions: %v, action: %v", identity.Name, identity.GetAccountId(), identity.Actions, action)
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 
 	if !identity.canDo(action, bucket, object) {
 		return identity, s3err.ErrAccessDenied
 	}
-
-	if !identity.isAnonymous() {
-		r.Header.Set(s3_constants.AmzAccountId, identity.AccountId)
+	r.Header.Set(s3_constants.AmzIdentityId, identity.Name)
+	r.Header.Set(s3_constants.AmzAccountId, identity.GetAccountId())
+	if identity.isAdmin() {
+		r.Header.Set(s3_constants.AmzIsAdmin, "true")
+	} else if _, ok := r.Header[s3_constants.AmzIsAdmin]; ok {
+		r.Header.Del(s3_constants.AmzIsAdmin)
 	}
 	return identity, s3err.ErrNone
-
 }
 
 func (iam *IdentityAccessManagement) authUser(r *http.Request) (*Identity, s3err.ErrorCode) {

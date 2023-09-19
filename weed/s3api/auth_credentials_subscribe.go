@@ -26,9 +26,9 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 		fileName := message.NewEntry.Name
 		content := message.NewEntry.Content
 
-		_ = s3a.onIamConfigUpdate(dir, fileName, content)
-		_ = s3a.onCircuitBreakerConfigUpdate(dir, fileName, content)
-		_ = s3a.onBucketMetadataChange(dir, message.OldEntry, message.NewEntry)
+		_ = s3a.onIamConfigUpdate(dir, fileName, &content)
+		_ = s3a.onBucketPolicesConfigUpdate(dir, fileName, &content)
+		_ = s3a.onCircuitBreakerConfigUpdate(dir, fileName, &content)
 
 		return nil
 	}
@@ -56,7 +56,7 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 }
 
 // reload iam config
-func (s3a *S3ApiServer) onIamConfigUpdate(dir, filename string, content []byte) error {
+func (s3a *S3ApiServer) onIamConfigUpdate(dir, filename string, content *[]byte) error {
 	if dir == filer.IamConfigDirectory && filename == filer.IamIdentityFile {
 		if err := s3a.iam.LoadS3ApiConfigurationFromBytes(content); err != nil {
 			return err
@@ -67,8 +67,8 @@ func (s3a *S3ApiServer) onIamConfigUpdate(dir, filename string, content []byte) 
 }
 
 // reload circuit breaker config
-func (s3a *S3ApiServer) onCircuitBreakerConfigUpdate(dir, filename string, content []byte) error {
-	if dir == s3_constants.CircuitBreakerConfigDir && filename == s3_constants.CircuitBreakerConfigFile {
+func (s3a *S3ApiServer) onCircuitBreakerConfigUpdate(dir, filename string, content *[]byte) error {
+	if dir == s3_constants.S3ConfigDir && filename == s3_constants.CircuitBreakerConfigFile {
 		if err := s3a.cb.LoadS3ApiConfigurationFromBytes(content); err != nil {
 			return err
 		}
@@ -78,14 +78,10 @@ func (s3a *S3ApiServer) onCircuitBreakerConfigUpdate(dir, filename string, conte
 }
 
 // reload bucket metadata
-func (s3a *S3ApiServer) onBucketMetadataChange(dir string, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) error {
-	if dir == s3a.option.BucketsPath {
-		if newEntry != nil {
-			s3a.bucketRegistry.LoadBucketMetadata(newEntry)
-			glog.V(1).Infof("updated bucketMetadata %s/%s", dir, newEntry)
-		} else {
-			s3a.bucketRegistry.RemoveBucketMetadata(oldEntry)
-			glog.V(1).Infof("remove bucketMetadata  %s/%s", dir, newEntry)
+func (s3a *S3ApiServer) onBucketPolicesConfigUpdate(dir, filename string, content *[]byte) error {
+	if dir == s3_constants.S3ConfigDir && filename == s3_constants.BucketACLsConfigFile {
+		if err := s3a.bacp.LoadConfigurationFromBytes(content); err != nil {
+			return err
 		}
 	}
 	return nil

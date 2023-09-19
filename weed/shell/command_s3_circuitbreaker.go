@@ -52,7 +52,7 @@ func (c *commandS3CircuitBreaker) Help() string {
 }
 
 func (c *commandS3CircuitBreaker) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
-	dir := s3_constants.CircuitBreakerConfigDir
+	dir := s3_constants.S3ConfigDir
 	file := s3_constants.CircuitBreakerConfigFile
 
 	s3CircuitBreakerCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
@@ -83,7 +83,8 @@ func (c *commandS3CircuitBreaker) Do(args []string, commandEnv *CommandEnv, writ
 		Buckets: make(map[string]*s3_pb.S3CircuitBreakerOptions),
 	}
 	if buf.Len() > 0 {
-		if err = filer.ParseS3ConfigurationFromBytes(buf.Bytes(), cbCfg); err != nil {
+		content := buf.Bytes()
+		if err = filer.ParseS3ConfigurationFromBytes(&content, cbCfg); err != nil {
 			return err
 		}
 	}

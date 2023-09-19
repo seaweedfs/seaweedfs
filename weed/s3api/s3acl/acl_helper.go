@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -716,4 +718,24 @@ func CheckObjectAccessForReadObject(r *http.Request, w http.ResponseWriter, entr
 
 	glog.V(3).Infof("acl denied! request account id: %s", requestAccountId)
 	return http.StatusForbidden, false
+}
+
+func GrantFromPb(pbGrant *s3_pb.Grant) *s3.Grant {
+	grant := s3.Grant{
+		Grantee: &s3.Grantee{
+			ID:   aws.String(pbGrant.Grantee.Id),
+			Type: aws.String(pbGrant.Grantee.Type),
+		},
+		Permission: aws.String(pbGrant.Permission),
+	}
+	if pbGrant.Grantee.DisplayName != "" {
+		grant.Grantee.DisplayName = aws.String(pbGrant.Grantee.DisplayName)
+	}
+	if pbGrant.Grantee.Uri != "" {
+		grant.Grantee.URI = aws.String(pbGrant.Grantee.Uri)
+	}
+	if pbGrant.Grantee.EmailAddress != "" {
+		grant.Grantee.EmailAddress = aws.String(pbGrant.Grantee.EmailAddress)
+	}
+	return &grant
 }

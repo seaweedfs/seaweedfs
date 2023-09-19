@@ -56,7 +56,8 @@ func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io
 
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 	if buf.Len() > 0 {
-		if err = filer.ParseS3ConfigurationFromBytes(buf.Bytes(), s3cfg); err != nil {
+		content := buf.Bytes()
+		if err = filer.ParseS3ConfigurationFromBytes(&content, s3cfg); err != nil {
 			return err
 		}
 	}

@@ -29,11 +29,11 @@ func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
 	}
 
 	err := pb.WithFilerClient(false, 0, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		content, err := filer.ReadInsideFiler(client, s3_constants.CircuitBreakerConfigDir, s3_constants.CircuitBreakerConfigFile)
+		content, err := filer.ReadInsideFiler(client, s3_constants.S3ConfigDir, s3_constants.CircuitBreakerConfigFile)
 		if err != nil {
 			return fmt.Errorf("read S3 circuit breaker config: %v", err)
 		}
-		return cb.LoadS3ApiConfigurationFromBytes(content)
+		return cb.LoadS3ApiConfigurationFromBytes(&content)
 	})
 
 	if err != nil {
@@ -43,7 +43,7 @@ func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
 	return cb
 }
 
-func (cb *CircuitBreaker) LoadS3ApiConfigurationFromBytes(content []byte) error {
+func (cb *CircuitBreaker) LoadS3ApiConfigurationFromBytes(content *[]byte) error {
 	cbCfg := &s3_pb.S3CircuitBreakerConfig{}
 	if err := filer.ParseS3ConfigurationFromBytes(content, cbCfg); err != nil {
 		glog.Warningf("unmarshal error: %v", err)

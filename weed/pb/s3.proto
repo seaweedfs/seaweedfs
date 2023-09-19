@@ -25,11 +25,38 @@ message S3ConfigureResponse {
 }
 
 message S3CircuitBreakerConfig {
-    S3CircuitBreakerOptions global=1;
-    map<string, S3CircuitBreakerOptions> buckets= 2;
+    S3CircuitBreakerOptions global = 1;
+    map<string, S3CircuitBreakerOptions> buckets = 2;
 }
 
 message S3CircuitBreakerOptions {
-    bool enabled=1;
+    bool enabled = 1;
     map<string, int64> actions = 2;
+}
+
+message Grantee {
+    string display_name = 1;
+    string email_address = 2;
+    string id = 3;
+    string type = 4;
+    string uri = 5;
+}
+
+message Grant {
+    Grantee grantee = 1;
+    string permission = 2;
+}
+message BucketOwner {
+    string display_name = 1;
+    string id = 2;
+}
+
+message AccessControlPolicy {
+    string object_ownership = 1;
+    BucketOwner owner = 2;
+    repeated Grant access_control_list = 3;
+}
+
+message S3BucketAccessControlPolices {
+    map<string, AccessControlPolicy> policies = 2;
 }

@@ -616,11 +616,6 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
-		return
-	}
-
 	errCode = s3acl.AssembleEntryWithAcp(objectEntry, ownerId, grants)
 	if errCode != s3err.ErrNone {
 		return

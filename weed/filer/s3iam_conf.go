@@ -9,12 +9,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func ParseS3ConfigurationFromBytes[T proto.Message](content []byte, config T) error {
+func ParseS3ConfigurationFromBytes[T proto.Message](content *[]byte, config T) error {
 	options := &jsonpb.UnmarshalOptions{
 		DiscardUnknown: true,
 		AllowPartial:   true,
 	}
-	if err := options.Unmarshal(content, config); err != nil {
+	if err := options.Unmarshal(*content, config); err != nil {
 		return err
 	}
 	return nil
