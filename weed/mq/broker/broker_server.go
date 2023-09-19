@@ -39,6 +39,7 @@ type MessageQueueBroker struct {
 	localTopicManager *topic.LocalTopicManager
 	Balancer          *balancer.Balancer
 	lockAsBalancer    *cluster.LiveLock
+	currentBalancer   pb.ServerAddress
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
