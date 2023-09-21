@@ -2,6 +2,7 @@ package mount
 
 import (
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"net/http"
 	"syscall"
 	"time"
@@ -48,8 +49,8 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 
 	tsNs := time.Now().UnixNano()
 
-	fh.Lock()
-	defer fh.Unlock()
+	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("Write", fh.fh, util.ExclusiveLock)
+	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
 	entry := fh.GetEntry()
 	if entry == nil {
