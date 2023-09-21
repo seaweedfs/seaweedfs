@@ -424,6 +424,7 @@ func (s3a *S3ApiServer) PutBucketOwnershipControls(w http.ResponseWriter, r *htt
 
 	defer util.CloseRequest(r)
 	var v s3.OwnershipControls
+
 	err := xmlutil.UnmarshalXML(&v, xml.NewDecoder(r.Body), "")
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
