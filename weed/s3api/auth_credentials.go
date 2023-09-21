@@ -18,8 +18,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-var IdentityAnonymous *Identity
-
 type Action string
 
 type Iam interface {
@@ -29,12 +27,14 @@ type Iam interface {
 type IdentityAccessManagement struct {
 	m sync.RWMutex
 
-	identities    []*Identity
-	isAuthEnabled bool
-	domain        string
-	hashes        map[string]*sync.Pool
-	hashCounters  map[string]*int32
-	hashMu        sync.RWMutex
+	identities        []*Identity
+	accessKeyIdent    map[string]*Identity
+	hashes            map[string]*sync.Pool
+	hashCounters      map[string]*int32
+	identityAnonymous *Identity
+	hashMu            sync.RWMutex
+	domain            string
+	isAuthEnabled     bool
 }
 
 type Identity struct {
@@ -136,6 +136,8 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content []b
 
 func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
 	var identities []*Identity
+	var identityAnonymous *Identity
+	accessKeyIdent := make(map[string]*Identity)
 	for _, ident := range config.Identities {
 		t := &Identity{
 			Name:        ident.Name,
@@ -149,7 +151,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 				glog.Warningf("anonymous identity is associated with a non-anonymous account ID, the association is invalid")
 			}
 			t.AccountId = s3account.AccountAnonymous.Id
-			IdentityAnonymous = t
+			identityAnonymous = t
 		} else {
 			if len(ident.AccountId) > 0 {
 				t.AccountId = ident.AccountId
@@ -164,19 +166,15 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 				AccessKey: cred.AccessKey,
 				SecretKey: cred.SecretKey,
 			})
+			accessKeyIdent[cred.AccessKey] = t
 		}
 		identities = append(identities, t)
-	}
-
-	if IdentityAnonymous == nil {
-		IdentityAnonymous = &Identity{
-			Name:      s3account.AccountAnonymous.Name,
-			AccountId: s3account.AccountAnonymous.Id,
-		}
 	}
 	iam.m.Lock()
 	// atomically switch
 	iam.identities = identities
+	iam.identityAnonymous = identityAnonymous
+	iam.accessKeyIdent = accessKeyIdent
 	if !iam.isAuthEnabled { // one-directional, no toggling
 		iam.isAuthEnabled = len(identities) > 0
 	}
@@ -189,14 +187,12 @@ func (iam *IdentityAccessManagement) isEnabled() bool {
 }
 
 func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
-
 	iam.m.RLock()
 	defer iam.m.RUnlock()
-	for _, ident := range iam.identities {
-		for _, cred := range ident.Credentials {
-			// println("checking", ident.Name, cred.AccessKey)
-			if cred.AccessKey == accessKey {
-				return ident, cred, true
+	if ident, ok := iam.accessKeyIdent[accessKey]; ok {
+		for _, credential := range ident.Credentials {
+			if credential.AccessKey == accessKey {
+				return ident, credential, true
 			}
 		}
 	}
@@ -207,10 +203,8 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, found bool) {
 	iam.m.RLock()
 	defer iam.m.RUnlock()
-	for _, ident := range iam.identities {
-		if ident.isAnonymous() {
-			return ident, true
-		}
+	if iam.identityAnonymous != nil {
+		return iam.identityAnonymous, true
 	}
 	return nil, false
 }
@@ -270,8 +264,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		return identity, s3err.ErrNotImplemented
 	case authTypeAnonymous:
 		authType = "Anonymous"
-		identity, found = iam.lookupAnonymous()
-		if !found {
+		if identity, found = iam.lookupAnonymous(); !found {
 			r.Header.Set(s3_constants.AmzAuthType, authType)
 			return identity, s3err.ErrAccessDenied
 		}
