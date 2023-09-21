@@ -8,8 +8,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"net/http"
 	"net/url"
@@ -60,22 +60,24 @@ func TestIsRequestPresignedSignatureV4(t *testing.T) {
 
 // Tests is requested authenticated function, tests replies for s3 errors.
 func TestIsReqAuthenticated(t *testing.T) {
-	option := S3ApiServerOption{
-		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	iam := &IdentityAccessManagement{
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
 	}
-	iam := NewIdentityAccessManagement(&option)
-	iam.identities = []*Identity{
-		{
-			Name: "someone",
-			Credentials: []*Credential{
-				{
-					AccessKey: "access_key_1",
-					SecretKey: "secret_key_1",
+	_ = iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "someone",
+				Credentials: []*iam_pb.Credential{
+					{
+						AccessKey: "access_key_1",
+						SecretKey: "secret_key_1",
+					},
 				},
+				Actions: []string{},
 			},
-			Actions: nil,
 		},
-	}
+	})
 
 	// List of test cases for validating http request authentication.
 	testCases := []struct {
@@ -97,24 +99,58 @@ func TestIsReqAuthenticated(t *testing.T) {
 	}
 }
 
-func TestCheckAdminRequestAuthType(t *testing.T) {
-	option := S3ApiServerOption{
-		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+func TestCheckaAnonymousRequestAuthType(t *testing.T) {
+	iam := &IdentityAccessManagement{
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
 	}
-	iam := NewIdentityAccessManagement(&option)
-	iam.identities = []*Identity{
-		{
-			Name: "someone",
-			Credentials: []*Credential{
-				{
-					AccessKey: "access_key_1",
-					SecretKey: "secret_key_1",
-				},
+	_ = iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:    "anonymous",
+				Actions: []string{s3_constants.ACTION_READ},
 			},
-			Actions: nil,
 		},
+	})
+	testCases := []struct {
+		Request *http.Request
+		ErrCode s3err.ErrorCode
+		Action  Action
+	}{
+		{Request: mustNewRequest("GET", "http://127.0.0.1:9000/bucket", 0, nil, t), ErrCode: s3err.ErrNone, Action: s3_constants.ACTION_READ},
+		{Request: mustNewRequest("PUT", "http://127.0.0.1:9000/bucket", 0, nil, t), ErrCode: s3err.ErrAccessDenied, Action: s3_constants.ACTION_WRITE},
+	}
+	for i, testCase := range testCases {
+		_, s3Error := iam.authRequest(testCase.Request, testCase.Action)
+		if s3Error != testCase.ErrCode {
+			t.Errorf("Test %d: Unexpected s3error returned wanted %d, got %d", i, testCase.ErrCode, s3Error)
+		}
+		if testCase.Request.Header.Get(s3_constants.AmzAuthType) != "Anonymous" {
+			t.Errorf("Test %d: Unexpected AuthType returned wanted %s, got %s", i, "Anonymous", testCase.Request.Header.Get(s3_constants.AmzAuthType))
+		}
 	}
 
+}
+
+func TestCheckAdminRequestAuthType(t *testing.T) {
+	iam := &IdentityAccessManagement{
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+	_ = iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "someone",
+				Credentials: []*iam_pb.Credential{
+					{
+						AccessKey: "access_key_1",
+						SecretKey: "secret_key_1",
+					},
+				},
+				Actions: []string{},
+			},
+		},
+	})
 	testCases := []struct {
 		Request *http.Request
 		ErrCode s3err.ErrorCode

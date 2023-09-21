@@ -126,6 +126,15 @@ func TestCanDo(t *testing.T) {
 	}
 	assert.Equal(t, true, ident5.canDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
 	assert.Equal(t, true, ident5.canDo(ACTION_WRITE, "special_bucket", "/a/b/c/d.txt"))
+
+	// anonymous buckets
+	ident6 := &Identity{
+		Name: "anonymous",
+		Actions: []Action{
+			"Read",
+		},
+	}
+	assert.Equal(t, true, ident6.canDo(ACTION_READ, "anything_bucket", "/a/b/c/d.txt"))
 }
 
 type LoadS3ApiConfigurationTestCase struct {
