@@ -2,6 +2,7 @@ package util
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"sync"
 	"sync/atomic"
 )
@@ -63,7 +64,7 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 	// If the lock is held exclusively, wait
 	entry.mu.Lock()
 	if len(entry.waiters) > 0 || lockType == ExclusiveLock {
-		fmt.Printf("ActiveLock %d %s wait for %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeLockOwnerCount)
+		glog.V(4).Infof("ActiveLock %d %s wait for %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeLockOwnerCount)
 		if len(entry.waiters) > 0 {
 			for _, waiter := range entry.waiters {
 				fmt.Printf(" %d", waiter.ID)
@@ -90,7 +91,7 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 
 	// Otherwise, grant the lock
 	entry.lockType = lockType
-	fmt.Printf("ActiveLock %d %s locked %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeLockOwnerCount)
+	glog.V(4).Infof("ActiveLock %d %s locked %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeLockOwnerCount)
 	if len(entry.waiters) > 0 {
 		for _, waiter := range entry.waiters {
 			fmt.Printf(" %d", waiter.ID)
@@ -128,7 +129,7 @@ func (lt *LockTable[T]) ReleaseLock(key T, lock *ActiveLock) {
 		delete(lt.locks, key)
 	}
 
-	fmt.Printf("ActiveLock %d %s unlocked %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, entry.lockType, len(entry.waiters), entry.activeLockOwnerCount)
+	glog.V(4).Infof("ActiveLock %d %s unlocked %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, entry.lockType, len(entry.waiters), entry.activeLockOwnerCount)
 	if len(entry.waiters) > 0 {
 		for _, waiter := range entry.waiters {
 			fmt.Printf(" %d", waiter.ID)

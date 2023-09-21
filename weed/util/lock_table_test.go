@@ -1,7 +1,6 @@
 package util
 
 import (
-	"fmt"
 	"math/rand"
 	"sync"
 	"testing"
@@ -27,14 +26,14 @@ func TestOrderedLock(t *testing.T) {
 			lock := lt.AcquireLock("", key, lockType)
 
 			// Lock acquired, perform some work
-			fmt.Printf("ActiveLock %d acquired the lock.\n", lock.ID)
+			glog.V(4).Infof("ActiveLock %d acquired the lock.\n", lock.ID)
 
 			// Simulate some work
 			time.Sleep(time.Duration(rand.Int31n(10)*10) * time.Millisecond)
 
 			// Release the lock
 			lt.ReleaseLock(key, lock)
-			fmt.Printf("ActiveLock %d released the lock.\n", lock.ID)
+			glog.V(4).Infof("ActiveLock %d released the lock.\n", lock.ID)
 		}(i)
 	}
 
