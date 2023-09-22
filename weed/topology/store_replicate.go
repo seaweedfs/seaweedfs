@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 	"net/http"
 	"net/url"
@@ -59,9 +60,16 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 		start := time.Now()
 		err = DistributedOperation(remoteLocations, func(location operation.Location) error {
 			u := url.URL{
-				Scheme: "http",
+				Scheme: "https",
 				Host:   location.Url,
 				Path:   r.URL.Path,
+			}
+			if viper.GetString("https.client.key") != "" {
+				u = url.URL{
+					Scheme: "https",
+					Host:   location.Url,
+					Path:   r.URL.Path,
+				}
 			}
 			q := url.Values{
 				"type": {"replicate"},
