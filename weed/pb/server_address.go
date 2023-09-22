@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/spf13/viper"
 	"net"
 	"strconv"
 	"strings"
@@ -162,8 +163,14 @@ func FromAddressStrings(strings []string) []ServerAddress {
 }
 
 func ParseUrl(input string) (address ServerAddress, path string, err error) {
-	if !strings.HasPrefix(input, "http://") {
-		return "", "", fmt.Errorf("url %s needs prefix 'http://'", input)
+	if viper.GetString("https.client.key") != "" {
+		if !strings.HasPrefix(input, "https://") {
+			return "", "", fmt.Errorf("url %s needs prefix 'https://'", input)
+		}
+	} else {
+		if !strings.HasPrefix(input, "http://") {
+			return "", "", fmt.Errorf("url %s needs prefix 'http://'", input)
+		}
 	}
 	input = input[7:]
 	pathSeparatorIndex := strings.Index(input, "/")
