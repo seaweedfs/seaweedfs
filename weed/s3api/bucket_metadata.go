@@ -6,7 +6,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
@@ -19,7 +18,7 @@ var loadBucketMetadataFromFiler = func(r *BucketRegistry, bucketName string) (*B
 		return nil, err
 	}
 
-	return buildBucketMetadata(r.s3a.accountManager, entry), nil
+	return buildBucketMetadata(r.s3a.iam, entry), nil
 }
 
 type BucketMetaData struct {
@@ -73,13 +72,13 @@ func (r *BucketRegistry) init() error {
 }
 
 func (r *BucketRegistry) LoadBucketMetadata(entry *filer_pb.Entry) {
-	bucketMetadata := buildBucketMetadata(r.s3a.accountManager, entry)
+	bucketMetadata := buildBucketMetadata(r.s3a.iam, entry)
 	r.metadataCacheLock.Lock()
 	defer r.metadataCacheLock.Unlock()
 	r.metadataCache[entry.Name] = bucketMetadata
 }
 
-func buildBucketMetadata(accountManager *s3account.AccountManager, entry *filer_pb.Entry) *BucketMetaData {
+func buildBucketMetadata(accountManager AccountManager, entry *filer_pb.Entry) *BucketMetaData {
 	entryJson, _ := json.Marshal(entry)
 	glog.V(3).Infof("build bucket metadata,entry=%s", entryJson)
 	bucketMetadata := &BucketMetaData{
@@ -90,8 +89,8 @@ func buildBucketMetadata(accountManager *s3account.AccountManager, entry *filer_
 
 		// Default owner: `AccountAdmin`
 		Owner: &s3.Owner{
-			ID:          &s3account.AccountAdmin.Id,
-			DisplayName: &s3account.AccountAdmin.Name,
+			ID:          &AccountAdmin.Id,
+			DisplayName: &AccountAdmin.DisplayName,
 		},
 	}
 	if entry.Extended != nil {
@@ -112,8 +111,8 @@ func buildBucketMetadata(accountManager *s3account.AccountManager, entry *filer_
 		acpOwnerBytes, ok := entry.Extended[s3_constants.ExtAmzOwnerKey]
 		if ok && len(acpOwnerBytes) > 0 {
 			ownerAccountId := string(acpOwnerBytes)
-			ownerAccountName, exists := accountManager.IdNameMapping[ownerAccountId]
-			if !exists {
+			ownerAccountName := accountManager.GetAccountNameById(ownerAccountId)
+			if ownerAccountName == "" {
 				glog.Warningf("owner[id=%s] is invalid, bucket: %s", ownerAccountId, bucketMetadata.Name)
 			} else {
 				bucketMetadata.Owner = &s3.Owner{

@@ -1,4 +1,4 @@
-package s3acl
+package s3api
 
 import (
 	"encoding/json"
@@ -8,25 +8,29 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"net/http"
 	"strings"
 )
 
+type AccountManager interface {
+	GetAccountNameById(canonicalId string) string
+	GetAccountIdByEmail(email string) string
+}
+
 // GetAccountId get AccountId from request headers, AccountAnonymousId will be return if not presen
 func GetAccountId(r *http.Request) string {
 	id := r.Header.Get(s3_constants.AmzAccountId)
 	if len(id) == 0 {
-		return s3account.AccountAnonymous.Id
+		return s3_constants.AccountAnonymousId
 	} else {
 		return id
 	}
 }
 
 // ExtractAcl extracts the acl from the request body, or from the header if request body is empty
-func ExtractAcl(r *http.Request, accountManager *s3account.AccountManager, ownership, bucketOwnerId, ownerId, accountId string) (grants []*s3.Grant, errCode s3err.ErrorCode) {
+func ExtractAcl(r *http.Request, accountManager AccountManager, ownership, bucketOwnerId, ownerId, accountId string) (grants []*s3.Grant, errCode s3err.ErrorCode) {
 	if r.Body != nil && r.Body != http.NoBody {
 		defer util.CloseRequest(r)
 
@@ -50,7 +54,7 @@ func ExtractAcl(r *http.Request, accountManager *s3account.AccountManager, owner
 }
 
 // ParseAndValidateAclHeadersOrElseDefault will callParseAndValidateAclHeaders to get Grants, if empty, it will return Grant that grant `accountId` with `FullControl` permission
-func ParseAndValidateAclHeadersOrElseDefault(r *http.Request, accountManager *s3account.AccountManager, ownership, bucketOwnerId, accountId string, putAcl bool) (ownerId string, grants []*s3.Grant, errCode s3err.ErrorCode) {
+func ParseAndValidateAclHeadersOrElseDefault(r *http.Request, accountManager AccountManager, ownership, bucketOwnerId, accountId string, putAcl bool) (ownerId string, grants []*s3.Grant, errCode s3err.ErrorCode) {
 	ownerId, grants, errCode = ParseAndValidateAclHeaders(r, accountManager, ownership, bucketOwnerId, accountId, putAcl)
 	if errCode != s3err.ErrNone {
 		return
@@ -69,7 +73,7 @@ func ParseAndValidateAclHeadersOrElseDefault(r *http.Request, accountManager *s3
 }
 
 // ParseAndValidateAclHeaders parse and validate acl from header
-func ParseAndValidateAclHeaders(r *http.Request, accountManager *s3account.AccountManager, ownership, bucketOwnerId, accountId string, putAcl bool) (ownerId string, grants []*s3.Grant, errCode s3err.ErrorCode) {
+func ParseAndValidateAclHeaders(r *http.Request, accountManager AccountManager, ownership, bucketOwnerId, accountId string, putAcl bool) (ownerId string, grants []*s3.Grant, errCode s3err.ErrorCode) {
 	ownerId, grants, errCode = ParseAclHeaders(r, ownership, bucketOwnerId, accountId, putAcl)
 	if errCode != s3err.ErrNone {
 		return
@@ -257,7 +261,7 @@ func ParseCannedAclHeader(bucketOwnership, bucketOwnerId, accountId, cannedAcl s
 }
 
 // ValidateAndTransferGrants validate grant & transfer Email-Grant to Id-Grant
-func ValidateAndTransferGrants(accountManager *s3account.AccountManager, grants []*s3.Grant) ([]*s3.Grant, s3err.ErrorCode) {
+func ValidateAndTransferGrants(accountManager AccountManager, grants []*s3.Grant) ([]*s3.Grant, s3err.ErrorCode) {
 	var result []*s3.Grant
 	for _, grant := range grants {
 		grantee := grant.Grantee
@@ -283,8 +287,8 @@ func ValidateAndTransferGrants(accountManager *s3account.AccountManager, grants 
 				glog.Warning("invalid canonical grantee! account id is nil")
 				return nil, s3err.ErrInvalidRequest
 			}
-			_, ok := accountManager.IdNameMapping[*grantee.ID]
-			if !ok {
+			name := accountManager.GetAccountNameById(*grantee.ID)
+			if len(name) == 0 {
 				glog.Warningf("invalid canonical grantee! account id[%s] is not exists", *grantee.ID)
 				return nil, s3err.ErrInvalidRequest
 			}
@@ -294,8 +298,8 @@ func ValidateAndTransferGrants(accountManager *s3account.AccountManager, grants 
 				glog.Warning("invalid email grantee! email address is nil")
 				return nil, s3err.ErrInvalidRequest
 			}
-			accountId, ok := accountManager.EmailIdMapping[*grantee.EmailAddress]
-			if !ok {
+			accountId := accountManager.GetAccountIdByEmail(*grantee.EmailAddress)
+			if len(accountId) == 0 {
 				glog.Warningf("invalid email grantee! email address[%s] is not exists", *grantee.EmailAddress)
 				return nil, s3err.ErrInvalidRequest
 			}
@@ -348,7 +352,7 @@ func DetermineReqGrants(accountId, aclAction string) (grants []*s3.Grant) {
 	})
 
 	// group grantee (AuthenticateUsers)
-	if accountId != s3account.AccountAnonymous.Id {
+	if accountId != s3_constants.AccountAnonymousId {
 		grants = append(grants, &s3.Grant{
 			Grantee: &s3.Grantee{
 				Type: &s3_constants.GrantTypeGroup,
