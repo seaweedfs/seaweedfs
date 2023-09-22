@@ -65,7 +65,7 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 	entry.mu.Lock()
 	if len(entry.waiters) > 0 || lockType == ExclusiveLock {
 		glog.V(4).Infof("ActiveLock %d %s wait for %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeLockOwnerCount)
-		if len(entry.waiters) > 0 {
+		if glog.V(4) && len(entry.waiters) > 0 {
 			for _, waiter := range entry.waiters {
 				fmt.Printf(" %d", waiter.ID)
 			}
@@ -92,7 +92,7 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 	// Otherwise, grant the lock
 	entry.lockType = lockType
 	glog.V(4).Infof("ActiveLock %d %s locked %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeLockOwnerCount)
-	if len(entry.waiters) > 0 {
+	if glog.V(4) && len(entry.waiters) > 0 {
 		for _, waiter := range entry.waiters {
 			fmt.Printf(" %d", waiter.ID)
 		}
