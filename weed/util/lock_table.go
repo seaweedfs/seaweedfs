@@ -64,12 +64,14 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 	// If the lock is held exclusively, wait
 	entry.mu.Lock()
 	if len(entry.waiters) > 0 || lockType == ExclusiveLock {
-		glog.V(4).Infof("ActiveLock %d %s wait for %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeLockOwnerCount)
-		if glog.V(4) && len(entry.waiters) > 0 {
-			for _, waiter := range entry.waiters {
-				fmt.Printf(" %d", waiter.ID)
+		if glog.V(4) {
+			fmt.Printf("ActiveLock %d %s wait for %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeLockOwnerCount)
+			if len(entry.waiters) > 0 {
+				for _, waiter := range entry.waiters {
+					fmt.Printf(" %d", waiter.ID)
+				}
+				fmt.Printf("\n")
 			}
-			fmt.Printf("\n")
 		}
 		entry.waiters = append(entry.waiters, lock)
 		if lockType == ExclusiveLock {
@@ -91,12 +93,14 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 
 	// Otherwise, grant the lock
 	entry.lockType = lockType
-	glog.V(4).Infof("ActiveLock %d %s locked %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeLockOwnerCount)
-	if glog.V(4) && len(entry.waiters) > 0 {
-		for _, waiter := range entry.waiters {
-			fmt.Printf(" %d", waiter.ID)
+	if glog.V(4) {
+		fmt.Printf("ActiveLock %d %s locked %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeLockOwnerCount)
+		if len(entry.waiters) > 0 {
+			for _, waiter := range entry.waiters {
+				fmt.Printf(" %d", waiter.ID)
+			}
+			fmt.Printf("\n")
 		}
-		fmt.Printf("\n")
 	}
 	entry.mu.Unlock()
 
@@ -129,12 +133,14 @@ func (lt *LockTable[T]) ReleaseLock(key T, lock *ActiveLock) {
 		delete(lt.locks, key)
 	}
 
-	glog.V(4).Infof("ActiveLock %d %s unlocked %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, entry.lockType, len(entry.waiters), entry.activeLockOwnerCount)
-	if len(entry.waiters) > 0 {
-		for _, waiter := range entry.waiters {
-			fmt.Printf(" %d", waiter.ID)
+	if glog.V(4) {
+		fmt.Printf("ActiveLock %d %s unlocked %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, entry.lockType, len(entry.waiters), entry.activeLockOwnerCount)
+		if len(entry.waiters) > 0 {
+			for _, waiter := range entry.waiters {
+				fmt.Printf(" %d", waiter.ID)
+			}
+			fmt.Printf("\n")
 		}
-		fmt.Printf("\n")
 	}
 	entry.activeLockOwnerCount--
 
