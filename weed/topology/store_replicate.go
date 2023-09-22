@@ -57,10 +57,11 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 	}
 
 	if len(remoteLocations) > 0 { //send to other replica locations
+		util.LoadConfiguration("security", false)
 		start := time.Now()
 		err = DistributedOperation(remoteLocations, func(location operation.Location) error {
 			u := url.URL{
-				Scheme: "https",
+				Scheme: "http",
 				Host:   location.Url,
 				Path:   r.URL.Path,
 			}

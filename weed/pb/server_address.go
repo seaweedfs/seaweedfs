@@ -163,6 +163,7 @@ func FromAddressStrings(strings []string) []ServerAddress {
 }
 
 func ParseUrl(input string) (address ServerAddress, path string, err error) {
+	util.LoadConfiguration("security", false)
 	if viper.GetString("https.client.key") != "" {
 		if !strings.HasPrefix(input, "https://") {
 			return "", "", fmt.Errorf("url %s needs prefix 'https://'", input)
