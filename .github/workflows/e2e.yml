@@ -21,7 +21,7 @@ jobs:
   e2e:
     name: FUSE Mount
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
     - name: Set up Go 1.x
       uses: actions/setup-go@93397bea11091df50f3d7e59dc26a7711a8bcfbe # v2
