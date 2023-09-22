@@ -2,7 +2,6 @@ package command
 
 import (
 	"fmt"
-	"github.com/spf13/viper"
 	"net"
 	"net/http"
 	"os"
@@ -10,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/spf13/viper"
 
 	"google.golang.org/grpc/reflection"
 
@@ -305,7 +306,7 @@ func (fo *FilerOptions) startFiler() {
 
 	httpS := &http.Server{Handler: defaultMux}
 
-	if viper.GetString("https.filer.ca") != "" {
+	if util.HttpUseTls("filer") {
 		clientCertFile := viper.GetString("https.filer.ca")
 		httpS.TLSConfig = security.LoadClientTLSHTTP(clientCertFile)
 	}

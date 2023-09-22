@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"io/fs"
 	"mime/multipart"
@@ -17,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
 	"google.golang.org/grpc"
 
@@ -164,7 +165,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn ope
 		return
 	}
 
-	url := "http://" + assignResult.Url + "/" + assignResult.Fid
+	url := util.HttpScheme("filer") + assignResult.Url + "/" + assignResult.Fid
 	if pu.ModifiedTime != 0 {
 		url = url + "?ts=" + strconv.FormatUint(pu.ModifiedTime, 10)
 	}

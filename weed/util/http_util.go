@@ -6,13 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/util/mem"
-	"github.com/spf13/viper"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
+	"github.com/spf13/viper"
 )
 
 var (
@@ -21,12 +22,11 @@ var (
 )
 
 func init() {
-	LoadConfiguration("security", false)
 	Transport = &http.Transport{
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
 	}
-	if viper.GetString("https.client.key") != "" {
+	if HttpUseTls("client") {
 		clientCert := viper.GetString("https.client.cert")
 		clientCertKey := viper.GetString("https.client.key")
 
@@ -241,11 +241,7 @@ func NormalizeUrl(url string) string {
 	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
 		return url
 	}
-	if viper.GetString("https.client.key") != "" {
-		return "https://" + url
-	} else {
-		return "http://" + url
-	}
+	return HttpScheme("client") + url
 }
 
 func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {

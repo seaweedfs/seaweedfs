@@ -2,11 +2,12 @@ package filersink
 
 import (
 	"fmt"
-	"github.com/schollz/progressbar/v3"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/schollz/progressbar/v3"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
 
@@ -109,9 +110,9 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string)
 			PairMap:           nil,
 		},
 		func(host, fileId string) string {
-			fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
+			fileUrl := fmt.Sprintf("%s%s/%s", util.HttpScheme("volume"), host, fileId)
 			if fs.writeChunkByFiler {
-				fileUrl = fmt.Sprintf("http://%s/?proxyChunkId=%s", fs.address, fileId)
+				fileUrl = fmt.Sprintf("%s%s/?proxyChunkId=%s", util.HttpScheme("volume"), fs.address, fileId)
 			}
 			glog.V(4).Infof("replicating %s to %s header:%+v", filename, fileUrl, header)
 			return fileUrl

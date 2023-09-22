@@ -3,7 +3,6 @@ package command
 import (
 	"bufio"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
 	"math"
 	"math/rand"
@@ -13,6 +12,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"google.golang.org/grpc"
 
@@ -212,7 +213,7 @@ func writeFiles(idChan chan int, fileIdLineChan chan string, s *stat) {
 				if isSecure {
 					jwtAuthorization = operation.LookupJwt(b.masterClient.GetMaster(), b.grpcDialOption, df.fp.Fid)
 				}
-				if e := util.Delete(fmt.Sprintf("http://%s/%s", df.fp.Server, df.fp.Fid), string(jwtAuthorization)); e == nil {
+				if e := util.Delete(fmt.Sprintf("%s%s/%s", util.HttpScheme("client"), df.fp.Server, df.fp.Fid), string(jwtAuthorization)); e == nil {
 					s.completed++
 				} else {
 					s.failed++

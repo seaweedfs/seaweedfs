@@ -403,7 +403,7 @@ func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64
 			PairMap:           nil,
 		},
 		func(host, fileId string) string {
-			return fmt.Sprintf("http://%s/%s", host, fileId)
+			return fmt.Sprintf("%s%s/%s", util.HttpScheme("filer"), host, fileId)
 		},
 		reader,
 	)

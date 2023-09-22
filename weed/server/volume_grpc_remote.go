@@ -3,14 +3,16 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"sync"
-	"time"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_server_pb.FetchAndWriteNeedleRequest) (resp *volume_server_pb.FetchAndWriteNeedleResponse, err error) {
@@ -62,7 +64,7 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 			go func(targetVolumeServer string) {
 				defer wg.Done()
 				uploadOption := &operation.UploadOption{
-					UploadUrl:         fmt.Sprintf("http://%s/%s?type=replicate", targetVolumeServer, fileId.String()),
+					UploadUrl:         fmt.Sprintf("%s%s/%s?type=replicate", util.HttpScheme("volume"), targetVolumeServer, fileId.String()),
 					Filename:          "",
 					Cipher:            false,
 					IsInputCompressed: false,

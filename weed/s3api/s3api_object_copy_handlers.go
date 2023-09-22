@@ -2,15 +2,16 @@ package s3api
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"modernc.org/strutil"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"modernc.org/strutil"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -81,9 +82,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	dstUrl := fmt.Sprintf("http://%s%s/%s%s",
+	dstUrl := fmt.Sprintf("%s%s%s/%s%s", util.HttpScheme("s3"),
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, dstBucket, urlEscapeObject(dstObject))
-	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
+	srcUrl := fmt.Sprintf("%s%s%s/%s%s", util.HttpScheme("s3"),
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, urlEscapeObject(srcObject))
 
 	_, _, resp, err := util.DownloadFile(srcUrl, s3a.maybeGetFilerJwtAuthorizationToken(false))
@@ -170,9 +171,9 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	rangeHeader := r.Header.Get("x-amz-copy-source-range")
 
-	dstUrl := fmt.Sprintf("http://%s%s/%s/%04d.part",
+	dstUrl := fmt.Sprintf("%s%s%s/%s/%04d.part", util.HttpScheme("s3"),
 		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(dstBucket), uploadID, partID)
-	srcUrl := fmt.Sprintf("http://%s%s/%s%s",
+	srcUrl := fmt.Sprintf("%s%s%s/%s%s", util.HttpScheme("s3"),
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, srcBucket, urlEscapeObject(srcObject))
 
 	resp, dataReader, err := util.ReadUrlAsReaderCloser(srcUrl, s3a.maybeGetFilerJwtAuthorizationToken(false), rangeHeader)

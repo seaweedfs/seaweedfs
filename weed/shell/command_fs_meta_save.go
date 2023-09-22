@@ -3,7 +3,6 @@ package shell
 import (
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 
 	"google.golang.org/protobuf/proto"
 
@@ -105,7 +106,7 @@ func (c *commandFsMetaSave) Do(args []string, commandEnv *CommandEnv, writer io.
 	})
 
 	if err == nil {
-		fmt.Fprintf(writer, "meta data for http://%s%s is saved to %s\n", commandEnv.option.FilerAddress.ToHttpAddress(), path, fileName)
+		fmt.Fprintf(writer, "meta data for %s%s%s is saved to %s\n", util.HttpScheme("client"), commandEnv.option.FilerAddress.ToHttpAddress(), path, fileName)
 	}
 
 	return err

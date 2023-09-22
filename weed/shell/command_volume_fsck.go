@@ -7,6 +7,18 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -19,18 +31,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/spf13/viper"
-	"io"
-	"math"
-	"net/http"
-	"net/url"
-	"os"
-	"path"
-	"path/filepath"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
 )
 
 func init() {
@@ -516,20 +516,11 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 	req, err := http.NewRequest(http.MethodDelete, "", nil)
 
-	if viper.GetString("https.client.key") != "" {
-		req.URL = &url.URL{
-			Scheme: "https",
-			Host:   c.env.option.FilerAddress.ToHttpAddress(),
-			Path:   string(path),
-		}
-	} else {
-		req.URL = &url.URL{
-			Scheme: "http",
-			Host:   c.env.option.FilerAddress.ToHttpAddress(),
-			Path:   string(path),
-		}
+	req.URL = &url.URL{
+		Scheme: util.HttpScheme("volume"),
+		Host:   c.env.option.FilerAddress.ToHttpAddress(),
+		Path:   string(path),
 	}
-
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "full HTTP delete request to be sent: %v\n", req)
 	}

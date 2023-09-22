@@ -2,12 +2,12 @@ package pb
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/spf13/viper"
 	"net"
 	"strconv"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type ServerAddress string
@@ -163,15 +163,9 @@ func FromAddressStrings(strings []string) []ServerAddress {
 }
 
 func ParseUrl(input string) (address ServerAddress, path string, err error) {
-	util.LoadConfiguration("security", false)
-	if viper.GetString("https.client.key") != "" {
-		if !strings.HasPrefix(input, "https://") {
-			return "", "", fmt.Errorf("url %s needs prefix 'https://'", input)
-		}
-	} else {
-		if !strings.HasPrefix(input, "http://") {
-			return "", "", fmt.Errorf("url %s needs prefix 'http://'", input)
-		}
+	scheme := util.HttpScheme("client")
+	if !strings.HasPrefix(input, scheme) {
+		return "", "", fmt.Errorf("url %s needs prefix '%s'", input, scheme)
 	}
 	input = input[7:]
 	pathSeparatorIndex := strings.Index(input, "/")

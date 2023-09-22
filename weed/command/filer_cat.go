@@ -3,14 +3,15 @@ package command
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"os"
+	"strings"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
-	"net/url"
-	"os"
-	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -38,7 +39,7 @@ func (fco *FilerCatOptions) GetLookupFileIdFunction() wdclient.LookupFileIdFunct
 		}
 		locations := resp.LocationsMap[vid]
 		for _, loc := range locations.Locations {
-			targetUrls = append(targetUrls, fmt.Sprintf("http://%s/%s", loc.Url, fileId))
+			targetUrls = append(targetUrls, fmt.Sprintf("%s%s/%s", util.HttpScheme("filer"), loc.Url, fileId))
 		}
 		return
 	}

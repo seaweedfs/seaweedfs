@@ -2,7 +2,6 @@ package mount
 
 import (
 	"context"
-	"github.com/spf13/viper"
 	"math/rand"
 	"os"
 	"path"
@@ -183,11 +182,7 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.St
 func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
 	if wfs.option.VolumeServerAccess == "filerProxy" {
 		return func(fileId string) (targetUrls []string, err error) {
-			if viper.GetString("https.client.ca") != "" {
-				return []string{"https://" + wfs.getCurrentFiler().ToHttpAddress() + "/?proxyChunkId=" + fileId}, nil
-			} else {
-				return []string{"http://" + wfs.getCurrentFiler().ToHttpAddress() + "/?proxyChunkId=" + fileId}, nil
-			}
+			return []string{util.HttpScheme("filer") + wfs.getCurrentFiler().ToHttpAddress() + "/?proxyChunkId=" + fileId}, nil
 		}
 	}
 	return filer.LookupFn(wfs)

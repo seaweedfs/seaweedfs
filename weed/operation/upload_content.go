@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"github.com/spf13/viper"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -16,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/spf13/viper"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -72,16 +73,7 @@ var (
 )
 
 func init() {
-	util.LoadConfiguration("security", false)
-	HttpClient = &http.Client{Transport: &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 10 * time.Second,
-		}).DialContext,
-		MaxIdleConns:        1024,
-		MaxIdleConnsPerHost: 1024,
-	}}
-	if viper.GetString("https.client.key") != "" {
+	if util.HttpUseTls("client") {
 		clientCert := viper.GetString("https.client.cert")
 		clientCertKey := viper.GetString("https.client.key")
 
@@ -101,6 +93,15 @@ func init() {
 				// not needed, will take certs from host
 				//	RootCAs:      caCertPool
 			},
+		}}
+	} else {
+		HttpClient = &http.Client{Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 10 * time.Second,
+			}).DialContext,
+			MaxIdleConns:        1024,
+			MaxIdleConnsPerHost: 1024,
 		}}
 	}
 }

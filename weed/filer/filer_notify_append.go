@@ -3,7 +3,6 @@ package filer
 import (
 	"context"
 	"fmt"
-	"github.com/spf13/viper"
 	"os"
 	"time"
 
@@ -50,7 +49,6 @@ func (f *Filer) appendToFile(targetFile string, data []byte) error {
 }
 
 func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.AssignResult, *operation.UploadResult, error) {
-	util.LoadConfiguration("security", false)
 	// assign a volume location
 	rule := f.FilerConf.MatchStorageRule(targetFile)
 	assignRequest := &operation.VolumeAssignRequest{
@@ -69,12 +67,7 @@ func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.Assi
 	}
 
 	// upload data
-	var targetUrl string
-	if viper.GetString("https.client.ca") != "" {
-		targetUrl = "https://" + assignResult.Url + "/" + assignResult.Fid
-	} else {
-		targetUrl = "http://" + assignResult.Url + "/" + assignResult.Fid
-	}
+	targetUrl := util.HttpScheme("filer") + assignResult.Url + "/" + assignResult.Fid
 	uploadOption := &operation.UploadOption{
 		UploadUrl:         targetUrl,
 		Filename:          "",

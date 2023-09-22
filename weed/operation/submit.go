@@ -1,7 +1,6 @@
 package operation
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
 	"mime"
 	"net/url"
@@ -9,6 +8,9 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
 
@@ -120,7 +122,7 @@ func newFilePart(fullPathFilename string) (ret FilePart, err error) {
 }
 
 func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jwt security.EncodedJwt, grpcDialOption grpc.DialOption) (retSize uint32, err error) {
-	fileUrl := "http://" + fi.Server + "/" + fi.Fid
+	fileUrl := util.HttpScheme("client") + fi.Server + "/" + fi.Fid
 	if fi.ModTime != 0 {
 		fileUrl += "?ts=" + strconv.Itoa(int(fi.ModTime))
 	}
@@ -178,9 +180,9 @@ func (fi FilePart) Upload(maxMB int, masterFn GetMasterFn, usePublicUrl bool, jw
 					id += "_" + strconv.FormatInt(i, 10)
 				}
 			}
-			fileUrl := "http://" + ret.Url + "/" + id
+			fileUrl := util.HttpScheme("client") + ret.Url + "/" + id
 			if usePublicUrl {
-				fileUrl = "http://" + ret.PublicUrl + "/" + id
+				fileUrl = util.HttpScheme("client") + ret.PublicUrl + "/" + id
 			}
 			count, e := upload_one_chunk(
 				baseName+"-"+strconv.FormatInt(i+1, 10),

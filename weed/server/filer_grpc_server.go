@@ -131,7 +131,7 @@ func (fs *FilerServer) lookupFileId(fileId string) (targetUrls []string, err err
 		return nil, fmt.Errorf("not found volume %d in %s", fid.VolumeId, fileId)
 	}
 	for _, loc := range locations {
-		targetUrls = append(targetUrls, fmt.Sprintf("http://%s/%s", loc.Url, fileId))
+		targetUrls = append(targetUrls, fmt.Sprintf("%s%s/%s", util.HttpScheme("filer"), loc.Url, fileId))
 	}
 	return
 }

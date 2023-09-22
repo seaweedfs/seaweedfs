@@ -3,10 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"log"
 	"math/rand"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"google.golang.org/grpc"
 
@@ -33,7 +34,7 @@ func main() {
 	go func() {
 		for {
 			println("vacuum threshold", *garbageThreshold)
-			_, _, err := util.Get(fmt.Sprintf("http://%s/vol/vacuum?garbageThreshold=%f", pb.ServerAddress(*master).ToHttpAddress(), *garbageThreshold))
+			_, _, err := util.Get(fmt.Sprintf("%s%s/vol/vacuum?garbageThreshold=%f", util.HttpScheme("client"), pb.ServerAddress(*master).ToHttpAddress(), *garbageThreshold))
 			if err != nil {
 				log.Fatalf("vacuum: %v", err)
 			}
@@ -64,7 +65,7 @@ func genFile(grpcDialOption grpc.DialOption, i int) (*operation.AssignResult, st
 	data := make([]byte, 1024)
 	rand.Read(data)
 
-	targetUrl := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
+	targetUrl := fmt.Sprintf("%s%s/%s", util.HttpScheme("client"), assignResult.Url, assignResult.Fid)
 
 	uploadOption := &operation.UploadOption{
 		UploadUrl:         targetUrl,

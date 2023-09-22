@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/spf13/viper"
-	"google.golang.org/grpc"
 	"math/rand"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
@@ -53,12 +53,7 @@ func LookupFileId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, fileId s
 	if len(lookup.Locations) == 0 {
 		return "", jwt, errors.New("File Not Found")
 	}
-	util.LoadConfiguration("security", false)
-	if viper.GetString("https.client.key") != "" {
-		return "https://" + lookup.Locations[rand.Intn(len(lookup.Locations))].Url + "/" + fileId, lookup.Jwt, nil
-	} else {
-		return "http://" + lookup.Locations[rand.Intn(len(lookup.Locations))].Url + "/" + fileId, lookup.Jwt, nil
-	}
+	return util.HttpScheme("client") + lookup.Locations[rand.Intn(len(lookup.Locations))].Url + "/" + fileId, lookup.Jwt, nil
 }
 
 func LookupVolumeId(masterFn GetMasterFn, grpcDialOption grpc.DialOption, vid string) (*LookupResult, error) {

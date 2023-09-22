@@ -360,7 +360,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 				PairMap:           nil,
 			},
 			func(host, fileId string) string {
-				return fmt.Sprintf("http://%s/%s", host, fileId)
+				return fmt.Sprintf("%s%s/%s", util.HttpScheme("filer"), host, fileId)
 			},
 			util.NewBytesReader(data),
 		)
@@ -394,7 +394,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 		}
 		return nil
 	}); err != nil {
-		return fmt.Errorf("upload data %v to http://%s%s%s: %v\n", fileName, worker.filerAddress.ToHttpAddress(), task.destinationUrlPath, fileName, err)
+		return fmt.Errorf("upload data %v to %s%s%s%s: %v\n", fileName, util.HttpScheme("filer"), worker.filerAddress.ToHttpAddress(), task.destinationUrlPath, fileName, err)
 	}
 
 	return nil
@@ -439,7 +439,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 					PairMap:           nil,
 				},
 				func(host, fileId string) string {
-					return fmt.Sprintf("http://%s/%s", host, fileId)
+					return fmt.Sprintf("%s%s/%s", util.HttpScheme("filer"), host, fileId)
 				},
 				io.NewSectionReader(f, i*chunkSize, chunkSize),
 			)
@@ -505,10 +505,10 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 		}
 		return nil
 	}); err != nil {
-		return fmt.Errorf("upload data %v to http://%s%s%s: %v\n", fileName, worker.filerAddress.ToHttpAddress(), task.destinationUrlPath, fileName, err)
+		return fmt.Errorf("upload data %v to %s%s%s%s: %v\n", fileName, util.HttpScheme("filer"), worker.filerAddress.ToHttpAddress(), task.destinationUrlPath, fileName, err)
 	}
 
-	fmt.Printf("copied %s => http://%s%s%s\n", f.Name(), worker.filerAddress.ToHttpAddress(), task.destinationUrlPath, fileName)
+	fmt.Printf("copied %s => %s%s%s%s\n", f.Name(), util.HttpScheme("filer"), worker.filerAddress.ToHttpAddress(), task.destinationUrlPath, fileName)
 
 	return nil
 }
@@ -552,7 +552,7 @@ func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, off
 			PairMap:           nil,
 		},
 		func(host, fileId string) string {
-			return fmt.Sprintf("http://%s/%s", host, fileId)
+			return fmt.Sprintf("%s%s/%s", util.HttpScheme("filer"), host, fileId)
 		},
 		reader,
 	)

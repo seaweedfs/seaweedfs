@@ -2,7 +2,6 @@ package util
 
 import (
 	"fmt"
-	"github.com/spf13/viper"
 	"net/url"
 	"strconv"
 	"strings"
@@ -30,16 +29,8 @@ func ParseUint64(text string, defaultValue uint64) uint64 {
 }
 
 func ParseFilerUrl(entryPath string) (filerServer string, filerPort int64, path string, err error) {
-	LoadConfiguration("security", false)
-
-	if viper.GetString("https.client.key") != "" {
-		if !strings.HasPrefix(entryPath, "http://") && !strings.HasPrefix(entryPath, "https://") {
-			entryPath = "https://" + entryPath
-		}
-	} else {
-		if !strings.HasPrefix(entryPath, "http://") && !strings.HasPrefix(entryPath, "https://") {
-			entryPath = "http://" + entryPath
-		}
+	if !strings.HasPrefix(entryPath, "http://") && !strings.HasPrefix(entryPath, "https://") {
+		entryPath = HttpScheme("filer") + entryPath
 	}
 
 	var u *url.URL

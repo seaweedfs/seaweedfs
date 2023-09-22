@@ -77,7 +77,7 @@ func (mc *MasterClient) LookupFileIdWithFallback(fileId string) (fullUrls []stri
 					DataCenter: vidLoc.DataCenter,
 				}
 				mc.vidMap.addLocation(uint32(vid), loc)
-				httpUrl := "http://" + loc.Url + "/" + fileId
+				httpUrl := util.HttpScheme("client") + loc.Url + "/" + fileId
 				// Prefer same data center
 				if mc.DataCenter != "" && mc.DataCenter == loc.DataCenter {
 					fullUrls = append([]string{httpUrl}, fullUrls...)

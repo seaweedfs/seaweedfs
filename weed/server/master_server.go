@@ -233,10 +233,10 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 
 		ms.boundedLeaderChan <- 1
 		defer func() { <-ms.boundedLeaderChan }()
-		targetUrl, err := url.Parse("http://" + raftServerLeader)
+		targetUrl, err := url.Parse(util.HttpScheme("master") + raftServerLeader)
 		if err != nil {
 			writeJsonError(w, r, http.StatusInternalServerError,
-				fmt.Errorf("Leader URL http://%s Parse Error: %v", raftServerLeader, err))
+				fmt.Errorf("Leader URL %s%s Parse Error: %v", util.HttpScheme("master"), raftServerLeader, err))
 			return
 		}
 

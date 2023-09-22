@@ -166,7 +166,7 @@ func removeDuplicateSlashes(object string) string {
 
 func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
 	object = urlPathEscape(removeDuplicateSlashes(object))
-	destUrl := fmt.Sprintf("http://%s%s/%s%s",
+	destUrl := fmt.Sprintf("%s%s%s/%s%s", util.HttpScheme("s3"),
 		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, object)
 	return destUrl
 }

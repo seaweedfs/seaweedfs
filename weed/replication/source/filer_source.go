@@ -88,7 +88,7 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrls []string, err error) 
 
 	if !fs.proxyByFiler {
 		for _, loc := range locations.Locations {
-			fileUrl := fmt.Sprintf("http://%s/%s?readDeleted=true", loc.Url, part)
+			fileUrl := fmt.Sprintf("%s%s/%s?readDeleted=true", util.HttpScheme("volume"), loc.Url, part)
 			// Prefer same data center
 			if fs.dataCenter != "" && fs.dataCenter == loc.DataCenter {
 				fileUrls = append([]string{fileUrl}, fileUrls...)
@@ -97,7 +97,7 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrls []string, err error) 
 			}
 		}
 	} else {
-		fileUrls = append(fileUrls, fmt.Sprintf("http://%s/?proxyChunkId=%s", fs.address, part))
+		fileUrls = append(fileUrls, fmt.Sprintf("%s%s/?proxyChunkId=%s", util.HttpScheme("volume"), fs.address, part))
 	}
 
 	return
@@ -106,7 +106,7 @@ func (fs *FilerSource) LookupFileId(part string) (fileUrls []string, err error) 
 func (fs *FilerSource) ReadPart(fileId string) (filename string, header http.Header, resp *http.Response, err error) {
 
 	if fs.proxyByFiler {
-		return util.DownloadFile("http://"+fs.address+"/?proxyChunkId="+fileId, "")
+		return util.DownloadFile(util.HttpScheme("volume")+fs.address+"/?proxyChunkId="+fileId, "")
 	}
 
 	fileUrls, err := fs.LookupFileId(fileId)

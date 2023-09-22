@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/spf13/viper"
-	"google.golang.org/grpc"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -61,16 +61,9 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 		start := time.Now()
 		err = DistributedOperation(remoteLocations, func(location operation.Location) error {
 			u := url.URL{
-				Scheme: "http",
+				Scheme: util.HttpScheme("volume"),
 				Host:   location.Url,
 				Path:   r.URL.Path,
-			}
-			if viper.GetString("https.client.key") != "" {
-				u = url.URL{
-					Scheme: "https",
-					Host:   location.Url,
-					Path:   r.URL.Path,
-				}
 			}
 			q := url.Values{
 				"type": {"replicate"},
@@ -149,7 +142,7 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 
 	if len(remoteLocations) > 0 { //send to other replica locations
 		if err = DistributedOperation(remoteLocations, func(location operation.Location) error {
-			return util.Delete("http://"+location.Url+r.URL.Path+"?type=replicate", string(jwt))
+			return util.Delete(util.HttpScheme("volume")+location.Url+r.URL.Path+"?type=replicate", string(jwt))
 		}); err != nil {
 			size = 0
 		}

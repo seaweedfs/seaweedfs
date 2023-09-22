@@ -60,7 +60,7 @@ func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, u
 			}
 		}
 	}
-	urlLocation = "http://" + assignUrl + "/" + assignResult.Fid
+	urlLocation = util.HttpScheme("filer") + assignUrl + "/" + assignResult.Fid
 	if so.Fsync {
 		urlLocation += "?fsync=true"
 	}
