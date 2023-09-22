@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"fmt"
+	"github.com/spf13/viper"
 	"io"
 	"math/rand"
 	"sync"
@@ -26,6 +27,7 @@ var _ = io.ReaderAt(&ChunkReadAt{})
 var _ = io.Closer(&ChunkReadAt{})
 
 func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionType {
+	util.LoadConfiguration("security", false)
 
 	vidCache := make(map[string]*filer_pb.Locations)
 	var vicCacheLock sync.RWMutex
@@ -68,7 +70,12 @@ func LookupFn(filerClient filer_pb.FilerClient) wdclient.LookupFileIdFunctionTyp
 		var sameDcTargetUrls, otherTargetUrls []string
 		for _, loc := range locations.Locations {
 			volumeServerAddress := filerClient.AdjustedUrl(loc)
-			targetUrl := fmt.Sprintf("http://%s/%s", volumeServerAddress, fileId)
+			var targetUrl string
+			if viper.GetString("https.client.ca") != "" {
+				targetUrl = fmt.Sprintf("https://%s/%s", volumeServerAddress, fileId)
+			} else {
+				targetUrl = fmt.Sprintf("http://%s/%s", volumeServerAddress, fileId)
+			}
 			if fcDataCenter == "" || fcDataCenter != loc.DataCenter {
 				otherTargetUrls = append(otherTargetUrls, targetUrl)
 			} else {

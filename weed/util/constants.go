@@ -11,5 +11,5 @@ var (
 )
 
 func Version() string {
-	return VERSION + " " + COMMIT
+	return VERSION + " " + "NICE" + COMMIT
 }

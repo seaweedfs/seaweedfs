@@ -2,6 +2,7 @@ package mount
 
 import (
 	"fmt"
+	"github.com/spf13/viper"
 	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -12,6 +13,7 @@ import (
 )
 
 func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFunctionType {
+	util.LoadConfiguration("security", false)
 
 	return func(reader io.Reader, filename string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
 
@@ -34,9 +36,17 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 				PairMap:           nil,
 			},
 			func(host, fileId string) string {
-				fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)
-				if wfs.option.VolumeServerAccess == "filerProxy" {
-					fileUrl = fmt.Sprintf("http://%s/?proxyChunkId=%s", wfs.getCurrentFiler(), fileId)
+				var fileUrl string
+				if viper.GetString("https.client.ca") != "" {
+					fileUrl = fmt.Sprintf("https://%s/%s", host, fileId)
+					if wfs.option.VolumeServerAccess == "filerProxy" {
+						fileUrl = fmt.Sprintf("https://%s/?proxyChunkId=%s", wfs.getCurrentFiler(), fileId)
+					}
+				} else {
+					fileUrl = fmt.Sprintf("http://%s/%s", host, fileId)
+					if wfs.option.VolumeServerAccess == "filerProxy" {
+						fileUrl = fmt.Sprintf("http://%s/?proxyChunkId=%s", wfs.getCurrentFiler(), fileId)
+					}
 				}
 				return fileUrl
 			},

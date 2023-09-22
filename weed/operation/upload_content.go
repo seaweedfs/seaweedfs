@@ -3,8 +3,10 @@ package operation
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/spf13/viper"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -70,6 +72,7 @@ var (
 )
 
 func init() {
+	util.LoadConfiguration("security", false)
 	HttpClient = &http.Client{Transport: &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
@@ -78,6 +81,28 @@ func init() {
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
 	}}
+	if viper.GetString("https.client.key") != "" {
+		clientCert := viper.GetString("https.client.cert")
+		clientCertKey := viper.GetString("https.client.key")
+
+		cert, err := tls.LoadX509KeyPair(clientCert, clientCertKey)
+		if err != nil {
+			glog.Fatalf("Error creating x509 keypair from client cert file %s and client key file %s", clientCert, clientCertKey)
+		}
+		HttpClient = &http.Client{Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 10 * time.Second,
+			}).DialContext,
+			MaxIdleConns:        1024,
+			MaxIdleConnsPerHost: 1024,
+			TLSClientConfig: &tls.Config{
+				Certificates: []tls.Certificate{cert},
+				// not needed, will take certs from host
+				//	RootCAs:      caCertPool
+			},
+		}}
+	}
 }
 
 // UploadWithRetry will retry both assigning volume request and uploading content

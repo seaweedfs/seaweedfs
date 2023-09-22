@@ -2,16 +2,17 @@ package util
 
 import (
 	"compress/gzip"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
+	"github.com/spf13/viper"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
-
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 var (
@@ -20,9 +21,28 @@ var (
 )
 
 func init() {
+	LoadConfiguration("security", false)
 	Transport = &http.Transport{
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
+	}
+	if viper.GetString("https.client.key") != "" {
+		clientCert := viper.GetString("https.client.cert")
+		clientCertKey := viper.GetString("https.client.key")
+
+		cert, err := tls.LoadX509KeyPair(clientCert, clientCertKey)
+		if err != nil {
+			glog.Fatalf("Error creating x509 keypair from client cert file %s and client key file %s", clientCert, clientCertKey)
+		}
+		Transport = &http.Transport{
+			MaxIdleConns:        1024,
+			MaxIdleConnsPerHost: 1024,
+			TLSClientConfig: &tls.Config{
+				Certificates: []tls.Certificate{cert},
+				// not needed, will take certs from host
+				//	RootCAs:      caCertPool
+			},
+		}
 	}
 	client = &http.Client{
 		Transport: Transport,
@@ -221,7 +241,11 @@ func NormalizeUrl(url string) string {
 	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
 		return url
 	}
-	return "http://" + url
+	if viper.GetString("https.client.key") != "" {
+		return "https://" + url
+	} else {
+		return "http://" + url
+	}
 }
 
 func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, buf []byte) (int64, error) {

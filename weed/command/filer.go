@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"github.com/spf13/viper"
 	"net"
 	"net/http"
 	"os"
@@ -303,6 +304,12 @@ func (fo *FilerOptions) startFiler() {
 	go grpcS.Serve(grpcL)
 
 	httpS := &http.Server{Handler: defaultMux}
+
+	if viper.GetString("https.filer.ca") != "" {
+		clientCertFile := viper.GetString("https.filer.ca")
+		httpS.TLSConfig = security.LoadClientTLSHTTP(clientCertFile)
+	}
+
 	if runtime.GOOS != "windows" {
 		localSocket := *fo.localSocket
 		if localSocket == "" {
