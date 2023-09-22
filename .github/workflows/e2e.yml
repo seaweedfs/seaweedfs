@@ -42,7 +42,7 @@ jobs:
       run: make build_e2e && docker compose -f ./compose/e2e-mount.yml up --wait
 
     - name: Run FIO 4k
-      timeout-minutes: 15
+      timeout-minutes: 20
       run: |
         echo "Starting FIO at: $(date)"
         # Concurrent r/w
