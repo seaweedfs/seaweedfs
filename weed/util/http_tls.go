@@ -16,5 +16,6 @@ func HttpScheme(part string) string {
 
 func HttpUseTls(part string) bool {
 	// todo: could make part-specific lookup (filer/volume/master/client)
+	LoadConfiguration("security", false)
 	return viper.GetString("https.client.ca") != ""
 }
