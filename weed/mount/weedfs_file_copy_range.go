@@ -1,7 +1,6 @@
 package mount
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"net/http"
 	"time"
 
@@ -45,16 +44,16 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	}
 
 	// lock source and target file handles
-	fhOutActiveLock := fhOut.wfs.fhLockTable.AcquireLock("CopyFileRange", fhOut.fh, util.ExclusiveLock)
-	defer fhOut.wfs.fhLockTable.ReleaseLock(fhOut.fh, fhOutActiveLock)
+	fhOut.Lock()
+	defer fhOut.Unlock()
 
 	if fhOut.entry == nil {
 		return 0, fuse.ENOENT
 	}
 
 	if fhIn.fh != fhOut.fh {
-		fhInActiveLock := fhIn.wfs.fhLockTable.AcquireLock("CopyFileRange", fhIn.fh, util.SharedLock)
-		defer fhIn.wfs.fhLockTable.ReleaseLock(fhIn.fh, fhInActiveLock)
+		fhIn.RLock()
+		defer fhIn.RUnlock()
 	}
 
 	// directories are not supported
