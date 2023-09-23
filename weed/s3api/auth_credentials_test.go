@@ -89,13 +89,10 @@ func TestCanDo(t *testing.T) {
 		Actions: []Action{
 			"Read:bucket1",
 			"Write:bucket1/*",
-			"WriteAcp:bucket1",
 		},
 	}
 	assert.Equal(t, true, ident2.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
 	assert.Equal(t, true, ident2.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident2.canDo(ACTION_WRITE_ACP, "bucket1", ""))
-	assert.Equal(t, false, ident2.canDo(ACTION_READ_ACP, "bucket1", ""))
 	assert.Equal(t, false, ident2.canDo(ACTION_LIST, "bucket1", "/a/b/c/d.txt"))
 
 	// across buckets
@@ -109,18 +106,15 @@ func TestCanDo(t *testing.T) {
 	assert.Equal(t, true, ident3.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
 	assert.Equal(t, true, ident3.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
 	assert.Equal(t, false, ident3.canDo(ACTION_LIST, "bucket1", "/a/b/other/some"))
-	assert.Equal(t, false, ident3.canDo(ACTION_WRITE_ACP, "bucket1", ""))
 
 	// partial buckets
 	ident4 := &Identity{
 		Name: "anything",
 		Actions: []Action{
 			"Read:special_*",
-			"ReadAcp:special_*",
 		},
 	}
 	assert.Equal(t, true, ident4.canDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident4.canDo(ACTION_READ_ACP, "special_bucket", ""))
 	assert.Equal(t, false, ident4.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
 
 	// admin buckets
@@ -131,9 +125,7 @@ func TestCanDo(t *testing.T) {
 		},
 	}
 	assert.Equal(t, true, ident5.canDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident5.canDo(ACTION_READ_ACP, "special_bucket", ""))
 	assert.Equal(t, true, ident5.canDo(ACTION_WRITE, "special_bucket", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident5.canDo(ACTION_WRITE_ACP, "special_bucket", ""))
 
 	// anonymous buckets
 	ident6 := &Identity{

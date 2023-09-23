@@ -3,7 +3,6 @@ package mount
 import (
 	"bytes"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -42,8 +41,8 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 		return nil, fuse.ENOENT
 	}
 
-	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("Read", fh.fh, util.SharedLock)
-	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+	fh.RLock()
+	defer fh.RUnlock()
 
 	offset := int64(in.Offset)
 	totalRead, err := readDataByFileHandle(buff, fh, offset)

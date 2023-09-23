@@ -27,6 +27,7 @@ type FileHandle struct {
 	dirtyPages    *PageWriter
 	reader        *filer.ChunkReadAt
 	contentType   string
+	sync.RWMutex
 
 	isDeleted bool
 
@@ -101,9 +102,8 @@ func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
 }
 
 func (fh *FileHandle) ReleaseHandle() {
-
-	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("ReleaseHandle", fh.fh, util.ExclusiveLock)
-	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+	fh.Lock()
+	defer fh.Unlock()
 
 	fh.entryLock.Lock()
 	defer fh.entryLock.Unlock()
