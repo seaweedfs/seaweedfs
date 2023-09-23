@@ -65,7 +65,7 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 
 	// If the lock is held exclusively, wait
 	entry.mu.Lock()
-	if len(entry.waiters) > 0 || lockType == ExclusiveLock {
+	if len(entry.waiters) > 0 || lockType == ExclusiveLock || entry.activeExclusiveLockOwnerCount > 0 {
 		if glog.V(4) {
 			fmt.Printf("ActiveLock %d %s wait for %+v type=%v with waiters %d active r%d w%d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeSharedLockOwnerCount, entry.activeExclusiveLockOwnerCount)
 			if len(entry.waiters) > 0 {
