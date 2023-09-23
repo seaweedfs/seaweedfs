@@ -89,7 +89,6 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 			entry.cond.Broadcast()
 		}
 	}
-	entry.activeLockOwnerCount++
 
 	// Otherwise, grant the lock
 	entry.lockType = lockType
@@ -102,6 +101,7 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 			fmt.Printf("\n")
 		}
 	}
+	entry.activeLockOwnerCount++
 	entry.mu.Unlock()
 
 	return lock
