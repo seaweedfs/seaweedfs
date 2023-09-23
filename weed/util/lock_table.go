@@ -135,7 +135,7 @@ func (lt *LockTable[T]) ReleaseLock(key T, lock *ActiveLock) {
 	}
 
 	// If there are no waiters, release the lock
-	if len(entry.waiters) == 0 {
+	if len(entry.waiters) == 0 && entry.activeExclusiveLockOwnerCount <= 0 && entry.activeSharedLockOwnerCount <= 0 {
 		delete(lt.locks, key)
 	}
 
