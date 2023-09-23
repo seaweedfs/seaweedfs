@@ -7,7 +7,7 @@ all: install
 .PHONY : clean debug_mount
 
 install:
-	go install
+	go install -ldflags="-s -w"
 
 clean:
 	go clean $(SOURCE_DIR)

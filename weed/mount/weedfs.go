@@ -78,6 +78,7 @@ type WFS struct {
 	dhmap             *DirectoryHandleToInode
 	fuseServer        *fuse.Server
 	IsOverQuota       bool
+	fhLockTable       *util.LockTable[FileHandleId]
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
@@ -88,6 +89,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		inodeToPath:   NewInodeToPath(util.FullPath(option.FilerMountRootPath)),
 		fhmap:         NewFileHandleToInode(),
 		dhmap:         NewDirectoryHandleToInode(),
+		fhLockTable:   util.NewLockTable[FileHandleId](),
 	}
 
 	wfs.option.filerIndex = int32(rand.Intn(len(option.FilerAddresses)))
