@@ -61,7 +61,7 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 	}
 	lt.mu.Unlock()
 
-	lock = lt.NewActiveLock(intention)
+	lock = lt.NewActiveLock(intention, lockType)
 
 	// If the lock is held exclusively, wait
 	entry.mu.Lock()
