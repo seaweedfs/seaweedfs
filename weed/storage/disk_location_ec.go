@@ -2,11 +2,12 @@ package storage
 
 import (
 	"fmt"
-	"golang.org/x/exp/slices"
 	"os"
 	"path"
 	"regexp"
 	"strconv"
+
+	"golang.org/x/exp/slices"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -162,7 +163,15 @@ func (l *DiskLocation) loadAllEcShards() (err error) {
 			continue
 		}
 
-		if re.MatchString(ext) {
+		info, err := fileInfo.Info()
+
+		if err != nil {
+			continue
+		}
+
+		// 0 byte files should be only appearing erroneously for ec data files
+		// so we ignore them
+		if re.MatchString(ext) && info.Size() > 0 {
 			if prevVolumeId == 0 || volumeId == prevVolumeId {
 				sameVolumeShards = append(sameVolumeShards, fileInfo.Name())
 			} else {
