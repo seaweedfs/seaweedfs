@@ -7,7 +7,8 @@ import (
 )
 
 const (
-	MaxPartitionCount = 8 * 9 * 5 * 7 //2520
+	MaxPartitionCount  = 8 * 9 * 5 * 7 //2520
+	LockBrokerBalancer = "broker_balancer"
 )
 
 type Balancer struct {
