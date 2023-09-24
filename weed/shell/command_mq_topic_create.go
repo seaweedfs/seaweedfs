@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -58,7 +59,8 @@ func (c *commandMqTopicCreate) Do(args []string, commandEnv *CommandEnv, writer 
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(writer, "response: %+v\n", resp)
+		output, _ := json.MarshalIndent(resp, "", "  ")
+		fmt.Fprintf(writer, "response:\n%+v\n", string(output))
 		return nil
 	})
 

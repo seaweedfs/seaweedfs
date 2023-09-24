@@ -32,6 +32,7 @@ type SeaweedMessagingClient interface {
 	// control plane for topic partitions
 	LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error)
 	CreateTopic(ctx context.Context, in *CreateTopicRequest, opts ...grpc.CallOption) (*CreateTopicResponse, error)
+	DoCreateTopic(ctx context.Context, in *DoCreateTopicRequest, opts ...grpc.CallOption) (*DoCreateTopicResponse, error)
 	// a pub client will call this to get the topic partitions assignment
 	RequestTopicPartitions(ctx context.Context, in *RequestTopicPartitionsRequest, opts ...grpc.CallOption) (*RequestTopicPartitionsResponse, error)
 	AssignTopicPartitions(ctx context.Context, in *AssignTopicPartitionsRequest, opts ...grpc.CallOption) (*AssignTopicPartitionsResponse, error)
@@ -128,6 +129,15 @@ func (c *seaweedMessagingClient) LookupTopicBrokers(ctx context.Context, in *Loo
 func (c *seaweedMessagingClient) CreateTopic(ctx context.Context, in *CreateTopicRequest, opts ...grpc.CallOption) (*CreateTopicResponse, error) {
 	out := new(CreateTopicResponse)
 	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/CreateTopic", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedMessagingClient) DoCreateTopic(ctx context.Context, in *DoCreateTopicRequest, opts ...grpc.CallOption) (*DoCreateTopicResponse, error) {
+	out := new(DoCreateTopicResponse)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/DoCreateTopic", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -238,6 +248,7 @@ type SeaweedMessagingServer interface {
 	// control plane for topic partitions
 	LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error)
 	CreateTopic(context.Context, *CreateTopicRequest) (*CreateTopicResponse, error)
+	DoCreateTopic(context.Context, *DoCreateTopicRequest) (*DoCreateTopicResponse, error)
 	// a pub client will call this to get the topic partitions assignment
 	RequestTopicPartitions(context.Context, *RequestTopicPartitionsRequest) (*RequestTopicPartitionsResponse, error)
 	AssignTopicPartitions(context.Context, *AssignTopicPartitionsRequest) (*AssignTopicPartitionsResponse, error)
@@ -272,6 +283,9 @@ func (UnimplementedSeaweedMessagingServer) LookupTopicBrokers(context.Context, *
 }
 func (UnimplementedSeaweedMessagingServer) CreateTopic(context.Context, *CreateTopicRequest) (*CreateTopicResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateTopic not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) DoCreateTopic(context.Context, *DoCreateTopicRequest) (*DoCreateTopicResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DoCreateTopic not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) RequestTopicPartitions(context.Context, *RequestTopicPartitionsRequest) (*RequestTopicPartitionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RequestTopicPartitions not implemented")
@@ -435,6 +449,24 @@ func _SeaweedMessaging_CreateTopic_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeaweedMessaging_DoCreateTopic_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DoCreateTopicRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).DoCreateTopic(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/messaging_pb.SeaweedMessaging/DoCreateTopic",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).DoCreateTopic(ctx, req.(*DoCreateTopicRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SeaweedMessaging_RequestTopicPartitions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RequestTopicPartitionsRequest)
 	if err := dec(in); err != nil {
@@ -566,6 +598,10 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateTopic",
 			Handler:    _SeaweedMessaging_CreateTopic_Handler,
+		},
+		{
+			MethodName: "DoCreateTopic",
+			Handler:    _SeaweedMessaging_DoCreateTopic_Handler,
 		},
 		{
 			MethodName: "RequestTopicPartitions",

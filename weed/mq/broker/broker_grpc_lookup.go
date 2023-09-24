@@ -7,26 +7,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func (broker *MessageQueueBroker) CreateTopic(ctx context.Context, request *mq_pb.CreateTopicRequest) (resp *mq_pb.CreateTopicResponse, err error) {
-	if broker.currentBalancer == "" {
-		return nil, status.Errorf(codes.Unavailable, "no balancer")
-	}
-	if !broker.lockAsBalancer.IsLocked() {
-		proxyErr := broker.withBrokerClient(false, broker.currentBalancer, func(client mq_pb.SeaweedMessagingClient) error {
-			resp, err = client.CreateTopic(ctx, request)
-			return nil
-		})
-		if proxyErr != nil {
-			return nil, proxyErr
-		}
-		return resp, err
-	}
-
-	ret := &mq_pb.CreateTopicResponse{}
-	ret.BrokerPartitionAssignments, err = broker.Balancer.LookupOrAllocateTopicPartitions(request.Topic, true, request.PartitionCount)
-	return ret, err
-}
-
 // FindTopicBrokers returns the brokers that are serving the topic
 //
 //  1. lock the topic
