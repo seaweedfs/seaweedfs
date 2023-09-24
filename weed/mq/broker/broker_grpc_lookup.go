@@ -23,7 +23,7 @@ func (broker *MessageQueueBroker) CreateTopic(ctx context.Context, request *mq_p
 	}
 
 	ret := &mq_pb.CreateTopicResponse{}
-	ret.BrokerPartitionAssignments, err = broker.Balancer.LookupOrAllocateTopicPartitions(request.Topic, true)
+	ret.BrokerPartitionAssignments, err = broker.Balancer.LookupOrAllocateTopicPartitions(request.Topic, true, request.PartitionCount)
 	return ret, err
 }
 
@@ -56,7 +56,7 @@ func (broker *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, reques
 
 	ret := &mq_pb.LookupTopicBrokersResponse{}
 	ret.Topic = request.Topic
-	ret.BrokerPartitionAssignments, err = broker.Balancer.LookupOrAllocateTopicPartitions(ret.Topic, request.IsForPublish)
+	ret.BrokerPartitionAssignments, err = broker.Balancer.LookupOrAllocateTopicPartitions(ret.Topic, request.IsForPublish, 6)
 	return ret, err
 }
 
