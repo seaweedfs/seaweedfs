@@ -20,7 +20,6 @@ type LockEntry struct {
 	waiters                       []*ActiveLock // ordered waiters that are blocked by exclusive locks
 	activeSharedLockOwnerCount    int32
 	activeExclusiveLockOwnerCount int32
-	lockType                      LockType
 	cond                          *sync.Cond
 }
 
@@ -93,7 +92,6 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 	}
 
 	// Otherwise, grant the lock
-	entry.lockType = lockType
 	if glog.V(4) {
 		fmt.Printf("ActiveLock %d %s locked %+v type=%v with waiters %d active r%d w%d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeSharedLockOwnerCount, entry.activeExclusiveLockOwnerCount)
 		if len(entry.waiters) > 0 {
@@ -140,7 +138,7 @@ func (lt *LockTable[T]) ReleaseLock(key T, lock *ActiveLock) {
 	}
 
 	if glog.V(4) {
-		fmt.Printf("ActiveLock %d %s unlocked %+v type=%v with waiters %d active r%d w%d.\n", lock.ID, lock.intention, key, entry.lockType, len(entry.waiters), entry.activeSharedLockOwnerCount, entry.activeExclusiveLockOwnerCount)
+		fmt.Printf("ActiveLock %d %s unlocked %+v type=%v with waiters %d active r%d w%d.\n", lock.ID, lock.intention, key, lock.lockType, len(entry.waiters), entry.activeSharedLockOwnerCount, entry.activeExclusiveLockOwnerCount)
 		if len(entry.waiters) > 0 {
 			for _, waiter := range entry.waiters {
 				fmt.Printf(" %d", waiter.ID)
