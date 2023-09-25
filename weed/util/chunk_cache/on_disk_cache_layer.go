@@ -32,8 +32,8 @@ func NewOnDiskCacheLayer(dir, namePrefix string, diskSize int64, segmentCount in
 	}
 
 	// keep newest cache to the front
-	slices.SortFunc(c.diskCaches, func(a, b *ChunkCacheVolume) bool {
-		return a.lastModTime.After(b.lastModTime)
+	slices.SortFunc(c.diskCaches, func(a, b *ChunkCacheVolume) int {
+		return b.lastModTime.Compare(a.lastModTime)
 	})
 	return c
 }

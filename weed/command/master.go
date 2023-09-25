@@ -288,8 +288,8 @@ func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers strin
 }
 
 func isTheFirstOne(self pb.ServerAddress, peers []pb.ServerAddress) bool {
-	slices.SortFunc(peers, func(a, b pb.ServerAddress) bool {
-		return strings.Compare(string(a), string(b)) < 0
+	slices.SortFunc(peers, func(a, b pb.ServerAddress) int {
+		return strings.Compare(string(a), string(b))
 	})
 	if len(peers) <= 0 {
 		return true
