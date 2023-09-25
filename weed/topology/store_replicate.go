@@ -61,7 +61,8 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 		start := time.Now()
 		err = DistributedOperation(remoteLocations, func(location operation.Location) error {
 			u := url.URL{
-				Scheme: util.HttpScheme("volume"),
+				//Scheme: util.HttpScheme("volume"),
+				Scheme: "https",
 				Host:   location.Url,
 				Path:   r.URL.Path,
 			}
