@@ -1,34 +1,38 @@
-package s3acl
+package s3api
 
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"io"
 	"net/http"
 	"testing"
 )
 
-var (
-	accountManager = &s3account.AccountManager{
-		IdNameMapping: map[string]string{
-			s3account.AccountAdmin.Id:     s3account.AccountAdmin.Name,
-			s3account.AccountAnonymous.Id: s3account.AccountAnonymous.Name,
-			"accountA":                    "accountA",
-			"accountB":                    "accountB",
+var accountManager *IdentityAccessManagement
+
+func init() {
+	accountManager = &IdentityAccessManagement{}
+	_ = accountManager.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Accounts: []*iam_pb.Account{
+			{
+				Id:           "accountA",
+				DisplayName:  "accountAName",
+				EmailAddress: "accountA@example.com",
+			},
+			{
+				Id:           "accountB",
+				DisplayName:  "accountBName",
+				EmailAddress: "accountB@example.com",
+			},
 		},
-		EmailIdMapping: map[string]string{
-			s3account.AccountAdmin.EmailAddress:     s3account.AccountAdmin.Id,
-			s3account.AccountAnonymous.EmailAddress: s3account.AccountAnonymous.Id,
-			"accountA@example.com":                  "accountA",
-			"accountBexample.com":                   "accountB",
-		},
-	}
-)
+	})
+}
 
 func TestGetAccountId(t *testing.T) {
 	req := &http.Request{
@@ -36,23 +40,342 @@ func TestGetAccountId(t *testing.T) {
 	}
 	//case1
 	//accountId: "admin"
-	req.Header.Set(s3_constants.AmzAccountId, s3account.AccountAdmin.Id)
-	if GetAccountId(req) != s3account.AccountAdmin.Id {
+	req.Header.Set(s3_constants.AmzAccountId, s3_constants.AccountAdminId)
+	if GetAccountId(req) != s3_constants.AccountAdminId {
 		t.Fatal("expect accountId: admin")
 	}
 
 	//case2
 	//accountId: "anoymous"
-	req.Header.Set(s3_constants.AmzAccountId, s3account.AccountAnonymous.Id)
-	if GetAccountId(req) != s3account.AccountAnonymous.Id {
+	req.Header.Set(s3_constants.AmzAccountId, s3_constants.AccountAnonymousId)
+	if GetAccountId(req) != s3_constants.AccountAnonymousId {
 		t.Fatal("expect accountId: anonymous")
 	}
 
 	//case3
 	//accountId is nil => "anonymous"
 	req.Header.Del(s3_constants.AmzAccountId)
-	if GetAccountId(req) != s3account.AccountAnonymous.Id {
+	if GetAccountId(req) != s3_constants.AccountAnonymousId {
 		t.Fatal("expect accountId: anonymous")
+	}
+}
+
+func TestExtractAcl(t *testing.T) {
+	type Case struct {
+		id                           int
+		resultErrCode, expectErrCode s3err.ErrorCode
+		resultGrants, expectGrants   []*s3.Grant
+	}
+	testCases := make([]*Case, 0)
+	accountAdminId := "admin"
+	{
+		//case1 (good case)
+		//parse acp from request body
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Body = io.NopCloser(bytes.NewReader([]byte(`
+	<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+		<Owner>
+			<ID>admin</ID>
+			<DisplayName>admin</DisplayName>
+		</Owner>
+		<AccessControlList>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
+					<ID>admin</ID>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
+					<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+		</AccessControlList>
+	</AccessControlPolicy>
+	`)))
+		objectWriter := "accountA"
+		grants, errCode := ExtractAcl(req, accountManager, s3_constants.OwnershipObjectWriter, accountAdminId, accountAdminId, objectWriter)
+		testCases = append(testCases, &Case{
+			1,
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &accountAdminId,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeGroup,
+						URI:  &s3_constants.GranteeGroupAllUsers,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+		})
+	}
+
+	{
+		//case2 (good case)
+		//parse acp from header (cannedAcl)
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Body = nil
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclPrivate)
+		objectWriter := "accountA"
+		grants, errCode := ExtractAcl(req, accountManager, s3_constants.OwnershipObjectWriter, accountAdminId, accountAdminId, objectWriter)
+		testCases = append(testCases, &Case{
+			2,
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &objectWriter,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+		})
+	}
+
+	{
+		//case3 (bad case)
+		//parse acp from request body (content is invalid)
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		req.Body = io.NopCloser(bytes.NewReader([]byte("zdfsaf")))
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclPrivate)
+		objectWriter := "accountA"
+		_, errCode := ExtractAcl(req, accountManager, s3_constants.OwnershipObjectWriter, accountAdminId, accountAdminId, objectWriter)
+		testCases = append(testCases, &Case{
+			id:            3,
+			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidRequest,
+		})
+	}
+
+	//case4 (bad case)
+	//parse acp from header (cannedAcl is invalid)
+	req := &http.Request{
+		Header: make(map[string][]string),
+	}
+	req.Body = nil
+	req.Header.Set(s3_constants.AmzCannedAcl, "dfaksjfk")
+	objectWriter := "accountA"
+	_, errCode := ExtractAcl(req, accountManager, s3_constants.OwnershipObjectWriter, accountAdminId, "", objectWriter)
+	testCases = append(testCases, &Case{
+		id:            4,
+		resultErrCode: errCode, expectErrCode: s3err.ErrInvalidRequest,
+	})
+
+	{
+		//case5 (bad case)
+		//parse acp from request body: owner is inconsistent
+		req.Body = io.NopCloser(bytes.NewReader([]byte(`
+	<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+		<Owner>
+			<ID>admin</ID>
+			<DisplayName>admin</DisplayName>
+		</Owner>
+		<AccessControlList>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser">
+					<ID>admin</ID>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+			<Grant>
+				<Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Group">
+					<URI>http://acs.amazonaws.com/groups/global/AllUsers</URI>
+				</Grantee>
+				<Permission>FULL_CONTROL</Permission>
+			</Grant>
+		</AccessControlList>
+	</AccessControlPolicy>
+	`)))
+		objectWriter = "accountA"
+		_, errCode := ExtractAcl(req, accountManager, s3_constants.OwnershipObjectWriter, accountAdminId, objectWriter, objectWriter)
+		testCases = append(testCases, &Case{
+			id:            5,
+			resultErrCode: errCode, expectErrCode: s3err.ErrAccessDenied,
+		})
+	}
+
+	for _, tc := range testCases {
+		if tc.resultErrCode != tc.expectErrCode {
+			t.Fatalf("case[%d]: errorCode not expect", tc.id)
+		}
+		if !grantsEquals(tc.resultGrants, tc.expectGrants) {
+			t.Fatalf("case[%d]: grants not expect", tc.id)
+		}
+	}
+}
+
+func TestParseAndValidateAclHeaders(t *testing.T) {
+	type Case struct {
+		id                           int
+		resultOwner, expectOwner     string
+		resultErrCode, expectErrCode s3err.ErrorCode
+		resultGrants, expectGrants   []*s3.Grant
+	}
+	testCases := make([]*Case, 0)
+	bucketOwner := "admin"
+
+	{
+		//case1 (good case)
+		//parse custom acl
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		objectWriter := "accountA"
+		req.Header.Set(s3_constants.AmzAclFullControl, `uri="http://acs.amazonaws.com/groups/global/AllUsers", id="anonymous", emailAddress="admin@example.com"`)
+		ownerId, grants, errCode := ParseAndValidateAclHeaders(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwner, objectWriter, false)
+		testCases = append(testCases, &Case{
+			1,
+			ownerId, objectWriter,
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeGroup,
+						URI:  &s3_constants.GranteeGroupAllUsers,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   aws.String(s3_constants.AccountAnonymousId),
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   aws.String(s3_constants.AccountAdminId),
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+		})
+	}
+	{
+		//case2 (good case)
+		//parse canned acl (ownership=ObjectWriter)
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		objectWriter := "accountA"
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
+		ownerId, grants, errCode := ParseAndValidateAclHeaders(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwner, objectWriter, false)
+		testCases = append(testCases, &Case{
+			2,
+			ownerId, objectWriter,
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &objectWriter,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &bucketOwner,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+		})
+	}
+	{
+		//case3 (good case)
+		//parse canned acl (ownership=OwnershipBucketOwnerPreferred)
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		objectWriter := "accountA"
+		req.Header.Set(s3_constants.AmzCannedAcl, s3_constants.CannedAclBucketOwnerFullControl)
+		ownerId, grants, errCode := ParseAndValidateAclHeaders(req, accountManager, s3_constants.OwnershipBucketOwnerPreferred, bucketOwner, objectWriter, false)
+		testCases = append(testCases, &Case{
+			3,
+			ownerId, bucketOwner,
+			errCode, s3err.ErrNone,
+			grants, []*s3.Grant{
+				{
+					Grantee: &s3.Grantee{
+						Type: &s3_constants.GrantTypeCanonicalUser,
+						ID:   &bucketOwner,
+					},
+					Permission: &s3_constants.PermissionFullControl,
+				},
+			},
+		})
+	}
+	{
+		//case4 (bad case)
+		//parse custom acl (grantee id not exists)
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		objectWriter := "accountA"
+		req.Header.Set(s3_constants.AmzAclFullControl, `uri="http://acs.amazonaws.com/groups/global/AllUsers", id="notExistsAccount", emailAddress="admin@example.com"`)
+		_, _, errCode := ParseAndValidateAclHeaders(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwner, objectWriter, false)
+		testCases = append(testCases, &Case{
+			id:            4,
+			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidRequest,
+		})
+	}
+
+	{
+		//case5 (bad case)
+		//parse custom acl (invalid format)
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		objectWriter := "accountA"
+		req.Header.Set(s3_constants.AmzAclFullControl, `uri="http:sfasf"`)
+		_, _, errCode := ParseAndValidateAclHeaders(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwner, objectWriter, false)
+		testCases = append(testCases, &Case{
+			id:            5,
+			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidRequest,
+		})
+	}
+
+	{
+		//case6 (bad case)
+		//parse canned acl (invalid value)
+		req := &http.Request{
+			Header: make(map[string][]string),
+		}
+		objectWriter := "accountA"
+		req.Header.Set(s3_constants.AmzCannedAcl, `uri="http:sfasf"`)
+		_, _, errCode := ParseAndValidateAclHeaders(req, accountManager, s3_constants.OwnershipObjectWriter, bucketOwner, objectWriter, false)
+		testCases = append(testCases, &Case{
+			id:            5,
+			resultErrCode: errCode, expectErrCode: s3err.ErrInvalidRequest,
+		})
+	}
+
+	for _, tc := range testCases {
+		if tc.expectErrCode != tc.resultErrCode {
+			t.Errorf("case[%d]: errCode unexpect", tc.id)
+		}
+		if tc.resultOwner != tc.expectOwner {
+			t.Errorf("case[%d]: ownerId unexpect", tc.id)
+		}
+		if !grantsEquals(tc.resultGrants, tc.expectGrants) {
+			t.Fatalf("case[%d]: grants not expect", tc.id)
+		}
 	}
 }
 
@@ -71,7 +394,7 @@ func grantsEquals(a, b []*s3.Grant) bool {
 func TestDetermineReqGrants(t *testing.T) {
 	{
 		//case1: request account is anonymous
-		accountId := s3account.AccountAnonymous.Id
+		accountId := s3_constants.AccountAnonymousId
 		reqPermission := s3_constants.PermissionRead
 
 		resultGrants := DetermineRequiredGrants(accountId, reqPermission)
@@ -176,7 +499,7 @@ func TestAssembleEntryWithAcp(t *testing.T) {
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
 				Type: &s3_constants.GrantTypeGroup,
-				ID:   &s3account.AccountAdmin.Id,
+				ID:   aws.String(s3_constants.AccountAdminId),
 				URI:  &s3_constants.GranteeGroupAllUsers,
 			},
 		},
@@ -249,13 +572,13 @@ func TestGrantEquals(t *testing.T) {
 		GrantEquals(&s3.Grant{
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
-				ID:           &s3account.AccountAdmin.Id,
-				EmailAddress: &s3account.AccountAdmin.EmailAddress,
+				ID: aws.String(s3_constants.AccountAdminId),
+				//EmailAddress: &s3account.AccountAdmin.EmailAddress,
 			},
 		}, &s3.Grant{
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
-				ID: &s3account.AccountAdmin.Id,
+				ID: aws.String(s3_constants.AccountAdminId),
 			},
 		}): true,
 
@@ -303,13 +626,13 @@ func TestGrantEquals(t *testing.T) {
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
 				Type: &s3_constants.GrantTypeGroup,
-				ID:   &s3account.AccountAdmin.Id,
+				ID:   aws.String(s3_constants.AccountAdminId),
 			},
 		}, &s3.Grant{
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
 				Type: &s3_constants.GrantTypeGroup,
-				ID:   &s3account.AccountAdmin.Id,
+				ID:   aws.String(s3_constants.AccountAdminId),
 			},
 		}): true,
 
@@ -317,14 +640,14 @@ func TestGrantEquals(t *testing.T) {
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
 				Type: &s3_constants.GrantTypeGroup,
-				ID:   &s3account.AccountAdmin.Id,
+				ID:   aws.String(s3_constants.AccountAdminId),
 				URI:  &s3_constants.GranteeGroupAllUsers,
 			},
 		}, &s3.Grant{
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
 				Type: &s3_constants.GrantTypeGroup,
-				ID:   &s3account.AccountAdmin.Id,
+				ID:   aws.String(s3_constants.AccountAdminId),
 			},
 		}): false,
 
@@ -332,7 +655,7 @@ func TestGrantEquals(t *testing.T) {
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
 				Type: &s3_constants.GrantTypeGroup,
-				ID:   &s3account.AccountAdmin.Id,
+				ID:   aws.String(s3_constants.AccountAdminId),
 				URI:  &s3_constants.GranteeGroupAllUsers,
 			},
 		}, &s3.Grant{
@@ -372,7 +695,7 @@ func TestSetAcpGrantsHeader(t *testing.T) {
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
 				Type: &s3_constants.GrantTypeGroup,
-				ID:   &s3account.AccountAdmin.Id,
+				ID:   aws.String(s3_constants.AccountAdminId),
 				URI:  &s3_constants.GranteeGroupAllUsers,
 			},
 		},

@@ -5,8 +5,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3acl"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"net/http"
@@ -16,7 +14,7 @@ import (
 func getAccountId(r *http.Request) string {
 	id := r.Header.Get(s3_constants.AmzAccountId)
 	if len(id) == 0 {
-		return s3account.AccountAnonymous.Id
+		return AccountAnonymous.Id
 	} else {
 		return id
 	}
