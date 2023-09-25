@@ -26,7 +26,9 @@ func (broker *MessageQueueBroker) ConnectToBalancer(stream mq_pb.SeaweedMessagin
 		brokerStats, found = broker.Balancer.Brokers.Get(initMessage.Broker)
 		if !found {
 			brokerStats = balancer.NewBrokerStats()
-			broker.Balancer.Brokers.Set(initMessage.Broker, brokerStats)
+			if !broker.Balancer.Brokers.SetIfAbsent(initMessage.Broker, brokerStats) {
+				brokerStats, _ = broker.Balancer.Brokers.Get(initMessage.Broker)
+			}
 		}
 	} else {
 		return status.Errorf(codes.InvalidArgument, "balancer init message is empty")

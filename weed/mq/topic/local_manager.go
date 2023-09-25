@@ -28,7 +28,9 @@ func (manager *LocalTopicManager) AddTopicPartition(topic Topic, localPartition 
 			Partitions: make([]*LocalPartition, 0),
 		}
 	}
-	manager.topics.SetIfAbsent(topic.String(), localTopic)
+	if !manager.topics.SetIfAbsent(topic.String(), localTopic) {
+		localTopic, _ = manager.topics.Get(topic.String())
+	}
 	if localTopic.findPartition(localPartition.Partition) != nil {
 		return
 	}
@@ -61,6 +63,15 @@ func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.Br
 	stats := &mq_pb.BrokerStats{
 		Stats: make(map[string]*mq_pb.TopicPartitionStats),
 	}
+
+	// collect current broker's cpu usage
+	// this needs to be in front, so the following stats can be more accurate
+	usages, err := cpu.Percent(duration, false)
+	if err == nil && len(usages) > 0 {
+		stats.CpuUsagePercent = int32(usages[0])
+	}
+
+	// collect current broker's topics and partitions
 	manager.topics.IterCb(func(topic string, localTopic *LocalTopic) {
 		for _, localPartition := range localTopic.Partitions {
 			topicPartition := &TopicPartition{
@@ -84,12 +95,6 @@ func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.Br
 			// fmt.Printf("collect topic %+v partition %+v\n", topicPartition, localPartition.Partition)
 		}
 	})
-
-	// collect current broker's cpu usage
-	usages, err := cpu.Percent(duration, false)
-	if err == nil && len(usages) > 0 {
-		stats.CpuUsagePercent = int32(usages[0])
-	}
 
 	return stats
 

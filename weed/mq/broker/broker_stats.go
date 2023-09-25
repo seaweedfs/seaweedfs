@@ -61,7 +61,7 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 			if err != nil {
 				return fmt.Errorf("send stats message: %v", err)
 			}
-			glog.V(4).Infof("sent stats: %+v", stats)
+			glog.V(3).Infof("sent stats: %+v", stats)
 
 			time.Sleep(time.Millisecond*5000 + time.Duration(rand.Intn(1000))*time.Millisecond)
 		}

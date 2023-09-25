@@ -43,7 +43,9 @@ func (broker *MessageQueueBroker) CreateTopic(ctx context.Context, request *mq_p
 			brokerStats, found := broker.Balancer.Brokers.Get(bpa.LeaderBroker)
 			if !found {
 				brokerStats = balancer.NewBrokerStats()
-				broker.Balancer.Brokers.Set(bpa.LeaderBroker, brokerStats)
+				if !broker.Balancer.Brokers.SetIfAbsent(bpa.LeaderBroker, brokerStats) {
+					brokerStats, _ = broker.Balancer.Brokers.Get(bpa.LeaderBroker)
+				}
 			}
 			brokerStats.RegisterAssignment(request.Topic, bpa.Partition)
 			return nil
@@ -51,6 +53,8 @@ func (broker *MessageQueueBroker) CreateTopic(ctx context.Context, request *mq_p
 			return nil, doCreateErr
 		}
 	}
+
+	// TODO revert if some error happens in the middle of the assignments
 
 	return ret, err
 }
