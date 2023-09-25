@@ -19,7 +19,7 @@ func NewLocalTopicManager() *LocalTopicManager {
 	}
 }
 
-// AddTopic adds a topic to the local topic manager
+// AddTopicPartition adds a topic to the local topic manager
 func (manager *LocalTopicManager) AddTopicPartition(topic Topic, localPartition *LocalPartition) {
 	localTopic, ok := manager.topics.Get(topic.String())
 	if !ok {
