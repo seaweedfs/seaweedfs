@@ -52,6 +52,11 @@ func (bs *BrokerStats) UpdateStats(stats *mq_pb.BrokerStats) {
 
 }
 
+func (bs *BrokerStats) String() string {
+	return fmt.Sprintf("BrokerStats{TopicPartitionCount:%d, ConsumerCount:%d, CpuUsagePercent:%d, Stats:%+v}",
+		bs.TopicPartitionCount, bs.ConsumerCount, bs.CpuUsagePercent, bs.Stats.Items())
+}
+
 type TopicPartition struct {
 	Namespace  string
 	Topic      string

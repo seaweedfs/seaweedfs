@@ -30,6 +30,8 @@ service SeaweedMessaging {
     }
     rpc DoCreateTopic (DoCreateTopicRequest) returns (DoCreateTopicResponse) {
     }
+    rpc ListTopics (ListTopicsRequest) returns (ListTopicsResponse) {
+    }
     // a pub client will call this to get the topic partitions assignment
     rpc RequestTopicPartitions (RequestTopicPartitionsRequest) returns (RequestTopicPartitionsResponse) {
     }
@@ -144,6 +146,11 @@ message DoCreateTopicRequest {
     Partition partition = 2;
 }
 message DoCreateTopicResponse {
+}
+message ListTopicsRequest {
+}
+message ListTopicsResponse {
+    repeated Topic topics = 1;
 }
 message LookupTopicBrokersRequest {
     Topic topic = 1;

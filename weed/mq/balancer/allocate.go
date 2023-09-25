@@ -6,10 +6,10 @@ import (
 	"math/rand"
 )
 
-func allocateTopicPartitions(brokers cmap.ConcurrentMap[string, *BrokerStats], partitionCount int) (assignments []*mq_pb.BrokerPartitionAssignment) {
+func allocateTopicPartitions(brokers cmap.ConcurrentMap[string, *BrokerStats], partitionCount int32) (assignments []*mq_pb.BrokerPartitionAssignment) {
 	// divide the ring into partitions
 	rangeSize := MaxPartitionCount / partitionCount
-	for i := 0; i < partitionCount; i++ {
+	for i := int32(0); i < partitionCount; i++ {
 		assignment := &mq_pb.BrokerPartitionAssignment{
 			Partition: &mq_pb.Partition{
 				RingSize:   MaxPartitionCount,
@@ -35,13 +35,13 @@ func allocateTopicPartitions(brokers cmap.ConcurrentMap[string, *BrokerStats], p
 
 // for now: randomly pick brokers
 // TODO pick brokers based on the broker stats
-func pickBrokers(brokers cmap.ConcurrentMap[string, *BrokerStats], count int) []string {
+func pickBrokers(brokers cmap.ConcurrentMap[string, *BrokerStats], count int32) []string {
 	candidates := make([]string, 0, brokers.Count())
 	for brokerStatsItem := range brokers.IterBuffered() {
 		candidates = append(candidates, brokerStatsItem.Key)
 	}
 	pickedBrokers := make([]string, 0, count)
-	for i := 0; i < count; i++ {
+	for i := int32(0); i < count; i++ {
 		p := rand.Int() % len(candidates)
 		if p < 0 {
 			p = -p

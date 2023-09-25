@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -26,6 +27,18 @@ func (broker *MessageQueueBroker) CreateTopic(ctx context.Context, request *mq_p
 
 	ret := &mq_pb.CreateTopicResponse{}
 	ret.BrokerPartitionAssignments, err = broker.Balancer.LookupOrAllocateTopicPartitions(request.Topic, true, request.PartitionCount)
+
+	for _, bpa := range ret.BrokerPartitionAssignments {
+		if doCreateErr := broker.withBrokerClient(false, pb.ServerAddress(bpa.LeaderBroker), func(client mq_pb.SeaweedMessagingClient) error {
+			_, doCreateErr := client.DoCreateTopic(ctx, &mq_pb.DoCreateTopicRequest{
+				Topic:     request.Topic,
+				Partition: bpa.Partition,
+			})
+			return doCreateErr
+		}); doCreateErr != nil {
+			return nil, doCreateErr
+		}
+	}
 
 	return ret, err
 }

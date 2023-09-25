@@ -47,5 +47,5 @@ func (b *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, publish b
 	if b.Brokers.IsEmpty() {
 		return nil, ErrNoBroker
 	}
-	return allocateTopicPartitions(b.Brokers, 6), nil
+	return allocateTopicPartitions(b.Brokers, partitionCount), nil
 }

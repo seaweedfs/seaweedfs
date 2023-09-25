@@ -43,6 +43,7 @@ func (broker *MessageQueueBroker) ConnectToBalancer(stream mq_pb.SeaweedMessagin
 			brokerStats.UpdateStats(receivedStats)
 
 			glog.V(3).Infof("broker %s stats: %+v", initMessage.Broker, brokerStats)
+			glog.V(3).Infof("received stats: %+v", receivedStats)
 		}
 	}
 
