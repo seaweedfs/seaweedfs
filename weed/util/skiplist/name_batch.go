@@ -41,8 +41,8 @@ func (nb *NameBatch) ListNames(startFrom string, visitNamesFn func(name string) 
 			names = append(names, n)
 		}
 	}
-	slices.SortFunc(names, func(a, b string) bool {
-		return strings.Compare(a, b) < 0
+	slices.SortFunc(names, func(a, b string) int {
+		return strings.Compare(a, b)
 	})
 	for _, n := range names {
 		if !visitNamesFn(n) {
