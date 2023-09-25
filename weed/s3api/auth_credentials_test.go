@@ -176,8 +176,8 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 				},
 			},
 			expectIdent: &Identity{
-				Name:      "notSpecifyAccountId",
-				AccountId: &AccountAdmin,
+				Name:    "notSpecifyAccountId",
+				Account: &AccountAdmin,
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -193,16 +193,16 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 		"specifiedAccountID": {
 			pbAccount: &pbSpecifiedAccount,
 			pbIdent: &iam_pb.Identity{
-				Name:      "specifiedAccountID",
-				AccountId: &pbSpecifiedAccount,
+				Name:    "specifiedAccountID",
+				Account: &pbSpecifiedAccount,
 				Actions: []string{
 					"Read",
 					"Write",
 				},
 			},
 			expectIdent: &Identity{
-				Name:      "specifiedAccountID",
-				AccountId: &specifiedAccount,
+				Name:    "specifiedAccountID",
+				Account: &specifiedAccount,
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -218,8 +218,8 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 				},
 			},
 			expectIdent: &Identity{
-				Name:      "anonymous",
-				AccountId: &AccountAnonymous,
+				Name:    "anonymous",
+				Account: &AccountAnonymous,
 				Actions: []Action{
 					"Read",
 					"Write",
