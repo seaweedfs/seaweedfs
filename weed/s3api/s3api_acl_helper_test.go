@@ -1,34 +1,38 @@
-package s3acl
+package s3api
 
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"io"
 	"net/http"
 	"testing"
 )
 
-var (
-	accountManager = &s3account.AccountManager{
-		IdNameMapping: map[string]string{
-			s3account.AccountAdmin.Id:     s3account.AccountAdmin.Name,
-			s3account.AccountAnonymous.Id: s3account.AccountAnonymous.Name,
-			"accountA":                    "accountA",
-			"accountB":                    "accountB",
+var accountManager *IdentityAccessManagement
+
+func init() {
+	accountManager = &IdentityAccessManagement{}
+	_ = accountManager.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Accounts: []*iam_pb.Account{
+			{
+				Id:           "accountA",
+				DisplayName:  "accountAName",
+				EmailAddress: "accountA@example.com",
+			},
+			{
+				Id:           "accountB",
+				DisplayName:  "accountBName",
+				EmailAddress: "accountB@example.com",
+			},
 		},
-		EmailIdMapping: map[string]string{
-			s3account.AccountAdmin.EmailAddress:     s3account.AccountAdmin.Id,
-			s3account.AccountAnonymous.EmailAddress: s3account.AccountAnonymous.Id,
-			"accountA@example.com":                  "accountA",
-			"accountBexample.com":                   "accountB",
-		},
-	}
-)
+	})
+}
 
 func TestGetAccountId(t *testing.T) {
 	req := &http.Request{
@@ -36,22 +40,22 @@ func TestGetAccountId(t *testing.T) {
 	}
 	//case1
 	//accountId: "admin"
-	req.Header.Set(s3_constants.AmzAccountId, s3account.AccountAdmin.Id)
-	if GetAccountId(req) != s3account.AccountAdmin.Id {
+	req.Header.Set(s3_constants.AmzAccountId, s3_constants.AccountAdminId)
+	if GetAccountId(req) != s3_constants.AccountAdminId {
 		t.Fatal("expect accountId: admin")
 	}
 
 	//case2
 	//accountId: "anoymous"
-	req.Header.Set(s3_constants.AmzAccountId, s3account.AccountAnonymous.Id)
-	if GetAccountId(req) != s3account.AccountAnonymous.Id {
+	req.Header.Set(s3_constants.AmzAccountId, s3_constants.AccountAnonymousId)
+	if GetAccountId(req) != s3_constants.AccountAnonymousId {
 		t.Fatal("expect accountId: anonymous")
 	}
 
 	//case3
 	//accountId is nil => "anonymous"
 	req.Header.Del(s3_constants.AmzAccountId)
-	if GetAccountId(req) != s3account.AccountAnonymous.Id {
+	if GetAccountId(req) != s3_constants.AccountAnonymousId {
 		t.Fatal("expect accountId: anonymous")
 	}
 }
@@ -64,7 +68,6 @@ func TestExtractAcl(t *testing.T) {
 	}
 	testCases := make([]*Case, 0)
 	accountAdminId := "admin"
-
 	{
 		//case1 (good case)
 		//parse acp from request body
@@ -249,14 +252,14 @@ func TestParseAndValidateAclHeaders(t *testing.T) {
 				{
 					Grantee: &s3.Grantee{
 						Type: &s3_constants.GrantTypeCanonicalUser,
-						ID:   &s3account.AccountAnonymous.Id,
+						ID:   aws.String(s3_constants.AccountAnonymousId),
 					},
 					Permission: &s3_constants.PermissionFullControl,
 				},
 				{
 					Grantee: &s3.Grantee{
 						Type: &s3_constants.GrantTypeCanonicalUser,
-						ID:   &s3account.AccountAdmin.Id,
+						ID:   aws.String(s3_constants.AccountAdminId),
 					},
 					Permission: &s3_constants.PermissionFullControl,
 				},
@@ -391,7 +394,7 @@ func grantsEquals(a, b []*s3.Grant) bool {
 func TestDetermineReqGrants(t *testing.T) {
 	{
 		//case1: request account is anonymous
-		accountId := s3account.AccountAnonymous.Id
+		accountId := s3_constants.AccountAnonymousId
 		reqPermission := s3_constants.PermissionRead
 
 		resultGrants := DetermineReqGrants(accountId, reqPermission)
@@ -496,7 +499,7 @@ func TestAssembleEntryWithAcp(t *testing.T) {
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
 				Type: &s3_constants.GrantTypeGroup,
-				ID:   &s3account.AccountAdmin.Id,
+				ID:   aws.String(s3_constants.AccountAdminId),
 				URI:  &s3_constants.GranteeGroupAllUsers,
 			},
 		},
@@ -569,13 +572,13 @@ func TestGrantEquals(t *testing.T) {
 		GrantEquals(&s3.Grant{
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
-				ID:           &s3account.AccountAdmin.Id,
-				EmailAddress: &s3account.AccountAdmin.EmailAddress,
+				ID: aws.String(s3_constants.AccountAdminId),
+				//EmailAddress: &s3account.AccountAdmin.EmailAddress,
 			},
 		}, &s3.Grant{
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
-				ID: &s3account.AccountAdmin.Id,
+				ID: aws.String(s3_constants.AccountAdminId),
 			},
 		}): true,
 
@@ -623,13 +626,13 @@ func TestGrantEquals(t *testing.T) {
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
 				Type: &s3_constants.GrantTypeGroup,
-				ID:   &s3account.AccountAdmin.Id,
+				ID:   aws.String(s3_constants.AccountAdminId),
 			},
 		}, &s3.Grant{
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
 				Type: &s3_constants.GrantTypeGroup,
-				ID:   &s3account.AccountAdmin.Id,
+				ID:   aws.String(s3_constants.AccountAdminId),
 			},
 		}): true,
 
@@ -637,14 +640,14 @@ func TestGrantEquals(t *testing.T) {
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
 				Type: &s3_constants.GrantTypeGroup,
-				ID:   &s3account.AccountAdmin.Id,
+				ID:   aws.String(s3_constants.AccountAdminId),
 				URI:  &s3_constants.GranteeGroupAllUsers,
 			},
 		}, &s3.Grant{
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
 				Type: &s3_constants.GrantTypeGroup,
-				ID:   &s3account.AccountAdmin.Id,
+				ID:   aws.String(s3_constants.AccountAdminId),
 			},
 		}): false,
 
@@ -652,7 +655,7 @@ func TestGrantEquals(t *testing.T) {
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
 				Type: &s3_constants.GrantTypeGroup,
-				ID:   &s3account.AccountAdmin.Id,
+				ID:   aws.String(s3_constants.AccountAdminId),
 				URI:  &s3_constants.GranteeGroupAllUsers,
 			},
 		}, &s3.Grant{
@@ -692,7 +695,7 @@ func TestSetAcpGrantsHeader(t *testing.T) {
 			Permission: &s3_constants.PermissionRead,
 			Grantee: &s3.Grantee{
 				Type: &s3_constants.GrantTypeGroup,
-				ID:   &s3account.AccountAdmin.Id,
+				ID:   aws.String(s3_constants.AccountAdminId),
 				URI:  &s3_constants.GranteeGroupAllUsers,
 			},
 		},
