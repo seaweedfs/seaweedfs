@@ -400,8 +400,8 @@ func (s *Store) EcVolumes() (ecVolumes []*erasure_coding.EcVolume) {
 		}
 		location.ecVolumesLock.RUnlock()
 	}
-	slices.SortFunc(ecVolumes, func(a, b *erasure_coding.EcVolume) bool {
-		return a.VolumeId > b.VolumeId
+	slices.SortFunc(ecVolumes, func(a, b *erasure_coding.EcVolume) int {
+		return int(b.VolumeId - a.VolumeId)
 	})
 	return ecVolumes
 }

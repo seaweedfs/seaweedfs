@@ -328,8 +328,8 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 
 func keepDataNodesSorted(dataNodes []location, diskType types.DiskType) {
 	fn := capacityByFreeVolumeCount(diskType)
-	slices.SortFunc(dataNodes, func(a, b location) bool {
-		return fn(a.dataNode) > fn(b.dataNode)
+	slices.SortFunc(dataNodes, func(a, b location) int {
+		return int(fn(b.dataNode) - fn(a.dataNode))
 	})
 }
 
@@ -514,17 +514,17 @@ func countReplicas(replicas []*VolumeReplica) (diffDc, diffRack, diffNode map[st
 }
 
 func pickOneReplicaToDelete(replicas []*VolumeReplica, replicaPlacement *super_block.ReplicaPlacement) *VolumeReplica {
-	slices.SortFunc(replicas, func(a, b *VolumeReplica) bool {
+	slices.SortFunc(replicas, func(a, b *VolumeReplica) int {
 		if a.info.Size != b.info.Size {
-			return a.info.Size < b.info.Size
+			return int(a.info.Size - b.info.Size)
 		}
 		if a.info.ModifiedAtSecond != b.info.ModifiedAtSecond {
-			return a.info.ModifiedAtSecond < b.info.ModifiedAtSecond
+			return int(a.info.ModifiedAtSecond - b.info.ModifiedAtSecond)
 		}
 		if a.info.CompactRevision != b.info.CompactRevision {
-			return a.info.CompactRevision < b.info.CompactRevision
+			return int(a.info.CompactRevision - b.info.CompactRevision)
 		}
-		return false
+		return 0
 	})
 
 	return replicas[0]
