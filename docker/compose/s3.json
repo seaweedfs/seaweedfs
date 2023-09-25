@@ -40,7 +40,10 @@
         "List",
         "Tagging",
         "Write"
-      ]
+      ],
+      "account": {
+        "id": "testid"
+      }
     },
     {
       "name": "s3_tests_alt",
@@ -101,5 +104,12 @@
         "Write"
       ]
     }
-  ]
+  ],
+  "accounts": [
+      {
+        "id" : "testid",
+        "displayName": "M. Tester",
+        "emailAddress": "tester@ceph.com"
+      }
+    ]
 }

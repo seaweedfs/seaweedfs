@@ -39,7 +39,7 @@ type IdentityAccessManagement struct {
 
 type Identity struct {
 	Name        string
-	AccountId   *Account
+	Account     *Account
 	Credentials []*Credential
 	Actions     []Action
 }
@@ -80,7 +80,7 @@ type Credential struct {
 }
 
 func (i *Identity) isAnonymous() bool {
-	return i.AccountId.Id == s3_constants.AccountAnonymousId
+	return i.Account.Id == s3_constants.AccountAnonymousId
 }
 
 func (action Action) isAdmin() bool {
@@ -224,15 +224,15 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 		}
 		switch {
 		case ident.Name == AccountAnonymous.Id:
-			t.AccountId = &AccountAnonymous
+			t.Account = &AccountAnonymous
 			identityAnonymous = t
-		case ident.AccountId == nil:
-			t.AccountId = &AccountAdmin
+		case ident.Account == nil:
+			t.Account = &AccountAdmin
 		default:
-			if account, ok := accounts[ident.AccountId.Id]; ok {
-				t.AccountId = account
+			if account, ok := accounts[ident.Account.Id]; ok {
+				t.Account = account
 			} else {
-				t.AccountId = &AccountAdmin
+				t.Account = &AccountAdmin
 				glog.Warningf("identity %s is associated with a non exist account ID, the association is invalid", ident.Name)
 			}
 		}
@@ -387,7 +387,7 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		return identity, s3err.ErrAccessDenied
 	}
 
-	r.Header.Set(s3_constants.AmzAccountId, identity.AccountId.Id)
+	r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
 
 	return identity, s3err.ErrNone
 
