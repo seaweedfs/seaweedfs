@@ -99,7 +99,10 @@ func (k *AwsSqsInput) ReceiveMessage() (key string, message *filer_pb.EventNotif
 	text := *result.Messages[0].Body
 	message = &filer_pb.EventNotification{}
 	err = proto.Unmarshal([]byte(text), message)
-
+	if err != nil {
+		err = fmt.Errorf("unmarshal message from sqs %s: %w", k.queueUrl, err)
+		return
+	}
 	// delete the message
 	_, err = k.svc.DeleteMessage(&sqs.DeleteMessageInput{
 		QueueUrl:      &k.queueUrl,
