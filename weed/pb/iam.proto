@@ -16,13 +16,14 @@ service SeaweedIdentityAccessManagement {
 
 message S3ApiConfiguration {
     repeated Identity identities = 1;
+    repeated Account accounts = 2;
 }
 
 message Identity {
     string name = 1;
     repeated Credential credentials = 2;
     repeated string actions = 3;
-    string accountId = 4;
+    Account account = 4;
 }
 
 message Credential {
@@ -30,6 +31,12 @@ message Credential {
     string secret_key = 2;
     // uint64 expiration = 3;
     // bool is_disabled = 4;
+}
+
+message Account {
+    string id = 1;
+    string display_name = 2;
+    string email_address = 3;
 }
 
 /*

@@ -259,17 +259,18 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	identityId := r.Header.Get(s3_constants.AmzIdentityId)
+	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
+	amzDisplayName := s3a.iam.GetAccountNameById(amzAccountId)
 	response := AccessControlPolicy{
 		Owner: CanonicalUser{
-			ID:          identityId,
-			DisplayName: identityId,
+			ID:          amzAccountId,
+			DisplayName: amzDisplayName,
 		},
 	}
 	response.AccessControlList.Grant = append(response.AccessControlList.Grant, Grant{
 		Grantee: Grantee{
-			ID:          identityId,
-			DisplayName: identityId,
+			ID:          amzAccountId,
+			DisplayName: amzDisplayName,
 			Type:        "CanonicalUser",
 			XMLXSI:      "CanonicalUser",
 			XMLNS:       "http://www.w3.org/2001/XMLSchema-instance"},
