@@ -43,7 +43,7 @@ func Test_allocateOneBroker(t *testing.T) {
 
 type args struct {
 	brokers        cmap.ConcurrentMap[string, *BrokerStats]
-	partitionCount int
+	partitionCount int32
 }
 
 func testThem(t *testing.T, tests []struct {
