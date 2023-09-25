@@ -111,7 +111,7 @@ require (
 	go.opencensus.io v0.24.0 // indirect
 	gocloud.dev v0.34.0
 	gocloud.dev/pubsub/natspubsub v0.33.0
-	gocloud.dev/pubsub/rabbitpubsub v0.33.0
+	gocloud.dev/pubsub/rabbitpubsub v0.34.0
 	golang.org/x/crypto v0.13.0 // indirect
 	golang.org/x/exp v0.0.0-20230321023759-10a507213a29
 	golang.org/x/image v0.11.0
@@ -268,7 +268,6 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/putdotio/go-putio/putio v0.0.0-20200123120452-16d982cac2b8 // indirect
 	github.com/rclone/ftp v0.0.0-20230327202000-dadc1f64e87d // indirect
-	github.com/rdleal/intervalst v0.0.0-20221028215511-a098aa0d2cb8 // indirect
 	github.com/rfjakob/eme v1.1.2 // indirect
 	github.com/rivo/uniseg v0.4.4 // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect
