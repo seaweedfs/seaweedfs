@@ -2,6 +2,8 @@ package broker
 
 import (
 	"context"
+	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/mq/balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -29,12 +31,22 @@ func (broker *MessageQueueBroker) CreateTopic(ctx context.Context, request *mq_p
 	ret.BrokerPartitionAssignments, err = broker.Balancer.LookupOrAllocateTopicPartitions(request.Topic, true, request.PartitionCount)
 
 	for _, bpa := range ret.BrokerPartitionAssignments {
+		// fmt.Printf("create topic %s on %s\n", request.Topic, bpa.LeaderBroker)
 		if doCreateErr := broker.withBrokerClient(false, pb.ServerAddress(bpa.LeaderBroker), func(client mq_pb.SeaweedMessagingClient) error {
 			_, doCreateErr := client.DoCreateTopic(ctx, &mq_pb.DoCreateTopicRequest{
 				Topic:     request.Topic,
 				Partition: bpa.Partition,
 			})
-			return doCreateErr
+			if doCreateErr != nil {
+				return fmt.Errorf("do create topic %s on %s: %v", request.Topic, bpa.LeaderBroker, doCreateErr)
+			}
+			brokerStats, found := broker.Balancer.Brokers.Get(bpa.LeaderBroker)
+			if !found {
+				brokerStats = balancer.NewBrokerStats()
+				broker.Balancer.Brokers.Set(bpa.LeaderBroker, brokerStats)
+			}
+			brokerStats.RegisterAssignment(request.Topic, bpa.Partition)
+			return nil
 		}); doCreateErr != nil {
 			return nil, doCreateErr
 		}

@@ -24,6 +24,7 @@ func (broker *MessageQueueBroker) ConnectToBalancer(stream mq_pb.SeaweedMessagin
 	if initMessage != nil {
 		broker.Balancer.Brokers.Set(initMessage.Broker, brokerStats)
 	} else {
+		// TODO fix this
 		return status.Errorf(codes.InvalidArgument, "balancer init message is empty")
 	}
 	defer func() {
@@ -42,8 +43,8 @@ func (broker *MessageQueueBroker) ConnectToBalancer(stream mq_pb.SeaweedMessagin
 		if receivedStats := req.GetStats(); receivedStats != nil {
 			brokerStats.UpdateStats(receivedStats)
 
-			glog.V(3).Infof("broker %s stats: %+v", initMessage.Broker, brokerStats)
-			glog.V(3).Infof("received stats: %+v", receivedStats)
+			glog.V(4).Infof("broker %s stats: %+v", initMessage.Broker, brokerStats)
+			glog.V(4).Infof("received stats: %+v", receivedStats)
 		}
 	}
 

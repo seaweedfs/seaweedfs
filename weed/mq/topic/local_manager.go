@@ -63,7 +63,13 @@ func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.Br
 	}
 	manager.topics.IterCb(func(topic string, localTopic *LocalTopic) {
 		for _, localPartition := range localTopic.Partitions {
-			stats.Stats[topic] = &mq_pb.TopicPartitionStats{
+			topicPartition := &TopicPartition{
+				Namespace:  string(localTopic.Namespace),
+				Topic:      localTopic.Name,
+				RangeStart: localPartition.RangeStart,
+				RangeStop:  localPartition.RangeStop,
+			}
+			stats.Stats[topicPartition.String()] = &mq_pb.TopicPartitionStats{
 				Topic: &mq_pb.Topic{
 					Namespace: string(localTopic.Namespace),
 					Name:      localTopic.Name,
@@ -75,6 +81,7 @@ func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.Br
 				},
 				ConsumerCount: localPartition.ConsumerCount,
 			}
+			// fmt.Printf("collect topic %+v partition %+v\n", topicPartition, localPartition.Partition)
 		}
 	})
 

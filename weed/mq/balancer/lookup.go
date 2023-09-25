@@ -24,11 +24,8 @@ func (b *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, publish b
 						RangeStop:  topicPartitionStat.RangeStop,
 					},
 				}
-				if topicPartitionStat.IsLeader {
-					assignment.LeaderBroker = broker
-				} else {
-					assignment.FollowerBrokers = append(assignment.FollowerBrokers, broker)
-				}
+				// TODO fix follower setting
+				assignment.LeaderBroker = broker
 				assignments = append(assignments, assignment)
 			}
 		}

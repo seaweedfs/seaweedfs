@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -62,7 +63,7 @@ func (broker *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb
 	}
 
 	ret := &mq_pb.ListTopicsResponse{}
-	knownTopics := make(map[*mq_pb.Topic]struct{})
+	knownTopics := make(map[string]struct{})
 	for brokerStatsItem := range broker.Balancer.Brokers.IterBuffered() {
 		_, brokerStats := brokerStatsItem.Key, brokerStatsItem.Val
 		for topicPartitionStatsItem := range brokerStats.Stats.IterBuffered() {
@@ -71,9 +72,11 @@ func (broker *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb
 				Namespace: topicPartitionStat.TopicPartition.Namespace,
 				Name:      topicPartitionStat.TopicPartition.Topic,
 			}
-			if _, found := knownTopics[topic]; found {
+			topicKey := fmt.Sprintf("%s/%s", topic.Namespace, topic.Name)
+			if _, found := knownTopics[topicKey]; found {
 				continue
 			}
+			knownTopics[topicKey] = struct{}{}
 			ret.Topics = append(ret.Topics, topic)
 		}
 	}
