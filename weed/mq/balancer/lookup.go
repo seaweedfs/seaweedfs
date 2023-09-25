@@ -1,10 +1,15 @@
 package balancer
 
 import (
+	"errors"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
 
-func (b *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, publish bool) (assignments []*mq_pb.BrokerPartitionAssignment, err error) {
+var (
+	ErrNoBroker = errors.New("no broker")
+)
+
+func (b *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, publish bool, partitionCount int32) (assignments []*mq_pb.BrokerPartitionAssignment, err error) {
 	// find existing topic partition assignments
 	for brokerStatsItem := range b.Brokers.IterBuffered() {
 		broker, brokerStats := brokerStatsItem.Key, brokerStatsItem.Val
@@ -19,11 +24,8 @@ func (b *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, publish b
 						RangeStop:  topicPartitionStat.RangeStop,
 					},
 				}
-				if topicPartitionStat.IsLeader {
-					assignment.LeaderBroker = broker
-				} else {
-					assignment.FollowerBrokers = append(assignment.FollowerBrokers, broker)
-				}
+				// TODO fix follower setting
+				assignment.LeaderBroker = broker
 				assignments = append(assignments, assignment)
 			}
 		}
@@ -39,5 +41,8 @@ func (b *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, publish b
 	//   if the request is_for_subscribe
 	//     return error not found
 	// t := topic.FromPbTopic(request.Topic)
-	return allocateTopicPartitions(b.Brokers, 6), nil
+	if b.Brokers.IsEmpty() {
+		return nil, ErrNoBroker
+	}
+	return allocateTopicPartitions(b.Brokers, partitionCount), nil
 }

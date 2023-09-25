@@ -16,11 +16,11 @@ type LockTable[T comparable] struct {
 }
 
 type LockEntry struct {
-	mu                   sync.Mutex
-	waiters              []*ActiveLock // ordered waiters that are blocked by exclusive locks
-	activeLockOwnerCount int32
-	lockType             LockType
-	cond                 *sync.Cond
+	mu                            sync.Mutex
+	waiters                       []*ActiveLock // ordered waiters that are blocked by exclusive locks
+	activeSharedLockOwnerCount    int32
+	activeExclusiveLockOwnerCount int32
+	cond                          *sync.Cond
 }
 
 type LockType int
@@ -34,6 +34,7 @@ type ActiveLock struct {
 	ID        int64
 	isDeleted bool
 	intention string // for debugging
+	lockType  LockType
 }
 
 func NewLockTable[T comparable]() *LockTable[T] {
@@ -42,9 +43,9 @@ func NewLockTable[T comparable]() *LockTable[T] {
 	}
 }
 
-func (lt *LockTable[T]) NewActiveLock(intention string) *ActiveLock {
+func (lt *LockTable[T]) NewActiveLock(intention string, lockType LockType) *ActiveLock {
 	id := atomic.AddInt64(&lt.lockIdSeq, 1)
-	l := &ActiveLock{ID: id, intention: intention}
+	l := &ActiveLock{ID: id, intention: intention, lockType: lockType}
 	return l
 }
 
@@ -59,25 +60,27 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 	}
 	lt.mu.Unlock()
 
-	lock = lt.NewActiveLock(intention)
+	lock = lt.NewActiveLock(intention, lockType)
 
 	// If the lock is held exclusively, wait
 	entry.mu.Lock()
-	if len(entry.waiters) > 0 || lockType == ExclusiveLock {
-		glog.V(4).Infof("ActiveLock %d %s wait for %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeLockOwnerCount)
-		if glog.V(4) && len(entry.waiters) > 0 {
-			for _, waiter := range entry.waiters {
-				fmt.Printf(" %d", waiter.ID)
+	if len(entry.waiters) > 0 || lockType == ExclusiveLock || entry.activeExclusiveLockOwnerCount > 0 {
+		if glog.V(4) {
+			fmt.Printf("ActiveLock %d %s wait for %+v type=%v with waiters %d active r%d w%d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeSharedLockOwnerCount, entry.activeExclusiveLockOwnerCount)
+			if len(entry.waiters) > 0 {
+				for _, waiter := range entry.waiters {
+					fmt.Printf(" %d", waiter.ID)
+				}
+				fmt.Printf("\n")
 			}
-			fmt.Printf("\n")
 		}
 		entry.waiters = append(entry.waiters, lock)
 		if lockType == ExclusiveLock {
-			for !lock.isDeleted && ((len(entry.waiters) > 0 && lock.ID != entry.waiters[0].ID) || entry.activeLockOwnerCount > 0) {
+			for !lock.isDeleted && ((len(entry.waiters) > 0 && lock.ID != entry.waiters[0].ID) || entry.activeExclusiveLockOwnerCount > 0 || entry.activeSharedLockOwnerCount > 0) {
 				entry.cond.Wait()
 			}
 		} else {
-			for !lock.isDeleted && (len(entry.waiters) > 0 && lock.ID != entry.waiters[0].ID) {
+			for !lock.isDeleted && (len(entry.waiters) > 0 && lock.ID != entry.waiters[0].ID) || entry.activeExclusiveLockOwnerCount > 0 {
 				entry.cond.Wait()
 			}
 		}
@@ -87,16 +90,21 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 			entry.cond.Broadcast()
 		}
 	}
-	entry.activeLockOwnerCount++
 
 	// Otherwise, grant the lock
-	entry.lockType = lockType
-	glog.V(4).Infof("ActiveLock %d %s locked %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeLockOwnerCount)
-	if glog.V(4) && len(entry.waiters) > 0 {
-		for _, waiter := range entry.waiters {
-			fmt.Printf(" %d", waiter.ID)
+	if glog.V(4) {
+		fmt.Printf("ActiveLock %d %s locked %+v type=%v with waiters %d active r%d w%d.\n", lock.ID, lock.intention, key, lockType, len(entry.waiters), entry.activeSharedLockOwnerCount, entry.activeExclusiveLockOwnerCount)
+		if len(entry.waiters) > 0 {
+			for _, waiter := range entry.waiters {
+				fmt.Printf(" %d", waiter.ID)
+			}
+			fmt.Printf("\n")
 		}
-		fmt.Printf("\n")
+	}
+	if lock.lockType == ExclusiveLock {
+		entry.activeExclusiveLockOwnerCount++
+	} else {
+		entry.activeSharedLockOwnerCount++
 	}
 	entry.mu.Unlock()
 
@@ -125,18 +133,24 @@ func (lt *LockTable[T]) ReleaseLock(key T, lock *ActiveLock) {
 	}
 
 	// If there are no waiters, release the lock
-	if len(entry.waiters) == 0 {
+	if len(entry.waiters) == 0 && entry.activeExclusiveLockOwnerCount <= 0 && entry.activeSharedLockOwnerCount <= 0 {
 		delete(lt.locks, key)
 	}
 
-	glog.V(4).Infof("ActiveLock %d %s unlocked %+v type=%v with waiters %d active %d.\n", lock.ID, lock.intention, key, entry.lockType, len(entry.waiters), entry.activeLockOwnerCount)
-	if len(entry.waiters) > 0 {
-		for _, waiter := range entry.waiters {
-			fmt.Printf(" %d", waiter.ID)
+	if glog.V(4) {
+		fmt.Printf("ActiveLock %d %s unlocked %+v type=%v with waiters %d active r%d w%d.\n", lock.ID, lock.intention, key, lock.lockType, len(entry.waiters), entry.activeSharedLockOwnerCount, entry.activeExclusiveLockOwnerCount)
+		if len(entry.waiters) > 0 {
+			for _, waiter := range entry.waiters {
+				fmt.Printf(" %d", waiter.ID)
+			}
+			fmt.Printf("\n")
 		}
-		fmt.Printf("\n")
 	}
-	entry.activeLockOwnerCount--
+	if lock.lockType == ExclusiveLock {
+		entry.activeExclusiveLockOwnerCount--
+	} else {
+		entry.activeSharedLockOwnerCount--
+	}
 
 	// Notify the next waiter
 	entry.cond.Broadcast()

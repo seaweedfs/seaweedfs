@@ -26,6 +26,12 @@ service SeaweedMessaging {
     // control plane for topic partitions
     rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
     }
+    rpc CreateTopic (CreateTopicRequest) returns (CreateTopicResponse) {
+    }
+    rpc DoCreateTopic (DoCreateTopicRequest) returns (DoCreateTopicResponse) {
+    }
+    rpc ListTopics (ListTopicsRequest) returns (ListTopicsResponse) {
+    }
     // a pub client will call this to get the topic partitions assignment
     rpc RequestTopicPartitions (RequestTopicPartitionsRequest) returns (RequestTopicPartitionsResponse) {
     }
@@ -128,6 +134,24 @@ message ConnectToBalancerRequest {
 message ConnectToBalancerResponse {
 }
 //////////////////////////////////////////////////
+message CreateTopicRequest {
+    Topic topic = 1;
+    int32 partition_count = 2;
+}
+message CreateTopicResponse {
+    repeated BrokerPartitionAssignment broker_partition_assignments = 2;
+}
+message DoCreateTopicRequest {
+    Topic topic = 1;
+    Partition partition = 2;
+}
+message DoCreateTopicResponse {
+}
+message ListTopicsRequest {
+}
+message ListTopicsResponse {
+    repeated Topic topics = 1;
+}
 message LookupTopicBrokersRequest {
     Topic topic = 1;
     bool is_for_publish = 2;

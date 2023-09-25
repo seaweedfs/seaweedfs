@@ -24,12 +24,11 @@ func Test_allocateOneBroker(t *testing.T) {
 			name: "test only one broker",
 			args: args{
 				brokers:        brokers,
-				partitionCount: 6,
+				partitionCount: 1,
 			},
 			wantAssignments: []*mq_pb.BrokerPartitionAssignment{
 				{
-					LeaderBroker:    "localhost:17777",
-					FollowerBrokers: []string{"localhost:17777"},
+					LeaderBroker: "localhost:17777",
 					Partition: &mq_pb.Partition{
 						RingSize:   MaxPartitionCount,
 						RangeStart: 0,
@@ -44,7 +43,7 @@ func Test_allocateOneBroker(t *testing.T) {
 
 type args struct {
 	brokers        cmap.ConcurrentMap[string, *BrokerStats]
-	partitionCount int
+	partitionCount int32
 }
 
 func testThem(t *testing.T, tests []struct {

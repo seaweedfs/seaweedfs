@@ -70,7 +70,7 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		glog.V(1).Infof("broker %s found filer %s", self, mqBroker.currentFiler)
 
 		lockClient := cluster.NewLockClient(grpcDialOption, mqBroker.currentFiler)
-		mqBroker.lockAsBalancer = lockClient.StartLock(LockBrokerBalancer, self)
+		mqBroker.lockAsBalancer = lockClient.StartLock(balancer.LockBrokerBalancer, self)
 		for {
 			err := mqBroker.BrokerConnectToBalancer(self)
 			if err != nil {

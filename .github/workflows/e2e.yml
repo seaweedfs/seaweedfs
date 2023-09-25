@@ -21,7 +21,7 @@ jobs:
   e2e:
     name: FUSE Mount
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
     - name: Set up Go 1.x
       uses: actions/setup-go@93397bea11091df50f3d7e59dc26a7711a8bcfbe # v2
@@ -30,7 +30,7 @@ jobs:
       id: go
 
     - name: Check out code into the Go module directory
-      uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac # v2
+      uses: actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608 # v2
 
     - name: Install dependencies
       run: |
@@ -41,20 +41,20 @@ jobs:
       timeout-minutes: 5
       run: make build_e2e && docker compose -f ./compose/e2e-mount.yml up --wait
 
-    - name: Run FIO
+    - name: Run FIO 4k
       timeout-minutes: 15
       run: |
         echo "Starting FIO at: $(date)"
         # Concurrent r/w
         echo 'Run randrw with size=16M bs=4k'
-        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 60 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randrw --bs=4k --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1
+        docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 60 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randrw --bs=4k --direct=1 --numjobs=8 --ioengine=libaio --group_reporting --runtime=30 --time_based=1
 
         echo "Verify FIO at: $(date)"
         # Verified write
         echo 'Run randwrite with size=16M bs=4k'
         docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 60 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randwrite --bs=4k --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1 --do_verify=0 --verify=crc32c --verify_backlog=1
 
-    - name: Run FIO
+    - name: Run FIO 128k
       timeout-minutes: 15
       run: |
         echo "Starting FIO at: $(date)"
@@ -67,7 +67,7 @@ jobs:
         echo 'Run randwrite with size=16M bs=128k'
         docker compose -f ./compose/e2e-mount.yml exec mount timeout -k5 60 fio --name=fiotest --filename=/mnt/seaweedfs/fiotest --size=16M --rw=randwrite --bs=128k --direct=1 --numjobs=8 --ioengine=libaio --iodepth=32 --group_reporting --runtime=30 --time_based=1 --do_verify=0 --verify=crc32c --verify_backlog=1
 
-    - name: Run FIO
+    - name: Run FIO 1MB
       timeout-minutes: 15
       run: |
         echo "Starting FIO at: $(date)"

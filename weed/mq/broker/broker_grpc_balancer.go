@@ -8,7 +8,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// BrokerConnectToBalancer receives connections from brokers and collects stats
+// ConnectToBalancer receives connections from brokers and collects stats
 func (broker *MessageQueueBroker) ConnectToBalancer(stream mq_pb.SeaweedMessaging_ConnectToBalancerServer) error {
 	if !broker.lockAsBalancer.IsLocked() {
 		return status.Errorf(codes.Unavailable, "not current broker balancer")
@@ -20,9 +20,16 @@ func (broker *MessageQueueBroker) ConnectToBalancer(stream mq_pb.SeaweedMessagin
 
 	// process init message
 	initMessage := req.GetInit()
-	brokerStats := balancer.NewBrokerStats()
+	var brokerStats *balancer.BrokerStats
 	if initMessage != nil {
-		broker.Balancer.Brokers.Set(initMessage.Broker, brokerStats)
+		var found bool
+		brokerStats, found = broker.Balancer.Brokers.Get(initMessage.Broker)
+		if !found {
+			brokerStats = balancer.NewBrokerStats()
+			if !broker.Balancer.Brokers.SetIfAbsent(initMessage.Broker, brokerStats) {
+				brokerStats, _ = broker.Balancer.Brokers.Get(initMessage.Broker)
+			}
+		}
 	} else {
 		return status.Errorf(codes.InvalidArgument, "balancer init message is empty")
 	}
@@ -42,7 +49,8 @@ func (broker *MessageQueueBroker) ConnectToBalancer(stream mq_pb.SeaweedMessagin
 		if receivedStats := req.GetStats(); receivedStats != nil {
 			brokerStats.UpdateStats(receivedStats)
 
-			glog.V(3).Infof("broker %s stats: %+v", initMessage.Broker, brokerStats)
+			glog.V(4).Infof("broker %s stats: %+v", initMessage.Broker, brokerStats)
+			glog.V(4).Infof("received stats: %+v", receivedStats)
 		}
 	}
 

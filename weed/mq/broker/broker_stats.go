@@ -4,15 +4,12 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mq/balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"math/rand"
 	"time"
-)
-
-const (
-	LockBrokerBalancer = "broker_balancer"
 )
 
 // BrokerConnectToBalancer connects to the broker balancer and sends stats
@@ -21,7 +18,7 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 	var brokerBalancer string
 	err := broker.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.FindLockOwner(context.Background(), &filer_pb.FindLockOwnerRequest{
-			Name: LockBrokerBalancer,
+			Name: balancer.LockBrokerBalancer,
 		})
 		if err != nil {
 			return err
@@ -32,6 +29,7 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 	if err != nil {
 		return err
 	}
+	broker.currentBalancer = pb.ServerAddress(brokerBalancer)
 
 	glog.V(1).Infof("broker %s found balancer %s", self, brokerBalancer)
 
@@ -63,6 +61,7 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 			if err != nil {
 				return fmt.Errorf("send stats message: %v", err)
 			}
+			glog.V(3).Infof("sent stats: %+v", stats)
 
 			time.Sleep(time.Millisecond*5000 + time.Duration(rand.Intn(1000))*time.Millisecond)
 		}
