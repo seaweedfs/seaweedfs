@@ -3,12 +3,14 @@ package wdclient
 import (
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -109,7 +111,8 @@ func (vc *vidMap) LookupFileId(fileId string) (fullUrls []string, err error) {
 		return nil, lookupError
 	}
 	for _, serverUrl := range serverUrls {
-		fullUrls = append(fullUrls, "http://"+serverUrl+"/"+fileId)
+		fullUrls = append(fullUrls, util.HttpScheme("client")+serverUrl+"/"+fileId)
+
 	}
 	return
 }
