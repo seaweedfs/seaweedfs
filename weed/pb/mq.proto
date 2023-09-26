@@ -26,9 +26,9 @@ service SeaweedMessaging {
     // control plane for topic partitions
     rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
     }
-    rpc CreateTopic (CreateTopicRequest) returns (CreateTopicResponse) {
+    rpc ConfigureTopic (ConfigureTopicRequest) returns (ConfigureTopicResponse) {
     }
-    rpc DoCreateTopic (DoCreateTopicRequest) returns (DoCreateTopicResponse) {
+    rpc DoConfigureTopic (DoConfigureTopicRequest) returns (DoConfigureTopicResponse) {
     }
     rpc ListTopics (ListTopicsRequest) returns (ListTopicsResponse) {
     }
@@ -134,18 +134,18 @@ message ConnectToBalancerRequest {
 message ConnectToBalancerResponse {
 }
 //////////////////////////////////////////////////
-message CreateTopicRequest {
+message ConfigureTopicRequest {
     Topic topic = 1;
     int32 partition_count = 2;
 }
-message CreateTopicResponse {
+message ConfigureTopicResponse {
     repeated BrokerPartitionAssignment broker_partition_assignments = 2;
 }
-message DoCreateTopicRequest {
+message DoConfigureTopicRequest {
     Topic topic = 1;
     Partition partition = 2;
 }
-message DoCreateTopicResponse {
+message DoConfigureTopicResponse {
 }
 message ListTopicsRequest {
 }

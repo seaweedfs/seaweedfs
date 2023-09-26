@@ -11,14 +11,14 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// CreateTopic Runs on any broker, but proxied to the balancer if not the balancer
-func (broker *MessageQueueBroker) CreateTopic(ctx context.Context, request *mq_pb.CreateTopicRequest) (resp *mq_pb.CreateTopicResponse, err error) {
+// ConfigureTopic Runs on any broker, but proxied to the balancer if not the balancer
+func (broker *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.ConfigureTopicRequest) (resp *mq_pb.ConfigureTopicResponse, err error) {
 	if broker.currentBalancer == "" {
 		return nil, status.Errorf(codes.Unavailable, "no balancer")
 	}
 	if !broker.lockAsBalancer.IsLocked() {
 		proxyErr := broker.withBrokerClient(false, broker.currentBalancer, func(client mq_pb.SeaweedMessagingClient) error {
-			resp, err = client.CreateTopic(ctx, request)
+			resp, err = client.ConfigureTopic(ctx, request)
 			return nil
 		})
 		if proxyErr != nil {
@@ -27,13 +27,13 @@ func (broker *MessageQueueBroker) CreateTopic(ctx context.Context, request *mq_p
 		return resp, err
 	}
 
-	ret := &mq_pb.CreateTopicResponse{}
+	ret := &mq_pb.ConfigureTopicResponse{}
 	ret.BrokerPartitionAssignments, err = broker.Balancer.LookupOrAllocateTopicPartitions(request.Topic, true, request.PartitionCount)
 
 	for _, bpa := range ret.BrokerPartitionAssignments {
 		// fmt.Printf("create topic %s on %s\n", request.Topic, bpa.LeaderBroker)
 		if doCreateErr := broker.withBrokerClient(false, pb.ServerAddress(bpa.LeaderBroker), func(client mq_pb.SeaweedMessagingClient) error {
-			_, doCreateErr := client.DoCreateTopic(ctx, &mq_pb.DoCreateTopicRequest{
+			_, doCreateErr := client.DoConfigureTopic(ctx, &mq_pb.DoConfigureTopicRequest{
 				Topic:     request.Topic,
 				Partition: bpa.Partition,
 			})
@@ -59,8 +59,8 @@ func (broker *MessageQueueBroker) CreateTopic(ctx context.Context, request *mq_p
 	return ret, err
 }
 
-func (broker *MessageQueueBroker) DoCreateTopic(ctx context.Context, req *mq_pb.DoCreateTopicRequest) (resp *mq_pb.DoCreateTopicResponse, err error) {
-	ret := &mq_pb.DoCreateTopicResponse{}
+func (broker *MessageQueueBroker) DoConfigureTopic(ctx context.Context, req *mq_pb.DoConfigureTopicRequest) (resp *mq_pb.DoConfigureTopicResponse, err error) {
+	ret := &mq_pb.DoConfigureTopicResponse{}
 	t, p := topic.FromPbTopic(req.Topic), topic.FromPbPartition(req.Partition)
 	localTopicPartition := broker.localTopicManager.GetTopicPartition(t, p)
 	if localTopicPartition == nil {

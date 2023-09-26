@@ -49,7 +49,7 @@ func (c *commandMqTopicCreate) Do(args []string, commandEnv *CommandEnv, writer 
 
 	// create topic
 	return pb.WithBrokerGrpcClient(false, brokerBalancer, commandEnv.option.GrpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
-		resp, err := client.CreateTopic(context.Background(), &mq_pb.CreateTopicRequest{
+		resp, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
 			Topic: &mq_pb.Topic{
 				Namespace: *namespace,
 				Name:      *topicName,
