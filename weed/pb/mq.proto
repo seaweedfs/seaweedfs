@@ -60,18 +60,18 @@ message CreateTableSnapshotRequest {
     string aws_secret_access_key = 5;
 }
 
-enum TableSnapshotStatus {
-    TABLE_SNAPSHOT_STATUS_UNKNOWN = 0;
-    TABLE_SNAPSHOT_STATUS_CREATED = 1;
-    TABLE_SNAPSHOT_STATUS_FAILED = 2;  // the error will be reported in the error string
-    TABLE_SNAPSHOT_STATUS_TRY_LATER = 3; // when the cluster has other snapshots in progress
-    TABLE_SNAPSHOT_STATUS_RUNNING = 4;
-    TABLE_SNAPSHOT_STATUS_DONE = 5;
+enum JobStatus {
+    JOB_STATUS_UNKNOWN = 0;
+    JOB_STATUS_CREATED = 1;
+    JOB_STATUS_FAILED = 2;  // the error will be reported in the error string
+    JOB_STATUS_TRY_LATER = 3; // when the cluster has other snapshots in progress
+    JOB_STATUS_RUNNING = 4;
+    JOB_STATUS_DONE = 5;
 }
 
 message CreateTableSnapshotResponse {
     string job_id = 1;
-    TableSnapshotStatus status = 2;
+    JobStatus status = 2;
     string error = 3;
 }
 
@@ -79,7 +79,7 @@ message CheckJobStatusRequest {
     string job_id = 1;
 }
 message CheckJobStatusResponse {
-    TableSnapshotStatus status = 1;
+    JobStatus status = 1;
     string error = 2;
 }
 
