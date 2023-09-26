@@ -95,14 +95,15 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		for vid, replicas := range volumeReplicas {
 			replica := replicas[0]
 			replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replica.info.ReplicaPlacement))
-			if replicaPlacement.GetCopyCount() > len(replicas) {
+			switch {
+			case replicaPlacement.GetCopyCount() > len(replicas):
 				underReplicatedVolumeIds = append(underReplicatedVolumeIds, vid)
-			} else if replicaPlacement.GetCopyCount() < len(replicas) {
+			case isMisplaced(replicas, replicaPlacement):
+				misplacedVolumeIds = append(misplacedVolumeIds, vid)
+				fmt.Fprintf(writer, "volume %d replication %s is not well placed %+v\n", replica.info.Id, replicaPlacement, replica)
+			case replicaPlacement.GetCopyCount() < len(replicas):
 				overReplicatedVolumeIds = append(overReplicatedVolumeIds, vid)
 				fmt.Fprintf(writer, "volume %d replication %s, but over replicated %+d\n", replica.info.Id, replicaPlacement, len(replicas))
-			} else if isMisplaced(replicas, replicaPlacement) {
-				misplacedVolumeIds = append(misplacedVolumeIds, vid)
-				fmt.Fprintf(writer, "volume %d replication %s is not well placed %+v\n", replica.info.Id, replicaPlacement, replicas)
 			}
 		}
 
