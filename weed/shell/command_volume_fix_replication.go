@@ -60,7 +60,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	c.collectionPattern = volFixReplicationCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
 	skipChange := volFixReplicationCommand.Bool("n", false, "skip the changes")
 	doDelete := volFixReplicationCommand.Bool("doDelete", true, "Also delete over-replicated volumes besides fixing under-replication")
-	noCheck := volFixReplicationCommand.Bool("noCheck", false, "do not check synchronization before deleting")
+	doCheck := volFixReplicationCommand.Bool("doCheck", true, "Also check synchronization before deleting")
 	retryCount := volFixReplicationCommand.Int("retry", 5, "how many times to retry")
 	volumesPerStep := volFixReplicationCommand.Int("volumesPerStep", 0, "how many volumes to fix in one cycle")
 
@@ -73,8 +73,6 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	}
 
 	takeAction := !*skipChange
-	doDeletes := !*noDelete
-	doCheck := !*noCheck
 
 	underReplicatedVolumeIdsCount := 1
 	for underReplicatedVolumeIdsCount > 0 {
@@ -115,14 +113,14 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 			return fmt.Errorf("lock is lost")
 		}
 
-		if len(overReplicatedVolumeIds) > 0 && doDeletes {
-			if err := c.deleteOneVolume(commandEnv, writer, takeAction, doCheck, overReplicatedVolumeIds, volumeReplicas, allLocations, pickOneReplicaToDelete); err != nil {
+		if len(overReplicatedVolumeIds) > 0 && *doDelete {
+			if err := c.deleteOneVolume(commandEnv, writer, takeAction, *doCheck, overReplicatedVolumeIds, volumeReplicas, allLocations, pickOneReplicaToDelete); err != nil {
 				return err
 			}
 		}
 
-		if len(misplacedVolumeIds) > 0 && doDeletes {
-			if err := c.deleteOneVolume(commandEnv, writer, takeAction, doCheck, misplacedVolumeIds, volumeReplicas, allLocations, pickOneMisplacedVolume); err != nil {
+		if len(misplacedVolumeIds) > 0 && *doDelete {
+			if err := c.deleteOneVolume(commandEnv, writer, takeAction, *doCheck, misplacedVolumeIds, volumeReplicas, allLocations, pickOneMisplacedVolume); err != nil {
 				return err
 			}
 		}
