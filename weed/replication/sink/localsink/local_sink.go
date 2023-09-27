@@ -90,7 +90,7 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 		return os.Mkdir(key, os.FileMode(entry.Attributes.FileMode))
 	}
 
-	dstFile, err := os.OpenFile(key, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(entry.Attributes.FileMode))
+	dstFile, err := os.OpenFile(util.ToShortFileName(key), os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(entry.Attributes.FileMode))
 	if err != nil {
 		return err
 	}
