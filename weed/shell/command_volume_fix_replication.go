@@ -59,7 +59,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 	volFixReplicationCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	c.collectionPattern = volFixReplicationCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
 	skipChange := volFixReplicationCommand.Bool("n", false, "skip the changes")
-	noDelete := volFixReplicationCommand.Bool("noDelete", false, "Do not delete over-replicated volumes, only fix under-replication")
+	doDelete := volFixReplicationCommand.Bool("doDelete", true, "Also delete over-replicated volumes besides fixing under-replication")
 	noCheck := volFixReplicationCommand.Bool("noCheck", false, "do not check synchronization before deleting")
 	retryCount := volFixReplicationCommand.Int("retry", 5, "how many times to retry")
 	volumesPerStep := volFixReplicationCommand.Int("volumesPerStep", 0, "how many volumes to fix in one cycle")
