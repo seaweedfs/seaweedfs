@@ -9,6 +9,7 @@ metadata:
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
 spec:
+  internalTrafficPolicy: {{ .Values.s3.internalTrafficPolicy | default "Cluster" }}
   ports:
   - name: "swfs-s3"
     port: {{ if .Values.s3.enabled }}{{ .Values.s3.port }}{{ else }}{{ .Values.filer.s3.port }}{{ end }}
