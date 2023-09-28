@@ -10,9 +10,9 @@ import (
 // LockTable is a table of locks that can be acquired.
 // Locks are acquired in order of request.
 type LockTable[T comparable] struct {
+	lockIdSeq int64
 	mu        sync.Mutex
 	locks     map[T]*LockEntry
-	lockIdSeq int64
 }
 
 type LockEntry struct {
