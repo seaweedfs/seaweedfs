@@ -10,6 +10,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
 spec:
   clusterIP: None
+  internalTrafficPolicy: {{ .Values.volume.internalTrafficPolicy | default "Cluster" }}
   ports:
   - name: "swfs-volume"
     port: {{ .Values.volume.port }}
