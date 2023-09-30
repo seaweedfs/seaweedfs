@@ -23,12 +23,12 @@ service SeaweedMessaging {
     // control plane for balancer
     rpc ConnectToBalancer (stream ConnectToBalancerRequest) returns (stream ConnectToBalancerResponse) {
     }
+    rpc DoConfigureTopic (DoConfigureTopicRequest) returns (DoConfigureTopicResponse) {
+    }
     // control plane for topic partitions
     rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
     }
     rpc ConfigureTopic (ConfigureTopicRequest) returns (ConfigureTopicResponse) {
-    }
-    rpc DoConfigureTopic (DoConfigureTopicRequest) returns (DoConfigureTopicResponse) {
     }
     rpc ListTopics (ListTopicsRequest) returns (ListTopicsResponse) {
     }
@@ -219,23 +219,30 @@ message SubscribeRequest {
         string consumer_group = 1;
         string consumer_id = 2;
         string client_id = 3;
+        Topic topic = 4;
+        Partition partition = 5;
     }
     message Cursor {
-        Topic topic = 1;
-        Partition partition = 2;
         oneof offset {
-            int64 start_offset = 3;
-            int64 start_timestamp_ns = 4;
+            int64 start_offset = 1;
+            int64 start_timestamp_ns = 2;
         }
-        string filter = 5;
+        string filter = 3;
     }
-    Consumer consumer = 1;
-    Cursor cursor = 2;
+    message AckMessage {
+        int64 sequence = 1;
+    }
+    oneof message {
+        Consumer consumer = 1;
+        Cursor cursor = 2;
+        AckMessage ack = 3;
+    }
 }
 message SubscribeResponse {
     message CtrlMessage {
         string error = 1;
-        string redirect_to_broker = 2;
+        bool is_end_of_stream = 2;
+        bool is_end_of_topic = 3;
     }
     oneof message {
         CtrlMessage ctrl = 1;
