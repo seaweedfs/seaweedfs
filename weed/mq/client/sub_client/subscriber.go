@@ -28,20 +28,15 @@ type TopicSubscriber struct {
 	brokerPartitionAssignments []*mq_pb.BrokerPartitionAssignment
 	OnEachMessageFunc          OnEachMessageFunc
 	OnCompletionFunc           OnCompletionFunc
+	bootstrapBroker            string
 }
 
-func NewTopicSubscriber(subscriber *SubscriberConfiguration, content *ContentConfiguration) *TopicSubscriber {
+func NewTopicSubscriber(bootstrapBroker string, subscriber *SubscriberConfiguration, content *ContentConfiguration) *TopicSubscriber {
 	return &TopicSubscriber{
 		SubscriberConfig: subscriber,
 		ContentConfig:    content,
+		bootstrapBroker:  bootstrapBroker,
 	}
-}
-
-func (sub *TopicSubscriber) Connect(bootstrapBroker string) error {
-	if err := sub.doLookup(bootstrapBroker); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (sub *TopicSubscriber) SetEachMessageFunc(onEachMessageFn OnEachMessageFunc) {

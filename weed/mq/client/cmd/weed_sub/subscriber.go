@@ -22,11 +22,7 @@ func main() {
 		Filter:    "",
 	}
 
-	subscriber := sub_client.NewTopicSubscriber(subscriberConfig, contentConfig)
-	if err := subscriber.Connect("localhost:17777"); err != nil {
-		fmt.Println(err)
-		return
-	}
+	subscriber := sub_client.NewTopicSubscriber("localhost:17777", subscriberConfig, contentConfig)
 
 	subscriber.SetEachMessageFunc(func(key, value []byte) bool {
 		println(string(key), "=>", string(value))
