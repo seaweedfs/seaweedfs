@@ -70,7 +70,7 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 		StopTsNs:               0,
 		EventErrorType:         pb.FatalOnError,
 	}
-	util.RetryForever("followMetaUpdates", func() error {
+	util.RetryUntil("followMetaUpdates", func() error {
 		clientEpoch++
 		return pb.WithFilerClientFollowMetadata(client, metadataFollowOption, processEventFn)
 	}, func(err error) bool {

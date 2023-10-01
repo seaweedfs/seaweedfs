@@ -57,7 +57,7 @@ func (lc *LockClient) StartLock(key string, owner string) (lock *LiveLock) {
 		lc:             lc,
 	}
 	go func() {
-		util.RetryForever("create lock:"+key, func() error {
+		util.RetryUntil("create lock:"+key, func() error {
 			errorMessage, err := lock.doLock(lock_manager.MaxDuration)
 			if err != nil {
 				glog.Infof("create lock %s: %s", key, err)
@@ -98,7 +98,7 @@ func (lc *LockClient) doNewLock(key string, lockDuration time.Duration, owner st
 		lockDuration = lc.maxLockDuration
 		needRenewal = true
 	}
-	util.RetryForever("create lock:"+key, func() error {
+	util.RetryUntil("create lock:"+key, func() error {
 		errorMessage, err := lock.doLock(lockDuration)
 		if err != nil {
 			time.Sleep(time.Second)
@@ -148,7 +148,7 @@ func (lc *LockClient) keepLock(lock *LiveLock) {
 		select {
 		case <-ticker:
 			// renew the lock if lock.expireAtNs is still greater than now
-			util.RetryForever("keep lock:"+lock.key, func() error {
+			util.RetryUntil("keep lock:"+lock.key, func() error {
 				lockDuration := time.Duration(lock.expireAtNs-time.Now().UnixNano()) * time.Nanosecond
 				if lockDuration > lc.maxLockDuration {
 					lockDuration = lc.maxLockDuration

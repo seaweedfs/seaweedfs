@@ -111,7 +111,7 @@ func runFilerRemoteGateway(cmd *Command, args []string) bool {
 
 	// synchronize /buckets folder
 	fmt.Printf("synchronize buckets in %s ...\n", remoteGatewayOptions.bucketsDir)
-	util.RetryForever("filer.remote.sync buckets", func() error {
+	util.RetryUntil("filer.remote.sync buckets", func() error {
 		return remoteGatewayOptions.followBucketUpdatesAndUploadToRemote(filerSource)
 	}, func(err error) bool {
 		if err != nil {

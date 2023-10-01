@@ -57,7 +57,8 @@ func MultiRetry(name string, errList []string, job func() error) (err error) {
 	return err
 }
 
-func RetryForever(name string, job func() error, onErrFn func(err error) (shouldContinue bool)) {
+// RetryUntil retries until the job returns no error or onErrFn returns false
+func RetryUntil(name string, job func() error, onErrFn func(err error) (shouldContinue bool)) {
 	waitTime := time.Second
 	for {
 		err := job()
@@ -74,6 +75,8 @@ func RetryForever(name string, job func() error, onErrFn func(err error) (should
 				waitTime += waitTime / 2
 			}
 			continue
+		} else {
+			break
 		}
 	}
 }

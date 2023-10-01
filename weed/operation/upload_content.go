@@ -116,7 +116,7 @@ func UploadWithRetry(filerClient filer_pb.FilerClient, assignRequest *filer_pb.A
 		return uploadErr
 	}
 	if uploadOption.RetryForever {
-		util.RetryForever("uploadWithRetryForever", doUploadFunc, func(err error) (shouldContinue bool) {
+		util.RetryUntil("uploadWithRetryForever", doUploadFunc, func(err error) (shouldContinue bool) {
 			glog.V(0).Infof("upload content: %v", err)
 			return true
 		})

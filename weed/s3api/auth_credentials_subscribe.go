@@ -46,7 +46,7 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 		StopTsNs:               0,
 		EventErrorType:         pb.FatalOnError,
 	}
-	util.RetryForever("followIamChanges", func() error {
+	util.RetryUntil("followIamChanges", func() error {
 		clientEpoch++
 		return pb.WithFilerClientFollowMetadata(s3a, metadataFollowOption, processEventFn)
 	}, func(err error) bool {
