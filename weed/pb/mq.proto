@@ -215,27 +215,24 @@ message PublishResponse {
     string redirect_to_broker = 3;
 }
 message SubscribeRequest {
-    message Consumer {
+    message InitMessage {
         string consumer_group = 1;
         string consumer_id = 2;
         string client_id = 3;
         Topic topic = 4;
         Partition partition = 5;
-    }
-    message Cursor {
         oneof offset {
-            int64 start_offset = 1;
-            int64 start_timestamp_ns = 2;
+            int64 start_offset = 6;
+            int64 start_timestamp_ns = 7;
         }
-        string filter = 3;
+        string filter = 8;
     }
     message AckMessage {
         int64 sequence = 1;
     }
     oneof message {
-        Consumer consumer = 1;
-        Cursor cursor = 2;
-        AckMessage ack = 3;
+        InitMessage init = 1;
+        AckMessage ack = 2;
     }
 }
 message SubscribeResponse {

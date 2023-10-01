@@ -29,10 +29,10 @@ type SeaweedMessagingClient interface {
 	CheckBrokerLoad(ctx context.Context, in *CheckBrokerLoadRequest, opts ...grpc.CallOption) (*CheckBrokerLoadResponse, error)
 	// control plane for balancer
 	ConnectToBalancer(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_ConnectToBalancerClient, error)
+	DoConfigureTopic(ctx context.Context, in *DoConfigureTopicRequest, opts ...grpc.CallOption) (*DoConfigureTopicResponse, error)
 	// control plane for topic partitions
 	LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error)
 	ConfigureTopic(ctx context.Context, in *ConfigureTopicRequest, opts ...grpc.CallOption) (*ConfigureTopicResponse, error)
-	DoConfigureTopic(ctx context.Context, in *DoConfigureTopicRequest, opts ...grpc.CallOption) (*DoConfigureTopicResponse, error)
 	ListTopics(ctx context.Context, in *ListTopicsRequest, opts ...grpc.CallOption) (*ListTopicsResponse, error)
 	// a pub client will call this to get the topic partitions assignment
 	RequestTopicPartitions(ctx context.Context, in *RequestTopicPartitionsRequest, opts ...grpc.CallOption) (*RequestTopicPartitionsResponse, error)
@@ -118,6 +118,15 @@ func (x *seaweedMessagingConnectToBalancerClient) Recv() (*ConnectToBalancerResp
 	return m, nil
 }
 
+func (c *seaweedMessagingClient) DoConfigureTopic(ctx context.Context, in *DoConfigureTopicRequest, opts ...grpc.CallOption) (*DoConfigureTopicResponse, error) {
+	out := new(DoConfigureTopicResponse)
+	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/DoConfigureTopic", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *seaweedMessagingClient) LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error) {
 	out := new(LookupTopicBrokersResponse)
 	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/LookupTopicBrokers", in, out, opts...)
@@ -130,15 +139,6 @@ func (c *seaweedMessagingClient) LookupTopicBrokers(ctx context.Context, in *Loo
 func (c *seaweedMessagingClient) ConfigureTopic(ctx context.Context, in *ConfigureTopicRequest, opts ...grpc.CallOption) (*ConfigureTopicResponse, error) {
 	out := new(ConfigureTopicResponse)
 	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/ConfigureTopic", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *seaweedMessagingClient) DoConfigureTopic(ctx context.Context, in *DoConfigureTopicRequest, opts ...grpc.CallOption) (*DoConfigureTopicResponse, error) {
-	out := new(DoConfigureTopicResponse)
-	err := c.cc.Invoke(ctx, "/messaging_pb.SeaweedMessaging/DoConfigureTopic", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -255,10 +255,10 @@ type SeaweedMessagingServer interface {
 	CheckBrokerLoad(context.Context, *CheckBrokerLoadRequest) (*CheckBrokerLoadResponse, error)
 	// control plane for balancer
 	ConnectToBalancer(SeaweedMessaging_ConnectToBalancerServer) error
+	DoConfigureTopic(context.Context, *DoConfigureTopicRequest) (*DoConfigureTopicResponse, error)
 	// control plane for topic partitions
 	LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error)
 	ConfigureTopic(context.Context, *ConfigureTopicRequest) (*ConfigureTopicResponse, error)
-	DoConfigureTopic(context.Context, *DoConfigureTopicRequest) (*DoConfigureTopicResponse, error)
 	ListTopics(context.Context, *ListTopicsRequest) (*ListTopicsResponse, error)
 	// a pub client will call this to get the topic partitions assignment
 	RequestTopicPartitions(context.Context, *RequestTopicPartitionsRequest) (*RequestTopicPartitionsResponse, error)
@@ -289,14 +289,14 @@ func (UnimplementedSeaweedMessagingServer) CheckBrokerLoad(context.Context, *Che
 func (UnimplementedSeaweedMessagingServer) ConnectToBalancer(SeaweedMessaging_ConnectToBalancerServer) error {
 	return status.Errorf(codes.Unimplemented, "method ConnectToBalancer not implemented")
 }
+func (UnimplementedSeaweedMessagingServer) DoConfigureTopic(context.Context, *DoConfigureTopicRequest) (*DoConfigureTopicResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DoConfigureTopic not implemented")
+}
 func (UnimplementedSeaweedMessagingServer) LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method LookupTopicBrokers not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) ConfigureTopic(context.Context, *ConfigureTopicRequest) (*ConfigureTopicResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ConfigureTopic not implemented")
-}
-func (UnimplementedSeaweedMessagingServer) DoConfigureTopic(context.Context, *DoConfigureTopicRequest) (*DoConfigureTopicResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DoConfigureTopic not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) ListTopics(context.Context, *ListTopicsRequest) (*ListTopicsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListTopics not implemented")
@@ -427,6 +427,24 @@ func (x *seaweedMessagingConnectToBalancerServer) Recv() (*ConnectToBalancerRequ
 	return m, nil
 }
 
+func _SeaweedMessaging_DoConfigureTopic_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DoConfigureTopicRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).DoConfigureTopic(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/messaging_pb.SeaweedMessaging/DoConfigureTopic",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).DoConfigureTopic(ctx, req.(*DoConfigureTopicRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SeaweedMessaging_LookupTopicBrokers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(LookupTopicBrokersRequest)
 	if err := dec(in); err != nil {
@@ -459,24 +477,6 @@ func _SeaweedMessaging_ConfigureTopic_Handler(srv interface{}, ctx context.Conte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SeaweedMessagingServer).ConfigureTopic(ctx, req.(*ConfigureTopicRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _SeaweedMessaging_DoConfigureTopic_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DoConfigureTopicRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SeaweedMessagingServer).DoConfigureTopic(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/messaging_pb.SeaweedMessaging/DoConfigureTopic",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedMessagingServer).DoConfigureTopic(ctx, req.(*DoConfigureTopicRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -624,16 +624,16 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _SeaweedMessaging_CheckBrokerLoad_Handler,
 		},
 		{
+			MethodName: "DoConfigureTopic",
+			Handler:    _SeaweedMessaging_DoConfigureTopic_Handler,
+		},
+		{
 			MethodName: "LookupTopicBrokers",
 			Handler:    _SeaweedMessaging_LookupTopicBrokers_Handler,
 		},
 		{
 			MethodName: "ConfigureTopic",
 			Handler:    _SeaweedMessaging_ConfigureTopic_Handler,
-		},
-		{
-			MethodName: "DoConfigureTopic",
-			Handler:    _SeaweedMessaging_DoConfigureTopic_Handler,
 		},
 		{
 			MethodName: "ListTopics",

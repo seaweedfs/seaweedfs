@@ -21,21 +21,21 @@ func (sub *TopicSubscriber) Subscribe() error {
 		}
 		brokerClient := mq_pb.NewSeaweedMessagingClient(grpcConnection)
 		subscribeClient, err := brokerClient.Subscribe(context.Background(), &mq_pb.SubscribeRequest{
-			Consumer: &mq_pb.SubscribeRequest_Consumer{
-				ConsumerGroup: sub.SubscriberConfig.GroupId,
-				ConsumerId:    sub.SubscriberConfig.GroupInstanceId,
-			},
-			Cursor: &mq_pb.SubscribeRequest_Cursor{
-				Topic: &mq_pb.Topic{
-					Namespace: sub.ContentConfig.Namespace,
-					Name:      sub.ContentConfig.Topic,
+			Message: &mq_pb.SubscribeRequest_Init{
+				Init: &mq_pb.SubscribeRequest_InitMessage{
+					ConsumerGroup: sub.SubscriberConfig.GroupId,
+					ConsumerId:    sub.SubscriberConfig.GroupInstanceId,
+					Topic: &mq_pb.Topic{
+						Namespace: sub.ContentConfig.Namespace,
+						Name:      sub.ContentConfig.Topic,
+					},
+					Partition: &mq_pb.Partition{
+						RingSize:   brokerPartitionAssignment.Partition.RingSize,
+						RangeStart: brokerPartitionAssignment.Partition.RangeStart,
+						RangeStop:  brokerPartitionAssignment.Partition.RangeStop,
+					},
+					Filter: sub.ContentConfig.Filter,
 				},
-				Partition: &mq_pb.Partition{
-					RingSize:   brokerPartitionAssignment.Partition.RingSize,
-					RangeStart: brokerPartitionAssignment.Partition.RangeStart,
-					RangeStop:  brokerPartitionAssignment.Partition.RangeStop,
-				},
-				Filter: sub.ContentConfig.Filter,
 			},
 		})
 		if err != nil {
