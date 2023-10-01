@@ -81,7 +81,7 @@ func RetryUntil(name string, job func() error, onErrFn func(err error) (shouldCo
 	}
 }
 
-// return the first non empty string
+// Nvl return the first non-empty string
 func Nvl(values ...string) string {
 	for _, s := range values {
 		if s != "" {
