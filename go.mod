@@ -110,7 +110,7 @@ require (
 	go.mongodb.org/mongo-driver v1.12.1
 	go.opencensus.io v0.24.0 // indirect
 	gocloud.dev v0.34.0
-	gocloud.dev/pubsub/natspubsub v0.33.0
+	gocloud.dev/pubsub/natspubsub v0.34.0
 	gocloud.dev/pubsub/rabbitpubsub v0.34.0
 	golang.org/x/crypto v0.13.0 // indirect
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9
