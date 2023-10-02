@@ -70,7 +70,7 @@ func (broker *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb
 			topicPartitionStat := topicPartitionStatsItem.Val
 			topic := &mq_pb.Topic{
 				Namespace: topicPartitionStat.TopicPartition.Namespace,
-				Name:      topicPartitionStat.TopicPartition.Topic,
+				Name:      topicPartitionStat.TopicPartition.Name,
 			}
 			topicKey := fmt.Sprintf("%s/%s", topic.Namespace, topic.Name)
 			if _, found := knownTopics[topicKey]; found {

@@ -49,10 +49,8 @@ func (bs *BrokerStats) UpdateStats(stats *mq_pb.BrokerStats) {
 	for _, topicPartitionStats := range stats.Stats {
 		tps := &TopicPartitionStats{
 			TopicPartition: topic.TopicPartition{
-				Namespace:  topicPartitionStats.Topic.Namespace,
-				Topic:      topicPartitionStats.Topic.Name,
-				RangeStart: topicPartitionStats.Partition.RangeStart,
-				RangeStop:  topicPartitionStats.Partition.RangeStop,
+				Topic:     topic.Topic{Namespace: topicPartitionStats.Topic.Namespace, Name: topicPartitionStats.Topic.Name},
+				Partition: topic.Partition{RangeStart: topicPartitionStats.Partition.RangeStart, RangeStop: topicPartitionStats.Partition.RangeStop, RingSize: topicPartitionStats.Partition.RingSize},
 			},
 			ConsumerCount: topicPartitionStats.ConsumerCount,
 			IsLeader:      topicPartitionStats.IsLeader,
@@ -73,10 +71,8 @@ func (bs *BrokerStats) UpdateStats(stats *mq_pb.BrokerStats) {
 func (bs *BrokerStats) RegisterAssignment(t *mq_pb.Topic, partition *mq_pb.Partition) {
 	tps := &TopicPartitionStats{
 		TopicPartition: topic.TopicPartition{
-			Namespace:  t.Namespace,
-			Topic:      t.Name,
-			RangeStart: partition.RangeStart,
-			RangeStop:  partition.RangeStop,
+			Topic:     topic.Topic{Namespace: t.Namespace, Name: t.Name},
+			Partition: topic.Partition{RangeStart: partition.RangeStart, RangeStop: partition.RangeStop},
 		},
 		ConsumerCount: 0,
 		IsLeader:      true,

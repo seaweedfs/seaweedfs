@@ -7,14 +7,12 @@ import (
 	"time"
 )
 
-type Namespace string
-
 type Topic struct {
-	Namespace Namespace
+	Namespace string
 	Name      string
 }
 
-func NewTopic(namespace Namespace, name string) Topic {
+func NewTopic(namespace string, name string) Topic {
 	return Topic{
 		Namespace: namespace,
 		Name:      name,
@@ -22,7 +20,7 @@ func NewTopic(namespace Namespace, name string) Topic {
 }
 func FromPbTopic(topic *mq_pb.Topic) Topic {
 	return Topic{
-		Namespace: Namespace(topic.Namespace),
+		Namespace: topic.Namespace,
 		Name:      topic.Name,
 	}
 }
@@ -41,7 +39,7 @@ type Segment struct {
 func FromPbSegment(segment *mq_pb.Segment) *Segment {
 	return &Segment{
 		Topic: Topic{
-			Namespace: Namespace(segment.Namespace),
+			Namespace: segment.Namespace,
 			Name:      segment.Topic,
 		},
 		Id: segment.Id,

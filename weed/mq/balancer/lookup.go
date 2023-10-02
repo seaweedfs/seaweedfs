@@ -16,7 +16,7 @@ func (b *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, publish b
 		for topicPartitionStatsItem := range brokerStats.Stats.IterBuffered() {
 			topicPartitionStat := topicPartitionStatsItem.Val
 			if topicPartitionStat.TopicPartition.Namespace == topic.Namespace &&
-				topicPartitionStat.TopicPartition.Topic == topic.Name {
+				topicPartitionStat.TopicPartition.Name == topic.Name {
 				assignment := &mq_pb.BrokerPartitionAssignment{
 					Partition: &mq_pb.Partition{
 						RingSize:   MaxPartitionCount,

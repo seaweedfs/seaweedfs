@@ -3,10 +3,8 @@ package topic
 import "fmt"
 
 type TopicPartition struct {
-	Namespace  string
-	Topic      string
-	RangeStart int32
-	RangeStop  int32
+	Topic
+	Partition
 }
 
 func (tp *TopicPartition) String() string {
