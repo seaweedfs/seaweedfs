@@ -6,11 +6,13 @@ import (
 )
 
 type SubscriberConfiguration struct {
-	ClientId         string
-	GroupId          string
-	GroupInstanceId  string
-	BootstrapServers []string
-	GrpcDialOption   grpc.DialOption
+	ClientId          string
+	GroupId           string
+	GroupInstanceId   string
+	GroupMinimumPeers int32
+	GroupMaximumPeers int32
+	BootstrapServers  []string
+	GrpcDialOption    grpc.DialOption
 }
 
 type ContentConfiguration struct {

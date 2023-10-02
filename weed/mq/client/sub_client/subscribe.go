@@ -11,9 +11,14 @@ import (
 
 func (sub *TopicSubscriber) Subscribe() error {
 	util.RetryUntil("subscribe", func() error {
+		// ask balancer for brokers of the topic
 		if err := sub.doLookup(sub.bootstrapBroker); err != nil {
 			return fmt.Errorf("lookup topic %s/%s: %v", sub.ContentConfig.Namespace, sub.ContentConfig.Topic, err)
 		}
+		// treat the first broker as the topic leader
+		// connect to the leader broker
+
+		// subscribe to the topic
 		if err := sub.doProcess(); err != nil {
 			return fmt.Errorf("subscribe topic %s/%s: %v", sub.ContentConfig.Namespace, sub.ContentConfig.Topic, err)
 		}
