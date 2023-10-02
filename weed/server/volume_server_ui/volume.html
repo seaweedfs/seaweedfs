@@ -1,11 +1,12 @@
 <!DOCTYPE html>
 <html>
+{{ $contextPath := .ContextPath }}
 <head>
     <title>SeaweedFS {{ .Version }}</title>
-    <link rel="stylesheet" href="/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
-    <script type="text/javascript" src="/seaweedfsstatic/javascript/jquery-3.6.0.min.js"></script>
+    <link rel="stylesheet" href="{{ $contextPath }}/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css">
+    <script type="text/javascript" src="{{ $contextPath }}/seaweedfsstatic/javascript/jquery-3.6.0.min.js"></script>
     <script type="text/javascript"
-            src="/seaweedfsstatic/javascript/jquery-sparklines/2.1.2/jquery.sparkline.min.js"></script>
+            src="{{ $contextPath }}/seaweedfsstatic/javascript/jquery-sparklines/2.1.2/jquery.sparkline.min.js"></script>
     <script type="text/javascript">
         $(function () {
             var periods = ['second', 'minute', 'hour', 'day'];
@@ -30,7 +31,7 @@
 <div class="container">
     <div class="page-header">
         <h1>
-            <a href="https://github.com/seaweedfs/seaweedfs"><img src="/seaweedfsstatic/seaweed50x50.png"></img></a>
+            <a href="https://github.com/seaweedfs/seaweedfs"><img src="{{ $contextPath }}/seaweedfsstatic/seaweed50x50.png"></img></a>
             SeaweedFS <small>{{ .Version }}</small>
         </h1>
     </div>

@@ -35,6 +35,7 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	args := struct {
+		ContextPath   string
 		Version       string
 		Masters       []pb.ServerAddress
 		Volumes       interface{}
@@ -44,6 +45,7 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		Stats         interface{}
 		Counters      *stats.ServerStats
 	}{
+		vs.store.UIContextPath,
 		util.Version(),
 		vs.SeedMasterNodes,
 		normalVolumeInfos,
