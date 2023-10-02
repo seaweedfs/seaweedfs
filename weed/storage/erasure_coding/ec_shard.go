@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
