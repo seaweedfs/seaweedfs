@@ -242,6 +242,7 @@ type StorageOption struct {
 	Fsync             bool
 	VolumeGrowthCount uint32
 	SaveInside        bool
+	LongerFileName    bool
 }
 
 func (so *StorageOption) TtlString() string {

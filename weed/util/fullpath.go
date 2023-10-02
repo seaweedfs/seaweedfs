@@ -29,6 +29,10 @@ func (fp FullPath) Name() string {
 	return name
 }
 
+func (fp FullPath) IsLongerFileName() bool {
+	return len([]byte(fp.Name())) > maxFilenameLength
+}
+
 func (fp FullPath) Child(name string) FullPath {
 	dir := string(fp)
 	noPrefix := name

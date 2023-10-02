@@ -166,6 +166,7 @@ func mergePathConf(a, b *filer_pb.FilerConf_PathConf) {
 		a.VolumeGrowthCount = b.VolumeGrowthCount
 	}
 	a.ReadOnly = b.ReadOnly || a.ReadOnly
+	a.LongerFileName = b.LongerFileName || a.LongerFileName
 	a.DataCenter = util.Nvl(b.DataCenter, a.DataCenter)
 	a.Rack = util.Nvl(b.Rack, a.Rack)
 	a.DataNode = util.Nvl(b.DataNode, a.DataNode)

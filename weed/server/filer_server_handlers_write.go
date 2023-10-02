@@ -99,6 +99,12 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		return
 	}
 
+	if !so.LongerFileName && util.FullPath(r.URL.Path).IsLongerFileName() {
+		glog.V(1).Infoln("post", r.RequestURI, ": ", "entry name too long")
+		w.WriteHeader(http.StatusRequestURITooLong)
+		return
+	}
+
 	// When DiskType is empty,use filer's -disk
 	if so.DiskType == "" {
 		so.DiskType = fs.option.DiskType
@@ -248,6 +254,7 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 		DiskType:          util.Nvl(diskType, rule.DiskType),
 		Fsync:             rule.Fsync,
 		VolumeGrowthCount: rule.VolumeGrowthCount,
+		LongerFileName:    rule.LongerFileName,
 	}, nil
 }
 

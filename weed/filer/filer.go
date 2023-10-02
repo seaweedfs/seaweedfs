@@ -194,10 +194,14 @@ func (f *Filer) RollbackTransaction(ctx context.Context) error {
 	return f.Store.RollbackTransaction(ctx)
 }
 
-func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFromOtherCluster bool, signatures []int32, skipCreateParentDir bool) error {
+func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFromOtherCluster bool, signatures []int32, skipCreateParentDir bool, doLongerFileName bool) error {
 
 	if string(entry.FullPath) == "/" {
 		return nil
+	}
+
+	if !doLongerFileName && entry.FullPath.IsLongerFileName() {
+		return fmt.Errorf("entry name too long")
 	}
 
 	oldEntry, _ := f.FindEntry(ctx, entry.FullPath)
