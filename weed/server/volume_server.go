@@ -72,6 +72,13 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	readBufferSizeMB int,
 	ldbTimeout int64,
 ) *VolumeServer {
+	if adminMux == publicMux {
+		adminMux = muxWithContextPathPrefix(uiContextPath, adminMux)
+		publicMux = adminMux
+	} else {
+		adminMux = muxWithContextPathPrefix(uiContextPath, adminMux)
+		publicMux = muxWithContextPathPrefix(uiContextPath, publicMux)
+	}
 
 	v := util.GetViper()
 	signingKey := v.GetString("jwt.signing.key")

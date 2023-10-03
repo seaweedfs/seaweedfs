@@ -98,6 +98,13 @@ type FilerServer struct {
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
+	if defaultMux == readonlyMux {
+		defaultMux = muxWithContextPathPrefix(option.UIContextPath, defaultMux)
+		readonlyMux = defaultMux
+	} else {
+		defaultMux = muxWithContextPathPrefix(option.UIContextPath, defaultMux)
+		readonlyMux = muxWithContextPathPrefix(option.UIContextPath, readonlyMux)
+	}
 
 	v := util.GetViper()
 	signingKey := v.GetString("jwt.filer_signing.key")

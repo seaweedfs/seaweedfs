@@ -80,6 +80,7 @@ type MasterServer struct {
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.ServerAddress) *MasterServer {
+	r = routerWithContextPathPrefix(option.UIContextPath, r)
 
 	v := util.GetViper()
 	signingKey := v.GetString("jwt.signing.key")
