@@ -621,6 +621,12 @@ s3:
     failureThreshold: 100
     timeoutSeconds: 10
 
+  ingress:
+    enabled: false
+    className: "nginx"
+    # host: false for "*" hostname
+    host: "seaweedfs.cluster.local"
+
 certificates:
   commonName: "SeaweedFS CA"
   ipAddresses: []
