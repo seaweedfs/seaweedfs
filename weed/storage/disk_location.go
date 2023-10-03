@@ -177,7 +177,6 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	}
 
 	l.SetVolume(vid, v)
-	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume", v.DiskType().ReadableString()).Inc()
 
 	size, _, _ := v.FileStat()
 	glog.V(0).Infof("data file %s, replication=%s v=%d size=%d ttl=%s",
