@@ -176,7 +176,7 @@ var (
 			Subsystem: "volumeServer",
 			Name:      "volumes",
 			Help:      "Number of volumes or shards.",
-		}, []string{"collection", "type", "disk"})
+		}, []string{"collection", "type"})
 
 	VolumeServerReadOnlyVolumeGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -315,10 +315,11 @@ func SourceName(port uint32) string {
 	return net.JoinHostPort(hostname, strconv.Itoa(int(port)))
 }
 
+// todo - can be changed to DeletePartialMatch when https://github.com/prometheus/client_golang/pull/1013 gets released
 func DeleteCollectionMetrics(collection string) {
 	VolumeServerDiskSizeGauge.DeleteLabelValues(collection, "normal")
 	for _, volume_type := range readOnlyVolumeTypes {
-		VolumeServerReadOnlyVolumeGauge.DeletePartialMatch(prometheus.Labels{"collection": collection, "type": volume_type})
+		VolumeServerReadOnlyVolumeGauge.DeleteLabelValues(collection, volume_type)
 	}
-	VolumeServerVolumeCounter.DeletePartialMatch(prometheus.Labels{"collection": collection, "type": "volume"})
+	VolumeServerVolumeCounter.DeleteLabelValues(collection, "volume")
 }
