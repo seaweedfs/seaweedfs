@@ -9,7 +9,6 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -200,8 +199,6 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			glog.Warningf("volume %d failed to save file info: %v", v.Id, err)
 		}
 	}
-
-	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume", v.DiskType().ReadableString()).Inc()
 
 	if err == nil {
 		hasLoadedVolume = true

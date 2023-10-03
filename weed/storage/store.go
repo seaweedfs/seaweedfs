@@ -167,6 +167,7 @@ func (s *Store) addVolume(vid needle.VolumeId, collection string, needleMapKind 
 			location.Directory, vid, collection, replicaPlacement, ttl)
 		if volume, err := NewVolume(location.Directory, location.IdxDirectory, collection, vid, needleMapKind, replicaPlacement, ttl, preallocate, memoryMapMaxSizeMb, ldbTimeout); err == nil {
 			location.SetVolume(vid, volume)
+			stats.VolumeServerVolumeCounter.WithLabelValues(volume.Collection, "volume", volume.DiskType().ReadableString()).Inc()
 			glog.V(0).Infof("add volume %d", vid)
 			s.NewVolumesChan <- master_pb.VolumeShortInformationMessage{
 				Id:               uint32(vid),
