@@ -13,8 +13,8 @@ global:
   securityConfig:
     jwtSigning:
       volumeWrite: true
-      volumeRead: true
-      filerWrite: true
+      volumeRead: false
+      filerWrite: false
       filerRead: false
   certificates:
     alphacrds: false
