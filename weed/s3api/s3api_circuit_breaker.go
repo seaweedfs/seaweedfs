@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"errors"
 	"fmt"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -30,7 +31,7 @@ func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
 
 	err := pb.WithFilerClient(false, 0, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		content, err := filer.ReadInsideFiler(client, s3_constants.CircuitBreakerConfigDir, s3_constants.CircuitBreakerConfigFile)
-		if err == filer_pb.ErrNotFound {
+		if errors.Is(err, filer_pb.ErrNotFound) {
 			glog.Infof("s3 circuit breaker not configured")
 			return nil
 		}
