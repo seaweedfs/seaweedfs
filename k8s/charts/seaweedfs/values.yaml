@@ -10,6 +10,12 @@ global:
   restartPolicy: Always
   loggingLevel: 1
   enableSecurity: false
+  securityConfig:
+    jwtSigning:
+      volumeWrite: true
+      volumeRead: false
+      filerWrite: false
+      filerRead: false
   certificates:
     alphacrds: false
   monitoring:
