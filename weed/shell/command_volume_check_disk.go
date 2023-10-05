@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"golang.org/x/exp/slices"
@@ -14,7 +15,12 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"sync"
 	"time"
+)
+
+const (
+	VolumePulseSeconds = 5
 )
 
 func init() {
@@ -43,6 +49,66 @@ func (c *commandVolumeCheckDisk) Help() string {
 `
 }
 
+func (c *commandVolumeCheckDisk) getVolumeStatusFileCount(vid uint32, dn *master_pb.DataNodeInfo) (fileCount, deletedFileCount uint64) {
+	_ = operation.WithVolumeServerClient(false, pb.NewServerAddressWithGrpcPort(dn.Id, int(dn.GrpcPort)), c.env.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		resp, _ := volumeServerClient.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{
+			VolumeId: uint32(vid),
+		})
+		if resp != nil {
+			fileCount = resp.FileCount
+			deletedFileCount = resp.FileDeletedCount
+		}
+		return nil
+	})
+	return fileCount, deletedFileCount
+}
+
+func (c *commandVolumeCheckDisk) eqVolumeFileCount(a, b *VolumeReplica) (bool, bool) {
+	var waitGroup sync.WaitGroup
+	var fileCountA, fileCountB, fileDeletedCountA, fileDeletedCountB uint64
+	waitGroup.Add(1)
+	go func() {
+		defer waitGroup.Done()
+		fileCountA, fileDeletedCountA = c.getVolumeStatusFileCount(a.info.Id, a.location.dataNode)
+	}()
+	waitGroup.Add(1)
+	go func() {
+		defer waitGroup.Done()
+		fileCountB, fileDeletedCountB = c.getVolumeStatusFileCount(b.info.Id, b.location.dataNode)
+	}()
+	// Trying to synchronize a remote call to two nodes
+	waitGroup.Wait()
+	return fileCountA == fileCountB, fileDeletedCountA == fileDeletedCountB
+}
+
+func (c *commandVolumeCheckDisk) doSkipVolume(a, b *VolumeReplica, timeBeforePulse int64, syncDeletions, verbose bool, writer io.Writer) bool {
+	doSyncTotalFileCount := false
+	doSyncDeletedCount := false
+	if syncDeletions && a.info.DeleteCount != b.info.DeleteCount {
+		doSyncDeletedCount = true
+	}
+	if a.info.FileCount != b.info.FileCount {
+		doSyncTotalFileCount = true
+	}
+	if doSyncTotalFileCount || doSyncDeletedCount {
+		if timeBeforePulse > a.info.ModifiedAtSecond && timeBeforePulse > b.info.ModifiedAtSecond {
+			return false
+		}
+		if eqFileCount, eqDeletedFileCount := c.eqVolumeFileCount(a, b); eqFileCount {
+			if doSyncDeletedCount && !eqDeletedFileCount {
+				return false
+			}
+			if verbose {
+				fmt.Fprintf(writer, "skipping active volumes %d with the same file counts on %s and %s\n",
+					a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id)
+			}
+		} else {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	fsckCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
@@ -64,6 +130,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	c.env = commandEnv
 
 	// collect topology information
+	timeBeforePulse := time.Now().Unix() - VolumePulseSeconds*2
 	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
 		return err
@@ -71,35 +138,27 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 
 	// pick 1 pairs of volume replica
-	fileCount := func(replica *VolumeReplica) uint64 {
-		return replica.info.FileCount - replica.info.DeleteCount
-	}
-
 	for _, replicas := range volumeReplicas {
 		if *volumeId > 0 && replicas[0].info.Id != uint32(*volumeId) {
 			continue
 		}
 		slices.SortFunc(replicas, func(a, b *VolumeReplica) int {
-			return int(fileCount(b) - fileCount(a))
+			return int(b.info.FileCount - a.info.FileCount)
 		})
 		for len(replicas) >= 2 {
 			a, b := replicas[0], replicas[1]
-			if !*slowMode {
-				if fileCount(a) == fileCount(b) {
-					replicas = replicas[1:]
-					continue
-				}
-			}
+			replicas = replicas[1:]
 			if a.info.ReadOnly || b.info.ReadOnly {
-				fmt.Fprintf(writer, "skipping readonly volume %d on %s and %s\n", a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id)
-				replicas = replicas[1:]
+				fmt.Fprintf(writer, "skipping readonly volume %d on %s and %s\n",
+					a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id)
 				continue
 			}
-
+			if !*slowMode && c.doSkipVolume(a, b, timeBeforePulse, *syncDeletions, *verbose, writer) {
+				continue
+			}
 			if err := c.syncTwoReplicas(a, b, *applyChanges, *syncDeletions, *nonRepairThreshold, *verbose, writer); err != nil {
 				fmt.Fprintf(writer, "sync volume %d on %s and %s: %v\n", a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id, err)
 			}
-			replicas = replicas[1:]
 		}
 	}
 
