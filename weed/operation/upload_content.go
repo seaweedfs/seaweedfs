@@ -188,6 +188,9 @@ func doUploadData(data []byte, option *UploadOption) (uploadResult *UploadResult
 		} else if !iAmSure && option.MimeType == "" && len(data) > 16*1024 {
 			var compressed []byte
 			compressed, err = util.GzipData(data[0:128])
+			if err != nil {
+				return
+			}
 			shouldGzipNow = len(compressed)*10 < 128*9 // can not compress to less than 90%
 		}
 	}

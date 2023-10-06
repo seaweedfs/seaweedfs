@@ -10,6 +10,12 @@ global:
   restartPolicy: Always
   loggingLevel: 1
   enableSecurity: false
+  securityConfig:
+    jwtSigning:
+      volumeWrite: true
+      volumeRead: false
+      filerWrite: false
+      filerRead: false
   certificates:
     alphacrds: false
   monitoring:
@@ -620,6 +626,12 @@ s3:
     successThreshold: 1
     failureThreshold: 100
     timeoutSeconds: 10
+
+  ingress:
+    enabled: false
+    className: "nginx"
+    # host: false for "*" hostname
+    host: "seaweedfs.cluster.local"
 
 certificates:
   commonName: "SeaweedFS CA"

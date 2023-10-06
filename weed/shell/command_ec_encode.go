@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
 	"math/rand"
@@ -62,12 +63,30 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	fullPercentage := encodeCommand.Float64("fullPercent", 95, "the volume reaches the percentage of max volume size")
 	quietPeriod := encodeCommand.Duration("quietFor", time.Hour, "select volumes without no writes for this period")
 	parallelCopy := encodeCommand.Bool("parallelCopy", true, "copy shards in parallel")
+	forceChanges := encodeCommand.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes")
 	if err = encodeCommand.Parse(args); err != nil {
 		return nil
 	}
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
+	}
+
+	// collect topology information
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
+	if err != nil {
+		return err
+	}
+
+	if !*forceChanges {
+		var nodeCount int
+		eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
+			nodeCount++
+		})
+		if nodeCount < erasure_coding.ParityShardsCount {
+			glog.V(0).Infof("skip erasure coding with %d nodes, less than recommended %d nodes", nodeCount, erasure_coding.ParityShardsCount)
+			return nil
+		}
 	}
 
 	vid := needle.VolumeId(*volumeId)
