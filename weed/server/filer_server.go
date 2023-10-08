@@ -157,6 +157,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	handleStaticResources(defaultMux)
 	if !option.DisableHttp {
+		defaultMux.HandleFunc("/healthz", fs.filerHealthzHandler)
 		defaultMux.HandleFunc("/", fs.filerHandler)
 	}
 	if defaultMux != readonlyMux {
