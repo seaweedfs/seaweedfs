@@ -240,6 +240,8 @@ func (vs *VolumeServer) VolumeStatus(ctx context.Context, req *volume_server_pb.
 	volumeSize, _, _ := v.DataBackend.GetStat()
 	resp.IsReadOnly = v.IsReadOnly()
 	resp.VolumeSize = uint64(volumeSize)
+	resp.FileCount = v.FileCount()
+	resp.FileDeletedCount = v.DeletedCount()
 
 	return resp, nil
 }
