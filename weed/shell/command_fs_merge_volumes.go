@@ -24,38 +24,38 @@ var (
 
 func init() {
 	client = &http.Client{}
-	Commands = append(Commands, &commandFsCompact{})
+	Commands = append(Commands, &commandFsMergeVolumes{})
 }
 
-type commandFsCompact struct {
+type commandFsMergeVolumes struct {
 	volumes map[needle.VolumeId]*master_pb.VolumeInformationMessage
 }
 
-func (c *commandFsCompact) Name() string {
-	return "fs.compact"
+func (c *commandFsMergeVolumes) Name() string {
+	return "fs.mergeVolumes"
 }
 
-func (c *commandFsCompact) Help() string {
+func (c *commandFsMergeVolumes) Help() string {
 	return `re-locate chunks into target volumes and try to clear lighter volumes.
 	
 	This would help clear half-full volumes and let vacuum system to delete them later.
 
-	fs.compact -toVolumeId=y [-fromVolumeId=x] [-apply] /dir/
+	fs.mergeVolumes -toVolumeId=y [-fromVolumeId=x] [-apply] /dir/
 `
 }
 
-func (c *commandFsCompact) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
+func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	dir, err := commandEnv.parseUrl(findInputDirectory(args))
 	if err != nil {
 		return err
 	}
 	dir = strings.TrimRight(dir, "/")
-	fsCompactCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	fromVolumeArg := fsCompactCommand.Uint("fromVolumeId", 0, "move chunks with this volume id")
-	toVolumeArg := fsCompactCommand.Uint("toVolumeId", 0, "change chunks to this volume id")
-	apply := fsCompactCommand.Bool("apply", false, "applying the metadata changes")
-	if err = fsCompactCommand.Parse(args); err != nil {
+	fsMergeVolumesCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	fromVolumeArg := fsMergeVolumesCommand.Uint("fromVolumeId", 0, "move chunks with this volume id")
+	toVolumeArg := fsMergeVolumesCommand.Uint("toVolumeId", 0, "change chunks to this volume id")
+	apply := fsMergeVolumesCommand.Bool("apply", false, "applying the metadata changes")
+	if err = fsMergeVolumesCommand.Parse(args); err != nil {
 		return err
 	}
 	fromVolumeId := needle.VolumeId(*fromVolumeArg)
@@ -143,7 +143,7 @@ func (c *commandFsCompact) Do(args []string, commandEnv *CommandEnv, writer io.W
 	})
 }
 
-func (c *commandFsCompact) getVolumeInfoById(vid needle.VolumeId) (*master_pb.VolumeInformationMessage, error) {
+func (c *commandFsMergeVolumes) getVolumeInfoById(vid needle.VolumeId) (*master_pb.VolumeInformationMessage, error) {
 	info := c.volumes[vid]
 	var err error
 	if info == nil {
@@ -152,7 +152,7 @@ func (c *commandFsCompact) getVolumeInfoById(vid needle.VolumeId) (*master_pb.Vo
 	return info, err
 }
 
-func (c *commandFsCompact) volumesAreCompatible(src needle.VolumeId, dest needle.VolumeId) (bool, error) {
+func (c *commandFsMergeVolumes) volumesAreCompatible(src needle.VolumeId, dest needle.VolumeId) (bool, error) {
 	srcInfo, err := c.getVolumeInfoById(src)
 	if err != nil {
 		return false, err
@@ -166,7 +166,7 @@ func (c *commandFsCompact) volumesAreCompatible(src needle.VolumeId, dest needle
 		srcInfo.ReplicaPlacement == destInfo.ReplicaPlacement), nil
 }
 
-func (c *commandFsCompact) reloadVolumesInfo(masterClient *wdclient.MasterClient) error {
+func (c *commandFsMergeVolumes) reloadVolumesInfo(masterClient *wdclient.MasterClient) error {
 	c.volumes = make(map[needle.VolumeId]*master_pb.VolumeInformationMessage)
 
 	return masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
