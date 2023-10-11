@@ -111,12 +111,12 @@ require (
 	gocloud.dev v0.34.0
 	gocloud.dev/pubsub/natspubsub v0.34.0
 	gocloud.dev/pubsub/rabbitpubsub v0.34.0
-	golang.org/x/crypto v0.13.0 // indirect
+	golang.org/x/crypto v0.14.0 // indirect
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9
 	golang.org/x/image v0.12.0
-	golang.org/x/net v0.15.0
+	golang.org/x/net v0.17.0
 	golang.org/x/oauth2 v0.12.0 // indirect
-	golang.org/x/sys v0.12.0
+	golang.org/x/sys v0.13.0
 	golang.org/x/text v0.13.0 // indirect
 	golang.org/x/tools v0.13.0
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
@@ -324,7 +324,7 @@ require (
 	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/mod v0.12.0 // indirect
 	golang.org/x/sync v0.3.0 // indirect
-	golang.org/x/term v0.12.0 // indirect
+	golang.org/x/term v0.13.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20230913181813-007df8e322eb // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20230920204549-e6e6cdab5c13 // indirect
