@@ -28,7 +28,7 @@ type SeaweedMessagingClient interface {
 	CheckSegmentStatus(ctx context.Context, in *CheckSegmentStatusRequest, opts ...grpc.CallOption) (*CheckSegmentStatusResponse, error)
 	CheckBrokerLoad(ctx context.Context, in *CheckBrokerLoadRequest, opts ...grpc.CallOption) (*CheckBrokerLoadResponse, error)
 	// control plane for balancer
-	ConnectToBalancer(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_ConnectToBalancerClient, error)
+	ConnectToPubCoordinator(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_ConnectToPubCoordinatorClient, error)
 	DoConfigureTopic(ctx context.Context, in *DoConfigureTopicRequest, opts ...grpc.CallOption) (*DoConfigureTopicResponse, error)
 	// control plane for topic partitions
 	LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error)
@@ -87,31 +87,31 @@ func (c *seaweedMessagingClient) CheckBrokerLoad(ctx context.Context, in *CheckB
 	return out, nil
 }
 
-func (c *seaweedMessagingClient) ConnectToBalancer(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_ConnectToBalancerClient, error) {
-	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[0], "/messaging_pb.SeaweedMessaging/ConnectToBalancer", opts...)
+func (c *seaweedMessagingClient) ConnectToPubCoordinator(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_ConnectToPubCoordinatorClient, error) {
+	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[0], "/messaging_pb.SeaweedMessaging/ConnectToPubCoordinator", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &seaweedMessagingConnectToBalancerClient{stream}
+	x := &seaweedMessagingConnectToPubCoordinatorClient{stream}
 	return x, nil
 }
 
-type SeaweedMessaging_ConnectToBalancerClient interface {
-	Send(*ConnectToBalancerRequest) error
-	Recv() (*ConnectToBalancerResponse, error)
+type SeaweedMessaging_ConnectToPubCoordinatorClient interface {
+	Send(*ConnectToPubCoordinatorRequest) error
+	Recv() (*ConnectToPubCoordinatorResponse, error)
 	grpc.ClientStream
 }
 
-type seaweedMessagingConnectToBalancerClient struct {
+type seaweedMessagingConnectToPubCoordinatorClient struct {
 	grpc.ClientStream
 }
 
-func (x *seaweedMessagingConnectToBalancerClient) Send(m *ConnectToBalancerRequest) error {
+func (x *seaweedMessagingConnectToPubCoordinatorClient) Send(m *ConnectToPubCoordinatorRequest) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *seaweedMessagingConnectToBalancerClient) Recv() (*ConnectToBalancerResponse, error) {
-	m := new(ConnectToBalancerResponse)
+func (x *seaweedMessagingConnectToPubCoordinatorClient) Recv() (*ConnectToPubCoordinatorResponse, error) {
+	m := new(ConnectToPubCoordinatorResponse)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -254,7 +254,7 @@ type SeaweedMessagingServer interface {
 	CheckSegmentStatus(context.Context, *CheckSegmentStatusRequest) (*CheckSegmentStatusResponse, error)
 	CheckBrokerLoad(context.Context, *CheckBrokerLoadRequest) (*CheckBrokerLoadResponse, error)
 	// control plane for balancer
-	ConnectToBalancer(SeaweedMessaging_ConnectToBalancerServer) error
+	ConnectToPubCoordinator(SeaweedMessaging_ConnectToPubCoordinatorServer) error
 	DoConfigureTopic(context.Context, *DoConfigureTopicRequest) (*DoConfigureTopicResponse, error)
 	// control plane for topic partitions
 	LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error)
@@ -286,8 +286,8 @@ func (UnimplementedSeaweedMessagingServer) CheckSegmentStatus(context.Context, *
 func (UnimplementedSeaweedMessagingServer) CheckBrokerLoad(context.Context, *CheckBrokerLoadRequest) (*CheckBrokerLoadResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CheckBrokerLoad not implemented")
 }
-func (UnimplementedSeaweedMessagingServer) ConnectToBalancer(SeaweedMessaging_ConnectToBalancerServer) error {
-	return status.Errorf(codes.Unimplemented, "method ConnectToBalancer not implemented")
+func (UnimplementedSeaweedMessagingServer) ConnectToPubCoordinator(SeaweedMessaging_ConnectToPubCoordinatorServer) error {
+	return status.Errorf(codes.Unimplemented, "method ConnectToPubCoordinator not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) DoConfigureTopic(context.Context, *DoConfigureTopicRequest) (*DoConfigureTopicResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DoConfigureTopic not implemented")
@@ -401,26 +401,26 @@ func _SeaweedMessaging_CheckBrokerLoad_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
-func _SeaweedMessaging_ConnectToBalancer_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(SeaweedMessagingServer).ConnectToBalancer(&seaweedMessagingConnectToBalancerServer{stream})
+func _SeaweedMessaging_ConnectToPubCoordinator_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(SeaweedMessagingServer).ConnectToPubCoordinator(&seaweedMessagingConnectToPubCoordinatorServer{stream})
 }
 
-type SeaweedMessaging_ConnectToBalancerServer interface {
-	Send(*ConnectToBalancerResponse) error
-	Recv() (*ConnectToBalancerRequest, error)
+type SeaweedMessaging_ConnectToPubCoordinatorServer interface {
+	Send(*ConnectToPubCoordinatorResponse) error
+	Recv() (*ConnectToPubCoordinatorRequest, error)
 	grpc.ServerStream
 }
 
-type seaweedMessagingConnectToBalancerServer struct {
+type seaweedMessagingConnectToPubCoordinatorServer struct {
 	grpc.ServerStream
 }
 
-func (x *seaweedMessagingConnectToBalancerServer) Send(m *ConnectToBalancerResponse) error {
+func (x *seaweedMessagingConnectToPubCoordinatorServer) Send(m *ConnectToPubCoordinatorResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *seaweedMessagingConnectToBalancerServer) Recv() (*ConnectToBalancerRequest, error) {
-	m := new(ConnectToBalancerRequest)
+func (x *seaweedMessagingConnectToPubCoordinatorServer) Recv() (*ConnectToPubCoordinatorRequest, error) {
+	m := new(ConnectToPubCoordinatorRequest)
 	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -654,8 +654,8 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 	},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "ConnectToBalancer",
-			Handler:       _SeaweedMessaging_ConnectToBalancer_Handler,
+			StreamName:    "ConnectToPubCoordinator",
+			Handler:       _SeaweedMessaging_ConnectToPubCoordinator_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},
