@@ -239,10 +239,10 @@ type StorageOption struct {
 	Rack              string
 	DataNode          string
 	TtlSeconds        int32
-	Fsync             bool
 	VolumeGrowthCount uint32
+	MaxFileNameLength uint32
+	Fsync             bool
 	SaveInside        bool
-	LongerFileName    bool
 }
 
 func (so *StorageOption) TtlString() string {

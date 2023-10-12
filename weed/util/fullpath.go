@@ -29,8 +29,11 @@ func (fp FullPath) Name() string {
 	return name
 }
 
-func (fp FullPath) IsLongerFileName() bool {
-	return len([]byte(fp.Name())) > maxFilenameLength
+func (fp FullPath) IsLongerFileName(maxFilenameLength uint32) bool {
+	if maxFilenameLength == 0 {
+		return false
+	}
+	return uint32(len([]byte(fp.Name()))) > maxFilenameLength
 }
 
 func (fp FullPath) Child(name string) FullPath {

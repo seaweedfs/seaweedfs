@@ -119,8 +119,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	if len(option.Masters.GetInstances()) == 0 {
 		glog.Fatal("master list is required!")
 	}
-
-	fs.filer = filer.NewFiler(*option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, func() {
+	v.SetDefault("filer.options.max_file_name_length", 255)
+	maxFilenameLength := v.GetUint32("filer.options.max_file_name_length")
+	fs.filer = filer.NewFiler(*option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, maxFilenameLength, func() {
 		fs.listenersCond.Broadcast()
 	})
 	fs.filer.Cipher = option.Cipher
