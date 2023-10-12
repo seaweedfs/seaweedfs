@@ -56,6 +56,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	diskType := fsConfigureCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes")
 	isReadOnly := fsConfigureCommand.Bool("readOnly", false, "disable writes")
+	maxFileNameLength := fsConfigureCommand.Uint("maxFileNameLength", 0, "file name length limits in bytes for compatibility with Unix-based systems")
 	dataCenter := fsConfigureCommand.String("dataCenter", "", "assign writes to this dataCenter")
 	rack := fsConfigureCommand.String("rack", "", "assign writes to this rack")
 	dataNode := fsConfigureCommand.String("dataNode", "", "assign writes to this dataNode")
@@ -79,6 +80,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			Replication:       *replication,
 			Ttl:               *ttl,
 			Fsync:             *fsync,
+			MaxFileNameLength: uint32(*maxFileNameLength),
 			DiskType:          *diskType,
 			VolumeGrowthCount: uint32(*volumeGrowthCount),
 			ReadOnly:          *isReadOnly,
