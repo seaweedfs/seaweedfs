@@ -57,11 +57,10 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 
 	}
 
-	var clientEpoch int32
 	metadataFollowOption := &pb.MetadataFollowOption{
 		ClientName:             "mount",
 		ClientId:               selfSignature,
-		ClientEpoch:            clientEpoch,
+		ClientEpoch:            1,
 		SelfSignature:          selfSignature,
 		PathPrefix:             dir,
 		AdditionalPathPrefixes: nil,
@@ -71,7 +70,7 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 		EventErrorType:         pb.FatalOnError,
 	}
 	util.RetryUntil("followMetaUpdates", func() error {
-		clientEpoch++
+		metadataFollowOption.ClientEpoch++
 		return pb.WithFilerClientFollowMetadata(client, metadataFollowOption, processEventFn)
 	}, func(err error) bool {
 		glog.Errorf("follow metadata updates: %v", err)
