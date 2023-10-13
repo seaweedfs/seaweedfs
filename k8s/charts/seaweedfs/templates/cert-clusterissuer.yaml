@@ -1,4 +1,4 @@
-{{- if .Values.global.enableSecurity }}
+{{- if and .Values.global.enableSecurity (not .Values.certificates.externalCertificates.enabled)}}
 apiVersion: cert-manager.io/v1{{ if .Values.global.certificates.alphacrds }}alpha1{{ end }}
 kind: ClusterIssuer
 metadata:
