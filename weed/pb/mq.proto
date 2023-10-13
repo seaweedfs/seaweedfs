@@ -21,7 +21,7 @@ service SeaweedMessaging {
     }
 
     // control plane for balancer
-    rpc ConnectToPubCoordinator (stream ConnectToPubCoordinatorRequest) returns (stream ConnectToPubCoordinatorResponse) {
+    rpc ConnectToBalancer (stream ConnectToBalancerRequest) returns (stream ConnectToBalancerResponse) {
     }
     rpc DoConfigureTopic (DoConfigureTopicRequest) returns (DoConfigureTopicResponse) {
     }
@@ -122,7 +122,7 @@ message TopicPartitionStats {
 }
 
 
-message ConnectToPubCoordinatorRequest {
+message ConnectToBalancerRequest {
     message InitMessage {
         string broker = 1;
     }
@@ -131,7 +131,7 @@ message ConnectToPubCoordinatorRequest {
         BrokerStats stats = 2;
     }
 }
-message ConnectToPubCoordinatorResponse {
+message ConnectToBalancerResponse {
 }
 //////////////////////////////////////////////////
 message ConfigureTopicRequest {
