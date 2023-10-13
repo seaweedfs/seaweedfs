@@ -508,12 +508,14 @@ type VolumeLayoutInfo struct {
 	TTL         string            `json:"ttl"`
 	Writables   []needle.VolumeId `json:"writables"`
 	Collection  string            `json:"collection"`
+	DiskType    string            `json:"diskType"`
 }
 
 func (vl *VolumeLayout) ToInfo() (info VolumeLayoutInfo) {
 	info.Replication = vl.rp.String()
 	info.TTL = vl.ttl.String()
 	info.Writables = vl.writables
+	info.DiskType = vl.diskType.ReadableString()
 	//m["locations"] = vl.vid2location
 	return
 }
