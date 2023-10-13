@@ -271,7 +271,7 @@ func doVolumeCheckDisk(minuend, subtrahend *needle_map.MemDb, source, target *Vo
 
 	}
 
-	if doSyncDeletions && len(partiallyDeletedNeedles) > 0 {
+	if doSyncDeletions && applyChanges && len(partiallyDeletedNeedles) > 0 {
 		var fidList []string
 		for _, needleValue := range partiallyDeletedNeedles {
 			fidList = append(fidList, needleValue.Key.FileId(source.info.Id))
@@ -286,7 +286,7 @@ func doVolumeCheckDisk(minuend, subtrahend *needle_map.MemDb, source, target *Vo
 			return hasChanges, deleteErr
 		}
 		for _, deleteResult := range deleteResults {
-			if deleteResult.Status == http.StatusAccepted {
+			if deleteResult.Status == http.StatusAccepted && deleteResult.Size > 0 {
 				hasChanges = true
 				return
 			}

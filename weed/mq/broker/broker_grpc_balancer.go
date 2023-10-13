@@ -8,8 +8,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// ConnectToPubCoordinator receives connections from brokers and collects stats
-func (broker *MessageQueueBroker) ConnectToPubCoordinator(stream mq_pb.SeaweedMessaging_ConnectToPubCoordinatorServer) error {
+// ConnectToBalancer receives connections from brokers and collects stats
+func (broker *MessageQueueBroker) ConnectToBalancer(stream mq_pb.SeaweedMessaging_ConnectToBalancerServer) error {
 	if !broker.lockAsBalancer.IsLocked() {
 		return status.Errorf(codes.Unavailable, "not current broker balancer")
 	}

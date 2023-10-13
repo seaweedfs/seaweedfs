@@ -50,9 +50,10 @@ type Filer struct {
 	FilerConf           *FilerConf
 	RemoteStorage       *FilerRemoteStorage
 	Dlm                 *lock_manager.DistributedLockManager
+	MaxFilenameLength   uint32
 }
 
-func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, notifyFn func()) *Filer {
+func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
 	f := &Filer{
 		MasterClient:        wdclient.NewMasterClient(grpcDialOption, filerGroup, cluster.FilerType, filerHost, dataCenter, "", masters),
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
@@ -61,6 +62,7 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		RemoteStorage:       NewFilerRemoteStorage(),
 		UniqueFilerId:       util.RandomInt32(),
 		Dlm:                 lock_manager.NewDistributedLockManager(filerHost),
+		MaxFilenameLength:   maxFilenameLength,
 	}
 	if f.UniqueFilerId < 0 {
 		f.UniqueFilerId = -f.UniqueFilerId
@@ -194,10 +196,14 @@ func (f *Filer) RollbackTransaction(ctx context.Context) error {
 	return f.Store.RollbackTransaction(ctx)
 }
 
-func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFromOtherCluster bool, signatures []int32, skipCreateParentDir bool) error {
+func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFromOtherCluster bool, signatures []int32, skipCreateParentDir bool, maxFilenameLength uint32) error {
 
 	if string(entry.FullPath) == "/" {
 		return nil
+	}
+
+	if entry.FullPath.IsLongerFileName(maxFilenameLength) {
+		return fmt.Errorf("entry name too long")
 	}
 
 	oldEntry, _ := f.FindEntry(ctx, entry.FullPath)

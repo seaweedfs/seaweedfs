@@ -99,6 +99,12 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		return
 	}
 
+	if util.FullPath(r.URL.Path).IsLongerFileName(so.MaxFileNameLength) {
+		glog.V(1).Infoln("post", r.RequestURI, ": ", "entry name too long")
+		w.WriteHeader(http.StatusRequestURITooLong)
+		return
+	}
+
 	// When DiskType is empty,use filer's -disk
 	if so.DiskType == "" {
 		so.DiskType = fs.option.DiskType
@@ -142,6 +148,11 @@ func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.
 
 	srcPath := util.FullPath(src)
 	dstPath := util.FullPath(dst)
+	if dstPath.IsLongerFileName(so.MaxFileNameLength) {
+		err = fmt.Errorf("dst name to long")
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
 	srcEntry, err := fs.filer.FindEntry(ctx, srcPath)
 	if err != nil {
 		err = fmt.Errorf("failed to get src entry '%s', err: %s", src, err)
@@ -224,6 +235,10 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 		return nil, ErrReadOnly
 	}
 
+	if rule.MaxFileNameLength == 0 {
+		rule.MaxFileNameLength = fs.filer.MaxFilenameLength
+	}
+
 	// required by buckets folder
 	bucketDefaultCollection := ""
 	if strings.HasPrefix(requestURI, fs.filer.DirBucketsPath+"/") {
@@ -248,6 +263,7 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 		DiskType:          util.Nvl(diskType, rule.DiskType),
 		Fsync:             rule.Fsync,
 		VolumeGrowthCount: rule.VolumeGrowthCount,
+		MaxFileNameLength: rule.MaxFileNameLength,
 	}, nil
 }
 
