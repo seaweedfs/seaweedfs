@@ -45,7 +45,7 @@ type S3Options struct {
 	tlsPrivateKey             *string
 	tlsCertificate            *string
 	tlsCACertificate          *string
-	verifyClientCert          *bool
+	tlsVerifyClientCert       *bool
 	metricsHttpPort           *int
 	allowEmptyFolder          *bool
 	allowDeleteBucketNotEmpty *bool
@@ -70,7 +70,7 @@ func init() {
 	s3StandaloneOptions.tlsPrivateKey = cmdS3.Flag.String("key.file", "", "path to the TLS private key file")
 	s3StandaloneOptions.tlsCertificate = cmdS3.Flag.String("cert.file", "", "path to the TLS certificate file")
 	s3StandaloneOptions.tlsCACertificate = cmdS3.Flag.String("cacert.file", "", "path to the TLS CA certificate file")
-	s3StandaloneOptions.verifyClientCert = cmdS3.Flag.Bool("verifyClientCert", false, "whether to verify the client's certificate")
+	s3StandaloneOptions.tlsVerifyClientCert = cmdS3.Flag.Bool("tlsVerifyClientCert", false, "whether to verify the client's certificate")
 	s3StandaloneOptions.metricsHttpPort = cmdS3.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	s3StandaloneOptions.allowEmptyFolder = cmdS3.Flag.Bool("allowEmptyFolder", true, "allow empty folders")
 	s3StandaloneOptions.allowDeleteBucketNotEmpty = cmdS3.Flag.Bool("allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
@@ -307,7 +307,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		}
 
 		clientAuth := tls.NoClientCert
-		if *s3Options.verifyClientCert {
+		if *s3Options.tlsVerifyClientCert {
 			clientAuth = tls.RequireAndVerifyClientCert
 		}
 
