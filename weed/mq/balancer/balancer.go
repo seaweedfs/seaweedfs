@@ -30,14 +30,14 @@ const (
 //	When a consumer instance is down, the broker will notice this and inform the balancer.
 //	The balancer will then tell the broker to send the partition to another standby consumer instance.
 type Balancer struct {
-	Brokers cmap.ConcurrentMap[string, *BrokerStats]
+	Brokers cmap.ConcurrentMap[string, *BrokerStats] // key: broker address
 }
 
 type BrokerStats struct {
 	TopicPartitionCount int32
 	ConsumerCount       int32
 	CpuUsagePercent     int32
-	Stats               cmap.ConcurrentMap[string, *TopicPartitionStats]
+	Stats               cmap.ConcurrentMap[string, *TopicPartitionStats] // key: topic_partition
 }
 
 func (bs *BrokerStats) UpdateStats(stats *mq_pb.BrokerStats) {
