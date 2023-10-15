@@ -644,5 +644,5 @@ certificates:
     # This will avoid the need to use cert-manager and will rely on providing your own external certificates and CA
     # you will need to store your provided certificates in the secret read by the different services:
     # seaweedfs-master-cert, seaweedfs-filer-cert, etc. Can see any statefulset definition to see secret names
-    enabled: true
+    enabled: false
     
