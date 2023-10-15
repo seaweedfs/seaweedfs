@@ -15,15 +15,9 @@ service SeaweedMessaging {
     }
     rpc AssignSegmentBrokers (AssignSegmentBrokersRequest) returns (AssignSegmentBrokersResponse) {
     }
-    rpc CheckSegmentStatus (CheckSegmentStatusRequest) returns (CheckSegmentStatusResponse) {
-    }
-    rpc CheckBrokerLoad (CheckBrokerLoadRequest) returns (CheckBrokerLoadResponse) {
-    }
 
     // control plane for balancer
     rpc ConnectToBalancer (stream ConnectToBalancerRequest) returns (stream ConnectToBalancerResponse) {
-    }
-    rpc DoConfigureTopic (DoConfigureTopicRequest) returns (DoConfigureTopicResponse) {
     }
     // control plane for topic partitions
     rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
@@ -32,12 +26,7 @@ service SeaweedMessaging {
     }
     rpc ListTopics (ListTopicsRequest) returns (ListTopicsResponse) {
     }
-    // a pub client will call this to get the topic partitions assignment
-    rpc RequestTopicPartitions (RequestTopicPartitionsRequest) returns (RequestTopicPartitionsResponse) {
-    }
     rpc AssignTopicPartitions (AssignTopicPartitionsRequest) returns (AssignTopicPartitionsResponse) {
-    }
-    rpc CheckTopicPartitionsStatus (CheckTopicPartitionsStatusRequest) returns (CheckTopicPartitionsStatusResponse) {
     }
 
     // data plane
@@ -92,23 +81,6 @@ message AssignSegmentBrokersResponse {
     repeated string brokers = 1;
 }
 
-message CheckSegmentStatusRequest {
-    Segment segment = 1;
-}
-
-message CheckSegmentStatusResponse {
-    bool is_active = 1;
-}
-
-message CheckBrokerLoadRequest {
-}
-
-message CheckBrokerLoadResponse {
-    int64 message_count = 1;
-    int64 bytes_count = 2;
-
-}
-
 //////////////////////////////////////////////////
 message BrokerStats {
     int32 cpu_usage_percent = 1;
@@ -141,12 +113,6 @@ message ConfigureTopicRequest {
 message ConfigureTopicResponse {
     repeated BrokerPartitionAssignment broker_partition_assignments = 2;
 }
-message DoConfigureTopicRequest {
-    Topic topic = 1;
-    Partition partition = 2;
-}
-message DoConfigureTopicResponse {
-}
 message ListTopicsRequest {
 }
 message ListTopicsResponse {
@@ -166,30 +132,13 @@ message BrokerPartitionAssignment {
     repeated string follower_brokers = 3;
 }
 
-message RequestTopicPartitionsRequest {
-    Topic topic = 1;
-    int32 partition_count = 2;
-}
-message RequestTopicPartitionsResponse {
-    repeated BrokerPartitionAssignment broker_partition_assignments = 1;
-}
-
 message AssignTopicPartitionsRequest {
     Topic topic = 1;
     repeated BrokerPartitionAssignment broker_partition_assignments = 2;
     bool is_leader = 3;
+    bool is_draining = 4;
 }
 message AssignTopicPartitionsResponse {
-}
-
-message CheckTopicPartitionsStatusRequest {
-    string namespace = 1;
-    string topic = 2;
-    BrokerPartitionAssignment broker_partition_assignment = 3;
-    bool should_cancel_if_not_match = 4;
-}
-message CheckTopicPartitionsStatusResponse {
-    repeated BrokerPartitionAssignment broker_partition_assignments = 1;
 }
 
 //////////////////////////////////////////////////

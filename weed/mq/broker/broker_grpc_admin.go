@@ -72,18 +72,6 @@ func (broker *MessageQueueBroker) AssignSegmentBrokers(c context.Context, reques
 	return ret, nil
 }
 
-func (broker *MessageQueueBroker) CheckSegmentStatus(c context.Context, request *mq_pb.CheckSegmentStatusRequest) (*mq_pb.CheckSegmentStatusResponse, error) {
-	ret := &mq_pb.CheckSegmentStatusResponse{}
-	// TODO add in memory active segment
-	return ret, nil
-}
-
-func (broker *MessageQueueBroker) CheckBrokerLoad(c context.Context, request *mq_pb.CheckBrokerLoadRequest) (*mq_pb.CheckBrokerLoadResponse, error) {
-	ret := &mq_pb.CheckBrokerLoadResponse{}
-	// TODO read broker's load
-	return ret, nil
-}
-
 // createOrUpdateTopicPartitions creates the topic partitions on the broker
 // 1. check
 func (broker *MessageQueueBroker) createOrUpdateTopicPartitions(topic *topic.Topic, prevAssignments []*mq_pb.BrokerPartitionAssignment) (err error) {

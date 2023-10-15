@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/mq/balancer"
-	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/codes"
@@ -33,9 +32,15 @@ func (broker *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *m
 	for _, bpa := range ret.BrokerPartitionAssignments {
 		// fmt.Printf("create topic %s on %s\n", request.Topic, bpa.LeaderBroker)
 		if doCreateErr := broker.withBrokerClient(false, pb.ServerAddress(bpa.LeaderBroker), func(client mq_pb.SeaweedMessagingClient) error {
-			_, doCreateErr := client.DoConfigureTopic(ctx, &mq_pb.DoConfigureTopicRequest{
-				Topic:     request.Topic,
-				Partition: bpa.Partition,
+			_, doCreateErr := client.AssignTopicPartitions(ctx, &mq_pb.AssignTopicPartitionsRequest{
+				Topic: request.Topic,
+				BrokerPartitionAssignments: []*mq_pb.BrokerPartitionAssignment{
+					{
+						Partition: bpa.Partition,
+					},
+				},
+				IsLeader:   true,
+				IsDraining: false,
 			})
 			if doCreateErr != nil {
 				return fmt.Errorf("do create topic %s on %s: %v", request.Topic, bpa.LeaderBroker, doCreateErr)
@@ -55,18 +60,6 @@ func (broker *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *m
 	}
 
 	// TODO revert if some error happens in the middle of the assignments
-
-	return ret, err
-}
-
-func (broker *MessageQueueBroker) DoConfigureTopic(ctx context.Context, req *mq_pb.DoConfigureTopicRequest) (resp *mq_pb.DoConfigureTopicResponse, err error) {
-	ret := &mq_pb.DoConfigureTopicResponse{}
-	t, p := topic.FromPbTopic(req.Topic), topic.FromPbPartition(req.Partition)
-	localTopicPartition := broker.localTopicManager.GetTopicPartition(t, p)
-	if localTopicPartition == nil {
-		localTopicPartition = topic.NewLocalPartition(t, p, true, nil)
-		broker.localTopicManager.AddTopicPartition(t, localTopicPartition)
-	}
 
 	return ret, err
 }

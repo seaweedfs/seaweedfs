@@ -41,12 +41,6 @@ func (broker *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, reques
 	return ret, err
 }
 
-// CheckTopicPartitionsStatus check the topic partitions on the broker
-func (broker *MessageQueueBroker) CheckTopicPartitionsStatus(c context.Context, request *mq_pb.CheckTopicPartitionsStatusRequest) (*mq_pb.CheckTopicPartitionsStatusResponse, error) {
-	ret := &mq_pb.CheckTopicPartitionsStatusResponse{}
-	return ret, nil
-}
-
 func (broker *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.ListTopicsRequest) (resp *mq_pb.ListTopicsResponse, err error) {
 	if broker.currentBalancer == "" {
 		return nil, status.Errorf(codes.Unavailable, "no balancer")
