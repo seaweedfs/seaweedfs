@@ -25,6 +25,13 @@ func FromPbTopic(topic *mq_pb.Topic) Topic {
 	}
 }
 
+func (tp Topic) ToPbTopic() *mq_pb.Topic {
+	return &mq_pb.Topic{
+		Namespace: tp.Namespace,
+		Name:      tp.Name,
+	}
+}
+
 func (tp Topic) String() string {
 	return fmt.Sprintf("%s.%s", tp.Namespace, tp.Name)
 }

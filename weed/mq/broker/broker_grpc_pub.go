@@ -87,14 +87,16 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 		t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
 		localTopicPartition = broker.localTopicManager.GetTopicPartition(t, p)
 		if localTopicPartition == nil {
-			localTopicPartition = topic.NewLocalPartition(t, p, true, nil)
-			broker.localTopicManager.AddTopicPartition(t, localTopicPartition)
+			response.Error = fmt.Sprintf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
+			glog.Errorf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
+			return stream.Send(response)
+
 		}
 		ackInterval = int(initMessage.AckInterval)
 		stream.Send(response)
 	} else {
-		response.Error = fmt.Sprintf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)
-		glog.Errorf("topic %v partition %v not found", initMessage.Topic, initMessage.Partition)
+		response.Error = fmt.Sprintf("missing init message")
+		glog.Errorf("missing init message")
 		return stream.Send(response)
 	}
 
@@ -166,12 +168,26 @@ func (broker *MessageQueueBroker) AssignTopicPartitions(c context.Context, reque
 	ret := &mq_pb.AssignTopicPartitionsResponse{}
 	self := pb.ServerAddress(fmt.Sprintf("%s:%d", broker.option.Ip, broker.option.Port))
 
+	// drain existing topic partition subscriptions
 	for _, brokerPartition := range request.BrokerPartitionAssignments {
 		localPartiton := topic.FromPbBrokerPartitionAssignment(self, brokerPartition)
-		broker.localTopicManager.AddTopicPartition(
-			topic.FromPbTopic(request.Topic),
-			localPartiton)
-		if request.IsLeader {
+		if request.IsDraining {
+			// TODO drain existing topic partition subscriptions
+
+			broker.localTopicManager.RemoveTopicPartition(
+				topic.FromPbTopic(request.Topic),
+				localPartiton.Partition)
+		} else {
+			broker.localTopicManager.AddTopicPartition(
+				topic.FromPbTopic(request.Topic),
+				localPartiton)
+		}
+	}
+
+	// if is leader, notify the followers to drain existing topic partition subscriptions
+	if request.IsLeader {
+		for _, brokerPartition := range request.BrokerPartitionAssignments {
+			localPartiton := topic.FromPbBrokerPartitionAssignment(self, brokerPartition)
 			for _, follower := range localPartiton.FollowerBrokers {
 				err := pb.WithBrokerGrpcClient(false, follower.String(), broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 					_, err := client.AssignTopicPartitions(context.Background(), request)

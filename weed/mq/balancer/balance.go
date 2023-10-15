@@ -2,6 +2,7 @@ package balancer
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"google.golang.org/grpc"
 )
 
 /*
@@ -51,4 +52,14 @@ type BalanceActionMove struct {
 func (balancer *Balancer) BalancePublishers() BalanceAction {
 	action := BalanceTopicPartitionOnBrokers(balancer.Brokers)
 	return action
+}
+
+func (balancer *Balancer) ExecuteBalanceAction(action BalanceAction, grpcDialOption grpc.DialOption) {
+	if action == nil {
+		return
+	}
+	switch action.(type) {
+	case *BalanceActionMove:
+		balancer.ExecuteBalanceActionMove(action.(*BalanceActionMove), grpcDialOption)
+	}
 }

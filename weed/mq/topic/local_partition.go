@@ -15,6 +15,7 @@ type LocalPartition struct {
 	FollowerBrokers []pb.ServerAddress
 	logBuffer       *log_buffer.LogBuffer
 	ConsumerCount   int32
+	StopCh          chan struct{}
 }
 
 func NewLocalPartition(topic Topic, partition Partition, isLeader bool, followerBrokers []pb.ServerAddress) *LocalPartition {

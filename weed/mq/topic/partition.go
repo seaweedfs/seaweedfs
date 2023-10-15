@@ -47,3 +47,11 @@ func SplitPartitions(targetCount int32) []*Partition {
 	}
 	return partitions
 }
+
+func (partition Partition) ToPbPartition() *mq_pb.Partition {
+	return &mq_pb.Partition{
+		RangeStart: partition.RangeStart,
+		RangeStop:  partition.RangeStop,
+		RingSize:   partition.RingSize,
+	}
+}

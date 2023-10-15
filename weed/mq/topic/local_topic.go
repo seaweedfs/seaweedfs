@@ -5,6 +5,13 @@ type LocalTopic struct {
 	Partitions []*LocalPartition
 }
 
+func NewLocalTopic(topic Topic) *LocalTopic {
+	return &LocalTopic{
+		Topic:      topic,
+		Partitions: make([]*LocalPartition, 0),
+	}
+}
+
 func (localTopic *LocalTopic) findPartition(partition Partition) *LocalPartition {
 	for _, localPartition := range localTopic.Partitions {
 		if localPartition.Partition.Equals(partition) {

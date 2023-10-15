@@ -23,10 +23,7 @@ func NewLocalTopicManager() *LocalTopicManager {
 func (manager *LocalTopicManager) AddTopicPartition(topic Topic, localPartition *LocalPartition) {
 	localTopic, ok := manager.topics.Get(topic.String())
 	if !ok {
-		localTopic = &LocalTopic{
-			Topic:      topic,
-			Partitions: make([]*LocalPartition, 0),
-		}
+		localTopic = NewLocalTopic(topic)
 	}
 	if !manager.topics.SetIfAbsent(topic.String(), localTopic) {
 		localTopic, _ = manager.topics.Get(topic.String())
