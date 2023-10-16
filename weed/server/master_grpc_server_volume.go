@@ -163,7 +163,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 
 	var (
 		lastErr    error
-		maxTimeout = time.Second * 10
+		maxTimeout = time.Second * 5
 		startTime  = time.Now()
 	)
 

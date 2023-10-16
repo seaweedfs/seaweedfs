@@ -7,6 +7,7 @@ variables:
 
 stages:
   - lint
+  - build
   - release
 
 commit-lint:
@@ -22,6 +23,12 @@ helm-lint:
     - if: $CI_COMMIT_BRANCH
       changes:
         - k8s/**
+
+docker-build:
+  extends: .docker-build-buildkit
+
+docker-push:
+  extends: .docker-push
 
 helm-push:
   extends: .helm-push
