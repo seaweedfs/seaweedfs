@@ -193,7 +193,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 				Replicas: replicas,
 			}, nil
 		}
-		//glog.V(4).Infoln("waiting for volume growing...")
+		glog.V(1).Infoln("waiting for volume growing...")
 		lastErr = err
 		time.Sleep(200 * time.Millisecond)
 	}
