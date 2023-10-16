@@ -2,9 +2,8 @@
 
 global:
   createClusterRole: true
-  registry: ""
-  repository: ""
   imageName: chrislusf/seaweedfs
+  imageTag: ""
   imagePullPolicy: IfNotPresent
   imagePullSecrets: ""
   restartPolicy: Always
@@ -40,7 +39,6 @@ image:
 
 master:
   enabled: true
-  repository: null
   imageName: null
   imageTag: null
   imageOverride: null
@@ -197,7 +195,6 @@ master:
 
 volume:
   enabled: true
-  repository: null
   imageName: null
   imageTag: null
   imageOverride: null
@@ -343,7 +340,6 @@ volume:
 
 filer:
   enabled: true
-  repository: null
   imageName: null
   imageTag: null
   imageOverride: null
@@ -551,7 +547,6 @@ filer:
 
 s3:
   enabled: false
-  repository: null
   imageName: null
   imageTag: null
   restartPolicy: null
