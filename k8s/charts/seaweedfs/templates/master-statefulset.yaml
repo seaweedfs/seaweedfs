@@ -39,6 +39,9 @@ spec:
       {{ with .Values.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.master.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.master.restartPolicy }}
       {{- if .Values.master.affinity }}
@@ -96,7 +99,7 @@ spec:
           command:
             - "/bin/sh"
             - "-ec"
-            - | 
+            - |
               exec /usr/bin/weed \
               {{- if eq .Values.master.logs.type "hostPath" }}
               -logdir=/logs \

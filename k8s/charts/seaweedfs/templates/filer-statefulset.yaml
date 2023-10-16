@@ -40,6 +40,9 @@ spec:
       {{ with .Values.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.filer.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.filer.restartPolicy }}
       {{- if .Values.filer.affinity }}
@@ -117,11 +120,11 @@ spec:
             - name: {{ $key }}
               valueFrom: {{ toYaml $value | nindent 16 }}
             {{- end }}
-            {{- end }}             
+            {{- end }}
           command:
             - "/bin/sh"
             - "-ec"
-            - | 
+            - |
               exec /usr/bin/weed \
               {{- if eq .Values.filer.logs.type "hostPath" }}
               -logdir=/logs \

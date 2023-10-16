@@ -33,6 +33,9 @@ spec:
       {{ with .Values.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.volume.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       {{- if .Values.volume.affinity }}
       affinity:

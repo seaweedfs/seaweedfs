@@ -65,6 +65,7 @@ master:
 
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
+  podAnnotations: {}
 
   config: |-
     # Enter any extra configuration for master.toml here.
@@ -213,6 +214,7 @@ volume:
   fileSizeLimitMB: null
   # minimum free disk space(in percents). If free disk space lower this value - all volumes marks as ReadOnly
   minFreeSpacePercent: 7
+  podAnnotations: {}
 
 # can use ANY storage-class , example with local-path-provisioner
 #  data:
@@ -350,6 +352,7 @@ filer:
   metricsPort: 9327
   loggingOverrideLevel: null
   filerGroup: ""
+  podAnnotations: {}
   #  replication type is XYZ:
   # X number of replica in other data centers
   # Y number of replica in other racks in the same data center
