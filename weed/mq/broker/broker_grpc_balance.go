@@ -24,8 +24,8 @@ func (broker *MessageQueueBroker) BalanceTopics(ctx context.Context, request *mq
 
 	ret := &mq_pb.BalanceTopicsResponse{}
 
-	action := broker.Balancer.BalancePublishers()
-	err = broker.Balancer.ExecuteBalanceAction(action, broker.grpcDialOption)
+	actions := broker.Balancer.BalancePublishers()
+	err = broker.Balancer.ExecuteBalanceAction(actions, broker.grpcDialOption)
 
 	return ret, err
 }
