@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion7
 const (
 	SeaweedMessaging_FindBrokerLeader_FullMethodName      = "/messaging_pb.SeaweedMessaging/FindBrokerLeader"
 	SeaweedMessaging_ConnectToBalancer_FullMethodName     = "/messaging_pb.SeaweedMessaging/ConnectToBalancer"
+	SeaweedMessaging_BalanceTopics_FullMethodName         = "/messaging_pb.SeaweedMessaging/BalanceTopics"
 	SeaweedMessaging_LookupTopicBrokers_FullMethodName    = "/messaging_pb.SeaweedMessaging/LookupTopicBrokers"
 	SeaweedMessaging_ConfigureTopic_FullMethodName        = "/messaging_pb.SeaweedMessaging/ConfigureTopic"
 	SeaweedMessaging_ListTopics_FullMethodName            = "/messaging_pb.SeaweedMessaging/ListTopics"
@@ -37,6 +38,7 @@ type SeaweedMessagingClient interface {
 	FindBrokerLeader(ctx context.Context, in *FindBrokerLeaderRequest, opts ...grpc.CallOption) (*FindBrokerLeaderResponse, error)
 	// control plane for balancer
 	ConnectToBalancer(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_ConnectToBalancerClient, error)
+	BalanceTopics(ctx context.Context, in *BalanceTopicsRequest, opts ...grpc.CallOption) (*BalanceTopicsResponse, error)
 	// control plane for topic partitions
 	LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error)
 	ConfigureTopic(ctx context.Context, in *ConfigureTopicRequest, opts ...grpc.CallOption) (*ConfigureTopicResponse, error)
@@ -93,6 +95,15 @@ func (x *seaweedMessagingConnectToBalancerClient) Recv() (*ConnectToBalancerResp
 		return nil, err
 	}
 	return m, nil
+}
+
+func (c *seaweedMessagingClient) BalanceTopics(ctx context.Context, in *BalanceTopicsRequest, opts ...grpc.CallOption) (*BalanceTopicsResponse, error) {
+	out := new(BalanceTopicsResponse)
+	err := c.cc.Invoke(ctx, SeaweedMessaging_BalanceTopics_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *seaweedMessagingClient) LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error) {
@@ -202,6 +213,7 @@ type SeaweedMessagingServer interface {
 	FindBrokerLeader(context.Context, *FindBrokerLeaderRequest) (*FindBrokerLeaderResponse, error)
 	// control plane for balancer
 	ConnectToBalancer(SeaweedMessaging_ConnectToBalancerServer) error
+	BalanceTopics(context.Context, *BalanceTopicsRequest) (*BalanceTopicsResponse, error)
 	// control plane for topic partitions
 	LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error)
 	ConfigureTopic(context.Context, *ConfigureTopicRequest) (*ConfigureTopicResponse, error)
@@ -222,6 +234,9 @@ func (UnimplementedSeaweedMessagingServer) FindBrokerLeader(context.Context, *Fi
 }
 func (UnimplementedSeaweedMessagingServer) ConnectToBalancer(SeaweedMessaging_ConnectToBalancerServer) error {
 	return status.Errorf(codes.Unimplemented, "method ConnectToBalancer not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) BalanceTopics(context.Context, *BalanceTopicsRequest) (*BalanceTopicsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BalanceTopics not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method LookupTopicBrokers not implemented")
@@ -296,6 +311,24 @@ func (x *seaweedMessagingConnectToBalancerServer) Recv() (*ConnectToBalancerRequ
 		return nil, err
 	}
 	return m, nil
+}
+
+func _SeaweedMessaging_BalanceTopics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BalanceTopicsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).BalanceTopics(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedMessaging_BalanceTopics_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).BalanceTopics(ctx, req.(*BalanceTopicsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _SeaweedMessaging_LookupTopicBrokers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -427,6 +460,10 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FindBrokerLeader",
 			Handler:    _SeaweedMessaging_FindBrokerLeader_Handler,
+		},
+		{
+			MethodName: "BalanceTopics",
+			Handler:    _SeaweedMessaging_BalanceTopics_Handler,
 		},
 		{
 			MethodName: "LookupTopicBrokers",

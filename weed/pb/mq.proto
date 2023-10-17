@@ -17,6 +17,8 @@ service SeaweedMessaging {
     // control plane for balancer
     rpc ConnectToBalancer (stream ConnectToBalancerRequest) returns (stream ConnectToBalancerResponse) {
     }
+    rpc BalanceTopics (BalanceTopicsRequest) returns (BalanceTopicsResponse) {
+    }
     // control plane for topic partitions
     rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
     }
@@ -78,6 +80,12 @@ message ConnectToBalancerRequest {
 }
 message ConnectToBalancerResponse {
 }
+
+message BalanceTopicsRequest {
+}
+message BalanceTopicsResponse {
+}
+
 //////////////////////////////////////////////////
 message ConfigureTopicRequest {
     Topic topic = 1;

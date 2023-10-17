@@ -54,12 +54,13 @@ func (balancer *Balancer) BalancePublishers() BalanceAction {
 	return action
 }
 
-func (balancer *Balancer) ExecuteBalanceAction(action BalanceAction, grpcDialOption grpc.DialOption) {
+func (balancer *Balancer) ExecuteBalanceAction(action BalanceAction, grpcDialOption grpc.DialOption) error {
 	if action == nil {
-		return
+		return nil
 	}
 	switch action.(type) {
 	case *BalanceActionMove:
-		balancer.ExecuteBalanceActionMove(action.(*BalanceActionMove), grpcDialOption)
+		return balancer.ExecuteBalanceActionMove(action.(*BalanceActionMove), grpcDialOption)
 	}
+	return nil
 }
