@@ -11,25 +11,25 @@ import (
 )
 
 func init() {
-	Commands = append(Commands, &commandMqTopicCreate{})
+	Commands = append(Commands, &commandMqTopicConfigure{})
 }
 
-type commandMqTopicCreate struct {
+type commandMqTopicConfigure struct {
 }
 
-func (c *commandMqTopicCreate) Name() string {
-	return "mq.topic.create"
+func (c *commandMqTopicConfigure) Name() string {
+	return "mq.topic.configure"
 }
 
-func (c *commandMqTopicCreate) Help() string {
-	return `create a topic with a given name
+func (c *commandMqTopicConfigure) Help() string {
+	return `configure a topic with a given name
 
 	Example:
-		mq.topic.create -namespace <namespace> -topic <topic_name> -partition_count <partition_count>
+		mq.topic.configure -namespace <namespace> -topic <topic_name> -partition_count <partition_count>
 `
 }
 
-func (c *commandMqTopicCreate) Do(args []string, commandEnv *CommandEnv, writer io.Writer) error {
+func (c *commandMqTopicConfigure) Do(args []string, commandEnv *CommandEnv, writer io.Writer) error {
 
 	// parse parameters
 	mqCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
