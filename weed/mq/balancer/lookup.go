@@ -30,7 +30,7 @@ func (b *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, publish b
 			}
 		}
 	}
-	if len(assignments) > 0 {
+	if len(assignments) > 0 && len(assignments) == int(partitionCount) || !publish {
 		return assignments, nil
 	}
 
