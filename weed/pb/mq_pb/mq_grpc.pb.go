@@ -20,7 +20,6 @@ const _ = grpc.SupportPackageIsVersion7
 
 const (
 	SeaweedMessaging_FindBrokerLeader_FullMethodName      = "/messaging_pb.SeaweedMessaging/FindBrokerLeader"
-	SeaweedMessaging_AssignSegmentBrokers_FullMethodName  = "/messaging_pb.SeaweedMessaging/AssignSegmentBrokers"
 	SeaweedMessaging_ConnectToBalancer_FullMethodName     = "/messaging_pb.SeaweedMessaging/ConnectToBalancer"
 	SeaweedMessaging_LookupTopicBrokers_FullMethodName    = "/messaging_pb.SeaweedMessaging/LookupTopicBrokers"
 	SeaweedMessaging_ConfigureTopic_FullMethodName        = "/messaging_pb.SeaweedMessaging/ConfigureTopic"
@@ -36,7 +35,6 @@ const (
 type SeaweedMessagingClient interface {
 	// control plane
 	FindBrokerLeader(ctx context.Context, in *FindBrokerLeaderRequest, opts ...grpc.CallOption) (*FindBrokerLeaderResponse, error)
-	AssignSegmentBrokers(ctx context.Context, in *AssignSegmentBrokersRequest, opts ...grpc.CallOption) (*AssignSegmentBrokersResponse, error)
 	// control plane for balancer
 	ConnectToBalancer(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_ConnectToBalancerClient, error)
 	// control plane for topic partitions
@@ -60,15 +58,6 @@ func NewSeaweedMessagingClient(cc grpc.ClientConnInterface) SeaweedMessagingClie
 func (c *seaweedMessagingClient) FindBrokerLeader(ctx context.Context, in *FindBrokerLeaderRequest, opts ...grpc.CallOption) (*FindBrokerLeaderResponse, error) {
 	out := new(FindBrokerLeaderResponse)
 	err := c.cc.Invoke(ctx, SeaweedMessaging_FindBrokerLeader_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *seaweedMessagingClient) AssignSegmentBrokers(ctx context.Context, in *AssignSegmentBrokersRequest, opts ...grpc.CallOption) (*AssignSegmentBrokersResponse, error) {
-	out := new(AssignSegmentBrokersResponse)
-	err := c.cc.Invoke(ctx, SeaweedMessaging_AssignSegmentBrokers_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +200,6 @@ func (x *seaweedMessagingSubscribeClient) Recv() (*SubscribeResponse, error) {
 type SeaweedMessagingServer interface {
 	// control plane
 	FindBrokerLeader(context.Context, *FindBrokerLeaderRequest) (*FindBrokerLeaderResponse, error)
-	AssignSegmentBrokers(context.Context, *AssignSegmentBrokersRequest) (*AssignSegmentBrokersResponse, error)
 	// control plane for balancer
 	ConnectToBalancer(SeaweedMessaging_ConnectToBalancerServer) error
 	// control plane for topic partitions
@@ -231,9 +219,6 @@ type UnimplementedSeaweedMessagingServer struct {
 
 func (UnimplementedSeaweedMessagingServer) FindBrokerLeader(context.Context, *FindBrokerLeaderRequest) (*FindBrokerLeaderResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FindBrokerLeader not implemented")
-}
-func (UnimplementedSeaweedMessagingServer) AssignSegmentBrokers(context.Context, *AssignSegmentBrokersRequest) (*AssignSegmentBrokersResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AssignSegmentBrokers not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) ConnectToBalancer(SeaweedMessaging_ConnectToBalancerServer) error {
 	return status.Errorf(codes.Unimplemented, "method ConnectToBalancer not implemented")
@@ -283,24 +268,6 @@ func _SeaweedMessaging_FindBrokerLeader_Handler(srv interface{}, ctx context.Con
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SeaweedMessagingServer).FindBrokerLeader(ctx, req.(*FindBrokerLeaderRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _SeaweedMessaging_AssignSegmentBrokers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(AssignSegmentBrokersRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SeaweedMessagingServer).AssignSegmentBrokers(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SeaweedMessaging_AssignSegmentBrokers_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedMessagingServer).AssignSegmentBrokers(ctx, req.(*AssignSegmentBrokersRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -460,10 +427,6 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FindBrokerLeader",
 			Handler:    _SeaweedMessaging_FindBrokerLeader_Handler,
-		},
-		{
-			MethodName: "AssignSegmentBrokers",
-			Handler:    _SeaweedMessaging_AssignSegmentBrokers_Handler,
 		},
 		{
 			MethodName: "LookupTopicBrokers",
