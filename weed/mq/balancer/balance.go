@@ -49,18 +49,20 @@ type BalanceActionMove struct {
 
 // BalancePublishers check the stats of all brokers,
 // and balance the publishers to the brokers.
-func (balancer *Balancer) BalancePublishers() BalanceAction {
+func (balancer *Balancer) BalancePublishers() []BalanceAction {
 	action := BalanceTopicPartitionOnBrokers(balancer.Brokers)
-	return action
+	return []BalanceAction{action}
 }
 
-func (balancer *Balancer) ExecuteBalanceAction(action BalanceAction, grpcDialOption grpc.DialOption) error {
-	if action == nil {
-		return nil
-	}
-	switch action.(type) {
-	case *BalanceActionMove:
-		return balancer.ExecuteBalanceActionMove(action.(*BalanceActionMove), grpcDialOption)
+func (balancer *Balancer) ExecuteBalanceAction(actions []BalanceAction, grpcDialOption grpc.DialOption) (err error) {
+	for _, action := range actions {
+		switch action.(type) {
+		case *BalanceActionMove:
+			err = balancer.ExecuteBalanceActionMove(action.(*BalanceActionMove), grpcDialOption)
+		}
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
