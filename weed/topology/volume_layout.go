@@ -314,7 +314,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*n
 				continue
 			}
 			counter++
-			if rand.Intn(counter) < 1 {
+			if rand.Intn(counter) < 1 || locationList == nil {
 				vid, locationList = v, volumeLocationList.Copy()
 			}
 		}
