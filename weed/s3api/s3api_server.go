@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"net"
 	"net/http"
 	"strings"
@@ -60,6 +62,15 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 		randomClientId: util.RandomInt32(),
 		filerGuard:     security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
 		cb:             NewCircuitBreaker(option),
+	}
+	if option.Config != "" {
+		grace.OnReload(func() {
+			if err := s3ApiServer.iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
+				glog.Errorf("fail to load config file %s: %v", option.Config, err)
+			} else {
+				glog.V(0).Infof("Loaded %d identities from config file %s", len(s3ApiServer.iam.identities), option.Config)
+			}
+		})
 	}
 	s3ApiServer.bucketRegistry = NewBucketRegistry(s3ApiServer)
 	if option.LocalFilerSocket == "" {
