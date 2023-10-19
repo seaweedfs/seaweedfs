@@ -33,7 +33,7 @@ func (b *Balancer) ExecuteBalanceActionMove(move *BalanceActionMove, grpcDialOpt
 		return err
 	})
 	if err != nil {
-		return fmt.Errorf("assign topic partition %s to %s: %v", move.TopicPartition, move.TargetBroker, err)
+		return fmt.Errorf("assign topic partition %v to %s: %v", move.TopicPartition, move.TargetBroker, err)
 	}
 
 	err = pb.WithBrokerGrpcClient(false, move.SourceBroker, grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
@@ -50,7 +50,7 @@ func (b *Balancer) ExecuteBalanceActionMove(move *BalanceActionMove, grpcDialOpt
 		return err
 	})
 	if err != nil {
-		return fmt.Errorf("assign topic partition %s to %s: %v", move.TopicPartition, move.SourceBroker, err)
+		return fmt.Errorf("assign topic partition %v to %s: %v", move.TopicPartition, move.SourceBroker, err)
 	}
 
 	return nil
