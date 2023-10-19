@@ -68,7 +68,7 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 			if err := s3ApiServer.iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
 				glog.Errorf("fail to load config file %s: %v", option.Config, err)
 			} else {
-				glog.V(0).Infof("success loaded %s identities from config file %s", len(s3ApiServer.iam.identities), option.Config)
+				glog.V(0).Infof("Loaded %s identities from config file %s", len(s3ApiServer.iam.identities), option.Config)
 			}
 		})
 	}
