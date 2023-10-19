@@ -47,6 +47,11 @@ type BalanceActionMove struct {
 	TargetBroker   string
 }
 
+type BalanceActionCreate struct {
+	TopicPartition topic.TopicPartition
+	TargetBroker   string
+}
+
 // BalancePublishers check the stats of all brokers,
 // and balance the publishers to the brokers.
 func (balancer *Balancer) BalancePublishers() []BalanceAction {
