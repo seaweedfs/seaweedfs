@@ -33,7 +33,7 @@ func (scanner *VolumeFileScanner4SeeDat) ReadNeedleBody() bool {
 
 func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	t := time.Unix(int64(n.AppendAtNs)/int64(time.Second), int64(n.AppendAtNs)%int64(time.Second))
-	glog.V(0).Infof("%d,%s%08x offset %d size %d(%s) cookie %08x appendedAt %v",
+	glog.V(0).Infof("%s %d,%s%08x offset %d size %d(%s) cookie %08x appendedAt %v", n.Name,
 		*volumeId, n.Id, n.Cookie, offset, n.Size, util.BytesToHumanReadable(uint64(n.Size)), n.Cookie, t)
 	return nil
 }
