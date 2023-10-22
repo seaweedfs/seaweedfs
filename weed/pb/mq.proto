@@ -4,7 +4,7 @@ package messaging_pb;
 
 option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/mq_pb";
 option java_package = "seaweedfs.mq";
-option java_outer_classname = "MessagQueueProto";
+option java_outer_classname = "MessageQueueProto";
 
 //////////////////////////////////////////////////
 
@@ -19,6 +19,7 @@ service SeaweedMessaging {
     }
     rpc BalanceTopics (BalanceTopicsRequest) returns (BalanceTopicsResponse) {
     }
+
     // control plane for topic partitions
     rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
     }
@@ -29,10 +30,15 @@ service SeaweedMessaging {
     rpc AssignTopicPartitions (AssignTopicPartitionsRequest) returns (AssignTopicPartitionsResponse) {
     }
 
-    // data plane
+    // data plane for each topic partition
     rpc Publish (stream PublishRequest) returns (stream PublishResponse) {
     }
     rpc Subscribe (SubscribeRequest) returns (stream SubscribeResponse) {
+    }
+    // control each topic partition
+    rpc ClosePublishers(ClosePublishersRequest) returns (ClosePublishersResponse) {
+    }
+    rpc CloseSubscribers(CloseSubscribersRequest) returns (CloseSubscribersResponse) {
     }
 }
 
@@ -175,4 +181,16 @@ message SubscribeResponse {
         CtrlMessage ctrl = 1;
         DataMessage data = 2;
     }
+}
+message ClosePublishersRequest {
+    Topic topic = 1;
+    int32 epoch = 2;
+}
+message ClosePublishersResponse {
+}
+message CloseSubscribersRequest {
+    Topic topic = 1;
+    int32 epoch = 2;
+}
+message CloseSubscribersResponse {
 }

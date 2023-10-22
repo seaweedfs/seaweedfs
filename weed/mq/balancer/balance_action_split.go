@@ -35,4 +35,9 @@ And also:
 2 => 5
 3 => 6
 
+For brokers:
+1. Close all publishers for a topic partition
+2. Close all subscribers for a topic partition
+3. Close the topic partition
+
 */
