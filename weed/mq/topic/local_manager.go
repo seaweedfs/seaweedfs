@@ -56,6 +56,22 @@ func (manager *LocalTopicManager) RemoveTopicPartition(topic Topic, partition Pa
 	return localTopic.removePartition(partition)
 }
 
+func (manager *LocalTopicManager) ClosePublishers(topic Topic, unixTsNs int64) (removed bool) {
+	localTopic, ok := manager.topics.Get(topic.String())
+	if !ok {
+		return false
+	}
+	return localTopic.closePartitionPublishers(unixTsNs)
+}
+
+func (manager *LocalTopicManager) CloseSubscribers(topic Topic, unixTsNs int64) (removed bool) {
+	localTopic, ok := manager.topics.Get(topic.String())
+	if !ok {
+		return false
+	}
+	return localTopic.closePartitionSubscribers(unixTsNs)
+}
+
 func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.BrokerStats {
 	stats := &mq_pb.BrokerStats{
 		Stats: make(map[string]*mq_pb.TopicPartitionStats),

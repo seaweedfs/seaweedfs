@@ -3,6 +3,7 @@ package coordinator
 import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"sync"
+	"time"
 )
 
 func (cg *ConsumerGroup) SetMinMaxActiveInstances(min, max int32) {
@@ -74,7 +75,7 @@ func (cg *ConsumerGroup) doCoordinate(target int32) {
 	}
 	wg.Wait()
 
-	partitions := topic.SplitPartitions(target)
+	partitions := topic.SplitPartitions(target, time.Now().UnixNano())
 
 	// assign partitions to new instances
 	i := 0
