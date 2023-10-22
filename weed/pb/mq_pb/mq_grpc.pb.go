@@ -28,6 +28,8 @@ const (
 	SeaweedMessaging_AssignTopicPartitions_FullMethodName = "/messaging_pb.SeaweedMessaging/AssignTopicPartitions"
 	SeaweedMessaging_Publish_FullMethodName               = "/messaging_pb.SeaweedMessaging/Publish"
 	SeaweedMessaging_Subscribe_FullMethodName             = "/messaging_pb.SeaweedMessaging/Subscribe"
+	SeaweedMessaging_ClosePublishers_FullMethodName       = "/messaging_pb.SeaweedMessaging/ClosePublishers"
+	SeaweedMessaging_CloseSubscribers_FullMethodName      = "/messaging_pb.SeaweedMessaging/CloseSubscribers"
 )
 
 // SeaweedMessagingClient is the client API for SeaweedMessaging service.
@@ -44,9 +46,12 @@ type SeaweedMessagingClient interface {
 	ConfigureTopic(ctx context.Context, in *ConfigureTopicRequest, opts ...grpc.CallOption) (*ConfigureTopicResponse, error)
 	ListTopics(ctx context.Context, in *ListTopicsRequest, opts ...grpc.CallOption) (*ListTopicsResponse, error)
 	AssignTopicPartitions(ctx context.Context, in *AssignTopicPartitionsRequest, opts ...grpc.CallOption) (*AssignTopicPartitionsResponse, error)
-	// data plane
+	// data plane for each topic partition
 	Publish(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublishClient, error)
 	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (SeaweedMessaging_SubscribeClient, error)
+	// control each topic partition
+	ClosePublishers(ctx context.Context, in *ClosePublishersRequest, opts ...grpc.CallOption) (*ClosePublishersResponse, error)
+	CloseSubscribers(ctx context.Context, in *CloseSubscribersRequest, opts ...grpc.CallOption) (*CloseSubscribersResponse, error)
 }
 
 type seaweedMessagingClient struct {
@@ -205,6 +210,24 @@ func (x *seaweedMessagingSubscribeClient) Recv() (*SubscribeResponse, error) {
 	return m, nil
 }
 
+func (c *seaweedMessagingClient) ClosePublishers(ctx context.Context, in *ClosePublishersRequest, opts ...grpc.CallOption) (*ClosePublishersResponse, error) {
+	out := new(ClosePublishersResponse)
+	err := c.cc.Invoke(ctx, SeaweedMessaging_ClosePublishers_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedMessagingClient) CloseSubscribers(ctx context.Context, in *CloseSubscribersRequest, opts ...grpc.CallOption) (*CloseSubscribersResponse, error) {
+	out := new(CloseSubscribersResponse)
+	err := c.cc.Invoke(ctx, SeaweedMessaging_CloseSubscribers_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SeaweedMessagingServer is the server API for SeaweedMessaging service.
 // All implementations must embed UnimplementedSeaweedMessagingServer
 // for forward compatibility
@@ -219,9 +242,12 @@ type SeaweedMessagingServer interface {
 	ConfigureTopic(context.Context, *ConfigureTopicRequest) (*ConfigureTopicResponse, error)
 	ListTopics(context.Context, *ListTopicsRequest) (*ListTopicsResponse, error)
 	AssignTopicPartitions(context.Context, *AssignTopicPartitionsRequest) (*AssignTopicPartitionsResponse, error)
-	// data plane
+	// data plane for each topic partition
 	Publish(SeaweedMessaging_PublishServer) error
 	Subscribe(*SubscribeRequest, SeaweedMessaging_SubscribeServer) error
+	// control each topic partition
+	ClosePublishers(context.Context, *ClosePublishersRequest) (*ClosePublishersResponse, error)
+	CloseSubscribers(context.Context, *CloseSubscribersRequest) (*CloseSubscribersResponse, error)
 	mustEmbedUnimplementedSeaweedMessagingServer()
 }
 
@@ -255,6 +281,12 @@ func (UnimplementedSeaweedMessagingServer) Publish(SeaweedMessaging_PublishServe
 }
 func (UnimplementedSeaweedMessagingServer) Subscribe(*SubscribeRequest, SeaweedMessaging_SubscribeServer) error {
 	return status.Errorf(codes.Unimplemented, "method Subscribe not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) ClosePublishers(context.Context, *ClosePublishersRequest) (*ClosePublishersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ClosePublishers not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) CloseSubscribers(context.Context, *CloseSubscribersRequest) (*CloseSubscribersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CloseSubscribers not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) mustEmbedUnimplementedSeaweedMessagingServer() {}
 
@@ -450,6 +482,42 @@ func (x *seaweedMessagingSubscribeServer) Send(m *SubscribeResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
+func _SeaweedMessaging_ClosePublishers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClosePublishersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).ClosePublishers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedMessaging_ClosePublishers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).ClosePublishers(ctx, req.(*ClosePublishersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedMessaging_CloseSubscribers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CloseSubscribersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).CloseSubscribers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedMessaging_CloseSubscribers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).CloseSubscribers(ctx, req.(*CloseSubscribersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SeaweedMessaging_ServiceDesc is the grpc.ServiceDesc for SeaweedMessaging service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -480,6 +548,14 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AssignTopicPartitions",
 			Handler:    _SeaweedMessaging_AssignTopicPartitions_Handler,
+		},
+		{
+			MethodName: "ClosePublishers",
+			Handler:    _SeaweedMessaging_ClosePublishers_Handler,
+		},
+		{
+			MethodName: "CloseSubscribers",
+			Handler:    _SeaweedMessaging_CloseSubscribers_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
