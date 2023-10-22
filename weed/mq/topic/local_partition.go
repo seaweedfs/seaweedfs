@@ -16,6 +16,8 @@ type LocalPartition struct {
 	logBuffer       *log_buffer.LogBuffer
 	ConsumerCount   int32
 	StopCh          chan struct{}
+	Publishers      *LocalPartitionPublishers
+	Subscribers     *LocalPartitionSubscribers
 }
 
 func NewLocalPartition(topic Topic, partition Partition, isLeader bool, followerBrokers []pb.ServerAddress) *LocalPartition {
@@ -33,16 +35,18 @@ func NewLocalPartition(topic Topic, partition Partition, isLeader bool, follower
 
 			},
 		),
+		Publishers:  NewLocalPartitionPublishers(),
+		Subscribers: NewLocalPartitionSubscribers(),
 	}
 }
 
 type OnEachMessageFn func(logEntry *filer_pb.LogEntry) error
 
-func (p LocalPartition) Publish(message *mq_pb.DataMessage) {
+func (p *LocalPartition) Publish(message *mq_pb.DataMessage) {
 	p.logBuffer.AddToBuffer(message.Key, message.Value, time.Now().UnixNano())
 }
 
-func (p LocalPartition) Subscribe(clientName string, startReadTime time.Time, eachMessageFn OnEachMessageFn) {
+func (p *LocalPartition) Subscribe(clientName string, startReadTime time.Time, eachMessageFn OnEachMessageFn) {
 	p.logBuffer.LoopProcessLogData(clientName, startReadTime, 0, func() bool {
 		return true
 	}, eachMessageFn)
@@ -63,4 +67,11 @@ func FromPbBrokerPartitionAssignment(self pb.ServerAddress, assignment *mq_pb.Br
 	}
 	localPartition.FollowerBrokers = followers
 	return localPartition
+}
+
+func (p *LocalPartition) closePublishers() {
+	p.Publishers.SignalShutdown()
+}
+func (p *LocalPartition) closeSubscribers() {
+	p.Subscribers.SignalShutdown()
 }

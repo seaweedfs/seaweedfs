@@ -60,6 +60,7 @@ message Partition {
     int32 ring_size = 1;
     int32 range_start = 2;
     int32 range_stop = 3;
+    int64 unix_time_ns = 4;
 }
 
 //////////////////////////////////////////////////
@@ -184,13 +185,13 @@ message SubscribeResponse {
 }
 message ClosePublishersRequest {
     Topic topic = 1;
-    int32 epoch = 2;
+    int64 unix_time_ns = 2;
 }
 message ClosePublishersResponse {
 }
 message CloseSubscribersRequest {
     Topic topic = 1;
-    int32 epoch = 2;
+    int64 unix_time_ns = 2;
 }
 message CloseSubscribersResponse {
 }
