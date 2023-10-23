@@ -153,7 +153,7 @@ require (
 	github.com/hashicorp/raft v1.5.0
 	github.com/hashicorp/raft-boltdb/v2 v2.2.2
 	github.com/orcaman/concurrent-map/v2 v2.0.1
-	github.com/puzpuzpuz/xsync/v2 v2.5.0
+	github.com/puzpuzpuz/xsync/v2 v2.5.1
 	github.com/rabbitmq/amqp091-go v1.9.0
 	github.com/rclone/rclone v1.64.0
 	github.com/rdleal/intervalst v0.0.0-20221028215511-a098aa0d2cb8
