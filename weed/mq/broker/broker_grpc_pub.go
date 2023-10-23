@@ -170,26 +170,25 @@ func (broker *MessageQueueBroker) AssignTopicPartitions(c context.Context, reque
 
 	// drain existing topic partition subscriptions
 	for _, brokerPartition := range request.BrokerPartitionAssignments {
-		localPartiton := topic.FromPbBrokerPartitionAssignment(self, brokerPartition)
+		localPartition := topic.FromPbBrokerPartitionAssignment(self, brokerPartition)
 		if request.IsDraining {
 			// TODO drain existing topic partition subscriptions
 
 			broker.localTopicManager.RemoveTopicPartition(
 				topic.FromPbTopic(request.Topic),
-				localPartiton.Partition)
+				localPartition.Partition)
 		} else {
 			broker.localTopicManager.AddTopicPartition(
 				topic.FromPbTopic(request.Topic),
-				localPartiton)
+				localPartition)
 		}
 	}
 
 	// if is leader, notify the followers to drain existing topic partition subscriptions
 	if request.IsLeader {
 		for _, brokerPartition := range request.BrokerPartitionAssignments {
-			localPartiton := topic.FromPbBrokerPartitionAssignment(self, brokerPartition)
-			for _, follower := range localPartiton.FollowerBrokers {
-				err := pb.WithBrokerGrpcClient(false, follower.String(), broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+			for _, follower := range brokerPartition.FollowerBrokers {
+				err := pb.WithBrokerGrpcClient(false, follower, broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 					_, err := client.AssignTopicPartitions(context.Background(), request)
 					return err
 				})

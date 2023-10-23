@@ -20,13 +20,13 @@ type LocalPartition struct {
 	Subscribers     *LocalPartitionSubscribers
 }
 
-func NewLocalPartition(topic Topic, partition Partition, isLeader bool, followerBrokers []pb.ServerAddress) *LocalPartition {
+func NewLocalPartition(partition Partition, isLeader bool, followerBrokers []pb.ServerAddress) *LocalPartition {
 	return &LocalPartition{
 		Partition:       partition,
 		isLeader:        isLeader,
 		FollowerBrokers: followerBrokers,
 		logBuffer: log_buffer.NewLogBuffer(
-			fmt.Sprintf("%s/%s/%4d-%4d", topic.Namespace, topic.Name, partition.RangeStart, partition.RangeStop),
+			fmt.Sprintf("%d/%4d-%4d", partition.UnixTimeNs, partition.RangeStart, partition.RangeStop),
 			2*time.Minute,
 			func(startTime, stopTime time.Time, buf []byte) {
 
@@ -53,20 +53,12 @@ func (p *LocalPartition) Subscribe(clientName string, startReadTime time.Time, e
 }
 
 func FromPbBrokerPartitionAssignment(self pb.ServerAddress, assignment *mq_pb.BrokerPartitionAssignment) *LocalPartition {
-	isLeaer := assignment.LeaderBroker == string(self)
-	localPartition := &LocalPartition{
-		Partition: FromPbPartition(assignment.Partition),
-		isLeader:  isLeaer,
-	}
-	if !isLeaer {
-		return localPartition
-	}
+	isLeader := assignment.LeaderBroker == string(self)
 	followers := make([]pb.ServerAddress, len(assignment.FollowerBrokers))
-	for i, follower := range assignment.FollowerBrokers {
-		followers[i] = pb.ServerAddress(follower)
+	for i, followerBroker := range assignment.FollowerBrokers {
+		followers[i] = pb.ServerAddress(followerBroker)
 	}
-	localPartition.FollowerBrokers = followers
-	return localPartition
+	return NewLocalPartition(FromPbPartition(assignment.Partition), isLeader, followers)
 }
 
 func (p *LocalPartition) closePublishers() {
