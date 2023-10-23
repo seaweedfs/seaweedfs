@@ -11,13 +11,14 @@ import (
 
 type LocalPartition struct {
 	Partition
-	isLeader        bool
-	FollowerBrokers []pb.ServerAddress
-	logBuffer       *log_buffer.LogBuffer
-	ConsumerCount   int32
-	StopCh          chan struct{}
-	Publishers      *LocalPartitionPublishers
-	Subscribers     *LocalPartitionSubscribers
+	isLeader          bool
+	FollowerBrokers   []pb.ServerAddress
+	logBuffer         *log_buffer.LogBuffer
+	ConsumerCount     int32
+	StopPublishersCh  chan struct{}
+	Publishers        *LocalPartitionPublishers
+	StopSubscribersCh chan struct{}
+	Subscribers       *LocalPartitionSubscribers
 }
 
 func NewLocalPartition(partition Partition, isLeader bool, followerBrokers []pb.ServerAddress) *LocalPartition {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/mq/balancer"
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/codes"
@@ -62,4 +63,43 @@ func (broker *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *m
 	// TODO revert if some error happens in the middle of the assignments
 
 	return ret, err
+}
+
+// AssignTopicPartitions Runs on the assigned broker, to execute the topic partition assignment
+func (broker *MessageQueueBroker) AssignTopicPartitions(c context.Context, request *mq_pb.AssignTopicPartitionsRequest) (*mq_pb.AssignTopicPartitionsResponse, error) {
+	ret := &mq_pb.AssignTopicPartitionsResponse{}
+	self := pb.ServerAddress(fmt.Sprintf("%s:%d", broker.option.Ip, broker.option.Port))
+
+	// drain existing topic partition subscriptions
+	for _, brokerPartition := range request.BrokerPartitionAssignments {
+		localPartition := topic.FromPbBrokerPartitionAssignment(self, brokerPartition)
+		if request.IsDraining {
+			// TODO drain existing topic partition subscriptions
+
+			broker.localTopicManager.RemoveTopicPartition(
+				topic.FromPbTopic(request.Topic),
+				localPartition.Partition)
+		} else {
+			broker.localTopicManager.AddTopicPartition(
+				topic.FromPbTopic(request.Topic),
+				localPartition)
+		}
+	}
+
+	// if is leader, notify the followers to drain existing topic partition subscriptions
+	if request.IsLeader {
+		for _, brokerPartition := range request.BrokerPartitionAssignments {
+			for _, follower := range brokerPartition.FollowerBrokers {
+				err := pb.WithBrokerGrpcClient(false, follower, broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+					_, err := client.AssignTopicPartitions(context.Background(), request)
+					return err
+				})
+				if err != nil {
+					return ret, err
+				}
+			}
+		}
+	}
+
+	return ret, nil
 }

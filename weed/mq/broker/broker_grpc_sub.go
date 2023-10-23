@@ -25,6 +25,10 @@ func (broker *MessageQueueBroker) Subscribe(req *mq_pb.SubscribeRequest, stream 
 	}
 
 	clientName := fmt.Sprintf("%s/%s-%s", req.GetInit().ConsumerGroup, req.GetInit().ConsumerId, req.GetInit().ClientId)
+	localTopicPartition.Subscribers.AddSubscriber(clientName, topic.NewLocalSubscriber())
+	defer func() {
+		localTopicPartition.Subscribers.RemoveSubscriber(clientName)
+	}()
 
 	localTopicPartition.Subscribe(clientName, time.Now(), func(logEntry *filer_pb.LogEntry) error {
 		value := logEntry.GetData()
