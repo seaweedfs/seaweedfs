@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"google.golang.org/grpc/peer"
+	"net"
 	"sync/atomic"
 	"time"
 )
@@ -100,6 +101,9 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 		return stream.Send(response)
 	}
 
+	clientName := fmt.Sprintf("%s/%v", initMessage.Topic, initMessage.Partition)
+	localTopicPartition.Publishers.AddPublisher(clientName, topic.NewLocalPublisher())
+
 	ackCounter := 0
 	var ackSequence int64
 	var isStopping int32
@@ -107,6 +111,7 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 	defer func() {
 		atomic.StoreInt32(&isStopping, 1)
 		close(respChan)
+		localTopicPartition.Publishers.RemovePublisher(clientName)
 	}()
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
@@ -128,6 +133,10 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 					respChan <- response
 				} else {
 					return
+				}
+			case <-localTopicPartition.StopPublishersCh:
+				respChan <- &mq_pb.PublishResponse{
+					ShouldClose: true,
 				}
 			}
 		}
@@ -163,41 +172,17 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 	return nil
 }
 
-// AssignTopicPartitions Runs on the assigned broker, to execute the topic partition assignment
-func (broker *MessageQueueBroker) AssignTopicPartitions(c context.Context, request *mq_pb.AssignTopicPartitionsRequest) (*mq_pb.AssignTopicPartitionsResponse, error) {
-	ret := &mq_pb.AssignTopicPartitionsResponse{}
-	self := pb.ServerAddress(fmt.Sprintf("%s:%d", broker.option.Ip, broker.option.Port))
-
-	// drain existing topic partition subscriptions
-	for _, brokerPartition := range request.BrokerPartitionAssignments {
-		localPartition := topic.FromPbBrokerPartitionAssignment(self, brokerPartition)
-		if request.IsDraining {
-			// TODO drain existing topic partition subscriptions
-
-			broker.localTopicManager.RemoveTopicPartition(
-				topic.FromPbTopic(request.Topic),
-				localPartition.Partition)
-		} else {
-			broker.localTopicManager.AddTopicPartition(
-				topic.FromPbTopic(request.Topic),
-				localPartition)
-		}
+// duplicated from master_grpc_server.go
+func findClientAddress(ctx context.Context) string {
+	// fmt.Printf("FromContext %+v\n", ctx)
+	pr, ok := peer.FromContext(ctx)
+	if !ok {
+		glog.Error("failed to get peer from ctx")
+		return ""
 	}
-
-	// if is leader, notify the followers to drain existing topic partition subscriptions
-	if request.IsLeader {
-		for _, brokerPartition := range request.BrokerPartitionAssignments {
-			for _, follower := range brokerPartition.FollowerBrokers {
-				err := pb.WithBrokerGrpcClient(false, follower, broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
-					_, err := client.AssignTopicPartitions(context.Background(), request)
-					return err
-				})
-				if err != nil {
-					return ret, err
-				}
-			}
-		}
+	if pr.Addr == net.Addr(nil) {
+		glog.Error("failed to get peer address")
+		return ""
 	}
-
-	return ret, nil
+	return pr.Addr.String()
 }
