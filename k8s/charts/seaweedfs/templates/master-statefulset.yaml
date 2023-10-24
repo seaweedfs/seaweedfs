@@ -11,7 +11,7 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   serviceName: {{ template "seaweedfs.name" . }}-master
-  podManagementPolicy: Parallel
+  podManagementPolicy: {{ .Values.master.podManagementPolicy }}
   replicas: {{ .Values.master.replicas }}
   {{- if (gt (int .Values.master.updatePartition) 0) }}
   updateStrategy:
