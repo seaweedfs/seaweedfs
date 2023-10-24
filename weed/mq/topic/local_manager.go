@@ -114,3 +114,11 @@ func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.Br
 	return stats
 
 }
+
+func (manager *LocalTopicManager) WaitUntilNoPublishers(topic Topic) {
+	localTopic, ok := manager.topics.Get(topic.String())
+	if !ok {
+		return
+	}
+	localTopic.WaitUntilNoPublishers()
+}

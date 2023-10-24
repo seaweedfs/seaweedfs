@@ -47,3 +47,10 @@ func (p *LocalPartitionPublishers) SignalShutdown() {
 		publisher.SignalShutdown()
 	}
 }
+
+func (p *LocalPartitionPublishers) IsEmpty() bool {
+	p.publishersLock.RLock()
+	defer p.publishersLock.RUnlock()
+
+	return len(p.publishers) == 0
+}
