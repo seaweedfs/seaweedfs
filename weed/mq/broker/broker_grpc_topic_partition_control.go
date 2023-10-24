@@ -9,7 +9,12 @@ import (
 func (broker *MessageQueueBroker) ClosePublishers(ctx context.Context, request *mq_pb.ClosePublishersRequest) (resp *mq_pb.ClosePublishersResponse, err error) {
 	resp = &mq_pb.ClosePublishersResponse{}
 
-	broker.localTopicManager.ClosePublishers(topic.FromPbTopic(request.Topic), request.UnixTimeNs)
+	t := topic.FromPbTopic(request.Topic)
+
+	broker.localTopicManager.ClosePublishers(t, request.UnixTimeNs)
+
+	// wait until all publishers are closed
+	broker.localTopicManager.WaitUntilNoPublishers(t)
 
 	return
 }

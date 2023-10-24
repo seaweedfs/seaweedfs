@@ -68,3 +68,20 @@ func (localTopic *LocalTopic) closePartitionSubscribers(unixTsNs int64) bool {
 	wg.Wait()
 	return true
 }
+
+func (localTopic *LocalTopic) WaitUntilNoPublishers() {
+	for {
+		var wg sync.WaitGroup
+		for _, localPartition := range localTopic.Partitions {
+			wg.Add(1)
+			go func(localPartition *LocalPartition) {
+				defer wg.Done()
+				localPartition.WaitUntilNoPublishers()
+			}(localPartition)
+		}
+		wg.Wait()
+		if len(localTopic.Partitions) == 0 {
+			return
+		}
+	}
+}

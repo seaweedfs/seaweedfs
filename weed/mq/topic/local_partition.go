@@ -68,3 +68,12 @@ func (p *LocalPartition) closePublishers() {
 func (p *LocalPartition) closeSubscribers() {
 	p.Subscribers.SignalShutdown()
 }
+
+func (p *LocalPartition) WaitUntilNoPublishers() {
+	for {
+		if p.Publishers.IsEmpty() {
+			return
+		}
+		time.Sleep(113 * time.Millisecond)
+	}
+}
