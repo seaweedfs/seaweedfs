@@ -49,13 +49,12 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 		return fmt.Errorf("delete file %s: %v", p, err)
 	}
 
-	if shouldDeleteChunks && !isDeleteCollection {
-		f.DirectDeleteChunks(entry.GetChunks())
-	}
-
-	if isDeleteCollection {
-		collectionName := entry.Name()
-		f.doDeleteCollection(collectionName)
+	if shouldDeleteChunks {
+		if isDeleteCollection {
+			f.doDeleteCollection(entry.Name())
+		} else {
+			f.DirectDeleteChunks(entry.GetChunks())
+		}
 	}
 
 	return nil
