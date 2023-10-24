@@ -94,6 +94,9 @@ master:
   extraVolumes: ""
   extraVolumeMounts: ""
 
+  ## Set podManagementPolicy
+  podManagementPolicy: Parallel
+
   # Resource requests, limits, etc. for the master cluster placement. This
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
@@ -269,6 +272,9 @@ volume:
   extraVolumes: ""
   extraVolumeMounts: ""
 
+  ## Set podManagementPolicy
+  podManagementPolicy: Parallel
+
   # Affinity Settings
   # Commenting out or setting as empty the affinity variable, will allow
   # deployment to single node services such as Minikube
@@ -401,6 +407,9 @@ filer:
 
   extraVolumes: ""
   extraVolumeMounts: ""
+
+  ## Set podManagementPolicy
+  podManagementPolicy: Parallel
 
   # Affinity Settings
   # Commenting out or setting as empty the affinity variable, will allow

@@ -12,7 +12,7 @@ metadata:
 spec:
   serviceName: {{ template "seaweedfs.name" . }}-volume
   replicas: {{ .Values.volume.replicas }}
-  podManagementPolicy: Parallel
+  podManagementPolicy: {{ .Values.volume.podManagementPolicy }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}

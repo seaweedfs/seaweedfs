@@ -12,7 +12,7 @@ metadata:
     app.kubernetes.io/component: filer
 spec:
   serviceName: {{ template "seaweedfs.name" . }}-filer
-  podManagementPolicy: Parallel
+  podManagementPolicy: {{ .Values.filer.podManagementPolicy }}
   replicas: {{ .Values.filer.replicas }}
   {{- if (gt (int .Values.filer.updatePartition) 0) }}
   updateStrategy:
