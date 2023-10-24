@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/peer"
+	"math/rand"
 	"net"
 	"sync/atomic"
 	"time"
@@ -101,7 +102,7 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 		return stream.Send(response)
 	}
 
-	clientName := fmt.Sprintf("%s/%v", initMessage.Topic, initMessage.Partition)
+	clientName := fmt.Sprintf("%v-%4d/%s/%v", findClientAddress(stream.Context()), rand.Intn(10000), initMessage.Topic, initMessage.Partition)
 	localTopicPartition.Publishers.AddPublisher(clientName, topic.NewLocalPublisher())
 
 	ackCounter := 0
