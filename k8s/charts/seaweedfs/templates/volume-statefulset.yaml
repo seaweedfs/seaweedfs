@@ -193,30 +193,7 @@ spec:
             {{- end }}
             - containerPort: {{ .Values.volume.grpcPort }}
               name: swfs-vol-grpc
-          {{- if .Values.volume.readinessProbe.enabled }}
-          readinessProbe:
-            httpGet:
-              path: {{ .Values.volume.readinessProbe.httpGet.path }}
-              port: {{ .Values.volume.port }}
-              scheme: {{ .Values.volume.readinessProbe.scheme }}
-            initialDelaySeconds: {{ .Values.volume.readinessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.volume.readinessProbe.periodSeconds }}
-            successThreshold: {{ .Values.volume.readinessProbe.successThreshold }}
-            failureThreshold: {{ .Values.volume.readinessProbe.failureThreshold }}
-            timeoutSeconds: {{ .Values.volume.readinessProbe.timeoutSeconds }}
-          {{- end }}
-          {{- if .Values.volume.livenessProbe.enabled }}
-          livenessProbe:
-            httpGet:
-              path: {{ .Values.volume.livenessProbe.httpGet.path }}
-              port: {{ .Values.volume.port }}
-              scheme: {{ .Values.volume.livenessProbe.scheme }}
-            initialDelaySeconds: {{ .Values.volume.livenessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.volume.livenessProbe.periodSeconds }}
-            successThreshold: {{ .Values.volume.livenessProbe.successThreshold }}
-            failureThreshold: {{ .Values.volume.livenessProbe.failureThreshold }}
-            timeoutSeconds: {{ .Values.volume.livenessProbe.timeoutSeconds }}
-          {{- end }}
+          {{- include "common.containerProbes" $.Values.volume | nindent 10 }}
           {{- if .Values.volume.resources }}
           resources:
             {{ tpl .Values.volume.resources . | nindent 12 | trim }}

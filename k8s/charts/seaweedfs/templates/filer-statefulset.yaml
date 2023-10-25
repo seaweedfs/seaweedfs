@@ -234,30 +234,7 @@ spec:
               name: metrics
             - containerPort: {{ .Values.filer.grpcPort }}
               #name: swfs-filer-grpc
-          {{- if .Values.filer.readinessProbe.enabled }}
-          readinessProbe:
-            httpGet:
-              path: {{ .Values.filer.readinessProbe.httpGet.path }}
-              port: {{ .Values.filer.port }}
-              scheme: {{ .Values.filer.readinessProbe.scheme }}
-            initialDelaySeconds: {{ .Values.filer.readinessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.filer.readinessProbe.periodSeconds }}
-            successThreshold: {{ .Values.filer.readinessProbe.successThreshold }}
-            failureThreshold: {{ .Values.filer.readinessProbe.failureThreshold }}
-            timeoutSeconds: {{ .Values.filer.readinessProbe.timeoutSeconds }}
-          {{- end }}
-          {{- if .Values.filer.livenessProbe.enabled }}
-          livenessProbe:
-            httpGet:
-              path: {{ .Values.filer.livenessProbe.httpGet.path }}
-              port: {{ .Values.filer.port }}
-              scheme: {{ .Values.filer.livenessProbe.scheme }}
-            initialDelaySeconds: {{ .Values.filer.livenessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.filer.livenessProbe.periodSeconds }}
-            successThreshold: {{ .Values.filer.livenessProbe.successThreshold }}
-            failureThreshold: {{ .Values.filer.livenessProbe.failureThreshold }}
-            timeoutSeconds: {{ .Values.filer.livenessProbe.timeoutSeconds }}
-          {{- end }}
+          {{- include "common.containerProbes" $.Values.filer | nindent 10 }}
           {{- if .Values.filer.resources }}
           resources:
             {{ tpl .Values.filer.resources . | nindent 12 | trim }}
