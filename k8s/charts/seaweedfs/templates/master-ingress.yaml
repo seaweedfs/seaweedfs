@@ -22,6 +22,8 @@ metadata:
     app.kubernetes.io/component: master
 spec:
   ingressClassName: {{ .Values.master.ingress.className | quote }}
+  tls:
+    {{ .Values.master.ingress.tls | default list | toYaml | nindent 6 }}
   rules:
     - http:
         paths:
