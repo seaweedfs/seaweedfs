@@ -65,6 +65,13 @@ spec:
       {{- if .Values.filer.serviceAccountName }}
       serviceAccountName: {{ .Values.filer.serviceAccountName | quote }}
       {{- end }}
+      {{- with .Values.filer.dnsPolicy }}
+      dnsPolicy: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.filer.dnsConfig }}
+      dnsConfig:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- if .Values.filer.initContainers }}
       initContainers:
         {{ tpl .Values.filer.initContainers . | nindent 8 | trim }}
@@ -96,8 +103,6 @@ spec:
                 secretKeyRef:
                   name: secret-seaweedfs-db
                   key: password
-            - name: SEAWEEDFS_FULLNAME
-              value: "{{ template "seaweedfs.name" . }}"
             {{- if .Values.filer.extraEnvironmentVars }}
             {{- range $key, $value := .Values.filer.extraEnvironmentVars }}
             - name: {{ $key }}
@@ -192,7 +197,7 @@ spec:
               -s3.auditLogConfig=/etc/sw/filer_s3_auditLogConfig.json \
               {{- end }}
               {{- end }}
-              -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
+              -master={{ template "seaweedfs.master_urls" .}}
           volumeMounts:
             {{- if eq .Values.filer.logs.type "hostPath" }}
             - name: seaweedfs-filer-log-volume

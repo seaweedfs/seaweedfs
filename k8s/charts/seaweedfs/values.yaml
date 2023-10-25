@@ -42,6 +42,11 @@ master:
   imageName: null
   imageTag: null
   imageOverride: null
+  dnsPolicy: null
+  dnsConfig: null
+  serviceNameOverride: null
+  serverName: |
+    ${POD_NAME}.{{ include "master.service_name" . }}.{{ .Release.Namespace }}
   restartPolicy: null
   replicas: 1
   port: 9333
@@ -199,6 +204,11 @@ volume:
   imageName: null
   imageTag: null
   imageOverride: null
+  dnsPolicy: null
+  dnsConfig: null
+  serviceNameOverride: null
+  serverName: |
+    ${POD_NAME}.{{ include "volume.service_name" . }}.{{ .Release.Namespace }}
   restartPolicy: null
   port: 8080
   grpcPort: 18080
@@ -345,6 +355,8 @@ filer:
   imageName: null
   imageTag: null
   imageOverride: null
+  dnsPolicy: null
+  dnsConfig: null
   restartPolicy: null
   replicas: 1
   port: 8888

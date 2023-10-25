@@ -10,7 +10,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
-  serviceName: {{ template "seaweedfs.name" . }}-volume
+  serviceName: {{ template "volume.service_name" . }}
   replicas: {{ .Values.volume.replicas }}
   podManagementPolicy: {{ .Values.volume.podManagementPolicy }}
   selector:
@@ -55,6 +55,13 @@ spec:
       {{- if .Values.volume.serviceAccountName }}
       serviceAccountName: {{ .Values.volume.serviceAccountName | quote }}
       {{- end }}
+      {{- with .Values.volume.dnsPolicy }}
+      dnsPolicy: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.volume.dnsConfig }}
+      dnsConfig:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- $initContainers_exists := include "volume.initContainers_exists" . -}}
       {{- if $initContainers_exists }}
       initContainers:
@@ -91,8 +98,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: status.hostIP
-            - name: SEAWEEDFS_FULLNAME
-              value: "{{ template "seaweedfs.name" . }}"
             {{- if .Values.global.extraEnvironmentVars }}
             {{- range $key, $value := .Values.global.extraEnvironmentVars }}
             - name: {{ $key }}
@@ -148,9 +153,9 @@ spec:
                 -fileSizeLimitMB={{ .Values.volume.fileSizeLimitMB }} \
                 {{- end }}
                 -minFreeSpacePercent={{ .Values.volume.minFreeSpacePercent }} \
-                -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-volume.{{ .Release.Namespace }} \
+                -ip={{ tpl .Values.volume.serverName . | trim }} \
                 -compactionMBps={{ .Values.volume.compactionMBps }} \
-                -mserver={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
+                -mserver={{ template "seaweedfs.master_urls" .}}
           volumeMounts:
             - name: data
               mountPath: "{{ .Values.volume.dir }}/"

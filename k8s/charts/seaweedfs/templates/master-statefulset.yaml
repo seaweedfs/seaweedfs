@@ -10,7 +10,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
-  serviceName: {{ template "seaweedfs.name" . }}-master
+  serviceName: {{ template "master.service_name" . }}
   podManagementPolicy: {{ .Values.master.podManagementPolicy }}
   replicas: {{ .Values.master.replicas }}
   {{- if (gt (int .Values.master.updatePartition) 0) }}
@@ -61,6 +61,13 @@ spec:
       {{- if .Values.master.serviceAccountName }}
       serviceAccountName: {{ .Values.master.serviceAccountName | quote }}
       {{- end }}
+      {{- with .Values.master.dnsPolicy }}
+      dnsPolicy: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.master.dnsConfig }}
+      dnsConfig:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- if .Values.master.initContainers }}
       initContainers:
         {{ tpl .Values.master.initContainers . | nindent 8 | trim }}
@@ -82,8 +89,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            - name: SEAWEEDFS_FULLNAME
-              value: "{{ template "seaweedfs.name" . }}"
             {{- if .Values.master.extraEnvironmentVars }}
             {{- range $key, $value := .Values.master.extraEnvironmentVars }}
             - name: {{ $key }}
@@ -143,8 +148,8 @@ spec:
               {{- if .Values.master.garbageThreshold }}
               -garbageThreshold={{ .Values.master.garbageThreshold }} \
               {{- end }}
-              -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-master.{{ .Release.Namespace }} \
-              -peers={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
+              -ip={{ tpl .Values.master.serverName . | trim }} \
+              -peers={{ template "seaweedfs.master_urls" . }}
           volumeMounts:
             - name : data-{{ .Release.Namespace }}
               mountPath: /data
