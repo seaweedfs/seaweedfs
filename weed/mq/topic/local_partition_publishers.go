@@ -7,16 +7,12 @@ type LocalPartitionPublishers struct {
 	publishersLock sync.RWMutex
 }
 type LocalPublisher struct {
-	stopCh chan struct{}
 }
 
 func NewLocalPublisher() *LocalPublisher {
-	return &LocalPublisher{
-		stopCh: make(chan struct{}, 1),
-	}
+	return &LocalPublisher{}
 }
 func (p *LocalPublisher) SignalShutdown() {
-	close(p.stopCh)
 }
 
 func NewLocalPartitionPublishers() *LocalPartitionPublishers {
