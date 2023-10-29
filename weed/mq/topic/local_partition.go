@@ -64,6 +64,7 @@ func FromPbBrokerPartitionAssignment(self pb.ServerAddress, assignment *mq_pb.Br
 
 func (p *LocalPartition) closePublishers() {
 	p.Publishers.SignalShutdown()
+	close(p.StopPublishersCh)
 }
 func (p *LocalPartition) closeSubscribers() {
 	p.Subscribers.SignalShutdown()
