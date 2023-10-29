@@ -168,7 +168,7 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 		}
 	}
 
-	glog.Infof("publish stream closed")
+	glog.V(0).Infof("topic %v partition %v publish stream closed.", initMessage.Topic, initMessage.Partition)
 
 	return nil
 }
