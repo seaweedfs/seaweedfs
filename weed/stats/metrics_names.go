@@ -10,6 +10,8 @@ const (
 	ErrorSizeMismatch           = "errorSizeMismatch"
 	ErrorCRC                    = "errorCRC"
 	ErrorIndexOutOfRange        = "errorIndexOutOfRange"
+	ErrorGetNotFound 						= "errorGetNotFound"
+	ErrorGetInternal 						= "errorGetInternal"	
 
 	// master topology
 	ErrorWriteToLocalDisk = "errorWriteToLocalDisk"
