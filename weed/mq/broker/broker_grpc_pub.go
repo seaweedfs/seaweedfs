@@ -137,6 +137,7 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 				}
 			case <-localTopicPartition.StopPublishersCh:
 				respChan <- &mq_pb.PublishResponse{
+					AckSequence: ackSequence,
 					ShouldClose: true,
 				}
 			}
