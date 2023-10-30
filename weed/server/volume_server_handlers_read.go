@@ -166,7 +166,6 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 	if n.Cookie != cookie {
 		glog.V(0).Infof("request %s with cookie:%x expected:%x from %s agent %s", r.URL.Path, cookie, n.Cookie, r.RemoteAddr, r.UserAgent())
-		stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorGetNotFound).Inc()
 		NotFound(w)
 		return
 	}
