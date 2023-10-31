@@ -63,6 +63,10 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 	if option.FilerRootPath == "/" {
 		option.FilerRootPath = ""
 	}
+	// filer.path non "/" option means we are accessing filer's sub-folders
+	if option.FilerRootPath != "" {
+		fs = NewWrappedFs(fs, path.Clean(option.FilerRootPath))
+	}
 
 	ws = &WebDavServer{
 		option:         option,
@@ -204,8 +208,6 @@ func (fs *WebDavFileSystem) Mkdir(ctx context.Context, fullDirPath string, perm 
 }
 
 func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, flag int, perm os.FileMode) (webdav.File, error) {
-	// Add filer.path
-	fullFilePath = fs.option.FilerRootPath + fullFilePath
 	glog.V(2).Infof("WebDavFileSystem.OpenFile %v %x", fullFilePath, flag)
 
 	var err error
@@ -377,8 +379,6 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 }
 
 func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo, error) {
-	// Add filer.path
-	name = fs.option.FilerRootPath + name
 	glog.V(2).Infof("WebDavFileSystem.Stat %v", name)
 
 	return fs.stat(ctx, name)
