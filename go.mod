@@ -156,7 +156,7 @@ require (
 	github.com/puzpuzpuz/xsync/v2 v2.5.1
 	github.com/rabbitmq/amqp091-go v1.9.0
 	github.com/rclone/rclone v1.64.0
-	github.com/rdleal/intervalst v1.1.0
+	github.com/rdleal/intervalst v1.2.0
 	github.com/schollz/progressbar/v3 v3.13.1
 	github.com/shirou/gopsutil/v3 v3.23.9
 	github.com/tikv/client-go/v2 v2.0.7
