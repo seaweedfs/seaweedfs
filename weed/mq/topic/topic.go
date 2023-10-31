@@ -1,4 +1,4 @@
-package mq
+package topic
 
 import (
 	"fmt"
@@ -7,17 +7,26 @@ import (
 	"time"
 )
 
-type Namespace string
-
 type Topic struct {
-	Namespace Namespace
+	Namespace string
 	Name      string
 }
 
-type Partition struct {
-	RangeStart int32
-	RangeStop  int32 // exclusive
-	RingSize   int32
+func NewTopic(namespace string, name string) Topic {
+	return Topic{
+		Namespace: namespace,
+		Name:      name,
+	}
+}
+func FromPbTopic(topic *mq_pb.Topic) Topic {
+	return Topic{
+		Namespace: topic.Namespace,
+		Name:      topic.Name,
+	}
+}
+
+func (tp Topic) String() string {
+	return fmt.Sprintf("%s.%s", tp.Namespace, tp.Name)
 }
 
 type Segment struct {
@@ -30,7 +39,7 @@ type Segment struct {
 func FromPbSegment(segment *mq_pb.Segment) *Segment {
 	return &Segment{
 		Topic: Topic{
-			Namespace: Namespace(segment.Namespace),
+			Namespace: segment.Namespace,
 			Name:      segment.Topic,
 		},
 		Id: segment.Id,

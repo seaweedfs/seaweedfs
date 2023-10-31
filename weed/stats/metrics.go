@@ -226,6 +226,15 @@ var (
 			Help:      "Bucketed histogram of s3 request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"type", "bucket"})
+	S3TimeToFirstByteHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "time_to_first_byte_millisecond",
+			Help:      "Bucketed histogram of s3 time to first byte request processing time.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 27),
+		}, []string{"type", "bucket"})
+
 )
 
 func init() {
@@ -258,6 +267,7 @@ func init() {
 
 	Gather.MustRegister(S3RequestCounter)
 	Gather.MustRegister(S3RequestHistogram)
+	Gather.MustRegister(S3TimeToFirstByteHistogram)
 }
 
 func LoopPushingMetric(name, instance, addr string, intervalSeconds int) {
@@ -288,7 +298,6 @@ func JoinHostPort(host string, port int) string {
 	}
 	return net.JoinHostPort(host, portStr)
 }
-
 
 func StartMetricsServer(ip string, port int) {
 	if port == 0 {

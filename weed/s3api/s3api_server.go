@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"net"
 	"net/http"
 	"strings"
@@ -42,7 +43,6 @@ type S3ApiServer struct {
 	randomClientId int32
 	filerGuard     *security.Guard
 	client         *http.Client
-	accountManager *s3account.AccountManager
 	bucketRegistry *BucketRegistry
 }
 
@@ -63,7 +63,15 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 		filerGuard:     security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
 		cb:             NewCircuitBreaker(option),
 	}
-	s3ApiServer.accountManager = s3account.NewAccountManager(s3ApiServer)
+	if option.Config != "" {
+		grace.OnReload(func() {
+			if err := s3ApiServer.iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
+				glog.Errorf("fail to load config file %s: %v", option.Config, err)
+			} else {
+				glog.V(0).Infof("Loaded %d identities from config file %s", len(s3ApiServer.iam.identities), option.Config)
+			}
+		})
+	}
 	s3ApiServer.bucketRegistry = NewBucketRegistry(s3ApiServer)
 	if option.LocalFilerSocket == "" {
 		s3ApiServer.client = &http.Client{Transport: &http.Transport{
@@ -147,7 +155,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods("DELETE").Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteObjectTaggingHandler, ACTION_TAGGING)), "DELETE")).Queries("tagging", "")
 
 		// PutObjectACL
-		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectAclHandler, ACTION_WRITE)), "PUT")).Queries("acl", "")
+		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectAclHandler, ACTION_WRITE_ACP)), "PUT")).Queries("acl", "")
 		// PutObjectRetention
 		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectRetentionHandler, ACTION_WRITE)), "PUT")).Queries("retention", "")
 		// PutObjectLegalHold
@@ -156,7 +164,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods("PUT").Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectLockConfigurationHandler, ACTION_WRITE)), "PUT")).Queries("object-lock", "")
 
 		// GetObjectACL
-		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectAclHandler, ACTION_READ)), "GET")).Queries("acl", "")
+		bucket.Methods("GET").Path("/{object:.+}").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectAclHandler, ACTION_READ_ACP)), "GET")).Queries("acl", "")
 
 		// objects with query
 
@@ -183,9 +191,9 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods("POST").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteMultipleObjectsHandler, ACTION_WRITE)), "DELETE")).Queries("delete", "")
 
 		// GetBucketACL
-		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketAclHandler, ACTION_READ)), "GET")).Queries("acl", "")
+		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketAclHandler, ACTION_READ_ACP)), "GET")).Queries("acl", "")
 		// PutBucketACL
-		bucket.Methods("PUT").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketAclHandler, ACTION_WRITE)), "PUT")).Queries("acl", "")
+		bucket.Methods("PUT").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketAclHandler, ACTION_WRITE_ACP)), "PUT")).Queries("acl", "")
 
 		// GetBucketPolicy
 		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketPolicyHandler, ACTION_READ)), "GET")).Queries("policy", "")

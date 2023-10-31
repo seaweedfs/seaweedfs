@@ -13,12 +13,12 @@ public class FilerClient extends FilerGrpcClient {
 
     private static final Logger LOG = LoggerFactory.getLogger(FilerClient.class);
 
-    public FilerClient(String host, int grpcPort) {
-        super(host, grpcPort-10000, grpcPort);
+    public FilerClient(String filerHost, int filerGrpcPort) {
+        super(filerHost, filerGrpcPort-10000, filerGrpcPort);
     }
 
-    public FilerClient(String host, int port, int grpcPort) {
-        super(host, port, grpcPort);
+    public FilerClient(String filerHost, int filerPort, int filerGrpcPort) {
+        super(filerHost, filerPort, filerGrpcPort);
     }
 
     public static String toFileId(FilerProto.FileId fid) {

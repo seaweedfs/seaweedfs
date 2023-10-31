@@ -7,7 +7,7 @@ all: install
 .PHONY : clean debug_mount
 
 install:
-	go install
+	go install -ldflags="-s -w"
 
 clean:
 	go clean $(SOURCE_DIR)
@@ -36,6 +36,10 @@ debug_webdav:
 debug_s3:
 	go build -gcflags="all=-N -l"
 	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec ./weed -- -v=4 s3
+
+debug_mq:
+	go build -gcflags="all=-N -l"
+	dlv --listen=:2345 --headless=true --api-version=2 --accept-multiclient exec ./weed -- -v=4 mq.broker
 
 debug_filer_copy:
 	go build -gcflags="all=-N -l"

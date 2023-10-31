@@ -3,12 +3,13 @@ package shell
 import (
 	"flag"
 	"fmt"
+	"io"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"golang.org/x/exp/slices"
-	"io"
 )
 
 func init() {
@@ -184,7 +185,7 @@ func balanceEcVolumes(commandEnv *CommandEnv, collection string, allEcNodes []*E
 
 func deleteDuplicatedEcShards(commandEnv *CommandEnv, allEcNodes []*EcNode, collection string, applyBalancing bool) error {
 	// vid => []ecNode
-	vidLocations := collectVolumeIdToEcNodes(allEcNodes)
+	vidLocations := collectVolumeIdToEcNodes(allEcNodes, collection)
 	// deduplicate ec shards
 	for vid, locations := range vidLocations {
 		if err := doDeduplicateEcShards(commandEnv, collection, vid, locations, applyBalancing); err != nil {
@@ -230,7 +231,7 @@ func doDeduplicateEcShards(commandEnv *CommandEnv, collection string, vid needle
 
 func balanceEcShardsAcrossRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, racks map[RackId]*EcRack, collection string, applyBalancing bool) error {
 	// collect vid => []ecNode, since previous steps can change the locations
-	vidLocations := collectVolumeIdToEcNodes(allEcNodes)
+	vidLocations := collectVolumeIdToEcNodes(allEcNodes, collection)
 	// spread the ec shards evenly
 	for vid, locations := range vidLocations {
 		if err := doBalanceEcShardsAcrossRacks(commandEnv, collection, vid, locations, racks, applyBalancing); err != nil {
@@ -309,7 +310,7 @@ func pickOneRack(rackToEcNodes map[RackId]*EcRack, rackToShardCount map[string]i
 
 func balanceEcShardsWithinRacks(commandEnv *CommandEnv, allEcNodes []*EcNode, racks map[RackId]*EcRack, collection string, applyBalancing bool) error {
 	// collect vid => []ecNode, since previous steps can change the locations
-	vidLocations := collectVolumeIdToEcNodes(allEcNodes)
+	vidLocations := collectVolumeIdToEcNodes(allEcNodes, collection)
 
 	// spread the ec shards evenly
 	for vid, locations := range vidLocations {
@@ -411,8 +412,8 @@ func doBalanceEcRack(commandEnv *CommandEnv, ecRack *EcRack, applyBalancing bool
 	hasMove := true
 	for hasMove {
 		hasMove = false
-		slices.SortFunc(rackEcNodes, func(a, b *EcNode) bool {
-			return a.freeEcSlot > b.freeEcSlot
+		slices.SortFunc(rackEcNodes, func(a, b *EcNode) int {
+			return b.freeEcSlot - a.freeEcSlot
 		})
 		emptyNode, fullNode := rackEcNodes[0], rackEcNodes[len(rackEcNodes)-1]
 		emptyNodeShardCount, fullNodeShardCount := ecNodeIdToShardCount[emptyNode.info.Id], ecNodeIdToShardCount[fullNode.info.Id]
@@ -492,8 +493,8 @@ func pickNEcShardsToMoveFrom(ecNodes []*EcNode, vid needle.VolumeId, n int) map[
 			})
 		}
 	}
-	slices.SortFunc(candidateEcNodes, func(a, b *CandidateEcNode) bool {
-		return a.shardCount > b.shardCount
+	slices.SortFunc(candidateEcNodes, func(a, b *CandidateEcNode) int {
+		return b.shardCount - a.shardCount
 	})
 	for i := 0; i < n; i++ {
 		selectedEcNodeIndex := -1
@@ -520,7 +521,7 @@ func pickNEcShardsToMoveFrom(ecNodes []*EcNode, vid needle.VolumeId, n int) map[
 	return picked
 }
 
-func collectVolumeIdToEcNodes(allEcNodes []*EcNode) map[needle.VolumeId][]*EcNode {
+func collectVolumeIdToEcNodes(allEcNodes []*EcNode, collection string) map[needle.VolumeId][]*EcNode {
 	vidLocations := make(map[needle.VolumeId][]*EcNode)
 	for _, ecNode := range allEcNodes {
 		diskInfo, found := ecNode.info.DiskInfos[string(types.HardDriveType)]
@@ -528,7 +529,10 @@ func collectVolumeIdToEcNodes(allEcNodes []*EcNode) map[needle.VolumeId][]*EcNod
 			continue
 		}
 		for _, shardInfo := range diskInfo.EcShardInfos {
-			vidLocations[needle.VolumeId(shardInfo.Id)] = append(vidLocations[needle.VolumeId(shardInfo.Id)], ecNode)
+			// ignore if not in current collection
+			if shardInfo.Collection == collection {
+				vidLocations[needle.VolumeId(shardInfo.Id)] = append(vidLocations[needle.VolumeId(shardInfo.Id)], ecNode)
+			}
 		}
 	}
 	return vidLocations

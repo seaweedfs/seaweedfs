@@ -4,10 +4,13 @@ metadata:
   name: {{ template "seaweedfs.name" . }}-volume
   namespace: {{ .Release.Namespace }}
   labels:
-    app: {{ template "seaweedfs.name" . }}
-    component: volume
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    app.kubernetes.io/component: volume
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
 spec:
   clusterIP: None
+  internalTrafficPolicy: {{ .Values.volume.internalTrafficPolicy | default "Cluster" }}
   ports:
   - name: "swfs-volume"
     port: {{ .Values.volume.port }}
@@ -24,5 +27,5 @@ spec:
     protocol: TCP
 {{- end }}
   selector:
-    app: {{ template "seaweedfs.name" . }}
-    component: volume
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    app.kubernetes.io/component: volume

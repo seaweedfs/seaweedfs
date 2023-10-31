@@ -24,7 +24,7 @@ type MasterClient struct {
 	rack              string
 	currentMaster     pb.ServerAddress
 	currentMasterLock sync.RWMutex
-	masters           map[string]pb.ServerAddress
+	masters           pb.ServerDiscovery
 	grpcDialOption    grpc.DialOption
 
 	*vidMap
@@ -33,7 +33,7 @@ type MasterClient struct {
 	OnPeerUpdateLock sync.RWMutex
 }
 
-func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters map[string]pb.ServerAddress) *MasterClient {
+func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters pb.ServerDiscovery) *MasterClient {
 	return &MasterClient{
 		FilerGroup:      filerGroup,
 		clientType:      clientType,
@@ -108,9 +108,9 @@ func (mc *MasterClient) GetMaster() pb.ServerAddress {
 	return mc.getCurrentMaster()
 }
 
-func (mc *MasterClient) GetMasters() map[string]pb.ServerAddress {
+func (mc *MasterClient) GetMasters() []pb.ServerAddress {
 	mc.WaitUntilConnected()
-	return mc.masters
+	return mc.masters.GetInstances()
 }
 
 func (mc *MasterClient) WaitUntilConnected() {
@@ -132,7 +132,7 @@ func (mc *MasterClient) KeepConnectedToMaster() {
 }
 
 func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress pb.ServerAddress) (leader string) {
-	for _, master := range mc.masters {
+	for _, master := range mc.masters.GetInstances() {
 		if master == myMasterAddress {
 			continue
 		}
@@ -159,7 +159,8 @@ func (mc *MasterClient) FindLeaderFromOtherPeers(myMasterAddress pb.ServerAddres
 
 func (mc *MasterClient) tryAllMasters() {
 	var nextHintedLeader pb.ServerAddress
-	for _, master := range mc.masters {
+	mc.masters.RefreshBySrvIfAvailable()
+	for _, master := range mc.masters.GetInstances() {
 		nextHintedLeader = mc.tryConnectToMaster(master)
 		for nextHintedLeader != "" {
 			nextHintedLeader = mc.tryConnectToMaster(nextHintedLeader)
@@ -243,9 +244,9 @@ func (mc *MasterClient) tryConnectToMaster(master pb.ServerAddress) (nextHintedL
 				if mc.OnPeerUpdate != nil {
 					if update.FilerGroup == mc.FilerGroup {
 						if update.IsAdd {
-							glog.V(0).Infof("+ %s.%s %s\n", update.FilerGroup, update.NodeType, update.Address)
+							glog.V(0).Infof("+ %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
 						} else {
-							glog.V(0).Infof("- %s.%s %s\n", update.FilerGroup, update.NodeType, update.Address)
+							glog.V(0).Infof("- %s@%s noticed %s.%s %s\n", mc.clientType, mc.clientHost, update.FilerGroup, update.NodeType, update.Address)
 						}
 						stats.MasterClientConnectCounter.WithLabelValues(stats.OnPeerUpdate).Inc()
 						mc.OnPeerUpdate(update, time.Now())

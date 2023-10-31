@@ -24,35 +24,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"hash"
 	"io"
 	"net/http"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+
 	"github.com/dustin/go-humanize"
 )
-
-// getChunkSignature - get chunk signature.
-func getChunkSignature(secretKey string, seedSignature string, region string, date time.Time, hashedChunk string) string {
-
-	// Calculate string to sign.
-	stringToSign := signV4ChunkedAlgorithm + "\n" +
-		date.Format(iso8601Format) + "\n" +
-		getScope(date, region) + "\n" +
-		seedSignature + "\n" +
-		emptySHA256 + "\n" +
-		hashedChunk
-
-	// Get hmac signing key.
-	signingKey := getSigningKey(secretKey, date, region, "s3")
-
-	// Calculate signature.
-	newSignature := getSignature(signingKey, stringToSign)
-
-	return newSignature
-}
 
 // calculateSeedSignature - Calculate seed signature in accordance with
 //   - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-streaming.html
@@ -124,11 +105,14 @@ func (iam *IdentityAccessManagement) calculateSeedSignature(r *http.Request) (cr
 	// Get string to sign from canonical request.
 	stringToSign := getStringToSign(canonicalRequest, date, signV4Values.Credential.getScope())
 
-	// Get hmac signing key.
-	signingKey := getSigningKey(cred.SecretKey, signV4Values.Credential.scope.date, region, "s3")
-
 	// Calculate signature.
-	newSignature := getSignature(signingKey, stringToSign)
+	newSignature := iam.getSignature(
+		cred.SecretKey,
+		signV4Values.Credential.scope.date,
+		region,
+		"s3",
+		stringToSign,
+	)
 
 	// Verify if signature match.
 	if !compareSignatureV4(newSignature, signV4Values.Signature) {
@@ -163,6 +147,7 @@ func (iam *IdentityAccessManagement) newSignV4ChunkedReader(req *http.Request) (
 		region:            region,
 		chunkSHA256Writer: sha256.New(),
 		state:             readChunkHeader,
+		iam:               iam,
 	}, s3err.ErrNone
 }
 
@@ -180,6 +165,7 @@ type s3ChunkedReader struct {
 	chunkSHA256Writer hash.Hash // Calculates sha256 of chunk data.
 	n                 uint64    // Unread bytes in chunk
 	err               error
+	iam               *IdentityAccessManagement
 }
 
 // Read chunk reads the chunk token signature portion.
@@ -296,7 +282,7 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			// Calculate the hashed chunk.
 			hashedChunk := hex.EncodeToString(cr.chunkSHA256Writer.Sum(nil))
 			// Calculate the chunk signature.
-			newSignature := getChunkSignature(cr.cred.SecretKey, cr.seedSignature, cr.region, cr.seedDate, hashedChunk)
+			newSignature := cr.getChunkSignature(hashedChunk)
 			if !compareSignatureV4(cr.chunkSignature, newSignature) {
 				// Chunk signature doesn't match we return signature does not match.
 				cr.err = errors.New("chunk signature does not match")
@@ -315,6 +301,26 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 			return n, io.EOF
 		}
 	}
+}
+
+// getChunkSignature - get chunk signature.
+func (cr *s3ChunkedReader) getChunkSignature(hashedChunk string) string {
+	// Calculate string to sign.
+	stringToSign := signV4ChunkedAlgorithm + "\n" +
+		cr.seedDate.Format(iso8601Format) + "\n" +
+		getScope(cr.seedDate, cr.region) + "\n" +
+		cr.seedSignature + "\n" +
+		emptySHA256 + "\n" +
+		hashedChunk
+
+	// Calculate signature.
+	return cr.iam.getSignature(
+		cr.cred.SecretKey,
+		cr.seedDate,
+		cr.region,
+		"s3",
+		stringToSign,
+	)
 }
 
 // readCRLF - check if reader only has '\r\n' CRLF character.

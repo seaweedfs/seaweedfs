@@ -43,3 +43,8 @@ func track(f http.HandlerFunc, action string) http.HandlerFunc {
 		stats_collect.S3RequestCounter.WithLabelValues(action, strconv.Itoa(recorder.Status), bucket).Inc()
 	}
 }
+
+func TimeToFirstByte(action string, start time.Time, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	stats_collect.S3TimeToFirstByteHistogram.WithLabelValues(action, bucket).Observe(float64(time.Since(start).Milliseconds()))
+}

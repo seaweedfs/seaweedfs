@@ -3,6 +3,7 @@ package wdclient
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"google.golang.org/grpc"
 	"strconv"
 	"sync"
@@ -65,7 +66,7 @@ func TestLocationIndex(t *testing.T) {
 }
 
 func TestLookupFileId(t *testing.T) {
-	mc := NewMasterClient(grpc.EmptyDialOption{}, "", "", "", "", "", nil)
+	mc := NewMasterClient(grpc.EmptyDialOption{}, "", "", "", "", "", pb.ServerDiscovery{})
 	length := 5
 
 	//Construct a cache linked list of length 5
@@ -135,7 +136,7 @@ func TestLookupFileId(t *testing.T) {
 }
 
 func TestConcurrentGetLocations(t *testing.T) {
-	mc := NewMasterClient(grpc.EmptyDialOption{}, "", "", "", "", "", nil)
+	mc := NewMasterClient(grpc.EmptyDialOption{}, "", "", "", "", "", pb.ServerDiscovery{})
 	location := Location{Url: "TestDataRacing"}
 	mc.addLocation(1, location)
 

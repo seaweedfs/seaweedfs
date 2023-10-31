@@ -21,14 +21,16 @@ import (
 )
 
 const (
-	charsetUpper           = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	charset                = charsetUpper + "abcdefghijklmnopqrstuvwxyz/"
-	policyDocumentVersion  = "2012-10-17"
-	StatementActionAdmin   = "*"
-	StatementActionWrite   = "Put*"
-	StatementActionRead    = "Get*"
-	StatementActionList    = "List*"
-	StatementActionTagging = "Tagging*"
+	charsetUpper            = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	charset                 = charsetUpper + "abcdefghijklmnopqrstuvwxyz/"
+	policyDocumentVersion   = "2012-10-17"
+	StatementActionAdmin    = "*"
+	StatementActionWrite    = "Put*"
+	StatementActionWriteAcp = "PutBucketAcl"
+	StatementActionRead     = "Get*"
+	StatementActionReadAcp  = "GetBucketAcl"
+	StatementActionList     = "List*"
+	StatementActionTagging  = "Tagging*"
 )
 
 var (
@@ -44,8 +46,12 @@ func MapToStatementAction(action string) string {
 		return s3_constants.ACTION_ADMIN
 	case StatementActionWrite:
 		return s3_constants.ACTION_WRITE
+	case StatementActionWriteAcp:
+		return s3_constants.ACTION_WRITE_ACP
 	case StatementActionRead:
 		return s3_constants.ACTION_READ
+	case StatementActionReadAcp:
+		return s3_constants.ACTION_READ_ACP
 	case StatementActionList:
 		return s3_constants.ACTION_LIST
 	case StatementActionTagging:
@@ -61,8 +67,12 @@ func MapToIdentitiesAction(action string) string {
 		return StatementActionAdmin
 	case s3_constants.ACTION_WRITE:
 		return StatementActionWrite
+	case s3_constants.ACTION_WRITE_ACP:
+		return StatementActionWriteAcp
 	case s3_constants.ACTION_READ:
 		return StatementActionRead
+	case s3_constants.ACTION_READ_ACP:
+		return StatementActionReadAcp
 	case s3_constants.ACTION_LIST:
 		return StatementActionList
 	case s3_constants.ACTION_TAGGING:

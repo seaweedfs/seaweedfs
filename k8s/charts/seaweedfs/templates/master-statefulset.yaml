@@ -5,13 +5,13 @@ metadata:
   name: {{ template "seaweedfs.name" . }}-master
   namespace: {{ .Release.Namespace }}
   labels:
-    app: {{ template "seaweedfs.name" . }}
-    chart: {{ template "seaweedfs.chart" . }}
-    heritage: {{ .Release.Service }}
-    release: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   serviceName: {{ template "seaweedfs.name" . }}-master
-  podManagementPolicy: Parallel
+  podManagementPolicy: {{ .Values.master.podManagementPolicy }}
   replicas: {{ .Values.master.replicas }}
   {{- if (gt (int .Values.master.updatePartition) 0) }}
   updateStrategy:
@@ -21,17 +21,17 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      app: {{ template "seaweedfs.name" . }}
-      chart: {{ template "seaweedfs.chart" . }}
-      release: {{ .Release.Name }}
-      component: master
+      app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+      helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: master
   template:
     metadata:
       labels:
-        app: {{ template "seaweedfs.name" . }}
-        chart: {{ template "seaweedfs.chart" . }}
-        release: {{ .Release.Name }}
-        component: master
+        app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: master
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.master.restartPolicy }}
       {{- if .Values.master.affinity }}
@@ -42,15 +42,15 @@ spec:
       tolerations:
         {{ tpl .Values.master.tolerations . | nindent 8 | trim }}
       {{- end }}
-      {{- if .Values.global.imagePullSecrets }}
-      imagePullSecrets:
-        - name: {{ .Values.global.imagePullSecrets }}
-      {{- end }}
+      {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
       terminationGracePeriodSeconds: 60
       {{- if .Values.master.priorityClassName }}
       priorityClassName: {{ .Values.master.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
+      {{- if .Values.master.serviceAccountName }}
+      serviceAccountName: {{ .Values.master.serviceAccountName | quote }}
+      {{- end }}
       {{- if .Values.master.initContainers }}
       initContainers:
         {{ tpl .Values.master.initContainers . | nindent 8 | trim }}
@@ -138,8 +138,14 @@ spec:
           volumeMounts:
             - name : data-{{ .Release.Namespace }}
               mountPath: /data
+            {{- if eq .Values.master.logs.type "hostPath" }}
             - name: seaweedfs-master-log-volume
               mountPath: "/logs/"
+            {{- end }}
+            - name: master-config
+              readOnly: true
+              mountPath: /etc/seaweedfs/master.toml
+              subPath: master.toml
             {{- if .Values.global.enableSecurity }}
             - name: security-config
               readOnly: true
@@ -171,26 +177,30 @@ spec:
             {{- end }}
             - containerPort: {{ .Values.master.grpcPort }}
               #name: swfs-master-grpc
+          {{- if .Values.master.readinessProbe.enabled }}
           readinessProbe:
             httpGet:
-              path: /cluster/status
+              path: {{ .Values.master.readinessProbe.httpGet.path }}
               port: {{ .Values.master.port }}
-              scheme: HTTP
-            initialDelaySeconds: 10
-            periodSeconds: 45
-            successThreshold: 2
-            failureThreshold: 100
-            timeoutSeconds: 10
+              scheme: {{ .Values.master.readinessProbe.scheme }}
+            initialDelaySeconds: {{ .Values.master.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.master.readinessProbe.periodSeconds }}
+            successThreshold: {{ .Values.master.readinessProbe.successThreshold }}
+            failureThreshold: {{ .Values.master.readinessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.master.readinessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if .Values.master.livenessProbe.enabled }}
           livenessProbe:
             httpGet:
-              path: /cluster/status
+              path: {{ .Values.master.livenessProbe.httpGet.path }}
               port: {{ .Values.master.port }}
-              scheme: HTTP
-            initialDelaySeconds: 20
-            periodSeconds: 30
-            successThreshold: 1
-            failureThreshold: 4
-            timeoutSeconds: 10
+              scheme: {{ .Values.master.livenessProbe.scheme }}
+            initialDelaySeconds: {{ .Values.master.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.master.livenessProbe.periodSeconds }}
+            successThreshold: {{ .Values.master.livenessProbe.successThreshold }}
+            failureThreshold: {{ .Values.master.livenessProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.master.livenessProbe.timeoutSeconds }}
+          {{- end }}
           {{- if .Values.master.resources }}
           resources:
             {{ tpl .Values.master.resources . | nindent 12 | trim }}
@@ -210,6 +220,9 @@ spec:
             path: {{ .Values.master.data.hostPathPrefix }}/seaweed-master/
             type: DirectoryOrCreate
         {{- end }}
+        - name: master-config
+          configMap:
+            name: {{ template "seaweedfs.name" . }}-master-config
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:

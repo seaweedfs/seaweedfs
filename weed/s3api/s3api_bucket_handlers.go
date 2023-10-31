@@ -259,32 +259,55 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	response := AccessControlPolicy{}
-	for _, ident := range s3a.iam.identities {
-		if len(ident.Credentials) == 0 {
-			continue
-		}
-		for _, action := range ident.Actions {
-			if !action.overBucket(bucket) || action.getPermission() == "" {
-				continue
-			}
-			id := ident.Credentials[0].AccessKey
-			if response.Owner.DisplayName == "" && action.isOwner(bucket) && len(ident.Credentials) > 0 {
-				response.Owner.DisplayName = ident.Name
-				response.Owner.ID = id
-			}
-			response.AccessControlList.Grant = append(response.AccessControlList.Grant, Grant{
-				Grantee: Grantee{
-					ID:          id,
-					DisplayName: ident.Name,
-					Type:        "CanonicalUser",
-					XMLXSI:      "CanonicalUser",
-					XMLNS:       "http://www.w3.org/2001/XMLSchema-instance"},
-				Permission: action.getPermission(),
-			})
-		}
+	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
+	amzDisplayName := s3a.iam.GetAccountNameById(amzAccountId)
+	response := AccessControlPolicy{
+		Owner: CanonicalUser{
+			ID:          amzAccountId,
+			DisplayName: amzDisplayName,
+		},
 	}
+	response.AccessControlList.Grant = append(response.AccessControlList.Grant, Grant{
+		Grantee: Grantee{
+			ID:          amzAccountId,
+			DisplayName: amzDisplayName,
+			Type:        "CanonicalUser",
+			XMLXSI:      "CanonicalUser",
+			XMLNS:       "http://www.w3.org/2001/XMLSchema-instance"},
+		Permission: s3.PermissionFullControl,
+	})
 	writeSuccessResponseXML(w, r, response)
+}
+
+// PutBucketAclHandler Put bucket ACL only responds success if the ACL is private.
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAcl.html //
+func (s3a *S3ApiServer) PutBucketAclHandler(w http.ResponseWriter, r *http.Request) {
+	// collect parameters
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("PutBucketAclHandler %s", bucket)
+
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+	cannedAcl := r.Header.Get(s3_constants.AmzCannedAcl)
+	switch {
+	case cannedAcl == "":
+		acl := &s3.AccessControlPolicy{}
+		if err := xmlDecoder(r.Body, acl, r.ContentLength); err != nil {
+			glog.Errorf("PutBucketAclHandler: %s", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			return
+		}
+		if len(acl.Grants) == 1 && acl.Grants[0].Permission != nil && *acl.Grants[0].Permission == s3_constants.PermissionFullControl {
+			writeSuccessResponseEmpty(w, r)
+			return
+		}
+	case cannedAcl == s3_constants.CannedAclPrivate:
+		writeSuccessResponseEmpty(w, r)
+		return
+	}
+	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 }
 
 // GetBucketLifecycleConfigurationHandler Get Bucket Lifecycle configuration

@@ -4,7 +4,7 @@ import (
 	"context"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/mq"
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -31,21 +31,9 @@ func (broker *MessageQueueBroker) FindBrokerLeader(c context.Context, request *m
 	return ret, err
 }
 
-func (broker *MessageQueueBroker) CheckSegmentStatus(c context.Context, request *mq_pb.CheckSegmentStatusRequest) (*mq_pb.CheckSegmentStatusResponse, error) {
-	ret := &mq_pb.CheckSegmentStatusResponse{}
-	// TODO add in memory active segment
-	return ret, nil
-}
-
-func (broker *MessageQueueBroker) CheckBrokerLoad(c context.Context, request *mq_pb.CheckBrokerLoadRequest) (*mq_pb.CheckBrokerLoadResponse, error) {
-	ret := &mq_pb.CheckBrokerLoadResponse{}
-	// TODO read broker's load
-	return ret, nil
-}
-
 func (broker *MessageQueueBroker) AssignSegmentBrokers(c context.Context, request *mq_pb.AssignSegmentBrokersRequest) (*mq_pb.AssignSegmentBrokersResponse, error) {
 	ret := &mq_pb.AssignSegmentBrokersResponse{}
-	segment := mq.FromPbSegment(request.Segment)
+	segment := topic.FromPbSegment(request.Segment)
 
 	// check existing segment locations on filer
 	existingBrokers, err := broker.checkSegmentOnFiler(segment)
@@ -84,7 +72,61 @@ func (broker *MessageQueueBroker) AssignSegmentBrokers(c context.Context, reques
 	return ret, nil
 }
 
-func (broker *MessageQueueBroker) checkSegmentsOnBrokers(segment *mq.Segment, brokers []pb.ServerAddress) (active bool, err error) {
+func (broker *MessageQueueBroker) CheckSegmentStatus(c context.Context, request *mq_pb.CheckSegmentStatusRequest) (*mq_pb.CheckSegmentStatusResponse, error) {
+	ret := &mq_pb.CheckSegmentStatusResponse{}
+	// TODO add in memory active segment
+	return ret, nil
+}
+
+func (broker *MessageQueueBroker) CheckBrokerLoad(c context.Context, request *mq_pb.CheckBrokerLoadRequest) (*mq_pb.CheckBrokerLoadResponse, error) {
+	ret := &mq_pb.CheckBrokerLoadResponse{}
+	// TODO read broker's load
+	return ret, nil
+}
+
+// createOrUpdateTopicPartitions creates the topic partitions on the broker
+// 1. check
+func (broker *MessageQueueBroker) createOrUpdateTopicPartitions(topic *topic.Topic, prevAssignments []*mq_pb.BrokerPartitionAssignment) (err error) {
+	// create or update each partition
+	if prevAssignments == nil {
+		broker.createOrUpdateTopicPartition(topic, nil)
+	} else {
+		for _, brokerPartitionAssignment := range prevAssignments {
+			broker.createOrUpdateTopicPartition(topic, brokerPartitionAssignment)
+		}
+	}
+	return nil
+}
+
+func (broker *MessageQueueBroker) createOrUpdateTopicPartition(topic *topic.Topic, oldAssignment *mq_pb.BrokerPartitionAssignment) (newAssignment *mq_pb.BrokerPartitionAssignment) {
+	shouldCreate := broker.confirmBrokerPartitionAssignment(topic, oldAssignment)
+	if !shouldCreate {
+
+	}
+	return
+}
+func (broker *MessageQueueBroker) confirmBrokerPartitionAssignment(topic *topic.Topic, oldAssignment *mq_pb.BrokerPartitionAssignment) (shouldCreate bool) {
+	if oldAssignment == nil {
+		return true
+	}
+	for _, b := range oldAssignment.FollowerBrokers {
+		pb.WithBrokerGrpcClient(false, b, broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+			_, err := client.CheckTopicPartitionsStatus(context.Background(), &mq_pb.CheckTopicPartitionsStatusRequest{
+				Namespace:                 string(topic.Namespace),
+				Topic:                     topic.Name,
+				BrokerPartitionAssignment: oldAssignment,
+				ShouldCancelIfNotMatch:    true,
+			})
+			if err != nil {
+				shouldCreate = true
+			}
+			return nil
+		})
+	}
+	return
+}
+
+func (broker *MessageQueueBroker) checkSegmentsOnBrokers(segment *topic.Segment, brokers []pb.ServerAddress) (active bool, err error) {
 	var wg sync.WaitGroup
 
 	for _, candidate := range brokers {

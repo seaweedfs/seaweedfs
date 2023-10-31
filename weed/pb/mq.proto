@@ -20,8 +20,30 @@ service SeaweedMessaging {
     rpc CheckBrokerLoad (CheckBrokerLoadRequest) returns (CheckBrokerLoadResponse) {
     }
 
+    // control plane for balancer
+    rpc ConnectToBalancer (stream ConnectToBalancerRequest) returns (stream ConnectToBalancerResponse) {
+    }
+    rpc DoConfigureTopic (DoConfigureTopicRequest) returns (DoConfigureTopicResponse) {
+    }
+    // control plane for topic partitions
+    rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
+    }
+    rpc ConfigureTopic (ConfigureTopicRequest) returns (ConfigureTopicResponse) {
+    }
+    rpc ListTopics (ListTopicsRequest) returns (ListTopicsResponse) {
+    }
+    // a pub client will call this to get the topic partitions assignment
+    rpc RequestTopicPartitions (RequestTopicPartitionsRequest) returns (RequestTopicPartitionsResponse) {
+    }
+    rpc AssignTopicPartitions (AssignTopicPartitionsRequest) returns (AssignTopicPartitionsResponse) {
+    }
+    rpc CheckTopicPartitionsStatus (CheckTopicPartitionsStatusRequest) returns (CheckTopicPartitionsStatusResponse) {
+    }
+
     // data plane
     rpc Publish (stream PublishRequest) returns (stream PublishResponse) {
+    }
+    rpc Subscribe (SubscribeRequest) returns (stream SubscribeResponse) {
     }
 }
 
@@ -45,6 +67,10 @@ message FindBrokerLeaderResponse {
     string broker = 1;
 }
 
+message Topic {
+    string namespace = 1;
+    string name = 2;
+}
 message Partition {
     int32 ring_size = 1;
     int32 range_start = 2;
@@ -84,14 +110,139 @@ message CheckBrokerLoadResponse {
 }
 
 //////////////////////////////////////////////////
+message BrokerStats {
+    int32 cpu_usage_percent = 1;
+    map<string, TopicPartitionStats> stats = 2;
+}
+message TopicPartitionStats {
+    Topic topic = 1;
+    Partition partition = 2;
+    int32 consumer_count = 3;
+    bool is_leader = 4;
+}
+
+
+message ConnectToBalancerRequest {
+    message InitMessage {
+        string broker = 1;
+    }
+    oneof message {
+        InitMessage init = 1;
+        BrokerStats stats = 2;
+    }
+}
+message ConnectToBalancerResponse {
+}
+//////////////////////////////////////////////////
+message ConfigureTopicRequest {
+    Topic topic = 1;
+    int32 partition_count = 2;
+}
+message ConfigureTopicResponse {
+    repeated BrokerPartitionAssignment broker_partition_assignments = 2;
+}
+message DoConfigureTopicRequest {
+    Topic topic = 1;
+    Partition partition = 2;
+}
+message DoConfigureTopicResponse {
+}
+message ListTopicsRequest {
+}
+message ListTopicsResponse {
+    repeated Topic topics = 1;
+}
+message LookupTopicBrokersRequest {
+    Topic topic = 1;
+    bool is_for_publish = 2;
+}
+message LookupTopicBrokersResponse {
+    Topic topic = 1;
+    repeated BrokerPartitionAssignment broker_partition_assignments = 2;
+}
+message BrokerPartitionAssignment {
+    Partition partition = 1;
+    string leader_broker = 2;
+    repeated string follower_brokers = 3;
+}
+
+message RequestTopicPartitionsRequest {
+    Topic topic = 1;
+    int32 partition_count = 2;
+}
+message RequestTopicPartitionsResponse {
+    repeated BrokerPartitionAssignment broker_partition_assignments = 1;
+}
+
+message AssignTopicPartitionsRequest {
+    Topic topic = 1;
+    repeated BrokerPartitionAssignment broker_partition_assignments = 2;
+    bool is_leader = 3;
+}
+message AssignTopicPartitionsResponse {
+}
+
+message CheckTopicPartitionsStatusRequest {
+    string namespace = 1;
+    string topic = 2;
+    BrokerPartitionAssignment broker_partition_assignment = 3;
+    bool should_cancel_if_not_match = 4;
+}
+message CheckTopicPartitionsStatusResponse {
+    repeated BrokerPartitionAssignment broker_partition_assignments = 1;
+}
+
+//////////////////////////////////////////////////
+message DataMessage {
+    bytes key = 1;
+    bytes value = 2;
+}
 message PublishRequest {
     message InitMessage {
-        Segment segment = 1;
+        Topic topic = 1;
+        Partition partition = 2;
+        int32 ack_interval = 3;
     }
-    InitMessage init = 1;
-    bytes message = 2;
+    oneof message {
+        InitMessage init = 1;
+        DataMessage data = 2;
+    }
+    int64 sequence = 3;
 }
 message PublishResponse {
     int64 ack_sequence = 1;
-    bool is_closed = 2;
+    string error = 2;
+    string redirect_to_broker = 3;
+}
+message SubscribeRequest {
+    message InitMessage {
+        string consumer_group = 1;
+        string consumer_id = 2;
+        string client_id = 3;
+        Topic topic = 4;
+        Partition partition = 5;
+        oneof offset {
+            int64 start_offset = 6;
+            int64 start_timestamp_ns = 7;
+        }
+        string filter = 8;
+    }
+    message AckMessage {
+        int64 sequence = 1;
+    }
+    oneof message {
+        InitMessage init = 1;
+        AckMessage ack = 2;
+    }
+}
+message SubscribeResponse {
+    message CtrlMessage {
+        string error = 1;
+        bool is_end_of_stream = 2;
+        bool is_end_of_topic = 3;
+    }
+    oneof message {
+        CtrlMessage ctrl = 1;
+        DataMessage data = 2;
+    }
 }

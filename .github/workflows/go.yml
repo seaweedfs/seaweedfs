@@ -27,7 +27,7 @@ jobs:
       id: go
 
     - name: Check out code into the Go module directory
-      uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c # v2
+      uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v2
 
     - name: Get dependencies
       run: |

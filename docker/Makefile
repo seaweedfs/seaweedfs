@@ -8,7 +8,7 @@ cgo ?= 0
 binary:
 	export SWCOMMIT=$(shell git rev-parse --short HEAD)
 	export SWLDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=$(SWCOMMIT)"
-	cd ../weed && CGO_ENABLED=$(cgo) GOOS=linux go build $(options) -tags "$(tags)" -ldflags "-extldflags -static $(SWLDFLAGS)" && mv weed ../docker/
+	cd ../weed && CGO_ENABLED=$(cgo) GOOS=linux go build $(options) -tags "$(tags)" -ldflags "-s -w -extldflags -static $(SWLDFLAGS)" && mv weed ../docker/
 
 binary_race: options = -race
 binary_race: cgo = 1
@@ -102,12 +102,12 @@ clean:
 	rm ./weed
 
 certstrap:
-	go get github.com/square/certstrap
-	certstrap --depot-path compose/tls init --passphrase "" --common-name "SeaweedFS CA" || true
-	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name volume01.dev || true
-	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name master01.dev || true
-	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name filer01.dev || true
-	certstrap --depot-path compose/tls request-cert --passphrase "" --common-name client01.dev || true
+	go install -v github.com/square/certstrap@latest
+	certstrap --depot-path compose/tls init --curve P-256 --passphrase "" --common-name "SeaweedFS CA" || true
+	certstrap --depot-path compose/tls request-cert --ou "SeaweedFS" --curve P-256 --passphrase "" --domain localhost --common-name volume01.dev || true
+	certstrap --depot-path compose/tls request-cert --ou "SeaweedFS" --curve P-256 --passphrase "" --common-name master01.dev || true
+	certstrap --depot-path compose/tls request-cert --ou "SeaweedFS" --curve P-256 --passphrase "" --common-name filer01.dev || true
+	certstrap --depot-path compose/tls request-cert --ou "SeaweedFS" --curve P-256 --passphrase "" --common-name client01.dev || true
 	certstrap --depot-path compose/tls sign --CA "SeaweedFS CA" volume01.dev || true
 	certstrap --depot-path compose/tls sign --CA "SeaweedFS CA" master01.dev || true
 	certstrap --depot-path compose/tls sign --CA "SeaweedFS CA" filer01.dev || true

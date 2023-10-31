@@ -28,9 +28,9 @@ jobs:
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c # v2
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v2
       - name: Go Release Binaries Normal Volume Size
-        uses: wangyoucao577/go-release-action@704aa02167966cb98c1297e3c900fa03c1cf5ed1 # v1.22
+        uses: wangyoucao577/go-release-action@2ac3035fa4c4feed6a8272ce278b0577b93cf8e5 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
@@ -39,13 +39,13 @@ jobs:
           build_flags: -tags elastic,ydb,gocdk,tikv
           pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
           # build_flags: -tags 5BytesOffset # optional, default is
-          ldflags: -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          ldflags: -s -w -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
           project_path: weed
           binary_name: weed
           asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}_full"
       - name: Go Release Large Disk Binaries
-        uses: wangyoucao577/go-release-action@704aa02167966cb98c1297e3c900fa03c1cf5ed1 # v1.22
+        uses: wangyoucao577/go-release-action@2ac3035fa4c4feed6a8272ce278b0577b93cf8e5 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
@@ -53,7 +53,7 @@ jobs:
           overwrite: true
           pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
           build_flags: -tags 5BytesOffset,elastic,ydb,gocdk,tikv
-          ldflags: -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${{github.sha}}
+          ldflags: -s -w -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
           project_path: weed
           binary_name: weed

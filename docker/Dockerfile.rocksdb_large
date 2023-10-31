@@ -1,4 +1,4 @@
-FROM golang:1.20-buster as builder
+FROM golang:1.21-buster as builder
 
 RUN apt-get update
 RUN apt-get install -y build-essential libsnappy-dev zlib1g-dev libbz2-dev libgflags-dev liblz4-dev libzstd-dev

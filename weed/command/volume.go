@@ -19,6 +19,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/server/constants"
 	"github.com/seaweedfs/seaweedfs/weed/util/httpdown"
 
 	"google.golang.org/grpc/reflection"
@@ -241,7 +242,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes,
 		*v.idxFolder,
 		volumeNeedleMapKind,
-		v.masters, 5, *v.dataCenter, *v.rack,
+		v.masters, constants.VolumePulseSeconds, *v.dataCenter, *v.rack,
 		v.whiteList,
 		*v.fixJpgOrientation, *v.readMode,
 		*v.compactionMBPerSecond,

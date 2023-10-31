@@ -50,7 +50,7 @@ import (
 )
 
 type FilerOption struct {
-	Masters               map[string]pb.ServerAddress
+	Masters               *pb.ServerDiscovery
 	FilerGroup            string
 	Collection            string
 	DefaultReplication    string
@@ -115,11 +115,13 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	}
 	fs.listenersCond = sync.NewCond(&fs.listenersLock)
 
-	if len(option.Masters) == 0 {
+	option.Masters.RefreshBySrvIfAvailable()
+	if len(option.Masters.GetInstances()) == 0 {
 		glog.Fatal("master list is required!")
 	}
-
-	fs.filer = filer.NewFiler(option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, func() {
+	v.SetDefault("filer.options.max_file_name_length", 255)
+	maxFilenameLength := v.GetUint32("filer.options.max_file_name_length")
+	fs.filer = filer.NewFiler(*option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, maxFilenameLength, func() {
 		fs.listenersCond.Broadcast()
 	})
 	fs.filer.Cipher = option.Cipher
@@ -156,6 +158,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	handleStaticResources(defaultMux)
 	if !option.DisableHttp {
+		defaultMux.HandleFunc("/healthz", fs.filerHealthzHandler)
 		defaultMux.HandleFunc("/", fs.filerHandler)
 	}
 	if defaultMux != readonlyMux {
@@ -190,7 +193,8 @@ func (fs *FilerServer) checkWithMaster() {
 
 	isConnected := false
 	for !isConnected {
-		for _, master := range fs.option.Masters {
+		fs.option.Masters.RefreshBySrvIfAvailable()
+		for _, master := range fs.option.Masters.GetInstances() {
 			readErr := operation.WithMasterServerClient(false, master, fs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 				if err != nil {

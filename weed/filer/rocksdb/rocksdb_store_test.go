@@ -15,7 +15,7 @@ import (
 )
 
 func TestCreateAndFind(t *testing.T) {
-	testFiler := filer.NewFiler(nil, nil, "", 0, "", "", "", nil)
+	testFiler := filer.NewFiler(pb.ServerDiscovery{}, nil, "", 0, "", "", "", nil)
 	dir := t.TempDir()
 	store := &RocksDBStore{}
 	store.initialize(dir)
@@ -34,7 +34,7 @@ func TestCreateAndFind(t *testing.T) {
 		},
 	}
 
-	if err := testFiler.CreateEntry(ctx, entry1, false, false, nil, false); err != nil {
+	if err := testFiler.CreateEntry(ctx, entry1, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
 		t.Errorf("create entry %v: %v", entry1.FullPath, err)
 		return
 	}
@@ -68,7 +68,7 @@ func TestCreateAndFind(t *testing.T) {
 }
 
 func TestEmptyRoot(t *testing.T) {
-	testFiler := filer.NewFiler(nil, nil, "", 0, "", "", "", nil)
+	testFiler := filer.NewFiler(pb.ServerDiscovery{}, nil, "", 0, "", "", "", nil)
 	dir := t.TempDir()
 	store := &RocksDBStore{}
 	store.initialize(dir)
@@ -90,7 +90,7 @@ func TestEmptyRoot(t *testing.T) {
 }
 
 func BenchmarkInsertEntry(b *testing.B) {
-	testFiler := filer.NewFiler(nil, nil, "", 0, "", "", "", nil)
+	testFiler := filer.NewFiler(pb.ServerDiscovery{}, nil, "", 0, "", "", "", nil)
 	dir := b.TempDir()
 	store := &RocksDBStore{}
 	store.initialize(dir)

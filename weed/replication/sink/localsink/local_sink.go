@@ -90,11 +90,23 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 		return os.Mkdir(key, os.FileMode(entry.Attributes.FileMode))
 	}
 
-	dstFile, err := os.OpenFile(key, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(entry.Attributes.FileMode))
+	mode := os.FileMode(entry.Attributes.FileMode)
+	dstFile, err := os.OpenFile(util.ToShortFileName(key), os.O_RDWR|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
 		return err
 	}
 	defer dstFile.Close()
+
+	fi, err := dstFile.Stat()
+	if err != nil {
+		return err
+	}
+	if fi.Mode() != mode {
+		glog.V(4).Infof("Modify file mode: %o -> %o", fi.Mode(), mode)
+		if err := dstFile.Chmod(mode); err != nil {
+			return err
+		}
+	}
 
 	writeFunc := func(data []byte) error {
 		_, writeErr := dstFile.Write(data)

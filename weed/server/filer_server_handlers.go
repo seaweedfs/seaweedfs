@@ -30,12 +30,6 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isReadHttpCall := r.Method == "GET" || r.Method == "HEAD"
-	if !fs.maybeCheckJwtAuthorization(r, !isReadHttpCall) {
-		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
-		return
-	}
-
 	// proxy to volume servers
 	var fileId string
 	if strings.HasPrefix(r.RequestURI, "/?proxyChunkId=") {
@@ -45,6 +39,12 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		stats.FilerRequestCounter.WithLabelValues(stats.ChunkProxy).Inc()
 		fs.proxyToVolumeServer(w, r, fileId)
 		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkProxy).Observe(time.Since(start).Seconds())
+		return
+	}
+
+	isReadHttpCall := r.Method == "GET" || r.Method == "HEAD"
+	if !fs.maybeCheckJwtAuthorization(r, !isReadHttpCall) {
+		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 		return
 	}
 
@@ -178,4 +178,9 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 	} else {
 		return true
 	}
+}
+
+func (fs *FilerServer) filerHealthzHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Server", "SeaweedFS Filer "+util.VERSION)
+	w.WriteHeader(http.StatusOK)
 }

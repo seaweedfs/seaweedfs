@@ -21,12 +21,23 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/images"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+
+func NotFound(w http.ResponseWriter) {
+	stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorGetNotFound).Inc()
+	w.WriteHeader(http.StatusNotFound)
+}
+
+func InternalError(w http.ResponseWriter) {
+	stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorGetInternal).Inc()
+	w.WriteHeader(http.StatusInternalServerError)
+}
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
 	n := new(needle.Needle)
@@ -56,14 +67,14 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	if !hasVolume && !hasEcVolume {
 		if vs.ReadMode == "local" {
 			glog.V(0).Infoln("volume is not local:", err, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
+			NotFound(w)
 			return
 		}
 		lookupResult, err := operation.LookupVolumeId(vs.GetMaster, vs.grpcDialOption, volumeId.String())
 		glog.V(2).Infoln("volume", volumeId, "found on", lookupResult, "error", err)
 		if err != nil || len(lookupResult.Locations) <= 0 {
 			glog.V(0).Infoln("lookup error:", err, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
+			NotFound(w)
 			return
 		}
 		if vs.ReadMode == "proxy" {
@@ -74,7 +85,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			request, err := http.NewRequest("GET", r.URL.String(), nil)
 			if err != nil {
 				glog.V(0).Infof("failed to instance http request of url %s: %v", r.URL.String(), err)
-				w.WriteHeader(http.StatusInternalServerError)
+				InternalError(w)
 				return
 			}
 			for k, vv := range r.Header {
@@ -86,7 +97,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			response, err := client.Do(request)
 			if err != nil {
 				glog.V(0).Infof("request remote url %s: %v", r.URL.String(), err)
-				w.WriteHeader(http.StatusInternalServerError)
+				InternalError(w)
 				return
 			}
 			defer util.CloseResponse(response)
@@ -147,15 +158,15 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	if err != nil || count < 0 {
 		glog.V(3).Infof("read %s isNormalVolume %v error: %v", r.URL.Path, hasVolume, err)
 		if err == storage.ErrorNotFound || err == storage.ErrorDeleted {
-			w.WriteHeader(http.StatusNotFound)
+			NotFound(w)
 		} else {
-			w.WriteHeader(http.StatusInternalServerError)
+			InternalError(w)
 		}
 		return
 	}
 	if n.Cookie != cookie {
 		glog.V(0).Infof("request %s with cookie:%x expected:%x from %s agent %s", r.URL.Path, cookie, n.Cookie, r.RemoteAddr, r.UserAgent())
-		w.WriteHeader(http.StatusNotFound)
+		NotFound(w)
 		return
 	}
 	if n.LastModified != 0 {

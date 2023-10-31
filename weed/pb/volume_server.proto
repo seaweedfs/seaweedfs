@@ -250,6 +250,8 @@ message VolumeStatusRequest {
 message VolumeStatusResponse {
     bool is_read_only = 1;
     uint64 volume_size = 2;
+    uint64 file_count = 3;
+    uint64 file_deleted_count = 4;
 }
 
 message VolumeCopyRequest {

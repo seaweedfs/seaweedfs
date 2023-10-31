@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt"
+	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
@@ -17,14 +17,14 @@ type SigningKey []byte
 // restricting the access this JWT allows to only a single file.
 type SeaweedFileIdClaims struct {
 	Fid string `json:"fid"`
-	jwt.StandardClaims
+	jwt.RegisteredClaims
 }
 
 // SeaweedFilerClaims is created e.g. by S3 proxy server and consumed by Filer server.
 // Right now, it only contains the standard claims; but this might be extended later
 // for more fine-grained permissions.
 type SeaweedFilerClaims struct {
-	jwt.StandardClaims
+	jwt.RegisteredClaims
 }
 
 func GenJwtForVolumeServer(signingKey SigningKey, expiresAfterSec int, fileId string) EncodedJwt {
@@ -34,10 +34,10 @@ func GenJwtForVolumeServer(signingKey SigningKey, expiresAfterSec int, fileId st
 
 	claims := SeaweedFileIdClaims{
 		fileId,
-		jwt.StandardClaims{},
+		jwt.RegisteredClaims{},
 	}
 	if expiresAfterSec > 0 {
-		claims.ExpiresAt = time.Now().Add(time.Second * time.Duration(expiresAfterSec)).Unix()
+		claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(time.Second * time.Duration(expiresAfterSec)))
 	}
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	encoded, e := t.SignedString([]byte(signingKey))
@@ -56,10 +56,10 @@ func GenJwtForFilerServer(signingKey SigningKey, expiresAfterSec int) EncodedJwt
 	}
 
 	claims := SeaweedFilerClaims{
-		jwt.StandardClaims{},
+		jwt.RegisteredClaims{},
 	}
 	if expiresAfterSec > 0 {
-		claims.ExpiresAt = time.Now().Add(time.Second * time.Duration(expiresAfterSec)).Unix()
+		claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(time.Second * time.Duration(expiresAfterSec)))
 	}
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	encoded, e := t.SignedString([]byte(signingKey))

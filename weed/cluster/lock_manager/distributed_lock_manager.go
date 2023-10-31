@@ -24,23 +24,38 @@ func NewDistributedLockManager(host pb.ServerAddress) *DistributedLockManager {
 	}
 }
 
-func (dlm *DistributedLockManager) Lock(key string, token string) (renewToken string, movedTo pb.ServerAddress, err error) {
-	return dlm.LockWithTimeout(key, MaxDuration, token)
+func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64, token string, owner string) (renewToken string, movedTo pb.ServerAddress, err error) {
+	movedTo, err = dlm.findLockOwningFiler(key)
+	if err != nil {
+		return
+	}
+	if movedTo != dlm.Host {
+		return
+	}
+	renewToken, err = dlm.lockManager.Lock(key, expiredAtNs, token, owner)
+	return
 }
 
-func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64, token string) (renewToken string, movedTo pb.ServerAddress, err error) {
+func (dlm *DistributedLockManager) findLockOwningFiler(key string) (movedTo pb.ServerAddress, err error) {
 	servers := dlm.LockRing.GetSnapshot()
 	if servers == nil {
 		err = NoLockServerError
 		return
 	}
 
-	server := hashKeyToServer(key, servers)
-	if server != dlm.Host {
-		movedTo = server
+	movedTo = hashKeyToServer(key, servers)
+	return
+}
+
+func (dlm *DistributedLockManager) FindLockOwner(key string) (owner string, movedTo pb.ServerAddress, err error) {
+	movedTo, err = dlm.findLockOwningFiler(key)
+	if err != nil {
 		return
 	}
-	renewToken, err = dlm.lockManager.Lock(key, expiredAtNs, token)
+	if movedTo != dlm.Host {
+		return
+	}
+	owner, err = dlm.lockManager.GetLockOwner(key)
 	return
 }
 
@@ -62,8 +77,8 @@ func (dlm *DistributedLockManager) Unlock(key string, token string) (movedTo pb.
 
 // InsertLock is used to insert a lock to a server unconditionally
 // It is used when a server is down and the lock is moved to another server
-func (dlm *DistributedLockManager) InsertLock(key string, expiredAtNs int64, token string) {
-	dlm.lockManager.InsertLock(key, expiredAtNs, token)
+func (dlm *DistributedLockManager) InsertLock(key string, expiredAtNs int64, token string, owner string) {
+	dlm.lockManager.InsertLock(key, expiredAtNs, token, owner)
 }
 func (dlm *DistributedLockManager) SelectNotOwnedLocks(servers []pb.ServerAddress) (locks []*Lock) {
 	return dlm.lockManager.SelectLocks(func(key string) bool {
