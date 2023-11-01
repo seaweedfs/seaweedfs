@@ -92,6 +92,6 @@ type wrappedFileInfo struct {
 }
 
 func (w wrappedFileInfo) Name() string {
-	name := w.Name()
+	name := w.FileInfo.Name()
 	return strings.TrimPrefix(name, *w.subFolder)
 }
