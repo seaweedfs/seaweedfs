@@ -654,3 +654,8 @@ certificates:
     # you will need to store your provided certificates in the secret read by the different services:
     # seaweedfs-master-cert, seaweedfs-filer-cert, etc. Can see any statefulset definition to see secret names
     enabled: false
+
+# Labels to be added to all the created pods
+podLabels: {}
+# Annotations to be added to all the created pods
+podAnnotations: {}

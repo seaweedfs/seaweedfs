@@ -26,6 +26,13 @@ spec:
         helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: volume
+      {{ with .Values.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      annotations:
+      {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       {{- if .Values.volume.affinity }}
       affinity:

@@ -24,6 +24,13 @@ spec:
         helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: s3
+      {{ with .Values.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      annotations:
+      {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.s3.restartPolicy }}
       {{- if .Values.s3.tolerations }}

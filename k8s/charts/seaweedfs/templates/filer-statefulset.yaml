@@ -33,6 +33,13 @@ spec:
         helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: filer
+      {{ with .Values.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      annotations:
+      {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.filer.restartPolicy }}
       {{- if .Values.filer.affinity }}
