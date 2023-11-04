@@ -12,6 +12,8 @@ import (
 )
 
 // ConfigureTopic Runs on any broker, but proxied to the balancer if not the balancer
+// It generates an assignments based on existing allocations,
+// and then assign the partitions to the brokers.
 func (broker *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.ConfigureTopicRequest) (resp *mq_pb.ConfigureTopicResponse, err error) {
 	if broker.currentBalancer == "" {
 		return nil, status.Errorf(codes.Unavailable, "no balancer")

@@ -21,12 +21,13 @@ service SeaweedMessaging {
     }
 
     // control plane for topic partitions
-    rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
+    rpc ListTopics (ListTopicsRequest) returns (ListTopicsResponse) {
     }
     rpc ConfigureTopic (ConfigureTopicRequest) returns (ConfigureTopicResponse) {
     }
-    rpc ListTopics (ListTopicsRequest) returns (ListTopicsResponse) {
+    rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
     }
+    // invoked by the balancer to assign partitions to each brokers
     rpc AssignTopicPartitions (AssignTopicPartitionsRequest) returns (AssignTopicPartitionsResponse) {
     }
 
