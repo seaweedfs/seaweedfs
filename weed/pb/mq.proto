@@ -27,19 +27,19 @@ service SeaweedMessaging {
     }
     rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
     }
-    // invoked by the balancer to assign partitions to each brokers
+
+    // invoked by the balancer
     rpc AssignTopicPartitions (AssignTopicPartitionsRequest) returns (AssignTopicPartitionsResponse) {
+    }
+    rpc ClosePublishers(ClosePublishersRequest) returns (ClosePublishersResponse) {
+    }
+    rpc CloseSubscribers(CloseSubscribersRequest) returns (CloseSubscribersResponse) {
     }
 
     // data plane for each topic partition
     rpc Publish (stream PublishRequest) returns (stream PublishResponse) {
     }
     rpc Subscribe (SubscribeRequest) returns (stream SubscribeResponse) {
-    }
-    // control each topic partition
-    rpc ClosePublishers(ClosePublishersRequest) returns (ClosePublishersResponse) {
-    }
-    rpc CloseSubscribers(CloseSubscribersRequest) returns (CloseSubscribersResponse) {
     }
 }
 
