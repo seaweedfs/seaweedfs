@@ -28,7 +28,7 @@ service SeaweedMessaging {
     rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
     }
 
-    // invoked by the balancer
+    // invoked by the balancer, running on each broker
     rpc AssignTopicPartitions (AssignTopicPartitionsRequest) returns (AssignTopicPartitionsResponse) {
     }
     rpc ClosePublishers(ClosePublishersRequest) returns (ClosePublishersResponse) {
