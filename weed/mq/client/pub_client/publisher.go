@@ -1,11 +1,13 @@
 package pub_client
 
 import (
+	"fmt"
 	"github.com/rdleal/intervalst/interval"
 	"github.com/seaweedfs/seaweedfs/weed/mq/balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"strings"
 	"sync"
 	"time"
 )
@@ -37,11 +39,19 @@ func NewTopicPublisher(namespace, topic string) *TopicPublisher {
 	}
 }
 
-func (p *TopicPublisher) Connect(bootstrapBroker string) error {
-	if err := p.doLookup(bootstrapBroker); err != nil {
-		return err
+func (p *TopicPublisher) Connect(bootstrapBrokers string) (err error) {
+	brokers := strings.Split(bootstrapBrokers, ",")
+	if len(brokers) == 0 {
+		return nil
 	}
-	return nil
+	for _, b := range brokers {
+		err = p.doLookup(b)
+		if err == nil {
+			return nil
+		}
+		fmt.Printf("failed to connect to %s: %v\n\n", b, err)
+	}
+	return err
 }
 
 func (p *TopicPublisher) Shutdown() error {
