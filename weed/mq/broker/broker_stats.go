@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"io"
 	"math/rand"
 	"time"
 )
@@ -62,6 +63,9 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 				},
 			})
 			if err != nil {
+				if err == io.EOF {
+					return err
+				}
 				return fmt.Errorf("send stats message: %v", err)
 			}
 			glog.V(3).Infof("sent stats: %+v", stats)
