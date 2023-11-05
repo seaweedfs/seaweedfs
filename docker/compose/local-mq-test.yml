@@ -1,0 +1,27 @@
+version: '3.9'
+
+services:
+  server:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9333:9333
+      - 19333:19333
+      - 8888:8888
+      - 18888:18888
+    command: "server -ip=server -filer -volume.max=0 -master.volumeSizeLimitMB=8 -volume.preStopSeconds=1"
+    healthcheck:
+      test: curl -f http://localhost:8888/healthz
+  mq_broker:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 17777:17777
+    command: "mq.broker -master=server:9333 -ip=mq_broker"
+    depends_on:
+      server:
+        condition: service_healthy
+  mq_client:
+    image: chrislusf/seaweedfs:local
+    # run a custom command instead of entrypoint
+    command: "ls -al"
+    depends_on:
+      - mq_broker
