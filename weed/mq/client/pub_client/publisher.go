@@ -13,6 +13,8 @@ import (
 )
 
 type PublisherConfiguration struct {
+	CreateTopic bool
+	CreateTopicPartitionCount int32
 }
 
 type PublishClient struct {
@@ -26,9 +28,10 @@ type TopicPublisher struct {
 	partition2Broker *interval.SearchTree[*PublishClient, int32]
 	grpcDialOption   grpc.DialOption
 	sync.Mutex       // protects grpc
+	config           *PublisherConfiguration
 }
 
-func NewTopicPublisher(namespace, topic string) *TopicPublisher {
+func NewTopicPublisher(namespace, topic string, config *PublisherConfiguration) *TopicPublisher {
 	return &TopicPublisher{
 		namespace: namespace,
 		topic:     topic,
@@ -36,6 +39,7 @@ func NewTopicPublisher(namespace, topic string) *TopicPublisher {
 			return int(a - b)
 		}),
 		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		config:         config,
 	}
 }
 

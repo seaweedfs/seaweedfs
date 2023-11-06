@@ -2,6 +2,7 @@ package balancer
 
 import (
 	"errors"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
 
@@ -10,6 +11,9 @@ var (
 )
 
 func (b *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, publish bool, partitionCount int32) (assignments []*mq_pb.BrokerPartitionAssignment, err error) {
+	if partitionCount == 0 {
+		partitionCount = 6
+	}
 	// find existing topic partition assignments
 	for brokerStatsItem := range b.Brokers.IterBuffered() {
 		broker, brokerStats := brokerStatsItem.Key, brokerStatsItem.Val
@@ -31,6 +35,7 @@ func (b *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, publish b
 		}
 	}
 	if len(assignments) > 0 && len(assignments) == int(partitionCount) || !publish {
+		glog.V(0).Infof("existing topic partitions %d: %v", len(assignments), assignments)
 		return assignments, nil
 	}
 
