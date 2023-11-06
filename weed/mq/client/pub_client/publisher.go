@@ -45,7 +45,7 @@ func (p *TopicPublisher) Connect(bootstrapBrokers string) (err error) {
 		return nil
 	}
 	for _, b := range brokers {
-		err = p.doLookup(b)
+		err = p.doLookupAndConnect(b)
 		if err == nil {
 			return nil
 		}

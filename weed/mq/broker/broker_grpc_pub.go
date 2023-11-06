@@ -92,7 +92,6 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 			response.Error = fmt.Sprintf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
 			glog.Errorf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
 			return stream.Send(response)
-
 		}
 		ackInterval = int(initMessage.AckInterval)
 		stream.Send(response)
