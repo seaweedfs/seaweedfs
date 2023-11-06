@@ -30,5 +30,6 @@ spec:
 {{- end }}
   selector:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: {{ if .Values.s3.enabled }}s3{{ else }}filer{{ end }}
 {{- end }}
