@@ -155,7 +155,7 @@ require (
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/puzpuzpuz/xsync/v2 v2.5.1
 	github.com/rabbitmq/amqp091-go v1.9.0
-	github.com/rclone/rclone v1.64.0
+	github.com/rclone/rclone v1.64.2
 	github.com/rdleal/intervalst v1.2.0
 	github.com/schollz/progressbar/v3 v3.13.1
 	github.com/shirou/gopsutil/v3 v3.23.9
@@ -333,10 +333,10 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/uint128 v1.2.0 // indirect
-	storj.io/common v0.0.0-20230602145716-d6ea82d58b3d // indirect
+	storj.io/common v0.0.0-20230907123639-5fd0608fd947 // indirect
 	storj.io/drpc v0.0.33 // indirect
-	storj.io/picobuf v0.0.1 // indirect
-	storj.io/uplink v1.11.0 // indirect
+	storj.io/picobuf v0.0.2-0.20230906122608-c4ba17033c6c // indirect
+	storj.io/uplink v1.12.0 // indirect
 )
 
 // replace github.com/seaweedfs/raft => /Users/chrislu/go/src/github.com/seaweedfs/raft
