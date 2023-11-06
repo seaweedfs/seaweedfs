@@ -140,7 +140,7 @@ require (
 
 require (
 	github.com/Jille/raft-grpc-transport v1.4.0
-	github.com/arangodb/go-driver v1.6.0
+	github.com/arangodb/go-driver v1.6.1
 	github.com/armon/go-metrics v0.4.1
 	github.com/aws/aws-sdk-go-v2 v1.21.2
 	github.com/aws/aws-sdk-go-v2/config v1.18.42
