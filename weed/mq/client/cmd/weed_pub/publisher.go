@@ -33,7 +33,10 @@ func doPublish(publisher *pub_client.TopicPublisher, id int) {
 
 func main() {
 	flag.Parse()
-	publisher := pub_client.NewTopicPublisher(*namespace, *topic)
+	config := &pub_client.PublisherConfiguration{
+		CreateTopic: true,
+	}
+	publisher := pub_client.NewTopicPublisher(*namespace, *topic, config)
 	if err := publisher.Connect(*seedBrokers); err != nil {
 		fmt.Println(err)
 		return

@@ -7,12 +7,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"log"
 )
 
 // broker => publish client
 // send init message
 // save the publishing client
 func (p *TopicPublisher) doConnect(partition *mq_pb.Partition, brokerAddress string) (publishClient *PublishClient, err error) {
+	log.Printf("connecting to %v for topic partition %+v", brokerAddress, partition)
+
 	grpcConnection, err := pb.GrpcDial(context.Background(), brokerAddress, true, p.grpcDialOption)
 	if err != nil {
 		return publishClient, fmt.Errorf("dial broker %s: %v", brokerAddress, err)
