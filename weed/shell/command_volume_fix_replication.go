@@ -572,12 +572,12 @@ func isMisplaced(replicas []*VolumeReplica, replicaPlacement *super_block.Replic
 
 	for i := 0; i < len(replicas); i++ {
 		others := otherThan(replicas, i)
-		if satisfyReplicaPlacement(replicaPlacement, others, *replicas[i].location) {
-			return false
+		if !satisfyReplicaPlacement(replicaPlacement, others, *replicas[i].location) {
+			return true
 		}
 	}
 
-	return true
+	return false
 
 }
 
