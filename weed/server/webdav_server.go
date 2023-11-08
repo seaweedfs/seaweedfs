@@ -568,6 +568,9 @@ func (f *WebDavFile) Readdir(count int) (ret []os.FileInfo, err error) {
 		ret = append(ret, &fi)
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	old := f.off
 	if old >= int64(len(ret)) {
