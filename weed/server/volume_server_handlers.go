@@ -36,13 +36,14 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
-	stats.VolumeServerRequestCounter.WithLabelValues(r.Method).Inc()
 	start := time.Now()
-	defer func(start time.Time) {
-		stats.VolumeServerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
-	}(start)
+	requestMethod := r.Method
+	defer func(start time.Time, method *string) {
+		stats.VolumeServerRequestCounter.WithLabelValues(*method).Inc()
+		stats.VolumeServerRequestHistogram.WithLabelValues(*method).Observe(time.Since(start).Seconds())
+	}(start, &requestMethod)
 	switch r.Method {
-	case "GET", "HEAD":
+	case http.MethodGet, http.MethodHead:
 		stats.ReadRequest()
 		vs.inFlightDownloadDataLimitCond.L.Lock()
 		inFlightDownloadSize := atomic.LoadInt64(&vs.inFlightDownloadDataSize)
@@ -61,10 +62,12 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		}
 		vs.inFlightDownloadDataLimitCond.L.Unlock()
 		vs.GetOrHeadHandler(w, r)
-	case "DELETE":
+	case http.MethodDelete:
+		stats.VolumeServerRequestCounter.WithLabelValues(r.Method).Inc()
 		stats.DeleteRequest()
 		vs.guard.WhiteList(vs.DeleteHandler)(w, r)
-	case "PUT", "POST":
+	case http.MethodPut, http.MethodPost:
+		stats.VolumeServerRequestCounter.WithLabelValues(r.Method).Inc()
 		contentLength := getContentLength(r)
 		// exclude the replication from the concurrentUploadLimitMB
 		if r.URL.Query().Get("type") != "replicate" && vs.concurrentUploadLimit != 0 {
@@ -98,10 +101,13 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		stats.WriteRequest()
 		vs.guard.WhiteList(vs.PostHandler)(w, r)
 
-	case "OPTIONS":
+	case http.MethodOptions:
 		stats.ReadRequest()
 		w.Header().Add("Access-Control-Allow-Methods", "PUT, POST, GET, DELETE, OPTIONS")
 		w.Header().Add("Access-Control-Allow-Headers", "*")
+	default:
+		requestMethod = "INVALID"
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("unsupported method %s", r.Method))
 	}
 }
 
@@ -124,7 +130,7 @@ func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Req
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
 	switch r.Method {
-	case "GET", "HEAD":
+	case http.MethodGet, http.MethodHead:
 		stats.ReadRequest()
 		vs.inFlightDownloadDataLimitCond.L.Lock()
 		inFlightDownloadSize := atomic.LoadInt64(&vs.inFlightDownloadDataSize)
@@ -135,7 +141,7 @@ func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Req
 		}
 		vs.inFlightDownloadDataLimitCond.L.Unlock()
 		vs.GetOrHeadHandler(w, r)
-	case "OPTIONS":
+	case http.MethodOptions:
 		stats.ReadRequest()
 		w.Header().Add("Access-Control-Allow-Methods", "GET, OPTIONS")
 		w.Header().Add("Access-Control-Allow-Headers", "*")
