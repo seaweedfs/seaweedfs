@@ -30,14 +30,14 @@ type TopicSubscriber struct {
 	brokerPartitionAssignments []*mq_pb.BrokerPartitionAssignment
 	OnEachMessageFunc          OnEachMessageFunc
 	OnCompletionFunc           OnCompletionFunc
-	bootstrapBroker            string
+	bootstrapBrokers           []string
 }
 
-func NewTopicSubscriber(bootstrapBroker string, subscriber *SubscriberConfiguration, content *ContentConfiguration) *TopicSubscriber {
+func NewTopicSubscriber(bootstrapBrokers []string, subscriber *SubscriberConfiguration, content *ContentConfiguration) *TopicSubscriber {
 	return &TopicSubscriber{
 		SubscriberConfig: subscriber,
 		ContentConfig:    content,
-		bootstrapBroker:  bootstrapBroker,
+		bootstrapBrokers:  bootstrapBrokers,
 	}
 }
 

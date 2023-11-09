@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/pub_client"
 	"log"
+	"strings"
 	"sync"
 	"time"
 )
@@ -37,7 +38,8 @@ func main() {
 		CreateTopic: true,
 	}
 	publisher := pub_client.NewTopicPublisher(*namespace, *topic, config)
-	if err := publisher.Connect(*seedBrokers); err != nil {
+	brokers := strings.Split(*seedBrokers, ",")
+	if err := publisher.Connect(brokers); err != nil {
 		fmt.Println(err)
 		return
 	}
