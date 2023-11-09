@@ -7,7 +7,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"strings"
 	"sync"
 	"time"
 )
@@ -43,12 +42,11 @@ func NewTopicPublisher(namespace, topic string, config *PublisherConfiguration) 
 	}
 }
 
-func (p *TopicPublisher) Connect(bootstrapBrokers string) (err error) {
-	brokers := strings.Split(bootstrapBrokers, ",")
-	if len(brokers) == 0 {
+func (p *TopicPublisher) Connect(bootstrapBrokers []string) (err error) {
+	if len(bootstrapBrokers) == 0 {
 		return nil
 	}
-	for _, b := range brokers {
+	for _, b := range bootstrapBrokers {
 		err = p.doLookupAndConnect(b)
 		if err == nil {
 			return nil
