@@ -23,14 +23,12 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
-      helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
       app.kubernetes.io/instance: {{ .Release.Name }}
       app.kubernetes.io/component: filer
   template:
     metadata:
       labels:
         app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
-        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: filer
       {{ with .Values.podLabels }}
@@ -38,6 +36,9 @@ spec:
       {{- end }}
       annotations:
       {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.filer.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
@@ -61,6 +62,13 @@ spec:
       enableServiceLinks: false
       {{- if .Values.filer.serviceAccountName }}
       serviceAccountName: {{ .Values.filer.serviceAccountName | quote }}
+      {{- end }}
+      {{- with .Values.filer.dnsPolicy }}
+      dnsPolicy: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.filer.dnsConfig }}
+      dnsConfig:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- if .Values.filer.initContainers }}
       initContainers:
@@ -93,8 +101,6 @@ spec:
                 secretKeyRef:
                   name: secret-seaweedfs-db
                   key: password
-            - name: SEAWEEDFS_FULLNAME
-              value: "{{ template "seaweedfs.name" . }}"
             {{- if .Values.filer.extraEnvironmentVars }}
             {{- range $key, $value := .Values.filer.extraEnvironmentVars }}
             - name: {{ $key }}
@@ -117,11 +123,11 @@ spec:
             - name: {{ $key }}
               valueFrom: {{ toYaml $value | nindent 16 }}
             {{- end }}
-            {{- end }}             
+            {{- end }}
           command:
             - "/bin/sh"
             - "-ec"
-            - | 
+            - |
               exec /usr/bin/weed \
               {{- if eq .Values.filer.logs.type "hostPath" }}
               -logdir=/logs \
@@ -189,7 +195,7 @@ spec:
               -s3.auditLogConfig=/etc/sw/filer_s3_auditLogConfig.json \
               {{- end }}
               {{- end }}
-              -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
+              -master={{ template "seaweedfs.master_urls" .}}
           volumeMounts:
             {{- if eq .Values.filer.logs.type "hostPath" }}
             - name: seaweedfs-filer-log-volume
@@ -231,30 +237,7 @@ spec:
               name: metrics
             - containerPort: {{ .Values.filer.grpcPort }}
               #name: swfs-filer-grpc
-          {{- if .Values.filer.readinessProbe.enabled }}
-          readinessProbe:
-            httpGet:
-              path: {{ .Values.filer.readinessProbe.httpGet.path }}
-              port: {{ .Values.filer.port }}
-              scheme: {{ .Values.filer.readinessProbe.scheme }}
-            initialDelaySeconds: {{ .Values.filer.readinessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.filer.readinessProbe.periodSeconds }}
-            successThreshold: {{ .Values.filer.readinessProbe.successThreshold }}
-            failureThreshold: {{ .Values.filer.readinessProbe.failureThreshold }}
-            timeoutSeconds: {{ .Values.filer.readinessProbe.timeoutSeconds }}
-          {{- end }}
-          {{- if .Values.filer.livenessProbe.enabled }}
-          livenessProbe:
-            httpGet:
-              path: {{ .Values.filer.livenessProbe.httpGet.path }}
-              port: {{ .Values.filer.port }}
-              scheme: {{ .Values.filer.livenessProbe.scheme }}
-            initialDelaySeconds: {{ .Values.filer.livenessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.filer.livenessProbe.periodSeconds }}
-            successThreshold: {{ .Values.filer.livenessProbe.successThreshold }}
-            failureThreshold: {{ .Values.filer.livenessProbe.failureThreshold }}
-            timeoutSeconds: {{ .Values.filer.livenessProbe.timeoutSeconds }}
-          {{- end }}
+          {{- include "common.containerProbes" $.Values.filer | nindent 10 }}
           {{- if .Values.filer.resources }}
           resources:
             {{ tpl .Values.filer.resources . | nindent 12 | trim }}

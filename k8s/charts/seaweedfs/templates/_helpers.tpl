@@ -49,24 +49,11 @@ Inject extra environment vars in the format key:value, if populated
 {{- $imageOverride := .Values.filer.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
+{{- $registryName := .Values.image.registry | toString -}}
 {{- $repositoryName := .Values.image.repository | toString -}}
-{{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Chart.AppVersion | toString -}}
+{{- $name := default .Values.filer.imageName .Values.global.imageName | toString -}}
+{{- $tag := coalesce .Values.filer.imageTag .Values.global.imageTag .Chart.AppVersion | toString -}}
 {{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
-{{- end -}}
-{{- end -}}
-
-{{/* Return the proper dbSchema image */}}
-{{- define "filer.dbSchema.image" -}}
-{{- if .Values.filer.dbSchema.imageOverride -}}
-{{- $imageOverride := .Values.filer.dbSchema.imageOverride -}}
-{{- printf "%s" $imageOverride -}}
-{{- else -}}
-{{- $registryName := default .Values.global.registry .Values.global.localRegistry | toString -}}
-{{- $repositoryName := .Values.global.repository | toString -}}
-{{- $name := .Values.filer.dbSchema.imageName | toString -}}
-{{- $tag := .Values.filer.dbSchema.imageTag | toString -}}
 {{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
 {{- end -}}
 {{- end -}}
@@ -77,10 +64,10 @@ Inject extra environment vars in the format key:value, if populated
 {{- $imageOverride := .Values.master.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
+{{- $registryName := .Values.image.registry | toString -}}
 {{- $repositoryName := .Values.image.repository | toString -}}
-{{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Chart.AppVersion | toString -}}
+{{- $name := default .Values.master.imageName .Values.global.imageName | toString -}}
+{{- $tag := coalesce .Values.master.imageTag .Values.global.imageTag .Chart.AppVersion | toString -}}
 {{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
 {{- end -}}
 {{- end -}}
@@ -91,10 +78,10 @@ Inject extra environment vars in the format key:value, if populated
 {{- $imageOverride := .Values.s3.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
+{{- $registryName := .Values.image.registry | toString -}}
 {{- $repositoryName := .Values.image.repository | toString -}}
-{{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Chart.AppVersion | toString -}}
+{{- $name := default .Values.s3.imageName .Values.global.imageName | toString -}}
+{{- $tag := coalesce .Values.s3.imageTag .Values.global.imageTag .Chart.AppVersion | toString -}}
 {{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
 {{- end -}}
 {{- end -}}
@@ -105,10 +92,10 @@ Inject extra environment vars in the format key:value, if populated
 {{- $imageOverride := .Values.volume.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
+{{- $registryName := .Values.image.registry | toString -}}
 {{- $repositoryName := .Values.image.repository | toString -}}
-{{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Chart.AppVersion | toString -}}
+{{- $name := default .Values.volume.imageName .Values.global.imageName | toString -}}
+{{- $tag := coalesce .Values.volume.imageTag .Values.global.imageTag .Chart.AppVersion | toString -}}
 {{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
 {{- end -}}
 {{- end -}}
@@ -198,3 +185,58 @@ imagePullSecrets:
 {{- end }}
 {{- end }}
 {{- end -}}
+
+{{- define "seaweedfs.master_urls" -}}
+    {{- range $index := until (.Values.master.replicas | int) }}
+        {{- $replacement := printf "%s-master-%d" (include "seaweedfs.name" $) $index -}}
+        {{- tpl $.Values.master.serverName $ | trim | replace "${POD_NAME}" $replacement }}:{{ $.Values.master.port -}}
+        {{- if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}
+    {{- end }}
+{{- end -}}
+
+{{- define "volume.service_name" -}}
+{{- default (printf "%s-volume" (include "seaweedfs.name" .)) .Values.volume.serviceNameOverride }}
+{{- end -}}
+
+{{- define "master.service_name" -}}
+{{- default (printf "%s-master" (include "seaweedfs.name" .)) .Values.master.serviceNameOverride }}
+{{- end -}}
+
+{{- define "common.containerProbes" }}
+{{- $containerValues := . -}}
+{{- range $probName := (list "startupProbe" "livenessProbe" "readinessProbe") }}
+  {{- with (index $containerValues $probName) }}
+    {{- if dig "enabled" true . }}
+{{ $probName }}:
+      {{- if .httpGet }}
+  httpGet:
+    path: {{ .httpGet.path }}
+    port: {{ default $containerValues.port .httpGet.port }}
+        {{- with .httpGet.scheme }}
+    scheme: {{ . | quote }}
+        {{- end }}
+        {{- with .httpGet.httpHeaders }}
+    httpHeaders:
+          {{- range $key, $value := . }}
+      - { name: {{ $key }}, value: {{ $value | toString | quote }} }
+          {{- end }}
+        {{- end }}
+      {{- else if .tcpSocket }}
+  tcpSocket:
+    port: {{ default $containerValues.port .tcpSocket.port }}
+      {{- else if .exec }}
+  exec:
+    command:
+      {{- toYaml .exec.command | nindent 6 }}
+      {{- else }}
+        {{- fail "unknown probe configuration" }}
+      {{- end }}
+  initialDelaySeconds: {{ .initialDelaySeconds | default 0 }}
+  periodSeconds: {{ .periodSeconds | default 10 }}
+  timeoutSeconds: {{ .timeoutSeconds | default 1 }}
+  successThreshold: {{ .successThreshold |default 1 }}
+  failureThreshold: {{ .failureThreshold | default 3 }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }}

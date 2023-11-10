@@ -14,14 +14,12 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
-      helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
       app.kubernetes.io/instance: {{ .Release.Name }}
       app.kubernetes.io/component: s3
   template:
     metadata:
       labels:
         app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
-        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: s3
       {{ with .Values.podLabels }}

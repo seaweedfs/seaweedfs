@@ -10,7 +10,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
-  serviceName: {{ template "seaweedfs.name" . }}-master
+  serviceName: {{ template "master.service_name" . }}
   podManagementPolicy: {{ .Values.master.podManagementPolicy }}
   replicas: {{ .Values.master.replicas }}
   {{- if (gt (int .Values.master.updatePartition) 0) }}
@@ -22,14 +22,12 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
-      helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
       app.kubernetes.io/instance: {{ .Release.Name }}
       app.kubernetes.io/component: master
   template:
     metadata:
       labels:
         app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
-        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: master
       {{ with .Values.podLabels }}
@@ -37,6 +35,9 @@ spec:
       {{- end }}
       annotations:
       {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.master.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
@@ -57,6 +58,13 @@ spec:
       enableServiceLinks: false
       {{- if .Values.master.serviceAccountName }}
       serviceAccountName: {{ .Values.master.serviceAccountName | quote }}
+      {{- end }}
+      {{- with .Values.master.dnsPolicy }}
+      dnsPolicy: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.master.dnsConfig }}
+      dnsConfig:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- if .Values.master.initContainers }}
       initContainers:
@@ -79,8 +87,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            - name: SEAWEEDFS_FULLNAME
-              value: "{{ template "seaweedfs.name" . }}"
             {{- if .Values.master.extraEnvironmentVars }}
             {{- range $key, $value := .Values.master.extraEnvironmentVars }}
             - name: {{ $key }}
@@ -96,7 +102,7 @@ spec:
           command:
             - "/bin/sh"
             - "-ec"
-            - | 
+            - |
               exec /usr/bin/weed \
               {{- if eq .Values.master.logs.type "hostPath" }}
               -logdir=/logs \
@@ -140,8 +146,8 @@ spec:
               {{- if .Values.master.garbageThreshold }}
               -garbageThreshold={{ .Values.master.garbageThreshold }} \
               {{- end }}
-              -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-master.{{ .Release.Namespace }} \
-              -peers={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
+              -ip={{ tpl .Values.master.serverName . | trim }} \
+              -peers={{ template "seaweedfs.master_urls" . }}
           volumeMounts:
             - name : data-{{ .Release.Namespace }}
               mountPath: /data
@@ -184,30 +190,7 @@ spec:
             {{- end }}
             - containerPort: {{ .Values.master.grpcPort }}
               #name: swfs-master-grpc
-          {{- if .Values.master.readinessProbe.enabled }}
-          readinessProbe:
-            httpGet:
-              path: {{ .Values.master.readinessProbe.httpGet.path }}
-              port: {{ .Values.master.port }}
-              scheme: {{ .Values.master.readinessProbe.scheme }}
-            initialDelaySeconds: {{ .Values.master.readinessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.master.readinessProbe.periodSeconds }}
-            successThreshold: {{ .Values.master.readinessProbe.successThreshold }}
-            failureThreshold: {{ .Values.master.readinessProbe.failureThreshold }}
-            timeoutSeconds: {{ .Values.master.readinessProbe.timeoutSeconds }}
-          {{- end }}
-          {{- if .Values.master.livenessProbe.enabled }}
-          livenessProbe:
-            httpGet:
-              path: {{ .Values.master.livenessProbe.httpGet.path }}
-              port: {{ .Values.master.port }}
-              scheme: {{ .Values.master.livenessProbe.scheme }}
-            initialDelaySeconds: {{ .Values.master.livenessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.master.livenessProbe.periodSeconds }}
-            successThreshold: {{ .Values.master.livenessProbe.successThreshold }}
-            failureThreshold: {{ .Values.master.livenessProbe.failureThreshold }}
-            timeoutSeconds: {{ .Values.master.livenessProbe.timeoutSeconds }}
-          {{- end }}
+          {{- include "common.containerProbes" $.Values.master | nindent 10 }}
           {{- if .Values.master.resources }}
           resources:
             {{ tpl .Values.master.resources . | nindent 12 | trim }}

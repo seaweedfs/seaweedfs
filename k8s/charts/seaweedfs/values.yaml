@@ -2,9 +2,8 @@
 
 global:
   createClusterRole: true
-  registry: ""
-  repository: ""
   imageName: chrislusf/seaweedfs
+  imageTag: ""
   imagePullPolicy: IfNotPresent
   imagePullSecrets: ""
   restartPolicy: Always
@@ -40,10 +39,14 @@ image:
 
 master:
   enabled: true
-  repository: null
   imageName: null
   imageTag: null
   imageOverride: null
+  dnsPolicy: null
+  dnsConfig: null
+  serviceNameOverride: null
+  serverName: |
+    ${POD_NAME}.{{ include "master.service_name" . }}.{{ .Release.Namespace }}
   restartPolicy: null
   replicas: 1
   port: 9333
@@ -67,6 +70,7 @@ master:
 
   # Disable http request, only gRpc operations are allowed
   disableHttp: false
+  podAnnotations: {}
 
   config: |-
     # Enter any extra configuration for master.toml here.
@@ -197,10 +201,14 @@ master:
 
 volume:
   enabled: true
-  repository: null
   imageName: null
   imageTag: null
   imageOverride: null
+  dnsPolicy: null
+  dnsConfig: null
+  serviceNameOverride: null
+  serverName: |
+    ${POD_NAME}.{{ include "volume.service_name" . }}.{{ .Release.Namespace }}
   restartPolicy: null
   port: 8080
   grpcPort: 18080
@@ -216,6 +224,7 @@ volume:
   fileSizeLimitMB: null
   # minimum free disk space(in percents). If free disk space lower this value - all volumes marks as ReadOnly
   minFreeSpacePercent: 7
+  podAnnotations: {}
 
 # can use ANY storage-class , example with local-path-provisioner
 #  data:
@@ -343,10 +352,11 @@ volume:
 
 filer:
   enabled: true
-  repository: null
   imageName: null
   imageTag: null
   imageOverride: null
+  dnsPolicy: null
+  dnsConfig: null
   restartPolicy: null
   replicas: 1
   port: 8888
@@ -354,6 +364,7 @@ filer:
   metricsPort: 9327
   loggingOverrideLevel: null
   filerGroup: ""
+  podAnnotations: {}
   #  replication type is XYZ:
   # X number of replica in other data centers
   # Y number of replica in other racks in the same data center
@@ -551,7 +562,6 @@ filer:
 
 s3:
   enabled: false
-  repository: null
   imageName: null
   imageTag: null
   restartPolicy: null
