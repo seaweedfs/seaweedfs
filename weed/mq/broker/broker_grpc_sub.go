@@ -12,8 +12,9 @@ import (
 
 func (broker *MessageQueueBroker) Subscribe(req *mq_pb.SubscribeRequest, stream mq_pb.SeaweedMessaging_SubscribeServer) error {
 
-	localTopicPartition := broker.localTopicManager.GetTopicPartition(topic.FromPbTopic(req.GetInit().Topic),
-		topic.FromPbPartition(req.GetInit().Partition))
+	t := topic.FromPbTopic(req.GetInit().Topic)
+	partition := topic.FromPbPartition(req.GetInit().Partition)
+	localTopicPartition := broker.localTopicManager.GetTopicPartition(t, partition)
 	if localTopicPartition == nil {
 		stream.Send(&mq_pb.SubscribeResponse{
 			Message: &mq_pb.SubscribeResponse_Ctrl{
@@ -27,12 +28,13 @@ func (broker *MessageQueueBroker) Subscribe(req *mq_pb.SubscribeRequest, stream 
 
 	clientName := fmt.Sprintf("%s/%s-%s", req.GetInit().ConsumerGroup, req.GetInit().ConsumerId, req.GetInit().ClientId)
 	localTopicPartition.Subscribers.AddSubscriber(clientName, topic.NewLocalSubscriber())
+	glog.V(0).Infof("Subscriber %s connected on %v %v", clientName, t, partition)
 	isConnected := true
 	sleepIntervalCount := 0
 	defer func() {
 		isConnected = false
 		localTopicPartition.Subscribers.RemoveSubscriber(clientName)
-		glog.V(0).Infof("Subscriber %s disconnected", clientName)
+		glog.V(0).Infof("Subscriber %s on %v %v disconnected", clientName, t, partition)
 	}()
 
 	ctx := stream.Context()
