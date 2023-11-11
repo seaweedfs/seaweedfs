@@ -30,14 +30,16 @@ type TopicSubscriber struct {
 	brokerPartitionAssignments []*mq_pb.BrokerPartitionAssignment
 	OnEachMessageFunc          OnEachMessageFunc
 	OnCompletionFunc           OnCompletionFunc
-	bootstrapBrokers           []string
+	bootstrapBrokers   []string
+	waitForMoreMessage bool
 }
 
 func NewTopicSubscriber(bootstrapBrokers []string, subscriber *SubscriberConfiguration, content *ContentConfiguration) *TopicSubscriber {
 	return &TopicSubscriber{
-		SubscriberConfig: subscriber,
-		ContentConfig:    content,
-		bootstrapBrokers:  bootstrapBrokers,
+		SubscriberConfig:   subscriber,
+		ContentConfig:      content,
+		bootstrapBrokers:   bootstrapBrokers,
+		waitForMoreMessage: true,
 	}
 }
 

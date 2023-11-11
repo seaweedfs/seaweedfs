@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
+	"log"
+	"time"
 )
 
 // Subscribe subscribes to a topic's specified partitions.
@@ -18,6 +20,14 @@ func (sub *TopicSubscriber) Subscribe() error {
 		if err := sub.doLookup(sub.bootstrapBrokers[index]); err != nil {
 			return fmt.Errorf("lookup topic %s/%s: %v", sub.ContentConfig.Namespace, sub.ContentConfig.Topic, err)
 		}
+		if len(sub.brokerPartitionAssignments) == 0 {
+			if sub.waitForMoreMessage {
+				time.Sleep(1 * time.Second)
+				return fmt.Errorf("no broker partition assignments")
+			} else {
+				return nil
+			}
+		}
 		// treat the first broker as the topic leader
 		// connect to the leader broker
 
@@ -28,6 +38,8 @@ func (sub *TopicSubscriber) Subscribe() error {
 		return nil
 	}, func(err error) bool {
 		if err == io.EOF {
+			log.Printf("subscriber %s/%s: %v", sub.ContentConfig.Namespace, sub.ContentConfig.Topic, err)
+			sub.waitForMoreMessage = false
 			return false
 		}
 		return true
