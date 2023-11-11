@@ -47,10 +47,8 @@ func (p *LocalPartition) Publish(message *mq_pb.DataMessage) {
 	p.logBuffer.AddToBuffer(message.Key, message.Value, time.Now().UnixNano())
 }
 
-func (p *LocalPartition) Subscribe(clientName string, startReadTime time.Time, eachMessageFn OnEachMessageFn) {
-	p.logBuffer.LoopProcessLogData(clientName, startReadTime, 0, func() bool {
-		return true
-	}, eachMessageFn)
+func (p *LocalPartition) Subscribe(clientName string, startReadTime time.Time, onNoMessageFn func() bool, eachMessageFn OnEachMessageFn) {
+	p.logBuffer.LoopProcessLogData(clientName, startReadTime, 0, onNoMessageFn, eachMessageFn)
 }
 
 func FromPbBrokerPartitionAssignment(self pb.ServerAddress, assignment *mq_pb.BrokerPartitionAssignment) *LocalPartition {

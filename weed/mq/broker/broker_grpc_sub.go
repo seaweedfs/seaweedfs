@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
@@ -26,11 +27,45 @@ func (broker *MessageQueueBroker) Subscribe(req *mq_pb.SubscribeRequest, stream 
 
 	clientName := fmt.Sprintf("%s/%s-%s", req.GetInit().ConsumerGroup, req.GetInit().ConsumerId, req.GetInit().ClientId)
 	localTopicPartition.Subscribers.AddSubscriber(clientName, topic.NewLocalSubscriber())
+	isConnected := true
+	sleepIntervalCount := 0
 	defer func() {
+		isConnected = false
 		localTopicPartition.Subscribers.RemoveSubscriber(clientName)
+		glog.V(0).Infof("Subscriber %s disconnected", clientName)
 	}()
 
-	localTopicPartition.Subscribe(clientName, time.Now(), func(logEntry *filer_pb.LogEntry) error {
+	ctx := stream.Context()
+
+	localTopicPartition.Subscribe(clientName, time.Now(), func() bool {
+		if !isConnected {
+			return false
+		}
+		sleepIntervalCount++
+		if sleepIntervalCount > 10 {
+			sleepIntervalCount = 10
+		}
+		time.Sleep(time.Duration(sleepIntervalCount) * 2339 * time.Millisecond)
+
+		// Check if the client has disconnected by monitoring the context
+		select {
+		case <-ctx.Done():
+			err := ctx.Err()
+			if err == context.Canceled {
+				// Client disconnected
+				return false
+			}
+			glog.V(0).Infof("Subscriber %s disconnected: %v", clientName, err)
+			return false
+		default:
+			// Continue processing the request
+		}
+
+		return true
+	}, func(logEntry *filer_pb.LogEntry) error {
+		// reset the sleep interval count
+		sleepIntervalCount = 0
+
 		value := logEntry.GetData()
 		if err := stream.Send(&mq_pb.SubscribeResponse{Message: &mq_pb.SubscribeResponse_Data{
 			Data: &mq_pb.DataMessage{
