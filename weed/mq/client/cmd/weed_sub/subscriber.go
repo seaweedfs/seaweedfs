@@ -7,6 +7,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"strings"
+	"time"
 )
 
 var (
@@ -28,6 +29,7 @@ func main() {
 		Namespace: *namespace,
 		Topic:     *topic,
 		Filter:    "",
+		StartTime: time.Now(),
 	}
 
 	brokers := strings.Split(*seedBrokers, ",")
