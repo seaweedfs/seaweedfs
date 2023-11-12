@@ -22,14 +22,14 @@ const (
 	SeaweedMessaging_FindBrokerLeader_FullMethodName      = "/messaging_pb.SeaweedMessaging/FindBrokerLeader"
 	SeaweedMessaging_ConnectToBalancer_FullMethodName     = "/messaging_pb.SeaweedMessaging/ConnectToBalancer"
 	SeaweedMessaging_BalanceTopics_FullMethodName         = "/messaging_pb.SeaweedMessaging/BalanceTopics"
-	SeaweedMessaging_LookupTopicBrokers_FullMethodName    = "/messaging_pb.SeaweedMessaging/LookupTopicBrokers"
-	SeaweedMessaging_ConfigureTopic_FullMethodName        = "/messaging_pb.SeaweedMessaging/ConfigureTopic"
 	SeaweedMessaging_ListTopics_FullMethodName            = "/messaging_pb.SeaweedMessaging/ListTopics"
+	SeaweedMessaging_ConfigureTopic_FullMethodName        = "/messaging_pb.SeaweedMessaging/ConfigureTopic"
+	SeaweedMessaging_LookupTopicBrokers_FullMethodName    = "/messaging_pb.SeaweedMessaging/LookupTopicBrokers"
 	SeaweedMessaging_AssignTopicPartitions_FullMethodName = "/messaging_pb.SeaweedMessaging/AssignTopicPartitions"
-	SeaweedMessaging_Publish_FullMethodName               = "/messaging_pb.SeaweedMessaging/Publish"
-	SeaweedMessaging_Subscribe_FullMethodName             = "/messaging_pb.SeaweedMessaging/Subscribe"
 	SeaweedMessaging_ClosePublishers_FullMethodName       = "/messaging_pb.SeaweedMessaging/ClosePublishers"
 	SeaweedMessaging_CloseSubscribers_FullMethodName      = "/messaging_pb.SeaweedMessaging/CloseSubscribers"
+	SeaweedMessaging_Publish_FullMethodName               = "/messaging_pb.SeaweedMessaging/Publish"
+	SeaweedMessaging_Subscribe_FullMethodName             = "/messaging_pb.SeaweedMessaging/Subscribe"
 )
 
 // SeaweedMessagingClient is the client API for SeaweedMessaging service.
@@ -42,16 +42,16 @@ type SeaweedMessagingClient interface {
 	ConnectToBalancer(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_ConnectToBalancerClient, error)
 	BalanceTopics(ctx context.Context, in *BalanceTopicsRequest, opts ...grpc.CallOption) (*BalanceTopicsResponse, error)
 	// control plane for topic partitions
-	LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error)
-	ConfigureTopic(ctx context.Context, in *ConfigureTopicRequest, opts ...grpc.CallOption) (*ConfigureTopicResponse, error)
 	ListTopics(ctx context.Context, in *ListTopicsRequest, opts ...grpc.CallOption) (*ListTopicsResponse, error)
+	ConfigureTopic(ctx context.Context, in *ConfigureTopicRequest, opts ...grpc.CallOption) (*ConfigureTopicResponse, error)
+	LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error)
+	// invoked by the balancer, running on each broker
 	AssignTopicPartitions(ctx context.Context, in *AssignTopicPartitionsRequest, opts ...grpc.CallOption) (*AssignTopicPartitionsResponse, error)
+	ClosePublishers(ctx context.Context, in *ClosePublishersRequest, opts ...grpc.CallOption) (*ClosePublishersResponse, error)
+	CloseSubscribers(ctx context.Context, in *CloseSubscribersRequest, opts ...grpc.CallOption) (*CloseSubscribersResponse, error)
 	// data plane for each topic partition
 	Publish(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublishClient, error)
 	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (SeaweedMessaging_SubscribeClient, error)
-	// control each topic partition
-	ClosePublishers(ctx context.Context, in *ClosePublishersRequest, opts ...grpc.CallOption) (*ClosePublishersResponse, error)
-	CloseSubscribers(ctx context.Context, in *CloseSubscribersRequest, opts ...grpc.CallOption) (*CloseSubscribersResponse, error)
 }
 
 type seaweedMessagingClient struct {
@@ -111,9 +111,9 @@ func (c *seaweedMessagingClient) BalanceTopics(ctx context.Context, in *BalanceT
 	return out, nil
 }
 
-func (c *seaweedMessagingClient) LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error) {
-	out := new(LookupTopicBrokersResponse)
-	err := c.cc.Invoke(ctx, SeaweedMessaging_LookupTopicBrokers_FullMethodName, in, out, opts...)
+func (c *seaweedMessagingClient) ListTopics(ctx context.Context, in *ListTopicsRequest, opts ...grpc.CallOption) (*ListTopicsResponse, error) {
+	out := new(ListTopicsResponse)
+	err := c.cc.Invoke(ctx, SeaweedMessaging_ListTopics_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -129,9 +129,9 @@ func (c *seaweedMessagingClient) ConfigureTopic(ctx context.Context, in *Configu
 	return out, nil
 }
 
-func (c *seaweedMessagingClient) ListTopics(ctx context.Context, in *ListTopicsRequest, opts ...grpc.CallOption) (*ListTopicsResponse, error) {
-	out := new(ListTopicsResponse)
-	err := c.cc.Invoke(ctx, SeaweedMessaging_ListTopics_FullMethodName, in, out, opts...)
+func (c *seaweedMessagingClient) LookupTopicBrokers(ctx context.Context, in *LookupTopicBrokersRequest, opts ...grpc.CallOption) (*LookupTopicBrokersResponse, error) {
+	out := new(LookupTopicBrokersResponse)
+	err := c.cc.Invoke(ctx, SeaweedMessaging_LookupTopicBrokers_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -141,6 +141,24 @@ func (c *seaweedMessagingClient) ListTopics(ctx context.Context, in *ListTopicsR
 func (c *seaweedMessagingClient) AssignTopicPartitions(ctx context.Context, in *AssignTopicPartitionsRequest, opts ...grpc.CallOption) (*AssignTopicPartitionsResponse, error) {
 	out := new(AssignTopicPartitionsResponse)
 	err := c.cc.Invoke(ctx, SeaweedMessaging_AssignTopicPartitions_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedMessagingClient) ClosePublishers(ctx context.Context, in *ClosePublishersRequest, opts ...grpc.CallOption) (*ClosePublishersResponse, error) {
+	out := new(ClosePublishersResponse)
+	err := c.cc.Invoke(ctx, SeaweedMessaging_ClosePublishers_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedMessagingClient) CloseSubscribers(ctx context.Context, in *CloseSubscribersRequest, opts ...grpc.CallOption) (*CloseSubscribersResponse, error) {
+	out := new(CloseSubscribersResponse)
+	err := c.cc.Invoke(ctx, SeaweedMessaging_CloseSubscribers_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -210,24 +228,6 @@ func (x *seaweedMessagingSubscribeClient) Recv() (*SubscribeResponse, error) {
 	return m, nil
 }
 
-func (c *seaweedMessagingClient) ClosePublishers(ctx context.Context, in *ClosePublishersRequest, opts ...grpc.CallOption) (*ClosePublishersResponse, error) {
-	out := new(ClosePublishersResponse)
-	err := c.cc.Invoke(ctx, SeaweedMessaging_ClosePublishers_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *seaweedMessagingClient) CloseSubscribers(ctx context.Context, in *CloseSubscribersRequest, opts ...grpc.CallOption) (*CloseSubscribersResponse, error) {
-	out := new(CloseSubscribersResponse)
-	err := c.cc.Invoke(ctx, SeaweedMessaging_CloseSubscribers_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // SeaweedMessagingServer is the server API for SeaweedMessaging service.
 // All implementations must embed UnimplementedSeaweedMessagingServer
 // for forward compatibility
@@ -238,16 +238,16 @@ type SeaweedMessagingServer interface {
 	ConnectToBalancer(SeaweedMessaging_ConnectToBalancerServer) error
 	BalanceTopics(context.Context, *BalanceTopicsRequest) (*BalanceTopicsResponse, error)
 	// control plane for topic partitions
-	LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error)
-	ConfigureTopic(context.Context, *ConfigureTopicRequest) (*ConfigureTopicResponse, error)
 	ListTopics(context.Context, *ListTopicsRequest) (*ListTopicsResponse, error)
+	ConfigureTopic(context.Context, *ConfigureTopicRequest) (*ConfigureTopicResponse, error)
+	LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error)
+	// invoked by the balancer, running on each broker
 	AssignTopicPartitions(context.Context, *AssignTopicPartitionsRequest) (*AssignTopicPartitionsResponse, error)
+	ClosePublishers(context.Context, *ClosePublishersRequest) (*ClosePublishersResponse, error)
+	CloseSubscribers(context.Context, *CloseSubscribersRequest) (*CloseSubscribersResponse, error)
 	// data plane for each topic partition
 	Publish(SeaweedMessaging_PublishServer) error
 	Subscribe(*SubscribeRequest, SeaweedMessaging_SubscribeServer) error
-	// control each topic partition
-	ClosePublishers(context.Context, *ClosePublishersRequest) (*ClosePublishersResponse, error)
-	CloseSubscribers(context.Context, *CloseSubscribersRequest) (*CloseSubscribersResponse, error)
 	mustEmbedUnimplementedSeaweedMessagingServer()
 }
 
@@ -264,29 +264,29 @@ func (UnimplementedSeaweedMessagingServer) ConnectToBalancer(SeaweedMessaging_Co
 func (UnimplementedSeaweedMessagingServer) BalanceTopics(context.Context, *BalanceTopicsRequest) (*BalanceTopicsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BalanceTopics not implemented")
 }
-func (UnimplementedSeaweedMessagingServer) LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method LookupTopicBrokers not implemented")
+func (UnimplementedSeaweedMessagingServer) ListTopics(context.Context, *ListTopicsRequest) (*ListTopicsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListTopics not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) ConfigureTopic(context.Context, *ConfigureTopicRequest) (*ConfigureTopicResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ConfigureTopic not implemented")
 }
-func (UnimplementedSeaweedMessagingServer) ListTopics(context.Context, *ListTopicsRequest) (*ListTopicsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListTopics not implemented")
+func (UnimplementedSeaweedMessagingServer) LookupTopicBrokers(context.Context, *LookupTopicBrokersRequest) (*LookupTopicBrokersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LookupTopicBrokers not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) AssignTopicPartitions(context.Context, *AssignTopicPartitionsRequest) (*AssignTopicPartitionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AssignTopicPartitions not implemented")
-}
-func (UnimplementedSeaweedMessagingServer) Publish(SeaweedMessaging_PublishServer) error {
-	return status.Errorf(codes.Unimplemented, "method Publish not implemented")
-}
-func (UnimplementedSeaweedMessagingServer) Subscribe(*SubscribeRequest, SeaweedMessaging_SubscribeServer) error {
-	return status.Errorf(codes.Unimplemented, "method Subscribe not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) ClosePublishers(context.Context, *ClosePublishersRequest) (*ClosePublishersResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ClosePublishers not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) CloseSubscribers(context.Context, *CloseSubscribersRequest) (*CloseSubscribersResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CloseSubscribers not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) Publish(SeaweedMessaging_PublishServer) error {
+	return status.Errorf(codes.Unimplemented, "method Publish not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) Subscribe(*SubscribeRequest, SeaweedMessaging_SubscribeServer) error {
+	return status.Errorf(codes.Unimplemented, "method Subscribe not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) mustEmbedUnimplementedSeaweedMessagingServer() {}
 
@@ -363,20 +363,20 @@ func _SeaweedMessaging_BalanceTopics_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
-func _SeaweedMessaging_LookupTopicBrokers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(LookupTopicBrokersRequest)
+func _SeaweedMessaging_ListTopics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListTopicsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SeaweedMessagingServer).LookupTopicBrokers(ctx, in)
+		return srv.(SeaweedMessagingServer).ListTopics(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: SeaweedMessaging_LookupTopicBrokers_FullMethodName,
+		FullMethod: SeaweedMessaging_ListTopics_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedMessagingServer).LookupTopicBrokers(ctx, req.(*LookupTopicBrokersRequest))
+		return srv.(SeaweedMessagingServer).ListTopics(ctx, req.(*ListTopicsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -399,20 +399,20 @@ func _SeaweedMessaging_ConfigureTopic_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
-func _SeaweedMessaging_ListTopics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListTopicsRequest)
+func _SeaweedMessaging_LookupTopicBrokers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LookupTopicBrokersRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SeaweedMessagingServer).ListTopics(ctx, in)
+		return srv.(SeaweedMessagingServer).LookupTopicBrokers(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: SeaweedMessaging_ListTopics_FullMethodName,
+		FullMethod: SeaweedMessaging_LookupTopicBrokers_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedMessagingServer).ListTopics(ctx, req.(*ListTopicsRequest))
+		return srv.(SeaweedMessagingServer).LookupTopicBrokers(ctx, req.(*LookupTopicBrokersRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -431,6 +431,42 @@ func _SeaweedMessaging_AssignTopicPartitions_Handler(srv interface{}, ctx contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SeaweedMessagingServer).AssignTopicPartitions(ctx, req.(*AssignTopicPartitionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedMessaging_ClosePublishers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClosePublishersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).ClosePublishers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedMessaging_ClosePublishers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).ClosePublishers(ctx, req.(*ClosePublishersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedMessaging_CloseSubscribers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CloseSubscribersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedMessagingServer).CloseSubscribers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedMessaging_CloseSubscribers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedMessagingServer).CloseSubscribers(ctx, req.(*CloseSubscribersRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -482,42 +518,6 @@ func (x *seaweedMessagingSubscribeServer) Send(m *SubscribeResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func _SeaweedMessaging_ClosePublishers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ClosePublishersRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SeaweedMessagingServer).ClosePublishers(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SeaweedMessaging_ClosePublishers_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedMessagingServer).ClosePublishers(ctx, req.(*ClosePublishersRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _SeaweedMessaging_CloseSubscribers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CloseSubscribersRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(SeaweedMessagingServer).CloseSubscribers(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SeaweedMessaging_CloseSubscribers_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedMessagingServer).CloseSubscribers(ctx, req.(*CloseSubscribersRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // SeaweedMessaging_ServiceDesc is the grpc.ServiceDesc for SeaweedMessaging service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -534,16 +534,16 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _SeaweedMessaging_BalanceTopics_Handler,
 		},
 		{
-			MethodName: "LookupTopicBrokers",
-			Handler:    _SeaweedMessaging_LookupTopicBrokers_Handler,
+			MethodName: "ListTopics",
+			Handler:    _SeaweedMessaging_ListTopics_Handler,
 		},
 		{
 			MethodName: "ConfigureTopic",
 			Handler:    _SeaweedMessaging_ConfigureTopic_Handler,
 		},
 		{
-			MethodName: "ListTopics",
-			Handler:    _SeaweedMessaging_ListTopics_Handler,
+			MethodName: "LookupTopicBrokers",
+			Handler:    _SeaweedMessaging_LookupTopicBrokers_Handler,
 		},
 		{
 			MethodName: "AssignTopicPartitions",

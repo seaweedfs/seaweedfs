@@ -134,6 +134,7 @@ message AssignTopicPartitionsResponse {
 message DataMessage {
     bytes key = 1;
     bytes value = 2;
+    int64 ts_ns = 3;
 }
 message PublishRequest {
     message InitMessage {
