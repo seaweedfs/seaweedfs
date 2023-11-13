@@ -244,8 +244,8 @@ func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeId ne
 
 func (c *commandFsMergeVolumes) getVolumeSizeBasedOnPlan(plan map[needle.VolumeId]needle.VolumeId, vid needle.VolumeId) uint64 {
 	size := c.getVolumeSizeById(vid)
-	for src, dist := range plan {
-		if dist == vid {
+	for src, dest := range plan {
+		if dest == vid {
 			size += c.getVolumeSizeById(src)
 		}
 	}
@@ -263,18 +263,18 @@ func (c *commandFsMergeVolumes) getVolumeSizeById(vid needle.VolumeId) uint64 {
 func (c *commandFsMergeVolumes) printPlan(plan map[needle.VolumeId]needle.VolumeId) {
 	fmt.Printf("max volume size: %d MB\n", c.volumeSizeLimit/1024/1024)
 	reversePlan := make(map[needle.VolumeId][]needle.VolumeId)
-	for src, dist := range plan {
-		reversePlan[dist] = append(reversePlan[dist], src)
+	for src, dest := range plan {
+		reversePlan[dest] = append(reversePlan[dest], src)
 	}
-	for dist, srcs := range reversePlan {
-		currentSize := c.getVolumeSizeById(dist)
+	for dest, srcs := range reversePlan {
+		currentSize := c.getVolumeSizeById(dest)
 		for _, src := range srcs {
 			srcSize := c.getVolumeSizeById(src)
 			newSize := currentSize + srcSize
 			fmt.Printf(
 				"volume %d (%d MB) merge into volume %d (%d MB => %d MB)\n",
 				src, srcSize/1024/1024,
-				dist, currentSize/1024/1024, newSize/1024/1024,
+				dest, currentSize/1024/1024, newSize/1024/1024,
 			)
 			currentSize = newSize
 
