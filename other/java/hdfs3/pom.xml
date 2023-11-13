@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <properties>
-        <seaweedfs.client.version>3.55</seaweedfs.client.version>
+        <seaweedfs.client.version>3.59</seaweedfs.client.version>
         <hadoop.version>3.2.4</hadoop.version>
     </properties>
 
@@ -33,6 +33,7 @@
                 <configuration>
                     <source>8</source>
                     <target>8</target>
+                    <release>8</release>
                 </configuration>
             </plugin>
             <plugin>
