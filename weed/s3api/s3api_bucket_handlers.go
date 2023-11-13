@@ -533,3 +533,20 @@ func (s3a *S3ApiServer) DeleteBucketOwnershipControls(w http.ResponseWriter, r *
 	}
 	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, emptyOwnershipControls)
 }
+
+// GetBucketVersioningHandler Get Bucket Versioning status
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketVersioning.html
+func (s3a *S3ApiServer) GetBucketVersioningHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("GetBucketVersioning %s", bucket)
+
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+
+	result := &s3.VersioningConfiguration{}
+	result.SetStatus(s3.BucketVersioningStatusSuspended)
+
+	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, result)
+}
