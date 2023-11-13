@@ -44,20 +44,14 @@ func (c *commandFsMergeVolumes) Help() string {
 	
 	This would help clear half-full volumes and let vacuum system to delete them later.
 
-	fs.mergeVolumes [-toVolumeId=y] [-fromVolumeId=x] [-collection="*"] [-apply] [/dir/]
+	fs.mergeVolumes [-toVolumeId=y] [-fromVolumeId=x] [-collection="*"] [-dir=/] [-apply]
 `
 }
 
 func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	dir, err := commandEnv.parseUrl(findInputDirectory(args))
-	if err != nil {
-		return err
-	}
-	if dir != "/" {
-		dir = strings.TrimRight(dir, "/")
-	}
 	fsMergeVolumesCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	dirArg := fsMergeVolumesCommand.String("dir", "/", "base directory to find and update files")
 	fromVolumeArg := fsMergeVolumesCommand.Uint("fromVolumeId", 0, "move chunks with this volume id")
 	toVolumeArg := fsMergeVolumesCommand.Uint("toVolumeId", 0, "change chunks to this volume id")
 	collectionArg := fsMergeVolumesCommand.String("collection", "*", "Name of collection to merge")
@@ -65,6 +59,12 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 	if err = fsMergeVolumesCommand.Parse(args); err != nil {
 		return err
 	}
+
+	dir := *dirArg
+	if dir != "/" {
+		dir = strings.TrimRight(dir, "/")
+	}
+
 	fromVolumeId := needle.VolumeId(*fromVolumeArg)
 	toVolumeId := needle.VolumeId(*toVolumeArg)
 
