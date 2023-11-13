@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"google.golang.org/grpc"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -250,7 +251,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 	filerSink.DoInitialize(targetFiler.ToHttpAddress(), targetFiler.ToGrpcAddress(), targetPath, replicationStr, collection, ttlSec, diskType, grpcDialOption, sinkWriteChunkByFiler)
 	filerSink.SetSourceFiler(filerSource)
 
-	persistEventFn := genProcessFunction(sourcePath, targetPath, sourceExcludePaths, filerSink, debug)
+	persistEventFn := genProcessFunction(sourcePath, targetPath, sourceExcludePaths, nil, filerSink, debug)
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
@@ -368,7 +369,7 @@ func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signature
 
 }
 
-func genProcessFunction(sourcePath string, targetPath string, excludePaths []string, dataSink sink.ReplicationSink, debug bool) func(resp *filer_pb.SubscribeMetadataResponse) error {
+func genProcessFunction(sourcePath string, targetPath string, excludePaths []string, reExcludeFileName *regexp.Regexp, dataSink sink.ReplicationSink, debug bool) func(resp *filer_pb.SubscribeMetadataResponse) error {
 	// process function
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
@@ -392,6 +393,9 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			if strings.HasPrefix(resp.Directory, excludePath) {
 				return nil
 			}
+		}
+		if reExcludeFileName != nil && reExcludeFileName.MatchString(message.NewEntry.Name) {
+			return nil
 		}
 		// handle deletions
 		if filer_pb.IsDelete(resp) {
