@@ -93,9 +93,12 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	sourceFiler := pb.ServerAddress(*backupOption.filer)
 	sourcePath := *backupOption.path
 	excludePaths := util.StringSplit(*backupOption.excludePaths, ",")
-	reExcludeFileName, err := regexp.Compile(*backupOption.excludeFileName)
-	if err != nil {
-		return fmt.Errorf("error compile regexp %v for exclude file name: %+v", *backupOption.excludeFileName, err)
+	var reExcludeFileName *regexp.Regexp
+	if *backupOption.excludeFileName != "" {
+		var err error
+		if reExcludeFileName, err = regexp.Compile(*backupOption.excludeFileName); err != nil {
+			return fmt.Errorf("error compile regexp %v for exclude file name: %+v", *backupOption.excludeFileName, err)
+		}
 	}
 	timeAgo := *backupOption.timeAgo
 	targetPath := dataSink.GetSinkToDirectory()
