@@ -126,9 +126,9 @@ spec:
               {{- if .Values.master.metricsIntervalSec }}
               -metrics.intervalSeconds={{ .Values.master.metricsIntervalSec }} \
               {{- end }}
+              {{- end }}
               {{- else if .Values.master.metricsPort }}
               -metricsPort={{ .Values.master.metricsPort }} \
-              {{- end }}
               {{- end }}
               -volumeSizeLimitMB={{ .Values.master.volumeSizeLimitMB }} \
               {{- if .Values.master.disableHttp }}

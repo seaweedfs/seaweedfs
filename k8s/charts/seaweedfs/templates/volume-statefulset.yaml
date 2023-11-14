@@ -185,7 +185,7 @@ spec:
             - containerPort: {{ .Values.volume.port }}
               name: swfs-vol
             {{- if .Values.volume.metricsPort }}
-            - containerPort: {{ .Values.filer.metricsPort }}
+            - containerPort: {{ .Values.volume.metricsPort }}
               name: metrics
             {{- end }}
             - containerPort: {{ .Values.volume.grpcPort }}
