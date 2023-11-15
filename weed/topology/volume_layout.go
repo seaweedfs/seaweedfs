@@ -340,7 +340,7 @@ func (vl *VolumeLayout) DoneGrowRequest() {
 
 func (vl *VolumeLayout) ShouldGrowVolumes(option *VolumeGrowOption) bool {
 	active, crowded := vl.GetActiveVolumeCount(option)
-	//glog.V(0).Infof("active volume: %d, high usage volume: %d\n", active, high)
+	glog.V(0).Infof("active volume: %d, crowded volume: %d\n", active, crowded)
 	return active <= crowded
 }
 

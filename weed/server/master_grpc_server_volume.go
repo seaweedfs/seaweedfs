@@ -25,9 +25,11 @@ func (ms *MasterServer) ProcessGrowRequest() {
 		for {
 			req, ok := <-ms.vgCh
 			if !ok {
+				glog.V(1).Infoln("vgCh channel closed")
 				break
 			}
 
+			glog.V(1).Infof("VGrequest: %#v \n", req.Option)
 			if !ms.Topo.IsLeader() {
 				//discard buffered requests
 				time.Sleep(time.Second * 1)
@@ -52,6 +54,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				// we have lock called inside vg
 				go func() {
 					glog.V(1).Infoln("starting automatic volume grow")
+					glog.V(1).Infof("GoRoutine VGrequest: %#v \n", req.Option)
 					start := time.Now()
 					newVidLocations, err := ms.vg.AutomaticGrowByType(req.Option, ms.grpcDialOption, ms.Topo, req.Count)
 					glog.V(1).Infoln("finished automatic volume grow, cost ", time.Now().Sub(start))
@@ -71,7 +74,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				}()
 
 			} else {
-				glog.V(4).Infoln("discard volume grow request")
+				glog.V(1).Infoln("discard volume grow request")
 			}
 		}
 	}()
