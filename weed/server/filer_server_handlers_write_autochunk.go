@@ -121,6 +121,10 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 	}
 
 	md5bytes = md5Hash.Sum(nil)
+	if r.Header.Get("Content-Md5") != "" && (util.Base64Encode(md5bytes) != r.Header.Get("Content-Md5")) {
+		fs.filer.DeleteChunks(fileChunks)
+		return nil, nil, errors.New("The Content-Md5 you specified did not match what we received.")
+	}
 	filerResult, replyerr = fs.saveMetaData(ctx, r, fileName, contentType, so, md5bytes, fileChunks, chunkOffset, smallContent)
 	if replyerr != nil {
 		fs.filer.DeleteChunks(fileChunks)
