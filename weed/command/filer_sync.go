@@ -427,6 +427,11 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			return nil
 		}
 
+		// handle truncate entries
+		if filer_pb.IsUpdate(resp) && resp.EventNotification.DeleteChunks && dataSink.IsIncremental() {
+			return nil
+		}
+
 		// handle updates
 		if strings.HasPrefix(string(sourceOldKey), sourcePath) {
 			// old key is in the watched directory
