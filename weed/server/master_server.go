@@ -145,7 +145,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 			r.HandleFunc("/stats/counter", ms.guard.WhiteList(statsCounterHandler))
 			r.HandleFunc("/stats/memory", ms.guard.WhiteList(statsMemoryHandler))
 		*/
-		r.HandleFunc("/{fileId}", ms.redirectHandler)
+		r.HandleFunc("/{fileId}", ms.guard.WhiteList(ms.redirectHandler))
 	}
 
 	ms.Topo.StartRefreshWritableVolumes(
