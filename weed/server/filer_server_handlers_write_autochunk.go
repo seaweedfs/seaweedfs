@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	//"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
