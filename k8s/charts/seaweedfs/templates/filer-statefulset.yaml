@@ -266,11 +266,21 @@ spec:
             path: {{ .Values.filer.logs.hostPathPrefix }}/logs/seaweedfs/filer
             type: DirectoryOrCreate
         {{- end }}
+        {{- if eq .Values.filer.logs.type "existingClaim" }}
+        - name: seaweedfs-filer-log-volume
+          persistentVolumeClaim:
+            claimName: {{ .Values.filer.logs.claimName }}
+        {{- end }}
         {{- if eq .Values.filer.data.type "hostPath" }}
         - name: data-filer
           hostPath:
             path: {{ .Values.filer.data.hostPathPrefix }}/filer_store
             type: DirectoryOrCreate
+        {{- end }}
+        {{- if eq .Values.filer.data.type "existingClaim" }}
+        - name: data-filer
+          persistentVolumeClaim:
+            claimName: {{ .Values.filer.data.claimName }}
         {{- end }}
         - name: db-schema-config-volume
           configMap:
