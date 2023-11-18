@@ -641,6 +641,9 @@ s3:
     className: "nginx"
     # host: false for "*" hostname
     host: "seaweedfs.cluster.local"
+    # additional ingress annotations for the s3 endpoint
+    annotations: []
+    tls: []
 
 certificates:
   commonName: "SeaweedFS CA"
