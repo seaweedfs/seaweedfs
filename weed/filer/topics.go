@@ -1,6 +1,6 @@
 package filer
 
-const (
+var (
 	TopicsDir    = "/topics"
 	SystemLogDir = TopicsDir + "/.system/log"
 )

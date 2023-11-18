@@ -91,7 +91,7 @@ func init() {
 	f.showUIDirectoryDelete = cmdFiler.Flag.Bool("ui.deleteDir", true, "enable filer UI show delete directory button")
 	f.downloadMaxMBps = cmdFiler.Flag.Int("downloadMaxMBps", 0, "download max speed for each download request, in MB per second")
 	f.diskType = cmdFiler.Flag.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
-
+	filer.SystemLogDir = *cmdFiler.Flag.String("systemLogDir", filer.SystemLogDir, "directory for system log")
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
 	filerS3Options.port = cmdFiler.Flag.Int("s3.port", 8333, "s3 server http listen port")
