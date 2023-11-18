@@ -77,6 +77,12 @@ master:
   #    type: "persistentVolumeClaim"
   #    size: "24Ti"
   #    storageClass: "local-path-provisioner"
+  #
+  # You may also spacify an existing claim:
+  #  data:
+  #    type: "existingClaim"
+  #    claimName: "my-pvc"
+
   data:
     type: "hostPath"
     size: ""
@@ -222,6 +228,12 @@ volume:
 #    type: "persistentVolumeClaim"
 #    size: "24Ti"
 #    storageClass: "local-path-provisioner"
+#
+# You may also spacify an existing claim:
+#  data:
+#    type: "existingClaim"
+#    claimName: "my-pvc"
+
   data:
     type: "hostPath"
     size: ""
@@ -391,6 +403,11 @@ filer:
   #    type: "persistentVolumeClaim"
   #    size: "24Ti"
   #    storageClass: "local-path-provisioner"
+  #
+  # You may also spacify an existing claim:
+  #  data:
+  #    type: "existingClaim"
+  #    claimName: "my-pvc"
   data:
     type: "hostPath"
     size: ""
