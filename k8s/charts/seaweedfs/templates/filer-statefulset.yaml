@@ -314,7 +314,7 @@ spec:
       nodeSelector:
         {{ tpl .Values.filer.nodeSelector . | indent 8 | trim }}
       {{- end }}
-  {{- if .Values.filer.enablePVC }}
+  {{- if and (.Values.filer.enablePVC) (eq .Values.filer.data.type "persistentVolumeClaim") }}
   # DEPRECATION: Deprecate in favor of filer.data section below
   volumeClaimTemplates:
   - metadata:
@@ -332,7 +332,7 @@ spec:
   {{- $pvc_exists := include "filer.pvc_exists" . -}}
   {{- if $pvc_exists }}
   volumeClaimTemplates:
-    {{- if eq .Values.filer.data.type "persistentVolumeClaim"}}
+    {{- if eq .Values.filer.data.type "persistentVolumeClaim" }}
     - metadata:
         name: data-filer
         {{- with .Values.filer.data.annotations }}
@@ -346,7 +346,7 @@ spec:
           requests:
             storage: {{ .Values.filer.data.size }}
     {{- end }}
-    {{- if eq .Values.filer.logs.type "persistentVolumeClaim"}}
+    {{- if eq .Values.filer.logs.type "persistentVolumeClaim" }}
     - metadata:
         name: seaweedfs-filer-log-volume
         {{- with .Values.filer.logs.annotations }}
