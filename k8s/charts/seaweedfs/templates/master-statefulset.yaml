@@ -223,7 +223,7 @@ spec:
             type: DirectoryOrCreate
         {{- end }}
         {{- if eq .Values.master.logs.type "existingClaim" }}
-        - name: logs
+        - name: seaweedfs-master-log-volume
           persistentVolumeClaim:
             claimName: {{ .Values.master.logs.claimName }} 
         {{- end }}
@@ -234,7 +234,7 @@ spec:
             type: DirectoryOrCreate
         {{- end }}
         {{- if eq .Values.master.data.type "existingClaim" }}
-        - name: data
+        - name: data-{{ .Release.Namespace }}
           persistentVolumeClaim:
             claimName: {{ .Values.master.data.claimName }} 
         {{- end }}
