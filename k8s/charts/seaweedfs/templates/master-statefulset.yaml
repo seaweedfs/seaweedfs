@@ -273,6 +273,10 @@ spec:
     {{- if eq .Values.master.data.type "persistentVolumeClaim"}}
     - metadata:
         name: data-{{ .Release.Namespace }}
+        {{- with .Values.master.data.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.master.data.storageClass }}
@@ -283,6 +287,10 @@ spec:
     {{- if eq .Values.master.logs.type "persistentVolumeClaim"}}
     - metadata:
         name: seaweedfs-master-log-volume
+        {{- with .Values.master.logs.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.master.logs.storageClass }}
