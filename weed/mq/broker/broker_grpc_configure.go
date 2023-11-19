@@ -3,7 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/mq/balancer"
+	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -50,7 +50,7 @@ func (broker *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *m
 			}
 			brokerStats, found := broker.Balancer.Brokers.Get(bpa.LeaderBroker)
 			if !found {
-				brokerStats = balancer.NewBrokerStats()
+				brokerStats = pub_balancer.NewBrokerStats()
 				if !broker.Balancer.Brokers.SetIfAbsent(bpa.LeaderBroker, brokerStats) {
 					brokerStats, _ = broker.Balancer.Brokers.Get(bpa.LeaderBroker)
 				}
