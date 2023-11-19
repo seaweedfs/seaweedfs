@@ -213,7 +213,8 @@ spec:
             {{ tpl .Values.master.resources . | nindent 12 | trim }}
           {{- end }}
       {{- $hostpath_exists := include "master.hostpath_exists" . -}}
-      {{- if $hostpath_exists }}
+      {{- $existing_claims := include "master.existing_claims" . -}}
+      {{- if or ($hostpath_exists) ($existing_claims) }}
       volumes:
         {{- if eq .Values.master.logs.type "hostPath" }}
         - name: seaweedfs-master-log-volume
@@ -221,11 +222,21 @@ spec:
             path: {{ .Values.master.logs.hostPathPrefix }}/logs/seaweedfs/master
             type: DirectoryOrCreate
         {{- end }}
+        {{- if eq .Values.master.logs.type "existingClaim" }}
+        - name: logs
+          persistentVolumeClaim:
+            claimName: {{ .Values.master.logs.claimName }} 
+        {{- end }}
         {{- if eq .Values.master.data.type "hostPath" }}
         - name: data-{{ .Release.Namespace }}
           hostPath:
             path: {{ .Values.master.data.hostPathPrefix }}/seaweed-master/
             type: DirectoryOrCreate
+        {{- end }}
+        {{- if eq .Values.master.data.type "existingClaim" }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.master.data.claimName }} 
         {{- end }}
         - name: master-config
           configMap:
