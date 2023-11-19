@@ -72,17 +72,19 @@ master:
     # Enter any extra configuration for master.toml here.
     # It may be be a multi-line string.
 
-  # can use ANY storage-class , example with local-path-provisioner
+  # You may use ANY storage-class, example with local-path-provisioner
+  # Annotations are optional.
   #  data:
   #    type: "persistentVolumeClaim"
   #    size: "24Ti"
   #    storageClass: "local-path-provisioner"
+  #    annotations: 
+  #      "key": "value"
   #
   # You may also spacify an existing claim:
   #  data:
   #    type: "existingClaim"
   #    claimName: "my-pvc"
-
   data:
     type: "hostPath"
     size: ""
@@ -223,16 +225,19 @@ volume:
   # minimum free disk space(in percents). If free disk space lower this value - all volumes marks as ReadOnly
   minFreeSpacePercent: 7
 
-# can use ANY storage-class , example with local-path-provisioner
-#  data:
-#    type: "persistentVolumeClaim"
-#    size: "24Ti"
-#    storageClass: "local-path-provisioner"
-#
-# You may also spacify an existing claim:
-#  data:
-#    type: "existingClaim"
-#    claimName: "my-pvc"
+  # You may use ANY storage-class, example with local-path-provisioner
+  # Annotations are optional.
+  #  data:
+  #    type: "persistentVolumeClaim"
+  #    size: "24Ti"
+  #    storageClass: "local-path-provisioner"
+  #    annotations: 
+  #      "key": "value"
+  #
+  # You may also spacify an existing claim:
+  #  data:
+  #    type: "existingClaim"
+  #    claimName: "my-pvc"
 
   data:
     type: "hostPath"
@@ -397,12 +402,14 @@ filer:
   storage: 25Gi
   # storageClass is the class of storage which defaults to null (the Kube cluster will pick the default).
   storageClass: null
-
-  # can use ANY storage-class , example with local-path-provisioner
+  # You may use ANY storage-class, example with local-path-provisioner
+  # Annotations are optional.
   #  data:
   #    type: "persistentVolumeClaim"
   #    size: "24Ti"
   #    storageClass: "local-path-provisioner"
+  #    annotations: 
+  #      "key": "value"
   #
   # You may also spacify an existing claim:
   #  data:

@@ -288,6 +288,10 @@ spec:
     {{- if eq .Values.volume.data.type "persistentVolumeClaim"}}
     - metadata:
         name: data
+        {{- with .Values.volume.data.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.volume.data.storageClass }}
@@ -298,6 +302,10 @@ spec:
     {{- if and (eq .Values.volume.idx.type "persistentVolumeClaim") .Values.volume.dir_idx }}
     - metadata:
         name: idx
+        {{- with .Values.volume.idx.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.volume.idx.storageClass }}
@@ -308,6 +316,10 @@ spec:
     {{- if eq .Values.volume.logs.type "persistentVolumeClaim" }}
     - metadata:
         name: logs
+        {{- with .Values.volume.logs.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.volume.logs.storageClass }}

@@ -335,6 +335,10 @@ spec:
     {{- if eq .Values.filer.data.type "persistentVolumeClaim"}}
     - metadata:
         name: data-filer
+        {{- with .Values.filer.data.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.filer.data.storageClass }}
@@ -345,6 +349,10 @@ spec:
     {{- if eq .Values.filer.logs.type "persistentVolumeClaim"}}
     - metadata:
         name: seaweedfs-filer-log-volume
+        {{- with .Values.filer.logs.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.filer.logs.storageClass }}
