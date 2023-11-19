@@ -1,4 +1,4 @@
-package coordinator
+package sub_coordinator
 
 import (
 	cmap "github.com/orcaman/concurrent-map/v2"
