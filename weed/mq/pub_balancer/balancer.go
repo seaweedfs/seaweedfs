@@ -1,4 +1,4 @@
-package balancer
+package pub_balancer
 
 import (
 	"fmt"

@@ -3,7 +3,7 @@ package broker
 import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/mq/balancer"
+	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"time"
 
@@ -37,7 +37,7 @@ type MessageQueueBroker struct {
 	filers            map[pb.ServerAddress]struct{}
 	currentFiler      pb.ServerAddress
 	localTopicManager *topic.LocalTopicManager
-	Balancer          *balancer.Balancer
+	Balancer          *pub_balancer.Balancer
 	lockAsBalancer    *cluster.LiveLock
 	currentBalancer   pb.ServerAddress
 }
@@ -50,7 +50,7 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		MasterClient:      wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, pb.NewServerAddress(option.Ip, option.Port, 0), option.DataCenter, option.Rack, *pb.NewServiceDiscoveryFromMap(option.Masters)),
 		filers:            make(map[pb.ServerAddress]struct{}),
 		localTopicManager: topic.NewLocalTopicManager(),
-		Balancer:          balancer.NewBalancer(),
+		Balancer:          pub_balancer.NewBalancer(),
 	}
 	mqBroker.MasterClient.SetOnPeerUpdateFn(mqBroker.OnBrokerUpdate)
 
@@ -70,7 +70,7 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		glog.V(0).Infof("broker %s found filer %s", self, mqBroker.currentFiler)
 
 		lockClient := cluster.NewLockClient(grpcDialOption, mqBroker.currentFiler)
-		mqBroker.lockAsBalancer = lockClient.StartLock(balancer.LockBrokerBalancer, self)
+		mqBroker.lockAsBalancer = lockClient.StartLock(pub_balancer.LockBrokerBalancer, self)
 		for {
 			err := mqBroker.BrokerConnectToBalancer(self)
 			if err != nil {

@@ -1,4 +1,4 @@
-package balancer
+package pub_balancer
 
 import (
 	cmap "github.com/orcaman/concurrent-map/v2"
