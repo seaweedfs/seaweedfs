@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/mq/balancer"
+	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -19,7 +19,7 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 	var brokerBalancer string
 	err := broker.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.FindLockOwner(context.Background(), &filer_pb.FindLockOwnerRequest{
-			Name: balancer.LockBrokerBalancer,
+			Name: pub_balancer.LockBrokerBalancer,
 		})
 		if err != nil {
 			return err

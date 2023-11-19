@@ -2,7 +2,7 @@ package broker
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/mq/balancer"
+	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,12 +20,12 @@ func (broker *MessageQueueBroker) ConnectToBalancer(stream mq_pb.SeaweedMessagin
 
 	// process init message
 	initMessage := req.GetInit()
-	var brokerStats *balancer.BrokerStats
+	var brokerStats *pub_balancer.BrokerStats
 	if initMessage != nil {
 		var found bool
 		brokerStats, found = broker.Balancer.Brokers.Get(initMessage.Broker)
 		if !found {
-			brokerStats = balancer.NewBrokerStats()
+			brokerStats = pub_balancer.NewBrokerStats()
 			if !broker.Balancer.Brokers.SetIfAbsent(initMessage.Broker, brokerStats) {
 				brokerStats, _ = broker.Balancer.Brokers.Get(initMessage.Broker)
 			}

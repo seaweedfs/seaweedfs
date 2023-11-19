@@ -3,7 +3,7 @@ package pub_client
 import (
 	"fmt"
 	"github.com/rdleal/intervalst/interval"
-	"github.com/seaweedfs/seaweedfs/weed/mq/balancer"
+	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -58,7 +58,7 @@ func (p *TopicPublisher) Connect(bootstrapBrokers []string) (err error) {
 
 func (p *TopicPublisher) Shutdown() error {
 
-	if clients, found := p.partition2Broker.AllIntersections(0, balancer.MaxPartitionCount); found {
+	if clients, found := p.partition2Broker.AllIntersections(0, pub_balancer.MaxPartitionCount); found {
 		for _, client := range clients {
 			client.CloseSend()
 		}
