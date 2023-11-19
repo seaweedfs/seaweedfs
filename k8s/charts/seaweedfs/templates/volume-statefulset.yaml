@@ -239,7 +239,7 @@ spec:
             type: DirectoryOrCreate
         {{- end }}
         {{- if eq .Values.volume.idx.type "existingClaim" }}
-        - name: data
+        - name: idx
           persistentVolumeClaim:
             claimName: {{ .Values.volume.idx.claimName }} 
         {{- end }}
@@ -250,7 +250,7 @@ spec:
             type: DirectoryOrCreate
         {{- end }}
         {{- if eq .Values.volume.logs.type "existingClaim" }}
-        - name: data
+        - name: logs
           persistentVolumeClaim:
             claimName: {{ .Values.volume.data.claimName }} 
         {{- end }}
