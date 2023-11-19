@@ -1,4 +1,4 @@
-package coordinator
+package sub_coordinator
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
