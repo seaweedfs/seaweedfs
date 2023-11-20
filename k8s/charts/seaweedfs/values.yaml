@@ -78,7 +78,7 @@ master:
   #    type: "persistentVolumeClaim"
   #    size: "24Ti"
   #    storageClass: "local-path-provisioner"
-  #    annotations: 
+  #    annotations:
   #      "key": "value"
   #
   # You may also spacify an existing claim:
@@ -231,7 +231,7 @@ volume:
   #    type: "persistentVolumeClaim"
   #    size: "24Ti"
   #    storageClass: "local-path-provisioner"
-  #    annotations: 
+  #    annotations:
   #      "key": "value"
   #
   # You may also spacify an existing claim:
@@ -408,7 +408,7 @@ filer:
   #    type: "persistentVolumeClaim"
   #    size: "24Ti"
   #    storageClass: "local-path-provisioner"
-  #    annotations: 
+  #    annotations:
   #      "key": "value"
   #
   # You may also spacify an existing claim:
