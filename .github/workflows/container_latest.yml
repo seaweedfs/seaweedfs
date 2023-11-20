@@ -57,7 +57,7 @@ jobs:
           password: ${{ secrets.GHCR_TOKEN }}
       -
         name: Build
-        uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v2
+        uses: docker/build-push-action@4a13e500e55cf31b7a5d59a38ab2040ab0f42f56 # v2
         with:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
