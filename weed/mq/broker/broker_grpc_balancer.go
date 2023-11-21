@@ -9,7 +9,7 @@ import (
 )
 
 // PublisherToPubBalancer receives connections from brokers and collects stats
-func (broker *MessageQueueBroker) PublisherToPubBalancer(stream mq_pb.SeaweedMessaging_ConnectToBalancerServer) error {
+func (broker *MessageQueueBroker) PublisherToPubBalancer(stream mq_pb.SeaweedMessaging_PublisherToPubBalancerServer) error {
 	if !broker.lockAsBalancer.IsLocked() {
 		return status.Errorf(codes.Unavailable, "not current broker balancer")
 	}

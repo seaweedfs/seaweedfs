@@ -45,8 +45,8 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 		}
 		defer stream.CloseSend()
 		err = stream.Send(&mq_pb.PublisherToPubBalancerRequest{
-			Message: &mq_pb.ConnectToBalancerRequest_Init{
-				Init: &mq_pb.ConnectToBalancerRequest_InitMessage{
+			Message: &mq_pb.PublisherToPubBalancerRequest_Init{
+				Init: &mq_pb.PublisherToPubBalancerRequest_InitMessage{
 					Broker: self,
 				},
 			},
@@ -58,7 +58,7 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 		for {
 			stats := broker.localTopicManager.CollectStats(time.Second * 5)
 			err = stream.Send(&mq_pb.PublisherToPubBalancerRequest{
-				Message: &mq_pb.ConnectToBalancerRequest_Stats{
+				Message: &mq_pb.PublisherToPubBalancerRequest_Stats{
 					Stats: stats,
 				},
 			})
