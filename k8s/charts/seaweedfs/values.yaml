@@ -411,7 +411,7 @@ filer:
   #    annotations:
   #      "key": "value"
   #
-  # You may also spacify an existing claim:
+  # You may also specify an existing claim:
   #  data:
   #    type: "existingClaim"
   #    claimName: "my-pvc"
@@ -571,6 +571,9 @@ filer:
     # enable user & permission to s3 (need to inject to all services)
     enableAuth: false
     skipAuthSecretCreation: false
+    # set to the name of an existing kubernetes Secret with the s3 json config file
+    # should have a secret key called seaweedfs_s3_config with an inline json configure
+    existingConfigSecret: ""
     auditLogConfig: {}
 
 s3:
@@ -591,6 +594,9 @@ s3:
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
   skipAuthSecretCreation: false
+  # set to the name of an existing kubernetes Secret with the s3 json config file
+  # should have a secret key called seaweedfs_s3_config with an inline json config
+  existingConfigSecret: ""
   auditLogConfig: {}
 
   # Suffix of the host name, {bucket}.{domainName}

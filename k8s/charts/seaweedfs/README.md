@@ -4,15 +4,21 @@
 
 ### Add the helm repo
 
-`helm repo add seaweedfs https://seaweedfs.github.io/seaweedfs/helm`
+```bash
+helm repo add seaweedfs https://seaweedfs.github.io/seaweedfs/helm
+```
 
 ### Install the helm chart
 
-`helm install seaweedfs seaweedfs/seaweedfs`
+```bash
+helm install seaweedfs seaweedfs/seaweedfs
+```
 
 ### (Recommended) Provide `values.yaml`
 
-`helm install --values=values.yaml seaweedfs seaweedfs/seaweedfs`
+```bash
+helm install --values=values.yaml seaweedfs seaweedfs/seaweedfs
+```
 
 ## Info:
 * master/filer/volume are stateful sets with anti-affinity on the hostname,
@@ -79,3 +85,62 @@ You can update the replicas count for each node type in values.yaml,
 need to add more nodes with the corresponding labels if applicable.
 
 Most of the configuration are available through values.yaml any pull requests to expand functionality or usability are greatly appreciated. Any pull request must pass [chart-testing](https://github.com/helm/chart-testing).
+
+## S3 configuration
+
+To enable an s3 endpoint for your filer with a default install add the following to your values.yaml:
+
+```yaml
+filer:
+  s3:
+    enabled: true
+```
+
+### Enabling Authenticaion to S3
+
+To enable authentication for S3, you have two options:
+
+- let the helm chart create an admin user as well as a read only user
+- provide your own s3 config.json file via an existing Kubernetes Secret
+
+#### Use the default credentials for S3
+
+Example parameters for your values.yaml:
+
+```yaml
+filer:
+  s3:
+    enabled: true
+    enableAuth: true
+```
+
+#### Provide your own credentials for S3
+
+Example parameters for your values.yaml:
+
+```yaml
+filer:
+  s3:
+    enabled: true
+    enableAuth: true
+    existingConfigSecret: my-s3-secret
+```
+
+Example existing secret with your s3 config to create an admin user and readonly user, both with credentials:
+
+```yaml
+---
+# Source: seaweedfs/templates/seaweedfs-s3-secret.yaml
+apiVersion: v1
+kind: Secret
+type: Opaque
+metadata:
+  name: my-s3-secret
+  namespace: seaweedfs
+  labels:
+    app.kubernetes.io/name: seaweedfs
+    app.kubernetes.io/component: s3
+stringData:
+  # this key must be an inline json config file
+  seaweedfs_s3_config: '{"identities":[{"name":"anvAdmin","credentials":[{"accessKey":"snu8yoP6QAlY0ne4","secretKey":"PNzBcmeLNEdR0oviwm04NQAicOrDH1Km"}],"actions":["Admin","Read","Write"]},{"name":"anvReadOnly","credentials":[{"accessKey":"SCigFee6c5lbi04A","secretKey":"kgFhbT38R8WUYVtiFQ1OiSVOrYr3NKku"}],"actions":["Read"]}]}'
+```
