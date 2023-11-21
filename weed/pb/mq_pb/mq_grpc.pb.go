@@ -19,17 +19,18 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	SeaweedMessaging_FindBrokerLeader_FullMethodName      = "/messaging_pb.SeaweedMessaging/FindBrokerLeader"
-	SeaweedMessaging_ConnectToBalancer_FullMethodName     = "/messaging_pb.SeaweedMessaging/ConnectToBalancer"
-	SeaweedMessaging_BalanceTopics_FullMethodName         = "/messaging_pb.SeaweedMessaging/BalanceTopics"
-	SeaweedMessaging_ListTopics_FullMethodName            = "/messaging_pb.SeaweedMessaging/ListTopics"
-	SeaweedMessaging_ConfigureTopic_FullMethodName        = "/messaging_pb.SeaweedMessaging/ConfigureTopic"
-	SeaweedMessaging_LookupTopicBrokers_FullMethodName    = "/messaging_pb.SeaweedMessaging/LookupTopicBrokers"
-	SeaweedMessaging_AssignTopicPartitions_FullMethodName = "/messaging_pb.SeaweedMessaging/AssignTopicPartitions"
-	SeaweedMessaging_ClosePublishers_FullMethodName       = "/messaging_pb.SeaweedMessaging/ClosePublishers"
-	SeaweedMessaging_CloseSubscribers_FullMethodName      = "/messaging_pb.SeaweedMessaging/CloseSubscribers"
-	SeaweedMessaging_Publish_FullMethodName               = "/messaging_pb.SeaweedMessaging/Publish"
-	SeaweedMessaging_Subscribe_FullMethodName             = "/messaging_pb.SeaweedMessaging/Subscribe"
+	SeaweedMessaging_FindBrokerLeader_FullMethodName           = "/messaging_pb.SeaweedMessaging/FindBrokerLeader"
+	SeaweedMessaging_PublisherToPubBalancer_FullMethodName     = "/messaging_pb.SeaweedMessaging/PublisherToPubBalancer"
+	SeaweedMessaging_BalanceTopics_FullMethodName              = "/messaging_pb.SeaweedMessaging/BalanceTopics"
+	SeaweedMessaging_ListTopics_FullMethodName                 = "/messaging_pb.SeaweedMessaging/ListTopics"
+	SeaweedMessaging_ConfigureTopic_FullMethodName             = "/messaging_pb.SeaweedMessaging/ConfigureTopic"
+	SeaweedMessaging_LookupTopicBrokers_FullMethodName         = "/messaging_pb.SeaweedMessaging/LookupTopicBrokers"
+	SeaweedMessaging_AssignTopicPartitions_FullMethodName      = "/messaging_pb.SeaweedMessaging/AssignTopicPartitions"
+	SeaweedMessaging_ClosePublishers_FullMethodName            = "/messaging_pb.SeaweedMessaging/ClosePublishers"
+	SeaweedMessaging_CloseSubscribers_FullMethodName           = "/messaging_pb.SeaweedMessaging/CloseSubscribers"
+	SeaweedMessaging_SubscriberToSubCoordinator_FullMethodName = "/messaging_pb.SeaweedMessaging/SubscriberToSubCoordinator"
+	SeaweedMessaging_Publish_FullMethodName                    = "/messaging_pb.SeaweedMessaging/Publish"
+	SeaweedMessaging_Subscribe_FullMethodName                  = "/messaging_pb.SeaweedMessaging/Subscribe"
 )
 
 // SeaweedMessagingClient is the client API for SeaweedMessaging service.
@@ -39,7 +40,7 @@ type SeaweedMessagingClient interface {
 	// control plane
 	FindBrokerLeader(ctx context.Context, in *FindBrokerLeaderRequest, opts ...grpc.CallOption) (*FindBrokerLeaderResponse, error)
 	// control plane for balancer
-	ConnectToBalancer(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_ConnectToBalancerClient, error)
+	PublisherToPubBalancer(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublisherToPubBalancerClient, error)
 	BalanceTopics(ctx context.Context, in *BalanceTopicsRequest, opts ...grpc.CallOption) (*BalanceTopicsResponse, error)
 	// control plane for topic partitions
 	ListTopics(ctx context.Context, in *ListTopicsRequest, opts ...grpc.CallOption) (*ListTopicsResponse, error)
@@ -49,6 +50,8 @@ type SeaweedMessagingClient interface {
 	AssignTopicPartitions(ctx context.Context, in *AssignTopicPartitionsRequest, opts ...grpc.CallOption) (*AssignTopicPartitionsResponse, error)
 	ClosePublishers(ctx context.Context, in *ClosePublishersRequest, opts ...grpc.CallOption) (*ClosePublishersResponse, error)
 	CloseSubscribers(ctx context.Context, in *CloseSubscribersRequest, opts ...grpc.CallOption) (*CloseSubscribersResponse, error)
+	// subscriber connects to broker balancer, which coordinates with the subscribers
+	SubscriberToSubCoordinator(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_SubscriberToSubCoordinatorClient, error)
 	// data plane for each topic partition
 	Publish(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublishClient, error)
 	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (SeaweedMessaging_SubscribeClient, error)
@@ -71,31 +74,31 @@ func (c *seaweedMessagingClient) FindBrokerLeader(ctx context.Context, in *FindB
 	return out, nil
 }
 
-func (c *seaweedMessagingClient) ConnectToBalancer(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_ConnectToBalancerClient, error) {
-	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[0], SeaweedMessaging_ConnectToBalancer_FullMethodName, opts...)
+func (c *seaweedMessagingClient) PublisherToPubBalancer(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublisherToPubBalancerClient, error) {
+	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[0], SeaweedMessaging_PublisherToPubBalancer_FullMethodName, opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &seaweedMessagingConnectToBalancerClient{stream}
+	x := &seaweedMessagingPublisherToPubBalancerClient{stream}
 	return x, nil
 }
 
-type SeaweedMessaging_ConnectToBalancerClient interface {
-	Send(*ConnectToBalancerRequest) error
-	Recv() (*ConnectToBalancerResponse, error)
+type SeaweedMessaging_PublisherToPubBalancerClient interface {
+	Send(*PublisherToPubBalancerRequest) error
+	Recv() (*PublisherToPubBalancerResponse, error)
 	grpc.ClientStream
 }
 
-type seaweedMessagingConnectToBalancerClient struct {
+type seaweedMessagingPublisherToPubBalancerClient struct {
 	grpc.ClientStream
 }
 
-func (x *seaweedMessagingConnectToBalancerClient) Send(m *ConnectToBalancerRequest) error {
+func (x *seaweedMessagingPublisherToPubBalancerClient) Send(m *PublisherToPubBalancerRequest) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *seaweedMessagingConnectToBalancerClient) Recv() (*ConnectToBalancerResponse, error) {
-	m := new(ConnectToBalancerResponse)
+func (x *seaweedMessagingPublisherToPubBalancerClient) Recv() (*PublisherToPubBalancerResponse, error) {
+	m := new(PublisherToPubBalancerResponse)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -165,8 +168,39 @@ func (c *seaweedMessagingClient) CloseSubscribers(ctx context.Context, in *Close
 	return out, nil
 }
 
+func (c *seaweedMessagingClient) SubscriberToSubCoordinator(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_SubscriberToSubCoordinatorClient, error) {
+	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[1], SeaweedMessaging_SubscriberToSubCoordinator_FullMethodName, opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &seaweedMessagingSubscriberToSubCoordinatorClient{stream}
+	return x, nil
+}
+
+type SeaweedMessaging_SubscriberToSubCoordinatorClient interface {
+	Send(*SubscriberToSubCoordinatorRequest) error
+	Recv() (*SubscriberToSubCoordinatorResponse, error)
+	grpc.ClientStream
+}
+
+type seaweedMessagingSubscriberToSubCoordinatorClient struct {
+	grpc.ClientStream
+}
+
+func (x *seaweedMessagingSubscriberToSubCoordinatorClient) Send(m *SubscriberToSubCoordinatorRequest) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *seaweedMessagingSubscriberToSubCoordinatorClient) Recv() (*SubscriberToSubCoordinatorResponse, error) {
+	m := new(SubscriberToSubCoordinatorResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 func (c *seaweedMessagingClient) Publish(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublishClient, error) {
-	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[1], SeaweedMessaging_Publish_FullMethodName, opts...)
+	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[2], SeaweedMessaging_Publish_FullMethodName, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +231,7 @@ func (x *seaweedMessagingPublishClient) Recv() (*PublishResponse, error) {
 }
 
 func (c *seaweedMessagingClient) Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (SeaweedMessaging_SubscribeClient, error) {
-	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[2], SeaweedMessaging_Subscribe_FullMethodName, opts...)
+	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[3], SeaweedMessaging_Subscribe_FullMethodName, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +269,7 @@ type SeaweedMessagingServer interface {
 	// control plane
 	FindBrokerLeader(context.Context, *FindBrokerLeaderRequest) (*FindBrokerLeaderResponse, error)
 	// control plane for balancer
-	ConnectToBalancer(SeaweedMessaging_ConnectToBalancerServer) error
+	PublisherToPubBalancer(SeaweedMessaging_PublisherToPubBalancerServer) error
 	BalanceTopics(context.Context, *BalanceTopicsRequest) (*BalanceTopicsResponse, error)
 	// control plane for topic partitions
 	ListTopics(context.Context, *ListTopicsRequest) (*ListTopicsResponse, error)
@@ -245,6 +279,8 @@ type SeaweedMessagingServer interface {
 	AssignTopicPartitions(context.Context, *AssignTopicPartitionsRequest) (*AssignTopicPartitionsResponse, error)
 	ClosePublishers(context.Context, *ClosePublishersRequest) (*ClosePublishersResponse, error)
 	CloseSubscribers(context.Context, *CloseSubscribersRequest) (*CloseSubscribersResponse, error)
+	// subscriber connects to broker balancer, which coordinates with the subscribers
+	SubscriberToSubCoordinator(SeaweedMessaging_SubscriberToSubCoordinatorServer) error
 	// data plane for each topic partition
 	Publish(SeaweedMessaging_PublishServer) error
 	Subscribe(*SubscribeRequest, SeaweedMessaging_SubscribeServer) error
@@ -258,8 +294,8 @@ type UnimplementedSeaweedMessagingServer struct {
 func (UnimplementedSeaweedMessagingServer) FindBrokerLeader(context.Context, *FindBrokerLeaderRequest) (*FindBrokerLeaderResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FindBrokerLeader not implemented")
 }
-func (UnimplementedSeaweedMessagingServer) ConnectToBalancer(SeaweedMessaging_ConnectToBalancerServer) error {
-	return status.Errorf(codes.Unimplemented, "method ConnectToBalancer not implemented")
+func (UnimplementedSeaweedMessagingServer) PublisherToPubBalancer(SeaweedMessaging_PublisherToPubBalancerServer) error {
+	return status.Errorf(codes.Unimplemented, "method PublisherToPubBalancer not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) BalanceTopics(context.Context, *BalanceTopicsRequest) (*BalanceTopicsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BalanceTopics not implemented")
@@ -281,6 +317,9 @@ func (UnimplementedSeaweedMessagingServer) ClosePublishers(context.Context, *Clo
 }
 func (UnimplementedSeaweedMessagingServer) CloseSubscribers(context.Context, *CloseSubscribersRequest) (*CloseSubscribersResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CloseSubscribers not implemented")
+}
+func (UnimplementedSeaweedMessagingServer) SubscriberToSubCoordinator(SeaweedMessaging_SubscriberToSubCoordinatorServer) error {
+	return status.Errorf(codes.Unimplemented, "method SubscriberToSubCoordinator not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) Publish(SeaweedMessaging_PublishServer) error {
 	return status.Errorf(codes.Unimplemented, "method Publish not implemented")
@@ -319,26 +358,26 @@ func _SeaweedMessaging_FindBrokerLeader_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
-func _SeaweedMessaging_ConnectToBalancer_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(SeaweedMessagingServer).ConnectToBalancer(&seaweedMessagingConnectToBalancerServer{stream})
+func _SeaweedMessaging_PublisherToPubBalancer_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(SeaweedMessagingServer).PublisherToPubBalancer(&seaweedMessagingPublisherToPubBalancerServer{stream})
 }
 
-type SeaweedMessaging_ConnectToBalancerServer interface {
-	Send(*ConnectToBalancerResponse) error
-	Recv() (*ConnectToBalancerRequest, error)
+type SeaweedMessaging_PublisherToPubBalancerServer interface {
+	Send(*PublisherToPubBalancerResponse) error
+	Recv() (*PublisherToPubBalancerRequest, error)
 	grpc.ServerStream
 }
 
-type seaweedMessagingConnectToBalancerServer struct {
+type seaweedMessagingPublisherToPubBalancerServer struct {
 	grpc.ServerStream
 }
 
-func (x *seaweedMessagingConnectToBalancerServer) Send(m *ConnectToBalancerResponse) error {
+func (x *seaweedMessagingPublisherToPubBalancerServer) Send(m *PublisherToPubBalancerResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *seaweedMessagingConnectToBalancerServer) Recv() (*ConnectToBalancerRequest, error) {
-	m := new(ConnectToBalancerRequest)
+func (x *seaweedMessagingPublisherToPubBalancerServer) Recv() (*PublisherToPubBalancerRequest, error) {
+	m := new(PublisherToPubBalancerRequest)
 	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -471,6 +510,32 @@ func _SeaweedMessaging_CloseSubscribers_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeaweedMessaging_SubscriberToSubCoordinator_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(SeaweedMessagingServer).SubscriberToSubCoordinator(&seaweedMessagingSubscriberToSubCoordinatorServer{stream})
+}
+
+type SeaweedMessaging_SubscriberToSubCoordinatorServer interface {
+	Send(*SubscriberToSubCoordinatorResponse) error
+	Recv() (*SubscriberToSubCoordinatorRequest, error)
+	grpc.ServerStream
+}
+
+type seaweedMessagingSubscriberToSubCoordinatorServer struct {
+	grpc.ServerStream
+}
+
+func (x *seaweedMessagingSubscriberToSubCoordinatorServer) Send(m *SubscriberToSubCoordinatorResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *seaweedMessagingSubscriberToSubCoordinatorServer) Recv() (*SubscriberToSubCoordinatorRequest, error) {
+	m := new(SubscriberToSubCoordinatorRequest)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 func _SeaweedMessaging_Publish_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(SeaweedMessagingServer).Publish(&seaweedMessagingPublishServer{stream})
 }
@@ -560,8 +625,14 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 	},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "ConnectToBalancer",
-			Handler:       _SeaweedMessaging_ConnectToBalancer_Handler,
+			StreamName:    "PublisherToPubBalancer",
+			Handler:       _SeaweedMessaging_PublisherToPubBalancer_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "SubscriberToSubCoordinator",
+			Handler:       _SeaweedMessaging_SubscriberToSubCoordinator_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

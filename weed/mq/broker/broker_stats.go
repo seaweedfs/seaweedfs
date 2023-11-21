@@ -39,12 +39,12 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 
 	// connect to the lock owner
 	err = pb.WithBrokerGrpcClient(false, brokerBalancer, broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
-		stream, err := client.ConnectToBalancer(context.Background())
+		stream, err := client.PublisherToPubBalancer(context.Background())
 		if err != nil {
 			return fmt.Errorf("connect to balancer %v: %v", brokerBalancer, err)
 		}
 		defer stream.CloseSend()
-		err = stream.Send(&mq_pb.ConnectToBalancerRequest{
+		err = stream.Send(&mq_pb.PublisherToPubBalancerRequest{
 			Message: &mq_pb.ConnectToBalancerRequest_Init{
 				Init: &mq_pb.ConnectToBalancerRequest_InitMessage{
 					Broker: self,
@@ -57,7 +57,7 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 
 		for {
 			stats := broker.localTopicManager.CollectStats(time.Second * 5)
-			err = stream.Send(&mq_pb.ConnectToBalancerRequest{
+			err = stream.Send(&mq_pb.PublisherToPubBalancerRequest{
 				Message: &mq_pb.ConnectToBalancerRequest_Stats{
 					Stats: stats,
 				},
