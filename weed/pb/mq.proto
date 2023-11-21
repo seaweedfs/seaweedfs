@@ -15,7 +15,7 @@ service SeaweedMessaging {
     }
 
     // control plane for balancer
-    rpc ConnectToBalancer (stream ConnectToBalancerRequest) returns (stream ConnectToBalancerResponse) {
+    rpc PublisherToPubBalancer (stream PublisherToPubBalancerRequest) returns (stream PublisherToPubBalancerResponse) {
     }
     rpc BalanceTopics (BalanceTopicsRequest) returns (BalanceTopicsResponse) {
     }
@@ -34,6 +34,10 @@ service SeaweedMessaging {
     rpc ClosePublishers(ClosePublishersRequest) returns (ClosePublishersResponse) {
     }
     rpc CloseSubscribers(CloseSubscribersRequest) returns (CloseSubscribersResponse) {
+    }
+
+    // subscriber connects to broker balancer, which coordinates with the subscribers
+    rpc SubscriberToSubCoordinator (stream SubscriberToSubCoordinatorRequest) returns (stream SubscriberToSubCoordinatorResponse) {
     }
 
     // data plane for each topic partition
@@ -77,7 +81,7 @@ message TopicPartitionStats {
 }
 
 
-message ConnectToBalancerRequest {
+message PublisherToPubBalancerRequest {
     message InitMessage {
         string broker = 1;
     }
@@ -86,7 +90,7 @@ message ConnectToBalancerRequest {
         BrokerStats stats = 2;
     }
 }
-message ConnectToBalancerResponse {
+message PublisherToPubBalancerResponse {
 }
 
 message BalanceTopicsRequest {
@@ -129,6 +133,9 @@ message AssignTopicPartitionsRequest {
 }
 message AssignTopicPartitionsResponse {
 }
+
+message SubscriberToSubCoordinatorRequest {}
+message SubscriberToSubCoordinatorResponse {}
 
 //////////////////////////////////////////////////
 message DataMessage {

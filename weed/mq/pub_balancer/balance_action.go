@@ -8,7 +8,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-// Balancer <= ConnectToBalancer() <= Broker <=> Publish()
+// Balancer <= PublisherToPubBalancer() <= Broker <=> Publish()
 // ExecuteBalanceActionMove from Balancer => AssignTopicPartitions() => Broker => Publish()
 
 func (b *Balancer) ExecuteBalanceActionMove(move *BalanceActionMove, grpcDialOption grpc.DialOption) error {
