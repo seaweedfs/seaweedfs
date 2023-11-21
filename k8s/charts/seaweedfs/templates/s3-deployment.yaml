@@ -78,7 +78,7 @@ spec:
           command:
             - "/bin/sh"
             - "-ec"
-            - | 
+            - |
               exec /usr/bin/weed \
                {{- if eq .Values.s3.logs.type "hostPath" }}
               -logdir=/logs \
