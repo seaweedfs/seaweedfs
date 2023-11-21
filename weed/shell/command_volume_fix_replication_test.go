@@ -332,7 +332,10 @@ func TestMisplacedChecking(t *testing.T) {
 					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
 				},
 				{
-					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn2"}},
+				},
+				{
+					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn3"}},
 				},
 			},
 			expected: false,
@@ -345,10 +348,13 @@ func TestMisplacedChecking(t *testing.T) {
 					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn1"}},
 				},
 				{
-					location: &location{"dc1", "r2", &master_pb.DataNodeInfo{Id: "dn2"}},
+					location: &location{"dc1", "r1", &master_pb.DataNodeInfo{Id: "dn2"}},
+				},
+				{
+					location: &location{"dc2", "r2", &master_pb.DataNodeInfo{Id: "dn3"}},
 				},
 			},
-			expected: false,
+			expected: true,
 		},
 		{
 			name:        "test 100",
