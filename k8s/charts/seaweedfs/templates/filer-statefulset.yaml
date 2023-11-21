@@ -117,11 +117,11 @@ spec:
             - name: {{ $key }}
               valueFrom: {{ toYaml $value | nindent 16 }}
             {{- end }}
-            {{- end }}             
+            {{- end }}
           command:
             - "/bin/sh"
             - "-ec"
-            - | 
+            - |
               exec /usr/bin/weed \
               {{- if eq .Values.filer.logs.type "hostPath" }}
               -logdir=/logs \
