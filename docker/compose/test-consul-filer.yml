@@ -1,0 +1,61 @@
+version: '3.9'
+
+services:
+  consul:
+    image: hashicorp/consul:1.17.0
+    ports:
+      - 8500:8500
+  master:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 9333:9333
+      - 19333:19333
+    command: "master -ip=master -volumeSizeLimitMB=1024"
+  volume:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8080:8080
+      - 18080:18080
+    command: "volume -mserver=master:9333 -port=8080 -ip=volume -max=0 -preStopSeconds=1"
+    depends_on:
+      - master
+  s3:
+    image: chrislusf/seaweedfs:local
+    ports:
+      - 8888:8888
+      - 18888:18888
+      - 8333:8333
+    command: '-v 9 filer -master="master:9333" -s3 -s3.config=/etc/seaweedfs/s3.json -s3.port=8333'
+    environment:
+      WEED_LEVELDB2_ENABLED: 'false'
+      WEED_CONSUL_ENABLED: 'true'
+      WEED_CONSUL_ADDR: "http://consul:8500"
+      WEED_CONSUL_KEY_PREFIX: "seaweedfs"
+    volumes:
+      - ./s3.json:/etc/seaweedfs/s3.json
+    depends_on:
+      - consul
+      - master
+      - volume
+  registry:
+    image: registry:2
+    environment:
+      REGISTRY_HTTP_ADDR: "0.0.0.0:5001" # seaweedfs s3
+      REGISTRY_LOG_LEVEL: "debug"
+      REGISTRY_STORAGE: "s3"
+      REGISTRY_STORAGE_S3_REGION: "us-east-1"
+      REGISTRY_STORAGE_S3_REGIONENDPOINT: "http://s3:8333"
+      REGISTRY_STORAGE_S3_BUCKET: "registry"
+      REGISTRY_STORAGE_S3_ACCESSKEY: "some_access_key1"
+      REGISTRY_STORAGE_S3_SECRETKEY: "some_secret_key1"
+      REGISTRY_STORAGE_S3_V4AUTH: "true"
+      REGISTRY_STORAGE_S3_SECURE: "false"
+      REGISTRY_STORAGE_S3_SKIPVERIFY: "true"
+      REGISTRY_STORAGE_S3_ROOTDIRECTORY: "/"
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+      REGISTRY_STORAGE_REDIRECT_DISABLE: "true"
+      REGISTRY_VALIDATION_DISABLED: "true"
+    ports:
+      - 5001:5001
+    depends_on:
+      - s3
