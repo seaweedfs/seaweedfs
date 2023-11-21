@@ -170,6 +170,7 @@ master:
         sub_filter '=/' '=./';
         sub_filter '/seaweedfsstatic' './seaweedfsstatic';
         sub_filter_once off;
+    tls: []
 
   extraEnvironmentVars:
     WEED_MASTER_VOLUME_GROWTH_COPY_1: 7
