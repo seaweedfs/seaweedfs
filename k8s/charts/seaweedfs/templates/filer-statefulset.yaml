@@ -196,8 +196,8 @@ spec:
               mountPath: "/logs/"
             {{- end }}
             {{- if .Values.filer.s3.enableAuth }}
-            - mountPath: /etc/sw
-              name: config-users
+            - name: config-users
+              mountPath: /etc/sw
               readOnly: true
             {{- end }}
             {{- if (or .Values.filer.enablePVC (or (eq .Values.filer.data.type "hostPath") (eq .Values.filer.data.type "persistentVolumeClaim"))) }}
@@ -292,7 +292,7 @@ spec:
           secret:
             defaultMode: 420
             {{- if .Values.filer.s3.existingConfigSecret }}
-            secretName: {{ .Values.s3.existingConfigSecret }}
+            secretName: {{ .Values.filer.s3.existingConfigSecret }}
             {{- else }}
             secretName: seaweedfs-s3-secret
             {{- end }}
