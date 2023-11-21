@@ -150,7 +150,10 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 	defer i.RUnlock()
 	inode, found := i.path2inode[fullpath]
 	if !found {
-		glog.Fatalf("MarkChildrenCached not found inode %v", fullpath)
+		// https://github.com/seaweedfs/seaweedfs/issues/4968
+		// glog.Fatalf("MarkChildrenCached not found inode %v", fullpath)
+		glog.Warningf("MarkChildrenCached not found inode %v", fullpath)
+		return
 	}
 	path, found := i.inode2path[inode]
 	path.isChildrenCached = true

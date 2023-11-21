@@ -24,6 +24,13 @@ spec:
         helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: s3
+      {{ with .Values.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      annotations:
+      {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       restartPolicy: {{ default .Values.global.restartPolicy .Values.s3.restartPolicy }}
       {{- if .Values.s3.tolerations }}
@@ -71,7 +78,7 @@ spec:
           command:
             - "/bin/sh"
             - "-ec"
-            - | 
+            - |
               exec /usr/bin/weed \
                {{- if eq .Values.s3.logs.type "hostPath" }}
               -logdir=/logs \
@@ -114,9 +121,11 @@ spec:
             - name: logs
               mountPath: "/logs/"
             {{- end }}
+            {{- if .Values.s3.enableAuth }}
             - mountPath: /etc/sw
               name: config-users
               readOnly: true
+            {{- end }}
             {{- if .Values.global.enableSecurity }}
             - name: security-config
               readOnly: true
@@ -175,10 +184,16 @@ spec:
             {{ tpl .Values.s3.resources . | nindent 12 | trim }}
           {{- end }}
       volumes:
+        {{- if .Values.s3.enableAuth }}
         - name: config-users
           secret:
             defaultMode: 420
+            {{- if .Values.filer.s3.existingConfigSecret }}
+            secretName: {{ .Values.s3.existingConfigSecret }}
+            {{- else }}
             secretName: seaweedfs-s3-secret
+            {{- end }}
+        {{- end }}
         {{- if eq .Values.s3.logs.type "hostPath" }}
         - name: logs
           hostPath:

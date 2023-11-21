@@ -170,7 +170,7 @@ func printHelp(cmds []string) {
 		cmd := strings.ToLower(args[0])
 
 		for _, c := range Commands {
-			if c.Name() == cmd {
+			if strings.ToLower(c.Name()) == cmd {
 				fmt.Printf("  %s\t# %s\n", c.Name(), c.Help())
 			}
 		}

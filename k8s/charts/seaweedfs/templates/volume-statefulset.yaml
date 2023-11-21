@@ -26,6 +26,13 @@ spec:
         helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: volume
+      {{ with .Values.podLabels }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      annotations:
+      {{ with .Values.podAnnotations }}
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       {{- if .Values.volume.affinity }}
       affinity:
@@ -178,7 +185,7 @@ spec:
             - containerPort: {{ .Values.volume.port }}
               name: swfs-vol
             {{- if .Values.volume.metricsPort }}
-            - containerPort: {{ .Values.filer.metricsPort }}
+            - containerPort: {{ .Values.volume.metricsPort }}
               name: metrics
             {{- end }}
             - containerPort: {{ .Values.volume.grpcPort }}
@@ -220,17 +227,32 @@ spec:
             path: {{ .Values.volume.data.hostPathPrefix }}/object_store/
             type: DirectoryOrCreate
         {{- end }}
+        {{- if eq .Values.volume.data.type "existingClaim" }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.volume.data.claimName }} 
+        {{- end }}
         {{- if and (eq .Values.volume.idx.type "hostPath") .Values.volume.dir_idx }}
         - name: idx
           hostPath:
             path: {{ .Values.volume.idx.hostPathPrefix }}/seaweedfs-volume-idx/
             type: DirectoryOrCreate
         {{- end }}
+        {{- if eq .Values.volume.idx.type "existingClaim" }}
+        - name: idx
+          persistentVolumeClaim:
+            claimName: {{ .Values.volume.idx.claimName }} 
+        {{- end }}
         {{- if eq .Values.volume.logs.type "hostPath" }}
         - name: logs
           hostPath:
             path: {{ .Values.volume.logs.hostPathPrefix }}/logs/seaweedfs/volume
             type: DirectoryOrCreate
+        {{- end }}
+        {{- if eq .Values.volume.logs.type "existingClaim" }}
+        - name: logs
+          persistentVolumeClaim:
+            claimName: {{ .Values.volume.data.claimName }} 
         {{- end }}
         {{- if .Values.global.enableSecurity }}
         - name: security-config
@@ -266,6 +288,10 @@ spec:
     {{- if eq .Values.volume.data.type "persistentVolumeClaim"}}
     - metadata:
         name: data
+        {{- with .Values.volume.data.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.volume.data.storageClass }}
@@ -276,6 +302,10 @@ spec:
     {{- if and (eq .Values.volume.idx.type "persistentVolumeClaim") .Values.volume.dir_idx }}
     - metadata:
         name: idx
+        {{- with .Values.volume.idx.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.volume.idx.storageClass }}
@@ -286,6 +316,10 @@ spec:
     {{- if eq .Values.volume.logs.type "persistentVolumeClaim" }}
     - metadata:
         name: logs
+        {{- with .Values.volume.logs.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.volume.logs.storageClass }}

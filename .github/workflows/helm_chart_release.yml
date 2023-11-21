@@ -1,8 +1,10 @@
 name: "helm: publish charts"
 on:
   push:
-    tags: 
-      - '*'
+    branches:
+      - master
+    paths:
+      - "k8s/charts/**"
 
 permissions:
   contents: write

@@ -49,7 +49,7 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 		n.SetHasLastModifiedDate()
 		if _, localWriteErr := vs.store.WriteVolumeNeedle(v.Id, n, true, false); localWriteErr != nil {
 			if err == nil {
-				err = fmt.Errorf("local write needle %d size %d: %v", req.NeedleId, req.Size, err)
+				err = fmt.Errorf("local write needle %d size %d: %v", req.NeedleId, req.Size, localWriteErr)
 			}
 		} else {
 			resp.ETag = n.Etag()

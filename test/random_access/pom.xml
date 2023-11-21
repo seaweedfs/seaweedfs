@@ -50,6 +50,7 @@
                 <configuration>
                     <source>8</source>
                     <target>8</target>
+                    <release>8</release>
                 </configuration>
             </plugin>
         </plugins>

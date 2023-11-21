@@ -72,11 +72,19 @@ master:
     # Enter any extra configuration for master.toml here.
     # It may be be a multi-line string.
 
-  # can use ANY storage-class , example with local-path-provisioner
+  # You may use ANY storage-class, example with local-path-provisioner
+  # Annotations are optional.
   #  data:
   #    type: "persistentVolumeClaim"
   #    size: "24Ti"
   #    storageClass: "local-path-provisioner"
+  #    annotations:
+  #      "key": "value"
+  #
+  # You may also spacify an existing claim:
+  #  data:
+  #    type: "existingClaim"
+  #    claimName: "my-pvc"
   data:
     type: "hostPath"
     size: ""
@@ -217,11 +225,20 @@ volume:
   # minimum free disk space(in percents). If free disk space lower this value - all volumes marks as ReadOnly
   minFreeSpacePercent: 7
 
-# can use ANY storage-class , example with local-path-provisioner
-#  data:
-#    type: "persistentVolumeClaim"
-#    size: "24Ti"
-#    storageClass: "local-path-provisioner"
+  # You may use ANY storage-class, example with local-path-provisioner
+  # Annotations are optional.
+  #  data:
+  #    type: "persistentVolumeClaim"
+  #    size: "24Ti"
+  #    storageClass: "local-path-provisioner"
+  #    annotations:
+  #      "key": "value"
+  #
+  # You may also spacify an existing claim:
+  #  data:
+  #    type: "existingClaim"
+  #    claimName: "my-pvc"
+
   data:
     type: "hostPath"
     size: ""
@@ -385,12 +402,19 @@ filer:
   storage: 25Gi
   # storageClass is the class of storage which defaults to null (the Kube cluster will pick the default).
   storageClass: null
-
-  # can use ANY storage-class , example with local-path-provisioner
+  # You may use ANY storage-class, example with local-path-provisioner
+  # Annotations are optional.
   #  data:
   #    type: "persistentVolumeClaim"
   #    size: "24Ti"
   #    storageClass: "local-path-provisioner"
+  #    annotations:
+  #      "key": "value"
+  #
+  # You may also specify an existing claim:
+  #  data:
+  #    type: "existingClaim"
+  #    claimName: "my-pvc"
   data:
     type: "hostPath"
     size: ""
@@ -547,6 +571,9 @@ filer:
     # enable user & permission to s3 (need to inject to all services)
     enableAuth: false
     skipAuthSecretCreation: false
+    # set to the name of an existing kubernetes Secret with the s3 json config file
+    # should have a secret key called seaweedfs_s3_config with an inline json configure
+    existingConfigSecret: ""
     auditLogConfig: {}
 
 s3:
@@ -567,6 +594,9 @@ s3:
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
   skipAuthSecretCreation: false
+  # set to the name of an existing kubernetes Secret with the s3 json config file
+  # should have a secret key called seaweedfs_s3_config with an inline json config
+  existingConfigSecret: ""
   auditLogConfig: {}
 
   # Suffix of the host name, {bucket}.{domainName}
@@ -641,6 +671,9 @@ s3:
     className: "nginx"
     # host: false for "*" hostname
     host: "seaweedfs.cluster.local"
+    # additional ingress annotations for the s3 endpoint
+    annotations: []
+    tls: []
 
 certificates:
   commonName: "SeaweedFS CA"
@@ -654,3 +687,8 @@ certificates:
     # you will need to store your provided certificates in the secret read by the different services:
     # seaweedfs-master-cert, seaweedfs-filer-cert, etc. Can see any statefulset definition to see secret names
     enabled: false
+
+# Labels to be added to all the created pods
+podLabels: {}
+# Annotations to be added to all the created pods
+podAnnotations: {}

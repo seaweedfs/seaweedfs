@@ -118,7 +118,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- if or (or (eq .Values.volume.data.type "persistentVolumeClaim") (and (eq .Values.volume.idx.type "persistentVolumeClaim") .Values.volume.dir_idx )) (eq .Values.volume.logs.type "persistentVolumeClaim") -}}
 {{- printf "true" -}}
 {{- else -}}
-{{- printf "false" -}}
+{{- printf "" -}}
 {{- end -}}
 {{- end -}}
 
@@ -130,7 +130,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- if or .Values.global.enableSecurity .Values.volume.extraVolumes -}}
 {{- printf "true" -}}
 {{- else -}}
-{{- printf "false" -}}
+{{- printf "" -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -140,7 +140,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- if or (eq .Values.filer.data.type "persistentVolumeClaim") (eq .Values.filer.logs.type "persistentVolumeClaim") -}}
 {{- printf "true" -}}
 {{- else -}}
-{{- printf "false" -}}
+{{- printf "" -}}
 {{- end -}}
 {{- end -}}
 
@@ -149,7 +149,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- if or (eq .Values.filer.data.type "hostPath") (eq .Values.filer.logs.type "hostPath") -}}
 {{- printf "true" -}}
 {{- else -}}
-{{- printf "false" -}}
+{{- printf "" -}}
 {{- end -}}
 {{- end -}}
 
@@ -158,7 +158,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- if or (eq .Values.master.data.type "persistentVolumeClaim") (eq .Values.master.logs.type "persistentVolumeClaim") -}}
 {{- printf "true" -}}
 {{- else -}}
-{{- printf "false" -}}
+{{- printf "" -}}
 {{- end -}}
 {{- end -}}
 
@@ -170,8 +170,17 @@ Inject extra environment vars in the format key:value, if populated
 {{- if or .Values.global.enableSecurity .Values.volume.extraVolumes -}}
 {{- printf "true" -}}
 {{- else -}}
-{{- printf "false" -}}
+{{- printf "" -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* check if any Master existingClaim is defined */}}
+{{- define "master.existing_claims" -}}
+{{- if or (eq .Values.master.data.type "existingClaim") (eq .Values.master.logs.type "existingClaim") -}}
+{{- printf "true" -}}
+{{- else -}}
+{{- printf "" -}}
 {{- end -}}
 {{- end -}}
 
@@ -180,7 +189,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- if or (not (empty .Values.volume.dir_idx )) (not (empty .Values.volume.initContainers )) -}}
 {{- printf "true" -}}
 {{- else -}}
-{{- printf "false" -}}
+{{- printf "" -}}
 {{- end -}}
 {{- end -}}
 

@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"google.golang.org/grpc"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -250,7 +251,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 	filerSink.DoInitialize(targetFiler.ToHttpAddress(), targetFiler.ToGrpcAddress(), targetPath, replicationStr, collection, ttlSec, diskType, grpcDialOption, sinkWriteChunkByFiler)
 	filerSink.SetSourceFiler(filerSource)
 
-	persistEventFn := genProcessFunction(sourcePath, targetPath, sourceExcludePaths, filerSink, debug)
+	persistEventFn := genProcessFunction(sourcePath, targetPath, sourceExcludePaths, nil, filerSink, true, debug)
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
@@ -368,7 +369,7 @@ func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signature
 
 }
 
-func genProcessFunction(sourcePath string, targetPath string, excludePaths []string, dataSink sink.ReplicationSink, debug bool) func(resp *filer_pb.SubscribeMetadataResponse) error {
+func genProcessFunction(sourcePath string, targetPath string, excludePaths []string, reExcludeFileName *regexp.Regexp, dataSink sink.ReplicationSink, doDeleteFiles bool, debug bool) func(resp *filer_pb.SubscribeMetadataResponse) error {
 	// process function
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
@@ -393,16 +394,22 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 				return nil
 			}
 		}
+		if reExcludeFileName != nil && reExcludeFileName.MatchString(message.NewEntry.Name) {
+			return nil
+		}
+		if dataSink.IsIncremental() {
+			doDeleteFiles = false
+		}
 		// handle deletions
 		if filer_pb.IsDelete(resp) {
+			if doDeleteFiles {
+				return nil
+			}
 			if !strings.HasPrefix(string(sourceOldKey), sourcePath) {
 				return nil
 			}
 			key := buildKey(dataSink, message, targetPath, sourceOldKey, sourcePath)
-			if !dataSink.IsIncremental() {
-				return dataSink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks, message.Signatures)
-			}
-			return nil
+			return dataSink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks, message.Signatures)
 		}
 
 		// handle new entries
@@ -428,7 +435,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			// old key is in the watched directory
 			if strings.HasPrefix(string(sourceNewKey), sourcePath) {
 				// new key is also in the watched directory
-				if !dataSink.IsIncremental() {
+				if doDeleteFiles {
 					oldKey := util.Join(targetPath, string(sourceOldKey)[len(sourcePath):])
 					message.NewParentPath = util.Join(targetPath, message.NewParentPath[len(sourcePath):])
 					foundExisting, err := dataSink.UpdateEntry(string(oldKey), message.OldEntry, message.NewParentPath, message.NewEntry, message.DeleteChunks, message.Signatures)
@@ -451,7 +458,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 
 			} else {
 				// new key is outside of the watched directory
-				if !dataSink.IsIncremental() {
+				if doDeleteFiles {
 					key := buildKey(dataSink, message, targetPath, sourceOldKey, sourcePath)
 					return dataSink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks, message.Signatures)
 				}
