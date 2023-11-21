@@ -277,6 +277,16 @@ tls_client_crt_file=""
 # Set the client private key path
 tls_client_key_file=""
 
+[consul]
+enabled = false
+# Equivalent to CONSUL_HTTP_ADDR, use https:// to enable TLS
+address = "http://localhost:8500"
+token = ""
+prefix = "seaweedfs"
+timeout = "3s"
+# a path to a pem encoded certificate to verify communication with Consul
+ca_path = ""
+
 [mongodb]
 enabled = false
 uri = "mongodb://localhost:27017"

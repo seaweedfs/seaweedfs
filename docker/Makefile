@@ -101,6 +101,9 @@ filer_etcd: build
 test_etcd: build
 	docker compose -f compose/test-etcd-filer.yml -p seaweedfs up
 
+test_consul: build
+	docker compose -f compose/test-consul-filer.yml -p seaweedfs up
+
 test_ydb: tags = ydb
 test_ydb: build
 	export
