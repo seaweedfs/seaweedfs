@@ -11,16 +11,16 @@ func (cg *ConsumerGroup) SetMinMaxActiveInstances(min, max int32) {
 	cg.MaximumActiveInstances = max
 }
 
-func (cg *ConsumerGroup) AddConsumerGroupInstance(clientId string) *ConsumerGroupInstance {
+func (cg *ConsumerGroup) AddConsumerGroupInstance(instanceId string) *ConsumerGroupInstance {
 	cgi := &ConsumerGroupInstance{
-		ClientId: clientId,
+		InstanceId: instanceId,
 	}
-	cg.ConsumerGroupInstances.Set(clientId, cgi)
+	cg.ConsumerGroupInstances.Set(instanceId, cgi)
 	return cgi
 }
 
-func (cg *ConsumerGroup) RemoveConsumerGroupInstance(clientId string) {
-	cg.ConsumerGroupInstances.Remove(clientId)
+func (cg *ConsumerGroup) RemoveConsumerGroupInstance(instanceId string) {
+	cg.ConsumerGroupInstances.Remove(instanceId)
 }
 
 func (cg *ConsumerGroup) CoordinateIfNeeded() {
