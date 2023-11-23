@@ -579,8 +579,6 @@ filer:
     # You may specify buckets and users to be created during the install process 
     # The user's credentials must be in an existing secret using the key names:
     #   'ACCESS_KEY_ID' and 'ACCESS_SECRET_KEY'
-    # The secret name should use underscore '_' separators, 
-    #   using a dash '-' will case variable expansion to fail inside the job.
     #createBuckets: 
     #   - bucket-a
     #   - bucket-b
