@@ -5,13 +5,13 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: "{{ $.Release.Name }}"
+  name: "{{ $.Release.Name }}-user-hook"
   labels:
     app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
     app.kubernetes.io/instance: {{ .Release.Name | quote }}
   annotations:
     "helm.sh/hook": post-install
-    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-weight": "-4"
     "helm.sh/hook-delete-policy": hook-succeeded
 spec:
   template:
