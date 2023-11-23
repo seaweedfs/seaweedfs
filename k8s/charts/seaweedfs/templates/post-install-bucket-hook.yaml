@@ -76,6 +76,17 @@ spec:
         {{- if .Values.master.readinessProbe.enabled }}
     {{- $hostpath_exists := include "master.hostpath_exists" . -}}
     {{- $existing_claims := include "master.existing_claims" . -}}
+    {{- if .Values.filer.s3.enableAuth }}
+      volumes:
+        - name: config-users
+          secret:
+            defaultMode: 420
+            {{- if .Values.filer.s3.existingConfigSecret }}
+            secretName: {{ .Values.filer.s3.existingConfigSecret }}
+            {{- else }}
+            secretName: seaweedfs-s3-secret
+            {{- end }}
+        {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
