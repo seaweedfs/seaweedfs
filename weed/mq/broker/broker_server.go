@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
+	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"time"
 
@@ -40,6 +41,7 @@ type MessageQueueBroker struct {
 	Balancer          *pub_balancer.Balancer
 	lockAsBalancer    *cluster.LiveLock
 	currentBalancer   pb.ServerAddress
+	Coordinator *sub_coordinator.Coordinator
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
@@ -51,6 +53,7 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		filers:            make(map[pb.ServerAddress]struct{}),
 		localTopicManager: topic.NewLocalTopicManager(),
 		Balancer:          pub_balancer.NewBalancer(),
+		Coordinator: sub_coordinator.NewCoordinator(),
 	}
 	mqBroker.MasterClient.SetOnPeerUpdateFn(mqBroker.OnBrokerUpdate)
 
