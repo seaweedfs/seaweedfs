@@ -58,7 +58,9 @@ spec:
           {{- range $reg, $props := $.Values.filer.s3.createBuckets }}
           {{- if $props.anonymousRead }}
             exec /bin/echo \
-            "s3.configure --user anonymous --buckets {{ $props.name }}" |\
+            "s3.configure --user anonymous \
+                --buckets {{ $props.name }} \
+                --actions Read" |\
             /usr/bin/weed shell
           {{- end }}  
           {{- end }}
