@@ -50,10 +50,17 @@ spec:
           - "/bin/sh"
           - "-ec"
           - |
-          {{- range $.Values.filer.s3.createBuckets }}
+          {{- range $reg, $props := $.Values.filer.s3.createBuckets }}
             exec /bin/echo \
-            "s3.bucket.create --name {{ . }}" |\
+            "s3.bucket.create --name {{ $props.name }}" |\
             /usr/bin/weed shell
+          {{- end }}
+          {{- range $reg, $props := $.Values.filer.s3.createBuckets }}
+          {{- if $props.anonymousRead }}
+            exec /bin/echo \
+            "s3.configure --user anonymous --buckets {{ $props.name }}" |\
+            /usr/bin/weed shell
+          {{- end }}  
           {{- end }}
         ports:
           - containerPort: {{ .Values.master.port }}
