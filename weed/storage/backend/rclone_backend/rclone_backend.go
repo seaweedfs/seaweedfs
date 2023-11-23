@@ -1,3 +1,6 @@
+//go:build rclone
+// +build rclone
+
 package rclone_backend
 
 import (
