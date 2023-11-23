@@ -579,12 +579,14 @@ filer:
     # You may specify buckets and users to be created during the install process 
     # The user's credentials must be in an existing secret using the key names:
     #   'ACCESS_KEY_ID' and 'ACCESS_SECRET_KEY'
-    #createBuckets: 
-    #   - bucket-a
-    #   - bucket-b
+    # createBuckets: 
+    #   - name: bucket-a
+    #     anonymousRead: true
+    #   - name: bucket-b
+    #     anonymousRead: false
     # createUsers:
     #   - name: friend
-    #     actions: "read,write,list"
+    #     actions: "Read,Write,List"
     #     buckets: "bucket-b"
     #     secretName: friend_s3_creds
        
