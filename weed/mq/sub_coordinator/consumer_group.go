@@ -1,9 +1,7 @@
 package sub_coordinator
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"sync"
-	"time"
 )
 
 func (cg *ConsumerGroup) SetMinMaxActiveInstances(min, max int32) {
@@ -26,7 +24,7 @@ func (cg *ConsumerGroup) RemoveConsumerGroupInstance(instanceId string) {
 func (cg *ConsumerGroup) CoordinateIfNeeded() {
 	emptyInstanceCount, activeInstanceCount := int32(0), int32(0)
 	for cgi := range cg.ConsumerGroupInstances.IterBuffered() {
-		if cgi.Val.Partition == nil {
+		if len(cgi.Val.Partitions) == 0 {
 			// this consumer group instance is not assigned a partition
 			// need to assign one
 			emptyInstanceCount++
@@ -62,7 +60,7 @@ func (cg *ConsumerGroup) doCoordinate(target int32) {
 	// stop existing instances from processing
 	var wg sync.WaitGroup
 	for cgi := range cg.ConsumerGroupInstances.IterBuffered() {
-		if cgi.Val.Partition != nil {
+		if len(cgi.Val.Partitions) != 0 {
 			wg.Add(1)
 			go func(cgi *ConsumerGroupInstance) {
 				defer wg.Done()
@@ -75,12 +73,12 @@ func (cg *ConsumerGroup) doCoordinate(target int32) {
 	}
 	wg.Wait()
 
-	partitions := topic.SplitPartitions(target, time.Now().UnixNano())
+	// partitions := topic.SplitPartitions(target, time.Now().UnixNano())
 
 	// assign partitions to new instances
 	i := 0
 	for cgi := range cg.ConsumerGroupInstances.IterBuffered() {
-		cgi.Val.Partition = partitions[i]
+		// cgi.Val.Partition = partitions[i]
 		i++
 		wg.Add(1)
 		go func(cgi *ConsumerGroupInstance) {

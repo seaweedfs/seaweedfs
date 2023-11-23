@@ -134,8 +134,34 @@ message AssignTopicPartitionsRequest {
 message AssignTopicPartitionsResponse {
 }
 
-message SubscriberToSubCoordinatorRequest {}
-message SubscriberToSubCoordinatorResponse {}
+message SubscriberToSubCoordinatorRequest {
+    message InitMessage {
+        string consumer_group = 1;
+        string consumer_instance_id = 2;
+        Topic topic = 3;
+    }
+    message AckMessage {
+        Partition partition = 1;
+        int64 ts_ns = 2;
+    }
+    oneof message {
+        InitMessage init = 1;
+        AckMessage ack = 2;
+    }
+}
+message SubscriberToSubCoordinatorResponse {
+    message AssignedPartition {
+        Partition partition = 1;
+        int64 ts_ns = 2;
+    }
+    message Assignment {
+        int64 generation = 1;
+        repeated AssignedPartition assigned_partitions = 2;
+    }
+    oneof message {
+        Assignment assignment = 1;
+    }
+}
 
 //////////////////////////////////////////////////
 message DataMessage {
