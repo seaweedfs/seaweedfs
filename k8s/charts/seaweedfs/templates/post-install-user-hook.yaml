@@ -47,12 +47,12 @@ spec:
           - name: SEAWEEDFS_FULLNAME
             value: "{{ template "seaweedfs.name" . }}"
           {{- range $reg, $props := $.Values.filer.s3.createUsers }}
-          - name: {{ $props.secretName | upper }}_ID
+          - name: {{ $props.name | upper }}_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
                 name: {{ $props.secretName }}
                 key: ACCESS_KEY_ID
-          - name: {{ $props.secretName | upper }}_KEY
+          - name: {{ $props.name | upper }}_SECRET_ACCESS_KEY
             valueFrom:
               secretKeyRef:
                 name: {{ $props.secretName }}
@@ -67,8 +67,8 @@ spec:
             "s3.configure --user {{ $props.name }} \
                 --buckets {{ $props.buckets }} \
                 --actions {{ $props.actions }} \
-                --access_key ${{ $props.secretName | upper }}_ID \
-                --secret_key ${{ $props.secretName | upper }}_KEY \
+                --access_key ${{ $props.name | upper }}_ACCESS_KEY_ID \
+                --secret_key ${{ $props.name | upper }}_SECRET_ACCESS_KEY \
                 --apply true" |\
             /usr/bin/weed shell
           {{- end }}
