@@ -578,12 +578,12 @@ filer:
     auditLogConfig: {}
     # You may specify buckets and users to be created during the install process
     # createBuckets: 
-    #   - bucketA
-    #   - bucketB
+    #   - bucket-a
+    #   - bucket-b
     # createUsers:
     #   - name: friend
     #     actions: "read,write,list"
-    #     buckets: "bucketA"
+    #     buckets: "bucket-b"
     #     secretName: friend-s3-creds
        
 
