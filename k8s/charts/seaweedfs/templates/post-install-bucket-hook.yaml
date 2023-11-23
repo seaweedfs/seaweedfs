@@ -64,6 +64,12 @@ spec:
             /usr/bin/weed shell
           {{- end }}  
           {{- end }}
+        {{- if .Values.filer.s3.enableAuth }}
+        volumeMounts:
+          - name: config-users
+            mountPath: /etc/sw
+            readOnly: true
+        {{- end }}
         ports:
           - containerPort: {{ .Values.master.port }}
             name: swfs-master
