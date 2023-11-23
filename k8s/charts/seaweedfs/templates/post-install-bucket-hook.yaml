@@ -1,0 +1,71 @@
+{{- if .Values.master.enabled }}
+{{- if .Values.filer.s3.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "{{ $.Release.Name }}"
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    metadata:
+      name: "{{ .Release.Name }}"
+      labels:
+        app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+        app.kubernetes.io/instance: {{ .Release.Name | quote }}
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: post-install-job
+        image: {{ template "master.image" . }}
+        env:
+          - name: WEED_CLUSTER_DEFAULT
+            value: "sw"
+          - name: WEED_CLUSTER_SW_MASTER
+            value: "seaweedfs-master.seaweedfs:9333"
+          - name: WEED_CLUSTER_SW_FILER
+            value: "seaweedfs-filer-client.seaweedfs:8888"
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: SEAWEEDFS_FULLNAME
+            value: "{{ template "seaweedfs.name" . }}"
+        command:
+          - "/bin/sh"
+          - "-ec"
+          {{- range $.Values.filer.s3.createBuckets }}
+          - |
+            exec /bin/echo \
+            "s3.bucket.create --name {{ . }}" |\
+            /usr/bin/weed shell
+          {{- end }}
+        ports:
+          - containerPort: {{ .Values.master.port }}
+            name: swfs-master
+          {{- if and .Values.global.monitoring.enabled .Values.master.metricsPort }}
+          - containerPort: {{ .Values.master.metricsPort }}
+            name: metrics
+          {{- end }}
+          - containerPort: {{ .Values.master.grpcPort }}
+            #name: swfs-master-grpc
+        {{- if .Values.master.readinessProbe.enabled }}
+    {{- $hostpath_exists := include "master.hostpath_exists" . -}}
+    {{- $existing_claims := include "master.existing_claims" . -}}
+{{- end }}
+{{- end }}
+{{- end }}
