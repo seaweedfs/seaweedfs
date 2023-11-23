@@ -137,7 +137,7 @@ master:
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
   nodeSelector: |
-    beta.kubernetes.io/arch: amd64
+    kubernetes.io/arch: amd64
   # nodeSelector: |
   #   sw-backend: "true"
 
@@ -321,7 +321,7 @@ volume:
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
   nodeSelector: |
-   beta.kubernetes.io/arch: amd64
+   kubernetes.io/arch: amd64
   # nodeSelector: |
   #   sw-volume: "true"
 
@@ -468,7 +468,7 @@ filer:
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
   nodeSelector: |
-    beta.kubernetes.io/arch: amd64
+    kubernetes.io/arch: amd64
   # nodeSelector: |
   #   sw-backend: "true"
 
@@ -633,7 +633,7 @@ s3:
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   # Example:
   nodeSelector: |
-    beta.kubernetes.io/arch: amd64
+    kubernetes.io/arch: amd64
   # nodeSelector: |
   #   sw-backend: "true"
 
