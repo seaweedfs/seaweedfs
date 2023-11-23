@@ -1,5 +1,6 @@
 {{- if .Values.master.enabled }}
 {{- if .Values.filer.s3.enabled }}
+{{- if .Values.filer.s3.createBuckets }}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -66,6 +67,7 @@ spec:
         {{- if .Values.master.readinessProbe.enabled }}
     {{- $hostpath_exists := include "master.hostpath_exists" . -}}
     {{- $existing_claims := include "master.existing_claims" . -}}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
