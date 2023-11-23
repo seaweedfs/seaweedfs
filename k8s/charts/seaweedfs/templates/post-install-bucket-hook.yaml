@@ -28,9 +28,9 @@ spec:
           - name: WEED_CLUSTER_DEFAULT
             value: "sw"
           - name: WEED_CLUSTER_SW_MASTER
-            value: "seaweedfs-master.seaweedfs:9333"
+            value: "{{ template "seaweedfs.name" . }}-master.{{ .Release.Namespace }}:9333"
           - name: WEED_CLUSTER_SW_FILER
-            value: "seaweedfs-filer-client.seaweedfs:8888"
+            value: "{{ template "seaweedfs.name" . }}-filer-client.{{ .Release.Namespace }}:8888"
           - name: POD_IP
             valueFrom:
               fieldRef:
