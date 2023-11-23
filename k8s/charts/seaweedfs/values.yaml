@@ -576,20 +576,14 @@ filer:
     # should have a secret key called seaweedfs_s3_config with an inline json configure
     existingConfigSecret: ""
     auditLogConfig: {}
-    # You may specify buckets and users to be created during the install process 
-    # The user's credentials must be in an existing secret using the key names:
-    #   'ACCESS_KEY_ID' and 'ACCESS_SECRET_KEY'
+    # You may specify buckets to be created during the install process.
+    # Buckets may be exposed publicly by setting `anonymousRead` to `true`
     # createBuckets: 
     #   - name: bucket-a
     #     anonymousRead: true
     #   - name: bucket-b
     #     anonymousRead: false
-    # createUsers:
-    #   - name: friend
-    #     actions: "Read,Write,List"
-    #     buckets: "bucket-b"
-    #     secretName: friend_s3_creds
-       
+      
 
 s3:
   enabled: false
