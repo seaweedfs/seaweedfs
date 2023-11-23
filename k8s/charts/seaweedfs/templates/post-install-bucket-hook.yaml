@@ -48,8 +48,8 @@ spec:
         command:
           - "/bin/sh"
           - "-ec"
-          {{- range $.Values.filer.s3.createBuckets }}
           - |
+          {{- range $.Values.filer.s3.createBuckets }}
             exec /bin/echo \
             "s3.bucket.create --name {{ . }}" |\
             /usr/bin/weed shell
