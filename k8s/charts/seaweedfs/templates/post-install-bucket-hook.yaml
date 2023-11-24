@@ -88,7 +88,7 @@ spec:
         - name: config-users
           secret:
             defaultMode: 420
-            {{- if .Values.filer.s3.existingConfigSecret }}
+            {{- if not (empty .Values.filer.s3.existingConfigSecret) }}
             secretName: {{ .Values.filer.s3.existingConfigSecret }}
             {{- else }}
             secretName: seaweedfs-s3-secret
