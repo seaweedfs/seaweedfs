@@ -60,8 +60,9 @@ spec:
             exec /bin/echo \
             "s3.configure --user anonymous \
                 --buckets {{ $props.name }} \
-                --actions Read" |\
-            /usr/bin/weed shell
+                --actions Read \
+                --apply true" |\
+                /usr/bin/weed shell
           {{- end }}  
           {{- end }}
         {{- if .Values.filer.s3.enableAuth }}
