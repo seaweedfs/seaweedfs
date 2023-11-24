@@ -30,7 +30,7 @@ global:
   # Z number of replica in other servers in the same rack
   replicationPlacment: "001"
   extraEnvironmentVars:
-    WEED_CLUSTER_DEFAULT: "sw"
+    WEED_CLUSTER_DEFAULT: "config"
     WEED_CLUSTER_SW_MASTER: "seaweedfs-master.seaweedfs:9333"
     WEED_CLUSTER_SW_FILER: "seaweedfs-filer-client.seaweedfs:8888"
 
@@ -570,20 +570,19 @@ filer:
     # Suffix of the host name, {bucket}.{domainName}
     domainName: ""
     # enable user & permission to s3 (need to inject to all services)
-    enableAuth: false
+    enableAuth: true
     skipAuthSecretCreation: false
     # set to the name of an existing kubernetes Secret with the s3 json config file
     # should have a secret key called seaweedfs_s3_config with an inline json configure
-    existingConfigSecret: ""
+    existingConfigSecret: false
     auditLogConfig: {}
     # You may specify buckets to be created during the install process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
-    # createBuckets: 
+    # createBuckets:
     #   - name: bucket-a
     #     anonymousRead: true
     #   - name: bucket-b
     #     anonymousRead: false
-      
 
 s3:
   enabled: false
@@ -605,7 +604,7 @@ s3:
   skipAuthSecretCreation: false
   # set to the name of an existing kubernetes Secret with the s3 json config file
   # should have a secret key called seaweedfs_s3_config with an inline json config
-  existingConfigSecret: ""
+  existingConfigSecret: false
   auditLogConfig: {}
 
   # Suffix of the host name, {bucket}.{domainName}
