@@ -19,6 +19,7 @@ type B2Sink struct {
 	dir           string
 	filerSource   *source.FilerSource
 	isIncremental bool
+	isBucketToBucket bool
 }
 
 func init() {
@@ -36,6 +37,10 @@ func (g *B2Sink) GetSinkToDirectory() string {
 func (g *B2Sink) IsIncremental() bool {
 	return g.isIncremental
 }
+func (g *B2Sink) IsBucketToBucket() bool {
+	return false
+}
+
 
 func (g *B2Sink) Initialize(configuration util.Configuration, prefix string) error {
 	g.isIncremental = configuration.GetBool(prefix + "is_incremental")

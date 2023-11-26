@@ -32,6 +32,7 @@ type FilerSink struct {
 	address           string
 	writeChunkByFiler bool
 	isIncremental     bool
+	isBucketToBucket  bool
 	executor          *util.LimitedConcurrentExecutor
 	signature         int32
 }
@@ -50,6 +51,10 @@ func (fs *FilerSink) GetSinkToDirectory() string {
 
 func (fs *FilerSink) IsIncremental() bool {
 	return fs.isIncremental
+}
+
+func (fs *FilerSink) IsBucketToBucket() bool {
+	return false
 }
 
 func (fs *FilerSink) Initialize(configuration util.Configuration, prefix string) error {

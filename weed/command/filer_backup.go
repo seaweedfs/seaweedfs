@@ -2,14 +2,15 @@ package command
 
 import (
 	"fmt"
+	"regexp"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
-	"regexp"
-	"time"
 )
 
 type FilerBackupOptions struct {

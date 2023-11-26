@@ -2,13 +2,14 @@ package S3Sink
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -27,6 +28,7 @@ type S3Sink struct {
 	acl           string
 	filerSource   *source.FilerSource
 	isIncremental bool
+	isBucketToBucket bool
 }
 
 func init() {
@@ -43,6 +45,10 @@ func (s3sink *S3Sink) GetSinkToDirectory() string {
 
 func (s3sink *S3Sink) IsIncremental() bool {
 	return s3sink.isIncremental
+}
+
+func (s3sink *S3Sink) IsBucketToBucket() bool {
+	return s3sink.isBucketToBucket
 }
 
 func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string) error {

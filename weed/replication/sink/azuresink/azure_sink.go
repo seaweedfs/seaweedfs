@@ -23,6 +23,7 @@ type AzureSink struct {
 	dir           string
 	filerSource   *source.FilerSource
 	isIncremental bool
+	isBucketToBucket bool
 }
 
 func init() {
@@ -39,6 +40,9 @@ func (g *AzureSink) GetSinkToDirectory() string {
 
 func (g *AzureSink) IsIncremental() bool {
 	return g.isIncremental
+}
+func (g *AzureSink) IsBucketToBucket() bool {
+	return false
 }
 
 func (g *AzureSink) Initialize(configuration util.Configuration, prefix string) error {

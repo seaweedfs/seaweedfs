@@ -18,6 +18,7 @@ type LocalSink struct {
 	Dir           string
 	filerSource   *source.FilerSource
 	isIncremental bool
+	isBucketToBucket bool
 }
 
 func init() {
@@ -55,6 +56,9 @@ func (localsink *LocalSink) GetSinkToDirectory() string {
 
 func (localsink *LocalSink) IsIncremental() bool {
 	return localsink.isIncremental
+}
+func (localsink *LocalSink) IsBucketToBucket() bool {
+	return false
 }
 
 func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
