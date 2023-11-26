@@ -120,21 +120,33 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 
 	key = cleanKey(key)
 
+	bucket := s3sink.bucket
+
 	if isDirectory {
+		if s3sink.isBucketToBucket {
+			if IsKeyBucket(key) {
+				return s3sink.deleteBucketIfExists(key)
+			}
+		}
 		return nil
 	}
 
+	if s3sink.isBucketToBucket {
+		bucket = GetBucketFromKey(key)
+		key = RemoveBucketFromKey(key)
+	}
+
 	input := &s3.DeleteObjectInput{
-		Bucket: aws.String(s3sink.bucket),
+		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	}
 
 	result, err := s3sink.conn.DeleteObject(input)
 
 	if err == nil {
-		glog.V(2).Infof("[%s] delete %s: %v", s3sink.bucket, key, result)
+		glog.V(2).Infof("[%s] delete %s: %v", bucket, key, result)
 	} else {
-		glog.Errorf("[%s] delete %s: %v", s3sink.bucket, key, err)
+		glog.Errorf("[%s] delete %s: %v", bucket, key, err)
 	}
 
 	return err
@@ -144,8 +156,21 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) (err error) {
 	key = cleanKey(key)
 
+	bucket := s3sink.bucket
+
 	if entry.IsDirectory {
+		if s3sink.isBucketToBucket {
+			if IsKeyBucket(key) {
+				return s3sink.createBucketIfNotExists(key)
+			}
+		}
 		return nil
+	}
+
+	if s3sink.isBucketToBucket {
+		bucket = GetBucketFromKey(key)
+		s3sink.createBucketIfNotExists(bucket)
+		key = RemoveBucketFromKey(key)
 	}
 
 	reader := filer.NewFileReader(s3sink.filerSource, entry)
@@ -176,7 +201,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 
 	// Upload the file to S3.
 	_, err = uploader.Upload(&s3manager.UploadInput{
-		Bucket:  aws.String(s3sink.bucket),
+		Bucket:  aws.String(bucket),
 		Key:     aws.String(key),
 		Body:    reader,
 		Tagging: aws.String(tags),
