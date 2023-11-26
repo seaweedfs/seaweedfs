@@ -3,21 +3,21 @@ package sub_coordinator
 import "github.com/seaweedfs/seaweedfs/weed/mq/topic"
 
 type PartitionSlot struct {
-	RangeStart int32
-	RangeStop  int32
+	RangeStart         int32
+	RangeStop          int32
 	AssignedInstanceId string
 }
 
 type PartitionSlotList struct {
 	PartitionSlots []*PartitionSlot
-	RingSize int32
-	Version int64
+	RingSize       int32
+	Version        int64
 }
 
 func NewPartitionSlotList(ringSize int32, version int64) *PartitionSlotList {
 	return &PartitionSlotList{
 		RingSize: ringSize,
-		Version: version,
+		Version:  version,
 	}
 }
 

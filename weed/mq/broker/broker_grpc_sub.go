@@ -45,7 +45,6 @@ func (broker *MessageQueueBroker) Subscribe(req *mq_pb.SubscribeRequest, stream 
 		startTime = time.Now()
 	}
 
-
 	localTopicPartition.Subscribe(clientName, startTime, func() bool {
 		if !isConnected {
 			return false
@@ -80,7 +79,7 @@ func (broker *MessageQueueBroker) Subscribe(req *mq_pb.SubscribeRequest, stream 
 			Data: &mq_pb.DataMessage{
 				Key:   []byte(fmt.Sprintf("key-%d", logEntry.PartitionKeyHash)),
 				Value: value,
-				TsNs: logEntry.TsNs,
+				TsNs:  logEntry.TsNs,
 			},
 		}}); err != nil {
 			glog.Errorf("Error sending setup response: %v", err)

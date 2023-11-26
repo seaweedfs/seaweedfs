@@ -32,9 +32,9 @@ type TopicSubscriber struct {
 	brokerPartitionAssignments []*mq_pb.BrokerPartitionAssignment
 	OnEachMessageFunc          OnEachMessageFunc
 	OnCompletionFunc           OnCompletionFunc
-	bootstrapBrokers   []string
-	waitForMoreMessage   bool
-	alreadyProcessedTsNs int64
+	bootstrapBrokers           []string
+	waitForMoreMessage         bool
+	alreadyProcessedTsNs       int64
 }
 
 func NewTopicSubscriber(bootstrapBrokers []string, subscriber *SubscriberConfiguration, content *ContentConfiguration) *TopicSubscriber {

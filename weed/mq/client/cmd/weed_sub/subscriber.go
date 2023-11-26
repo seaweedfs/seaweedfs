@@ -11,10 +11,11 @@ import (
 )
 
 var (
-	namespace = flag.String("ns", "test", "namespace")
-	topic = flag.String("topic", "test", "topic")
+	namespace   = flag.String("ns", "test", "namespace")
+	topic       = flag.String("topic", "test", "topic")
 	seedBrokers = flag.String("brokers", "localhost:17777", "seed brokers")
 )
+
 func main() {
 	flag.Parse()
 
