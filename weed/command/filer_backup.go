@@ -94,6 +94,9 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 
 	sourceFiler := pb.ServerAddress(*backupOption.filer)
 	sourcePath := *backupOption.path
+	if dataSink.IsBucketToBucket(){
+		sourcePath = "/buckets"
+	}
 	excludePaths := util.StringSplit(*backupOption.excludePaths, ",")
 	var reExcludeFileName *regexp.Regexp
 	if *backupOption.excludeFileName != "" {
