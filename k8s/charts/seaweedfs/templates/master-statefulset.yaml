@@ -55,7 +55,7 @@ spec:
       priorityClassName: {{ .Values.master.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
-      {{- if .Values.master.serviceAccountName }}
+      {{- if .Values.global.createClusterRole }}
       serviceAccountName: {{ default .Values.global.serviceAccountName .Values.master.serviceAccountName }} # for deleting statefulset pods after migration
       {{- end }}
       {{- if .Values.master.initContainers }}
