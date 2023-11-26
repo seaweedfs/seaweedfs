@@ -38,9 +38,11 @@ func (pcm *PartitionConsumerMapping) BalanceToConsumerInstanceIds(partitions []*
 func doBalanceSticky(partitions []*topic.Partition, consumerInstanceIds []string, prevMapping *PartitionSlotList) (partitionSlots []*PartitionSlot) {
 	// collect previous consumer instance ids
 	prevConsumerInstanceIds := make(map[string]struct{})
-	for _, prevPartitionSlot := range prevMapping.PartitionSlots {
-		if prevPartitionSlot.AssignedInstanceId != "" {
-			prevConsumerInstanceIds[prevPartitionSlot.AssignedInstanceId] = struct{}{}
+	if prevMapping != nil {
+		for _, prevPartitionSlot := range prevMapping.PartitionSlots {
+			if prevPartitionSlot.AssignedInstanceId != "" {
+				prevConsumerInstanceIds[prevPartitionSlot.AssignedInstanceId] = struct{}{}
+			}
 		}
 	}
 	// collect current consumer instance ids
@@ -59,9 +61,11 @@ func doBalanceSticky(partitions []*topic.Partition, consumerInstanceIds []string
 
 	// convert partition slots from list to a map
 	prevPartitionSlotMap := make(map[string]*PartitionSlot)
-	for _, partitionSlot := range prevMapping.PartitionSlots {
-		key := fmt.Sprintf("%d-%d", partitionSlot.RangeStart, partitionSlot.RangeStop)
-		prevPartitionSlotMap[key] = partitionSlot
+	if prevMapping != nil {
+		for _, partitionSlot := range prevMapping.PartitionSlots {
+			key := fmt.Sprintf("%d-%d", partitionSlot.RangeStart, partitionSlot.RangeStop)
+			prevPartitionSlotMap[key] = partitionSlot
+		}
 	}
 
 	// make a copy of old mapping, skipping the deleted consumer instances
