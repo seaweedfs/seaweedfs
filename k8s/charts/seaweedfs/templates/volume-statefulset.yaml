@@ -50,7 +50,7 @@ spec:
       {{- end }}
       enableServiceLinks: false
       {{- if .Values.volume.serviceAccountName }}
-      serviceAccountName: {{ .Values.volume.serviceAccountName | quote }}
+      serviceAccountName: {{ default .Values.global.serviceAccountName .Values.volume.serviceAccountName }} # for deleting statefulset pods after migration
       {{- end }}
       {{- $initContainers_exists := include "volume.initContainers_exists" . -}}
       {{- if $initContainers_exists }}
