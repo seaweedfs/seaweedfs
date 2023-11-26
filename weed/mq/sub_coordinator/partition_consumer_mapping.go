@@ -8,7 +8,7 @@ import (
 
 type PartitionConsumerMapping struct {
 	currentMapping *PartitionSlotList
-	prevMappings []*PartitionSlotList
+	prevMappings   []*PartitionSlotList
 }
 
 func NewPartitionConsumerMapping(ringSize int32) *PartitionConsumerMapping {
@@ -21,7 +21,6 @@ func NewPartitionConsumerMapping(ringSize int32) *PartitionConsumerMapping {
 // 1. max processing power utilization
 // 2. allow one consumer instance to be down unexpectedly
 //    without affecting the processing power utilization
-
 
 func (pcm *PartitionConsumerMapping) BalanceToConsumerInstanceIds(partitions []*topic.Partition, consumerInstanceIds []string) {
 	if len(partitions) == 0 || len(consumerInstanceIds) == 0 {
@@ -36,7 +35,7 @@ func (pcm *PartitionConsumerMapping) BalanceToConsumerInstanceIds(partitions []*
 	pcm.currentMapping = newMapping
 }
 
-func doBalanceSticky(partitions []*topic.Partition, consumerInstanceIds []string, prevMapping *PartitionSlotList) (partitionSlots []*PartitionSlot){
+func doBalanceSticky(partitions []*topic.Partition, consumerInstanceIds []string, prevMapping *PartitionSlotList) (partitionSlots []*PartitionSlot) {
 	// collect previous consumer instance ids
 	prevConsumerInstanceIds := make(map[string]struct{})
 	for _, prevPartitionSlot := range prevMapping.PartitionSlots {

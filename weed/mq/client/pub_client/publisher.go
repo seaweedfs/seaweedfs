@@ -12,7 +12,7 @@ import (
 )
 
 type PublisherConfiguration struct {
-	CreateTopic bool
+	CreateTopic               bool
 	CreateTopicPartitionCount int32
 }
 

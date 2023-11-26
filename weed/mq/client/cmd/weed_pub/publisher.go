@@ -14,8 +14,8 @@ var (
 	messageCount = flag.Int("n", 1000, "message count")
 	concurrency  = flag.Int("c", 4, "concurrency count")
 
-	namespace = flag.String("ns", "test", "namespace")
-	topic = flag.String("topic", "test", "topic")
+	namespace   = flag.String("ns", "test", "namespace")
+	topic       = flag.String("topic", "test", "topic")
 	seedBrokers = flag.String("brokers", "localhost:17777", "seed brokers")
 )
 
