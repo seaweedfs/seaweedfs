@@ -16,6 +16,8 @@ global:
       volumeRead: false
       filerWrite: false
       filerRead: false
+  # we will use this serviceAccountName for all ClusterRoles/ClusterRoleBindings
+  serviceAccountName: "seaweedfs"
   certificates:
     alphacrds: false
   monitoring:
