@@ -52,7 +52,7 @@ spec:
       {{- end }}
       {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
       {{- if .Values.global.createClusterRole }}
-      serviceAccountName: {{ default .Values.global.serviceAccountName .Values.filer.serviceAccountName }} # for deleting statefulset pods after migration
+      serviceAccountName: {{ .Values.filer.serviceAccountName | default .Values.global.serviceAccountName | quote }} # for deleting statefulset pods after migration
       {{- end }}
       terminationGracePeriodSeconds: 60
       {{- if .Values.filer.priorityClassName }}
