@@ -234,7 +234,6 @@ var (
 			Help:      "Bucketed histogram of s3 time to first byte request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 27),
 		}, []string{"type", "bucket"})
-
 )
 
 func init() {

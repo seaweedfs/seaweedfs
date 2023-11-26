@@ -1065,7 +1065,7 @@ func (f *FlagSet) ParseEnv(environ []string) error {
 		}
 		envKey = strings.Replace(envKey, "-", "_", -1)
 		envKey = strings.Replace(envKey, ".", "_", -1)
-		 
+
 		value, isSet := env[envKey]
 		if !isSet {
 			continue
