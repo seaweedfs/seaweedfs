@@ -59,9 +59,6 @@ spec:
       priorityClassName: {{ .Values.filer.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
-      {{- if .Values.filer.serviceAccountName }}
-      serviceAccountName: {{ .Values.filer.serviceAccountName | quote }}
-      {{- end }}
       {{- if .Values.filer.initContainers }}
       initContainers:
         {{ tpl .Values.filer.initContainers . | nindent 8 | trim }}
