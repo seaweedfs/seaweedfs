@@ -197,3 +197,71 @@ func cleanKey(key string) string {
 	}
 	return key
 }
+
+func GetBucketFromKey(key string) string {
+	key = cleanKey(key)
+	return key[:strings.Index(key, "/")]
+}
+
+func RemoveBucketFromKey(key string) string {
+	key = cleanKey(key)
+	return key[strings.Index(key, "/")+1:]
+}
+
+func IsKeyBucket(key string) bool {
+	key = cleanKey(key)
+	return !strings.Contains(key, "/")
+}
+
+func (s3sink *S3Sink) createBucketIfNotExists(bucket string) error {
+	// Check if the bucket exists
+	_, err := s3sink.conn.HeadBucket(&s3.HeadBucketInput{
+		Bucket: aws.String(bucket),
+	})
+
+	if err != nil {
+		// Bucket does not exist, create it
+		createBucketInput := &s3.CreateBucketInput{
+			Bucket: aws.String(bucket),
+			ACL:    aws.String(s3sink.acl),
+		}
+
+		_, err := s3sink.conn.CreateBucket(createBucketInput)
+		if err != nil {
+			return err
+		}
+
+		glog.V(0).Infof("Bucket %s created successfully", s3sink.bucket)
+	} else {
+		glog.V(0).Infof("Bucket %s already exists", s3sink.bucket)
+	}
+
+	return nil
+}
+
+func (s3sink *S3Sink) deleteBucketIfExists(bucket string) error {
+	// Check if the bucket exists
+	_, err := s3sink.conn.HeadBucket(&s3.HeadBucketInput{
+		Bucket: aws.String(bucket),
+	})
+
+	if err != nil {
+		// Bucket does not exist, nothing to delete
+		glog.V(0).Infof("Bucket %s does not exist, nothing to delete", bucket)
+		return nil
+	}
+
+	// Bucket exists, delete it
+	deleteBucketInput := &s3.DeleteBucketInput{
+		Bucket: aws.String(bucket),
+	}
+
+	_, err = s3sink.conn.DeleteBucket(deleteBucketInput)
+	if err != nil {
+		return err
+	}
+
+	glog.V(0).Infof("Bucket %s deleted successfully", bucket)
+
+	return nil
+}
