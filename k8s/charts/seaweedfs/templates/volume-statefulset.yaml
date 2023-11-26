@@ -49,7 +49,7 @@ spec:
       priorityClassName: {{ .Values.volume.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
-      {{- if .Values.volume.serviceAccountName }}
+      {{- if .Values.global.createClusterRole }}
       serviceAccountName: {{ default .Values.global.serviceAccountName .Values.volume.serviceAccountName }} # for deleting statefulset pods after migration
       {{- end }}
       {{- $initContainers_exists := include "volume.initContainers_exists" . -}}
