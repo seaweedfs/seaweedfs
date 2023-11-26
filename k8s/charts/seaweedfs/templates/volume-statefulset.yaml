@@ -50,7 +50,7 @@ spec:
       {{- end }}
       enableServiceLinks: false
       {{- if .Values.global.createClusterRole }}
-      serviceAccountName: {{ default .Values.global.serviceAccountName .Values.volume.serviceAccountName }} # for deleting statefulset pods after migration
+      serviceAccountName: {{ .Values.volume.serviceAccountName | default .Values.global.serviceAccountName | quote }} # for deleting statefulset pods after migration
       {{- end }}
       {{- $initContainers_exists := include "volume.initContainers_exists" . -}}
       {{- if $initContainers_exists }}
