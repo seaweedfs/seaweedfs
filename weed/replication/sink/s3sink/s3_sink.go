@@ -53,21 +53,37 @@ func (s3sink *S3Sink) IsBucketToBucket() bool {
 
 func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string) error {
 	glog.V(0).Infof("sink.s3.region: %v", configuration.GetString(prefix+"region"))
-	glog.V(0).Infof("sink.s3.bucket: %v", configuration.GetString(prefix+"bucket"))
-	glog.V(0).Infof("sink.s3.directory: %v", configuration.GetString(prefix+"directory"))
 	glog.V(0).Infof("sink.s3.endpoint: %v", configuration.GetString(prefix+"endpoint"))
 	glog.V(0).Infof("sink.s3.acl: %v", configuration.GetString(prefix+"acl"))
-	glog.V(0).Infof("sink.s3.is_incremental: %v", configuration.GetString(prefix+"is_incremental"))
-	s3sink.isIncremental = configuration.GetBool(prefix + "is_incremental")
-	return s3sink.initialize(
-		configuration.GetString(prefix+"aws_access_key_id"),
-		configuration.GetString(prefix+"aws_secret_access_key"),
-		configuration.GetString(prefix+"region"),
-		configuration.GetString(prefix+"bucket"),
-		configuration.GetString(prefix+"directory"),
-		configuration.GetString(prefix+"endpoint"),
-		configuration.GetString(prefix+"acl"),
-	)
+	glog.V(0).Infof("sink.s3.is_bucket_to_bucket: %v", configuration.GetString(prefix+"is_bucket_to_bucket"))
+	s3sink.isBucketToBucket = configuration.GetBool(prefix + "is_bucket_to_bucket")
+	
+	if s3sink.isBucketToBucket {
+		s3sink.isIncremental = false
+		return s3sink.initialize(
+			configuration.GetString(prefix+"aws_access_key_id"),
+			configuration.GetString(prefix+"aws_secret_access_key"),
+			configuration.GetString(prefix+"region"),
+			"",
+			"",
+			configuration.GetString(prefix+"endpoint"),
+			configuration.GetString(prefix+"acl"),
+		)
+	} else {
+		glog.V(0).Infof("sink.s3.bucket: %v", configuration.GetString(prefix+"bucket"))
+		glog.V(0).Infof("sink.s3.directory: %v", configuration.GetString(prefix+"directory"))
+		glog.V(0).Infof("sink.s3.is_incremental: %v", configuration.GetString(prefix+"is_incremental"))
+		s3sink.isIncremental = configuration.GetBool(prefix + "is_incremental")
+		return s3sink.initialize(
+			configuration.GetString(prefix+"aws_access_key_id"),
+			configuration.GetString(prefix+"aws_secret_access_key"),
+			configuration.GetString(prefix+"region"),
+			configuration.GetString(prefix+"bucket"),
+			configuration.GetString(prefix+"directory"),
+			configuration.GetString(prefix+"endpoint"),
+			configuration.GetString(prefix+"acl"),
+		)
+	}
 }
 
 func (s3sink *S3Sink) SetSourceFiler(s *source.FilerSource) {
