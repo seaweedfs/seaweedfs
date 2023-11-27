@@ -196,7 +196,7 @@ func TestCompactSection_Get(t *testing.T) {
 	maps = append(maps, m)
 	totalRowCount += rowCount
 	m.Set(1574318345753513987, ToOffset(10002), 10002)
-	nv,ok := m.Get(1574318345753513987)
+	nv, ok := m.Get(1574318345753513987)
 	if ok {
 		t.Log(uint64(nv.Key))
 	}
@@ -207,13 +207,13 @@ func TestCompactSection_Get(t *testing.T) {
 	}
 
 	m.Set(1574318350048481283, ToOffset(10002), 10002)
-	nv2,ok1 := m.Get(1574318350048481283)
+	nv2, ok1 := m.Get(1574318350048481283)
 	if ok1 {
 		t.Log(uint64(nv2.Key))
 	}
 
 	m.Delete(nv2.Key)
-	nv3,has := m.Get(nv2.Key)
+	nv3, has := m.Get(nv2.Key)
 	if has && nv3.Size > 0 {
 		t.Error(uint64(nv3.Size))
 	}
