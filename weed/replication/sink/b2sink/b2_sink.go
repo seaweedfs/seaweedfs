@@ -2,8 +2,10 @@ package B2Sink
 
 import (
 	"context"
-	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 
 	"github.com/kurin/blazer/b2"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -43,6 +45,9 @@ func (g *B2Sink) IsBucketToBucket() bool {
 
 
 func (g *B2Sink) Initialize(configuration util.Configuration, prefix string) error {
+	if configuration.GetBool(prefix + "is_bucket_to_bucket") {
+		glog.Warning("is_bucket_to_bucket only works with s3.sink!, It will be ignored")
+	}
 	g.isIncremental = configuration.GetBool(prefix + "is_incremental")
 	return g.initialize(
 		configuration.GetString(prefix+"b2_account_id"),

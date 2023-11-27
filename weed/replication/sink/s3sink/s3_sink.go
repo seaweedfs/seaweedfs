@@ -122,11 +122,9 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 
 	bucket := s3sink.bucket
 
-	if isDirectory {
-		if s3sink.isBucketToBucket {
-			if IsKeyBucket(key) {
-				return s3sink.deleteBucketIfExists(key)
-			}
+	if isDirectory && s3sink.isBucketToBucket {
+		if IsKeyBucket(key) {
+			return s3sink.deleteBucketIfExists(key)
 		}
 		return nil
 	}
@@ -253,6 +251,7 @@ func (s3sink *S3Sink) createBucketIfNotExists(bucket string) error {
 
 		_, err := s3sink.conn.CreateBucket(createBucketInput)
 		if err != nil {
+			glog.Errorf("Creating %s bucket failed!", bucket)
 			return err
 		}
 
@@ -283,6 +282,7 @@ func (s3sink *S3Sink) deleteBucketIfExists(bucket string) error {
 
 	_, err = s3sink.conn.DeleteBucket(deleteBucketInput)
 	if err != nil {
+		glog.Errorf("Deleting %s bucket failed!", bucket)
 		return err
 	}
 
