@@ -50,6 +50,7 @@ endpoint = ""
 is_incremental = false
 is_bucket_to_bucket = false    # It will backup the whole buckets in the /buckets path to the specified S3.
                                # Each bucket will have its corresponding bucket in the backup S3.
+                               # Source path will be ignored and automatically set to /buckets and is incremental is always false
                                # Exclude paths on filer.backup command will only affect if they start with /buckets
 
 [sink.google_cloud_storage]

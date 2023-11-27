@@ -3,6 +3,7 @@ package command
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -95,9 +96,17 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	sourceFiler := pb.ServerAddress(*backupOption.filer)
 	sourcePath := *backupOption.path
 	if dataSink.IsBucketToBucket(){
+		if sourcePath != "/buckets" {
+			glog.Warning("source path changed from %v to /buckets because is_bucket_to_bucket is true\n", sourcePath)
+		}
 		sourcePath = "/buckets"
 	}
 	excludePaths := util.StringSplit(*backupOption.excludePaths, ",")
+	for _, excludedPath := range excludePaths {
+		if !strings.HasPrefix(excludedPath, "/buckets") {
+			fmt.Printf("%s does not start with /buckets ,it will be ignored\n", excludedPath)
+		}
+	}
 	var reExcludeFileName *regexp.Regexp
 	if *backupOption.excludeFileName != "" {
 		var err error
