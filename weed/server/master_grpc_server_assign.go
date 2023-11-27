@@ -91,7 +91,7 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	for time.Now().Sub(startTime) < maxTimeout {
 		fid, count, dnList, err := ms.Topo.PickForWrite(req.Count, option)
 		if err != nil {
-			glog.Warningf("PickForWrite error: %+v", err)
+			glog.Warningf("PickForWrite %+v: %v", req, err)
 			lastErr = err
 			time.Sleep(200 * time.Millisecond)
 			continue
