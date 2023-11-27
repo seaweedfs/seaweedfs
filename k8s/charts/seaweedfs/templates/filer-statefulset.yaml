@@ -52,16 +52,13 @@ spec:
       {{- end }}
       {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
       {{- if .Values.global.createClusterRole }}
-      serviceAccountName: seaweedfs-rw-sa #hack for delete pod master after migration
+      serviceAccountName: {{ .Values.filer.serviceAccountName | default .Values.global.serviceAccountName | quote }} # for deleting statefulset pods after migration
       {{- end }}
       terminationGracePeriodSeconds: 60
       {{- if .Values.filer.priorityClassName }}
       priorityClassName: {{ .Values.filer.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
-      {{- if .Values.filer.serviceAccountName }}
-      serviceAccountName: {{ .Values.filer.serviceAccountName | quote }}
-      {{- end }}
       {{- if .Values.filer.initContainers }}
       initContainers:
         {{ tpl .Values.filer.initContainers . | nindent 8 | trim }}
