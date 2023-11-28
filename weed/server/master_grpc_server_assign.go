@@ -90,33 +90,34 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 
 	for time.Now().Sub(startTime) < maxTimeout {
 		fid, count, dnList, err := ms.Topo.PickForWrite(req.Count, option)
-		if err == nil {
-			dn := dnList.Head()
-			var replicas []*master_pb.Location
-			for _, r := range dnList.Rest() {
-				replicas = append(replicas, &master_pb.Location{
-					Url:        r.Url(),
-					PublicUrl:  r.PublicUrl,
-					GrpcPort:   uint32(r.GrpcPort),
-					DataCenter: r.GetDataCenterId(),
-				})
-			}
-			return &master_pb.AssignResponse{
-				Fid: fid,
-				Location: &master_pb.Location{
-					Url:        dn.Url(),
-					PublicUrl:  dn.PublicUrl,
-					GrpcPort:   uint32(dn.GrpcPort),
-					DataCenter: dn.GetDataCenterId(),
-				},
-				Count:    count,
-				Auth:     string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
-				Replicas: replicas,
-			}, nil
+		if err != nil {
+			glog.Warningf("PickForWrite %+v: %v", req, err)
+			lastErr = err
+			time.Sleep(200 * time.Millisecond)
+			continue
 		}
-		//glog.V(4).Infoln("waiting for volume growing...")
-		lastErr = err
-		time.Sleep(200 * time.Millisecond)
+		dn := dnList.Head()
+		var replicas []*master_pb.Location
+		for _, r := range dnList.Rest() {
+			replicas = append(replicas, &master_pb.Location{
+				Url:        r.Url(),
+				PublicUrl:  r.PublicUrl,
+				GrpcPort:   uint32(r.GrpcPort),
+				DataCenter: r.GetDataCenterId(),
+			})
+		}
+		return &master_pb.AssignResponse{
+			Fid: fid,
+			Location: &master_pb.Location{
+				Url:        dn.Url(),
+				PublicUrl:  dn.PublicUrl,
+				GrpcPort:   uint32(dn.GrpcPort),
+				DataCenter: dn.GetDataCenterId(),
+			},
+			Count:    count,
+			Auth:     string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
+			Replicas: replicas,
+		}, nil
 	}
 	return nil, lastErr
 }
