@@ -95,18 +95,20 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 
 	sourceFiler := pb.ServerAddress(*backupOption.filer)
 	sourcePath := *backupOption.path
-	if dataSink.IsBucketToBucket(){
+	excludePaths := util.StringSplit(*backupOption.excludePaths, ",")
+	
+	if dataSink.GetName() == "s3" && dataSink.IsBucketToBucket() {
 		if sourcePath != "/buckets" {
 			glog.Warningf("source path changed from %v to /buckets because is_bucket_to_bucket is true\n", sourcePath)
 		}
 		sourcePath = "/buckets"
-	}
-	excludePaths := util.StringSplit(*backupOption.excludePaths, ",")
-	for _, excludedPath := range excludePaths {
-		if !strings.HasPrefix(excludedPath, "/buckets") {
-			glog.Warningf("%s does not start with /buckets ,it will be ignored\n", excludedPath)
+		for _, excludedPath := range excludePaths {
+			if !strings.HasPrefix(excludedPath, "/buckets") {
+				glog.Warningf("%s does not start with /buckets ,it will be ignored\n", excludedPath)
+			}
 		}
 	}
+	
 	var reExcludeFileName *regexp.Regexp
 	if *backupOption.excludeFileName != "" {
 		var err error
