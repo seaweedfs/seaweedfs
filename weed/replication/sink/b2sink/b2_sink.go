@@ -2,10 +2,8 @@ package B2Sink
 
 import (
 	"context"
-	"strings"
-
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
+	"strings"
 
 	"github.com/kurin/blazer/b2"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -21,7 +19,6 @@ type B2Sink struct {
 	dir           string
 	filerSource   *source.FilerSource
 	isIncremental bool
-	isBucketToBucket bool
 }
 
 func init() {
@@ -39,15 +36,8 @@ func (g *B2Sink) GetSinkToDirectory() string {
 func (g *B2Sink) IsIncremental() bool {
 	return g.isIncremental
 }
-func (g *B2Sink) IsBucketToBucket() bool {
-	return false
-}
-
 
 func (g *B2Sink) Initialize(configuration util.Configuration, prefix string) error {
-	if configuration.GetBool(prefix + "is_bucket_to_bucket") {
-		glog.Warning("is_bucket_to_bucket only works with s3.sink!, It will be ignored")
-	}
 	g.isIncremental = configuration.GetBool(prefix + "is_incremental")
 	return g.initialize(
 		configuration.GetString(prefix+"b2_account_id"),

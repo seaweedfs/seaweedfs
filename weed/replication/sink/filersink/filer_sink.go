@@ -32,7 +32,6 @@ type FilerSink struct {
 	address           string
 	writeChunkByFiler bool
 	isIncremental     bool
-	isBucketToBucket  bool
 	executor          *util.LimitedConcurrentExecutor
 	signature         int32
 }
@@ -53,14 +52,7 @@ func (fs *FilerSink) IsIncremental() bool {
 	return fs.isIncremental
 }
 
-func (fs *FilerSink) IsBucketToBucket() bool {
-	return false
-}
-
 func (fs *FilerSink) Initialize(configuration util.Configuration, prefix string) error {
-	if configuration.GetBool(prefix + "is_bucket_to_bucket") {
-		glog.Warning("is_bucket_to_bucket only works with s3.sink!, It will be ignored")
-	}
 	fs.isIncremental = configuration.GetBool(prefix + "is_incremental")
 	fs.dataCenter = configuration.GetString(prefix + "dataCenter")
 	fs.signature = util.RandomInt32()

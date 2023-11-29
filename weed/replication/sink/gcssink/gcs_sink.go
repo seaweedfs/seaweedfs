@@ -3,9 +3,8 @@ package gcssink
 import (
 	"context"
 	"fmt"
-	"os"
-
 	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
+	"os"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/option"
@@ -24,7 +23,6 @@ type GcsSink struct {
 	dir           string
 	filerSource   *source.FilerSource
 	isIncremental bool
-	isBucketToBucket bool
 }
 
 func init() {
@@ -42,14 +40,8 @@ func (g *GcsSink) GetSinkToDirectory() string {
 func (g *GcsSink) IsIncremental() bool {
 	return g.isIncremental
 }
-func (g *GcsSink) IsBucketToBucket() bool {
-	return false
-}
 
 func (g *GcsSink) Initialize(configuration util.Configuration, prefix string) error {
-	if configuration.GetBool(prefix + "is_bucket_to_bucket") {
-		glog.Warning("is_bucket_to_bucket only works with s3.sink!, It will be ignored")
-	}
 	g.isIncremental = configuration.GetBool(prefix + "is_incremental")
 	return g.initialize(
 		configuration.GetString(prefix+"google_application_credentials"),

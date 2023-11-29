@@ -28,7 +28,7 @@ type S3Sink struct {
 	acl           string
 	filerSource   *source.FilerSource
 	isIncremental bool
-	isBucketToBucket bool
+	SyncS3ToS3 bool
 }
 
 func init() {
@@ -47,19 +47,15 @@ func (s3sink *S3Sink) IsIncremental() bool {
 	return s3sink.isIncremental
 }
 
-func (s3sink *S3Sink) IsBucketToBucket() bool {
-	return s3sink.isBucketToBucket
-}
-
 func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string) error {
 	glog.V(0).Infof("sink.s3.region: %v", configuration.GetString(prefix+"region"))
 	glog.V(0).Infof("sink.s3.endpoint: %v", configuration.GetString(prefix+"endpoint"))
 	glog.V(0).Infof("sink.s3.acl: %v", configuration.GetString(prefix+"acl"))
-	glog.V(0).Infof("sink.s3.is_bucket_to_bucket: %v", configuration.GetString(prefix+"is_bucket_to_bucket"))
-	s3sink.isBucketToBucket = configuration.GetBool(prefix + "is_bucket_to_bucket")
+	glog.V(0).Infof("sink.s3.sync_s3_to_s3: %v", configuration.GetString(prefix+"sync_s3_to_s3"))
+	s3sink.SyncS3ToS3 = configuration.GetBool(prefix + "sync_s3_to_s3")
 	
-	if s3sink.isBucketToBucket {
-		glog.V(0).Info("sink.s3.is_bucket_to_bucket is true:\n	source path will be ignored and set to /buckets\n	is_incremental set to False")
+	if s3sink.SyncS3ToS3 {
+		glog.V(0).Info("sink.s3.sync_s3_to_s3 is true:\n	source path will be ignored and set to /buckets\n	is_incremental set to False")
 		s3sink.isIncremental = false
 		return s3sink.initialize(
 			configuration.GetString(prefix+"aws_access_key_id"),
@@ -122,14 +118,14 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 
 	bucket := s3sink.bucket
 
-	if isDirectory && s3sink.isBucketToBucket {
+	if isDirectory && s3sink.SyncS3ToS3 {
 		if IsKeyBucket(key) {
 			return s3sink.deleteBucketIfExists(key)
 		}
 		return nil
 	}
 
-	if s3sink.isBucketToBucket {
+	if s3sink.SyncS3ToS3 {
 		bucket = GetBucketFromKey(key)
 		key = RemoveBucketFromKey(key)
 	}
@@ -157,7 +153,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 	bucket := s3sink.bucket
 
 	if entry.IsDirectory {
-		if s3sink.isBucketToBucket {
+		if s3sink.SyncS3ToS3 {
 			if IsKeyBucket(key) {
 				return s3sink.createBucketIfNotExists(key)
 			}
@@ -165,7 +161,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 		return nil
 	}
 
-	if s3sink.isBucketToBucket {
+	if s3sink.SyncS3ToS3 {
 		bucket = GetBucketFromKey(key)
 		s3sink.createBucketIfNotExists(bucket)
 		key = RemoveBucketFromKey(key)

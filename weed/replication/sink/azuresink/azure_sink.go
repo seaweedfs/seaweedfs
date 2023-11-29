@@ -23,7 +23,6 @@ type AzureSink struct {
 	dir           string
 	filerSource   *source.FilerSource
 	isIncremental bool
-	isBucketToBucket bool
 }
 
 func init() {
@@ -41,14 +40,8 @@ func (g *AzureSink) GetSinkToDirectory() string {
 func (g *AzureSink) IsIncremental() bool {
 	return g.isIncremental
 }
-func (g *AzureSink) IsBucketToBucket() bool {
-	return false
-}
 
 func (g *AzureSink) Initialize(configuration util.Configuration, prefix string) error {
-	if configuration.GetBool(prefix + "is_bucket_to_bucket") {
-		glog.Warning("is_bucket_to_bucket only works with s3.sink!, It will be ignored")
-	}
 	g.isIncremental = configuration.GetBool(prefix + "is_incremental")
 	return g.initialize(
 		configuration.GetString(prefix+"account_name"),

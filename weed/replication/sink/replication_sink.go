@@ -15,7 +15,6 @@ type ReplicationSink interface {
 	GetSinkToDirectory() string
 	SetSourceFiler(s *source.FilerSource)
 	IsIncremental() bool
-	IsBucketToBucket() bool
 }
 
 var (

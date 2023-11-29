@@ -97,9 +97,9 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	sourcePath := *backupOption.path
 	excludePaths := util.StringSplit(*backupOption.excludePaths, ",")
 	
-	if dataSink.GetName() == "s3" && dataSink.IsBucketToBucket() {
+	if config.GetBool("sink.s3.enabled") && config.GetBool("sink.s3.sync_s3_to_s3") {
 		if sourcePath != "/buckets" {
-			glog.Warningf("source path changed from %v to /buckets because is_bucket_to_bucket is true\n", sourcePath)
+			glog.Warningf("source path changed from %v to /buckets because sync_s3_to_s3 is true\n", sourcePath)
 		}
 		sourcePath = "/buckets"
 		for _, excludedPath := range excludePaths {
