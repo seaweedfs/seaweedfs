@@ -3,6 +3,7 @@ package mysql
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -30,6 +31,7 @@ func (store *MysqlStore) GetName() string {
 
 func (store *MysqlStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return store.initialize(
+		configuration.GetString(prefix+"dsn"),
 		configuration.GetString(prefix+"upsertQuery"),
 		configuration.GetBool(prefix+"enableUpsert"),
 		configuration.GetString(prefix+"username"),
@@ -44,7 +46,7 @@ func (store *MysqlStore) Initialize(configuration util.Configuration, prefix str
 	)
 }
 
-func (store *MysqlStore) initialize(upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database string, maxIdle, maxOpen,
+func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert bool, user, password, hostname string, port int, database string, maxIdle, maxOpen,
 	maxLifetimeSeconds int, interpolateParams bool) (err error) {
 
 	store.SupportBucketTable = false
@@ -57,19 +59,19 @@ func (store *MysqlStore) initialize(upsertQuery string, enableUpsert bool, user,
 		UpsertQueryTemplate:    upsertQuery,
 	}
 
-	sqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, password, hostname, port, database)
-	adaptedSqlUrl := fmt.Sprintf(CONNECTION_URL_PATTERN, user, "<ADAPTED>", hostname, port, database)
-	if interpolateParams {
-		sqlUrl += "&interpolateParams=true"
-		adaptedSqlUrl += "&interpolateParams=true"
+	if dsn == "" {
+		dsn = fmt.Sprintf(CONNECTION_URL_PATTERN, user, password, hostname, port, database)
+		if interpolateParams {
+			dsn += "&interpolateParams=true"
+		}
 	}
 
 	var dbErr error
-	store.DB, dbErr = sql.Open("mysql", sqlUrl)
+	store.DB, dbErr = sql.Open("mysql", dsn)
 	if dbErr != nil {
 		store.DB.Close()
 		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", adaptedSqlUrl, err)
+		return fmt.Errorf("can not connect to %s error:%v", strings.ReplaceAll(dsn, password, "<ADAPTED>"), err)
 	}
 
 	store.DB.SetMaxIdleConns(maxIdle)
@@ -77,7 +79,7 @@ func (store *MysqlStore) initialize(upsertQuery string, enableUpsert bool, user,
 	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
 
 	if err = store.DB.Ping(); err != nil {
-		return fmt.Errorf("connect to %s error:%v", sqlUrl, err)
+		return fmt.Errorf("connect to %s error:%v", strings.ReplaceAll(dsn, password, "<ADAPTED>"), err)
 	}
 
 	return nil
