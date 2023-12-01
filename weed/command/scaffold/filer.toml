@@ -51,6 +51,9 @@ dbFile = "./filer.db"                # sqlite db file
 # ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 enabled = false
+# dsn will take priority over "hostname, port, username, password, database".
+# [username[:password]@][protocol[(address)]]/dbname[?param1=value1&...&paramN=valueN]
+dsn = "root@tcp(localhost:3306)/seaweedfs?collation=utf8mb4_bin"
 hostname = "localhost"
 port = 3306
 username = "root"
@@ -60,8 +63,6 @@ connection_max_idle = 2
 connection_max_open = 100
 connection_max_lifetime_seconds = 0
 interpolateParams = false
-#     [username[:password]@][protocol[(address)]]/dbname[?param1=value1&...&paramN=valueN]
-dsn = "root@tcp(localhost:3306)/seaweedfs?collation=utf8mb4_bin"
 # if insert/upsert failing, you can disable upsert or update query syntax to match your RDBMS syntax:
 enableUpsert = true
 upsertQuery = """INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES (?,?,?,?) AS `new` ON DUPLICATE KEY UPDATE `meta` = `new`.`meta`"""
