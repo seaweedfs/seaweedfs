@@ -83,6 +83,14 @@ func GetJwt(r *http.Request) EncodedJwt {
 		}
 	}
 
+	// Get token from http only cookie
+	if tokenStr == "" {
+		token, err := r.Cookie("AT")
+		if err == nil {
+			tokenStr = token.Value
+		}
+	}
+
 	return EncodedJwt(tokenStr)
 }
 
