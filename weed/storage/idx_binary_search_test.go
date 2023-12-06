@@ -32,6 +32,9 @@ func TestFirstInvalidIndex(t *testing.T) {
 		}
 	}
 	b, err := os.ReadFile(v.IndexFileName() + ".idx")
+	if err != nil {
+		t.Fatal(err)
+	}
 	// base case every record is valid -> nothing is filtered
 	index, err := idx.FirstInvalidIndex(b, func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
 		return true, nil
@@ -43,16 +46,25 @@ func TestFirstInvalidIndex(t *testing.T) {
 	index, err = idx.FirstInvalidIndex(b, func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
 		return false, nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	assert.Equal(t, 0, index, "when every record is invalid everything should be filtered from binary search")
 	index, err = idx.FirstInvalidIndex(b, func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
 		return key < 20, nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	// needle key range from 1 to 30 so < 20 means 19 keys are valid and cutoff the bytes at 19 * 16 = 304
 	assert.Equal(t, 19, index, "when every record is invalid everything should be filtered from binary search")
 
 	index, err = idx.FirstInvalidIndex(b, func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
 		return key <= 1, nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	// needle key range from 1 to 30 so <=1 1 means 1 key is valid and cutoff the bytes at 1 * 16 = 16
 	assert.Equal(t, 1, index, "when every record is invalid everything should be filtered from binary search")
 }
