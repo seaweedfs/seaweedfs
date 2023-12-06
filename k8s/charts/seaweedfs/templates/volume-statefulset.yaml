@@ -218,8 +218,6 @@ spec:
           resources:
             {{ tpl .Values.volume.resources . | nindent 12 | trim }}
           {{- end }}
-      {{- $hostpath_exists := include "volume.hostpath_exists" . -}}
-      {{- if $hostpath_exists }}
       volumes:
         {{- if eq .Values.volume.data.type "hostPath" }}
         - name: data
@@ -276,7 +274,6 @@ spec:
         {{- end }}
       {{- if .Values.volume.extraVolumes }}
         {{ tpl .Values.volume.extraVolumes . | indent 8 | trim }}
-      {{- end }}
       {{- end }}
       {{- if .Values.volume.nodeSelector }}
       nodeSelector:
