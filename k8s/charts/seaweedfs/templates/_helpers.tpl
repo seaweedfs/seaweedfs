@@ -122,19 +122,6 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 {{- end -}}
 
-{{/* check if any Volume HostPath exists */}}
-{{- define "volume.hostpath_exists" -}}
-{{- if or (or (eq .Values.volume.data.type "hostPath") (and (eq .Values.volume.idx.type "hostPath") .Values.volume.dir_idx )) (eq .Values.volume.logs.type "hostPath") -}}
-{{- printf "true" -}}
-{{- else -}}
-{{- if or .Values.global.enableSecurity .Values.volume.extraVolumes -}}
-{{- printf "true" -}}
-{{- else -}}
-{{- printf "" -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-
 {{/* check if any Filer PVC exists */}}
 {{- define "filer.pvc_exists" -}}
 {{- if or (eq .Values.filer.data.type "persistentVolumeClaim") (eq .Values.filer.logs.type "persistentVolumeClaim") -}}
@@ -144,40 +131,9 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 {{- end -}}
 
-{{/* check if any Filer HostPath exists */}}
-{{- define "filer.hostpath_exists" -}}
-{{- if or (eq .Values.filer.data.type "hostPath") (eq .Values.filer.logs.type "hostPath") -}}
-{{- printf "true" -}}
-{{- else -}}
-{{- printf "" -}}
-{{- end -}}
-{{- end -}}
-
 {{/* check if any Master PVC exists */}}
 {{- define "master.pvc_exists" -}}
 {{- if or (eq .Values.master.data.type "persistentVolumeClaim") (eq .Values.master.logs.type "persistentVolumeClaim") -}}
-{{- printf "true" -}}
-{{- else -}}
-{{- printf "" -}}
-{{- end -}}
-{{- end -}}
-
-{{/* check if any Master HostPath exists */}}
-{{- define "master.hostpath_exists" -}}
-{{- if or (eq .Values.master.data.type "hostPath") (eq .Values.master.logs.type "hostPath") -}}
-{{- printf "true" -}}
-{{- else -}}
-{{- if or .Values.global.enableSecurity .Values.volume.extraVolumes -}}
-{{- printf "true" -}}
-{{- else -}}
-{{- printf "" -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-
-{{/* check if any Master existingClaim is defined */}}
-{{- define "master.existing_claims" -}}
-{{- if or (eq .Values.master.data.type "existingClaim") (eq .Values.master.logs.type "existingClaim") -}}
 {{- printf "true" -}}
 {{- else -}}
 {{- printf "" -}}
