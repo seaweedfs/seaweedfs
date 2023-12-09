@@ -3,6 +3,7 @@ package mysql
 import (
 	"database/sql"
 	"fmt"
+	"github.com/go-sql-driver/mysql"
 	"strings"
 	"time"
 
@@ -65,13 +66,17 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 			dsn += "&interpolateParams=true"
 		}
 	}
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return fmt.Errorf("can not parse DSN error:%v", err)
+	}
 
 	var dbErr error
 	store.DB, dbErr = sql.Open("mysql", dsn)
 	if dbErr != nil {
 		store.DB.Close()
 		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", strings.ReplaceAll(dsn, password, "<ADAPTED>"), err)
+		return fmt.Errorf("can not connect to %s error:%v", strings.ReplaceAll(dsn, cfg.Passwd, "<ADAPTED>"), err)
 	}
 
 	store.DB.SetMaxIdleConns(maxIdle)
@@ -79,7 +84,7 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
 
 	if err = store.DB.Ping(); err != nil {
-		return fmt.Errorf("connect to %s error:%v", strings.ReplaceAll(dsn, password, "<ADAPTED>"), err)
+		return fmt.Errorf("connect to %s error:%v", strings.ReplaceAll(dsn, cfg.Passwd, "<ADAPTED>"), err)
 	}
 
 	return nil
