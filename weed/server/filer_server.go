@@ -171,7 +171,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	if isFresh {
 		glog.V(0).Infof("%s bootstrap from peers %+v", option.Host, existingNodes)
 		if err := fs.filer.MaybeBootstrapFromPeers(option.Host, existingNodes, startFromTime); err != nil {
-			glog.Fatalf("%s bootstrap from %+v", option.Host, existingNodes)
+			glog.Fatalf("%s bootstrap from %+v: %v", option.Host, existingNodes, err)
 		}
 	}
 	fs.filer.AggregateFromPeers(option.Host, existingNodes, startFromTime)
