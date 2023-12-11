@@ -4,7 +4,7 @@ package messaging_pb;
 
 option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/mq_pb";
 option java_package = "seaweedfs.mq";
-option java_outer_classname = "MessagQueueProto";
+option java_outer_classname = "MessageQueueProto";
 
 //////////////////////////////////////////////////
 
@@ -13,48 +13,38 @@ service SeaweedMessaging {
     // control plane
     rpc FindBrokerLeader (FindBrokerLeaderRequest) returns (FindBrokerLeaderResponse) {
     }
-    rpc AssignSegmentBrokers (AssignSegmentBrokersRequest) returns (AssignSegmentBrokersResponse) {
-    }
-    rpc CheckSegmentStatus (CheckSegmentStatusRequest) returns (CheckSegmentStatusResponse) {
-    }
-    rpc CheckBrokerLoad (CheckBrokerLoadRequest) returns (CheckBrokerLoadResponse) {
-    }
 
     // control plane for balancer
-    rpc ConnectToBalancer (stream ConnectToBalancerRequest) returns (stream ConnectToBalancerResponse) {
+    rpc PublisherToPubBalancer (stream PublisherToPubBalancerRequest) returns (stream PublisherToPubBalancerResponse) {
     }
-    rpc DoConfigureTopic (DoConfigureTopicRequest) returns (DoConfigureTopicResponse) {
+    rpc BalanceTopics (BalanceTopicsRequest) returns (BalanceTopicsResponse) {
     }
+
     // control plane for topic partitions
-    rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
+    rpc ListTopics (ListTopicsRequest) returns (ListTopicsResponse) {
     }
     rpc ConfigureTopic (ConfigureTopicRequest) returns (ConfigureTopicResponse) {
     }
-    rpc ListTopics (ListTopicsRequest) returns (ListTopicsResponse) {
-    }
-    // a pub client will call this to get the topic partitions assignment
-    rpc RequestTopicPartitions (RequestTopicPartitionsRequest) returns (RequestTopicPartitionsResponse) {
-    }
-    rpc AssignTopicPartitions (AssignTopicPartitionsRequest) returns (AssignTopicPartitionsResponse) {
-    }
-    rpc CheckTopicPartitionsStatus (CheckTopicPartitionsStatusRequest) returns (CheckTopicPartitionsStatusResponse) {
+    rpc LookupTopicBrokers (LookupTopicBrokersRequest) returns (LookupTopicBrokersResponse) {
     }
 
-    // data plane
+    // invoked by the balancer, running on each broker
+    rpc AssignTopicPartitions (AssignTopicPartitionsRequest) returns (AssignTopicPartitionsResponse) {
+    }
+    rpc ClosePublishers(ClosePublishersRequest) returns (ClosePublishersResponse) {
+    }
+    rpc CloseSubscribers(CloseSubscribersRequest) returns (CloseSubscribersResponse) {
+    }
+
+    // subscriber connects to broker balancer, which coordinates with the subscribers
+    rpc SubscriberToSubCoordinator (stream SubscriberToSubCoordinatorRequest) returns (stream SubscriberToSubCoordinatorResponse) {
+    }
+
+    // data plane for each topic partition
     rpc Publish (stream PublishRequest) returns (stream PublishResponse) {
     }
     rpc Subscribe (SubscribeRequest) returns (stream SubscribeResponse) {
     }
-}
-
-//////////////////////////////////////////////////
-message SegmentInfo {
-    Segment segment = 1;
-    int64 start_ts_ns = 2;
-    repeated string brokers = 3;
-    int64 stop_ts_ns = 4;
-    repeated int32 previous_segments = 5;
-    repeated int32 next_segments = 6;
 }
 
 //////////////////////////////////////////////////
@@ -75,38 +65,7 @@ message Partition {
     int32 ring_size = 1;
     int32 range_start = 2;
     int32 range_stop = 3;
-}
-
-message Segment {
-    string namespace = 1;
-    string topic = 2;
-    int32 id = 3;
-    Partition partition = 4;
-}
-
-message AssignSegmentBrokersRequest {
-    Segment segment = 1;
-}
-
-message AssignSegmentBrokersResponse {
-    repeated string brokers = 1;
-}
-
-message CheckSegmentStatusRequest {
-    Segment segment = 1;
-}
-
-message CheckSegmentStatusResponse {
-    bool is_active = 1;
-}
-
-message CheckBrokerLoadRequest {
-}
-
-message CheckBrokerLoadResponse {
-    int64 message_count = 1;
-    int64 bytes_count = 2;
-
+    int64 unix_time_ns = 4;
 }
 
 //////////////////////////////////////////////////
@@ -122,7 +81,7 @@ message TopicPartitionStats {
 }
 
 
-message ConnectToBalancerRequest {
+message PublisherToPubBalancerRequest {
     message InitMessage {
         string broker = 1;
     }
@@ -131,8 +90,14 @@ message ConnectToBalancerRequest {
         BrokerStats stats = 2;
     }
 }
-message ConnectToBalancerResponse {
+message PublisherToPubBalancerResponse {
 }
+
+message BalanceTopicsRequest {
+}
+message BalanceTopicsResponse {
+}
+
 //////////////////////////////////////////////////
 message ConfigureTopicRequest {
     Topic topic = 1;
@@ -140,12 +105,6 @@ message ConfigureTopicRequest {
 }
 message ConfigureTopicResponse {
     repeated BrokerPartitionAssignment broker_partition_assignments = 2;
-}
-message DoConfigureTopicRequest {
-    Topic topic = 1;
-    Partition partition = 2;
-}
-message DoConfigureTopicResponse {
 }
 message ListTopicsRequest {
 }
@@ -166,36 +125,49 @@ message BrokerPartitionAssignment {
     repeated string follower_brokers = 3;
 }
 
-message RequestTopicPartitionsRequest {
-    Topic topic = 1;
-    int32 partition_count = 2;
-}
-message RequestTopicPartitionsResponse {
-    repeated BrokerPartitionAssignment broker_partition_assignments = 1;
-}
-
 message AssignTopicPartitionsRequest {
     Topic topic = 1;
     repeated BrokerPartitionAssignment broker_partition_assignments = 2;
     bool is_leader = 3;
+    bool is_draining = 4;
 }
 message AssignTopicPartitionsResponse {
 }
 
-message CheckTopicPartitionsStatusRequest {
-    string namespace = 1;
-    string topic = 2;
-    BrokerPartitionAssignment broker_partition_assignment = 3;
-    bool should_cancel_if_not_match = 4;
+message SubscriberToSubCoordinatorRequest {
+    message InitMessage {
+        string consumer_group = 1;
+        string consumer_instance_id = 2;
+        Topic topic = 3;
+    }
+    message AckMessage {
+        Partition partition = 1;
+        int64 ts_ns = 2;
+    }
+    oneof message {
+        InitMessage init = 1;
+        AckMessage ack = 2;
+    }
 }
-message CheckTopicPartitionsStatusResponse {
-    repeated BrokerPartitionAssignment broker_partition_assignments = 1;
+message SubscriberToSubCoordinatorResponse {
+    message AssignedPartition {
+        Partition partition = 1;
+        int64 ts_ns = 2;
+    }
+    message Assignment {
+        int64 generation = 1;
+        repeated AssignedPartition assigned_partitions = 2;
+    }
+    oneof message {
+        Assignment assignment = 1;
+    }
 }
 
 //////////////////////////////////////////////////
 message DataMessage {
     bytes key = 1;
     bytes value = 2;
+    int64 ts_ns = 3;
 }
 message PublishRequest {
     message InitMessage {
@@ -212,7 +184,7 @@ message PublishRequest {
 message PublishResponse {
     int64 ack_sequence = 1;
     string error = 2;
-    string redirect_to_broker = 3;
+    bool should_close = 3;
 }
 message SubscribeRequest {
     message InitMessage {
@@ -245,4 +217,16 @@ message SubscribeResponse {
         CtrlMessage ctrl = 1;
         DataMessage data = 2;
     }
+}
+message ClosePublishersRequest {
+    Topic topic = 1;
+    int64 unix_time_ns = 2;
+}
+message ClosePublishersResponse {
+}
+message CloseSubscribersRequest {
+    Topic topic = 1;
+    int64 unix_time_ns = 2;
+}
+message CloseSubscribersResponse {
 }

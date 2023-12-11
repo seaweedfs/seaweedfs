@@ -1,7 +1,8 @@
-package balancer
+package pub_balancer
 
 import (
 	cmap "github.com/orcaman/concurrent-map/v2"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"math/rand"
 )
@@ -30,6 +31,7 @@ func allocateTopicPartitions(brokers cmap.ConcurrentMap[string, *BrokerStats], p
 	for i, assignment := range assignments {
 		assignment.LeaderBroker = pickedBrokers[i]
 	}
+	glog.V(0).Infof("allocate topic partitions %d: %v", len(assignments), assignments)
 	return
 }
 

@@ -4,21 +4,22 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/mq/balancer"
+	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"io"
 	"math/rand"
 	"time"
 )
 
 // BrokerConnectToBalancer connects to the broker balancer and sends stats
-func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
+func (b *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 	// find the lock owner
 	var brokerBalancer string
-	err := broker.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err := b.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.FindLockOwner(context.Background(), &filer_pb.FindLockOwnerRequest{
-			Name: balancer.LockBrokerBalancer,
+			Name: pub_balancer.LockBrokerBalancer,
 		})
 		if err != nil {
 			return err
@@ -29,7 +30,7 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 	if err != nil {
 		return err
 	}
-	broker.currentBalancer = pb.ServerAddress(brokerBalancer)
+	b.currentBalancer = pb.ServerAddress(brokerBalancer)
 
 	glog.V(0).Infof("broker %s found balancer %s", self, brokerBalancer)
 	if brokerBalancer == "" {
@@ -37,15 +38,15 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 	}
 
 	// connect to the lock owner
-	err = pb.WithBrokerGrpcClient(false, brokerBalancer, broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
-		stream, err := client.ConnectToBalancer(context.Background())
+	err = pb.WithBrokerGrpcClient(false, brokerBalancer, b.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+		stream, err := client.PublisherToPubBalancer(context.Background())
 		if err != nil {
 			return fmt.Errorf("connect to balancer %v: %v", brokerBalancer, err)
 		}
 		defer stream.CloseSend()
-		err = stream.Send(&mq_pb.ConnectToBalancerRequest{
-			Message: &mq_pb.ConnectToBalancerRequest_Init{
-				Init: &mq_pb.ConnectToBalancerRequest_InitMessage{
+		err = stream.Send(&mq_pb.PublisherToPubBalancerRequest{
+			Message: &mq_pb.PublisherToPubBalancerRequest_Init{
+				Init: &mq_pb.PublisherToPubBalancerRequest_InitMessage{
 					Broker: self,
 				},
 			},
@@ -55,13 +56,16 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 		}
 
 		for {
-			stats := broker.localTopicManager.CollectStats(time.Second * 5)
-			err = stream.Send(&mq_pb.ConnectToBalancerRequest{
-				Message: &mq_pb.ConnectToBalancerRequest_Stats{
+			stats := b.localTopicManager.CollectStats(time.Second * 5)
+			err = stream.Send(&mq_pb.PublisherToPubBalancerRequest{
+				Message: &mq_pb.PublisherToPubBalancerRequest_Stats{
 					Stats: stats,
 				},
 			})
 			if err != nil {
+				if err == io.EOF {
+					return err
+				}
 				return fmt.Errorf("send stats message: %v", err)
 			}
 			glog.V(3).Infof("sent stats: %+v", stats)
