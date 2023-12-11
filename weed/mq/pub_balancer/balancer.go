@@ -53,6 +53,8 @@ func (balancer *Balancer) OnBrokerConnected(broker string) (brokerStats *BrokerS
 
 func (balancer *Balancer) OnBrokerDisconnected(broker string, stats *BrokerStats) {
 	balancer.Brokers.Remove(broker)
+
+	// update TopicToBrokers
 	for _, topic := range stats.Topics {
 		partitionSlotToBrokerList, found := balancer.TopicToBrokers.Get(topic.String())
 		if !found {
@@ -64,6 +66,8 @@ func (balancer *Balancer) OnBrokerDisconnected(broker string, stats *BrokerStats
 
 func (balancer *Balancer) OnBrokerStatsUpdated(broker string, brokerStats *BrokerStats, receivedStats *mq_pb.BrokerStats) {
 	brokerStats.UpdateStats(receivedStats)
+
+	// update TopicToBrokers
 	for _, topicPartitionStats := range receivedStats.Stats {
 		topic := topicPartitionStats.Topic
 		partition := topicPartitionStats.Partition
