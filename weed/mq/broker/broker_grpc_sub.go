@@ -10,11 +10,11 @@ import (
 	"time"
 )
 
-func (broker *MessageQueueBroker) Subscribe(req *mq_pb.SubscribeRequest, stream mq_pb.SeaweedMessaging_SubscribeServer) error {
+func (b *MessageQueueBroker) Subscribe(req *mq_pb.SubscribeRequest, stream mq_pb.SeaweedMessaging_SubscribeServer) error {
 
 	t := topic.FromPbTopic(req.GetInit().Topic)
 	partition := topic.FromPbPartition(req.GetInit().Partition)
-	localTopicPartition := broker.localTopicManager.GetTopicPartition(t, partition)
+	localTopicPartition := b.localTopicManager.GetTopicPartition(t, partition)
 	if localTopicPartition == nil {
 		stream.Send(&mq_pb.SubscribeResponse{
 			Message: &mq_pb.SubscribeResponse_Ctrl{

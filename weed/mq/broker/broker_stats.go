@@ -14,10 +14,10 @@ import (
 )
 
 // BrokerConnectToBalancer connects to the broker balancer and sends stats
-func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
+func (b *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 	// find the lock owner
 	var brokerBalancer string
-	err := broker.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err := b.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.FindLockOwner(context.Background(), &filer_pb.FindLockOwnerRequest{
 			Name: pub_balancer.LockBrokerBalancer,
 		})
@@ -30,7 +30,7 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 	if err != nil {
 		return err
 	}
-	broker.currentBalancer = pb.ServerAddress(brokerBalancer)
+	b.currentBalancer = pb.ServerAddress(brokerBalancer)
 
 	glog.V(0).Infof("broker %s found balancer %s", self, brokerBalancer)
 	if brokerBalancer == "" {
@@ -38,7 +38,7 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 	}
 
 	// connect to the lock owner
-	err = pb.WithBrokerGrpcClient(false, brokerBalancer, broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+	err = pb.WithBrokerGrpcClient(false, brokerBalancer, b.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 		stream, err := client.PublisherToPubBalancer(context.Background())
 		if err != nil {
 			return fmt.Errorf("connect to balancer %v: %v", brokerBalancer, err)
@@ -56,7 +56,7 @@ func (broker *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 		}
 
 		for {
-			stats := broker.localTopicManager.CollectStats(time.Second * 5)
+			stats := b.localTopicManager.CollectStats(time.Second * 5)
 			err = stream.Send(&mq_pb.PublisherToPubBalancerRequest{
 				Message: &mq_pb.PublisherToPubBalancerRequest_Stats{
 					Stats: stats,

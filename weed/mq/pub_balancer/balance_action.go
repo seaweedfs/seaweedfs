@@ -11,11 +11,11 @@ import (
 // Balancer <= PublisherToPubBalancer() <= Broker <=> Publish()
 // ExecuteBalanceActionMove from Balancer => AssignTopicPartitions() => Broker => Publish()
 
-func (b *Balancer) ExecuteBalanceActionMove(move *BalanceActionMove, grpcDialOption grpc.DialOption) error {
-	if _, found := b.Brokers.Get(move.SourceBroker); !found {
+func (balancer *Balancer) ExecuteBalanceActionMove(move *BalanceActionMove, grpcDialOption grpc.DialOption) error {
+	if _, found := balancer.Brokers.Get(move.SourceBroker); !found {
 		return fmt.Errorf("source broker %s not found", move.SourceBroker)
 	}
-	if _, found := b.Brokers.Get(move.TargetBroker); !found {
+	if _, found := balancer.Brokers.Get(move.TargetBroker); !found {
 		return fmt.Errorf("target broker %s not found", move.TargetBroker)
 	}
 

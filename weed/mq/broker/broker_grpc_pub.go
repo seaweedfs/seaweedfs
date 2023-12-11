@@ -34,7 +34,7 @@ import (
 // Subscribers needs to listen for new partitions and connect to the brokers.
 // Each subscription may not get data. It can act as a backup.
 
-func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishServer) error {
+func (b *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishServer) error {
 	// 1. write to the volume server
 	// 2. find the topic metadata owning filer
 	// 3. write to the filer
@@ -50,7 +50,7 @@ func (broker *MessageQueueBroker) Publish(stream mq_pb.SeaweedMessaging_PublishS
 	initMessage := req.GetInit()
 	if initMessage != nil {
 		t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
-		localTopicPartition = broker.localTopicManager.GetTopicPartition(t, p)
+		localTopicPartition = b.localTopicManager.GetTopicPartition(t, p)
 		if localTopicPartition == nil {
 			response.Error = fmt.Sprintf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
 			glog.Errorf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)

@@ -14,12 +14,12 @@ import (
 // ConfigureTopic Runs on any broker, but proxied to the balancer if not the balancer
 // It generates an assignments based on existing allocations,
 // and then assign the partitions to the brokers.
-func (broker *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.ConfigureTopicRequest) (resp *mq_pb.ConfigureTopicResponse, err error) {
-	if broker.currentBalancer == "" {
+func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.ConfigureTopicRequest) (resp *mq_pb.ConfigureTopicResponse, err error) {
+	if b.currentBalancer == "" {
 		return nil, status.Errorf(codes.Unavailable, "no balancer")
 	}
-	if !broker.lockAsBalancer.IsLocked() {
-		proxyErr := broker.withBrokerClient(false, broker.currentBalancer, func(client mq_pb.SeaweedMessagingClient) error {
+	if !b.lockAsBalancer.IsLocked() {
+		proxyErr := b.withBrokerClient(false, b.currentBalancer, func(client mq_pb.SeaweedMessagingClient) error {
 			resp, err = client.ConfigureTopic(ctx, request)
 			return nil
 		})
@@ -30,11 +30,11 @@ func (broker *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *m
 	}
 
 	ret := &mq_pb.ConfigureTopicResponse{}
-	ret.BrokerPartitionAssignments, err = broker.Balancer.LookupOrAllocateTopicPartitions(request.Topic, true, request.PartitionCount)
+	ret.BrokerPartitionAssignments, err = b.Balancer.LookupOrAllocateTopicPartitions(request.Topic, true, request.PartitionCount)
 
 	for _, bpa := range ret.BrokerPartitionAssignments {
 		// fmt.Printf("create topic %s on %s\n", request.Topic, bpa.LeaderBroker)
-		if doCreateErr := broker.withBrokerClient(false, pb.ServerAddress(bpa.LeaderBroker), func(client mq_pb.SeaweedMessagingClient) error {
+		if doCreateErr := b.withBrokerClient(false, pb.ServerAddress(bpa.LeaderBroker), func(client mq_pb.SeaweedMessagingClient) error {
 			_, doCreateErr := client.AssignTopicPartitions(ctx, &mq_pb.AssignTopicPartitionsRequest{
 				Topic: request.Topic,
 				BrokerPartitionAssignments: []*mq_pb.BrokerPartitionAssignment{
@@ -48,11 +48,11 @@ func (broker *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *m
 			if doCreateErr != nil {
 				return fmt.Errorf("do create topic %s on %s: %v", request.Topic, bpa.LeaderBroker, doCreateErr)
 			}
-			brokerStats, found := broker.Balancer.Brokers.Get(bpa.LeaderBroker)
+			brokerStats, found := b.Balancer.Brokers.Get(bpa.LeaderBroker)
 			if !found {
 				brokerStats = pub_balancer.NewBrokerStats()
-				if !broker.Balancer.Brokers.SetIfAbsent(bpa.LeaderBroker, brokerStats) {
-					brokerStats, _ = broker.Balancer.Brokers.Get(bpa.LeaderBroker)
+				if !b.Balancer.Brokers.SetIfAbsent(bpa.LeaderBroker, brokerStats) {
+					brokerStats, _ = b.Balancer.Brokers.Get(bpa.LeaderBroker)
 				}
 			}
 			brokerStats.RegisterAssignment(request.Topic, bpa.Partition)
@@ -68,9 +68,9 @@ func (broker *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *m
 }
 
 // AssignTopicPartitions Runs on the assigned broker, to execute the topic partition assignment
-func (broker *MessageQueueBroker) AssignTopicPartitions(c context.Context, request *mq_pb.AssignTopicPartitionsRequest) (*mq_pb.AssignTopicPartitionsResponse, error) {
+func (b *MessageQueueBroker) AssignTopicPartitions(c context.Context, request *mq_pb.AssignTopicPartitionsRequest) (*mq_pb.AssignTopicPartitionsResponse, error) {
 	ret := &mq_pb.AssignTopicPartitionsResponse{}
-	self := pb.ServerAddress(fmt.Sprintf("%s:%d", broker.option.Ip, broker.option.Port))
+	self := pb.ServerAddress(fmt.Sprintf("%s:%d", b.option.Ip, b.option.Port))
 
 	// drain existing topic partition subscriptions
 	for _, brokerPartition := range request.BrokerPartitionAssignments {
@@ -78,11 +78,11 @@ func (broker *MessageQueueBroker) AssignTopicPartitions(c context.Context, reque
 		if request.IsDraining {
 			// TODO drain existing topic partition subscriptions
 
-			broker.localTopicManager.RemoveTopicPartition(
+			b.localTopicManager.RemoveTopicPartition(
 				topic.FromPbTopic(request.Topic),
 				localPartition.Partition)
 		} else {
-			broker.localTopicManager.AddTopicPartition(
+			b.localTopicManager.AddTopicPartition(
 				topic.FromPbTopic(request.Topic),
 				localPartition)
 		}
@@ -92,7 +92,7 @@ func (broker *MessageQueueBroker) AssignTopicPartitions(c context.Context, reque
 	if request.IsLeader {
 		for _, brokerPartition := range request.BrokerPartitionAssignments {
 			for _, follower := range brokerPartition.FollowerBrokers {
-				err := pb.WithBrokerGrpcClient(false, follower, broker.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+				err := pb.WithBrokerGrpcClient(false, follower, b.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 					_, err := client.AssignTopicPartitions(context.Background(), request)
 					return err
 				})

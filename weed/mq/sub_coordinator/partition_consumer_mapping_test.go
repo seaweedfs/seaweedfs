@@ -10,12 +10,12 @@ func Test_doBalanceSticky(t *testing.T) {
 	type args struct {
 		partitions          []*topic.Partition
 		consumerInstanceIds []string
-		prevMapping         *PartitionSlotList
+		prevMapping         *PartitionSlotToConsumerInstanceList
 	}
 	tests := []struct {
 		name               string
 		args               args
-		wantPartitionSlots []*PartitionSlot
+		wantPartitionSlots []*PartitionSlotToConsumerInstance
 	}{
 		{
 			name: "1 consumer instance, 1 partition",
@@ -29,7 +29,7 @@ func Test_doBalanceSticky(t *testing.T) {
 				consumerInstanceIds: []string{"consumer-instance-1"},
 				prevMapping:         nil,
 			},
-			wantPartitionSlots: []*PartitionSlot{
+			wantPartitionSlots: []*PartitionSlotToConsumerInstance{
 				{
 					RangeStart:         0,
 					RangeStop:          100,
@@ -49,7 +49,7 @@ func Test_doBalanceSticky(t *testing.T) {
 				consumerInstanceIds: []string{"consumer-instance-1", "consumer-instance-2"},
 				prevMapping:         nil,
 			},
-			wantPartitionSlots: []*PartitionSlot{
+			wantPartitionSlots: []*PartitionSlotToConsumerInstance{
 				{
 					RangeStart:         0,
 					RangeStop:          100,
@@ -73,7 +73,7 @@ func Test_doBalanceSticky(t *testing.T) {
 				consumerInstanceIds: []string{"consumer-instance-1"},
 				prevMapping:         nil,
 			},
-			wantPartitionSlots: []*PartitionSlot{
+			wantPartitionSlots: []*PartitionSlotToConsumerInstance{
 				{
 					RangeStart:         0,
 					RangeStop:          50,
@@ -102,7 +102,7 @@ func Test_doBalanceSticky(t *testing.T) {
 				consumerInstanceIds: []string{"consumer-instance-1", "consumer-instance-2"},
 				prevMapping:         nil,
 			},
-			wantPartitionSlots: []*PartitionSlot{
+			wantPartitionSlots: []*PartitionSlotToConsumerInstance{
 				{
 					RangeStart:         0,
 					RangeStop:          50,
@@ -129,8 +129,8 @@ func Test_doBalanceSticky(t *testing.T) {
 					},
 				},
 				consumerInstanceIds: []string{"consumer-instance-1", "consumer-instance-2"},
-				prevMapping: &PartitionSlotList{
-					PartitionSlots: []*PartitionSlot{
+				prevMapping: &PartitionSlotToConsumerInstanceList{
+					PartitionSlots: []*PartitionSlotToConsumerInstance{
 						{
 							RangeStart:         0,
 							RangeStop:          50,
@@ -144,7 +144,7 @@ func Test_doBalanceSticky(t *testing.T) {
 					},
 				},
 			},
-			wantPartitionSlots: []*PartitionSlot{
+			wantPartitionSlots: []*PartitionSlotToConsumerInstance{
 				{
 					RangeStart:         0,
 					RangeStop:          50,
@@ -171,8 +171,8 @@ func Test_doBalanceSticky(t *testing.T) {
 					},
 				},
 				consumerInstanceIds: []string{"consumer-instance-1", "consumer-instance-2", "consumer-instance-3"},
-				prevMapping: &PartitionSlotList{
-					PartitionSlots: []*PartitionSlot{
+				prevMapping: &PartitionSlotToConsumerInstanceList{
+					PartitionSlots: []*PartitionSlotToConsumerInstance{
 						{
 							RangeStart:         0,
 							RangeStop:          50,
@@ -186,7 +186,7 @@ func Test_doBalanceSticky(t *testing.T) {
 					},
 				},
 			},
-			wantPartitionSlots: []*PartitionSlot{
+			wantPartitionSlots: []*PartitionSlotToConsumerInstance{
 				{
 					RangeStart:         0,
 					RangeStop:          50,
@@ -217,8 +217,8 @@ func Test_doBalanceSticky(t *testing.T) {
 					},
 				},
 				consumerInstanceIds: []string{"consumer-instance-1", "consumer-instance-2"},
-				prevMapping: &PartitionSlotList{
-					PartitionSlots: []*PartitionSlot{
+				prevMapping: &PartitionSlotToConsumerInstanceList{
+					PartitionSlots: []*PartitionSlotToConsumerInstance{
 						{
 							RangeStart:         0,
 							RangeStop:          50,
@@ -232,7 +232,7 @@ func Test_doBalanceSticky(t *testing.T) {
 					},
 				},
 			},
-			wantPartitionSlots: []*PartitionSlot{
+			wantPartitionSlots: []*PartitionSlotToConsumerInstance{
 				{
 					RangeStart:         0,
 					RangeStop:          50,
@@ -268,8 +268,8 @@ func Test_doBalanceSticky(t *testing.T) {
 					},
 				},
 				consumerInstanceIds: []string{"consumer-instance-1", "consumer-instance-2", "consumer-instance-3"},
-				prevMapping: &PartitionSlotList{
-					PartitionSlots: []*PartitionSlot{
+				prevMapping: &PartitionSlotToConsumerInstanceList{
+					PartitionSlots: []*PartitionSlotToConsumerInstance{
 						{
 							RangeStart:         0,
 							RangeStop:          50,
@@ -283,7 +283,7 @@ func Test_doBalanceSticky(t *testing.T) {
 					},
 				},
 			},
-			wantPartitionSlots: []*PartitionSlot{
+			wantPartitionSlots: []*PartitionSlotToConsumerInstance{
 				{
 					RangeStart:         0,
 					RangeStop:          50,

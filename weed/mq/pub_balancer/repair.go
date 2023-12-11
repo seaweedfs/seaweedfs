@@ -26,7 +26,7 @@ func RepairMissingTopicPartitions(brokers cmap.ConcurrentMap[string, *BrokerStat
 	topicToTopicPartitions := make(map[topic.Topic]map[topic.Partition]*TopicPartitionInfo)
 	for brokerStatsItem := range brokers.IterBuffered() {
 		broker, brokerStats := brokerStatsItem.Key, brokerStatsItem.Val
-		for topicPartitionStatsItem := range brokerStats.Stats.IterBuffered() {
+		for topicPartitionStatsItem := range brokerStats.TopicPartitionStats.IterBuffered() {
 			topicPartitionStat := topicPartitionStatsItem.Val
 			topicPartitionToInfo, found := topicToTopicPartitions[topicPartitionStat.Topic]
 			if !found {

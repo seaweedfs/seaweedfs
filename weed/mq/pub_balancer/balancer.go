@@ -1,9 +1,7 @@
 package pub_balancer
 
 import (
-	"fmt"
 	cmap "github.com/orcaman/concurrent-map/v2"
-	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
 
@@ -31,75 +29,51 @@ const (
 //	The balancer will then tell the broker to send the partition to another standby consumer instance.
 type Balancer struct {
 	Brokers cmap.ConcurrentMap[string, *BrokerStats] // key: broker address
+	// Collected from all brokers when they connect to the broker leader
+	TopicToBrokers cmap.ConcurrentMap[string, *PartitionSlotToBrokerList] // key: topic name
 }
-
-type BrokerStats struct {
-	TopicPartitionCount int32
-	ConsumerCount       int32
-	CpuUsagePercent     int32
-	Stats               cmap.ConcurrentMap[string, *TopicPartitionStats] // key: topic_partition
-}
-
-func (bs *BrokerStats) UpdateStats(stats *mq_pb.BrokerStats) {
-	bs.TopicPartitionCount = int32(len(stats.Stats))
-	bs.CpuUsagePercent = stats.CpuUsagePercent
-
-	var consumerCount int32
-	currentTopicPartitions := bs.Stats.Items()
-	for _, topicPartitionStats := range stats.Stats {
-		tps := &TopicPartitionStats{
-			TopicPartition: topic.TopicPartition{
-				Topic:     topic.Topic{Namespace: topicPartitionStats.Topic.Namespace, Name: topicPartitionStats.Topic.Name},
-				Partition: topic.Partition{RangeStart: topicPartitionStats.Partition.RangeStart, RangeStop: topicPartitionStats.Partition.RangeStop, RingSize: topicPartitionStats.Partition.RingSize},
-			},
-			ConsumerCount: topicPartitionStats.ConsumerCount,
-			IsLeader:      topicPartitionStats.IsLeader,
-		}
-		consumerCount += topicPartitionStats.ConsumerCount
-		key := tps.TopicPartition.String()
-		bs.Stats.Set(key, tps)
-		delete(currentTopicPartitions, key)
-	}
-	// remove the topic partitions that are not in the stats
-	for key := range currentTopicPartitions {
-		bs.Stats.Remove(key)
-	}
-	bs.ConsumerCount = consumerCount
-
-}
-
-func (bs *BrokerStats) RegisterAssignment(t *mq_pb.Topic, partition *mq_pb.Partition) {
-	tps := &TopicPartitionStats{
-		TopicPartition: topic.TopicPartition{
-			Topic:     topic.Topic{Namespace: t.Namespace, Name: t.Name},
-			Partition: topic.Partition{RangeStart: partition.RangeStart, RangeStop: partition.RangeStop},
-		},
-		ConsumerCount: 0,
-		IsLeader:      true,
-	}
-	key := tps.TopicPartition.String()
-	bs.Stats.Set(key, tps)
-}
-
-func (bs *BrokerStats) String() string {
-	return fmt.Sprintf("BrokerStats{TopicPartitionCount:%d, ConsumerCount:%d, CpuUsagePercent:%d, Stats:%+v}",
-		bs.TopicPartitionCount, bs.ConsumerCount, bs.CpuUsagePercent, bs.Stats.Items())
-}
-
-type TopicPartitionStats struct {
-	topic.TopicPartition
-	ConsumerCount int32
-	IsLeader      bool
-}
-
 func NewBalancer() *Balancer {
 	return &Balancer{
 		Brokers: cmap.New[*BrokerStats](),
+		TopicToBrokers: cmap.New[*PartitionSlotToBrokerList](),
 	}
 }
 
-func NewBrokerStats() *BrokerStats {
-	return &BrokerStats{
-		Stats: cmap.New[*TopicPartitionStats](),
+func (balancer *Balancer) OnBrokerConnected(broker string) (brokerStats *BrokerStats) {
+	var found bool
+	brokerStats, found = balancer.Brokers.Get(broker)
+	if !found {
+		brokerStats = NewBrokerStats()
+		if !balancer.Brokers.SetIfAbsent(broker, brokerStats) {
+			brokerStats, _ = balancer.Brokers.Get(broker)
+		}
+	}
+	return brokerStats
+}
+
+func (balancer *Balancer) OnBrokerDisconnected(broker string, stats *BrokerStats) {
+	balancer.Brokers.Remove(broker)
+	for _, topic := range stats.Topics {
+		partitionSlotToBrokerList, found := balancer.TopicToBrokers.Get(topic.String())
+		if !found {
+			continue
+		}
+		partitionSlotToBrokerList.RemoveBroker(broker)
+	}
+}
+
+func (balancer *Balancer) OnBrokerStatsUpdated(broker string, brokerStats *BrokerStats, receivedStats *mq_pb.BrokerStats) {
+	brokerStats.UpdateStats(receivedStats)
+	for _, topicPartitionStats := range receivedStats.Stats {
+		topic := topicPartitionStats.Topic
+		partition := topicPartitionStats.Partition
+		partitionSlotToBrokerList, found := balancer.TopicToBrokers.Get(topic.String())
+		if !found {
+			partitionSlotToBrokerList = NewPartitionSlotToBrokerList(MaxPartitionCount)
+			if !balancer.TopicToBrokers.SetIfAbsent(topic.String(), partitionSlotToBrokerList) {
+				partitionSlotToBrokerList, _ = balancer.TopicToBrokers.Get(topic.String())
+			}
+		}
+		partitionSlotToBrokerList.AddBroker(partition, broker)
 	}
 }

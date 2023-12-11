@@ -7,12 +7,12 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func (broker *MessageQueueBroker) BalanceTopics(ctx context.Context, request *mq_pb.BalanceTopicsRequest) (resp *mq_pb.BalanceTopicsResponse, err error) {
-	if broker.currentBalancer == "" {
+func (b *MessageQueueBroker) BalanceTopics(ctx context.Context, request *mq_pb.BalanceTopicsRequest) (resp *mq_pb.BalanceTopicsResponse, err error) {
+	if b.currentBalancer == "" {
 		return nil, status.Errorf(codes.Unavailable, "no balancer")
 	}
-	if !broker.lockAsBalancer.IsLocked() {
-		proxyErr := broker.withBrokerClient(false, broker.currentBalancer, func(client mq_pb.SeaweedMessagingClient) error {
+	if !b.lockAsBalancer.IsLocked() {
+		proxyErr := b.withBrokerClient(false, b.currentBalancer, func(client mq_pb.SeaweedMessagingClient) error {
 			resp, err = client.BalanceTopics(ctx, request)
 			return nil
 		})
@@ -24,8 +24,8 @@ func (broker *MessageQueueBroker) BalanceTopics(ctx context.Context, request *mq
 
 	ret := &mq_pb.BalanceTopicsResponse{}
 
-	actions := broker.Balancer.BalancePublishers()
-	err = broker.Balancer.ExecuteBalanceAction(actions, broker.grpcDialOption)
+	actions := b.Balancer.BalancePublishers()
+	err = b.Balancer.ExecuteBalanceAction(actions, b.grpcDialOption)
 
 	return ret, err
 }

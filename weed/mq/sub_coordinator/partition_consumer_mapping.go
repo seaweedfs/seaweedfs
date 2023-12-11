@@ -7,13 +7,14 @@ import (
 )
 
 type PartitionConsumerMapping struct {
-	currentMapping *PartitionSlotList
-	prevMappings   []*PartitionSlotList
+	currentMapping *PartitionSlotToConsumerInstanceList
+	prevMappings   []*PartitionSlotToConsumerInstanceList
 }
 
 func NewPartitionConsumerMapping(ringSize int32) *PartitionConsumerMapping {
+	newVersion := time.Now().UnixNano()
 	return &PartitionConsumerMapping{
-		currentMapping: NewPartitionSlotList(ringSize, 0),
+		currentMapping: NewPartitionSlotToConsumerInstanceList(ringSize, newVersion),
 	}
 }
 
@@ -27,7 +28,7 @@ func (pcm *PartitionConsumerMapping) BalanceToConsumerInstanceIds(partitions []*
 		return
 	}
 	newVersion := time.Now().UnixNano()
-	newMapping := NewPartitionSlotList(partitions[0].RingSize, newVersion)
+	newMapping := NewPartitionSlotToConsumerInstanceList(partitions[0].RingSize, newVersion)
 	newMapping.PartitionSlots = doBalanceSticky(partitions, consumerInstanceIds, pcm.prevMappings[0])
 	if pcm.currentMapping != nil {
 		pcm.prevMappings = append(pcm.prevMappings, pcm.currentMapping)
@@ -35,7 +36,7 @@ func (pcm *PartitionConsumerMapping) BalanceToConsumerInstanceIds(partitions []*
 	pcm.currentMapping = newMapping
 }
 
-func doBalanceSticky(partitions []*topic.Partition, consumerInstanceIds []string, prevMapping *PartitionSlotList) (partitionSlots []*PartitionSlot) {
+func doBalanceSticky(partitions []*topic.Partition, consumerInstanceIds []string, prevMapping *PartitionSlotToConsumerInstanceList) (partitionSlots []*PartitionSlotToConsumerInstance) {
 	// collect previous consumer instance ids
 	prevConsumerInstanceIds := make(map[string]struct{})
 	if prevMapping != nil {
@@ -60,7 +61,7 @@ func doBalanceSticky(partitions []*topic.Partition, consumerInstanceIds []string
 	}
 
 	// convert partition slots from list to a map
-	prevPartitionSlotMap := make(map[string]*PartitionSlot)
+	prevPartitionSlotMap := make(map[string]*PartitionSlotToConsumerInstance)
 	if prevMapping != nil {
 		for _, partitionSlot := range prevMapping.PartitionSlots {
 			key := fmt.Sprintf("%d-%d", partitionSlot.RangeStart, partitionSlot.RangeStop)

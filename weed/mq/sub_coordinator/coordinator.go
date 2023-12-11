@@ -2,21 +2,11 @@ package sub_coordinator
 
 import (
 	cmap "github.com/orcaman/concurrent-map/v2"
-	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
 
-type ConsumerGroupInstance struct {
-	InstanceId string
-	// the consumer group instance may not have an active partition
-	Partitions []*topic.Partition
-}
-type ConsumerGroup struct {
-	// map a consumer group instance id to a consumer group instance
-	ConsumerGroupInstances cmap.ConcurrentMap[string, *ConsumerGroupInstance]
-	MinimumActiveInstances int32
-	MaximumActiveInstances int32
-}
+
 type TopicConsumerGroups struct {
 	// map a consumer group name to a consumer group
 	ConsumerGroups cmap.ConcurrentMap[string, *ConsumerGroup]
@@ -24,21 +14,18 @@ type TopicConsumerGroups struct {
 
 // Coordinator coordinates the instances in the consumer group for one topic.
 // It is responsible for:
-// 1. Assigning partitions to consumer instances.
-// 2. Reassigning partitions when a consumer instance is up/down.
-// The coordinator manages for each consumer:
-// 1. The consumer group
-// 2. The consumer group instance
-// 3. The partitions that the consumer is consuming
+// 1. (Maybe) assigning partitions when a consumer instance is up/down.
 
 type Coordinator struct {
 	// map topic name to consumer groups
 	TopicSubscribers cmap.ConcurrentMap[string, *TopicConsumerGroups]
+	balancer *pub_balancer.Balancer
 }
 
-func NewCoordinator() *Coordinator {
+func NewCoordinator(balancer *pub_balancer.Balancer) *Coordinator {
 	return &Coordinator{
 		TopicSubscribers: cmap.New[*TopicConsumerGroups](),
+		balancer: balancer,
 	}
 }
 
@@ -63,22 +50,20 @@ func toTopicName(topic *mq_pb.Topic) string {
 	return topicName
 }
 
-func (c *Coordinator) AddSubscriber(consumerGroup, consumerGroupInstance string, topic *mq_pb.Topic) {
+func (c *Coordinator) AddSubscriber(consumerGroup, consumerGroupInstance string, topic *mq_pb.Topic) *ConsumerGroupInstance{
 	tcg := c.GetTopicConsumerGroups(topic)
 	cg, _ := tcg.ConsumerGroups.Get(consumerGroup)
 	if cg == nil {
-		cg = &ConsumerGroup{
-			ConsumerGroupInstances: cmap.New[*ConsumerGroupInstance](),
-		}
+		cg = NewConsumerGroup()
 		tcg.ConsumerGroups.Set(consumerGroup, cg)
 	}
 	cgi, _ := cg.ConsumerGroupInstances.Get(consumerGroupInstance)
 	if cgi == nil {
-		cgi = &ConsumerGroupInstance{
-			InstanceId: consumerGroupInstance,
-		}
+		cgi = NewConsumerGroupInstance(consumerGroupInstance)
 		cg.ConsumerGroupInstances.Set(consumerGroupInstance, cgi)
 	}
+	cg.OnAddConsumerGroupInstance(consumerGroupInstance, topic)
+	return cgi
 }
 
 func (c *Coordinator) RemoveSubscriber(consumerGroup, consumerGroupInstance string, topic *mq_pb.Topic) {
@@ -91,6 +76,7 @@ func (c *Coordinator) RemoveSubscriber(consumerGroup, consumerGroupInstance stri
 		return
 	}
 	cg.ConsumerGroupInstances.Remove(consumerGroupInstance)
+	cg.OnRemoveConsumerGroupInstance(consumerGroupInstance, topic)
 	if cg.ConsumerGroupInstances.Count() == 0 {
 		tcg.ConsumerGroups.Remove(consumerGroup)
 	}
