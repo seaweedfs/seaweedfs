@@ -1,9 +1,9 @@
-package balancer
+package pub_balancer
 
 import (
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
-	"reflect"
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
@@ -53,8 +53,14 @@ func testThem(t *testing.T, tests []struct {
 }) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if gotAssignments := allocateTopicPartitions(tt.args.brokers, tt.args.partitionCount); !reflect.DeepEqual(gotAssignments, tt.wantAssignments) {
-				t.Errorf("allocateTopicPartitions() = %v, want %v", gotAssignments, tt.wantAssignments)
+			gotAssignments := allocateTopicPartitions(tt.args.brokers, tt.args.partitionCount)
+			assert.Equal(t, len(tt.wantAssignments), len(gotAssignments))
+			for i, gotAssignment := range gotAssignments {
+				assert.Equal(t, tt.wantAssignments[i].LeaderBroker, gotAssignment.LeaderBroker)
+				assert.Equal(t, tt.wantAssignments[i].Partition.RangeStart, gotAssignment.Partition.RangeStart)
+				assert.Equal(t, tt.wantAssignments[i].Partition.RangeStop, gotAssignment.Partition.RangeStop)
+				assert.Equal(t, tt.wantAssignments[i].Partition.RingSize, gotAssignment.Partition.RingSize)
+				assert.Equal(t, tt.wantAssignments[i].Partition.UnixTimeNs, gotAssignment.Partition.UnixTimeNs)
 			}
 		})
 	}

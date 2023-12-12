@@ -23,10 +23,7 @@ func NewLocalTopicManager() *LocalTopicManager {
 func (manager *LocalTopicManager) AddTopicPartition(topic Topic, localPartition *LocalPartition) {
 	localTopic, ok := manager.topics.Get(topic.String())
 	if !ok {
-		localTopic = &LocalTopic{
-			Topic:      topic,
-			Partitions: make([]*LocalPartition, 0),
-		}
+		localTopic = NewLocalTopic(topic)
 	}
 	if !manager.topics.SetIfAbsent(topic.String(), localTopic) {
 		localTopic, _ = manager.topics.Get(topic.String())
@@ -57,6 +54,22 @@ func (manager *LocalTopicManager) RemoveTopicPartition(topic Topic, partition Pa
 		return false
 	}
 	return localTopic.removePartition(partition)
+}
+
+func (manager *LocalTopicManager) ClosePublishers(topic Topic, unixTsNs int64) (removed bool) {
+	localTopic, ok := manager.topics.Get(topic.String())
+	if !ok {
+		return false
+	}
+	return localTopic.closePartitionPublishers(unixTsNs)
+}
+
+func (manager *LocalTopicManager) CloseSubscribers(topic Topic, unixTsNs int64) (removed bool) {
+	localTopic, ok := manager.topics.Get(topic.String())
+	if !ok {
+		return false
+	}
+	return localTopic.closePartitionSubscribers(unixTsNs)
 }
 
 func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.BrokerStats {
@@ -100,4 +113,12 @@ func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.Br
 
 	return stats
 
+}
+
+func (manager *LocalTopicManager) WaitUntilNoPublishers(topic Topic) {
+	localTopic, ok := manager.topics.Get(topic.String())
+	if !ok {
+		return
+	}
+	localTopic.WaitUntilNoPublishers()
 }

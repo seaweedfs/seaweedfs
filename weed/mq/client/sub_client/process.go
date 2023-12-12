@@ -32,6 +32,9 @@ func (sub *TopicSubscriber) doProcess() error {
 						RangeStop:  brokerPartitionAssignment.Partition.RangeStop,
 					},
 					Filter: sub.ContentConfig.Filter,
+					Offset: &mq_pb.SubscribeRequest_InitMessage_StartTimestampNs{
+						StartTimestampNs: sub.alreadyProcessedTsNs,
+					},
 				},
 			},
 		})
@@ -68,6 +71,7 @@ func (sub *TopicSubscriber) doProcess() error {
 					if !sub.OnEachMessageFunc(m.Data.Key, m.Data.Value) {
 						return
 					}
+					sub.alreadyProcessedTsNs = m.Data.TsNs
 				case *mq_pb.SubscribeResponse_Ctrl:
 					if m.Ctrl.IsEndOfStream || m.Ctrl.IsEndOfTopic {
 						return

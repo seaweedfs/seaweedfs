@@ -60,12 +60,12 @@ func (lc *LockClient) StartLock(key string, owner string) (lock *LiveLock) {
 		util.RetryUntil("create lock:"+key, func() error {
 			errorMessage, err := lock.doLock(lock_manager.MaxDuration)
 			if err != nil {
-				glog.Infof("create lock %s: %s", key, err)
+				glog.V(0).Infof("create lock %s: %s", key, err)
 				time.Sleep(time.Second)
 				return err
 			}
 			if errorMessage != "" {
-				glog.Infof("create lock %s: %s", key, errorMessage)
+				glog.V(4).Infof("create lock %s: %s", key, errorMessage)
 				time.Sleep(time.Second)
 				return fmt.Errorf("%v", errorMessage)
 			}
@@ -73,7 +73,6 @@ func (lc *LockClient) StartLock(key string, owner string) (lock *LiveLock) {
 			return nil
 		}, func(err error) (shouldContinue bool) {
 			if err != nil {
-				glog.Warningf("create lock %s: %s", key, err)
 				time.Sleep(time.Second)
 			}
 			return lock.renewToken == ""

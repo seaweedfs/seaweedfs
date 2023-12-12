@@ -20,12 +20,12 @@ import (
 //     2.2 if the topic is found, return the brokers
 //
 //  3. unlock the topic
-func (broker *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq_pb.LookupTopicBrokersRequest) (resp *mq_pb.LookupTopicBrokersResponse, err error) {
-	if broker.currentBalancer == "" {
+func (b *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq_pb.LookupTopicBrokersRequest) (resp *mq_pb.LookupTopicBrokersResponse, err error) {
+	if b.currentBalancer == "" {
 		return nil, status.Errorf(codes.Unavailable, "no balancer")
 	}
-	if !broker.lockAsBalancer.IsLocked() {
-		proxyErr := broker.withBrokerClient(false, broker.currentBalancer, func(client mq_pb.SeaweedMessagingClient) error {
+	if !b.lockAsBalancer.IsLocked() {
+		proxyErr := b.withBrokerClient(false, b.currentBalancer, func(client mq_pb.SeaweedMessagingClient) error {
 			resp, err = client.LookupTopicBrokers(ctx, request)
 			return nil
 		})
@@ -37,22 +37,16 @@ func (broker *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, reques
 
 	ret := &mq_pb.LookupTopicBrokersResponse{}
 	ret.Topic = request.Topic
-	ret.BrokerPartitionAssignments, err = broker.Balancer.LookupOrAllocateTopicPartitions(ret.Topic, request.IsForPublish, 6)
+	ret.BrokerPartitionAssignments, err = b.Balancer.LookupOrAllocateTopicPartitions(ret.Topic, request.IsForPublish, 6)
 	return ret, err
 }
 
-// CheckTopicPartitionsStatus check the topic partitions on the broker
-func (broker *MessageQueueBroker) CheckTopicPartitionsStatus(c context.Context, request *mq_pb.CheckTopicPartitionsStatusRequest) (*mq_pb.CheckTopicPartitionsStatusResponse, error) {
-	ret := &mq_pb.CheckTopicPartitionsStatusResponse{}
-	return ret, nil
-}
-
-func (broker *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.ListTopicsRequest) (resp *mq_pb.ListTopicsResponse, err error) {
-	if broker.currentBalancer == "" {
+func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.ListTopicsRequest) (resp *mq_pb.ListTopicsResponse, err error) {
+	if b.currentBalancer == "" {
 		return nil, status.Errorf(codes.Unavailable, "no balancer")
 	}
-	if !broker.lockAsBalancer.IsLocked() {
-		proxyErr := broker.withBrokerClient(false, broker.currentBalancer, func(client mq_pb.SeaweedMessagingClient) error {
+	if !b.lockAsBalancer.IsLocked() {
+		proxyErr := b.withBrokerClient(false, b.currentBalancer, func(client mq_pb.SeaweedMessagingClient) error {
 			resp, err = client.ListTopics(ctx, request)
 			return nil
 		})
@@ -64,9 +58,9 @@ func (broker *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb
 
 	ret := &mq_pb.ListTopicsResponse{}
 	knownTopics := make(map[string]struct{})
-	for brokerStatsItem := range broker.Balancer.Brokers.IterBuffered() {
+	for brokerStatsItem := range b.Balancer.Brokers.IterBuffered() {
 		_, brokerStats := brokerStatsItem.Key, brokerStatsItem.Val
-		for topicPartitionStatsItem := range brokerStats.Stats.IterBuffered() {
+		for topicPartitionStatsItem := range brokerStats.TopicPartitionStats.IterBuffered() {
 			topicPartitionStat := topicPartitionStatsItem.Val
 			topic := &mq_pb.Topic{
 				Namespace: topicPartitionStat.TopicPartition.Namespace,

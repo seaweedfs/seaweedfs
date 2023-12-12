@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/pub_client"
 	"log"
+	"strings"
 	"sync"
 	"time"
 )
@@ -12,6 +13,10 @@ import (
 var (
 	messageCount = flag.Int("n", 1000, "message count")
 	concurrency  = flag.Int("c", 4, "concurrency count")
+
+	namespace   = flag.String("ns", "test", "namespace")
+	topic       = flag.String("topic", "test", "topic")
+	seedBrokers = flag.String("brokers", "localhost:17777", "seed brokers")
 )
 
 func doPublish(publisher *pub_client.TopicPublisher, id int) {
@@ -29,9 +34,12 @@ func doPublish(publisher *pub_client.TopicPublisher, id int) {
 
 func main() {
 	flag.Parse()
-	publisher := pub_client.NewTopicPublisher(
-		"test", "test")
-	if err := publisher.Connect("localhost:17777"); err != nil {
+	config := &pub_client.PublisherConfiguration{
+		CreateTopic: true,
+	}
+	publisher := pub_client.NewTopicPublisher(*namespace, *topic, config)
+	brokers := strings.Split(*seedBrokers, ",")
+	if err := publisher.Connect(brokers); err != nil {
 		fmt.Println(err)
 		return
 	}
