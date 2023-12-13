@@ -224,7 +224,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			if writeErr != nil {
 				return writeErr
 			}
-			return updateLocalEntry(&remoteSyncOptions, message.NewParentPath, message.NewEntry, remoteEntry)
+			return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 		if filer_pb.IsDelete(resp) {
 			if resp.Directory == option.bucketsDir {
@@ -288,7 +288,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 						if writeErr != nil {
 							return writeErr
 						}
-						return updateLocalEntry(&remoteSyncOptions, message.NewParentPath, message.NewEntry, remoteEntry)
+						return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 					}
 				}
 			}
@@ -325,7 +325,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				if writeErr != nil {
 					return writeErr
 				}
-				return updateLocalEntry(&remoteSyncOptions, message.NewParentPath, message.NewEntry, remoteEntry)
+				return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 			}
 		}
 
