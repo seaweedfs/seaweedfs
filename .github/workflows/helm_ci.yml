@@ -36,16 +36,16 @@ jobs:
       - name: Run chart-testing (list-changed)
         id: list-changed
         run: |
-          changed=$(ct list-changed --chart-dirs k8s/charts)
+          changed=$(ct list-changed --target-branch ${{ github.event.repository.default_branch }} --chart-dirs k8s/charts)
           if [[ -n "$changed" ]]; then
             echo "::set-output name=changed::true"
           fi
 
       - name: Run chart-testing (lint)
-        run: ct lint --all --validate-maintainers=false --chart-dirs k8s/charts
+        run: ct lint --target-branch ${{ github.event.repository.default_branch }} --all --validate-maintainers=false --chart-dirs k8s/charts
 
       - name: Create kind cluster
         uses: helm/kind-action@v1.8.0
 
       - name: Run chart-testing (install)
-        run: ct install --all --chart-dirs k8s/charts
+        run: ct install --target-branch ${{ github.event.repository.default_branch }} --all --chart-dirs k8s/charts
