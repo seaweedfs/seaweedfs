@@ -3,14 +3,15 @@ package s3api
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -26,6 +27,7 @@ type S3ApiServerOption struct {
 	Port                      int
 	Config                    string
 	DomainName                string
+	AllowedOrigins            string
 	BucketsPath               string
 	GrpcDialOption            grpc.DialOption
 	AllowEmptyFolder          bool
@@ -103,7 +105,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 	apiRouter.Methods("OPTIONS").HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Origin", s3a.option.AllowedOrigins)
 			w.Header().Set("Access-Control-Expose-Headers", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "*")
 			w.Header().Set("Access-Control-Allow-Headers", "*")

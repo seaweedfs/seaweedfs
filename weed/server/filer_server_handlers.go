@@ -18,7 +18,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	if r.Header.Get("Origin") != "" {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Origin", fs.option.AllowedOrigins)
 		w.Header().Set("Access-Control-Expose-Headers", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "*")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -26,7 +26,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == "OPTIONS" {
-		OptionsHandler(w, r, false)
+		OptionsHandler(w, r, false, fs.option.AllowedOrigins)
 		return
 	}
 
@@ -111,7 +111,7 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 	}()
 	// We handle OPTIONS first because it never should be authenticated
 	if r.Method == "OPTIONS" {
-		OptionsHandler(w, r, true)
+		OptionsHandler(w, r, true, fs.option.AllowedOrigins)
 		return
 	}
 
@@ -130,14 +130,14 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-func OptionsHandler(w http.ResponseWriter, r *http.Request, isReadOnly bool) {
+func OptionsHandler(w http.ResponseWriter, r *http.Request, isReadOnly bool, allowedOrigins string) {
 	if isReadOnly {
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	} else {
 		w.Header().Set("Access-Control-Allow-Methods", "PUT, POST, GET, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Expose-Headers", "*")
 	}
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Origin", allowedOrigins)
 	w.Header().Set("Access-Control-Allow-Headers", "*")
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 }

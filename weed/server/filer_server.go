@@ -70,6 +70,7 @@ type FilerOption struct {
 	ShowUIDirectoryDelete bool
 	DownloadMaxBytesPs    int64
 	DiskType              string
+	AllowedOrigins        string
 }
 
 type FilerServer struct {
@@ -106,6 +107,12 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	readSigningKey := v.GetString("jwt.filer_signing.read.key")
 	v.SetDefault("jwt.filer_signing.read.expires_after_seconds", 60)
 	readExpiresAfterSec := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
+
+	v.SetDefault("filer.allowed_origins.values", "*")
+	allowedOrigins := v.GetString("filer.allowed_origins.values")
+
+	option.AllowedOrigins = allowedOrigins
+	os.Stdout.WriteString("---------- Allowed origins: " + option.AllowedOrigins + "\n")
 
 	fs = &FilerServer{
 		option:                option,
