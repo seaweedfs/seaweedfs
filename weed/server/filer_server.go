@@ -109,10 +109,10 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	v.SetDefault("jwt.filer_signing.read.expires_after_seconds", 60)
 	readExpiresAfterSec := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
 
-	v.SetDefault("filer.allowed_origins.values", "*")
+	v.SetDefault("cors.allowed_origins.values", "*")
 
 	if (option.AllowedOrigins == nil) || (len(option.AllowedOrigins) == 0) {
-		allowedOrigins := v.GetString("filer.allowed_origins.values")
+		allowedOrigins := v.GetString("cors.allowed_origins.values")
 		domains := strings.Split(allowedOrigins, ",")
 		option.AllowedOrigins = domains
 	}

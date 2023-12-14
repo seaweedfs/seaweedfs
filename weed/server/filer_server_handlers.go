@@ -20,15 +20,19 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 
 	origin := r.Header.Get("Origin")
 	if origin != "" {
-		originFound := false
-		for _, allowedOrigin := range fs.option.AllowedOrigins {
-			if origin == allowedOrigin {
-				originFound = true
+		if fs.option.AllowedOrigins == nil || len(fs.option.AllowedOrigins) == 0 || fs.option.AllowedOrigins[0] == "*" {
+			origin = "*"
+		} else {
+			originFound := false
+			for _, allowedOrigin := range fs.option.AllowedOrigins {
+				if origin == allowedOrigin {
+					originFound = true
+				}
 			}
-		}
-		if !originFound {
-			writeJsonError(w, r, http.StatusForbidden, errors.New("origin not allowed"))
-			return
+			if !originFound {
+				writeJsonError(w, r, http.StatusForbidden, errors.New("origin not allowed"))
+				return
+			}
 		}
 
 		w.Header().Set("Access-Control-Allow-Origin", origin)
@@ -116,15 +120,19 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 
 	origin := r.Header.Get("Origin")
 	if origin != "" {
-		originFound := false
-		for _, allowedOrigin := range fs.option.AllowedOrigins {
-			if origin == allowedOrigin {
-				originFound = true
+		if fs.option.AllowedOrigins == nil || len(fs.option.AllowedOrigins) == 0 || fs.option.AllowedOrigins[0] == "*" {
+			origin = "*"
+		} else {
+			originFound := false
+			for _, allowedOrigin := range fs.option.AllowedOrigins {
+				if origin == allowedOrigin {
+					originFound = true
+				}
 			}
-		}
-		if !originFound {
-			writeJsonError(w, r, http.StatusForbidden, errors.New("origin not allowed"))
-			return
+			if !originFound {
+				writeJsonError(w, r, http.StatusForbidden, errors.New("origin not allowed"))
+				return
+			}
 		}
 
 		w.Header().Set("Access-Control-Allow-Origin", origin)

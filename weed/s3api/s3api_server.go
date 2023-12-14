@@ -58,6 +58,14 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 	v.SetDefault("jwt.filer_signing.read.expires_after_seconds", 60)
 	readExpiresAfterSec := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
 
+	v.SetDefault("cors.allowed_origins.values", "*")
+
+	if (option.AllowedOrigins == nil) || (len(option.AllowedOrigins) == 0) {
+		allowedOrigins := v.GetString("cors.allowed_origins.values")
+		domains := strings.Split(allowedOrigins, ",")
+		option.AllowedOrigins = domains
+	}
+
 	s3ApiServer = &S3ApiServer{
 		option:         option,
 		iam:            NewIdentityAccessManagement(option),
@@ -107,15 +115,19 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
 			if origin != "" {
-				originFound := false
-				for _, allowedOrigin := range s3a.option.AllowedOrigins {
-					if origin == allowedOrigin {
-						originFound = true
+				if s3a.option.AllowedOrigins == nil || len(s3a.option.AllowedOrigins) == 0 || s3a.option.AllowedOrigins[0] == "*" {
+					origin = "*"
+				} else {
+					originFound := false
+					for _, allowedOrigin := range s3a.option.AllowedOrigins {
+						if origin == allowedOrigin {
+							originFound = true
+						}
 					}
-				}
-				if !originFound {
-					http.Error(w, "Origin not allowed", 403)
-					return
+					if !originFound {
+						writeFailureResponse(w, r, http.StatusForbidden)
+						return
+					}
 				}
 			}
 
