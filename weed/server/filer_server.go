@@ -112,7 +112,6 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	allowedOrigins := v.GetString("filer.allowed_origins.values")
 
 	option.AllowedOrigins = allowedOrigins
-	os.Stdout.WriteString("---------- Allowed origins: " + option.AllowedOrigins + "\n")
 
 	fs = &FilerServer{
 		option:                option,
