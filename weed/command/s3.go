@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -222,7 +223,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		Port:                      *s3opt.port,
 		Config:                    *s3opt.config,
 		DomainName:                *s3opt.domainName,
-		AllowedOrigins:            *s3opt.allowedOrigins,
+		AllowedOrigins:            strings.Split(*s3opt.allowedOrigins, ","),
 		BucketsPath:               filerBucketsPath,
 		GrpcDialOption:            grpcDialOption,
 		AllowEmptyFolder:          *s3opt.allowEmptyFolder,

@@ -27,7 +27,7 @@ type S3ApiServerOption struct {
 	Port                      int
 	Config                    string
 	DomainName                string
-	AllowedOrigins            string
+	AllowedOrigins            []string
 	BucketsPath               string
 	GrpcDialOption            grpc.DialOption
 	AllowEmptyFolder          bool
@@ -105,7 +105,21 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 	apiRouter.Methods("OPTIONS").HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", s3a.option.AllowedOrigins)
+			origin := r.Header.Get("Origin")
+			if origin != "" {
+				originFound := false
+				for _, allowedOrigin := range s3a.option.AllowedOrigins {
+					if origin == allowedOrigin {
+						originFound = true
+					}
+				}
+				if !originFound {
+					http.Error(w, "Origin not allowed", 403)
+					return
+				}
+			}
+
+			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Expose-Headers", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "*")
 			w.Header().Set("Access-Control-Allow-Headers", "*")

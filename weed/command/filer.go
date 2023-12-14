@@ -258,7 +258,7 @@ func (fo *FilerOptions) startFiler() {
 		ShowUIDirectoryDelete: *fo.showUIDirectoryDelete,
 		DownloadMaxBytesPs:    int64(*fo.downloadMaxMBps) * 1024 * 1024,
 		DiskType:              *fo.diskType,
-		AllowedOrigins:        *fo.allowedOrigins,
+		AllowedOrigins:        strings.Split(*fo.allowedOrigins, ","),
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
