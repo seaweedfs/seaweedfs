@@ -80,9 +80,6 @@ spec:
           {{- end }}
           - containerPort: {{ .Values.master.grpcPort }}
             #name: swfs-master-grpc
-        {{- if .Values.master.readinessProbe.enabled }}
-    {{- $hostpath_exists := include "master.hostpath_exists" . -}}
-    {{- $existing_claims := include "master.existing_claims" . -}}
     {{- if .Values.filer.s3.enableAuth }}
       volumes:
         - name: config-users
@@ -93,8 +90,7 @@ spec:
             {{- else }}
             secretName: seaweedfs-s3-secret
             {{- end }}
-        {{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
+    {{- end }}{{/** if .Values.filer.s3.enableAuth **/}}
+{{- end }}{{/** if .Values.master.enabled **/}}
+{{- end }}{{/** if .Values.filer.s3.enabled **/}}
+{{- end }}{{/** if .Values.filer.s3.createBuckets **/}}
