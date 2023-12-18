@@ -128,7 +128,7 @@ require (
 	modernc.org/cc/v3 v3.40.0 // indirect
 	modernc.org/ccgo/v3 v3.16.13 // indirect
 	modernc.org/libc v1.29.0 // indirect
-	modernc.org/mathutil v1.6.0 // indirect
+	modernc.org/mathutil v1.6.0
 	modernc.org/memory v1.7.2 // indirect
 	modernc.org/opt v0.1.3 // indirect
 	modernc.org/sqlite v1.27.0
@@ -147,7 +147,7 @@ require (
 	github.com/fluent/fluent-logger-golang v1.9.0
 	github.com/golang-jwt/jwt/v5 v5.1.0
 	github.com/google/flatbuffers/go v0.0.0-20230108230133-3b8644d32c50
-	github.com/hanwen/go-fuse/v2 v2.4.0
+	github.com/hanwen/go-fuse/v2 v2.4.2
 	github.com/hashicorp/raft v1.6.0
 	github.com/hashicorp/raft-boltdb/v2 v2.3.0
 	github.com/orcaman/concurrent-map/v2 v2.0.1
