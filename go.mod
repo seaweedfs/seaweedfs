@@ -5,7 +5,7 @@ go 1.21
 require (
 	cloud.google.com/go v0.110.10 // indirect
 	cloud.google.com/go/pubsub v1.33.0
-	cloud.google.com/go/storage v1.35.1
+	cloud.google.com/go/storage v1.36.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/Shopify/sarama v1.38.1
