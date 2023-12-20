@@ -212,6 +212,9 @@ spec:
           resources:
             {{ tpl .Values.master.resources . | nindent 12 | trim }}
           {{- end }}
+        {{- if .Values.master.sidecars }}
+        {{- include "common.tplvalues.render" (dict "value" .Values.master.sidecars "context" $) | nindent 8 }}
+        {{- end }}
       volumes:
         {{- if eq .Values.master.logs.type "hostPath" }}
         - name: seaweedfs-master-log-volume
