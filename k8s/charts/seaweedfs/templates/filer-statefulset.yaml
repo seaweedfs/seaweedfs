@@ -258,6 +258,9 @@ spec:
           resources:
             {{ tpl .Values.filer.resources . | nindent 12 | trim }}
           {{- end }}
+        {{- if .Values.filer.sidecars }}
+        {{- include "common.tplvalues.render" (dict "value" .Values.filer.sidecars "context" $) | nindent 8 }}
+        {{- end }}
       volumes:
         {{- if eq .Values.filer.logs.type "hostPath" }}
         - name: seaweedfs-filer-log-volume

@@ -218,6 +218,9 @@ spec:
           resources:
             {{ tpl .Values.volume.resources . | nindent 12 | trim }}
           {{- end }}
+      {{- if .Values.volume.sidecars }}
+      {{- include "common.tplvalues.render" (dict "value" .Values.volume.sidecars "context" $) | nindent 8 }}
+      {{- end }}
       volumes:
         {{- if eq .Values.volume.data.type "hostPath" }}
         - name: data
