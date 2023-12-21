@@ -4,6 +4,11 @@
 #    /etc/seaweedfs/security.toml
 # this file is read by master, volume server, and filer
 
+# comma separated origins allowed to make requests to the filer and s3 gateway. 
+# enter in this format: https://domain.com, or http://localhost:port
+[cors.allowed_origins]
+values = "*"
+
 # this jwt signing key is read by master and volume server, and it is used for write operations:
 # - the Master server generates the JWT, which can be used to write a certain file on a volume server
 # - the Volume server validates the JWT on writing

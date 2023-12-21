@@ -3,14 +3,15 @@ package s3api
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -26,6 +27,7 @@ type S3ApiServerOption struct {
 	Port                      int
 	Config                    string
 	DomainName                string
+	AllowedOrigins            []string
 	BucketsPath               string
 	GrpcDialOption            grpc.DialOption
 	AllowEmptyFolder          bool
@@ -55,6 +57,14 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 	readSigningKey := v.GetString("jwt.filer_signing.read.key")
 	v.SetDefault("jwt.filer_signing.read.expires_after_seconds", 60)
 	readExpiresAfterSec := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
+
+	v.SetDefault("cors.allowed_origins.values", "*")
+
+	if (option.AllowedOrigins == nil) || (len(option.AllowedOrigins) == 0) {
+		allowedOrigins := v.GetString("cors.allowed_origins.values")
+		domains := strings.Split(allowedOrigins, ",")
+		option.AllowedOrigins = domains
+	}
 
 	s3ApiServer = &S3ApiServer{
 		option:         option,
@@ -103,7 +113,25 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 	apiRouter.Methods("OPTIONS").HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			origin := r.Header.Get("Origin")
+			if origin != "" {
+				if s3a.option.AllowedOrigins == nil || len(s3a.option.AllowedOrigins) == 0 || s3a.option.AllowedOrigins[0] == "*" {
+					origin = "*"
+				} else {
+					originFound := false
+					for _, allowedOrigin := range s3a.option.AllowedOrigins {
+						if origin == allowedOrigin {
+							originFound = true
+						}
+					}
+					if !originFound {
+						writeFailureResponse(w, r, http.StatusForbidden)
+						return
+					}
+				}
+			}
+
+			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Expose-Headers", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "*")
 			w.Header().Set("Access-Control-Allow-Headers", "*")

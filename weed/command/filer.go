@@ -61,6 +61,7 @@ type FilerOptions struct {
 	showUIDirectoryDelete   *bool
 	downloadMaxMBps         *int
 	diskType                *string
+	allowedOrigins          *string
 }
 
 func init() {
@@ -91,6 +92,7 @@ func init() {
 	f.showUIDirectoryDelete = cmdFiler.Flag.Bool("ui.deleteDir", true, "enable filer UI show delete directory button")
 	f.downloadMaxMBps = cmdFiler.Flag.Int("downloadMaxMBps", 0, "download max speed for each download request, in MB per second")
 	f.diskType = cmdFiler.Flag.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
+	f.allowedOrigins = cmdFiler.Flag.String("allowedOrigins", "*", "comma separated list of allowed origins")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -229,6 +231,9 @@ func (fo *FilerOptions) startFiler() {
 	if *fo.bindIp == "" {
 		*fo.bindIp = *fo.ip
 	}
+	if *fo.allowedOrigins == "" {
+		*fo.allowedOrigins = "*"
+	}
 
 	defaultLevelDbDirectory := util.ResolvePath(*fo.defaultLevelDbDirectory + "/filerldb2")
 
@@ -253,6 +258,7 @@ func (fo *FilerOptions) startFiler() {
 		ShowUIDirectoryDelete: *fo.showUIDirectoryDelete,
 		DownloadMaxBytesPs:    int64(*fo.downloadMaxMBps) * 1024 * 1024,
 		DiskType:              *fo.diskType,
+		AllowedOrigins:        strings.Split(*fo.allowedOrigins, ","),
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
