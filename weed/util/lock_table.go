@@ -132,6 +132,12 @@ func (lt *LockTable[T]) ReleaseLock(key T, lock *ActiveLock) {
 		}
 	}
 
+	if lock.lockType == ExclusiveLock {
+		entry.activeExclusiveLockOwnerCount--
+	} else {
+		entry.activeSharedLockOwnerCount--
+	}
+
 	// If there are no waiters, release the lock
 	if len(entry.waiters) == 0 && entry.activeExclusiveLockOwnerCount <= 0 && entry.activeSharedLockOwnerCount <= 0 {
 		delete(lt.locks, key)
@@ -145,11 +151,6 @@ func (lt *LockTable[T]) ReleaseLock(key T, lock *ActiveLock) {
 			}
 			fmt.Printf("\n")
 		}
-	}
-	if lock.lockType == ExclusiveLock {
-		entry.activeExclusiveLockOwnerCount--
-	} else {
-		entry.activeSharedLockOwnerCount--
 	}
 
 	// Notify the next waiter
