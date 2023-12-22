@@ -80,7 +80,7 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 	return pb.FollowMetadata(pb.ServerAddress(*option.filerAddress), option.grpcDialOption, metadataFollowOption, processEventFnWithOffset)
 }
 
-func (option *RemoteSyncOptions)  makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, remoteStorageMountLocation *remote_pb.RemoteStorageLocation, filerSource *source.FilerSource) (pb.ProcessMetadataFunc, error) {
+func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, remoteStorageMountLocation *remote_pb.RemoteStorageLocation, filerSource *source.FilerSource) (pb.ProcessMetadataFunc, error) {
 	client, err := remote_storage.GetRemoteStorage(remoteStorage)
 	if err != nil {
 		return nil, err

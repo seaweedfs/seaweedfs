@@ -6,7 +6,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
 
-
 type TopicConsumerGroups struct {
 	// map a consumer group name to a consumer group
 	ConsumerGroups cmap.ConcurrentMap[string, *ConsumerGroup]
@@ -19,13 +18,13 @@ type TopicConsumerGroups struct {
 type Coordinator struct {
 	// map topic name to consumer groups
 	TopicSubscribers cmap.ConcurrentMap[string, *TopicConsumerGroups]
-	balancer *pub_balancer.Balancer
+	balancer         *pub_balancer.Balancer
 }
 
 func NewCoordinator(balancer *pub_balancer.Balancer) *Coordinator {
 	return &Coordinator{
 		TopicSubscribers: cmap.New[*TopicConsumerGroups](),
-		balancer: balancer,
+		balancer:         balancer,
 	}
 }
 
@@ -50,7 +49,7 @@ func toTopicName(topic *mq_pb.Topic) string {
 	return topicName
 }
 
-func (c *Coordinator) AddSubscriber(consumerGroup, consumerGroupInstance string, topic *mq_pb.Topic) *ConsumerGroupInstance{
+func (c *Coordinator) AddSubscriber(consumerGroup, consumerGroupInstance string, topic *mq_pb.Topic) *ConsumerGroupInstance {
 	tcg := c.GetTopicConsumerGroups(topic)
 	cg, _ := tcg.ConsumerGroups.Get(consumerGroup)
 	if cg == nil {
