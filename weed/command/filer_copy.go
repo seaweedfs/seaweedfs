@@ -46,6 +46,7 @@ type CopyOptions struct {
 	ttlSec           int32
 	checkSize        *bool
 	verbose          *bool
+	volumeServerAccess *string
 }
 
 func init() {
@@ -61,6 +62,7 @@ func init() {
 	copy.concurrentChunks = cmdFilerCopy.Flag.Int("concurrentChunks", 8, "concurrent chunk copy goroutines for each file")
 	copy.checkSize = cmdFilerCopy.Flag.Bool("check.size", false, "copy when the target file size is different from the source file")
 	copy.verbose = cmdFilerCopy.Flag.Bool("verbose", false, "print out details during copying")
+	copy.volumeServerAccess = cmdMount.Flag.String("volumeServerAccess", "direct", "access volume servers by [direct|publicUrl|filerProxy]")
 }
 
 var cmdFilerCopy = &Command{
@@ -580,6 +582,9 @@ func (worker *FileCopyWorker) WithFilerClient(streamingMode bool, fn func(filer_
 }
 
 func (worker *FileCopyWorker) AdjustedUrl(location *filer_pb.Location) string {
+	if *worker.options.volumeServerAccess == "publicUrl" {
+		return location.PublicUrl
+	}
 	return location.Url
 }
 
