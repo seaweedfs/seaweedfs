@@ -62,7 +62,7 @@ func init() {
 	copy.concurrentChunks = cmdFilerCopy.Flag.Int("concurrentChunks", 8, "concurrent chunk copy goroutines for each file")
 	copy.checkSize = cmdFilerCopy.Flag.Bool("check.size", false, "copy when the target file size is different from the source file")
 	copy.verbose = cmdFilerCopy.Flag.Bool("verbose", false, "print out details during copying")
-	copy.volumeServerAccess = cmdMount.Flag.String("volumeServerAccess", "direct", "access volume servers by [direct|publicUrl|filerProxy]")
+	copy.volumeServerAccess = cmdFilerCopy.Flag.String("volumeServerAccess", "direct", "access volume servers by [direct|publicUrl|filerProxy]")
 }
 
 var cmdFilerCopy = &Command{
