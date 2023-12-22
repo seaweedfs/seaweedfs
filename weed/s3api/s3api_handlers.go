@@ -40,6 +40,10 @@ func writeSuccessResponseEmpty(w http.ResponseWriter, r *http.Request) {
 	s3err.WriteEmptyResponse(w, r, http.StatusOK)
 }
 
+func writeFailureResponse(w http.ResponseWriter, r *http.Request, errCode s3err.ErrorCode) {
+	s3err.WriteErrorResponse(w, r, errCode)
+}
+
 func validateContentMd5(h http.Header) ([]byte, error) {
 	md5B64, ok := h["Content-Md5"]
 	if ok {

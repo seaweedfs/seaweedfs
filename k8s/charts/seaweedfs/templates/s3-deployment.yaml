@@ -183,6 +183,9 @@ spec:
           resources:
             {{ tpl .Values.s3.resources . | nindent 12 | trim }}
           {{- end }}
+      {{- if .Values.s3.sidecars }}
+      {{- include "common.tplvalues.render" (dict "value" .Values.s3.sidecars "context" $) | nindent 8 }}
+      {{- end }}
       volumes:
         {{- if .Values.s3.enableAuth }}
         - name: config-users

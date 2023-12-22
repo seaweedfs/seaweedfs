@@ -3,6 +3,7 @@ package weed_server
 import (
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -17,8 +18,24 @@ import (
 func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	if r.Header.Get("Origin") != "" {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+	origin := r.Header.Get("Origin")
+	if origin != "" {
+		if fs.option.AllowedOrigins == nil || len(fs.option.AllowedOrigins) == 0 || fs.option.AllowedOrigins[0] == "*" {
+			origin = "*"
+		} else {
+			originFound := false
+			for _, allowedOrigin := range fs.option.AllowedOrigins {
+				if origin == allowedOrigin {
+					originFound = true
+				}
+			}
+			if !originFound {
+				writeJsonError(w, r, http.StatusForbidden, errors.New("origin not allowed"))
+				return
+			}
+		}
+
+		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Expose-Headers", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "*")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -99,9 +116,27 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 
 	start := time.Now()
 
-	if r.Header.Get("Origin") != "" {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "*")
+	os.Stdout.WriteString("Request: " + r.Method + " " + r.URL.String() + "\n")
+
+	origin := r.Header.Get("Origin")
+	if origin != "" {
+		if fs.option.AllowedOrigins == nil || len(fs.option.AllowedOrigins) == 0 || fs.option.AllowedOrigins[0] == "*" {
+			origin = "*"
+		} else {
+			originFound := false
+			for _, allowedOrigin := range fs.option.AllowedOrigins {
+				if origin == allowedOrigin {
+					originFound = true
+				}
+			}
+			if !originFound {
+				writeJsonError(w, r, http.StatusForbidden, errors.New("origin not allowed"))
+				return
+			}
+		}
+
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Headers", "OPTIONS, GET, HEAD")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
 
@@ -137,7 +172,6 @@ func OptionsHandler(w http.ResponseWriter, r *http.Request, isReadOnly bool) {
 		w.Header().Set("Access-Control-Allow-Methods", "PUT, POST, GET, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Expose-Headers", "*")
 	}
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Headers", "*")
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 }

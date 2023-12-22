@@ -51,6 +51,9 @@ dbFile = "./filer.db"                # sqlite db file
 # ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 enabled = false
+# dsn will take priority over "hostname, port, username, password, database".
+# [username[:password]@][protocol[(address)]]/dbname[?param1=value1&...&paramN=valueN]
+dsn = "root@tcp(localhost:3306)/seaweedfs?collation=utf8mb4_bin"
 hostname = "localhost"
 port = 3306
 username = "root"

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -42,6 +43,7 @@ type S3Options struct {
 	portGrpc                  *int
 	config                    *string
 	domainName                *string
+	allowedOrigins            *string
 	tlsPrivateKey             *string
 	tlsCertificate            *string
 	tlsCACertificate          *string
@@ -64,6 +66,7 @@ func init() {
 	s3StandaloneOptions.portHttps = cmdS3.Flag.Int("port.https", 0, "s3 server https listen port")
 	s3StandaloneOptions.portGrpc = cmdS3.Flag.Int("port.grpc", 0, "s3 server grpc listen port")
 	s3StandaloneOptions.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
+	s3StandaloneOptions.allowedOrigins = cmdS3.Flag.String("allowedOrigins", "*", "comma separated list of allowed origins")
 	s3StandaloneOptions.dataCenter = cmdS3.Flag.String("dataCenter", "", "prefer to read and write to volumes in this data center")
 	s3StandaloneOptions.config = cmdS3.Flag.String("config", "", "path to the config file")
 	s3StandaloneOptions.auditLogConfig = cmdS3.Flag.String("auditLogConfig", "", "path to the audit log config file")
@@ -220,6 +223,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		Port:                      *s3opt.port,
 		Config:                    *s3opt.config,
 		DomainName:                *s3opt.domainName,
+		AllowedOrigins:            strings.Split(*s3opt.allowedOrigins, ","),
 		BucketsPath:               filerBucketsPath,
 		GrpcDialOption:            grpcDialOption,
 		AllowEmptyFolder:          *s3opt.allowEmptyFolder,
