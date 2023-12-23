@@ -428,7 +428,7 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 						if err != nil {
 							return false, fmt.Errorf("read needle meta with id %d from volume %d: %v", key, volumeId, err)
 						}
-						if (modifyFrom == 0 || modifyFrom <= resp.LastModified) && (resp.AppendAtNs <= cutoffFrom) {
+						if (modifyFrom == 0 || modifyFrom <= resp.AppendAtNs) && (resp.AppendAtNs <= cutoffFrom) {
 							return true, nil
 						}
 						return false, nil
