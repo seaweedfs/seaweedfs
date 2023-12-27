@@ -71,6 +71,8 @@ func (ms *MasterServer) ProcessGrowRequest() {
 
 			} else {
 				glog.V(4).Infoln("discard volume grow request")
+				time.Sleep(time.Millisecond * 211)
+				vl.DoneGrowRequest()
 			}
 		}
 	}()

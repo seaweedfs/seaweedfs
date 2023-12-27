@@ -71,17 +71,6 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
 
-	if !vl.HasGrowRequest() && vl.ShouldGrowVolumes(option) {
-		if ms.Topo.AvailableSpaceFor(option) <= 0 {
-			return nil, fmt.Errorf("no free volumes left for " + option.String())
-		}
-		vl.AddGrowRequest()
-		ms.vgCh <- &topology.VolumeGrowRequest{
-			Option: option,
-			Count:  int(req.WritableVolumeCount),
-		}
-	}
-
 	var (
 		lastErr    error
 		maxTimeout = time.Second * 10
@@ -89,9 +78,20 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	)
 
 	for time.Now().Sub(startTime) < maxTimeout {
-		fid, count, dnList, err := ms.Topo.PickForWrite(req.Count, option)
+		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(req.Count, option, vl)
+		if shouldGrow && !vl.HasGrowRequest() {
+			// if picked volume is almost full, trigger a volume-grow request
+			if ms.Topo.AvailableSpaceFor(option) <= 0 {
+				return nil, fmt.Errorf("no free volumes left for " + option.String())
+			}
+			vl.AddGrowRequest()
+			ms.vgCh <- &topology.VolumeGrowRequest{
+				Option: option,
+				Count:  int(req.WritableVolumeCount),
+			}
+		}
 		if err != nil {
-			glog.Warningf("PickForWrite %+v: %v", req, err)
+			// glog.Warningf("PickForWrite %+v: %v", req, err)
 			lastErr = err
 			time.Sleep(200 * time.Millisecond)
 			continue
