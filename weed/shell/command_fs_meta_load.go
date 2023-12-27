@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -67,6 +68,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 		sizeBuf := make([]byte, 4)
 		waitChan := make(chan struct{}, *concurrency)
 		defer close(waitChan)
+		var wg sync.WaitGroup
 
 		for {
 			if n, err := dst.Read(sizeBuf); n != 4 {
@@ -109,6 +111,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 
 			fullEntry.Entry.Name = strings.ReplaceAll(fullEntry.Entry.Name, "/", "x")
 			if fullEntry.Entry.IsDirectory {
+				wg.Wait()
 				if errEntry := filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
 					Directory: fullEntry.Dir,
 					Entry:     fullEntry.Entry,
@@ -117,6 +120,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 				}
 				dirCount++
 			} else {
+				wg.Add(1)
 				waitChan <- struct{}{}
 				go func(entry *filer_pb.FullEntry) {
 					if errEntry := filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
@@ -125,6 +129,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 					}); errEntry != nil {
 						err = errEntry
 					}
+					defer wg.Done()
 					<-waitChan
 				}(fullEntry)
 				if err != nil {
