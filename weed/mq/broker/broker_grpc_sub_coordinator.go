@@ -37,24 +37,24 @@ func (b *MessageQueueBroker) SubscriberToSubCoordinator(stream mq_pb.SeaweedMess
 
 	// process ack messages
 	go func() {
-	for {
-		_, err := stream.Recv()
-		if err != nil {
-			glog.V(0).Infof("subscriber %s/%s/%s receive: %v", initMessage.ConsumerGroup, initMessage.ConsumerInstanceId, initMessage.Topic, err)
-		}
-
-		select {
-		case <-ctx.Done():
-			err := ctx.Err()
-			if err == context.Canceled {
-				// Client disconnected
-				return
+		for {
+			_, err := stream.Recv()
+			if err != nil {
+				glog.V(0).Infof("subscriber %s/%s/%s receive: %v", initMessage.ConsumerGroup, initMessage.ConsumerInstanceId, initMessage.Topic, err)
 			}
-			return
-		default:
-			// Continue processing the request
+
+			select {
+			case <-ctx.Done():
+				err := ctx.Err()
+				if err == context.Canceled {
+					// Client disconnected
+					return
+				}
+				return
+			default:
+				// Continue processing the request
+			}
 		}
-	}
 	}()
 
 	// send commands to subscriber
@@ -68,7 +68,7 @@ func (b *MessageQueueBroker) SubscriberToSubCoordinator(stream mq_pb.SeaweedMess
 			}
 			glog.V(0).Infof("subscriber %s/%s/%s disconnected: %v", initMessage.ConsumerGroup, initMessage.ConsumerInstanceId, initMessage.Topic, err)
 			return err
-		case message := <- cgi.ResponseChan:
+		case message := <-cgi.ResponseChan:
 			if err := stream.Send(message); err != nil {
 				glog.V(0).Infof("subscriber %s/%s/%s send: %v", initMessage.ConsumerGroup, initMessage.ConsumerInstanceId, initMessage.Topic, err)
 			}

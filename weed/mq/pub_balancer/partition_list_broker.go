@@ -6,8 +6,8 @@ import (
 )
 
 type PartitionSlotToBroker struct {
-	RangeStart         int32
-	RangeStop          int32
+	RangeStart     int32
+	RangeStop      int32
 	AssignedBroker string
 }
 
@@ -36,12 +36,12 @@ func (ps *PartitionSlotToBrokerList) AddBroker(partition *mq_pb.Partition, broke
 		}
 	}
 	ps.PartitionSlots = append(ps.PartitionSlots, &PartitionSlotToBroker{
-		RangeStart: partition.RangeStart,
-		RangeStop:  partition.RangeStop,
+		RangeStart:     partition.RangeStart,
+		RangeStop:      partition.RangeStop,
 		AssignedBroker: broker,
 	})
 }
-func (ps *PartitionSlotToBrokerList) RemoveBroker(broker string)  {
+func (ps *PartitionSlotToBrokerList) RemoveBroker(broker string) {
 	for _, partitionSlot := range ps.PartitionSlots {
 		if partitionSlot.AssignedBroker == broker {
 			partitionSlot.AssignedBroker = ""

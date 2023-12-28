@@ -14,9 +14,8 @@ import (
 //
 //  2. find the topic partitions on the filer
 //     2.1 if the topic is not found, return error
-//     2.2 if the request is_for_publish, create the topic
-//     2.2.1 if the request is_for_subscribe, return error not found
-//     2.2.2 if the request is_for_publish, create the topic
+//     2.1.1 if the request is_for_subscribe, return error not found
+//     2.1.2 if the request is_for_publish, create the topic
 //     2.2 if the topic is found, return the brokers
 //
 //  3. unlock the topic

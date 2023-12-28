@@ -310,7 +310,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			return
 		}
 		nextMarker = subDir + "/" + subNextMarker
-		// finished processing this sub directory
+		// finished processing this subdirectory
 		marker = subDir
 	}
 	if cursor.isTruncated {
