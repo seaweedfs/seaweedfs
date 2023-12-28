@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -47,6 +48,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	metaLoadCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	c.dirPrefix = metaLoadCommand.String("dirPrefix", "", "load entries only with directories matching prefix")
+	concurrency := metaLoadCommand.Int("concurrency", 1, "number of parallel meta load to filer")
 	verbose := metaLoadCommand.Bool("v", true, "verbose mode")
 	if err = metaLoadCommand.Parse(args[0 : len(args)-1]); err != nil {
 		return nil
@@ -64,6 +66,9 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		sizeBuf := make([]byte, 4)
+		waitChan := make(chan struct{}, *concurrency)
+		defer close(waitChan)
+		var wg sync.WaitGroup
 
 		for {
 			if n, err := dst.Read(sizeBuf); n != 4 {
@@ -105,21 +110,34 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 			}
 
 			fullEntry.Entry.Name = strings.ReplaceAll(fullEntry.Entry.Name, "/", "x")
-			if err := filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
-				Directory: fullEntry.Dir,
-				Entry:     fullEntry.Entry,
-			}); err != nil {
-				return err
-			}
-
 			if fullEntry.Entry.IsDirectory {
+				wg.Wait()
+				if errEntry := filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
+					Directory: fullEntry.Dir,
+					Entry:     fullEntry.Entry,
+				}); errEntry != nil {
+					return errEntry
+				}
 				dirCount++
 			} else {
+				wg.Add(1)
+				waitChan <- struct{}{}
+				go func(entry *filer_pb.FullEntry) {
+					if errEntry := filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
+						Directory: entry.Dir,
+						Entry:     entry.Entry,
+					}); errEntry != nil {
+						err = errEntry
+					}
+					defer wg.Done()
+					<-waitChan
+				}(fullEntry)
+				if err != nil {
+					return err
+				}
 				fileCount++
 			}
-
 		}
-
 	})
 
 	if err == nil {
