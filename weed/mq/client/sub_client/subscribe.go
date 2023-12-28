@@ -12,6 +12,11 @@ import (
 // If a partition is moved to another broker, the subscriber will automatically reconnect to the new broker.
 
 func (sub *TopicSubscriber) Subscribe() error {
+	// loop forever
+	sub.doKeepConnectedToSubCoordinator()
+
+
+
 	index := -1
 	util.RetryUntil("subscribe", func() error {
 		index++

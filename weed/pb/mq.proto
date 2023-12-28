@@ -137,7 +137,7 @@ message AssignTopicPartitionsResponse {
 message SubscriberToSubCoordinatorRequest {
     message InitMessage {
         string consumer_group = 1;
-        string consumer_instance_id = 2;
+        string consumer_group_instance_id = 2;
         Topic topic = 3;
     }
     message AckMessage {

@@ -20,8 +20,8 @@ func (sub *TopicSubscriber) doProcess() error {
 		subscribeClient, err := brokerClient.Subscribe(context.Background(), &mq_pb.SubscribeRequest{
 			Message: &mq_pb.SubscribeRequest_Init{
 				Init: &mq_pb.SubscribeRequest_InitMessage{
-					ConsumerGroup: sub.SubscriberConfig.GroupId,
-					ConsumerId:    sub.SubscriberConfig.GroupInstanceId,
+					ConsumerGroup: sub.SubscriberConfig.ConsumerGroup,
+					ConsumerId:    sub.SubscriberConfig.ConsumerGroupInstanceId,
 					Topic: &mq_pb.Topic{
 						Namespace: sub.ContentConfig.Namespace,
 						Name:      sub.ContentConfig.Topic,

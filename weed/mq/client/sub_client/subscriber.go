@@ -7,10 +7,10 @@ import (
 )
 
 type SubscriberConfiguration struct {
-	ClientId          string
-	GroupId           string
-	GroupInstanceId   string
-	GroupMinimumPeers int32
+	ClientId                string
+	ConsumerGroup           string
+	ConsumerGroupInstanceId string
+	GroupMinimumPeers       int32
 	GroupMaximumPeers int32
 	BootstrapServers  []string
 	GrpcDialOption    grpc.DialOption
@@ -23,12 +23,17 @@ type ContentConfiguration struct {
 	StartTime time.Time
 }
 
+type ProcessorConfiguration struct {
+	ConcurrentPartitionLimit int // how many partitions to process concurrently
+}
+
 type OnEachMessageFunc func(key, value []byte) (shouldContinue bool)
 type OnCompletionFunc func()
 
 type TopicSubscriber struct {
 	SubscriberConfig           *SubscriberConfiguration
 	ContentConfig              *ContentConfiguration
+	ProcessorConfig            *ProcessorConfiguration
 	brokerPartitionAssignments []*mq_pb.BrokerPartitionAssignment
 	OnEachMessageFunc          OnEachMessageFunc
 	OnCompletionFunc           OnCompletionFunc
@@ -37,10 +42,11 @@ type TopicSubscriber struct {
 	alreadyProcessedTsNs       int64
 }
 
-func NewTopicSubscriber(bootstrapBrokers []string, subscriber *SubscriberConfiguration, content *ContentConfiguration) *TopicSubscriber {
+func NewTopicSubscriber(bootstrapBrokers []string, subscriber *SubscriberConfiguration, content *ContentConfiguration, processor ProcessorConfiguration) *TopicSubscriber {
 	return &TopicSubscriber{
 		SubscriberConfig:     subscriber,
 		ContentConfig:        content,
+		ProcessorConfig:      &processor,
 		bootstrapBrokers:     bootstrapBrokers,
 		waitForMoreMessage:   true,
 		alreadyProcessedTsNs: content.StartTime.UnixNano(),
