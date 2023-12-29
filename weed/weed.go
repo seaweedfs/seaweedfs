@@ -3,19 +3,18 @@ package main
 import (
 	"embed"
 	"fmt"
-	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
-	"github.com/seaweedfs/seaweedfs/weed/util"
-	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"io"
 	"io/fs"
-	"math/rand"
 	"os"
 	"strings"
 	"sync"
 	"text/template"
-	"time"
 	"unicode"
 	"unicode/utf8"
+
+	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -48,7 +47,6 @@ func init() {
 func main() {
 	glog.MaxSize = 1024 * 1024 * 10
 	glog.MaxFileCount = 5
-	rand.Seed(time.Now().UnixNano())
 	flag.Usage = usage
 
 	if command.AutocompleteMain(commands) {
