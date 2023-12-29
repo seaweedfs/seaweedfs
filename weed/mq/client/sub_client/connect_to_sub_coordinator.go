@@ -72,20 +72,20 @@ func (sub *TopicSubscriber) onEachAssignment(assignment *mq_pb.SubscriberToSubCo
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, sub.ProcessorConfig.ConcurrentPartitionLimit)
 
-	for _, partition := range assignment.AssignedPartitions {
+	for _, assigned := range assignment.AssignedPartitions {
 		wg.Add(1)
 		semaphore <- struct{}{}
-		go func(partition *mq_pb.Partition) {
+		go func(partition *mq_pb.Partition, broker string) {
 			defer wg.Done()
 			defer func() { <-semaphore }()
-			glog.V(0).Infof("subscriber %s/%s/%s assigned partition %d", sub.ContentConfig.Namespace, sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, partition)
-			sub.onEachPartition(partition)
-		}(partition.Partition)
+			glog.V(0).Infof("subscriber %s/%s/%s assigned partition %+v", sub.ContentConfig.Namespace, sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, partition)
+			sub.onEachPartition(partition, broker)
+		}(assigned.Partition, assigned.Broker)
 	}
 
 	wg.Wait()
 }
 
-func (sub *TopicSubscriber) onEachPartition(partition *mq_pb.Partition) {
-	glog.V(0).Infof("subscriber %s/%s/%s processing partition %d", sub.ContentConfig.Namespace, sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, partition)
+func (sub *TopicSubscriber) onEachPartition(partition *mq_pb.Partition, broker string) {
+	glog.V(0).Infof("subscriber %s/%s/%s processing partition %+v", sub.ContentConfig.Namespace, sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, partition)
 }

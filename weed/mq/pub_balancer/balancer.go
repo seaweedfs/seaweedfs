@@ -2,6 +2,7 @@ package pub_balancer
 
 import (
 	cmap "github.com/orcaman/concurrent-map/v2"
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
 
@@ -70,13 +71,13 @@ func (balancer *Balancer) OnBrokerStatsUpdated(broker string, brokerStats *Broke
 
 	// update TopicToBrokers
 	for _, topicPartitionStats := range receivedStats.Stats {
-		topic := topicPartitionStats.Topic
+		topicKey := topic.FromPbTopic(topicPartitionStats.Topic).String()
 		partition := topicPartitionStats.Partition
-		partitionSlotToBrokerList, found := balancer.TopicToBrokers.Get(topic.String())
+		partitionSlotToBrokerList, found := balancer.TopicToBrokers.Get(topicKey)
 		if !found {
 			partitionSlotToBrokerList = NewPartitionSlotToBrokerList(MaxPartitionCount)
-			if !balancer.TopicToBrokers.SetIfAbsent(topic.String(), partitionSlotToBrokerList) {
-				partitionSlotToBrokerList, _ = balancer.TopicToBrokers.Get(topic.String())
+			if !balancer.TopicToBrokers.SetIfAbsent(topicKey, partitionSlotToBrokerList) {
+				partitionSlotToBrokerList, _ = balancer.TopicToBrokers.Get(topicKey)
 			}
 		}
 		partitionSlotToBrokerList.AddBroker(partition, broker)

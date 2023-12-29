@@ -153,6 +153,7 @@ message SubscriberToSubCoordinatorResponse {
     message AssignedPartition {
         Partition partition = 1;
         int64 ts_ns = 2;
+        string broker = 3;
     }
     message Assignment {
         int64 generation = 1;

@@ -29,9 +29,18 @@ func (pcm *PartitionConsumerMapping) BalanceToConsumerInstanceIds(partitions []*
 	}
 	newVersion := time.Now().UnixNano()
 	newMapping := NewPartitionSlotToConsumerInstanceList(partitions[0].RingSize, newVersion)
-	newMapping.PartitionSlots = doBalanceSticky(partitions, consumerInstanceIds, pcm.prevMappings[0])
+	var prevMapping *PartitionSlotToConsumerInstanceList
+	if len(pcm.prevMappings) > 0 {
+		prevMapping = pcm.prevMappings[len(pcm.prevMappings)-1]
+	} else {
+		prevMapping = nil
+	}
+	newMapping.PartitionSlots = doBalanceSticky(partitions, consumerInstanceIds, prevMapping)
 	if pcm.currentMapping != nil {
 		pcm.prevMappings = append(pcm.prevMappings, pcm.currentMapping)
+		if len(pcm.prevMappings) > 10 {
+			pcm.prevMappings = pcm.prevMappings[1:]
+		}
 	}
 	pcm.currentMapping = newMapping
 }

@@ -41,8 +41,7 @@ func (b *MessageQueueBroker) PublisherToPubBalancer(stream mq_pb.SeaweedMessagin
 		}
 		if receivedStats := req.GetStats(); receivedStats != nil {
 			b.Balancer.OnBrokerStatsUpdated(initMessage.Broker, brokerStats, receivedStats)
-			glog.V(4).Infof("broker %s stats: %+v", initMessage.Broker, brokerStats)
-			glog.V(4).Infof("received stats: %+v", receivedStats)
+			glog.V(4).Infof("received from %v: %+v", initMessage.Broker, receivedStats)
 		}
 	}
 

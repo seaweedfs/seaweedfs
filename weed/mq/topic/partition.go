@@ -11,6 +11,15 @@ type Partition struct {
 	UnixTimeNs int64 // in nanoseconds
 }
 
+func NewPartition(rangeStart, rangeStop, ringSize int32, unixTimeNs int64) *Partition {
+	return &Partition{
+		RangeStart: rangeStart,
+		RangeStop:  rangeStop,
+		RingSize:   ringSize,
+		UnixTimeNs: unixTimeNs,
+	}
+}
+
 func (partition Partition) Equals(other Partition) bool {
 	if partition.RangeStart != other.RangeStart {
 		return false

@@ -53,7 +53,7 @@ func (c *Coordinator) AddSubscriber(consumerGroup, consumerGroupInstance string,
 	tcg := c.GetTopicConsumerGroups(topic)
 	cg, _ := tcg.ConsumerGroups.Get(consumerGroup)
 	if cg == nil {
-		cg = NewConsumerGroup()
+		cg = NewConsumerGroup(topic, c.balancer)
 		tcg.ConsumerGroups.Set(consumerGroup, cg)
 	}
 	cgi, _ := cg.ConsumerGroupInstances.Get(consumerGroupInstance)

@@ -81,6 +81,9 @@ func (fs *FilerServer) DistributedUnlock(ctx context.Context, req *filer_pb.Unlo
 
 func (fs *FilerServer) FindLockOwner(ctx context.Context, req *filer_pb.FindLockOwnerRequest) (*filer_pb.FindLockOwnerResponse, error) {
 	owner, movedTo, err := fs.filer.Dlm.FindLockOwner(req.Name)
+	if owner == "" {
+		glog.V(0).Infof("find lock %s moved to %v: %v", req.Name, movedTo, err)
+	}
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
