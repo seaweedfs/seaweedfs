@@ -78,7 +78,7 @@ func (sub *TopicSubscriber) onEachAssignment(assignment *mq_pb.SubscriberToSubCo
 		go func(partition *mq_pb.Partition, broker string) {
 			defer wg.Done()
 			defer func() { <-semaphore }()
-			glog.V(0).Infof("subscriber %s/%s/%s assigned partition %+v", sub.ContentConfig.Namespace, sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, partition)
+			glog.V(0).Infof("subscriber %s/%s/%s assigned partition %+v at %v", sub.ContentConfig.Namespace, sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, partition, broker)
 			sub.onEachPartition(partition, broker)
 		}(assigned.Partition, assigned.Broker)
 	}
@@ -87,5 +87,4 @@ func (sub *TopicSubscriber) onEachAssignment(assignment *mq_pb.SubscriberToSubCo
 }
 
 func (sub *TopicSubscriber) onEachPartition(partition *mq_pb.Partition, broker string) {
-	glog.V(0).Infof("subscriber %s/%s/%s processing partition %+v", sub.ContentConfig.Namespace, sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, partition)
 }

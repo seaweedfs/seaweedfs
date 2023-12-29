@@ -2,7 +2,7 @@ package sub_coordinator
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"time"
 )
 
@@ -23,19 +23,19 @@ func NewPartitionConsumerMapping(ringSize int32) *PartitionConsumerMapping {
 // 2. allow one consumer instance to be down unexpectedly
 //    without affecting the processing power utilization
 
-func (pcm *PartitionConsumerMapping) BalanceToConsumerInstanceIds(partitions []*topic.Partition, consumerInstanceIds []string) {
-	if len(partitions) == 0 || len(consumerInstanceIds) == 0 {
+func (pcm *PartitionConsumerMapping) BalanceToConsumerInstanceIds(partitionSlotToBrokerList *pub_balancer.PartitionSlotToBrokerList, consumerInstanceIds []string) {
+	if len(partitionSlotToBrokerList.PartitionSlots) == 0 || len(consumerInstanceIds) == 0 {
 		return
 	}
 	newVersion := time.Now().UnixNano()
-	newMapping := NewPartitionSlotToConsumerInstanceList(partitions[0].RingSize, newVersion)
+	newMapping := NewPartitionSlotToConsumerInstanceList(partitionSlotToBrokerList.RingSize, newVersion)
 	var prevMapping *PartitionSlotToConsumerInstanceList
 	if len(pcm.prevMappings) > 0 {
 		prevMapping = pcm.prevMappings[len(pcm.prevMappings)-1]
 	} else {
 		prevMapping = nil
 	}
-	newMapping.PartitionSlots = doBalanceSticky(partitions, consumerInstanceIds, prevMapping)
+	newMapping.PartitionSlots = doBalanceSticky(partitionSlotToBrokerList.PartitionSlots, consumerInstanceIds, prevMapping)
 	if pcm.currentMapping != nil {
 		pcm.prevMappings = append(pcm.prevMappings, pcm.currentMapping)
 		if len(pcm.prevMappings) > 10 {
@@ -45,7 +45,7 @@ func (pcm *PartitionConsumerMapping) BalanceToConsumerInstanceIds(partitions []*
 	pcm.currentMapping = newMapping
 }
 
-func doBalanceSticky(partitions []*topic.Partition, consumerInstanceIds []string, prevMapping *PartitionSlotToConsumerInstanceList) (partitionSlots []*PartitionSlotToConsumerInstance) {
+func doBalanceSticky(partitions []*pub_balancer.PartitionSlotToBroker, consumerInstanceIds []string, prevMapping *PartitionSlotToConsumerInstanceList) (partitionSlots []*PartitionSlotToConsumerInstance) {
 	// collect previous consumer instance ids
 	prevConsumerInstanceIds := make(map[string]struct{})
 	if prevMapping != nil {
@@ -79,7 +79,14 @@ func doBalanceSticky(partitions []*topic.Partition, consumerInstanceIds []string
 	}
 
 	// make a copy of old mapping, skipping the deleted consumer instances
-	newPartitionSlots := ToPartitionSlots(partitions)
+	newPartitionSlots := make([]*PartitionSlotToConsumerInstance, 0, len(partitions))
+	for _, partition := range partitions {
+		newPartitionSlots = append(newPartitionSlots, &PartitionSlotToConsumerInstance{
+			RangeStart: partition.RangeStart,
+			RangeStop:  partition.RangeStop,
+			Broker:     partition.AssignedBroker,
+		})
+	}
 	for _, newPartitionSlot := range newPartitionSlots {
 		key := fmt.Sprintf("%d-%d", newPartitionSlot.RangeStart, newPartitionSlot.RangeStop)
 		if prevPartitionSlot, ok := prevPartitionSlotMap[key]; ok {

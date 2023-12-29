@@ -5,6 +5,7 @@ import "github.com/seaweedfs/seaweedfs/weed/mq/topic"
 type PartitionSlotToConsumerInstance struct {
 	RangeStart         int32
 	RangeStop          int32
+	Broker             string
 	AssignedInstanceId string
 }
 
@@ -19,16 +20,6 @@ func NewPartitionSlotToConsumerInstanceList(ringSize int32, version int64) *Part
 		RingSize: ringSize,
 		Version:  version,
 	}
-}
-
-func ToPartitionSlots(partitions []*topic.Partition) (partitionSlots []*PartitionSlotToConsumerInstance) {
-	for _, partition := range partitions {
-		partitionSlots = append(partitionSlots, &PartitionSlotToConsumerInstance{
-			RangeStart: partition.RangeStart,
-			RangeStop:  partition.RangeStop,
-		})
-	}
-	return
 }
 
 func ToPartitions(ringSize int32, slots []*PartitionSlotToConsumerInstance, unixTimeNs int64) []*topic.Partition {

@@ -40,19 +40,19 @@ func NewConsumerGroupInstance(instanceId string) *ConsumerGroupInstance {
 	}
 }
 func (cg *ConsumerGroup) OnAddConsumerGroupInstance(consumerGroupInstance string, topic *mq_pb.Topic) {
-	cg.onConsumerGroupInstanceChange()
+	cg.onConsumerGroupInstanceChange("add consumer instance "+ consumerGroupInstance)
 }
 func (cg *ConsumerGroup) OnRemoveConsumerGroupInstance(consumerGroupInstance string, topic *mq_pb.Topic) {
-	cg.onConsumerGroupInstanceChange()
+	cg.onConsumerGroupInstanceChange("remove consumer instance "+ consumerGroupInstance)
 }
 
-func (cg *ConsumerGroup) onConsumerGroupInstanceChange(){
+func (cg *ConsumerGroup) onConsumerGroupInstanceChange(reason string){
 	if cg.reBalanceTimer != nil {
 		cg.reBalanceTimer.Stop()
 		cg.reBalanceTimer = nil
 	}
 	cg.reBalanceTimer = time.AfterFunc(5*time.Second, func() {
-		cg.RebalanceConsumberGroupInstances()
+		cg.RebalanceConsumberGroupInstances(reason)
 		cg.reBalanceTimer = nil
 	})
 }
@@ -61,11 +61,11 @@ func (cg *ConsumerGroup) OnPartitionListChange() {
 		cg.reBalanceTimer.Stop()
 		cg.reBalanceTimer = nil
 	}
-	cg.RebalanceConsumberGroupInstances()
+	cg.RebalanceConsumberGroupInstances("partition list change")
 }
 
-func (cg *ConsumerGroup) RebalanceConsumberGroupInstances() {
-	println("rebalance...")
+func (cg *ConsumerGroup) RebalanceConsumberGroupInstances(reason string) {
+	println("rebalance due to", reason, "...")
 
 	now := time.Now().UnixNano()
 
@@ -75,10 +75,6 @@ func (cg *ConsumerGroup) RebalanceConsumberGroupInstances() {
 		glog.V(0).Infof("topic %s not found in balancer", cg.topic.String())
 		return
 	}
-	partitions := make([]*topic.Partition, 0)
-	for _, partitionSlot := range partitionSlotToBrokerList.PartitionSlots {
-		partitions = append(partitions, topic.NewPartition(partitionSlot.RangeStart, partitionSlot.RangeStop, partitionSlotToBrokerList.RingSize, now))
-	}
 
 	// collect current consumer group instance ids
 	consumerInstanceIds := make([]string, 0)
@@ -86,7 +82,7 @@ func (cg *ConsumerGroup) RebalanceConsumberGroupInstances() {
 		consumerInstanceIds = append(consumerInstanceIds, consumerGroupInstance.InstanceId)
 	}
 
-	cg.mapping.BalanceToConsumerInstanceIds(partitions, consumerInstanceIds)
+	cg.mapping.BalanceToConsumerInstanceIds(partitionSlotToBrokerList, consumerInstanceIds)
 
 	// convert cg.mapping currentMapping to map of consumer group instance id to partition slots
 	consumerInstanceToPartitionSlots := make(map[string][]*PartitionSlotToConsumerInstance)
@@ -110,6 +106,7 @@ func (cg *ConsumerGroup) RebalanceConsumberGroupInstances() {
 					RingSize: partitionSlotToBrokerList.RingSize,
 					UnixTimeNs: now,
 				},
+				Broker: partitionSlot.Broker,
 			}
 		}
 		response := &mq_pb.SubscriberToSubCoordinatorResponse{
