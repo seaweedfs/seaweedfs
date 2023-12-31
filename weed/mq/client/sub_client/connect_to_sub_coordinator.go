@@ -2,9 +2,11 @@ package sub_client
 
 import (
 	"context"
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"io"
 	"sync"
 	"time"
 )
@@ -87,4 +89,76 @@ func (sub *TopicSubscriber) onEachAssignment(assignment *mq_pb.SubscriberToSubCo
 }
 
 func (sub *TopicSubscriber) onEachPartition(partition *mq_pb.Partition, broker string) {
+	// connect to the partition broker
+	pb.WithBrokerGrpcClient(true, broker, sub.SubscriberConfig.GrpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+		subscribeClient, err := client.Subscribe(context.Background(), &mq_pb.SubscribeRequest{
+			Message: &mq_pb.SubscribeRequest_Init{
+				Init: &mq_pb.SubscribeRequest_InitMessage{
+					ConsumerGroup: sub.SubscriberConfig.ConsumerGroup,
+					ConsumerId:    sub.SubscriberConfig.ConsumerGroupInstanceId,
+					Topic: &mq_pb.Topic{
+						Namespace: sub.ContentConfig.Namespace,
+						Name:      sub.ContentConfig.Topic,
+					},
+					Partition: &mq_pb.Partition{
+						RingSize:   partition.RingSize,
+						RangeStart: partition.RangeStart,
+						RangeStop:  partition.RangeStop,
+					},
+					Filter: sub.ContentConfig.Filter,
+					Offset: &mq_pb.SubscribeRequest_InitMessage_StartTimestampNs{
+						StartTimestampNs: sub.alreadyProcessedTsNs,
+					},
+				},
+			},
+		})
+
+		if err != nil {
+			return fmt.Errorf("create subscribe client: %v", err)
+		}
+
+		fmt.Printf("subscriber %s/%s/%s connected to partition %+v at %v\n", sub.ContentConfig.Namespace, sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, partition, broker)
+
+		if sub.OnCompletionFunc != nil {
+			defer sub.OnCompletionFunc()
+		}
+		defer func() {
+			subscribeClient.SendMsg(&mq_pb.SubscribeRequest{
+				Message: &mq_pb.SubscribeRequest_Ack{
+					Ack: &mq_pb.SubscribeRequest_AckMessage{
+						Sequence: 0,
+					},
+				},
+			})
+			subscribeClient.CloseSend()
+		}()
+
+		for {
+			fmt.Printf("subscriber %s/%s/%s waiting for message\n", sub.ContentConfig.Namespace, sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup)
+			resp, err := subscribeClient.Recv()
+			if err != nil {
+				return fmt.Errorf("subscribe error: %v", err)
+			}
+			if resp.Message == nil {
+				continue
+			}
+			switch m := resp.Message.(type) {
+			case *mq_pb.SubscribeResponse_Data:
+				shouldContinue, processErr := sub.OnEachMessageFunc(m.Data.Key, m.Data.Value)
+				if processErr != nil {
+					return fmt.Errorf("process error: %v", processErr)
+				}
+				if !shouldContinue {
+					return nil
+				}
+				sub.alreadyProcessedTsNs = m.Data.TsNs
+			case *mq_pb.SubscribeResponse_Ctrl:
+				if m.Ctrl.IsEndOfStream || m.Ctrl.IsEndOfTopic {
+					return io.EOF
+				}
+			}
+		}
+
+		return nil
+	})
 }

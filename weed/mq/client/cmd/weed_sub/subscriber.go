@@ -40,9 +40,9 @@ func main() {
 	brokers := strings.Split(*seedBrokers, ",")
 	subscriber := sub_client.NewTopicSubscriber(brokers, subscriberConfig, contentConfig, processorConfig)
 
-	subscriber.SetEachMessageFunc(func(key, value []byte) bool {
+	subscriber.SetEachMessageFunc(func(key, value []byte) (bool, error) {
 		println(string(key), "=>", string(value))
-		return true
+		return true, nil
 	})
 
 	subscriber.SetCompletionFunc(func() {
