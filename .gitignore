@@ -89,3 +89,6 @@ other/java/hdfs/dependency-reduced-pom.xml
 weed/weed
 weed/mq/client/cmd/weed_pub/weed_pub
 docker/weed
+
+# test generated files
+weed/*/*.jpg
