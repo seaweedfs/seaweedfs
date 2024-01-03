@@ -96,6 +96,7 @@ type FileInfo struct {
 	size         int64
 	mode         os.FileMode
 	modifiedTime time.Time
+	etag         string
 	isDirectory  bool
 }
 
@@ -105,6 +106,10 @@ func (fi *FileInfo) Mode() os.FileMode  { return fi.mode }
 func (fi *FileInfo) ModTime() time.Time { return fi.modifiedTime }
 func (fi *FileInfo) IsDir() bool        { return fi.isDirectory }
 func (fi *FileInfo) Sys() interface{}   { return nil }
+
+func (fi *FileInfo) ETag(ctx context.Context) (string, error) {
+	return fi.etag, nil
+}
 
 type WebDavFile struct {
 	fs               *WebDavFileSystem
@@ -369,6 +374,7 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 	fi.name = string(fullpath)
 	fi.mode = os.FileMode(entry.Attributes.FileMode)
 	fi.modifiedTime = time.Unix(entry.Attributes.Mtime, 0)
+	fi.etag = filer.ETag(entry)
 	fi.isDirectory = entry.IsDirectory
 
 	if fi.name == "/" {
