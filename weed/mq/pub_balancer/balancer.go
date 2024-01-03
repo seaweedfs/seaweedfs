@@ -32,6 +32,7 @@ type Balancer struct {
 	Brokers cmap.ConcurrentMap[string, *BrokerStats] // key: broker address
 	// Collected from all brokers when they connect to the broker leader
 	TopicToBrokers cmap.ConcurrentMap[string, *PartitionSlotToBrokerList] // key: topic name
+	OnPartitionChange func(topic *mq_pb.Topic, assignments []*mq_pb.BrokerPartitionAssignment)
 }
 
 func NewBalancer() *Balancer {

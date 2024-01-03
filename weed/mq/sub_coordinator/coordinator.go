@@ -28,14 +28,16 @@ func NewCoordinator(balancer *pub_balancer.Balancer) *Coordinator {
 	}
 }
 
-func (c *Coordinator) GetTopicConsumerGroups(topic *mq_pb.Topic) *TopicConsumerGroups {
+func (c *Coordinator) GetTopicConsumerGroups(topic *mq_pb.Topic, createIfMissing bool) *TopicConsumerGroups {
 	topicName := toTopicName(topic)
 	tcg, _ := c.TopicSubscribers.Get(topicName)
-	if tcg == nil {
+	if tcg == nil && createIfMissing{
 		tcg = &TopicConsumerGroups{
 			ConsumerGroups: cmap.New[*ConsumerGroup](),
 		}
-		c.TopicSubscribers.Set(topicName, tcg)
+		if !c.TopicSubscribers.SetIfAbsent(topicName, tcg) {
+			tcg, _ = c.TopicSubscribers.Get(topicName)
+		}
 	}
 	return tcg
 }
@@ -50,23 +52,27 @@ func toTopicName(topic *mq_pb.Topic) string {
 }
 
 func (c *Coordinator) AddSubscriber(consumerGroup, consumerGroupInstance string, topic *mq_pb.Topic) *ConsumerGroupInstance {
-	tcg := c.GetTopicConsumerGroups(topic)
+	tcg := c.GetTopicConsumerGroups(topic, true)
 	cg, _ := tcg.ConsumerGroups.Get(consumerGroup)
 	if cg == nil {
 		cg = NewConsumerGroup(topic, c.balancer)
-		tcg.ConsumerGroups.Set(consumerGroup, cg)
+		if !tcg.ConsumerGroups.SetIfAbsent(consumerGroup, cg){
+			cg, _ = tcg.ConsumerGroups.Get(consumerGroup)
+		}
 	}
 	cgi, _ := cg.ConsumerGroupInstances.Get(consumerGroupInstance)
 	if cgi == nil {
 		cgi = NewConsumerGroupInstance(consumerGroupInstance)
-		cg.ConsumerGroupInstances.Set(consumerGroupInstance, cgi)
+		if !cg.ConsumerGroupInstances.SetIfAbsent(consumerGroupInstance, cgi){
+			cgi, _ = cg.ConsumerGroupInstances.Get(consumerGroupInstance)
+		}
 	}
 	cg.OnAddConsumerGroupInstance(consumerGroupInstance, topic)
 	return cgi
 }
 
 func (c *Coordinator) RemoveSubscriber(consumerGroup, consumerGroupInstance string, topic *mq_pb.Topic) {
-	tcg, _ := c.TopicSubscribers.Get(toTopicName(topic))
+	tcg := c.GetTopicConsumerGroups(topic, false)
 	if tcg == nil {
 		return
 	}
@@ -81,5 +87,15 @@ func (c *Coordinator) RemoveSubscriber(consumerGroup, consumerGroupInstance stri
 	}
 	if tcg.ConsumerGroups.Count() == 0 {
 		c.RemoveTopic(topic)
+	}
+}
+
+func (c *Coordinator) OnPartitionChange(topic *mq_pb.Topic, assignments []*mq_pb.BrokerPartitionAssignment) {
+	tcg, _ := c.TopicSubscribers.Get(toTopicName(topic))
+	if tcg == nil {
+		return
+	}
+	for _, cg := range tcg.ConsumerGroups.Items() {
+		cg.OnPartitionListChange(assignments)
 	}
 }

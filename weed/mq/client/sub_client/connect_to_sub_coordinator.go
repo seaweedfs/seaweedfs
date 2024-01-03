@@ -145,7 +145,7 @@ func (sub *TopicSubscriber) onEachPartition(partition *mq_pb.Partition, broker s
 			glog.V(3).Infof("subscriber %s/%s/%s waiting for message", sub.ContentConfig.Namespace, sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup)
 			resp, err := subscribeClient.Recv()
 			if err != nil {
-				return fmt.Errorf("subscribe error: %v", err)
+				return fmt.Errorf("subscribe recv: %v", err)
 			}
 			if resp.Message == nil {
 				continue
@@ -156,10 +156,10 @@ func (sub *TopicSubscriber) onEachPartition(partition *mq_pb.Partition, broker s
 				if processErr != nil {
 					return fmt.Errorf("process error: %v", processErr)
 				}
+				sub.alreadyProcessedTsNs = m.Data.TsNs
 				if !shouldContinue {
 					return nil
 				}
-				sub.alreadyProcessedTsNs = m.Data.TsNs
 			case *mq_pb.SubscribeResponse_Ctrl:
 				if m.Ctrl.IsEndOfStream || m.Ctrl.IsEndOfTopic {
 					return io.EOF

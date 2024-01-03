@@ -124,7 +124,7 @@ func (lc *LockClient) doNewLock(key string, lockDuration time.Duration, owner st
 }
 
 func (lock *LiveLock) IsLocked() bool {
-	return lock.isLocked
+	return lock!=nil && lock.isLocked
 }
 
 func (lock *LiveLock) StopLock() error {

@@ -52,32 +52,40 @@ func (cg *ConsumerGroup) onConsumerGroupInstanceChange(reason string){
 		cg.reBalanceTimer = nil
 	}
 	cg.reBalanceTimer = time.AfterFunc(5*time.Second, func() {
-		cg.RebalanceConsumberGroupInstances(reason)
+		cg.RebalanceConsumberGroupInstances(nil, reason)
 		cg.reBalanceTimer = nil
 	})
 }
-func (cg *ConsumerGroup) OnPartitionListChange() {
+func (cg *ConsumerGroup) OnPartitionListChange(assignments []*mq_pb.BrokerPartitionAssignment) {
 	if cg.reBalanceTimer != nil {
 		cg.reBalanceTimer.Stop()
 		cg.reBalanceTimer = nil
 	}
-	cg.RebalanceConsumberGroupInstances("partition list change")
+	partitionSlotToBrokerList := pub_balancer.NewPartitionSlotToBrokerList(pub_balancer.MaxPartitionCount)
+	for _, assignment := range assignments {
+		partitionSlotToBrokerList.AddBroker(assignment.Partition, assignment.LeaderBroker)
+	}
+	cg.RebalanceConsumberGroupInstances(partitionSlotToBrokerList, "partition list change")
 }
 
-func (cg *ConsumerGroup) RebalanceConsumberGroupInstances(reason string) {
-	println("rebalance due to", reason, "...")
+func (cg *ConsumerGroup) RebalanceConsumberGroupInstances(knownPartitionSlotToBrokerList *pub_balancer.PartitionSlotToBrokerList, reason string) {
+	glog.V(0).Infof("rebalance consumer group %s due to %s", cg.topic.String(), reason)
 
 	now := time.Now().UnixNano()
 
 	// collect current topic partitions
-	partitionSlotToBrokerList, found := cg.pubBalancer.TopicToBrokers.Get(cg.topic.String())
-	if !found {
-		glog.V(0).Infof("topic %s not found in balancer", cg.topic.String())
-		return
+	partitionSlotToBrokerList := knownPartitionSlotToBrokerList
+	if partitionSlotToBrokerList == nil {
+		var found bool
+		partitionSlotToBrokerList, found = cg.pubBalancer.TopicToBrokers.Get(cg.topic.String())
+		if !found {
+			glog.V(0).Infof("topic %s not found in balancer", cg.topic.String())
+			return
+		}
 	}
 
 	// collect current consumer group instance ids
-	consumerInstanceIds := make([]string, 0)
+	var consumerInstanceIds []string
 	for _, consumerGroupInstance := range cg.ConsumerGroupInstances.Items() {
 		consumerInstanceIds = append(consumerInstanceIds, consumerGroupInstance.InstanceId)
 	}
@@ -116,6 +124,7 @@ func (cg *ConsumerGroup) RebalanceConsumberGroupInstances(reason string) {
 				},
 			},
 		}
+		println("sending response to", consumerGroupInstance.InstanceId, "...")
 		consumerGroupInstance.ResponseChan <- response
 	}
 

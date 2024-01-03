@@ -47,6 +47,7 @@ type MessageQueueBroker struct {
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
 
 	pub_broker_balancer := pub_balancer.NewBalancer()
+	coordinator := sub_coordinator.NewCoordinator(pub_broker_balancer)
 
 	mqBroker = &MessageQueueBroker{
 		option:            option,
@@ -55,9 +56,10 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		filers:            make(map[pb.ServerAddress]struct{}),
 		localTopicManager: topic.NewLocalTopicManager(),
 		Balancer:          pub_broker_balancer,
-		Coordinator:       sub_coordinator.NewCoordinator(pub_broker_balancer),
+		Coordinator:       coordinator,
 	}
 	mqBroker.MasterClient.SetOnPeerUpdateFn(mqBroker.OnBrokerUpdate)
+	pub_broker_balancer.OnPartitionChange = mqBroker.Coordinator.OnPartitionChange
 
 	go mqBroker.MasterClient.KeepConnectedToMaster()
 

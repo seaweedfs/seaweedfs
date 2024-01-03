@@ -30,11 +30,11 @@ func main() {
 		Namespace: *namespace,
 		Topic:     *topic,
 		Filter:    "",
-		StartTime: time.Now(),
+		StartTime: time.Unix(0, 0),
 	}
 
 	processorConfig := sub_client.ProcessorConfiguration{
-		ConcurrentPartitionLimit: 1,
+		ConcurrentPartitionLimit: 6,
 	}
 
 	brokers := strings.Split(*seedBrokers, ",")

@@ -33,7 +33,7 @@ func (balancer *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, pu
 			}
 		}
 	}
-	if len(assignments) > 0 || !publish {
+	if len(assignments) > 0 || !(publish && len(assignments) !=int(partitionCount) && partitionCount > 0) {
 		// glog.V(0).Infof("existing topic partitions %d: %v", len(assignments), assignments)
 		return assignments, nil
 	}
@@ -48,5 +48,7 @@ func (balancer *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, pu
 	if balancer.Brokers.IsEmpty() {
 		return nil, ErrNoBroker
 	}
-	return allocateTopicPartitions(balancer.Brokers, partitionCount), nil
+	assignments = allocateTopicPartitions(balancer.Brokers, partitionCount)
+	balancer.OnPartitionChange(topic, assignments)
+	return
 }
