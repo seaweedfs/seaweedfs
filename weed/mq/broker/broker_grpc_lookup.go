@@ -14,7 +14,6 @@ import (
 //
 //  2. find the topic partitions on the filer
 //     2.1 if the topic is not found, return error
-//     2.1.1 if the request is_for_subscribe, return error not found
 //     2.1.2 if the request is_for_publish, create the topic
 //     2.2 if the topic is found, return the brokers
 //
@@ -36,7 +35,7 @@ func (b *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq
 
 	ret := &mq_pb.LookupTopicBrokersResponse{}
 	ret.Topic = request.Topic
-	ret.BrokerPartitionAssignments, err = b.Balancer.LookupOrAllocateTopicPartitions(ret.Topic, request.IsForPublish, 6)
+	ret.BrokerPartitionAssignments, err = b.Balancer.LookupOrAllocateTopicPartitions(ret.Topic, request.IsForPublish, -1)
 	return ret, err
 }
 

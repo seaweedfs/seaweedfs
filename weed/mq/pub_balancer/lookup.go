@@ -2,7 +2,6 @@ package pub_balancer
 
 import (
 	"errors"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
 
@@ -34,8 +33,8 @@ func (balancer *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, pu
 			}
 		}
 	}
-	if len(assignments) > 0 && len(assignments) == int(partitionCount) || !publish {
-		glog.V(0).Infof("existing topic partitions %d: %v", len(assignments), assignments)
+	if len(assignments) > 0 || !publish {
+		// glog.V(0).Infof("existing topic partitions %d: %v", len(assignments), assignments)
 		return assignments, nil
 	}
 
