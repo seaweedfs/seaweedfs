@@ -545,10 +545,9 @@ func (s3a *S3ApiServer) GetBucketVersioningHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	result := &s3.PutBucketVersioningInput{
+	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, &s3.PutBucketVersioningInput{
 		VersioningConfiguration: &s3.VersioningConfiguration{
 			Status: aws.String(s3.BucketVersioningStatusSuspended),
 		},
-	}
-	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, result)
+	})
 }
