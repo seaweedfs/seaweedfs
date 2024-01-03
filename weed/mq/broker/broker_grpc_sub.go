@@ -38,11 +38,9 @@ func (b *MessageQueueBroker) Subscribe(req *mq_pb.SubscribeRequest, stream mq_pb
 	}()
 
 	ctx := stream.Context()
-	var startTime time.Time
+	startTime := time.Now()
 	if startTs := req.GetInit().GetStartTimestampNs(); startTs > 0 {
 		startTime = time.Unix(0, startTs)
-	} else {
-		startTime = time.Now()
 	}
 
 	localTopicPartition.Subscribe(clientName, startTime, func() bool {

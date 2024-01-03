@@ -30,7 +30,7 @@ func main() {
 		Namespace: *namespace,
 		Topic:     *topic,
 		Filter:    "",
-		StartTime: time.Unix(0, 0),
+		StartTime: time.Unix(1, 1),
 	}
 
 	processorConfig := sub_client.ProcessorConfiguration{
