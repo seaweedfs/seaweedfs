@@ -241,7 +241,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 					Name:        name,
 					IsDirectory: perm&os.ModeDir > 0,
 					Attributes: &filer_pb.FuseAttributes{
-						Mtime:    time.Now().Unix(),
+						Mtime:    0,
 						Crtime:   time.Now().Unix(),
 						FileMode: uint32(perm),
 						Uid:      fs.option.Uid,
@@ -429,12 +429,13 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 	glog.V(2).Infof("WebDavFileSystem.Write %v", f.name)
 
-	dir, _ := util.FullPath(f.name).DirAndName()
+	fullPath := util.FullPath(f.name)
+	dir, _ := fullPath.DirAndName()
 
 	var getErr error
 	ctx := context.Background()
 	if f.entry == nil {
-		f.entry, getErr = filer_pb.GetEntry(f.fs, util.FullPath(f.name))
+		f.entry, getErr = filer_pb.GetEntry(f.fs, fullPath)
 	}
 
 	if f.entry == nil {
@@ -451,6 +452,11 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 			chunk, flushErr = f.saveDataAsChunk(util.NewBytesReader(data), f.name, offset, time.Now().UnixNano())
 
 			if flushErr != nil {
+				if f.entry.Attributes.Mtime == 0 {
+					if err := f.fs.removeAll(ctx, f.name); err != nil {
+						glog.Errorf("bufWriter.Flush remove file error: %+v", f.name)
+					}
+				}
 				return fmt.Errorf("%s upload result: %v", f.name, flushErr)
 			}
 
