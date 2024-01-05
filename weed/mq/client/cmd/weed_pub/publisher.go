@@ -36,6 +36,7 @@ func main() {
 	flag.Parse()
 	config := &pub_client.PublisherConfiguration{
 		CreateTopic: true,
+		CreateTopicPartitionCount: 1,
 	}
 	publisher := pub_client.NewTopicPublisher(*namespace, *topic, config)
 	brokers := strings.Split(*seedBrokers, ",")
