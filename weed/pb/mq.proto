@@ -203,12 +203,8 @@ message SubscribeMessageRequest {
         string consumer_id = 2;
         string client_id = 3;
         Topic topic = 4;
-        Partition partition = 5;
-        oneof offset {
-            int64 start_offset = 6;
-            int64 start_timestamp_ns = 7;
-        }
-        string filter = 8;
+        PartitionOffset partition_offset = 5;
+        string filter = 6;
     }
     message AckMessage {
         int64 sequence = 1;
