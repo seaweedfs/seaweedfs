@@ -95,3 +95,11 @@ func (w wrappedFileInfo) Name() string {
 	name := w.FileInfo.Name()
 	return strings.TrimPrefix(name, *w.subFolder)
 }
+
+func (w wrappedFileInfo) ETag(ctx context.Context) (string, error) {
+	etag, _ := w.FileInfo.(webdav.ETager).ETag(ctx)
+	if len(etag) == 0 {
+		return etag, webdav.ErrNotImplemented
+	}
+	return etag, nil
+}
