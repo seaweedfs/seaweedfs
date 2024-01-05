@@ -156,6 +156,7 @@ func (m *LogBuffer) loopInterval() {
 		toFlush := m.copyToFlush()
 		m.Unlock()
 		if toFlush != nil {
+			glog.V(0).Infof("%s flush [%v, %v] size %d", m.name, toFlush.startTime, toFlush.stopTime, len(toFlush.data.Bytes()))
 			m.flushChan <- toFlush
 		} else {
 			// glog.V(0).Infof("%s no flush", m.name)
