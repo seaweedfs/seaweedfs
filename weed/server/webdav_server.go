@@ -38,6 +38,7 @@ type WebDavOption struct {
 	Cipher         bool
 	CacheDir       string
 	CacheSizeMB    int64
+	MaxMB          int
 }
 
 type WebDavServer struct {
@@ -262,7 +263,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 			fs:          fs,
 			name:        fullFilePath,
 			isDirectory: false,
-			bufWriter:   buffered_writer.NewBufferedWriteCloser(4 * 1024 * 1024),
+			bufWriter:   buffered_writer.NewBufferedWriteCloser(fs.option.MaxMB * 1024 * 1024),
 		}, nil
 	}
 
@@ -278,7 +279,7 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		fs:          fs,
 		name:        fullFilePath,
 		isDirectory: false,
-		bufWriter:   buffered_writer.NewBufferedWriteCloser(4 * 1024 * 1024),
+		bufWriter:   buffered_writer.NewBufferedWriteCloser(fs.option.MaxMB * 1024 * 1024),
 	}, nil
 
 }
