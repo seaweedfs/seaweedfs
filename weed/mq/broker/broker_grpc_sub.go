@@ -10,15 +10,15 @@ import (
 	"time"
 )
 
-func (b *MessageQueueBroker) Subscribe(req *mq_pb.SubscribeRequest, stream mq_pb.SeaweedMessaging_SubscribeServer) error {
+func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest, stream mq_pb.SeaweedMessaging_SubscribeMessageServer) error {
 
 	t := topic.FromPbTopic(req.GetInit().Topic)
 	partition := topic.FromPbPartition(req.GetInit().Partition)
 	localTopicPartition := b.localTopicManager.GetTopicPartition(t, partition)
 	if localTopicPartition == nil {
-		stream.Send(&mq_pb.SubscribeResponse{
-			Message: &mq_pb.SubscribeResponse_Ctrl{
-				Ctrl: &mq_pb.SubscribeResponse_CtrlMessage{
+		stream.Send(&mq_pb.SubscribeMessageResponse{
+			Message: &mq_pb.SubscribeMessageResponse_Ctrl{
+				Ctrl: &mq_pb.SubscribeMessageResponse_CtrlMessage{
 					Error: "not initialized",
 				},
 			},
@@ -73,7 +73,7 @@ func (b *MessageQueueBroker) Subscribe(req *mq_pb.SubscribeRequest, stream mq_pb
 		sleepIntervalCount = 0
 
 		value := logEntry.GetData()
-		if err := stream.Send(&mq_pb.SubscribeResponse{Message: &mq_pb.SubscribeResponse_Data{
+		if err := stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Data{
 			Data: &mq_pb.DataMessage{
 				Key:   []byte(fmt.Sprintf("key-%d", logEntry.PartitionKeyHash)),
 				Value: value,

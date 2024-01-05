@@ -21,7 +21,7 @@ func (p *TopicPublisher) doConnect(partition *mq_pb.Partition, brokerAddress str
 		return publishClient, fmt.Errorf("dial broker %s: %v", brokerAddress, err)
 	}
 	brokerClient := mq_pb.NewSeaweedMessagingClient(grpcConnection)
-	stream, err := brokerClient.Publish(context.Background())
+	stream, err := brokerClient.SubscribeMessage(context.Background())
 	if err != nil {
 		return publishClient, fmt.Errorf("create publish client: %v", err)
 	}
@@ -29,9 +29,9 @@ func (p *TopicPublisher) doConnect(partition *mq_pb.Partition, brokerAddress str
 		SeaweedMessaging_PublishClient: stream,
 		Broker:                         brokerAddress,
 	}
-	if err = publishClient.Send(&mq_pb.PublishRequest{
-		Message: &mq_pb.PublishRequest_Init{
-			Init: &mq_pb.PublishRequest_InitMessage{
+	if err = publishClient.Send(&mq_pb.PublishMessageRequest{
+		Message: &mq_pb.PublishMessageRequest_Init{
+			Init: &mq_pb.PublishMessageRequest_InitMessage{
 				Topic: &mq_pb.Topic{
 					Namespace: p.namespace,
 					Name:      p.topic,

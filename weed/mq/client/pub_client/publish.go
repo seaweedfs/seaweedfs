@@ -27,8 +27,8 @@ func (p *TopicPublisher) Publish(key, value []byte) error {
 	//google.golang.org/grpc.(*clientStream).SendMsg(stream.go:894)
 	//github.com/seaweedfs/seaweedfs/weed/pb/mq_pb.(*seaweedMessagingPublishClient).Send(mq_grpc.pb.go:141)
 	//github.com/seaweedfs/seaweedfs/weed/mq/client/pub_client.(*TopicPublisher).Publish(publish.go:19)
-	if err := publishClient.Send(&mq_pb.PublishRequest{
-		Message: &mq_pb.PublishRequest_Data{
+	if err := publishClient.Send(&mq_pb.PublishMessageRequest{
+		Message: &mq_pb.PublishMessageRequest_Data{
 			Data: &mq_pb.DataMessage{
 				Key:   key,
 				Value: value,

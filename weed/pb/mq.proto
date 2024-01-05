@@ -41,9 +41,9 @@ service SeaweedMessaging {
     }
 
     // data plane for each topic partition
-    rpc Publish (stream PublishRequest) returns (stream PublishResponse) {
+    rpc PublishMessage (stream PublishMessageRequest) returns (stream PublishMessageResponse) {
     }
-    rpc Subscribe (SubscribeRequest) returns (stream SubscribeResponse) {
+    rpc SubscribeMessage (SubscribeMessageRequest) returns (stream SubscribeMessageResponse) {
     }
 }
 
@@ -180,7 +180,7 @@ message DataMessage {
     bytes value = 2;
     int64 ts_ns = 3;
 }
-message PublishRequest {
+message PublishMessageRequest {
     message InitMessage {
         Topic topic = 1;
         Partition partition = 2;
@@ -192,12 +192,12 @@ message PublishRequest {
     }
     int64 sequence = 3;
 }
-message PublishResponse {
+message PublishMessageResponse {
     int64 ack_sequence = 1;
     string error = 2;
     bool should_close = 3;
 }
-message SubscribeRequest {
+message SubscribeMessageRequest {
     message InitMessage {
         string consumer_group = 1;
         string consumer_id = 2;
@@ -218,7 +218,7 @@ message SubscribeRequest {
         AckMessage ack = 2;
     }
 }
-message SubscribeResponse {
+message SubscribeMessageResponse {
     message CtrlMessage {
         string error = 1;
         bool is_end_of_stream = 2;
