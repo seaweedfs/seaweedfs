@@ -131,9 +131,9 @@ func (sub *TopicSubscriber) onEachPartition(partition *mq_pb.Partition, broker s
 			defer sub.OnCompletionFunc()
 		}
 		defer func() {
-			subscribeClient.SendMsg(&mq_pb.SubscribeRequest{
-				Message: &mq_pb.SubscribeRequest_Ack{
-					Ack: &mq_pb.SubscribeRequest_AckMessage{
+			subscribeClient.SendMsg(&mq_pb.SubscribeMessageRequest{
+				Message: &mq_pb.SubscribeMessageRequest_Ack{
+					Ack: &mq_pb.SubscribeMessageRequest_AckMessage{
 						Sequence: 0,
 					},
 				},
