@@ -68,6 +68,16 @@ message Partition {
     int64 unix_time_ns = 4;
 }
 
+message Offset {
+    Topic topic = 1;
+    repeated PartitionOffset partition_offsets = 2;
+}
+
+message PartitionOffset {
+    Partition partition = 1;
+    int64 ts_ns = 2;
+}
+
 //////////////////////////////////////////////////
 message BrokerStats {
     int32 cpu_usage_percent = 1;
