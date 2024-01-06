@@ -47,7 +47,8 @@ type SyncOptions struct {
 	metricsHttpIp   *string
 	metricsHttpPort *int
 	concurrency     *int
-	doDeleteFiles   *bool
+	aDoDeleteFiles  *bool
+	bDoDeleteFiles  *bool
 	clientId        int32
 	clientEpoch     int32
 }
@@ -91,7 +92,8 @@ func init() {
 	syncMemProfile = cmdFilerSynchronize.Flag.String("memprofile", "", "memory profile output file")
 	syncOptions.metricsHttpIp = cmdFilerSynchronize.Flag.String("metricsIp", "", "metrics listen ip")
 	syncOptions.metricsHttpPort = cmdFilerSynchronize.Flag.Int("metricsPort", 0, "metrics listen port")
-	syncOptions.doDeleteFiles = cmdFilerSynchronize.Flag.Bool("doDeleteFiles", true, "delete and update files when synchronizing")
+	syncOptions.aDoDeleteFiles = cmdFilerSynchronize.Flag.Bool("a.doDeleteFiles", true, "delete and update files when synchronizing on filer A")
+	syncOptions.bDoDeleteFiles = cmdFilerSynchronize.Flag.Bool("b.doDeleteFiles", true, "delete and update files when synchronizing on filer B")
 	syncOptions.clientId = util.RandomInt32()
 }
 
@@ -166,7 +168,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 				*syncOptions.bDiskType,
 				*syncOptions.bDebug,
 				*syncOptions.concurrency,
-				*syncOptions.doDeleteFiles,
+				*syncOptions.bDoDeleteFiles,
 				aFilerSignature,
 				bFilerSignature)
 			if err != nil {
@@ -204,7 +206,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 					*syncOptions.aDiskType,
 					*syncOptions.aDebug,
 					*syncOptions.concurrency,
-					*syncOptions.doDeleteFiles,
+					*syncOptions.aDoDeleteFiles,
 					bFilerSignature,
 					aFilerSignature)
 				if err != nil {
