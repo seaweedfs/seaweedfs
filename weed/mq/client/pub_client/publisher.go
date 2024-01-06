@@ -17,7 +17,7 @@ type PublisherConfiguration struct {
 }
 
 type PublishClient struct {
-	mq_pb.SeaweedMessaging_PublishClient
+	mq_pb.SeaweedMessaging_PublishMessageClient
 	Broker string
 	Err    error
 }
