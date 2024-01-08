@@ -207,7 +207,7 @@ require (
 	github.com/bradenaw/juniper v0.13.1 // indirect
 	github.com/buengese/sgzip v0.1.1 // indirect
 	github.com/calebcase/tmpfile v1.0.3 // indirect
-	github.com/cloudflare/circl v1.3.6 // indirect
+	github.com/cloudflare/circl v1.3.7 // indirect
 	github.com/cloudsoda/go-smb2 v0.0.0-20231106205947-b0758ecc4c67 // indirect
 	github.com/colinmarc/hdfs/v2 v2.4.0 // indirect
 	github.com/cronokirby/saferith v0.33.0 // indirect
