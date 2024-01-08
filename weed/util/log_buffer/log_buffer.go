@@ -26,6 +26,7 @@ type LogBuffer struct {
 	name          string
 	prevBuffers   *SealedBuffers
 	buf           []byte
+	batchIndex    int64
 	idx           []int
 	pos           int
 	startTime     time.Time
@@ -58,17 +59,17 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn func(startTi
 	return lb
 }
 
-func (m *LogBuffer) AddToBuffer(partitionKey, data []byte, processingTsNs int64) {
+func (logBuffer *LogBuffer) AddToBuffer(partitionKey, data []byte, processingTsNs int64) {
 
 	var toFlush *dataToFlush
-	m.Lock()
+	logBuffer.Lock()
 	defer func() {
-		m.Unlock()
+		logBuffer.Unlock()
 		if toFlush != nil {
-			m.flushChan <- toFlush
+			logBuffer.flushChan <- toFlush
 		}
-		if m.notifyFn != nil {
-			m.notifyFn()
+		if logBuffer.notifyFn != nil {
+			logBuffer.notifyFn()
 		}
 	}()
 
@@ -80,12 +81,12 @@ func (m *LogBuffer) AddToBuffer(partitionKey, data []byte, processingTsNs int64)
 	} else {
 		ts = time.Unix(0, processingTsNs)
 	}
-	if m.lastTsNs >= processingTsNs {
+	if logBuffer.lastTsNs >= processingTsNs {
 		// this is unlikely to happen, but just in case
-		processingTsNs = m.lastTsNs + 1
+		processingTsNs = logBuffer.lastTsNs + 1
 		ts = time.Unix(0, processingTsNs)
 	}
-	m.lastTsNs = processingTsNs
+	logBuffer.lastTsNs = processingTsNs
 	logEntry := &filer_pb.LogEntry{
 		TsNs:             processingTsNs,
 		PartitionKeyHash: util.HashToInt32(partitionKey),
@@ -96,98 +97,109 @@ func (m *LogBuffer) AddToBuffer(partitionKey, data []byte, processingTsNs int64)
 
 	size := len(logEntryData)
 
-	if m.pos == 0 {
-		m.startTime = ts
+	if logBuffer.pos == 0 {
+		logBuffer.startTime = ts
 	}
 
-	if m.startTime.Add(m.flushInterval).Before(ts) || len(m.buf)-m.pos < size+4 {
-		// glog.V(4).Infof("%s copyToFlush1 start time %v, ts %v, remaining %d bytes", m.name, m.startTime, ts, len(m.buf)-m.pos)
-		toFlush = m.copyToFlush()
-		m.startTime = ts
-		if len(m.buf) < size+4 {
-			m.buf = make([]byte, 2*size+4)
+	if logBuffer.startTime.Add(logBuffer.flushInterval).Before(ts) || len(logBuffer.buf)-logBuffer.pos < size+4 {
+		glog.V(0).Infof("%s copyToFlush1 batch:%d start time %v, ts %v, remaining %d bytes", logBuffer.name, logBuffer.batchIndex, logBuffer.startTime, ts, len(logBuffer.buf)-logBuffer.pos)
+		toFlush = logBuffer.copyToFlush()
+		logBuffer.startTime = ts
+		if len(logBuffer.buf) < size+4 {
+			logBuffer.buf = make([]byte, 2*size+4)
 		}
 	}
-	m.stopTime = ts
+	logBuffer.stopTime = ts
 
-	m.idx = append(m.idx, m.pos)
-	util.Uint32toBytes(m.sizeBuf, uint32(size))
-	copy(m.buf[m.pos:m.pos+4], m.sizeBuf)
-	copy(m.buf[m.pos+4:m.pos+4+size], logEntryData)
-	m.pos += size + 4
+	logBuffer.idx = append(logBuffer.idx, logBuffer.pos)
+	util.Uint32toBytes(logBuffer.sizeBuf, uint32(size))
+	copy(logBuffer.buf[logBuffer.pos:logBuffer.pos+4], logBuffer.sizeBuf)
+	copy(logBuffer.buf[logBuffer.pos+4:logBuffer.pos+4+size], logEntryData)
+	logBuffer.pos += size + 4
 
 	// fmt.Printf("partitionKey %v entry size %d total %d count %d\n", string(partitionKey), size, m.pos, len(m.idx))
 
 }
 
-func (m *LogBuffer) IsStopping() bool {
-	return m.isStopping.Load()
+func (logBuffer *LogBuffer) IsStopping() bool {
+	return logBuffer.isStopping.Load()
 }
 
-func (m *LogBuffer) Shutdown() {
-	isAlreadyStopped := m.isStopping.Swap(true)
+func (logBuffer *LogBuffer) Shutdown() {
+	isAlreadyStopped := logBuffer.isStopping.Swap(true)
 	if isAlreadyStopped {
 		return
 	}
-	toFlush := m.copyToFlush()
-	m.flushChan <- toFlush
-	close(m.flushChan)
+	toFlush := logBuffer.copyToFlush()
+	logBuffer.flushChan <- toFlush
+	close(logBuffer.flushChan)
 }
 
-func (m *LogBuffer) loopFlush() {
-	for d := range m.flushChan {
+func (logBuffer *LogBuffer) loopFlush() {
+	for d := range logBuffer.flushChan {
 		if d != nil {
 			// glog.V(4).Infof("%s flush [%v, %v] size %d", m.name, d.startTime, d.stopTime, len(d.data.Bytes()))
-			m.flushFn(d.startTime, d.stopTime, d.data.Bytes())
+			logBuffer.flushFn(d.startTime, d.stopTime, d.data.Bytes())
 			d.releaseMemory()
 			// local logbuffer is different from aggregate logbuffer here
-			m.lastFlushTime = d.stopTime
+			logBuffer.lastFlushTime = d.stopTime
 		}
 	}
 }
 
-func (m *LogBuffer) loopInterval() {
-	for !m.IsStopping() {
-		time.Sleep(m.flushInterval)
-		if m.IsStopping() {
+func (logBuffer *LogBuffer) loopInterval() {
+	for !logBuffer.IsStopping() {
+		time.Sleep(logBuffer.flushInterval)
+		if logBuffer.IsStopping() {
 			return
 		}
-		m.Lock()
-		toFlush := m.copyToFlush()
-		m.Unlock()
+		logBuffer.Lock()
+		toFlush := logBuffer.copyToFlush()
+		logBuffer.Unlock()
 		if toFlush != nil {
-			glog.V(0).Infof("%s flush [%v, %v] size %d", m.name, toFlush.startTime, toFlush.stopTime, len(toFlush.data.Bytes()))
-			m.flushChan <- toFlush
+			glog.V(0).Infof("%s flush [%v, %v] size %d", logBuffer.name, toFlush.startTime, toFlush.stopTime, len(toFlush.data.Bytes()))
+			logBuffer.flushChan <- toFlush
 		} else {
 			// glog.V(0).Infof("%s no flush", m.name)
 		}
 	}
 }
 
-func (m *LogBuffer) copyToFlush() *dataToFlush {
+func (logBuffer *LogBuffer) copyToFlush() *dataToFlush {
 
-	if m.pos > 0 {
+	if logBuffer.pos > 0 {
 		// fmt.Printf("flush buffer %d pos %d empty space %d\n", len(m.buf), m.pos, len(m.buf)-m.pos)
 		var d *dataToFlush
-		if m.flushFn != nil {
+		if logBuffer.flushFn != nil {
 			d = &dataToFlush{
-				startTime: m.startTime,
-				stopTime:  m.stopTime,
-				data:      copiedBytes(m.buf[:m.pos]),
+				startTime: logBuffer.startTime,
+				stopTime:  logBuffer.stopTime,
+				data:      copiedBytes(logBuffer.buf[:logBuffer.pos]),
 			}
 			// glog.V(4).Infof("%s flushing [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
 		} else {
 			// glog.V(4).Infof("%s removed from memory [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
-			m.lastFlushTime = m.stopTime
+			logBuffer.lastFlushTime = logBuffer.stopTime
 		}
-		m.buf = m.prevBuffers.SealBuffer(m.startTime, m.stopTime, m.buf, m.pos)
-		m.startTime = time.Unix(0, 0)
-		m.stopTime = time.Unix(0, 0)
-		m.pos = 0
-		m.idx = m.idx[:0]
+		logBuffer.buf = logBuffer.prevBuffers.SealBuffer(logBuffer.startTime, logBuffer.stopTime, logBuffer.buf, logBuffer.pos, logBuffer.batchIndex)
+		logBuffer.startTime = time.Unix(0, 0)
+		logBuffer.stopTime = time.Unix(0, 0)
+		logBuffer.pos = 0
+		logBuffer.idx = logBuffer.idx[:0]
+		logBuffer.batchIndex++
 		return d
 	}
 	return nil
+}
+
+func (logBuffer *LogBuffer) GetEarliestTime() time.Time{
+	return logBuffer.startTime
+}
+func (logBuffer *LogBuffer) GetEarliestPosition() MessagePosition{
+	return MessagePosition{
+		Time:       logBuffer.startTime,
+		BatchIndex: logBuffer.batchIndex,
+	}
 }
 
 func (d *dataToFlush) releaseMemory() {
@@ -195,9 +207,9 @@ func (d *dataToFlush) releaseMemory() {
 	bufferPool.Put(d.data)
 }
 
-func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Buffer, err error) {
-	m.RLock()
-	defer m.RUnlock()
+func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition, inMemoryOnly bool) (bufferCopy *bytes.Buffer, batchIndex int64, err error) {
+	logBuffer.RLock()
+	defer logBuffer.RUnlock()
 
 	// Read from disk and memory
 	//	1. read from disk, last time is = td
@@ -209,52 +221,61 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 	//	if td < tm, case 2.3
 	//		read from disk again
 	var tsMemory time.Time
-	if !m.startTime.IsZero() {
-		tsMemory = m.startTime
+	var tsBatchIndex int64
+	if !logBuffer.startTime.IsZero() {
+		tsMemory = logBuffer.startTime
+		tsBatchIndex = logBuffer.batchIndex
 	}
-	for _, prevBuf := range m.prevBuffers.buffers {
+	for _, prevBuf := range logBuffer.prevBuffers.buffers {
 		if !prevBuf.startTime.IsZero() && prevBuf.startTime.Before(tsMemory) {
 			tsMemory = prevBuf.startTime
+			tsBatchIndex = prevBuf.batchIndex
 		}
 	}
 	if tsMemory.IsZero() { // case 2.2
-		return nil, nil
-	} else if lastReadTime.Before(tsMemory) { // case 2.3
-		if !m.lastFlushTime.IsZero() {
-			glog.V(0).Infof("resume with last flush time: %v", m.lastFlushTime)
-			return nil, ResumeFromDiskError
+		println("2.2 no data")
+		return nil, -2,nil
+	} else if lastReadPosition.Before(tsMemory) && lastReadPosition.BatchIndex +1 < tsBatchIndex { // case 2.3
+		if inMemoryOnly {
+			println("2.3 no data", lastReadPosition.BatchIndex, tsBatchIndex)
+			// FIXME: this is wrong: the data has been flushed to disk already
+			return nil, tsBatchIndex,nil
+		}
+		if !logBuffer.lastFlushTime.IsZero() {
+			glog.V(0).Infof("resume with last flush time: %v", logBuffer.lastFlushTime)
+			return nil, -2, ResumeFromDiskError
 		}
 	}
 
 	// the following is case 2.1
 
-	if lastReadTime.Equal(m.stopTime) {
-		return nil, nil
+	if lastReadPosition.Equal(logBuffer.stopTime) {
+		return nil, logBuffer.batchIndex, nil
 	}
-	if lastReadTime.After(m.stopTime) {
-		// glog.Fatalf("unexpected last read time %v, older than latest %v", lastReadTime, m.stopTime)
-		return nil, nil
+	if lastReadPosition.After(logBuffer.stopTime) {
+		// glog.Fatalf("unexpected last read time %v, older than latest %v", lastReadPosition, m.stopTime)
+		return nil, logBuffer.batchIndex, nil
 	}
-	if lastReadTime.Before(m.startTime) {
-		// println("checking ", lastReadTime.UnixNano())
-		for _, buf := range m.prevBuffers.buffers {
-			if buf.startTime.After(lastReadTime) {
+	if lastReadPosition.Before(logBuffer.startTime) {
+		// println("checking ", lastReadPosition.UnixNano())
+		for _, buf := range logBuffer.prevBuffers.buffers {
+			if buf.startTime.After(lastReadPosition.Time) {
 				// glog.V(4).Infof("%s return the %d sealed buffer %v", m.name, i, buf.startTime)
 				// println("return the", i, "th in memory", buf.startTime.UnixNano())
-				return copiedBytes(buf.buf[:buf.size]), nil
+				return copiedBytes(buf.buf[:buf.size]), buf.batchIndex, nil
 			}
-			if !buf.startTime.After(lastReadTime) && buf.stopTime.After(lastReadTime) {
-				pos := buf.locateByTs(lastReadTime)
+			if !buf.startTime.After(lastReadPosition.Time) && buf.stopTime.After(lastReadPosition.Time) {
+				pos := buf.locateByTs(lastReadPosition.Time)
 				// fmt.Printf("locate buffer[%d] pos %d\n", i, pos)
-				return copiedBytes(buf.buf[pos:buf.size]), nil
+				return copiedBytes(buf.buf[pos:buf.size]), buf.batchIndex, nil
 			}
 		}
-		// glog.V(4).Infof("%s return the current buf %v", m.name, lastReadTime)
-		return copiedBytes(m.buf[:m.pos]), nil
+		// glog.V(4).Infof("%s return the current buf %v", m.name, lastReadPosition)
+		return copiedBytes(logBuffer.buf[:logBuffer.pos]), logBuffer.batchIndex,nil
 	}
 
-	lastTs := lastReadTime.UnixNano()
-	l, h := 0, len(m.idx)-1
+	lastTs := lastReadPosition.UnixNano()
+	l, h := 0, len(logBuffer.idx)-1
 
 	/*
 		for i, pos := range m.idx {
@@ -272,18 +293,18 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 
 	for l <= h {
 		mid := (l + h) / 2
-		pos := m.idx[mid]
-		_, t := readTs(m.buf, pos)
+		pos := logBuffer.idx[mid]
+		_, t := readTs(logBuffer.buf, pos)
 		if t <= lastTs {
 			l = mid + 1
 		} else if lastTs < t {
 			var prevT int64
 			if mid > 0 {
-				_, prevT = readTs(m.buf, m.idx[mid-1])
+				_, prevT = readTs(logBuffer.buf, logBuffer.idx[mid-1])
 			}
 			if prevT <= lastTs {
 				// fmt.Printf("found l=%d, m-1=%d(ts=%d), m=%d(ts=%d), h=%d [%d, %d) \n", l, mid-1, prevT, mid, t, h, pos, m.pos)
-				return copiedBytes(m.buf[pos:m.pos]), nil
+				return copiedBytes(logBuffer.buf[pos:logBuffer.pos]), logBuffer.batchIndex, nil
 			}
 			h = mid
 		}
@@ -291,10 +312,11 @@ func (m *LogBuffer) ReadFromBuffer(lastReadTime time.Time) (bufferCopy *bytes.Bu
 	}
 
 	// FIXME: this could be that the buffer has been flushed already
-	return nil, nil
+	println("Not sure why no data", lastReadPosition.BatchIndex, tsBatchIndex)
+	return nil, -2, nil
 
 }
-func (m *LogBuffer) ReleaseMemory(b *bytes.Buffer) {
+func (logBuffer *LogBuffer) ReleaseMemory(b *bytes.Buffer) {
 	bufferPool.Put(b)
 }
 

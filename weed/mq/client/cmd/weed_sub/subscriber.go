@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/sub_client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -40,13 +41,15 @@ func main() {
 	brokers := strings.Split(*seedBrokers, ",")
 	subscriber := sub_client.NewTopicSubscriber(brokers, subscriberConfig, contentConfig, processorConfig)
 
+	counter := 0
 	subscriber.SetEachMessageFunc(func(key, value []byte) (bool, error) {
-		println(string(key), "=>", string(value))
+		counter++
+		println(string(key), "=>", string(value), counter)
 		return true, nil
 	})
 
 	subscriber.SetCompletionFunc(func() {
-		println("done subscribing")
+		glog.V(0).Infof("done recived %d messages", counter)
 	})
 
 	if err := subscriber.Subscribe(); err != nil {

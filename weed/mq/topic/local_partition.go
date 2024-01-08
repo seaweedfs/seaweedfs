@@ -47,8 +47,20 @@ func (p *LocalPartition) Publish(message *mq_pb.DataMessage) {
 	p.logBuffer.AddToBuffer(message.Key, message.Value, time.Now().UnixNano())
 }
 
-func (p *LocalPartition) Subscribe(clientName string, startReadTime time.Time, onNoMessageFn func() bool, eachMessageFn OnEachMessageFn) {
-	p.logBuffer.LoopProcessLogData(clientName, startReadTime, 0, onNoMessageFn, eachMessageFn)
+func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.MessagePosition, inMemoryOnly bool, onNoMessageFn func() bool, eachMessageFn OnEachMessageFn) {
+	p.logBuffer.LoopProcessLogData(clientName, startPosition, inMemoryOnly, 0, onNoMessageFn, eachMessageFn)
+}
+
+func (p *LocalPartition) GetEarliestMessageTimeInMemory() time.Time {
+	return p.logBuffer.GetEarliestTime()
+}
+
+func (p *LocalPartition) HasData() bool {
+	return !p.logBuffer.GetEarliestTime().IsZero()
+}
+
+func (p *LocalPartition) GetEarliestInMemoryMessagePosition() log_buffer.MessagePosition {
+	return p.logBuffer.GetEarliestPosition()
 }
 
 func FromPbBrokerPartitionAssignment(self pb.ServerAddress, assignment *mq_pb.BrokerPartitionAssignment) *LocalPartition {

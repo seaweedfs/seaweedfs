@@ -1,7 +1,6 @@
 package broker
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/codes"
@@ -41,7 +40,7 @@ func (b *MessageQueueBroker) PublisherToPubBalancer(stream mq_pb.SeaweedMessagin
 		}
 		if receivedStats := req.GetStats(); receivedStats != nil {
 			b.Balancer.OnBrokerStatsUpdated(initMessage.Broker, brokerStats, receivedStats)
-			glog.V(4).Infof("received from %v: %+v", initMessage.Broker, receivedStats)
+			// glog.V(4).Infof("received from %v: %+v", initMessage.Broker, receivedStats)
 		}
 	}
 

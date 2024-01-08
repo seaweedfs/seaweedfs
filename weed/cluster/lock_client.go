@@ -73,6 +73,7 @@ func (lc *LockClient) StartLock(key string, owner string) (lock *LiveLock) {
 			return nil
 		}, func(err error) (shouldContinue bool) {
 			if err != nil {
+				glog.Warningf("create lock %s: %s", key, err)
 				time.Sleep(time.Second)
 			}
 			return lock.renewToken == ""

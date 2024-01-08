@@ -73,9 +73,17 @@ message Offset {
     repeated PartitionOffset partition_offsets = 2;
 }
 
+enum PartitionOffsetStartType {
+    EARLIEST = 0;
+    EARLIEST_IN_MEMORY = 1;
+    LATEST = 2;
+}
+
 message PartitionOffset {
     Partition partition = 1;
-    int64 ts_ns = 2;
+    int64 start_ts_ns = 2;
+    int64 stop_ts_ns = 3;
+    PartitionOffsetStartType start_type = 4;
 }
 
 //////////////////////////////////////////////////

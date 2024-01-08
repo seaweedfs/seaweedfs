@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"time"
 )
 
@@ -38,12 +39,30 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 	}()
 
 	ctx := stream.Context()
-	startTime := time.Now()
-	if startTs := req.GetInit().GetPartitionOffset().GetTsNs(); startTs > 0 {
-		startTime = time.Unix(0, startTs)
+	var startPosition log_buffer.MessagePosition
+	var inMemoryOnly bool
+	if req.GetInit()!=nil && req.GetInit().GetPartitionOffset() != nil {
+		offset := req.GetInit().GetPartitionOffset()
+		if offset.StartTsNs != 0 {
+			startPosition = log_buffer.NewMessagePosition(offset.StartTsNs, -2)
+		}
+		if offset.StartType == mq_pb.PartitionOffsetStartType_EARLIEST {
+			startPosition = log_buffer.NewMessagePosition(1, -2)
+		} else if offset.StartType == mq_pb.PartitionOffsetStartType_LATEST {
+			startPosition = log_buffer.NewMessagePosition(time.Now().UnixNano(), -2)
+		} else if offset.StartType == mq_pb.PartitionOffsetStartType_EARLIEST_IN_MEMORY {
+			inMemoryOnly = true
+			for !localTopicPartition.HasData() {
+				time.Sleep(337 * time.Millisecond)
+			}
+			memPosition := localTopicPartition.GetEarliestInMemoryMessagePosition()
+			if startPosition.Before(memPosition.Time) {
+				startPosition = memPosition
+			}
+		}
 	}
 
-	localTopicPartition.Subscribe(clientName, startTime, func() bool {
+	localTopicPartition.Subscribe(clientName, startPosition, inMemoryOnly, func() bool {
 		if !isConnected {
 			return false
 		}
@@ -51,7 +70,7 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 		if sleepIntervalCount > 10 {
 			sleepIntervalCount = 10
 		}
-		time.Sleep(time.Duration(sleepIntervalCount) * 2339 * time.Millisecond)
+		time.Sleep(time.Duration(sleepIntervalCount) * 337 * time.Millisecond)
 
 		// Check if the client has disconnected by monitoring the context
 		select {

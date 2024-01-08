@@ -17,11 +17,24 @@ var (
 	ResumeFromDiskError = fmt.Errorf("resumeFromDisk")
 )
 
-func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startReadTime time.Time, stopTsNs int64,
-	waitForDataFn func() bool, eachLogDataFn func(logEntry *filer_pb.LogEntry) error) (lastReadTime time.Time, isDone bool, err error) {
+type MessagePosition struct {
+	time.Time // this is the timestamp of the message
+	BatchIndex int64 // this is only used when the timestamp is not enough to identify the next message, when the timestamp is in the previous batch.
+}
+
+func NewMessagePosition(tsNs int64, batchIndex int64) MessagePosition {
+	return MessagePosition{
+		Time:       time.Unix(0, tsNs).UTC(),
+		BatchIndex: batchIndex,
+	}
+}
+
+func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition MessagePosition, inMemoryOnly bool, stopTsNs int64,
+	waitForDataFn func() bool, eachLogDataFn func(logEntry *filer_pb.LogEntry) error) (lastReadPosition MessagePosition, isDone bool, err error) {
 	// loop through all messages
 	var bytesBuf *bytes.Buffer
-	lastReadTime = startReadTime
+	var batchIndex int64
+	lastReadPosition = startPosition
 	defer func() {
 		if bytesBuf != nil {
 			logBuffer.ReleaseMemory(bytesBuf)
@@ -33,13 +46,20 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startReadTime 
 		if bytesBuf != nil {
 			logBuffer.ReleaseMemory(bytesBuf)
 		}
-		bytesBuf, err = logBuffer.ReadFromBuffer(lastReadTime)
+		bytesBuf, batchIndex, err = logBuffer.ReadFromBuffer(lastReadPosition, inMemoryOnly)
 		if err == ResumeFromDiskError {
 			time.Sleep(1127 * time.Millisecond)
-			return lastReadTime, isDone, ResumeFromDiskError
+			return lastReadPosition, isDone, ResumeFromDiskError
 		}
-		// glog.V(4).Infof("%s ReadFromBuffer by %v", readerName, lastReadTime)
+		readSize := 0
+		if bytesBuf != nil {
+			readSize = bytesBuf.Len()
+		}
+		glog.V(0).Infof("%s ReadFromBuffer at %v batch:%d, read size:%v batch:%d", readerName, lastReadPosition, lastReadPosition.BatchIndex, readSize, batchIndex)
 		if bytesBuf == nil {
+			if batchIndex >= 0 {
+				lastReadPosition = NewMessagePosition(lastReadPosition.UnixNano(), batchIndex)
+			}
 			if stopTsNs != 0 {
 				isDone = true
 				return
@@ -52,7 +72,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startReadTime 
 		}
 
 		buf := bytesBuf.Bytes()
-		// fmt.Printf("ReadFromBuffer %s by %v size %d\n", readerName, lastReadTime, len(buf))
+		// fmt.Printf("ReadFromBuffer %s by %v size %d\n", readerName, lastReadPosition, len(buf))
 
 		batchSize := 0
 
@@ -61,7 +81,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startReadTime 
 			size := util.BytesToUint32(buf[pos : pos+4])
 			if pos+4+int(size) > len(buf) {
 				err = ResumeError
-				glog.Errorf("LoopProcessLogData: %s read buffer %v read %d [%d,%d) from [0,%d)", readerName, lastReadTime, batchSize, pos, pos+int(size)+4, len(buf))
+				glog.Errorf("LoopProcessLogData: %s read buffer %v read %d [%d,%d) from [0,%d)", readerName, lastReadPosition, batchSize, pos, pos+int(size)+4, len(buf))
 				return
 			}
 			entryData := buf[pos+4 : pos+4+int(size)]
@@ -76,7 +96,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startReadTime 
 				isDone = true
 				return
 			}
-			lastReadTime = time.Unix(0, logEntry.TsNs)
+			lastReadPosition = NewMessagePosition(logEntry.TsNs, batchIndex)
 
 			if err = eachLogDataFn(logEntry); err != nil {
 				return
@@ -87,7 +107,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startReadTime 
 
 		}
 
-		// glog.V(4).Infof("%s sent messages ts[%+v,%+v] size %d\n", readerName, startReadTime, lastReadTime, batchSize)
+		// glog.V(4).Infof("%s sent messages ts[%+v,%+v] size %d\n", readerName, startReadTime, lastReadPosition, batchSize)
 	}
 
 }

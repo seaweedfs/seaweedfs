@@ -28,7 +28,7 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		lastProcessedTime, isDone, err := lb.LoopProcessLogData("test", startTime, 0, func() bool {
+		lastProcessedTime, isDone, err := lb.LoopProcessLogData("test", startTime, false, 0, func() bool {
 			// stop if no more messages
 			return receivedMessageCount < messageCount
 		}, func(logEntry *filer_pb.LogEntry) error {
