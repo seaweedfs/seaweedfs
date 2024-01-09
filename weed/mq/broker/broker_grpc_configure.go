@@ -3,12 +3,16 @@ package broker
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"time"
 )
 
 // ConfigureTopic Runs on any broker, but proxied to the balancer if not the balancer
@@ -73,8 +77,9 @@ func (b *MessageQueueBroker) AssignTopicPartitions(c context.Context, request *m
 	self := pb.ServerAddress(fmt.Sprintf("%s:%d", b.option.Ip, b.option.Port))
 
 	// drain existing topic partition subscriptions
-	for _, brokerPartition := range request.BrokerPartitionAssignments {
-		localPartition := topic.FromPbBrokerPartitionAssignment(self, brokerPartition)
+	for _, assignment := range request.BrokerPartitionAssignments {
+		topicPartition :=  topic.FromPbPartition(assignment.Partition)
+		localPartition := topic.FromPbBrokerPartitionAssignment(self, assignment, b.genLogFlushFunc(request.Topic, topicPartition))
 		if request.IsDraining {
 			// TODO drain existing topic partition subscriptions
 
@@ -104,4 +109,30 @@ func (b *MessageQueueBroker) AssignTopicPartitions(c context.Context, request *m
 	}
 
 	return ret, nil
+}
+
+func (b *MessageQueueBroker) genLogFlushFunc(t *mq_pb.Topic, partition topic.Partition) log_buffer.LogFlushFuncType {
+	topicDir := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, t.Namespace, t.Name)
+	partitionGeneration := time.Unix(0, partition.UnixTimeNs).UTC().Format(topic.TIME_FORMAT)
+	partitionDir := fmt.Sprintf("%s/%s/%4d-%4d", topicDir, partitionGeneration, partition.RangeStart, partition.RangeStop)
+
+	return func(startTime, stopTime time.Time, buf []byte) {
+		if len(buf) == 0 {
+			return
+		}
+
+		startTime, stopTime = startTime.UTC(), stopTime.UTC()
+		fileName := startTime.Format(topic.TIME_FORMAT)
+
+		targetFile := fmt.Sprintf("%s/%s",partitionDir, fileName)
+
+		for {
+			if err := b.appendToFile(targetFile, buf); err != nil {
+				glog.V(0).Infof("metadata log write failed %s: %v", targetFile, err)
+				time.Sleep(737 * time.Millisecond)
+			} else {
+				break
+			}
+		}
+	}
 }

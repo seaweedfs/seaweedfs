@@ -22,6 +22,8 @@ type dataToFlush struct {
 	data      *bytes.Buffer
 }
 
+type LogFlushFuncType func(startTime, stopTime time.Time, buf []byte)
+
 type LogBuffer struct {
 	name          string
 	prevBuffers   *SealedBuffers
@@ -34,7 +36,7 @@ type LogBuffer struct {
 	lastFlushTime time.Time
 	sizeBuf       []byte
 	flushInterval time.Duration
-	flushFn       func(startTime, stopTime time.Time, buf []byte)
+	flushFn       LogFlushFuncType
 	notifyFn      func()
 	isStopping    *atomic.Bool
 	flushChan     chan *dataToFlush
@@ -42,7 +44,7 @@ type LogBuffer struct {
 	sync.RWMutex
 }
 
-func NewLogBuffer(name string, flushInterval time.Duration, flushFn func(startTime, stopTime time.Time, buf []byte), notifyFn func()) *LogBuffer {
+func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFuncType, notifyFn func()) *LogBuffer {
 	lb := &LogBuffer{
 		name:          name,
 		prevBuffers:   newSealedBuffers(PreviousBufferCount),

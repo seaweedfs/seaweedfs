@@ -28,6 +28,7 @@ type MessageQueueBrokerOption struct {
 	Ip                 string
 	Port               int
 	Cipher             bool
+	VolumeServerAccess string // how to access volume servers
 }
 
 type MessageQueueBroker struct {

@@ -21,7 +21,8 @@ type LocalPartition struct {
 	Subscribers       *LocalPartitionSubscribers
 }
 
-func NewLocalPartition(partition Partition, isLeader bool, followerBrokers []pb.ServerAddress) *LocalPartition {
+var TIME_FORMAT = "2006-01-02-15-04-05"
+func NewLocalPartition(partition Partition, isLeader bool, followerBrokers []pb.ServerAddress, logFlushFn log_buffer.LogFlushFuncType) *LocalPartition {
 	return &LocalPartition{
 		Partition:       partition,
 		isLeader:        isLeader,
@@ -29,9 +30,7 @@ func NewLocalPartition(partition Partition, isLeader bool, followerBrokers []pb.
 		logBuffer: log_buffer.NewLogBuffer(
 			fmt.Sprintf("%d/%4d-%4d", partition.UnixTimeNs, partition.RangeStart, partition.RangeStop),
 			2*time.Minute,
-			func(startTime, stopTime time.Time, buf []byte) {
-
-			},
+			logFlushFn,
 			func() {
 
 			},
@@ -63,13 +62,13 @@ func (p *LocalPartition) GetEarliestInMemoryMessagePosition() log_buffer.Message
 	return p.logBuffer.GetEarliestPosition()
 }
 
-func FromPbBrokerPartitionAssignment(self pb.ServerAddress, assignment *mq_pb.BrokerPartitionAssignment) *LocalPartition {
+func FromPbBrokerPartitionAssignment(self pb.ServerAddress, assignment *mq_pb.BrokerPartitionAssignment, logFlushFn log_buffer.LogFlushFuncType) *LocalPartition {
 	isLeader := assignment.LeaderBroker == string(self)
 	followers := make([]pb.ServerAddress, len(assignment.FollowerBrokers))
 	for i, followerBroker := range assignment.FollowerBrokers {
 		followers[i] = pb.ServerAddress(followerBroker)
 	}
-	return NewLocalPartition(FromPbPartition(assignment.Partition), isLeader, followers)
+	return NewLocalPartition(FromPbPartition(assignment.Partition), isLeader, followers, logFlushFn)
 }
 
 func (p *LocalPartition) closePublishers() {
