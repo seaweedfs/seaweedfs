@@ -148,7 +148,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: Namespace,
 			Subsystem: "volumeServer",
-			Name:      "request_total",
+			Name:      "handler_total",
 			Help:      "Counter of volume server handlers.",
 		}, []string{"type"})
 
