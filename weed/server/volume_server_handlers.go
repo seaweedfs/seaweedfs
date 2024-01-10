@@ -31,8 +31,8 @@ security settings:
 */
 
 func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Request) {
-	statusResponseWriter := stats.NewStatusResponseWriter(w)
-	w = statusResponseWriter.ResponseWriter
+	statusRecorder := stats.NewStatusResponseWriter(w)
+	w = statusRecorder
 	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
 	if r.Header.Get("Origin") != "" {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -43,7 +43,7 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 	defer func(start time.Time, method *string, statusRecorder *stats.StatusRecorder) {
 		stats.VolumeServerRequestCounter.WithLabelValues(*method, strconv.Itoa(statusRecorder.Status)).Inc()
 		stats.VolumeServerRequestHistogram.WithLabelValues(*method).Observe(time.Since(start).Seconds())
-	}(start, &requestMethod, statusResponseWriter)
+	}(start, &requestMethod, statusRecorder)
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		stats.ReadRequest()

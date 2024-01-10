@@ -86,6 +86,14 @@ var (
 			Help:      "Counter of filer requests.",
 		}, []string{"type", "code"})
 
+	FilerHandlerCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "filer",
+			Name:      "handler_total",
+			Help:      "Counter of filer handlers.",
+		}, []string{"type"})
+
 	FilerRequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
@@ -245,6 +253,7 @@ func init() {
 	Gather.MustRegister(MasterReplicaPlacementMismatch)
 
 	Gather.MustRegister(FilerRequestCounter)
+	Gather.MustRegister(FilerHandlerCounter)
 	Gather.MustRegister(FilerRequestHistogram)
 	Gather.MustRegister(FilerStoreCounter)
 	Gather.MustRegister(FilerStoreHistogram)
