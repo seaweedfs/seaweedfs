@@ -144,6 +144,14 @@ var (
 			Help:      "Counter of volume server requests.",
 		}, []string{"type", "code"})
 
+	VolumeServerHandlerCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "request_total",
+			Help:      "Counter of volume server handlers.",
+		}, []string{"type"})
+
 	VolumeServerVacuumingCompactCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -263,6 +271,7 @@ func init() {
 	Gather.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
 	Gather.MustRegister(VolumeServerRequestCounter)
+	Gather.MustRegister(VolumeServerHandlerCounter)
 	Gather.MustRegister(VolumeServerRequestHistogram)
 	Gather.MustRegister(VolumeServerVacuumingCompactCounter)
 	Gather.MustRegister(VolumeServerVacuumingCommitCounter)

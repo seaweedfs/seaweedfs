@@ -124,11 +124,21 @@ func getContentLength(r *http.Request) int64 {
 }
 
 func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Request) {
+	statusRecorder := stats.NewStatusResponseWriter(w)
+	w = statusRecorder
 	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
 	if r.Header.Get("Origin") != "" {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
+
+	start := time.Now()
+	requestMethod := r.Method
+	defer func(start time.Time, method *string, statusRecorder *stats.StatusRecorder) {
+		stats.VolumeServerRequestCounter.WithLabelValues(*method, strconv.Itoa(statusRecorder.Status)).Inc()
+		stats.VolumeServerRequestHistogram.WithLabelValues(*method).Observe(time.Since(start).Seconds())
+	}(start, &requestMethod, statusRecorder)
+
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		stats.ReadRequest()
