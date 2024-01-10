@@ -31,6 +31,8 @@ security settings:
 */
 
 func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Request) {
+	statusResponseWriter := stats.NewStatusResponseWriter(w)
+	w = statusResponseWriter.ResponseWriter
 	w.Header().Set("Server", "SeaweedFS Volume "+util.VERSION)
 	if r.Header.Get("Origin") != "" {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -38,10 +40,10 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 	}
 	start := time.Now()
 	requestMethod := r.Method
-	defer func(start time.Time, method *string) {
-		stats.VolumeServerRequestCounter.WithLabelValues(*method).Inc()
+	defer func(start time.Time, method *string, statusRecorder *stats.StatusRecorder) {
+		stats.VolumeServerRequestCounter.WithLabelValues(*method, strconv.Itoa(statusRecorder.Status)).Inc()
 		stats.VolumeServerRequestHistogram.WithLabelValues(*method).Observe(time.Since(start).Seconds())
-	}(start, &requestMethod)
+	}(start, &requestMethod, statusResponseWriter)
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		stats.ReadRequest()
@@ -63,11 +65,9 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		vs.inFlightDownloadDataLimitCond.L.Unlock()
 		vs.GetOrHeadHandler(w, r)
 	case http.MethodDelete:
-		stats.VolumeServerRequestCounter.WithLabelValues(r.Method).Inc()
 		stats.DeleteRequest()
 		vs.guard.WhiteList(vs.DeleteHandler)(w, r)
 	case http.MethodPut, http.MethodPost:
-		stats.VolumeServerRequestCounter.WithLabelValues(r.Method).Inc()
 		contentLength := getContentLength(r)
 		// exclude the replication from the concurrentUploadLimitMB
 		if r.URL.Query().Get("type") != "replicate" && vs.concurrentUploadLimit != 0 {

@@ -84,7 +84,7 @@ var (
 			Subsystem: "filer",
 			Name:      "request_total",
 			Help:      "Counter of filer requests.",
-		}, []string{"type"})
+		}, []string{"type", "code"})
 
 	FilerRequestHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -134,7 +134,7 @@ var (
 			Subsystem: "volumeServer",
 			Name:      "request_total",
 			Help:      "Counter of volume server requests.",
-		}, []string{"type"})
+		}, []string{"type", "code"})
 
 	VolumeServerVacuumingCompactCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{

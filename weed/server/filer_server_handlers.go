@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -17,7 +18,8 @@ import (
 
 func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-
+	statusResponseWriter := stats.NewStatusResponseWriter(w)
+	w = statusResponseWriter.ResponseWriter
 	origin := r.Header.Get("Origin")
 	if origin != "" {
 		if fs.option.AllowedOrigins == nil || len(fs.option.AllowedOrigins) == 0 || fs.option.AllowedOrigins[0] == "*" {
@@ -53,22 +55,22 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		fileId = r.RequestURI[len("/?proxyChunkId="):]
 	}
 	if fileId != "" {
-		stats.FilerRequestCounter.WithLabelValues(stats.ChunkProxy).Inc()
 		fs.proxyToVolumeServer(w, r, fileId)
-		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkProxy).Observe(time.Since(start).Seconds())
+		stats.FilerRequestCounter.WithLabelValues(stats.ChunkProxy).Inc()
+		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkProxy, strconv.Itoa(statusResponseWriter.Status)).Observe(time.Since(start).Seconds())
 		return
 	}
+
+	defer func() {
+		stats.FilerRequestCounter.WithLabelValues(r.Method, strconv.Itoa(statusResponseWriter.Status)).Inc()
+		stats.FilerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
+	}()
 
 	isReadHttpCall := r.Method == "GET" || r.Method == "HEAD"
 	if !fs.maybeCheckJwtAuthorization(r, !isReadHttpCall) {
 		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 		return
 	}
-
-	stats.FilerRequestCounter.WithLabelValues(r.Method).Inc()
-	defer func() {
-		stats.FilerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
-	}()
 
 	w.Header().Set("Server", "SeaweedFS Filer "+util.VERSION)
 

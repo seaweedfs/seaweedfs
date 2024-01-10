@@ -8,29 +8,11 @@ import (
 	"time"
 )
 
-type StatusRecorder struct {
-	http.ResponseWriter
-	Status int
-}
-
-func NewStatusResponseWriter(w http.ResponseWriter) *StatusRecorder {
-	return &StatusRecorder{w, http.StatusOK}
-}
-
-func (r *StatusRecorder) WriteHeader(status int) {
-	r.Status = status
-	r.ResponseWriter.WriteHeader(status)
-}
-
-func (r *StatusRecorder) Flush() {
-	r.ResponseWriter.(http.Flusher).Flush()
-}
-
 func track(f http.HandlerFunc, action string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		bucket, _ := s3_constants.GetBucketAndObject(r)
 		w.Header().Set("Server", "SeaweedFS S3")
-		recorder := NewStatusResponseWriter(w)
+		recorder := stats_collect.NewStatusResponseWriter(w)
 		start := time.Now()
 		f(recorder, r)
 		if recorder.Status == http.StatusForbidden {
