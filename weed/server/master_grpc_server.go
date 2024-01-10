@@ -168,10 +168,10 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			DataCenter: dn.GetDataCenterId(),
 		}
 		if len(heartbeat.NewVolumes) > 0 {
-			stats.FilerRequestCounter.WithLabelValues("newVolumes").Inc()
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("newVolumes").Inc()
 		}
 		if len(heartbeat.DeletedVolumes) > 0 {
-			stats.FilerRequestCounter.WithLabelValues("deletedVolumes").Inc()
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("deletedVolumes").Inc()
 		}
 		if len(heartbeat.NewVolumes) > 0 || len(heartbeat.DeletedVolumes) > 0 {
 			// process delta volume ids if exists for fast volume id updates
