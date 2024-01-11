@@ -104,7 +104,7 @@ func (logBuffer *LogBuffer) AddToBuffer(partitionKey, data []byte, processingTsN
 	}
 
 	if logBuffer.startTime.Add(logBuffer.flushInterval).Before(ts) || len(logBuffer.buf)-logBuffer.pos < size+4 {
-		glog.V(0).Infof("%s copyToFlush1 batch:%d start time %v, ts %v, remaining %d bytes", logBuffer.name, logBuffer.batchIndex, logBuffer.startTime, ts, len(logBuffer.buf)-logBuffer.pos)
+		glog.V(0).Infof("%s copyToFlush1 batch:%d count:%d start time %v, ts %v, remaining %d bytes", logBuffer.name, logBuffer.batchIndex, len(logBuffer.idx), logBuffer.startTime, ts, len(logBuffer.buf)-logBuffer.pos)
 		toFlush = logBuffer.copyToFlush()
 		logBuffer.startTime = ts
 		if len(logBuffer.buf) < size+4 {

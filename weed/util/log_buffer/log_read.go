@@ -35,10 +35,12 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 	var bytesBuf *bytes.Buffer
 	var batchIndex int64
 	lastReadPosition = startPosition
+	var entryCounter int64
 	defer func() {
 		if bytesBuf != nil {
 			logBuffer.ReleaseMemory(bytesBuf)
 		}
+		println("LoopProcessLogData", readerName, "sent messages total", entryCounter)
 	}()
 
 	for {
@@ -55,7 +57,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 		if bytesBuf != nil {
 			readSize = bytesBuf.Len()
 		}
-		glog.V(0).Infof("%s ReadFromBuffer at %v batch:%d, read size:%v batch:%d", readerName, lastReadPosition, lastReadPosition.BatchIndex, readSize, batchIndex)
+		glog.V(0).Infof("%s ReadFromBuffer at %v batch:%d, read bytes:%v batch:%d", readerName, lastReadPosition, lastReadPosition.BatchIndex, readSize, batchIndex)
 		if bytesBuf == nil {
 			if batchIndex >= 0 {
 				lastReadPosition = NewMessagePosition(lastReadPosition.UnixNano(), batchIndex)
@@ -81,7 +83,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			size := util.BytesToUint32(buf[pos : pos+4])
 			if pos+4+int(size) > len(buf) {
 				err = ResumeError
-				glog.Errorf("LoopProcessLogData: %s read buffer %v read %d [%d,%d) from [0,%d)", readerName, lastReadPosition, batchSize, pos, pos+int(size)+4, len(buf))
+				glog.Errorf("LoopProcessLogData: %s read buffer %v read %d entries [%d,%d) from [0,%d)", readerName, lastReadPosition, batchSize, pos, pos+int(size)+4, len(buf))
 				return
 			}
 			entryData := buf[pos+4 : pos+4+int(size)]
@@ -94,20 +96,23 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			}
 			if stopTsNs != 0 && logEntry.TsNs > stopTsNs {
 				isDone = true
+				println("stopTsNs", stopTsNs, "logEntry.TsNs", logEntry.TsNs)
 				return
 			}
 			lastReadPosition = NewMessagePosition(logEntry.TsNs, batchIndex)
 
 			if err = eachLogDataFn(logEntry); err != nil {
+				glog.Errorf("LoopProcessLogData: %s process log entry %d %v: %v", readerName, batchSize+1, logEntry, err)
 				return
 			}
 
 			pos += 4 + int(size)
 			batchSize++
+			entryCounter++
 
 		}
 
-		// glog.V(4).Infof("%s sent messages ts[%+v,%+v] size %d\n", readerName, startReadTime, lastReadPosition, batchSize)
+		glog.V(0).Infof("%s sent messages ts[%+v,%+v] size %d\n", readerName, startPosition, lastReadPosition, batchSize)
 	}
 
 }
