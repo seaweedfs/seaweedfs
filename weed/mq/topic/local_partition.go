@@ -28,7 +28,7 @@ func NewLocalPartition(partition Partition, isLeader bool, followerBrokers []pb.
 		isLeader:        isLeader,
 		FollowerBrokers: followerBrokers,
 		logBuffer: log_buffer.NewLogBuffer(
-			fmt.Sprintf("%d/%4d-%4d", partition.UnixTimeNs, partition.RangeStart, partition.RangeStop),
+			fmt.Sprintf("%d/%04d-%04d", partition.UnixTimeNs, partition.RangeStart, partition.RangeStop),
 			2*time.Minute,
 			logFlushFn,
 			func() {

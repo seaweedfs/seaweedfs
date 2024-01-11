@@ -2,6 +2,7 @@ package pub_balancer
 
 import (
 	"errors"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
 
@@ -25,6 +26,7 @@ func (balancer *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, pu
 						RingSize:   MaxPartitionCount,
 						RangeStart: topicPartitionStat.RangeStart,
 						RangeStop:  topicPartitionStat.RangeStop,
+						UnixTimeNs: topicPartitionStat.UnixTimeNs,
 					},
 				}
 				// TODO fix follower setting
@@ -34,7 +36,7 @@ func (balancer *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, pu
 		}
 	}
 	if len(assignments) > 0 || !(publish && len(assignments) !=int(partitionCount) && partitionCount > 0) {
-		// glog.V(0).Infof("existing topic partitions %d: %v", len(assignments), assignments)
+		glog.V(0).Infof("existing topic partitions %d: %+v", len(assignments), assignments)
 		return assignments, nil
 	}
 

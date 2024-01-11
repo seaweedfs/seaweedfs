@@ -84,6 +84,7 @@ func doBalanceSticky(partitions []*pub_balancer.PartitionSlotToBroker, consumerI
 		newPartitionSlots = append(newPartitionSlots, &PartitionSlotToConsumerInstance{
 			RangeStart: partition.RangeStart,
 			RangeStop:  partition.RangeStop,
+			UnixTimeNs: partition.UnixTimeNs,
 			Broker:     partition.AssignedBroker,
 		})
 	}

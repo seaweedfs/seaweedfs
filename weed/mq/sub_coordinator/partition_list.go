@@ -5,6 +5,7 @@ import "github.com/seaweedfs/seaweedfs/weed/mq/topic"
 type PartitionSlotToConsumerInstance struct {
 	RangeStart         int32
 	RangeStop          int32
+	UnixTimeNs         int64
 	Broker             string
 	AssignedInstanceId string
 }

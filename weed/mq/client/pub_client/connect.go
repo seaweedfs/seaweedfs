@@ -40,6 +40,7 @@ func (p *TopicPublisher) doConnect(partition *mq_pb.Partition, brokerAddress str
 					RingSize:   partition.RingSize,
 					RangeStart: partition.RangeStart,
 					RangeStop:  partition.RangeStop,
+					UnixTimeNs: partition.UnixTimeNs,
 				},
 				AckInterval: 128,
 			},

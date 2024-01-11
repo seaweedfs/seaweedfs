@@ -40,7 +40,12 @@ func (bs *BrokerStats) UpdateStats(stats *mq_pb.BrokerStats) {
 		tps := &TopicPartitionStats{
 			TopicPartition: topic.TopicPartition{
 				Topic:     topic.Topic{Namespace: topicPartitionStats.Topic.Namespace, Name: topicPartitionStats.Topic.Name},
-				Partition: topic.Partition{RangeStart: topicPartitionStats.Partition.RangeStart, RangeStop: topicPartitionStats.Partition.RangeStop, RingSize: topicPartitionStats.Partition.RingSize},
+				Partition: topic.Partition{
+					RangeStart: topicPartitionStats.Partition.RangeStart,
+					RangeStop: topicPartitionStats.Partition.RangeStop,
+					RingSize: topicPartitionStats.Partition.RingSize,
+					UnixTimeNs: topicPartitionStats.Partition.UnixTimeNs,
+				},
 			},
 			ConsumerCount: topicPartitionStats.ConsumerCount,
 			IsLeader:      topicPartitionStats.IsLeader,
@@ -62,7 +67,12 @@ func (bs *BrokerStats) RegisterAssignment(t *mq_pb.Topic, partition *mq_pb.Parti
 	tps := &TopicPartitionStats{
 		TopicPartition: topic.TopicPartition{
 			Topic:     topic.Topic{Namespace: t.Namespace, Name: t.Name},
-			Partition: topic.Partition{RangeStart: partition.RangeStart, RangeStop: partition.RangeStop},
+			Partition: topic.Partition{
+				RangeStart: partition.RangeStart,
+				RangeStop: partition.RangeStop,
+				RingSize: partition.RingSize,
+				UnixTimeNs: partition.UnixTimeNs,
+			},
 		},
 		ConsumerCount: 0,
 		IsLeader:      true,

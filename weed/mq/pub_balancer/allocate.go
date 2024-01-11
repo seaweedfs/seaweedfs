@@ -5,10 +5,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"math/rand"
+	"time"
 )
 
 func allocateTopicPartitions(brokers cmap.ConcurrentMap[string, *BrokerStats], partitionCount int32) (assignments []*mq_pb.BrokerPartitionAssignment) {
 	// divide the ring into partitions
+	now := time.Now().UnixNano()
 	rangeSize := MaxPartitionCount / partitionCount
 	for i := int32(0); i < partitionCount; i++ {
 		assignment := &mq_pb.BrokerPartitionAssignment{
@@ -16,6 +18,7 @@ func allocateTopicPartitions(brokers cmap.ConcurrentMap[string, *BrokerStats], p
 				RingSize:   MaxPartitionCount,
 				RangeStart: int32(i * rangeSize),
 				RangeStop:  int32((i + 1) * rangeSize),
+				UnixTimeNs: now,
 			},
 		}
 		if i == partitionCount-1 {
