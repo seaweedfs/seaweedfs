@@ -149,7 +149,7 @@ func (s *Store) FindFreeLocation(diskType DiskType) (ret *DiskLocation) {
 		}
 		currentFreeCount := location.MaxVolumeCount - int32(location.VolumesLen())
 		currentFreeCount *= erasure_coding.DataShardsCount
-		currentFreeCount -= int32(location.EcVolumesLen())
+		currentFreeCount -= int32(location.EcShardCount())
 		currentFreeCount /= erasure_coding.DataShardsCount
 		if currentFreeCount > max {
 			max = currentFreeCount
