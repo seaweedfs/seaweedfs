@@ -34,7 +34,7 @@ func (manager *LocalTopicManager) AddTopicPartition(topic Topic, localPartition 
 	localTopic.Partitions = append(localTopic.Partitions, localPartition)
 }
 
-// GetTopic gets a topic from the local topic manager
+// GetTopicPartition gets a topic from the local topic manager
 func (manager *LocalTopicManager) GetTopicPartition(topic Topic, partition Partition) *LocalPartition {
 	localTopic, ok := manager.topics.Get(topic.String())
 	if !ok {
