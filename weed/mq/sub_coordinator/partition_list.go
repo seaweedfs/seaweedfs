@@ -23,10 +23,10 @@ func NewPartitionSlotToConsumerInstanceList(ringSize int32, version int64) *Part
 	}
 }
 
-func ToPartitions(ringSize int32, slots []*PartitionSlotToConsumerInstance, unixTimeNs int64) []*topic.Partition {
+func ToPartitions(ringSize int32, slots []*PartitionSlotToConsumerInstance) []*topic.Partition {
 	partitions := make([]*topic.Partition, 0, len(slots))
 	for _, slot := range slots {
-		partitions = append(partitions, topic.NewPartition(slot.RangeStart, slot.RangeStop, ringSize, unixTimeNs))
+		partitions = append(partitions, topic.NewPartition(slot.RangeStart, slot.RangeStop, ringSize, slot.UnixTimeNs))
 	}
 	return partitions
 }

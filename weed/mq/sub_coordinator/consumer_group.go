@@ -71,8 +71,6 @@ func (cg *ConsumerGroup) OnPartitionListChange(assignments []*mq_pb.BrokerPartit
 func (cg *ConsumerGroup) RebalanceConsumberGroupInstances(knownPartitionSlotToBrokerList *pub_balancer.PartitionSlotToBrokerList, reason string) {
 	glog.V(0).Infof("rebalance consumer group %s due to %s", cg.topic.String(), reason)
 
-	now := time.Now().UnixNano()
-
 	// collect current topic partitions
 	partitionSlotToBrokerList := knownPartitionSlotToBrokerList
 	if partitionSlotToBrokerList == nil {
@@ -104,7 +102,7 @@ func (cg *ConsumerGroup) RebalanceConsumberGroupInstances(knownPartitionSlotToBr
 		if !found {
 			partitionSlots = make([]*PartitionSlotToConsumerInstance, 0)
 		}
-		consumerGroupInstance.Partitions = ToPartitions(partitionSlotToBrokerList.RingSize, partitionSlots, now)
+		consumerGroupInstance.Partitions = ToPartitions(partitionSlotToBrokerList.RingSize, partitionSlots)
 		assignedPartitions := make([]*mq_pb.SubscriberToSubCoordinatorResponse_AssignedPartition, len(partitionSlots))
 		for i, partitionSlot := range partitionSlots {
 			assignedPartitions[i] = &mq_pb.SubscriberToSubCoordinatorResponse_AssignedPartition{
@@ -112,7 +110,7 @@ func (cg *ConsumerGroup) RebalanceConsumberGroupInstances(knownPartitionSlotToBr
 					RangeStop: partitionSlot.RangeStop,
 					RangeStart: partitionSlot.RangeStart,
 					RingSize: partitionSlotToBrokerList.RingSize,
-					UnixTimeNs: now,
+					UnixTimeNs: partitionSlot.UnixTimeNs,
 				},
 				Broker: partitionSlot.Broker,
 			}
