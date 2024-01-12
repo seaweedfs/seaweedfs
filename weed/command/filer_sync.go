@@ -408,7 +408,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 		}
 		// handle deletions
 		if filer_pb.IsDelete(resp) {
-			if doDeleteFiles {
+			if !doDeleteFiles {
 				return nil
 			}
 			if !strings.HasPrefix(string(sourceOldKey), sourcePath) {
