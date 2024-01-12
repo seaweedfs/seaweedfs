@@ -33,7 +33,8 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		return err
 	}
 
-	processor := NewMetadataProcessor(eachEntryFunc, 128)
+	lastOffsetTs := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, *option.timeAgo)
+	processor := NewMetadataProcessor(eachEntryFunc, 128, lastOffsetTs.UnixNano())
 
 	var lastLogTsNs = time.Now().UnixNano()
 	processEventFnWithOffset := pb.AddOffsetFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
@@ -50,17 +51,16 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		processor.AddSyncJob(resp)
 		return nil
 	}, 3*time.Second, func(counter int64, lastTsNs int64) error {
-		if processor.processedTsWatermark == 0 {
+		offsetTsNs := processor.processedTsWatermark.Load()
+		if offsetTsNs == 0 {
 			return nil
 		}
 		// use processor.processedTsWatermark instead of the lastTsNs from the most recent job
 		now := time.Now().UnixNano()
-		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, time.Unix(0, processor.processedTsWatermark), float64(counter)/(float64(now-lastLogTsNs)/1e9))
+		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, time.Unix(0, offsetTsNs), float64(counter)/(float64(now-lastLogTsNs)/1e9))
 		lastLogTsNs = now
-		return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, processor.processedTsWatermark)
+		return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, offsetTsNs)
 	})
-
-	lastOffsetTs := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, *option.timeAgo)
 
 	option.clientEpoch++
 
