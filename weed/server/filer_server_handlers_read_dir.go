@@ -18,7 +18,7 @@ import (
 // is empty.
 func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Request) {
 
-	stats.FilerRequestCounter.WithLabelValues(stats.DirList).Inc()
+	stats.FilerHandlerCounter.WithLabelValues(stats.DirList).Inc()
 
 	path := r.URL.Path
 	if strings.HasSuffix(path, "/") && len(path) > 1 {

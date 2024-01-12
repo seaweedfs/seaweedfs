@@ -218,9 +218,13 @@ func (l *DiskLocation) unmountEcVolumeByCollection(collectionName string) map[ne
 	return deltaVols
 }
 
-func (l *DiskLocation) EcVolumesLen() int {
+func (l *DiskLocation) EcShardCount() int {
 	l.ecVolumesLock.RLock()
 	defer l.ecVolumesLock.RUnlock()
 
-	return len(l.ecVolumes)
+	shardCount := 0
+	for _, ecVolume := range l.ecVolumes {
+		shardCount += len(ecVolume.Shards)
+	}
+	return shardCount
 }

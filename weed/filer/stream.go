@@ -121,10 +121,10 @@ func StreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunction, w
 		remaining -= int64(chunkView.ViewSize)
 		stats.FilerRequestHistogram.WithLabelValues("chunkDownload").Observe(time.Since(start).Seconds())
 		if err != nil {
-			stats.FilerRequestCounter.WithLabelValues("chunkDownloadError").Inc()
+			stats.FilerHandlerCounter.WithLabelValues("chunkDownloadError").Inc()
 			return fmt.Errorf("read chunk: %v", err)
 		}
-		stats.FilerRequestCounter.WithLabelValues("chunkDownload").Inc()
+		stats.FilerHandlerCounter.WithLabelValues("chunkDownload").Inc()
 		downloadThrottler.MaybeSlowdown(int64(chunkView.ViewSize))
 	}
 	if remaining > 0 {

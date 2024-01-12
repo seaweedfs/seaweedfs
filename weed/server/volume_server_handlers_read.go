@@ -30,12 +30,12 @@ import (
 var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 
 func NotFound(w http.ResponseWriter) {
-	stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorGetNotFound).Inc()
+	stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorGetNotFound).Inc()
 	w.WriteHeader(http.StatusNotFound)
 }
 
 func InternalError(w http.ResponseWriter) {
-	stats.VolumeServerRequestCounter.WithLabelValues(stats.ErrorGetInternal).Inc()
+	stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorGetInternal).Inc()
 	w.WriteHeader(http.StatusInternalServerError)
 }
 

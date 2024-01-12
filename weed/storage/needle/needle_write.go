@@ -127,7 +127,7 @@ func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset u
 		err = fmt.Errorf("Cannot Read Current Volume Position: %v", e)
 		return
 	}
-	if offset >= MaxPossibleVolumeSize && n.Size.IsValid() {
+	if offset >= MaxPossibleVolumeSize && len(n.Data) != 0 {
 		err = fmt.Errorf("Volume Size %d Exceeded %d", offset, MaxPossibleVolumeSize)
 		return
 	}

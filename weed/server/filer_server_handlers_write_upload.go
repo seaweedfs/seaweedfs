@@ -86,11 +86,11 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 				bytesBuffer.Read(smallContent)
 				bufPool.Put(bytesBuffer)
 				<-bytesBufferLimitChan
-				stats.FilerRequestCounter.WithLabelValues(stats.ContentSaveToFiler).Inc()
+				stats.FilerHandlerCounter.WithLabelValues(stats.ContentSaveToFiler).Inc()
 				break
 			}
 		} else {
-			stats.FilerRequestCounter.WithLabelValues(stats.AutoChunk).Inc()
+			stats.FilerHandlerCounter.WithLabelValues(stats.AutoChunk).Inc()
 		}
 
 		wg.Add(1)
@@ -143,7 +143,7 @@ func (fs *FilerServer) uploadReaderToChunks(w http.ResponseWriter, r *http.Reque
 
 func (fs *FilerServer) doUpload(urlLocation string, limitedReader io.Reader, fileName string, contentType string, pairMap map[string]string, auth security.EncodedJwt) (*operation.UploadResult, error, []byte) {
 
-	stats.FilerRequestCounter.WithLabelValues(stats.ChunkUpload).Inc()
+	stats.FilerHandlerCounter.WithLabelValues(stats.ChunkUpload).Inc()
 	start := time.Now()
 	defer func() {
 		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkUpload).Observe(time.Since(start).Seconds())
@@ -160,7 +160,7 @@ func (fs *FilerServer) doUpload(urlLocation string, limitedReader io.Reader, fil
 	}
 	uploadResult, err, data := operation.Upload(limitedReader, uploadOption)
 	if uploadResult != nil && uploadResult.RetryCount > 0 {
-		stats.FilerRequestCounter.WithLabelValues(stats.ChunkUploadRetry).Add(float64(uploadResult.RetryCount))
+		stats.FilerHandlerCounter.WithLabelValues(stats.ChunkUploadRetry).Add(float64(uploadResult.RetryCount))
 	}
 	return uploadResult, err, data
 }
@@ -180,14 +180,14 @@ func (fs *FilerServer) dataToChunk(fileName, contentType string, data []byte, ch
 		fileId, urlLocation, auth, uploadErr = fs.assignNewFileInfo(so)
 		if uploadErr != nil {
 			glog.V(4).Infof("retry later due to assign error: %v", uploadErr)
-			stats.FilerRequestCounter.WithLabelValues(stats.ChunkAssignRetry).Inc()
+			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkAssignRetry).Inc()
 			return uploadErr
 		}
 		// upload the chunk to the volume server
 		uploadResult, uploadErr, _ = fs.doUpload(urlLocation, dataReader, fileName, contentType, nil, auth)
 		if uploadErr != nil {
 			glog.V(4).Infof("retry later due to upload error: %v", uploadErr)
-			stats.FilerRequestCounter.WithLabelValues(stats.ChunkDoUploadRetry).Inc()
+			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkDoUploadRetry).Inc()
 			fid, _ := filer_pb.ToFileIdObject(fileId)
 			fileChunk := filer_pb.FileChunk{
 				FileId: fileId,

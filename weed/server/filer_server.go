@@ -111,11 +111,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	v.SetDefault("cors.allowed_origins.values", "*")
 
-	if (option.AllowedOrigins == nil) || (len(option.AllowedOrigins) == 0) {
-		allowedOrigins := v.GetString("cors.allowed_origins.values")
-		domains := strings.Split(allowedOrigins, ",")
-		option.AllowedOrigins = domains
-	}
+	allowedOrigins := v.GetString("cors.allowed_origins.values")
+	domains := strings.Split(allowedOrigins, ",")
+	option.AllowedOrigins = domains
 
 	fs = &FilerServer{
 		option:                option,

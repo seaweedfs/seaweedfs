@@ -20,7 +20,7 @@ jobs:
       -
         name: Docker meta
         id: docker_meta
-        uses: docker/metadata-action@9dc751fe249ad99385a2583ee0d084c400eee04e # v3
+        uses: docker/metadata-action@dbef88086f6cef02e264edb7dbf63250c17cef6c # v3
         with:
           images: |
             chrislusf/seaweedfs
@@ -52,7 +52,7 @@ jobs:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
           file: ./docker/Dockerfile.go_build
-          build-args: TAGS=elastic,ydb,gocdk,tikv
+          build-args: TAGS=elastic,ydb,gocdk,tikv,rclone
           platforms: linux/amd64
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
