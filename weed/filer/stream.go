@@ -176,7 +176,7 @@ func ReadAll(buffer []byte, masterClient *wdclient.MasterClient, chunks []*filer
 			return err
 		}
 
-		n, err := retriedFetchChunkData(buffer[idx:idx+int(chunkView.ViewSize)], urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk)
+		n, err := util.RetriedFetchChunkData(buffer[idx:idx+int(chunkView.ViewSize)], urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk)
 		if err != nil {
 			return err
 		}
