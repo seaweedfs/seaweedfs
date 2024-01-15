@@ -84,7 +84,7 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 
 	volumeServers := collectVolumeServersByDc(topologyInfo, *dc)
-	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
+	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo, nil)
 	diskTypes := collectVolumeDiskTypes(topologyInfo)
 
 	if *collection == "EACH_COLLECTION" {

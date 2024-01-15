@@ -94,7 +94,7 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	}
 	fmt.Printf("tier move volumes: %v\n", volumeIds)
 
-	_, allLocations := collectVolumeReplicaLocations(topologyInfo)
+	_, allLocations := collectVolumeReplicaLocations(topologyInfo, nil)
 	allLocations = filterLocationsByDiskType(allLocations, toDiskType)
 	keepDataNodesSorted(allLocations, toDiskType)
 

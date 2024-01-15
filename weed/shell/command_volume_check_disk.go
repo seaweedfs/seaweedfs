@@ -69,7 +69,7 @@ func (c *commandVolumeCheckDisk) Do(args []string, commandEnv *CommandEnv, write
 	if err != nil {
 		return err
 	}
-	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
+	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo, nil)
 
 	// pick 1 pairs of volume replica
 	fileCount := func(replica *VolumeReplica) uint64 {
