@@ -22,7 +22,9 @@ type dataToFlush struct {
 	data      *bytes.Buffer
 }
 
+type EachLogEntryFuncType func(logEntry *filer_pb.LogEntry) error
 type LogFlushFuncType func(startTime, stopTime time.Time, buf []byte)
+type LogReadFromDiskFuncType func(startPosition MessagePosition, stopTsNs int64, eachLogEntryFn EachLogEntryFuncType) (lastReadPosition MessagePosition, isDone bool, err error)
 
 type LogBuffer struct {
 	name          string
@@ -36,15 +38,17 @@ type LogBuffer struct {
 	lastFlushTime time.Time
 	sizeBuf       []byte
 	flushInterval time.Duration
-	flushFn       LogFlushFuncType
-	notifyFn      func()
+	flushFn        LogFlushFuncType
+	ReadFromDiskFn LogReadFromDiskFuncType
+	notifyFn       func()
 	isStopping    *atomic.Bool
 	flushChan     chan *dataToFlush
 	lastTsNs      int64
 	sync.RWMutex
 }
 
-func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFuncType, notifyFn func()) *LogBuffer {
+func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFuncType,
+	readFromDiskFn LogReadFromDiskFuncType, notifyFn func()) *LogBuffer {
 	lb := &LogBuffer{
 		name:          name,
 		prevBuffers:   newSealedBuffers(PreviousBufferCount),
@@ -52,6 +56,7 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 		sizeBuf:       make([]byte, 4),
 		flushInterval: flushInterval,
 		flushFn:       flushFn,
+		ReadFromDiskFn: readFromDiskFn,
 		notifyFn:      notifyFn,
 		flushChan:     make(chan *dataToFlush, 256),
 		isStopping:    new(atomic.Bool),
@@ -104,7 +109,7 @@ func (logBuffer *LogBuffer) AddToBuffer(partitionKey, data []byte, processingTsN
 	}
 
 	if logBuffer.startTime.Add(logBuffer.flushInterval).Before(ts) || len(logBuffer.buf)-logBuffer.pos < size+4 {
-		glog.V(0).Infof("%s copyToFlush1 batch:%d count:%d start time %v, ts %v, remaining %d bytes", logBuffer.name, logBuffer.batchIndex, len(logBuffer.idx), logBuffer.startTime, ts, len(logBuffer.buf)-logBuffer.pos)
+		// glog.V(0).Infof("%s copyToFlush1 batch:%d count:%d start time %v, ts %v, remaining %d bytes", logBuffer.name, logBuffer.batchIndex, len(logBuffer.idx), logBuffer.startTime, ts, len(logBuffer.buf)-logBuffer.pos)
 		toFlush = logBuffer.copyToFlush()
 		logBuffer.startTime = ts
 		if len(logBuffer.buf) < size+4 {
@@ -209,7 +214,7 @@ func (d *dataToFlush) releaseMemory() {
 	bufferPool.Put(d.data)
 }
 
-func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition, inMemoryOnly bool) (bufferCopy *bytes.Buffer, batchIndex int64, err error) {
+func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bufferCopy *bytes.Buffer, batchIndex int64, err error) {
 	logBuffer.RLock()
 	defer logBuffer.RUnlock()
 
@@ -238,11 +243,6 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition, inM
 		println("2.2 no data")
 		return nil, -2,nil
 	} else if lastReadPosition.Before(tsMemory) && lastReadPosition.BatchIndex +1 < tsBatchIndex { // case 2.3
-		if inMemoryOnly {
-			println("2.3 no data", lastReadPosition.BatchIndex, tsBatchIndex)
-			// FIXME: this is wrong: the data has been flushed to disk already
-			return nil, tsBatchIndex,nil
-		}
 		if !logBuffer.lastFlushTime.IsZero() {
 			glog.V(0).Infof("resume with last flush time: %v", logBuffer.lastFlushTime)
 			return nil, -2, ResumeFromDiskError

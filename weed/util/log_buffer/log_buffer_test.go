@@ -15,7 +15,7 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 	flushInterval := time.Second
 	lb := NewLogBuffer("test", flushInterval, func(startTime, stopTime time.Time, buf []byte) {
 		fmt.Printf("flush from %v to %v %d bytes\n", startTime, stopTime, len(buf))
-	}, func() {
+	}, nil, func() {
 	})
 
 	startTime := time.Now()
@@ -28,7 +28,7 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		lastProcessedTime, isDone, err := lb.LoopProcessLogData("test", startTime, false, 0, func() bool {
+		lastProcessedTime, isDone, err := lb.LoopProcessLogData("test", startTime, 0, func() bool {
 			// stop if no more messages
 			return receivedMessageCount < messageCount
 		}, func(logEntry *filer_pb.LogEntry) error {

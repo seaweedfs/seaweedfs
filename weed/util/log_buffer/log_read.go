@@ -29,7 +29,7 @@ func NewMessagePosition(tsNs int64, batchIndex int64) MessagePosition {
 	}
 }
 
-func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition MessagePosition, inMemoryOnly bool, stopTsNs int64,
+func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition MessagePosition, stopTsNs int64,
 	waitForDataFn func() bool, eachLogDataFn func(logEntry *filer_pb.LogEntry) error) (lastReadPosition MessagePosition, isDone bool, err error) {
 	// loop through all messages
 	var bytesBuf *bytes.Buffer
@@ -48,7 +48,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 		if bytesBuf != nil {
 			logBuffer.ReleaseMemory(bytesBuf)
 		}
-		bytesBuf, batchIndex, err = logBuffer.ReadFromBuffer(lastReadPosition, inMemoryOnly)
+		bytesBuf, batchIndex, err = logBuffer.ReadFromBuffer(lastReadPosition)
 		if err == ResumeFromDiskError {
 			time.Sleep(1127 * time.Millisecond)
 			return lastReadPosition, isDone, ResumeFromDiskError
