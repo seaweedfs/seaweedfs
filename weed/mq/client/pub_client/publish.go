@@ -12,7 +12,7 @@ func (p *TopicPublisher) Publish(key, value []byte) error {
 	if hashKey < 0 {
 		hashKey = -hashKey
 	}
-	publishClient, found := p.partition2Broker.Floor(hashKey, hashKey)
+	publishClient, found := p.partition2Broker.Floor(hashKey+1, hashKey+1)
 	if !found {
 		return fmt.Errorf("no broker found for key %d", hashKey)
 	}

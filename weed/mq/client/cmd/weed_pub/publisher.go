@@ -25,7 +25,10 @@ func doPublish(publisher *pub_client.TopicPublisher, id int) {
 		// Simulate publishing a message
 		key := []byte(fmt.Sprintf("key-%d-%d", id, i))
 		value := []byte(fmt.Sprintf("value-%d-%d", id, i))
-		publisher.Publish(key, value) // Call your publisher function here
+		if err := publisher.Publish(key, value); err != nil {
+			fmt.Println(err)
+			break
+		}
 		// println("Published", string(key), string(value))
 	}
 	elapsed := time.Since(startTime)
