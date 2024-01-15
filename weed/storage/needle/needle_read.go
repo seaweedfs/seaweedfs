@@ -93,7 +93,17 @@ func (n *Needle) ReadData(r backend.BackendStorageFile, offset int64, size Size,
 	if err != nil {
 		return err
 	}
-	return n.ReadBytes(bytes, offset, size, version)
+
+	err = n.ReadBytes(bytes, offset, size, version)
+	if err == ErrorSizeMismatch && OffsetSize == 4 {
+		offset = offset + int64(MaxPossibleVolumeSize)
+		bytes, err = ReadNeedleBlob(r, offset, size, version)
+		if err != nil {
+			return err
+		}
+		err = n.ReadBytes(bytes, offset, size, version)
+	}
+	return err
 }
 
 func (n *Needle) ParseNeedleHeader(bytes []byte) {
