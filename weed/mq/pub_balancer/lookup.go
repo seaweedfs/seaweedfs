@@ -50,7 +50,7 @@ func (balancer *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, pu
 	if balancer.Brokers.IsEmpty() {
 		return nil, ErrNoBroker
 	}
-	assignments = allocateTopicPartitions(balancer.Brokers, partitionCount)
+	assignments = AllocateTopicPartitions(balancer.Brokers, partitionCount)
 	balancer.OnPartitionChange(topic, assignments)
 	return
 }
