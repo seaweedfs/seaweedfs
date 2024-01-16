@@ -47,3 +47,10 @@ func (p *LocalPartitionSubscribers) SignalShutdown() {
 		Subscriber.SignalShutdown()
 	}
 }
+
+func (p *LocalPartitionSubscribers) IsEmpty() bool {
+	p.SubscribersLock.RLock()
+	defer p.SubscribersLock.RUnlock()
+
+	return len(p.Subscribers) == 0
+}

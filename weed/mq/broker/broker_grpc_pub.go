@@ -48,8 +48,10 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	// TODO check whether current broker should be the leader for the topic partition
 	ackInterval := 1
 	initMessage := req.GetInit()
+	var t topic.Topic
+	var p topic.Partition
 	if initMessage != nil {
-		t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
+		t, p = topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
 		localTopicPartition = b.localTopicManager.GetTopicPartition(t, p)
 		if localTopicPartition == nil {
 			response.Error = fmt.Sprintf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
@@ -75,6 +77,9 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		atomic.StoreInt32(&isStopping, 1)
 		close(respChan)
 		localTopicPartition.Publishers.RemovePublisher(clientName)
+		if localTopicPartition.MaybeShutdownLocalPartition() {
+			b.localTopicManager.RemoveTopicPartition(t, p)
+		}
 	}()
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)

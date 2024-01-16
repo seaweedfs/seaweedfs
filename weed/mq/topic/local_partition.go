@@ -109,3 +109,11 @@ func (p *LocalPartition) WaitUntilNoPublishers() {
 		time.Sleep(113 * time.Millisecond)
 	}
 }
+
+func (p *LocalPartition) MaybeShutdownLocalPartition() (hasShutdown bool) {
+	if p.Publishers.IsEmpty() && p.Subscribers.IsEmpty() {
+		p.logBuffer.ShutdownLogBuffer()
+		hasShutdown = true
+	}
+	return
+}
