@@ -8,16 +8,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// FindTopicBrokers returns the brokers that are serving the topic
-//
-//  1. lock the topic
-//
-//  2. find the topic partitions on the filer
-//     2.1 if the topic is not found, return error
-//     2.1.2 if the request is_for_publish, create the topic
-//     2.2 if the topic is found, return the brokers
-//
-//  3. unlock the topic
+// LookupTopicBrokers returns the brokers that are serving the topic
 func (b *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq_pb.LookupTopicBrokersRequest) (resp *mq_pb.LookupTopicBrokersResponse, err error) {
 	if b.currentBalancer == "" {
 		return nil, status.Errorf(codes.Unavailable, "no balancer")
@@ -35,7 +26,7 @@ func (b *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq
 
 	ret := &mq_pb.LookupTopicBrokersResponse{}
 	ret.Topic = request.Topic
-	ret.BrokerPartitionAssignments, _, err = b.Balancer.LookupOrAllocateTopicPartitions(ret.Topic, -1)
+	ret.BrokerPartitionAssignments = b.Balancer.LookupTopicPartitions(ret.Topic)
 	return ret, err
 }
 

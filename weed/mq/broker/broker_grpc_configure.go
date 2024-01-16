@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -38,7 +39,28 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 	}
 
 	ret := &mq_pb.ConfigureTopicResponse{}
-	ret.BrokerPartitionAssignments, _, err = b.Balancer.LookupOrAllocateTopicPartitions(request.Topic, request.PartitionCount)
+	existingAssignments := b.Balancer.LookupTopicPartitions(request.Topic)
+	if len(existingAssignments) == int(request.PartitionCount) {
+		glog.V(0).Infof("existing topic partitions %d: %+v", len(existingAssignments), existingAssignments)
+		ret.BrokerPartitionAssignments = existingAssignments
+	} else {
+		if b.Balancer.Brokers.IsEmpty()	{
+			return nil, status.Errorf(codes.Unavailable, pub_balancer.ErrNoBroker.Error())
+		}
+		ret.BrokerPartitionAssignments = pub_balancer.AllocateTopicPartitions(b.Balancer.Brokers, request.PartitionCount)
+
+		// save the topic configuration on filer
+		topicDir := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, request.Topic.Namespace, request.Topic.Name)
+		if err = b.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			var buf bytes.Buffer
+			filer.ProtoToText(&buf, ret)
+			return filer.SaveInsideFiler(client, topicDir, "topic.conf", buf.Bytes())
+		}); err != nil {
+			return nil, fmt.Errorf("create topic %s: %v", topicDir, err)
+		}
+
+		b.Balancer.OnPartitionChange(request.Topic, ret.BrokerPartitionAssignments)
+	}
 
 	for _, bpa := range ret.BrokerPartitionAssignments {
 		fmt.Printf("create topic %s partition %+v on %s\n", request.Topic, bpa.Partition, bpa.LeaderBroker)
