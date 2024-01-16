@@ -89,22 +89,14 @@ func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.Br
 		for _, localPartition := range localTopic.Partitions {
 			topicPartition := &TopicPartition{
 				Topic: Topic{Namespace: localTopic.Namespace, Name: localTopic.Name},
-				Partition: Partition{
-					RingSize:   localPartition.RingSize,
-					RangeStart: localPartition.RangeStart,
-					RangeStop:  localPartition.RangeStop,
-				},
+				Partition: localPartition.Partition,
 			}
 			stats.Stats[topicPartition.String()] = &mq_pb.TopicPartitionStats{
 				Topic: &mq_pb.Topic{
 					Namespace: string(localTopic.Namespace),
 					Name:      localTopic.Name,
 				},
-				Partition: &mq_pb.Partition{
-					RingSize:   localPartition.RingSize,
-					RangeStart: localPartition.RangeStart,
-					RangeStop:  localPartition.RangeStop,
-				},
+				Partition: localPartition.Partition.ToPbPartition(),
 				ConsumerCount: localPartition.ConsumerCount,
 			}
 			// fmt.Printf("collect topic %+v partition %+v\n", topicPartition, localPartition.Partition)
