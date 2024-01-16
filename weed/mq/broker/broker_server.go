@@ -6,6 +6,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -43,6 +44,7 @@ type MessageQueueBroker struct {
 	lockAsBalancer    *cluster.LiveLock
 	currentBalancer   pb.ServerAddress
 	Coordinator       *sub_coordinator.Coordinator
+	accessLock        sync.Mutex
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {

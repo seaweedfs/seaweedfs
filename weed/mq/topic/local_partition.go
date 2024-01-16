@@ -84,13 +84,13 @@ func (p *LocalPartition) GetEarliestInMemoryMessagePosition() log_buffer.Message
 	return p.logBuffer.GetEarliestPosition()
 }
 
-func FromPbBrokerPartitionAssignment(self pb.ServerAddress, assignment *mq_pb.BrokerPartitionAssignment, logFlushFn log_buffer.LogFlushFuncType, readFromDiskFn log_buffer.LogReadFromDiskFuncType) *LocalPartition {
+func FromPbBrokerPartitionAssignment(self pb.ServerAddress, partition Partition, assignment *mq_pb.BrokerPartitionAssignment, logFlushFn log_buffer.LogFlushFuncType, readFromDiskFn log_buffer.LogReadFromDiskFuncType) *LocalPartition {
 	isLeader := assignment.LeaderBroker == string(self)
 	followers := make([]pb.ServerAddress, len(assignment.FollowerBrokers))
 	for i, followerBroker := range assignment.FollowerBrokers {
 		followers[i] = pb.ServerAddress(followerBroker)
 	}
-	return NewLocalPartition(FromPbPartition(assignment.Partition), isLeader, followers, logFlushFn, readFromDiskFn)
+	return NewLocalPartition(partition, isLeader, followers, logFlushFn, readFromDiskFn)
 }
 
 func (p *LocalPartition) closePublishers() {
