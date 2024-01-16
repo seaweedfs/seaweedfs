@@ -55,9 +55,6 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 	}
 	if readOption == nil || !readOption.IsMetaOnly {
 		err = n.ReadData(v.DataBackend, nv.Offset.ToActualOffset(), readSize, v.Version())
-		if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
-			err = n.ReadData(v.DataBackend, nv.Offset.ToActualOffset()+int64(MaxPossibleVolumeSize), readSize, v.Version())
-		}
 		v.checkReadWriteError(err)
 		if err != nil {
 			return 0, err

@@ -60,6 +60,9 @@ func doCheckAndFixVolumeData(v *Volume, indexFile *os.File, indexOffset int64) (
 		}
 	} else {
 		if lastAppendAtNs, err = verifyNeedleIntegrity(v.DataBackend, v.Version(), offset.ToActualOffset(), key, size); err != nil {
+			if err == ErrorSizeMismatch {
+				return verifyNeedleIntegrity(v.DataBackend, v.Version(), offset.ToActualOffset()+int64(MaxPossibleVolumeSize), key, size)
+			}
 			return lastAppendAtNs, err
 		}
 	}
