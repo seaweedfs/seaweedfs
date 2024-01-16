@@ -38,7 +38,6 @@ func (p *TopicPublisher) doLookupAndConnect(brokerAddress string) error {
 						Namespace: p.namespace,
 						Name:      p.topic,
 					},
-					IsForPublish: true,
 				})
 			glog.V(0).Infof("lookup1 topic %s/%s: %v", p.namespace, p.topic, lookupResp)
 			if p.config.CreateTopic && err != nil {
@@ -58,7 +57,6 @@ func (p *TopicPublisher) doLookupAndConnect(brokerAddress string) error {
 							Namespace: p.namespace,
 							Name:      p.topic,
 						},
-						IsForPublish: true,
 					})
 				glog.V(0).Infof("lookup2 topic %s/%s: %v", p.namespace, p.topic, lookupResp)
 			}

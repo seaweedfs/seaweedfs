@@ -10,7 +10,7 @@ var (
 	ErrNoBroker = errors.New("no broker")
 )
 
-func (balancer *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, publish bool, partitionCount int32) (assignments []*mq_pb.BrokerPartitionAssignment, err error) {
+func (balancer *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, publish bool, partitionCount int32) (assignments []*mq_pb.BrokerPartitionAssignment, alreadyExists bool, err error) {
 	if partitionCount == 0 {
 		partitionCount = 6
 	}
@@ -37,7 +37,7 @@ func (balancer *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, pu
 	}
 	if len(assignments) > 0 || !(publish && len(assignments) !=int(partitionCount) && partitionCount > 0) {
 		glog.V(0).Infof("existing topic partitions %d: %+v", len(assignments), assignments)
-		return assignments, nil
+		return assignments, true, nil
 	}
 
 	// find the topic partitions on the filer
@@ -48,7 +48,7 @@ func (balancer *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, pu
 	//     return error not found
 	// t := topic.FromPbTopic(request.Topic)
 	if balancer.Brokers.IsEmpty() {
-		return nil, ErrNoBroker
+		return nil, alreadyExists, ErrNoBroker
 	}
 	assignments = AllocateTopicPartitions(balancer.Brokers, partitionCount)
 	balancer.OnPartitionChange(topic, assignments)

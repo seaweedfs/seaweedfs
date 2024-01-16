@@ -46,7 +46,6 @@ func (c *commandMqTopicDescribe) Do(args []string, commandEnv *CommandEnv, write
 				Namespace: *namespace,
 				Name:      *topicName,
 			},
-			IsForPublish: false,
 		})
 		if err != nil {
 			return err

@@ -131,7 +131,6 @@ message ListTopicsResponse {
 }
 message LookupTopicBrokersRequest {
     Topic topic = 1;
-    bool is_for_publish = 2;
 }
 message LookupTopicBrokersResponse {
     Topic topic = 1;

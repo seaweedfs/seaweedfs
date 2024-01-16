@@ -35,7 +35,7 @@ func (b *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq
 
 	ret := &mq_pb.LookupTopicBrokersResponse{}
 	ret.Topic = request.Topic
-	ret.BrokerPartitionAssignments, err = b.Balancer.LookupOrAllocateTopicPartitions(ret.Topic, request.IsForPublish, -1)
+	ret.BrokerPartitionAssignments, _, err = b.Balancer.LookupOrAllocateTopicPartitions(ret.Topic, false, -1)
 	return ret, err
 }
 
