@@ -53,7 +53,7 @@ func testThem(t *testing.T, tests []struct {
 }) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotAssignments := allocateTopicPartitions(tt.args.brokers, tt.args.partitionCount)
+			gotAssignments := AllocateTopicPartitions(tt.args.brokers, tt.args.partitionCount)
 			assert.Equal(t, len(tt.wantAssignments), len(gotAssignments))
 			for i, gotAssignment := range gotAssignments {
 				assert.Equal(t, tt.wantAssignments[i].LeaderBroker, gotAssignment.LeaderBroker)

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func allocateTopicPartitions(brokers cmap.ConcurrentMap[string, *BrokerStats], partitionCount int32) (assignments []*mq_pb.BrokerPartitionAssignment) {
+func AllocateTopicPartitions(brokers cmap.ConcurrentMap[string, *BrokerStats], partitionCount int32) (assignments []*mq_pb.BrokerPartitionAssignment) {
 	// divide the ring into partitions
 	now := time.Now().UnixNano()
 	rangeSize := MaxPartitionCount / partitionCount
