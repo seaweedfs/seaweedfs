@@ -377,6 +377,6 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 }
 
 func (f *Filer) Shutdown() {
-	f.LocalMetaLogBuffer.Shutdown()
+	f.LocalMetaLogBuffer.ShutdownLogBuffer()
 	f.Store.Shutdown()
 }

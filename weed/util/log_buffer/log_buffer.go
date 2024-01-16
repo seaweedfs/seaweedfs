@@ -132,7 +132,7 @@ func (logBuffer *LogBuffer) IsStopping() bool {
 	return logBuffer.isStopping.Load()
 }
 
-func (logBuffer *LogBuffer) Shutdown() {
+func (logBuffer *LogBuffer) ShutdownLogBuffer() {
 	isAlreadyStopped := logBuffer.isStopping.Swap(true)
 	if isAlreadyStopped {
 		return
