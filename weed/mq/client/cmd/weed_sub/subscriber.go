@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/sub_client"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"strings"
@@ -15,15 +16,17 @@ var (
 	namespace   = flag.String("ns", "test", "namespace")
 	topic       = flag.String("topic", "test", "topic")
 	seedBrokers = flag.String("brokers", "localhost:17777", "seed brokers")
+
+	clientId = flag.Uint("client_id", uint(util.RandomInt32()), "client id")
 )
 
 func main() {
 	flag.Parse()
 
 	subscriberConfig := &sub_client.SubscriberConfiguration{
-		ClientId:                "testSubscriber",
+		ClientId:                fmt.Sprintf("client-%d", *clientId),
 		ConsumerGroup:           "test",
-		ConsumerGroupInstanceId: "test",
+		ConsumerGroupInstanceId: fmt.Sprintf("client-%d", *clientId),
 		GrpcDialOption:          grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 
@@ -35,7 +38,7 @@ func main() {
 	}
 
 	processorConfig := sub_client.ProcessorConfiguration{
-		ConcurrentPartitionLimit: 6,
+		ConcurrentPartitionLimit: 3,
 	}
 
 	brokers := strings.Split(*seedBrokers, ",")

@@ -12,7 +12,8 @@ import (
 
 var (
 	messageCount = flag.Int("n", 1000, "message count")
-	concurrency  = flag.Int("c", 4, "concurrency count")
+	concurrency  = flag.Int("c", 4, "concurrent publishers")
+	partitionCount = flag.Int("p", 6, "partition count")
 
 	namespace   = flag.String("ns", "test", "namespace")
 	topic       = flag.String("topic", "test", "topic")
@@ -38,8 +39,8 @@ func doPublish(publisher *pub_client.TopicPublisher, id int) {
 func main() {
 	flag.Parse()
 	config := &pub_client.PublisherConfiguration{
-		CreateTopic: true,
-		CreateTopicPartitionCount: 1,
+		CreateTopic:               true,
+		CreateTopicPartitionCount: int32(*partitionCount),
 	}
 	publisher := pub_client.NewTopicPublisher(*namespace, *topic, config)
 	brokers := strings.Split(*seedBrokers, ",")
