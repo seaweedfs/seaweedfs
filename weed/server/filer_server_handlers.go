@@ -44,7 +44,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Methods", "PUT, POST, GET, DELETE, OPTIONS")
 	}
 
-	if r.Method == "OPTIONS" {
+	if r.Method == http.MethodOptions {
 		OptionsHandler(w, r, false)
 		return
 	}
@@ -66,7 +66,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		stats.FilerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
 	}()
 
-	isReadHttpCall := r.Method == "GET" || r.Method == "HEAD"
+	isReadHttpCall := r.Method == http.MethodGet || r.Method == http.MethodHead
 	if !fs.maybeCheckJwtAuthorization(r, !isReadHttpCall) {
 		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 		return
@@ -75,17 +75,15 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Server", "SeaweedFS Filer "+util.VERSION)
 
 	switch r.Method {
-	case "GET":
+	case http.MethodGet, http.MethodHead:
 		fs.GetOrHeadHandler(w, r)
-	case "HEAD":
-		fs.GetOrHeadHandler(w, r)
-	case "DELETE":
+	case http.MethodDelete:
 		if _, ok := r.URL.Query()["tagging"]; ok {
 			fs.DeleteTaggingHandler(w, r)
 		} else {
 			fs.DeleteHandler(w, r)
 		}
-	case "POST", "PUT":
+	case http.MethodPost, http.MethodPut:
 		// wait until in flight data is less than the limit
 		contentLength := getContentLength(r)
 		fs.inFlightDataLimitCond.L.Lock()
@@ -102,7 +100,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 			fs.inFlightDataLimitCond.Signal()
 		}()
 
-		if r.Method == "PUT" {
+		if r.Method == http.MethodPut {
 			if _, ok := r.URL.Query()["tagging"]; ok {
 				fs.PutTaggingHandler(w, r)
 			} else {
@@ -111,6 +109,8 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		} else { // method == "POST"
 			fs.PostHandler(w, r, contentLength)
 		}
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
@@ -149,7 +149,7 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 		stats.FilerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
 	}()
 	// We handle OPTIONS first because it never should be authenticated
-	if r.Method == "OPTIONS" {
+	if r.Method == http.MethodOptions {
 		OptionsHandler(w, r, true)
 		return
 	}
@@ -162,10 +162,10 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Server", "SeaweedFS Filer "+util.VERSION)
 
 	switch r.Method {
-	case "GET":
+	case http.MethodGet, http.MethodHead:
 		fs.GetOrHeadHandler(w, r)
-	case "HEAD":
-		fs.GetOrHeadHandler(w, r)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
