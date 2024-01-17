@@ -21,9 +21,9 @@ var cmdScaffold = &Command{
 	For example, the filer.toml mysql password can be overwritten by environment variable
 		export WEED_MYSQL_PASSWORD=some_password
 	Environment variable rules:
-		* Prefix the variable name with "WEED_"
-		* Uppercase the reset of variable name.
-		* Replace '.' with '_'
+		* Prefix the variable name with "WEED_".
+		* Uppercase the rest of the variable name.
+		* Replace '.' with '_'.
 
   `,
 }
