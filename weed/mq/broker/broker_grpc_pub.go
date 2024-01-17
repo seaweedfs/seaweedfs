@@ -3,10 +3,13 @@ package broker
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/peer"
+	jsonpb "google.golang.org/protobuf/encoding/protojson"
 	"math/rand"
 	"net"
 	"sync/atomic"
@@ -54,9 +57,13 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		t, p = topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
 		localTopicPartition = b.localTopicManager.GetTopicPartition(t, p)
 		if localTopicPartition == nil {
-			response.Error = fmt.Sprintf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
-			glog.Errorf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
-			return stream.Send(response)
+			localTopicPartition, err = b.loadLocalTopicPartitionFromFiler(t, p)
+			// if not created, return error
+			if err != nil {
+				response.Error = fmt.Sprintf("topic %v partition %v not setup: %v", initMessage.Topic, initMessage.Partition, err)
+				glog.Errorf("topic %v partition %v not setup: %v", initMessage.Topic, initMessage.Partition, err)
+				return stream.Send(response)
+			}
 		}
 		ackInterval = int(initMessage.AckInterval)
 		stream.Send(response)
@@ -139,6 +146,44 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	glog.V(0).Infof("topic %v partition %v publish stream closed.", initMessage.Topic, initMessage.Partition)
 
 	return nil
+}
+
+func (b *MessageQueueBroker) loadLocalTopicPartitionFromFiler(t topic.Topic, p topic.Partition) (localTopicPartition *topic.LocalPartition, err error) {
+	// load local topic partition from configuration on filer if not found
+	var conf *mq_pb.ConfigureTopicResponse
+	topicDir := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, t.Namespace, t.Name)
+	if err = b.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		data, err := filer.ReadInsideFiler(client, topicDir, "topic.conf")
+		if err != nil {
+			return fmt.Errorf("read topic %v partition %v conf: %v", t, p, err)
+		}
+		// parse into filer conf object
+		conf = &mq_pb.ConfigureTopicResponse{}
+		if err = jsonpb.Unmarshal(data, conf); err != nil {
+			return fmt.Errorf("unmarshal topic %v partition %v conf: %v", t, p, err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	// create local topic partition
+	self := b.option.BrokerAddress()
+	var hasCreated bool
+	for _, assignment := range conf.BrokerPartitionAssignments {
+		if assignment.LeaderBroker == string(self) && p.Equals(topic.FromPbPartition(assignment.Partition)) {
+			localTopicPartition = topic.FromPbBrokerPartitionAssignment(self, p, assignment, b.genLogFlushFunc(t, assignment.Partition), b.genLogOnDiskReadFunc(t, assignment.Partition))
+			b.localTopicManager.AddTopicPartition(t, localTopicPartition)
+			hasCreated = true
+			break
+		}
+	}
+
+	if !hasCreated {
+		return nil, fmt.Errorf("topic %v partition %v not assigned to broker %v", t, p, self)
+	}
+
+	return localTopicPartition, nil
 }
 
 // duplicated from master_grpc_server.go

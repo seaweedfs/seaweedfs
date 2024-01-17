@@ -32,6 +32,10 @@ type MessageQueueBrokerOption struct {
 	VolumeServerAccess string // how to access volume servers
 }
 
+func (option *MessageQueueBrokerOption) BrokerAddress() pb.ServerAddress {
+	return pb.NewServerAddress(option.Ip, option.Port, 0)
+}
+
 type MessageQueueBroker struct {
 	mq_pb.UnimplementedSeaweedMessagingServer
 	option            *MessageQueueBrokerOption
@@ -55,7 +59,7 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 	mqBroker = &MessageQueueBroker{
 		option:            option,
 		grpcDialOption:    grpcDialOption,
-		MasterClient:      wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, pb.NewServerAddress(option.Ip, option.Port, 0), option.DataCenter, option.Rack, *pb.NewServiceDiscoveryFromMap(option.Masters)),
+		MasterClient:      wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, option.BrokerAddress(), option.DataCenter, option.Rack, *pb.NewServiceDiscoveryFromMap(option.Masters)),
 		filers:            make(map[pb.ServerAddress]struct{}),
 		localTopicManager: topic.NewLocalTopicManager(),
 		Balancer:          pub_broker_balancer,
@@ -76,13 +80,13 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		for mqBroker.currentFiler == "" {
 			time.Sleep(time.Millisecond * 237)
 		}
-		self := fmt.Sprintf("%s:%d", option.Ip, option.Port)
+		self := option.BrokerAddress()
 		glog.V(0).Infof("broker %s found filer %s", self, mqBroker.currentFiler)
 
 		lockClient := cluster.NewLockClient(grpcDialOption, mqBroker.currentFiler)
-		mqBroker.lockAsBalancer = lockClient.StartLock(pub_balancer.LockBrokerBalancer, self)
+		mqBroker.lockAsBalancer = lockClient.StartLock(pub_balancer.LockBrokerBalancer, string(self))
 		for {
-			err := mqBroker.BrokerConnectToBalancer(self)
+			err := mqBroker.BrokerConnectToBalancer(string(self))
 			if err != nil {
 				fmt.Printf("BrokerConnectToBalancer: %v\n", err)
 			}
