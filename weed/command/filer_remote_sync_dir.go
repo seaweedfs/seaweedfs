@@ -278,7 +278,10 @@ func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer
 }
 
 func isMultipartUploadFile(dir string, name string) bool {
+	return isMultipartUploadDir(dir) &&	strings.HasSuffix(name, ".part")
+}
+
+func isMultipartUploadDir(dir string) bool {
 	return strings.HasPrefix(dir, "/buckets/") &&
-		strings.Contains(dir, "/"+s3_constants.MultipartUploadsFolder+"/") &&
-		strings.HasSuffix(name, ".part")
+		strings.Contains(dir, "/"+s3_constants.MultipartUploadsFolder+"/")
 }
