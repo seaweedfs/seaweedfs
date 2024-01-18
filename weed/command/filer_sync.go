@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink/filersink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -392,6 +393,10 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 
 		if debug {
 			glog.V(0).Infof("received %v", resp)
+		}
+
+		if isMultipartUploadDir(resp.Directory) {
+			return nil
 		}
 
 		if !strings.HasPrefix(resp.Directory, sourcePath) {
