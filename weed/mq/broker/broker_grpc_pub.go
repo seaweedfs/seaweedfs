@@ -150,11 +150,10 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 
 func (b *MessageQueueBroker) loadLocalTopicPartitionFromFiler(t topic.Topic, p topic.Partition) (localTopicPartition *topic.LocalPartition, err error) {
 	self := b.option.BrokerAddress()
-	glog.V(0).Infof("broker %s load topic %v partition %v", self, t, p)
 
 	// load local topic partition from configuration on filer if not found
 	var conf *mq_pb.ConfigureTopicResponse
-	conf, err = b.readTopicConfFromFiler(t, p)
+	conf, err = b.readTopicConfFromFiler(t)
 	if err != nil {
 		return nil, err
 	}
@@ -177,17 +176,20 @@ func (b *MessageQueueBroker) loadLocalTopicPartitionFromFiler(t topic.Topic, p t
 	return localTopicPartition, nil
 }
 
-func (b *MessageQueueBroker) readTopicConfFromFiler(t topic.Topic, p topic.Partition) (conf *mq_pb.ConfigureTopicResponse, err error) {
+func (b *MessageQueueBroker) readTopicConfFromFiler(t topic.Topic) (conf *mq_pb.ConfigureTopicResponse, err error) {
+
+	glog.V(0).Infof("load conf for topic %v from filer", t)
+
 	topicDir := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, t.Namespace, t.Name)
 	if err = b.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := filer.ReadInsideFiler(client, topicDir, "topic.conf")
 		if err != nil {
-			return fmt.Errorf("read topic %v partition %v conf: %v", t, p, err)
+			return fmt.Errorf("read topic %v partition %v conf: %v", t, err)
 		}
 		// parse into filer conf object
 		conf = &mq_pb.ConfigureTopicResponse{}
 		if err = jsonpb.Unmarshal(data, conf); err != nil {
-			return fmt.Errorf("unmarshal topic %v partition %v conf: %v", t, p, err)
+			return fmt.Errorf("unmarshal topic %v conf: %v", t, err)
 		}
 		return nil
 	}); err != nil {

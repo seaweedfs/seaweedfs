@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -35,8 +36,27 @@ func (b *MessageQueueBroker) SubscriberToSubCoordinator(stream mq_pb.SeaweedMess
 
 	ctx := stream.Context()
 
-	// process ack messages
 	go func() {
+		// try to load the partition assignment from filer
+		if conf, err := b.readTopicConfFromFiler(topic.FromPbTopic(initMessage.Topic)); err == nil {
+			assignedPartitions := make([]*mq_pb.SubscriberToSubCoordinatorResponse_AssignedPartition, len(conf.BrokerPartitionAssignments))
+			for i, assignment := range conf.BrokerPartitionAssignments {
+				assignedPartitions[i] = &mq_pb.SubscriberToSubCoordinatorResponse_AssignedPartition{
+					Partition: assignment.Partition,
+					Broker:   assignment.LeaderBroker,
+				}
+			}
+			// send partition assignment to subscriber
+			cgi.ResponseChan <- &mq_pb.SubscriberToSubCoordinatorResponse{
+				Message: &mq_pb.SubscriberToSubCoordinatorResponse_Assignment_{
+					Assignment: &mq_pb.SubscriberToSubCoordinatorResponse_Assignment{
+						AssignedPartitions: assignedPartitions,
+					},
+				},
+			}
+		}
+
+		// process ack messages
 		for {
 			_, err := stream.Recv()
 			if err != nil {
