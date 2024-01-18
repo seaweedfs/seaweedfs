@@ -271,6 +271,9 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 					}
 				}
 			}
+			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
+				return nil
+			}
 			oldBucket, oldRemoteStorageMountLocation, oldRemoteStorage, oldOk := option.detectBucketInfo(resp.Directory)
 			newBucket, newRemoteStorageMountLocation, newRemoteStorage, newOk := option.detectBucketInfo(message.NewParentPath)
 			if oldOk && newOk {
