@@ -394,9 +394,11 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 		if debug {
 			glog.V(0).Infof("received %v", resp)
 		}
-		if strings.Contains(resp.Directory, "/"+s3_constants.MultipartUploadsFolder+"/") {
+
+		if isMultipartUploadDir(resp.Directory) {
 			return nil
 		}
+
 		if !strings.HasPrefix(resp.Directory, sourcePath) {
 			return nil
 		}
