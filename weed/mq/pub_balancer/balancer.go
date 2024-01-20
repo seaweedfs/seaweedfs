@@ -33,6 +33,8 @@ type Balancer struct {
 	// Collected from all brokers when they connect to the broker leader
 	TopicToBrokers cmap.ConcurrentMap[string, *PartitionSlotToBrokerList] // key: topic name
 	OnPartitionChange func(topic *mq_pb.Topic, assignments []*mq_pb.BrokerPartitionAssignment)
+	OnAddBroker func(broker string, brokerStats *BrokerStats)
+	OnRemoveBroker func(broker string, brokerStats *BrokerStats)
 }
 
 func NewBalancer() *Balancer {
@@ -42,7 +44,7 @@ func NewBalancer() *Balancer {
 	}
 }
 
-func (balancer *Balancer) OnBrokerConnected(broker string) (brokerStats *BrokerStats) {
+func (balancer *Balancer) AddBroker(broker string) (brokerStats *BrokerStats) {
 	var found bool
 	brokerStats, found = balancer.Brokers.Get(broker)
 	if !found {
@@ -51,10 +53,11 @@ func (balancer *Balancer) OnBrokerConnected(broker string) (brokerStats *BrokerS
 			brokerStats, _ = balancer.Brokers.Get(broker)
 		}
 	}
+	balancer.OnAddBroker(broker, brokerStats)
 	return brokerStats
 }
 
-func (balancer *Balancer) OnBrokerDisconnected(broker string, stats *BrokerStats) {
+func (balancer *Balancer) RemoveBroker(broker string, stats *BrokerStats) {
 	balancer.Brokers.Remove(broker)
 
 	// update TopicToBrokers
@@ -65,6 +68,7 @@ func (balancer *Balancer) OnBrokerDisconnected(broker string, stats *BrokerStats
 		}
 		partitionSlotToBrokerList.RemoveBroker(broker)
 	}
+	balancer.OnRemoveBroker(broker, stats)
 }
 
 func (balancer *Balancer) OnBrokerStatsUpdated(broker string, brokerStats *BrokerStats, receivedStats *mq_pb.BrokerStats) {

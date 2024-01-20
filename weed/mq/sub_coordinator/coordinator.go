@@ -99,3 +99,11 @@ func (c *Coordinator) OnPartitionChange(topic *mq_pb.Topic, assignments []*mq_pb
 		cg.OnPartitionListChange(assignments)
 	}
 }
+
+func (c *Coordinator) OnAddBroker(broker string, brokerStats *pub_balancer.BrokerStats) {
+
+}
+
+func (c *Coordinator) OnRemoveBroker(broker string, brokerStats *pub_balancer.BrokerStats) {
+
+}

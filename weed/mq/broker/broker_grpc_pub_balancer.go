@@ -21,12 +21,12 @@ func (b *MessageQueueBroker) PublisherToPubBalancer(stream mq_pb.SeaweedMessagin
 	initMessage := req.GetInit()
 	var brokerStats *pub_balancer.BrokerStats
 	if initMessage != nil {
-		brokerStats = b.Balancer.OnBrokerConnected(initMessage.Broker)
+		brokerStats = b.Balancer.AddBroker(initMessage.Broker)
 	} else {
 		return status.Errorf(codes.InvalidArgument, "balancer init message is empty")
 	}
 	defer func() {
-		b.Balancer.OnBrokerDisconnected(initMessage.Broker, brokerStats)
+		b.Balancer.RemoveBroker(initMessage.Broker, brokerStats)
 	}()
 
 	// process stats message
