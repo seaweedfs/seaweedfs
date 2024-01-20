@@ -100,10 +100,12 @@ func (c *Coordinator) OnPartitionChange(topic *mq_pb.Topic, assignments []*mq_pb
 	}
 }
 
-func (c *Coordinator) OnAddBroker(broker string, brokerStats *pub_balancer.BrokerStats) {
+// OnSubAddBroker is called when a broker is added to the balancer
+func (c *Coordinator) OnSubAddBroker(broker string, brokerStats *pub_balancer.BrokerStats) {
 
 }
 
-func (c *Coordinator) OnRemoveBroker(broker string, brokerStats *pub_balancer.BrokerStats) {
+// OnSubRemoveBroker is called when a broker is removed from the balancer
+func (c *Coordinator) OnSubRemoveBroker(broker string, brokerStats *pub_balancer.BrokerStats) {
 
 }

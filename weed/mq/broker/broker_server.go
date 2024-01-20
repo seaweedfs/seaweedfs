@@ -67,8 +67,8 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 	}
 	mqBroker.MasterClient.SetOnPeerUpdateFn(mqBroker.OnBrokerUpdate)
 	pub_broker_balancer.OnPartitionChange = mqBroker.Coordinator.OnPartitionChange
-	pub_broker_balancer.OnAddBroker = mqBroker.Coordinator.OnAddBroker
-	pub_broker_balancer.OnRemoveBroker = mqBroker.Coordinator.OnRemoveBroker
+	pub_broker_balancer.OnAddBroker = mqBroker.Coordinator.OnSubAddBroker
+	pub_broker_balancer.OnRemoveBroker = mqBroker.Coordinator.OnSubRemoveBroker
 
 	go mqBroker.MasterClient.KeepConnectedToMaster()
 

@@ -53,6 +53,7 @@ func (balancer *Balancer) AddBroker(broker string) (brokerStats *BrokerStats) {
 			brokerStats, _ = balancer.Brokers.Get(broker)
 		}
 	}
+	balancer.onPubAddBroker(broker, brokerStats)
 	balancer.OnAddBroker(broker, brokerStats)
 	return brokerStats
 }
@@ -68,6 +69,7 @@ func (balancer *Balancer) RemoveBroker(broker string, stats *BrokerStats) {
 		}
 		partitionSlotToBrokerList.RemoveBroker(broker)
 	}
+	balancer.onPubRemoveBroker(broker, stats)
 	balancer.OnRemoveBroker(broker, stats)
 }
 
@@ -87,4 +89,12 @@ func (balancer *Balancer) OnBrokerStatsUpdated(broker string, brokerStats *Broke
 		}
 		partitionSlotToBrokerList.AddBroker(partition, broker)
 	}
+}
+
+// OnPubAddBroker is called when a broker is added for a publisher coordinator
+func (balancer *Balancer) onPubAddBroker(broker string, brokerStats *BrokerStats) {
+}
+
+// OnPubRemoveBroker is called when a broker is removed for a publisher coordinator
+func (balancer *Balancer) onPubRemoveBroker(broker string, brokerStats *BrokerStats) {
 }
