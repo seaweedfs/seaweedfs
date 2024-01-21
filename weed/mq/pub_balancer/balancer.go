@@ -67,7 +67,12 @@ func (balancer *Balancer) RemoveBroker(broker string, stats *BrokerStats) {
 		if !found {
 			continue
 		}
-		partitionSlotToBrokerList.RemoveBroker(broker)
+		pickedBroker := pickBrokers(balancer.Brokers, 1)
+		if len(pickedBroker) == 0 {
+			partitionSlotToBrokerList.RemoveBroker(broker)
+		} else {
+			partitionSlotToBrokerList.ReplaceBroker(broker, pickedBroker[0])
+		}
 	}
 	balancer.onPubRemoveBroker(broker, stats)
 	balancer.OnRemoveBroker(broker, stats)

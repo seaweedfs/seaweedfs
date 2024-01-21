@@ -44,9 +44,13 @@ func (ps *PartitionSlotToBrokerList) AddBroker(partition *mq_pb.Partition, broke
 	})
 }
 func (ps *PartitionSlotToBrokerList) RemoveBroker(broker string) {
+	ps.ReplaceBroker(broker, "")
+}
+
+func (ps *PartitionSlotToBrokerList) ReplaceBroker(oldBroker string, newBroker string) {
 	for _, partitionSlot := range ps.PartitionSlots {
-		if partitionSlot.AssignedBroker == broker {
-			partitionSlot.AssignedBroker = ""
+		if partitionSlot.AssignedBroker == oldBroker {
+			partitionSlot.AssignedBroker = newBroker
 		}
 	}
 }
