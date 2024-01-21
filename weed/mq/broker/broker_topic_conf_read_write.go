@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
@@ -46,5 +47,15 @@ func (b *MessageQueueBroker) readTopicConfFromFiler(t topic.Topic) (conf *mq_pb.
 	}); err != nil {
 		return nil, err
 	}
+
+	// also fix assignee broker if invalid
+	changedAssignments := pub_balancer.EnsureAssignmentsToActiveBrokers(b.Balancer.Brokers, conf.BrokerPartitionAssignments)
+	if len(changedAssignments) > 0 {
+		glog.V(0).Infof("topic %v partition assignments changed: %v", t, changedAssignments)
+		if err = b.saveTopicConfToFiler(t.ToPbTopic(), conf); err != nil {
+			return nil, err
+		}
+	}
+	
 	return conf, err
 }
