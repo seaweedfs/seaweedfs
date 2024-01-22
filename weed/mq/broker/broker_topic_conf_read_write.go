@@ -55,9 +55,9 @@ func (b *MessageQueueBroker) readTopicConfFromFiler(t topic.Topic) (conf *mq_pb.
 
 func (b *MessageQueueBroker) ensureTopicActiveAssignments(t topic.Topic, conf *mq_pb.ConfigureTopicResponse) (err error) {
 	// also fix assignee broker if invalid
-	changedAssignments := pub_balancer.EnsureAssignmentsToActiveBrokers(b.Balancer.Brokers, conf.BrokerPartitionAssignments)
-	if len(changedAssignments) > 0 {
-		glog.V(0).Infof("topic %v partition assignments changed: %v", t, changedAssignments)
+	addedAssignments, updatedAssignments := pub_balancer.EnsureAssignmentsToActiveBrokers(b.Balancer.Brokers, conf.BrokerPartitionAssignments)
+	if len(addedAssignments) > 0 || len(updatedAssignments) > 0 {
+		glog.V(0).Infof("topic %v partition assignments added: %v updated: %v", t, addedAssignments, updatedAssignments)
 		if err = b.saveTopicConfToFiler(t.ToPbTopic(), conf); err != nil {
 			return err
 		}

@@ -56,22 +56,27 @@ func pickBrokers(brokers cmap.ConcurrentMap[string, *BrokerStats], count int32) 
 	return pickedBrokers
 }
 
-func EnsureAssignmentsToActiveBrokers(activeBrokers cmap.ConcurrentMap[string,*BrokerStats], assignments []*mq_pb.BrokerPartitionAssignment) (changedAssignments []*mq_pb.BrokerPartitionAssignment) {
+func EnsureAssignmentsToActiveBrokers(activeBrokers cmap.ConcurrentMap[string,*BrokerStats], assignments []*mq_pb.BrokerPartitionAssignment) (addedAssignments, updatedAssignments []*mq_pb.BrokerPartitionAssignment) {
 	for _, assignment := range assignments {
 		if assignment.LeaderBroker == "" {
-			changedAssignments = append(changedAssignments, assignment)
+			addedAssignments = append(addedAssignments, assignment)
 			continue
 		}
 		if _, found := activeBrokers.Get(assignment.LeaderBroker); !found {
-			changedAssignments = append(changedAssignments, assignment)
+			updatedAssignments = append(updatedAssignments, assignment)
 			continue
 		}
 	}
 
 	// pick the brokers with the least number of partitions
-	pickedBrokers := pickBrokers(activeBrokers, int32(len(changedAssignments)))
-	for i, assignment := range changedAssignments {
+	pickedBrokers := pickBrokers(activeBrokers, int32(len(addedAssignments)))
+	for i, assignment := range addedAssignments {
 		assignment.LeaderBroker = pickedBrokers[i]
 	}
-	return changedAssignments
+	pickedBrokers = pickBrokers(activeBrokers, int32(len(updatedAssignments)))
+	for i, assignment := range updatedAssignments {
+		assignment.LeaderBroker = pickedBrokers[i]
+	}
+
+	return
 }
