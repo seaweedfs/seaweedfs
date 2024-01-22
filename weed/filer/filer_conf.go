@@ -92,8 +92,11 @@ func (fc *FilerConf) loadFromChunks(filer *Filer, content []byte, chunks []*file
 
 func (fc *FilerConf) LoadFromBytes(data []byte) (err error) {
 	conf := &filer_pb.FilerConf{}
-
-	if err := jsonpb.Unmarshal(data, conf); err != nil {
+	options := &jsonpb.UnmarshalOptions{
+		DiscardUnknown: true,
+		AllowPartial:   true,
+	}
+	if err := options.Unmarshal(data, conf); err != nil {
 		return err
 	}
 

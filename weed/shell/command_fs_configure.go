@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"io"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
-	"io"
 )
 
 func init() {
@@ -49,7 +50,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 	locationPrefix := fsConfigureCommand.String("locationPrefix", "", "path prefix, required to update the path-specific configuration")
 	collection := fsConfigureCommand.String("collection", "", "assign writes to this collection")
 	replication := fsConfigureCommand.String("replication", "", "assign writes with this replication")
-	ttl := fsConfigureCommand.String("ttl", "", "assign writes with this ttl")
+	ttl := fsConfigureCommand.String("ttl", "", "assign writes with this ttl (e.g., 1m, 1h, 1d, 1w, 1y)")
 	diskType := fsConfigureCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	fsync := fsConfigureCommand.Bool("fsync", false, "fsync for the writes")
 	isReadOnly := fsConfigureCommand.Bool("readOnly", false, "disable writes")
@@ -83,11 +84,6 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 			Rack:              *rack,
 			DataNode:          *dataNode,
 		}
-
-		// check collection
-		//if *collection != "" && strings.HasPrefix(*locationPrefix, "/buckets/") {
-		//	return fmt.Errorf("one s3 bucket goes to one collection and not customizable")
-		//}
 
 		// check replication
 		if *replication != "" {
