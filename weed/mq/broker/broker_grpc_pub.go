@@ -54,9 +54,11 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		t, p = topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
 		localTopicPartition = b.localTopicManager.GetTopicPartition(t, p)
 		if localTopicPartition == nil {
-			response.Error = fmt.Sprintf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
-			glog.Errorf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
-			return stream.Send(response)
+			if localTopicPartition, err = b.genLocalPartitionFromFiler(t, p); err != nil {
+				response.Error = fmt.Sprintf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
+				glog.Errorf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
+				return stream.Send(response)
+			}
 		}
 		ackInterval = int(initMessage.AckInterval)
 		stream.Send(response)
@@ -139,34 +141,6 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	glog.V(0).Infof("topic %v partition %v publish stream closed.", initMessage.Topic, initMessage.Partition)
 
 	return nil
-}
-
-func (b *MessageQueueBroker) loadLocalTopicPartitionFromFiler(t topic.Topic, p topic.Partition) (localTopicPartition *topic.LocalPartition, err error) {
-	self := b.option.BrokerAddress()
-
-	// load local topic partition from configuration on filer if not found
-	var conf *mq_pb.ConfigureTopicResponse
-	conf, err = b.readTopicConfFromFiler(t)
-	if err != nil {
-		return nil, err
-	}
-
-	// create local topic partition
-	var hasCreated bool
-	for _, assignment := range conf.BrokerPartitionAssignments {
-		if assignment.LeaderBroker == string(self) && p.Equals(topic.FromPbPartition(assignment.Partition)) {
-			localTopicPartition = topic.FromPbBrokerPartitionAssignment(self, p, assignment, b.genLogFlushFunc(t, assignment.Partition), b.genLogOnDiskReadFunc(t, assignment.Partition))
-			b.localTopicManager.AddTopicPartition(t, localTopicPartition)
-			hasCreated = true
-			break
-		}
-	}
-
-	if !hasCreated {
-		return nil, fmt.Errorf("topic %v partition %v not assigned to broker %v", t, p, self)
-	}
-
-	return localTopicPartition, nil
 }
 
 // duplicated from master_grpc_server.go

@@ -22,8 +22,16 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 	glog.V(0).Infof("Subscriber %s on %v %v connected", req.GetInit().ConsumerId, t, partition)
 
 	var localTopicPartition *topic.LocalPartition
-	localTopicPartition = b.localTopicManager.GetTopicPartition(t, partition)
 	for localTopicPartition == nil {
+		localTopicPartition = b.localTopicManager.GetTopicPartition(t, partition)
+		if localTopicPartition == nil {
+			if localTopicPartition, err = b.genLocalPartitionFromFiler(t, partition); err != nil {
+				glog.V(1).Infof("topic %v partition %v not setup", t, partition)
+			}
+		}
+		if localTopicPartition != nil {
+			break
+		}
 		time.Sleep(337 * time.Millisecond)
 		// Check if the client has disconnected by monitoring the context
 		select {
@@ -38,7 +46,6 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 		default:
 			// Continue processing the request
 		}
-		localTopicPartition = b.localTopicManager.GetTopicPartition(t, partition)
 	}
 
 	localTopicPartition.Subscribers.AddSubscriber(clientName, topic.NewLocalSubscriber())
