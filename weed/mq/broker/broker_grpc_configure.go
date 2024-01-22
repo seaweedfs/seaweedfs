@@ -42,6 +42,11 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 	if err == nil && len(resp.BrokerPartitionAssignments) == int(request.PartitionCount) {
 		glog.V(0).Infof("existing topic partitions %d: %+v", len(resp.BrokerPartitionAssignments), resp.BrokerPartitionAssignments)
 	} else {
+		if resp!=nil && len(resp.BrokerPartitionAssignments) > 0 {
+			if cancelErr := b.assignTopicPartitionsToBrokers(ctx, request.Topic, resp.BrokerPartitionAssignments, false); cancelErr != nil {
+				glog.V(1).Infof("cancel old topic %s partitions assignments %v : %v", request.Topic, resp.BrokerPartitionAssignments, cancelErr)
+			}
+		}
 		resp = &mq_pb.ConfigureTopicResponse{}
 		if b.Balancer.Brokers.IsEmpty()	{
 			return nil, status.Errorf(codes.Unavailable, pub_balancer.ErrNoBroker.Error())
