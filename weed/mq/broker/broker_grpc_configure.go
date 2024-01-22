@@ -37,26 +37,31 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 		return resp, err
 	}
 
-	ret := &mq_pb.ConfigureTopicResponse{}
-	existingAssignments := b.Balancer.LookupTopicPartitions(request.Topic)
-	if len(existingAssignments) == int(request.PartitionCount) {
-		glog.V(0).Infof("existing topic partitions %d: %+v", len(existingAssignments), existingAssignments)
-		ret.BrokerPartitionAssignments = existingAssignments
+	t := topic.FromPbTopic(request.Topic)
+	resp, err = b.readTopicConfFromFiler(t)
+	if err != nil {
+		glog.V(0).Infof("read topic %s conf: %v", request.Topic, err)
 	} else {
+		err = b.ensureTopicActiveAssignments(t, resp)
+	}
+	if err == nil && len(resp.BrokerPartitionAssignments) == int(request.PartitionCount) {
+		glog.V(0).Infof("existing topic partitions %d: %+v", len(resp.BrokerPartitionAssignments), resp.BrokerPartitionAssignments)
+	} else {
+		resp = &mq_pb.ConfigureTopicResponse{}
 		if b.Balancer.Brokers.IsEmpty()	{
 			return nil, status.Errorf(codes.Unavailable, pub_balancer.ErrNoBroker.Error())
 		}
-		ret.BrokerPartitionAssignments = pub_balancer.AllocateTopicPartitions(b.Balancer.Brokers, request.PartitionCount)
+		resp.BrokerPartitionAssignments = pub_balancer.AllocateTopicPartitions(b.Balancer.Brokers, request.PartitionCount)
 
 		// save the topic configuration on filer
-		if err := b.saveTopicConfToFiler(request.Topic, ret); err != nil {
+		if err := b.saveTopicConfToFiler(request.Topic, resp); err != nil {
 			return nil, fmt.Errorf("configure topic: %v", err)
 		}
 
-		b.Balancer.OnPartitionChange(request.Topic, ret.BrokerPartitionAssignments)
+		b.Balancer.OnPartitionChange(request.Topic, resp.BrokerPartitionAssignments)
 	}
 
-	for _, bpa := range ret.BrokerPartitionAssignments {
+	for _, bpa := range resp.BrokerPartitionAssignments {
 		fmt.Printf("create topic %s partition %+v on %s\n", request.Topic, bpa.Partition, bpa.LeaderBroker)
 		if doCreateErr := b.withBrokerClient(false, pb.ServerAddress(bpa.LeaderBroker), func(client mq_pb.SeaweedMessagingClient) error {
 			_, doCreateErr := client.AssignTopicPartitions(ctx, &mq_pb.AssignTopicPartitionsRequest{
@@ -86,9 +91,9 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 		}
 	}
 
-	glog.V(0).Infof("ConfigureTopic: topic %s partition assignments: %v", request.Topic, ret.BrokerPartitionAssignments)
+	glog.V(0).Infof("ConfigureTopic: topic %s partition assignments: %v", request.Topic, resp.BrokerPartitionAssignments)
 
-	return ret, err
+	return resp, err
 }
 
 // AssignTopicPartitions Runs on the assigned broker, to execute the topic partition assignment

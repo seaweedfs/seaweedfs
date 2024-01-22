@@ -28,6 +28,8 @@ func (b *MessageQueueBroker) saveTopicConfToFiler(t *mq_pb.Topic, conf *mq_pb.Co
 	return nil
 }
 
+// readTopicConfFromFiler reads the topic configuration from filer
+// this should only be run in broker leader, to ensure correct active broker list.
 func (b *MessageQueueBroker) readTopicConfFromFiler(t topic.Topic) (conf *mq_pb.ConfigureTopicResponse, err error) {
 
 	glog.V(0).Infof("load conf for topic %v from filer", t)
@@ -48,14 +50,18 @@ func (b *MessageQueueBroker) readTopicConfFromFiler(t topic.Topic) (conf *mq_pb.
 		return nil, err
 	}
 
+	return conf, nil
+}
+
+func (b *MessageQueueBroker) ensureTopicActiveAssignments(t topic.Topic, conf *mq_pb.ConfigureTopicResponse) (err error) {
 	// also fix assignee broker if invalid
 	changedAssignments := pub_balancer.EnsureAssignmentsToActiveBrokers(b.Balancer.Brokers, conf.BrokerPartitionAssignments)
 	if len(changedAssignments) > 0 {
 		glog.V(0).Infof("topic %v partition assignments changed: %v", t, changedAssignments)
 		if err = b.saveTopicConfToFiler(t.ToPbTopic(), conf); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	
-	return conf, err
+
+	return err
 }
