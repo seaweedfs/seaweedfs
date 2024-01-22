@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/codes"
@@ -25,12 +26,17 @@ func (b *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq
 		return resp, err
 	}
 
+	t := topic.FromPbTopic(request.Topic)
 	ret := &mq_pb.LookupTopicBrokersResponse{}
+	conf := &mq_pb.ConfigureTopicResponse{}
 	ret.Topic = request.Topic
-	conf, err := b.readTopicConfFromFiler(topic.FromPbTopic(request.Topic))
-	if err == nil {
+	if conf, err = b.readTopicConfFromFiler(t); err != nil {
+		glog.V(0).Infof("lookup topic %s conf: %v", request.Topic, err)
 		ret.BrokerPartitionAssignments = conf.BrokerPartitionAssignments
+	} else {
+		err = b.ensureTopicActiveAssignments(t, conf)
 	}
+
 	return ret, err
 }
 
