@@ -52,10 +52,10 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	var p topic.Partition
 	if initMessage != nil {
 		t, p = topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
-		localTopicPartition, err = b.loadLocalTopicPartition(t, p)
-		if err != nil {
-			response.Error = fmt.Sprintf("topic %v partition %v not setup: %v", initMessage.Topic, initMessage.Partition, err)
-			glog.Errorf("topic %v partition %v not setup: %v", initMessage.Topic, initMessage.Partition, err)
+		localTopicPartition = b.localTopicManager.GetTopicPartition(t, p)
+		if localTopicPartition == nil {
+			response.Error = fmt.Sprintf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
+			glog.Errorf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
 			return stream.Send(response)
 		}
 		ackInterval = int(initMessage.AckInterval)
@@ -139,14 +139,6 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	glog.V(0).Infof("topic %v partition %v publish stream closed.", initMessage.Topic, initMessage.Partition)
 
 	return nil
-}
-
-func (b *MessageQueueBroker) loadLocalTopicPartition(t topic.Topic, p topic.Partition) (localTopicPartition *topic.LocalPartition, err error) {
-	localTopicPartition = b.localTopicManager.GetTopicPartition(t, p)
-	if localTopicPartition == nil {
-		localTopicPartition, err = b.loadLocalTopicPartitionFromFiler(t, p)
-	}
-	return localTopicPartition, err
 }
 
 func (b *MessageQueueBroker) loadLocalTopicPartitionFromFiler(t topic.Topic, p topic.Partition) (localTopicPartition *topic.LocalPartition, err error) {

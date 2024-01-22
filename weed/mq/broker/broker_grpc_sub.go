@@ -24,31 +24,21 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 	var localTopicPartition *topic.LocalPartition
 	localTopicPartition = b.localTopicManager.GetTopicPartition(t, partition)
 	for localTopicPartition == nil {
-		localTopicPartition, err = b.loadLocalTopicPartitionFromFiler(t, partition)
-		// if not created, return error
-		if err != nil {
-			stream.Send(&mq_pb.SubscribeMessageResponse{
-				Message: &mq_pb.SubscribeMessageResponse_Ctrl{
-					Ctrl: &mq_pb.SubscribeMessageResponse_CtrlMessage{
-						Error: fmt.Sprintf("topic %v partition %v not setup: %v", t, partition, err),
-					},
-				},
-			})
-			time.Sleep(337 * time.Millisecond)
-			// Check if the client has disconnected by monitoring the context
-			select {
-			case <-ctx.Done():
-				err := ctx.Err()
-				if err == context.Canceled {
-					// Client disconnected
-					return nil
-				}
-				glog.V(0).Infof("Subscriber %s disconnected: %v", clientName, err)
+		time.Sleep(337 * time.Millisecond)
+		// Check if the client has disconnected by monitoring the context
+		select {
+		case <-ctx.Done():
+			err := ctx.Err()
+			if err == context.Canceled {
+				// Client disconnected
 				return nil
-			default:
-				// Continue processing the request
 			}
+			glog.V(0).Infof("Subscriber %s disconnected: %v", clientName, err)
+			return nil
+		default:
+			// Continue processing the request
 		}
+		localTopicPartition = b.localTopicManager.GetTopicPartition(t, partition)
 	}
 
 	localTopicPartition.Subscribers.AddSubscriber(clientName, topic.NewLocalSubscriber())
