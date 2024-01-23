@@ -1,11 +1,9 @@
 package needle_map
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"os"
-	"sort"
 
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/iterator"
@@ -36,6 +34,7 @@ func NewMemDb() *MemDb {
 }
 
 func (cm *MemDb) Set(key NeedleId, offset Offset, size Size) error {
+
 	bytes := ToBytes(key, offset, size)
 
 	if err := cm.db.Put(bytes[0:NeedleIdSize], bytes[NeedleIdSize:NeedleIdSize+OffsetSize+SizeSize], nil); err != nil {
@@ -73,31 +72,6 @@ func doVisit(iter iterator.Iterator, visit func(NeedleValue) error) (ret error) 
 	ret = visit(needle)
 	if ret != nil {
 		return
-	}
-	return nil
-}
-
-func (cm *MemDb) AscendingVisitByOffset(visit func(NeedleValue) error) (ret error) {
-	var needles []NeedleValue
-	err := cm.AscendingVisit(func(value NeedleValue) error {
-		needles = append(needles, value)
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	sort.Slice(needles, func(i, j int) bool {
-		i_bytes := make([]byte, OffsetSize)
-		j_bytes := make([]byte, OffsetSize)
-		OffsetToBytes(i_bytes, needles[i].Offset)
-		OffsetToBytes(j_bytes, needles[j].Offset)
-		return bytes.Compare(i_bytes, j_bytes) < 0
-	})
-	for _, needle := range needles {
-		ret = visit(needle)
-		if ret != nil {
-			return ret
-		}
 	}
 	return nil
 }
@@ -148,7 +122,7 @@ func (cm *MemDb) SaveToIdx(idxName string) (ret error) {
 		idxFile.Close()
 	}()
 
-	return cm.AscendingVisitByOffset(func(value NeedleValue) error {
+	return cm.AscendingVisit(func(value NeedleValue) error {
 		if value.Offset.IsZero() || value.Size.IsDeleted() {
 			return nil
 		}
