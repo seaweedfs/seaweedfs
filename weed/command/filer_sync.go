@@ -251,6 +251,13 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 
 	glog.V(0).Infof("start sync %s(%d) => %s(%d) from %v(%d)", sourceFiler, sourceFilerSignature, targetFiler, targetFilerSignature, time.Unix(0, sourceFilerOffsetTsNs), sourceFilerOffsetTsNs)
 
+	if !strings.HasSuffix(sourcePath, "/") {
+		sourcePath = sourcePath + "/"
+	}
+	if !strings.HasSuffix(targetPath, "/") {
+		targetPath = targetPath + "/"
+	}
+
 	// create filer sink
 	filerSource := &source.FilerSource{}
 	filerSource.DoInitialize(sourceFiler.ToHttpAddress(), sourceFiler.ToGrpcAddress(), sourcePath, sourceReadChunkFromFiler)
@@ -398,7 +405,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			return nil
 		}
 
-		if !strings.HasPrefix(resp.Directory, sourcePath) {
+		if !strings.HasPrefix(resp.Directory+"/", sourcePath) {
 			return nil
 		}
 		for _, excludePath := range excludePaths {
