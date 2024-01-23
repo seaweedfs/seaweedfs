@@ -1,0 +1,68 @@
+# Changelog
+
+All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
+
+### [1.0.7](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.6...v1.0.7) (2024-01-17)
+
+
+### Minor Changes
+
+* add debug logging ([1fdf433](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/1fdf433e5b0e38df768a71ca5c31472a87b13f9c))
+
+### [1.0.6](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.5...v1.0.6) (2024-01-12)
+
+
+### Minor Changes
+
+* add logging for setOffset ([b836b86](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/b836b86cd1ef40c5a1f5a05b415071c499b017d0))
+
+### [1.0.5](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.4...v1.0.5) (2024-01-12)
+
+
+### Minor Changes
+
+* refactor filer sync setoffset ([d3023db](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/d3023dbaa6eb131d3078d6c360db0c028096d812))
+
+### [1.0.4](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.3...v1.0.4) (2024-01-05)
+
+
+### Minor Changes
+
+* filer sync add doDeleteFiles option for create only mode ([1b45007](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/1b45007f51c02ba2b756126b7c719fe2cd8cc63b))
+
+### [1.0.3](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.2...v1.0.3) (2024-01-05)
+
+
+### Bug Fixes
+
+* upload asset name for ci ([6479958](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/647995893efeddbbe15d934b490e2729c69a6de4))
+
+### [1.0.2](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.1...v1.0.2) (2024-01-05)
+
+
+### Bug Fixes
+
+* typo asset name for ci ([418a6f9](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/418a6f9c3f59b751976eff46e27008740ea7da98))
+
+### [1.0.1](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.0...v1.0.1) (2024-01-05)
+
+## 1.0.0 (2024-01-04)
+
+
+### Bug Fixes
+
+* add buildvcs for build large disk ([e7758b3](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/e7758b362ab33b7fa4c3c14b18a630ceff821795))
+* add wg ([32cd548](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/32cd548e9d63a7f13688085a2eff9b054aec95f2))
+* build large disk ([fde5c57](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/fde5c571732cacf6dfc4d9f524fc403d276cb04d))
+* increase speed cmd fs meta load ([5ce76e8](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/5ce76e8152d5583a13e92de4ec4ce98061e8a1bd))
+* make build ([f98eaaa](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/f98eaaac006a33c9d0914d9a71d0090f956e991d))
+* name to amd64 ([53de2c1](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/53de2c125bfc221aa1a1e9722283639998c8c88a))
+* print err in fs.meta.load ([7b797e0](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/7b797e047a56aafe2697227da9252f185684028e))
+* push dir ([bfaed2e](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/bfaed2e62d69502769d3f65206bf6eaabcc4b1f0))
+* work dir for build large disk ([0bbf0b0](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/0bbf0b07645206fa41a8db368dbeb71daae378ee))
+* work dir for build large disk ([c9a9b5e](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/c9a9b5e60d8a5a834d403840b5039a93c110861e))
+
+
+### Minor Changes
+
+* **tests:** update S3 compat tests ([ef20d5f](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/ef20d5fc635f033d05eb6e116064e260160ffeba))
