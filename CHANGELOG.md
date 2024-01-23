@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### 1.0.1 (2024-01-23)
+
+
+### Bug Fixes
+
+* **k8s-chart-helm:** `helm upgrade` statefulset error ([#5207](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/issues/5207)) ([53be97d](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/53be97d5bea8b44db40077c62af5e224e21be3ee))
+* Revert "fix write volume over size MaxPossibleVolumeSize ([#5190](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/issues/5190))" ([7048f11](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/7048f110b3e4226a88ccdf8d7eb96ecf231fdd03))
+* skip s3 .uploads ([be166b4](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/be166b434f002dba684e8e3630a1e87fdb6a96db))
+
+
+### Minor Changes
+
+* add ci/cd ([410e2b9](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/410e2b9827464fd64d6254de78d06ad7211b7514))
+* filer healthz handler check filer store ([#5208](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/issues/5208)) ([4e9ea1e](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/4e9ea1e628a4d2105a758d12673efdeebe43ebaa))
+* fix typos in scaffold help output ([#5211](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/issues/5211)) ([2eb8277](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/2eb82778bc85474ef71e5c923780dd141c12856f))
+
 ### [1.0.7](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.6...v1.0.7) (2024-01-17)
 
 
