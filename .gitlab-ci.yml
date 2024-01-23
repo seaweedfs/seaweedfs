@@ -1,0 +1,55 @@
+---
+stages:
+  - pre_tagging
+  - tagging
+  - release
+
+variables:
+  TAG_OF_GITLAB_RUNNER: inf_hotel_okd
+
+release_tag:
+  stage: pre_tagging
+  image: registry.stripchat.dev/infrastructure/ansible/standard_version:latest
+  tags:
+    - ${TAG_OF_GITLAB_RUNNER}
+  script:
+    - |
+      STANDARD_VERSION_ADDTIONAL=""
+      if [ ! -f "CHANGELOG.md" ]; then
+        STANDARD_VERSION_ADDTIONAL="--first-release"
+      fi
+      CI_RELEASE_TAG=$(standard-version ${STANDARD_VERSION_ADDTIONAL} --dry-run | grep -Eo "tagging release (v.*)" | grep -Eo "(v.*)")
+    - echo "CI_RELEASE_TAG=${RELEASE_TAG_PREFIX}${CI_RELEASE_TAG}" > release_tag.env
+  variables: {}
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /(schedule|trigger|web)/'
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  artifacts:
+    reports:
+      dotenv: release_tag.env
+
+build_large_disk:
+  stage: tagging
+  dependencies:
+    - release_tag
+  tags:
+    - ${TAG_OF_GITLAB_RUNNER}
+  image: nexus.stripchat.tech/golang:1.21
+  script:
+    - cd ./weed
+    - GODEBUG=http2client=0 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -tags 5BytesOffset -ldflags "-s -w -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${CI_COMMIT_SHORT_SHA}"
+    - ASSET_NAME=weed-large-disk-$(date -u +%Y%m%d-%H%M)-linux-amd64.tar.gz
+    - tar -czvf $ASSET_NAME weed
+    - curl -s -u admin:${NEXUS_ADMIN_PASS} --upload-file $ASSET_NAME https://nexus.stripchat.tech/repository/storage/seaweedfs/${CI_RELEASE_TAG}/$ASSET_NAME
+  variables:
+    CI_RELEASE_TAG: ${CI_COMMIT_SHA}
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /(schedule|trigger|web)/'
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+include:
+  - project: "infrastructure/gitlab/templates"
+    ref: master
+    file: "jobs/release.yml"
