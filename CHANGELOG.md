@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.0.2](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.1...v1.0.2) (2024-01-23)
+
+
+### Bug Fixes
+
+* added debug logging for loop exit to SubscribeLocalMetadata ([c913d06](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/c913d06d2c9f300d98605b8e53e45b21431cd211))
+
 ### 1.0.1 (2024-01-23)
 
 
