@@ -29,6 +29,27 @@ release_tag:
     reports:
       dotenv: release_tag.env
 
+build:
+  stage: tagging
+  dependencies:
+    - release_tag
+  tags:
+    - ${TAG_OF_GITLAB_RUNNER}
+  image: nexus.stripchat.tech/golang:1.21
+  script:
+    - cd ./weed
+    - GODEBUG=http2client=0 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -ldflags "-s -w -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${CI_COMMIT_SHORT_SHA}"
+    - ASSET_NAME=weed-$(date -u +%Y%m%d-%H%M)-linux-amd64.tar.gz
+    - tar -czvf $ASSET_NAME weed
+    - curl -s -u admin:${NEXUS_ADMIN_PASS} --upload-file $ASSET_NAME https://nexus.stripchat.tech/repository/storage/seaweedfs/${CI_RELEASE_TAG}/$ASSET_NAME
+    - curl -v -I https://nexus.stripchat.tech/repository/storage/seaweedfs/${CI_RELEASE_TAG}/$ASSET_NAME
+  variables:
+    CI_RELEASE_TAG: ${CI_COMMIT_SHA}
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /(schedule|trigger|web)/'
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
 build_large_disk:
   stage: tagging
   dependencies:
@@ -42,6 +63,7 @@ build_large_disk:
     - ASSET_NAME=weed-large-disk-$(date -u +%Y%m%d-%H%M)-linux-amd64.tar.gz
     - tar -czvf $ASSET_NAME weed
     - curl -s -u admin:${NEXUS_ADMIN_PASS} --upload-file $ASSET_NAME https://nexus.stripchat.tech/repository/storage/seaweedfs/${CI_RELEASE_TAG}/$ASSET_NAME
+    - curl -v -I https://nexus.stripchat.tech/repository/storage/seaweedfs/${CI_RELEASE_TAG}/$ASSET_NAME
   variables:
     CI_RELEASE_TAG: ${CI_COMMIT_SHA}
   rules:
