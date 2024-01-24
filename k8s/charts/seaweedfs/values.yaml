@@ -270,7 +270,6 @@ volume:
 
 
   idx:
-    name: idx
     type: "hostPath"
     size: ""
     storageClass: ""
