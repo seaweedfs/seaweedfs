@@ -135,17 +135,10 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 				writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left for " + option.String()})
 				return
 			}
-
-			errCh := make(chan error, 1)
 			vl.AddGrowRequest()
 			ms.vgCh <- &topology.VolumeGrowRequest{
 				Option: option,
 				Count:  writableVolumeCount,
-				ErrCh:  errCh,
-			}
-			if err := <-errCh; err != nil {
-				writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("cannot grow volume group! %v", err))
-				return
 			}
 		}
 		if err != nil {
