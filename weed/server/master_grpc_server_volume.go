@@ -61,11 +61,6 @@ func (ms *MasterServer) ProcessGrowRequest() {
 					}
 					vl.DoneGrowRequest()
 
-					if req.ErrCh != nil {
-						req.ErrCh <- err
-						close(req.ErrCh)
-					}
-
 					filter.Delete(req)
 				}()
 
