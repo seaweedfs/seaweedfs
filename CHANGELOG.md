@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.0.4](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.3...v1.0.4) (2024-01-24)
+
+
+### Minor Changes
+
+* add build witout tag 5BytesOffset ([f280a41](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/f280a41dd1a87678fed075cdcf73c6287d04a4f9))
+
 ### [1.0.3](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.2...v1.0.3) (2024-01-24)
 
 ### [1.0.2](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.1...v1.0.2) (2024-01-23)
