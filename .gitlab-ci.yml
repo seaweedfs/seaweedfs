@@ -2,10 +2,13 @@
 stages:
   - pre_tagging
   - tagging
+  - build
   - release
 
 variables:
   TAG_OF_GITLAB_RUNNER: inf_hotel_okd
+  CI_PROJECT_DIR: docker
+  DOCKERFILE: Dockerfile.go_build
 
 release_tag:
   stage: pre_tagging
@@ -71,7 +74,21 @@ build_large_disk:
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
+docker:build:public:s3tests:
+  extends: docker:build:public
+  rules:
+    - when: manual
+  variables:
+    CURRENT_TAG: ${CI_COMMIT_SHORT_SHA}
+    CI_PROJECT_DIR: test/s3/compatibility
+    DOCKERFILE: Dockerfile
+    DOCKER_REGISTRY_IMAGE: s3tests
+    PUBLIC_BUILD_IMAGE: s3tests
+
 include:
   - project: "infrastructure/gitlab/templates"
     ref: master
     file: "jobs/release.yml"
+  - project: 'infrastructure/gitlab/templates'
+    ref: master
+    file: 'jobs/docker_build.yml'
