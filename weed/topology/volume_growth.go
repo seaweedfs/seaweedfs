@@ -29,7 +29,6 @@ This package is created to resolve these replica placement issues:
 type VolumeGrowRequest struct {
 	Option *VolumeGrowOption
 	Count  int
-	ErrCh  chan error
 }
 
 type VolumeGrowOption struct {

@@ -331,6 +331,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 			if float64(info.Size) > float64(vl.volumeSizeLimit)*option.Threshold() {
 				shouldGrow = true
 			}
+			counter = count
 			return
 		}
 	}
