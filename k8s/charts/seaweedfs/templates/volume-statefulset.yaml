@@ -64,8 +64,10 @@ spec:
           volumeMounts:
             - name: idx
               mountPath: {{ .Values.volume.idx.name }}
-            - name: data
-              mountPath: {{ .Values.volume.dir }}
+          {{- range $dir :=  .Values.volume.dataDirs }} 
+            - name: {{ $dir.name }}
+              mountPath: /{{ $dir.name }}
+          {{- end }}
         {{- end }}
         {{- if .Values.volume.initContainers }}
         {{ tpl .Values.volume.initContainers . | nindent 8 | trim }}
