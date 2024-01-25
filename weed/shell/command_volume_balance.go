@@ -99,10 +99,6 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 				return err
 			}
 		}
-	} else if *collection == "ALL_COLLECTIONS" {
-		if err = balanceVolumeServers(commandEnv, diskTypes, volumeReplicas, volumeServers, volumeSizeLimitMb*1024*1024, "ALL_COLLECTIONS", *applyBalancing); err != nil {
-			return err
-		}
 	} else {
 		if err = balanceVolumeServers(commandEnv, diskTypes, volumeReplicas, volumeServers, volumeSizeLimitMb*1024*1024, *collection, *applyBalancing); err != nil {
 			return err
