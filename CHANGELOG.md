@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.0.6](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.5...v1.0.6) (2024-01-25)
+
+
+### Bug Fixes
+
+* clean metric MasterReplicaPlacementMismatch for unregister volume ([e7f2580](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/e7f258066289dbb36e7ccb9f335acf566572feac))
+
 ### [1.0.5](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.4...v1.0.5) (2024-01-25)
 
 
