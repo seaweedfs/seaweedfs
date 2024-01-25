@@ -75,6 +75,7 @@ build_large_disk:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 docker:build:public:s3tests:
+  stage: release
   extends: docker:build:public
   rules:
     - when: manual
