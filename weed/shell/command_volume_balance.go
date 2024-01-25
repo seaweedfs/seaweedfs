@@ -279,7 +279,8 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 		}
 
 		var fullNode *Node
-		for fullNodeIndex := len(nodesWithCapacity) - 1; fullNodeIndex >= 0; fullNodeIndex-- {
+		var fullNodeIndex int
+		for fullNodeIndex = len(nodesWithCapacity) - 1; fullNodeIndex >= 0; fullNodeIndex-- {
 			fullNode = nodesWithCapacity[fullNodeIndex]
 			if !fullNode.isOneVolumeOnly() {
 				break
@@ -290,9 +291,7 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 			candidateVolumes = append(candidateVolumes, v)
 		}
 		sortCandidatesFn(candidateVolumes)
-
-		for i := 0; i < len(nodesWithCapacity)-1; i++ {
-			emptyNode := nodesWithCapacity[i]
+		for _, emptyNode := range nodesWithCapacity[:fullNodeIndex] {
 			if !(fullNode.localVolumeRatio(capacityFunc) > idealVolumeRatio && emptyNode.localVolumeNextRatio(capacityFunc) <= idealVolumeRatio) {
 				// no more volume servers with empty slots
 				break
