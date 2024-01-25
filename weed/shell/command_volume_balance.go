@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"cmp"
 	"flag"
 	"fmt"
 	"io"
@@ -244,7 +245,7 @@ func (n *Node) selectVolumes(fn func(v *master_pb.VolumeInformationMessage) bool
 
 func sortWritableVolumes(volumes []*master_pb.VolumeInformationMessage) {
 	slices.SortFunc(volumes, func(a, b *master_pb.VolumeInformationMessage) int {
-		return int(a.Size - b.Size)
+		return cmp.Compare(a.Size, b.Size)
 	})
 }
 
@@ -270,7 +271,7 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 	for hasMoved {
 		hasMoved = false
 		slices.SortFunc(nodesWithCapacity, func(a, b *Node) int {
-			return int(a.localVolumeRatio(capacityFunc) - b.localVolumeRatio(capacityFunc))
+			return cmp.Compare(a.localVolumeRatio(capacityFunc), b.localVolumeRatio(capacityFunc))
 		})
 		if len(nodesWithCapacity) == 0 {
 			fmt.Printf("no volume server found with capacity for %s", diskType.ReadableString())
