@@ -77,7 +77,12 @@ build_large_disk:
 docker:build:public:s3tests:
   extends: docker:build:public
   rules:
-    - when: manual
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $PUBLIC_BUILD == "true"'
+      when: manual
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $PUBLIC_BUILD == "true"'
+      when: manual
+    - when: never
+  allow_failure: true
   variables:
     CURRENT_TAG: ${CI_COMMIT_SHORT_SHA}
     CI_PROJECT_DIR: test/s3/compatibility
