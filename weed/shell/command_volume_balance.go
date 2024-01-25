@@ -161,7 +161,7 @@ func collectVolumeDiskTypes(t *master_pb.TopologyInfo) (diskTypes []types.DiskTy
 	for _, dc := range t.DataCenterInfos {
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {
-				for diskType, _ := range dn.DiskInfos {
+				for diskType := range dn.DiskInfos {
 					if _, found := knownTypes[diskType]; !found {
 						knownTypes[diskType] = true
 					}
@@ -169,7 +169,7 @@ func collectVolumeDiskTypes(t *master_pb.TopologyInfo) (diskTypes []types.DiskTy
 			}
 		}
 	}
-	for diskType, _ := range knownTypes {
+	for diskType := range knownTypes {
 		diskTypes = append(diskTypes, types.ToDiskType(diskType))
 	}
 	return
