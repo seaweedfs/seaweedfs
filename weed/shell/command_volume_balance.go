@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"cmp"
 	"flag"
 	"fmt"
 	"io"
@@ -244,7 +245,7 @@ func (n *Node) selectVolumes(fn func(v *master_pb.VolumeInformationMessage) bool
 
 func sortWritableVolumes(volumes []*master_pb.VolumeInformationMessage) {
 	slices.SortFunc(volumes, func(a, b *master_pb.VolumeInformationMessage) int {
-		return int(a.Size - b.Size)
+		return cmp.Compare(a.Size, b.Size)
 	})
 }
 
@@ -270,7 +271,7 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 	for hasMoved {
 		hasMoved = false
 		slices.SortFunc(nodesWithCapacity, func(a, b *Node) int {
-			return int(a.localVolumeRatio(capacityFunc) - b.localVolumeRatio(capacityFunc))
+			return cmp.Compare(a.localVolumeRatio(capacityFunc), b.localVolumeRatio(capacityFunc))
 		})
 		if len(nodesWithCapacity) == 0 {
 			fmt.Printf("no volume server found with capacity for %s", diskType.ReadableString())
@@ -278,7 +279,8 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 		}
 
 		var fullNode *Node
-		for fullNodeIndex := len(nodesWithCapacity) - 1; fullNodeIndex >= 0; fullNodeIndex-- {
+		var fullNodeIndex int
+		for fullNodeIndex = len(nodesWithCapacity) - 1; fullNodeIndex >= 0; fullNodeIndex-- {
 			fullNode = nodesWithCapacity[fullNodeIndex]
 			if !fullNode.isOneVolumeOnly() {
 				break
@@ -289,9 +291,7 @@ func balanceSelectedVolume(commandEnv *CommandEnv, diskType types.DiskType, volu
 			candidateVolumes = append(candidateVolumes, v)
 		}
 		sortCandidatesFn(candidateVolumes)
-
-		for i := 0; i < len(nodesWithCapacity)-1; i++ {
-			emptyNode := nodesWithCapacity[i]
+		for _, emptyNode := range nodesWithCapacity[:fullNodeIndex] {
 			if !(fullNode.localVolumeRatio(capacityFunc) > idealVolumeRatio && emptyNode.localVolumeNextRatio(capacityFunc) <= idealVolumeRatio) {
 				// no more volume servers with empty slots
 				break
