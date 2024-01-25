@@ -67,12 +67,14 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 	ifModifiedSinceHeader := r.Header.Get("If-Modified-Since")
 	if ifNoneMatchETagHeader != "" {
 		if util.CanonicalizeETag(etag) == util.CanonicalizeETag(ifNoneMatchETagHeader) {
+			setEtag(w, etag)
 			w.WriteHeader(http.StatusNotModified)
 			return true
 		}
 	} else if ifModifiedSinceHeader != "" {
 		if t, parseError := time.Parse(http.TimeFormat, ifModifiedSinceHeader); parseError == nil {
 			if !t.Before(entry.Attr.Mtime) {
+				setEtag(w, etag)
 				w.WriteHeader(http.StatusNotModified)
 				return true
 			}
@@ -147,11 +149,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	etag := filer.ETagEntry(entry)
 	if checkPreconditions(w, r, entry) {
 		return
 	}
 
+	etag := filer.ETagEntry(entry)
 	w.Header().Set("Accept-Ranges", "bytes")
 
 	// mime type
