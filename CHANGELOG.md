@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.0.7](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.6...v1.0.7) (2024-01-25)
+
+
+### Bug Fixes
+
+* allow_failure ([1dfba01](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/1dfba013c5c8282ae1dba2954ee054f17f4c7a7b))
+* s3tests to release ([4461c5c](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/4461c5ccbcf5c9793a99cbbf9fec100fbfbae552))
+
 ### [1.0.6](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.5...v1.0.6) (2024-01-25)
 
 
