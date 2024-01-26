@@ -28,6 +28,7 @@ type TopicPublisher struct {
 	grpcDialOption   grpc.DialOption
 	sync.Mutex       // protects grpc
 	config           *PublisherConfiguration
+	jobs             []*EachPartitionPublishJob
 }
 
 func NewTopicPublisher(namespace, topic string, config *PublisherConfiguration) *TopicPublisher {
