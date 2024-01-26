@@ -46,13 +46,13 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 	}
 	fmt.Fprintf(writer, "Topology volumeSizeLimit:%d MB%s\n", volumeSizeLimitMb, diskInfosToString(topologyInfo.DiskInfos))
 
-	emptyDiskTypeDiskInfo, emptyDiskTypeFound := topologyInfo.DiskInfos[""]
-	hddDiskTypeDiskInfo, hddDiskTypeFound := topologyInfo.DiskInfos["hdd"]
-	if !emptyDiskTypeFound && !hddDiskTypeFound {
-		return fmt.Errorf("Need to a hdd disk type!")
+	if len(topologyInfo.DiskInfos) == 0 {
+		return fmt.Errorf("no disk type defined")
 	}
-	if emptyDiskTypeFound && emptyDiskTypeDiskInfo.MaxVolumeCount == 0 || hddDiskTypeFound && hddDiskTypeDiskInfo.MaxVolumeCount == 0 {
-		return fmt.Errorf("Need to a hdd disk type!")
+	for diskType, diskInfo := range topologyInfo.DiskInfos {
+		if diskInfo.MaxVolumeCount == 0 {
+			return fmt.Errorf("no volume available for \"%s\" disk type", diskType)
+		}
 	}
 
 	// collect filers
