@@ -251,6 +251,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 
 	glog.V(0).Infof("start sync %s(%d) => %s(%d) from %v(%d)", sourceFiler, sourceFilerSignature, targetFiler, targetFilerSignature, time.Unix(0, sourceFilerOffsetTsNs), sourceFilerOffsetTsNs)
 
+	var orgSourcePath = sourcePath
 	if !strings.HasSuffix(sourcePath, "/") {
 		sourcePath = sourcePath + "/"
 	}
@@ -300,7 +301,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 		lastLogTsNs = now
 		// collect synchronous offset
 		statsCollect.FilerSyncOffsetGauge.WithLabelValues(sourceFiler.String(), targetFiler.String(), clientName, sourcePath).Set(float64(offsetTsNs))
-		return setOffset(grpcDialOption, targetFiler, getSignaturePrefixByPath(sourcePath), sourceFilerSignature, offsetTsNs)
+		return setOffset(grpcDialOption, targetFiler, getSignaturePrefixByPath(orgSourcePath), sourceFilerSignature, offsetTsNs)
 	})
 
 	metadataFollowOption := &pb.MetadataFollowOption{
