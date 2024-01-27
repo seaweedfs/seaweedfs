@@ -86,15 +86,11 @@ func BenchmarkBufferedQueue(b *testing.B) {
 
 	queue := NewBufferedQueue[Job[string]](1024, true)
 
-	b.Run("Enqueue", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			queue.Enqueue(Job[string]{ID: i, Action: "task", Data: "data"})
-		}
-	})
+	for i := 0; i < b.N; i++ {
+		queue.Enqueue(Job[string]{ID: i, Action: "task", Data: "data"})
+	}
+	for i := 0; i < b.N; i++ {
+		_, _ = queue.Dequeue()
+	}
 
-	b.Run("Dequeue", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_, _ = queue.Dequeue()
-		}
-	})
 }
