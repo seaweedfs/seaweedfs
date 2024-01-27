@@ -1,4 +1,4 @@
-package util
+package buffered_queue
 
 import (
 	"sync"
@@ -9,33 +9,38 @@ type ItemChunkNode[T any] struct {
 	items     []T
 	headIndex int
 	tailIndex int
-	next *ItemChunkNode[T]
-	nodeId int
+	next      *ItemChunkNode[T]
+	nodeId    int
 }
 
 // BufferedQueue implements a buffered queue using a linked list of job chunks
 type BufferedQueue[T any] struct {
-	chunkSize int         // Maximum number of items per chunk
-	head      *ItemChunkNode[T]
-	tail      *ItemChunkNode[T]
-	last      *ItemChunkNode[T] // Pointer to the last chunk, for reclaiming memory
-	count     int               // Total number of items in the queue
-	mutex     sync.Mutex
+	chunkSize   int // Maximum number of items per chunk
+	head        *ItemChunkNode[T]
+	tail        *ItemChunkNode[T]
+	last        *ItemChunkNode[T] // Pointer to the last chunk, for reclaiming memory
+	count       int               // Total number of items in the queue
+	mutex       sync.Mutex
 	nodeCounter int
+	waitOnRead  bool
+	waitCond    *sync.Cond
 }
 
 // NewBufferedQueue creates a new buffered queue with the specified chunk size
-func NewBufferedQueue[T any](chunkSize int) *BufferedQueue[T] {
+func NewBufferedQueue[T any](chunkSize int, waitOnRead bool) *BufferedQueue[T] {
 	// Create an empty chunk to initialize head and tail
 	chunk := &ItemChunkNode[T]{items: make([]T, chunkSize), nodeId: 0}
-	return &BufferedQueue[T]{
-		chunkSize: chunkSize,
-		head:      chunk,
-		tail:      chunk,
-		last:      chunk,
-		count:     0,
-		mutex:     sync.Mutex{},
+	bq := &BufferedQueue[T]{
+		chunkSize:  chunkSize,
+		head:       chunk,
+		tail:       chunk,
+		last:       chunk,
+		count:      0,
+		mutex:      sync.Mutex{},
+		waitOnRead: waitOnRead,
 	}
+	bq.waitCond = sync.NewCond(&bq.mutex)
+	return bq
 }
 
 // Enqueue adds a job to the queue
@@ -65,6 +70,9 @@ func (q *BufferedQueue[T]) Enqueue(job T) {
 	q.tail.items[q.tail.tailIndex] = job
 	q.tail.tailIndex++
 	q.count++
+	if q.waitOnRead {
+		q.waitCond.Signal()
+	}
 }
 
 // Dequeue removes and returns a job from the queue
@@ -72,9 +80,15 @@ func (q *BufferedQueue[T]) Dequeue() (T, bool) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
-	if q.count == 0 {
-		var a T
-		return a, false
+	if q.waitOnRead {
+		for q.count <= 0 {
+			q.waitCond.Wait()
+		}
+	} else {
+		if q.count == 0 {
+			var a T
+			return a, false
+		}
 	}
 
 	job := q.head.items[q.head.headIndex]

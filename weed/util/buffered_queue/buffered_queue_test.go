@@ -1,4 +1,4 @@
-package util
+package buffered_queue
 
 import "testing"
 
@@ -9,7 +9,7 @@ func TestJobQueue(t *testing.T) {
 		Data   T
 	}
 
-	queue := NewBufferedQueue[Job[string]](2) // Chunk size of 5
+	queue := NewBufferedQueue[Job[string]](2, false) // Chunk size of 5
 	queue.Enqueue(Job[string]{ID: 1, Action: "task1", Data: "hello"})
 	queue.Enqueue(Job[string]{ID: 2, Action: "task2", Data: "world"})
 
@@ -62,7 +62,7 @@ func TestJobQueue(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		println("enqueue", i+8)
-		queue.Enqueue(Job[string]{ID: i+8, Action: "task", Data: "data"})
+		queue.Enqueue(Job[string]{ID: i + 8, Action: "task", Data: "data"})
 	}
 	for i := 0; i < 5; i++ {
 		job, ok = queue.Dequeue()
@@ -75,4 +75,26 @@ func TestJobQueue(t *testing.T) {
 		println("dequeued", job.ID)
 	}
 
+}
+
+func BenchmarkBufferedQueue(b *testing.B) {
+	type Job[T any] struct {
+		ID     int
+		Action string
+		Data   T
+	}
+
+	queue := NewBufferedQueue[Job[string]](1024, true)
+
+	b.Run("Enqueue", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			queue.Enqueue(Job[string]{ID: i, Action: "task", Data: "data"})
+		}
+	})
+
+	b.Run("Dequeue", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_, _ = queue.Dequeue()
+		}
+	})
 }
