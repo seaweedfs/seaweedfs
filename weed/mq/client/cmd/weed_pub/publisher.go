@@ -31,7 +31,7 @@ func doPublish(publisher *pub_client.TopicPublisher, id int) {
 			fmt.Println(err)
 			break
 		}
-		println("Published", string(key), string(value))
+		// println("Published", string(key), string(value))
 	}
 	elapsed := time.Since(startTime)
 	log.Printf("Publisher %d finished in %s", id, elapsed)
@@ -43,22 +43,13 @@ func main() {
 		Topic:                     topic.NewTopic(*namespace, *t),
 		CreateTopic:               true,
 		CreateTopicPartitionCount: int32(*partitionCount),
+		Brokers:                   strings.Split(*seedBrokers, ","),
 	}
 	publisher := pub_client.NewTopicPublisher(config)
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		brokers := strings.Split(*seedBrokers, ",")
-		if err := publisher.StartSchedulerThread(brokers, &wg); err != nil {
-			fmt.Println(err)
-			return
-		}
-	}()
-
-	wg.Wait()
 
 	startTime := time.Now()
 
+	var wg sync.WaitGroup
 	// Start multiple publishers
 	for i := 0; i < *concurrency; i++ {
 		wg.Add(1)

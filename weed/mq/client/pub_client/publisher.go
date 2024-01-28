@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/buffered_queue"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"log"
 	"sync"
 	"time"
 )
@@ -16,6 +17,7 @@ type PublisherConfiguration struct {
 	Topic                     topic.Topic
 	CreateTopic               bool
 	CreateTopicPartitionCount int32
+	Brokers				   []string
 }
 
 type PublishClient struct {
@@ -32,13 +34,26 @@ type TopicPublisher struct {
 }
 
 func NewTopicPublisher(config *PublisherConfiguration) *TopicPublisher {
-	return &TopicPublisher{
+	tp := &TopicPublisher{
 		partition2Buffer: interval.NewSearchTree[*buffered_queue.BufferedQueue[*mq_pb.DataMessage]](func(a, b int32) int {
 			return int(a - b)
 		}),
 		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
 		config:         config,
 	}
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		if err := tp.StartSchedulerThread(&wg); err != nil {
+			log.Println(err)
+			return
+		}
+	}()
+
+	wg.Wait()
+
+	return tp
 }
 
 func (p *TopicPublisher) Shutdown() error {
