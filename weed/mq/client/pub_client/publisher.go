@@ -10,7 +10,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"log"
 	"sync"
-	"time"
 )
 
 type PublisherConfiguration struct {
@@ -63,7 +62,10 @@ func (p *TopicPublisher) Shutdown() error {
 			inputBuffer.CloseInput()
 		}
 	}
-	time.Sleep(1100 * time.Millisecond)
+
+	for _, job := range p.jobs {
+		job.wg.Wait()
+	}
 
 	return nil
 }
