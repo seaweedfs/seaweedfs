@@ -1,6 +1,9 @@
 package buffered_queue
 
-import "testing"
+import (
+	"sync"
+	"testing"
+)
 
 func TestJobQueue(t *testing.T) {
 	type Job[T any] struct {
@@ -9,7 +12,7 @@ func TestJobQueue(t *testing.T) {
 		Data   T
 	}
 
-	queue := NewBufferedQueue[Job[string]](2, false) // Chunk size of 5
+	queue := NewBufferedQueue[Job[string]](2) // Chunk size of 5
 	queue.Enqueue(Job[string]{ID: 1, Action: "task1", Data: "hello"})
 	queue.Enqueue(Job[string]{ID: 2, Action: "task2", Data: "world"})
 
@@ -77,6 +80,35 @@ func TestJobQueue(t *testing.T) {
 
 }
 
+func TestJobQueueClose(t *testing.T) {
+	type Job[T any] struct {
+		ID     int
+		Action string
+		Data   T
+	}
+
+	queue := NewBufferedQueue[Job[string]](2)
+	queue.Enqueue(Job[string]{ID: 1, Action: "task1", Data: "hello"})
+	queue.Enqueue(Job[string]{ID: 2, Action: "task2", Data: "world"})
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for data, ok := queue.Dequeue(); ok; data, ok = queue.Dequeue() {
+			println("dequeued", data.ID)
+		}
+	}()
+
+	for i := 0; i < 5; i++ {
+		queue.Enqueue(Job[string]{ID: i + 3, Action: "task", Data: "data"})
+	}
+
+	queue.CloseInput()
+	wg.Wait()
+
+}
+
 func BenchmarkBufferedQueue(b *testing.B) {
 	type Job[T any] struct {
 		ID     int
@@ -84,7 +116,7 @@ func BenchmarkBufferedQueue(b *testing.B) {
 		Data   T
 	}
 
-	queue := NewBufferedQueue[Job[string]](1024, true)
+	queue := NewBufferedQueue[Job[string]](1024)
 
 	for i := 0; i < b.N; i++ {
 		queue.Enqueue(Job[string]{ID: i, Action: "task", Data: "data"})

@@ -103,7 +103,7 @@ func (p *TopicPublisher) onEachAssignments(generation int, assignments []*mq_pb.
 			BrokerPartitionAssignment: assignment,
 			stopChan: make(chan bool, 1),
 			generation: generation,
-			inputQueue: buffered_queue.NewBufferedQueue[*mq_pb.DataMessage](1024, true),
+			inputQueue: buffered_queue.NewBufferedQueue[*mq_pb.DataMessage](1024),
 		}
 		job.wg.Add(1)
 		go func(job *EachPartitionPublishJob) {
