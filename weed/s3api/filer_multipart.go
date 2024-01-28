@@ -99,9 +99,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name, ".part") && !entry.IsDirectory {
-			partETag, found := findByPartNumber(entry.Name, completedParts)
+			partETag, isFirstPart, found := findByPartNumber(entry.Name, completedParts)
 			if !found {
 				continue
+			}
+			if isFirstPart {
+				mime = entry.GetAttributes().Mime
 			}
 			entryETag := hex.EncodeToString(entry.Attributes.GetMd5())
 			if partETag != "" && len(partETag) == 32 && entryETag != "" && entryETag != partETag {
@@ -176,7 +179,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	return
 }
 
-func findByPartNumber(fileName string, parts []CompletedPart) (etag string, found bool) {
+func findByPartNumber(fileName string, parts []CompletedPart) (etag string, firstPart, found bool) {
 	partNumber, formatErr := strconv.Atoi(fileName[:4])
 	if formatErr != nil {
 		return
@@ -198,7 +201,7 @@ func findByPartNumber(fileName string, parts []CompletedPart) (etag string, foun
 			break
 		}
 	}
-	return parts[x+y].ETag, true
+	return parts[x+y].ETag, partNumber == 1, true
 }
 
 func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput) (output *s3.AbortMultipartUploadOutput, code s3err.ErrorCode) {

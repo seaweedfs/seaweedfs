@@ -312,7 +312,8 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	uploadUrl := fmt.Sprintf("http://%s%s/%s/%04d.part",
 		s3a.option.Filer.ToHttpAddress(), s3a.genUploadsFolder(bucket), uploadID, partID)
 
-	if partID == 1 && r.Header.Get("Content-Type") == "" {
+	contentType := r.Header.Get("Content-Type")
+	if partID == 1 && contentType == "" || contentType == "application/octet-stream" {
 		dataReader = mimeDetect(r, dataReader)
 	}
 
