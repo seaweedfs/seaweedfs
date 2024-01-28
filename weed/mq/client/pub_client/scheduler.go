@@ -28,7 +28,7 @@ type EachPartitionPublishJob struct {
 	generation int
 	inputQueue *buffered_queue.BufferedQueue[*mq_pb.DataMessage]
 }
-func (p *TopicPublisher) StartSchedulerThread(bootstrapBrokers []string) error {
+func (p *TopicPublisher) StartSchedulerThread(bootstrapBrokers []string, wg *sync.WaitGroup) error {
 
 	if err := p.doEnsureConfigureTopic(bootstrapBrokers); err != nil {
 		return fmt.Errorf("configure topic %s/%s: %v", p.namespace, p.topic, err)
@@ -39,10 +39,10 @@ func (p *TopicPublisher) StartSchedulerThread(bootstrapBrokers []string) error {
 	generation := 0
 	var errChan chan EachPartitionError
 	for {
-		glog.V(0).Infof("lookup partitions gen %d topic %s/%s", generation, p.namespace, p.topic)
+		glog.V(0).Infof("lookup partitions gen %d topic %s/%s", generation+1, p.namespace, p.topic)
 		if assignments, err := p.doLookupTopicPartitions(bootstrapBrokers); err == nil {
 			generation++
-			glog.V(0).Infof("start generation %d", generation)
+			glog.V(0).Infof("start generation %d with %d assignments", generation, len(assignments))
 			if errChan == nil {
 				errChan = make(chan EachPartitionError, len(assignments))
 			}
@@ -51,6 +51,10 @@ func (p *TopicPublisher) StartSchedulerThread(bootstrapBrokers []string) error {
 			glog.Errorf("lookup topic %s/%s: %v", p.namespace, p.topic, err)
 			time.Sleep(5 * time.Second)
 			continue
+		}
+
+		if generation == 1 {
+			wg.Done()
 		}
 
 		// wait for any error to happen. If so, consume all remaining errors, and retry
@@ -235,6 +239,10 @@ func (p *TopicPublisher) doLookupTopicPartitions(bootstrapBrokers []string) (ass
 
 				if err != nil {
 					return err
+				}
+
+				if len(lookupResp.BrokerPartitionAssignments) == 0 {
+					return fmt.Errorf("no broker partition assignments")
 				}
 
 				assignments = lookupResp.BrokerPartitionAssignments

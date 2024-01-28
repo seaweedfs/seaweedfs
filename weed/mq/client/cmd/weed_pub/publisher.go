@@ -43,18 +43,21 @@ func main() {
 		CreateTopicPartitionCount: int32(*partitionCount),
 	}
 	publisher := pub_client.NewTopicPublisher(*namespace, *topic, config)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
 	go func() {
 		brokers := strings.Split(*seedBrokers, ",")
-		if err := publisher.StartSchedulerThread(brokers); err != nil {
+		if err := publisher.StartSchedulerThread(brokers, &wg); err != nil {
 			fmt.Println(err)
 			return
 		}
 	}()
 
+	wg.Wait()
+
 	startTime := time.Now()
 
 	// Start multiple publishers
-	var wg sync.WaitGroup
 	for i := 0; i < *concurrency; i++ {
 		wg.Add(1)
 		go func(id int) {
