@@ -32,10 +32,7 @@ func (p *TopicPublisher) doConnect(partition *mq_pb.Partition, brokerAddress str
 	if err = publishClient.Send(&mq_pb.PublishMessageRequest{
 		Message: &mq_pb.PublishMessageRequest_Init{
 			Init: &mq_pb.PublishMessageRequest_InitMessage{
-				Topic: &mq_pb.Topic{
-					Namespace: p.namespace,
-					Name:      p.topic,
-				},
+				Topic: p.config.Topic.ToPbTopic(),
 				Partition: &mq_pb.Partition{
 					RingSize:   partition.RingSize,
 					RangeStart: partition.RangeStart,

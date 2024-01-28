@@ -31,15 +31,15 @@ type EachPartitionPublishJob struct {
 func (p *TopicPublisher) StartSchedulerThread(bootstrapBrokers []string, wg *sync.WaitGroup) error {
 
 	if err := p.doEnsureConfigureTopic(bootstrapBrokers); err != nil {
-		return fmt.Errorf("configure topic %s/%s: %v", p.namespace, p.topic, err)
+		return fmt.Errorf("configure topic %s: %v", p.config.Topic, err)
 	}
 
-	log.Printf("start scheduler thread for topic %s/%s", p.namespace, p.topic)
+	log.Printf("start scheduler thread for topic %s", p.config.Topic)
 
 	generation := 0
 	var errChan chan EachPartitionError
 	for {
-		glog.V(0).Infof("lookup partitions gen %d topic %s/%s", generation+1, p.namespace, p.topic)
+		glog.V(0).Infof("lookup partitions gen %d topic %s", generation+1, p.config.Topic)
 		if assignments, err := p.doLookupTopicPartitions(bootstrapBrokers); err == nil {
 			generation++
 			glog.V(0).Infof("start generation %d with %d assignments", generation, len(assignments))
@@ -48,7 +48,7 @@ func (p *TopicPublisher) StartSchedulerThread(bootstrapBrokers []string, wg *syn
 			}
 			p.onEachAssignments(generation, assignments, errChan)
 		} else {
-			glog.Errorf("lookup topic %s/%s: %v", p.namespace, p.topic, err)
+			glog.Errorf("lookup topic %s: %v", p.config.Topic, err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -61,7 +61,7 @@ func (p *TopicPublisher) StartSchedulerThread(bootstrapBrokers []string, wg *syn
 		for {
 			select {
 			case eachErr := <-errChan:
-				glog.Errorf("gen %d publish to topic %s/%s partition %v: %v", eachErr.generation, p.namespace, p.topic, eachErr.Partition, eachErr.Err)
+				glog.Errorf("gen %d publish to topic %s partition %v: %v", eachErr.generation, p.config.Topic, eachErr.Partition, eachErr.Err)
 				if eachErr.generation < generation {
 					continue
 				}
@@ -140,10 +140,7 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 	if err = publishClient.Send(&mq_pb.PublishMessageRequest{
 		Message: &mq_pb.PublishMessageRequest_Init{
 			Init: &mq_pb.PublishMessageRequest_InitMessage{
-				Topic: &mq_pb.Topic{
-					Namespace: p.namespace,
-					Name:      p.topic,
-				},
+				Topic: p.config.Topic.ToPbTopic(),
 				Partition: job.Partition,
 				AckInterval: 128,
 			},
@@ -197,10 +194,7 @@ func (p *TopicPublisher) doEnsureConfigureTopic(bootstrapBrokers []string) (err 
 			p.grpcDialOption,
 			func(client mq_pb.SeaweedMessagingClient) error {
 				_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
-					Topic: &mq_pb.Topic{
-						Namespace: p.namespace,
-						Name:      p.topic,
-					},
+					Topic: p.config.Topic.ToPbTopic(),
 					PartitionCount: p.config.CreateTopicPartitionCount,
 				})
 				return err
@@ -213,7 +207,7 @@ func (p *TopicPublisher) doEnsureConfigureTopic(bootstrapBrokers []string) (err 
 	}
 
 	if lastErr != nil {
-		return fmt.Errorf("configure topic %s/%s: %v", p.namespace, p.topic, err)
+		return fmt.Errorf("configure topic %s: %v", p.config.Topic, err)
 	}
 	return nil
 }
@@ -230,12 +224,9 @@ func (p *TopicPublisher) doLookupTopicPartitions(bootstrapBrokers []string) (ass
 			func(client mq_pb.SeaweedMessagingClient) error {
 				lookupResp, err := client.LookupTopicBrokers(context.Background(),
 					&mq_pb.LookupTopicBrokersRequest{
-						Topic: &mq_pb.Topic{
-							Namespace: p.namespace,
-							Name:      p.topic,
-						},
+						Topic: p.config.Topic.ToPbTopic(),
 					})
-				glog.V(0).Infof("lookup topic %s/%s: %v", p.namespace, p.topic, lookupResp)
+				glog.V(0).Infof("lookup topic %s: %v", p.config.Topic, lookupResp)
 
 				if err != nil {
 					return err
@@ -256,6 +247,6 @@ func (p *TopicPublisher) doLookupTopicPartitions(bootstrapBrokers []string) (ass
 		}
 	}
 
-	return nil, fmt.Errorf("lookup topic %s/%s: %v", p.namespace, p.topic, lastErr)
+	return nil, fmt.Errorf("lookup topic %s: %v", p.config.Topic, lastErr)
 
 }

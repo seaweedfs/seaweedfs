@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/pub_client"
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"log"
 	"strings"
 	"sync"
@@ -16,7 +17,7 @@ var (
 	partitionCount = flag.Int("p", 6, "partition count")
 
 	namespace   = flag.String("ns", "test", "namespace")
-	topic       = flag.String("topic", "test", "topic")
+	t           = flag.String("t", "test", "t")
 	seedBrokers = flag.String("brokers", "localhost:17777", "seed brokers")
 )
 
@@ -39,10 +40,11 @@ func doPublish(publisher *pub_client.TopicPublisher, id int) {
 func main() {
 	flag.Parse()
 	config := &pub_client.PublisherConfiguration{
+		Topic:                     topic.NewTopic(*namespace, *t),
 		CreateTopic:               true,
 		CreateTopicPartitionCount: int32(*partitionCount),
 	}
-	publisher := pub_client.NewTopicPublisher(*namespace, *topic, config)
+	publisher := pub_client.NewTopicPublisher(config)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
