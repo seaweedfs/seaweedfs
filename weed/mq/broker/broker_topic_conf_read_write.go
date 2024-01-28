@@ -56,6 +56,19 @@ func (b *MessageQueueBroker) readTopicConfFromFiler(t topic.Topic) (conf *mq_pb.
 	return conf, nil
 }
 
+func (b *MessageQueueBroker) GetOrGenLocalPartition(t topic.Topic, partition topic.Partition) (localPartition *topic.LocalPartition, err error) {
+	b.accessLock.Lock()
+	defer b.accessLock.Unlock()
+
+	if localPartition = b.localTopicManager.GetTopicPartition(t, partition); localPartition == nil {
+		localPartition, err = b.genLocalPartitionFromFiler(t, partition)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return localPartition, nil
+}
+
 func (b *MessageQueueBroker) genLocalPartitionFromFiler(t topic.Topic, partition topic.Partition) (localPartition *topic.LocalPartition, err error) {
 	self := b.option.BrokerAddress()
 	conf, err := b.readTopicConfFromFiler(t)

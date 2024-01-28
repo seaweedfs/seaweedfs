@@ -22,13 +22,12 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 	glog.V(0).Infof("Subscriber %s on %v %v connected", req.GetInit().ConsumerId, t, partition)
 
 	waitIntervalCount := 0
+
 	var localTopicPartition *topic.LocalPartition
 	for localTopicPartition == nil {
-		localTopicPartition = b.localTopicManager.GetTopicPartition(t, partition)
-		if localTopicPartition == nil {
-			if localTopicPartition, err = b.genLocalPartitionFromFiler(t, partition); err != nil {
-				glog.V(1).Infof("topic %v partition %v not setup", t, partition)
-			}
+		localTopicPartition, err = b.GetOrGenLocalPartition(t, partition)
+		if err != nil {
+			glog.V(1).Infof("topic %v partition %v not setup", t, partition)
 		}
 		if localTopicPartition != nil {
 			break
@@ -75,9 +74,9 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 			startPosition = log_buffer.NewMessagePosition(offset.StartTsNs, -2)
 		}
 		if offset.StartType == mq_pb.PartitionOffsetStartType_EARLIEST {
-			startPosition = log_buffer.NewMessagePosition(1, -2)
+			startPosition = log_buffer.NewMessagePosition(1, -3)
 		} else if offset.StartType == mq_pb.PartitionOffsetStartType_LATEST {
-			startPosition = log_buffer.NewMessagePosition(time.Now().UnixNano(), -2)
+			startPosition = log_buffer.NewMessagePosition(time.Now().UnixNano(), -4)
 		}
 	}
 
