@@ -37,8 +37,11 @@ func (b *MessageQueueBroker) readTopicConfFromFiler(t topic.Topic) (conf *mq_pb.
 	topicDir := fmt.Sprintf("%s/%s/%s", filer.TopicsDir, t.Namespace, t.Name)
 	if err = b.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := filer.ReadInsideFiler(client, topicDir, "topic.conf")
+		if err == filer_pb.ErrNotFound {
+			return err
+		}
 		if err != nil {
-			return fmt.Errorf("read topic %v partition %v conf: %v", t, err)
+			return fmt.Errorf("read topic.conf of %v: %v", t, err)
 		}
 		// parse into filer conf object
 		conf = &mq_pb.ConfigureTopicResponse{}

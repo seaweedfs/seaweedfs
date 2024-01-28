@@ -6,6 +6,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/buffered_queue"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"log"
 	"sort"
 	"sync"
 	"time"
@@ -22,12 +26,15 @@ type EachPartitionPublishJob struct {
 	stopChan chan bool
 	wg 	 sync.WaitGroup
 	generation int
+	inputQueue *buffered_queue.BufferedQueue[*mq_pb.DataMessage]
 }
 func (p *TopicPublisher) StartSchedulerThread(bootstrapBrokers []string) error {
 
 	if err := p.doEnsureConfigureTopic(bootstrapBrokers); err != nil {
-		return err
+		return fmt.Errorf("configure topic %s/%s: %v", p.namespace, p.topic, err)
 	}
+
+	log.Printf("start scheduler thread for topic %s/%s", p.namespace, p.topic)
 
 	generation := 0
 	var errChan chan EachPartitionError
@@ -92,6 +99,7 @@ func (p *TopicPublisher) onEachAssignments(generation int, assignments []*mq_pb.
 			BrokerPartitionAssignment: assignment,
 			stopChan: make(chan bool, 1),
 			generation: generation,
+			inputQueue: buffered_queue.NewBufferedQueue[*mq_pb.DataMessage](1024, true),
 		}
 		job.wg.Add(1)
 		go func(job *EachPartitionPublishJob) {
@@ -101,12 +109,76 @@ func (p *TopicPublisher) onEachAssignments(generation int, assignments []*mq_pb.
 			}
 		}(job)
 		jobs = append(jobs, job)
+		// TODO assuming this is not re-configured so the partitions are fixed.
+		// better just re-use the existing job
+		p.partition2Buffer.Insert(assignment.Partition.RangeStart, assignment.Partition.RangeStop, job.inputQueue)
 	}
 	p.jobs = jobs
 }
 
 func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) error {
 
+	log.Printf("connecting to %v for topic partition %+v", job.LeaderBroker, job.Partition)
+
+	grpcConnection, err := pb.GrpcDial(context.Background(), job.LeaderBroker, true, p.grpcDialOption)
+	if err != nil {
+		return fmt.Errorf("dial broker %s: %v", job.LeaderBroker, err)
+	}
+	brokerClient := mq_pb.NewSeaweedMessagingClient(grpcConnection)
+	stream, err := brokerClient.PublishMessage(context.Background())
+	if err != nil {
+		return fmt.Errorf("create publish client: %v", err)
+	}
+	publishClient := &PublishClient{
+		SeaweedMessaging_PublishMessageClient: stream,
+		Broker:                         job.LeaderBroker,
+	}
+	if err = publishClient.Send(&mq_pb.PublishMessageRequest{
+		Message: &mq_pb.PublishMessageRequest_Init{
+			Init: &mq_pb.PublishMessageRequest_InitMessage{
+				Topic: &mq_pb.Topic{
+					Namespace: p.namespace,
+					Name:      p.topic,
+				},
+				Partition: job.Partition,
+				AckInterval: 128,
+			},
+		},
+	}); err != nil {
+		return fmt.Errorf("send init message: %v", err)
+	}
+	resp, err := stream.Recv()
+	if err != nil {
+		return fmt.Errorf("recv init response: %v", err)
+	}
+	if resp.Error != "" {
+		return fmt.Errorf("init response error: %v", resp.Error)
+	}
+
+	go func() {
+		for {
+			_, err := publishClient.Recv()
+			if err != nil {
+				e, ok := status.FromError(err)
+				if ok && e.Code() == codes.Unknown && e.Message() == "EOF" {
+					return
+				}
+				publishClient.Err = err
+				fmt.Printf("publish to %s error: %v\n", publishClient.Broker, err)
+				return
+			}
+		}
+	}()
+
+	for data, hasData := job.inputQueue.Dequeue(); hasData; data, hasData = job.inputQueue.Dequeue() {
+		if err := publishClient.Send(&mq_pb.PublishMessageRequest{
+			Message: &mq_pb.PublishMessageRequest_Data{
+				Data: data,
+			},
+		}); err != nil {
+			return fmt.Errorf("send publish data: %v", err)
+		}
+	}
 	return nil
 }
 

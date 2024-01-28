@@ -30,7 +30,7 @@ func doPublish(publisher *pub_client.TopicPublisher, id int) {
 			fmt.Println(err)
 			break
 		}
-		// println("Published", string(key), string(value))
+		println("Published", string(key), string(value))
 	}
 	elapsed := time.Since(startTime)
 	log.Printf("Publisher %d finished in %s", id, elapsed)
@@ -43,11 +43,13 @@ func main() {
 		CreateTopicPartitionCount: int32(*partitionCount),
 	}
 	publisher := pub_client.NewTopicPublisher(*namespace, *topic, config)
-	brokers := strings.Split(*seedBrokers, ",")
-	if err := publisher.Connect(brokers); err != nil {
-		fmt.Println(err)
-		return
-	}
+	go func() {
+		brokers := strings.Split(*seedBrokers, ",")
+		if err := publisher.StartSchedulerThread(brokers); err != nil {
+			fmt.Println(err)
+			return
+		}
+	}()
 
 	startTime := time.Now()
 
