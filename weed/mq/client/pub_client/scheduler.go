@@ -28,7 +28,7 @@ type EachPartitionPublishJob struct {
 	generation int
 	inputQueue *buffered_queue.BufferedQueue[*mq_pb.DataMessage]
 }
-func (p *TopicPublisher) StartSchedulerThread(wg *sync.WaitGroup) error {
+func (p *TopicPublisher) startSchedulerThread(wg *sync.WaitGroup) error {
 
 	if err := p.doEnsureConfigureTopic(); err != nil {
 		return fmt.Errorf("configure topic %s: %v", p.config.Topic, err)

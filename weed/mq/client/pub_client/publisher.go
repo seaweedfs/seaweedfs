@@ -45,7 +45,7 @@ func NewTopicPublisher(config *PublisherConfiguration) *TopicPublisher {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
-		if err := tp.StartSchedulerThread(&wg); err != nil {
+		if err := tp.startSchedulerThread(&wg); err != nil {
 			log.Println(err)
 			return
 		}
