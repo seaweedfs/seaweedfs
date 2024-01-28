@@ -34,6 +34,7 @@ func (b *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq
 		glog.V(0).Infof("lookup topic %s conf: %v", request.Topic, err)
 	} else {
 		err = b.ensureTopicActiveAssignments(t, conf)
+		ret.BrokerPartitionAssignments = conf.BrokerPartitionAssignments
 	}
 
 	return ret, err
