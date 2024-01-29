@@ -14,6 +14,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+const dataLossLimitPerc = 1
+
 func CheckAndFixVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uint64, err error) {
 	var indexSize int64
 	if indexSize, err = verifyIndexFileIntegrity(indexFile); err != nil {
@@ -41,7 +43,7 @@ func CheckAndFixVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAt
 			glog.Warningf("CheckAndFixVolumeDataIntegrity truncate idx file %s from %d to %d: %v", indexFile.Name(), indexSize, healthyIndexSize, err)
 		}
 	}
-	return
+	return lastAppendAtNs, err
 }
 
 func doCheckAndFixVolumeData(v *Volume, indexFile *os.File, indexOffset int64) (lastAppendAtNs uint64, err error) {
@@ -118,6 +120,9 @@ func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version,
 			return n.AppendAtNs, nil
 		}
 		if fileSize > fileTailOffset {
+			if (100 - (fileTailOffset * 100 / fileSize)) > dataLossLimitPerc {
+				return n.AppendAtNs, ErrorDataSizeMismatch
+			}
 			glog.Warningf("Truncate %s from %d bytes to %d bytes!", datFile.Name(), fileSize, fileTailOffset)
 			err = datFile.Truncate(fileTailOffset)
 			if err == nil {
