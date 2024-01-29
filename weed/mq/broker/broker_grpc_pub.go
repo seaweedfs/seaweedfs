@@ -7,10 +7,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc/peer"
+	"io"
 	"math/rand"
 	"net"
 	"sync/atomic"
-	"time"
 )
 
 // PUB
@@ -75,14 +75,17 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	respChan := make(chan *mq_pb.PublishMessageResponse, 128)
 	defer func() {
 		atomic.StoreInt32(&isStopping, 1)
+		respChan <- &mq_pb.PublishMessageResponse{
+			AckSequence: ackSequence,
+		}
 		close(respChan)
 		localTopicPartition.Publishers.RemovePublisher(clientName)
 		if localTopicPartition.MaybeShutdownLocalPartition() {
 			b.localTopicManager.RemoveTopicPartition(t, p)
 		}
+		glog.V(0).Infof("topic %v partition %v published %d messges.", initMessage.Topic, initMessage.Partition, ackSequence)
 	}()
 	go func() {
-		ticker := time.NewTicker(1 * time.Second)
 		for {
 			select {
 			case resp := <-respChan:
@@ -90,15 +93,6 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 					if err := stream.Send(resp); err != nil {
 						glog.Errorf("Error sending response %v: %v", resp, err)
 					}
-				} else {
-					return
-				}
-			case <-ticker.C:
-				if atomic.LoadInt32(&isStopping) == 0 {
-					response := &mq_pb.PublishMessageResponse{
-						AckSequence: ackSequence,
-					}
-					respChan <- response
 				} else {
 					return
 				}
@@ -116,6 +110,10 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		// receive a message
 		req, err := stream.Recv()
 		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			glog.V(0).Infof("topic %v partition %v publish stream error: %v", initMessage.Topic, initMessage.Partition, err)
 			return err
 		}
 

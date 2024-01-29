@@ -158,7 +158,7 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 
 	go func() {
 		for {
-			_, err := publishClient.Recv()
+			ackResp, err := publishClient.Recv()
 			if err != nil {
 				e, ok := status.FromError(err)
 				if ok && e.Code() == codes.Unknown && e.Message() == "EOF" {
@@ -168,9 +168,18 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 				fmt.Printf("publish to %s error: %v\n", publishClient.Broker, err)
 				return
 			}
+			if ackResp.Error != "" {
+				publishClient.Err = fmt.Errorf("ack error: %v", ackResp.Error)
+				fmt.Printf("publish to %s error: %v\n", publishClient.Broker, ackResp.Error)
+				return
+			}
+			if ackResp.AckSequence > 0 {
+				log.Printf("ack %d", ackResp.AckSequence)
+			}
 		}
 	}()
 
+	publishCounter := 0
 	for data, hasData := job.inputQueue.Dequeue(); hasData; data, hasData = job.inputQueue.Dequeue() {
 		if err := publishClient.Send(&mq_pb.PublishMessageRequest{
 			Message: &mq_pb.PublishMessageRequest_Data{
@@ -179,7 +188,17 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 		}); err != nil {
 			return fmt.Errorf("send publish data: %v", err)
 		}
+		publishCounter++
 	}
+
+	if err := publishClient.CloseSend(); err != nil {
+		return fmt.Errorf("close send: %v", err)
+	}
+
+	time.Sleep(3 * time.Second)
+
+	log.Printf("published %d messages to %v for topic partition %+v", publishCounter, job.LeaderBroker, job.Partition)
+
 	return nil
 }
 
