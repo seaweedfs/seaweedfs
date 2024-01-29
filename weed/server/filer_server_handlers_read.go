@@ -231,14 +231,16 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
+	processRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
 		if offset+size <= int64(len(entry.Content)) {
-			_, err := writer.Write(entry.Content[offset : offset+size])
-			if err != nil {
-				stats.FilerHandlerCounter.WithLabelValues(stats.ErrorWriteEntry).Inc()
-				glog.Errorf("failed to write entry content: %v", err)
-			}
-			return err
+			return func(writer io.Writer) error {
+				_, err := writer.Write(entry.Content[offset : offset+size])
+				if err != nil {
+					stats.FilerHandlerCounter.WithLabelValues(stats.ErrorWriteEntry).Inc()
+					glog.Errorf("failed to write entry content: %v", err)
+				}
+				return err
+			}, nil
 		}
 		chunks := entry.GetChunks()
 		if entry.IsInRemoteOnly() {
@@ -249,17 +251,25 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			}); err != nil {
 				stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadCache).Inc()
 				glog.Errorf("CacheRemoteObjectToLocalCluster %s: %v", entry.FullPath, err)
-				return fmt.Errorf("cache %s: %v", entry.FullPath, err)
+				return nil, fmt.Errorf("cache %s: %v", entry.FullPath, err)
 			} else {
 				chunks = resp.Entry.GetChunks()
 			}
 		}
 
-		err = filer.StreamContentWithThrottler(fs.filer.MasterClient, writer, chunks, offset, size, fs.option.DownloadMaxBytesPs)
+		streamFn, err := filer.PrepareStreamContentWithThrottler(fs.filer.MasterClient, chunks, offset, size, fs.option.DownloadMaxBytesPs)
 		if err != nil {
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
-			glog.Errorf("failed to stream content %s: %v", r.URL, err)
+			glog.Errorf("failed to prepare stream content %s: %v", r.URL, err)
+			return nil, err
 		}
-		return err
+		return func(writer io.Writer) error {
+			err := streamFn(writer)
+			if err != nil {
+				stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
+				glog.Errorf("failed to stream content %s: %v", r.URL, err)
+			}
+			return err
+		}, nil
 	})
 }
