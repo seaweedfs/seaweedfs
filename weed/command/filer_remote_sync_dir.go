@@ -165,6 +165,9 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			return client.DeleteFile(dest)
 		}
 		if message.OldEntry != nil && message.NewEntry != nil {
+			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
+				return nil
+			}
 			oldDest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
 			if !shouldSendToRemote(message.NewEntry) {
@@ -278,7 +281,10 @@ func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer
 }
 
 func isMultipartUploadFile(dir string, name string) bool {
+	return isMultipartUploadDir(dir) && strings.HasSuffix(name, ".part")
+}
+
+func isMultipartUploadDir(dir string) bool {
 	return strings.HasPrefix(dir, "/buckets/") &&
-		strings.Contains(dir, "/"+s3_constants.MultipartUploadsFolder+"/") &&
-		strings.HasSuffix(name, ".part")
+		strings.Contains(dir, "/"+s3_constants.MultipartUploadsFolder+"/")
 }

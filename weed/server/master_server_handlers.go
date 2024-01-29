@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -119,34 +120,45 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
 
-	fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(requestedCount, option, vl)
-	if shouldGrow && !vl.HasGrowRequest() {
-		// if picked volume is almost full, trigger a volume-grow request
-		glog.V(0).Infof("dirAssign volume growth %v from %v", option.String(), r.RemoteAddr)
-		if ms.Topo.AvailableSpaceFor(option) <= 0 {
-			writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left for " + option.String()})
-			return
-		}
+	var (
+		lastErr    error
+		maxTimeout = time.Second * 10
+		startTime  = time.Now()
+	)
 
-		errCh := make(chan error, 1)
-		vl.AddGrowRequest()
-		ms.vgCh <- &topology.VolumeGrowRequest{
-			Option: option,
-			Count:  writableVolumeCount,
-			ErrCh:  errCh,
+	for time.Now().Sub(startTime) < maxTimeout {
+		fid, count, dnList, shouldGrow, err := ms.Topo.PickForWrite(requestedCount, option, vl)
+		if shouldGrow && !vl.HasGrowRequest() {
+			// if picked volume is almost full, trigger a volume-grow request
+			glog.V(0).Infof("dirAssign volume growth %v from %v", option.String(), r.RemoteAddr)
+			if ms.Topo.AvailableSpaceFor(option) <= 0 {
+				writeJsonQuiet(w, r, http.StatusNotFound, operation.AssignResult{Error: "No free volumes left for " + option.String()})
+				return
+			}
+			vl.AddGrowRequest()
+			ms.vgCh <- &topology.VolumeGrowRequest{
+				Option: option,
+				Count:  writableVolumeCount,
+			}
 		}
-		if err := <-errCh; err != nil {
-			writeJsonError(w, r, http.StatusInternalServerError, fmt.Errorf("cannot grow volume group! %v", err))
+		if err != nil {
+			// glog.Warningf("PickForWrite %+v: %v", req, err)
+			lastErr = err
+			time.Sleep(200 * time.Millisecond)
+			continue
+		} else {
+			ms.maybeAddJwtAuthorization(w, fid, true)
+			dn := dnList.Head()
+
+			writeJsonQuiet(w, r, http.StatusOK, operation.AssignResult{Fid: fid, Url: dn.Url(), PublicUrl: dn.PublicUrl, Count: count})
 			return
 		}
 	}
-	if err == nil {
-		ms.maybeAddJwtAuthorization(w, fid, true)
-		dn := dnList.Head()
 
-		writeJsonQuiet(w, r, http.StatusOK, operation.AssignResult{Fid: fid, Url: dn.Url(), PublicUrl: dn.PublicUrl, Count: count})
+	if lastErr != nil {
+		writeJsonQuiet(w, r, http.StatusNotAcceptable, operation.AssignResult{Error: lastErr.Error()})
 	} else {
-		writeJsonQuiet(w, r, http.StatusNotAcceptable, operation.AssignResult{Error: err.Error()})
+		writeJsonQuiet(w, r, http.StatusRequestTimeout, operation.AssignResult{Error: "request timeout"})
 	}
 }
 
