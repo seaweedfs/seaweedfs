@@ -73,6 +73,19 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 	}
 	fmt.Fprintf(writer, "the cluster has %d filers: %+v\n", len(filers), filers)
 
+	if len(filers) > 0 {
+		genericDiskInfo, genericDiskInfoOk := topologyInfo.DiskInfos[""]
+		hddDiskInfo, hddDiskInfoOk := topologyInfo.DiskInfos["hdd"]
+
+		if !genericDiskInfoOk && !hddDiskInfoOk {
+			return fmt.Errorf("filer metadata logs need generic or hdd disk type to be defined")
+		}
+
+		if (genericDiskInfoOk && genericDiskInfo.MaxVolumeCount == 0) || (hddDiskInfoOk && hddDiskInfo.MaxVolumeCount == 0) {
+			return fmt.Errorf("filer metadata logs need generic or hdd volumes to be available")
+		}
+	}
+
 	// collect volume servers
 	var volumeServers []pb.ServerAddress
 	t, _, err := collectTopologyInfo(commandEnv, 0)
