@@ -59,7 +59,7 @@ spec:
           image: {{ template "volume.image" . }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy | default "IfNotPresent" }}
           command: [ '/bin/sh', '-c' ]
-          args: [ 'ls {{range $dir :=  .Values.volume.dataDirs }}/{{$dir.name}}/*.idx {{end}} && xargs -I {} mv {} /idx/' ]
+          args: [ '{{range $dir :=  .Values.volume.dataDirs }}if ls /{{$dir.name}}/*.idx  >/dev/null 2>&1; then mv /{{$dir.name}}/*.idx /idx/ ; fi; {{end}}' ]
           volumeMounts:
             - name: idx
               mountPath: /idx
