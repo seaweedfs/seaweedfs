@@ -247,20 +247,20 @@ volume:
   #     storageClass: "local-path-provisioner"
   #     annotations:
   #      "key": "value"
-  #     maxVolumes: 0
+  #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
   #
   # You may also spacify an existing claim:
   #    - name: data
   #      type: "existingClaim"
   #      claimName: "my-pvc"
-  #     maxVolumes: 0
+  #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
 
 
   dataDirs:
    - name: data1
      type: "hostPath"
      hostPathPrefix: /ssd
-     maxVolumes: 0   # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
+     maxVolumes: 0 
 
    #- name: data2
    #  type: "persistentVolumeClaim"
@@ -268,19 +268,30 @@ volume:
    #  size: "800Gi"
    #  maxVolumes: 0
 
+  # idx can be defined by:
+  #
+  # idx:
+  #  type: "hostPath"
+  #  hostPathPrefix: /ssd
+  #
+  # or
+  #
+  # idx:
+  #  type: "persistentVolumeClaim"
+  #  size: "20Gi"
+  #  storageClass: "local-path-provisioner"
+  #
+  # or
+  #
+  # idx:
+  #   type: "existingClaim"
+  #   claimName: "myClaim"
 
-  idx:
-    type: "hostPath"
-    size: ""
-    storageClass: ""
-    hostPathPrefix: /ssd
+  # same applies to "logs"
 
+  idx: ""
 
-  logs:
-    type: "hostPath"
-    size: ""
-    storageClass: ""
-    hostPathPrefix: /storage
+  logs: ""
 
   # limit background compaction or copying speed in mega bytes per second
   compactionMBps: "50"
