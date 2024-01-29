@@ -63,7 +63,7 @@ spec:
           volumeMounts:
             - name: idx
               mountPath: /idx
-          {{- range $dir :=  .Values.volume.dataDirs }} 
+          {{- range $dir :=  .Values.volume.dataDirs }}
             - name: {{ $dir.name }}
               mountPath: /{{ $dir.name }}
           {{- end }}
