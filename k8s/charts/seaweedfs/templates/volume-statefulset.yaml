@@ -63,7 +63,7 @@ spec:
           args: [ 'ls {{range $dir :=  .Values.volume.dataDirs }}/{{$dir.name}}/*.idx {{end}} && xargs -I {} mv {} /idx/' ]
           volumeMounts:
             - name: idx
-              mountPath: {{ .Values.volume.idx.name }}
+              mountPath: /idx
           {{- range $dir :=  .Values.volume.dataDirs }} 
             - name: {{ $dir.name }}
               mountPath: /{{ $dir.name }}
@@ -120,7 +120,7 @@ spec:
                 {{- end }}
                 -dir {{range $index, $dir :=  .Values.volume.dataDirs }}{{if ne $index 0}},{{end}}/{{$dir.name}}{{end}} \
                 {{- if .Values.volume.idx }}
-                -dir.idx= /idx \
+                -dir.idx=/idx \
                 {{- end }}
                 -max {{range $index, $dir :=  .Values.volume.dataDirs }}{{if ne $index 0}},{{end}}{{$dir.maxVolumes}}{{end}} \
                 {{- if .Values.volume.rack }}
