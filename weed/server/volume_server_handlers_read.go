@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
@@ -382,12 +383,14 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 		return nil
 	}
 
-	return processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
-		if _, e = rs.Seek(offset, 0); e != nil {
+	return processRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
+		return func(writer io.Writer) error {
+			if _, e = rs.Seek(offset, 0); e != nil {
+				return e
+			}
+			_, e = io.CopyN(writer, rs, size)
 			return e
-		}
-		_, e = io.CopyN(writer, rs, size)
-		return e
+		}, nil
 	})
 }
 
@@ -409,8 +412,10 @@ func (vs *VolumeServer) streamWriteResponseContent(filename string, mimeType str
 		return
 	}
 
-	processRangeRequest(r, w, totalSize, mimeType, func(writer io.Writer, offset int64, size int64) error {
-		return vs.store.ReadVolumeNeedleDataInto(volumeId, n, readOption, writer, offset, size)
+	processRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
+		return func(writer io.Writer) error {
+			return vs.store.ReadVolumeNeedleDataInto(volumeId, n, readOption, writer, offset, size)
+		}, nil
 	})
 
 }
