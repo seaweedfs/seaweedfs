@@ -14,7 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-const dataLossLimitPerc = 1
+const dataLossLimitPercent = 1
 
 func CheckAndFixVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uint64, err error) {
 	var indexSize int64
@@ -120,7 +120,7 @@ func verifyNeedleIntegrity(datFile backend.BackendStorageFile, v needle.Version,
 			return n.AppendAtNs, nil
 		}
 		if fileSize > fileTailOffset {
-			if (100 - (fileTailOffset * 100 / fileSize)) > dataLossLimitPerc {
+			if (100 - (fileTailOffset * 100 / fileSize)) > dataLossLimitPercent {
 				return n.AppendAtNs, ErrorDataSizeMismatch
 			}
 			glog.Warningf("Truncate %s from %d bytes to %d bytes!", datFile.Name(), fileSize, fileTailOffset)
