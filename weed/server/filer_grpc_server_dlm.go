@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -81,13 +82,7 @@ func (fs *FilerServer) DistributedUnlock(ctx context.Context, req *filer_pb.Unlo
 
 func (fs *FilerServer) FindLockOwner(ctx context.Context, req *filer_pb.FindLockOwnerRequest) (*filer_pb.FindLockOwnerResponse, error) {
 	owner, movedTo, err := fs.filer.Dlm.FindLockOwner(req.Name)
-	if owner == "" {
-		glog.V(0).Infof("find lock %s moved to %v: %v", req.Name, movedTo, err)
-	}
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	if !req.IsMoved && movedTo != "" {
+	if !req.IsMoved && movedTo != "" && err == lock_manager.LockNotFound {
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			secondResp, err := client.FindLockOwner(context.Background(), &filer_pb.FindLockOwnerRequest{
 				Name:    req.Name,
@@ -103,6 +98,15 @@ func (fs *FilerServer) FindLockOwner(ctx context.Context, req *filer_pb.FindLock
 			return nil, err
 		}
 	}
+
+	if owner == "" {
+		glog.V(0).Infof("find lock %s moved to %v: %v", req.Name, movedTo, err)
+		return nil, status.Error(codes.NotFound, err.Error())
+	}
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
 	return &filer_pb.FindLockOwnerResponse{
 		Owner: owner,
 	}, nil

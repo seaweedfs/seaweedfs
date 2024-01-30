@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/puzpuzpuz/xsync/v2"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"time"
 )
 
@@ -11,6 +12,7 @@ var LockErrorNonEmptyTokenOnNewLock = fmt.Errorf("lock: non-empty token on a new
 var LockErrorNonEmptyTokenOnExpiredLock = fmt.Errorf("lock: non-empty token on an expired lock")
 var LockErrorTokenMismatch = fmt.Errorf("lock: token mismatch")
 var UnlockErrorTokenMismatch = fmt.Errorf("unlock: token mismatch")
+var LockNotFound = fmt.Errorf("lock not found")
 
 // LockManager local lock manager, used by distributed lock manager
 type LockManager struct {
@@ -138,13 +140,11 @@ func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, 
 }
 
 func (lm *LockManager) GetLockOwner(key string) (owner string, err error) {
-	lm.locks.Range(func(k string, lock *Lock) bool {
-		if k == key && lock != nil {
-			owner = lock.Owner
-			return false
-		}
-		return true
-	})
+	lock, _ := lm.locks.Load(key)
+	if lock != nil {
+		return lock.Owner, nil
+	}
+	glog.V(0).Infof("get lock %s %+v", key, lock)
+	err = LockNotFound
 	return
-
 }
