@@ -101,7 +101,7 @@ func (fs *FilerServer) FindLockOwner(ctx context.Context, req *filer_pb.FindLock
 
 	if owner == "" {
 		glog.V(0).Infof("find lock %s moved to %v: %v", req.Name, movedTo, err)
-		return nil, status.Error(codes.NotFound, err.Error())
+		return nil, status.Error(codes.NotFound, fmt.Sprintf("lock %s not found", req.Name))
 	}
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
