@@ -237,7 +237,7 @@ spec:
       {{- if eq $dir.type "existingClaim" }}
         - name: {{ $dir.name }}
           persistentVolumeClaim:
-            claimName: {{ $dir.claimName }} 
+            claimName: {{ $dir.claimName }}
       {{- end }}
 
      {{- end }}
@@ -252,7 +252,7 @@ spec:
        {{- if eq .Values.volume.idx.type "existingClaim" }}
         - name: idx
           persistentVolumeClaim:
-            claimName: {{ .Values.volume.idx.claimName }} 
+            claimName: {{ .Values.volume.idx.claimName }}
        {{- end }}
      {{- end }}
 
@@ -266,7 +266,7 @@ spec:
        {{- if eq .Values.volume.logs.type "existingClaim" }}
         - name: logs
           persistentVolumeClaim:
-            claimName: {{ .Values.volume.logs.claimName }} 
+            claimName: {{ .Values.volume.logs.claimName }}
        {{- end }}
      {{- end }}
      {{- if .Values.global.enableSecurity }}
