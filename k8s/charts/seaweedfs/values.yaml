@@ -10,6 +10,7 @@ global:
   restartPolicy: Always
   loggingLevel: 1
   enableSecurity: false
+  masterServer: null
   securityConfig:
     jwtSigning:
       volumeWrite: true
