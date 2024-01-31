@@ -1,3 +1,4 @@
+{{- if or .Values.s3.enabled .Values.filer.s3.enabled }}
 {{- if .Values.s3.metricsPort }}
 {{- if .Values.global.monitoring.enabled }}
 apiVersion: monitoring.coreos.com/v1
@@ -20,5 +21,6 @@ spec:
     matchLabels:
       app: {{ template "seaweedfs.name" . }}
       component: s3
+{{- end }}
 {{- end }}
 {{- end }}
