@@ -1,3 +1,4 @@
+{{- if .Values.filer.enabled }}
 {{- if .Values.filer.metricsPort }}
 {{- if .Values.global.monitoring.enabled }}
 apiVersion: monitoring.coreos.com/v1
@@ -20,5 +21,6 @@ spec:
     matchLabels:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
       app.kubernetes.io/component: filer
+{{- end }}
 {{- end }}
 {{- end }}
