@@ -87,6 +87,9 @@ hashicorp_raft: build
 s3tests: build s3tests_build
 	docker compose -f compose/local-s3tests-compose.yml -p seaweedfs up
 
+brokers: build
+	docker compose -f compose/local-brokers-compose.yml -p seaweedfs up
+
 filer_etcd: build
 	docker stack deploy -c compose/swarm-etcd.yml fs
 
