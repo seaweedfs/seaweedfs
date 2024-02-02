@@ -19,7 +19,7 @@ func (fs *FilerServer) DistributedLock(ctx context.Context, req *filer_pb.LockRe
 
 	var movedTo pb.ServerAddress
 	expiredAtNs := time.Now().Add(time.Duration(req.SecondsToLock) * time.Second).UnixNano()
-	resp.RenewToken, movedTo, err = fs.filer.Dlm.LockWithTimeout(req.Name, expiredAtNs, req.RenewToken, req.Owner)
+	resp.LockOwner, resp.RenewToken, movedTo, err = fs.filer.Dlm.LockWithTimeout(req.Name, expiredAtNs, req.RenewToken, req.Owner)
 	glog.V(3).Infof("lock %s %v %v %v, isMoved=%v %v", req.Name, req.SecondsToLock, req.RenewToken, req.Owner, req.IsMoved, movedTo)
 	if movedTo != "" && movedTo != fs.option.Host && !req.IsMoved {
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -32,6 +32,7 @@ func (fs *FilerServer) DistributedLock(ctx context.Context, req *filer_pb.LockRe
 			})
 			if err == nil {
 				resp.RenewToken = secondResp.RenewToken
+				resp.LockOwner = secondResp.LockOwner
 			} else {
 				resp.Error = secondResp.Error
 			}
@@ -43,7 +44,7 @@ func (fs *FilerServer) DistributedLock(ctx context.Context, req *filer_pb.LockRe
 		resp.Error = fmt.Sprintf("%v", err)
 	}
 	if movedTo != "" {
-		resp.MovedTo = string(movedTo)
+		resp.LockHostMovedTo = string(movedTo)
 	}
 
 	return resp, nil

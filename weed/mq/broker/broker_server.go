@@ -86,11 +86,14 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		glog.V(0).Infof("broker %s found filer %s", self, mqBroker.currentFiler)
 
 		lockClient := cluster.NewLockClient(grpcDialOption, mqBroker.currentFiler)
-		mqBroker.lockAsBalancer = lockClient.StartLock(pub_balancer.LockBrokerBalancer, string(self))
-		for {
-			if err := mqBroker.BrokerConnectToBalancer(string(self)); err != nil {
-				glog.V(0).Infof("BrokerConnectToBalancer: %v", err)
+		mqBroker.lockAsBalancer = lockClient.StartLongLivedLock(pub_balancer.LockBrokerBalancer, string(self), func(newLockOwner string) {
+			balancer := mqBroker.lockAsBalancer.LockOwner()
+			if err := mqBroker.BrokerConnectToBalancer(balancer); err != nil {
+				glog.V(0).Infof("BrokerConnectToBalancer %s: %v", balancer, err)
 			}
+		})
+		for {
+
 			time.Sleep(time.Second)
 			if err := mqBroker.lockAsBalancer.AttemptToLock(lock_manager.MaxDuration); err != nil {
 				glog.V(0).Infof("AttemptToLock: %v", err)

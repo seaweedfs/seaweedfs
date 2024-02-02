@@ -33,7 +33,7 @@ func NewLockManager() *LockManager {
 	return t
 }
 
-func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner string) (renewToken string, err error) {
+func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner string) (lockOwner, renewToken string, err error) {
 	lm.locks.Compute(path, func(oldValue *Lock, loaded bool) (newValue *Lock, delete bool) {
 		if oldValue != nil {
 			if oldValue.ExpiredAtNs > 0 && oldValue.ExpiredAtNs < time.Now().UnixNano() {
@@ -48,6 +48,7 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner 
 				}
 			}
 			// not expired
+			lockOwner = oldValue.Owner
 			if oldValue.Token == token {
 				// token matches, renew the lock
 				renewToken = uuid.New().String()
