@@ -40,9 +40,19 @@ type LiveLock struct {
 	lc             *LockClient
 }
 
-// NewLock creates a lock with a very long duration
-func (lc *LockClient) NewLock(key string, owner string) (lock *LiveLock) {
-	return lc.doNewLock(key, lock_manager.MaxDuration, owner)
+// NewShortLivedLock creates a lock with a 5-second duration
+func (lc *LockClient) NewShortLivedLock(key string, owner string) (lock *LiveLock) {
+	lock = &LiveLock{
+		key:            key,
+		filer:          lc.seedFiler,
+		cancelCh:       make(chan struct{}),
+		expireAtNs:     time.Now().Add(5*time.Second).UnixNano(),
+		grpcDialOption: lc.grpcDialOption,
+		owner:          owner,
+		lc:             lc,
+	}
+	lock.retryUntilLocked(5*time.Second)
+	return
 }
 
 // StartLock starts a goroutine to lock the key and returns immediately.
@@ -57,40 +67,15 @@ func (lc *LockClient) StartLock(key string, owner string) (lock *LiveLock) {
 		lc:             lc,
 	}
 	go func() {
-		lock.CreateLock(lock_manager.MaxDuration)
+		lock.retryUntilLocked(lock_manager.MaxDuration)
 		lc.keepLock(lock)
 	}()
 	return
 }
 
-func (lc *LockClient) doNewLock(key string, lockDuration time.Duration, owner string) (lock *LiveLock) {
-	lock = &LiveLock{
-		key:            key,
-		filer:          lc.seedFiler,
-		cancelCh:       make(chan struct{}),
-		expireAtNs:     time.Now().Add(lockDuration).UnixNano(),
-		grpcDialOption: lc.grpcDialOption,
-		owner:          owner,
-		lc:             lc,
-	}
-	var needRenewal bool
-	if lockDuration > lc.maxLockDuration {
-		lockDuration = lc.maxLockDuration
-		needRenewal = true
-	}
-
-	lock.CreateLock(lockDuration)
-
-	if needRenewal {
-		go lc.keepLock(lock)
-	}
-
-	return
-}
-
-func (lock *LiveLock) CreateLock(lockDuration time.Duration) {
+func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) {
 	util.RetryUntil("create lock:"+lock.key, func() error {
-		return lock.DoLock(lockDuration)
+		return lock.AttemptToLock(lockDuration)
 	}, func(err error) (shouldContinue bool) {
 		if err != nil {
 			glog.Warningf("create lock %s: %s", lock.key, err)
@@ -99,7 +84,7 @@ func (lock *LiveLock) CreateLock(lockDuration time.Duration) {
 	})
 }
 
-func (lock *LiveLock) DoLock(lockDuration time.Duration) error {
+func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {
 	errorMessage, err := lock.doLock(lockDuration)
 	if err != nil {
 		time.Sleep(time.Second)
@@ -117,11 +102,13 @@ func (lock *LiveLock) IsLocked() bool {
 	return lock!=nil && lock.isLocked
 }
 
-func (lock *LiveLock) StopLock() error {
-	close(lock.cancelCh)
+func (lock *LiveLock) StopShortLivedLock() error {
 	if !lock.isLocked {
 		return nil
 	}
+	defer func() {
+		lock.isLocked = false
+	}()
 	return pb.WithFilerClient(false, 0, lock.filer, lock.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.DistributedUnlock(context.Background(), &filer_pb.UnlockRequest{
 			Name:       lock.key,

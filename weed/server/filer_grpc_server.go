@@ -245,8 +245,8 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	fullpath := util.NewFullPath(req.Directory, req.EntryName)
 
 	lockClient := cluster.NewLockClient(fs.grpcDialOption, fs.option.Host)
-	lock := lockClient.NewLock(string(fullpath), string(fs.option.Host))
-	defer lock.StopLock()
+	lock := lockClient.NewShortLivedLock(string(fullpath), string(fs.option.Host))
+	defer lock.StopShortLivedLock()
 
 	var offset int64 = 0
 	entry, err := fs.filer.FindEntry(ctx, fullpath)
