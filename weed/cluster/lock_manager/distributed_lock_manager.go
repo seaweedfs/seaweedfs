@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const MaxDuration = 1<<63 - 1
+const MaxDuration = time.Hour * 24 * 365 * 100
 
 var NoLockServerError = fmt.Errorf("no lock server found")
 
