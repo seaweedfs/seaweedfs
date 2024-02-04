@@ -93,10 +93,9 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 			}
 		})
 		for {
-
-			time.Sleep(time.Second)
-			if err := mqBroker.lockAsBalancer.AttemptToLock(lock_manager.RenewInterval); err != nil {
-				glog.V(0).Infof("AttemptToLock: %v", err)
+			time.Sleep(lock_manager.RenewInterval)
+			if err := mqBroker.lockAsBalancer.AttemptToLock(lock_manager.LiveLockTTL); err != nil {
+				glog.V(4).Infof("AttemptToLock: %v", err)
 			}
 		}
 	}()
