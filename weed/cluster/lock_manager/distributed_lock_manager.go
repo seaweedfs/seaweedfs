@@ -7,7 +7,8 @@ import (
 	"time"
 )
 
-const MaxDuration = time.Hour * 24 * 365 * 100
+const RenewInterval = time.Second * 3
+const LiveLockTTL = time.Second * 7
 
 var NoLockServerError = fmt.Errorf("no lock server found")
 

@@ -35,10 +35,10 @@ type LiveLock struct {
 	filer          pb.ServerAddress
 	cancelCh       chan struct{}
 	grpcDialOption grpc.DialOption
-	isLocked bool
-	self     string
-	lc       *LockClient
-	owner	string
+	isLocked       bool
+	self           string
+	lc             *LockClient
+	owner          string
 }
 
 // NewShortLivedLock creates a lock with a 5-second duration
@@ -47,12 +47,12 @@ func (lc *LockClient) NewShortLivedLock(key string, owner string) (lock *LiveLoc
 		key:            key,
 		filer:          lc.seedFiler,
 		cancelCh:       make(chan struct{}),
-		expireAtNs:     time.Now().Add(5*time.Second).UnixNano(),
+		expireAtNs:     time.Now().Add(5 * time.Second).UnixNano(),
 		grpcDialOption: lc.grpcDialOption,
 		self:           owner,
 		lc:             lc,
 	}
-	lock.retryUntilLocked(5*time.Second)
+	lock.retryUntilLocked(5 * time.Second)
 	return
 }
 
@@ -62,7 +62,7 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 		key:            key,
 		filer:          lc.seedFiler,
 		cancelCh:       make(chan struct{}),
-		expireAtNs:     time.Now().Add(lock_manager.MaxDuration).UnixNano(),
+		expireAtNs:     time.Now().Add(lock_manager.LiveLockTTL).UnixNano(),
 		grpcDialOption: lc.grpcDialOption,
 		self:           owner,
 		lc:             lc,
@@ -72,12 +72,12 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 		lockOwner := ""
 		for {
 			if isLocked {
-				if err := lock.AttemptToLock(lock_manager.MaxDuration); err != nil {
+				if err := lock.AttemptToLock(lock_manager.LiveLockTTL); err != nil {
 					glog.V(0).Infof("Lost lock %s: %v", key, err)
 					isLocked = false
 				}
 			} else {
-				if err := lock.AttemptToLock(lock_manager.MaxDuration); err == nil {
+				if err := lock.AttemptToLock(lock_manager.LiveLockTTL); err == nil {
 					isLocked = true
 				}
 			}
@@ -90,7 +90,7 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 			case <-lock.cancelCh:
 				return
 			default:
-				time.Sleep(5*time.Second)
+				time.Sleep(lock_manager.RenewInterval)
 			}
 		}
 	}()
@@ -111,10 +111,12 @@ func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) {
 func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {
 	errorMessage, err := lock.doLock(lockDuration)
 	if err != nil {
+		glog.Warningf("lock1 %s: %v", lock.key, err)
 		time.Sleep(time.Second)
 		return err
 	}
 	if errorMessage != "" {
+		glog.Warningf("lock2 %s: %v", lock.key, errorMessage)
 		time.Sleep(time.Second)
 		return fmt.Errorf("%v", errorMessage)
 	}
@@ -123,7 +125,7 @@ func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {
 }
 
 func (lock *LiveLock) IsLocked() bool {
-	return lock!=nil && lock.isLocked
+	return lock != nil && lock.isLocked
 }
 
 func (lock *LiveLock) StopShortLivedLock() error {
@@ -154,8 +156,8 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 		if err == nil && resp != nil {
 			lock.renewToken = resp.RenewToken
 		} else {
-			// this can be retried. Need to remember the last valid renewToken
-			// lock.renewToken = ""
+			//this can be retried. Need to remember the last valid renewToken
+			lock.renewToken = ""
 		}
 		if resp != nil {
 			errorMessage = resp.Error
