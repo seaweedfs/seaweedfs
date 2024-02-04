@@ -111,12 +111,10 @@ func (lock *LiveLock) retryUntilLocked(lockDuration time.Duration) {
 func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {
 	errorMessage, err := lock.doLock(lockDuration)
 	if err != nil {
-		glog.Warningf("lock1 %s: %v", lock.key, err)
 		time.Sleep(time.Second)
 		return err
 	}
 	if errorMessage != "" {
-		glog.Warningf("lock2 %s: %v", lock.key, errorMessage)
 		time.Sleep(time.Second)
 		return fmt.Errorf("%v", errorMessage)
 	}
@@ -167,7 +165,9 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 			}
 			if resp.LockOwner != "" {
 				lock.owner = resp.LockOwner
+				// fmt.Printf("lock %s owner: %s\n", lock.key, lock.owner)
 			} else {
+				// fmt.Printf("lock %s has no owner\n", lock.key)
 				lock.owner = ""
 			}
 		}
