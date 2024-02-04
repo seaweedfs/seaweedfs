@@ -58,7 +58,7 @@ require (
 	github.com/karlseguin/ccache/v2 v2.0.8
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	github.com/klauspost/compress v1.17.3 // indirect
-	github.com/klauspost/reedsolomon v1.11.8
+	github.com/klauspost/reedsolomon v1.12.1
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.9
 	github.com/linxGnu/grocksdb v1.8.11
@@ -75,7 +75,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/posener/complete v1.2.3
 	github.com/pquerna/cachecontrol v0.2.0
-	github.com/prometheus/client_golang v1.17.0
+	github.com/prometheus/client_golang v1.18.0
 	github.com/prometheus/client_model v0.5.0 // indirect
 	github.com/prometheus/common v0.45.0 // indirect
 	github.com/prometheus/procfs v0.12.0
@@ -154,9 +154,9 @@ require (
 	github.com/puzpuzpuz/xsync/v2 v2.5.1
 	github.com/rabbitmq/amqp091-go v1.9.0
 	github.com/rclone/rclone v1.65.0
-	github.com/rdleal/intervalst v1.2.1
+	github.com/rdleal/intervalst v1.2.2
 	github.com/schollz/progressbar/v3 v3.14.1
-	github.com/shirou/gopsutil/v3 v3.23.11
+	github.com/shirou/gopsutil/v3 v3.23.12
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.2.0
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.54.3
@@ -254,7 +254,7 @@ require (
 	github.com/jtolio/eventkit v0.0.0-20231019094657-5d77ebb407d9 // indirect
 	github.com/jtolio/noiseconn v0.0.0-20230621152802-afeab29449e0 // indirect
 	github.com/jzelinskie/whirlpool v0.0.0-20201016144138-0675e54bb004 // indirect
-	github.com/klauspost/cpuid/v2 v2.2.5 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.6 // indirect
 	github.com/koofr/go-httpclient v0.0.0-20230225102643-5d51a2e9dea6 // indirect
 	github.com/koofr/go-koofrclient v0.0.0-20221207135200-cbd7fc9ad6a6 // indirect
 	github.com/kr/fs v0.1.0 // indirect

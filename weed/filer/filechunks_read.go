@@ -38,10 +38,10 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOff
 			return int(a.ts - b.ts)
 		}
 		if a.isStart {
-			return -1
+			return 1
 		}
 		if b.isStart {
-			return 1
+			return -1
 		}
 		return 0
 	})
