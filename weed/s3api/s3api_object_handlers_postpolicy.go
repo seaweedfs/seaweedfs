@@ -128,6 +128,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	for k, _ := range formValues {
 		if k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
 			r.Header.Set(k, formValues.Get(k))
+			continue
 		}
 
 		if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
