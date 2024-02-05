@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -122,6 +123,18 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		contentType = fileContentType
 	}
 	r.Header.Set("Content-Type", contentType)
+
+	// Add s3 postpolicy support header
+	for k, _ := range formValues {
+		if k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
+			r.Header.Set(k, formValues.Get(k))
+			continue
+		}
+
+		if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
+			r.Header.Set(k, formValues.Get(k))
+		}
+	}
 
 	etag, errCode := s3a.putToFiler(r, uploadUrl, fileBody, "", bucket)
 
