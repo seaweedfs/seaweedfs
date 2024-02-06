@@ -122,10 +122,6 @@ func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {
 	return nil
 }
 
-func (lock *LiveLock) IsLocked() bool {
-	return lock != nil && lock.isLocked
-}
-
 func (lock *LiveLock) StopShortLivedLock() error {
 	if !lock.isLocked {
 		return nil

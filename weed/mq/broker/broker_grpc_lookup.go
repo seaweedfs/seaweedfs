@@ -7,16 +7,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // LookupTopicBrokers returns the brokers that are serving the topic
 func (b *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq_pb.LookupTopicBrokersRequest) (resp *mq_pb.LookupTopicBrokersResponse, err error) {
-	if !b.lockAsBalancer.IsLocked() {
-		return nil, status.Errorf(codes.Unavailable, "no balancer")
-	}
-	if !b.lockAsBalancer.IsLocked() {
+	if !b.isLockOwner() {
 		proxyErr := b.withBrokerClient(false, pb.ServerAddress(b.lockAsBalancer.LockOwner()), func(client mq_pb.SeaweedMessagingClient) error {
 			resp, err = client.LookupTopicBrokers(ctx, request)
 			return nil
@@ -42,9 +37,6 @@ func (b *MessageQueueBroker) LookupTopicBrokers(ctx context.Context, request *mq
 }
 
 func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.ListTopicsRequest) (resp *mq_pb.ListTopicsResponse, err error) {
-	if !b.lockAsBalancer.IsLocked() {
-		return nil, status.Errorf(codes.Unavailable, "no balancer")
-	}
 	if !b.isLockOwner() {
 		proxyErr := b.withBrokerClient(false, pb.ServerAddress(b.lockAsBalancer.LockOwner()), func(client mq_pb.SeaweedMessagingClient) error {
 			resp, err = client.ListTopics(ctx, request)

@@ -12,7 +12,7 @@ import (
 
 // SubscriberToSubCoordinator coordinates the subscribers
 func (b *MessageQueueBroker) SubscriberToSubCoordinator(stream mq_pb.SeaweedMessaging_SubscriberToSubCoordinatorServer) error {
-	if !b.lockAsBalancer.IsLocked() {
+	if !b.isLockOwner() {
 		return status.Errorf(codes.Unavailable, "not current broker balancer")
 	}
 	req, err := stream.Recv()
@@ -43,7 +43,7 @@ func (b *MessageQueueBroker) SubscriberToSubCoordinator(stream mq_pb.SeaweedMess
 			for i, assignment := range conf.BrokerPartitionAssignments {
 				assignedPartitions[i] = &mq_pb.SubscriberToSubCoordinatorResponse_AssignedPartition{
 					Partition: assignment.Partition,
-					Broker:   assignment.LeaderBroker,
+					Broker:    assignment.LeaderBroker,
 				}
 			}
 			// send partition assignment to subscriber

@@ -16,10 +16,6 @@ import (
 // It generates an assignments based on existing allocations,
 // and then assign the partitions to the brokers.
 func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.ConfigureTopicRequest) (resp *mq_pb.ConfigureTopicResponse, err error) {
-	if !b.lockAsBalancer.IsLocked() {
-		glog.V(0).Infof("broker %s found balancer:%s, %s isLocked:%v", b.option.BrokerAddress(), pb.ServerAddress(b.lockAsBalancer.LockOwner()), b.lockAsBalancer.LockOwner(), b.lockAsBalancer.IsLocked())
-		return nil, status.Errorf(codes.Unavailable, "no balancer")
-	}
 	if !b.isLockOwner() {
 		proxyErr := b.withBrokerClient(false, pb.ServerAddress(b.lockAsBalancer.LockOwner()), func(client mq_pb.SeaweedMessagingClient) error {
 			resp, err = client.ConfigureTopic(ctx, request)

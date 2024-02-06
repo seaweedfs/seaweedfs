@@ -9,7 +9,7 @@ import (
 
 // PublisherToPubBalancer receives connections from brokers and collects stats
 func (b *MessageQueueBroker) PublisherToPubBalancer(stream mq_pb.SeaweedMessaging_PublisherToPubBalancerServer) error {
-	if !b.lockAsBalancer.IsLocked() {
+	if !b.isLockOwner() {
 		return status.Errorf(codes.Unavailable, "not current broker balancer")
 	}
 	req, err := stream.Recv()
@@ -35,7 +35,7 @@ func (b *MessageQueueBroker) PublisherToPubBalancer(stream mq_pb.SeaweedMessagin
 		if err != nil {
 			return err
 		}
-		if !b.lockAsBalancer.IsLocked() {
+		if !b.isLockOwner() {
 			return status.Errorf(codes.Unavailable, "not current broker balancer")
 		}
 		if receivedStats := req.GetStats(); receivedStats != nil {
