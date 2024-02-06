@@ -46,7 +46,6 @@ type MessageQueueBroker struct {
 	localTopicManager *topic.LocalTopicManager
 	Balancer          *pub_balancer.Balancer
 	lockAsBalancer    *cluster.LiveLock
-	currentBalancer   pb.ServerAddress
 	Coordinator       *sub_coordinator.Coordinator
 	accessLock        sync.Mutex
 }
@@ -87,9 +86,8 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 
 		lockClient := cluster.NewLockClient(grpcDialOption, mqBroker.currentFiler)
 		mqBroker.lockAsBalancer = lockClient.StartLongLivedLock(pub_balancer.LockBrokerBalancer, string(self), func(newLockOwner string) {
-			balancer := mqBroker.lockAsBalancer.LockOwner()
-			if err := mqBroker.BrokerConnectToBalancer(balancer); err != nil {
-				glog.V(0).Infof("BrokerConnectToBalancer %s: %v", balancer, err)
+			if err := mqBroker.BrokerConnectToBalancer(newLockOwner); err != nil {
+				glog.V(0).Infof("BrokerConnectToBalancer: %v", err)
 			}
 		})
 		for {

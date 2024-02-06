@@ -17,20 +17,21 @@ import (
 
 type EachPartitionError struct {
 	*mq_pb.BrokerPartitionAssignment
-	Err error
+	Err        error
 	generation int
 }
 
 type EachPartitionPublishJob struct {
 	*mq_pb.BrokerPartitionAssignment
-	stopChan chan bool
-	wg 	 sync.WaitGroup
+	stopChan   chan bool
+	wg         sync.WaitGroup
 	generation int
 	inputQueue *buffered_queue.BufferedQueue[*mq_pb.DataMessage]
 }
+
 func (p *TopicPublisher) startSchedulerThread(wg *sync.WaitGroup) error {
 
-	if err := p.doEnsureConfigureTopic(); err != nil {
+	if err := p.doConfigureTopic(); err != nil {
 		return fmt.Errorf("configure topic %s: %v", p.config.Topic, err)
 	}
 
@@ -101,9 +102,9 @@ func (p *TopicPublisher) onEachAssignments(generation int, assignments []*mq_pb.
 		// start a go routine to publish to this partition
 		job := &EachPartitionPublishJob{
 			BrokerPartitionAssignment: assignment,
-			stopChan: make(chan bool, 1),
-			generation: generation,
-			inputQueue: buffered_queue.NewBufferedQueue[*mq_pb.DataMessage](1024),
+			stopChan:                  make(chan bool, 1),
+			generation:                generation,
+			inputQueue:                buffered_queue.NewBufferedQueue[*mq_pb.DataMessage](1024),
 		}
 		job.wg.Add(1)
 		go func(job *EachPartitionPublishJob) {
@@ -135,13 +136,13 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 	}
 	publishClient := &PublishClient{
 		SeaweedMessaging_PublishMessageClient: stream,
-		Broker:                         job.LeaderBroker,
+		Broker:                                job.LeaderBroker,
 	}
 	if err = publishClient.Send(&mq_pb.PublishMessageRequest{
 		Message: &mq_pb.PublishMessageRequest_Init{
 			Init: &mq_pb.PublishMessageRequest_InitMessage{
-				Topic: p.config.Topic.ToPbTopic(),
-				Partition: job.Partition,
+				Topic:       p.config.Topic.ToPbTopic(),
+				Partition:   job.Partition,
 				AckInterval: 128,
 			},
 		},
@@ -202,7 +203,7 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 	return nil
 }
 
-func (p *TopicPublisher) doEnsureConfigureTopic() (err error) {
+func (p *TopicPublisher) doConfigureTopic() (err error) {
 	if len(p.config.Brokers) == 0 {
 		return fmt.Errorf("no bootstrap brokers")
 	}
@@ -213,7 +214,7 @@ func (p *TopicPublisher) doEnsureConfigureTopic() (err error) {
 			p.grpcDialOption,
 			func(client mq_pb.SeaweedMessagingClient) error {
 				_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
-					Topic: p.config.Topic.ToPbTopic(),
+					Topic:          p.config.Topic.ToPbTopic(),
 					PartitionCount: p.config.CreateTopicPartitionCount,
 				})
 				return err
@@ -226,7 +227,7 @@ func (p *TopicPublisher) doEnsureConfigureTopic() (err error) {
 	}
 
 	if lastErr != nil {
-		return fmt.Errorf("configure topic %s: %v", p.config.Topic, err)
+		return fmt.Errorf("doConfigureTopic %s: %v", p.config.Topic, err)
 	}
 	return nil
 }

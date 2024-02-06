@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"io"
 	"math/rand"
@@ -14,31 +12,16 @@ import (
 )
 
 // BrokerConnectToBalancer connects to the broker balancer and sends stats
-func (b *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
-	// find the lock owner
-	var brokerBalancer string
-	err := b.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.FindLockOwner(context.Background(), &filer_pb.FindLockOwnerRequest{
-			Name: pub_balancer.LockBrokerBalancer,
-		})
-		if err != nil {
-			return err
-		}
-		brokerBalancer = resp.Owner
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	b.currentBalancer = pb.ServerAddress(brokerBalancer)
+func (b *MessageQueueBroker) BrokerConnectToBalancer(brokerBalancer string) error {
+	self := string(b.option.BrokerAddress())
 
-	glog.V(0).Infof("broker %s found balancer %s", self, brokerBalancer)
+	glog.V(0).Infof("broker %s connects to balancer %s", self, brokerBalancer)
 	if brokerBalancer == "" {
 		return fmt.Errorf("no balancer found")
 	}
 
 	// connect to the lock owner
-	err = pb.WithBrokerGrpcClient(false, brokerBalancer, b.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+	return pb.WithBrokerGrpcClient(false, brokerBalancer, b.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 		stream, err := client.PublisherToPubBalancer(context.Background())
 		if err != nil {
 			return fmt.Errorf("connect to balancer %v: %v", brokerBalancer, err)
@@ -75,6 +58,4 @@ func (b *MessageQueueBroker) BrokerConnectToBalancer(self string) error {
 
 		return nil
 	})
-
-	return err
 }
