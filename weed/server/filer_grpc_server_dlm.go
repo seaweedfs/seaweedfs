@@ -83,7 +83,7 @@ func (fs *FilerServer) DistributedUnlock(ctx context.Context, req *filer_pb.Unlo
 
 func (fs *FilerServer) FindLockOwner(ctx context.Context, req *filer_pb.FindLockOwnerRequest) (*filer_pb.FindLockOwnerResponse, error) {
 	owner, movedTo, err := fs.filer.Dlm.FindLockOwner(req.Name)
-	if !req.IsMoved && movedTo != "" && err == lock_manager.LockNotFound {
+	if !req.IsMoved && movedTo != "" || err == lock_manager.LockNotFound {
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			secondResp, err := client.FindLockOwner(context.Background(), &filer_pb.FindLockOwnerRequest{
 				Name:    req.Name,
