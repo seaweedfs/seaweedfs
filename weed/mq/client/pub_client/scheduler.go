@@ -166,12 +166,12 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 					return
 				}
 				publishClient.Err = err
-				fmt.Printf("publish to %s error: %v\n", publishClient.Broker, err)
+				fmt.Printf("publish1 to %s error: %v\n", publishClient.Broker, err)
 				return
 			}
 			if ackResp.Error != "" {
 				publishClient.Err = fmt.Errorf("ack error: %v", ackResp.Error)
-				fmt.Printf("publish to %s error: %v\n", publishClient.Broker, ackResp.Error)
+				fmt.Printf("publish2 to %s error: %v\n", publishClient.Broker, ackResp.Error)
 				return
 			}
 			if ackResp.AckSequence > 0 {
