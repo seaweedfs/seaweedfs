@@ -1,6 +1,7 @@
 package sub_client
 
 import (
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"google.golang.org/grpc"
 	"time"
@@ -11,14 +12,13 @@ type SubscriberConfiguration struct {
 	ConsumerGroup           string
 	ConsumerGroupInstanceId string
 	GroupMinimumPeers       int32
-	GroupMaximumPeers int32
-	BootstrapServers  []string
-	GrpcDialOption    grpc.DialOption
+	GroupMaximumPeers       int32
+	BootstrapServers        []string
+	GrpcDialOption          grpc.DialOption
 }
 
 type ContentConfiguration struct {
-	Namespace string
-	Topic     string
+	Topic     topic.Topic
 	Filter    string
 	StartTime time.Time
 }

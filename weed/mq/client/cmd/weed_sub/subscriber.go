@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/sub_client"
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -14,7 +15,7 @@ import (
 
 var (
 	namespace   = flag.String("ns", "test", "namespace")
-	topic       = flag.String("topic", "test", "topic")
+	t           = flag.String("topic", "test", "topic")
 	seedBrokers = flag.String("brokers", "localhost:17777", "seed brokers")
 
 	clientId = flag.Uint("client_id", uint(util.RandomInt32()), "client id")
@@ -31,8 +32,7 @@ func main() {
 	}
 
 	contentConfig := &sub_client.ContentConfiguration{
-		Namespace: *namespace,
-		Topic:     *topic,
+		Topic:     topic.NewTopic(*namespace, *t),
 		Filter:    "",
 		StartTime: time.Unix(1, 1),
 	}
