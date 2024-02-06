@@ -161,8 +161,8 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 		for {
 			ackResp, err := publishClient.Recv()
 			if err != nil {
-				e, ok := status.FromError(err)
-				if ok && e.Code() == codes.Unknown && e.Message() == "EOF" {
+				e, _ := status.FromError(err)
+				if e.Code() == codes.Unknown && e.Message() == "EOF" {
 					return
 				}
 				publishClient.Err = err
