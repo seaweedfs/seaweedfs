@@ -1,6 +1,6 @@
 module github.com/seaweedfs/seaweedfs
 
-go 1.21
+go 1.22
 
 require (
 	cloud.google.com/go v0.111.0 // indirect
