@@ -73,6 +73,11 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if fs.option.ShowUI == false {
+		http.NotFound(w, r)
+		return
+	}
+
 	err = ui.StatusTpl.Execute(w, struct {
 		Path                  string
 		Breadcrumbs           []ui.Breadcrumb
@@ -95,4 +100,5 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		glog.V(0).Infof("Template Execute Error: %v", err)
 	}
+
 }

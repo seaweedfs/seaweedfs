@@ -72,6 +72,7 @@ type FilerOption struct {
 	DownloadMaxBytesPs    int64
 	DiskType              string
 	AllowedOrigins        []string
+	ShowUI                bool
 }
 
 type FilerServer struct {
@@ -114,6 +115,10 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	allowedOrigins := v.GetString("cors.allowed_origins.values")
 	domains := strings.Split(allowedOrigins, ",")
 	option.AllowedOrigins = domains
+
+	v.SetDefault("filer.ui.enabled", true)
+	showFilerUI := v.GetBool("filer.ui.enabled")
+	option.ShowUI = showFilerUI
 
 	fs = &FilerServer{
 		option:                option,
