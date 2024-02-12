@@ -78,6 +78,11 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if fs.option.ShowUI == false {
+		http.NotFound(w, r)
+		return
+	}
+
 	err = ui.StatusTpl.Execute(w, struct {
 		Path                  string
 		Breadcrumbs           []ui.Breadcrumb
