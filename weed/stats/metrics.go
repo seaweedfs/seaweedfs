@@ -84,6 +84,14 @@ var (
 			Subsystem: "filer",
 			Name:      "request_total",
 			Help:      "Counter of filer requests.",
+		}, []string{"type", "code"})
+
+	FilerHandlerCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "filer",
+			Name:      "handler_total",
+			Help:      "Counter of filer handlers.",
 		}, []string{"type"})
 
 	FilerRequestHistogram = prometheus.NewHistogramVec(
@@ -134,6 +142,14 @@ var (
 			Subsystem: "volumeServer",
 			Name:      "request_total",
 			Help:      "Counter of volume server requests.",
+		}, []string{"type", "code"})
+
+	VolumeServerHandlerCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "handler_total",
+			Help:      "Counter of volume server handlers.",
 		}, []string{"type"})
 
 	VolumeServerVacuumingCompactCounter = prometheus.NewCounterVec(
@@ -245,6 +261,7 @@ func init() {
 	Gather.MustRegister(MasterReplicaPlacementMismatch)
 
 	Gather.MustRegister(FilerRequestCounter)
+	Gather.MustRegister(FilerHandlerCounter)
 	Gather.MustRegister(FilerRequestHistogram)
 	Gather.MustRegister(FilerStoreCounter)
 	Gather.MustRegister(FilerStoreHistogram)
@@ -254,6 +271,7 @@ func init() {
 	Gather.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
 	Gather.MustRegister(VolumeServerRequestCounter)
+	Gather.MustRegister(VolumeServerHandlerCounter)
 	Gather.MustRegister(VolumeServerRequestHistogram)
 	Gather.MustRegister(VolumeServerVacuumingCompactCounter)
 	Gather.MustRegister(VolumeServerVacuumingCommitCounter)

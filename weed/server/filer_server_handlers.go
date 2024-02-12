@@ -1,14 +1,18 @@
 package weed_server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
@@ -17,7 +21,8 @@ import (
 
 func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-
+	statusRecorder := stats.NewStatusResponseWriter(w)
+	w = statusRecorder
 	origin := r.Header.Get("Origin")
 	if origin != "" {
 		if fs.option.AllowedOrigins == nil || len(fs.option.AllowedOrigins) == 0 || fs.option.AllowedOrigins[0] == "*" {
@@ -42,7 +47,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Methods", "PUT, POST, GET, DELETE, OPTIONS")
 	}
 
-	if r.Method == "OPTIONS" {
+	if r.Method == http.MethodOptions {
 		OptionsHandler(w, r, false)
 		return
 	}
@@ -53,37 +58,35 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		fileId = r.RequestURI[len("/?proxyChunkId="):]
 	}
 	if fileId != "" {
-		stats.FilerRequestCounter.WithLabelValues(stats.ChunkProxy).Inc()
 		fs.proxyToVolumeServer(w, r, fileId)
+		stats.FilerHandlerCounter.WithLabelValues(stats.ChunkProxy).Inc()
 		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkProxy).Observe(time.Since(start).Seconds())
 		return
 	}
 
-	isReadHttpCall := r.Method == "GET" || r.Method == "HEAD"
+	defer func() {
+		stats.FilerRequestCounter.WithLabelValues(r.Method, strconv.Itoa(statusRecorder.Status)).Inc()
+		stats.FilerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
+	}()
+
+	isReadHttpCall := r.Method == http.MethodGet || r.Method == http.MethodHead
 	if !fs.maybeCheckJwtAuthorization(r, !isReadHttpCall) {
 		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 		return
 	}
 
-	stats.FilerRequestCounter.WithLabelValues(r.Method).Inc()
-	defer func() {
-		stats.FilerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
-	}()
-
 	w.Header().Set("Server", "SeaweedFS Filer "+util.VERSION)
 
 	switch r.Method {
-	case "GET":
+	case http.MethodGet, http.MethodHead:
 		fs.GetOrHeadHandler(w, r)
-	case "HEAD":
-		fs.GetOrHeadHandler(w, r)
-	case "DELETE":
+	case http.MethodDelete:
 		if _, ok := r.URL.Query()["tagging"]; ok {
 			fs.DeleteTaggingHandler(w, r)
 		} else {
 			fs.DeleteHandler(w, r)
 		}
-	case "POST", "PUT":
+	case http.MethodPost, http.MethodPut:
 		// wait until in flight data is less than the limit
 		contentLength := getContentLength(r)
 		fs.inFlightDataLimitCond.L.Lock()
@@ -100,7 +103,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 			fs.inFlightDataLimitCond.Signal()
 		}()
 
-		if r.Method == "PUT" {
+		if r.Method == http.MethodPut {
 			if _, ok := r.URL.Query()["tagging"]; ok {
 				fs.PutTaggingHandler(w, r)
 			} else {
@@ -109,12 +112,16 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		} else { // method == "POST"
 			fs.PostHandler(w, r, contentLength)
 		}
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
 func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
+	statusRecorder := stats.NewStatusResponseWriter(w)
+	w = statusRecorder
 
 	os.Stdout.WriteString("Request: " + r.Method + " " + r.URL.String() + "\n")
 
@@ -140,12 +147,12 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
 
-	stats.FilerRequestCounter.WithLabelValues(r.Method).Inc()
 	defer func() {
+		stats.FilerRequestCounter.WithLabelValues(r.Method, strconv.Itoa(statusRecorder.Status)).Inc()
 		stats.FilerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
 	}()
 	// We handle OPTIONS first because it never should be authenticated
-	if r.Method == "OPTIONS" {
+	if r.Method == http.MethodOptions {
 		OptionsHandler(w, r, true)
 		return
 	}
@@ -158,10 +165,10 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Server", "SeaweedFS Filer "+util.VERSION)
 
 	switch r.Method {
-	case "GET":
+	case http.MethodGet, http.MethodHead:
 		fs.GetOrHeadHandler(w, r)
-	case "HEAD":
-		fs.GetOrHeadHandler(w, r)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
@@ -216,5 +223,10 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 
 func (fs *FilerServer) filerHealthzHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Server", "SeaweedFS Filer "+util.VERSION)
-	w.WriteHeader(http.StatusOK)
+	if _, err := fs.filer.Store.FindEntry(context.Background(), filer.TopicsDir); err != nil && err != filer_pb.ErrNotFound {
+		glog.Warningf("filerHealthzHandler FindEntry: %+v", err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
 }

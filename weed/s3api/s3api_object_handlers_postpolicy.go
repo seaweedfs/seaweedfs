@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -39,7 +40,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	}
 	defer form.RemoveAll()
 
-	fileBody, fileName, fileSize, formValues, err := extractPostPolicyFormValues(form)
+	fileBody, fileName, fileContentType, fileSize, formValues, err := extractPostPolicyFormValues(form)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedPOSTRequest)
 		return
@@ -115,6 +116,26 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 
 	uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlEscapeObject(object))
 
+	// Get ContentType from post formData
+	// Otherwise from formFile ContentType
+	contentType := formValues.Get("Content-Type")
+	if contentType == "" {
+		contentType = fileContentType
+	}
+	r.Header.Set("Content-Type", contentType)
+
+	// Add s3 postpolicy support header
+	for k, _ := range formValues {
+		if k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
+			r.Header.Set(k, formValues.Get(k))
+			continue
+		}
+
+		if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
+			r.Header.Set(k, formValues.Get(k))
+		}
+	}
+
 	etag, errCode := s3a.putToFiler(r, uploadUrl, fileBody, "", bucket)
 
 	if errCode != s3err.ErrNone {
@@ -152,9 +173,10 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 }
 
 // Extract form fields and file data from a HTTP POST Policy
-func extractPostPolicyFormValues(form *multipart.Form) (filePart io.ReadCloser, fileName string, fileSize int64, formValues http.Header, err error) {
+func extractPostPolicyFormValues(form *multipart.Form) (filePart io.ReadCloser, fileName, fileContentType string, fileSize int64, formValues http.Header, err error) {
 	// / HTML Form values
 	fileName = ""
+	fileContentType = ""
 
 	// Canonicalize the form values into http.Header.
 	formValues = make(http.Header)
@@ -164,7 +186,7 @@ func extractPostPolicyFormValues(form *multipart.Form) (filePart io.ReadCloser, 
 
 	// Validate form values.
 	if err = validateFormFieldSize(formValues); err != nil {
-		return nil, "", 0, nil, err
+		return nil, "", "", 0, nil, err
 	}
 
 	// this means that filename="" was not specified for file key and Go has
@@ -177,7 +199,7 @@ func extractPostPolicyFormValues(form *multipart.Form) (filePart io.ReadCloser, 
 		}
 		fileSize = int64(b.Len())
 		filePart = io.NopCloser(b)
-		return filePart, fileName, fileSize, formValues, nil
+		return filePart, fileName, fileContentType, fileSize, formValues, nil
 	}
 
 	// Iterator until we find a valid File field and break
@@ -185,32 +207,34 @@ func extractPostPolicyFormValues(form *multipart.Form) (filePart io.ReadCloser, 
 		canonicalFormName := http.CanonicalHeaderKey(k)
 		if canonicalFormName == "File" {
 			if len(v) == 0 {
-				return nil, "", 0, nil, errors.New("Invalid arguments specified")
+				return nil, "", "", 0, nil, errors.New("Invalid arguments specified")
 			}
 			// Fetch fileHeader which has the uploaded file information
 			fileHeader := v[0]
 			// Set filename
 			fileName = fileHeader.Filename
+			// Set contentType
+			fileContentType = fileHeader.Header.Get("Content-Type")
 			// Open the uploaded part
 			filePart, err = fileHeader.Open()
 			if err != nil {
-				return nil, "", 0, nil, err
+				return nil, "", "", 0, nil, err
 			}
 			// Compute file size
 			fileSize, err = filePart.(io.Seeker).Seek(0, 2)
 			if err != nil {
-				return nil, "", 0, nil, err
+				return nil, "", "", 0, nil, err
 			}
 			// Reset Seek to the beginning
 			_, err = filePart.(io.Seeker).Seek(0, 0)
 			if err != nil {
-				return nil, "", 0, nil, err
+				return nil, "", "", 0, nil, err
 			}
 			// File found and ready for reading
 			break
 		}
 	}
-	return filePart, fileName, fileSize, formValues, nil
+	return filePart, fileName, fileContentType, fileSize, formValues, nil
 }
 
 // Validate form field size for s3 specification requirement.

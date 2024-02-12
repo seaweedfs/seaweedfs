@@ -16,7 +16,6 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
-      helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
       app.kubernetes.io/instance: {{ .Release.Name }}
       app.kubernetes.io/component: volume
   template:
@@ -55,17 +54,19 @@ spec:
       {{- $initContainers_exists := include "volume.initContainers_exists" . -}}
       {{- if $initContainers_exists }}
       initContainers:
-        {{- if .Values.volume.dir_idx }}
+        {{- if .Values.volume.idx }}
         - name: seaweedfs-vol-move-idx
           image: {{ template "volume.image" . }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy | default "IfNotPresent" }}
           command: [ '/bin/sh', '-c' ]
-          args: [ 'if ls {{ .Values.volume.dir }}/*.idx >/dev/null 2>&1; then mv {{ .Values.volume.dir }}/*.idx {{ .Values.volume.dir_idx }}/; fi;' ]
+          args: [ '{{range $dir :=  .Values.volume.dataDirs }}if ls /{{$dir.name}}/*.idx  >/dev/null 2>&1; then mv /{{$dir.name}}/*.idx /idx/ ; fi; {{end}}' ]
           volumeMounts:
             - name: idx
-              mountPath: {{ .Values.volume.dir_idx }}
-            - name: data
-              mountPath: {{ .Values.volume.dir }}
+              mountPath: /idx
+          {{- range $dir :=  .Values.volume.dataDirs }}
+            - name: {{ $dir.name }}
+              mountPath: /{{ $dir.name }}
+          {{- end }}
         {{- end }}
         {{- if .Values.volume.initContainers }}
         {{ tpl .Values.volume.initContainers . | nindent 8 | trim }}
@@ -101,7 +102,7 @@ spec:
             - "-ec"
             - |
               exec /usr/bin/weed \
-                {{- if eq .Values.volume.logs.type "hostPath" }}
+                {{- if .Values.volume.logs }}
                 -logdir=/logs \
                 {{- else }}
                 -logtostderr=true \
@@ -116,11 +117,11 @@ spec:
                 {{- if .Values.volume.metricsPort }}
                 -metricsPort={{ .Values.volume.metricsPort }} \
                 {{- end }}
-                -dir={{ .Values.volume.dir }} \
-                {{- if .Values.volume.dir_idx }}
-                -dir.idx={{ .Values.volume.dir_idx }} \
+                -dir {{range $index, $dir :=  .Values.volume.dataDirs }}{{if ne $index 0}},{{end}}/{{$dir.name}}{{end}} \
+                {{- if .Values.volume.idx }}
+                -dir.idx=/idx \
                 {{- end }}
-                -max={{ .Values.volume.maxVolumes }} \
+                -max {{range $index, $dir :=  .Values.volume.dataDirs }}{{if ne $index 0}},{{end}}{{$dir.maxVolumes}}{{end}} \
                 {{- if .Values.volume.rack }}
                 -rack={{ .Values.volume.rack }} \
                 {{- end }}
@@ -147,17 +148,19 @@ spec:
                 -minFreeSpacePercent={{ .Values.volume.minFreeSpacePercent }} \
                 -ip=${POD_NAME}.${SEAWEEDFS_FULLNAME}-volume.{{ .Release.Namespace }} \
                 -compactionMBps={{ .Values.volume.compactionMBps }} \
-                -mserver={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
+                -mserver={{ if .Values.global.masterServer }}{{.Values.global.masterServer}}{{ else }}{{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{ end }}
           volumeMounts:
-            - name: data
-              mountPath: "{{ .Values.volume.dir }}/"
-            {{- if .Values.volume.dir_idx }}
-            - name: idx
-              mountPath: "{{ .Values.volume.dir_idx }}/"
+            {{- range $dir := .Values.volume.dataDirs }}
+            - name: {{ $dir.name }}
+              mountPath: "/{{ $dir.name }}/"
             {{- end }}
-            {{- if eq .Values.volume.logs.type "hostPath" }}
+            {{- if .Values.volume.logs }}
             - name: logs
               mountPath: "/logs/"
+            {{- end }}
+            {{- if .Values.volume.idx }}
+            - name: idx
+              mountPath: "/idx/"
             {{- end }}
             {{- if .Values.global.enableSecurity }}
             - name: security-config
@@ -222,40 +225,51 @@ spec:
       {{- include "common.tplvalues.render" (dict "value" .Values.volume.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
-        {{- if eq .Values.volume.data.type "hostPath" }}
-        - name: data
+
+     {{- range $dir := .Values.volume.dataDirs }}
+
+      {{- if eq $dir.type "hostPath" }}
+        - name: {{ $dir.name }}
           hostPath:
-            path: {{ .Values.volume.data.hostPathPrefix }}/object_store/
+            path: {{ $dir.hostPathPrefix }}/object_store/
             type: DirectoryOrCreate
-        {{- end }}
-        {{- if eq .Values.volume.data.type "existingClaim" }}
-        - name: data
+      {{- end }}
+      {{- if eq $dir.type "existingClaim" }}
+        - name: {{ $dir.name }}
           persistentVolumeClaim:
-            claimName: {{ .Values.volume.data.claimName }} 
-        {{- end }}
-        {{- if and (eq .Values.volume.idx.type "hostPath") .Values.volume.dir_idx }}
+            claimName: {{ $dir.claimName }}
+      {{- end }}
+
+     {{- end }}
+
+     {{- if .Values.volume.idx }}
+       {{- if eq .Values.volume.idx.type "hostPath" }}
         - name: idx
           hostPath:
             path: {{ .Values.volume.idx.hostPathPrefix }}/seaweedfs-volume-idx/
             type: DirectoryOrCreate
-        {{- end }}
-        {{- if eq .Values.volume.idx.type "existingClaim" }}
+       {{- end }}
+       {{- if eq .Values.volume.idx.type "existingClaim" }}
         - name: idx
           persistentVolumeClaim:
-            claimName: {{ .Values.volume.idx.claimName }} 
-        {{- end }}
-        {{- if eq .Values.volume.logs.type "hostPath" }}
+            claimName: {{ .Values.volume.idx.claimName }}
+       {{- end }}
+     {{- end }}
+
+     {{- if .Values.volume.logs }}
+       {{- if eq .Values.volume.logs.type "hostPath" }}
         - name: logs
           hostPath:
             path: {{ .Values.volume.logs.hostPathPrefix }}/logs/seaweedfs/volume
             type: DirectoryOrCreate
-        {{- end }}
-        {{- if eq .Values.volume.logs.type "existingClaim" }}
+       {{- end }}
+       {{- if eq .Values.volume.logs.type "existingClaim" }}
         - name: logs
           persistentVolumeClaim:
-            claimName: {{ .Values.volume.data.claimName }} 
-        {{- end }}
-        {{- if .Values.global.enableSecurity }}
+            claimName: {{ .Values.volume.logs.claimName }}
+       {{- end }}
+     {{- end }}
+     {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:
             name: {{ template "seaweedfs.name" . }}-security-config
@@ -274,7 +288,7 @@ spec:
         - name: client-cert
           secret:
             secretName: {{ template "seaweedfs.name" . }}-client-cert
-        {{- end }}
+      {{- end }}
       {{- if .Values.volume.extraVolumes }}
         {{ tpl .Values.volume.extraVolumes . | indent 8 | trim }}
       {{- end }}
@@ -282,24 +296,25 @@ spec:
       nodeSelector:
         {{ tpl .Values.volume.nodeSelector . | indent 8 | trim }}
       {{- end }}
-  {{- $pvc_exists := include "volume.pvc_exists" . -}}
-  {{- if $pvc_exists }}
   volumeClaimTemplates:
-    {{- if eq .Values.volume.data.type "persistentVolumeClaim"}}
+    {{- range $dir := .Values.volume.dataDirs }}
+    {{- if eq $dir.type "persistentVolumeClaim" }}
     - metadata:
-        name: data
-        {{- with .Values.volume.data.annotations }}
+        name: {{ $dir.name }}
+        {{- with $dir.annotations }}
         annotations:
           {{- toYaml . | nindent 10 }}
         {{- end }}
       spec:
         accessModes: [ "ReadWriteOnce" ]
-        storageClassName: {{ .Values.volume.data.storageClass }}
+        storageClassName: {{ $dir.storageClass }}
         resources:
           requests:
-            storage: {{ .Values.volume.data.size }}
+            storage: {{ $dir.size }}
     {{- end }}
-    {{- if and (eq .Values.volume.idx.type "persistentVolumeClaim") .Values.volume.dir_idx }}
+    {{- end }}
+
+    {{- if and .Values.volume.idx (eq .Values.volume.idx.type "persistentVolumeClaim") }}
     - metadata:
         name: idx
         {{- with .Values.volume.idx.annotations }}
@@ -313,7 +328,7 @@ spec:
           requests:
             storage: {{ .Values.volume.idx.size }}
     {{- end }}
-    {{- if eq .Values.volume.logs.type "persistentVolumeClaim" }}
+    {{- if and .Values.volume.logs (eq .Values.volume.logs.type "persistentVolumeClaim") }}
     - metadata:
         name: logs
         {{- with .Values.volume.logs.annotations }}
@@ -327,5 +342,4 @@ spec:
           requests:
             storage: {{ .Values.volume.logs.size }}
     {{- end }}
-      {{- end }}
-{{- end }}
+    {{- end }}

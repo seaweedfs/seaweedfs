@@ -3,19 +3,54 @@ services:
   node1:
     image: chrislusf/seaweedfs:local
     command: "server -master -volume -filer"
+    ports:
+      - 8888:8888
+      - 18888:18888
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "-I", "http://localhost:9333/cluster/healthz" ]
+      interval: 1s
+      start_period: 10s
+      timeout: 30s
   mount1:
     image: chrislusf/seaweedfs:local
     privileged: true
     command: "mount -filer=node1:8888 -dir=/mnt -dirAutoCreate"
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "-I", "http://node1:8888/" ]
+      interval: 1s
+      start_period: 10s
+      timeout: 30s
+    depends_on:
+      node1:
+        condition: service_healthy
   node2:
     image: chrislusf/seaweedfs:local
     ports:
       - 7888:8888
+      - 17888:18888
     command: "server -master -volume -filer"
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "-I", "http://localhost:9333/cluster/healthz" ]
+      interval: 1s
+      start_period: 10s
+      timeout: 30s
   mount2:
     image: chrislusf/seaweedfs:local
     privileged: true
     command: "mount -filer=node2:8888 -dir=/mnt -dirAutoCreate"
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "-I", "http://node2:8888/" ]
+      interval: 1s
+      start_period: 10s
+      timeout: 30s
+    depends_on:
+      node2:
+        condition: service_healthy
   sync:
     image: chrislusf/seaweedfs:local
     command: "-v=4 filer.sync -a=node1:8888 -b=node2:8888 -a.debug -b.debug"
+    depends_on:
+      mount1:
+        condition: service_healthy
+      mount2:
+        condition: service_healthy

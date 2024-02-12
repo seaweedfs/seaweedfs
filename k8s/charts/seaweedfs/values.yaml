@@ -10,6 +10,7 @@ global:
   restartPolicy: Always
   loggingLevel: 1
   enableSecurity: false
+  masterServer: null
   securityConfig:
     jwtSigning:
       volumeWrite: true
@@ -89,7 +90,6 @@ master:
   #    claimName: "my-pvc"
   data:
     type: "hostPath"
-    size: ""
     storageClass: ""
     hostPathPrefix: /ssd
 
@@ -98,7 +98,7 @@ master:
     size: ""
     storageClass: ""
     hostPathPrefix: /storage
-  
+
   ## @param master.sidecars Add additional sidecar containers to the master pod(s)
   ## e.g:
   ## sidecars:
@@ -239,49 +239,63 @@ volume:
   # minimum free disk space(in percents). If free disk space lower this value - all volumes marks as ReadOnly
   minFreeSpacePercent: 7
 
-  # You may use ANY storage-class, example with local-path-provisioner
+  # For each data disk you may use ANY storage-class, example with local-path-provisioner
   # Annotations are optional.
-  #  data:
-  #    type: "persistentVolumeClaim"
-  #    size: "24Ti"
-  #    storageClass: "local-path-provisioner"
-  #    annotations:
+  #  dataDirs:
+  #   - name: data:
+  #     type: "persistentVolumeClaim"
+  #     size: "24Ti"
+  #     storageClass: "local-path-provisioner"
+  #     annotations:
   #      "key": "value"
+  #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
   #
   # You may also spacify an existing claim:
-  #  data:
-  #    type: "existingClaim"
-  #    claimName: "my-pvc"
+  #    - name: data
+  #      type: "existingClaim"
+  #      claimName: "my-pvc"
+  #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
 
-  data:
+  dataDirs:
+  - name: data1
     type: "hostPath"
-    size: ""
-    storageClass: ""
-    hostPathPrefix: /storage
-
-  idx:
-    type: "hostPath"
-    size: ""
-    storageClass: ""
     hostPathPrefix: /ssd
+    maxVolumes: 0
 
-  logs:
-    type: "hostPath"
-    size: ""
-    storageClass: ""
-    hostPathPrefix: /storage
+   # - name: data2
+   #   type: "persistentVolumeClaim"
+   #   storageClass: "yourClassNameOfChoice"
+   #   size: "800Gi"
+   #   maxVolumes: 0
+
+  # idx can be defined by:
+  #
+  # idx:
+  #  type: "hostPath"
+  #  hostPathPrefix: /ssd
+  #
+  # or
+  #
+  # idx:
+  #  type: "persistentVolumeClaim"
+  #  size: "20Gi"
+  #  storageClass: "local-path-provisioner"
+  #
+  # or
+  #
+  # idx:
+  #   type: "existingClaim"
+  #   claimName: "myClaim"
+
+  # same applies to "logs"
+
+  idx: ""
+
+  logs: ""
 
   # limit background compaction or copying speed in mega bytes per second
   compactionMBps: "50"
 
-  # Directories to store data files. dir[,dir]... (default "/tmp")
-  dir: "/data"
-  # Directories to store index files. dir[,dir]... (default is the same as "dir")
-  dir_idx: null
-
-  # Maximum numbers of volumes, count[,count]...
-  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
-  maxVolumes: "0"
 
   # Volume server's rack name
   rack: null
@@ -297,7 +311,7 @@ volume:
 
   # Adjust jpg orientation when uploading.
   imagesFixOrientation: false
-  
+
   ## @param volume.sidecars Add additional sidecar containers to the volume pod(s)
   ## e.g:
   ## sidecars:
@@ -451,7 +465,7 @@ filer:
     size: ""
     storageClass: ""
     hostPathPrefix: /storage
-  
+
   ## @param filer.sidecars Add additional sidecar containers to the filer pod(s)
   ## e.g:
   ## sidecars:
@@ -644,7 +658,7 @@ s3:
 
   # Suffix of the host name, {bucket}.{domainName}
   domainName: ""
-  
+
   ## @param s3.sidecars Add additional sidecar containers to the s3 pod(s)
   ## e.g:
   ## sidecars:

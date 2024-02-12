@@ -553,3 +553,18 @@ func TestViewFromVisibleIntervals3(t *testing.T) {
 	}
 
 }
+
+func TestCompactFileChunks3(t *testing.T) {
+	chunks := []*filer_pb.FileChunk{
+		{Offset: 0, Size: 100, FileId: "abc", ModifiedTsNs: 50},
+		{Offset: 100, Size: 100, FileId: "ghi", ModifiedTsNs: 50},
+		{Offset: 200, Size: 100, FileId: "jkl", ModifiedTsNs: 100},
+		{Offset: 300, Size: 100, FileId: "def", ModifiedTsNs: 200},
+	}
+
+	compacted, _ := CompactFileChunks(nil, chunks)
+
+	if len(compacted) != 4 {
+		t.Fatalf("unexpected compacted: %d", len(compacted))
+	}
+}

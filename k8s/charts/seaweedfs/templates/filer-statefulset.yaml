@@ -23,7 +23,6 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
-      helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
       app.kubernetes.io/instance: {{ .Release.Name }}
       app.kubernetes.io/component: filer
   template:
@@ -186,7 +185,7 @@ spec:
               -s3.auditLogConfig=/etc/sw/filer_s3_auditLogConfig.json \
               {{- end }}
               {{- end }}
-              -master={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}
+              -master={{ if .Values.global.masterServer }}{{.Values.global.masterServer}}{{ else }}{{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{ end }}
           volumeMounts:
             {{- if eq .Values.filer.logs.type "hostPath" }}
             - name: seaweedfs-filer-log-volume

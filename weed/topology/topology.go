@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -273,6 +274,9 @@ func (t *Topology) RegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 }
 func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 	glog.Infof("removing volume info: %+v from %v", v, dn.id)
+	if v.ReplicaPlacement.GetCopyCount() > 1 {
+		stats.MasterReplicaPlacementMismatch.WithLabelValues(v.Collection, v.Id.String()).Set(0)
+	}
 	diskType := types.ToDiskType(v.DiskType)
 	volumeLayout := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 	volumeLayout.UnRegisterVolume(&v, dn)
