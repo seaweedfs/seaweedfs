@@ -26,7 +26,8 @@ ui = false
 
 # by default the filer UI is enabled. This can be a security risk if the filer is exposed to the public
 # and the JWT for reads is not set. If you don't want the public to have access to the objects in your
-# storage it is wise to disable the UI.
+# storage, and you haven't set the JWT for reads it is wise to disable access to directory metadata.
+# This disables access to the Filer UI, and will no longer return directory metadata in GET requests.
 [filer.expose_directory_metadata]
 enabled = true
 

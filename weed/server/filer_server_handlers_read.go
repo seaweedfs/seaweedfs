@@ -117,7 +117,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		if query.Get("metadata") == "true" {
+		if query.Get("metadata") == "true" && fs.option.ExposeDirectoryData != false {
 			writeJsonQuiet(w, r, http.StatusOK, entry)
 			return
 		}
@@ -135,7 +135,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if query.Get("metadata") == "true" {
+	if query.Get("metadata") == "true" && fs.option.ExposeDirectoryData != false {
 		if query.Get("resolveManifest") == "true" {
 			if entry.Chunks, _, err = filer.ResolveChunkManifest(
 				fs.filer.MasterClient.GetLookupFileIdFunction(),
