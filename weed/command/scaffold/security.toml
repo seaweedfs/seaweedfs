@@ -27,7 +27,7 @@ ui = false
 # by default the filer UI is enabled. This can be a security risk if the filer is exposed to the public
 # and the JWT for reads is not set. If you don't want the public to have access to the objects in your
 # storage it is wise to disable the UI.
-[filer.ui]
+[filer.expose_directory_metadata]
 enabled = true
 
 # this jwt signing key is read by master and volume server, and it is used for read operations:

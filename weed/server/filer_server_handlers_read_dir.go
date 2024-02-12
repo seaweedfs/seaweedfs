@@ -18,6 +18,11 @@ import (
 // is empty.
 func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Request) {
 
+	if fs.option.ExposeDirectoryData == false {
+		http.NotFound(w, r)
+		return
+	}
+
 	stats.FilerHandlerCounter.WithLabelValues(stats.DirList).Inc()
 
 	path := r.URL.Path
@@ -70,11 +75,6 @@ func (fs *FilerServer) listDirectoryHandler(w http.ResponseWriter, r *http.Reque
 			shouldDisplayLoadMore,
 			emptyFolder,
 		})
-		return
-	}
-
-	if fs.option.ShowUI == false {
-		http.NotFound(w, r)
 		return
 	}
 

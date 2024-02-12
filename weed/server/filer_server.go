@@ -72,7 +72,7 @@ type FilerOption struct {
 	DownloadMaxBytesPs    int64
 	DiskType              string
 	AllowedOrigins        []string
-	ShowUI                bool
+	ExposeDirectoryData   bool
 }
 
 type FilerServer struct {
@@ -116,9 +116,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	domains := strings.Split(allowedOrigins, ",")
 	option.AllowedOrigins = domains
 
-	v.SetDefault("filer.ui.enabled", true)
-	showFilerUI := v.GetBool("filer.ui.enabled")
-	option.ShowUI = showFilerUI
+	v.SetDefault("filer.expose_directory_metadata.enabled", true)
+	returnDirMetadata := v.GetBool("filer.expose_directory_metadata.enabled")
+	option.ExposeDirectoryData = returnDirMetadata
 
 	fs = &FilerServer{
 		option:                option,
