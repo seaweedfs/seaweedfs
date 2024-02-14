@@ -218,8 +218,8 @@ github.com/cloudflare/circl v1.1.0/go.mod h1:prBCrKB9DV4poKZY1l9zBXg2QJY7mvgRvtM
 github.com/cloudflare/circl v1.3.3/go.mod h1:5XYMA4rFBvNIrhs50XuiBJ15vF2pZn4nnUKZrLbUZFA=
 github.com/cloudflare/circl v1.3.7 h1:qlCDlTPz2n9fu58M0Nh1J/JzcFpfgkFHHX3O35r5vcU=
 github.com/cloudflare/circl v1.3.7/go.mod h1:sRTcRWXGLrKw6yIGJ+l7amYJFfAXbZG0kBSc8r4zxgA=
-github.com/cloudsoda/go-smb2 v0.0.0-20231106205947-b0758ecc4c67 h1:KzZU0EMkUm4vX/jPp5d/VttocDpocL/8QP0zyiI9Xiw=
-github.com/cloudsoda/go-smb2 v0.0.0-20231106205947-b0758ecc4c67/go.mod h1:xFxVVe3plxwhM+6BgTTPByEgG8hggo8+gtRUkbc5W8Q=
+github.com/cloudsoda/go-smb2 v0.0.0-20231124195312-f3ec8ae2c891 h1:nPP4suUiNage0vvyEBgfAnhTPwwXhNqtHmSuiCIQwKU=
+github.com/cloudsoda/go-smb2 v0.0.0-20231124195312-f3ec8ae2c891/go.mod h1:xFxVVe3plxwhM+6BgTTPByEgG8hggo8+gtRUkbc5W8Q=
 github.com/cncf/udpa/go v0.0.0-20191209042840-269d4d468f6f/go.mod h1:M8M6+tZqaGXZJjfX53e64911xZQV5JYwmTeXPW+k8Sc=
 github.com/cncf/udpa/go v0.0.0-20201120205902-5459f2c99403/go.mod h1:WmhPx2Nbnhtbo57+VJT5O0JRkEi1Wbu0z5j0R8u5Hbk=
 github.com/cncf/udpa/go v0.0.0-20210930031921-04548b0d99d4/go.mod h1:6pvJx4me5XPnfI9Z40ddWsdw2W/uZgQLFXToKeRcDiI=
@@ -801,8 +801,8 @@ github.com/quic-go/quic-go v0.39.3 h1:o3YB6t2SR+HU/pgwF29kJ6g4jJIJEwEZ8CKia1h1TK
 github.com/quic-go/quic-go v0.39.3/go.mod h1:T09QsDQWjLiQ74ZmacDfqZmhY/NLnw5BC40MANNNZ1Q=
 github.com/rabbitmq/amqp091-go v1.9.0 h1:qrQtyzB4H8BQgEuJwhmVQqVHB9O4+MNDJCCAcpc3Aoo=
 github.com/rabbitmq/amqp091-go v1.9.0/go.mod h1:+jPrT9iY2eLjRaMSRHUhc3z14E/l85kv/f+6luSD3pc=
-github.com/rclone/rclone v1.65.0 h1:e4kV+MQ3v3XRPEzjMiI4L54k2lezQCR/ZxtTym49TkE=
-github.com/rclone/rclone v1.65.0/go.mod h1:EqoIENpN8BRBQ3DbN/Jeh2sZyCxH01LdsJbLMfDsYl0=
+github.com/rclone/rclone v1.65.2 h1:ZBMzSKqGwimbDWkBqSx6MneRAE7Z5UI0lFxyC8HCGMQ=
+github.com/rclone/rclone v1.65.2/go.mod h1:nSMqGk0ovcw70cnEJ4xkRXZSL2h2GP8DojLeA+uu1rI=
 github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 h1:N/ElC8H3+5XpJzTSTfLsJV/mx9Q9g7kxmchpfZyxgzM=
 github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475/go.mod h1:bCqnVzQkZxMG4s8nGwiZ5l3QUCyqpo9Y+/ZMZ9VjZe4=
 github.com/rdleal/intervalst v1.2.2 h1:cw93gelL8qIAPuOwT+oHFewumFdrdW/QMFqgRhLUrlY=
