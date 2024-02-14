@@ -301,7 +301,7 @@ func getSystemInfo() (_SYSTEM_INFO, error) {
 //   PSIZE_T lpMinimumWorkingSetSize,
 //   PSIZE_T lpMaximumWorkingSetSize
 // );
-// https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getprocessworkingsetsize
+// https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-getprocessworkingsetsize
 
 func getProcessWorkingSetSize(process uintptr, dwMinWorkingSet *uint64, dwMaxWorkingSet *uint64) error {
 	r1, _, err := syscall.Syscall(procGetProcessWorkingSetSize.Addr(), 3, process, uintptr(unsafe.Pointer(dwMinWorkingSet)), uintptr(unsafe.Pointer(dwMaxWorkingSet)))
@@ -318,7 +318,7 @@ func getProcessWorkingSetSize(process uintptr, dwMinWorkingSet *uint64, dwMaxWor
 //   SIZE_T dwMinimumWorkingSetSize,
 //   SIZE_T dwMaximumWorkingSetSize
 // );
-// https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setprocessworkingsetsize
+// https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-setprocessworkingsetsize
 
 func setProcessWorkingSetSize(process uintptr, dwMinWorkingSet uint64, dwMaxWorkingSet uint64) error {
 	r1, _, err := syscall.Syscall(procSetProcessWorkingSetSize.Addr(), 3, process, uintptr(dwMinWorkingSet), uintptr(dwMaxWorkingSet))
