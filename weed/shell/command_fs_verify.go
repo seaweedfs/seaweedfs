@@ -187,7 +187,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 							c.waitChanLock.RUnlock()
 							if !ok {
 								fmt.Fprintf(c.writer, "%s failed to get channel for %s fileId: %s: %+v\n",
-									string(volumeServer), fileMsg, chunk.GetFileIdString, err)
+									string(volumeServer), fileMsg, chunk.GetFileIdString(), err)
 								if itemIsVerifed.Load() {
 									itemIsVerifed.Store(false)
 									itemErrCount.Add(1)
