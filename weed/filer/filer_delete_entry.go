@@ -51,7 +51,9 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 
 	if shouldDeleteChunks {
 		if isDeleteCollection {
-			f.doDeleteCollection(entry.Name())
+			if err := f.doDeleteCollection(entry.Name()); err != nil {
+				glog.Infof("failed delete collection %s: %v", entry.Name(), err)
+			}
 		} else {
 			f.DirectDeleteChunks(entry.GetChunks())
 		}
