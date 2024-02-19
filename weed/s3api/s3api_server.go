@@ -239,7 +239,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// PutBucket
 		bucket.Methods("PUT").HandlerFunc(track(s3a.PutBucketHandler, "PUT"))
 		// DeleteBucket
-		bucket.Methods("DELETE").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteBucketHandler, ACTION_WRITE)), "DELETE"))
+		bucket.Methods("DELETE").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteBucketHandler, ACTION_ADMIN)), "DELETE"))
 
 		// ListObjectsV1 (Legacy)
 		bucket.Methods("GET").HandlerFunc(track(s3a.Auth(withAcl(s3a.cb.Limit, s3a.ListObjectsV1Handler, ACTION_LIST)), "LIST"))
