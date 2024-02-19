@@ -122,7 +122,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		}
 	} else {
 		uploadUrl := s3a.toFilerUrl(bucket, object)
-		if objectContentType == "" || objectContentType == "application/octet-stream" {
+		if objectContentType == "" {
 			dataReader = mimeDetect(r, dataReader)
 		}
 
