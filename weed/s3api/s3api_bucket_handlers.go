@@ -158,13 +158,6 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		s3err.WriteErrorResponse(w, r, err)
 		return
 	}
-	
-	if s3a.iam.isEnabled() {
-		if _, errCode := s3a.iam.authRequest(r, s3_constants.ACTION_ADMIN); errCode != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, r, errCode)
-			return
-		}
-	}
 
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		if !s3a.option.AllowDeleteBucketNotEmpty {
