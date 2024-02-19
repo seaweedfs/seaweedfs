@@ -53,7 +53,7 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 			select {
 			case <-r.Context().Done():
 				glog.V(4).Infof("request cancelled from %s: %v", r.RemoteAddr, r.Context().Err())
-				w.WriteHeader(http.StatusInternalServerError)
+				w.WriteHeader(util.HttpStatusCancelled)
 				vs.inFlightDownloadDataLimitCond.L.Unlock()
 				return
 			default:
