@@ -91,10 +91,26 @@ spec:
                   fieldPath: status.hostIP
             - name: SEAWEEDFS_FULLNAME
               value: "{{ template "seaweedfs.name" . }}"
+            {{- if .Values.volume.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.volume.extraEnvironmentVars }}
+            - name: {{ $key }}
+            {{- if kindIs "string" $value }}
+              value: {{ $value | quote }}
+            {{- else }}
+              valueFrom:
+                {{ toYaml $value | nindent 16 | trim }}
+            {{- end -}}
+            {{- end }}
+            {{- end }}
             {{- if .Values.global.extraEnvironmentVars }}
             {{- range $key, $value := .Values.global.extraEnvironmentVars }}
             - name: {{ $key }}
+            {{- if kindIs "string" $value }}
               value: {{ $value | quote }}
+            {{- else }}
+              valueFrom:
+                {{ toYaml $value | nindent 16 | trim }}
+            {{- end -}}
             {{- end }}
             {{- end }}
           command:

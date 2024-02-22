@@ -20,6 +20,7 @@ type ReaderCache struct {
 }
 
 type SingleChunkCacher struct {
+	completedTimeNew int64
 	sync.Mutex
 	parent           *ReaderCache
 	chunkFileId      string
@@ -31,7 +32,6 @@ type SingleChunkCacher struct {
 	shouldCache      bool
 	wg               sync.WaitGroup
 	cacheStartedCh   chan struct{}
-	completedTimeNew int64
 }
 
 func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType) *ReaderCache {
