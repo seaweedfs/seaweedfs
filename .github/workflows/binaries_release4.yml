@@ -30,13 +30,13 @@ jobs:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v2
       - name: Go Release Binaries Normal Volume Size
-        uses: wangyoucao577/go-release-action@23b3194d60e5291b78d4ebf84705f5d6c5a74c0e # v1.22
+        uses: wangyoucao577/go-release-action@a4a9b2ed09837e8c8c59fcaeae64e5bba70d8d87 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
           overwrite: true
-          build_flags: -tags elastic,ydb,gocdk,tikv
+          build_flags: -tags elastic,gocdk,sqlite,ydb,tikv,rclone
           pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
           # build_flags: -tags 5BytesOffset # optional, default is
           ldflags: -s -w -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${{github.sha}}
@@ -45,14 +45,14 @@ jobs:
           binary_name: weed
           asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}_full"
       - name: Go Release Large Disk Binaries
-        uses: wangyoucao577/go-release-action@23b3194d60e5291b78d4ebf84705f5d6c5a74c0e # v1.22
+        uses: wangyoucao577/go-release-action@a4a9b2ed09837e8c8c59fcaeae64e5bba70d8d87 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
           overwrite: true
           pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0
-          build_flags: -tags 5BytesOffset,elastic,ydb,gocdk,tikv
+          build_flags: -tags 5BytesOffset,elastic,gocdk,sqlite,ydb,tikv,rclone
           ldflags: -s -w -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${{github.sha}}
           # Where to run `go build .`
           project_path: weed
