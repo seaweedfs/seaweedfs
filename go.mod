@@ -145,7 +145,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.4
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.48.0
 	github.com/fluent/fluent-logger-golang v1.9.0
-	github.com/golang-jwt/jwt/v5 v5.1.0
+	github.com/golang-jwt/jwt/v5 v5.2.0
 	github.com/google/flatbuffers/go v0.0.0-20230108230133-3b8644d32c50
 	github.com/hanwen/go-fuse/v2 v2.5.0
 	github.com/hashicorp/raft v1.6.0
