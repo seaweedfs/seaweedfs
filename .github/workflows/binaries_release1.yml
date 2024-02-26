@@ -30,7 +30,7 @@ jobs:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v2
       - name: Go Release Binaries Normal Volume Size
-        uses: wangyoucao577/go-release-action@09860831ed1af40a26790704f077627ffa330c27 # v1.22
+        uses: wangyoucao577/go-release-action@a4a9b2ed09837e8c8c59fcaeae64e5bba70d8d87 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
@@ -44,7 +44,7 @@ jobs:
           binary_name: weed
           asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}"
       - name: Go Release Large Disk Binaries
-        uses: wangyoucao577/go-release-action@09860831ed1af40a26790704f077627ffa330c27 # v1.22
+        uses: wangyoucao577/go-release-action@a4a9b2ed09837e8c8c59fcaeae64e5bba70d8d87 # v1.22
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
