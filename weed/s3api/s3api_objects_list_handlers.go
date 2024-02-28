@@ -47,10 +47,6 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
 		return
 	}
-	if delimiter != "" && delimiter != "/" {
-		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
-		return
-	}
 
 	marker := continuationToken
 	if continuationToken == "" {
@@ -101,10 +97,6 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 
 	if maxKeys < 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxKeys)
-		return
-	}
-	if delimiter != "" && delimiter != "/" {
-		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 		return
 	}
 
@@ -171,22 +163,51 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						cursor.maxKeys--
 					}
 				} else {
-					storageClass := "STANDARD"
-					if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
-						storageClass = string(v)
+					var delimiterFound bool
+					if delimiter != "" {
+						// keys that contain the same string between the prefix and the first occurrence of the delimiter are grouped together as a commonPrefix.
+						// extract the string between the prefix and the delimiter and add it to the commonPrefixes if it's unique.
+						fullPath := fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):]
+						delimitedPath := strings.SplitN(fullPath, delimiter, 2)
+						if len(delimitedPath) == 2 {
+
+							// S3 clients expect the delimited prefix to contain the delimiter.
+							delimitedPrefix := delimitedPath[0] + delimiter
+
+							for i := range commonPrefixes {
+								if commonPrefixes[i].Prefix == delimitedPrefix {
+									delimiterFound = true
+									break
+								}
+							}
+
+							if !delimiterFound {
+								commonPrefixes = append(commonPrefixes, PrefixEntry{
+									Prefix: delimitedPrefix,
+								})
+								cursor.maxKeys--
+								delimiterFound = true
+							}
+						}
 					}
-					contents = append(contents, ListEntry{
-						Key:          fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):],
-						LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
-						ETag:         "\"" + filer.ETag(entry) + "\"",
-						Size:         int64(filer.FileSize(entry)),
-						Owner: CanonicalUser{
-							ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
-							DisplayName: entry.Attributes.UserName,
-						},
-						StorageClass: StorageClass(storageClass),
-					})
-					cursor.maxKeys--
+					if !delimiterFound {
+						storageClass := "STANDARD"
+						if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
+							storageClass = string(v)
+						}
+						contents = append(contents, ListEntry{
+							Key:          fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):],
+							LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
+							ETag:         "\"" + filer.ETag(entry) + "\"",
+							Size:         int64(filer.FileSize(entry)),
+							Owner: CanonicalUser{
+								ID:          fmt.Sprintf("%x", entry.Attributes.Uid),
+								DisplayName: entry.Attributes.UserName,
+							},
+							StorageClass: StorageClass(storageClass),
+						})
+						cursor.maxKeys--
+					}
 				}
 			})
 			if doErr != nil {
