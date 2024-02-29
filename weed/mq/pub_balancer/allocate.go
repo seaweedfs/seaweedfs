@@ -38,7 +38,7 @@ func AllocateTopicPartitions(brokers cmap.ConcurrentMap[string, *BrokerStats], p
 	return
 }
 
-// for now: randomly pick brokers
+// randomly pick n brokers, which may contain duplicates
 // TODO pick brokers based on the broker stats
 func pickBrokers(brokers cmap.ConcurrentMap[string, *BrokerStats], count int32) []string {
 	candidates := make([]string, 0, brokers.Count())
@@ -47,39 +47,96 @@ func pickBrokers(brokers cmap.ConcurrentMap[string, *BrokerStats], count int32) 
 	}
 	pickedBrokers := make([]string, 0, count)
 	for i := int32(0); i < count; i++ {
-		p := rand.Int() % len(candidates)
-		if p < 0 {
-			p = -p
-		}
+		p := rand.Intn(len(candidates))
 		pickedBrokers = append(pickedBrokers, candidates[p])
 	}
 	return pickedBrokers
 }
 
-func EnsureAssignmentsToActiveBrokers(activeBrokers cmap.ConcurrentMap[string, *BrokerStats], assignments []*mq_pb.BrokerPartitionAssignment) (addedAssignments, updatedAssignments []*mq_pb.BrokerPartitionAssignment) {
-	for _, assignment := range assignments {
-		if assignment.LeaderBroker == "" {
-			addedAssignments = append(addedAssignments, assignment)
+// reservoir sampling select N brokers from the active brokers, with exclusion of the excluded brokers
+func pickBrokersExcluded(brokers []string, count int, excludedLeadBroker string, excludedBrokers []string) []string {
+	// convert the excluded brokers to a map
+	excludedBrokerMap := make(map[string]bool)
+	for _, broker := range excludedBrokers {
+		excludedBrokerMap[broker] = true
+	}
+	if excludedLeadBroker != "" {
+		excludedBrokerMap[excludedLeadBroker] = true
+	}
+
+	pickedBrokers := make([]string, 0, count)
+	for i, broker := range brokers {
+		if _, found := excludedBrokerMap[broker]; found {
 			continue
 		}
-		if _, found := activeBrokers.Get(assignment.LeaderBroker); !found {
-			updatedAssignments = append(updatedAssignments, assignment)
-			continue
+		if len(pickedBrokers) < count {
+			pickedBrokers = append(pickedBrokers, broker)
+		} else {
+			j := rand.Intn(i + 1)
+			if j < count {
+				pickedBrokers[j] = broker
+			}
 		}
 	}
 
-	// pick the brokers with the least number of partitions
-	if len(addedAssignments) > 0 {
-		pickedBrokers := pickBrokers(activeBrokers, int32(len(addedAssignments)))
-		for i, assignment := range addedAssignments {
-			assignment.LeaderBroker = pickedBrokers[i]
-		}
+	// shuffle the picked brokers
+	count = len(pickedBrokers)
+	for i := 0; i < count; i++ {
+		j := rand.Intn(count)
+		pickedBrokers[i], pickedBrokers[j] = pickedBrokers[j], pickedBrokers[i]
 	}
-	if len(updatedAssignments) == 0 {
-		pickedBrokers := pickBrokers(activeBrokers, int32(len(updatedAssignments)))
-		for i, assignment := range updatedAssignments {
-			assignment.LeaderBroker = pickedBrokers[i]
+
+	return pickedBrokers
+}
+
+func EnsureAssignmentsToActiveBrokers(activeBrokers cmap.ConcurrentMap[string, *BrokerStats], followerCount int, assignments []*mq_pb.BrokerPartitionAssignment) (hasChanges bool) {
+	candidates := make([]string, 0, activeBrokers.Count())
+	for brokerStatsItem := range activeBrokers.IterBuffered() {
+		candidates = append(candidates, brokerStatsItem.Key)
+	}
+
+	for _, assignment := range assignments {
+		// count how many brokers are needed
+		count := 0
+		if assignment.LeaderBroker == "" {
+			count++
+		} else if _, found := activeBrokers.Get(assignment.LeaderBroker); !found {
+			assignment.LeaderBroker = ""
+			count++
 		}
+		for i:=0; i<followerCount; i++ {
+			if i >= len(assignment.FollowerBrokers) {
+				count++
+				continue
+			}
+			if assignment.FollowerBrokers[i] == "" {
+				count++
+			} else if _, found := activeBrokers.Get(assignment.FollowerBrokers[i]); !found {
+				assignment.FollowerBrokers[i] = ""
+				count++
+			}
+		}
+
+		if count > 0 {
+			pickedBrokers := pickBrokersExcluded(candidates, count, assignment.LeaderBroker, assignment.FollowerBrokers)
+			i := 0
+			if assignment.LeaderBroker == "" {
+				assignment.LeaderBroker = pickedBrokers[i]
+				i++
+			}
+			j := 0
+			for ; j<len(assignment.FollowerBrokers); j++ {
+				if assignment.FollowerBrokers[j] == "" {
+					assignment.FollowerBrokers[j] = pickedBrokers[i]
+					i++
+				}
+			}
+			if i < len(pickedBrokers) {
+				assignment.FollowerBrokers = append(assignment.FollowerBrokers, pickedBrokers[i:]...)
+			}
+		}
+
+		hasChanges = hasChanges || count > 0
 	}
 
 	return

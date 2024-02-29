@@ -88,9 +88,9 @@ func (b *MessageQueueBroker) genLocalPartitionFromFiler(t topic.Topic, partition
 
 func (b *MessageQueueBroker) ensureTopicActiveAssignments(t topic.Topic, conf *mq_pb.ConfigureTopicResponse) (err error) {
 	// also fix assignee broker if invalid
-	addedAssignments, updatedAssignments := pub_balancer.EnsureAssignmentsToActiveBrokers(b.Balancer.Brokers, conf.BrokerPartitionAssignments)
-	if len(addedAssignments) > 0 || len(updatedAssignments) > 0 {
-		glog.V(0).Infof("topic %v partition assignments added: %v updated: %v", t, addedAssignments, updatedAssignments)
+	hasChanges := pub_balancer.EnsureAssignmentsToActiveBrokers(b.Balancer.Brokers, 1, conf.BrokerPartitionAssignments)
+	if hasChanges {
+		glog.V(0).Infof("topic %v partition updated assignments: %v", t, conf.BrokerPartitionAssignments)
 		if err = b.saveTopicConfToFiler(t.ToPbTopic(), conf); err != nil {
 			return err
 		}
