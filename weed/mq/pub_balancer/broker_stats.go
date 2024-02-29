@@ -39,11 +39,11 @@ func (bs *BrokerStats) UpdateStats(stats *mq_pb.BrokerStats) {
 	for _, topicPartitionStats := range stats.Stats {
 		tps := &TopicPartitionStats{
 			TopicPartition: topic.TopicPartition{
-				Topic:     topic.Topic{Namespace: topicPartitionStats.Topic.Namespace, Name: topicPartitionStats.Topic.Name},
+				Topic: topic.Topic{Namespace: topicPartitionStats.Topic.Namespace, Name: topicPartitionStats.Topic.Name},
 				Partition: topic.Partition{
 					RangeStart: topicPartitionStats.Partition.RangeStart,
-					RangeStop: topicPartitionStats.Partition.RangeStop,
-					RingSize: topicPartitionStats.Partition.RingSize,
+					RangeStop:  topicPartitionStats.Partition.RangeStop,
+					RingSize:   topicPartitionStats.Partition.RingSize,
 					UnixTimeNs: topicPartitionStats.Partition.UnixTimeNs,
 				},
 			},
@@ -66,11 +66,11 @@ func (bs *BrokerStats) UpdateStats(stats *mq_pb.BrokerStats) {
 func (bs *BrokerStats) RegisterAssignment(t *mq_pb.Topic, partition *mq_pb.Partition, isAdd bool) {
 	tps := &TopicPartitionStats{
 		TopicPartition: topic.TopicPartition{
-			Topic:     topic.Topic{Namespace: t.Namespace, Name: t.Name},
+			Topic: topic.Topic{Namespace: t.Namespace, Name: t.Name},
 			Partition: topic.Partition{
 				RangeStart: partition.RangeStart,
-				RangeStop: partition.RangeStop,
-				RingSize: partition.RingSize,
+				RangeStop:  partition.RangeStop,
+				RingSize:   partition.RingSize,
 				UnixTimeNs: partition.UnixTimeNs,
 			},
 		},

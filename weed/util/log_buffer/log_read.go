@@ -18,7 +18,7 @@ var (
 )
 
 type MessagePosition struct {
-	time.Time // this is the timestamp of the message
+	time.Time        // this is the timestamp of the message
 	BatchIndex int64 // this is only used when the timestamp is not enough to identify the next message, when the timestamp is in the previous batch.
 }
 

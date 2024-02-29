@@ -16,12 +16,12 @@ type ConsumerGroupInstance struct {
 	ResponseChan chan *mq_pb.SubscriberToSubCoordinatorResponse
 }
 type ConsumerGroup struct {
-	topic         topic.Topic
+	topic topic.Topic
 	// map a consumer group instance id to a consumer group instance
 	ConsumerGroupInstances cmap.ConcurrentMap[string, *ConsumerGroupInstance]
-	mapping        *PartitionConsumerMapping
-	reBalanceTimer *time.Timer
-	pubBalancer    *pub_balancer.Balancer
+	mapping                *PartitionConsumerMapping
+	reBalanceTimer         *time.Timer
+	pubBalancer            *pub_balancer.Balancer
 }
 
 func NewConsumerGroup(t *mq_pb.Topic, pubBalancer *pub_balancer.Balancer) *ConsumerGroup {
@@ -40,13 +40,13 @@ func NewConsumerGroupInstance(instanceId string) *ConsumerGroupInstance {
 	}
 }
 func (cg *ConsumerGroup) OnAddConsumerGroupInstance(consumerGroupInstance string, topic *mq_pb.Topic) {
-	cg.onConsumerGroupInstanceChange("add consumer instance "+ consumerGroupInstance)
+	cg.onConsumerGroupInstanceChange("add consumer instance " + consumerGroupInstance)
 }
 func (cg *ConsumerGroup) OnRemoveConsumerGroupInstance(consumerGroupInstance string, topic *mq_pb.Topic) {
-	cg.onConsumerGroupInstanceChange("remove consumer instance "+ consumerGroupInstance)
+	cg.onConsumerGroupInstanceChange("remove consumer instance " + consumerGroupInstance)
 }
 
-func (cg *ConsumerGroup) onConsumerGroupInstanceChange(reason string){
+func (cg *ConsumerGroup) onConsumerGroupInstanceChange(reason string) {
 	if cg.reBalanceTimer != nil {
 		cg.reBalanceTimer.Stop()
 		cg.reBalanceTimer = nil
@@ -107,9 +107,9 @@ func (cg *ConsumerGroup) RebalanceConsumberGroupInstances(knownPartitionSlotToBr
 		for i, partitionSlot := range partitionSlots {
 			assignedPartitions[i] = &mq_pb.SubscriberToSubCoordinatorResponse_AssignedPartition{
 				Partition: &mq_pb.Partition{
-					RangeStop: partitionSlot.RangeStop,
+					RangeStop:  partitionSlot.RangeStop,
 					RangeStart: partitionSlot.RangeStart,
-					RingSize: partitionSlotToBrokerList.RingSize,
+					RingSize:   partitionSlotToBrokerList.RingSize,
 					UnixTimeNs: partitionSlot.UnixTimeNs,
 				},
 				Broker: partitionSlot.Broker,
@@ -125,6 +125,5 @@ func (cg *ConsumerGroup) RebalanceConsumberGroupInstances(knownPartitionSlotToBr
 		println("sending response to", consumerGroupInstance.InstanceId, "...")
 		consumerGroupInstance.ResponseChan <- response
 	}
-
 
 }

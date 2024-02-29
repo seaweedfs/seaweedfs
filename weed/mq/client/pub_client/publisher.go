@@ -16,7 +16,7 @@ type PublisherConfiguration struct {
 	Topic                     topic.Topic
 	CreateTopic               bool
 	CreateTopicPartitionCount int32
-	Brokers				   []string
+	Brokers                   []string
 }
 
 type PublishClient struct {

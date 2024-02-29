@@ -6,10 +6,10 @@ import (
 )
 
 type MemBuffer struct {
-	buf       []byte
-	size      int
-	startTime time.Time
-	stopTime  time.Time
+	buf        []byte
+	size       int
+	startTime  time.Time
+	stopTime   time.Time
 	batchIndex int64
 }
 

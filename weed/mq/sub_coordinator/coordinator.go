@@ -31,7 +31,7 @@ func NewCoordinator(balancer *pub_balancer.Balancer) *Coordinator {
 func (c *Coordinator) GetTopicConsumerGroups(topic *mq_pb.Topic, createIfMissing bool) *TopicConsumerGroups {
 	topicName := toTopicName(topic)
 	tcg, _ := c.TopicSubscribers.Get(topicName)
-	if tcg == nil && createIfMissing{
+	if tcg == nil && createIfMissing {
 		tcg = &TopicConsumerGroups{
 			ConsumerGroups: cmap.New[*ConsumerGroup](),
 		}
@@ -56,14 +56,14 @@ func (c *Coordinator) AddSubscriber(consumerGroup, consumerGroupInstance string,
 	cg, _ := tcg.ConsumerGroups.Get(consumerGroup)
 	if cg == nil {
 		cg = NewConsumerGroup(topic, c.balancer)
-		if !tcg.ConsumerGroups.SetIfAbsent(consumerGroup, cg){
+		if !tcg.ConsumerGroups.SetIfAbsent(consumerGroup, cg) {
 			cg, _ = tcg.ConsumerGroups.Get(consumerGroup)
 		}
 	}
 	cgi, _ := cg.ConsumerGroupInstances.Get(consumerGroupInstance)
 	if cgi == nil {
 		cgi = NewConsumerGroupInstance(consumerGroupInstance)
-		if !cg.ConsumerGroupInstances.SetIfAbsent(consumerGroupInstance, cgi){
+		if !cg.ConsumerGroupInstances.SetIfAbsent(consumerGroupInstance, cgi) {
 			cgi, _ = cg.ConsumerGroupInstances.Get(consumerGroupInstance)
 		}
 	}

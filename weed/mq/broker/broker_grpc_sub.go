@@ -68,7 +68,7 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 	}()
 
 	var startPosition log_buffer.MessagePosition
-	if req.GetInit()!=nil && req.GetInit().GetPartitionOffset() != nil {
+	if req.GetInit() != nil && req.GetInit().GetPartitionOffset() != nil {
 		offset := req.GetInit().GetPartitionOffset()
 		if offset.StartTsNs != 0 {
 			startPosition = log_buffer.NewMessagePosition(offset.StartTsNs, -2)

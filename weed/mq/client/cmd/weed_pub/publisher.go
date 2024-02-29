@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	messageCount = flag.Int("n", 1000, "message count")
-	concurrency  = flag.Int("c", 4, "concurrent publishers")
+	messageCount   = flag.Int("n", 1000, "message count")
+	concurrency    = flag.Int("c", 4, "concurrent publishers")
 	partitionCount = flag.Int("p", 6, "partition count")
 
 	namespace   = flag.String("ns", "test", "namespace")

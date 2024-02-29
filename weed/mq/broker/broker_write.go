@@ -24,14 +24,14 @@ func (b *MessageQueueBroker) appendToFile(targetFile string, data []byte) error 
 	var offset int64 = 0
 	if err == filer_pb.ErrNotFound {
 		entry = &filer_pb.Entry{
-			Name:   name,
+			Name:        name,
 			IsDirectory: false,
 			Attributes: &filer_pb.FuseAttributes{
-				Crtime: time.Now().Unix(),
-				Mtime:  time.Now().Unix(),
-				FileMode:   uint32(os.FileMode(0644)),
-				Uid:    uint32(os.Getuid()),
-				Gid:    uint32(os.Getgid()),
+				Crtime:   time.Now().Unix(),
+				Mtime:    time.Now().Unix(),
+				FileMode: uint32(os.FileMode(0644)),
+				Uid:      uint32(os.Getuid()),
+				Gid:      uint32(os.Getgid()),
 			},
 		}
 	} else if err != nil {
@@ -45,11 +45,11 @@ func (b *MessageQueueBroker) appendToFile(targetFile string, data []byte) error 
 
 	// update the entry
 	return b.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
-				Directory: dir,
-				Entry: entry,
-			})
+		return filer_pb.CreateEntry(client, &filer_pb.CreateEntryRequest{
+			Directory: dir,
+			Entry:     entry,
 		})
+	})
 }
 
 func (b *MessageQueueBroker) assignAndUpload(targetFile string, data []byte) (fileId string, uploadResult *operation.UploadResult, err error) {
@@ -63,11 +63,11 @@ func (b *MessageQueueBroker) assignAndUpload(targetFile string, data []byte) (fi
 			Collection:  "topics",
 			// TtlSec:      wfs.option.TtlSec,
 			// DiskType:    string(wfs.option.DiskType),
-			DataCenter:  b.option.DataCenter,
-			Path:        targetFile,
+			DataCenter: b.option.DataCenter,
+			Path:       targetFile,
 		},
 		&operation.UploadOption{
-			Cipher:           b.option.Cipher,
+			Cipher: b.option.Cipher,
 		},
 		func(host, fileId string) string {
 			fileUrl := fmt.Sprintf("http://%s/%s", host, fileId)

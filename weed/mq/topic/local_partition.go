@@ -22,6 +22,7 @@ type LocalPartition struct {
 }
 
 var TIME_FORMAT = "2006-01-02-15-04-05"
+
 func NewLocalPartition(partition Partition, isLeader bool, followerBrokers []pb.ServerAddress, logFlushFn log_buffer.LogFlushFuncType, readFromDiskFn log_buffer.LogReadFromDiskFuncType) *LocalPartition {
 	return &LocalPartition{
 		Partition:       partition,

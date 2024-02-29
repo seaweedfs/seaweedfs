@@ -7,7 +7,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-
 func (p *TopicPublisher) Publish(key, value []byte) error {
 	hashKey := util.HashToInt32(key) % pub_balancer.MaxPartitionCount
 	if hashKey < 0 {

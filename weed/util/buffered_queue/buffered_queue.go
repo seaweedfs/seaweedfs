@@ -32,12 +32,12 @@ func NewBufferedQueue[T any](chunkSize int) *BufferedQueue[T] {
 	// Create an empty chunk to initialize head and tail
 	chunk := &ItemChunkNode[T]{items: make([]T, chunkSize), nodeId: 0}
 	bq := &BufferedQueue[T]{
-		chunkSize:  chunkSize,
-		head:       chunk,
-		tail:       chunk,
-		last:       chunk,
-		count:      0,
-		mutex:      sync.Mutex{},
+		chunkSize: chunkSize,
+		head:      chunk,
+		tail:      chunk,
+		last:      chunk,
+		count:     0,
+		mutex:     sync.Mutex{},
 	}
 	bq.waitCond = sync.NewCond(&bq.mutex)
 	return bq
@@ -87,7 +87,7 @@ func (q *BufferedQueue[T]) Dequeue() (T, bool) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
-	for q.count <= 0 && !q.isClosed	{
+	for q.count <= 0 && !q.isClosed {
 		q.waitCond.Wait()
 	}
 	if q.count <= 0 && q.isClosed {

@@ -26,7 +26,7 @@ func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, partition *mq_pb.Par
 
 		startTime, stopTime = startTime.UTC(), stopTime.UTC()
 
-		targetFile := fmt.Sprintf("%s/%s",partitionDir, startTime.Format(topic.TIME_FORMAT))
+		targetFile := fmt.Sprintf("%s/%s", partitionDir, startTime.Format(topic.TIME_FORMAT))
 
 		// TODO append block with more metadata
 
@@ -50,7 +50,7 @@ func (b *MessageQueueBroker) genLogOnDiskReadFunc(t topic.Topic, partition *mq_p
 		return b.MasterClient.LookupFileId(fileId)
 	}
 
-	eachChunkFn := func (buf []byte, eachLogEntryFn log_buffer.EachLogEntryFuncType, starTsNs, stopTsNs int64) (processedTsNs int64, err error) {
+	eachChunkFn := func(buf []byte, eachLogEntryFn log_buffer.EachLogEntryFuncType, starTsNs, stopTsNs int64) (processedTsNs int64, err error) {
 		for pos := 0; pos+4 < len(buf); {
 
 			size := util.BytesToUint32(buf[pos : pos+4])
@@ -99,7 +99,7 @@ func (b *MessageQueueBroker) genLogOnDiskReadFunc(t topic.Topic, partition *mq_p
 			if chunk.Size == 0 {
 				continue
 			}
-			if chunk.IsChunkManifest{
+			if chunk.IsChunkManifest {
 				glog.Warningf("this should not happen. unexpected chunk manifest in %s/%s", partitionDir, entry.Name)
 				return
 			}
@@ -145,7 +145,7 @@ func (b *MessageQueueBroker) genLogOnDiskReadFunc(t topic.Topic, partition *mq_p
 				if entry.IsDirectory {
 					return nil
 				}
-				if stopTsNs!=0 && entry.Name > stopTime.UTC().Format(topic.TIME_FORMAT) {
+				if stopTsNs != 0 && entry.Name > stopTime.UTC().Format(topic.TIME_FORMAT) {
 					isDone = true
 					return nil
 				}
