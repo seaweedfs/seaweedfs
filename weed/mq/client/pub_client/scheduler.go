@@ -141,9 +141,10 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 	if err = publishClient.Send(&mq_pb.PublishMessageRequest{
 		Message: &mq_pb.PublishMessageRequest_Init{
 			Init: &mq_pb.PublishMessageRequest_InitMessage{
-				Topic:       p.config.Topic.ToPbTopic(),
-				Partition:   job.Partition,
-				AckInterval: 128,
+				Topic:           p.config.Topic.ToPbTopic(),
+				Partition:       job.Partition,
+				AckInterval:     128,
+				FollowerBrokers: job.FollowerBrokers,
 			},
 		},
 	}); err != nil {

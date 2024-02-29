@@ -192,6 +192,7 @@ message PublishMessageRequest {
         Topic topic = 1;
         Partition partition = 2;
         int32 ack_interval = 3;
+        repeated string follower_brokers = 4;
     }
     oneof message {
         InitMessage init = 1;
