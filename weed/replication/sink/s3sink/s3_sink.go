@@ -19,14 +19,18 @@ import (
 )
 
 type S3Sink struct {
-	conn          s3iface.S3API
-	region        string
-	bucket        string
-	dir           string
-	endpoint      string
-	acl           string
-	filerSource   *source.FilerSource
-	isIncremental bool
+	conn                   s3iface.S3API
+	filerSource            *source.FilerSource
+	isIncremental          bool
+	keepPartSize           bool
+	uploaderConcurrency    int
+	uploaderMaxUploadParts int
+	uploaderPartSize       int64
+	region                 string
+	bucket                 string
+	dir                    string
+	endpoint               string
+	acl                    string
 }
 
 func init() {
@@ -61,6 +65,8 @@ func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string
 		configuration.GetString(prefix+"directory"),
 		configuration.GetString(prefix+"endpoint"),
 		configuration.GetString(prefix+"acl"),
+		configuration,
+		prefix,
 	)
 }
 
@@ -68,18 +74,29 @@ func (s3sink *S3Sink) SetSourceFiler(s *source.FilerSource) {
 	s3sink.filerSource = s
 }
 
-func (s3sink *S3Sink) initialize(awsAccessKeyId, awsSecretAccessKey, region, bucket, dir, endpoint, acl string) error {
+func (s3sink *S3Sink) initialize(awsAccessKeyId, awsSecretAccessKey, region, bucket, dir, endpoint, acl string, configuration util.Configuration, prefix string) error {
 	s3sink.region = region
 	s3sink.bucket = bucket
 	s3sink.dir = dir
 	s3sink.endpoint = endpoint
 	s3sink.acl = acl
 
+	configuration.SetDefault(prefix+"keep_part_size", false)
+	configuration.SetDefault(prefix+"uploader_max_upload_parts", 1000)
+	configuration.SetDefault(prefix+"uploader_part_size", 8*1024*1024)
+	configuration.SetDefault(prefix+"uploader_concurrency", 8)
+	configuration.SetDefault(prefix+"s3_disable_content_md5_validatione", true)
+	configuration.SetDefault(prefix+"s3_force_path_style", true)
+
+	s3sink.keepPartSize = configuration.GetBool(prefix + "keep_part_size")
+	s3sink.uploaderMaxUploadParts = configuration.GetInt(prefix + "uploader_max_upload_parts")
+	s3sink.uploaderPartSize = int64(configuration.GetInt(prefix + "uploader_part_size"))
+	s3sink.uploaderConcurrency = configuration.GetInt(prefix + "uploader_concurrency")
 	config := &aws.Config{
 		Region:                        aws.String(s3sink.region),
 		Endpoint:                      aws.String(s3sink.endpoint),
-		S3ForcePathStyle:              aws.Bool(true),
-		S3DisableContentMD5Validation: aws.Bool(true),
+		S3DisableContentMD5Validation: aws.Bool(configuration.GetBool(prefix + "s3_disable_content_md5_validatione")),
+		S3ForcePathStyle:              aws.Bool(configuration.GetBool(prefix + "s3_force_path_style")),
 	}
 	if awsAccessKeyId != "" && awsSecretAccessKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(awsAccessKeyId, awsSecretAccessKey, "")
@@ -128,19 +145,19 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 
 	reader := filer.NewFileReader(s3sink.filerSource, entry)
 
-	fileSize := int64(filer.FileSize(entry))
-
-	partSize := int64(8 * 1024 * 1024) // The minimum/default allowed part size is 5MB
-	for partSize*1000 < fileSize {
-		partSize *= 4
-	}
-
 	// Create an uploader with the session and custom options
 	uploader := s3manager.NewUploaderWithClient(s3sink.conn, func(u *s3manager.Uploader) {
-		u.PartSize = partSize
-		u.Concurrency = 8
+		u.PartSize = s3sink.uploaderPartSize
+		u.Concurrency = s3sink.uploaderConcurrency
+		u.MaxUploadParts = s3sink.uploaderMaxUploadParts
 	})
 
+	if s3sink.keepPartSize && len(entry.Chunks) > 0 {
+		firstChunkSize := int64(entry.Chunks[0].Size)
+		if firstChunkSize > s3manager.MinUploadPartSize {
+			uploader.PartSize = firstChunkSize
+		}
+	}
 	// process tagging
 	tags := ""
 	if true {
@@ -153,14 +170,18 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 	}
 
 	// Upload the file to S3.
-	_, err = uploader.Upload(&s3manager.UploadInput{
+	uploadInput := s3manager.UploadInput{
 		Bucket:  aws.String(s3sink.bucket),
 		Key:     aws.String(key),
 		Body:    reader,
 		Tagging: aws.String(tags),
-	})
+	}
+	if len(entry.Attributes.Md5) > 0 {
+		uploadInput.ContentMD5 = aws.String(fmt.Sprintf("%x", entry.Attributes.Md5))
+	}
+	_, err = uploader.Upload(&uploadInput)
 
-	return
+	return err
 
 }
 
