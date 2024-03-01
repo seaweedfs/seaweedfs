@@ -89,6 +89,7 @@ func pickBrokersExcluded(brokers []string, count int, excludedLeadBroker string,
 	return pickedBrokers
 }
 
+// EnsureAssignmentsToActiveBrokers ensures the assignments are assigned to active brokers
 func EnsureAssignmentsToActiveBrokers(activeBrokers cmap.ConcurrentMap[string, *BrokerStats], followerCount int, assignments []*mq_pb.BrokerPartitionAssignment) (hasChanges bool) {
 	candidates := make([]string, 0, activeBrokers.Count())
 	for brokerStatsItem := range activeBrokers.IterBuffered() {
@@ -123,20 +124,22 @@ func EnsureAssignmentsToActiveBrokers(activeBrokers cmap.ConcurrentMap[string, *
 			if assignment.LeaderBroker == "" {
 				assignment.LeaderBroker = pickedBrokers[i]
 				i++
+				hasChanges = true
 			}
 			j := 0
 			for ; j<len(assignment.FollowerBrokers); j++ {
 				if assignment.FollowerBrokers[j] == "" {
 					assignment.FollowerBrokers[j] = pickedBrokers[i]
 					i++
+					hasChanges = true
 				}
 			}
 			if i < len(pickedBrokers) {
 				assignment.FollowerBrokers = append(assignment.FollowerBrokers, pickedBrokers[i:]...)
+				hasChanges = true
 			}
 		}
 
-		hasChanges = hasChanges || count > 0
 	}
 
 	return

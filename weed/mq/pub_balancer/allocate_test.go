@@ -80,6 +80,9 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 	activeBrokers.SetIfAbsent("localhost:4", &BrokerStats{})
 	activeBrokers.SetIfAbsent("localhost:5", &BrokerStats{})
 	activeBrokers.SetIfAbsent("localhost:6", &BrokerStats{})
+	lowActiveBrokers := cmap.New[*BrokerStats]()
+	lowActiveBrokers.SetIfAbsent("localhost:1", &BrokerStats{})
+	lowActiveBrokers.SetIfAbsent("localhost:2", &BrokerStats{})
 	tests := []struct {
 		name                   string
 		args                   args
@@ -186,6 +189,23 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 				},
 			},
 			hasChanges: true,
+		},
+		{
+			name: "test low active brokers",
+			args: args{
+				activeBrokers: lowActiveBrokers,
+				followerCount: 3,
+				assignments:   []*mq_pb.BrokerPartitionAssignment{
+					{
+						LeaderBroker: "localhost:1",
+						Partition: &mq_pb.Partition{},
+						FollowerBrokers: []string{
+							"localhost:2",
+						},
+					},
+				},
+			},
+			hasChanges: false,
 		},
 	}
 	for _, tt := range tests {
