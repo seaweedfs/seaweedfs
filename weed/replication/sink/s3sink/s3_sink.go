@@ -52,6 +52,8 @@ func (s3sink *S3Sink) IsIncremental() bool {
 }
 
 func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string) error {
+	configuration.SetDefault(prefix+"region", "us-east-2")
+	configuration.SetDefault(prefix+"directory", "/")
 	configuration.SetDefault(prefix+"keep_part_size", false)
 	configuration.SetDefault(prefix+"uploader_max_upload_parts", 1000)
 	configuration.SetDefault(prefix+"uploader_part_size", 8*1024*1024)
@@ -83,7 +85,6 @@ func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string
 	glog.V(0).Infof("sink.s3.uploader_max_upload_parts: %v", s3sink.uploaderMaxUploadParts)
 	glog.V(0).Infof("sink.s3.uploader_part_size: %v", s3sink.uploaderPartSize)
 	glog.V(0).Infof("sink.s3.uploader_concurrency: %v", s3sink.uploaderConcurrency)
-	glog.V(0).Infof("sink.s3.uploader_max_upload_parts: %v", s3sink.uploaderMaxUploadParts)
 
 	return s3sink.initialize(
 		configuration.GetString(prefix+"aws_access_key_id"),
