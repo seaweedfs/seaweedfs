@@ -8,16 +8,13 @@ all: install
 install:
 	cd weed; go install
 
-install_large:
-	cd weed; go install -tags "5BytesOffset"
-
 warp_install:
 	go install github.com/minio/warp@v0.7.6
 
 full_install:
 	cd weed; go install -tags "elastic gocdk sqlite ydb tikv rclone"
 
-server: install_large
+server: install
 	weed -v 4 server -s3 -filer -volume.max=0 -master.volumeSizeLimitMB=1024 -volume.preStopSeconds=1 -s3.port=8000 -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=false -s3.config=./docker/compose/s3.json -metricsPort=9324
 
 benchmark: install warp_install
