@@ -8,6 +8,8 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"strconv"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -27,7 +29,7 @@ type S3Sink struct {
 	s3ForcePathStyle              bool
 	uploaderConcurrency           int
 	uploaderMaxUploadParts        int
-	uploaderPartSize              int64
+	uploaderPartSizeMb            int
 	region                        string
 	bucket                        string
 	dir                           string
@@ -54,11 +56,11 @@ func (s3sink *S3Sink) IsIncremental() bool {
 func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string) error {
 	configuration.SetDefault(prefix+"region", "us-east-2")
 	configuration.SetDefault(prefix+"directory", "/")
-	configuration.SetDefault(prefix+"keep_part_size", false)
+	configuration.SetDefault(prefix+"keep_part_size", true)
 	configuration.SetDefault(prefix+"uploader_max_upload_parts", 1000)
-	configuration.SetDefault(prefix+"uploader_part_size", 8*1024*1024)
+	configuration.SetDefault(prefix+"uploader_part_size_mb", 8)
 	configuration.SetDefault(prefix+"uploader_concurrency", 8)
-	configuration.SetDefault(prefix+"s3_disable_content_md5_validatione", true)
+	configuration.SetDefault(prefix+"s3_disable_content_md5_validation", true)
 	configuration.SetDefault(prefix+"s3_force_path_style", true)
 	s3sink.region = configuration.GetString(prefix + "region")
 	s3sink.bucket = configuration.GetString(prefix + "bucket")
@@ -67,10 +69,10 @@ func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string
 	s3sink.acl = configuration.GetString(prefix + "acl")
 	s3sink.isIncremental = configuration.GetBool(prefix + "is_incremental")
 	s3sink.keepPartSize = configuration.GetBool(prefix + "keep_part_size")
-	s3sink.s3DisableContentMD5Validation = configuration.GetBool(prefix + "s3_disable_content_md5_validatione")
+	s3sink.s3DisableContentMD5Validation = configuration.GetBool(prefix + "s3_disable_content_md5_validation")
 	s3sink.s3ForcePathStyle = configuration.GetBool(prefix + "s3_force_path_style")
 	s3sink.uploaderMaxUploadParts = configuration.GetInt(prefix + "uploader_max_upload_parts")
-	s3sink.uploaderPartSize = int64(configuration.GetInt(prefix + "uploader_part_size"))
+	s3sink.uploaderPartSizeMb = configuration.GetInt(prefix + "uploader_part_size")
 	s3sink.uploaderConcurrency = configuration.GetInt(prefix + "uploader_concurrency")
 
 	glog.V(0).Infof("sink.s3.region: %v", s3sink.region)
@@ -79,11 +81,11 @@ func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string
 	glog.V(0).Infof("sink.s3.endpoint: %v", s3sink.endpoint)
 	glog.V(0).Infof("sink.s3.acl: %v", s3sink.acl)
 	glog.V(0).Infof("sink.s3.is_incremental: %v", s3sink.isIncremental)
-	glog.V(0).Infof("sink.s3.s3_disable_content_md5_validatione: %v", s3sink.s3DisableContentMD5Validation)
+	glog.V(0).Infof("sink.s3.s3_disable_content_md5_validation: %v", s3sink.s3DisableContentMD5Validation)
 	glog.V(0).Infof("sink.s3.s3_force_path_style: %v", s3sink.s3ForcePathStyle)
 	glog.V(0).Infof("sink.s3.keep_part_size: %v", s3sink.keepPartSize)
 	glog.V(0).Infof("sink.s3.uploader_max_upload_parts: %v", s3sink.uploaderMaxUploadParts)
-	glog.V(0).Infof("sink.s3.uploader_part_size: %v", s3sink.uploaderPartSize)
+	glog.V(0).Infof("sink.s3.uploader_part_size_mb: %v", s3sink.uploaderPartSizeMb)
 	glog.V(0).Infof("sink.s3.uploader_concurrency: %v", s3sink.uploaderConcurrency)
 
 	return s3sink.initialize(
@@ -152,7 +154,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 
 	// Create an uploader with the session and custom options
 	uploader := s3manager.NewUploaderWithClient(s3sink.conn, func(u *s3manager.Uploader) {
-		u.PartSize = s3sink.uploaderPartSize
+		u.PartSize = int64(s3sink.uploaderPartSizeMb * 1024 * 1024)
 		u.Concurrency = s3sink.uploaderConcurrency
 		u.MaxUploadParts = s3sink.uploaderMaxUploadParts
 	})
@@ -162,6 +164,9 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 		if firstChunkSize > s3manager.MinUploadPartSize {
 			uploader.PartSize = firstChunkSize
 		}
+	}
+	if _, ok := entry.Extended[s3_constants.AmzUserMetaMtime]; !ok {
+		entry.Extended[s3_constants.AmzUserMetaMtime] = []byte(strconv.FormatInt(entry.Attributes.Crtime, 10))
 	}
 	// process tagging
 	tags := ""

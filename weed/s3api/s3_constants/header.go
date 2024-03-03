@@ -30,6 +30,7 @@ const (
 	// S3 user-defined metadata
 	AmzUserMetaPrefix    = "X-Amz-Meta-"
 	AmzUserMetaDirective = "X-Amz-Metadata-Directive"
+	AmzUserMetaMtime     = "X-Amz-Meta-Mtime"
 
 	// S3 object tagging
 	AmzObjectTagging          = "X-Amz-Tagging"
