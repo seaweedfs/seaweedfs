@@ -166,7 +166,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 		}
 	}
 	if _, ok := entry.Extended[s3_constants.AmzUserMetaMtime]; !ok {
-		entry.Extended[s3_constants.AmzUserMetaMtime] = []byte(strconv.FormatInt(entry.Attributes.Crtime, 10))
+		entry.Extended[s3_constants.AmzUserMetaMtime] = []byte(strconv.FormatInt(entry.Attributes.Mtime, 10))
 	}
 	// process tagging
 	tags := ""
