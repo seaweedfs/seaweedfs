@@ -29,14 +29,14 @@ func (c *commandFsLogPurge) Help() string {
 
 func (c *commandFsLogPurge) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 	fsLogPurgeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	dayAgo := fsLogPurgeCommand.Uint("dayAgo", 365, "purge logs older N day")
+	daysAgo := fsLogPurgeCommand.Uint("daysAgo", 365, "purge logs older than N days")
 	verbose := fsLogPurgeCommand.Bool("v", false, "verbose mode")
 
 	if err = fsLogPurgeCommand.Parse(args); err != nil {
 		return err
 	}
 
-	modificationTimeAgo := time.Now().Add(-time.Hour * 24 * time.Duration(*dayAgo)).Unix()
+	modificationTimeAgo := time.Now().Add(-time.Hour * 24 * time.Duration(*daysAgo)).Unix()
 	err = filer_pb.ReadDirAllEntries(commandEnv, filer.SystemLogDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 		if entry.Attributes.Mtime > modificationTimeAgo {
 			return nil
