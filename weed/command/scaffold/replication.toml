@@ -6,6 +6,8 @@
 #    $HOME/.seaweedfs/replication.toml
 #    /etc/seaweedfs/replication.toml
 
+# !!! sync_s3_to_s3 only works with s3.sink, not other options
+
 [source.filer]  # deprecated. Only useful with "weed filer.replicate"
 enabled = true
 grpcAddress = "localhost:18888"
@@ -46,6 +48,10 @@ bucket = "your_bucket_name"    # an existing bucket
 directory = "/"                # destination directory
 endpoint = ""
 is_incremental = false
+sync_s3_to_s3 = false          # It will backup the whole buckets in the /buckets path to the specified S3.
+                               # Each bucket will have its corresponding bucket in the backup S3.
+                               # Source path will be ignored and automatically set to /buckets and is_incremental is always false
+                               # Exclude paths on filer.backup command will only affect if they start with /buckets
 
 [sink.google_cloud_storage]
 # read credentials doc at https://cloud.google.com/docs/authentication/getting-started

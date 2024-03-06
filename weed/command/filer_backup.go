@@ -2,14 +2,16 @@ package command
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
-	"regexp"
-	"time"
 )
 
 type FilerBackupOptions struct {
@@ -94,6 +96,19 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	sourceFiler := pb.ServerAddress(*backupOption.filer)
 	sourcePath := *backupOption.path
 	excludePaths := util.StringSplit(*backupOption.excludePaths, ",")
+	
+	if config.GetBool("sink.s3.enabled") && config.GetBool("sink.s3.sync_s3_to_s3") {
+		if sourcePath != "/buckets" {
+			glog.Warningf("source path changed from %v to /buckets because sync_s3_to_s3 is true\n", sourcePath)
+		}
+		sourcePath = "/buckets"
+		for _, excludedPath := range excludePaths {
+			if !strings.HasPrefix(excludedPath, "/buckets") {
+				glog.Warningf("%s does not start with /buckets ,it will be ignored\n", excludedPath)
+			}
+		}
+	}
+	
 	var reExcludeFileName *regexp.Regexp
 	if *backupOption.excludeFileName != "" {
 		var err error

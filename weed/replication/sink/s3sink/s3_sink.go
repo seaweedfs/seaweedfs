@@ -2,13 +2,14 @@ package S3Sink
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -27,6 +28,7 @@ type S3Sink struct {
 	acl           string
 	filerSource   *source.FilerSource
 	isIncremental bool
+	SyncS3ToS3 bool
 }
 
 func init() {
@@ -47,10 +49,26 @@ func (s3sink *S3Sink) IsIncremental() bool {
 
 func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string) error {
 	glog.V(0).Infof("sink.s3.region: %v", configuration.GetString(prefix+"region"))
-	glog.V(0).Infof("sink.s3.bucket: %v", configuration.GetString(prefix+"bucket"))
-	glog.V(0).Infof("sink.s3.directory: %v", configuration.GetString(prefix+"directory"))
 	glog.V(0).Infof("sink.s3.endpoint: %v", configuration.GetString(prefix+"endpoint"))
 	glog.V(0).Infof("sink.s3.acl: %v", configuration.GetString(prefix+"acl"))
+	glog.V(0).Infof("sink.s3.sync_s3_to_s3: %v", configuration.GetString(prefix+"sync_s3_to_s3"))
+	s3sink.SyncS3ToS3 = configuration.GetBool(prefix + "sync_s3_to_s3")
+	
+	if s3sink.SyncS3ToS3 {
+		glog.V(0).Info("sink.s3.sync_s3_to_s3 is true:\n	source path will be ignored and set to /buckets\n	is_incremental set to False")
+		s3sink.isIncremental = false
+		return s3sink.initialize(
+			configuration.GetString(prefix+"aws_access_key_id"),
+			configuration.GetString(prefix+"aws_secret_access_key"),
+			configuration.GetString(prefix+"region"),
+			"",
+			"",
+			configuration.GetString(prefix+"endpoint"),
+			configuration.GetString(prefix+"acl"),
+		)
+	}
+	glog.V(0).Infof("sink.s3.bucket: %v", configuration.GetString(prefix+"bucket"))
+	glog.V(0).Infof("sink.s3.directory: %v", configuration.GetString(prefix+"directory"))
 	glog.V(0).Infof("sink.s3.is_incremental: %v", configuration.GetString(prefix+"is_incremental"))
 	s3sink.isIncremental = configuration.GetBool(prefix + "is_incremental")
 	return s3sink.initialize(
@@ -98,21 +116,31 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 
 	key = cleanKey(key)
 
-	if isDirectory {
+	bucket := s3sink.bucket
+
+	if isDirectory && s3sink.SyncS3ToS3 {
+		if IsKeyBucket(key) {
+			return s3sink.deleteBucketIfExists(key)
+		}
 		return nil
 	}
 
+	if s3sink.SyncS3ToS3 {
+		bucket = GetBucketFromKey(key)
+		key = RemoveBucketFromKey(key)
+	}
+
 	input := &s3.DeleteObjectInput{
-		Bucket: aws.String(s3sink.bucket),
+		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	}
 
 	result, err := s3sink.conn.DeleteObject(input)
 
 	if err == nil {
-		glog.V(2).Infof("[%s] delete %s: %v", s3sink.bucket, key, result)
+		glog.V(2).Infof("[%s] delete %s: %v", bucket, key, result)
 	} else {
-		glog.Errorf("[%s] delete %s: %v", s3sink.bucket, key, err)
+		glog.Errorf("[%s] delete %s: %v", bucket, key, err)
 	}
 
 	return err
@@ -122,8 +150,21 @@ func (s3sink *S3Sink) DeleteEntry(key string, isDirectory, deleteIncludeChunks b
 func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) (err error) {
 	key = cleanKey(key)
 
+	bucket := s3sink.bucket
+
 	if entry.IsDirectory {
+		if s3sink.SyncS3ToS3 {
+			if IsKeyBucket(key) {
+				return s3sink.createBucketIfNotExists(key)
+			}
+		}
 		return nil
+	}
+
+	if s3sink.SyncS3ToS3 {
+		bucket = GetBucketFromKey(key)
+		s3sink.createBucketIfNotExists(bucket)
+		key = RemoveBucketFromKey(key)
 	}
 
 	reader := filer.NewFileReader(s3sink.filerSource, entry)
@@ -154,7 +195,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 
 	// Upload the file to S3.
 	_, err = uploader.Upload(&s3manager.UploadInput{
-		Bucket:  aws.String(s3sink.bucket),
+		Bucket:  aws.String(bucket),
 		Key:     aws.String(key),
 		Body:    reader,
 		Tagging: aws.String(tags),
@@ -174,4 +215,74 @@ func cleanKey(key string) string {
 		key = key[1:]
 	}
 	return key
+}
+
+func GetBucketFromKey(key string) string {
+	key = cleanKey(key)
+	return key[:strings.Index(key, "/")]
+}
+
+func RemoveBucketFromKey(key string) string {
+	key = cleanKey(key)
+	return key[strings.Index(key, "/")+1:]
+}
+
+func IsKeyBucket(key string) bool {
+	key = cleanKey(key)
+	return !strings.Contains(key, "/")
+}
+
+func (s3sink *S3Sink) createBucketIfNotExists(bucket string) error {
+	// Check if the bucket exists
+	_, err := s3sink.conn.HeadBucket(&s3.HeadBucketInput{
+		Bucket: aws.String(bucket),
+	})
+
+	if err != nil {
+		// Bucket does not exist, create it
+		createBucketInput := &s3.CreateBucketInput{
+			Bucket: aws.String(bucket),
+			ACL:    aws.String(s3sink.acl),
+		}
+
+		_, err := s3sink.conn.CreateBucket(createBucketInput)
+		if err != nil {
+			glog.Errorf("Creating %s bucket failed!", bucket)
+			return err
+		}
+
+		glog.V(0).Infof("Bucket %s created successfully", s3sink.bucket)
+	} else {
+		glog.V(0).Infof("Bucket %s already exists", s3sink.bucket)
+	}
+
+	return nil
+}
+
+func (s3sink *S3Sink) deleteBucketIfExists(bucket string) error {
+	// Check if the bucket exists
+	_, err := s3sink.conn.HeadBucket(&s3.HeadBucketInput{
+		Bucket: aws.String(bucket),
+	})
+
+	if err != nil {
+		// Bucket does not exist, nothing to delete
+		glog.V(0).Infof("Bucket %s does not exist, nothing to delete", bucket)
+		return nil
+	}
+
+	// Bucket exists, delete it
+	deleteBucketInput := &s3.DeleteBucketInput{
+		Bucket: aws.String(bucket),
+	}
+
+	_, err = s3sink.conn.DeleteBucket(deleteBucketInput)
+	if err != nil {
+		glog.Errorf("Deleting %s bucket failed!", bucket)
+		return err
+	}
+
+	glog.V(0).Infof("Bucket %s deleted successfully", bucket)
+
+	return nil
 }
