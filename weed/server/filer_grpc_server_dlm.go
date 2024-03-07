@@ -33,7 +33,6 @@ func (fs *FilerServer) DistributedLock(ctx context.Context, req *filer_pb.LockRe
 			if err == nil {
 				resp.RenewToken = secondResp.RenewToken
 				resp.LockOwner = secondResp.LockOwner
-			} else {
 				resp.Error = secondResp.Error
 			}
 			return err
