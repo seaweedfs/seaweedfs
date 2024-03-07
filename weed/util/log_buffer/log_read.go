@@ -30,7 +30,7 @@ func NewMessagePosition(tsNs int64, batchIndex int64) MessagePosition {
 }
 
 func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition MessagePosition, stopTsNs int64,
-	waitForDataFn func() bool, eachLogDataFn func(logEntry *filer_pb.LogEntry) error) (lastReadPosition MessagePosition, isDone bool, err error) {
+	waitForDataFn func() bool, eachLogDataFn EachLogEntryFuncType) (lastReadPosition MessagePosition, isDone bool, err error) {
 	// loop through all messages
 	var bytesBuf *bytes.Buffer
 	var batchIndex int64
@@ -69,6 +69,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			if waitForDataFn() {
 				continue
 			} else {
+				isDone = true
 				return
 			}
 		}
@@ -101,8 +102,11 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			}
 			lastReadPosition = NewMessagePosition(logEntry.TsNs, batchIndex)
 
-			if err = eachLogDataFn(logEntry); err != nil {
+			if isDone, err = eachLogDataFn(logEntry); err != nil {
 				glog.Errorf("LoopProcessLogData: %s process log entry %d %v: %v", readerName, batchSize+1, logEntry, err)
+				return
+			}
+			if isDone {
 				return
 			}
 

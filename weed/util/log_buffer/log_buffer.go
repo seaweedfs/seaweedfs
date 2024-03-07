@@ -22,8 +22,8 @@ type dataToFlush struct {
 	data      *bytes.Buffer
 }
 
-type EachLogEntryFuncType func(logEntry *filer_pb.LogEntry) error
-type LogFlushFuncType func(startTime, stopTime time.Time, buf []byte)
+type EachLogEntryFuncType func(logEntry *filer_pb.LogEntry) (isDone bool, err error)
+type LogFlushFuncType func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte)
 type LogReadFromDiskFuncType func(startPosition MessagePosition, stopTsNs int64, eachLogEntryFn EachLogEntryFuncType) (lastReadPosition MessagePosition, isDone bool, err error)
 
 type LogBuffer struct {
@@ -146,7 +146,7 @@ func (logBuffer *LogBuffer) loopFlush() {
 	for d := range logBuffer.flushChan {
 		if d != nil {
 			// glog.V(4).Infof("%s flush [%v, %v] size %d", m.name, d.startTime, d.stopTime, len(d.data.Bytes()))
-			logBuffer.flushFn(d.startTime, d.stopTime, d.data.Bytes())
+			logBuffer.flushFn(logBuffer, d.startTime, d.stopTime, d.data.Bytes())
 			d.releaseMemory()
 			// local logbuffer is different from aggregate logbuffer here
 			logBuffer.lastFlushTime = d.stopTime

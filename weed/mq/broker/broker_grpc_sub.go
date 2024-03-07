@@ -105,7 +105,7 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 		}
 
 		return true
-	}, func(logEntry *filer_pb.LogEntry) error {
+	}, func(logEntry *filer_pb.LogEntry) (bool, error) {
 		// reset the sleep interval count
 		sleepIntervalCount = 0
 
@@ -118,10 +118,10 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 			},
 		}}); err != nil {
 			glog.Errorf("Error sending setup response: %v", err)
-			return err
+			return false, err
 		}
 
 		counter++
-		return nil
+		return false, nil
 	})
 }

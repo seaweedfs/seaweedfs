@@ -19,7 +19,7 @@ func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, partition *mq_pb.Par
 	partitionGeneration := time.Unix(0, partition.UnixTimeNs).UTC().Format(topic.TIME_FORMAT)
 	partitionDir := fmt.Sprintf("%s/%s/%04d-%04d", topicDir, partitionGeneration, partition.RangeStart, partition.RangeStop)
 
-	return func(startTime, stopTime time.Time, buf []byte) {
+	return func(logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte) {
 		if len(buf) == 0 {
 			return
 		}
@@ -75,7 +75,7 @@ func (b *MessageQueueBroker) genLogOnDiskReadFunc(t topic.Topic, partition *mq_p
 				return
 			}
 
-			if err = eachLogEntryFn(logEntry); err != nil {
+			if _, err = eachLogEntryFn(logEntry); err != nil {
 				err = fmt.Errorf("process log entry %v: %v", logEntry, err)
 				return
 			}

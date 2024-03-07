@@ -87,7 +87,7 @@ func (f *Filer) logMetaEvent(ctx context.Context, fullpath string, eventNotifica
 
 }
 
-func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
+func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte) {
 
 	if len(buf) == 0 {
 		return
@@ -114,7 +114,7 @@ var (
 	VolumeNotFoundPattern = regexp.MustCompile(`volume \d+? not found`)
 )
 
-func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (lastTsNs int64, isDone bool, err error) {
+func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastTsNs int64, isDone bool, err error) {
 
 	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Year(), startPosition.Month(), startPosition.Day())
 	startHourMinute := fmt.Sprintf("%02d-%02d", startPosition.Hour(), startPosition.Minute())
@@ -177,7 +177,7 @@ func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition,
 	return lastTsNs, isDone, nil
 }
 
-func ReadEachLogEntry(r io.Reader, sizeBuf []byte, startTsNs, stopTsNs int64, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (lastTsNs int64, err error) {
+func ReadEachLogEntry(r io.Reader, sizeBuf []byte, startTsNs, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastTsNs int64, err error) {
 	for {
 		n, err := r.Read(sizeBuf)
 		if err != nil {
@@ -207,7 +207,7 @@ func ReadEachLogEntry(r io.Reader, sizeBuf []byte, startTsNs, stopTsNs int64, ea
 			return lastTsNs, err
 		}
 		// println("each log: ", logEntry.TsNs)
-		if err := eachLogEntryFn(logEntry); err != nil {
+		if _, err := eachLogEntryFn(logEntry); err != nil {
 			return lastTsNs, err
 		} else {
 			lastTsNs = logEntry.TsNs
