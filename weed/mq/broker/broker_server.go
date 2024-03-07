@@ -86,8 +86,9 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 
 		lockClient := cluster.NewLockClient(grpcDialOption, mqBroker.currentFiler)
 		mqBroker.lockAsBalancer = lockClient.StartLongLivedLock(pub_balancer.LockBrokerBalancer, string(self), func(newLockOwner string) {
+			// FIXME this is a blocking call, should be in a goroutine
 			if err := mqBroker.BrokerConnectToBalancer(newLockOwner); err != nil {
-				glog.V(0).Infof("BrokerConnectToBalancer: %v", err)
+				glog.V(0).Infof("BrokerConnectToBalancer %s: %v", newLockOwner, err)
 			}
 		})
 		for {
