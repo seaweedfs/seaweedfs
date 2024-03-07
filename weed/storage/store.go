@@ -251,6 +251,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	maxVolumeCounts := make(map[string]uint32)
 	var maxFileKey NeedleId
 	collectionVolumeSize := make(map[string]int64)
+	collectionVolumeDeletedBytes := make(map[string]int64)
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
 	for _, location := range s.Locations {
 		var deleteVids []needle.VolumeId
@@ -283,9 +284,11 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 			if _, exist := collectionVolumeSize[v.Collection]; !exist {
 				collectionVolumeSize[v.Collection] = 0
+				collectionVolumeDeletedBytes[v.Collection] = 0
 			}
 			if !shouldDeleteVolume {
 				collectionVolumeSize[v.Collection] += int64(volumeMessage.Size)
+				collectionVolumeDeletedBytes[v.Collection] += int64(volumeMessage.DeletedByteCount)
 			} else {
 				collectionVolumeSize[v.Collection] -= int64(volumeMessage.Size)
 				if collectionVolumeSize[v.Collection] <= 0 {
@@ -340,6 +343,10 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 	for col, size := range collectionVolumeSize {
 		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal").Set(float64(size))
+	}
+
+	for col, deletedBytes := range collectionVolumeDeletedBytes{
+		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "deleted_bytes").Set(float64(deletedBytes))
 	}
 
 	for col, types := range collectionVolumeReadOnlyCount {
