@@ -210,6 +210,20 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 			hasChanges: false,
 		},
 		{
+			name: "test low active brokers with one follower",
+			args: args{
+				activeBrokers: lowActiveBrokers,
+				followerCount: 1,
+				assignments:   []*mq_pb.BrokerPartitionAssignment{
+					{
+						LeaderBroker: "localhost:1",
+						Partition: &mq_pb.Partition{},
+					},
+				},
+			},
+			hasChanges: true,
+		},
+		{
 			name: "test single active broker",
 			args: args{
 				activeBrokers: singleActiveBroker,
