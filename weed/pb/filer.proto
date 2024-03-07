@@ -364,6 +364,7 @@ message LogEntry {
     int64 ts_ns = 1;
     int32 partition_key_hash = 2;
     bytes data = 3;
+    bytes key = 4;
 }
 
 message KeepConnectedRequest {

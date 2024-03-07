@@ -98,6 +98,7 @@ func (logBuffer *LogBuffer) AddToBuffer(partitionKey, data []byte, processingTsN
 		TsNs:             processingTsNs,
 		PartitionKeyHash: util.HashToInt32(partitionKey),
 		Data:             data,
+		Key:              partitionKey,
 	}
 
 	logEntryData, _ := proto.Marshal(logEntry)

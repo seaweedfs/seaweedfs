@@ -109,11 +109,10 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 		// reset the sleep interval count
 		sleepIntervalCount = 0
 
-		value := logEntry.GetData()
 		if err := stream.Send(&mq_pb.SubscribeMessageResponse{Message: &mq_pb.SubscribeMessageResponse_Data{
 			Data: &mq_pb.DataMessage{
-				Key:   []byte(fmt.Sprintf("key-%d", logEntry.PartitionKeyHash)),
-				Value: value,
+				Key:   logEntry.Key,
+				Value: logEntry.Data,
 				TsNs:  logEntry.TsNs,
 			},
 		}}); err != nil {
