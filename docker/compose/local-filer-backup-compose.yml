@@ -1,0 +1,54 @@
+version: '3.9'
+
+services:
+  server-left:
+    image: chrislusf/seaweedfs:local
+    command: "-v=0 server -ip=server-left -filer -filer.maxMB 5 -s3 -s3.config=/etc/seaweedfs/s3.json -volume.max=0 -master.volumeSizeLimitMB=1024 -volume.preStopSeconds=1"
+    volumes:
+      - ./s3.json:/etc/seaweedfs/s3.json
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "-I", "http://localhost:9333/cluster/healthz" ]
+      interval: 3s
+      start_period: 15s
+      timeout: 30s
+  server-right:
+    image: chrislusf/seaweedfs:local
+    command: "-v=0 server -ip=server-right -filer -filer.maxMB 64 -s3 -s3.config=/etc/seaweedfs/s3.json -volume.max=0 -master.volumeSizeLimitMB=1024 -volume.preStopSeconds=1"
+    volumes:
+      - ./s3.json:/etc/seaweedfs/s3.json
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "-I", "http://localhost:9333/cluster/healthz" ]
+      interval: 3s
+      start_period: 15s
+      timeout: 30s
+  filer-backup:
+    image: chrislusf/seaweedfs:local
+    command: "-v=0 filer.backup -debug -doDeleteFiles=False -filer server-left:8888"
+    volumes:
+      - ./replication.toml:/etc/seaweedfs/replication.toml
+    environment:
+      WEED_SINK_LOCAL_INCREMENTAL_ENABLED: "false"
+      WEED_SINK_S3_ENABLED: "true"
+      WEED_SINK_S3_BUCKET: "backup"
+      WEED_SINK_S3_ENDPOINT: "http://server-right:8333"
+      WEED_SINK_S3_DIRECTORY: "/"
+      WEED_SINK_S3_AWS_ACCESS_KEY_ID: "some_access_key1"
+      WEED_SINK_S3_AWS_SECRET_ACCESS_KEY: "some_secret_key1"
+      WEED_SINK_S3_S3_DISABLE_CONTENT_MD5_VALIDATION: "false"
+      WEED_SINK_S3_UPLOADER_PART_SIZE_MB: "5"
+      WEED_SINK_S3_KEEP_PART_SIZE: "false"
+    depends_on:
+      server-left:
+        condition: service_healthy
+      server-right:
+        condition: service_healthy
+  minio-warp:
+    image: minio/warp
+    command: 'mixed --duration 5s --obj.size=6mb --md5 --objects 10 --concurrent 2'
+    restart: on-failure
+    environment:
+      WARP_HOST: "server-left:8333"
+      WARP_ACCESS_KEY: "some_access_key1"
+      WARP_SECRET_KEY: "some_secret_key1"
+    depends_on:
+      - filer-backup
