@@ -13,7 +13,7 @@ type LocalPartition struct {
 	Partition
 	isLeader          bool
 	FollowerBrokers   []pb.ServerAddress
-	logBuffer         *log_buffer.LogBuffer
+	LogBuffer         *log_buffer.LogBuffer
 	ConsumerCount     int32
 	StopPublishersCh  chan struct{}
 	Publishers        *LocalPartitionPublishers
@@ -28,7 +28,7 @@ func NewLocalPartition(partition Partition, isLeader bool, followerBrokers []pb.
 		Partition:       partition,
 		isLeader:        isLeader,
 		FollowerBrokers: followerBrokers,
-		logBuffer: log_buffer.NewLogBuffer(fmt.Sprintf("%d/%04d-%04d", partition.UnixTimeNs, partition.RangeStart, partition.RangeStop),
+		LogBuffer: log_buffer.NewLogBuffer(fmt.Sprintf("%d/%04d-%04d", partition.UnixTimeNs, partition.RangeStart, partition.RangeStop),
 			2*time.Minute, logFlushFn, readFromDiskFn, func() {}),
 		Publishers:  NewLocalPartitionPublishers(),
 		Subscribers: NewLocalPartitionSubscribers(),
@@ -36,7 +36,7 @@ func NewLocalPartition(partition Partition, isLeader bool, followerBrokers []pb.
 }
 
 func (p *LocalPartition) Publish(message *mq_pb.DataMessage) {
-	p.logBuffer.AddToBuffer(message.Key, message.Value, time.Now().UnixNano())
+	p.LogBuffer.AddToBuffer(message.Key, message.Value, time.Now().UnixNano())
 }
 
 func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.MessagePosition,
@@ -47,7 +47,7 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 	var isDone bool
 
 	for {
-		processedPosition, isDone, readPersistedLogErr = p.logBuffer.ReadFromDiskFn(startPosition, 0, eachMessageFn)
+		processedPosition, isDone, readPersistedLogErr = p.LogBuffer.ReadFromDiskFn(startPosition, 0, eachMessageFn)
 		if readPersistedLogErr != nil {
 			glog.V(0).Infof("%s read %v persisted log: %v", clientName, p.Partition, readPersistedLogErr)
 			return readPersistedLogErr
@@ -57,7 +57,7 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 		}
 
 		startPosition = processedPosition
-		processedPosition, isDone, readInMemoryLogErr = p.logBuffer.LoopProcessLogData(clientName, startPosition, 0, onNoMessageFn, eachMessageFn)
+		processedPosition, isDone, readInMemoryLogErr = p.LogBuffer.LoopProcessLogData(clientName, startPosition, 0, onNoMessageFn, eachMessageFn)
 		startPosition = processedPosition
 
 		if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
@@ -74,15 +74,15 @@ func (p *LocalPartition) Subscribe(clientName string, startPosition log_buffer.M
 }
 
 func (p *LocalPartition) GetEarliestMessageTimeInMemory() time.Time {
-	return p.logBuffer.GetEarliestTime()
+	return p.LogBuffer.GetEarliestTime()
 }
 
 func (p *LocalPartition) HasData() bool {
-	return !p.logBuffer.GetEarliestTime().IsZero()
+	return !p.LogBuffer.GetEarliestTime().IsZero()
 }
 
 func (p *LocalPartition) GetEarliestInMemoryMessagePosition() log_buffer.MessagePosition {
-	return p.logBuffer.GetEarliestPosition()
+	return p.LogBuffer.GetEarliestPosition()
 }
 
 func FromPbBrokerPartitionAssignment(self pb.ServerAddress, partition Partition, assignment *mq_pb.BrokerPartitionAssignment, logFlushFn log_buffer.LogFlushFuncType, readFromDiskFn log_buffer.LogReadFromDiskFuncType) *LocalPartition {
@@ -113,7 +113,7 @@ func (p *LocalPartition) WaitUntilNoPublishers() {
 
 func (p *LocalPartition) MaybeShutdownLocalPartition() (hasShutdown bool) {
 	if p.Publishers.IsEmpty() && p.Subscribers.IsEmpty() {
-		p.logBuffer.ShutdownLogBuffer()
+		p.LogBuffer.ShutdownLogBuffer()
 		hasShutdown = true
 	}
 	return
