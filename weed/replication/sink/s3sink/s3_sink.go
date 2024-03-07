@@ -87,8 +87,10 @@ func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string
 	if s3sink.uploaderMaxUploadParts > s3manager.MaxUploadParts {
 		s3sink.uploaderMaxUploadParts = s3manager.MaxUploadParts
 		glog.Warningf("uploader_max_upload_parts is greater than the maximum number of parts allowed when uploading multiple parts to Amazon S3")
+		glog.V(0).Infof("sink.s3.uploader_max_upload_parts: %v => %v", s3sink.uploaderMaxUploadParts, s3manager.MaxUploadParts)
+	} else {
+		glog.V(0).Infof("sink.s3.uploader_max_upload_parts: %v", s3sink.uploaderMaxUploadParts)
 	}
-	glog.V(0).Infof("sink.s3.uploader_max_upload_parts: %v", s3sink.uploaderMaxUploadParts)
 	glog.V(0).Infof("sink.s3.uploader_part_size_mb: %v", s3sink.uploaderPartSizeMb)
 	glog.V(0).Infof("sink.s3.uploader_concurrency: %v", s3sink.uploaderConcurrency)
 
