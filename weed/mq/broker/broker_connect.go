@@ -12,7 +12,8 @@ import (
 )
 
 // BrokerConnectToBalancer connects to the broker balancer and sends stats
-func (b *MessageQueueBroker) BrokerConnectToBalancer(brokerBalancer string) error {
+func (b *MessageQueueBroker) BrokerConnectToBalancer(brokerBalancer string, stopCh chan struct{}) error {
+
 	self := string(b.option.BrokerAddress())
 
 	glog.V(0).Infof("broker %s connects to balancer %s", self, brokerBalancer)
@@ -39,6 +40,13 @@ func (b *MessageQueueBroker) BrokerConnectToBalancer(brokerBalancer string) erro
 		}
 
 		for {
+			// check if the broker is stopping
+			select {
+			case <-stopCh:
+				return nil
+			default:
+			}
+
 			stats := b.localTopicManager.CollectStats(time.Second * 5)
 			err = stream.Send(&mq_pb.PublisherToPubBalancerRequest{
 				Message: &mq_pb.PublisherToPubBalancerRequest_Stats{
@@ -55,7 +63,40 @@ func (b *MessageQueueBroker) BrokerConnectToBalancer(brokerBalancer string) erro
 
 			time.Sleep(time.Millisecond*5000 + time.Duration(rand.Intn(1000))*time.Millisecond)
 		}
-
-		return nil
 	})
+}
+
+func (b *MessageQueueBroker) KeepConnectedToBrokerBalancer(newBrokerBalancerCh chan string) {
+	var stopPrevRunChan chan struct{}
+	for {
+		select {
+		case newBrokerBalancer := <-newBrokerBalancerCh:
+			if stopPrevRunChan != nil {
+				close(stopPrevRunChan)
+				stopPrevRunChan = nil
+			}
+			thisRunStopChan := make(chan struct{})
+			if newBrokerBalancer != "" {
+				stopPrevRunChan = thisRunStopChan
+				go func() {
+					for {
+						err := b.BrokerConnectToBalancer(newBrokerBalancer, thisRunStopChan)
+						if err != nil {
+							glog.V(0).Infof("connect to balancer %s: %v", newBrokerBalancer, err)
+							time.Sleep(time.Second)
+						} else {
+							break
+						}
+
+						select {
+						case <-thisRunStopChan:
+							return
+						default:
+						}
+
+					}
+				}()
+			}
+		}
+	}
 }

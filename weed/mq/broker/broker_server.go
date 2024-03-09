@@ -1,7 +1,6 @@
 package broker
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
@@ -84,19 +83,13 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		self := option.BrokerAddress()
 		glog.V(0).Infof("broker %s found filer %s", self, mqBroker.currentFiler)
 
+		newBrokerBalancerCh := make(chan string, 1)
 		lockClient := cluster.NewLockClient(grpcDialOption, mqBroker.currentFiler)
 		mqBroker.lockAsBalancer = lockClient.StartLongLivedLock(pub_balancer.LockBrokerBalancer, string(self), func(newLockOwner string) {
-			// FIXME this is a blocking call, should be in a goroutine
-			if err := mqBroker.BrokerConnectToBalancer(newLockOwner); err != nil {
-				glog.V(0).Infof("BrokerConnectToBalancer %s: %v", newLockOwner, err)
-			}
+			glog.V(0).Infof("broker %s found balanacer %s", self, newLockOwner)
+			newBrokerBalancerCh <- newLockOwner
 		})
-		for {
-			time.Sleep(lock_manager.RenewInterval)
-			if err := mqBroker.lockAsBalancer.AttemptToLock(lock_manager.LiveLockTTL); err != nil {
-				glog.V(4).Infof("AttemptToLock: %v", err)
-			}
-		}
+		mqBroker.KeepConnectedToBrokerBalancer(newBrokerBalancerCh)
 	}()
 
 	return mqBroker, nil
