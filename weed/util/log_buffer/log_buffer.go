@@ -27,6 +27,7 @@ type LogFlushFuncType func(logBuffer *LogBuffer, startTime, stopTime time.Time, 
 type LogReadFromDiskFuncType func(startPosition MessagePosition, stopTsNs int64, eachLogEntryFn EachLogEntryFuncType) (lastReadPosition MessagePosition, isDone bool, err error)
 
 type LogBuffer struct {
+	LastFlushTsNs  int64
 	name           string
 	prevBuffers    *SealedBuffers
 	buf            []byte

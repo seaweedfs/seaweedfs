@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"google.golang.org/protobuf/proto"
 	"math"
+	"sync/atomic"
 	"time"
 )
 
@@ -38,6 +39,8 @@ func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, partition *mq_pb.Par
 				break
 			}
 		}
+
+		atomic.StoreInt64(&logBuffer.LastFlushTsNs, stopTime.UnixNano())
 	}
 }
 

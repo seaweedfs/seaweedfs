@@ -27,6 +27,7 @@ func (localTopic *LocalTopic) removePartition(partition Partition) bool {
 	for i, localPartition := range localTopic.Partitions {
 		if localPartition.Partition.Equals(partition) {
 			foundPartitionIndex = i
+			localPartition.Shutdown()
 			break
 		}
 	}

@@ -57,7 +57,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 		if bytesBuf != nil {
 			readSize = bytesBuf.Len()
 		}
-		glog.V(0).Infof("%s ReadFromBuffer at %v batch:%d, read bytes:%v batch:%d", readerName, lastReadPosition, lastReadPosition.BatchIndex, readSize, batchIndex)
+		glog.V(0).Infof("%s ReadFromBuffer at %v batch %d. Read bytes %v batch %d", readerName, lastReadPosition, lastReadPosition.BatchIndex, readSize, batchIndex)
 		if bytesBuf == nil {
 			if batchIndex >= 0 {
 				lastReadPosition = NewMessagePosition(lastReadPosition.UnixNano(), batchIndex)
@@ -69,6 +69,10 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			if waitForDataFn() {
 				continue
 			} else {
+				isDone = true
+				return
+			}
+			if logBuffer.IsStopping() {
 				isDone = true
 				return
 			}
@@ -107,6 +111,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 				return
 			}
 			if isDone {
+				glog.V(0).Infof("LoopProcessLogData2: %s process log entry %d", readerName, batchSize+1)
 				return
 			}
 
