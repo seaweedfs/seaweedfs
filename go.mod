@@ -104,7 +104,7 @@ require (
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20201027041543-1326539a0a0a // indirect
 	go.etcd.io/etcd/client/v3 v3.5.11
-	go.mongodb.org/mongo-driver v1.13.1
+	go.mongodb.org/mongo-driver v1.14.0
 	go.opencensus.io v0.24.0 // indirect
 	gocloud.dev v0.36.0
 	gocloud.dev/pubsub/natspubsub v0.36.0
