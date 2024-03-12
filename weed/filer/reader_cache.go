@@ -22,16 +22,16 @@ type ReaderCache struct {
 type SingleChunkCacher struct {
 	completedTimeNew int64
 	sync.Mutex
-	parent           *ReaderCache
-	chunkFileId      string
-	data             []byte
-	err              error
-	cipherKey        []byte
-	isGzipped        bool
-	chunkSize        int
-	shouldCache      bool
-	wg               sync.WaitGroup
-	cacheStartedCh   chan struct{}
+	parent         *ReaderCache
+	chunkFileId    string
+	data           []byte
+	err            error
+	cipherKey      []byte
+	isGzipped      bool
+	chunkSize      int
+	shouldCache    bool
+	wg             sync.WaitGroup
+	cacheStartedCh chan struct{}
 }
 
 func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType) *ReaderCache {
