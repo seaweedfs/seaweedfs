@@ -226,7 +226,7 @@ func (vs *VolumeServer) doCopyFileWithThrottler(client volume_server_pb.VolumeSe
 
 /*
 *
-only check the the differ of the file size
+only check the differ of the file size
 todo: maybe should check the received count and deleted count of the volume
 */
 func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse, hasRemoteDatFile bool, idxFileName, datFileName string) error {
