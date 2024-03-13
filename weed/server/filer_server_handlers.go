@@ -63,11 +63,11 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkProxy).Observe(time.Since(start).Seconds())
 		return
 	}
-
-	defer func() {
-		stats.FilerRequestCounter.WithLabelValues(r.Method, strconv.Itoa(statusRecorder.Status)).Inc()
-		stats.FilerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
-	}()
+	requestMethod := r.Method
+	defer func(method *string) {
+		stats.FilerRequestCounter.WithLabelValues(*method, strconv.Itoa(statusRecorder.Status)).Inc()
+		stats.FilerRequestHistogram.WithLabelValues(*method).Observe(time.Since(start).Seconds())
+	}(&requestMethod)
 
 	isReadHttpCall := r.Method == http.MethodGet || r.Method == http.MethodHead
 	if !fs.maybeCheckJwtAuthorization(r, !isReadHttpCall) {
@@ -113,6 +113,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 			fs.PostHandler(w, r, contentLength)
 		}
 	default:
+		requestMethod = "INVALID"
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
@@ -146,11 +147,11 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 		w.Header().Set("Access-Control-Allow-Headers", "OPTIONS, GET, HEAD")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
-
-	defer func() {
-		stats.FilerRequestCounter.WithLabelValues(r.Method, strconv.Itoa(statusRecorder.Status)).Inc()
-		stats.FilerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
-	}()
+	requestMethod := r.Method
+	defer func(method *string) {
+		stats.FilerRequestCounter.WithLabelValues(*method, strconv.Itoa(statusRecorder.Status)).Inc()
+		stats.FilerRequestHistogram.WithLabelValues(*method).Observe(time.Since(start).Seconds())
+	}(&requestMethod)
 	// We handle OPTIONS first because it never should be authenticated
 	if r.Method == http.MethodOptions {
 		OptionsHandler(w, r, true)
@@ -168,6 +169,7 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 	case http.MethodGet, http.MethodHead:
 		fs.GetOrHeadHandler(w, r)
 	default:
+		requestMethod = "INVALID"
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
