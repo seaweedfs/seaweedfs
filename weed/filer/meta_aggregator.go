@@ -188,6 +188,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			ClientEpoch: atomic.LoadInt32(&ma.filer.UniqueFilerEpoch),
 		})
 		if err != nil {
+			glog.V(0).Infof("SubscribeLocalMetadata %v: %v", peer, err)
 			return fmt.Errorf("subscribe: %v", err)
 		}
 
@@ -197,10 +198,12 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 				return nil
 			}
 			if listenErr != nil {
+				glog.V(0).Infof("SubscribeLocalMetadata stream %v: %v", peer, listenErr)
 				return listenErr
 			}
 
 			if err := processEventFn(resp); err != nil {
+				glog.V(0).Infof("SubscribeLocalMetadata process %v: %v", resp, err)
 				return fmt.Errorf("process %v: %v", resp, err)
 			}
 
