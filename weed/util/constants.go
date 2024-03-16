@@ -7,7 +7,7 @@ import (
 const HttpStatusCancelled = 499
 
 var (
-	VERSION_NUMBER = fmt.Sprintf("%.02f", 3.63)
+	VERSION_NUMBER = fmt.Sprintf("%.02f", 3.64)
 	VERSION        = sizeLimit + " " + VERSION_NUMBER
 	COMMIT         = ""
 )
