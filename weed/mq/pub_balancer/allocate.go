@@ -102,7 +102,7 @@ func EnsureAssignmentsToActiveBrokers(activeBrokers cmap.ConcurrentMap[string, *
 			assignment.LeaderBroker = ""
 			count++
 		}
-		for i:=0; i<followerCount; i++ {
+		for i := 0; i < followerCount; i++ {
 			if i >= len(assignment.FollowerBrokers) {
 				count++
 				continue
@@ -128,7 +128,7 @@ func EnsureAssignmentsToActiveBrokers(activeBrokers cmap.ConcurrentMap[string, *
 
 			hasEmptyFollowers := false
 			j := 0
-			for ; j<len(assignment.FollowerBrokers); j++ {
+			for ; j < len(assignment.FollowerBrokers); j++ {
 				if assignment.FollowerBrokers[j] == "" {
 					hasChanges = true
 					if i < len(pickedBrokers) {

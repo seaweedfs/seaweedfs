@@ -27,24 +27,24 @@ type LogFlushFuncType func(logBuffer *LogBuffer, startTime, stopTime time.Time, 
 type LogReadFromDiskFuncType func(startPosition MessagePosition, stopTsNs int64, eachLogEntryFn EachLogEntryFuncType) (lastReadPosition MessagePosition, isDone bool, err error)
 
 type LogBuffer struct {
-	LastFlushTsNs  int64
-	name           string
-	prevBuffers    *SealedBuffers
-	buf            []byte
-	batchIndex     int64
-	idx            []int
-	pos            int
-	startTime      time.Time
+	LastFlushTsNs     int64
+	name              string
+	prevBuffers       *SealedBuffers
+	buf               []byte
+	batchIndex        int64
+	idx               []int
+	pos               int
+	startTime         time.Time
 	stopTime          time.Time
 	lastFlushDataTime time.Time
 	sizeBuf           []byte
-	flushInterval  time.Duration
-	flushFn        LogFlushFuncType
-	ReadFromDiskFn LogReadFromDiskFuncType
-	notifyFn       func()
-	isStopping     *atomic.Bool
-	flushChan      chan *dataToFlush
-	lastTsNs       int64
+	flushInterval     time.Duration
+	flushFn           LogFlushFuncType
+	ReadFromDiskFn    LogReadFromDiskFuncType
+	notifyFn          func()
+	isStopping        *atomic.Bool
+	flushChan         chan *dataToFlush
+	lastTsNs          int64
 	sync.RWMutex
 }
 

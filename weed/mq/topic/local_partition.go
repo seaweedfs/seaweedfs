@@ -12,13 +12,13 @@ import (
 
 type LocalPartition struct {
 	Partition
-	isLeader          bool
-	FollowerBrokers   []pb.ServerAddress
-	LogBuffer         *log_buffer.LogBuffer
-	ConsumerCount     int32
-	Publishers        *LocalPartitionPublishers
-	Subscribers       *LocalPartitionSubscribers
-	FollowerId        int32
+	isLeader        bool
+	FollowerBrokers []pb.ServerAddress
+	LogBuffer       *log_buffer.LogBuffer
+	ConsumerCount   int32
+	Publishers      *LocalPartitionPublishers
+	Subscribers     *LocalPartitionSubscribers
+	FollowerId      int32
 }
 
 var TIME_FORMAT = "2006-01-02-15-04-05"

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func (b *MessageQueueBroker)  PublishFollowMe(c context.Context, request *mq_pb.PublishFollowMeRequest) (*mq_pb.PublishFollowMeResponse, error){
+func (b *MessageQueueBroker) PublishFollowMe(c context.Context, request *mq_pb.PublishFollowMeRequest) (*mq_pb.PublishFollowMeResponse, error) {
 	glog.V(0).Infof("PublishFollowMe %v", request)
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -75,7 +75,7 @@ func (b *MessageQueueBroker) doFollowInMemoryMessage(c context.Context, client m
 		}
 		if resp.Message != nil {
 			// process ctrl message or data message
-			switch m:= resp.Message.(type) {
+			switch m := resp.Message.(type) {
 			case *mq_pb.FollowInMemoryMessagesResponse_Data:
 				// process data message
 				print("d")

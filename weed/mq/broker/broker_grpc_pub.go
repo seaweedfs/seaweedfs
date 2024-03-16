@@ -63,9 +63,9 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		for _, follower := range initMessage.FollowerBrokers {
 			followErr := b.withBrokerClient(false, pb.ServerAddress(follower), func(client mq_pb.SeaweedMessagingClient) error {
 				_, err := client.PublishFollowMe(context.Background(), &mq_pb.PublishFollowMeRequest{
-					Topic:     initMessage.Topic,
-					Partition: initMessage.Partition,
-					BrokerSelf:    string(b.option.BrokerAddress()),
+					Topic:      initMessage.Topic,
+					Partition:  initMessage.Partition,
+					BrokerSelf: string(b.option.BrokerAddress()),
 				})
 				return err
 			})

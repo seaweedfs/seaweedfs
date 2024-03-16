@@ -86,19 +86,19 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 	singleActiveBroker := cmap.New[*BrokerStats]()
 	singleActiveBroker.SetIfAbsent("localhost:1", &BrokerStats{})
 	tests := []struct {
-		name                   string
-		args                   args
-		hasChanges			   bool
+		name       string
+		args       args
+		hasChanges bool
 	}{
 		{
 			name: "test empty leader",
 			args: args{
 				activeBrokers: activeBrokers,
 				followerCount: 1,
-				assignments:   []*mq_pb.BrokerPartitionAssignment{
+				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
 						LeaderBroker: "",
-						Partition: &mq_pb.Partition{},
+						Partition:    &mq_pb.Partition{},
 						FollowerBrokers: []string{
 							"localhost:2",
 						},
@@ -112,10 +112,10 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 			args: args{
 				activeBrokers: activeBrokers,
 				followerCount: 1,
-				assignments:   []*mq_pb.BrokerPartitionAssignment{
+				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
 						LeaderBroker: "localhost:1",
-						Partition: &mq_pb.Partition{},
+						Partition:    &mq_pb.Partition{},
 						FollowerBrokers: []string{
 							"",
 						},
@@ -129,10 +129,10 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 			args: args{
 				activeBrokers: activeBrokers,
 				followerCount: 1,
-				assignments:   []*mq_pb.BrokerPartitionAssignment{
+				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
 						LeaderBroker: "localhost:1",
-						Partition: &mq_pb.Partition{},
+						Partition:    &mq_pb.Partition{},
 						FollowerBrokers: []string{
 							"localhost:200",
 						},
@@ -146,10 +146,10 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 			args: args{
 				activeBrokers: activeBrokers,
 				followerCount: 1,
-				assignments:   []*mq_pb.BrokerPartitionAssignment{
+				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
 						LeaderBroker: "localhost:100",
-						Partition: &mq_pb.Partition{},
+						Partition:    &mq_pb.Partition{},
 						FollowerBrokers: []string{
 							"localhost:200",
 						},
@@ -163,10 +163,10 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 			args: args{
 				activeBrokers: activeBrokers,
 				followerCount: 3,
-				assignments:   []*mq_pb.BrokerPartitionAssignment{
+				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
 						LeaderBroker: "localhost:1",
-						Partition: &mq_pb.Partition{},
+						Partition:    &mq_pb.Partition{},
 						FollowerBrokers: []string{
 							"localhost:2",
 						},
@@ -180,10 +180,10 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 			args: args{
 				activeBrokers: activeBrokers,
 				followerCount: 10,
-				assignments:   []*mq_pb.BrokerPartitionAssignment{
+				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
 						LeaderBroker: "localhost:1",
-						Partition: &mq_pb.Partition{},
+						Partition:    &mq_pb.Partition{},
 						FollowerBrokers: []string{
 							"localhost:2",
 						},
@@ -197,10 +197,10 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 			args: args{
 				activeBrokers: lowActiveBrokers,
 				followerCount: 3,
-				assignments:   []*mq_pb.BrokerPartitionAssignment{
+				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
 						LeaderBroker: "localhost:1",
-						Partition: &mq_pb.Partition{},
+						Partition:    &mq_pb.Partition{},
 						FollowerBrokers: []string{
 							"localhost:2",
 						},
@@ -214,10 +214,10 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 			args: args{
 				activeBrokers: lowActiveBrokers,
 				followerCount: 1,
-				assignments:   []*mq_pb.BrokerPartitionAssignment{
+				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
 						LeaderBroker: "localhost:1",
-						Partition: &mq_pb.Partition{},
+						Partition:    &mq_pb.Partition{},
 					},
 				},
 			},
@@ -228,10 +228,10 @@ func TestEnsureAssignmentsToActiveBrokersX(t *testing.T) {
 			args: args{
 				activeBrokers: singleActiveBroker,
 				followerCount: 3,
-				assignments:   []*mq_pb.BrokerPartitionAssignment{
+				assignments: []*mq_pb.BrokerPartitionAssignment{
 					{
 						LeaderBroker: "localhost:1",
-						Partition: &mq_pb.Partition{},
+						Partition:    &mq_pb.Partition{},
 						FollowerBrokers: []string{
 							"localhost:2",
 						},

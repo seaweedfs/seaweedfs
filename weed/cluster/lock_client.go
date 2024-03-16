@@ -31,9 +31,9 @@ func NewLockClient(grpcDialOption grpc.DialOption, seedFiler pb.ServerAddress) *
 type LiveLock struct {
 	key            string
 	renewToken     string
-	expireAtNs int64
-	hostFiler  pb.ServerAddress
-	cancelCh   chan struct{}
+	expireAtNs     int64
+	hostFiler      pb.ServerAddress
+	cancelCh       chan struct{}
 	grpcDialOption grpc.DialOption
 	isLocked       bool
 	self           string
