@@ -184,6 +184,15 @@ func (b *MessageQueueBroker)  FollowInMemoryMessages(req *mq_pb.FollowInMemoryMe
 		glog.V(0).Infof("FollowInMemoryMessages %s on %v %v disconnected, sent %d", clientName, t, partition, counter)
 	}()
 
+	// send first hello message
+	// to indicate the follower is connected
+	stream.Send(&mq_pb.FollowInMemoryMessagesResponse{
+		Message: &mq_pb.FollowInMemoryMessagesResponse_Ctrl{
+			Ctrl: &mq_pb.FollowInMemoryMessagesResponse_CtrlMessage{
+			},
+		},
+	})
+
 	var startPosition log_buffer.MessagePosition
 	if req.GetInit() != nil && req.GetInit().GetPartitionOffset() != nil {
 		startPosition = getRequestPosition(req.GetInit().GetPartitionOffset())
