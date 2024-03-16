@@ -15,7 +15,7 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 	flushInterval := time.Second
 	lb := NewLogBuffer("test", flushInterval, func(startTime, stopTime time.Time, buf []byte) {
 		fmt.Printf("flush from %v to %v %d bytes\n", startTime, stopTime, len(buf))
-	}, func() {
+	}, nil, func() {
 	})
 
 	startTime := time.Now()

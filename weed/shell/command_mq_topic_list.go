@@ -55,7 +55,7 @@ func findBrokerBalancer(commandEnv *CommandEnv) (brokerBalancer string, err erro
 			Name: pub_balancer.LockBrokerBalancer,
 		})
 		if err != nil {
-			return err
+			return fmt.Errorf("FindLockOwner: %v", err)
 		}
 		brokerBalancer = resp.Owner
 		return nil

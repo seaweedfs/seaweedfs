@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/url"
-	"strings"
 	"sync"
 	"time"
 
@@ -122,44 +120,7 @@ func fetchChunkRange(buffer []byte, lookupFileIdFn wdclient.LookupFileIdFunction
 		glog.Errorf("operation LookupFileId %s failed, err: %v", fileId, err)
 		return 0, err
 	}
-	return retriedFetchChunkData(buffer, urlStrings, cipherKey, isGzipped, false, offset)
-}
-
-func retriedFetchChunkData(buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64) (n int, err error) {
-
-	var shouldRetry bool
-
-	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
-		for _, urlString := range urlStrings {
-			n = 0
-			if strings.Contains(urlString, "%") {
-				urlString = url.PathEscape(urlString)
-			}
-			shouldRetry, err = util.ReadUrlAsStream(urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
-				if n < len(buffer) {
-					x := copy(buffer[n:], data)
-					n += x
-				}
-			})
-			if !shouldRetry {
-				break
-			}
-			if err != nil {
-				glog.V(0).Infof("read %s failed, err: %v", urlString, err)
-			} else {
-				break
-			}
-		}
-		if err != nil && shouldRetry {
-			glog.V(0).Infof("retry reading in %v", waitTime)
-			time.Sleep(waitTime)
-		} else {
-			break
-		}
-	}
-
-	return n, err
-
+	return util.RetriedFetchChunkData(buffer, urlStrings, cipherKey, isGzipped, false, offset)
 }
 
 func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, size int) (err error) {

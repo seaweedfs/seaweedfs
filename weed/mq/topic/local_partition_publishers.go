@@ -50,3 +50,10 @@ func (p *LocalPartitionPublishers) IsEmpty() bool {
 
 	return len(p.publishers) == 0
 }
+
+func (p *LocalPartitionPublishers) Size() int {
+	p.publishersLock.RLock()
+	defer p.publishersLock.RUnlock()
+
+	return len(p.publishers)
+}

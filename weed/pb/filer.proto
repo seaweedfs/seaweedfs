@@ -364,6 +364,7 @@ message LogEntry {
     int64 ts_ns = 1;
     int32 partition_key_hash = 2;
     bytes data = 3;
+    bytes key = 4;
 }
 
 message KeepConnectedRequest {
@@ -452,8 +453,9 @@ message LockRequest {
 }
 message LockResponse {
     string renew_token = 1;
-    string moved_to = 2;
-    string error = 3;
+    string lock_owner = 2;
+    string lock_host_moved_to = 3;
+    string error = 4;
 }
 message UnlockRequest {
     string name = 1;

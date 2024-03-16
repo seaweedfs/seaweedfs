@@ -9,6 +9,8 @@ binary:
 	export SWCOMMIT=$(shell git rev-parse --short HEAD)
 	export SWLDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=$(SWCOMMIT)"
 	cd ../weed && CGO_ENABLED=$(cgo) GOOS=linux go build $(options) -tags "$(tags)" -ldflags "-s -w -extldflags -static $(SWLDFLAGS)" && mv weed ../docker/
+	cd ../weed/mq/client/cmd/weed_pub && CGO_ENABLED=$(cgo) GOOS=linux go build && mv weed_pub ../../../../../docker/
+	cd ../weed/mq/client/cmd/weed_sub && CGO_ENABLED=$(cgo) GOOS=linux go build && mv weed_sub ../../../../../docker/
 
 binary_race: options = -race
 binary_race: cgo = 1
@@ -89,6 +91,9 @@ hashicorp_raft: build
 
 s3tests: build s3tests_build
 	docker compose -f compose/local-s3tests-compose.yml -p seaweedfs up
+
+brokers: build
+	docker compose -f compose/local-brokers-compose.yml -p seaweedfs up
 
 filer_etcd: build
 	docker stack deploy -c compose/swarm-etcd.yml fs

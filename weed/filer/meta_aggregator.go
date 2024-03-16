@@ -43,7 +43,7 @@ func NewMetaAggregator(filer *Filer, self pb.ServerAddress, grpcDialOption grpc.
 		peerChans:      make(map[pb.ServerAddress]chan struct{}),
 	}
 	t.ListenersCond = sync.NewCond(&t.ListenersLock)
-	t.MetaLogBuffer = log_buffer.NewLogBuffer("aggr", LogFlushInterval, nil, func() {
+	t.MetaLogBuffer = log_buffer.NewLogBuffer("aggr", LogFlushInterval, nil, nil, func() {
 		t.ListenersCond.Broadcast()
 	})
 	return t
@@ -188,6 +188,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			ClientEpoch: atomic.LoadInt32(&ma.filer.UniqueFilerEpoch),
 		})
 		if err != nil {
+			glog.V(0).Infof("SubscribeLocalMetadata %v: %v", peer, err)
 			return fmt.Errorf("subscribe: %v", err)
 		}
 
@@ -197,10 +198,12 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 				return nil
 			}
 			if listenErr != nil {
+				glog.V(0).Infof("SubscribeLocalMetadata stream %v: %v", peer, listenErr)
 				return listenErr
 			}
 
 			if err := processEventFn(resp); err != nil {
+				glog.V(0).Infof("SubscribeLocalMetadata process %v: %v", resp, err)
 				return fmt.Errorf("process %v: %v", resp, err)
 			}
 

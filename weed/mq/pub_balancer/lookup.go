@@ -2,7 +2,6 @@ package pub_balancer
 
 import (
 	"errors"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
 
@@ -10,10 +9,7 @@ var (
 	ErrNoBroker = errors.New("no broker")
 )
 
-func (balancer *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, publish bool, partitionCount int32) (assignments []*mq_pb.BrokerPartitionAssignment, err error) {
-	if partitionCount == 0 {
-		partitionCount = 6
-	}
+func (balancer *Balancer) LookupTopicPartitions(topic *mq_pb.Topic) (assignments []*mq_pb.BrokerPartitionAssignment) {
 	// find existing topic partition assignments
 	for brokerStatsItem := range balancer.Brokers.IterBuffered() {
 		broker, brokerStats := brokerStatsItem.Key, brokerStatsItem.Val
@@ -26,6 +22,7 @@ func (balancer *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, pu
 						RingSize:   MaxPartitionCount,
 						RangeStart: topicPartitionStat.RangeStart,
 						RangeStop:  topicPartitionStat.RangeStop,
+						UnixTimeNs: topicPartitionStat.UnixTimeNs,
 					},
 				}
 				// TODO fix follower setting
@@ -34,20 +31,5 @@ func (balancer *Balancer) LookupOrAllocateTopicPartitions(topic *mq_pb.Topic, pu
 			}
 		}
 	}
-	if len(assignments) > 0 && len(assignments) == int(partitionCount) || !publish {
-		glog.V(0).Infof("existing topic partitions %d: %v", len(assignments), assignments)
-		return assignments, nil
-	}
-
-	// find the topic partitions on the filer
-	// if the topic is not found
-	//   if the request is_for_publish
-	//     create the topic
-	//   if the request is_for_subscribe
-	//     return error not found
-	// t := topic.FromPbTopic(request.Topic)
-	if balancer.Brokers.IsEmpty() {
-		return nil, ErrNoBroker
-	}
-	return allocateTopicPartitions(balancer.Brokers, partitionCount), nil
+	return
 }

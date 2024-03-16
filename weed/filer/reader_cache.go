@@ -2,6 +2,7 @@ package filer
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -170,7 +171,7 @@ func (s *SingleChunkCacher) startCaching() {
 
 	s.data = mem.Allocate(s.chunkSize)
 
-	_, s.err = retriedFetchChunkData(s.data, urlStrings, s.cipherKey, s.isGzipped, true, 0)
+	_, s.err = util.RetriedFetchChunkData(s.data, urlStrings, s.cipherKey, s.isGzipped, true, 0)
 	if s.err != nil {
 		mem.Free(s.data)
 		s.data = nil
