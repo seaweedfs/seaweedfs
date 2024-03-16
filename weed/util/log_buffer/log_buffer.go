@@ -44,7 +44,7 @@ type LogBuffer struct {
 	notifyFn          func()
 	isStopping        *atomic.Bool
 	flushChan         chan *dataToFlush
-	lastTsNs          int64
+	LastTsNs          int64
 	sync.RWMutex
 }
 
@@ -89,12 +89,12 @@ func (logBuffer *LogBuffer) AddToBuffer(partitionKey, data []byte, processingTsN
 	} else {
 		ts = time.Unix(0, processingTsNs)
 	}
-	if logBuffer.lastTsNs >= processingTsNs {
+	if logBuffer.LastTsNs >= processingTsNs {
 		// this is unlikely to happen, but just in case
-		processingTsNs = logBuffer.lastTsNs + 1
+		processingTsNs = logBuffer.LastTsNs + 1
 		ts = time.Unix(0, processingTsNs)
 	}
-	logBuffer.lastTsNs = processingTsNs
+	logBuffer.LastTsNs = processingTsNs
 	logEntry := &filer_pb.LogEntry{
 		TsNs:             processingTsNs,
 		PartitionKeyHash: util.HashToInt32(partitionKey),
