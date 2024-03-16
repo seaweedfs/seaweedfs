@@ -53,7 +53,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	var p topic.Partition
 	if initMessage != nil {
 		t, p = topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
-		localTopicPartition, err = b.GetOrGenLocalPartition(t, p)
+		localTopicPartition, _, err = b.GetOrGenLocalPartition(t, p)
 		if err != nil {
 			response.Error = fmt.Sprintf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
 			glog.Errorf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)

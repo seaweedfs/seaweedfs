@@ -26,7 +26,7 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 
 	var localTopicPartition *topic.LocalPartition
 	for localTopicPartition == nil {
-		localTopicPartition, err = b.GetOrGenLocalPartition(t, partition)
+		localTopicPartition, _, err = b.GetOrGenLocalPartition(t, partition)
 		if err != nil {
 			glog.V(1).Infof("topic %v partition %v not setup", t, partition)
 		}
@@ -143,7 +143,7 @@ func (b *MessageQueueBroker)  FollowInMemoryMessages(req *mq_pb.FollowInMemoryMe
 
 	var localTopicPartition *topic.LocalPartition
 	for localTopicPartition == nil {
-		localTopicPartition, err = b.GetOrGenLocalPartition(t, partition)
+		localTopicPartition, _, err = b.GetOrGenLocalPartition(t, partition)
 		if err != nil {
 			glog.V(1).Infof("topic %v partition %v not setup", t, partition)
 		}
