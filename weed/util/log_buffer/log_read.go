@@ -66,16 +66,20 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 				isDone = true
 				return
 			}
-			if waitForDataFn() {
-				continue
-			} else {
-				isDone = true
-				return
+			lastTsNs := logBuffer.LastTsNs
+			for lastTsNs == logBuffer.LastTsNs {
+				if waitForDataFn() {
+					continue
+				} else {
+					isDone = true
+					return
+				}
 			}
 			if logBuffer.IsStopping() {
 				isDone = true
 				return
 			}
+			continue
 		}
 
 		buf := bytesBuf.Bytes()
