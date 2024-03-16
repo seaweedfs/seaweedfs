@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -150,7 +151,9 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 		lastReadTime, isDone, readInMemoryLogErr = fs.filer.LocalMetaLogBuffer.LoopProcessLogData("localMeta:"+clientName, lastReadTime, req.UntilNs, func() bool {
 			fs.listenersLock.Lock()
+			atomic.AddInt64(&fs.listenersWaits, 1)
 			fs.listenersCond.Wait()
+			atomic.AddInt64(&fs.listenersWaits, -1)
 			fs.listenersLock.Unlock()
 			if !fs.hasClient(req.ClientId, req.ClientEpoch) {
 				return false

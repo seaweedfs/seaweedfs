@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -76,7 +77,13 @@ type FilerOption struct {
 }
 
 type FilerServer struct {
-	inFlightDataSize      int64
+	inFlightDataSize int64
+	listenersWaits   int64
+
+	// notifying clients
+	listenersLock sync.Mutex
+	listenersCond *sync.Cond
+
 	inFlightDataLimitCond *sync.Cond
 
 	filer_pb.UnimplementedSeaweedFilerServer
@@ -89,10 +96,6 @@ type FilerServer struct {
 	// metrics read from the master
 	metricsAddress     string
 	metricsIntervalSec int
-
-	// notifying clients
-	listenersLock sync.Mutex
-	listenersCond *sync.Cond
 
 	// track known metadata listeners
 	knownListenersLock sync.Mutex
@@ -135,7 +138,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	v.SetDefault("filer.options.max_file_name_length", 255)
 	maxFilenameLength := v.GetUint32("filer.options.max_file_name_length")
 	fs.filer = filer.NewFiler(*option.Masters, fs.grpcDialOption, option.Host, option.FilerGroup, option.Collection, option.DefaultReplication, option.DataCenter, maxFilenameLength, func() {
-		fs.listenersCond.Broadcast()
+		if atomic.LoadInt64(&fs.listenersWaits) > 0 {
+			fs.listenersCond.Broadcast()
+		}
 	})
 	fs.filer.Cipher = option.Cipher
 	// we do not support IP whitelist right now
