@@ -35,9 +35,9 @@ type LogBuffer struct {
 	idx            []int
 	pos            int
 	startTime      time.Time
-	stopTime       time.Time
-	lastFlushTime  time.Time
-	sizeBuf        []byte
+	stopTime          time.Time
+	lastFlushDataTime time.Time
+	sizeBuf           []byte
 	flushInterval  time.Duration
 	flushFn        LogFlushFuncType
 	ReadFromDiskFn LogReadFromDiskFuncType
@@ -151,7 +151,7 @@ func (logBuffer *LogBuffer) loopFlush() {
 			logBuffer.flushFn(logBuffer, d.startTime, d.stopTime, d.data.Bytes())
 			d.releaseMemory()
 			// local logbuffer is different from aggregate logbuffer here
-			logBuffer.lastFlushTime = d.stopTime
+			logBuffer.lastFlushDataTime = d.stopTime
 		}
 	}
 }
@@ -188,7 +188,7 @@ func (logBuffer *LogBuffer) copyToFlush() *dataToFlush {
 			// glog.V(4).Infof("%s flushing [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
 		} else {
 			// glog.V(4).Infof("%s removed from memory [0,%d) with %d entries [%v, %v]", m.name, m.pos, len(m.idx), m.startTime, m.stopTime)
-			logBuffer.lastFlushTime = logBuffer.stopTime
+			logBuffer.lastFlushDataTime = logBuffer.stopTime
 		}
 		logBuffer.buf = logBuffer.prevBuffers.SealBuffer(logBuffer.startTime, logBuffer.stopTime, logBuffer.buf, logBuffer.pos, logBuffer.batchIndex)
 		logBuffer.startTime = time.Unix(0, 0)
@@ -245,8 +245,8 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		println("2.2 no data")
 		return nil, -2, nil
 	} else if lastReadPosition.Before(tsMemory) && lastReadPosition.BatchIndex+1 < tsBatchIndex { // case 2.3
-		if !logBuffer.lastFlushTime.IsZero() {
-			glog.V(0).Infof("resume with last flush time: %v", logBuffer.lastFlushTime)
+		if !logBuffer.lastFlushDataTime.IsZero() {
+			glog.V(0).Infof("resume with last flush time: %v", logBuffer.lastFlushDataTime)
 			return nil, -2, ResumeFromDiskError
 		}
 	}
