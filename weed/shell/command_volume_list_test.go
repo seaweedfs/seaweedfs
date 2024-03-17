@@ -5,9 +5,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
-	// "google.golang.org/protobuf/proto"
-	//"github.com/golang/protobuf/proto"
-	jsonpb "google.golang.org/protobuf/encoding/protojson"
+	//"google.golang.org/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	"strconv"
 	"strings"
 	"testing"
@@ -92,7 +91,7 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 		case "volume":
 			volumeLine := line[len("volume "):]
 			volume := &master_pb.VolumeInformationMessage{}
-			jsonpb.Unmarshal([]byte(volumeLine), volume)
+			proto.UnmarshalText(volumeLine, volume)
 			disk.VolumeInfos = append(disk.VolumeInfos, volume)
 		case "ec":
 			ecVolumeLine := line[len("ec volume "):]
