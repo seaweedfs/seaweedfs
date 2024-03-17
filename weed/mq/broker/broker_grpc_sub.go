@@ -175,7 +175,6 @@ func (b *MessageQueueBroker) FollowInMemoryMessages(req *mq_pb.FollowInMemoryMes
 	atomic.StoreInt32(&localTopicPartition.FollowerId, followerId)
 
 	glog.V(0).Infof("FollowInMemoryMessages %s connected on %v %v", clientName, t, partition)
-	sleepIntervalCount := 0
 
 	var counter int64
 	defer func() {
@@ -198,11 +197,12 @@ func (b *MessageQueueBroker) FollowInMemoryMessages(req *mq_pb.FollowInMemoryMes
 	var prevFlushTsNs int64
 
 	_, _, err = localTopicPartition.LogBuffer.LoopProcessLogData(clientName, startPosition, 0, func() bool {
-		sleepIntervalCount++
-		if sleepIntervalCount > 32 {
-			sleepIntervalCount = 32
-		}
-		time.Sleep(time.Duration(sleepIntervalCount) * 137 * time.Millisecond)
+		// wait for the log buffer to be ready
+		localTopicPartition.ListenersLock.Lock()
+		atomic.AddInt64(&localTopicPartition.ListenersWaits, 1)
+		localTopicPartition.ListenersCond.Wait()
+		atomic.AddInt64(&localTopicPartition.ListenersWaits, -1)
+		localTopicPartition.ListenersLock.Unlock()
 
 		if localTopicPartition.LogBuffer.IsStopping() {
 			newFollowerId := atomic.LoadInt32(&localTopicPartition.FollowerId)
@@ -246,8 +246,6 @@ func (b *MessageQueueBroker) FollowInMemoryMessages(req *mq_pb.FollowInMemoryMes
 
 		return true
 	}, func(logEntry *filer_pb.LogEntry) (bool, error) {
-		// reset the sleep interval count
-		sleepIntervalCount = 0
 
 		// check the follower id
 		newFollowerId := atomic.LoadInt32(&localTopicPartition.FollowerId)

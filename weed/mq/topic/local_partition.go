@@ -6,11 +6,18 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
 type LocalPartition struct {
+	ListenersWaits   int64
+
+	// notifying clients
+	ListenersLock sync.Mutex
+	ListenersCond *sync.Cond
+
 	Partition
 	isLeader        bool
 	FollowerBrokers []pb.ServerAddress
@@ -24,15 +31,21 @@ type LocalPartition struct {
 var TIME_FORMAT = "2006-01-02-15-04-05"
 
 func NewLocalPartition(partition Partition, isLeader bool, followerBrokers []pb.ServerAddress, logFlushFn log_buffer.LogFlushFuncType, readFromDiskFn log_buffer.LogReadFromDiskFuncType) *LocalPartition {
-	return &LocalPartition{
+	lp := &LocalPartition{
 		Partition:       partition,
 		isLeader:        isLeader,
 		FollowerBrokers: followerBrokers,
-		LogBuffer: log_buffer.NewLogBuffer(fmt.Sprintf("%d/%04d-%04d", partition.UnixTimeNs, partition.RangeStart, partition.RangeStop),
-			2*time.Minute, logFlushFn, readFromDiskFn, func() {}),
 		Publishers:  NewLocalPartitionPublishers(),
 		Subscribers: NewLocalPartitionSubscribers(),
 	}
+	lp.ListenersCond = sync.NewCond(&lp.ListenersLock)
+	lp.LogBuffer = log_buffer.NewLogBuffer(fmt.Sprintf("%d/%04d-%04d", partition.UnixTimeNs, partition.RangeStart, partition.RangeStop),
+		2*time.Minute, logFlushFn, readFromDiskFn, func() {
+			if atomic.LoadInt64(&lp.ListenersWaits) > 0 {
+				lp.ListenersCond.Broadcast()
+			}
+		})
+	return lp
 }
 
 func (p *LocalPartition) Publish(message *mq_pb.DataMessage) {
