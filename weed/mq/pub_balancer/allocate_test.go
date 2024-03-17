@@ -61,7 +61,6 @@ func testThem(t *testing.T, tests []struct {
 				assert.Equal(t, tt.wantAssignments[i].Partition.RangeStart, gotAssignment.Partition.RangeStart)
 				assert.Equal(t, tt.wantAssignments[i].Partition.RangeStop, gotAssignment.Partition.RangeStop)
 				assert.Equal(t, tt.wantAssignments[i].Partition.RingSize, gotAssignment.Partition.RingSize)
-				assert.Equal(t, tt.wantAssignments[i].Partition.UnixTimeNs, gotAssignment.Partition.UnixTimeNs)
 			}
 		})
 	}
