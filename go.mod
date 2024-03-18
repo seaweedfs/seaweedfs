@@ -140,7 +140,7 @@ require (
 	github.com/Jille/raft-grpc-transport v1.5.0
 	github.com/arangodb/go-driver v1.6.1
 	github.com/armon/go-metrics v0.4.1
-	github.com/aws/aws-sdk-go-v2 v1.25.2
+	github.com/aws/aws-sdk-go-v2 v1.25.3
 	github.com/aws/aws-sdk-go-v2/config v1.26.6
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.4
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.48.0
@@ -151,7 +151,6 @@ require (
 	github.com/hashicorp/raft v1.6.0
 	github.com/hashicorp/raft-boltdb/v2 v2.3.0
 	github.com/orcaman/concurrent-map/v2 v2.0.1
-	github.com/puzpuzpuz/xsync/v2 v2.5.1
 	github.com/rabbitmq/amqp091-go v1.9.0
 	github.com/rclone/rclone v1.65.2
 	github.com/rdleal/intervalst v1.3.0
