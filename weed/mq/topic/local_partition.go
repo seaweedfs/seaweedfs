@@ -136,4 +136,5 @@ func (p *LocalPartition) Shutdown() {
 	p.closeSubscribers()
 	p.LogBuffer.ShutdownLogBuffer()
 	atomic.StoreInt32(&p.FollowerId, 0)
+	glog.V(0).Infof("local partition %v shutting down", p.Partition)
 }
