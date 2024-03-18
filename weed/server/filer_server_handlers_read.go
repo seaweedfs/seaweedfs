@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -120,7 +121,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		if query.Get("metadata") == "true" {
 			// Don't return directory meta if config value is set to true
 			if fs.option.ExposeDirectoryData == false {
-				writeJsonError(w, r, http.StatusForbidden, err)
+				writeJsonError(w, r, http.StatusForbidden, errors.New("directory listing is disabled"))
 				return
 			}
 		}
