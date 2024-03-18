@@ -34,7 +34,7 @@ func (manager *LocalTopicManager) AddTopicPartition(topic Topic, localPartition 
 	localTopic.Partitions = append(localTopic.Partitions, localPartition)
 }
 
-// GetTopic gets a topic from the local topic manager
+// GetTopicPartition gets a topic from the local topic manager
 func (manager *LocalTopicManager) GetTopicPartition(topic Topic, partition Partition) *LocalPartition {
 	localTopic, ok := manager.topics.Get(topic.String())
 	if !ok {
@@ -88,23 +88,15 @@ func (manager *LocalTopicManager) CollectStats(duration time.Duration) *mq_pb.Br
 	manager.topics.IterCb(func(topic string, localTopic *LocalTopic) {
 		for _, localPartition := range localTopic.Partitions {
 			topicPartition := &TopicPartition{
-				Topic: Topic{Namespace: localTopic.Namespace, Name: localTopic.Name},
-				Partition: Partition{
-					RingSize:   localPartition.RingSize,
-					RangeStart: localPartition.RangeStart,
-					RangeStop:  localPartition.RangeStop,
-				},
+				Topic:     Topic{Namespace: localTopic.Namespace, Name: localTopic.Name},
+				Partition: localPartition.Partition,
 			}
 			stats.Stats[topicPartition.String()] = &mq_pb.TopicPartitionStats{
 				Topic: &mq_pb.Topic{
 					Namespace: string(localTopic.Namespace),
 					Name:      localTopic.Name,
 				},
-				Partition: &mq_pb.Partition{
-					RingSize:   localPartition.RingSize,
-					RangeStart: localPartition.RangeStart,
-					RangeStop:  localPartition.RangeStop,
-				},
+				Partition:     localPartition.Partition.ToPbPartition(),
 				ConsumerCount: localPartition.ConsumerCount,
 			}
 			// fmt.Printf("collect topic %+v partition %+v\n", topicPartition, localPartition.Partition)

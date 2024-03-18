@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -15,11 +16,8 @@ import (
 // It generates an assignments based on existing allocations,
 // and then assign the partitions to the brokers.
 func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.ConfigureTopicRequest) (resp *mq_pb.ConfigureTopicResponse, err error) {
-	if b.currentBalancer == "" {
-		return nil, status.Errorf(codes.Unavailable, "no balancer")
-	}
-	if !b.lockAsBalancer.IsLocked() {
-		proxyErr := b.withBrokerClient(false, b.currentBalancer, func(client mq_pb.SeaweedMessagingClient) error {
+	if !b.isLockOwner() {
+		proxyErr := b.withBrokerClient(false, pb.ServerAddress(b.lockAsBalancer.LockOwner()), func(client mq_pb.SeaweedMessagingClient) error {
 			resp, err = client.ConfigureTopic(ctx, request)
 			return nil
 		})
@@ -29,79 +27,44 @@ func (b *MessageQueueBroker) ConfigureTopic(ctx context.Context, request *mq_pb.
 		return resp, err
 	}
 
-	ret := &mq_pb.ConfigureTopicResponse{}
-	ret.BrokerPartitionAssignments, err = b.Balancer.LookupOrAllocateTopicPartitions(request.Topic, true, request.PartitionCount)
-
-	for _, bpa := range ret.BrokerPartitionAssignments {
-		// fmt.Printf("create topic %s on %s\n", request.Topic, bpa.LeaderBroker)
-		if doCreateErr := b.withBrokerClient(false, pb.ServerAddress(bpa.LeaderBroker), func(client mq_pb.SeaweedMessagingClient) error {
-			_, doCreateErr := client.AssignTopicPartitions(ctx, &mq_pb.AssignTopicPartitionsRequest{
-				Topic: request.Topic,
-				BrokerPartitionAssignments: []*mq_pb.BrokerPartitionAssignment{
-					{
-						Partition: bpa.Partition,
-					},
-				},
-				IsLeader:   true,
-				IsDraining: false,
-			})
-			if doCreateErr != nil {
-				return fmt.Errorf("do create topic %s on %s: %v", request.Topic, bpa.LeaderBroker, doCreateErr)
-			}
-			brokerStats, found := b.Balancer.Brokers.Get(bpa.LeaderBroker)
-			if !found {
-				brokerStats = pub_balancer.NewBrokerStats()
-				if !b.Balancer.Brokers.SetIfAbsent(bpa.LeaderBroker, brokerStats) {
-					brokerStats, _ = b.Balancer.Brokers.Get(bpa.LeaderBroker)
-				}
-			}
-			brokerStats.RegisterAssignment(request.Topic, bpa.Partition)
-			return nil
-		}); doCreateErr != nil {
-			return nil, doCreateErr
-		}
+	t := topic.FromPbTopic(request.Topic)
+	var readErr, assignErr error
+	resp, readErr = b.readTopicConfFromFiler(t)
+	if readErr != nil {
+		glog.V(0).Infof("read topic %s conf: %v", request.Topic, readErr)
 	}
 
-	// TODO revert if some error happens in the middle of the assignments
-
-	return ret, err
-}
-
-// AssignTopicPartitions Runs on the assigned broker, to execute the topic partition assignment
-func (b *MessageQueueBroker) AssignTopicPartitions(c context.Context, request *mq_pb.AssignTopicPartitionsRequest) (*mq_pb.AssignTopicPartitionsResponse, error) {
-	ret := &mq_pb.AssignTopicPartitionsResponse{}
-	self := pb.ServerAddress(fmt.Sprintf("%s:%d", b.option.Ip, b.option.Port))
-
-	// drain existing topic partition subscriptions
-	for _, brokerPartition := range request.BrokerPartitionAssignments {
-		localPartition := topic.FromPbBrokerPartitionAssignment(self, brokerPartition)
-		if request.IsDraining {
-			// TODO drain existing topic partition subscriptions
-
-			b.localTopicManager.RemoveTopicPartition(
-				topic.FromPbTopic(request.Topic),
-				localPartition.Partition)
-		} else {
-			b.localTopicManager.AddTopicPartition(
-				topic.FromPbTopic(request.Topic),
-				localPartition)
-		}
+	if resp != nil {
+		assignErr = b.ensureTopicActiveAssignments(t, resp)
+		// no need to assign directly.
+		// The added or updated assignees will read from filer directly.
+		// The gone assignees will die by themselves.
 	}
 
-	// if is leader, notify the followers to drain existing topic partition subscriptions
-	if request.IsLeader {
-		for _, brokerPartition := range request.BrokerPartitionAssignments {
-			for _, follower := range brokerPartition.FollowerBrokers {
-				err := pb.WithBrokerGrpcClient(false, follower, b.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
-					_, err := client.AssignTopicPartitions(context.Background(), request)
-					return err
-				})
-				if err != nil {
-					return ret, err
-				}
-			}
-		}
+	if readErr == nil && assignErr == nil && len(resp.BrokerPartitionAssignments) == int(request.PartitionCount) {
+		glog.V(0).Infof("existing topic partitions %d: %+v", len(resp.BrokerPartitionAssignments), resp.BrokerPartitionAssignments)
+		return
 	}
 
-	return ret, nil
+	if resp != nil && len(resp.BrokerPartitionAssignments) > 0 {
+		if cancelErr := b.assignTopicPartitionsToBrokers(ctx, request.Topic, resp.BrokerPartitionAssignments, false); cancelErr != nil {
+			glog.V(1).Infof("cancel old topic %s partitions assignments %v : %v", request.Topic, resp.BrokerPartitionAssignments, cancelErr)
+		}
+	}
+	resp = &mq_pb.ConfigureTopicResponse{}
+	if b.Balancer.Brokers.IsEmpty() {
+		return nil, status.Errorf(codes.Unavailable, pub_balancer.ErrNoBroker.Error())
+	}
+	resp.BrokerPartitionAssignments = pub_balancer.AllocateTopicPartitions(b.Balancer.Brokers, request.PartitionCount)
+
+	// save the topic configuration on filer
+	if err := b.saveTopicConfToFiler(request.Topic, resp); err != nil {
+		return nil, fmt.Errorf("configure topic: %v", err)
+	}
+
+	b.Balancer.OnPartitionChange(request.Topic, resp.BrokerPartitionAssignments)
+
+	glog.V(0).Infof("ConfigureTopic: topic %s partition assignments: %v", request.Topic, resp.BrokerPartitionAssignments)
+
+	return resp, err
 }

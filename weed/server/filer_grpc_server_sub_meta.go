@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -32,7 +33,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	}
 	defer fs.deleteClient("", clientName, req.ClientId, req.ClientEpoch)
 
-	lastReadTime := time.Unix(0, req.SinceNs)
+	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, -2)
 	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
 	eachEventNotificationFn := fs.eachEventNotificationFn(req, stream, clientName)
@@ -57,7 +58,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		}
 
 		if processedTsNs != 0 {
-			lastReadTime = time.Unix(0, processedTsNs)
+			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
 		}
 
 		glog.V(4).Infof("read in memory %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
@@ -113,7 +114,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 		fs.deleteClient("local", clientName, req.ClientId, req.ClientEpoch)
 	}()
 
-	lastReadTime := time.Unix(0, req.SinceNs)
+	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, -2)
 	glog.V(0).Infof(" + %v local subscribe %s from %+v clientId:%d", clientName, req.PathPrefix, lastReadTime, req.ClientId)
 
 	eachEventNotificationFn := fs.eachEventNotificationFn(req, stream, clientName)
@@ -138,7 +139,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 		}
 
 		if processedTsNs != 0 {
-			lastReadTime = time.Unix(0, processedTsNs)
+			lastReadTime = log_buffer.NewMessagePosition(processedTsNs, -2)
 		} else {
 			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
 				time.Sleep(1127 * time.Millisecond)
@@ -150,7 +151,9 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 		lastReadTime, isDone, readInMemoryLogErr = fs.filer.LocalMetaLogBuffer.LoopProcessLogData("localMeta:"+clientName, lastReadTime, req.UntilNs, func() bool {
 			fs.listenersLock.Lock()
+			atomic.AddInt64(&fs.listenersWaits, 1)
 			fs.listenersCond.Wait()
+			atomic.AddInt64(&fs.listenersWaits, -1)
 			fs.listenersLock.Unlock()
 			if !fs.hasClient(req.ClientId, req.ClientEpoch) {
 				return false
@@ -178,19 +181,19 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 
 }
 
-func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error) func(logEntry *filer_pb.LogEntry) error {
-	return func(logEntry *filer_pb.LogEntry) error {
+func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error) log_buffer.EachLogEntryFuncType {
+	return func(logEntry *filer_pb.LogEntry) (bool, error) {
 		event := &filer_pb.SubscribeMetadataResponse{}
 		if err := proto.Unmarshal(logEntry.Data, event); err != nil {
 			glog.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
-			return fmt.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
+			return false, fmt.Errorf("unexpected unmarshal filer_pb.SubscribeMetadataResponse: %v", err)
 		}
 
 		if err := eachEventNotificationFn(event.Directory, event.EventNotification, event.TsNs); err != nil {
-			return err
+			return false, err
 		}
 
-		return nil
+		return false, nil
 	}
 }
 

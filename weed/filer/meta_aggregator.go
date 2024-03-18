@@ -21,13 +21,13 @@ import (
 )
 
 type MetaAggregator struct {
-	filer           *Filer
-	self            pb.ServerAddress
-	isLeader        bool
-	grpcDialOption  grpc.DialOption
-	MetaLogBuffer   *log_buffer.LogBuffer
-	peerStatues     map[pb.ServerAddress]int
-	peerStatuesLock sync.Mutex
+	filer          *Filer
+	self           pb.ServerAddress
+	isLeader       bool
+	grpcDialOption grpc.DialOption
+	MetaLogBuffer  *log_buffer.LogBuffer
+	peerChans      map[pb.ServerAddress]chan struct{}
+	peerChansLock  sync.Mutex
 	// notifying clients
 	ListenersLock sync.Mutex
 	ListenersCond *sync.Cond
@@ -40,61 +40,50 @@ func NewMetaAggregator(filer *Filer, self pb.ServerAddress, grpcDialOption grpc.
 		filer:          filer,
 		self:           self,
 		grpcDialOption: grpcDialOption,
-		peerStatues:    make(map[pb.ServerAddress]int),
+		peerChans:      make(map[pb.ServerAddress]chan struct{}),
 	}
 	t.ListenersCond = sync.NewCond(&t.ListenersLock)
-	t.MetaLogBuffer = log_buffer.NewLogBuffer("aggr", LogFlushInterval, nil, func() {
+	t.MetaLogBuffer = log_buffer.NewLogBuffer("aggr", LogFlushInterval, nil, nil, func() {
 		t.ListenersCond.Broadcast()
 	})
 	return t
 }
 
 func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
+	ma.peerChansLock.Lock()
+	defer ma.peerChansLock.Unlock()
+
 	address := pb.ServerAddress(update.Address)
 	if update.IsAdd {
-		// every filer should subscribe to a new filer
-		if ma.setActive(address, true) {
-			go ma.loopSubscribeToOneFiler(ma.filer, ma.self, address, startFrom)
+		// cancel previous subscription if any
+		if prevChan, found := ma.peerChans[address]; found {
+			close(prevChan)
 		}
+		stopChan := make(chan struct{})
+		ma.peerChans[address] = stopChan
+		go ma.loopSubscribeToOneFiler(ma.filer, ma.self, address, startFrom, stopChan)
 	} else {
-		ma.setActive(address, false)
+		if prevChan, found := ma.peerChans[address]; found {
+			close(prevChan)
+			delete(ma.peerChans, address)
+		}
 	}
 }
 
-func (ma *MetaAggregator) setActive(address pb.ServerAddress, isActive bool) (notDuplicated bool) {
-	ma.peerStatuesLock.Lock()
-	defer ma.peerStatuesLock.Unlock()
-	if isActive {
-		if _, found := ma.peerStatues[address]; found {
-			ma.peerStatues[address] += 1
-		} else {
-			ma.peerStatues[address] = 1
-			notDuplicated = true
-		}
-	} else {
-		if _, found := ma.peerStatues[address]; found {
-			delete(ma.peerStatues, address)
-		}
-	}
-	return
-}
-func (ma *MetaAggregator) isActive(address pb.ServerAddress) (isActive bool) {
-	ma.peerStatuesLock.Lock()
-	defer ma.peerStatuesLock.Unlock()
-	var count int
-	count, isActive = ma.peerStatues[address]
-	return count > 0 && isActive
-}
-
-func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress, startFrom time.Time) {
+func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress, startFrom time.Time, stopChan chan struct{}) {
 	lastTsNs := startFrom.UnixNano()
 	for {
 		glog.V(0).Infof("loopSubscribeToOneFiler read %s start from %v %d", peer, time.Unix(0, lastTsNs), lastTsNs)
 		nextLastTsNs, err := ma.doSubscribeToOneFiler(f, self, peer, lastTsNs)
-		if !ma.isActive(peer) {
-			glog.V(0).Infof("stop subscribing remote %s meta change", peer)
+
+		// check stopChan to see if we should stop
+		select {
+		case <-stopChan:
+			glog.V(0).Infof("stop subscribing peer %s meta change", peer)
 			return
+		default:
 		}
+
 		if err != nil {
 			errLvl := glog.Level(0)
 			if strings.Contains(err.Error(), "duplicated local subscription detected") {
@@ -199,6 +188,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			ClientEpoch: atomic.LoadInt32(&ma.filer.UniqueFilerEpoch),
 		})
 		if err != nil {
+			glog.V(0).Infof("SubscribeLocalMetadata %v: %v", peer, err)
 			return fmt.Errorf("subscribe: %v", err)
 		}
 
@@ -208,10 +198,12 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 				return nil
 			}
 			if listenErr != nil {
+				glog.V(0).Infof("SubscribeLocalMetadata stream %v: %v", peer, listenErr)
 				return listenErr
 			}
 
 			if err := processEventFn(resp); err != nil {
+				glog.V(0).Infof("SubscribeLocalMetadata process %v: %v", resp, err)
 				return fmt.Errorf("process %v: %v", resp, err)
 			}
 

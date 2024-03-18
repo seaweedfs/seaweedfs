@@ -1,14 +1,14 @@
 package sub_coordinator
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"reflect"
 	"testing"
 )
 
 func Test_doBalanceSticky(t *testing.T) {
 	type args struct {
-		partitions          []*topic.Partition
+		partitions          []*pub_balancer.PartitionSlotToBroker
 		consumerInstanceIds []string
 		prevMapping         *PartitionSlotToConsumerInstanceList
 	}
@@ -20,7 +20,7 @@ func Test_doBalanceSticky(t *testing.T) {
 		{
 			name: "1 consumer instance, 1 partition",
 			args: args{
-				partitions: []*topic.Partition{
+				partitions: []*pub_balancer.PartitionSlotToBroker{
 					{
 						RangeStart: 0,
 						RangeStop:  100,
@@ -40,7 +40,7 @@ func Test_doBalanceSticky(t *testing.T) {
 		{
 			name: "2 consumer instances, 1 partition",
 			args: args{
-				partitions: []*topic.Partition{
+				partitions: []*pub_balancer.PartitionSlotToBroker{
 					{
 						RangeStart: 0,
 						RangeStop:  100,
@@ -60,7 +60,7 @@ func Test_doBalanceSticky(t *testing.T) {
 		{
 			name: "1 consumer instance, 2 partitions",
 			args: args{
-				partitions: []*topic.Partition{
+				partitions: []*pub_balancer.PartitionSlotToBroker{
 					{
 						RangeStart: 0,
 						RangeStop:  50,
@@ -89,7 +89,7 @@ func Test_doBalanceSticky(t *testing.T) {
 		{
 			name: "2 consumer instances, 2 partitions",
 			args: args{
-				partitions: []*topic.Partition{
+				partitions: []*pub_balancer.PartitionSlotToBroker{
 					{
 						RangeStart: 0,
 						RangeStop:  50,
@@ -118,7 +118,7 @@ func Test_doBalanceSticky(t *testing.T) {
 		{
 			name: "2 consumer instances, 2 partitions, 1 deleted consumer instance",
 			args: args{
-				partitions: []*topic.Partition{
+				partitions: []*pub_balancer.PartitionSlotToBroker{
 					{
 						RangeStart: 0,
 						RangeStop:  50,
@@ -160,7 +160,7 @@ func Test_doBalanceSticky(t *testing.T) {
 		{
 			name: "2 consumer instances, 2 partitions, 1 new consumer instance",
 			args: args{
-				partitions: []*topic.Partition{
+				partitions: []*pub_balancer.PartitionSlotToBroker{
 					{
 						RangeStart: 0,
 						RangeStop:  50,
@@ -202,7 +202,7 @@ func Test_doBalanceSticky(t *testing.T) {
 		{
 			name: "2 consumer instances, 2 partitions, 1 new partition",
 			args: args{
-				partitions: []*topic.Partition{
+				partitions: []*pub_balancer.PartitionSlotToBroker{
 					{
 						RangeStart: 0,
 						RangeStop:  50,
@@ -253,7 +253,7 @@ func Test_doBalanceSticky(t *testing.T) {
 		{
 			name: "2 consumer instances, 2 partitions, 1 new partition, 1 new consumer instance",
 			args: args{
-				partitions: []*topic.Partition{
+				partitions: []*pub_balancer.PartitionSlotToBroker{
 					{
 						RangeStart: 0,
 						RangeStop:  50,

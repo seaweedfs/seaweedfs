@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"io"
 	"math"
 	"regexp"
@@ -86,7 +87,7 @@ func (f *Filer) logMetaEvent(ctx context.Context, fullpath string, eventNotifica
 
 }
 
-func (f *Filer) logFlushFunc(startTime, stopTime time.Time, buf []byte) {
+func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTime time.Time, buf []byte) {
 
 	if len(buf) == 0 {
 		return
@@ -113,11 +114,10 @@ var (
 	VolumeNotFoundPattern = regexp.MustCompile(`volume \d+? not found`)
 )
 
-func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, stopTsNs int64, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (lastTsNs int64, isDone bool, err error) {
+func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastTsNs int64, isDone bool, err error) {
 
-	startTime = startTime.UTC()
-	startDate := fmt.Sprintf("%04d-%02d-%02d", startTime.Year(), startTime.Month(), startTime.Day())
-	startHourMinute := fmt.Sprintf("%02d-%02d", startTime.Hour(), startTime.Minute())
+	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Year(), startPosition.Month(), startPosition.Day())
+	startHourMinute := fmt.Sprintf("%02d-%02d", startPosition.Hour(), startPosition.Minute())
 	var stopDate, stopHourMinute string
 	if stopTsNs != 0 {
 		stopTime := time.Unix(0, stopTsNs+24*60*60*int64(time.Nanosecond)).UTC()
@@ -126,7 +126,7 @@ func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, stopTsNs int64, each
 	}
 
 	sizeBuf := make([]byte, 4)
-	startTsNs := startTime.UnixNano()
+	startTsNs := startPosition.UnixNano()
 
 	dayEntries, _, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, math.MaxInt32, "", "", "")
 	if listDayErr != nil {
@@ -177,7 +177,7 @@ func (f *Filer) ReadPersistedLogBuffer(startTime time.Time, stopTsNs int64, each
 	return lastTsNs, isDone, nil
 }
 
-func ReadEachLogEntry(r io.Reader, sizeBuf []byte, startTsNs, stopTsNs int64, eachLogEntryFn func(logEntry *filer_pb.LogEntry) error) (lastTsNs int64, err error) {
+func ReadEachLogEntry(r io.Reader, sizeBuf []byte, startTsNs, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastTsNs int64, err error) {
 	for {
 		n, err := r.Read(sizeBuf)
 		if err != nil {
@@ -207,7 +207,7 @@ func ReadEachLogEntry(r io.Reader, sizeBuf []byte, startTsNs, stopTsNs int64, ea
 			return lastTsNs, err
 		}
 		// println("each log: ", logEntry.TsNs)
-		if err := eachLogEntryFn(logEntry); err != nil {
+		if _, err := eachLogEntryFn(logEntry); err != nil {
 			return lastTsNs, err
 		} else {
 			lastTsNs = logEntry.TsNs

@@ -2,6 +2,7 @@ package pub_balancer
 
 import (
 	cmap "github.com/orcaman/concurrent-map/v2"
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 )
 
@@ -30,7 +31,10 @@ const (
 type Balancer struct {
 	Brokers cmap.ConcurrentMap[string, *BrokerStats] // key: broker address
 	// Collected from all brokers when they connect to the broker leader
-	TopicToBrokers cmap.ConcurrentMap[string, *PartitionSlotToBrokerList] // key: topic name
+	TopicToBrokers    cmap.ConcurrentMap[string, *PartitionSlotToBrokerList] // key: topic name
+	OnPartitionChange func(topic *mq_pb.Topic, assignments []*mq_pb.BrokerPartitionAssignment)
+	OnAddBroker       func(broker string, brokerStats *BrokerStats)
+	OnRemoveBroker    func(broker string, brokerStats *BrokerStats)
 }
 
 func NewBalancer() *Balancer {
@@ -40,7 +44,7 @@ func NewBalancer() *Balancer {
 	}
 }
 
-func (balancer *Balancer) OnBrokerConnected(broker string) (brokerStats *BrokerStats) {
+func (balancer *Balancer) AddBroker(broker string) (brokerStats *BrokerStats) {
 	var found bool
 	brokerStats, found = balancer.Brokers.Get(broker)
 	if !found {
@@ -49,10 +53,12 @@ func (balancer *Balancer) OnBrokerConnected(broker string) (brokerStats *BrokerS
 			brokerStats, _ = balancer.Brokers.Get(broker)
 		}
 	}
+	balancer.onPubAddBroker(broker, brokerStats)
+	balancer.OnAddBroker(broker, brokerStats)
 	return brokerStats
 }
 
-func (balancer *Balancer) OnBrokerDisconnected(broker string, stats *BrokerStats) {
+func (balancer *Balancer) RemoveBroker(broker string, stats *BrokerStats) {
 	balancer.Brokers.Remove(broker)
 
 	// update TopicToBrokers
@@ -61,8 +67,15 @@ func (balancer *Balancer) OnBrokerDisconnected(broker string, stats *BrokerStats
 		if !found {
 			continue
 		}
-		partitionSlotToBrokerList.RemoveBroker(broker)
+		pickedBroker := pickBrokers(balancer.Brokers, 1)
+		if len(pickedBroker) == 0 {
+			partitionSlotToBrokerList.RemoveBroker(broker)
+		} else {
+			partitionSlotToBrokerList.ReplaceBroker(broker, pickedBroker[0])
+		}
 	}
+	balancer.onPubRemoveBroker(broker, stats)
+	balancer.OnRemoveBroker(broker, stats)
 }
 
 func (balancer *Balancer) OnBrokerStatsUpdated(broker string, brokerStats *BrokerStats, receivedStats *mq_pb.BrokerStats) {
@@ -70,15 +83,23 @@ func (balancer *Balancer) OnBrokerStatsUpdated(broker string, brokerStats *Broke
 
 	// update TopicToBrokers
 	for _, topicPartitionStats := range receivedStats.Stats {
-		topic := topicPartitionStats.Topic
+		topicKey := topic.FromPbTopic(topicPartitionStats.Topic).String()
 		partition := topicPartitionStats.Partition
-		partitionSlotToBrokerList, found := balancer.TopicToBrokers.Get(topic.String())
+		partitionSlotToBrokerList, found := balancer.TopicToBrokers.Get(topicKey)
 		if !found {
 			partitionSlotToBrokerList = NewPartitionSlotToBrokerList(MaxPartitionCount)
-			if !balancer.TopicToBrokers.SetIfAbsent(topic.String(), partitionSlotToBrokerList) {
-				partitionSlotToBrokerList, _ = balancer.TopicToBrokers.Get(topic.String())
+			if !balancer.TopicToBrokers.SetIfAbsent(topicKey, partitionSlotToBrokerList) {
+				partitionSlotToBrokerList, _ = balancer.TopicToBrokers.Get(topicKey)
 			}
 		}
 		partitionSlotToBrokerList.AddBroker(partition, broker)
 	}
+}
+
+// OnPubAddBroker is called when a broker is added for a publisher coordinator
+func (balancer *Balancer) onPubAddBroker(broker string, brokerStats *BrokerStats) {
+}
+
+// OnPubRemoveBroker is called when a broker is removed for a publisher coordinator
+func (balancer *Balancer) onPubRemoveBroker(broker string, brokerStats *BrokerStats) {
 }

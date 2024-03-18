@@ -41,9 +41,14 @@ service SeaweedMessaging {
     }
 
     // data plane for each topic partition
-    rpc Publish (stream PublishRequest) returns (stream PublishResponse) {
+    rpc PublishMessage (stream PublishMessageRequest) returns (stream PublishMessageResponse) {
     }
-    rpc Subscribe (SubscribeRequest) returns (stream SubscribeResponse) {
+    rpc SubscribeMessage (SubscribeMessageRequest) returns (stream SubscribeMessageResponse) {
+    }
+    // The lead broker asks a follower broker to follow itself
+    rpc PublishFollowMe (PublishFollowMeRequest) returns (PublishFollowMeResponse) {
+    }
+    rpc FollowInMemoryMessages (FollowInMemoryMessagesRequest) returns (stream FollowInMemoryMessagesResponse) {
     }
 }
 
@@ -66,6 +71,24 @@ message Partition {
     int32 range_start = 2;
     int32 range_stop = 3;
     int64 unix_time_ns = 4;
+}
+
+message Offset {
+    Topic topic = 1;
+    repeated PartitionOffset partition_offsets = 2;
+}
+
+enum PartitionOffsetStartType {
+    EARLIEST = 0;
+    EARLIEST_IN_MEMORY = 1;
+    LATEST = 2;
+}
+
+message PartitionOffset {
+    Partition partition = 1;
+    int64 start_ts_ns = 2;
+    int64 stop_ts_ns = 3;
+    PartitionOffsetStartType start_type = 4;
 }
 
 //////////////////////////////////////////////////
@@ -113,7 +136,6 @@ message ListTopicsResponse {
 }
 message LookupTopicBrokersRequest {
     Topic topic = 1;
-    bool is_for_publish = 2;
 }
 message LookupTopicBrokersResponse {
     Topic topic = 1;
@@ -137,7 +159,7 @@ message AssignTopicPartitionsResponse {
 message SubscriberToSubCoordinatorRequest {
     message InitMessage {
         string consumer_group = 1;
-        string consumer_instance_id = 2;
+        string consumer_group_instance_id = 2;
         Topic topic = 3;
     }
     message AckMessage {
@@ -153,6 +175,7 @@ message SubscriberToSubCoordinatorResponse {
     message AssignedPartition {
         Partition partition = 1;
         int64 ts_ns = 2;
+        string broker = 3;
     }
     message Assignment {
         int64 generation = 1;
@@ -169,11 +192,12 @@ message DataMessage {
     bytes value = 2;
     int64 ts_ns = 3;
 }
-message PublishRequest {
+message PublishMessageRequest {
     message InitMessage {
         Topic topic = 1;
         Partition partition = 2;
         int32 ack_interval = 3;
+        repeated string follower_brokers = 4;
     }
     oneof message {
         InitMessage init = 1;
@@ -181,23 +205,27 @@ message PublishRequest {
     }
     int64 sequence = 3;
 }
-message PublishResponse {
+message PublishMessageResponse {
     int64 ack_sequence = 1;
     string error = 2;
     bool should_close = 3;
 }
-message SubscribeRequest {
+message PublishFollowMeRequest {
+    Topic topic = 1;
+    Partition partition = 2;
+    string broker_self = 3;
+}
+message PublishFollowMeResponse {
+    string error = 1;
+}
+message SubscribeMessageRequest {
     message InitMessage {
         string consumer_group = 1;
         string consumer_id = 2;
         string client_id = 3;
         Topic topic = 4;
-        Partition partition = 5;
-        oneof offset {
-            int64 start_offset = 6;
-            int64 start_timestamp_ns = 7;
-        }
-        string filter = 8;
+        PartitionOffset partition_offset = 5;
+        string filter = 6;
     }
     message AckMessage {
         int64 sequence = 1;
@@ -207,11 +235,37 @@ message SubscribeRequest {
         AckMessage ack = 2;
     }
 }
-message SubscribeResponse {
+message SubscribeMessageResponse {
     message CtrlMessage {
         string error = 1;
         bool is_end_of_stream = 2;
         bool is_end_of_topic = 3;
+    }
+    oneof message {
+        CtrlMessage ctrl = 1;
+        DataMessage data = 2;
+    }
+}
+message FollowInMemoryMessagesRequest {
+    message InitMessage {
+        string consumer_group = 1;
+        string consumer_id = 2;
+        int32 follower_id = 3;
+        Topic topic = 4;
+        PartitionOffset partition_offset = 5;
+    }
+    message AckMessage {
+        int64 sequence = 1;
+    }
+    oneof message {
+        InitMessage init = 1;
+        AckMessage ack = 2;
+    }
+}
+message FollowInMemoryMessagesResponse {
+    message CtrlMessage {
+        int64 flushed_sequence = 1;
+        int32 follower_changed_to_id = 2;
     }
     oneof message {
         CtrlMessage ctrl = 1;

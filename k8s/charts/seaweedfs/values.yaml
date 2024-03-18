@@ -36,6 +36,10 @@ global:
     WEED_CLUSTER_DEFAULT: "sw"
     WEED_CLUSTER_SW_MASTER: "seaweedfs-master.seaweedfs:9333"
     WEED_CLUSTER_SW_FILER: "seaweedfs-filer-client.seaweedfs:8888"
+    # WEED_JWT_SIGNING_KEY:
+    #   secretKeyRef:
+    #     name: seaweedfs-signing-key
+    #     key: signingKey
 
 image:
   registry: ""
@@ -186,10 +190,10 @@ master:
     tls: []
 
   extraEnvironmentVars:
-    WEED_MASTER_VOLUME_GROWTH_COPY_1: 7
-    WEED_MASTER_VOLUME_GROWTH_COPY_2: 6
-    WEED_MASTER_VOLUME_GROWTH_COPY_3: 3
-    WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: 1
+    WEED_MASTER_VOLUME_GROWTH_COPY_1: '7'
+    WEED_MASTER_VOLUME_GROWTH_COPY_2: '6'
+    WEED_MASTER_VOLUME_GROWTH_COPY_3: '3'
+    WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: '1'
 
   # used to configure livenessProbe on master-server containers
   #
@@ -370,6 +374,8 @@ volume:
   # used to assign a service account.
   # ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
   serviceAccountName: ""
+
+  extraEnvironmentVars:
 
   # used to configure livenessProbe on volume-server containers
   #
@@ -610,7 +616,7 @@ filer:
       #     key: password
 
   s3:
-    enabled: true
+    enabled: false
     port: 8333
     # add additional https port
     httpsPort: 0
@@ -619,11 +625,10 @@ filer:
     # Suffix of the host name, {bucket}.{domainName}
     domainName: ""
     # enable user & permission to s3 (need to inject to all services)
-    enableAuth: true
-    skipAuthSecretCreation: false
+    enableAuth: false
     # set to the name of an existing kubernetes Secret with the s3 json config file
     # should have a secret key called seaweedfs_s3_config with an inline json configure
-    existingConfigSecret: ""
+    existingConfigSecret: null
     auditLogConfig: {}
     # You may specify buckets to be created during the install process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
@@ -650,10 +655,9 @@ s3:
   allowEmptyFolder: true
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
-  skipAuthSecretCreation: false
   # set to the name of an existing kubernetes Secret with the s3 json config file
   # should have a secret key called seaweedfs_s3_config with an inline json config
-  existingConfigSecret: false
+  existingConfigSecret: null
   auditLogConfig: {}
 
   # Suffix of the host name, {bucket}.{domainName}
@@ -707,6 +711,8 @@ s3:
     size: ""
     storageClass: ""
     hostPathPrefix: /storage
+
+  extraEnvironmentVars:
 
   # used to configure livenessProbe on s3 containers
   #
