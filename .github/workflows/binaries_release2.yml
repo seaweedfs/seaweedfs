@@ -28,7 +28,7 @@ jobs:
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v2
+      - uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v2
       - name: Go Release Binaries Normal Volume Size
         uses: wangyoucao577/go-release-action@b173bce0484dc9f34c585181e5db16bd8756a21e # v1.22
         with:
