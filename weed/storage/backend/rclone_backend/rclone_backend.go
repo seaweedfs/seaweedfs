@@ -202,7 +202,7 @@ func downloadViaRclone(fs fs.Fs, filename string, key string, fn func(progressed
 		}
 	}(file)
 
-	tr := accounting.NewStats(ctx).NewTransfer(obj)
+	tr := accounting.NewStats(ctx).NewTransfer(obj, fs)
 	defer tr.Done(ctx, err)
 	acc := tr.Account(ctx, rc)
 	pr := ProgressReader{acc: acc, tr: tr, fn: fn}
