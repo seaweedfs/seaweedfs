@@ -150,7 +150,7 @@ func uploadViaRclone(rfs fs.Fs, filename string, key string, fn func(progressed 
 
 	info := object.NewStaticObjectInfo(key, stat.ModTime(), stat.Size(), true, nil, rfs)
 
-	tr := accounting.NewStats(ctx).NewTransfer(info)
+	tr := accounting.NewStats(ctx).NewTransfer(info, rfs)
 	defer tr.Done(ctx, err)
 	acc := tr.Account(ctx, file)
 	pr := ProgressReader{acc: acc, tr: tr, fn: fn}
