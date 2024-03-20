@@ -248,6 +248,24 @@ func statsMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
 
+func muxWithContextPathPrefix(uiContextPath string, mux *http.ServeMux) *http.ServeMux {
+	if len(uiContextPath) == 0 {
+		return mux
+	}
+	newMux := http.NewServeMux()
+	mux.Handle(uiContextPath+"/", http.StripPrefix(uiContextPath, newMux))
+	return newMux
+}
+
+func routerWithContextPathPrefix(uiContextPath string, router *mux.Router) *mux.Router {
+	if len(uiContextPath) == 0 {
+		return router
+	}
+	newRouter := mux.NewRouter()
+	router.PathPrefix(uiContextPath+"/").Handler(http.StripPrefix(uiContextPath, newRouter))
+	return newRouter
+}
+
 var StaticFS fs.FS
 
 func handleStaticResources(defaultMux *http.ServeMux) {

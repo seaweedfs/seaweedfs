@@ -58,6 +58,7 @@ type FilerOptions struct {
 	debug                   *bool
 	debugPort               *int
 	localSocket             *string
+	uiContextPath           *string
 	showUIDirectoryDelete   *bool
 	downloadMaxMBps         *int
 	diskType                *string
@@ -75,6 +76,7 @@ func init() {
 	f.port = cmdFiler.Flag.Int("port", 8888, "filer server http listen port")
 	f.portGrpc = cmdFiler.Flag.Int("port.grpc", 0, "filer server grpc listen port")
 	f.publicPort = cmdFiler.Flag.Int("port.readonly", 0, "readonly port opened to public")
+	f.uiContextPath = cmdFiler.Flag.String("ui.contextPath", "", "filer server http context path")
 	f.defaultReplicaPlacement = cmdFiler.Flag.String("defaultReplicaPlacement", "", "default replication type. If not specified, use master setting.")
 	f.disableDirListing = cmdFiler.Flag.Bool("disableDirListing", false, "turn off directory listing")
 	f.maxMB = cmdFiler.Flag.Int("maxMB", 4, "split files larger than the limit")
@@ -255,6 +257,7 @@ func (fo *FilerOptions) startFiler() {
 		DefaultLevelDbDir:     defaultLevelDbDirectory,
 		DisableHttp:           *fo.disableHttp,
 		Host:                  filerAddress,
+		UIContextPath:         *fo.uiContextPath,
 		Cipher:                *fo.cipher,
 		SaveToFilerLimit:      int64(*fo.saveToFilerLimit),
 		ConcurrentUploadLimit: int64(*fo.concurrentUploadLimitMB) * 1024 * 1024,
