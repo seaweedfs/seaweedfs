@@ -150,6 +150,7 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 	}); err != nil {
 		return fmt.Errorf("send init message: %v", err)
 	}
+	// process the hello message
 	resp, err := stream.Recv()
 	if err != nil {
 		return fmt.Errorf("recv init response: %v", err)
@@ -158,21 +159,25 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 		return fmt.Errorf("init response error: %v", resp.Error)
 	}
 
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for {
 			ackResp, err := publishClient.Recv()
 			if err != nil {
 				e, _ := status.FromError(err)
 				if e.Code() == codes.Unknown && e.Message() == "EOF" {
+					log.Printf("publish to %s EOF", publishClient.Broker)
 					return
 				}
 				publishClient.Err = err
-				fmt.Printf("publish1 to %s error: %v\n", publishClient.Broker, err)
+				log.Printf("publish1 to %s error: %v\n", publishClient.Broker, err)
 				return
 			}
 			if ackResp.Error != "" {
 				publishClient.Err = fmt.Errorf("ack error: %v", ackResp.Error)
-				fmt.Printf("publish2 to %s error: %v\n", publishClient.Broker, ackResp.Error)
+				log.Printf("publish2 to %s error: %v\n", publishClient.Broker, ackResp.Error)
 				return
 			}
 			if ackResp.AckSequence > 0 {
@@ -193,11 +198,12 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 		publishCounter++
 	}
 
-	if err := publishClient.CloseSend(); err != nil {
-		return fmt.Errorf("close send: %v", err)
-	}
+	// CloseSend would cancel the context on the server side
+	//if err := publishClient.CloseSend(); err != nil {
+	//	return fmt.Errorf("close send: %v", err)
+	//}
 
-	time.Sleep(3 * time.Second)
+	wg.Wait()
 
 	log.Printf("published %d messages to %v for topic partition %+v", publishCounter, job.LeaderBroker, job.Partition)
 

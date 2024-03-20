@@ -46,7 +46,7 @@ service SeaweedMessaging {
     rpc SubscribeMessage (SubscribeMessageRequest) returns (stream SubscribeMessageResponse) {
     }
     // The lead broker asks a follower broker to follow itself
-    rpc PublishFollowMe (PublishFollowMeRequest) returns (PublishFollowMeResponse) {
+    rpc PublishFollowMe (stream PublishFollowMeRequest) returns (stream PublishFollowMeResponse) {
     }
 }
 
@@ -209,12 +209,24 @@ message PublishMessageResponse {
     bool should_close = 3;
 }
 message PublishFollowMeRequest {
-    Topic topic = 1;
-    Partition partition = 2;
-    string broker_self = 3;
+    message InitMessage {
+        Topic topic = 1;
+        Partition partition = 2;
+    }
+    message FlushMessage {
+        int64 ts_ns = 1;
+    }
+    message CloseMessage {
+    }
+    oneof message {
+        InitMessage init = 1;
+        DataMessage data = 2;
+        FlushMessage flush = 3;
+        CloseMessage close = 4;
+    }
 }
 message PublishFollowMeResponse {
-    string error = 1;
+    int64 ack_ts_ns = 1;
 }
 message SubscribeMessageRequest {
     message InitMessage {

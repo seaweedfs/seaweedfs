@@ -57,7 +57,7 @@ type SeaweedMessagingClient interface {
 	PublishMessage(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublishMessageClient, error)
 	SubscribeMessage(ctx context.Context, in *SubscribeMessageRequest, opts ...grpc.CallOption) (SeaweedMessaging_SubscribeMessageClient, error)
 	// The lead broker asks a follower broker to follow itself
-	PublishFollowMe(ctx context.Context, in *PublishFollowMeRequest, opts ...grpc.CallOption) (*PublishFollowMeResponse, error)
+	PublishFollowMe(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublishFollowMeClient, error)
 }
 
 type seaweedMessagingClient struct {
@@ -265,13 +265,35 @@ func (x *seaweedMessagingSubscribeMessageClient) Recv() (*SubscribeMessageRespon
 	return m, nil
 }
 
-func (c *seaweedMessagingClient) PublishFollowMe(ctx context.Context, in *PublishFollowMeRequest, opts ...grpc.CallOption) (*PublishFollowMeResponse, error) {
-	out := new(PublishFollowMeResponse)
-	err := c.cc.Invoke(ctx, SeaweedMessaging_PublishFollowMe_FullMethodName, in, out, opts...)
+func (c *seaweedMessagingClient) PublishFollowMe(ctx context.Context, opts ...grpc.CallOption) (SeaweedMessaging_PublishFollowMeClient, error) {
+	stream, err := c.cc.NewStream(ctx, &SeaweedMessaging_ServiceDesc.Streams[4], SeaweedMessaging_PublishFollowMe_FullMethodName, opts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &seaweedMessagingPublishFollowMeClient{stream}
+	return x, nil
+}
+
+type SeaweedMessaging_PublishFollowMeClient interface {
+	Send(*PublishFollowMeRequest) error
+	Recv() (*PublishFollowMeResponse, error)
+	grpc.ClientStream
+}
+
+type seaweedMessagingPublishFollowMeClient struct {
+	grpc.ClientStream
+}
+
+func (x *seaweedMessagingPublishFollowMeClient) Send(m *PublishFollowMeRequest) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *seaweedMessagingPublishFollowMeClient) Recv() (*PublishFollowMeResponse, error) {
+	m := new(PublishFollowMeResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // SeaweedMessagingServer is the server API for SeaweedMessaging service.
@@ -297,7 +319,7 @@ type SeaweedMessagingServer interface {
 	PublishMessage(SeaweedMessaging_PublishMessageServer) error
 	SubscribeMessage(*SubscribeMessageRequest, SeaweedMessaging_SubscribeMessageServer) error
 	// The lead broker asks a follower broker to follow itself
-	PublishFollowMe(context.Context, *PublishFollowMeRequest) (*PublishFollowMeResponse, error)
+	PublishFollowMe(SeaweedMessaging_PublishFollowMeServer) error
 	mustEmbedUnimplementedSeaweedMessagingServer()
 }
 
@@ -341,8 +363,8 @@ func (UnimplementedSeaweedMessagingServer) PublishMessage(SeaweedMessaging_Publi
 func (UnimplementedSeaweedMessagingServer) SubscribeMessage(*SubscribeMessageRequest, SeaweedMessaging_SubscribeMessageServer) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeMessage not implemented")
 }
-func (UnimplementedSeaweedMessagingServer) PublishFollowMe(context.Context, *PublishFollowMeRequest) (*PublishFollowMeResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PublishFollowMe not implemented")
+func (UnimplementedSeaweedMessagingServer) PublishFollowMe(SeaweedMessaging_PublishFollowMeServer) error {
+	return status.Errorf(codes.Unimplemented, "method PublishFollowMe not implemented")
 }
 func (UnimplementedSeaweedMessagingServer) mustEmbedUnimplementedSeaweedMessagingServer() {}
 
@@ -600,22 +622,30 @@ func (x *seaweedMessagingSubscribeMessageServer) Send(m *SubscribeMessageRespons
 	return x.ServerStream.SendMsg(m)
 }
 
-func _SeaweedMessaging_PublishFollowMe_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PublishFollowMeRequest)
-	if err := dec(in); err != nil {
+func _SeaweedMessaging_PublishFollowMe_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(SeaweedMessagingServer).PublishFollowMe(&seaweedMessagingPublishFollowMeServer{stream})
+}
+
+type SeaweedMessaging_PublishFollowMeServer interface {
+	Send(*PublishFollowMeResponse) error
+	Recv() (*PublishFollowMeRequest, error)
+	grpc.ServerStream
+}
+
+type seaweedMessagingPublishFollowMeServer struct {
+	grpc.ServerStream
+}
+
+func (x *seaweedMessagingPublishFollowMeServer) Send(m *PublishFollowMeResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *seaweedMessagingPublishFollowMeServer) Recv() (*PublishFollowMeRequest, error) {
+	m := new(PublishFollowMeRequest)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
-	if interceptor == nil {
-		return srv.(SeaweedMessagingServer).PublishFollowMe(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: SeaweedMessaging_PublishFollowMe_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SeaweedMessagingServer).PublishFollowMe(ctx, req.(*PublishFollowMeRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return m, nil
 }
 
 // SeaweedMessaging_ServiceDesc is the grpc.ServiceDesc for SeaweedMessaging service.
@@ -657,10 +687,6 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "CloseSubscribers",
 			Handler:    _SeaweedMessaging_CloseSubscribers_Handler,
 		},
-		{
-			MethodName: "PublishFollowMe",
-			Handler:    _SeaweedMessaging_PublishFollowMe_Handler,
-		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -685,6 +711,12 @@ var SeaweedMessaging_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "SubscribeMessage",
 			Handler:       _SeaweedMessaging_SubscribeMessage_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "PublishFollowMe",
+			Handler:       _SeaweedMessaging_PublishFollowMe_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 	},
 	Metadata: "mq.proto",

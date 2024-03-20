@@ -5,6 +5,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"time"
 )
 
 func (p *TopicPublisher) Publish(key, value []byte) error {
@@ -20,5 +21,6 @@ func (p *TopicPublisher) Publish(key, value []byte) error {
 	return inputBuffer.Enqueue(&mq_pb.DataMessage{
 		Key:   key,
 		Value: value,
+		TsNs:  time.Now().UnixNano(),
 	})
 }
