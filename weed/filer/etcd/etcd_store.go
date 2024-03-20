@@ -164,8 +164,10 @@ func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, dirPath weed_u
 		return lastFileName, fmt.Errorf("list %s : %v", dirPath, err)
 	}
 
+	etcdKeyWithDirectoryPrefix := append([]byte(store.etcdKeyPrefix), directoryPrefix...)
+
 	for _, kv := range resp.Kvs {
-		if !bytes.HasPrefix(kv.Key, directoryPrefix) {
+		if !bytes.HasPrefix(kv.Key, etcdKeyWithDirectoryPrefix) {
 			break
 		}
 		fileName := getNameFromKey(kv.Key)
