@@ -175,18 +175,23 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 			uploader.PartSize = 0
 		}
 	}
-	if _, ok := entry.Extended[s3_constants.AmzUserMetaMtime]; !ok {
+
+	doSaveMtime := true
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	} else if _, ok := entry.Extended[s3_constants.AmzUserMetaMtime]; ok {
+		doSaveMtime = false
+	}
+	if doSaveMtime {
 		entry.Extended[s3_constants.AmzUserMetaMtime] = []byte(strconv.FormatInt(entry.Attributes.Mtime, 10))
 	}
 	// process tagging
 	tags := ""
-	if true {
-		for k, v := range entry.Extended {
-			if len(tags) > 0 {
-				tags = tags + "&"
-			}
-			tags = tags + k + "=" + string(v)
+	for k, v := range entry.Extended {
+		if len(tags) > 0 {
+			tags = tags + "&"
 		}
+		tags = tags + k + "=" + string(v)
 	}
 
 	// Upload the file to S3.
