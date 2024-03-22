@@ -40,7 +40,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 		if bytesBuf != nil {
 			logBuffer.ReleaseMemory(bytesBuf)
 		}
-		println("LoopProcessLogData", readerName, "sent messages total", entryCounter)
+		// println("LoopProcessLogData", readerName, "sent messages total", entryCounter)
 	}()
 
 	for {
@@ -105,7 +105,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			}
 			if stopTsNs != 0 && logEntry.TsNs > stopTsNs {
 				isDone = true
-				println("stopTsNs", stopTsNs, "logEntry.TsNs", logEntry.TsNs)
+				// println("stopTsNs", stopTsNs, "logEntry.TsNs", logEntry.TsNs)
 				return
 			}
 			lastReadPosition = NewMessagePosition(logEntry.TsNs, batchIndex)
@@ -125,7 +125,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 
 		}
 
-		glog.V(0).Infof("%s sent messages ts[%+v,%+v] size %d\n", readerName, startPosition, lastReadPosition, batchSize)
+		glog.V(4).Infof("%s sent messages ts[%+v,%+v] size %d\n", readerName, startPosition, lastReadPosition, batchSize)
 	}
 
 }
