@@ -242,7 +242,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		}
 	}
 	if tsMemory.IsZero() { // case 2.2
-		println("2.2 no data")
+		// println("2.2 no data")
 		return nil, -2, nil
 	} else if lastReadPosition.Before(tsMemory) && lastReadPosition.BatchIndex+1 < tsBatchIndex { // case 2.3
 		if !logBuffer.lastFlushDataTime.IsZero() {
