@@ -70,6 +70,14 @@ var (
 			Help:      "replica placement mismatch",
 		}, []string{"collection", "id"})
 
+	MasterVolumeLayout = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "master",
+			Name:      "volume_layout_total",
+			Help:      "Number of volumes in volume layouts",
+		}, []string{"collection", "replica", "type"})
+
 	MasterLeaderChangeCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -259,6 +267,7 @@ func init() {
 	Gather.MustRegister(MasterReceivedHeartbeatCounter)
 	Gather.MustRegister(MasterLeaderChangeCounter)
 	Gather.MustRegister(MasterReplicaPlacementMismatch)
+	Gather.MustRegister(MasterVolumeLayout)
 
 	Gather.MustRegister(FilerRequestCounter)
 	Gather.MustRegister(FilerHandlerCounter)
