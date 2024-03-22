@@ -38,7 +38,7 @@ build:
     - release_tag
   tags:
     - ${TAG_OF_GITLAB_RUNNER}
-  image: nexus.stripchat.tech/golang:1.21
+  image: nexus.stripchat.tech/golang:1.22
   script:
     - cd ./weed
     - GODEBUG=http2client=0 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -ldflags "-s -w -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${CI_COMMIT_SHORT_SHA}"
@@ -59,7 +59,7 @@ build_large_disk:
     - release_tag
   tags:
     - ${TAG_OF_GITLAB_RUNNER}
-  image: nexus.stripchat.tech/golang:1.21
+  image: nexus.stripchat.tech/golang:1.22
   script:
     - cd ./weed
     - GODEBUG=http2client=0 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -tags 5BytesOffset -ldflags "-s -w -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=${CI_COMMIT_SHORT_SHA}"
