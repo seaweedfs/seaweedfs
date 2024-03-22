@@ -6,10 +6,11 @@ import (
 )
 
 type MemBuffer struct {
-	buf       []byte
-	size      int
-	startTime time.Time
-	stopTime  time.Time
+	buf        []byte
+	size       int
+	startTime  time.Time
+	stopTime   time.Time
+	batchIndex int64
 }
 
 type SealedBuffers struct {
@@ -29,7 +30,7 @@ func newSealedBuffers(size int) *SealedBuffers {
 	return sbs
 }
 
-func (sbs *SealedBuffers) SealBuffer(startTime, stopTime time.Time, buf []byte, pos int) (newBuf []byte) {
+func (sbs *SealedBuffers) SealBuffer(startTime, stopTime time.Time, buf []byte, pos int, batchIndex int64) (newBuf []byte) {
 	oldMemBuffer := sbs.buffers[0]
 	size := len(sbs.buffers)
 	for i := 0; i < size-1; i++ {
@@ -37,11 +38,13 @@ func (sbs *SealedBuffers) SealBuffer(startTime, stopTime time.Time, buf []byte, 
 		sbs.buffers[i].size = sbs.buffers[i+1].size
 		sbs.buffers[i].startTime = sbs.buffers[i+1].startTime
 		sbs.buffers[i].stopTime = sbs.buffers[i+1].stopTime
+		sbs.buffers[i].batchIndex = sbs.buffers[i+1].batchIndex
 	}
 	sbs.buffers[size-1].buf = buf
 	sbs.buffers[size-1].size = pos
 	sbs.buffers[size-1].startTime = startTime
 	sbs.buffers[size-1].stopTime = stopTime
+	sbs.buffers[size-1].batchIndex = batchIndex
 	return oldMemBuffer.buf
 }
 

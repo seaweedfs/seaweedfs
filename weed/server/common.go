@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"io/fs"
 	"mime/multipart"
@@ -17,6 +16,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
 	"google.golang.org/grpc"
 
@@ -282,7 +284,7 @@ func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, file
 	}
 }
 
-func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, writeFn func(writer io.Writer, offset int64, size int64) error) error {
+func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, prepareWriteFn func(offset int64, size int64) (filer.DoStreamContent, error)) error {
 	rangeReq := r.Header.Get("Range")
 	bufferedWriter := writePool.Get().(*bufio.Writer)
 	bufferedWriter.Reset(w)
@@ -293,7 +295,13 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 
 	if rangeReq == "" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
-		if err := writeFn(bufferedWriter, 0, totalSize); err != nil {
+		writeFn, err := prepareWriteFn(0, totalSize)
+		if err != nil {
+			glog.Errorf("processRangeRequest: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return fmt.Errorf("processRangeRequest: %v", err)
+		}
+		if err = writeFn(bufferedWriter); err != nil {
 			glog.Errorf("processRangeRequest: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return fmt.Errorf("processRangeRequest: %v", err)
@@ -335,8 +343,14 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		w.Header().Set("Content-Length", strconv.FormatInt(ra.length, 10))
 		w.Header().Set("Content-Range", ra.contentRange(totalSize))
 
+		writeFn, err := prepareWriteFn(ra.start, ra.length)
+		if err != nil {
+			glog.Errorf("processRangeRequest range[0]: %+v err: %v", w.Header(), err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return fmt.Errorf("processRangeRequest: %v", err)
+		}
 		w.WriteHeader(http.StatusPartialContent)
-		err = writeFn(bufferedWriter, ra.start, ra.length)
+		err = writeFn(bufferedWriter)
 		if err != nil {
 			glog.Errorf("processRangeRequest range[0]: %+v err: %v", w.Header(), err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -346,11 +360,20 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	}
 
 	// process multiple ranges
-	for _, ra := range ranges {
+	writeFnByRange := make(map[int](func(writer io.Writer) error))
+
+	for i, ra := range ranges {
 		if ra.start > totalSize {
 			http.Error(w, "Out of Range", http.StatusRequestedRangeNotSatisfiable)
 			return fmt.Errorf("out of range: %v", err)
 		}
+		writeFn, err := prepareWriteFn(ra.start, ra.length)
+		if err != nil {
+			glog.Errorf("processRangeRequest range[%d] err: %v", i, err)
+			http.Error(w, "Internal Error", http.StatusInternalServerError)
+			return fmt.Errorf("processRangeRequest range[%d] err: %v", i, err)
+		}
+		writeFnByRange[i] = writeFn
 	}
 	sendSize := rangesMIMESize(ranges, mimeType, totalSize)
 	pr, pw := io.Pipe()
@@ -359,13 +382,18 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	sendContent := pr
 	defer pr.Close() // cause writing goroutine to fail and exit if CopyN doesn't finish.
 	go func() {
-		for _, ra := range ranges {
+		for i, ra := range ranges {
 			part, e := mw.CreatePart(ra.mimeHeader(mimeType, totalSize))
 			if e != nil {
 				pw.CloseWithError(e)
 				return
 			}
-			if e = writeFn(part, ra.start, ra.length); e != nil {
+			writeFn := writeFnByRange[i]
+			if writeFn == nil {
+				pw.CloseWithError(e)
+				return
+			}
+			if e = writeFn(part); e != nil {
 				pw.CloseWithError(e)
 				return
 			}

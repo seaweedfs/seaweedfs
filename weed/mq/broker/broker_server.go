@@ -1,11 +1,11 @@
 package broker
 
 import (
-	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/sub_coordinator"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -28,6 +28,11 @@ type MessageQueueBrokerOption struct {
 	Ip                 string
 	Port               int
 	Cipher             bool
+	VolumeServerAccess string // how to access volume servers
+}
+
+func (option *MessageQueueBrokerOption) BrokerAddress() pb.ServerAddress {
+	return pb.NewServerAddress(option.Ip, option.Port, 0)
 }
 
 type MessageQueueBroker struct {
@@ -40,24 +45,28 @@ type MessageQueueBroker struct {
 	localTopicManager *topic.LocalTopicManager
 	Balancer          *pub_balancer.Balancer
 	lockAsBalancer    *cluster.LiveLock
-	currentBalancer   pb.ServerAddress
 	Coordinator       *sub_coordinator.Coordinator
+	accessLock        sync.Mutex
 }
 
 func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.DialOption) (mqBroker *MessageQueueBroker, err error) {
 
 	pub_broker_balancer := pub_balancer.NewBalancer()
+	coordinator := sub_coordinator.NewCoordinator(pub_broker_balancer)
 
 	mqBroker = &MessageQueueBroker{
 		option:            option,
 		grpcDialOption:    grpcDialOption,
-		MasterClient:      wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, pb.NewServerAddress(option.Ip, option.Port, 0), option.DataCenter, option.Rack, *pb.NewServiceDiscoveryFromMap(option.Masters)),
+		MasterClient:      wdclient.NewMasterClient(grpcDialOption, option.FilerGroup, cluster.BrokerType, option.BrokerAddress(), option.DataCenter, option.Rack, *pb.NewServiceDiscoveryFromMap(option.Masters)),
 		filers:            make(map[pb.ServerAddress]struct{}),
 		localTopicManager: topic.NewLocalTopicManager(),
 		Balancer:          pub_broker_balancer,
-		Coordinator:       sub_coordinator.NewCoordinator(pub_broker_balancer),
+		Coordinator:       coordinator,
 	}
 	mqBroker.MasterClient.SetOnPeerUpdateFn(mqBroker.OnBrokerUpdate)
+	pub_broker_balancer.OnPartitionChange = mqBroker.Coordinator.OnPartitionChange
+	pub_broker_balancer.OnAddBroker = mqBroker.Coordinator.OnSubAddBroker
+	pub_broker_balancer.OnRemoveBroker = mqBroker.Coordinator.OnSubRemoveBroker
 
 	go mqBroker.MasterClient.KeepConnectedToMaster()
 
@@ -71,18 +80,16 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 		for mqBroker.currentFiler == "" {
 			time.Sleep(time.Millisecond * 237)
 		}
-		self := fmt.Sprintf("%s:%d", option.Ip, option.Port)
+		self := option.BrokerAddress()
 		glog.V(0).Infof("broker %s found filer %s", self, mqBroker.currentFiler)
 
+		newBrokerBalancerCh := make(chan string, 1)
 		lockClient := cluster.NewLockClient(grpcDialOption, mqBroker.currentFiler)
-		mqBroker.lockAsBalancer = lockClient.StartLock(pub_balancer.LockBrokerBalancer, self)
-		for {
-			err := mqBroker.BrokerConnectToBalancer(self)
-			if err != nil {
-				fmt.Printf("BrokerConnectToBalancer: %v\n", err)
-			}
-			time.Sleep(time.Second)
-		}
+		mqBroker.lockAsBalancer = lockClient.StartLongLivedLock(pub_balancer.LockBrokerBalancer, string(self), func(newLockOwner string) {
+			glog.V(0).Infof("broker %s found balanacer %s", self, newLockOwner)
+			newBrokerBalancerCh <- newLockOwner
+		})
+		mqBroker.KeepConnectedToBrokerBalancer(newBrokerBalancerCh)
 	}()
 
 	return mqBroker, nil

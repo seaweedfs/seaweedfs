@@ -16,7 +16,7 @@ import org.springframework.stereotype.Component;
 import java.io.File;
 
 /**
- * reference: https://github.com/iponweb/hdfs-over-ftp
+ * reference: https://github.com/AShiou/hof
  */
 @Component
 public class HFtpService {

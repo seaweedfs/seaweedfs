@@ -2,11 +2,13 @@ package lock_manager
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"time"
 )
 
-const MaxDuration = 1<<63 - 1
+const RenewInterval = time.Second * 3
+const LiveLockTTL = time.Second * 7
 
 var NoLockServerError = fmt.Errorf("no lock server found")
 
@@ -24,7 +26,7 @@ func NewDistributedLockManager(host pb.ServerAddress) *DistributedLockManager {
 	}
 }
 
-func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64, token string, owner string) (renewToken string, movedTo pb.ServerAddress, err error) {
+func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64, token string, owner string) (lockOwner string, renewToken string, movedTo pb.ServerAddress, err error) {
 	movedTo, err = dlm.findLockOwningFiler(key)
 	if err != nil {
 		return
@@ -32,7 +34,7 @@ func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64
 	if movedTo != dlm.Host {
 		return
 	}
-	renewToken, err = dlm.lockManager.Lock(key, expiredAtNs, token, owner)
+	lockOwner, renewToken, err = dlm.lockManager.Lock(key, expiredAtNs, token, owner)
 	return
 }
 
@@ -53,6 +55,7 @@ func (dlm *DistributedLockManager) FindLockOwner(key string) (owner string, move
 		return
 	}
 	if movedTo != dlm.Host {
+		glog.V(0).Infof("lock %s not on current %s but on %s", key, dlm.Host, movedTo)
 		return
 	}
 	owner, err = dlm.lockManager.GetLockOwner(key)

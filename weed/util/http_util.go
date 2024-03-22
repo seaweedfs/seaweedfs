@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
@@ -449,4 +450,41 @@ func (r *CountingReader) Read(p []byte) (n int, err error) {
 	n, err = r.reader.Read(p)
 	r.BytesRead += n
 	return n, err
+}
+
+func RetriedFetchChunkData(buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64) (n int, err error) {
+
+	var shouldRetry bool
+
+	for waitTime := time.Second; waitTime < RetryWaitTime; waitTime += waitTime / 2 {
+		for _, urlString := range urlStrings {
+			n = 0
+			if strings.Contains(urlString, "%") {
+				urlString = url.PathEscape(urlString)
+			}
+			shouldRetry, err = ReadUrlAsStream(urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
+				if n < len(buffer) {
+					x := copy(buffer[n:], data)
+					n += x
+				}
+			})
+			if !shouldRetry {
+				break
+			}
+			if err != nil {
+				glog.V(0).Infof("read %s failed, err: %v", urlString, err)
+			} else {
+				break
+			}
+		}
+		if err != nil && shouldRetry {
+			glog.V(0).Infof("retry reading in %v", waitTime)
+			time.Sleep(waitTime)
+		} else {
+			break
+		}
+	}
+
+	return n, err
+
 }

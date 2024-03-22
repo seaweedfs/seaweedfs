@@ -2,6 +2,7 @@ package filer
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,18 +21,18 @@ type ReaderCache struct {
 }
 
 type SingleChunkCacher struct {
-	sync.Mutex
-	parent           *ReaderCache
-	chunkFileId      string
-	data             []byte
-	err              error
-	cipherKey        []byte
-	isGzipped        bool
-	chunkSize        int
-	shouldCache      bool
-	wg               sync.WaitGroup
-	cacheStartedCh   chan struct{}
 	completedTimeNew int64
+	sync.Mutex
+	parent         *ReaderCache
+	chunkFileId    string
+	data           []byte
+	err            error
+	cipherKey      []byte
+	isGzipped      bool
+	chunkSize      int
+	shouldCache    bool
+	wg             sync.WaitGroup
+	cacheStartedCh chan struct{}
 }
 
 func NewReaderCache(limit int, chunkCache chunk_cache.ChunkCache, lookupFileIdFn wdclient.LookupFileIdFunctionType) *ReaderCache {
@@ -170,7 +171,7 @@ func (s *SingleChunkCacher) startCaching() {
 
 	s.data = mem.Allocate(s.chunkSize)
 
-	_, s.err = retriedFetchChunkData(s.data, urlStrings, s.cipherKey, s.isGzipped, true, 0)
+	_, s.err = util.RetriedFetchChunkData(s.data, urlStrings, s.cipherKey, s.isGzipped, true, 0)
 	if s.err != nil {
 		mem.Free(s.data)
 		s.data = nil

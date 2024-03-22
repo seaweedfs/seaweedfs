@@ -17,15 +17,30 @@ var (
 	ResumeFromDiskError = fmt.Errorf("resumeFromDisk")
 )
 
-func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startReadTime time.Time, stopTsNs int64,
-	waitForDataFn func() bool, eachLogDataFn func(logEntry *filer_pb.LogEntry) error) (lastReadTime time.Time, isDone bool, err error) {
+type MessagePosition struct {
+	time.Time        // this is the timestamp of the message
+	BatchIndex int64 // this is only used when the timestamp is not enough to identify the next message, when the timestamp is in the previous batch.
+}
+
+func NewMessagePosition(tsNs int64, batchIndex int64) MessagePosition {
+	return MessagePosition{
+		Time:       time.Unix(0, tsNs).UTC(),
+		BatchIndex: batchIndex,
+	}
+}
+
+func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition MessagePosition, stopTsNs int64,
+	waitForDataFn func() bool, eachLogDataFn EachLogEntryFuncType) (lastReadPosition MessagePosition, isDone bool, err error) {
 	// loop through all messages
 	var bytesBuf *bytes.Buffer
-	lastReadTime = startReadTime
+	var batchIndex int64
+	lastReadPosition = startPosition
+	var entryCounter int64
 	defer func() {
 		if bytesBuf != nil {
 			logBuffer.ReleaseMemory(bytesBuf)
 		}
+		// println("LoopProcessLogData", readerName, "sent messages total", entryCounter)
 	}()
 
 	for {
@@ -33,26 +48,42 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startReadTime 
 		if bytesBuf != nil {
 			logBuffer.ReleaseMemory(bytesBuf)
 		}
-		bytesBuf, err = logBuffer.ReadFromBuffer(lastReadTime)
+		bytesBuf, batchIndex, err = logBuffer.ReadFromBuffer(lastReadPosition)
 		if err == ResumeFromDiskError {
 			time.Sleep(1127 * time.Millisecond)
-			return lastReadTime, isDone, ResumeFromDiskError
+			return lastReadPosition, isDone, ResumeFromDiskError
 		}
-		// glog.V(4).Infof("%s ReadFromBuffer by %v", readerName, lastReadTime)
+		readSize := 0
+		if bytesBuf != nil {
+			readSize = bytesBuf.Len()
+		}
+		glog.V(4).Infof("%s ReadFromBuffer at %v batch %d. Read bytes %v batch %d", readerName, lastReadPosition, lastReadPosition.BatchIndex, readSize, batchIndex)
 		if bytesBuf == nil {
+			if batchIndex >= 0 {
+				lastReadPosition = NewMessagePosition(lastReadPosition.UnixNano(), batchIndex)
+			}
 			if stopTsNs != 0 {
 				isDone = true
 				return
 			}
-			if waitForDataFn() {
-				continue
-			} else {
+			lastTsNs := logBuffer.LastTsNs
+			for lastTsNs == logBuffer.LastTsNs {
+				if waitForDataFn() {
+					continue
+				} else {
+					isDone = true
+					return
+				}
+			}
+			if logBuffer.IsStopping() {
+				isDone = true
 				return
 			}
+			continue
 		}
 
 		buf := bytesBuf.Bytes()
-		// fmt.Printf("ReadFromBuffer %s by %v size %d\n", readerName, lastReadTime, len(buf))
+		// fmt.Printf("ReadFromBuffer %s by %v size %d\n", readerName, lastReadPosition, len(buf))
 
 		batchSize := 0
 
@@ -61,7 +92,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startReadTime 
 			size := util.BytesToUint32(buf[pos : pos+4])
 			if pos+4+int(size) > len(buf) {
 				err = ResumeError
-				glog.Errorf("LoopProcessLogData: %s read buffer %v read %d [%d,%d) from [0,%d)", readerName, lastReadTime, batchSize, pos, pos+int(size)+4, len(buf))
+				glog.Errorf("LoopProcessLogData: %s read buffer %v read %d entries [%d,%d) from [0,%d)", readerName, lastReadPosition, batchSize, pos, pos+int(size)+4, len(buf))
 				return
 			}
 			entryData := buf[pos+4 : pos+4+int(size)]
@@ -74,20 +105,27 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startReadTime 
 			}
 			if stopTsNs != 0 && logEntry.TsNs > stopTsNs {
 				isDone = true
+				// println("stopTsNs", stopTsNs, "logEntry.TsNs", logEntry.TsNs)
 				return
 			}
-			lastReadTime = time.Unix(0, logEntry.TsNs)
+			lastReadPosition = NewMessagePosition(logEntry.TsNs, batchIndex)
 
-			if err = eachLogDataFn(logEntry); err != nil {
+			if isDone, err = eachLogDataFn(logEntry); err != nil {
+				glog.Errorf("LoopProcessLogData: %s process log entry %d %v: %v", readerName, batchSize+1, logEntry, err)
+				return
+			}
+			if isDone {
+				glog.V(0).Infof("LoopProcessLogData2: %s process log entry %d", readerName, batchSize+1)
 				return
 			}
 
 			pos += 4 + int(size)
 			batchSize++
+			entryCounter++
 
 		}
 
-		// glog.V(4).Infof("%s sent messages ts[%+v,%+v] size %d\n", readerName, startReadTime, lastReadTime, batchSize)
+		glog.V(4).Infof("%s sent messages ts[%+v,%+v] size %d\n", readerName, startPosition, lastReadPosition, batchSize)
 	}
 
 }
