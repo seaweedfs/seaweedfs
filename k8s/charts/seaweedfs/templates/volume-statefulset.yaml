@@ -59,11 +59,11 @@ spec:
           image: {{ template "volume.image" . }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy | default "IfNotPresent" }}
           command: [ '/bin/sh', '-c' ]
-          args: [ '{{range $dir :=  .Values.volume.dataDirs }}if ls /{{$dir.name}}/*.idx  >/dev/null 2>&1; then mv /{{$dir.name}}/*.idx /idx/ ; fi; {{end}}' ]
+          args: [ 'ls {{range $dir :=  .Values.volume.dataDirs }}/{{$dir.name}}/*.idx {{end}} && xargs -I {} mv {} /idx/' ]
           volumeMounts:
             - name: idx
-              mountPath: /idx
-          {{- range $dir :=  .Values.volume.dataDirs }}
+              mountPath: {{ .Values.volume.idx.name }}
+          {{- range $dir :=  .Values.volume.dataDirs }} 
             - name: {{ $dir.name }}
               mountPath: /{{ $dir.name }}
           {{- end }}
@@ -135,7 +135,7 @@ spec:
                 {{- end }}
                 -dir {{range $index, $dir :=  .Values.volume.dataDirs }}{{if ne $index 0}},{{end}}/{{$dir.name}}{{end}} \
                 {{- if .Values.volume.idx }}
-                -dir.idx=/idx \
+                -dir.idx= /idx \
                 {{- end }}
                 -max {{range $index, $dir :=  .Values.volume.dataDirs }}{{if ne $index 0}},{{end}}{{$dir.maxVolumes}}{{end}} \
                 {{- if .Values.volume.rack }}
@@ -253,7 +253,7 @@ spec:
       {{- if eq $dir.type "existingClaim" }}
         - name: {{ $dir.name }}
           persistentVolumeClaim:
-            claimName: {{ $dir.claimName }}
+            claimName: {{ $dir.claimName }} 
       {{- end }}
 
      {{- end }}
@@ -268,7 +268,7 @@ spec:
        {{- if eq .Values.volume.idx.type "existingClaim" }}
         - name: idx
           persistentVolumeClaim:
-            claimName: {{ .Values.volume.idx.claimName }}
+            claimName: {{ .Values.volume.idx.claimName }} 
        {{- end }}
      {{- end }}
 
@@ -282,7 +282,7 @@ spec:
        {{- if eq .Values.volume.logs.type "existingClaim" }}
         - name: logs
           persistentVolumeClaim:
-            claimName: {{ .Values.volume.logs.claimName }}
+            claimName: {{ .Values.volume.logs.claimName }} 
        {{- end }}
      {{- end }}
      {{- if .Values.global.enableSecurity }}

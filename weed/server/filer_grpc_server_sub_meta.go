@@ -135,6 +135,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			return fmt.Errorf("reading from persisted logs: %v", readPersistedLogErr)
 		}
 		if isDone {
+			glog.V(4).Infof("done read on disk %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 			return nil
 		}
 
@@ -170,9 +171,11 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			}
 		}
 		if isDone {
+			glog.V(4).Infof("done read in memory %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 			return nil
 		}
 		if !fs.hasClient(req.ClientId, req.ClientEpoch) {
+			glog.V(4).Infof("has not client %v local subscriber %s clientId:%d clientEpoch %v", clientName, req.PathPrefix, req.ClientId, req.ClientEpoch)
 			return nil
 		}
 	}
