@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [1.0.8](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.7...v1.0.8) (2024-03-22)
+
+
+### Bug Fixes
+
+* panic: assignment to entry in nil map on S3Sink.CreateEntry ([#5406](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/issues/5406)) ([25643cf](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/25643cfbc6fdde5a73725b557fd2d6ae8e66484f))
+* sync without dir /buckets/some/.uploads/hash_hash ([#5402](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/issues/5402)) ([d821cb3](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/d821cb3b187a381a42da3fcbc2749c5e66077f1d))
+
+
+### Minor Changes
+
+* bump golang ver to 1.22 ([119c65f](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/119c65f44e31a86f0bf5f3d1b833b307d8feddc0))
+* **deps:** bump docker/build-push-action from 5.2.0 to 5.3.0 ([#5391](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/issues/5391)) ([e21f458](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/e21f458bca69061825ac2c0130d21ed2deb75214))
+* **deps:** bump docker/setup-buildx-action from 3.1.0 to 3.2.0 ([#5393](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/issues/5393)) ([8a2b387](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/8a2b3879b98d17eb0b49fedfcec78c6a66ac7655))
+* **deps:** bump github.com/rclone/rclone from 1.65.2 to 1.66.0 ([#5387](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/issues/5387)) ([359b005](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/commit/359b00596f70f508060cb88f9ac7ab1d3f0e8331))
+
 ### [1.0.7](https://gitlab.stripchat.dev/infrastructure/utils/storage/seaweedfs/compare/v1.0.6...v1.0.7) (2024-01-25)
 
 
