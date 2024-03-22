@@ -167,12 +167,16 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 					if delimiter != "" {
 						// keys that contain the same string between the prefix and the first occurrence of the delimiter are grouped together as a commonPrefix.
 						// extract the string between the prefix and the delimiter and add it to the commonPrefixes if it's unique.
-						fullPath := fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):]
-						delimitedPath := strings.SplitN(fullPath, delimiter, 2)
-						if len(delimitedPath) == 2 {
+						undelimitedPath := fmt.Sprintf("%s/%s", dir, entry.Name)[len(bucketPrefix):]
 
-							// S3 clients expect the delimited prefix to contain the delimiter.
-							delimitedPrefix := delimitedPath[0] + delimiter
+						// take into account a prefix if supplied while delimiting.
+						undelimitedPath = strings.TrimPrefix(undelimitedPath, originalPrefix)
+
+						delimitedPath := strings.SplitN(undelimitedPath, delimiter, 2)
+
+						if len(delimitedPath) == 2 {
+							// S3 clients expect the delimited prefix to contain the delimiter and prefix.
+							delimitedPrefix := originalPrefix + delimitedPath[0] + delimiter
 
 							for i := range commonPrefixes {
 								if commonPrefixes[i].Prefix == delimitedPrefix {
