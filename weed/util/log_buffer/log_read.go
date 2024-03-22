@@ -125,7 +125,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 
 		}
 
-		glog.V(0).Infof("%s sent messages ts[%+v,%+v] size %d\n", readerName, startPosition, lastReadPosition, batchSize)
+		glog.V(4).Infof("%s sent messages ts[%+v,%+v] size %d\n", readerName, startPosition, lastReadPosition, batchSize)
 	}
 
 }
