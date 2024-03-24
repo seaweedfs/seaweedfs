@@ -39,7 +39,6 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	// 2. find the topic metadata owning filer
 	// 3. write to the filer
 
-	var localTopicPartition *topic.LocalPartition
 	req, err := stream.Recv()
 	if err != nil {
 		return err
@@ -56,18 +55,13 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 
 	// get or generate a local partition
 	t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
-	conf, readConfErr := b.readTopicConfFromFiler(t)
-	if readConfErr != nil {
-		response.Error = fmt.Sprintf("topic %v not found: %v", initMessage.Topic, readConfErr)
-		glog.Errorf("topic %v not found: %v", initMessage.Topic, readConfErr)
+	localTopicPartition, getOrGenErr := b.GetOrGenerateLocalPartition(t, p)
+	if getOrGenErr != nil {
+		response.Error = fmt.Sprintf("topic %v not found: %v", t, getOrGenErr)
+		glog.Errorf("topic %v not found: %v", t, getOrGenErr)
 		return stream.Send(response)
 	}
-	localTopicPartition, _, err = b.GetOrGenLocalPartition(t, p, conf)
-	if err != nil {
-		response.Error = fmt.Sprintf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
-		glog.Errorf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
-		return stream.Send(response)
-	}
+
 	ackInterval = int(initMessage.AckInterval)
 
 	// connect to follower brokers

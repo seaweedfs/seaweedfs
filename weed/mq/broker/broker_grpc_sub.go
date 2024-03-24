@@ -27,17 +27,9 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 
 	glog.V(0).Infof("Subscriber %s on %v %v connected", req.GetInit().ConsumerId, t, partition)
 
-	// get or generate a local partition
-	var localTopicPartition *topic.LocalPartition
-	conf, readConfErr := b.readTopicConfFromFiler(t)
-	if readConfErr != nil {
-		glog.Errorf("topic %v not found: %v", initMessage.Topic, readConfErr)
-		return fmt.Errorf("topic %v not found: %v", initMessage.Topic, readConfErr)
-	}
-	localTopicPartition, _, err = b.GetOrGenLocalPartition(t, partition, conf)
-	if err != nil {
-		glog.Errorf("topic %v partition %v not setup", initMessage.Topic, partition)
-		return fmt.Errorf("topic %v partition %v not setup", initMessage.Topic, partition)
+	localTopicPartition, getOrGenErr := b.GetOrGenerateLocalPartition(t, partition)
+	if getOrGenErr != nil {
+		return getOrGenErr
 	}
 
 	localTopicPartition.Subscribers.AddSubscriber(clientName, topic.NewLocalSubscriber())
@@ -103,6 +95,21 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 		counter++
 		return false, nil
 	})
+}
+
+func (b *MessageQueueBroker) GetOrGenerateLocalPartition(t topic.Topic, partition topic.Partition) (localTopicPartition *topic.LocalPartition, getOrGenError error) {
+	// get or generate a local partition
+	conf, readConfErr := b.readTopicConfFromFiler(t)
+	if readConfErr != nil {
+		glog.Errorf("topic %v not found: %v", t, readConfErr)
+		return nil, fmt.Errorf("topic %v not found: %v", t, readConfErr)
+	}
+	localTopicPartition, _, getOrGenError = b.doGetOrGenLocalPartition(t, partition, conf)
+	if getOrGenError != nil {
+		glog.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
+		return nil, fmt.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
+	}
+	return localTopicPartition, nil
 }
 
 func getRequestPosition(offset *mq_pb.PartitionOffset) (startPosition log_buffer.MessagePosition) {
