@@ -178,11 +178,7 @@ func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath weed_
 }
 
 func (store *EtcdStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
-	return lastFileName, filer.ErrUnsupportedListDirectoryPrefixed
-}
-
-func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
-	directoryPrefix := genDirectoryKeyPrefix(dirPath, "")
+	directoryPrefix := genDirectoryKeyPrefix(dirPath, prefix)
 	lastFileStart := directoryPrefix
 	if startFileName != "" {
 		lastFileStart = genDirectoryKeyPrefix(dirPath, startFileName)
@@ -222,6 +218,10 @@ func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, dirPath weed_u
 	}
 
 	return lastFileName, err
+}
+
+func (store *EtcdStore) ListDirectoryEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
+	return store.ListDirectoryPrefixedEntries(ctx, dirPath, startFileName, includeStartFile, limit, "", eachEntryFunc)
 }
 
 func genKey(dirPath, fileName string) (key []byte) {
