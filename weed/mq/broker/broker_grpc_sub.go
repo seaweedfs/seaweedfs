@@ -97,21 +97,6 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 	})
 }
 
-func (b *MessageQueueBroker) GetOrGenerateLocalPartition(t topic.Topic, partition topic.Partition) (localTopicPartition *topic.LocalPartition, getOrGenError error) {
-	// get or generate a local partition
-	conf, readConfErr := b.readTopicConfFromFiler(t)
-	if readConfErr != nil {
-		glog.Errorf("topic %v not found: %v", t, readConfErr)
-		return nil, fmt.Errorf("topic %v not found: %v", t, readConfErr)
-	}
-	localTopicPartition, _, getOrGenError = b.doGetOrGenLocalPartition(t, partition, conf)
-	if getOrGenError != nil {
-		glog.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
-		return nil, fmt.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
-	}
-	return localTopicPartition, nil
-}
-
 func getRequestPosition(offset *mq_pb.PartitionOffset) (startPosition log_buffer.MessagePosition) {
 	if offset.StartTsNs != 0 {
 		startPosition = log_buffer.NewMessagePosition(offset.StartTsNs, -2)

@@ -56,6 +56,21 @@ func (b *MessageQueueBroker) readTopicConfFromFiler(t topic.Topic) (conf *mq_pb.
 	return conf, nil
 }
 
+func (b *MessageQueueBroker) GetOrGenerateLocalPartition(t topic.Topic, partition topic.Partition) (localTopicPartition *topic.LocalPartition, getOrGenError error) {
+	// get or generate a local partition
+	conf, readConfErr := b.readTopicConfFromFiler(t)
+	if readConfErr != nil {
+		glog.Errorf("topic %v not found: %v", t, readConfErr)
+		return nil, fmt.Errorf("topic %v not found: %v", t, readConfErr)
+	}
+	localTopicPartition, _, getOrGenError = b.doGetOrGenLocalPartition(t, partition, conf)
+	if getOrGenError != nil {
+		glog.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
+		return nil, fmt.Errorf("topic %v partition %v not setup: %v", t, partition, getOrGenError)
+	}
+	return localTopicPartition, nil
+}
+
 func (b *MessageQueueBroker) doGetOrGenLocalPartition(t topic.Topic, partition topic.Partition, conf *mq_pb.ConfigureTopicResponse) (localPartition *topic.LocalPartition, isGenerated bool, err error) {
 	b.accessLock.Lock()
 	defer b.accessLock.Unlock()
