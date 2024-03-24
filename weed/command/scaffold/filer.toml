@@ -270,6 +270,12 @@ username = ""
 password = ""
 key_prefix = "seaweedfs."
 timeout = "3s"
+# Set the CA certificate path
+tls_ca_file=""
+# Set the client certificate path
+tls_client_crt_file=""
+# Set the client private key path
+tls_client_key_file=""
 
 [mongodb]
 enabled = false
