@@ -166,7 +166,7 @@ func (logBuffer *LogBuffer) loopInterval() {
 		toFlush := logBuffer.copyToFlush()
 		logBuffer.Unlock()
 		if toFlush != nil {
-			glog.V(0).Infof("%s flush [%v, %v] size %d", logBuffer.name, toFlush.startTime, toFlush.stopTime, len(toFlush.data.Bytes()))
+			glog.V(4).Infof("%s flush [%v, %v] size %d", logBuffer.name, toFlush.startTime, toFlush.stopTime, len(toFlush.data.Bytes()))
 			logBuffer.flushChan <- toFlush
 		} else {
 			// glog.V(0).Infof("%s no flush", m.name)
@@ -242,7 +242,7 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 		}
 	}
 	if tsMemory.IsZero() { // case 2.2
-		println("2.2 no data")
+		// println("2.2 no data")
 		return nil, -2, nil
 	} else if lastReadPosition.Before(tsMemory) && lastReadPosition.BatchIndex+1 < tsBatchIndex { // case 2.3
 		if !logBuffer.lastFlushDataTime.IsZero() {

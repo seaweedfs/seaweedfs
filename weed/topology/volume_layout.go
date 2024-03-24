@@ -3,6 +3,7 @@ package topology
 import (
 	"errors"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -349,18 +350,21 @@ func (vl *VolumeLayout) DoneGrowRequest() {
 }
 
 func (vl *VolumeLayout) ShouldGrowVolumes(option *VolumeGrowOption) bool {
-	active, crowded := vl.GetActiveVolumeCount(option)
+	total, active, crowded := vl.GetActiveVolumeCount(option)
+	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.ReplicaPlacement.String(), "total").Set(float64(total))
+	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.ReplicaPlacement.String(), "active").Set(float64(active))
+	stats.MasterVolumeLayout.WithLabelValues(option.Collection, option.ReplicaPlacement.String(), "crowded").Set(float64(crowded))
 	//glog.V(0).Infof("active volume: %d, high usage volume: %d\n", active, high)
 	return active <= crowded
 }
 
-func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) (active, crowded int) {
+func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) (total, active, crowded int) {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
-
 	if option.DataCenter == "" {
-		return len(vl.writables), len(vl.crowded)
+		return len(vl.writables), len(vl.writables), len(vl.crowded)
 	}
+	total = len(vl.writables)
 	for _, v := range vl.writables {
 		for _, dn := range vl.vid2location[v].list {
 			if dn.GetDataCenter().Id() == NodeId(option.DataCenter) {

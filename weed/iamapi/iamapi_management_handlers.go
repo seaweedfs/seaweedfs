@@ -3,6 +3,7 @@ package iamapi
 import (
 	"crypto/sha1"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -424,7 +426,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	}
 	values := r.PostForm
 	s3cfg := &iam_pb.S3ApiConfiguration{}
-	if err := iama.s3ApiConfig.GetS3ApiConfiguration(s3cfg); err != nil {
+	if err := iama.s3ApiConfig.GetS3ApiConfiguration(s3cfg); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}

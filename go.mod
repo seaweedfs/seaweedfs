@@ -30,7 +30,7 @@ require (
 	github.com/facebookgo/subset v0.0.0-20200203212716-c811ad88dec4 // indirect
 	github.com/fclairamb/ftpserverlib v0.24.0
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
-	github.com/go-errors/errors v1.1.1 // indirect
+	github.com/go-errors/errors v1.4.2 // indirect
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-redsync/redsync/v4 v4.11.0
 	github.com/go-sql-driver/mysql v1.8.0
@@ -226,6 +226,7 @@ require (
 	github.com/flynn/noise v1.0.1 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.3 // indirect
 	github.com/geoffgarside/ber v1.1.0 // indirect
+	github.com/getsentry/sentry-go v0.27.0 // indirect
 	github.com/go-chi/chi/v5 v5.0.11 // indirect
 	github.com/go-logr/logr v1.4.1 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
