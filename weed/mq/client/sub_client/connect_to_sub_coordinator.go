@@ -91,26 +91,26 @@ func (sub *TopicSubscriber) onEachAssignment(assignment *mq_pb.SubscriberToSubCo
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, sub.ProcessorConfig.ConcurrentPartitionLimit)
 
-	for _, assigned := range assignment.AssignedPartitions {
+	for _, assigned := range assignment.PartitionAssignments {
 		wg.Add(1)
 		semaphore <- struct{}{}
-		go func(partition *mq_pb.Partition, broker string) {
+		go func(assigned *mq_pb.BrokerPartitionAssignment) {
 			defer wg.Done()
 			defer func() { <-semaphore }()
-			glog.V(0).Infof("subscriber %s/%s assigned partition %+v at %v", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, partition, broker)
-			err := sub.onEachPartition(partition, broker)
+			glog.V(0).Infof("subscriber %s/%s assigned partition %+v at %v", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, assigned.Partition, assigned.LeaderBroker)
+			err := sub.onEachPartition(assigned)
 			if err != nil {
-				glog.V(0).Infof("subscriber %s/%s partition %+v at %v: %v", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, partition, broker, err)
+				glog.V(0).Infof("subscriber %s/%s partition %+v at %v: %v", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, assigned.Partition, assigned.LeaderBroker, err)
 			}
-		}(assigned.Partition, assigned.Broker)
+		}(assigned)
 	}
 
 	wg.Wait()
 }
 
-func (sub *TopicSubscriber) onEachPartition(partition *mq_pb.Partition, broker string) error {
+func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssignment) error {
 	// connect to the partition broker
-	return pb.WithBrokerGrpcClient(true, broker, sub.SubscriberConfig.GrpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+	return pb.WithBrokerGrpcClient(true, assigned.LeaderBroker, sub.SubscriberConfig.GrpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 		subscribeClient, err := client.SubscribeMessage(context.Background(), &mq_pb.SubscribeMessageRequest{
 			Message: &mq_pb.SubscribeMessageRequest_Init{
 				Init: &mq_pb.SubscribeMessageRequest_InitMessage{
@@ -118,11 +118,12 @@ func (sub *TopicSubscriber) onEachPartition(partition *mq_pb.Partition, broker s
 					ConsumerId:    sub.SubscriberConfig.ConsumerGroupInstanceId,
 					Topic:         sub.ContentConfig.Topic.ToPbTopic(),
 					PartitionOffset: &mq_pb.PartitionOffset{
-						Partition: partition,
+						Partition: assigned.Partition,
 						StartTsNs: sub.alreadyProcessedTsNs,
 						StartType: mq_pb.PartitionOffsetStartType_EARLIEST_IN_MEMORY,
 					},
 					Filter: sub.ContentConfig.Filter,
+					FollowerBrokers: assigned.FollowerBrokers,
 				},
 			},
 		})
@@ -131,7 +132,7 @@ func (sub *TopicSubscriber) onEachPartition(partition *mq_pb.Partition, broker s
 			return fmt.Errorf("create subscribe client: %v", err)
 		}
 
-		glog.V(0).Infof("subscriber %s/%s connected to partition %+v at %v", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, partition, broker)
+		glog.V(0).Infof("subscriber %s/%s connected to partition %+v at %v", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup, assigned.Partition, assigned.LeaderBroker)
 
 		if sub.OnCompletionFunc != nil {
 			defer sub.OnCompletionFunc()

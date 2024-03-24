@@ -16,40 +16,28 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 	ctx := stream.Context()
 	clientName := fmt.Sprintf("%s/%s-%s", req.GetInit().ConsumerGroup, req.GetInit().ConsumerId, req.GetInit().ClientId)
 
+	initMessage := req.GetInit()
+	if initMessage == nil {
+		glog.Errorf("missing init message")
+		return fmt.Errorf("missing init message")
+	}
+
 	t := topic.FromPbTopic(req.GetInit().Topic)
 	partition := topic.FromPbPartition(req.GetInit().GetPartitionOffset().GetPartition())
 
 	glog.V(0).Infof("Subscriber %s on %v %v connected", req.GetInit().ConsumerId, t, partition)
 
-	waitIntervalCount := 0
-
+	// get or generate a local partition
 	var localTopicPartition *topic.LocalPartition
-	for localTopicPartition == nil {
-		localTopicPartition, _, err = b.GetOrGenLocalPartition(t, partition)
-		if err != nil {
-			glog.V(1).Infof("topic %v partition %v not setup", t, partition)
-		}
-		if localTopicPartition != nil {
-			break
-		}
-		waitIntervalCount++
-		if waitIntervalCount > 10 {
-			waitIntervalCount = 10
-		}
-		time.Sleep(time.Duration(waitIntervalCount) * 337 * time.Millisecond)
-		// Check if the client has disconnected by monitoring the context
-		select {
-		case <-ctx.Done():
-			err := ctx.Err()
-			if err == context.Canceled {
-				// Client disconnected
-				return nil
-			}
-			glog.V(0).Infof("Subscriber %s disconnected: %v", clientName, err)
-			return nil
-		default:
-			// Continue processing the request
-		}
+	conf, readConfErr := b.readTopicConfFromFiler(t)
+	if readConfErr != nil {
+		glog.Errorf("topic %v not found: %v", initMessage.Topic, readConfErr)
+		return fmt.Errorf("topic %v not found: %v", initMessage.Topic, readConfErr)
+	}
+	localTopicPartition, _, err = b.GetOrGenLocalPartition(t, partition, conf)
+	if err != nil {
+		glog.Errorf("topic %v partition %v not setup", initMessage.Topic, partition)
+		return fmt.Errorf("topic %v partition %v not setup", initMessage.Topic, partition)
 	}
 
 	localTopicPartition.Subscribers.AddSubscriber(clientName, topic.NewLocalSubscriber())

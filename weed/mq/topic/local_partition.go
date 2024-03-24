@@ -6,6 +6,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
+	"google.golang.org/grpc"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,6 +27,9 @@ type LocalPartition struct {
 	Publishers      *LocalPartitionPublishers
 	Subscribers     *LocalPartitionSubscribers
 	FollowerId      int32
+
+	FollowerStream mq_pb.SeaweedMessaging_PublishFollowMeClient
+	GrpcConnection *grpc.ClientConn
 }
 
 var TIME_FORMAT = "2006-01-02-15-04-05"

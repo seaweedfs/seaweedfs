@@ -170,14 +170,9 @@ message SubscriberToSubCoordinatorRequest {
     }
 }
 message SubscriberToSubCoordinatorResponse {
-    message AssignedPartition {
-        Partition partition = 1;
-        int64 ts_ns = 2;
-        string broker = 3;
-    }
     message Assignment {
         int64 generation = 1;
-        repeated AssignedPartition assigned_partitions = 2;
+        repeated BrokerPartitionAssignment partition_assignments = 2;
     }
     oneof message {
         Assignment assignment = 1;
@@ -236,6 +231,7 @@ message SubscribeMessageRequest {
         Topic topic = 4;
         PartitionOffset partition_offset = 5;
         string filter = 6;
+        repeated string follower_brokers = 7;
     }
     message AckMessage {
         int64 sequence = 1;

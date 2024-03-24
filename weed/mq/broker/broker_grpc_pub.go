@@ -7,7 +7,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/peer"
 	"io"
 	"math/rand"
@@ -41,7 +40,6 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	// 3. write to the filer
 
 	var localTopicPartition *topic.LocalPartition
-	var isGenerated bool
 	req, err := stream.Recv()
 	if err != nil {
 		return err
@@ -58,7 +56,13 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 
 	// get or generate a local partition
 	t, p := topic.FromPbTopic(initMessage.Topic), topic.FromPbPartition(initMessage.Partition)
-	localTopicPartition, isGenerated, err = b.GetOrGenLocalPartition(t, p)
+	conf, readConfErr := b.readTopicConfFromFiler(t)
+	if readConfErr != nil {
+		response.Error = fmt.Sprintf("topic %v not found: %v", initMessage.Topic, readConfErr)
+		glog.Errorf("topic %v not found: %v", initMessage.Topic, readConfErr)
+		return stream.Send(response)
+	}
+	localTopicPartition, _, err = b.GetOrGenLocalPartition(t, p, conf)
 	if err != nil {
 		response.Error = fmt.Sprintf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
 		glog.Errorf("topic %v partition %v not setup", initMessage.Topic, initMessage.Partition)
@@ -67,25 +71,23 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	ackInterval = int(initMessage.AckInterval)
 
 	// connect to follower brokers
-	var followerStream mq_pb.SeaweedMessaging_PublishFollowMeClient
-	var grpcConnection *grpc.ClientConn
-	if isGenerated && len(initMessage.FollowerBrokers) > 0 {
+	if localTopicPartition.FollowerStream == nil && len(initMessage.FollowerBrokers) > 0 {
 		follower := initMessage.FollowerBrokers[0]
 		ctx := stream.Context()
-		grpcConnection, err = pb.GrpcDial(ctx, follower, true, b.grpcDialOption)
+		localTopicPartition.GrpcConnection, err = pb.GrpcDial(ctx, follower, true, b.grpcDialOption)
 		if err != nil {
 			response.Error = fmt.Sprintf("fail to dial %s: %v", follower, err)
 			glog.Errorf("fail to dial %s: %v", follower, err)
 			return stream.Send(response)
 		}
-		followerClient := mq_pb.NewSeaweedMessagingClient(grpcConnection)
-		followerStream, err = followerClient.PublishFollowMe(ctx)
+		followerClient := mq_pb.NewSeaweedMessagingClient(localTopicPartition.GrpcConnection)
+		localTopicPartition.FollowerStream, err = followerClient.PublishFollowMe(ctx)
 		if err != nil {
 			response.Error = fmt.Sprintf("fail to create publish client: %v", err)
 			glog.Errorf("fail to create publish client: %v", err)
 			return stream.Send(response)
 		}
-		if err = followerStream.Send(&mq_pb.PublishFollowMeRequest{
+		if err = localTopicPartition.FollowerStream.Send(&mq_pb.PublishFollowMeRequest{
 			Message: &mq_pb.PublishFollowMeRequest_Init{
 				Init: &mq_pb.PublishFollowMeRequest_InitMessage{
 					Topic:      initMessage.Topic,
@@ -104,7 +106,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	ackCounter := 0
 	var ackSequence int64
 	defer func() {
-		if followerStream == nil {
+		if localTopicPartition.FollowerStream == nil {
 			// remove the publisher
 			localTopicPartition.Publishers.RemovePublisher(clientName)
 			glog.V(0).Infof("topic %v partition %v published %d messges Publisher:%d Subscriber:%d", initMessage.Topic, initMessage.Partition, ackSequence, localTopicPartition.Publishers.Size(), localTopicPartition.Subscribers.Size())
@@ -114,7 +116,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		}
 	}()
 
-	if followerStream != nil {
+	if localTopicPartition.FollowerStream != nil {
 		go func() {
 			defer func() {
 				println("stop receiving ack from follower")
@@ -126,11 +128,11 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 					b.localTopicManager.RemoveTopicPartition(t, p)
 				}
 				println("closing grpcConnection to follower")
-				grpcConnection.Close()
+				localTopicPartition.GrpcConnection.Close()
 			}()
 
 			for {
-				ack, err := followerStream.Recv()
+				ack, err := localTopicPartition.FollowerStream.Recv()
 				if err != nil {
 					glog.Errorf("Error receiving response: %v", err)
 					return
@@ -153,7 +155,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	var receivedSequence, acknowledgedSequence  int64
 
 	defer func() {
-		if followerStream != nil {
+		if localTopicPartition.FollowerStream != nil {
 			//if err := followerStream.CloseSend(); err != nil {
 			//	glog.Errorf("Error closing follower stream: %v", err)
 			//}
@@ -193,9 +195,9 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		receivedSequence = dataMessage.TsNs
 
 		// maybe send to the follower
-		if followerStream != nil {
+		if localTopicPartition.FollowerStream != nil {
 			println("recv", string(dataMessage.Key), dataMessage.TsNs)
-			if followErr := followerStream.Send(&mq_pb.PublishFollowMeRequest{
+			if followErr := localTopicPartition.FollowerStream.Send(&mq_pb.PublishFollowMeRequest{
 				Message: &mq_pb.PublishFollowMeRequest_Data{
 					Data: dataMessage,
 				},
@@ -218,9 +220,9 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		}
 	}
 
-	if followerStream != nil {
+	if localTopicPartition.FollowerStream != nil {
 		// send close to the follower
-		if followErr := followerStream.Send(&mq_pb.PublishFollowMeRequest{
+		if followErr := localTopicPartition.FollowerStream.Send(&mq_pb.PublishFollowMeRequest{
 			Message: &mq_pb.PublishFollowMeRequest_Close{
 				Close: &mq_pb.PublishFollowMeRequest_CloseMessage{},
 			},
