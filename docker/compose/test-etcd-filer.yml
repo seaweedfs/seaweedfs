@@ -30,6 +30,7 @@ services:
     environment:
       WEED_LEVELDB2_ENABLED: 'false'
       WEED_ETCD_ENABLED: 'true'
+      WEED_ETCD_KEY_PREFIX: 'seaweedfs.'
       WEED_ETCD_SERVERS: "http://etcd:2379"
     volumes:
       - ./s3.json:/etc/seaweedfs/s3.json
