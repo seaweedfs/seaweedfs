@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package public_pb;
+
+import "google/api/annotations.proto";
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/public_pb";
+option java_package = "seaweedfs.client";
+option java_outer_classname = "PublicProto";
+
+/////////////
+// Service //
+/////////////
+
+// Public SeaweedFS API
+service SeaweedFS {
+    rpc V1GetInfo (V1GetInfoRequest) returns (V1GetInfoResponse) {
+        option (google.api.http) = {
+          get: "/v1/info"
+        };
+    }
+}
+
+//////////////
+// Messages //
+//////////////
+
+// Request message for SeaweedFS.v1GetInfo
+message V1GetInfoRequest {}
+
+// Response message for SeaweedFS.v1GetInfo
+message V1GetInfoResponse {
+    // Version of the API
+    string version = 1;
+}
