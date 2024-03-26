@@ -37,7 +37,7 @@ jobs:
       - name: Start SeaweedFS
         run: |
           cd /__w/seaweedfs/seaweedfs/weed
-          go install
+          go install -buildvcs=false
           set -x
           nohup weed -v 1 server -filer -s3 \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
