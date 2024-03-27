@@ -43,7 +43,7 @@ jobs:
           cd /__w/seaweedfs/seaweedfs/weed
           go install -buildvcs=false
           set -x
-          nohup weed -v 1 server -filer -s3 -ip.bind 0.0.0.0 \
+          nohup weed -v 0 server -filer -s3 -ip.bind 0.0.0.0 \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
             -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
@@ -54,17 +54,29 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_bucket_list_distinct \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_many \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_many \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_basic \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_prefix \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_prefix_ends_with_delimiter \
-          s3tests_boto3/functional/test_s3.py::test_bucket_list_delimiter_prefix_ends_with_delimiter \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_alt \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_prefix_underscore \
-          s3tests_boto3/functional/test_s3.py::test_bucket_list_delimiter_empty \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_percentage \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_whitespace \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_dot \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_unreadable \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_empty \
-          s3tests_boto3/functional/test_s3.py::test_bucket_list_delimiter_none \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_none \
-          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_fetchowner_notempty \
-          s3tests_boto3/functional/test_s3.py::test_bucket_list_delimiter_not_exist \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_delimiter_basic \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_basic \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_delimiter_alt \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_alt \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_delimiter_prefix_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_prefix_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_delimiter_delimiter_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_delimiter_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_delimiter_prefix_delimiter_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_prefix_delimiter_not_exist \
+          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_fetchowner_notempty \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_basic \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_basic \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_alt \
@@ -77,8 +89,6 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_not_exist \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_unreadable \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_unreadable \
-          s3tests_boto3/functional/test_s3.py::test_bucket_list_prefix_delimiter_basic \
-          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_prefix_delimiter_basic \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_maxkeys_one \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_maxkeys_one \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_maxkeys_zero \
