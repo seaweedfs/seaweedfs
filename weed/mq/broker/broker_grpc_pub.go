@@ -68,13 +68,13 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 	if localTopicPartition.FollowerStream == nil && len(initMessage.FollowerBrokers) > 0 {
 		follower := initMessage.FollowerBrokers[0]
 		ctx := stream.Context()
-		localTopicPartition.GrpcConnection, err = pb.GrpcDial(ctx, follower, true, b.grpcDialOption)
+		localTopicPartition.FollowerGrpcConnection, err = pb.GrpcDial(ctx, follower, true, b.grpcDialOption)
 		if err != nil {
 			response.Error = fmt.Sprintf("fail to dial %s: %v", follower, err)
 			glog.Errorf("fail to dial %s: %v", follower, err)
 			return stream.Send(response)
 		}
-		followerClient := mq_pb.NewSeaweedMessagingClient(localTopicPartition.GrpcConnection)
+		followerClient := mq_pb.NewSeaweedMessagingClient(localTopicPartition.FollowerGrpcConnection)
 		localTopicPartition.FollowerStream, err = followerClient.PublishFollowMe(ctx)
 		if err != nil {
 			response.Error = fmt.Sprintf("fail to create publish client: %v", err)
@@ -136,7 +136,7 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 					glog.Errorf("Error closing follower stream: %v", followErr)
 				}
 				println("closing grpcConnection to follower")
-				localTopicPartition.GrpcConnection.Close()
+				localTopicPartition.FollowerGrpcConnection.Close()
 			}
 			b.localTopicManager.RemoveTopicPartition(t, p)
 			glog.V(0).Infof("Removed local topic %v partition %v", initMessage.Topic, initMessage.Partition)

@@ -28,8 +28,8 @@ type LocalPartition struct {
 	Subscribers     *LocalPartitionSubscribers
 	FollowerId      int32
 
-	FollowerStream mq_pb.SeaweedMessaging_PublishFollowMeClient
-	GrpcConnection *grpc.ClientConn
+	FollowerStream         mq_pb.SeaweedMessaging_PublishFollowMeClient
+	FollowerGrpcConnection *grpc.ClientConn
 }
 
 var TIME_FORMAT = "2006-01-02-15-04-05"
