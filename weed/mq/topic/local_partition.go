@@ -14,6 +14,7 @@ import (
 
 type LocalPartition struct {
 	ListenersWaits   int64
+	AckTsNs		  	 int64
 
 	// notifying clients
 	ListenersLock sync.Mutex
