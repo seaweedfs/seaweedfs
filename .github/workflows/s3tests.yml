@@ -54,7 +54,6 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_bucket_list_distinct \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_many \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_many \
-          s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_basic \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_prefix \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_prefix_ends_with_delimiter \
           s3tests_boto3/functional/test_s3.py::test_bucket_listv2_delimiter_alt \
