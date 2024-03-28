@@ -28,6 +28,9 @@ func (dnll *VolumeLocationList) Copy() *VolumeLocationList {
 
 func (dnll *VolumeLocationList) Head() *DataNode {
 	//mark first node as master volume
+	if dnll.Length() == 0 {
+		return nil
+	}
 	return dnll.list[0]
 }
 
