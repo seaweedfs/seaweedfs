@@ -149,7 +149,9 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 		} else {
 			ms.maybeAddJwtAuthorization(w, fid, true)
 			dn := dnList.Head()
-
+			if dn == nil {
+				continue
+			}
 			writeJsonQuiet(w, r, http.StatusOK, operation.AssignResult{Fid: fid, Url: dn.Url(), PublicUrl: dn.PublicUrl, Count: count})
 			return
 		}
