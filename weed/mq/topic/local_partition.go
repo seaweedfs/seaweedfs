@@ -129,6 +129,24 @@ func (p *LocalPartition) WaitUntilNoPublishers() {
 }
 
 func (p *LocalPartition) MaybeShutdownLocalPartition() (hasShutdown bool) {
+	if p.MaybeShutdownLocalPartition() {
+		if p.FollowerStream != nil {
+			// send close to the follower
+			if followErr := p.FollowerStream.Send(&mq_pb.PublishFollowMeRequest{
+				Message: &mq_pb.PublishFollowMeRequest_Close{
+					Close: &mq_pb.PublishFollowMeRequest_CloseMessage{},
+				},
+			}); followErr != nil {
+				glog.Errorf("Error closing follower stream: %v", followErr)
+			}
+			println("closing grpcConnection to follower")
+			p.FollowerGrpcConnection.Close()
+		}
+	}
+	return
+}
+
+func (p *LocalPartition) canShutdownLocalPartition() (hasShutdown bool) {
 	if p.Publishers.IsEmpty() && p.Subscribers.IsEmpty() {
 		p.LogBuffer.ShutdownLogBuffer()
 		hasShutdown = true

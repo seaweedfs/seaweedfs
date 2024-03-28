@@ -153,18 +153,6 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		localTopicPartition.Publishers.RemovePublisher(clientName)
 		glog.V(0).Infof("topic %v partition %v published %d messges Publisher:%d Subscriber:%d", initMessage.Topic, initMessage.Partition, ackSequence, localTopicPartition.Publishers.Size(), localTopicPartition.Subscribers.Size())
 		if localTopicPartition.MaybeShutdownLocalPartition() {
-			if localTopicPartition.FollowerStream != nil {
-				// send close to the follower
-				if followErr := localTopicPartition.FollowerStream.Send(&mq_pb.PublishFollowMeRequest{
-					Message: &mq_pb.PublishFollowMeRequest_Close{
-						Close: &mq_pb.PublishFollowMeRequest_CloseMessage{},
-					},
-				}); followErr != nil {
-					glog.Errorf("Error closing follower stream: %v", followErr)
-				}
-				println("closing grpcConnection to follower")
-				localTopicPartition.FollowerGrpcConnection.Close()
-			}
 			b.localTopicManager.RemoveTopicPartition(t, p)
 			glog.V(0).Infof("Removed local topic %v partition %v", initMessage.Topic, initMessage.Partition)
 		}
