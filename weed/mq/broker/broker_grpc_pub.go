@@ -143,21 +143,8 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 		}
 
 		// send to the local partition
-		localTopicPartition.Publish(dataMessage)
-		receivedSequence = dataMessage.TsNs
-
-		// maybe send to the follower
-		if localTopicPartition.FollowerStream != nil {
-			println("recv", string(dataMessage.Key), dataMessage.TsNs)
-			if followErr := localTopicPartition.FollowerStream.Send(&mq_pb.PublishFollowMeRequest{
-				Message: &mq_pb.PublishFollowMeRequest_Data{
-					Data: dataMessage,
-				},
-			}); followErr != nil {
-				return followErr
-			}
-		} else {
-			atomic.StoreInt64(&localTopicPartition.AckTsNs, receivedSequence)
+		if err = localTopicPartition.Publish(dataMessage); err != nil {
+			return fmt.Errorf("topic %v partition %v publish error: %v", initMessage.Topic, initMessage.Partition, err)
 		}
 	}
 
