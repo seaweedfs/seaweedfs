@@ -179,7 +179,7 @@ func (p *LocalPartition) MaybeConnectToFollowers(initMessage *mq_pb.PublishMessa
 }
 
 func (p *LocalPartition) MaybeShutdownLocalPartition() (hasShutdown bool) {
-	if p.MaybeShutdownLocalPartition() {
+	if p.canShutdownLocalPartition() {
 		if p.FollowerStream != nil {
 			// send close to the follower
 			if followErr := p.FollowerStream.Send(&mq_pb.PublishFollowMeRequest{
