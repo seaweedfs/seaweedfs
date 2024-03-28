@@ -97,7 +97,7 @@ func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableU
 	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
 
 	if err = store.DB.Ping(); err != nil {
-		return fmt.Errorf("connect to %s error:%v", sqlUrl, err)
+		return fmt.Errorf("connect to %s error:%v", adaptedSqlUrl, err)
 	}
 
 	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil {

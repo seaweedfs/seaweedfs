@@ -92,7 +92,7 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
 
 	if err = store.DB.Ping(); err != nil {
-		return fmt.Errorf("connect to %s error:%v", sqlUrl, err)
+		return fmt.Errorf("connect to %s error:%v", adaptedSqlUrl, err)
 	}
 
 	return nil
