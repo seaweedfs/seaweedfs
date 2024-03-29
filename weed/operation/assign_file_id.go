@@ -262,6 +262,7 @@ func (so *StorageOption) ToAssignRequests(count int) (ar *VolumeAssignRequest, a
 		WritableVolumeCount: so.VolumeGrowthCount,
 	}
 	if so.DataCenter != "" || so.Rack != "" || so.DataNode != "" {
+		ar.WritableVolumeCount = uint32(count)
 		altRequest = &VolumeAssignRequest{
 			Count:               uint64(count),
 			Replication:         so.Replication,
