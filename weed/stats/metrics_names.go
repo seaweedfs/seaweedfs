@@ -40,6 +40,7 @@ const (
 	ErrorReadInternal        = "read.internal.error"
 	ErrorWriteEntry          = "write.entry.failed"
 	RepeatErrorUploadContent = "upload.content.repeat.failed"
+	ErrorChunkAssign         = "chunkAssign.failed"
 	ErrorReadCache           = "read.cache.failed"
 	ErrorReadStream          = "read.stream.failed"
 )
