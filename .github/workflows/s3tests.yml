@@ -195,7 +195,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: "rclone/rclone"
-          path: "/__w/rclone/rclone"
+          path: "/__w/seaweedfs/seaweedfs/rclone"
 
       - name: Run Rclone S3 tests
         timeout-minutes: 15
@@ -216,5 +216,5 @@ jobs:
             -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
           sleep 10          
-          cd /__w/rclone/rclone/backend/s3
+          cd /__w/seaweedfs/seaweedfs/rclone/backend/s3
           go test -v -remote swfs:
