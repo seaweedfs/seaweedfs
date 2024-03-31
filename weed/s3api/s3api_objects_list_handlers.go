@@ -374,7 +374,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		}
 		if cursor.maxKeys <= 0 {
 			cursor.isTruncated = true
-			return
+			continue
 		}
 		entry := resp.Entry
 		nextMarker = entry.Name
