@@ -24,3 +24,16 @@ func (p *TopicPublisher) Publish(key, value []byte) error {
 		TsNs:  time.Now().UnixNano(),
 	})
 }
+
+func (p *TopicPublisher) FinishPublish() error {
+	if inputBuffers, found := p.partition2Buffer.AllIntersections(0, pub_balancer.MaxPartitionCount); found {
+		for _, inputBuffer := range inputBuffers {
+			inputBuffer.Enqueue(&mq_pb.DataMessage{
+				IsClose: true,
+				TsNs:  time.Now().UnixNano(),
+			})
+		}
+	}
+
+	return nil
+}

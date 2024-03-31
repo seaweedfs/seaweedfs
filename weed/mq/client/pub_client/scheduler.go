@@ -195,6 +195,10 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 
 	publishCounter := 0
 	for data, hasData := job.inputQueue.Dequeue(); hasData; data, hasData = job.inputQueue.Dequeue() {
+		if data.IsClose {
+			// need to set this before sending to brokers, to avoid timing issue
+			atomic.StoreInt32(&hasMoreData, 0)
+		}
 		if err := publishClient.Send(&mq_pb.PublishMessageRequest{
 			Message: &mq_pb.PublishMessageRequest_Data{
 				Data: data,
@@ -205,7 +209,6 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 		publishCounter++
 		atomic.StoreInt64(&publishedTsNs, data.TsNs)
 	}
-	atomic.StoreInt32(&hasMoreData, 0)
 	if publishCounter > 0 {
 		wg.Wait()
 	} else {

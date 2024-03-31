@@ -184,6 +184,7 @@ message DataMessage {
     bytes key = 1;
     bytes value = 2;
     int64 ts_ns = 3;
+    bool is_close = 4;
 }
 message PublishMessageRequest {
     message InitMessage {

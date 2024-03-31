@@ -36,6 +36,9 @@ func doPublish(publisher *pub_client.TopicPublisher, id int) {
 		time.Sleep(time.Second)
 		// println("Published", string(key), string(value))
 	}
+	if err := publisher.FinishPublish(); err != nil {
+		fmt.Println(err)
+	}
 	elapsed := time.Since(startTime)
 	log.Printf("Publisher %s-%d finished in %s", *clientName, id, elapsed)
 }
