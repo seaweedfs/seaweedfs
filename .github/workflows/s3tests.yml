@@ -199,22 +199,9 @@ jobs:
 
       - name: Run Rclone S3 tests
         timeout-minutes: 15
-        env:
-          RCLONE_CONFIG_SWFS_TYPE: s3
-          RCLONE_CONFIG_SWFS_PROVIDER: Other
-          RCLONE_CONFIG_SWFS_ACCESS_KEY_ID: some_access_key1
-          RCLONE_CONFIG_SWFS_SECRET_ACCESS_KEY: some_secret_key1
-          RCLONE_CONFIG_SWFS_ENDPOINT: http://localhost:8000
-          RCLONE_CONFIG_SWFS_UPLOAD_CUTOFF: 50Mi
-          RCLONE_CONFIG_SWFS_CHUNK_SIZE: 50Mi
-          RCLONE_CONFIG_SWFS_FORCE_PATH_STYLE: true
         shell: bash
         run: |
-          set -x
-          nohup weed -v 0 server -filer -s3 -ip.bind 0.0.0.0 \
-            -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
-            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
-            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
-          sleep 10          
+          mkdir -p  ~/.config/rclone
+          cp /__w/seaweedfs/seaweedfs/docker/compose/rclone.conf ~/.config/rclone/rclone.conf     
           cd /__w/seaweedfs/seaweedfs/rclone/backend/s3
           go test -v -remote swfs:
