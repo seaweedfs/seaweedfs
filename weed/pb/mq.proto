@@ -191,6 +191,7 @@ message PublishMessageRequest {
         Partition partition = 2;
         int32 ack_interval = 3;
         repeated string follower_brokers = 4;
+        string publisher_name = 5; // for debugging
     }
     oneof message {
         InitMessage init = 1;

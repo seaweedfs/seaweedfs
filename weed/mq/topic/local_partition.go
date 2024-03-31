@@ -8,6 +8,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -171,7 +173,12 @@ func (p *LocalPartition) MaybeConnectToFollowers(initMessage *mq_pb.PublishMessa
 		for {
 			ack, err := p.followerStream.Recv()
 			if err != nil {
-				glog.Errorf("Error receiving follower ack: %v", err)
+				e, _ := status.FromError(err)
+				if e.Code() == codes.Canceled {
+					glog.V(0).Infof("local partition %v follower %v stopped", p.Partition, p.follower)
+					return
+				}
+				glog.Errorf("Receiving local partition %v  follower %s ack: %v", p.Partition, p.follower, err)
 				return
 			}
 			atomic.StoreInt64(&p.AckTsNs, ack.AckTsNs)

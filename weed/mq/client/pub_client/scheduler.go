@@ -146,6 +146,7 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 				Partition:       job.Partition,
 				AckInterval:     128,
 				FollowerBrokers: job.FollowerBrokers,
+				PublisherName:   p.config.PublisherName,
 			},
 		},
 	}); err != nil {
@@ -184,9 +185,9 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 				return
 			}
 			if ackResp.AckSequence > 0 {
-				log.Printf("ack %d", ackResp.AckSequence)
+				log.Printf("ack %d published %d hasMoreData:%d", ackResp.AckSequence, atomic.LoadInt64(&publishedTsNs), atomic.LoadInt32(&hasMoreData))
 			}
-			if atomic.LoadInt64(&publishedTsNs) == ackResp.AckSequence && atomic.LoadInt32(&hasMoreData) == 0 {
+			if atomic.LoadInt64(&publishedTsNs) <= ackResp.AckSequence && atomic.LoadInt32(&hasMoreData) == 0 {
 				return
 			}
 		}
