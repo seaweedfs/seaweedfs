@@ -140,6 +140,9 @@ func (b *MessageQueueBroker) PublishMessage(stream mq_pb.SeaweedMessaging_Publis
 			continue
 		}
 
+		// The control message should still be sent to the follower
+		// to avoid timing issue when ack messages.
+
 		// send to the local partition
 		if err = localTopicPartition.Publish(dataMessage); err != nil {
 			return fmt.Errorf("topic %v partition %v publish error: %v", initMessage.Topic, initMessage.Partition, err)

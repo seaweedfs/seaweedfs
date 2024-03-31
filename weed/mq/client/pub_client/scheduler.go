@@ -195,7 +195,7 @@ func (p *TopicPublisher) doPublishToPartition(job *EachPartitionPublishJob) erro
 
 	publishCounter := 0
 	for data, hasData := job.inputQueue.Dequeue(); hasData; data, hasData = job.inputQueue.Dequeue() {
-		if data.IsClose {
+		if data.Ctrl != nil && data.Ctrl.IsClose {
 			// need to set this before sending to brokers, to avoid timing issue
 			atomic.StoreInt32(&hasMoreData, 0)
 		}

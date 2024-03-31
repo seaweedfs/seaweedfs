@@ -180,11 +180,14 @@ message SubscriberToSubCoordinatorResponse {
 }
 
 //////////////////////////////////////////////////
+message ControlMessage {
+    bool is_close = 1;
+}
 message DataMessage {
     bytes key = 1;
     bytes value = 2;
     int64 ts_ns = 3;
-    bool is_close = 4;
+    ControlMessage ctrl = 4;
 }
 message PublishMessageRequest {
     message InitMessage {
@@ -244,13 +247,13 @@ message SubscribeMessageRequest {
     }
 }
 message SubscribeMessageResponse {
-    message CtrlMessage {
+    message SubscribeCtrlMessage {
         string error = 1;
         bool is_end_of_stream = 2;
         bool is_end_of_topic = 3;
     }
     oneof message {
-        CtrlMessage ctrl = 1;
+        SubscribeCtrlMessage ctrl = 1;
         DataMessage data = 2;
     }
 }
