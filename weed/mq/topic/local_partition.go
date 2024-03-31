@@ -125,7 +125,7 @@ func (p *LocalPartition) closeSubscribers() {
 
 func (p *LocalPartition) WaitUntilNoPublishers() {
 	for {
-		if p.Publishers.IsEmpty() {
+		if p.Publishers.Size() == 0 {
 			return
 		}
 		time.Sleep(113 * time.Millisecond)
@@ -183,7 +183,7 @@ func (p *LocalPartition) MaybeConnectToFollowers(initMessage *mq_pb.PublishMessa
 
 func (p *LocalPartition) MaybeShutdownLocalPartition() (hasShutdown bool) {
 
-	if p.Publishers.IsEmpty() {
+	if p.Publishers.Size() == 0 {
 		if p.followerStream != nil {
 			// send close to the follower
 			if followErr := p.followerStream.Send(&mq_pb.PublishFollowMeRequest{
@@ -196,10 +196,11 @@ func (p *LocalPartition) MaybeShutdownLocalPartition() (hasShutdown bool) {
 			glog.V(4).Infof("closing grpcConnection to follower")
 			p.followerGrpcConnection.Close()
 			p.followerStream = nil
+			p.follower = ""
 		}
 	}
 
-	if p.Publishers.IsEmpty() && p.Subscribers.IsEmpty() {
+	if p.Publishers.Size() == 0 && p.Subscribers.Size() == 0 {
 		p.LogBuffer.ShutdownLogBuffer()
 		hasShutdown = true
 	}
