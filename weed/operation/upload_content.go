@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/rclone/rclone/lib/encoder"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -127,8 +128,6 @@ func UploadWithRetry(filerClient filer_pb.FilerClient, assignRequest *filer_pb.A
 
 	return
 }
-
-var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", "")
 
 // Upload sends a POST request to a volume server to upload the content with adjustable compression level
 func UploadData(data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
@@ -279,7 +278,7 @@ func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize
 	defer PutBuffer(buf)
 	body_writer := multipart.NewWriter(buf)
 	h := make(textproto.MIMEHeader)
-	filename := fileNameEscaper.Replace(option.Filename)
+	filename := encoder.Standard.Encode(option.Filename)
 	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
 	h.Set("Idempotency-Key", option.UploadUrl)
 	if option.MimeType == "" {

@@ -126,7 +126,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 
 	// Add s3 postpolicy support header
 	for k, _ := range formValues {
-		if k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
+		if k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" || k == "Content-Language" {
 			r.Header.Set(k, formValues.Get(k))
 			continue
 		}

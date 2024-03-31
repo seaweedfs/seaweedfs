@@ -257,7 +257,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 	for k, v := range r.Header {
 		if len(v) > 0 && len(v[0]) > 0 {
-			if strings.HasPrefix(k, needle.PairNamePrefix) || k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
+			if strings.HasPrefix(k, needle.PairNamePrefix) || k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" || k == "Content-Language" {
 				entry.Extended[k] = []byte(v[0])
 			}
 			if k == "Response-Content-Disposition" {
