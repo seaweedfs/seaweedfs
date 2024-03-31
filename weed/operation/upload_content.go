@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/rclone/rclone/lib/encoder"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -67,7 +66,8 @@ type HTTPClient interface {
 }
 
 var (
-	HttpClient HTTPClient
+	HttpClient      HTTPClient
+	fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 )
 
 func init() {
@@ -278,7 +278,7 @@ func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize
 	defer PutBuffer(buf)
 	body_writer := multipart.NewWriter(buf)
 	h := make(textproto.MIMEHeader)
-	filename := encoder.Standard.Encode(option.Filename)
+	filename := fileNameEscaper.Replace(strings.Trim(option.Filename, "\n\r\t\v"))
 	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
 	h.Set("Idempotency-Key", option.UploadUrl)
 	if option.MimeType == "" {
