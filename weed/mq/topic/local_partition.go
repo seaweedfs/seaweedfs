@@ -204,6 +204,7 @@ func (p *LocalPartition) MaybeShutdownLocalPartition() (hasShutdown bool) {
 		hasShutdown = true
 	}
 
+	glog.V(0).Infof("local partition %v Publisher:%d Subscriber:%d follower:%s shutdown %v", p.Partition, p.Publishers.Size(), p.Subscribers.Size(), p.follower, hasShutdown)
 	return
 }
 
