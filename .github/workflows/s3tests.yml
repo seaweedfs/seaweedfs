@@ -22,7 +22,7 @@ jobs:
     name: S3 tests
     runs-on: ubuntu-22.04
     container:
-      image: docker.io/kmlebedev/ceph-s3-tests:0.0.2
+      image: docker.io/kmlebedev/ceph-s3-tests:0.0.3
     timeout-minutes: 30
     steps:
       - name: Check out code into the Go module directory
@@ -34,17 +34,11 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Build an run weed
+      - name: Build weed
         shell: bash
         run: |
           cd /__w/seaweedfs/seaweedfs/weed
           go install -buildvcs=false
-          set -x
-          nohup weed -v 0 server -filer -s3 -ip.bind 0.0.0.0 \
-            -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
-            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
-            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
-          sleep 10
 
       - name: Run Ceph S3 tests
         timeout-minutes: 15
@@ -52,6 +46,12 @@ jobs:
           S3TEST_CONF: /__w/seaweedfs/seaweedfs/docker/compose/s3tests.conf
         shell: bash
         run: |
+          set -x
+          nohup weed -v 0 server -filer -s3 -ip.bind 0.0.0.0 \
+            -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
+            -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
+            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
+          sleep 10          
           cd /s3-tests
           tox -- \
           s3tests_boto3/functional/test_s3.py::test_bucket_list_empty \
@@ -191,6 +191,7 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_ranged_request_return_trailing_bytes_response_code \
           s3tests_boto3/functional/test_s3.py::test_copy_object_ifmatch_good \
           s3tests_boto3/functional/test_s3.py::test_copy_object_ifnonematch_failed
+          pkill weed
 
       - uses: actions/checkout@v4
         with:
@@ -201,7 +202,14 @@ jobs:
         timeout-minutes: 15
         shell: bash
         run: |
+          set -x
+          nohup weed -v 0 server -filer -s3 -ip.bind 0.0.0.0 \
+          -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
+          -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
+          -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
+          sleep 10
           mkdir -p  ~/.config/rclone
           cp /__w/seaweedfs/seaweedfs/docker/compose/rclone.conf ~/.config/rclone/rclone.conf     
           cd /__w/seaweedfs/seaweedfs/rclone/backend/s3
           go test -v -remote swfs:
+          pkill weed
