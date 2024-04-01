@@ -190,7 +190,7 @@ func (p *LocalPartition) MaybeConnectToFollowers(initMessage *mq_pb.PublishMessa
 
 func (p *LocalPartition) MaybeShutdownLocalPartition() (hasShutdown bool) {
 
-	if p.Publishers.Size() == 0 {
+	if p.Publishers.Size() == 0 && p.Subscribers.Size() == 0 {
 		if p.followerStream != nil {
 			// send close to the follower
 			if followErr := p.followerStream.Send(&mq_pb.PublishFollowMeRequest{
@@ -205,9 +205,7 @@ func (p *LocalPartition) MaybeShutdownLocalPartition() (hasShutdown bool) {
 			p.followerStream = nil
 			p.follower = ""
 		}
-	}
 
-	if p.Publishers.Size() == 0 && p.Subscribers.Size() == 0 {
 		p.LogBuffer.ShutdownLogBuffer()
 		hasShutdown = true
 	}
