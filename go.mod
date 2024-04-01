@@ -30,7 +30,7 @@ require (
 	github.com/facebookgo/subset v0.0.0-20200203212716-c811ad88dec4 // indirect
 	github.com/fclairamb/ftpserverlib v0.24.0
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
-	github.com/go-errors/errors v1.4.2 // indirect
+	github.com/go-errors/errors v1.5.1 // indirect
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-redsync/redsync/v4 v4.11.0
 	github.com/go-sql-driver/mysql v1.8.0
@@ -96,9 +96,8 @@ require (
 	github.com/tsuna/gohbase v0.0.0-20201125011725-348991136365
 	github.com/tylertreat/BoomFilters v0.0.0-20210315201527-1a82519a3e43
 	github.com/valyala/bytebufferpool v1.0.0
-	github.com/viant/assertly v0.5.4 // indirect
-	github.com/viant/ptrie v0.3.0
-	github.com/viant/toolbox v0.33.2 // indirect
+	github.com/viant/ptrie v0.3.1
+	github.com/viant/toolbox v0.34.5 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.1.2 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
