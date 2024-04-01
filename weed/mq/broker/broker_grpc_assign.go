@@ -22,12 +22,12 @@ func (b *MessageQueueBroker) AssignTopicPartitions(c context.Context, request *m
 		b.accessLock.Lock()
 		if request.IsDraining {
 			// TODO drain existing topic partition subscriptions
-			b.localTopicManager.RemoveTopicPartition(t, partition)
+			b.localTopicManager.RemoveLocalPartition(t, partition)
 		} else {
 			var localPartition *topic.LocalPartition
-			if localPartition = b.localTopicManager.GetTopicPartition(t, partition); localPartition == nil {
+			if localPartition = b.localTopicManager.GetLocalPartition(t, partition); localPartition == nil {
 				localPartition = topic.NewLocalPartition(partition, b.genLogFlushFunc(t, assignment.Partition), b.genLogOnDiskReadFunc(t, assignment.Partition))
-				b.localTopicManager.AddTopicPartition(t, localPartition)
+				b.localTopicManager.AddLocalPartition(t, localPartition)
 			}
 		}
 		b.accessLock.Unlock()

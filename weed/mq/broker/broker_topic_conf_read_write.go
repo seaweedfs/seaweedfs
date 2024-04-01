@@ -75,7 +75,7 @@ func (b *MessageQueueBroker) doGetOrGenLocalPartition(t topic.Topic, partition t
 	b.accessLock.Lock()
 	defer b.accessLock.Unlock()
 
-	if localPartition = b.localTopicManager.GetTopicPartition(t, partition); localPartition == nil {
+	if localPartition = b.localTopicManager.GetLocalPartition(t, partition); localPartition == nil {
 		localPartition, isGenerated, err = b.genLocalPartitionFromFiler(t, partition, conf)
 		if err != nil {
 			return nil, false, err
@@ -89,7 +89,7 @@ func (b *MessageQueueBroker) genLocalPartitionFromFiler(t topic.Topic, partition
 	for _, assignment := range conf.BrokerPartitionAssignments {
 		if assignment.LeaderBroker == string(self) && partition.Equals(topic.FromPbPartition(assignment.Partition)) {
 			localPartition = topic.NewLocalPartition(partition, b.genLogFlushFunc(t, assignment.Partition), b.genLogOnDiskReadFunc(t, assignment.Partition))
-			b.localTopicManager.AddTopicPartition(t, localPartition)
+			b.localTopicManager.AddLocalPartition(t, localPartition)
 			isGenerated = true
 			break
 		}

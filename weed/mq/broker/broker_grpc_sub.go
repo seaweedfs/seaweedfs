@@ -43,7 +43,7 @@ func (b *MessageQueueBroker) SubscribeMessage(req *mq_pb.SubscribeMessageRequest
 		localTopicPartition.Subscribers.RemoveSubscriber(clientName)
 		glog.V(0).Infof("Subscriber %s on %v %v disconnected, sent %d", clientName, t, partition, counter)
 		if localTopicPartition.MaybeShutdownLocalPartition() {
-			b.localTopicManager.RemoveTopicPartition(t, partition)
+			b.localTopicManager.RemoveLocalPartition(t, partition)
 		}
 	}()
 
