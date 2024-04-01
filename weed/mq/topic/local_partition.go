@@ -27,7 +27,6 @@ type LocalPartition struct {
 	LogBuffer       *log_buffer.LogBuffer
 	Publishers      *LocalPartitionPublishers
 	Subscribers     *LocalPartitionSubscribers
-	FollowerId      int32
 
 	followerStream         mq_pb.SeaweedMessaging_PublishFollowMeClient
 	followerGrpcConnection *grpc.ClientConn
@@ -218,6 +217,5 @@ func (p *LocalPartition) Shutdown() {
 	p.closePublishers()
 	p.closeSubscribers()
 	p.LogBuffer.ShutdownLogBuffer()
-	atomic.StoreInt32(&p.FollowerId, 0)
 	glog.V(0).Infof("local partition %v shutting down", p.Partition)
 }
