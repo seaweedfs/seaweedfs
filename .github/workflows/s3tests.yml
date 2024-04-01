@@ -47,10 +47,10 @@ jobs:
         shell: bash
         run: |
           set -x
-          nohup weed -v 0 server -filer -s3 -ip.bind 0.0.0.0 \
+          (nohup weed -v 0 server -filer -s3 -ip.bind 0.0.0.0 \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
             -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
-            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
+            -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json || true) &
           sleep 10          
           cd /s3-tests
           tox -- \
@@ -204,10 +204,10 @@ jobs:
         shell: bash
         run: |
           set -x
-          nohup weed -v 0 server -filer -s3 -ip.bind 0.0.0.0 \
+          (nohup weed -v 0 server -filer -s3 -ip.bind 0.0.0.0 \
           -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
           -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
-          -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
+          -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json || true) &
           sleep 10
           mkdir -p  ~/.config/rclone
           cp /__w/seaweedfs/seaweedfs/docker/compose/rclone.conf ~/.config/rclone/rclone.conf     
