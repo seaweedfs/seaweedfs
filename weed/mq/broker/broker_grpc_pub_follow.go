@@ -43,6 +43,10 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 		} else if closeMessage := req.GetClose(); closeMessage != nil {
 			glog.V(0).Infof("topic %v partition %v publish stream closed: %v", initMessage.Topic, initMessage.Partition, closeMessage)
 			break
+		} else if flushMessage := req.GetFlush(); flushMessage != nil {
+			glog.V(0).Infof("topic %v partition %v publish stream flushed: %v", initMessage.Topic, initMessage.Partition, flushMessage)
+		} else {
+			glog.Errorf("unknown message: %v", req)
 		}
 	}
 	return nil

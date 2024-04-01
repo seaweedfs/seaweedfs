@@ -43,6 +43,7 @@ type LogBuffer struct {
 	ReadFromDiskFn    LogReadFromDiskFuncType
 	notifyFn          func()
 	isStopping        *atomic.Bool
+	isAllFlushed      bool
 	flushChan         chan *dataToFlush
 	LastTsNs          int64
 	sync.RWMutex
@@ -134,6 +135,7 @@ func (logBuffer *LogBuffer) IsStopping() bool {
 	return logBuffer.isStopping.Load()
 }
 
+// ShutdownLogBuffer flushes the buffer and stops the log buffer
 func (logBuffer *LogBuffer) ShutdownLogBuffer() {
 	isAlreadyStopped := logBuffer.isStopping.Swap(true)
 	if isAlreadyStopped {
@@ -142,6 +144,11 @@ func (logBuffer *LogBuffer) ShutdownLogBuffer() {
 	toFlush := logBuffer.copyToFlush()
 	logBuffer.flushChan <- toFlush
 	close(logBuffer.flushChan)
+}
+
+// IsAllFlushed returns true if all data in the buffer has been flushed, after calling ShutdownLogBuffer().
+func (logBuffer *LogBuffer) IsAllFlushed() bool {
+	return logBuffer.isAllFlushed
 }
 
 func (logBuffer *LogBuffer) loopFlush() {
@@ -154,6 +161,7 @@ func (logBuffer *LogBuffer) loopFlush() {
 			logBuffer.lastFlushDataTime = d.stopTime
 		}
 	}
+	logBuffer.isAllFlushed = true
 }
 
 func (logBuffer *LogBuffer) loopInterval() {

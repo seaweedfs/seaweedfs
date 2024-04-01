@@ -41,6 +41,16 @@ func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, partition *mq_pb.Par
 		}
 
 		atomic.StoreInt64(&logBuffer.LastFlushTsNs, stopTime.UnixNano())
+
+		b.accessLock.Lock()
+		defer b.accessLock.Unlock()
+		p := topic.FromPbPartition(partition)
+		if localPartition:=b.localTopicManager.GetLocalPartition(t, p); localPartition!=nil {
+			localPartition.NotifyLogFlushed(logBuffer.LastFlushTsNs)
+		}
+
+		println("flushing at", logBuffer.LastFlushTsNs, "to", targetFile, "size", len(buf))
+
 	}
 }
 
