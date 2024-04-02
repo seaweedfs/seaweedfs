@@ -11,7 +11,7 @@ import (
 	"sync"
 )
 
-var bufPool = sync.Pool{
+var BufPool = sync.Pool{
 	New: func() interface{} {
 		return new(bytes.Buffer)
 	},
@@ -132,8 +132,10 @@ func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset u
 		return
 	}
 
-	bytesBuffer := bufPool.Get().(*bytes.Buffer)
-	defer bufPool.Put(bytesBuffer)
+	bytesBuffer := BufPool.Get().(*bytes.Buffer)
+	defer func() {
+		BufPool.Put(bytesBuffer)
+	}()
 
 	size, actualSize, err = n.prepareWriteBuffer(version, bytesBuffer)
 

@@ -35,8 +35,10 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bytesBuffer := bufPool.Get().(*bytes.Buffer)
-	defer bufPool.Put(bytesBuffer)
+	bytesBuffer := needle.BufPool.Get().(*bytes.Buffer)
+	defer func() {
+		needle.BufPool.Put(bytesBuffer)
+	}()
 
 	reqNeedle, originalSize, contentMd5, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes, bytesBuffer)
 	if ne != nil {

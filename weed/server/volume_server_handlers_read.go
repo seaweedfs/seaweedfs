@@ -149,7 +149,6 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	defer func() {
 		atomic.AddInt64(&vs.inFlightDownloadDataSize, -int64(memoryCost))
 		vs.inFlightDownloadDataLimitCond.Signal()
-		n.Data = []byte{}
 	}()
 
 	if err != nil && err != storage.ErrorDeleted && hasVolume {
