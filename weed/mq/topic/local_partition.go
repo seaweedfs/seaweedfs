@@ -56,7 +56,7 @@ func (p *LocalPartition) Publish(message *mq_pb.DataMessage) error {
 
 	// maybe send to the follower
 	if p.followerStream != nil {
-		println("recv", string(message.Key), message.TsNs)
+		// println("recv", string(message.Key), message.TsNs)
 		if followErr := p.followerStream.Send(&mq_pb.PublishFollowMeRequest{
 			Message: &mq_pb.PublishFollowMeRequest_Data{
 				Data: message,
@@ -166,7 +166,7 @@ func (p *LocalPartition) MaybeConnectToFollowers(initMessage *mq_pb.PublishMessa
 	// start receiving ack from follower
 	go func() {
 		defer func() {
-			println("stop receiving ack from follower")
+			// println("stop receiving ack from follower")
 		}()
 
 		for {
@@ -181,7 +181,7 @@ func (p *LocalPartition) MaybeConnectToFollowers(initMessage *mq_pb.PublishMessa
 				return
 			}
 			atomic.StoreInt64(&p.AckTsNs, ack.AckTsNs)
-			println("recv ack", ack.AckTsNs)
+			// println("recv ack", ack.AckTsNs)
 		}
 	}()
 	return nil
@@ -234,6 +234,6 @@ func (p *LocalPartition) NotifyLogFlushed(flushTsNs int64) {
 		}); followErr != nil {
 			glog.Errorf("send follower %s flush message: %v", p.follower, followErr)
 		}
-		println("notifying", p.follower, "flushed at", flushTsNs)
+		// println("notifying", p.follower, "flushed at", flushTsNs)
 	}
 }

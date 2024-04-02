@@ -58,10 +58,9 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 			if err := stream.Send(&mq_pb.PublishFollowMeResponse{
 				AckTsNs: dataMessage.TsNs,
 			}); err != nil {
-				// TODO save un-acked messages to disk
 				glog.Errorf("Error sending response %v: %v", dataMessage, err)
 			}
-			println("ack", string(dataMessage.Key), dataMessage.TsNs)
+			// println("ack", string(dataMessage.Key), dataMessage.TsNs)
 		} else if closeMessage := req.GetClose(); closeMessage != nil {
 			glog.V(0).Infof("topic %v partition %v publish stream closed: %v", initMessage.Topic, initMessage.Partition, closeMessage)
 			break
@@ -74,7 +73,7 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 			for mem, found := inMemoryBuffers.PeekHead(); found; mem, found = inMemoryBuffers.PeekHead() {
 				if mem.stopTime.UnixNano() <= flushMessage.TsNs {
 					inMemoryBuffers.Dequeue()
-					println("dropping flushed messages: ", mem.startTime.UnixNano(), mem.stopTime.UnixNano(), len(mem.buf))
+					// println("dropping flushed messages: ", mem.startTime.UnixNano(), mem.stopTime.UnixNano(), len(mem.buf))
 				} else {
 					break
 				}
@@ -116,8 +115,6 @@ func (b *MessageQueueBroker) PublishFollowMe(stream mq_pb.SeaweedMessaging_Publi
 		// TODO trim data earlier than lastFlushTsNs
 
 		targetFile := fmt.Sprintf("%s/%s", partitionDir, startTime.Format(topic.TIME_FORMAT))
-
-		// TODO append block with more metadata
 
 		for {
 			if err := b.appendToFile(targetFile, mem.buf); err != nil {
