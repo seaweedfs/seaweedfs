@@ -2,6 +2,7 @@ package log_buffer
 
 import (
 	"bytes"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -68,7 +69,11 @@ func NewLogBuffer(name string, flushInterval time.Duration, flushFn LogFlushFunc
 	return lb
 }
 
-func (logBuffer *LogBuffer) AddToBuffer(partitionKey, data []byte, processingTsNs int64) {
+func (logBuffer *LogBuffer) AddToBuffer(message *mq_pb.DataMessage) {
+	logBuffer.AddDataToBuffer(message.Key, message.Value, message.TsNs)
+}
+
+func (logBuffer *LogBuffer) AddDataToBuffer(partitionKey, data []byte, processingTsNs int64) {
 
 	var toFlush *dataToFlush
 	logBuffer.Lock()

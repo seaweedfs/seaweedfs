@@ -52,7 +52,7 @@ func NewLocalPartition(partition Partition, logFlushFn log_buffer.LogFlushFuncTy
 }
 
 func (p *LocalPartition) Publish(message *mq_pb.DataMessage) error {
-	p.LogBuffer.AddToBuffer(message.Key, message.Value, time.Now().UnixNano())
+	p.LogBuffer.AddToBuffer(message)
 
 	// maybe send to the follower
 	if p.followerStream != nil {

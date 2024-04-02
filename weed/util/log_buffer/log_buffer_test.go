@@ -3,6 +3,7 @@ package log_buffer
 import (
 	"crypto/rand"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"io"
 	"sync"
 	"testing"
@@ -50,7 +51,11 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 	var buf = make([]byte, messageSize)
 	for i := 0; i < messageCount; i++ {
 		rand.Read(buf)
-		lb.AddToBuffer(nil, buf, 0)
+		lb.AddToBuffer(&mq_pb.DataMessage{
+			Key:   nil,
+			Value: buf,
+			TsNs:  0,
+		})
 	}
 	wg.Wait()
 
