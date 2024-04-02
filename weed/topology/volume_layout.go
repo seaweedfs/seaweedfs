@@ -234,13 +234,18 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 }
 
 func (vl *VolumeLayout) isAllWritable(vid needle.VolumeId) bool {
-	for _, dn := range vl.vid2location[vid].list {
-		if v, getError := dn.GetVolumesById(vid); getError == nil {
-			if v.ReadOnly {
-				return false
+	if location, ok := vl.vid2location[vid]; ok {
+		for _, dn := range location.list {
+			if v, getError := dn.GetVolumesById(vid); getError == nil {
+				if v.ReadOnly {
+					return false
+				}
 			}
 		}
+	} else {
+		return false
 	}
+
 	return true
 }
 
