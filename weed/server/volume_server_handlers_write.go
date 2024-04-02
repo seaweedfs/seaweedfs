@@ -45,9 +45,6 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		writeJsonError(w, r, http.StatusBadRequest, ne)
 		return
 	}
-	defer func() {
-		reqNeedle.Data = []byte{}
-	}()
 
 	ret := operation.UploadResult{}
 	isUnchanged, writeError := topology.ReplicatedWrite(vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, reqNeedle, r, contentMd5)

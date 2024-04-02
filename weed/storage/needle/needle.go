@@ -55,10 +55,6 @@ func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit 
 	if e != nil {
 		return
 	}
-	defer func() {
-		pu.Data = []byte{}
-		pu.UncompressedData = []byte{}
-	}()
 	n.Data = pu.Data
 	originalSize = pu.OriginalDataSize
 	n.LastModified = pu.ModifiedTime
