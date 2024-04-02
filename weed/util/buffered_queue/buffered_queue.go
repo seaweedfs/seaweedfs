@@ -117,6 +117,19 @@ func (q *BufferedQueue[T]) Dequeue() (T, bool) {
 	return job, true
 }
 
+func (q *BufferedQueue[T]) PeekHead() (T, bool) {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+
+	if q.count <= 0 {
+		var a T
+		return a, false
+	}
+
+	job := q.head.items[q.head.headIndex]
+	return job, true
+}
+
 // Size returns the number of items in the queue
 func (q *BufferedQueue[T]) Size() int {
 	q.mutex.Lock()
