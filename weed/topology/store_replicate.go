@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -87,7 +88,10 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 					pairMap[needle.PairNamePrefix+k] = v
 				}
 			}
-
+			bytesBuffer := needle.BufPool.Get().(*bytes.Buffer)
+			defer func() {
+				needle.BufPool.Put(bytesBuffer)
+			}()
 			// volume server do not know about encryption
 			// TODO optimize here to compress data only once
 			uploadOption := &operation.UploadOption{
@@ -99,6 +103,7 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 				PairMap:           pairMap,
 				Jwt:               jwt,
 				Md5:               contentMd5,
+				BytesBuffer:       bytesBuffer,
 			}
 
 			_, err := operation.UploadData(n.Data, uploadOption)
