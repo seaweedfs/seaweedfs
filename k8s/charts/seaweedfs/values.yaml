@@ -293,9 +293,9 @@ volume:
 
   # same applies to "logs"
 
-  idx: ""
+  idx: {}
 
-  logs: ""
+  logs: {}
 
   # limit background compaction or copying speed in mega bytes per second
   compactionMBps: "50"
