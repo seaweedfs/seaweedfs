@@ -374,7 +374,13 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name, ".part") && !entry.IsDirectory {
-			partNumberString := entry.Name[:len(entry.Name)-len(".part")]
+			var partNumberString string
+			index := strings.Index(entry.Name, "_")
+			if index != -1 {
+				partNumberString = entry.Name[:index]
+			} else {
+				partNumberString = entry.Name[:len(entry.Name)-len(".part")]
+			}
 			partNumber, err := strconv.Atoi(partNumberString)
 			if err != nil {
 				glog.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, err)
