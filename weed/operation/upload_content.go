@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -32,6 +33,7 @@ type UploadOption struct {
 	Jwt               security.EncodedJwt
 	RetryForever      bool
 	Md5               string
+	HandlerCounter    *prometheus.CounterVec
 }
 
 type UploadResult struct {
@@ -168,6 +170,9 @@ func retriedUploadData(data []byte, option *UploadOption) (uploadResult *UploadR
 			return
 		}
 		glog.Warningf("uploading %d to %s: %v", i, option.UploadUrl, err)
+		if option.HandlerCounter != nil {
+			option.HandlerCounter.WithLabelValues(stats.RepeatErrorUploadData).Inc()
+		}
 	}
 	return
 }
