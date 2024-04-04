@@ -118,7 +118,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	var finalParts []*filer_pb.FileChunk
 	var offset int64
 	var deleteEntries []*filer_pb.Entry
-	for _, part := range completedParts {
+	for i, part := range completedParts {
+		if i+1 < len(completedParts) && part.PartNumber == completedParts[i+1].PartNumber {
+			continue
+		}
 		entries := partEntries[part.PartNumber]
 		// check whether completedParts is more than received parts
 		if len(entries) == 0 {
