@@ -99,43 +99,39 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	partEntries := make(map[int][]*filer_pb.Entry, len(entries))
 	for _, entry := range entries {
 		glog.V(4).Infof("completeMultipartUpload part entries %s", entry.Name)
-		if strings.HasSuffix(entry.Name, ".part") && !entry.IsDirectory {
-			var partNumberString string
-			index := strings.Index(entry.Name, "_")
-			if index != -1 {
-				partNumberString = entry.Name[:index]
+		if entry.IsDirectory || !strings.HasSuffix(entry.Name, ".part") {
+			continue
+		}
+		partNumber, err := parseByPartNumber(entry.Name)
+		if err != nil {
+			stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedPartNumber).Inc()
+			glog.Errorf("completeMultipartUpload failed to pasre partNumber %s:%s", entry.Name, err)
+			continue
+		}
+		completedPartsByNumber, ok := completedPartMap[partNumber]
+		if !ok {
+			continue
+		}
+		for _, partETag := range completedPartsByNumber {
+			partETag = strings.Trim(partETag, `"`)
+			entryETag := hex.EncodeToString(entry.Attributes.GetMd5())
+			if partETag != "" && len(partETag) == 32 && entryETag != "" {
+				if entryETag != partETag {
+					glog.Errorf("completeMultipartUpload %s ETag mismatch chunk: %s part: %s", entry.Name, entryETag, partETag)
+					stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedEtagMismatch).Inc()
+					continue
+				}
 			} else {
-				partNumberString = entry.Name[:len(entry.Name)-len(".part")]
+				glog.Warningf("invalid complete etag %s, partEtag %s", partETag, entryETag)
+				stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedEtagInvalid).Inc()
 			}
-			partNumber, err := strconv.Atoi(partNumberString)
-			if err != nil {
-				stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedPartNumber).Inc()
-				glog.Errorf("completeMultipartUpload failed to pasre partNumber %s:%s", partNumberString, err)
+			if len(entry.Chunks) == 0 {
+				glog.Warningf("completeMultipartUpload %s empty chunks", entry.Name)
+				stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedPartEmpty).Inc()
 				continue
 			}
-			if completedPartsByNumber, ok := completedPartMap[partNumber]; ok {
-				for _, partETag := range completedPartsByNumber {
-					partETag = strings.Trim(partETag, `"`)
-					entryETag := hex.EncodeToString(entry.Attributes.GetMd5())
-					if partETag != "" && len(partETag) == 32 && entryETag != "" {
-						if entryETag != partETag {
-							glog.Errorf("completeMultipartUpload %s ETag mismatch chunk: %s part: %s", entry.Name, entryETag, partETag)
-							stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedEtagMismatch).Inc()
-							continue
-						}
-					} else {
-						glog.Warningf("invalid complete etag %s, partEtag %s", partETag, entryETag)
-						stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedEtagInvalid).Inc()
-					}
-					if len(entry.Chunks) == 0 {
-						glog.Warningf("completeMultipartUpload %s empty chunks", entry.Name)
-						stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedPartEmpty).Inc()
-						continue
-					}
-					//there maybe multi same part, because of client retry
-					partEntries[partNumber] = append(partEntries[partNumber], entry)
-				}
-			}
+			//there maybe multi same part, because of client retry
+			partEntries[partNumber] = append(partEntries[partNumber], entry)
 		}
 	}
 
@@ -240,29 +236,15 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	return
 }
 
-func findByPartNumber(fileName string, parts []CompletedPart) (etag string, found bool) {
-	partNumber, formatErr := strconv.Atoi(fileName[:4])
-	if formatErr != nil {
-		return
+func parseByPartNumber(fileName string) (int, error) {
+	var partNumberString string
+	index := strings.Index(fileName, "_")
+	if index != -1 {
+		partNumberString = fileName[:index]
+	} else {
+		partNumberString = fileName[:len(fileName)-len(".part")]
 	}
-	x := sort.Search(len(parts), func(i int) bool {
-		return parts[i].PartNumber >= partNumber
-	})
-	if x >= len(parts) {
-		return
-	}
-	if parts[x].PartNumber != partNumber {
-		return
-	}
-	y := 0
-	for i, part := range parts[x:] {
-		if part.PartNumber == partNumber {
-			y = i
-		} else {
-			break
-		}
-	}
-	return parts[x+y].ETag, true
+	return strconv.Atoi(partNumberString)
 }
 
 func (s3a *S3ApiServer) abortMultipartUpload(input *s3.AbortMultipartUploadInput) (output *s3.AbortMultipartUploadOutput, code s3err.ErrorCode) {
