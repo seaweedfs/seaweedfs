@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"golang.org/x/exp/slices"
 	"math"
 	"path/filepath"
 	"sort"
@@ -12,12 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"golang.org/x/exp/slices"
-
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/google/uuid"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -72,23 +72,27 @@ type CompleteMultipartUploadResult struct {
 func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploadInput, parts *CompleteMultipartUpload) (output *CompleteMultipartUploadResult, code s3err.ErrorCode) {
 
 	glog.V(2).Infof("completeMultipartUpload input %v", input)
-
-	completedParts := parts.Parts
-	slices.SortFunc(completedParts, func(a, b CompletedPart) int {
-		return a.PartNumber - b.PartNumber
-	})
-
+	completedPartNumbers := []int{}
+	completedPartMap := make(map[int][]string)
+	for _, part := range parts.Parts {
+		if _, ok := completedPartMap[part.PartNumber]; !ok {
+			completedPartNumbers = append(completedPartNumbers, part.PartNumber)
+		}
+		completedPartMap[part.PartNumber] = append(completedPartMap[part.PartNumber], part.ETag)
+	}
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
 
 	entries, _, err := s3a.list(uploadDirectory, "", "", false, maxPartsList)
 	if err != nil || len(entries) == 0 {
 		glog.Errorf("completeMultipartUpload %s %s error: %v, entries:%d", *input.Bucket, *input.UploadId, err, len(entries))
+		stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
 		return nil, s3err.ErrNoSuchUpload
 	}
 
 	pentry, err := s3a.getEntry(s3a.genUploadsFolder(*input.Bucket), *input.UploadId)
 	if err != nil {
 		glog.Errorf("completeMultipartUpload %s %s error: %v", *input.Bucket, *input.UploadId, err)
+		stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
 		return nil, s3err.ErrNoSuchUpload
 	}
 
@@ -105,13 +109,34 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			}
 			partNumber, err := strconv.Atoi(partNumberString)
 			if err != nil {
+				stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedPartNumber).Inc()
 				glog.Errorf("completeMultipartUpload failed to pasre partNumber %s:%s", partNumberString, err)
 				continue
 			}
-			//there maybe multi same part, because of client retry
-			partEntries[partNumber] = append(partEntries[partNumber], entry)
+			if completedPartsByNumber, ok := completedPartMap[partNumber]; ok {
+				for _, partETag := range completedPartsByNumber {
+					partETag = strings.Trim(partETag, `"`)
+					entryETag := hex.EncodeToString(entry.Attributes.GetMd5())
+					if partETag != "" && len(partETag) == 32 && entryETag != "" {
+						if entryETag != partETag {
+							glog.Errorf("completeMultipartUpload %s ETag mismatch chunk: %s part: %s", entry.Name, entryETag, partETag)
+							stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedEtagMismatch).Inc()
+							continue
+						}
+					} else {
+						glog.Warningf("invalid complete etag %s, partEtag %s", partETag, entryETag)
+						stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedEtagInvalid).Inc()
+					}
+					if len(entry.Chunks) == 0 {
+						glog.Warningf("completeMultipartUpload %s empty chunks", entry.Name)
+						stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedPartEmpty).Inc()
+						continue
+					}
+					//there maybe multi same part, because of client retry
+					partEntries[partNumber] = append(partEntries[partNumber], entry)
+				}
+			}
 		}
-
 	}
 
 	mime := pentry.Attributes.Mime
@@ -119,37 +144,24 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	var finalParts []*filer_pb.FileChunk
 	var offset int64
 	var deleteEntries []*filer_pb.Entry
-	for _, part := range completedParts {
-		partEntriesByNumber := partEntries[part.PartNumber]
-		// check whether completedParts is more than received parts
-		if len(partEntriesByNumber) == 0 {
-			glog.Errorf("part %d has no entry", part.PartNumber)
+	sort.Ints(completedPartNumbers)
+	for _, partNumber := range completedPartNumbers {
+		partEntriesByNumber, ok := partEntries[partNumber]
+		if !ok {
+			glog.Errorf("part %d has no entry", partNumber)
+			stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedPartNotFound).Inc()
 			return nil, s3err.ErrInvalidPart
 		}
+		found := false
 		if len(partEntriesByNumber) > 1 {
 			slices.SortFunc(partEntriesByNumber, func(a, b *filer_pb.Entry) int {
-				if len(a.Chunks) == 0 {
-					return 1
-				}
-				if len(b.Chunks) == 0 {
-					return 0
-				}
 				return cmp.Compare(b.Chunks[0].ModifiedTsNs, a.Chunks[0].ModifiedTsNs)
 			})
 		}
-		found := false
 		for _, entry := range partEntriesByNumber {
 			if found {
 				deleteEntries = append(deleteEntries, entry)
-				continue
-			}
-
-			partETag := strings.Trim(part.ETag, `"`)
-			entryETag := hex.EncodeToString(entry.Attributes.GetMd5())
-			glog.Warningf("complete etag %s, partEtag %s", partETag, entryETag)
-			if partETag != "" && len(partETag) == 32 && entryETag != "" && entryETag != partETag {
-				err = fmt.Errorf("completeMultipartUpload %s ETag mismatch chunk: %s part: %s", entry.Name, entryETag, partETag)
-				deleteEntries = append(deleteEntries, entry)
+				stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedPartEntryMismatch).Inc()
 				continue
 			}
 			for _, chunk := range entry.GetChunks() {
@@ -165,13 +177,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 				offset += int64(chunk.Size)
 			}
 			found = true
-			err = nil
 		}
-		if err != nil {
-			glog.Errorf("%s", err)
-			return nil, s3err.ErrInvalidPart
-		}
-
 	}
 
 	entryName := filepath.Base(*input.Key)
