@@ -98,8 +98,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		return nil, s3err.ErrNoSuchUpload
 	}
 
+	deleteEntries := []*filer_pb.Entry{}
 	partEntries := make(map[int][]*filer_pb.Entry, len(entries))
 	for _, entry := range entries {
+		foundEntry := false
 		glog.V(4).Infof("completeMultipartUpload part entries %s", entry.Name)
 		if entry.IsDirectory || !strings.HasSuffix(entry.Name, multipartExt) {
 			continue
@@ -134,6 +136,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			}
 			//there maybe multi same part, because of client retry
 			partEntries[partNumber] = append(partEntries[partNumber], entry)
+			foundEntry = true
+		}
+		if !foundEntry {
+			deleteEntries = append(deleteEntries, entry)
 		}
 	}
 
@@ -141,7 +147,6 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 
 	var finalParts []*filer_pb.FileChunk
 	var offset int64
-	var deleteEntries []*filer_pb.Entry
 	sort.Ints(completedPartNumbers)
 	for _, partNumber := range completedPartNumbers {
 		partEntriesByNumber, ok := partEntries[partNumber]
