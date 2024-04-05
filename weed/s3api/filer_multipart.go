@@ -24,6 +24,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
+const multipartExt = ".part"
+
 type InitiateMultipartUploadResult struct {
 	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ InitiateMultipartUploadResult"`
 	s3.CreateMultipartUploadOutput
@@ -99,10 +101,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	partEntries := make(map[int][]*filer_pb.Entry, len(entries))
 	for _, entry := range entries {
 		glog.V(4).Infof("completeMultipartUpload part entries %s", entry.Name)
-		if entry.IsDirectory || !strings.HasSuffix(entry.Name, ".part") {
+		if entry.IsDirectory || !strings.HasSuffix(entry.Name, multipartExt) {
 			continue
 		}
-		partNumber, err := parseByPartNumber(entry.Name)
+		partNumber, err := parsePartNumber(entry.Name)
 		if err != nil {
 			stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedPartNumber).Inc()
 			glog.Errorf("completeMultipartUpload failed to pasre partNumber %s:%s", entry.Name, err)
@@ -236,13 +238,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	return
 }
 
-func parseByPartNumber(fileName string) (int, error) {
+func parsePartNumber(fileName string) (int, error) {
 	var partNumberString string
 	index := strings.Index(fileName, "_")
 	if index != -1 {
 		partNumberString = fileName[:index]
 	} else {
-		partNumberString = fileName[:len(fileName)-len(".part")]
+		partNumberString = fileName[:len(fileName)-len(multipartExt)]
 	}
 	return strconv.Atoi(partNumberString)
 }
@@ -360,7 +362,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 		StorageClass:     aws.String("STANDARD"),
 	}
 
-	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d.part", *input.PartNumberMarker), false, uint32(*input.MaxParts))
+	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d%s", *input.PartNumberMarker, multipartExt), false, uint32(*input.MaxParts))
 	if err != nil {
 		glog.Errorf("listObjectParts %s %s error: %v", *input.Bucket, *input.UploadId, err)
 		return nil, s3err.ErrNoSuchUpload
@@ -372,15 +374,8 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 	output.IsTruncated = aws.Bool(!isLast)
 
 	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name, ".part") && !entry.IsDirectory {
-			var partNumberString string
-			index := strings.Index(entry.Name, "_")
-			if index != -1 {
-				partNumberString = entry.Name[:index]
-			} else {
-				partNumberString = entry.Name[:len(entry.Name)-len(".part")]
-			}
-			partNumber, err := strconv.Atoi(partNumberString)
+		if strings.HasSuffix(entry.Name, multipartExt) && !entry.IsDirectory {
+			partNumber, err := parsePartNumber(entry.Name)
 			if err != nil {
 				glog.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, err)
 				continue

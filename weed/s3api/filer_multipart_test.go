@@ -50,7 +50,7 @@ func TestListPartsResult(t *testing.T) {
 
 }
 
-func Test_parseByPartNumber(t *testing.T) {
+func Test_parsePartNumber(t *testing.T) {
 	tests := []struct {
 		name     string
 		fileName string
@@ -69,8 +69,8 @@ func Test_parseByPartNumber(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			partNumber, _ := parseByPartNumber(tt.fileName)
-			assert.Equalf(t, tt.partNum, partNumber, "parseByPartNumber(%v)", tt.fileName)
+			partNumber, _ := parsePartNumber(tt.fileName)
+			assert.Equalf(t, tt.partNum, partNumber, "parsePartNumber(%v)", tt.fileName)
 		})
 	}
 }
