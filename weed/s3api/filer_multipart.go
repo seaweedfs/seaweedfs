@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"cmp"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
@@ -119,15 +120,25 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	var offset int64
 	var deleteEntries []*filer_pb.Entry
 	for _, part := range completedParts {
-		entries := partEntries[part.PartNumber]
+		partEntriesByNumber := partEntries[part.PartNumber]
 		// check whether completedParts is more than received parts
-		if len(entries) == 0 {
+		if len(partEntriesByNumber) == 0 {
 			glog.Errorf("part %d has no entry", part.PartNumber)
 			return nil, s3err.ErrInvalidPart
 		}
-
+		if len(partEntriesByNumber) > 1 {
+			slices.SortFunc(partEntriesByNumber, func(a, b *filer_pb.Entry) int {
+				if len(a.Chunks) == 0 {
+					return 1
+				}
+				if len(b.Chunks) == 0 {
+					return 0
+				}
+				return cmp.Compare(b.Chunks[0].ModifiedTsNs, a.Chunks[0].ModifiedTsNs)
+			})
+		}
 		found := false
-		for _, entry := range entries {
+		for _, entry := range partEntriesByNumber {
 			if found {
 				deleteEntries = append(deleteEntries, entry)
 				continue
