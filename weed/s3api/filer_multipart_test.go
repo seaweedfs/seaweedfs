@@ -50,88 +50,27 @@ func TestListPartsResult(t *testing.T) {
 
 }
 
-func Test_findByPartNumber(t *testing.T) {
-	type args struct {
-		fileName string
-		parts    []CompletedPart
-	}
-
-	parts := []CompletedPart{
-		{
-			ETag:       "xxx",
-			PartNumber: 1,
-		},
-		{
-			ETag:       "lll",
-			PartNumber: 1,
-		},
-		{
-			ETag:       "yyy",
-			PartNumber: 3,
-		},
-		{
-			ETag:       "zzz",
-			PartNumber: 5,
-		},
-	}
-
+func Test_parsePartNumber(t *testing.T) {
 	tests := []struct {
-		name      string
-		args      args
-		wantEtag  string
-		wantFound bool
+		name     string
+		fileName string
+		partNum  int
 	}{
 		{
 			"first",
-			args{
-				"0001.part",
-				parts,
-			},
-			"lll",
-			true,
+			"0001_uuid.part",
+			1,
 		},
 		{
 			"second",
-			args{
-				"0002.part",
-				parts,
-			},
-			"",
-			false,
-		},
-		{
-			"third",
-			args{
-				"0003.part",
-				parts,
-			},
-			"yyy",
-			true,
-		},
-		{
-			"fourth",
-			args{
-				"0004.part",
-				parts,
-			},
-			"",
-			false,
-		},
-		{
-			"fifth",
-			args{
-				"0005.part",
-				parts,
-			},
-			"zzz",
-			true,
+			"0002.part",
+			2,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotEtag, gotFound := findByPartNumber(tt.args.fileName, tt.args.parts)
-			assert.Equalf(t, tt.wantEtag, gotEtag, "findByPartNumber(%v, %v)", tt.args.fileName, tt.args.parts)
-			assert.Equalf(t, tt.wantFound, gotFound, "findByPartNumber(%v, %v)", tt.args.fileName, tt.args.parts)
+			partNumber, _ := parsePartNumber(tt.fileName)
+			assert.Equalf(t, tt.partNum, partNumber, "parsePartNumber(%v)", tt.fileName)
 		})
 	}
 }
