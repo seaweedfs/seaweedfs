@@ -148,7 +148,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 			foundEntry = true
 		}
 		if foundEntry {
-			if (len(completedPartNumbers) == 1 || partNumber != completedPartNumbers[len(completedPartNumbers)-1]) &&
+			if len(completedPartNumbers) > 1 && partNumber != completedPartNumbers[len(completedPartNumbers)-1] &&
 				entry.Attributes.FileSize < multiPartMinSize {
 				glog.Warningf("completeMultipartUpload %s part file size less 5mb", entry.Name)
 				entityTooSmall = true
