@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"golang.org/x/exp/slices"
 	"math"
@@ -85,8 +86,26 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
 
 	entries, _, err := s3a.list(uploadDirectory, "", "", false, maxPartsList)
-	if err != nil || len(entries) == 0 {
+	if err != nil {
 		glog.Errorf("completeMultipartUpload %s %s error: %v, entries:%d", *input.Bucket, *input.UploadId, err, len(entries))
+		stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
+		return nil, s3err.ErrNoSuchUpload
+	}
+
+	if len(entries) == 0 {
+		entryName, dirName := s3a.getEntryNameAndDir(input)
+		if entry, _ := s3a.getEntry(dirName, entryName); entry != nil && entry.Extended != nil {
+			if uploadId, ok := entry.Extended[s3_constants.X_SeaweedFS_Header_Upload_Id]; ok && *input.UploadId == string(uploadId) {
+				return &CompleteMultipartUploadResult{
+					CompleteMultipartUploadOutput: s3.CompleteMultipartUploadOutput{
+						Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
+						Bucket:   input.Bucket,
+						ETag:     aws.String("\"" + filer.ETagChunks(entry.GetChunks()) + "\""),
+						Key:      objectKey(input.Key),
+					},
+				}, s3err.ErrNone
+			}
+		}
 		stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
 		return nil, s3err.ErrNoSuchUpload
 	}
@@ -97,7 +116,6 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
 		return nil, s3err.ErrNoSuchUpload
 	}
-
 	deleteEntries := []*filer_pb.Entry{}
 	partEntries := make(map[int][]*filer_pb.Entry, len(entries))
 	for _, entry := range entries {
@@ -183,25 +201,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		}
 	}
 
-	entryName := filepath.Base(*input.Key)
-	dirName := filepath.ToSlash(filepath.Dir(*input.Key))
-	if dirName == "." {
-		dirName = ""
-	}
-	if strings.HasPrefix(dirName, "/") {
-		dirName = dirName[1:]
-	}
-	dirName = fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, *input.Bucket, dirName)
-
-	// remove suffix '/'
-	if strings.HasSuffix(dirName, "/") {
-		dirName = dirName[:len(dirName)-1]
-	}
-
+	entryName, dirName := s3a.getEntryNameAndDir(input)
 	err = s3a.mkFile(dirName, entryName, finalParts, func(entry *filer_pb.Entry) {
 		if entry.Extended == nil {
 			entry.Extended = make(map[string][]byte)
 		}
+		entry.Extended[s3_constants.X_SeaweedFS_Header_Upload_Id] = []byte(*input.UploadId)
 		for k, v := range pentry.Extended {
 			if k != "key" {
 				entry.Extended[k] = v
@@ -241,6 +246,24 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	}
 
 	return
+}
+
+func (s3a *S3ApiServer) getEntryNameAndDir(input *s3.CompleteMultipartUploadInput) (string, string) {
+	entryName := filepath.Base(*input.Key)
+	dirName := filepath.ToSlash(filepath.Dir(*input.Key))
+	if dirName == "." {
+		dirName = ""
+	}
+	if strings.HasPrefix(dirName, "/") {
+		dirName = dirName[1:]
+	}
+	dirName = fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, *input.Bucket, dirName)
+
+	// remove suffix '/'
+	if strings.HasSuffix(dirName, "/") {
+		dirName = dirName[:len(dirName)-1]
+	}
+	return entryName, dirName
 }
 
 func parsePartNumber(fileName string) (int, error) {
