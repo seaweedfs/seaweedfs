@@ -38,7 +38,8 @@ const (
 	AmzObjectTaggingDirective = "X-Amz-Tagging-Directive"
 	AmzTagCount               = "x-amz-tagging-count"
 
-	X_SeaweedFS_Header_Directory_Key = "x-seaweedfs-is-directory-key"
+	SeaweedFSIsDirectoryKey = "x-seaweedfs-is-directory-key"
+	SeaweedFSPartNumber     = "x-seaweedfs-part-number"
 
 	// S3 ACL headers
 	AmzCannedAcl      = "X-Amz-Acl"
@@ -47,6 +48,8 @@ const (
 	AmzAclWrite       = "X-Amz-Grant-Write"
 	AmzAclReadAcp     = "X-Amz-Grant-Read-Acp"
 	AmzAclWriteAcp    = "X-Amz-Grant-Write-Acp"
+
+	AmzMpPartsCount = "X-Amz-Mp-Parts-Count"
 )
 
 // Non-Standard S3 HTTP request constants

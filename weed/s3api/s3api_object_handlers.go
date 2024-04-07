@@ -370,6 +370,9 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		if _, ok := s3_constants.PassThroughHeaders[strings.ToLower(k)]; ok {
 			proxyReq.Header[k] = v
 		}
+		if k == "partNumber" {
+			proxyReq.Header[s3_constants.SeaweedFSPartNumber] = v
+		}
 	}
 	for header, values := range r.Header {
 		proxyReq.Header[header] = values
@@ -411,7 +414,7 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	}
 
 	TimeToFirstByte(r.Method, start, r)
-	if resp.Header.Get(s3_constants.X_SeaweedFS_Header_Directory_Key) == "true" {
+	if resp.Header.Get(s3_constants.SeaweedFSIsDirectoryKey) == "true" {
 		responseStatusCode := responseFn(resp, w)
 		s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
 		return
@@ -426,6 +429,18 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 	// https://github.com/seaweedfs/seaweedfs/issues/3457
 	if resp.ContentLength == -1 && resp.StatusCode != http.StatusNotModified {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+		return
+	}
+
+	if resp.StatusCode == http.StatusBadRequest {
+		resp_body, _ := io.ReadAll(resp.Body)
+		switch string(resp_body) {
+		case "InvalidPart":
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPart)
+		default:
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		}
+		resp.Body.Close()
 		return
 	}
 

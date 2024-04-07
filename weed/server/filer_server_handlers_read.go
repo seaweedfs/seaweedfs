@@ -3,6 +3,8 @@ package weed_server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -131,7 +133,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		// inform S3 API this is a user created directory key object
-		w.Header().Set(s3_constants.X_SeaweedFS_Header_Directory_Key, "true")
+		w.Header().Set(s3_constants.SeaweedFSIsDirectoryKey, "true")
 	}
 
 	if isForDirectory && entry.Attr.Mime != s3_constants.FolderMimeType {
@@ -157,7 +159,27 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	etag := filer.ETagEntry(entry)
+	var etag string
+	var totalSize int64
+	var fileChunks []*filer_pb.FileChunk
+	if partNumber, errNum := strconv.Atoi(r.Header.Get(s3_constants.SeaweedFSPartNumber)); errNum == nil {
+		if len(entry.Chunks) < partNumber {
+			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadChunk).Inc()
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("InvalidPart"))
+			return
+		}
+		w.Header().Set(s3_constants.AmzMpPartsCount, strconv.Itoa(len(entry.Chunks)))
+		partChunk := entry.Chunks[partNumber-1]
+		md5, _ := base64.StdEncoding.DecodeString(partChunk.ETag)
+		etag = hex.EncodeToString(md5)
+		totalSize = int64(partChunk.Size)
+		fileChunks = []*filer_pb.FileChunk{partChunk}
+	} else {
+		etag = filer.ETagEntry(entry)
+		totalSize = int64(entry.Size())
+		fileChunks = entry.GetChunks()
+	}
 	w.Header().Set("Accept-Ranges", "bytes")
 
 	// mime type
@@ -207,8 +229,6 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	filename := entry.Name()
 	adjustPassthroughHeaders(w, r, filename)
 
-	totalSize := int64(entry.Size())
-
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return
@@ -246,7 +266,6 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				return err
 			}, nil
 		}
-		chunks := entry.GetChunks()
 		if entry.IsInRemoteOnly() {
 			dir, name := entry.FullPath.DirAndName()
 			if resp, err := fs.CacheRemoteObjectToLocalCluster(context.Background(), &filer_pb.CacheRemoteObjectToLocalClusterRequest{
@@ -257,11 +276,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				glog.Errorf("CacheRemoteObjectToLocalCluster %s: %v", entry.FullPath, err)
 				return nil, fmt.Errorf("cache %s: %v", entry.FullPath, err)
 			} else {
-				chunks = resp.Entry.GetChunks()
+				fileChunks = resp.Entry.GetChunks()
 			}
 		}
 
-		streamFn, err := filer.PrepareStreamContentWithThrottler(fs.filer.MasterClient, chunks, offset, size, fs.option.DownloadMaxBytesPs)
+		streamFn, err := filer.PrepareStreamContentWithThrottler(fs.filer.MasterClient, fileChunks, offset, size, fs.option.DownloadMaxBytesPs)
 		if err != nil {
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
 			glog.Errorf("failed to prepare stream content %s: %v", r.URL, err)
