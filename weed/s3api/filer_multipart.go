@@ -77,6 +77,10 @@ type CompleteMultipartUploadResult struct {
 func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploadInput, parts *CompleteMultipartUpload) (output *CompleteMultipartUploadResult, code s3err.ErrorCode) {
 
 	glog.V(2).Infof("completeMultipartUpload input %v", input)
+	if len(parts.Parts) == 0 {
+		stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
+		return nil, s3err.ErrNoSuchUpload
+	}
 	completedPartNumbers := []int{}
 	completedPartMap := make(map[int][]string)
 	for _, part := range parts.Parts {
