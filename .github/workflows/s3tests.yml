@@ -172,6 +172,9 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_multipart_upload_overwrite_existing_object \
           s3tests_boto3/functional/test_s3.py::test_multipart_upload_size_too_small \
           s3tests_boto3/functional/test_s3.py::test_multipart_resend_first_finishes_last \
+          s3tests_boto3/functional/test_s3.py::test_multipart_upload_resend_part \
+          s3tests_boto3/functional/test_s3.py::test_multipart_upload_missing_part \
+          s3tests_boto3/functional/test_s3.py::test_multipart_upload_incorrect_etag \          
           s3tests_boto3/functional/test_s3.py::test_abort_multipart_upload \
           s3tests_boto3/functional/test_s3.py::test_list_multipart_upload \
           s3tests_boto3/functional/test_s3.py::test_atomic_read_1mb \
