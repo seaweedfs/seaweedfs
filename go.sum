@@ -948,8 +948,8 @@ github.com/ydb-platform/ydb-go-sdk-auth-environ v0.2.0 h1:IG5bPd+Lqyc+zsw2kmxqfG
 github.com/ydb-platform/ydb-go-sdk-auth-environ v0.2.0/go.mod h1:l6lZ+osdQOjDRBgRA4PQ06BuvmXN2neYjnRw8rCfd7s=
 github.com/ydb-platform/ydb-go-sdk/v3 v3.25.3/go.mod h1:PFizF/vJsdAgEwjK3DVSBD52kdmRkWfSIS2q2pA+e88=
 github.com/ydb-platform/ydb-go-sdk/v3 v3.47.3/go.mod h1:bWnOIcUHd7+Sl7DN+yhyY1H/I61z53GczvwJgXMgvj0=
-github.com/ydb-platform/ydb-go-sdk/v3 v3.56.1 h1:AtNjus6Wm5pqK4pfYa9QQ83A2omHpzZuBwILB+ylfJ4=
-github.com/ydb-platform/ydb-go-sdk/v3 v3.56.1/go.mod h1:h7mpZZIAPq65QDZOO/qGVKyadsXzvv2ncs5fKuIho24=
+github.com/ydb-platform/ydb-go-sdk/v3 v3.63.0 h1:rWU5frxoj7C5Qpy4+7vs1aq/xEjIgpHK761pumHWCug=
+github.com/ydb-platform/ydb-go-sdk/v3 v3.63.0/go.mod h1:5Muw8UI+7corCqqx/OXAiboCF3jehxyev20B79Y1evk=
 github.com/ydb-platform/ydb-go-yc v0.10.2 h1:RAHy6g7ncxk1y0N4oS2MwYXLATqRqKBI6DYXuxpV2wo=
 github.com/ydb-platform/ydb-go-yc v0.10.2/go.mod h1:U1dX3LJy6zADId2DciCXlgrU/vphK1+CQzaefKq21dQ=
 github.com/ydb-platform/ydb-go-yc-metadata v0.5.2 h1:nMtixUijP0Z7iHJNT9fOL+dbmEzZxqU6Xk87ll7hqXg=
@@ -1018,8 +1018,8 @@ go.uber.org/goleak v1.1.12/go.mod h1:cwTWslyiVhfpKIDGSZEM2HlOvcqm+tG4zioyIeLoqMQ
 go.uber.org/goleak v1.2.1/go.mod h1:qlT2yGI9QafXHhZZLxlSuNsMw3FFLxBr+tBRlmO1xH4=
 go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
 go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
-go.uber.org/mock v0.3.1-0.20231011042131-892b665398ec h1:aB0WVMCyiVcqL1yMRLM4htiFlMvgdOml97GYnw9su5Q=
-go.uber.org/mock v0.3.1-0.20231011042131-892b665398ec/go.mod h1:a6FSlNadKUHUa9IP5Vyt1zh4fC7uAwxMutEAscFbkZc=
+go.uber.org/mock v0.4.0 h1:VcM4ZOtdbR4f6VXfiOpwpVJDL6lCReaZ6mw31wqh7KU=
+go.uber.org/mock v0.4.0/go.mod h1:a6FSlNadKUHUa9IP5Vyt1zh4fC7uAwxMutEAscFbkZc=
 go.uber.org/multierr v1.1.0/go.mod h1:wR5kodmAFQ0UK8QlbwjlSNy0Z68gJhDJUG5sjR94q/0=
 go.uber.org/multierr v1.6.0/go.mod h1:cdWPpRnG4AhwMwsgIHip0KRBQjJy5kYEpYjJxpXp9iU=
 go.uber.org/multierr v1.7.0/go.mod h1:7EAYxJLBy9rStEaz58O2t4Uvip6FSURkq8/ppBp95ak=
