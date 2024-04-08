@@ -47,8 +47,9 @@ const (
 
 	// s3 handler
 	ErrorCompletedNoSuchUpload      = "errorCompletedNoSuchUpload"
-	ErrorCompletedPartEmpty         = "ErrorCompletedPartEmpty"
-	ErrorCompletedPartNumber        = "ErrorCompletedPartNumber"
+	ErrorCompleteEntityTooSmall     = "errorCompleteEntityTooSmall"
+	ErrorCompletedPartEmpty         = "errorCompletedPartEmpty"
+	ErrorCompletedPartNumber        = "errorCompletedPartNumber"
 	ErrorCompletedPartNotFound      = "errorCompletedPartNotFound"
 	ErrorCompletedEtagInvalid       = "errorCompletedEtagInvalid"
 	ErrorCompletedEtagMismatch      = "errorCompletedEtagMismatch"
