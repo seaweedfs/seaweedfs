@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
@@ -18,6 +19,26 @@ func init() {
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
 	}}
+}
+
+func (fs *FilerServer) maybeAddVolumeJwtAuthorization(r *http.Request, fileId string, isWrite bool) {
+	encodedJwt := fs.maybeGetVolumeJwtAuthorizationToken(fileId, isWrite)
+
+	if encodedJwt == "" {
+		return
+	}
+
+	r.Header.Set("Authorization", "BEARER "+string(encodedJwt))
+}
+
+func (fs *FilerServer) maybeGetVolumeJwtAuthorizationToken(fileId string, isWrite bool) string {
+	var encodedJwt security.EncodedJwt
+	if isWrite {
+		encodedJwt = security.GenJwtForVolumeServer(fs.volumeGuard.SigningKey, fs.volumeGuard.ExpiresAfterSec, fileId)
+	} else {
+		encodedJwt = security.GenJwtForVolumeServer(fs.volumeGuard.ReadSigningKey, fs.volumeGuard.ReadExpiresAfterSec, fileId)
+	}
+	return string(encodedJwt)
 }
 
 func (fs *FilerServer) proxyToVolumeServer(w http.ResponseWriter, r *http.Request, fileId string) {

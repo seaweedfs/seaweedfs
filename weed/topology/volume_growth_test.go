@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
@@ -419,11 +420,13 @@ func TestPickForWrite(t *testing.T) {
 		Rack:       "",
 		DataNode:   "",
 	}
+	v := util.GetViper()
+	v.Set("master.volume_growth.threshold", 0.9)
 	for _, rpStr := range []string{"001", "010", "100"} {
 		rp, _ := super_block.NewReplicaPlacementFromString(rpStr)
 		vl := topo.GetVolumeLayout("test", rp, needle.EMPTY_TTL, types.HardDriveType)
 		volumeGrowOption.ReplicaPlacement = rp
-		for _, dc := range []string{"", "dc1", "dc2", "dc3"} {
+		for _, dc := range []string{"", "dc1", "dc2", "dc3", "dc0"} {
 			volumeGrowOption.DataCenter = dc
 			for _, r := range []string{""} {
 				volumeGrowOption.Rack = r
@@ -432,8 +435,13 @@ func TestPickForWrite(t *testing.T) {
 						continue
 					}
 					volumeGrowOption.DataNode = dn
-					fileId, count, _, _, err := topo.PickForWrite(1, volumeGrowOption, vl)
-					if err != nil {
+					fileId, count, _, shouldGrow, err := topo.PickForWrite(1, volumeGrowOption, vl)
+					if dc == "dc0" {
+						if err == nil || count != 0 || !shouldGrow {
+							fmt.Println(dc, r, dn, "pick for write should be with error")
+							t.Fail()
+						}
+					} else if err != nil {
 						fmt.Println(dc, r, dn, "pick for write error :", err)
 						t.Fail()
 					} else if count == 0 {
@@ -441,6 +449,9 @@ func TestPickForWrite(t *testing.T) {
 						t.Fail()
 					} else if len(fileId) == 0 {
 						fmt.Println(dc, r, dn, "pick for write file id is empty")
+						t.Fail()
+					} else if shouldGrow {
+						fmt.Println(dc, r, dn, "pick for write error : not should grow")
 						t.Fail()
 					}
 				}

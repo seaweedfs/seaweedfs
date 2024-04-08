@@ -97,6 +97,9 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			continue
 		}
 		dn := dnList.Head()
+		if dn == nil {
+			continue
+		}
 		var replicas []*master_pb.Location
 		for _, r := range dnList.Rest() {
 			replicas = append(replicas, &master_pb.Location{
