@@ -57,7 +57,7 @@ require (
 	github.com/json-iterator/go v1.1.12
 	github.com/karlseguin/ccache/v2 v2.0.8
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
-	github.com/klauspost/compress v1.17.4 // indirect
+	github.com/klauspost/compress v1.17.7 // indirect
 	github.com/klauspost/reedsolomon v1.12.1
 	github.com/kurin/blazer v0.5.3
 	github.com/lib/pq v1.10.9
@@ -106,7 +106,7 @@ require (
 	go.mongodb.org/mongo-driver v1.14.0
 	go.opencensus.io v0.24.0 // indirect
 	gocloud.dev v0.37.0
-	gocloud.dev/pubsub/natspubsub v0.36.0
+	gocloud.dev/pubsub/natspubsub v0.37.0
 	gocloud.dev/pubsub/rabbitpubsub v0.36.0
 	golang.org/x/crypto v0.21.0 // indirect
 	golang.org/x/exp v0.0.0-20240112132812-db7319d0e0e3
@@ -266,8 +266,8 @@ require (
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/montanaflynn/stats v0.7.0 // indirect
-	github.com/nats-io/nats.go v1.31.0 // indirect
-	github.com/nats-io/nkeys v0.4.6 // indirect
+	github.com/nats-io/nats.go v1.33.1 // indirect
+	github.com/nats-io/nkeys v0.4.7 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/ncw/swift/v2 v2.0.2 // indirect
 	github.com/onsi/gomega v1.27.10 // indirect
