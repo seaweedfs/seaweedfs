@@ -302,8 +302,8 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 			fmt.Fprintf(writer, "replicating volume %d %s from %s to dataNode %s ...\n", replica.info.Id, replicaPlacement, replica.location.dataNode.Id, dst.dataNode.Id)
 
 			if !takeAction {
-				// adjust free volume count
-				dst.dataNode.DiskInfos[replica.info.DiskType].FreeVolumeCount--
+				// adjust volume count
+				dst.dataNode.DiskInfos[replica.info.DiskType].VolumeCount++
 				break
 			}
 
@@ -337,8 +337,8 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 				return err
 			}
 
-			// adjust free volume count
-			dst.dataNode.DiskInfos[replica.info.DiskType].FreeVolumeCount--
+			// adjust volume count
+			dst.dataNode.DiskInfos[replica.info.DiskType].VolumeCount++
 			break
 		}
 	}
