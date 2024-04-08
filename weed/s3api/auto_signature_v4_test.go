@@ -262,7 +262,7 @@ func getMD5HashBase64(data []byte) string {
 	return base64.StdEncoding.EncodeToString(getMD5Sum(data))
 }
 
-// getSHA256Hash returns SHA-256 sum of given data.
+// getSHA256Sum returns SHA-256 sum of given data.
 func getSHA256Sum(data []byte) []byte {
 	hash := sha256.New()
 	hash.Write(data)
