@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
+	"github.com/seaweedfs/seaweedfs/weed/util/buffer_pool"
 )
 
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
@@ -35,9 +36,9 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bytesBuffer := needle.BufPool.Get().(*bytes.Buffer)
+	bytesBuffer := buffer_pool.SyncPool.Get().(*bytes.Buffer)
 	defer func() {
-		needle.BufPool.Put(bytesBuffer)
+		buffer_pool.SyncPool.Put(bytesBuffer)
 	}()
 
 	reqNeedle, originalSize, contentMd5, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes, bytesBuffer)

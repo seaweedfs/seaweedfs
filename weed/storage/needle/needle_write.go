@@ -7,15 +7,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/buffer_pool"
 	"math"
-	"sync"
 )
-
-var BufPool = sync.Pool{
-	New: func() interface{} {
-		return new(bytes.Buffer)
-	},
-}
 
 func (n *Needle) prepareWriteBuffer(version Version, writeBytes *bytes.Buffer) (Size, int64, error) {
 	writeBytes.Reset()
@@ -132,9 +126,9 @@ func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset u
 		return
 	}
 
-	bytesBuffer := BufPool.Get().(*bytes.Buffer)
+	bytesBuffer := buffer_pool.SyncPool.Get().(*bytes.Buffer)
 	defer func() {
-		BufPool.Put(bytesBuffer)
+		buffer_pool.SyncPool.Put(bytesBuffer)
 	}()
 
 	size, actualSize, err = n.prepareWriteBuffer(version, bytesBuffer)

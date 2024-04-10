@@ -20,6 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/buffer_pool"
 )
 
 func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request, contentMd5 string) (isUnchanged bool, err error) {
@@ -88,9 +89,9 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 					pairMap[needle.PairNamePrefix+k] = v
 				}
 			}
-			bytesBuffer := needle.BufPool.Get().(*bytes.Buffer)
+			bytesBuffer := buffer_pool.SyncPool.Get().(*bytes.Buffer)
 			defer func() {
-				needle.BufPool.Put(bytesBuffer)
+				buffer_pool.SyncPool.Put(bytesBuffer)
 			}()
 			// volume server do not know about encryption
 			// TODO optimize here to compress data only once
