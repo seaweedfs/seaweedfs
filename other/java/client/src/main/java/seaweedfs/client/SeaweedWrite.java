@@ -113,6 +113,7 @@ public class SeaweedWrite {
             List<FilerProto.FileChunk> chunks = FileChunkManifest.maybeManifestize(filerClient, entry.getChunksList(), parentDirectory);
             entry.clearChunks();
             entry.addAllChunks(chunks);
+            ExtendedFormatUtil.addKeyPrefix(entry);
             filerClient.getBlockingStub().createEntry(
                     FilerProto.CreateEntryRequest.newBuilder()
                             .setDirectory(parentDirectory)

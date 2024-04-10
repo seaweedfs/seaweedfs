@@ -61,6 +61,9 @@ public class FilerClient extends FilerGrpcClient {
     }
 
     public static FilerProto.Entry afterEntryDeserialization(FilerProto.Entry entry) {
+        FilerProto.Entry.Builder builder = entry.toBuilder();
+        ExtendedFormatUtil.removeKeyPrefix(builder);
+        entry = builder.build();
         if (entry.getChunksList().size() <= 0) {
             if (entry.getContent().isEmpty()) {
                 return entry;
