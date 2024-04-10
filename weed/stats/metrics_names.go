@@ -43,4 +43,14 @@ const (
 	ErrorChunkAssign         = "chunkAssign.failed"
 	ErrorReadCache           = "read.cache.failed"
 	ErrorReadStream          = "read.stream.failed"
+
+	// s3 handler
+	ErrorCompletedNoSuchUpload      = "errorCompletedNoSuchUpload"
+	ErrorCompleteEntityTooSmall     = "errorCompleteEntityTooSmall"
+	ErrorCompletedPartEmpty         = "errorCompletedPartEmpty"
+	ErrorCompletedPartNumber        = "errorCompletedPartNumber"
+	ErrorCompletedPartNotFound      = "errorCompletedPartNotFound"
+	ErrorCompletedEtagInvalid       = "errorCompletedEtagInvalid"
+	ErrorCompletedEtagMismatch      = "errorCompletedEtagMismatch"
+	ErrorCompletedPartEntryMismatch = "errorCompletedPartEntryMismatch"
 )

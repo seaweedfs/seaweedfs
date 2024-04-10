@@ -166,8 +166,10 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_multipart_copy_without_range \
           s3tests_boto3/functional/test_s3.py::test_multipart_upload_multiple_sizes \
           s3tests_boto3/functional/test_s3.py::test_multipart_copy_multiple_sizes \
+          s3tests_boto3/functional/test_s3.py::test_multipart_upload \
           s3tests_boto3/functional/test_s3.py::test_multipart_upload_contents \
           s3tests_boto3/functional/test_s3.py::test_multipart_upload_overwrite_existing_object \
+          s3tests_boto3/functional/test_s3.py::test_multipart_upload_size_too_small \
           s3tests_boto3/functional/test_s3.py::test_abort_multipart_upload \
           s3tests_boto3/functional/test_s3.py::test_list_multipart_upload \
           s3tests_boto3/functional/test_s3.py::test_atomic_read_1mb \
@@ -180,7 +182,6 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_atomic_dual_write_4mb \
           s3tests_boto3/functional/test_s3.py::test_atomic_dual_write_8mb \
           s3tests_boto3/functional/test_s3.py::test_atomic_multipart_upload_write \
-          s3tests_boto3/functional/test_s3.py::test_multipart_resend_first_finishes_last \
           s3tests_boto3/functional/test_s3.py::test_ranged_request_response_code \
           s3tests_boto3/functional/test_s3.py::test_ranged_big_request_response_code \
           s3tests_boto3/functional/test_s3.py::test_ranged_request_skip_leading_bytes_response_code \

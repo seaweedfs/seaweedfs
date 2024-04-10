@@ -293,9 +293,9 @@ volume:
 
   # same applies to "logs"
 
-  idx: ""
+  idx: {}
 
-  logs: ""
+  logs: {}
 
   # limit background compaction or copying speed in mega bytes per second
   compactionMBps: "50"
@@ -746,7 +746,7 @@ s3:
     # host: false for "*" hostname
     host: "seaweedfs.cluster.local"
     # additional ingress annotations for the s3 endpoint
-    annotations: []
+    annotations: ""
     tls: []
 
 certificates:

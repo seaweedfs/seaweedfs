@@ -26,7 +26,7 @@ type SkipList struct {
 	// elementCount int
 }
 
-// NewSeedEps returns a new empty, initialized Skiplist.
+// NewSeed returns a new empty, initialized Skiplist.
 // Given a seed, a deterministic height/list behaviour can be achieved.
 // Eps is used to compare keys given by the ExtractKey() function on equality.
 func NewSeed(seed int64, listStore ListStore) *SkipList {
