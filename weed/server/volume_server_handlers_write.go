@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"net/http"
@@ -36,8 +35,8 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bytesBuffer := buffer_pool.SyncPool.Get().(*bytes.Buffer)
-	defer buffer_pool.SyncPool.Put(bytesBuffer)
+	bytesBuffer := buffer_pool.SyncPoolGetBuffer()
+	defer buffer_pool.SyncPoolPutBuffer(bytesBuffer)
 
 	reqNeedle, originalSize, contentMd5, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes, bytesBuffer)
 	if ne != nil {
