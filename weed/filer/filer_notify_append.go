@@ -8,6 +8,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -76,6 +77,7 @@ func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.Assi
 		MimeType:          "",
 		PairMap:           nil,
 		Jwt:               assignResult.Auth,
+		HandlerCounter:    stats.FilerHandlerCounter,
 	}
 	uploadResult, err := operation.UploadData(data, uploadOption)
 	if err != nil {

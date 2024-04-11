@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"net/http"
 	"net/url"
@@ -23,6 +24,11 @@ import (
 )
 
 func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request, contentMd5 string) (isUnchanged bool, err error) {
+	if s.GetVolume(volumeId) == nil {
+		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteVolumeNotFound).Inc()
+		err = fmt.Errorf("volume %d not found", volumeId)
+		return true, err
+	}
 
 	//check JWT
 	jwt := security.GetJwt(r)
@@ -34,7 +40,8 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 		remoteLocations, err = GetWritableRemoteReplications(s, grpcDialOption, volumeId, masterFn)
 		if err != nil {
 			glog.V(0).Infoln(err)
-			return
+			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteReplicasNotFound).Inc()
+			return true, err
 		}
 	}
 
@@ -55,69 +62,84 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 			return
 		}
 	}
-
+	group := errgroup.Group{}
 	if len(remoteLocations) > 0 { //send to other replica locations
-		start := time.Now()
-		err = DistributedOperation(remoteLocations, func(location operation.Location) error {
-			u := url.URL{
-				Scheme: "http",
-				Host:   location.Url,
-				Path:   r.URL.Path,
-			}
-			q := url.Values{
-				"type": {"replicate"},
-				"ttl":  {n.Ttl.String()},
-			}
-			if n.LastModified > 0 {
-				q.Set("ts", strconv.FormatUint(n.LastModified, 10))
-			}
-			if n.IsChunkedManifest() {
-				q.Set("cm", "true")
-			}
-			u.RawQuery = q.Encode()
-
-			pairMap := make(map[string]string)
-			if n.HasPairs() {
-				tmpMap := make(map[string]string)
-				err := json.Unmarshal(n.Pairs, &tmpMap)
-				if err != nil {
-					stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorUnmarshalPairs).Inc()
-					glog.V(0).Infoln("Unmarshal pairs error:", err)
+		group.Go(func() error {
+			startWriteToReplicas := time.Now()
+			defer stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToReplicas).Observe(time.Since(startWriteToReplicas).Seconds())
+			return DistributedOperation(remoteLocations, func(location operation.Location) error {
+				u := url.URL{
+					Scheme: "http",
+					Host:   location.Url,
+					Path:   r.URL.Path,
 				}
-				for k, v := range tmpMap {
-					pairMap[needle.PairNamePrefix+k] = v
+				q := url.Values{
+					"type": {"replicate"},
+					"ttl":  {n.Ttl.String()},
 				}
-			}
-			bytesBuffer := buffer_pool.SyncPoolGetBuffer()
-			defer buffer_pool.SyncPoolPutBuffer(bytesBuffer)
+				if n.LastModified > 0 {
+					q.Set("ts", strconv.FormatUint(n.LastModified, 10))
+				}
+				if n.IsChunkedManifest() {
+					q.Set("cm", "true")
+				}
+				u.RawQuery = q.Encode()
 
-			// volume server do not know about encryption
-			// TODO optimize here to compress data only once
-			uploadOption := &operation.UploadOption{
-				UploadUrl:         u.String(),
-				Filename:          string(n.Name),
-				Cipher:            false,
-				IsInputCompressed: n.IsCompressed(),
-				MimeType:          string(n.Mime),
-				PairMap:           pairMap,
-				Jwt:               jwt,
-				Md5:               contentMd5,
-				BytesBuffer:       bytesBuffer,
-			}
+				pairMap := make(map[string]string)
+				if n.HasPairs() {
+					tmpMap := make(map[string]string)
+					jsonErr := json.Unmarshal(n.Pairs, &tmpMap)
+					if jsonErr != nil {
+						stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorUnmarshalPairs).Inc()
+						glog.V(0).Infoln("Unmarshal pairs error:", jsonErr)
+					}
+					for k, v := range tmpMap {
+						pairMap[needle.PairNamePrefix+k] = v
+					}
+				}
 
-			_, err := operation.UploadData(n.Data, uploadOption)
-			if err != nil {
-				glog.Errorf("replication-UploadData, err:%v, url:%s", err, u.String())
-			}
-			return err
+				bytesBuffer := buffer_pool.SyncPoolGetBuffer()
+				defer buffer_pool.SyncPoolPutBuffer(bytesBuffer)
+
+				// volume server do not know about encryption
+				// TODO optimize here to compress data only once
+				uploadOption := &operation.UploadOption{
+					UploadUrl:         u.String(),
+					Filename:          string(n.Name),
+					Cipher:            false,
+					IsInputCompressed: n.IsCompressed(),
+					MimeType:          string(n.Mime),
+					PairMap:           pairMap,
+					Jwt:               jwt,
+					Md5:               contentMd5,
+					BytesBuffer:       bytesBuffer,
+					HandlerCounter:    stats.VolumeServerHandlerCounter,
+				}
+
+				_, errUload := operation.UploadData(n.Data, uploadOption)
+				if errUload != nil {
+					glog.Errorf("replication-UploadData, err:%v, url:%s", errUload, u.String())
+				}
+				return errUload
+			})
 		})
-		stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToReplicas).Observe(time.Since(start).Seconds())
-		if err != nil {
-			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToReplicas).Inc()
-			err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
-			glog.V(0).Infoln(err)
-			return false, err
-		}
+	}
+
+	start := time.Now()
+	isUnchanged, err = s.WriteVolumeNeedle(volumeId, n, true, fsync)
+	stats.VolumeServerRequestHistogram.WithLabelValues(stats.WriteToLocalDisk).Observe(time.Since(start).Seconds())
+	if err != nil {
+		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToLocalDisk).Inc()
+		err = fmt.Errorf("failed to write to local disk: %v", err)
+		glog.Errorln(err)
+		return true, err
+	}
+
+	if err = group.Wait(); err != nil {
+		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorWriteToReplicas).Inc()
+		err = fmt.Errorf("failed to write to replicas for volume %d: %v", volumeId, err)
+		glog.Errorln(err)
+		return
 	}
 	return
 }

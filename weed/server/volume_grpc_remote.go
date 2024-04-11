@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"sync"
@@ -69,6 +70,7 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 					MimeType:          "",
 					PairMap:           nil,
 					Jwt:               security.EncodedJwt(req.Auth),
+					HandlerCounter:    stats.VolumeServerHandlerCounter,
 				}
 				if _, replicaWriteErr := operation.UploadData(data, uploadOption); replicaWriteErr != nil {
 					if err == nil {
