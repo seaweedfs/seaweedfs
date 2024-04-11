@@ -37,9 +37,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bytesBuffer := buffer_pool.SyncPool.Get().(*bytes.Buffer)
-	defer func() {
-		buffer_pool.SyncPool.Put(bytesBuffer)
-	}()
+	defer buffer_pool.SyncPool.Put(bytesBuffer)
 
 	reqNeedle, originalSize, contentMd5, ne := needle.CreateNeedleFromRequest(r, vs.FixJpgOrientation, vs.fileSizeLimitBytes, bytesBuffer)
 	if ne != nil {

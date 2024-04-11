@@ -90,9 +90,8 @@ func ReplicatedWrite(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOpt
 				}
 			}
 			bytesBuffer := buffer_pool.SyncPool.Get().(*bytes.Buffer)
-			defer func() {
-				buffer_pool.SyncPool.Put(bytesBuffer)
-			}()
+			defer buffer_pool.SyncPool.Put(bytesBuffer)
+
 			// volume server do not know about encryption
 			// TODO optimize here to compress data only once
 			uploadOption := &operation.UploadOption{

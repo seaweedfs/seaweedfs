@@ -127,9 +127,7 @@ func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset u
 	}
 
 	bytesBuffer := buffer_pool.SyncPool.Get().(*bytes.Buffer)
-	defer func() {
-		buffer_pool.SyncPool.Put(bytesBuffer)
-	}()
+	defer buffer_pool.SyncPool.Put(bytesBuffer)
 
 	size, actualSize, err = n.prepareWriteBuffer(version, bytesBuffer)
 
