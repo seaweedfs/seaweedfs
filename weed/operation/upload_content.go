@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/valyala/bytebufferpool"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -32,6 +33,7 @@ type UploadOption struct {
 	Jwt               security.EncodedJwt
 	RetryForever      bool
 	Md5               string
+	BytesBuffer       *bytes.Buffer
 }
 
 type UploadResult struct {
@@ -261,6 +263,7 @@ func doUploadData(data []byte, option *UploadOption) (uploadResult *UploadResult
 			PairMap:           option.PairMap,
 			Jwt:               option.Jwt,
 			Md5:               option.Md5,
+			BytesBuffer:       option.BytesBuffer,
 		})
 		if uploadResult == nil {
 			return
@@ -275,9 +278,17 @@ func doUploadData(data []byte, option *UploadOption) (uploadResult *UploadResult
 }
 
 func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize int, option *UploadOption) (*UploadResult, error) {
-	buf := GetBuffer()
-	defer PutBuffer(buf)
-	body_writer := multipart.NewWriter(buf)
+	var body_writer *multipart.Writer
+	var reqReader *bytes.Reader
+	var buf *bytebufferpool.ByteBuffer
+	if option.BytesBuffer == nil {
+		buf = GetBuffer()
+		defer PutBuffer(buf)
+		body_writer = multipart.NewWriter(buf)
+	} else {
+		option.BytesBuffer.Reset()
+		body_writer = multipart.NewWriter(option.BytesBuffer)
+	}
 	h := make(textproto.MIMEHeader)
 	filename := fileNameEscaper.Replace(option.Filename)
 	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
@@ -309,8 +320,12 @@ func upload_content(fillBufferFunction func(w io.Writer) error, originalDataSize
 		glog.V(0).Infoln("error closing body", err)
 		return nil, err
 	}
-
-	req, postErr := http.NewRequest("POST", option.UploadUrl, bytes.NewReader(buf.Bytes()))
+	if option.BytesBuffer == nil {
+		reqReader = bytes.NewReader(buf.Bytes())
+	} else {
+		reqReader = bytes.NewReader(option.BytesBuffer.Bytes())
+	}
+	req, postErr := http.NewRequest("POST", option.UploadUrl, reqReader)
 	if postErr != nil {
 		glog.V(1).Infof("create upload request %s: %v", option.UploadUrl, postErr)
 		return nil, fmt.Errorf("create upload request %s: %v", option.UploadUrl, postErr)
