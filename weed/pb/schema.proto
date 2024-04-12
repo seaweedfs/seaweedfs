@@ -12,15 +12,14 @@ message Field {
     string name = 1;
     Type type = 2;
     int32 index = 3;
-    bool is_optional = 4;
-    bool is_repeated = 5;
+    bool is_repeated = 4;
 }
 
 message Type {
     oneof kind {
         ScalarType scalar_type = 1;
         RecordType record_type = 2;
-        MapType map_type = 3;
+        // MapType map_type = 3;
     }
 }
 
