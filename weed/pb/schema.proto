@@ -5,7 +5,7 @@ package schema_pb;
 option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/schema_pb";
 
 message RecordType {
-    repeated Field fields = 2;
+    repeated Field fields = 1;
 }
 
 message Field {
