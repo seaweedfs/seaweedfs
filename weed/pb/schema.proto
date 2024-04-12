@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package schema_pb;
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/schema_pb";
+
+message RecordType {
+    repeated Field fields = 2;
+}
+
+message Field {
+    string name = 1;
+    Type type = 2;
+    int32 index = 3;
+    bool is_optional = 4;
+    bool is_repeated = 5;
+}
+
+message Type {
+    oneof kind {
+        ScalarType scalar_type = 1;
+        RecordType record_type = 2;
+        MapType map_type = 3;
+    }
+}
+
+enum ScalarType {
+    BOOLEAN = 0;
+    INTEGER = 1;
+    LONG = 3;
+    FLOAT = 4;
+    DOUBLE = 5;
+    BYTES = 6;
+    STRING = 7;
+}
+
+message MapType {
+    // key is always string
+    Type value = 1;
+}
