@@ -63,11 +63,11 @@ func (mc *MemChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop int64) 
 		logicStart := max(off, memChunkBaseOffset+t.StartOffset)
 		logicStop := min(off+int64(len(p)), memChunkBaseOffset+t.stopOffset)
 		if logicStart < logicStop {
+			copy(p[logicStart-off:logicStop-off], mc.buf[logicStart-memChunkBaseOffset:logicStop-memChunkBaseOffset])
+			maxStop = max(maxStop, logicStop)
+
 			if t.TsNs >= tsNs {
-				copy(p[logicStart-off:logicStop-off], mc.buf[logicStart-memChunkBaseOffset:logicStop-memChunkBaseOffset])
-				maxStop = max(maxStop, logicStop)
-			} else {
-				println("read old data1", tsNs-t.TsNs, "ns")
+				println("read new data1", t.TsNs - tsNs, "ns")
 			}
 		}
 	}
