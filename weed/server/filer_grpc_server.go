@@ -234,7 +234,7 @@ func (fs *FilerServer) cleanupChunks(fullpath string, existingEntry *filer.Entry
 		}
 	}
 
-	chunks = append(chunks, manifestChunks...)
+	chunks = append(manifestChunks, chunks...)
 
 	return
 }
