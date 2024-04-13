@@ -30,20 +30,11 @@ func TestEnumScalarType(t *testing.T) {
 	}
 }
 
-func TestMapType(t *testing.T) {
-	mt := &MapType{
-		Key:   "key",
-		Value: &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_BOOLEAN}},
-	}
-	assert.NotNil(t, mt)
-}
-
 func TestField(t *testing.T) {
 	field := &Field{
 		Name:        "field_name",
 		Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INTEGER}},
 		Index:       1,
-		IsOptional:  true,
 		IsRepeated:  false,
 	}
 	assert.NotNil(t, field)
@@ -56,14 +47,12 @@ func TestRecordType(t *testing.T) {
 				Name:        "field_1",
 				Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INTEGER}},
 				Index:       1,
-				IsOptional:  true,
 				IsRepeated:  false,
 			},
 			{
 				Name:        "field_2",
 				Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_STRING}},
 				Index:       2,
-				IsOptional:  true,
 				IsRepeated:  false,
 			},
 		},
@@ -74,14 +63,12 @@ func TestRecordType(t *testing.T) {
 				Name:        "field_key",
 				Type:        &Type{Kind: &Type_ScalarType{ScalarType: ScalarType_INTEGER}},
 				Index:       1,
-				IsOptional:  true,
 				IsRepeated:  false,
 			},
 			{
 				Name:        "field_record",
 				Type:        &Type{Kind: &Type_RecordType{RecordType: subRecord}},
 				Index:       2,
-				IsOptional:  true,
 				IsRepeated:  false,
 			},
 		},
