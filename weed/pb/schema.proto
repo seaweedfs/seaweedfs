@@ -4,6 +4,10 @@ package schema_pb;
 
 option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/schema_pb";
 
+///////////////////////////
+// schema definition
+///////////////////////////
+
 message RecordType {
     repeated Field fields = 1;
 }
@@ -19,7 +23,6 @@ message Type {
     oneof kind {
         ScalarType scalar_type = 1;
         RecordType record_type = 2;
-        // MapType map_type = 3;
     }
 }
 
@@ -33,7 +36,21 @@ enum ScalarType {
     STRING = 7;
 }
 
-message MapType {
-    // key is always string
-    Type value = 1;
+///////////////////////////
+// value definition
+///////////////////////////
+message RecordValue {
+    map<string, Value> fields = 1;
+}
+message Value {
+    oneof kind {
+        bool bool_value = 1;
+        int32 int32_value = 2;
+        int64 int64_value = 3;
+        float float_value = 4;
+        double double_value = 5;
+        bytes bytes_value = 6;
+        string string_value = 7;
+        RecordValue record_value = 15;
+    }
 }
