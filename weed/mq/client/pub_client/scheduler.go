@@ -235,7 +235,7 @@ func (p *TopicPublisher) doConfigureTopic() (err error) {
 			func(client mq_pb.SeaweedMessagingClient) error {
 				_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
 					Topic:          p.config.Topic.ToPbTopic(),
-					PartitionCount: p.config.CreateTopicPartitionCount,
+					PartitionCount: p.config.PartitionCount,
 				})
 				return err
 			})

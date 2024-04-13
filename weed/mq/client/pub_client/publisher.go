@@ -13,11 +13,10 @@ import (
 )
 
 type PublisherConfiguration struct {
-	Topic                     topic.Topic
-	CreateTopic               bool
-	CreateTopicPartitionCount int32
-	Brokers                   []string
-	PublisherName             string // for debugging
+	Topic          topic.Topic
+	PartitionCount int32
+	Brokers        []string
+	PublisherName  string // for debugging
 }
 
 type PublishClient struct {

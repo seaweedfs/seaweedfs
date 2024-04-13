@@ -46,11 +46,10 @@ func doPublish(publisher *pub_client.TopicPublisher, id int) {
 func main() {
 	flag.Parse()
 	config := &pub_client.PublisherConfiguration{
-		Topic:                     topic.NewTopic(*namespace, *t),
-		CreateTopic:               true,
-		CreateTopicPartitionCount: int32(*partitionCount),
-		Brokers:                   strings.Split(*seedBrokers, ","),
-		PublisherName:             *clientName,
+		Topic:          topic.NewTopic(*namespace, *t),
+		PartitionCount: int32(*partitionCount),
+		Brokers:        strings.Split(*seedBrokers, ","),
+		PublisherName:  *clientName,
 	}
 	publisher := pub_client.NewTopicPublisher(config)
 
