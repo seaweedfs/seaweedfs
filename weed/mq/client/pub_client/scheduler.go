@@ -236,6 +236,7 @@ func (p *TopicPublisher) doConfigureTopic() (err error) {
 				_, err := client.ConfigureTopic(context.Background(), &mq_pb.ConfigureTopicRequest{
 					Topic:          p.config.Topic.ToPbTopic(),
 					PartitionCount: p.config.PartitionCount,
+					RecordType:     p.config.RecordType, // TODO schema upgrade
 				})
 				return err
 			})
