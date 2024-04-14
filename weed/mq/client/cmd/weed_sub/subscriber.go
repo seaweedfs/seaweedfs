@@ -52,7 +52,7 @@ func main() {
 	})
 
 	subscriber.SetCompletionFunc(func() {
-		glog.V(0).Infof("done recived %d messages", counter)
+		glog.V(0).Infof("done received %d messages", counter)
 	})
 
 	if err := subscriber.Subscribe(); err != nil {
