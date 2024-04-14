@@ -164,9 +164,11 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_object_copy_key_not_found \
           s3tests_boto3/functional/test_s3.py::test_multipart_copy_small \
           s3tests_boto3/functional/test_s3.py::test_multipart_copy_without_range \
+          s3tests_boto3/functional/test_s3.py::test_multipart_copy_special_names \
           s3tests_boto3/functional/test_s3.py::test_multipart_copy_multiple_sizes \
           s3tests_boto3/functional/test_s3.py::test_multipart_get_part \
           s3tests_boto3/functional/test_s3.py::test_multipart_upload \
+          s3tests_boto3/functional/test_s3.py::test_multipart_upload_empty \
           s3tests_boto3/functional/test_s3.py::test_multipart_upload_multiple_sizes \
           s3tests_boto3/functional/test_s3.py::test_multipart_upload_contents \
           s3tests_boto3/functional/test_s3.py::test_multipart_upload_overwrite_existing_object \
