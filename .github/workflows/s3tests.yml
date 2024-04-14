@@ -43,7 +43,7 @@ jobs:
           cd /__w/seaweedfs/seaweedfs/weed
           go install -buildvcs=false
           set -x
-          nohup weed -v 0 server -filer -s3 -ip.bind 0.0.0.0 \
+          nohup weed -v 0 server -filer -filer.maxMB=64 -s3 -ip.bind 0.0.0.0 \
             -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
             -volume.max=100 -volume.preStopSeconds=1 -s3.port=8000 -metricsPort=9324 \
             -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../docker/compose/s3.json &
@@ -164,12 +164,19 @@ jobs:
           s3tests_boto3/functional/test_s3.py::test_object_copy_key_not_found \
           s3tests_boto3/functional/test_s3.py::test_multipart_copy_small \
           s3tests_boto3/functional/test_s3.py::test_multipart_copy_without_range \
-          s3tests_boto3/functional/test_s3.py::test_multipart_upload_multiple_sizes \
+          s3tests_boto3/functional/test_s3.py::test_multipart_copy_special_names \
           s3tests_boto3/functional/test_s3.py::test_multipart_copy_multiple_sizes \
+          s3tests_boto3/functional/test_s3.py::test_multipart_get_part \
           s3tests_boto3/functional/test_s3.py::test_multipart_upload \
+          s3tests_boto3/functional/test_s3.py::test_multipart_upload_empty \
+          s3tests_boto3/functional/test_s3.py::test_multipart_upload_multiple_sizes \
           s3tests_boto3/functional/test_s3.py::test_multipart_upload_contents \
           s3tests_boto3/functional/test_s3.py::test_multipart_upload_overwrite_existing_object \
           s3tests_boto3/functional/test_s3.py::test_multipart_upload_size_too_small \
+          s3tests_boto3/functional/test_s3.py::test_multipart_resend_first_finishes_last \
+          s3tests_boto3/functional/test_s3.py::test_multipart_upload_resend_part \
+          s3tests_boto3/functional/test_s3.py::test_multipart_upload_missing_part \
+          s3tests_boto3/functional/test_s3.py::test_multipart_upload_incorrect_etag \
           s3tests_boto3/functional/test_s3.py::test_abort_multipart_upload \
           s3tests_boto3/functional/test_s3.py::test_list_multipart_upload \
           s3tests_boto3/functional/test_s3.py::test_atomic_read_1mb \
