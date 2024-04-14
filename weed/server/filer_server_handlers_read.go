@@ -161,8 +161,6 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var etag string
-	var totalSize int64
-	var fileChunks []*filer_pb.FileChunk
 	if partNumber, errNum := strconv.Atoi(r.Header.Get(s3_constants.SeaweedFSPartNumber)); errNum == nil {
 		if len(entry.Chunks) < partNumber {
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadChunk).Inc()
@@ -171,15 +169,12 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		w.Header().Set(s3_constants.AmzMpPartsCount, strconv.Itoa(len(entry.Chunks)))
-		partChunk := entry.Chunks[partNumber-1]
+		partChunk := entry.GetChunks()[partNumber-1]
 		md5, _ := base64.StdEncoding.DecodeString(partChunk.ETag)
 		etag = hex.EncodeToString(md5)
-		totalSize = int64(partChunk.Size)
-		fileChunks = []*filer_pb.FileChunk{partChunk}
+		r.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", partChunk.Offset, uint64(partChunk.Offset)+partChunk.Size-1))
 	} else {
 		etag = filer.ETagEntry(entry)
-		totalSize = int64(entry.Size())
-		fileChunks = entry.GetChunks()
 	}
 	w.Header().Set("Accept-Ranges", "bytes")
 
@@ -229,6 +224,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 
 	filename := entry.Name()
 	adjustPassthroughHeaders(w, r, filename)
+	totalSize := int64(entry.Size())
 
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
@@ -267,6 +263,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				return err
 			}, nil
 		}
+		chunks := entry.GetChunks()
 		if entry.IsInRemoteOnly() {
 			dir, name := entry.FullPath.DirAndName()
 			if resp, err := fs.CacheRemoteObjectToLocalCluster(context.Background(), &filer_pb.CacheRemoteObjectToLocalClusterRequest{
@@ -277,11 +274,11 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 				glog.Errorf("CacheRemoteObjectToLocalCluster %s: %v", entry.FullPath, err)
 				return nil, fmt.Errorf("cache %s: %v", entry.FullPath, err)
 			} else {
-				fileChunks = resp.Entry.GetChunks()
+				chunks = resp.Entry.GetChunks()
 			}
 		}
 
-		streamFn, err := filer.PrepareStreamContentWithThrottler(fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken, fileChunks, offset, size, fs.option.DownloadMaxBytesPs)
+		streamFn, err := filer.PrepareStreamContentWithThrottler(fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken, chunks, offset, size, fs.option.DownloadMaxBytesPs)
 		if err != nil {
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
 			glog.Errorf("failed to prepare stream content %s: %v", r.URL, err)
