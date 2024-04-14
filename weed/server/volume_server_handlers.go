@@ -97,7 +97,7 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 			}
 		}()
 
-		// processs uploads
+		// processes uploads
 		stats.WriteRequest()
 		vs.guard.WhiteList(vs.PostHandler)(w, r)
 

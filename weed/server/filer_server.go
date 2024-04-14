@@ -177,7 +177,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
 	v.SetDefault("filer.options.buckets_folder", "/buckets")
 	fs.filer.DirBucketsPath = v.GetString("filer.options.buckets_folder")
-	// TODO deprecated, will be be removed after 2020-12-31
+	// TODO deprecated, will be removed after 2020-12-31
 	// replaced by https://github.com/seaweedfs/seaweedfs/wiki/Path-Specific-Configuration
 	// fs.filer.FsyncBuckets = v.GetStringSlice("filer.options.buckets_fsync")
 	isFresh := fs.filer.LoadConfiguration(v)

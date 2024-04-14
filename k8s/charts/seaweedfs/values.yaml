@@ -77,7 +77,7 @@ master:
 
   config: |-
     # Enter any extra configuration for master.toml here.
-    # It may be be a multi-line string.
+    # It may be a multi-line string.
 
   # You may use ANY storage-class, example with local-path-provisioner
   # Annotations are optional.
