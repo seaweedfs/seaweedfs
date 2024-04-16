@@ -1,10 +1,10 @@
 package shell
 
 import (
-	"testing"
-
+	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
+	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -269,5 +269,20 @@ func TestVolumeSelection(t *testing.T) {
 		t.Errorf("collectVolumeIdsForTierChange: %v", err)
 	}
 	assert.Equal(t, 378, len(vids))
+
+}
+
+func TestDeleteEmptySelection(t *testing.T) {
+	topologyInfo := parseOutput(topoData)
+
+	eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
+		for _, diskInfo := range dn.DiskInfos {
+			for _, v := range diskInfo.VolumeInfos {
+				if v.Size <= super_block.SuperBlockSize && v.ModifiedAtSecond > 0  {
+					fmt.Printf("empty volume %d from %s\n", v.Id, dn.Id)
+				}
+			}
+		}
+	})
 
 }

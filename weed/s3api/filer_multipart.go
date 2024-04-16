@@ -103,7 +103,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 	if len(entries) == 0 {
 		entryName, dirName := s3a.getEntryNameAndDir(input)
 		if entry, _ := s3a.getEntry(dirName, entryName); entry != nil && entry.Extended != nil {
-			if uploadId, ok := entry.Extended[s3_constants.X_SeaweedFS_Header_Upload_Id]; ok && *input.UploadId == string(uploadId) {
+			if uploadId, ok := entry.Extended[s3_constants.SeaweedFSUploadId]; ok && *input.UploadId == string(uploadId) {
 				return &CompleteMultipartUploadResult{
 					CompleteMultipartUploadOutput: s3.CompleteMultipartUploadOutput{
 						Location: aws.String(fmt.Sprintf("http://%s%s/%s", s3a.option.Filer.ToHttpAddress(), urlEscapeObject(dirName), urlPathEscape(entryName))),
@@ -222,7 +222,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(input *s3.CompleteMultipartUploa
 		if entry.Extended == nil {
 			entry.Extended = make(map[string][]byte)
 		}
-		entry.Extended[s3_constants.X_SeaweedFS_Header_Upload_Id] = []byte(*input.UploadId)
+		entry.Extended[s3_constants.SeaweedFSUploadId] = []byte(*input.UploadId)
 		for k, v := range pentry.Extended {
 			if k != "key" {
 				entry.Extended[k] = v
