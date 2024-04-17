@@ -246,7 +246,7 @@ func (v *Volume) doClose() {
 			glog.Warningf("Volume Close fail to sync volume %d", v.Id)
 		}
 		v.DataBackend = nil
-		stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Dec()
+		stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "volume").Dec()
 	}
 }
 
