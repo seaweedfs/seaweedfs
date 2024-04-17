@@ -124,7 +124,7 @@ func (v *Volume) CommitCompact() error {
 		}
 	}
 	v.DataBackend = nil
-	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Dec()
+	stats.VolumeServerVolumeGauge.WithLabelValues(v.Collection, "volume").Dec()
 
 	var e error
 	if e = v.makeupDiff(v.FileName(".cpd"), v.FileName(".cpx"), v.FileName(".dat"), v.FileName(".idx")); e != nil {
