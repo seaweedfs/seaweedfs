@@ -136,7 +136,7 @@ func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request)
 				return
 			}
 			vl.AddGrowRequest()
-			ms.vgCh <- &topology.VolumeGrowRequest{
+			ms.volumeGrowthRequestChan <- &topology.VolumeGrowRequest{
 				Option: option,
 				Count:  writableVolumeCount,
 			}
