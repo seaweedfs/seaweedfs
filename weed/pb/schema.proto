@@ -23,6 +23,7 @@ message Type {
     oneof kind {
         ScalarType scalar_type = 1;
         RecordType record_type = 2;
+        ListType list_type = 3;
     }
 }
 
@@ -34,6 +35,10 @@ enum ScalarType {
     DOUBLE = 5;
     BYTES = 6;
     STRING = 7;
+}
+
+message ListType {
+    Type element_type = 1;
 }
 
 ///////////////////////////
@@ -51,6 +56,10 @@ message Value {
         double double_value = 5;
         bytes bytes_value = 6;
         string string_value = 7;
+        ListValue list_value = 14;
         RecordValue record_value = 15;
     }
+}
+message ListValue {
+    repeated Value values = 1;
 }
