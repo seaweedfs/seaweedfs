@@ -370,6 +370,7 @@ func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) (total, a
 		return len(vl.writables), len(vl.writables), len(vl.crowded)
 	}
 	total = len(vl.writables)
+	threshold := option.Threshold()
 	for _, v := range vl.writables {
 		for _, dn := range vl.vid2location[v].list {
 			if dn.GetDataCenter().Id() == NodeId(option.DataCenter) {
@@ -381,7 +382,7 @@ func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) (total, a
 				}
 				active++
 				info, _ := dn.GetVolumesById(v)
-				if float64(info.Size) > float64(vl.volumeSizeLimit)*option.Threshold() {
+				if float64(info.Size) > float64(vl.volumeSizeLimit)*threshold {
 					crowded++
 				}
 			}
