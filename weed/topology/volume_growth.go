@@ -15,7 +15,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 /*
@@ -30,6 +29,24 @@ type VolumeGrowRequest struct {
 	Option *VolumeGrowOption
 	Count  int
 }
+
+type volumeGrowthStrategy struct {
+	Copy1Count int
+	Copy2Count int
+	Copy3Count int
+	CopyOtherCount int
+	Threshold float64
+}
+
+var (
+	VolumeGrowStrategy = volumeGrowthStrategy{
+		Copy1Count: 7,
+		Copy2Count: 6,
+		Copy3Count: 3,
+		CopyOtherCount: 1,
+		Threshold: 0.9,
+	}
+)
 
 type VolumeGrowOption struct {
 	Collection         string                        `json:"collection,omitempty"`
@@ -52,11 +69,6 @@ func (o *VolumeGrowOption) String() string {
 	return string(blob)
 }
 
-func (o *VolumeGrowOption) Threshold() float64 {
-	v := util.GetViper()
-	return v.GetFloat64("master.volume_growth.threshold")
-}
-
 func NewDefaultVolumeGrowth() *VolumeGrowth {
 	return &VolumeGrowth{}
 }
@@ -64,16 +76,14 @@ func NewDefaultVolumeGrowth() *VolumeGrowth {
 // one replication type may need rp.GetCopyCount() actual volumes
 // given copyCount, how many logical volumes to create
 func (vg *VolumeGrowth) findVolumeCount(copyCount int) (count int) {
-	v := util.GetViper()
 	switch copyCount {
-	case 1:
-		count = v.GetInt("master.volume_growth.copy_1")
+	case 1: count = VolumeGrowStrategy.Copy1Count
 	case 2:
-		count = v.GetInt("master.volume_growth.copy_2")
+		count = VolumeGrowStrategy.Copy2Count
 	case 3:
-		count = v.GetInt("master.volume_growth.copy_3")
+		count = VolumeGrowStrategy.Copy3Count
 	default:
-		count = v.GetInt("master.volume_growth.copy_other")
+		count = VolumeGrowStrategy.CopyOtherCount
 	}
 	return
 }
