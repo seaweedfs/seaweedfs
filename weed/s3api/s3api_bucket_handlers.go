@@ -1,15 +1,18 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
+	"github.com/minio/minio-go/v7/pkg/lifecycle"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -325,19 +328,22 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchLifecycleConfiguration)
 		return
 	}
-	response := Lifecycle{}
-	for prefix, internalTtl := range ttls {
+	response := lifecycle.Configuration{}
+	for locationPrefix, internalTtl := range ttls {
 		ttl, _ := needle.ReadTTL(internalTtl)
 		days := int(ttl.Minutes() / 60 / 24)
 		if days == 0 {
 			continue
 		}
-		response.Rules = append(response.Rules, Rule{
-			Status: Enabled, Filter: Filter{
-				Prefix: Prefix{string: prefix, set: true},
-				set:    true,
-			},
-			Expiration: Expiration{Days: days, set: true},
+		rulePrefix, found := strings.CutPrefix(locationPrefix, fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket))
+		if !found {
+			continue
+		}
+		response.Rules = append(response.Rules, lifecycle.Rule{
+			ID:         rulePrefix,
+			Status:     "Enabled",
+			Prefix:     rulePrefix,
+			Expiration: lifecycle.Expiration{Days: lifecycle.ExpirationDays(days)},
 		})
 	}
 	writeSuccessResponseXML(w, r, response)
@@ -346,9 +352,82 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 // PutBucketLifecycleConfigurationHandler Put Bucket Lifecycle configuration
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketLifecycleConfiguration.html
 func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWriter, r *http.Request) {
+	// collect parameters
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("PutBucketLifecycleConfigurationHandler %s", bucket)
 
-	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
 
+	lifecycleConfig := &lifecycle.Configuration{}
+	if err := xmlDecoder(r.Body, lifecycleConfig, r.ContentLength); err != nil {
+		glog.Warningf("PutBucketLifecycleConfigurationHandler xml decode: %s", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+		return
+	}
+
+	fc, err := filer.ReadFilerConf(s3a.option.Filer, s3a.option.GrpcDialOption, nil)
+	if err != nil {
+		glog.Errorf("PutBucketLifecycleConfigurationHandler read filer config: %s", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	collectionTtls := fc.GetCollectionTtls(bucket)
+	changed := false
+
+	for _, rule := range lifecycleConfig.Rules {
+		if !strings.EqualFold(rule.Status, "Enabled") {
+			continue
+		}
+		if rule.Expiration.Days == 0 {
+			continue
+		}
+
+		var rulePrefix string
+		switch {
+		case len(rule.RuleFilter.Prefix) > 0:
+			rulePrefix = rule.RuleFilter.Prefix
+		case len(rule.Prefix) > 0:
+			rulePrefix = rule.Prefix
+		}
+
+		if len(rulePrefix) == 0 {
+			continue
+		}
+		locConf := &filer_pb.FilerConf_PathConf{
+			LocationPrefix: fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, rulePrefix),
+			Collection:     bucket,
+			Ttl:            fmt.Sprintf("%dd", rule.Expiration.Days),
+		}
+		if ttl, ok := collectionTtls[locConf.LocationPrefix]; ok && ttl == locConf.Ttl {
+			continue
+		}
+		if err := fc.AddLocationConf(locConf); err != nil {
+			glog.Errorf("PutBucketLifecycleConfigurationHandler add location config: %s", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+		changed = true
+	}
+
+	if changed {
+		var buf bytes.Buffer
+		if err := fc.ToText(&buf); err != nil {
+			glog.Errorf("PutBucketLifecycleConfigurationHandler save config to text: %s", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		}
+		if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
+		}); err != nil {
+			glog.Errorf("PutBucketLifecycleConfigurationHandler save config inside filer: %s", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+	}
+
+	writeSuccessResponseEmpty(w, r)
 }
 
 // DeleteBucketLifecycleHandler Delete Bucket Lifecycle

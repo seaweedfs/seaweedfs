@@ -150,6 +150,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.5.0
 	github.com/hashicorp/raft v1.6.1
 	github.com/hashicorp/raft-boltdb/v2 v2.3.0
+	github.com/minio/minio-go/v7 v7.0.66
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/rabbitmq/amqp091-go v1.9.0
 	github.com/rclone/rclone v1.66.0
