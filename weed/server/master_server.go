@@ -60,8 +60,8 @@ type MasterServer struct {
 	preallocateSize int64
 
 	Topo *topology.Topology
-	vg   *topology.VolumeGrowth
-	vgCh chan *topology.VolumeGrowRequest
+	vg                      *topology.VolumeGrowth
+	volumeGrowthRequestChan chan *topology.VolumeGrowRequest
 
 	boundedLeaderChan chan int
 
@@ -97,6 +97,11 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	v.SetDefault("master.volume_growth.copy_3", 3)
 	v.SetDefault("master.volume_growth.copy_other", 1)
 	v.SetDefault("master.volume_growth.threshold", 0.9)
+	topology.VolumeGrowStrategy.Copy1Count = v.GetInt("master.volume_growth.copy_1")
+	topology.VolumeGrowStrategy.Copy2Count = v.GetInt("master.volume_growth.copy_2")
+	topology.VolumeGrowStrategy.Copy3Count = v.GetInt("master.volume_growth.copy_3")
+	topology.VolumeGrowStrategy.CopyOtherCount = v.GetInt("master.volume_growth.copy_other")
+	topology.VolumeGrowStrategy.Threshold = v.GetFloat64("master.volume_growth.threshold")
 
 	var preallocateSize int64
 	if option.VolumePreallocate {
@@ -105,14 +110,14 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 
 	grpcDialOption := security.LoadClientTLS(v, "grpc.master")
 	ms := &MasterServer{
-		option:          option,
-		preallocateSize: preallocateSize,
-		vgCh:            make(chan *topology.VolumeGrowRequest, 1<<6),
-		clientChans:     make(map[string]chan *master_pb.KeepConnectedResponse),
-		grpcDialOption:  grpcDialOption,
-		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "", cluster.MasterType, option.Master, "", "", *pb.NewServiceDiscoveryFromMap(peers)),
-		adminLocks:      NewAdminLocks(),
-		Cluster:         cluster.NewCluster(),
+		option:                  option,
+		preallocateSize:         preallocateSize,
+		volumeGrowthRequestChan: make(chan *topology.VolumeGrowRequest, 1<<6),
+		clientChans:             make(map[string]chan *master_pb.KeepConnectedResponse),
+		grpcDialOption:          grpcDialOption,
+		MasterClient:            wdclient.NewMasterClient(grpcDialOption, "", cluster.MasterType, option.Master, "", "", *pb.NewServiceDiscoveryFromMap(peers)),
+		adminLocks:              NewAdminLocks(),
+		Cluster:                 cluster.NewCluster(),
 	}
 	ms.boundedLeaderChan = make(chan int, 16)
 
@@ -151,7 +156,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	ms.Topo.StartRefreshWritableVolumes(
 		ms.grpcDialOption,
 		ms.option.GarbageThreshold,
-		v.GetFloat64("master.volume_growth.threshold"),
+		topology.VolumeGrowStrategy.Threshold,
 		ms.preallocateSize,
 	)
 

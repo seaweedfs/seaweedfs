@@ -22,7 +22,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 	go func() {
 		filter := sync.Map{}
 		for {
-			req, ok := <-ms.vgCh
+			req, ok := <-ms.volumeGrowthRequestChan
 			if !ok {
 				break
 			}

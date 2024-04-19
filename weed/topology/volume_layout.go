@@ -303,7 +303,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 			// check whether picked file is close to full
 			dn := locationList.Head()
 			info, _ := dn.GetVolumesById(vid)
-			if float64(info.Size) > float64(vl.volumeSizeLimit)*option.Threshold() {
+			if float64(info.Size) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
 				shouldGrow = true
 			}
 			return vid, count, locationList.Copy(), shouldGrow, nil
@@ -334,7 +334,7 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 			vid, locationList = writableVolumeId, volumeLocationList.Copy()
 			// check whether picked file is close to full
 			info, _ := dn.GetVolumesById(writableVolumeId)
-			if float64(info.Size) > float64(vl.volumeSizeLimit)*option.Threshold() {
+			if float64(info.Size) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
 				shouldGrow = true
 			}
 			counter = count
@@ -381,7 +381,7 @@ func (vl *VolumeLayout) GetActiveVolumeCount(option *VolumeGrowOption) (total, a
 				}
 				active++
 				info, _ := dn.GetVolumesById(v)
-				if float64(info.Size) > float64(vl.volumeSizeLimit)*option.Threshold() {
+				if float64(info.Size) > float64(vl.volumeSizeLimit)* VolumeGrowStrategy.Threshold{
 					crowded++
 				}
 			}

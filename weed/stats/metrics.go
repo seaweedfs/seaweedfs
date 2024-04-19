@@ -194,7 +194,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"type"})
 
-	VolumeServerVolumeCounter = prometheus.NewGaugeVec(
+	VolumeServerVolumeGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
 			Subsystem: "volumeServer",
@@ -291,7 +291,7 @@ func init() {
 	Gather.MustRegister(VolumeServerVacuumingCompactCounter)
 	Gather.MustRegister(VolumeServerVacuumingCommitCounter)
 	Gather.MustRegister(VolumeServerVacuumingHistogram)
-	Gather.MustRegister(VolumeServerVolumeCounter)
+	Gather.MustRegister(VolumeServerVolumeGauge)
 	Gather.MustRegister(VolumeServerMaxVolumeCounter)
 	Gather.MustRegister(VolumeServerReadOnlyVolumeGauge)
 	Gather.MustRegister(VolumeServerDiskSizeGauge)
@@ -354,5 +354,5 @@ func DeleteCollectionMetrics(collection string) {
 	for _, volume_type := range readOnlyVolumeTypes {
 		VolumeServerReadOnlyVolumeGauge.DeleteLabelValues(collection, volume_type)
 	}
-	VolumeServerVolumeCounter.DeleteLabelValues(collection, "volume")
+	VolumeServerVolumeGauge.DeleteLabelValues(collection, "volume")
 }
