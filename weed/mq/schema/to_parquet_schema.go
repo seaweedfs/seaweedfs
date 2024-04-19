@@ -21,7 +21,7 @@ func toParquetFieldType(fieldType *schema_pb.Type) (dataType parquet.Node, err e
 		dataType, err = toParquetFieldTypeScalar(fieldType.GetScalarType())
 	case *schema_pb.Type_RecordType:
 		dataType, err = toParquetFieldTypeRecord(fieldType.GetRecordType())
-		case *schema_pb.Type_ListType:
+	case *schema_pb.Type_ListType:
 		dataType, err = toParquetFieldTypeList(fieldType.GetListType())
 	default:
 		return nil, fmt.Errorf("unknown field type: %T", fieldType.Kind)
@@ -64,6 +64,9 @@ func toParquetFieldTypeRecord(recordType *schema_pb.RecordType) (parquet.Node, e
 		parquetFieldType, err := toParquetFieldType(field.Type)
 		if err != nil {
 			return nil, err
+		}
+		if !field.IsRequired {
+			parquetFieldType = parquet.Optional(parquetFieldType)
 		}
 		recordNode[field.Name] = parquetFieldType
 	}

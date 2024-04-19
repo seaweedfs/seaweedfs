@@ -17,6 +17,7 @@ message Field {
     Type type = 2;
     int32 index = 3;
     bool is_repeated = 4;
+    bool is_required = 5;
 }
 
 message Type {
