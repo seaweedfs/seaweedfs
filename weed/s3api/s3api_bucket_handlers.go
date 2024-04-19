@@ -335,14 +335,15 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		if days == 0 {
 			continue
 		}
-		rulePrefix, found := strings.CutPrefix(locationPrefix, fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket))
+		prefix, found := strings.CutPrefix(locationPrefix, fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket))
 		if !found {
 			continue
 		}
 		response.Rules = append(response.Rules, lifecycle.Rule{
-			ID:         rulePrefix,
+			ID:         prefix,
 			Status:     "Enabled",
-			Prefix:     rulePrefix,
+			Prefix:     prefix,
+			RuleFilter: lifecycle.Filter{Prefix: prefix},
 			Expiration: lifecycle.Expiration{Days: lifecycle.ExpirationDays(days)},
 		})
 	}
@@ -433,9 +434,47 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 // DeleteBucketLifecycleHandler Delete Bucket Lifecycle
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketLifecycle.html
 func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *http.Request) {
+	// collect parameters
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("DeleteBucketLifecycleHandler %s", bucket)
+
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+
+	fc, err := filer.ReadFilerConf(s3a.option.Filer, s3a.option.GrpcDialOption, nil)
+	if err != nil {
+		glog.Errorf("DeleteBucketLifecycleHandler read filer config: %s", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	collectionTtls := fc.GetCollectionTtls(bucket)
+	changed := false
+	for prefix, ttl := range collectionTtls {
+		bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
+		if strings.HasPrefix(prefix, bucketPrefix) && strings.HasSuffix(ttl, "d") {
+			fc.DeleteLocationConf(prefix)
+			changed = true
+		}
+	}
+
+	if changed {
+		var buf bytes.Buffer
+		if err := fc.ToText(&buf); err != nil {
+			glog.Errorf("DeleteBucketLifecycleHandler save config to text: %s", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		}
+		if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+			return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
+		}); err != nil {
+			glog.Errorf("DeleteBucketLifecycleHandler save config inside filer: %s", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+	}
 
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
-
 }
 
 // GetBucketLocationHandler Get bucket location
