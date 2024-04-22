@@ -2,6 +2,7 @@ package schema
 
 import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
+	"sort"
 )
 
 var (
@@ -23,6 +24,10 @@ func NewRecordTypeBuilder() *RecordTypeBuilder {
 }
 
 func (rtb *RecordTypeBuilder) Build() *schema_pb.RecordType {
+	// be consistent with parquet.node.go `func (g Group) Fields() []Field`
+	sort.Slice(rtb.recordType.Fields, func(i, j int) bool {
+		return rtb.recordType.Fields[i].Name < rtb.recordType.Fields[j].Name
+	})
 	return rtb.recordType
 }
 

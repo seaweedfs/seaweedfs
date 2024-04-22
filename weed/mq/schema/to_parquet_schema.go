@@ -12,6 +12,8 @@ func ToParquetSchema(topicName string, recordType *schema_pb.RecordType) (*parqu
 		return nil, fmt.Errorf("failed to convert record type to parquet schema: %v", err)
 	}
 
+	// Fields are sorted by name, so the value should be sorted also
+	// the sorting is inside parquet.`func (g Group) Fields() []Field`
 	return parquet.NewSchema(topicName, rootNode), nil
 }
 
@@ -53,7 +55,7 @@ func toParquetFieldTypeScalar(scalarType schema_pb.ScalarType) (parquet.Node, er
 	case schema_pb.ScalarType_BYTES:
 		return parquet.Leaf(parquet.ByteArrayType), nil
 	case schema_pb.ScalarType_STRING:
-		return parquet.String(), nil
+		return parquet.Leaf(parquet.ByteArrayType), nil
 	default:
 		return nil, fmt.Errorf("unknown scalar type: %v", scalarType)
 	}

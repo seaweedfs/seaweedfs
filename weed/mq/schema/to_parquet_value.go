@@ -6,19 +6,32 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
-
-func AddRecordValue(rowBuilder *parquet.RowBuilder, fieldType *schema_pb.Type, fieldValue *schema_pb.Value) error {
-	visitor := func(fieldType *schema_pb.Type, fieldValue *schema_pb.Value, index int) error {
-		switch fieldType.Kind.(type) {
-		case *schema_pb.Type_ScalarType:
-			parquetValue, err := toParquetValue(fieldValue)
-			if err != nil {
+func rowBuilderVisit(rowBuilder *parquet.RowBuilder, fieldType *schema_pb.Type, fieldValue *schema_pb.Value, columnIndex int) error {
+	switch fieldType.Kind.(type) {
+	case *schema_pb.Type_ScalarType:
+		parquetValue, err := toParquetValue(fieldValue)
+		if err != nil {
+			return err
+		}
+		rowBuilder.Add(columnIndex, parquetValue)
+	case *schema_pb.Type_ListType:
+		elementType := fieldType.GetListType().ElementType
+		for _, value := range fieldValue.GetListValue().Values {
+			if err := rowBuilderVisit(rowBuilder, elementType, value, columnIndex); err != nil {
 				return err
 			}
-			rowBuilder.Add(index, parquetValue)
 		}
-		return nil
+		rowBuilder.Next(columnIndex)
 	}
+	return nil
+}
+
+func AddRecordValue(rowBuilder *parquet.RowBuilder, recordType *schema_pb.RecordType, recordValue *schema_pb.RecordValue) error {
+	visitor := func(fieldType *schema_pb.Type, fieldValue *schema_pb.Value, index int) error {
+		return rowBuilderVisit(rowBuilder, fieldType, fieldValue, index)
+	}
+	fieldType := &schema_pb.Type{Kind: &schema_pb.Type_RecordType{RecordType: recordType}}
+	fieldValue := &schema_pb.Value{Kind: &schema_pb.Value_RecordValue{RecordValue: recordValue}}
 	return visitValue(fieldType, fieldValue, visitor)
 }
 
@@ -39,13 +52,7 @@ func doVisitValue(fieldType *schema_pb.Type, fieldValue *schema_pb.Value, column
 	case *schema_pb.Type_ScalarType:
 		return columnIndex+1, visitor(fieldType, fieldValue, columnIndex)
 	case *schema_pb.Type_ListType:
-		for _, value := range fieldValue.GetListValue().Values {
-			err = visitor(fieldType, value, columnIndex)
-			if err != nil {
-				return
-			}
-		}
-		return columnIndex+1, nil
+		return columnIndex+1, visitor(fieldType, fieldValue, columnIndex)
 	case *schema_pb.Type_RecordType:
 		for _, field := range fieldType.GetRecordType().Fields {
 			fieldValue, found := fieldValue.GetRecordValue().Fields[field.Name]
