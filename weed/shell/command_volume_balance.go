@@ -402,14 +402,12 @@ func adjustAfterMove(v *master_pb.VolumeInformationMessage, volumeReplicas map[u
 			replica.location = &loc
 			for diskType, diskInfo := range fullNode.info.DiskInfos {
 				if diskType == v.DiskType {
-					diskInfo.VolumeCount--
-					diskInfo.FreeVolumeCount++
+					addVolumeCount(diskInfo, -1)
 				}
 			}
 			for diskType, diskInfo := range emptyNode.info.DiskInfos {
 				if diskType == v.DiskType {
-					diskInfo.VolumeCount++
-					diskInfo.FreeVolumeCount--
+					addVolumeCount(diskInfo, 1)
 				}
 			}
 			return
