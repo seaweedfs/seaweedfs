@@ -64,7 +64,7 @@ func (rtb *RecordTypeBuilder) AddStringField(name string) *RecordTypeBuilder {
 func (rtb *RecordTypeBuilder) AddRecordField(name string, recordTypeBuilder *RecordTypeBuilder) *RecordTypeBuilder {
 	rtb.recordType.Fields = append(rtb.recordType.Fields, &schema_pb.Field{
 		Name: name,
-		Type: &schema_pb.Type{Kind: &schema_pb.Type_RecordType{RecordType: recordTypeBuilder.recordType}},
+		Type: &schema_pb.Type{Kind: &schema_pb.Type_RecordType{RecordType: recordTypeBuilder.Build()}},
 	})
 	return rtb
 }
