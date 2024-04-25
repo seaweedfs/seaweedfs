@@ -6,6 +6,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 
+// ToRecordValue converts a parquet.Row to a schema_pb.RecordValue
+// This does not work or did not test with nested structures.
+// Using this may fail to convert the parquet.Row to schema_pb.RecordValue
 func ToRecordValue(recordType *schema_pb.RecordType, row parquet.Row) (*schema_pb.RecordValue, error) {
 	values := []parquet.Value(row)
 	recordValue, _, _, err := toRecordValue(recordType, values, 0, 0)
