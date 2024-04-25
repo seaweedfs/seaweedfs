@@ -42,6 +42,10 @@ func TestWriteParquet(t *testing.T) {
 		t.Fatalf("total != 128*1024: %v", total)
 	}
 
+	if err = os.Remove(filename); err != nil {
+		t.Fatalf("os.Remove failed: %v", err)
+	}
+
 }
 
 func testWritingParquetFile(t *testing.T, count int, filename string, parquetSchema *parquet.Schema, recordType *schema_pb.RecordType) {
