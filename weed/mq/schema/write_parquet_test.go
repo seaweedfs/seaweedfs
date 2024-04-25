@@ -27,7 +27,8 @@ func TestWriteParquet(t *testing.T) {
 		t.Fatalf("ToParquetSchema failed: %v", err)
 	}
 	fmt.Printf("ParquetSchema: %v\n", parquetSchema)
-	parquet.PrintSchema(os.Stdout, "example", parquetSchema)
+
+	fmt.Printf("Go Type: %+v\n", parquetSchema.GoType())
 
 	filename := "example.parquet"
 
@@ -50,21 +51,29 @@ func testWritingParquetFile(t *testing.T, filename string, parquetSchema *parque
 	defer file.Close()
 	writer := parquet.NewWriter(file, parquetSchema, parquet.Compression(&zstd.Codec{Level: zstd.SpeedDefault}))
 	rowBuilder := parquet.NewRowBuilder(parquetSchema)
-	for i := 0; i < 128; i++ {
+	for i := 0; i < 128*1024; i++ {
 		rowBuilder.Reset()
 		// generate random data
-		AddRecordValue(rowBuilder, recordType, NewRecordValueBuilder().
-			AddLongValue("ID", int64(1+i)).
-			AddLongValue("CreatedAt", 2*int64(i)).
+		recordValue := NewRecordValueBuilder().
+			AddLongValue("ID", 1+int64(i)).
+			AddLongValue("CreatedAt", 2+2*int64(i)).
 			AddRecordValue("Person", NewRecordValueBuilder().
 				AddStringValue("zName", fmt.Sprintf("john_%d", i)).
 				AddStringListValue("emails",
-					fmt.Sprintf("john_%d@y.com", i),
-					fmt.Sprintf("john_%d@g.com", i),
-					fmt.Sprintf("john_%d@t.com", i))).
-			AddStringValue("Company", fmt.Sprintf("company_%d", i)).Build())
+					fmt.Sprintf("john_%d@a.com", i),
+					fmt.Sprintf("john_%d@b.com", i),
+					fmt.Sprintf("john_%d@c.com", i),
+					fmt.Sprintf("john_%d@d.com", i),
+					fmt.Sprintf("john_%d@e.com", i))).
+			AddStringValue("Company", fmt.Sprintf("company_%d", i)).Build()
+		AddRecordValue(rowBuilder, recordType, recordValue)
+
+		// fmt.Printf("RecordValue: %v\n", recordValue)
 
 		row := rowBuilder.Row()
+
+		// fmt.Printf("Row: %+v\n", row)
+
 		if err != nil {
 			t.Fatalf("rowBuilder.Build failed: %v", err)
 		}
@@ -98,11 +107,11 @@ func testReadingParquetFile(t *testing.T, filename string, parquetSchema *parque
 		for i := 0; i < rowCount; i++ {
 			row := rows[i]
 			// convert parquet row to schema_pb.RecordValue
-			recordValue, err := ToRecordValue(recordType, row)
+			_, err := ToRecordValue(recordType, row)
 			if err != nil {
 				t.Fatalf("ToRecordValue failed: %v", err)
 			}
-			fmt.Printf("RecordValue: %v\n", recordValue)
+			// fmt.Printf("RecordValue: %v\n", recordValue)
 		}
 		total += rowCount
 	}
