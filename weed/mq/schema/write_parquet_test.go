@@ -18,7 +18,10 @@ func TestWriteParquet(t *testing.T) {
 		AddRecordField("Person", NewRecordTypeBuilder().
 			AddStringField("zName").
 			AddListField("emails", TypeString)).
-		AddStringField("Company").Build()
+		AddStringField("Company").
+		AddRecordField("zAddress", NewRecordTypeBuilder().
+			AddStringField("Street").
+			AddStringField("City")).Build()
 	fmt.Printf("RecordType: %v\n", recordType)
 
 	// create a parquet schema
