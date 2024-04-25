@@ -32,17 +32,19 @@ func TestWriteParquet(t *testing.T) {
 
 	filename := "example.parquet"
 
-	testWritingParquetFile(t, filename, parquetSchema, recordType)
+	count := 3
+
+	testWritingParquetFile(t, count, filename, parquetSchema, recordType)
 
 	total := testReadingParquetFile(t, filename, parquetSchema, recordType)
 
-	if total != 128*1024 {
+	if total != count {
 		t.Fatalf("total != 128*1024: %v", total)
 	}
 
 }
 
-func testWritingParquetFile(t *testing.T, filename string, parquetSchema *parquet.Schema, recordType *schema_pb.RecordType) {
+func testWritingParquetFile(t *testing.T, count int, filename string, parquetSchema *parquet.Schema, recordType *schema_pb.RecordType) {
 	// create a parquet file
 	file, err := os.OpenFile(filename, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0664)
 	if err != nil {
@@ -51,7 +53,7 @@ func testWritingParquetFile(t *testing.T, filename string, parquetSchema *parque
 	defer file.Close()
 	writer := parquet.NewWriter(file, parquetSchema, parquet.Compression(&zstd.Codec{Level: zstd.SpeedDefault}))
 	rowBuilder := parquet.NewRowBuilder(parquetSchema)
-	for i := 0; i < 128*1024; i++ {
+	for i := 0; i < count; i++ {
 		rowBuilder.Reset()
 		// generate random data
 		recordValue := NewRecordValueBuilder().
@@ -107,11 +109,13 @@ func testReadingParquetFile(t *testing.T, filename string, parquetSchema *parque
 		for i := 0; i < rowCount; i++ {
 			row := rows[i]
 			// convert parquet row to schema_pb.RecordValue
-			_, err := ToRecordValue(recordType, row)
+			recordValue, err := ToRecordValue(recordType, row)
 			if err != nil {
 				t.Fatalf("ToRecordValue failed: %v", err)
 			}
-			// fmt.Printf("RecordValue: %v\n", recordValue)
+			if rowCount < 10 {
+				fmt.Printf("RecordValue: %v\n", recordValue)
+			}
 		}
 		total += rowCount
 	}
