@@ -72,7 +72,9 @@ func (r *LockRing) SetSnapshot(servers []pb.ServerAddress) {
 		return servers[i] < servers[j]
 	})
 
+	r.Lock()
 	r.lastUpdateTime = time.Now()
+	r.Unlock()
 
 	r.addOneSnapshot(servers)
 
