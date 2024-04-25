@@ -315,7 +315,7 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 				if replicateErr != nil {
 					return fmt.Errorf("copying from %s => %s : %v", replica.location.dataNode.Id, dst.dataNode.Id, replicateErr)
 				}
-				var bytesCount int64
+				var processedBytes int64
 				for {
 					resp, recvErr := stream.Recv()
 					if recvErr != nil {
@@ -326,10 +326,10 @@ func (c *commandVolumeFixReplication) fixOneUnderReplicatedVolume(commandEnv *Co
 						}
 					}
 					if resp.ProcessedBytes > 0 {
-						bytesCount += resp.ProcessedBytes
+						processedBytes = resp.ProcessedBytes
 					}
 				}
-				fmt.Fprintf(writer, "volume %d processed completed! total %d bytes\n", replica.info.Id, bytesCount)
+				fmt.Fprintf(writer, "volume %d processed completed! total %d bytes\n", replica.info.Id, processedBytes)
 				return nil
 			})
 
