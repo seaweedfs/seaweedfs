@@ -24,6 +24,7 @@ func toParquetFieldType(fieldType *schema_pb.Type) (dataType parquet.Node, err e
 		dataType = parquet.Optional(dataType)
 	case *schema_pb.Type_RecordType:
 		dataType, err = toParquetFieldTypeRecord(fieldType.GetRecordType())
+		dataType = parquet.Optional(dataType)
 	case *schema_pb.Type_ListType:
 		dataType, err = toParquetFieldTypeList(fieldType.GetListType())
 	default:
