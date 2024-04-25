@@ -18,7 +18,6 @@ require (
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
-	github.com/disintegration/imaging v1.6.2
 	github.com/dustin/go-humanize v1.0.1
 	github.com/eapache/go-resiliency v1.3.0 // indirect
 	github.com/eapache/go-xerial-snappy v0.0.0-20230111030713-bf00bc1b83b6 // indirect
@@ -142,6 +141,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.27.11
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.11
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.51.4
+	github.com/cognusion/imaging v1.0.1
 	github.com/fluent/fluent-logger-golang v1.9.0
 	github.com/getsentry/sentry-go v0.27.0
 	github.com/golang-jwt/jwt/v5 v5.2.1
